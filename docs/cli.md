@@ -68,6 +68,8 @@ Beim `execution:start`- und `execution:tick`-Pfad werden heute zusaetzlich diese
 
 - `ProjectExecutionContext`
 - `WaveExecution`
+- `WaveStoryTestRun`
+- `TestAgentSession`
 - `WaveStoryExecution`
 - `ExecutionAgentSession`
 - `VerificationRun`
@@ -76,7 +78,16 @@ Die Engine entscheidet dabei deterministisch:
 
 - welche Wave aktiv ist
 - welche Stories ausfuehrbar sind
+- dass jede Story zuerst einen `test-writer`-Lauf durchlaeuft
 - welche Worker-Rolle verwendet wird
 - wann Retry oder Review erforderlich ist
 
 Der Worker selbst bekommt nur den bounded Story-Kontext plus gespeicherte Business- und Repo-Snapshots.
+
+Im aktuellen TDD-Schnitt gilt:
+
+- `execution:start` und `execution:tick` erzwingen zuerst `test_preparation`, dann `implementation`
+- `execution:show` zeigt den neuesten `WaveStoryTestRun` und die zugehoerigen `TestAgentSession`-Records pro Story
+- Implementierung startet nur, wenn der neueste Test-Run fuer die Story `completed` ist
+- der Implementer bekommt den gespeicherten Test-Run-Output als Eingabe und arbeitet gegen diese vorab erzeugten Testziele
+- jede `WaveStoryExecution` referenziert den konkret verwendeten Test-Run direkt ueber `testPreparationRunId`

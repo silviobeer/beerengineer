@@ -156,6 +156,32 @@ ${waves.map((wave) => `- ${wave.waveCode}: ${wave.goal}`).join("\n")}`
   };
 }
 
+function testPreparation(payload) {
+  const baseName = payload.story.code.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  const testPath = `test/generated/${baseName}.test.ts`;
+  return {
+    output: {
+      summary: `Local test writer prepared a deterministic failing test plan for ${payload.story.code}.`,
+      testFiles: [
+        {
+          path: testPath,
+          content: `describe("${payload.story.code}", () => {\n  it("covers the planned acceptance criteria", () => {\n    throw new Error("Generated failing test placeholder");\n  });\n});\n`,
+          writeMode: "proposed"
+        }
+      ],
+      testsGenerated: payload.acceptanceCriteria.map((criterion) => ({
+        path: testPath,
+        intent: `Verify ${criterion.code}: ${criterion.text}`
+      })),
+      assumptions: [
+        "The generated tests are stored as structured output before repo mutation is enforced.",
+        "The implementer receives these test targets as the success contract."
+      ],
+      blockers: []
+    }
+  };
+}
+
 function storyExecution(payload) {
   const targetFiles = [];
   const storyText = `${payload.story.title} ${payload.story.description} ${payload.story.goal}`.toLowerCase();
@@ -172,17 +198,18 @@ function storyExecution(payload) {
 
   return {
     output: {
-      summary: `Local execution worker prepared ${payload.story.code} with role ${payload.workerRole}.`,
+      summary: `Local execution worker prepared ${payload.story.code} with role ${payload.workerRole} against ${payload.testPreparation.testFiles.length} prewritten test target(s).`,
       changedFiles: targetFiles,
       testsRun: [
         {
-          command: "npm test",
+          command: `npm test -- ${payload.testPreparation.testFiles[0].path}`,
           status: "passed"
         }
       ],
       implementationNotes: [
         `Story ${payload.story.code} executed with curated repo context.`,
-        `Wave ${payload.wave.code} remains engine-orchestrated.`
+        `Wave ${payload.wave.code} remains engine-orchestrated.`,
+        `Implementation used prewritten tests from test preparation ${payload.testPreparation.id}.`
       ],
       blockers: []
     }
@@ -198,6 +225,8 @@ if (payload.stageKey === "brainstorm") {
   result = architecture(payload.project);
 } else if (payload.stageKey === "planning") {
   result = planning(payload.project, payload.context);
+} else if (payload.workerRole === "test-writer") {
+  result = testPreparation(payload);
 } else if (payload.workerRole) {
   result = storyExecution(payload);
 } else {

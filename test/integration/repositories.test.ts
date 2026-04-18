@@ -13,10 +13,12 @@ import {
   ItemRepository,
   ProjectExecutionContextRepository,
   ProjectRepository,
+  TestAgentSessionRepository,
   UserStoryRepository,
   VerificationRunRepository,
   WaveRepository,
   WaveExecutionRepository,
+  WaveStoryTestRunRepository,
   WaveStoryDependencyRepository,
   WaveStoryExecutionRepository,
   WaveStoryRepository
@@ -39,6 +41,8 @@ describe("repositories", () => {
     const waveStoryDependencyRepository = new WaveStoryDependencyRepository(db);
     const projectExecutionContextRepository = new ProjectExecutionContextRepository(db);
     const waveExecutionRepository = new WaveExecutionRepository(db);
+    const waveStoryTestRunRepository = new WaveStoryTestRunRepository(db);
+    const testAgentSessionRepository = new TestAgentSessionRepository(db);
     const waveStoryExecutionRepository = new WaveStoryExecutionRepository(db);
     const executionAgentSessionRepository = new ExecutionAgentSessionRepository(db);
     const verificationRunRepository = new VerificationRunRepository(db);
@@ -211,8 +215,30 @@ describe("repositories", () => {
         status: "running",
         attempt: 1
       });
+      const waveStoryTestRun = waveStoryTestRunRepository.create({
+        waveExecutionId: waveExecution.id,
+        waveStoryId: waveStories[0]!.id,
+        storyId: stories[0]!.id,
+        status: "completed",
+        attempt: 1,
+        workerRole: "test-writer",
+        businessContextSnapshotJson: "{\"story\":\"ITEM-0001-P01-US01\"}",
+        repoContextSnapshotJson: "{\"files\":[\"test/generated/item-0001-p01-us01.test.ts\"]}",
+        outputSummaryJson: "{\"summary\":\"tests prepared\"}",
+        errorMessage: null
+      });
+      const testSession = testAgentSessionRepository.create({
+        waveStoryTestRunId: waveStoryTestRun.id,
+        adapterKey: "local-cli",
+        status: "completed",
+        commandJson: "[\"node\"]",
+        stdout: "{}",
+        stderr: "",
+        exitCode: 0
+      });
       const waveStoryExecution = waveStoryExecutionRepository.create({
         waveExecutionId: waveExecution.id,
+        testPreparationRunId: waveStoryTestRun.id,
         waveStoryId: waveStories[0]!.id,
         storyId: stories[0]!.id,
         status: "completed",
@@ -250,6 +276,9 @@ describe("repositories", () => {
       });
       expect(projectExecutionContext.relevantDirectories).toEqual(["src"]);
       expect(waveExecution.id).toContain("wave_execution_");
+      expect(waveStoryTestRun.id).toContain("wave_story_test_run_");
+      expect(testSession.id).toContain("test_session_");
+      expect(waveStoryExecution.testPreparationRunId).toBe(waveStoryTestRun.id);
       expect(waveStoryExecution.id).toContain("wave_story_execution_");
       expect(executionSession.id).toContain("execution_session_");
       expect(verificationRun.id).toContain("verification_");

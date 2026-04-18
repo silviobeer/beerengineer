@@ -96,10 +96,18 @@ describe("cli happy path", () => {
 
       const executionShow = runCli(["--db", dbPath, "execution:show", "--project-id", projectId], cwd) as {
         activeWave: { code: string } | null;
-        waves: Array<{ waveExecution: { status: string } | null }>;
+        waves: Array<{
+          waveExecution: { status: string } | null;
+          stories: Array<{
+            latestTestRun: { id: string } | null;
+            testAgentSessions: Array<{ id: string }>;
+          }>;
+        }>;
       };
       expect(executionShow.activeWave).toBeNull();
       expect(executionShow.waves.map((wave) => wave.waveExecution?.status)).toEqual(["completed", "completed"]);
+      expect(executionShow.waves[0]?.stories[0]?.latestTestRun?.id).toContain("wave_story_test_run_");
+      expect(executionShow.waves[0]?.stories[0]?.testAgentSessions.length).toBe(1);
 
       const artifacts = runCli(["--db", dbPath, "artifacts:list", "--item-id", item.id], cwd) as Array<{ id: string }>;
       expect(artifacts.length).toBeGreaterThan(0);

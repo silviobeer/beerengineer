@@ -37,6 +37,9 @@ export type StageRunStatus = (typeof stageRunStatuses)[number];
 export const executionWorkerRoles = ["implementer", "backend-implementer", "frontend-implementer"] as const;
 export type ExecutionWorkerRole = (typeof executionWorkerRoles)[number];
 
+export const testPreparationWorkerRoles = ["test-writer"] as const;
+export type TestPreparationWorkerRole = (typeof testPreparationWorkerRoles)[number];
+
 export const waveExecutionStatuses = [
   "pending",
   "running",
@@ -49,6 +52,9 @@ export type WaveExecutionStatus = (typeof waveExecutionStatuses)[number];
 
 export const waveStoryExecutionStatuses = ["pending", "running", "review_required", "completed", "failed"] as const;
 export type WaveStoryExecutionStatus = (typeof waveStoryExecutionStatuses)[number];
+
+export const waveStoryTestRunStatuses = ["pending", "running", "review_required", "completed", "failed"] as const;
+export type WaveStoryTestRunStatus = (typeof waveStoryTestRunStatuses)[number];
 
 export const verificationRunStatuses = ["passed", "review_required", "failed"] as const;
 export type VerificationRunStatus = (typeof verificationRunStatuses)[number];
@@ -192,6 +198,7 @@ export type WaveExecution = {
 export type WaveStoryExecution = {
   id: string;
   waveExecutionId: string;
+  testPreparationRunId: string;
   waveStoryId: string;
   storyId: string;
   status: WaveStoryExecutionStatus;
@@ -204,6 +211,36 @@ export type WaveStoryExecution = {
   createdAt: number;
   updatedAt: number;
   completedAt: number | null;
+};
+
+export type WaveStoryTestRun = {
+  id: string;
+  waveExecutionId: string;
+  waveStoryId: string;
+  storyId: string;
+  status: WaveStoryTestRunStatus;
+  attempt: number;
+  workerRole: TestPreparationWorkerRole;
+  businessContextSnapshotJson: string;
+  repoContextSnapshotJson: string;
+  outputSummaryJson: string | null;
+  errorMessage: string | null;
+  createdAt: number;
+  updatedAt: number;
+  completedAt: number | null;
+};
+
+export type TestAgentSession = {
+  id: string;
+  waveStoryTestRunId: string;
+  adapterKey: string;
+  status: "running" | "completed" | "failed";
+  commandJson: string;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  createdAt: number;
+  updatedAt: number;
 };
 
 export type ExecutionAgentSession = {

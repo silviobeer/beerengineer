@@ -346,11 +346,13 @@ describe("workflow service", () => {
       expect(first.activeWaveCode).toBe("W01");
       expect(first.scheduledCount).toBe(1);
       expect(first.executions[0]?.status).toBe("completed");
+      expect(first.executions[0]?.phase).toBe("implementation");
 
       const second = await context.workflowService.tickExecution(project.id);
       expect(second.activeWaveCode).toBe("W02");
       expect(second.scheduledCount).toBe(1);
       expect(second.executions[0]?.status).toBe("completed");
+      expect(second.executions[0]?.phase).toBe("implementation");
 
       const shown = context.workflowService.showExecution(project.id) as {
         projectExecutionContext: { relevantDirectories: string[] } | null;
@@ -358,7 +360,13 @@ describe("workflow service", () => {
         waves: Array<{
           waveExecution: { status: string } | null;
           stories: Array<{
-            latestExecution: { businessContextSnapshotJson: string; repoContextSnapshotJson: string } | null;
+            latestTestRun: { id: string; outputSummaryJson: string | null } | null;
+            latestExecution: {
+              businessContextSnapshotJson: string;
+              repoContextSnapshotJson: string;
+              testPreparationRunId: string;
+            } | null;
+            testAgentSessions: Array<{ adapterKey: string }>;
             verificationRuns: Array<{ status: string }>;
             agentSessions: Array<{ adapterKey: string }>;
           }>;
@@ -368,8 +376,13 @@ describe("workflow service", () => {
       expect(shown.projectExecutionContext?.relevantDirectories).toContain("src");
       expect(shown.activeWave).toBeNull();
       expect(shown.waves.map((wave) => wave.waveExecution?.status)).toEqual(["completed", "completed"]);
+      expect(shown.waves[0]?.stories[0]?.latestTestRun?.outputSummaryJson).toContain("testsGenerated");
       expect(shown.waves[0]?.stories[0]?.latestExecution?.businessContextSnapshotJson).toContain("ITEM-0001-P01-US01");
+      expect(shown.waves[0]?.stories[0]?.latestExecution?.testPreparationRunId).toBe(
+        shown.waves[0]?.stories[0]?.latestTestRun?.id
+      );
       expect(shown.waves[1]?.stories[0]?.latestExecution?.repoContextSnapshotJson).toContain("src");
+      expect(shown.waves[0]?.stories[0]?.testAgentSessions[0]?.adapterKey).toBe("local-cli");
       expect(shown.waves[0]?.stories[0]?.verificationRuns[0]?.status).toBe("passed");
       expect(shown.waves[0]?.stories[0]?.agentSessions[0]?.adapterKey).toBe("local-cli");
     } finally {

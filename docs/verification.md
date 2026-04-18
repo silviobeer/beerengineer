@@ -137,3 +137,31 @@ Live verifiziert:
 - pro `WaveStoryExecution` wurden Business- und Repo-Snapshots gespeichert
 - pro Story wurde ein `ExecutionAgentSession`-Record angelegt
 - pro Story wurde ein `VerificationRun` mit Status `passed` gespeichert
+
+## TDD Slice
+
+Umgesetzt:
+
+- engine-erzwungene Reihenfolge `test_preparation -> implementation -> verification`
+- neue Runtime-Entities `WaveStoryTestRun` und `TestAgentSession`
+- eigener strukturierter Test-Writer-Output vor jeder Implementierung
+- gespeicherte Business- und Repo-Snapshots auch fuer Testvorbereitungslaeufe
+- Implementer bekommt den neuesten erfolgreichen Test-Run als Eingabekontext
+- `execution:show` surfacet Test-Run- und Test-Session-Informationen pro Story
+
+Verifiziert mit:
+
+- `npm run lint`
+- `npm run build`
+- `npm test`
+
+Aktueller Stand:
+
+- 12 Testdateien
+- 30 gruene Tests
+
+Live verifiziert:
+
+- jede ausgefuehrte Story erzeugt zuerst einen `WaveStoryTestRun`
+- pro Test-Run wird ein `TestAgentSession`-Record gespeichert
+- die anschliessende Implementierung nutzt den gespeicherten Test-Run-Output als vorab definiertes Ziel

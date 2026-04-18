@@ -9,7 +9,9 @@ import type {
   AdapterRunRequest,
   AdapterRunResult,
   ExecutionAdapterRunRequest,
-  ExecutionAdapterRunResult
+  ExecutionAdapterRunResult,
+  TestPreparationAdapterRunRequest,
+  TestPreparationAdapterRunResult
 } from "./types.js";
 
 export class AgentExecutionError extends AppError {
@@ -50,7 +52,20 @@ export class LocalCliAdapter implements AgentAdapter {
     };
   }
 
-  private executePayload(request: AdapterRunRequest | ExecutionAdapterRunRequest): unknown {
+  public async runStoryTestPreparation(
+    request: TestPreparationAdapterRunRequest
+  ): Promise<TestPreparationAdapterRunResult> {
+    const parsed = this.executePayload(request) as { output: TestPreparationAdapterRunResult["output"] };
+    return {
+      output: parsed.output,
+      stdout: JSON.stringify(parsed),
+      stderr: "",
+      exitCode: 0,
+      command: [process.execPath, resolve(this.repoRoot, this.scriptPath)]
+    };
+  }
+
+  private executePayload(request: AdapterRunRequest | ExecutionAdapterRunRequest | TestPreparationAdapterRunRequest): unknown {
     const tempDir = mkdtempSync(join(tmpdir(), "beerengineer-agent-"));
     const payloadPath = join(tempDir, "payload.json");
     writeFileSync(payloadPath, JSON.stringify(request, null, 2), "utf8");

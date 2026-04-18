@@ -15,10 +15,12 @@ import {
   ProjectExecutionContextRepository,
   ProjectRepository,
   StageRunRepository,
+  TestAgentSessionRepository,
   UserStoryRepository,
   VerificationRunRepository,
   WaveRepository,
   WaveExecutionRepository,
+  WaveStoryTestRunRepository,
   WaveStoryDependencyRepository,
   WaveStoryExecutionRepository,
   WaveStoryRepository
@@ -48,6 +50,8 @@ export type AppContext = {
     waveStoryDependencyRepository: WaveStoryDependencyRepository;
     projectExecutionContextRepository: ProjectExecutionContextRepository;
     waveExecutionRepository: WaveExecutionRepository;
+    waveStoryTestRunRepository: WaveStoryTestRunRepository;
+    testAgentSessionRepository: TestAgentSessionRepository;
     waveStoryExecutionRepository: WaveStoryExecutionRepository;
     executionAgentSessionRepository: ExecutionAgentSessionRepository;
     verificationRunRepository: VerificationRunRepository;
@@ -76,6 +80,8 @@ export function createAppContext(dbPath: string): AppContext {
   const waveStoryDependencyRepository = new WaveStoryDependencyRepository(db);
   const projectExecutionContextRepository = new ProjectExecutionContextRepository(db);
   const waveExecutionRepository = new WaveExecutionRepository(db);
+  const waveStoryTestRunRepository = new WaveStoryTestRunRepository(db);
+  const testAgentSessionRepository = new TestAgentSessionRepository(db);
   const waveStoryExecutionRepository = new WaveStoryExecutionRepository(db);
   const executionAgentSessionRepository = new ExecutionAgentSessionRepository(db);
   const verificationRunRepository = new VerificationRunRepository(db);
@@ -100,6 +106,8 @@ export function createAppContext(dbPath: string): AppContext {
       waveStoryDependencyRepository,
       projectExecutionContextRepository,
       waveExecutionRepository,
+      waveStoryTestRunRepository,
+      testAgentSessionRepository,
       waveStoryExecutionRepository,
       executionAgentSessionRepository,
       verificationRunRepository,
@@ -124,6 +132,8 @@ export function createAppContext(dbPath: string): AppContext {
       waveStoryDependencyRepository,
       projectExecutionContextRepository,
       waveExecutionRepository,
+      waveStoryTestRunRepository,
+      testAgentSessionRepository,
       waveStoryExecutionRepository,
       executionAgentSessionRepository,
       verificationRunRepository,

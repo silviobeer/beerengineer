@@ -187,7 +187,7 @@ export const baseMigrations: readonly SqlMigration[] = [
         completed_at INTEGER,
         FOREIGN KEY (wave_id) REFERENCES waves(id)
       )`,
-      `CREATE TABLE IF NOT EXISTS wave_story_executions (
+      `CREATE TABLE IF NOT EXISTS wave_story_test_runs (
         id TEXT PRIMARY KEY NOT NULL,
         wave_execution_id TEXT NOT NULL,
         wave_story_id TEXT NOT NULL,
@@ -205,6 +205,40 @@ export const baseMigrations: readonly SqlMigration[] = [
         FOREIGN KEY (wave_execution_id) REFERENCES wave_executions(id),
         FOREIGN KEY (wave_story_id) REFERENCES wave_stories(id),
         FOREIGN KEY (story_id) REFERENCES user_stories(id)
+      )`,
+      `CREATE TABLE IF NOT EXISTS wave_story_executions (
+        id TEXT PRIMARY KEY NOT NULL,
+        wave_execution_id TEXT NOT NULL,
+        test_preparation_run_id TEXT NOT NULL,
+        wave_story_id TEXT NOT NULL,
+        story_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        attempt INTEGER NOT NULL,
+        worker_role TEXT NOT NULL,
+        business_context_snapshot_json TEXT NOT NULL,
+        repo_context_snapshot_json TEXT NOT NULL,
+        output_summary_json TEXT,
+        error_message TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        FOREIGN KEY (wave_execution_id) REFERENCES wave_executions(id),
+        FOREIGN KEY (test_preparation_run_id) REFERENCES wave_story_test_runs(id),
+        FOREIGN KEY (wave_story_id) REFERENCES wave_stories(id),
+        FOREIGN KEY (story_id) REFERENCES user_stories(id)
+      )`,
+      `CREATE TABLE IF NOT EXISTS test_agent_sessions (
+        id TEXT PRIMARY KEY NOT NULL,
+        wave_story_test_run_id TEXT NOT NULL,
+        adapter_key TEXT NOT NULL,
+        status TEXT NOT NULL,
+        command_json TEXT NOT NULL,
+        stdout TEXT NOT NULL,
+        stderr TEXT NOT NULL,
+        exit_code INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (wave_story_test_run_id) REFERENCES wave_story_test_runs(id)
       )`,
       `CREATE TABLE IF NOT EXISTS execution_agent_sessions (
         id TEXT PRIMARY KEY NOT NULL,

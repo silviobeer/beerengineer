@@ -11,14 +11,16 @@ import {
   architecturePlanOutputSchema,
   projectsOutputSchema,
   storiesOutputSchema,
-  storyExecutionOutputSchema
+  storyExecutionOutputSchema,
+  testPreparationOutputSchema
 } from "../schemas/output-contracts.js";
 import type {
   ImplementationPlanOutput,
   ArchitecturePlanOutput,
   ProjectsOutput,
   StoriesOutput,
-  StoryExecutionOutput
+  StoryExecutionOutput,
+  TestPreparationOutput
 } from "../schemas/output-contracts.js";
 import { AppError } from "../shared/errors.js";
 import {
@@ -29,6 +31,7 @@ import {
 import type {
   ExecutionAgentSessionRepository,
   ProjectExecutionContextRepository,
+  TestAgentSessionRepository,
   VerificationRunRepository,
   AcceptanceCriterionRepository,
   ArchitecturePlanRepository,
@@ -44,6 +47,7 @@ import type {
   WaveRepository,
   WaveExecutionRepository,
   WaveStoryDependencyRepository,
+  WaveStoryTestRunRepository,
   WaveStoryExecutionRepository,
   WaveStoryRepository
 } from "../persistence/repositories.js";
@@ -68,6 +72,8 @@ type WorkflowDeps = {
   waveStoryDependencyRepository: WaveStoryDependencyRepository;
   projectExecutionContextRepository: ProjectExecutionContextRepository;
   waveExecutionRepository: WaveExecutionRepository;
+  waveStoryTestRunRepository: WaveStoryTestRunRepository;
+  testAgentSessionRepository: TestAgentSessionRepository;
   waveStoryExecutionRepository: WaveStoryExecutionRepository;
   executionAgentSessionRepository: ExecutionAgentSessionRepository;
   verificationRunRepository: VerificationRunRepository;
@@ -413,13 +419,35 @@ export class WorkflowService {
     const project = this.requireProject(story.projectId);
     const plan = this.requireImplementationPlanForProject(project.id);
     const wave = this.requireWave(waveExecution.waveId);
+    const projectExecutionContext = this.ensureProjectExecutionContext(project, plan);
+    const testRun = await this.ensureWaveStoryTestPreparation({
+      project,
+      implementationPlan: plan,
+      wave,
+      waveExecution,
+      waveStory,
+      story,
+      projectExecutionContext
+    });
+    if (testRun.status !== "completed") {
+      this.refreshWaveExecutionStatus(waveExecution.id);
+      return {
+        phase: "test_preparation",
+        waveStoryTestRunId: testRun.waveStoryTestRunId,
+        waveStoryId: waveStory.id,
+        storyCode: story.code,
+        status: testRun.status
+      };
+    }
     const result = await this.executeWaveStory({
       project,
       implementationPlan: plan,
       wave,
       waveExecution,
       waveStory,
-      story
+      story,
+      projectExecutionContext,
+      testPreparationRunId: testRun.waveStoryTestRunId
     });
     this.refreshWaveExecutionStatus(waveExecution.id);
     return result;
@@ -435,6 +463,7 @@ export class WorkflowService {
       const waveStories = this.deps.waveStoryRepository.listByWaveId(wave.id);
       const storyExecutions = waveStories.map((waveStory) => {
         const story = this.requireStory(waveStory.storyId);
+        const latestTestRun = this.deps.waveStoryTestRunRepository.getLatestByWaveStoryId(waveStory.id);
         const latestExecution = this.deps.waveStoryExecutionRepository.getLatestByWaveStoryId(waveStory.id);
         const blockers = this.deps.waveStoryDependencyRepository
           .listByDependentStoryId(story.id)
@@ -448,8 +477,12 @@ export class WorkflowService {
         return {
           waveStory,
           story,
+          latestTestRun,
           latestExecution,
           blockers,
+          testAgentSessions: latestTestRun
+            ? this.deps.testAgentSessionRepository.listByWaveStoryTestRunId(latestTestRun.id)
+            : [],
           verificationRuns: latestExecution
             ? this.deps.verificationRunRepository.listByWaveStoryExecutionId(latestExecution.id)
             : [],
@@ -526,7 +559,7 @@ export class WorkflowService {
     const executions = [];
     for (const waveStory of executableStories) {
       const story = this.requireStory(waveStory.storyId);
-      const result = await this.executeWaveStory({
+      const testRun = await this.ensureWaveStoryTestPreparation({
         project,
         implementationPlan,
         wave: activeWave,
@@ -534,6 +567,20 @@ export class WorkflowService {
         waveStory,
         story,
         projectExecutionContext
+      });
+      if (testRun.status !== "completed") {
+        executions.push(testRun);
+        continue;
+      }
+      const result = await this.executeWaveStory({
+        project,
+        implementationPlan,
+        wave: activeWave,
+        waveExecution,
+        waveStory,
+        story,
+        projectExecutionContext,
+        testPreparationRunId: testRun.waveStoryTestRunId
       });
       executions.push(result);
     }
@@ -558,38 +605,29 @@ export class WorkflowService {
     waveStory: ReturnType<WorkflowService["requireWaveStory"]>;
     story: ReturnType<WorkflowService["requireStory"]>;
     projectExecutionContext?: ReturnType<WorkflowService["ensureProjectExecutionContext"]>;
+    testPreparationRunId: string;
   }) {
-    const item = this.requireItem(input.project.itemId);
-    const architecture = this.deps.architecturePlanRepository.getLatestByProjectId(input.project.id);
-    const acceptanceCriteria = this.deps.acceptanceCriterionRepository.listByStoryId(input.story.id);
-    const projectExecutionContext =
-      input.projectExecutionContext ?? this.ensureProjectExecutionContext(input.project, input.implementationPlan);
-    const businessContextSnapshotJson = this.buildBusinessContextSnapshot({
-      item,
+    const storyRunContext = this.buildStoryRunContext({
       project: input.project,
       implementationPlan: input.implementationPlan,
       wave: input.wave,
       story: input.story,
-      acceptanceCriteria,
-      architecture
+      projectExecutionContext: input.projectExecutionContext
     });
-    const repoContextSnapshotJson = this.buildRepoContextSnapshot({
-      project: input.project,
-      story: input.story,
-      architectureSummary: architecture?.summary ?? null,
-      projectExecutionContext
-    });
-    const workerRole = this.selectWorkerRole(input.story, acceptanceCriteria);
+    const testPreparationRun = this.requireWaveStoryTestRun(input.testPreparationRunId);
+    const parsedTestPreparation = this.parseTestPreparationOutput(testPreparationRun);
+    const workerRole = this.selectWorkerRole(input.story, storyRunContext.acceptanceCriteria);
     const previousAttempts = this.deps.waveStoryExecutionRepository.listByWaveStoryId(input.waveStory.id);
     const execution = this.deps.waveStoryExecutionRepository.create({
       waveExecutionId: input.waveExecution.id,
+      testPreparationRunId: testPreparationRun.id,
       waveStoryId: input.waveStory.id,
       storyId: input.story.id,
       status: "running",
       attempt: previousAttempts.length + 1,
       workerRole,
-      businessContextSnapshotJson,
-      repoContextSnapshotJson,
+      businessContextSnapshotJson: storyRunContext.businessContextSnapshotJson,
+      repoContextSnapshotJson: storyRunContext.repoContextSnapshotJson,
       outputSummaryJson: null,
       errorMessage: null
     });
@@ -597,7 +635,7 @@ export class WorkflowService {
     try {
       const result = await this.deps.adapter.runStoryExecution({
         workerRole,
-        item,
+        item: storyRunContext.item,
         project: input.project,
         implementationPlan: {
           id: input.implementationPlan.id,
@@ -611,17 +649,24 @@ export class WorkflowService {
           position: input.wave.position
         },
         story: input.story,
-        acceptanceCriteria,
-        architecture: architecture
+        acceptanceCriteria: storyRunContext.acceptanceCriteria,
+        architecture: storyRunContext.architecture
           ? {
-              id: architecture.id,
-              summary: architecture.summary,
-              version: architecture.version
+              id: storyRunContext.architecture.id,
+              summary: storyRunContext.architecture.summary,
+              version: storyRunContext.architecture.version
             }
           : null,
-        projectExecutionContext,
-        businessContextSnapshotJson,
-        repoContextSnapshotJson
+        projectExecutionContext: storyRunContext.projectExecutionContext,
+        businessContextSnapshotJson: storyRunContext.businessContextSnapshotJson,
+        repoContextSnapshotJson: storyRunContext.repoContextSnapshotJson,
+        testPreparation: {
+          id: testPreparationRun.id,
+          summary: parsedTestPreparation.summary,
+          testFiles: parsedTestPreparation.testFiles,
+          testsGenerated: parsedTestPreparation.testsGenerated,
+          assumptions: parsedTestPreparation.assumptions
+        }
       });
 
       const parsed = storyExecutionOutputSchema.parse(result.output) as StoryExecutionOutput;
@@ -661,6 +706,7 @@ export class WorkflowService {
         }
       );
       return {
+        phase: "implementation",
         waveStoryExecutionId: execution.id,
         waveStoryId: input.waveStory.id,
         storyCode: input.story.code,
@@ -687,10 +733,129 @@ export class WorkflowService {
         errorMessage: error instanceof Error ? error.message : String(error)
       });
       return {
+        phase: "implementation",
         waveStoryExecutionId: execution.id,
         waveStoryId: input.waveStory.id,
         storyCode: input.story.code,
         status: "failed"
+      };
+    }
+  }
+
+  private async ensureWaveStoryTestPreparation(input: {
+    project: ReturnType<WorkflowService["requireProject"]>;
+    implementationPlan: ReturnType<WorkflowService["requireImplementationPlanForProject"]>;
+    wave: ReturnType<WorkflowService["requireWave"]>;
+    waveExecution: ReturnType<WorkflowService["requireWaveExecution"]>;
+    waveStory: ReturnType<WorkflowService["requireWaveStory"]>;
+    story: ReturnType<WorkflowService["requireStory"]>;
+    projectExecutionContext?: ReturnType<WorkflowService["ensureProjectExecutionContext"]>;
+  }) {
+    const latest = this.deps.waveStoryTestRunRepository.getLatestByWaveStoryId(input.waveStory.id);
+    if (latest?.status === "completed") {
+      return {
+        phase: "test_preparation",
+        waveStoryTestRunId: latest.id,
+        waveStoryId: input.waveStory.id,
+        storyCode: input.story.code,
+        status: "completed" as const
+      };
+    }
+
+    const storyRunContext = this.buildStoryRunContext({
+      project: input.project,
+      implementationPlan: input.implementationPlan,
+      wave: input.wave,
+      story: input.story,
+      projectExecutionContext: input.projectExecutionContext
+    });
+
+    const testRun = this.deps.waveStoryTestRunRepository.create({
+      waveExecutionId: input.waveExecution.id,
+      waveStoryId: input.waveStory.id,
+      storyId: input.story.id,
+      status: "running",
+      attempt: (latest?.attempt ?? 0) + 1,
+      workerRole: "test-writer",
+      businessContextSnapshotJson: storyRunContext.businessContextSnapshotJson,
+      repoContextSnapshotJson: storyRunContext.repoContextSnapshotJson,
+      outputSummaryJson: null,
+      errorMessage: null
+    });
+
+    try {
+      const result = await this.deps.adapter.runStoryTestPreparation({
+        workerRole: "test-writer",
+        item: storyRunContext.item,
+        project: input.project,
+        implementationPlan: {
+          id: input.implementationPlan.id,
+          summary: input.implementationPlan.summary,
+          version: input.implementationPlan.version
+        },
+        wave: {
+          id: input.wave.id,
+          code: input.wave.code,
+          goal: input.wave.goal,
+          position: input.wave.position
+        },
+        story: input.story,
+        acceptanceCriteria: storyRunContext.acceptanceCriteria,
+        architecture: storyRunContext.architecture
+          ? {
+              id: storyRunContext.architecture.id,
+              summary: storyRunContext.architecture.summary,
+              version: storyRunContext.architecture.version
+            }
+          : null,
+        projectExecutionContext: storyRunContext.projectExecutionContext,
+        businessContextSnapshotJson: storyRunContext.businessContextSnapshotJson,
+        repoContextSnapshotJson: storyRunContext.repoContextSnapshotJson
+      });
+
+      const parsed = testPreparationOutputSchema.parse(result.output) as TestPreparationOutput;
+      this.deps.testAgentSessionRepository.create({
+        waveStoryTestRunId: testRun.id,
+        adapterKey: this.deps.adapter.key,
+        status: result.exitCode === 0 ? "completed" : "failed",
+        commandJson: JSON.stringify(result.command),
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exitCode: result.exitCode
+      });
+
+      const status = this.resolveTestPreparationStatus(parsed, result.exitCode);
+      this.deps.waveStoryTestRunRepository.updateStatus(testRun.id, status, {
+        outputSummaryJson: JSON.stringify(parsed, null, 2),
+        errorMessage: parsed.blockers.join("; ") || null
+      });
+
+      return {
+        phase: "test_preparation",
+        waveStoryTestRunId: testRun.id,
+        waveStoryId: input.waveStory.id,
+        storyCode: input.story.code,
+        status
+      };
+    } catch (error) {
+      this.deps.testAgentSessionRepository.create({
+        waveStoryTestRunId: testRun.id,
+        adapterKey: this.deps.adapter.key,
+        status: "failed",
+        commandJson: JSON.stringify([]),
+        stdout: "",
+        stderr: error instanceof Error ? error.message : String(error),
+        exitCode: 1
+      });
+      this.deps.waveStoryTestRunRepository.updateStatus(testRun.id, "failed", {
+        errorMessage: error instanceof Error ? error.message : String(error)
+      });
+      return {
+        phase: "test_preparation",
+        waveStoryTestRunId: testRun.id,
+        waveStoryId: input.waveStory.id,
+        storyCode: input.story.code,
+        status: "failed" as const
       };
     }
   }
@@ -781,23 +946,37 @@ export class WorkflowService {
   private refreshWaveExecutionStatus(waveExecutionId: string): void {
     const waveExecution = this.requireWaveExecution(waveExecutionId);
     const waveStories = this.deps.waveStoryRepository.listByWaveId(waveExecution.waveId);
+    const latestTestRuns = waveStories.map((waveStory) => this.deps.waveStoryTestRunRepository.getLatestByWaveStoryId(waveStory.id));
     const latestStoryExecutions = waveStories.map((waveStory) =>
       this.deps.waveStoryExecutionRepository.getLatestByWaveStoryId(waveStory.id)
     );
 
-    if (latestStoryExecutions.some((execution) => execution?.status === "failed")) {
+    if (latestTestRuns.some((testRun) => testRun?.status === "failed") || latestStoryExecutions.some((execution) => execution?.status === "failed")) {
       this.deps.waveExecutionRepository.updateStatus(waveExecutionId, "failed");
       return;
     }
-    if (latestStoryExecutions.some((execution) => execution?.status === "review_required")) {
+    if (
+      latestTestRuns.some((testRun) => testRun?.status === "review_required") ||
+      latestStoryExecutions.some((execution) => execution?.status === "review_required")
+    ) {
       this.deps.waveExecutionRepository.updateStatus(waveExecutionId, "review_required");
       return;
     }
-    if (latestStoryExecutions.length > 0 && latestStoryExecutions.every((execution) => execution?.status === "completed")) {
+    // A wave can only be completed if every story has both a completed test-preparation run
+    // and a completed implementation run. Today implementation is gated on test preparation,
+    // but keeping the check explicit here makes the invariant visible in the status reducer.
+    if (
+      latestStoryExecutions.length > 0 &&
+      latestTestRuns.every((testRun) => testRun?.status === "completed") &&
+      latestStoryExecutions.every((execution) => execution?.status === "completed")
+    ) {
       this.deps.waveExecutionRepository.updateStatus(waveExecutionId, "completed");
       return;
     }
-    if (latestStoryExecutions.some((execution) => execution?.status === "running")) {
+    if (
+      latestTestRuns.some((testRun) => testRun?.status === "running") ||
+      latestStoryExecutions.some((execution) => execution?.status === "running")
+    ) {
       this.deps.waveExecutionRepository.updateStatus(waveExecutionId, "running");
       return;
     }
@@ -891,6 +1070,44 @@ export class WorkflowService {
     return JSON.stringify(repoContext, null, 2);
   }
 
+  private buildStoryRunContext(input: {
+    project: ReturnType<WorkflowService["requireProject"]>;
+    implementationPlan: ReturnType<WorkflowService["requireImplementationPlanForProject"]>;
+    wave: ReturnType<WorkflowService["requireWave"]>;
+    story: ReturnType<WorkflowService["requireStory"]>;
+    projectExecutionContext?: ReturnType<WorkflowService["ensureProjectExecutionContext"]>;
+  }) {
+    const item = this.requireItem(input.project.itemId);
+    const architecture = this.deps.architecturePlanRepository.getLatestByProjectId(input.project.id);
+    const acceptanceCriteria = this.deps.acceptanceCriterionRepository.listByStoryId(input.story.id);
+    const projectExecutionContext =
+      input.projectExecutionContext ?? this.ensureProjectExecutionContext(input.project, input.implementationPlan);
+    const businessContextSnapshotJson = this.buildBusinessContextSnapshot({
+      item,
+      project: input.project,
+      implementationPlan: input.implementationPlan,
+      wave: input.wave,
+      story: input.story,
+      acceptanceCriteria,
+      architecture
+    });
+    const repoContextSnapshotJson = this.buildRepoContextSnapshot({
+      project: input.project,
+      story: input.story,
+      architectureSummary: architecture?.summary ?? null,
+      projectExecutionContext
+    });
+
+    return {
+      item,
+      architecture,
+      acceptanceCriteria,
+      projectExecutionContext,
+      businessContextSnapshotJson,
+      repoContextSnapshotJson
+    };
+  }
+
   private selectWorkerRole(
     story: ReturnType<WorkflowService["requireStory"]>,
     acceptanceCriteria: ReturnType<AcceptanceCriterionRepository["listByStoryId"]>
@@ -918,6 +1135,28 @@ export class WorkflowService {
       return "review_required";
     }
     return "passed";
+  }
+
+  private resolveTestPreparationStatus(
+    output: TestPreparationOutput,
+    exitCode: number
+  ): "completed" | "review_required" | "failed" {
+    if (exitCode !== 0) {
+      return "failed";
+    }
+    if (output.blockers.length > 0) {
+      return "review_required";
+    }
+    return "completed";
+  }
+
+  private parseTestPreparationOutput(
+    testRun: ReturnType<WorkflowService["requireWaveStoryTestRun"]>
+  ): TestPreparationOutput {
+    if (!testRun.outputSummaryJson) {
+      throw new AppError("TEST_RUN_OUTPUT_MISSING", `Test run ${testRun.id} has no output summary`);
+    }
+    return testPreparationOutputSchema.parse(JSON.parse(testRun.outputSummaryJson)) as TestPreparationOutput;
   }
 
   private buildSnapshot(itemId: string) {
@@ -1354,6 +1593,14 @@ export class WorkflowService {
       throw new AppError("WAVE_EXECUTION_NOT_FOUND", `Wave execution ${waveExecutionId} not found`);
     }
     return waveExecution;
+  }
+
+  private requireWaveStoryTestRun(waveStoryTestRunId: string) {
+    const waveStoryTestRun = this.deps.waveStoryTestRunRepository.getById(waveStoryTestRunId);
+    if (!waveStoryTestRun) {
+      throw new AppError("WAVE_STORY_TEST_RUN_NOT_FOUND", `Wave story test run ${waveStoryTestRunId} not found`);
+    }
+    return waveStoryTestRun;
   }
 
   private requireImplementationPlanForProject(projectId: string) {

@@ -13,7 +13,10 @@ Kernentitaeten des aktuellen MVP:
 - `WaveStoryDependency`: explizite Story-zu-Story-Abhaengigkeit innerhalb eines Project-Plans
 - `ProjectExecutionContext`: persistierter, wiederverwendbarer Ausfuehrungskontext pro Project
 - `WaveExecution`: Laufzeitversuch fuer genau eine `Wave`
+- `WaveStoryTestRun`: vorgeschalteter TDD-Testvorbereitungsversuch fuer genau eine `WaveStory`
+- `TestAgentSession`: Session-Metadaten eines konkreten Test-Writer-Laufs
 - `WaveStoryExecution`: Laufzeitversuch fuer genau eine `WaveStory`
+  mit direkter Referenz auf den konkret verwendeten `WaveStoryTestRun`
 - `ExecutionAgentSession`: Session-Metadaten eines konkreten Worker-Laufs
 - `VerificationRun`: strukturierter Verifikationsstand fuer Story- oder Wave-Ausfuehrung
 - optional spaeter `WaveParallelGroup`: fachliche Kennzeichnung fuer sicher parallel ausfuehrbare Story-Gruppen innerhalb einer Wave
@@ -24,4 +27,5 @@ Wichtig:
 
 - Die Planning-Schicht soll Parallelisierbarkeit fachlich beschreiben.
 - Die Execution-Schicht entscheidet die konkrete Laufzeitorchestrierung engine-seitig.
+- Die TDD-Schicht erzwingt `test_preparation` vor `implementation`.
 - Worker-Rollen sind Registry und Ausfuehrungsprofil, aber nicht der Scheduler.

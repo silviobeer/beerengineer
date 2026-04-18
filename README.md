@@ -12,12 +12,12 @@ Der dokumentierte MVP-Schnitt bis zur ersten Execution-Schicht ist umgesetzt:
 - stabile Codes fuer `Item`, `Project`, `UserStory` und `AcceptanceCriterion`
 - `AcceptanceCriterion` als eigene persistierte Entity fuer spaetere QA-Verwendung
 - `ImplementationPlan`, `Wave`, `WaveStory` und `WaveStoryDependency` als persistierte Planungsschicht
-- `ProjectExecutionContext`, `WaveExecution`, `WaveStoryExecution`, `ExecutionAgentSession` und `VerificationRun` als persistierte Runtime-Schicht
+- `ProjectExecutionContext`, `WaveExecution`, `WaveStoryTestRun`, `TestAgentSession`, `WaveStoryExecution`, `ExecutionAgentSession` und `VerificationRun` als persistierte Runtime-Schicht
 - dateibasiertes Artefakt- und Output-Contract-System
 - StageRuns mit Prompt- und Skill-Snapshots
 - ausformulierte Skills und System-Prompts fuer `brainstorm`, `requirements`, `architecture` und `planning`
 - lokaler CLI-Adapter
-- CLI-Happy-Path von `item:create` bis `execution:tick`
+- CLI-Happy-Path von `item:create` bis `execution:tick` mit vorgeschalteter TDD-Testvorbereitung pro Story
 
 ## Voraussetzungen
 

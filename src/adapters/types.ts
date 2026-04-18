@@ -1,5 +1,5 @@
-import type { ExecutionWorkerRole, StageKey } from "../domain/types.js";
-import type { StoryExecutionOutput } from "../schemas/output-contracts.js";
+import type { ExecutionWorkerRole, StageKey, TestPreparationWorkerRole } from "../domain/types.js";
+import type { StoryExecutionOutput, TestPreparationOutput } from "../schemas/output-contracts.js";
 
 export type AdapterRunRequest = {
   stageKey: StageKey;
@@ -96,6 +96,20 @@ export type ExecutionAdapterRunRequest = {
   };
   businessContextSnapshotJson: string;
   repoContextSnapshotJson: string;
+  testPreparation: {
+    id: string;
+    summary: string;
+    testFiles: Array<{
+      path: string;
+      content: string;
+      writeMode: "proposed" | "written";
+    }>;
+    testsGenerated: Array<{
+      path: string;
+      intent: string;
+    }>;
+    assumptions: string[];
+  };
 };
 
 export type ExecutionAdapterRunResult = {
@@ -106,8 +120,31 @@ export type ExecutionAdapterRunResult = {
   command: string[];
 };
 
+export type TestPreparationAdapterRunRequest = {
+  workerRole: TestPreparationWorkerRole;
+  item: ExecutionAdapterRunRequest["item"];
+  project: ExecutionAdapterRunRequest["project"];
+  implementationPlan: ExecutionAdapterRunRequest["implementationPlan"];
+  wave: ExecutionAdapterRunRequest["wave"];
+  story: ExecutionAdapterRunRequest["story"];
+  acceptanceCriteria: ExecutionAdapterRunRequest["acceptanceCriteria"];
+  architecture: ExecutionAdapterRunRequest["architecture"];
+  projectExecutionContext: ExecutionAdapterRunRequest["projectExecutionContext"];
+  businessContextSnapshotJson: string;
+  repoContextSnapshotJson: string;
+};
+
+export type TestPreparationAdapterRunResult = {
+  output: TestPreparationOutput;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  command: string[];
+};
+
 export interface AgentAdapter {
   readonly key: string;
   run(request: AdapterRunRequest): Promise<AdapterRunResult>;
+  runStoryTestPreparation(request: TestPreparationAdapterRunRequest): Promise<TestPreparationAdapterRunResult>;
   runStoryExecution(request: ExecutionAdapterRunRequest): Promise<ExecutionAdapterRunResult>;
 }

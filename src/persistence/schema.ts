@@ -153,7 +153,7 @@ export const waveExecutions = sqliteTable("wave_executions", {
   completedAt: integer("completed_at")
 });
 
-export const waveStoryExecutions = sqliteTable("wave_story_executions", {
+export const waveStoryTestRuns = sqliteTable("wave_story_test_runs", {
   id: text("id").primaryKey(),
   waveExecutionId: text("wave_execution_id").notNull().references(() => waveExecutions.id),
   waveStoryId: text("wave_story_id").notNull().references(() => waveStories.id),
@@ -168,6 +168,37 @@ export const waveStoryExecutions = sqliteTable("wave_story_executions", {
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
   completedAt: integer("completed_at")
+});
+
+export const waveStoryExecutions = sqliteTable("wave_story_executions", {
+  id: text("id").primaryKey(),
+  waveExecutionId: text("wave_execution_id").notNull().references(() => waveExecutions.id),
+  testPreparationRunId: text("test_preparation_run_id").notNull().references(() => waveStoryTestRuns.id),
+  waveStoryId: text("wave_story_id").notNull().references(() => waveStories.id),
+  storyId: text("story_id").notNull().references(() => userStories.id),
+  status: text("status").notNull(),
+  attempt: integer("attempt").notNull(),
+  workerRole: text("worker_role").notNull(),
+  businessContextSnapshotJson: text("business_context_snapshot_json").notNull(),
+  repoContextSnapshotJson: text("repo_context_snapshot_json").notNull(),
+  outputSummaryJson: text("output_summary_json"),
+  errorMessage: text("error_message"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+  completedAt: integer("completed_at")
+});
+
+export const testAgentSessions = sqliteTable("test_agent_sessions", {
+  id: text("id").primaryKey(),
+  waveStoryTestRunId: text("wave_story_test_run_id").notNull().references(() => waveStoryTestRuns.id),
+  adapterKey: text("adapter_key").notNull(),
+  status: text("status").notNull(),
+  commandJson: text("command_json").notNull(),
+  stdout: text("stdout").notNull(),
+  stderr: text("stderr").notNull(),
+  exitCode: integer("exit_code").notNull(),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull()
 });
 
 export const executionAgentSessions = sqliteTable("execution_agent_sessions", {

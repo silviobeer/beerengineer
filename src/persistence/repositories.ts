@@ -14,11 +14,14 @@ import type {
   RecordStatus,
   StageKey,
   StageRunStatus,
+  TestAgentSession,
   UserStory,
   VerificationRun,
   Wave,
   WaveExecution,
   WaveExecutionStatus,
+  WaveStoryTestRun,
+  WaveStoryTestRunStatus,
   WaveStory,
   WaveStoryDependency,
   WaveStoryExecution,
@@ -40,9 +43,11 @@ import {
   projects,
   stageRunInputArtifacts,
   stageRuns,
+  testAgentSessions,
   userStories,
   verificationRuns,
   waveExecutions,
+  waveStoryTestRuns,
   waveStoryExecutions,
   waveStories,
   waves,
@@ -651,6 +656,104 @@ export class WaveStoryExecutionRepository {
       })
       .where(eq(waveStoryExecutions.id, id))
       .run();
+  }
+}
+
+export class WaveStoryTestRunRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public getById(id: string): WaveStoryTestRun | null {
+    return (
+      this.db.select().from(waveStoryTestRuns).where(eq(waveStoryTestRuns.id, id)).get() as
+        | WaveStoryTestRun
+        | undefined
+    ) ?? null;
+  }
+
+  public listByWaveExecutionId(waveExecutionId: string): WaveStoryTestRun[] {
+    return this.db
+      .select()
+      .from(waveStoryTestRuns)
+      .where(eq(waveStoryTestRuns.waveExecutionId, waveExecutionId))
+      .orderBy(waveStoryTestRuns.createdAt)
+      .all() as WaveStoryTestRun[];
+  }
+
+  public listByWaveStoryId(waveStoryId: string): WaveStoryTestRun[] {
+    return this.db
+      .select()
+      .from(waveStoryTestRuns)
+      .where(eq(waveStoryTestRuns.waveStoryId, waveStoryId))
+      .orderBy(waveStoryTestRuns.attempt)
+      .all() as WaveStoryTestRun[];
+  }
+
+  public getLatestByWaveStoryId(waveStoryId: string): WaveStoryTestRun | null {
+    return (
+      this.db
+        .select()
+        .from(waveStoryTestRuns)
+        .where(eq(waveStoryTestRuns.waveStoryId, waveStoryId))
+        .orderBy(desc(waveStoryTestRuns.attempt))
+        .limit(1)
+        .get() as WaveStoryTestRun | undefined
+    ) ?? null;
+  }
+
+  public create(input: Omit<WaveStoryTestRun, "id" | "createdAt" | "updatedAt" | "completedAt">): WaveStoryTestRun {
+    const timestamp = now();
+    const row: WaveStoryTestRun = {
+      ...input,
+      id: createId("wave_story_test_run"),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      completedAt: null
+    };
+    this.db.insert(waveStoryTestRuns).values(row).run();
+    return row;
+  }
+
+  public updateStatus(
+    id: string,
+    status: WaveStoryTestRunStatus,
+    options?: { outputSummaryJson?: string | null; errorMessage?: string | null }
+  ): void {
+    this.db
+      .update(waveStoryTestRuns)
+      .set({
+        status,
+        outputSummaryJson: options?.outputSummaryJson,
+        errorMessage: options?.errorMessage ?? null,
+        updatedAt: now(),
+        completedAt: status === "completed" || status === "failed" || status === "review_required" ? now() : null
+      })
+      .where(eq(waveStoryTestRuns.id, id))
+      .run();
+  }
+}
+
+export class TestAgentSessionRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public create(input: Omit<TestAgentSession, "id" | "createdAt" | "updatedAt">): TestAgentSession {
+    const timestamp = now();
+    const row: TestAgentSession = {
+      ...input,
+      id: createId("test_session"),
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+    this.db.insert(testAgentSessions).values(row).run();
+    return row;
+  }
+
+  public listByWaveStoryTestRunId(waveStoryTestRunId: string): TestAgentSession[] {
+    return this.db
+      .select()
+      .from(testAgentSessions)
+      .where(eq(testAgentSessions.waveStoryTestRunId, waveStoryTestRunId))
+      .orderBy(testAgentSessions.createdAt)
+      .all() as TestAgentSession[];
   }
 }
 

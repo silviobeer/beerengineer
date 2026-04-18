@@ -64,8 +64,28 @@ export const storyExecutionOutputSchema = z.object({
   blockers: z.array(z.string().min(1))
 });
 
+export const testPreparationOutputSchema = z.object({
+  summary: z.string().min(1),
+  testFiles: z.array(
+    z.object({
+      path: z.string().min(1),
+      content: z.string().min(1),
+      writeMode: z.enum(["proposed", "written"])
+    })
+  ).min(1),
+  testsGenerated: z.array(
+    z.object({
+      path: z.string().min(1),
+      intent: z.string().min(1)
+    })
+  ).min(1),
+  assumptions: z.array(z.string().min(1)),
+  blockers: z.array(z.string().min(1))
+});
+
 export type ProjectsOutput = z.infer<typeof projectsOutputSchema>;
 export type StoriesOutput = z.infer<typeof storiesOutputSchema>;
 export type ArchitecturePlanOutput = z.infer<typeof architecturePlanOutputSchema>;
 export type ImplementationPlanOutput = z.infer<typeof implementationPlanOutputSchema>;
 export type StoryExecutionOutput = z.infer<typeof storyExecutionOutputSchema>;
+export type TestPreparationOutput = z.infer<typeof testPreparationOutputSchema>;
