@@ -55,6 +55,7 @@ describe("workflow rules", () => {
         {
           id: "project_1",
           itemId: "item_1",
+          code: "ITEM-0001-P01",
           conceptId: "concept_1",
           title: "Project",
           summary: "Summary",
@@ -72,12 +73,12 @@ describe("workflow rules", () => {
             {
               id: "story_1",
               projectId: "project_1",
+              code: "ITEM-0001-P01-US01",
               title: "Story",
               description: "Description",
               actor: "actor",
               goal: "goal",
               benefit: "benefit",
-              acceptanceCriteriaJson: "[]",
               priority: "high",
               status: "approved",
               sourceArtifactId: "artifact_3",

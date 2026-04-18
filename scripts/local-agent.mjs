@@ -10,6 +10,9 @@ function brainstorming(item) {
         kind: "concept",
         content: `# ${item.title} Concept
 
+## Item Code
+${item.code}
+
 ## Summary
 ${item.description || "A locally orchestrated MVP item."}
 
@@ -39,7 +42,7 @@ function requirements(project) {
     markdownArtifacts: [
       {
         kind: "stories-markdown",
-        content: `# Stories for ${project.title}
+        content: `# Stories for ${project.code} ${project.title}
 
 - Draft stories generated locally for the MVP path.`
       }
@@ -85,7 +88,7 @@ function architecture(project) {
     markdownArtifacts: [
       {
         kind: "architecture-plan",
-        content: `# Architecture Plan for ${project.title}
+        content: `# Architecture Plan for ${project.code} ${project.title}
 
 ## Summary
 Modular engine-first implementation with reproducible stage runs.`

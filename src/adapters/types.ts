@@ -6,11 +6,13 @@ export type AdapterRunRequest = {
   skills: Array<{ path: string; content: string }>;
   item: {
     id: string;
+    code: string;
     title: string;
     description: string;
   };
   project?: {
     id: string;
+    code: string;
     title: string;
     summary: string;
     goal: string;

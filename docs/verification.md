@@ -54,3 +54,55 @@ Umgesetzt:
 Zurueckgestellt:
 
 - [Review Follow-Ups](review-follow-ups.md)
+
+## Record Codes
+
+Umgesetzt:
+
+- stabile fachliche Codes fuer `Item`, `Project` und `UserStory`
+- hierarchische Ableitung `ITEM-0001`, `ITEM-0001-P01`, `ITEM-0001-P01-US01`
+- Engine-seitige Vergabe bei Persistierung statt LLM-seitiger Nummernhoheit
+- finales Basisschema ohne Legacy-Baumodus-Migrationspfad
+- CLI-, Repository-, Workflow- und E2E-Abdeckung fuer den neuen Codepfad
+- Anpassung des lokalen Demo-Adapters und des Brainstorm-Prompts auf das Code-Modell
+
+Verifiziert mit:
+
+- `npm run build`
+- `npm run lint`
+- `npm test`
+
+## Prompt And Skill Completion
+
+Umgesetzt:
+
+- ausformulierte System-Prompts fuer `brainstorm`, `requirements` und `architecture`
+- ausformulierte Skills fuer `brainstorm-facilitation`, `project-extraction`, `requirements-engineer` und `architecture`
+- saubere Trennung zwischen Stage-Contract in den Prompts und Arbeitsweise in den Skills
+- aktiver Stage-Wiring ueber `runProfiles`
+
+Verifiziert mit:
+
+- `npm run build`
+- `npm test`
+
+Aktueller Stand:
+
+- 12 Testdateien
+- 28 gruene Tests
+
+## Acceptance Criteria Model
+
+Umgesetzt:
+
+- `AcceptanceCriterion` als eigene persistierte Entity
+- eigene Tabelle `acceptance_criteria`
+- hierarchische Codes wie `ITEM-0001-P01-US01-AC01`
+- keine Legacy-JSON-Ablage mehr an `user_stories`
+- Import der Requirements-Ausgabe schreibt Stories und ACs als getrennte Records
+
+Verifiziert mit:
+
+- `npm run build`
+- `npm run lint`
+- `npm test`

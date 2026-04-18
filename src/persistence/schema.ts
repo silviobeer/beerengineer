@@ -2,6 +2,7 @@ import { integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core"
 
 export const items = sqliteTable("items", {
   id: text("id").primaryKey(),
+  code: text("code").notNull().unique(),
   title: text("title").notNull(),
   description: text("description").notNull(),
   currentColumn: text("current_column").notNull(),
@@ -26,6 +27,7 @@ export const concepts = sqliteTable("concepts", {
 export const projects = sqliteTable("projects", {
   id: text("id").primaryKey(),
   itemId: text("item_id").notNull().references(() => items.id),
+  code: text("code").notNull().unique(),
   conceptId: text("concept_id").notNull().references(() => concepts.id),
   title: text("title").notNull(),
   summary: text("summary").notNull(),
@@ -52,15 +54,25 @@ export const artifacts = sqliteTable("artifacts", {
 export const userStories = sqliteTable("user_stories", {
   id: text("id").primaryKey(),
   projectId: text("project_id").notNull().references(() => projects.id),
+  code: text("code").notNull().unique(),
   title: text("title").notNull(),
   description: text("description").notNull(),
   actor: text("actor").notNull(),
   goal: text("goal").notNull(),
   benefit: text("benefit").notNull(),
-  acceptanceCriteriaJson: text("acceptance_criteria_json").notNull(),
   priority: text("priority").notNull(),
   status: text("status").notNull(),
   sourceArtifactId: text("source_artifact_id").notNull().references(() => artifacts.id),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull()
+});
+
+export const acceptanceCriteria = sqliteTable("acceptance_criteria", {
+  id: text("id").primaryKey(),
+  storyId: text("story_id").notNull().references(() => userStories.id),
+  code: text("code").notNull().unique(),
+  text: text("text").notNull(),
+  position: integer("position").notNull(),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull()
 });

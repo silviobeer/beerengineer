@@ -9,8 +9,11 @@ Der dokumentierte MVP-Schnitt bis zur Architekturphase ist umgesetzt:
 - TypeScript/Vitest/SQLite/Drizzle-Basis
 - Domainmodell und Gate-Logik
 - Persistenzschema und Repositories
+- stabile Codes fuer `Item`, `Project`, `UserStory` und `AcceptanceCriterion`
+- `AcceptanceCriterion` als eigene persistierte Entity fuer spaetere QA-Verwendung
 - dateibasiertes Artefakt- und Output-Contract-System
 - StageRuns mit Prompt- und Skill-Snapshots
+- ausformulierte Skills und System-Prompts fuer `brainstorm`, `requirements` und `architecture`
 - lokaler CLI-Adapter
 - CLI-Happy-Path von `item:create` bis `architecture:approve`
 
@@ -68,6 +71,8 @@ Weitere Details:
 
 - [Architektur](docs/architecture.md)
 - [CLI](docs/cli.md)
+- [Prompts und Skills](docs/prompts-and-skills.md)
+- [MVP Scope](docs/mvp-scope.md)
 - [Verification](docs/verification.md)
 
 ## Code Review

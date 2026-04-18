@@ -17,7 +17,9 @@ import type {
   StoriesOutput
 } from "../schemas/output-contracts.js";
 import { AppError } from "../shared/errors.js";
+import { formatAcceptanceCriterionCode, formatProjectCode, formatStoryCode } from "../shared/codes.js";
 import type {
+  AcceptanceCriterionRepository,
   ArchitecturePlanRepository,
   ArtifactRecord,
   ArtifactRepository,
@@ -41,6 +43,7 @@ type WorkflowDeps = {
   conceptRepository: ConceptRepository;
   projectRepository: ProjectRepository;
   userStoryRepository: UserStoryRepository;
+  acceptanceCriterionRepository: AcceptanceCriterionRepository;
   architecturePlanRepository: ArchitecturePlanRepository;
   stageRunRepository: StageRunRepository;
   artifactRepository: ArtifactRepository;
@@ -67,6 +70,7 @@ export class WorkflowService {
       {
         item: {
           id: item.id,
+          code: item.code,
           title: item.title,
           description: item.description,
           currentColumn: item.currentColumn
@@ -74,6 +78,7 @@ export class WorkflowService {
         project: project
           ? {
               id: project.id,
+              code: project.code,
               title: project.title,
               summary: project.summary,
               goal: project.goal
@@ -112,12 +117,14 @@ export class WorkflowService {
         skills: resolved.skills,
         item: {
           id: item.id,
+          code: item.code,
           title: item.title,
           description: item.description
         },
         project: project
           ? {
               id: project.id,
+              code: project.code,
               title: project.title,
               summary: project.summary,
               goal: project.goal
@@ -210,6 +217,7 @@ export class WorkflowService {
     this.deps.projectRepository.createMany(
       parsed.projects.map((project, index) => ({
         itemId,
+        code: formatProjectCode(item.code, existingProjects.length + index + 1),
         conceptId: concept.id,
         title: project.title,
         summary: project.summary,
@@ -416,19 +424,40 @@ export class WorkflowService {
       if (this.deps.userStoryRepository.hasAnyByProjectId(input.projectId)) {
         return { status: "completed", reviewReason: null };
       }
-      this.deps.userStoryRepository.createMany(
-        parsed.stories.map((story) => ({
+      const project = this.requireProject(input.projectId);
+      const createdStories = this.deps.userStoryRepository.createMany(
+        parsed.stories.map((story, index) => ({
           projectId: input.projectId as string,
+          code: formatStoryCode(project.code, index + 1),
           title: story.title,
           description: story.description,
           actor: story.actor,
           goal: story.goal,
           benefit: story.benefit,
-          acceptanceCriteriaJson: JSON.stringify(story.acceptanceCriteria),
           priority: story.priority,
           status: "draft",
           sourceArtifactId: storiesArtifact.id
         }))
+      );
+      if (createdStories.length !== parsed.stories.length) {
+        throw new Error("Requirements import created a different number of stories than parsed output");
+      }
+
+      const storiesWithDefinitions = createdStories.map((storyRecord, storyIndex) => ({
+        storyRecord,
+        storyDefinition: parsed.stories[storyIndex] as StoriesOutput["stories"][number]
+      }));
+
+      this.deps.acceptanceCriterionRepository.createMany(
+        storiesWithDefinitions.flatMap(({ storyRecord, storyDefinition }) =>
+          storyDefinition.acceptanceCriteria.map((criterion, criterionIndex) => ({
+            storyId: storyRecord.id,
+            code: formatAcceptanceCriterionCode(storyRecord.code, criterionIndex + 1),
+            text: criterion,
+            // position is 0-indexed; code suffix is 1-indexed (AC01 => position 0)
+            position: criterionIndex
+          }))
+        )
       );
       return { status: "completed", reviewReason: null };
     } catch (error) {

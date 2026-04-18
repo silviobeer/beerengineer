@@ -44,7 +44,8 @@ describe("cli happy path", () => {
     const cwd = resolve(".");
 
     try {
-      const item = runCli(["--db", dbPath, "item:create", "--title", "CLI Item", "--description", "Desc"], cwd) as { id: string };
+      const item = runCli(["--db", dbPath, "item:create", "--title", "CLI Item", "--description", "Desc"], cwd) as { id: string; code: string };
+      expect(item.code).toBe("ITEM-0001");
       const brainstorm = runCli(["--db", dbPath, "brainstorm:start", "--item-id", item.id], cwd) as { runId: string };
       expect(brainstorm.runId).toContain("run_");
 
@@ -57,10 +58,11 @@ describe("cli happy path", () => {
       runCli(["--db", dbPath, "project:import", "--item-id", item.id], cwd);
 
       const imported = runCli(["--db", dbPath, "item:show", "--item-id", item.id], cwd) as {
-        projects: Array<{ id: string }>;
+        projects: Array<{ id: string; code: string }>;
       };
       const projectId = imported.projects[0]?.id;
       expect(projectId).toBeTruthy();
+      expect(imported.projects[0]?.code).toBe("ITEM-0001-P01");
 
       runCli(["--db", dbPath, "requirements:start", "--item-id", item.id, "--project-id", projectId], cwd);
       const runs = runCli(["--db", dbPath, "runs:list", "--item-id", item.id], cwd) as Array<{ id: string; status: string }>;
@@ -111,7 +113,8 @@ describe("cli happy path", () => {
     const dbPath = join(root, "app.sqlite");
 
     try {
-      const item = runCli(["--db", dbPath, "item:create", "--title", "External CWD"], root) as { id: string };
+      const item = runCli(["--db", dbPath, "item:create", "--title", "External CWD"], root) as { id: string; code: string };
+      expect(item.code).toBe("ITEM-0001");
       const result = runCli(["--db", dbPath, "brainstorm:start", "--item-id", item.id], root) as { status: string };
       expect(result.status).toBe("completed");
     } finally {

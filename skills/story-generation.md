@@ -1,3 +1,5 @@
-# Story Generation
+# Deprecated
 
-Placeholder skill file for Wave 1.
+This placeholder is no longer used.
+
+Use `skills/requirements-engineer.md` for the active requirements-stage skill.

@@ -15,11 +15,11 @@ export const runProfiles: Record<StageKey, RunProfile> = {
   requirements: {
     stageKey: "requirements",
     promptPath: "prompts/system/requirements.md",
-    skillPaths: ["skills/story-generation.md"]
+    skillPaths: ["skills/requirements-engineer.md"]
   },
   architecture: {
     stageKey: "architecture",
     promptPath: "prompts/system/architecture.md",
-    skillPaths: []
+    skillPaths: ["skills/architecture.md"]
   }
 };

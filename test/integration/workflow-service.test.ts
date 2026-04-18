@@ -25,8 +25,9 @@ describe("workflow service", () => {
       const run = context.repositories.stageRunRepository.getById(result.runId);
 
       expect(run?.status).toBe("completed");
-      expect(run?.systemPromptSnapshot).toContain("Brainstorm System Prompt");
+      expect(run?.systemPromptSnapshot).toContain("Brainstorm Stage System Prompt");
       expect(run?.skillsSnapshotJson).toContain("brainstorm-facilitation");
+      expect(context.repositories.itemRepository.getById(item.id)?.code).toBe("ITEM-0001");
     } finally {
       context.connection.close();
       rmSync(root, { recursive: true, force: true });
@@ -37,6 +38,7 @@ describe("workflow service", () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
     const dbPath = join(root, "app.sqlite");
     const context = createAppContext(dbPath);
+    const originalPrompt = readFileSync("prompts/system/brainstorm.md", "utf8");
 
     try {
       const item = context.repositories.itemRepository.create({
@@ -57,10 +59,10 @@ describe("workflow service", () => {
       const secondRun = context.repositories.stageRunRepository.getById(second.runId);
 
       expect(firstRun?.systemPromptSnapshot).not.toBe(secondRun?.systemPromptSnapshot);
-      expect(firstRun?.systemPromptSnapshot).toContain("Placeholder");
+      expect(firstRun?.systemPromptSnapshot).toBe(originalPrompt);
       expect(secondRun?.systemPromptSnapshot).toContain("Changed prompt");
-      writeFileSync("prompts/system/brainstorm.md", "# Brainstorm System Prompt\n\nPlaceholder prompt for Wave 1. Real stage prompts are added in later waves.");
     } finally {
+      writeFileSync("prompts/system/brainstorm.md", originalPrompt);
       context.connection.close();
       rmSync(root, { recursive: true, force: true });
     }
@@ -69,130 +71,7 @@ describe("workflow service", () => {
   it("marks run review_required when structured output is invalid", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
     const repoScript = "scripts/local-agent.mjs";
-    const originalScript = `import { readFileSync } from "node:fs";
-
-const payload = JSON.parse(readFileSync(process.argv[2], "utf8"));
-
-function brainstorming(item) {
-  const projectTitle = \`\${item.title} Core Flow\`;
-  return {
-    markdownArtifacts: [
-      {
-        kind: "concept",
-        content: \`# \${item.title} Concept
-
-## Summary
-\${item.description || "A locally orchestrated MVP item."}
-
-## Proposed Projects
-- \${projectTitle}\`
-      }
-    ],
-    structuredArtifacts: [
-      {
-        kind: "projects",
-        content: {
-          projects: [
-            {
-              title: projectTitle,
-              summary: \`Primary delivery track for \${item.title}.\`,
-              goal: \`Deliver the first usable slice for \${item.title}.\`
-            }
-          ]
-        }
-      }
-    ]
-  };
-}
-
-function requirements(project) {
-  return {
-    markdownArtifacts: [
-      {
-        kind: "stories-markdown",
-        content: \`# Stories for \${project.title}
-
-- Draft stories generated locally for the MVP path.\`
-      }
-    ],
-    structuredArtifacts: [
-      {
-        kind: "stories",
-        content: {
-          stories: [
-            {
-              title: \`Create \${project.title} workflow record\`,
-              description: \`As an operator I want \${project.title} represented in the engine.\`,
-              actor: "operator",
-              goal: \`Manage \${project.title}\`,
-              benefit: "Traceable workflow execution",
-              acceptanceCriteria: [
-                "A project record exists",
-                "The project can progress through requirements"
-              ],
-              priority: "high"
-            },
-            {
-              title: \`Approve \${project.title} stories\`,
-              description: \`As an operator I want to approve stories before implementation.\`,
-              actor: "operator",
-              goal: "Control quality gates",
-              benefit: "Clean transition into implementation",
-              acceptanceCriteria: [
-                "Stories remain draft until approved",
-                "Approved stories unlock implementation"
-              ],
-              priority: "medium"
-            }
-          ]
-        }
-      }
-    ]
-  };
-}
-
-function architecture(project) {
-  return {
-    markdownArtifacts: [
-      {
-        kind: "architecture-plan",
-        content: \`# Architecture Plan for \${project.title}
-
-## Summary
-Modular engine-first implementation with reproducible stage runs.\`
-      }
-    ],
-    structuredArtifacts: [
-      {
-        kind: "architecture-plan-data",
-        content: {
-          summary: \`Modular architecture for \${project.title}\`,
-          decisions: [
-            "Keep workflow logic in the domain layer",
-            "Store stage runs and artifacts separately"
-          ],
-          risks: ["Prompt or skill files may drift without snapshots"],
-          nextSteps: ["Continue into implementation waves after approval"]
-        }
-      }
-    ]
-  };
-}
-
-let result;
-if (payload.stageKey === "brainstorm") {
-  result = brainstorming(payload.item);
-} else if (payload.stageKey === "requirements") {
-  result = requirements(payload.project);
-} else if (payload.stageKey === "architecture") {
-  result = architecture(payload.project);
-} else {
-  console.error(\`Unsupported stage \${payload.stageKey}\`);
-  process.exit(1);
-}
-
-process.stdout.write(JSON.stringify(result));
-`;
+    const originalScript = readFileSync(repoScript, "utf8");
     const dbPath = join(root, "app.sqlite");
     const context = createAppContext(dbPath);
 
@@ -285,6 +164,7 @@ process.stdout.write(JSON.stringify(result));
 
       const project = context.repositories.projectRepository.listByItemId(item.id)[0];
       expect(project).toBeTruthy();
+      expect(project?.code).toBe("ITEM-0001-P01");
 
       await context.workflowService.startStage({
         stageKey: "requirements",
@@ -299,6 +179,17 @@ process.stdout.write(JSON.stringify(result));
         itemId: item.id,
         projectId: project!.id
       });
+
+      const stories = context.repositories.userStoryRepository.listByProjectId(project!.id);
+      expect(stories.map((story) => story.code)).toEqual(["ITEM-0001-P01-US01", "ITEM-0001-P01-US02"]);
+      const acceptanceCriteria = context.repositories.acceptanceCriterionRepository.listByProjectId(project!.id);
+      expect(acceptanceCriteria.map((criterion) => criterion.code)).toEqual([
+        "ITEM-0001-P01-US01-AC01",
+        "ITEM-0001-P01-US01-AC02",
+        "ITEM-0001-P01-US02-AC01",
+        "ITEM-0001-P01-US02-AC02"
+      ]);
+
       context.workflowService.approveArchitecture(project!.id);
       context.workflowService.approveArchitecture(project!.id);
 

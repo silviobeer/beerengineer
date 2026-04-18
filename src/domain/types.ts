@@ -36,6 +36,7 @@ export type StageRunStatus = (typeof stageRunStatuses)[number];
 
 export type Item = {
   id: string;
+  code: string;
   title: string;
   description: string;
   currentColumn: BoardColumn;
@@ -60,6 +61,7 @@ export type Concept = {
 export type Project = {
   id: string;
   itemId: string;
+  code: string;
   conceptId: string;
   title: string;
   summary: string;
@@ -73,15 +75,25 @@ export type Project = {
 export type UserStory = {
   id: string;
   projectId: string;
+  code: string;
   title: string;
   description: string;
   actor: string;
   goal: string;
   benefit: string;
-  acceptanceCriteriaJson: string;
   priority: string;
   status: RecordStatus;
   sourceArtifactId: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type AcceptanceCriterion = {
+  id: string;
+  storyId: string;
+  code: string;
+  text: string;
+  position: number;
   createdAt: number;
   updatedAt: number;
 };

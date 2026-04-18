@@ -14,6 +14,7 @@ export const baseMigrations: readonly SqlMigration[] = [
       `PRAGMA foreign_keys = ON`,
       `CREATE TABLE IF NOT EXISTS items (
         id TEXT PRIMARY KEY NOT NULL,
+        code TEXT NOT NULL UNIQUE,
         title TEXT NOT NULL,
         description TEXT NOT NULL,
         current_column TEXT NOT NULL,
@@ -53,6 +54,7 @@ export const baseMigrations: readonly SqlMigration[] = [
       `CREATE TABLE IF NOT EXISTS projects (
         id TEXT PRIMARY KEY NOT NULL,
         item_id TEXT NOT NULL,
+        code TEXT NOT NULL UNIQUE,
         concept_id TEXT NOT NULL,
         title TEXT NOT NULL,
         summary TEXT NOT NULL,
@@ -82,12 +84,12 @@ export const baseMigrations: readonly SqlMigration[] = [
       `CREATE TABLE IF NOT EXISTS user_stories (
         id TEXT PRIMARY KEY NOT NULL,
         project_id TEXT NOT NULL,
+        code TEXT NOT NULL UNIQUE,
         title TEXT NOT NULL,
         description TEXT NOT NULL,
         actor TEXT NOT NULL,
         goal TEXT NOT NULL,
         benefit TEXT NOT NULL,
-        acceptance_criteria_json TEXT NOT NULL,
         priority TEXT NOT NULL,
         status TEXT NOT NULL,
         source_artifact_id TEXT NOT NULL,
@@ -95,6 +97,16 @@ export const baseMigrations: readonly SqlMigration[] = [
         updated_at INTEGER NOT NULL,
         FOREIGN KEY (project_id) REFERENCES projects(id),
         FOREIGN KEY (source_artifact_id) REFERENCES artifacts(id)
+      )`,
+      `CREATE TABLE IF NOT EXISTS acceptance_criteria (
+        id TEXT PRIMARY KEY NOT NULL,
+        story_id TEXT NOT NULL,
+        code TEXT NOT NULL UNIQUE,
+        text TEXT NOT NULL,
+        position INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (story_id) REFERENCES user_stories(id)
       )`,
       `CREATE TABLE IF NOT EXISTS architecture_plans (
         id TEXT PRIMARY KEY NOT NULL,

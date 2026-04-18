@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import { LocalCliAdapter } from "./adapters/local-cli-adapter.js";
 import { createDatabase } from "./persistence/database.js";
 import {
+  AcceptanceCriterionRepository,
   ArchitecturePlanRepository,
   ArtifactRepository,
   AgentSessionRepository,
@@ -30,6 +31,7 @@ export type AppContext = {
     conceptRepository: ConceptRepository;
     projectRepository: ProjectRepository;
     userStoryRepository: UserStoryRepository;
+    acceptanceCriterionRepository: AcceptanceCriterionRepository;
     architecturePlanRepository: ArchitecturePlanRepository;
     stageRunRepository: StageRunRepository;
     artifactRepository: ArtifactRepository;
@@ -48,6 +50,7 @@ export function createAppContext(dbPath: string): AppContext {
   const conceptRepository = new ConceptRepository(db);
   const projectRepository = new ProjectRepository(db);
   const userStoryRepository = new UserStoryRepository(db);
+  const acceptanceCriterionRepository = new AcceptanceCriterionRepository(db);
   const architecturePlanRepository = new ArchitecturePlanRepository(db);
   const stageRunRepository = new StageRunRepository(db);
   const artifactRepository = new ArtifactRepository(db);
@@ -62,6 +65,7 @@ export function createAppContext(dbPath: string): AppContext {
       conceptRepository,
       projectRepository,
       userStoryRepository,
+      acceptanceCriterionRepository,
       architecturePlanRepository,
       stageRunRepository,
       artifactRepository,
@@ -76,6 +80,7 @@ export function createAppContext(dbPath: string): AppContext {
       conceptRepository,
       projectRepository,
       userStoryRepository,
+      acceptanceCriterionRepository,
       architecturePlanRepository,
       stageRunRepository,
       artifactRepository,

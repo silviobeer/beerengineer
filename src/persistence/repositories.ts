@@ -1,6 +1,7 @@
 import { and, desc, eq, isNull } from "drizzle-orm";
 
 import type {
+  AcceptanceCriterion,
   ArchitecturePlan,
   BoardColumn,
   Concept,
@@ -12,9 +13,11 @@ import type {
   StageRunStatus,
   UserStory
 } from "../domain/types.js";
+import { formatItemCode, parseItemCodeSequence } from "../shared/codes.js";
 import { createId } from "../shared/ids.js";
 import type { DatabaseClient } from "./database.js";
 import {
+  acceptanceCriteria,
   agentSessions,
   architecturePlans,
   artifacts,
@@ -30,22 +33,69 @@ function now(): number {
   return Date.now();
 }
 
+function isItemsCodeUniqueViolation(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const sqliteCode = (error as { code?: string }).code;
+  if (sqliteCode === "SQLITE_CONSTRAINT_UNIQUE") {
+    return true;
+  }
+
+  // Fallback to message matching because better-sqlite3 may surface driver-specific errors.
+  return error.message.includes("UNIQUE constraint failed");
+}
+
 export class ItemRepository {
   public constructor(private readonly db: DatabaseClient) {}
 
   public create(input: { title: string; description: string }): Item {
-    const timestamp = now();
-    const item: Item = {
-      id: createId("item"),
-      title: input.title,
-      description: input.description,
-      currentColumn: "idea",
-      phaseStatus: "draft",
-      createdAt: timestamp,
-      updatedAt: timestamp
-    };
-    this.db.insert(items).values(item).run();
-    return item;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const timestamp = now();
+      const item: Item = {
+        id: createId("item"),
+        code: this.allocateNextCode(),
+        title: input.title,
+        description: input.description,
+        currentColumn: "idea",
+        phaseStatus: "draft",
+        createdAt: timestamp,
+        updatedAt: timestamp
+      };
+
+      try {
+        this.db.insert(items).values(item).run();
+        return item;
+      } catch (error) {
+        if (attempt < 2 && isItemsCodeUniqueViolation(error)) {
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    throw new Error("Failed to allocate a unique item code");
+  }
+
+  private allocateNextCode(): string {
+    const latestCodeRow = this.db
+      .select({ code: items.code, createdAt: items.createdAt, id: items.id })
+      .from(items)
+      .orderBy(desc(items.createdAt), desc(items.id))
+      .limit(1)
+      .get() as { code: string | null; createdAt: number; id: string } | undefined;
+
+    if (!latestCodeRow?.code) {
+      return formatItemCode(1);
+    }
+
+    const latestSequence = parseItemCodeSequence(latestCodeRow.code);
+    if (latestSequence === null) {
+      throw new Error(`Invalid item code format in database: ${latestCodeRow.code}`);
+    }
+
+    return formatItemCode(latestSequence + 1);
   }
 
   public getById(id: string): Item | null {
@@ -171,6 +221,49 @@ export class UserStoryRepository {
       .limit(1)
       .get();
     return row !== undefined;
+  }
+}
+
+export class AcceptanceCriterionRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public listByStoryId(storyId: string): AcceptanceCriterion[] {
+    return this.db
+      .select()
+      .from(acceptanceCriteria)
+      .where(eq(acceptanceCriteria.storyId, storyId))
+      .orderBy(acceptanceCriteria.position)
+      .all() as AcceptanceCriterion[];
+  }
+
+  public listByProjectId(projectId: string): AcceptanceCriterion[] {
+    return this.db
+      .select({
+        id: acceptanceCriteria.id,
+        storyId: acceptanceCriteria.storyId,
+        code: acceptanceCriteria.code,
+        text: acceptanceCriteria.text,
+        position: acceptanceCriteria.position,
+        createdAt: acceptanceCriteria.createdAt,
+        updatedAt: acceptanceCriteria.updatedAt
+      })
+      .from(acceptanceCriteria)
+      .innerJoin(userStories, eq(acceptanceCriteria.storyId, userStories.id))
+      .where(eq(userStories.projectId, projectId))
+      .orderBy(userStories.code, acceptanceCriteria.position)
+      .all() as AcceptanceCriterion[];
+  }
+
+  public createMany(input: Array<Omit<AcceptanceCriterion, "id" | "createdAt" | "updatedAt">>): AcceptanceCriterion[] {
+    const timestamp = now();
+    const rows = input.map((criterion) => ({
+      ...criterion,
+      id: createId("ac"),
+      createdAt: timestamp,
+      updatedAt: timestamp
+    }));
+    this.db.insert(acceptanceCriteria).values(rows).run();
+    return rows as AcceptanceCriterion[];
   }
 }
 

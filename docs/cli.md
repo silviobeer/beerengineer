@@ -25,3 +25,21 @@ npm run cli -- sessions:list --run-id <runId>
 ```
 
 Fehler werden als JSON auf `stderr` mit `error.code` und `error.message` ausgegeben.
+
+## Stable Codes
+
+- `item:create` vergibt automatisch einen stabilen Item-Code wie `ITEM-0001`
+- importierte Projekte erhalten abgeleitete Codes wie `ITEM-0001-P01`
+- importierte User Stories erhalten abgeleitete Codes wie `ITEM-0001-P01-US01`
+- importierte Acceptance Criteria erhalten abgeleitete Codes wie `ITEM-0001-P01-US01-AC01`
+
+Die Codes werden von der Engine vergeben und bleiben stabil, auch wenn Titel spaeter angepasst werden.
+
+## Requirements Import
+
+Beim `requirements:start`-Pfad werden heute zwei fachliche Ebenen persistiert:
+
+- `UserStory`
+- `AcceptanceCriterion`
+
+Acceptance Criteria werden nicht mehr nur als Story-JSON mitgefuehrt, sondern als eigene Records gespeichert und koennen spaeter direkt fuer QA oder Verifikation verwendet werden.
