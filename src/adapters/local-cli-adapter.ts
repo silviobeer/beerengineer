@@ -18,7 +18,8 @@ export class LocalCliAdapter implements AgentAdapter {
 
   public constructor(
     private readonly repoRoot: string,
-    private readonly scriptPath = "scripts/local-agent.mjs"
+    private readonly scriptPath = "scripts/local-agent.mjs",
+    private readonly timeoutMs = 120_000
   ) {}
 
   public async run(request: AdapterRunRequest): Promise<AdapterRunResult> {
@@ -30,11 +31,16 @@ export class LocalCliAdapter implements AgentAdapter {
       const command = [process.execPath, resolve(this.repoRoot, this.scriptPath), payloadPath];
       const result = spawnSync(command[0], command.slice(1), {
         cwd: this.repoRoot,
-        encoding: "utf8"
+        encoding: "utf8",
+        timeout: this.timeoutMs
       });
 
       if (result.error) {
         throw new AgentExecutionError(result.error.message);
+      }
+
+      if (result.signal) {
+        throw new AgentExecutionError(`Agent process terminated by signal ${result.signal}`);
       }
 
       if (result.status !== 0) {

@@ -35,6 +35,7 @@ import type { AgentAdapter } from "../adapters/types.js";
 type WorkflowDeps = {
   repoRoot: string;
   artifactRoot: string;
+  runInTransaction<T>(fn: () => T): T;
   adapter: AgentAdapter;
   itemRepository: ItemRepository;
   conceptRepository: ConceptRepository;
@@ -60,6 +61,7 @@ export class WorkflowService {
     const project = input.projectId ? this.requireProject(input.projectId) : null;
     const profile = runProfiles[input.stageKey];
     const resolved = this.promptResolver.resolve(profile);
+    const inputArtifactIds = this.resolveInputArtifactIds(input.stageKey, item.id, project?.id ?? null);
 
     const inputSnapshot = JSON.stringify(
       {
@@ -82,22 +84,26 @@ export class WorkflowService {
       2
     );
 
-    const run = this.deps.stageRunRepository.create({
-      itemId: item.id,
-      projectId: project?.id ?? null,
-      stageKey: input.stageKey,
-      status: "pending",
-      inputSnapshotJson: inputSnapshot,
-      systemPromptSnapshot: resolved.promptContent,
-      skillsSnapshotJson: JSON.stringify(resolved.skills, null, 2),
-      outputSummaryJson: null,
-      errorMessage: null
+    const run = this.deps.runInTransaction(() => {
+      const createdRun = this.deps.stageRunRepository.create({
+        itemId: item.id,
+        projectId: project?.id ?? null,
+        stageKey: input.stageKey,
+        status: "pending",
+        inputSnapshotJson: inputSnapshot,
+        systemPromptSnapshot: resolved.promptContent,
+        skillsSnapshotJson: JSON.stringify(resolved.skills, null, 2),
+        outputSummaryJson: null,
+        errorMessage: null
+      });
+      this.deps.stageRunRepository.linkInputArtifacts(createdRun.id, inputArtifactIds);
+      this.transitionRun(createdRun.id, "pending", "running");
+      this.deps.itemRepository.updatePhaseStatus(item.id, "running");
+      if (input.stageKey === "brainstorm" && item.currentColumn === "idea") {
+        this.deps.itemRepository.updateColumn(item.id, "brainstorm", "running");
+      }
+      return createdRun;
     });
-    this.transitionRun(run.id, "pending", "running");
-    this.deps.itemRepository.updatePhaseStatus(item.id, "running");
-    if (input.stageKey === "brainstorm" && item.currentColumn === "idea") {
-      this.deps.itemRepository.updateColumn(item.id, "brainstorm", "running");
-    }
 
     try {
       const result = await this.deps.adapter.run({
@@ -119,51 +125,64 @@ export class WorkflowService {
           : null
       });
 
-      this.deps.agentSessionRepository.create({
-        stageRunId: run.id,
-        adapterKey: this.deps.adapter.key,
-        status: result.exitCode === 0 ? "completed" : "failed",
-        commandJson: JSON.stringify(result.command),
-        stdout: result.stdout,
-        stderr: result.stderr,
-        exitCode: result.exitCode
-      });
+      const completion = this.deps.runInTransaction(() => {
+        this.deps.agentSessionRepository.create({
+          stageRunId: run.id,
+          adapterKey: this.deps.adapter.key,
+          status: result.exitCode === 0 ? "completed" : "failed",
+          commandJson: JSON.stringify(result.command),
+          stdout: result.stdout,
+          stderr: result.stderr,
+          exitCode: result.exitCode
+        });
 
-      const outputArtifacts = this.persistArtifacts({
-        itemId: item.id,
-        projectId: project?.id ?? null,
-        runId: run.id,
-        markdownArtifacts: result.markdownArtifacts,
-        structuredArtifacts: result.structuredArtifacts
-      });
+        const outputArtifacts = this.persistArtifacts({
+          itemId: item.id,
+          projectId: project?.id ?? null,
+          runId: run.id,
+          markdownArtifacts: result.markdownArtifacts,
+          structuredArtifacts: result.structuredArtifacts
+        });
 
-      const finalStatus = this.importOutputs({
-        stageKey: input.stageKey,
-        itemId: item.id,
-        projectId: project?.id ?? null,
-        artifactsByKind: new Map(outputArtifacts.map((artifact) => [artifact.kind, artifact]))
-      });
-      const outputSummaryJson = JSON.stringify(
-        {
+        const importOutcome = this.importOutputs({
           stageKey: input.stageKey,
-          artifactKinds: outputArtifacts.map((artifact) => artifact.kind),
-          artifactIds: outputArtifacts.map((artifact) => artifact.id),
-          finalStatus
-        },
-        null,
-        2
-      );
+          itemId: item.id,
+          projectId: project?.id ?? null,
+          artifactsByKind: new Map(outputArtifacts.map((artifact) => [artifact.kind, artifact]))
+        });
+        const outputSummaryJson = JSON.stringify(
+          {
+            stageKey: input.stageKey,
+            artifactKinds: outputArtifacts.map((artifact) => artifact.kind),
+            artifactIds: outputArtifacts.map((artifact) => artifact.id),
+            finalStatus: importOutcome.status,
+            reviewReason: importOutcome.reviewReason
+          },
+          null,
+          2
+        );
 
-      this.transitionRun(run.id, "running", finalStatus, {
-        outputSummaryJson
+        this.transitionRun(run.id, "running", importOutcome.status, {
+          outputSummaryJson,
+          errorMessage: importOutcome.reviewReason ?? null
+        });
+        this.deps.itemRepository.updatePhaseStatus(
+          item.id,
+          importOutcome.status === "completed" ? "completed" : "review_required"
+        );
+        return {
+          runId: run.id,
+          status: importOutcome.status
+        };
       });
-      this.deps.itemRepository.updatePhaseStatus(item.id, finalStatus === "completed" ? "completed" : "review_required");
-      return { runId: run.id, status: finalStatus };
+      return completion;
     } catch (error) {
-      this.transitionRun(run.id, "running", "failed", {
-        errorMessage: error instanceof Error ? error.message : String(error)
+      this.deps.runInTransaction(() => {
+        this.transitionRun(run.id, "running", "failed", {
+          errorMessage: error instanceof Error ? error.message : String(error)
+        });
+        this.deps.itemRepository.updatePhaseStatus(item.id, "failed");
       });
-      this.deps.itemRepository.updatePhaseStatus(item.id, "failed");
       throw error;
     }
   }
@@ -330,7 +349,7 @@ export class WorkflowService {
     itemId: string;
     projectId: string | null;
     artifactsByKind: Map<string, ArtifactRecord>;
-  }): "completed" | "review_required" {
+  }): { status: "completed" | "review_required"; reviewReason: string | null } {
     if (input.stageKey === "brainstorm") {
       return this.importBrainstormOutputs(input);
     }
@@ -343,11 +362,14 @@ export class WorkflowService {
   private importBrainstormOutputs(input: {
     itemId: string;
     artifactsByKind: Map<string, ArtifactRecord>;
-  }): "completed" | "review_required" {
+  }): { status: "completed" | "review_required"; reviewReason: string | null } {
     const conceptArtifact = input.artifactsByKind.get("concept");
     const projectsArtifact = input.artifactsByKind.get("projects");
     if (!conceptArtifact || !projectsArtifact) {
-      return "review_required";
+      return {
+        status: "review_required",
+        reviewReason: "Brainstorm output is missing concept or projects artifacts"
+      };
     }
     try {
       const projects = projectsOutputSchema.parse(
@@ -355,7 +377,7 @@ export class WorkflowService {
       ) as ProjectsOutput;
       const previous = this.deps.conceptRepository.getLatestByItemId(input.itemId);
       if (previous?.structuredArtifactId === projectsArtifact.id) {
-        return "completed";
+        return { status: "completed", reviewReason: null };
       }
       const markdownContent = readFileSync(resolve(this.deps.artifactRoot, conceptArtifact.path), "utf8");
       this.deps.conceptRepository.create({
@@ -367,29 +389,32 @@ export class WorkflowService {
         markdownArtifactId: conceptArtifact.id,
         structuredArtifactId: projectsArtifact.id
       });
-      return "completed";
-    } catch {
-      return "review_required";
+      return { status: "completed", reviewReason: null };
+    } catch (error) {
+      return this.buildReviewOutcome("brainstorm", error);
     }
   }
 
   private importRequirementsOutputs(input: {
     projectId: string | null;
     artifactsByKind: Map<string, ArtifactRecord>;
-  }): "completed" | "review_required" {
+  }): { status: "completed" | "review_required"; reviewReason: string | null } {
     if (!input.projectId) {
       throw new AppError("PROJECT_REQUIRED", "Requirements stage requires a project");
     }
     const storiesArtifact = input.artifactsByKind.get("stories");
     if (!storiesArtifact) {
-      return "review_required";
+      return {
+        status: "review_required",
+        reviewReason: "Requirements output is missing stories artifact"
+      };
     }
     try {
       const parsed = storiesOutputSchema.parse(
         JSON.parse(readFileSync(resolve(this.deps.artifactRoot, storiesArtifact.path), "utf8"))
       ) as StoriesOutput;
       if (this.deps.userStoryRepository.hasAnyByProjectId(input.projectId)) {
-        return "completed";
+        return { status: "completed", reviewReason: null };
       }
       this.deps.userStoryRepository.createMany(
         parsed.stories.map((story) => ({
@@ -405,23 +430,26 @@ export class WorkflowService {
           sourceArtifactId: storiesArtifact.id
         }))
       );
-      return "completed";
-    } catch {
-      return "review_required";
+      return { status: "completed", reviewReason: null };
+    } catch (error) {
+      return this.buildReviewOutcome("requirements", error);
     }
   }
 
   private importArchitectureOutputs(input: {
     projectId: string | null;
     artifactsByKind: Map<string, ArtifactRecord>;
-  }): "completed" | "review_required" {
+  }): { status: "completed" | "review_required"; reviewReason: string | null } {
     if (!input.projectId) {
       throw new AppError("PROJECT_REQUIRED", "Architecture stage requires a project");
     }
     const markdownArtifact = input.artifactsByKind.get("architecture-plan");
     const jsonArtifact = input.artifactsByKind.get("architecture-plan-data");
     if (!markdownArtifact || !jsonArtifact) {
-      return "review_required";
+      return {
+        status: "review_required",
+        reviewReason: "Architecture output is missing markdown or structured plan artifact"
+      };
     }
     try {
       const parsed = architecturePlanOutputSchema.parse(
@@ -429,7 +457,7 @@ export class WorkflowService {
       ) as ArchitecturePlanOutput;
       const previous = this.deps.architecturePlanRepository.getLatestByProjectId(input.projectId);
       if (previous?.structuredArtifactId === jsonArtifact.id) {
-        return "completed";
+        return { status: "completed", reviewReason: null };
       }
       this.deps.architecturePlanRepository.create({
         projectId: input.projectId,
@@ -439,9 +467,9 @@ export class WorkflowService {
         markdownArtifactId: markdownArtifact.id,
         structuredArtifactId: jsonArtifact.id
       });
-      return "completed";
-    } catch {
-      return "review_required";
+      return { status: "completed", reviewReason: null };
+    } catch (error) {
+      return this.buildReviewOutcome("architecture", error);
     }
   }
 
@@ -498,7 +526,6 @@ export class WorkflowService {
       records.push(record);
     }
 
-    this.deps.stageRunRepository.linkInputArtifacts(input.runId, []);
     return records;
   }
 
@@ -531,5 +558,37 @@ export class WorkflowService {
   private extractHeading(markdown: string): string {
     const line = markdown.split("\n").find((entry) => entry.startsWith("# "));
     return line ? line.replace(/^#\s+/, "") : "Concept";
+  }
+
+  private resolveInputArtifactIds(stageKey: StageKey, itemId: string, projectId: string | null): string[] {
+    const kindsByStage: Record<StageKey, string[]> = {
+      brainstorm: [],
+      requirements: ["concept", "projects"],
+      architecture: ["concept", "projects", "stories", "stories-markdown"]
+    };
+
+    const ids = new Set<string>();
+    for (const kind of kindsByStage[stageKey]) {
+      const artifact = this.deps.artifactRepository.getLatestByKind({
+        itemId,
+        ...(kind === "stories" || kind === "stories-markdown" ? { projectId } : {}),
+        kind
+      });
+      if (artifact) {
+        ids.add(artifact.id);
+      }
+    }
+    return [...ids];
+  }
+
+  private buildReviewOutcome(
+    stageKey: StageKey,
+    error: unknown
+  ): { status: "review_required"; reviewReason: string } {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      status: "review_required",
+      reviewReason: `Failed to import ${stageKey} output: ${message}`
+    };
   }
 }

@@ -31,6 +31,7 @@ npm test
 ```bash
 npm run build
 npm run lint
+npm run review
 npm run test
 npm run db:migrate -- ./var/data/beerengineer.sqlite
 npm run db:check -- ./var/data/beerengineer.sqlite
@@ -68,3 +69,14 @@ Weitere Details:
 - [Architektur](docs/architecture.md)
 - [CLI](docs/cli.md)
 - [Verification](docs/verification.md)
+
+## Code Review
+
+CodeRabbit ist lokal verfuegbar und dieses Repo bringt eine Projekt-Instruktionsdatei mit:
+
+```bash
+npm run review
+npm run review:agent
+```
+
+Die zusaetzlichen Review-Instruktionen liegen in [coderabbit.md](coderabbit.md).

@@ -213,6 +213,7 @@ process.stdout.write(JSON.stringify(result));
       const run = context.repositories.stageRunRepository.getById(result.runId);
 
       expect(run?.status).toBe("review_required");
+      expect(run?.errorMessage).toContain("Failed to import brainstorm output");
     } finally {
       writeFileSync(repoScript, originalScript);
       context.connection.close();
@@ -303,6 +304,42 @@ process.stdout.write(JSON.stringify(result));
 
       const itemState = context.repositories.itemRepository.getById(item.id);
       expect(itemState?.phaseStatus).toBe("completed");
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("links input artifacts for downstream runs", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const item = context.repositories.itemRepository.create({
+        title: "Provenance",
+        description: "Track inputs"
+      });
+      await context.workflowService.startStage({
+        stageKey: "brainstorm",
+        itemId: item.id
+      });
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      context.workflowService.approveConcept(concept!.id);
+      context.workflowService.importProjects(item.id);
+      const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
+
+      const requirementsRun = await context.workflowService.startStage({
+        stageKey: "requirements",
+        itemId: item.id,
+        projectId: project.id
+      });
+
+      const linkedInputs = context.connection
+        .prepare("SELECT count(*) as count FROM stage_run_input_artifacts WHERE stage_run_id = ?")
+        .get(requirementsRun.runId) as { count: number };
+
+      expect(linkedInputs.count).toBeGreaterThan(0);
     } finally {
       context.connection.close();
       rmSync(root, { recursive: true, force: true });

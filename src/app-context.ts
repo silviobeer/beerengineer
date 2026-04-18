@@ -1,4 +1,5 @@
-import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 
 import { LocalCliAdapter } from "./adapters/local-cli-adapter.js";
 import { createDatabase } from "./persistence/database.js";
@@ -18,8 +19,12 @@ import { WorkflowService } from "./workflow/workflow-service.js";
 
 export type AppContext = {
   connection: {
+    prepare(sql: string): {
+      get(...args: unknown[]): unknown;
+    };
     close(): void;
   };
+  runInTransaction<T>(fn: () => T): T;
   repositories: {
     itemRepository: ItemRepository;
     conceptRepository: ConceptRepository;
@@ -34,8 +39,8 @@ export type AppContext = {
 };
 
 export function createAppContext(dbPath: string): AppContext {
-  const repoRoot = resolve(".");
-  const artifactRoot = resolve("./var/artifacts");
+  const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const artifactRoot = resolve(repoRoot, "var/artifacts");
   const { connection, db } = createDatabase(dbPath);
   applyMigrations(connection, baseMigrations);
 
@@ -51,6 +56,7 @@ export function createAppContext(dbPath: string): AppContext {
 
   return {
     connection,
+    runInTransaction: <T>(fn: () => T): T => connection.transaction(fn)(),
     repositories: {
       itemRepository,
       conceptRepository,
@@ -64,6 +70,7 @@ export function createAppContext(dbPath: string): AppContext {
     workflowService: new WorkflowService({
       repoRoot,
       artifactRoot,
+      runInTransaction: <T>(fn: () => T): T => connection.transaction(fn)(),
       adapter,
       itemRepository,
       conceptRepository,

@@ -10,6 +10,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "cli": "tsx src/cli/main.ts",
+    "review": "coderabbit review --config coderabbit.md",
+    "review:agent": "coderabbit review --agent --config coderabbit.md",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint .",

@@ -5,10 +5,14 @@ import { tmpdir } from "node:os";
 
 import { describe, expect, it } from "vitest";
 
+const repoRoot = resolve(".");
+const tsxCliPath = resolve(repoRoot, "node_modules/tsx/dist/cli.mjs");
+const mainCliPath = resolve(repoRoot, "src/cli/main.ts");
+
 function runCli(args: string[], cwd: string): unknown {
   const output = execFileSync(
     process.execPath,
-    [resolve("node_modules/tsx/dist/cli.mjs"), "src/cli/main.ts", ...args],
+    [tsxCliPath, mainCliPath, ...args],
     {
       cwd,
       encoding: "utf8"
@@ -19,7 +23,7 @@ function runCli(args: string[], cwd: string): unknown {
 
 function runCliError(args: string[], cwd: string): { error: { code: string; message: string } } {
   try {
-    execFileSync(process.execPath, [resolve("node_modules/tsx/dist/cli.mjs"), "src/cli/main.ts", ...args], {
+    execFileSync(process.execPath, [tsxCliPath, mainCliPath, ...args], {
       cwd,
       encoding: "utf8",
       stdio: ["pipe", "pipe", "pipe"]
@@ -97,6 +101,19 @@ describe("cli happy path", () => {
     try {
       const error = runCliError(["--db", dbPath, "run:show", "--run-id", "missing"], cwd);
       expect(error.error.code).toBe("RUN_NOT_FOUND");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("works when invoked outside the repository root", () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-e2e-"));
+    const dbPath = join(root, "app.sqlite");
+
+    try {
+      const item = runCli(["--db", dbPath, "item:create", "--title", "External CWD"], root) as { id: string };
+      const result = runCli(["--db", dbPath, "brainstorm:start", "--item-id", item.id], root) as { status: string };
+      expect(result.status).toBe("completed");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

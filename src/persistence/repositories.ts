@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 
 import type {
   ArchitecturePlan,
@@ -164,7 +164,13 @@ export class UserStoryRepository {
   }
 
   public hasAnyByProjectId(projectId: string): boolean {
-    return this.listByProjectId(projectId).length > 0;
+    const row = this.db
+      .select({ id: userStories.id })
+      .from(userStories)
+      .where(eq(userStories.projectId, projectId))
+      .limit(1)
+      .get();
+    return row !== undefined;
   }
 }
 
@@ -238,20 +244,24 @@ export class ArtifactRepository {
   }
 
   public getLatestByKind(input: { itemId: string; projectId?: string | null; kind: string }): ArtifactRecord | null {
-    const rows = this.db
-      .select()
-      .from(artifacts)
-      .where(eq(artifacts.itemId, input.itemId))
-      .orderBy(desc(artifacts.createdAt))
-      .all() as ArtifactRecord[];
+    const whereClause =
+      input.projectId === undefined
+        ? and(eq(artifacts.itemId, input.itemId), eq(artifacts.kind, input.kind))
+        : and(
+            eq(artifacts.itemId, input.itemId),
+            eq(artifacts.kind, input.kind),
+            input.projectId === null ? isNull(artifacts.projectId) : eq(artifacts.projectId, input.projectId)
+          );
 
     return (
-      rows.find(
-        (row) =>
-          row.kind === input.kind &&
-          (input.projectId === undefined ? true : row.projectId === (input.projectId ?? null))
-      ) ?? null
-    );
+      this.db
+        .select()
+        .from(artifacts)
+        .where(whereClause)
+        .orderBy(desc(artifacts.createdAt))
+        .limit(1)
+        .get() as ArtifactRecord | undefined
+    ) ?? null;
   }
 }
 

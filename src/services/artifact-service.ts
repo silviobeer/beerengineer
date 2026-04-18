@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
 export type ArtifactPayload = {
@@ -31,16 +31,14 @@ export class ArtifactService {
     );
     const absolutePath = resolve(this.rootDir, relativePath);
     mkdirSync(dirname(absolutePath), { recursive: true });
-    writeFileSync(absolutePath, payload.content, "utf8");
-
-    const fileBuffer = readFileSync(absolutePath);
+    const fileBuffer = Buffer.from(payload.content, "utf8");
     const sha256 = createHash("sha256").update(fileBuffer).digest("hex");
-    const stats = statSync(absolutePath);
+    writeFileSync(absolutePath, fileBuffer);
 
     return {
       path: relativePath,
       sha256,
-      sizeBytes: stats.size
+      sizeBytes: fileBuffer.byteLength
     };
   }
 }

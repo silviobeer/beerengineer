@@ -7,3 +7,4 @@
 - `run:show`, `artifacts:list` und `sessions:list` helfen bei der Diagnose eines fehlgeschlagenen oder review-pflichtigen Runs
 - `run:retry --run-id <runId>` startet einen neuen Run auf Basis eines `failed`- oder `review_required`-Runs
 - wiederholte Freigaben und erneuter Projektimport sind idempotent und verursachen keine Doppelanlage
+- lokale Adapter-Runs haben ein Timeout, damit ein haengender Agent-Prozess nicht unbegrenzt blockiert

@@ -124,11 +124,8 @@ program
   .command("item:show")
   .requiredOption("--item-id <itemId>")
   .action(
-    withContext<{ itemId: string }>(({ repositories }, options) => {
-      const item = repositories.itemRepository.getById(options.itemId);
-      const concept = repositories.conceptRepository.getLatestByItemId(options.itemId);
-      const projects = repositories.projectRepository.listByItemId(options.itemId);
-      console.log(JSON.stringify({ item, concept, projects }, null, 2));
+    withContext<{ itemId: string }>(({ workflowService }, options) => {
+      console.log(JSON.stringify(workflowService.showItem(options.itemId), null, 2));
     })
   );
 

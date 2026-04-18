@@ -38,4 +38,19 @@ Ergebnis: erfolgreich.
 Aktueller Stand:
 
 - 11 Testdateien
-- 23 gruene Tests
+- 25 gruene Tests
+
+## Review-Runde
+
+Umgesetzt:
+
+- Adapter-Timeout und Signalbehandlung
+- transaktionale Vor- und Nachbloecke rund um `StageRun`-Schreibvorgaenge
+- echte Verknuepfung von Input-Artefakten fuer Downstream-Runs
+- schlankere Query-Pfade fuer Existenz- und Latest-Lookups
+- nachvollziehbare `review_required`-Ursachen in `stage_runs.error_message`
+- CWD-unabhaengige Aufloesung von Prompt-/Skill-Pfaden
+
+Zurueckgestellt:
+
+- [Review Follow-Ups](review-follow-ups.md)
