@@ -186,6 +186,36 @@ program
   );
 
 program
+  .command("qa:start")
+  .requiredOption("--project-id <projectId>")
+  .action(
+    withContext<{ projectId: string }>(async ({ workflowService }, options) => {
+      const result = await workflowService.startQa(options.projectId);
+      console.log(JSON.stringify(result, null, 2));
+    })
+  );
+
+program
+  .command("qa:show")
+  .requiredOption("--project-id <projectId>")
+  .action(
+    withContext<{ projectId: string }>(({ workflowService }, options) => {
+      const result = workflowService.showQa(options.projectId);
+      console.log(JSON.stringify(result, null, 2));
+    })
+  );
+
+program
+  .command("qa:retry")
+  .requiredOption("--qa-run-id <qaRunId>")
+  .action(
+    withContext<{ qaRunId: string }>(async ({ workflowService }, options) => {
+      const result = await workflowService.retryQa(options.qaRunId);
+      console.log(JSON.stringify(result, null, 2));
+    })
+  );
+
+program
   .command("item:show")
   .requiredOption("--item-id <itemId>")
   .action(

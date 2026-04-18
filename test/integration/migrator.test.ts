@@ -27,9 +27,19 @@ describe("migration runner", () => {
       const row = secondConnection
         .prepare("SELECT count(*) as count FROM __migrations")
         .get() as { count: number } | undefined;
+      const indexes = secondConnection
+        .prepare("PRAGMA index_list(qa_runs)")
+        .all() as Array<{ name: string }>;
 
-      expect(applied).toEqual(["0000_initial", "0001_add_verification_run_mode"]);
-      expect(row?.count).toBe(2);
+      expect(applied).toEqual([
+        "0000_initial",
+        "0001_add_verification_run_mode",
+        "0002_add_qa_runtime_tables",
+        "0003_add_story_review_runtime_tables",
+        "0004_add_worker_prompt_skill_snapshots"
+      ]);
+      expect(row?.count).toBe(5);
+      expect(indexes.map((index) => index.name)).toContain("idx_qa_runs_project_id");
     } finally {
       secondConnection.close();
       testDb.cleanup();
@@ -45,11 +55,76 @@ describe("migration runner", () => {
 
       const applied = applyMigrations(legacyDb, baseMigrations);
       const columns = legacyDb.prepare("PRAGMA table_info(verification_runs)").all() as Array<{ name: string }>;
+      const executionColumns = legacyDb.prepare("PRAGMA table_info(wave_story_executions)").all() as Array<{ name: string }>;
+      const qaTables = legacyDb
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('qa_runs', 'qa_findings', 'qa_agent_sessions') ORDER BY name")
+        .all() as Array<{ name: string }>;
 
-      expect(applied).toEqual(["0001_add_verification_run_mode"]);
+      expect(applied).toEqual([
+        "0001_add_verification_run_mode",
+        "0002_add_qa_runtime_tables",
+        "0003_add_story_review_runtime_tables",
+        "0004_add_worker_prompt_skill_snapshots"
+      ]);
       expect(columns.map((column) => column.name)).toContain("mode");
+      expect(executionColumns.map((column) => column.name)).toContain("system_prompt_snapshot");
+      expect(qaTables.map((table) => table.name)).toEqual(["qa_agent_sessions", "qa_findings", "qa_runs"]);
     } finally {
       legacyDb.close();
+      testDb.cleanup();
+    }
+  });
+
+  it("adds QA indexes when the QA runtime migration is applied", () => {
+    const testDb = createTestDatabase();
+    const qaLegacyDb = createSqliteConnection(testDb.filePath.replace("test.sqlite", "qa-legacy.sqlite"));
+
+    try {
+      applyMigrations(qaLegacyDb, [baseMigrations[0]!, baseMigrations[1]!]);
+
+      const applied = applyMigrations(qaLegacyDb, baseMigrations);
+      const runIndexes = qaLegacyDb.prepare("PRAGMA index_list(qa_runs)").all() as Array<{ name: string }>;
+      const findingIndexes = qaLegacyDb.prepare("PRAGMA index_list(qa_findings)").all() as Array<{ name: string }>;
+      const sessionIndexes = qaLegacyDb.prepare("PRAGMA index_list(qa_agent_sessions)").all() as Array<{ name: string }>;
+
+      expect(applied).toEqual(["0002_add_qa_runtime_tables", "0003_add_story_review_runtime_tables", "0004_add_worker_prompt_skill_snapshots"]);
+      expect(runIndexes.map((index) => index.name)).toContain("idx_qa_runs_project_id");
+      expect(findingIndexes.map((index) => index.name)).toContain("idx_qa_findings_qa_run_id");
+      expect(sessionIndexes.map((index) => index.name)).toContain("idx_qa_agent_sessions_qa_run_id");
+    } finally {
+      qaLegacyDb.close();
+      testDb.cleanup();
+    }
+  });
+
+  it("adds story review tables and indexes when the story review migration is applied", () => {
+    const testDb = createTestDatabase();
+    const reviewLegacyDb = createSqliteConnection(testDb.filePath.replace("test.sqlite", "story-review-legacy.sqlite"));
+
+    try {
+      applyMigrations(reviewLegacyDb, [baseMigrations[0]!, baseMigrations[1]!, baseMigrations[2]!]);
+
+      const applied = applyMigrations(reviewLegacyDb, baseMigrations);
+      const tables = reviewLegacyDb
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('story_review_runs', 'story_review_findings', 'story_review_agent_sessions') ORDER BY name")
+        .all() as Array<{ name: string }>;
+      const runIndexes = reviewLegacyDb.prepare("PRAGMA index_list(story_review_runs)").all() as Array<{ name: string }>;
+      const findingIndexes = reviewLegacyDb.prepare("PRAGMA index_list(story_review_findings)").all() as Array<{ name: string }>;
+      const sessionIndexes = reviewLegacyDb.prepare("PRAGMA index_list(story_review_agent_sessions)").all() as Array<{ name: string }>;
+
+      expect(applied).toEqual(["0003_add_story_review_runtime_tables", "0004_add_worker_prompt_skill_snapshots"]);
+      expect(tables.map((table) => table.name)).toEqual([
+        "story_review_agent_sessions",
+        "story_review_findings",
+        "story_review_runs"
+      ]);
+      expect(runIndexes.map((index) => index.name)).toContain("idx_story_review_runs_wave_story_execution_id");
+      expect(findingIndexes.map((index) => index.name)).toContain("idx_story_review_findings_story_review_run_id");
+      expect(sessionIndexes.map((index) => index.name)).toContain("idx_story_review_agent_sessions_story_review_run_id");
+      const qaRunColumns = reviewLegacyDb.prepare("PRAGMA table_info(qa_runs)").all() as Array<{ name: string }>;
+      expect(qaRunColumns.map((column) => column.name)).toContain("system_prompt_snapshot");
+    } finally {
+      reviewLegacyDb.close();
       testDb.cleanup();
     }
   });

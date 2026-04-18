@@ -2,7 +2,10 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { ConfigurationError } from "../shared/errors.js";
-import type { RunProfile } from "../workflow/run-profiles.js";
+export type ResolvableProfile = {
+  promptPath: string;
+  skillPaths: readonly string[];
+};
 
 export type ResolvedRunProfile = {
   promptPath: string;
@@ -16,7 +19,7 @@ export type ResolvedRunProfile = {
 export class PromptResolver {
   public constructor(private readonly repoRoot: string) {}
 
-  public resolve(profile: RunProfile): ResolvedRunProfile {
+  public resolve(profile: ResolvableProfile): ResolvedRunProfile {
     const promptPath = resolve(this.repoRoot, profile.promptPath);
     const promptContent = this.readFile(promptPath);
     const skills = profile.skillPaths.map((skillPath) => {

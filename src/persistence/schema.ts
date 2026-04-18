@@ -161,6 +161,8 @@ export const waveStoryTestRuns = sqliteTable("wave_story_test_runs", {
   status: text("status").notNull(),
   attempt: integer("attempt").notNull(),
   workerRole: text("worker_role").notNull(),
+  systemPromptSnapshot: text("system_prompt_snapshot").notNull(),
+  skillsSnapshotJson: text("skills_snapshot_json").notNull(),
   businessContextSnapshotJson: text("business_context_snapshot_json").notNull(),
   repoContextSnapshotJson: text("repo_context_snapshot_json").notNull(),
   outputSummaryJson: text("output_summary_json"),
@@ -179,6 +181,8 @@ export const waveStoryExecutions = sqliteTable("wave_story_executions", {
   status: text("status").notNull(),
   attempt: integer("attempt").notNull(),
   workerRole: text("worker_role").notNull(),
+  systemPromptSnapshot: text("system_prompt_snapshot").notNull(),
+  skillsSnapshotJson: text("skills_snapshot_json").notNull(),
   businessContextSnapshotJson: text("business_context_snapshot_json").notNull(),
   repoContextSnapshotJson: text("repo_context_snapshot_json").notNull(),
   outputSummaryJson: text("output_summary_json"),
@@ -220,8 +224,99 @@ export const verificationRuns = sqliteTable("verification_runs", {
   waveStoryExecutionId: text("wave_story_execution_id").references(() => waveStoryExecutions.id),
   mode: text("mode").notNull(),
   status: text("status").notNull(),
+  systemPromptSnapshot: text("system_prompt_snapshot"),
+  skillsSnapshotJson: text("skills_snapshot_json"),
   summaryJson: text("summary_json").notNull(),
   errorMessage: text("error_message"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull()
+});
+
+export const storyReviewRuns = sqliteTable("story_review_runs", {
+  id: text("id").primaryKey(),
+  waveStoryExecutionId: text("wave_story_execution_id").notNull().references(() => waveStoryExecutions.id),
+  status: text("status").notNull(),
+  inputSnapshotJson: text("input_snapshot_json").notNull(),
+  systemPromptSnapshot: text("system_prompt_snapshot").notNull(),
+  skillsSnapshotJson: text("skills_snapshot_json").notNull(),
+  summaryJson: text("summary_json"),
+  errorMessage: text("error_message"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+  completedAt: integer("completed_at")
+});
+
+export const storyReviewFindings = sqliteTable("story_review_findings", {
+  id: text("id").primaryKey(),
+  storyReviewRunId: text("story_review_run_id").notNull().references(() => storyReviewRuns.id),
+  severity: text("severity").notNull(),
+  category: text("category").notNull(),
+  title: text("title").notNull(),
+  description: text("description").notNull(),
+  evidence: text("evidence").notNull(),
+  filePath: text("file_path"),
+  line: integer("line"),
+  suggestedFix: text("suggested_fix"),
+  status: text("status").notNull(),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull()
+});
+
+export const storyReviewAgentSessions = sqliteTable("story_review_agent_sessions", {
+  id: text("id").primaryKey(),
+  storyReviewRunId: text("story_review_run_id").notNull().references(() => storyReviewRuns.id),
+  adapterKey: text("adapter_key").notNull(),
+  status: text("status").notNull(),
+  commandJson: text("command_json").notNull(),
+  stdout: text("stdout").notNull(),
+  stderr: text("stderr").notNull(),
+  exitCode: integer("exit_code").notNull(),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull()
+});
+
+export const qaRuns = sqliteTable("qa_runs", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull().references(() => projects.id),
+  mode: text("mode").notNull(),
+  status: text("status").notNull(),
+  inputSnapshotJson: text("input_snapshot_json").notNull(),
+  systemPromptSnapshot: text("system_prompt_snapshot").notNull(),
+  skillsSnapshotJson: text("skills_snapshot_json").notNull(),
+  summaryJson: text("summary_json"),
+  errorMessage: text("error_message"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+  completedAt: integer("completed_at")
+});
+
+export const qaFindings = sqliteTable("qa_findings", {
+  id: text("id").primaryKey(),
+  qaRunId: text("qa_run_id").notNull().references(() => qaRuns.id),
+  severity: text("severity").notNull(),
+  category: text("category").notNull(),
+  title: text("title").notNull(),
+  description: text("description").notNull(),
+  evidence: text("evidence").notNull(),
+  reproStepsJson: text("repro_steps_json").notNull(),
+  suggestedFix: text("suggested_fix"),
+  status: text("status").notNull(),
+  storyId: text("story_id").references(() => userStories.id),
+  acceptanceCriterionId: text("acceptance_criterion_id").references(() => acceptanceCriteria.id),
+  waveStoryExecutionId: text("wave_story_execution_id").references(() => waveStoryExecutions.id),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull()
+});
+
+export const qaAgentSessions = sqliteTable("qa_agent_sessions", {
+  id: text("id").primaryKey(),
+  qaRunId: text("qa_run_id").notNull().references(() => qaRuns.id),
+  adapterKey: text("adapter_key").notNull(),
+  status: text("status").notNull(),
+  commandJson: text("command_json").notNull(),
+  stdout: text("stdout").notNull(),
+  stderr: text("stderr").notNull(),
+  exitCode: integer("exit_code").notNull(),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull()
 });

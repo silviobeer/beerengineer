@@ -5,6 +5,8 @@
 - `runProfiles` referenzieren Dateien relativ zum Repo
 - beim Start eines `StageRun` wird der aufgeloeste Prompt direkt in `stage_runs.system_prompt_snapshot` gespeichert
 - aufgeloeste Skills werden unveraenderlich als JSON-Snapshot in `stage_runs.skills_snapshot_json` gespeichert
+- Worker-Runs in `execution` und `qa` laden ihre Prompts und Skills ebenfalls dateibasiert
+- Worker-Prompt- und Skill-Snapshots werden direkt in den zugehoerigen Runtime-Records gespeichert
 
 Damit bleiben alte Runs nachvollziehbar, auch wenn Prompt- oder Skill-Dateien spaeter geaendert werden.
 
@@ -22,6 +24,24 @@ Damit bleiben alte Runs nachvollziehbar, auch wenn Prompt- oder Skill-Dateien sp
 - `planning`
   Prompt: `prompts/system/planning.md`
   Skill: `skills/writing-plans.md`
+
+## Current Worker Files
+
+- `test_preparation`
+  Prompt: `prompts/workers/test-preparation.md`
+  Skill: `skills/test-writer.md`
+- `execution`
+  Prompt: `prompts/workers/execution.md`
+  Skill: `skills/execution-implementer.md`
+- `ralph`
+  Prompt: `prompts/workers/ralph.md`
+  Skill: `skills/ralph-verifier.md`
+- `story_review`
+  Prompt: `prompts/workers/story-review.md`
+  Skill: `skills/story-reviewer.md`
+- `qa`
+  Prompt: `prompts/workers/qa.md`
+  Skill: `skills/qa-verifier.md`
 
 ## Current Intent
 
@@ -43,6 +63,19 @@ Dieser Schnitt ist fuer `requirements` und `architecture` bereits bewusst entdop
 
 - `brainstorm-facilitation` fuer die Konzeptarbeit
 - `project-extraction` fuer die Ableitung von 1..n Projekten
+
+Fuer Worker-Runs gilt derselbe Grundsatz:
+
+- Worker-Prompts tragen den harten bounded Contract des einzelnen Runtime-Schritts
+- Worker-Skills tragen die Arbeitsweise und den Qualitaetsmassstab des jeweiligen Workers
+
+Das gilt heute fuer:
+
+- `test_preparation`
+- `execution`
+- `ralph`
+- `story_review`
+- `qa`
 
 Die Stage-Prompts sind bewusst enger geschnitten als allgemeine Agent-Skills:
 

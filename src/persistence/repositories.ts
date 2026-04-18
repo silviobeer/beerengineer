@@ -9,6 +9,21 @@ import type {
   ImplementationPlan,
   Item,
   ItemPhaseStatus,
+  StoryReviewAgentSession,
+  StoryReviewFinding,
+  StoryReviewFindingCategory,
+  StoryReviewFindingSeverity,
+  StoryReviewFindingStatus,
+  StoryReviewRun,
+  StoryReviewRunStatus,
+  QaAgentSession,
+  QaFinding,
+  QaFindingCategory,
+  QaFindingSeverity,
+  QaFindingStatus,
+  QaRun,
+  QaRunMode,
+  QaRunStatus,
   ProjectExecutionContext,
   Project,
   RecordStatus,
@@ -40,8 +55,14 @@ import {
   executionAgentSessions,
   implementationPlans,
   items,
+  qaAgentSessions,
+  qaFindings,
+  qaRuns,
   projectExecutionContexts,
   projects,
+  storyReviewAgentSessions,
+  storyReviewFindings,
+  storyReviewRuns,
   stageRunInputArtifacts,
   stageRuns,
   testAgentSessions,
@@ -65,6 +86,78 @@ function parseStringList(value: string): string[] {
 
 function stringifyStringList(value: string[]): string {
   return JSON.stringify(value);
+}
+
+type QaFindingRow = {
+  id: string;
+  qaRunId: string;
+  severity: QaFindingSeverity;
+  category: QaFindingCategory;
+  title: string;
+  description: string;
+  evidence: string;
+  reproStepsJson: string;
+  suggestedFix: string | null;
+  status: QaFindingStatus;
+  storyId: string | null;
+  acceptanceCriterionId: string | null;
+  waveStoryExecutionId: string | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
+type StoryReviewFindingRow = {
+  id: string;
+  storyReviewRunId: string;
+  severity: StoryReviewFindingSeverity;
+  category: StoryReviewFindingCategory;
+  title: string;
+  description: string;
+  evidence: string;
+  filePath: string | null;
+  line: number | null;
+  suggestedFix: string | null;
+  status: StoryReviewFindingStatus;
+  createdAt: number;
+  updatedAt: number;
+};
+
+function mapStoryReviewFinding(row: StoryReviewFindingRow): StoryReviewFinding {
+  return {
+    id: row.id,
+    storyReviewRunId: row.storyReviewRunId,
+    severity: row.severity,
+    category: row.category,
+    title: row.title,
+    description: row.description,
+    evidence: row.evidence,
+    filePath: row.filePath,
+    line: row.line,
+    suggestedFix: row.suggestedFix,
+    status: row.status,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+  };
+}
+
+function mapQaFinding(row: QaFindingRow): QaFinding {
+  return {
+    id: row.id,
+    qaRunId: row.qaRunId,
+    severity: row.severity,
+    category: row.category,
+    title: row.title,
+    description: row.description,
+    evidence: row.evidence,
+    reproSteps: parseStringList(row.reproStepsJson),
+    suggestedFix: row.suggestedFix,
+    status: row.status,
+    storyId: row.storyId,
+    acceptanceCriterionId: row.acceptanceCriterionId,
+    waveStoryExecutionId: row.waveStoryExecutionId,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+  };
 }
 
 function isItemsCodeUniqueViolation(error: unknown): boolean {
@@ -829,6 +922,259 @@ export class VerificationRunRepository {
       .where(eq(verificationRuns.waveExecutionId, waveExecutionId))
       .orderBy(verificationRuns.createdAt)
       .all() as VerificationRun[];
+  }
+}
+
+export class StoryReviewRunRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public getById(id: string): StoryReviewRun | null {
+    return (this.db.select().from(storyReviewRuns).where(eq(storyReviewRuns.id, id)).get() as StoryReviewRun | undefined) ?? null;
+  }
+
+  public listByWaveStoryExecutionId(waveStoryExecutionId: string): StoryReviewRun[] {
+    return this.db
+      .select()
+      .from(storyReviewRuns)
+      .where(eq(storyReviewRuns.waveStoryExecutionId, waveStoryExecutionId))
+      .orderBy(storyReviewRuns.createdAt)
+      .all() as StoryReviewRun[];
+  }
+
+  public getLatestByWaveStoryExecutionId(waveStoryExecutionId: string): StoryReviewRun | null {
+    return (
+      this.db
+        .select()
+        .from(storyReviewRuns)
+        .where(eq(storyReviewRuns.waveStoryExecutionId, waveStoryExecutionId))
+        .orderBy(desc(storyReviewRuns.createdAt), desc(storyReviewRuns.id))
+        .limit(1)
+        .get() as StoryReviewRun | undefined
+    ) ?? null;
+  }
+
+  public create(input: Omit<StoryReviewRun, "id" | "createdAt" | "updatedAt" | "completedAt">): StoryReviewRun {
+    const timestamp = now();
+    const row: StoryReviewRun = {
+      ...input,
+      id: createId("story_review_run"),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      completedAt: null
+    };
+    this.db.insert(storyReviewRuns).values(row).run();
+    return row;
+  }
+
+  public updateStatus(
+    id: string,
+    status: StoryReviewRunStatus,
+    options?: { summaryJson?: string | null; errorMessage?: string | null }
+  ): void {
+    this.db
+      .update(storyReviewRuns)
+      .set({
+        status,
+        summaryJson: options?.summaryJson,
+        errorMessage: options?.errorMessage ?? null,
+        updatedAt: now(),
+        completedAt: status === "passed" || status === "failed" || status === "review_required" ? now() : null
+      })
+      .where(eq(storyReviewRuns.id, id))
+      .run();
+  }
+}
+
+export class StoryReviewFindingRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public listByStoryReviewRunId(storyReviewRunId: string): StoryReviewFinding[] {
+    const rows = this.db
+      .select()
+      .from(storyReviewFindings)
+      .where(eq(storyReviewFindings.storyReviewRunId, storyReviewRunId))
+      .orderBy(storyReviewFindings.createdAt)
+      .all() as StoryReviewFindingRow[];
+    return rows.map(mapStoryReviewFinding);
+  }
+
+  public createMany(input: Array<Omit<StoryReviewFinding, "id" | "createdAt" | "updatedAt">>): StoryReviewFinding[] {
+    if (input.length === 0) {
+      return [];
+    }
+
+    const timestamp = now();
+    const rows: StoryReviewFindingRow[] = input.map((finding) => ({
+      id: createId("story_review_finding"),
+      storyReviewRunId: finding.storyReviewRunId,
+      severity: finding.severity,
+      category: finding.category,
+      title: finding.title,
+      description: finding.description,
+      evidence: finding.evidence,
+      filePath: finding.filePath,
+      line: finding.line,
+      suggestedFix: finding.suggestedFix,
+      status: finding.status,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    }));
+
+    this.db.insert(storyReviewFindings).values(rows).run();
+    return rows.map(mapStoryReviewFinding);
+  }
+}
+
+export class StoryReviewAgentSessionRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public create(input: Omit<StoryReviewAgentSession, "id" | "createdAt" | "updatedAt">): StoryReviewAgentSession {
+    const timestamp = now();
+    const row: StoryReviewAgentSession = {
+      ...input,
+      id: createId("story_review_session"),
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+    this.db.insert(storyReviewAgentSessions).values(row).run();
+    return row;
+  }
+
+  public listByStoryReviewRunId(storyReviewRunId: string): StoryReviewAgentSession[] {
+    return this.db
+      .select()
+      .from(storyReviewAgentSessions)
+      .where(eq(storyReviewAgentSessions.storyReviewRunId, storyReviewRunId))
+      .orderBy(storyReviewAgentSessions.createdAt)
+      .all() as StoryReviewAgentSession[];
+  }
+}
+
+export class QaRunRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public getById(id: string): QaRun | null {
+    return (this.db.select().from(qaRuns).where(eq(qaRuns.id, id)).get() as QaRun | undefined) ?? null;
+  }
+
+  public getLatestByProjectId(projectId: string): QaRun | null {
+    return (
+      this.db
+        .select()
+        .from(qaRuns)
+        .where(eq(qaRuns.projectId, projectId))
+        .orderBy(desc(qaRuns.createdAt), desc(qaRuns.id))
+        .limit(1)
+        .get() as QaRun | undefined
+    ) ?? null;
+  }
+
+  public listByProjectId(projectId: string): QaRun[] {
+    return this.db
+      .select()
+      .from(qaRuns)
+      .where(eq(qaRuns.projectId, projectId))
+      .orderBy(qaRuns.createdAt)
+      .all() as QaRun[];
+  }
+
+  public create(input: Omit<QaRun, "id" | "createdAt" | "updatedAt" | "completedAt">): QaRun {
+    const timestamp = now();
+    const row: QaRun = {
+      ...input,
+      id: createId("qa_run"),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      completedAt: null
+    };
+    this.db.insert(qaRuns).values(row).run();
+    return row;
+  }
+
+  public updateStatus(
+    id: string,
+    status: QaRunStatus,
+    options?: { summaryJson?: string | null; errorMessage?: string | null; mode?: QaRunMode }
+  ): void {
+    this.db
+      .update(qaRuns)
+      .set({
+        ...(options?.mode ? { mode: options.mode } : {}),
+        status,
+        summaryJson: options?.summaryJson,
+        errorMessage: options?.errorMessage ?? null,
+        updatedAt: now(),
+        completedAt: status === "passed" || status === "failed" || status === "review_required" ? now() : null
+      })
+      .where(eq(qaRuns.id, id))
+      .run();
+  }
+}
+
+export class QaFindingRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public listByQaRunId(qaRunId: string): QaFinding[] {
+    const rows = this.db
+      .select()
+      .from(qaFindings)
+      .where(eq(qaFindings.qaRunId, qaRunId))
+      .orderBy(qaFindings.createdAt)
+      .all() as QaFindingRow[];
+    return rows.map(mapQaFinding);
+  }
+
+  public createMany(input: Array<Omit<QaFinding, "id" | "createdAt" | "updatedAt">>): QaFinding[] {
+    if (input.length === 0) {
+      return [];
+    }
+
+    const timestamp = now();
+    const rows: QaFindingRow[] = input.map((finding) => ({
+      id: createId("qa_finding"),
+      qaRunId: finding.qaRunId,
+      severity: finding.severity,
+      category: finding.category,
+      title: finding.title,
+      description: finding.description,
+      evidence: finding.evidence,
+      reproStepsJson: stringifyStringList(finding.reproSteps),
+      suggestedFix: finding.suggestedFix,
+      status: finding.status,
+      storyId: finding.storyId,
+      acceptanceCriterionId: finding.acceptanceCriterionId,
+      waveStoryExecutionId: finding.waveStoryExecutionId,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    }));
+
+    this.db.insert(qaFindings).values(rows).run();
+    return rows.map(mapQaFinding);
+  }
+}
+
+export class QaAgentSessionRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public create(input: Omit<QaAgentSession, "id" | "createdAt" | "updatedAt">): QaAgentSession {
+    const timestamp = now();
+    const row: QaAgentSession = {
+      ...input,
+      id: createId("qa_session"),
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+    this.db.insert(qaAgentSessions).values(row).run();
+    return row;
+  }
+
+  public listByQaRunId(qaRunId: string): QaAgentSession[] {
+    return this.db
+      .select()
+      .from(qaAgentSessions)
+      .where(eq(qaAgentSessions.qaRunId, qaRunId))
+      .orderBy(qaAgentSessions.createdAt)
+      .all() as QaAgentSession[];
   }
 }
 

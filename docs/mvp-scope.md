@@ -2,7 +2,7 @@
 
 Enthalten:
 
-- lokaler CLI-Happy-Path bis in die erste deterministische Execution-Schicht
+- lokaler CLI-Happy-Path bis in die projektweite QA-Schicht
 - dateibasierte Prompts und Skills
 - StageRun-Snapshotting
 - SQLite-Persistenz
@@ -13,14 +13,17 @@ Enthalten:
 - persistierte Planning-Schicht mit `ImplementationPlan`, `Wave`, `WaveStory` und `WaveStoryDependency`
 - persistierte Runtime-Schicht mit `ProjectExecutionContext`, `WaveExecution`, `WaveStoryTestRun`, `TestAgentSession`, `WaveStoryExecution`, `ExecutionAgentSession` und `VerificationRun`
 - zweistufige Story-Verifikation mit `basic`- und `ralph`-Runs nach jeder Implementierung
+- bounded Story-Review-Schicht innerhalb der Execution-Pipeline
+- projektweite QA-Schicht mit `QaRun`, `QaFinding` und `QaAgentSession`
 - CLI-Kommandos fuer `execution:start`, `execution:tick`, `execution:show` und `execution:retry`
-- engine-erzwungene TDD-Reihenfolge `test_preparation -> implementation -> verification`
+- CLI-Kommandos fuer `qa:start`, `qa:show` und `qa:retry`
+- engine-erzwungene Reihenfolge `test_preparation -> implementation -> verification_basic -> verification_ralph -> story_review -> qa`
 
 Bewusst nicht enthalten:
 
 - UI
 - Multi-Provider-Adapter
 - freie LLM-Orchestrierung oder agentenseitige Scheduling-Entscheidungen
-- ausformulierte Review-/QA-Pipelines ueber den ersten Execution-Core hinaus
+- Dokumentations-Schritt
 - Session-Recovery ueber Prozessneustarts hinaus
 - Legacy-Kompatibilitaet fuer wegwerfbare Baumodus-Datenbanken

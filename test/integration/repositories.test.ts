@@ -11,8 +11,14 @@ import {
   ExecutionAgentSessionRepository,
   ImplementationPlanRepository,
   ItemRepository,
+  QaAgentSessionRepository,
+  QaFindingRepository,
+  QaRunRepository,
   ProjectExecutionContextRepository,
   ProjectRepository,
+  StoryReviewAgentSessionRepository,
+  StoryReviewFindingRepository,
+  StoryReviewRunRepository,
   TestAgentSessionRepository,
   UserStoryRepository,
   VerificationRunRepository,
@@ -46,6 +52,12 @@ describe("repositories", () => {
     const waveStoryExecutionRepository = new WaveStoryExecutionRepository(db);
     const executionAgentSessionRepository = new ExecutionAgentSessionRepository(db);
     const verificationRunRepository = new VerificationRunRepository(db);
+    const storyReviewRunRepository = new StoryReviewRunRepository(db);
+    const storyReviewFindingRepository = new StoryReviewFindingRepository(db);
+    const storyReviewAgentSessionRepository = new StoryReviewAgentSessionRepository(db);
+    const qaRunRepository = new QaRunRepository(db);
+    const qaFindingRepository = new QaFindingRepository(db);
+    const qaAgentSessionRepository = new QaAgentSessionRepository(db);
     const artifactRepository = new ArtifactRepository(db);
 
     try {
@@ -222,6 +234,8 @@ describe("repositories", () => {
         status: "completed",
         attempt: 1,
         workerRole: "test-writer",
+        systemPromptSnapshot: "test preparation prompt",
+        skillsSnapshotJson: JSON.stringify([{ path: "skills/test-writer.md", content: "Test writer skill" }]),
         businessContextSnapshotJson: "{\"story\":\"ITEM-0001-P01-US01\"}",
         repoContextSnapshotJson: "{\"files\":[\"test/generated/item-0001-p01-us01.test.ts\"]}",
         outputSummaryJson: "{\"summary\":\"tests prepared\"}",
@@ -244,6 +258,8 @@ describe("repositories", () => {
         status: "completed",
         attempt: 1,
         workerRole: "backend-implementer",
+        systemPromptSnapshot: "execution prompt",
+        skillsSnapshotJson: JSON.stringify([{ path: "skills/execution-implementer.md", content: "Execution skill" }]),
         businessContextSnapshotJson: "{\"story\":\"ITEM-0001-P01-US01\"}",
         repoContextSnapshotJson: "{\"files\":[\"src/workflow/workflow-service.ts\"]}",
         outputSummaryJson: "{\"summary\":\"done\"}",
@@ -263,8 +279,80 @@ describe("repositories", () => {
         waveStoryExecutionId: waveStoryExecution.id,
         mode: "basic",
         status: "passed",
+        systemPromptSnapshot: null,
+        skillsSnapshotJson: null,
         summaryJson: "{\"testsRun\":[{\"command\":\"npm test\",\"status\":\"passed\"}]}",
         errorMessage: null
+      });
+      const qaRun = qaRunRepository.create({
+        projectId: projects[0]!.id,
+        mode: "full",
+        status: "running",
+        inputSnapshotJson: "{\"projectCode\":\"ITEM-0001-P01\"}",
+        systemPromptSnapshot: "qa prompt",
+        skillsSnapshotJson: JSON.stringify([{ path: "skills/qa-verifier.md", content: "QA skill" }]),
+        summaryJson: null,
+        errorMessage: null
+      });
+      const qaFindings = qaFindingRepository.createMany([
+        {
+          qaRunId: qaRun.id,
+          severity: "medium",
+          category: "functional",
+          title: "Duplicate submission is possible",
+          description: "Submitting twice quickly creates two records.",
+          evidence: "Observed in assembled flow after story completion.",
+          reproSteps: ["Open the relevant flow", "Submit twice quickly"],
+          suggestedFix: "Add idempotent handling or disable repeated submission.",
+          status: "open",
+          storyId: stories[0]!.id,
+          acceptanceCriterionId: criteria[0]!.id,
+          waveStoryExecutionId: waveStoryExecution.id
+        }
+      ]);
+      const qaSession = qaAgentSessionRepository.create({
+        qaRunId: qaRun.id,
+        adapterKey: "local-cli",
+        status: "completed",
+        commandJson: "[\"node\"]",
+        stdout: "{}",
+        stderr: "",
+        exitCode: 0
+      });
+      qaRunRepository.updateStatus(qaRun.id, "review_required", {
+        summaryJson: "{\"overallStatus\":\"review_required\"}"
+      });
+      const storyReviewRun = storyReviewRunRepository.create({
+        waveStoryExecutionId: waveStoryExecution.id,
+        status: "review_required",
+        inputSnapshotJson: "{\"storyCode\":\"ITEM-0001-P01-US01\"}",
+        systemPromptSnapshot: "story review prompt",
+        skillsSnapshotJson: JSON.stringify([{ path: "skills/story-reviewer.md", content: "Story review skill" }]),
+        summaryJson: "{\"overallStatus\":\"review_required\"}",
+        errorMessage: "Potential persistence issue"
+      });
+      const storyReviewFindings = storyReviewFindingRepository.createMany([
+        {
+          storyReviewRunId: storyReviewRun.id,
+          severity: "medium",
+          category: "persistence",
+          title: "Potential persistence issue",
+          description: "The implementation may rely on an implicit persistence invariant.",
+          evidence: "Observed in the repository access pattern for the completed story.",
+          filePath: "src/persistence/repositories.ts",
+          line: 123,
+          suggestedFix: "Make the persistence assumption explicit with a guard or comment.",
+          status: "open"
+        }
+      ]);
+      const storyReviewSession = storyReviewAgentSessionRepository.create({
+        storyReviewRunId: storyReviewRun.id,
+        adapterKey: "local-cli",
+        status: "completed",
+        commandJson: "[\"node\"]",
+        stdout: "{}",
+        stderr: "",
+        exitCode: 0
       });
 
       expect(architecturePlan.id).toContain("architecture_");
@@ -283,6 +371,19 @@ describe("repositories", () => {
       expect(waveStoryExecution.id).toContain("wave_story_execution_");
       expect(executionSession.id).toContain("execution_session_");
       expect(verificationRun.id).toContain("verification_");
+      expect(storyReviewRun.id).toContain("story_review_run_");
+      expect(storyReviewRunRepository.getLatestByWaveStoryExecutionId(waveStoryExecution.id)?.status).toBe("review_required");
+      expect(storyReviewFindings[0]?.line).toBe(123);
+      expect(storyReviewFindingRepository.listByStoryReviewRunId(storyReviewRun.id)).toHaveLength(1);
+      expect(storyReviewSession.id).toContain("story_review_session_");
+      expect(storyReviewAgentSessionRepository.listByStoryReviewRunId(storyReviewRun.id)).toHaveLength(1);
+      expect(qaRun.id).toContain("qa_run_");
+      expect(qaRunRepository.getLatestByProjectId(projects[0]!.id)?.status).toBe("review_required");
+      expect(qaRunRepository.listByProjectId(projects[0]!.id)).toHaveLength(1);
+      expect(qaFindings[0]?.reproSteps).toEqual(["Open the relevant flow", "Submit twice quickly"]);
+      expect(qaFindingRepository.listByQaRunId(qaRun.id)).toHaveLength(1);
+      expect(qaSession.id).toContain("qa_session_");
+      expect(qaAgentSessionRepository.listByQaRunId(qaRun.id)).toHaveLength(1);
     } finally {
       testDb.cleanup();
     }

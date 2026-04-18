@@ -192,6 +192,68 @@ Live zu verifizieren:
 - pro erfolgreicher Story liegen jetzt zwei `VerificationRun`-Records vor: `basic` und `ralph`
 - Wave-Abschluss haengt explizit am Ralph-Status jeder Story
 
+## Story Review Slice
+
+Umgesetzt:
+
+- neue Runtime-Entities `StoryReviewRun`, `StoryReviewFinding` und `StoryReviewAgentSession`
+- engine-erzwungene Reihenfolge `test_preparation -> implementation -> verification_basic -> verification_ralph -> story_review`
+- bounded technischer Review pro Story mit Severity-basierten Findings
+- `execution:show` surfacet den neuesten Story-Review-Run, dessen Findings und die zugehoerige Review-Session pro Story
+- eine Story wird erst `completed`, wenn auch der neueste Story-Review-Run `passed` ist
+
+Verifiziert mit:
+
+- `npm run build`
+- `npm test`
+
+Aktueller Stand:
+
+- 12 Testdateien
+- 37 gruene Tests
+
+Live zu verifizieren:
+
+- pro erfolgreicher Story liegt jetzt zusaetzlich ein `StoryReviewRun` vor
+- Story-Review-Findings werden als eigene Records gespeichert und in `execution:show` sichtbar
+- Wave-Abschluss haengt explizit auch am Story-Review-Status jeder Story
+
+## QA Slice
+
+Umgesetzt:
+
+- projektweiter QA-Lauf mit `QaRun`, `QaFinding` und `QaAgentSession`
+- CLI-Kommandos `qa:start`, `qa:show` und `qa:retry`
+- engine-seitige Guards: QA startet nur nach vollstaendig abgeschlossener Execution
+- strukturierter `qa.json`-Output mit Summary, Findings, Evidence und Recommendations
+- engine-seitige Statusableitung:
+  - keine Findings -> `passed`
+  - mindestens ein `critical` oder `high` -> `failed`
+  - nur `medium` / `low` -> `review_required`
+- Retry-Pfad fuer `review_required` und `failed` auf `QaRun`-Ebene
+
+Verifiziert mit:
+
+- `npm run build`
+- `npm test`
+
+Aktueller Stand:
+
+- 12 Testdateien
+- 40 gruene Tests
+
+Live verifiziert:
+
+- kompletter CLI-Durchlauf bis `qa:start` und `qa:show` erfolgreich
+- pro Project wird ein `QaRun` mit gespeichertem Input-Snapshot und strukturierter Summary angelegt
+- Findings und QA-Agent-Sessions werden pro Run persistiert
+- erfolgreicher Live-Run gegen `/tmp/beerengineer-live-qa.sqlite`:
+  - Item `ITEM-0002`
+  - Project `ITEM-0002-P01`
+  - `QaRun.status = passed`
+  - beide Waves `completed`
+  - Item-Endzustand `currentColumn = done`, `phaseStatus = completed`
+
 ## Migration Hardening
 
 Umgesetzt:

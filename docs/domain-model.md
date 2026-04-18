@@ -20,6 +20,12 @@ Kernentitaeten des aktuellen MVP:
 - `ExecutionAgentSession`: Session-Metadaten eines konkreten Worker-Laufs
 - `VerificationRun`: strukturierter Verifikationsstand fuer Story- oder Wave-Ausfuehrung
   mit explizitem `mode` (`basic` oder `ralph`)
+- `StoryReviewRun`: bounded technischer Reviewversuch fuer genau eine `WaveStoryExecution`
+- `StoryReviewFinding`: strukturierter technischer Finding-Record eines Story-Reviews
+- `StoryReviewAgentSession`: Session-Metadaten des konkreten Story-Review-Workers
+- `QaRun`: projektweiter QA-Versuch nach komplett abgeschlossener Execution
+- `QaFinding`: strukturierter projektweiter QA-Finding-Record mit Severity, Evidence und Repro-Schritten
+- `QaAgentSession`: Session-Metadaten des konkreten QA-Workers
 - optional spaeter `WaveParallelGroup`: fachliche Kennzeichnung fuer sicher parallel ausfuehrbare Story-Gruppen innerhalb einer Wave
 
 Die Entitaeten leben im Domain-Layer und werden nicht aus CLI-Kommandos heraus modelliert.
@@ -30,4 +36,6 @@ Wichtig:
 - Die Execution-Schicht entscheidet die konkrete Laufzeitorchestrierung engine-seitig.
 - Die TDD-Schicht erzwingt `test_preparation` vor `implementation`.
 - Die Ralph-Schicht erzwingt AC-by-AC-Verifikation nach der Implementierung.
+- Die Story-Review-Schicht erzwingt einen bounded technischen Review nach Ralph und vor finaler Story-Completion.
+- Die QA-Schicht erzwingt einen projektweiten integrierten Check nach vollstaendig abgeschlossener Story-Execution.
 - Worker-Rollen sind Registry und Ausfuehrungsprofil, aber nicht der Scheduler.

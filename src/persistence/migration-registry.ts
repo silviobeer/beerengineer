@@ -299,5 +299,124 @@ export const baseMigrations: readonly SqlMigration[] = [
     statements: [
       `ALTER TABLE verification_runs ADD COLUMN mode TEXT NOT NULL DEFAULT 'basic'`
     ]
+  },
+  {
+    id: "0002_add_qa_runtime_tables",
+    statements: [
+      `CREATE TABLE IF NOT EXISTS qa_runs (
+        id TEXT PRIMARY KEY NOT NULL,
+        project_id TEXT NOT NULL,
+        mode TEXT NOT NULL,
+        status TEXT NOT NULL,
+        input_snapshot_json TEXT NOT NULL,
+        summary_json TEXT,
+        error_message TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        FOREIGN KEY (project_id) REFERENCES projects(id)
+      )`,
+      `CREATE TABLE IF NOT EXISTS qa_findings (
+        id TEXT PRIMARY KEY NOT NULL,
+        qa_run_id TEXT NOT NULL,
+        severity TEXT NOT NULL,
+        category TEXT NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL,
+        evidence TEXT NOT NULL,
+        repro_steps_json TEXT NOT NULL,
+        suggested_fix TEXT,
+        status TEXT NOT NULL,
+        story_id TEXT,
+        acceptance_criterion_id TEXT,
+        wave_story_execution_id TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (qa_run_id) REFERENCES qa_runs(id),
+        FOREIGN KEY (story_id) REFERENCES user_stories(id),
+        FOREIGN KEY (acceptance_criterion_id) REFERENCES acceptance_criteria(id),
+        FOREIGN KEY (wave_story_execution_id) REFERENCES wave_story_executions(id)
+      )`,
+      `CREATE TABLE IF NOT EXISTS qa_agent_sessions (
+        id TEXT PRIMARY KEY NOT NULL,
+        qa_run_id TEXT NOT NULL,
+        adapter_key TEXT NOT NULL,
+        status TEXT NOT NULL,
+        command_json TEXT NOT NULL,
+        stdout TEXT NOT NULL,
+        stderr TEXT NOT NULL,
+        exit_code INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (qa_run_id) REFERENCES qa_runs(id)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_qa_runs_project_id ON qa_runs(project_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_qa_findings_qa_run_id ON qa_findings(qa_run_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_qa_agent_sessions_qa_run_id ON qa_agent_sessions(qa_run_id)`
+    ]
+  },
+  {
+    id: "0003_add_story_review_runtime_tables",
+    statements: [
+      `CREATE TABLE IF NOT EXISTS story_review_runs (
+        id TEXT PRIMARY KEY NOT NULL,
+        wave_story_execution_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        input_snapshot_json TEXT NOT NULL,
+        summary_json TEXT,
+        error_message TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        FOREIGN KEY (wave_story_execution_id) REFERENCES wave_story_executions(id)
+      )`,
+      `CREATE TABLE IF NOT EXISTS story_review_findings (
+        id TEXT PRIMARY KEY NOT NULL,
+        story_review_run_id TEXT NOT NULL,
+        severity TEXT NOT NULL,
+        category TEXT NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL,
+        evidence TEXT NOT NULL,
+        file_path TEXT,
+        line INTEGER,
+        suggested_fix TEXT,
+        status TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (story_review_run_id) REFERENCES story_review_runs(id)
+      )`,
+      `CREATE TABLE IF NOT EXISTS story_review_agent_sessions (
+        id TEXT PRIMARY KEY NOT NULL,
+        story_review_run_id TEXT NOT NULL,
+        adapter_key TEXT NOT NULL,
+        status TEXT NOT NULL,
+        command_json TEXT NOT NULL,
+        stdout TEXT NOT NULL,
+        stderr TEXT NOT NULL,
+        exit_code INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (story_review_run_id) REFERENCES story_review_runs(id)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_story_review_runs_wave_story_execution_id ON story_review_runs(wave_story_execution_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_story_review_findings_story_review_run_id ON story_review_findings(story_review_run_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_story_review_agent_sessions_story_review_run_id ON story_review_agent_sessions(story_review_run_id)`
+    ]
+  },
+  {
+    id: "0004_add_worker_prompt_skill_snapshots",
+    statements: [
+      `ALTER TABLE wave_story_test_runs ADD COLUMN system_prompt_snapshot TEXT NOT NULL DEFAULT ''`,
+      `ALTER TABLE wave_story_test_runs ADD COLUMN skills_snapshot_json TEXT NOT NULL DEFAULT '[]'`,
+      `ALTER TABLE wave_story_executions ADD COLUMN system_prompt_snapshot TEXT NOT NULL DEFAULT ''`,
+      `ALTER TABLE wave_story_executions ADD COLUMN skills_snapshot_json TEXT NOT NULL DEFAULT '[]'`,
+      `ALTER TABLE verification_runs ADD COLUMN system_prompt_snapshot TEXT`,
+      `ALTER TABLE verification_runs ADD COLUMN skills_snapshot_json TEXT`,
+      `ALTER TABLE story_review_runs ADD COLUMN system_prompt_snapshot TEXT NOT NULL DEFAULT ''`,
+      `ALTER TABLE story_review_runs ADD COLUMN skills_snapshot_json TEXT NOT NULL DEFAULT '[]'`,
+      `ALTER TABLE qa_runs ADD COLUMN system_prompt_snapshot TEXT NOT NULL DEFAULT ''`,
+      `ALTER TABLE qa_runs ADD COLUMN skills_snapshot_json TEXT NOT NULL DEFAULT '[]'`
+    ]
   }
 ];

@@ -12,8 +12,14 @@ import {
   ExecutionAgentSessionRepository,
   ImplementationPlanRepository,
   ItemRepository,
+  QaAgentSessionRepository,
+  QaFindingRepository,
+  QaRunRepository,
   ProjectExecutionContextRepository,
   ProjectRepository,
+  StoryReviewAgentSessionRepository,
+  StoryReviewFindingRepository,
+  StoryReviewRunRepository,
   StageRunRepository,
   TestAgentSessionRepository,
   UserStoryRepository,
@@ -55,6 +61,12 @@ export type AppContext = {
     waveStoryExecutionRepository: WaveStoryExecutionRepository;
     executionAgentSessionRepository: ExecutionAgentSessionRepository;
     verificationRunRepository: VerificationRunRepository;
+    storyReviewRunRepository: StoryReviewRunRepository;
+    storyReviewFindingRepository: StoryReviewFindingRepository;
+    storyReviewAgentSessionRepository: StoryReviewAgentSessionRepository;
+    qaRunRepository: QaRunRepository;
+    qaFindingRepository: QaFindingRepository;
+    qaAgentSessionRepository: QaAgentSessionRepository;
     stageRunRepository: StageRunRepository;
     artifactRepository: ArtifactRepository;
     agentSessionRepository: AgentSessionRepository;
@@ -90,6 +102,12 @@ export function createAppContext(
   const waveStoryExecutionRepository = new WaveStoryExecutionRepository(db);
   const executionAgentSessionRepository = new ExecutionAgentSessionRepository(db);
   const verificationRunRepository = new VerificationRunRepository(db);
+  const storyReviewRunRepository = new StoryReviewRunRepository(db);
+  const storyReviewFindingRepository = new StoryReviewFindingRepository(db);
+  const storyReviewAgentSessionRepository = new StoryReviewAgentSessionRepository(db);
+  const qaRunRepository = new QaRunRepository(db);
+  const qaFindingRepository = new QaFindingRepository(db);
+  const qaAgentSessionRepository = new QaAgentSessionRepository(db);
   const stageRunRepository = new StageRunRepository(db);
   const artifactRepository = new ArtifactRepository(db);
   const agentSessionRepository = new AgentSessionRepository(db);
@@ -116,6 +134,12 @@ export function createAppContext(
       waveStoryExecutionRepository,
       executionAgentSessionRepository,
       verificationRunRepository,
+      storyReviewRunRepository,
+      storyReviewFindingRepository,
+      storyReviewAgentSessionRepository,
+      qaRunRepository,
+      qaFindingRepository,
+      qaAgentSessionRepository,
       stageRunRepository,
       artifactRepository,
       agentSessionRepository
@@ -142,6 +166,12 @@ export function createAppContext(
       waveStoryExecutionRepository,
       executionAgentSessionRepository,
       verificationRunRepository,
+      storyReviewRunRepository,
+      storyReviewFindingRepository,
+      storyReviewAgentSessionRepository,
+      qaRunRepository,
+      qaFindingRepository,
+      qaAgentSessionRepository,
       stageRunRepository,
       artifactRepository,
       agentSessionRepository

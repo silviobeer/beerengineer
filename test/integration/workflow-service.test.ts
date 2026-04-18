@@ -7,6 +7,31 @@ import { describe, expect, it } from "vitest";
 import { createAppContext } from "../../src/app-context.js";
 
 describe("workflow service", () => {
+  async function prepareProjectThroughCompletedExecution(
+    context: ReturnType<typeof createAppContext>,
+    input: { title: string; description: string }
+  ) {
+    const item = context.repositories.itemRepository.create({
+      title: input.title,
+      description: input.description
+    });
+    await context.workflowService.startStage({ stageKey: "brainstorm", itemId: item.id });
+    const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+    context.workflowService.approveConcept(concept!.id);
+    context.workflowService.importProjects(item.id);
+    const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
+    await context.workflowService.startStage({ stageKey: "requirements", itemId: item.id, projectId: project.id });
+    context.workflowService.approveStories(project.id);
+    await context.workflowService.startStage({ stageKey: "architecture", itemId: item.id, projectId: project.id });
+    context.workflowService.approveArchitecture(project.id);
+    await context.workflowService.startStage({ stageKey: "planning", itemId: item.id, projectId: project.id });
+    context.workflowService.approvePlanning(project.id);
+    await context.workflowService.startExecution(project.id);
+    await context.workflowService.tickExecution(project.id);
+
+    return { item, project };
+  }
+
   it("starts a brainstorm run and stores prompt snapshots", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
     const dbPath = join(root, "app.sqlite");
@@ -346,13 +371,13 @@ describe("workflow service", () => {
       expect(first.activeWaveCode).toBe("W01");
       expect(first.scheduledCount).toBe(1);
       expect(first.executions[0]?.status).toBe("completed");
-      expect(first.executions[0]?.phase).toBe("implementation");
+      expect(first.executions[0]?.phase).toBe("story_review");
 
       const second = await context.workflowService.tickExecution(project.id);
       expect(second.activeWaveCode).toBe("W02");
       expect(second.scheduledCount).toBe(1);
       expect(second.executions[0]?.status).toBe("completed");
-      expect(second.executions[0]?.phase).toBe("implementation");
+      expect(second.executions[0]?.phase).toBe("story_review");
 
       const shown = context.workflowService.showExecution(project.id) as {
         projectExecutionContext: { relevantDirectories: string[] } | null;
@@ -371,6 +396,9 @@ describe("workflow service", () => {
             latestBasicVerification: { mode: string; status: string } | null;
             latestRalphVerification: { mode: string; status: string } | null;
             agentSessions: Array<{ adapterKey: string }>;
+            latestStoryReviewRun: { status: string; summaryJson: string | null } | null;
+            latestStoryReviewFindings: Array<{ severity: string }>;
+            storyReviewAgentSessions: Array<{ adapterKey: string }>;
           }>;
         }>;
       };
@@ -388,6 +416,10 @@ describe("workflow service", () => {
       expect(shown.waves[0]?.stories[0]?.verificationRuns.map((run) => run.mode)).toEqual(["basic", "ralph"]);
       expect(shown.waves[0]?.stories[0]?.latestBasicVerification?.status).toBe("passed");
       expect(shown.waves[0]?.stories[0]?.latestRalphVerification?.status).toBe("passed");
+      expect(shown.waves[0]?.stories[0]?.latestStoryReviewRun?.status).toBe("passed");
+      expect(shown.waves[0]?.stories[0]?.latestStoryReviewRun?.summaryJson).toContain("overallStatus");
+      expect(shown.waves[0]?.stories[0]?.latestStoryReviewFindings).toHaveLength(0);
+      expect(shown.waves[0]?.stories[0]?.storyReviewAgentSessions[0]?.adapterKey).toBe("local-cli");
       expect(shown.waves[0]?.stories[0]?.agentSessions[0]?.adapterKey).toBe("local-cli");
     } finally {
       context.connection.close();
@@ -402,10 +434,7 @@ describe("workflow service", () => {
     const dbPath = join(root, "app.sqlite");
 
     try {
-      const reviewScript = originalScript.replace(
-        /const status = payload\.basicVerification\.status === "failed"[\s\S]*?: "passed";/,
-        'const status = "review_required";'
-      );
+      const reviewScript = originalScript.replace("      overallStatus: status,", '      overallStatus: "review_required",');
       writeFileSync(adapterScriptPath, reviewScript);
       const context = createAppContext(dbPath, { adapterScriptPath });
 
@@ -434,12 +463,14 @@ describe("workflow service", () => {
           stories: Array<{
             latestRalphVerification: { status: string } | null;
             latestExecution: { status: string } | null;
+            latestStoryReviewRun: { status: string } | null;
           }>;
         }>;
       };
       expect(shown.waves[0]?.waveExecution?.status).toBe("review_required");
       expect(shown.waves[0]?.stories[0]?.latestExecution?.status).toBe("review_required");
       expect(shown.waves[0]?.stories[0]?.latestRalphVerification?.status).toBe("review_required");
+      expect(shown.waves[0]?.stories[0]?.latestStoryReviewRun).toBeNull();
       context.connection.close();
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -453,10 +484,7 @@ describe("workflow service", () => {
     const dbPath = join(root, "app.sqlite");
 
     try {
-      const failedScript = originalScript.replace(
-        /const status = payload\.basicVerification\.status === "failed"[\s\S]*?: "passed";/,
-        'const status = "failed";'
-      );
+      const failedScript = originalScript.replace("      overallStatus: status,", '      overallStatus: "failed",');
       writeFileSync(adapterScriptPath, failedScript);
       const context = createAppContext(dbPath, { adapterScriptPath });
 
@@ -485,14 +513,256 @@ describe("workflow service", () => {
           stories: Array<{
             latestRalphVerification: { status: string } | null;
             latestExecution: { status: string } | null;
+            latestStoryReviewRun: { status: string } | null;
           }>;
         }>;
       };
       expect(shown.waves[0]?.waveExecution?.status).toBe("failed");
       expect(shown.waves[0]?.stories[0]?.latestExecution?.status).toBe("failed");
       expect(shown.waves[0]?.stories[0]?.latestRalphVerification?.status).toBe("failed");
+      expect(shown.waves[0]?.stories[0]?.latestStoryReviewRun).toBeNull();
       context.connection.close();
     } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("marks execution review_required when story review returns review_required", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const originalScript = readFileSync("scripts/local-agent.mjs", "utf8");
+    const adapterScriptPath = join(root, "local-agent-story-review-required.mjs");
+    const dbPath = join(root, "app.sqlite");
+
+    try {
+      const reviewScript = originalScript.replace(
+        "function storyReview(payload) {\n  const findings = [];",
+        `function storyReview(payload) {\n  const findings = [{
+    severity: "medium",
+    category: "performance",
+    title: "Potential N+1 query path",
+    description: "Repeated lookup pattern may not scale cleanly.",
+    evidence: "Observed in the bounded review fixture.",
+    filePath: "src/workflow/workflow-service.ts",
+    line: 1,
+    suggestedFix: "Batch the lookup before scaling the path."
+  }];`
+      );
+      writeFileSync(adapterScriptPath, reviewScript);
+      const context = createAppContext(dbPath, { adapterScriptPath });
+
+      const item = context.repositories.itemRepository.create({
+        title: "Story Review Required",
+        description: "Trigger story review follow-up"
+      });
+      await context.workflowService.startStage({ stageKey: "brainstorm", itemId: item.id });
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      context.workflowService.approveConcept(concept!.id);
+      context.workflowService.importProjects(item.id);
+      const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
+      await context.workflowService.startStage({ stageKey: "requirements", itemId: item.id, projectId: project.id });
+      context.workflowService.approveStories(project.id);
+      await context.workflowService.startStage({ stageKey: "architecture", itemId: item.id, projectId: project.id });
+      context.workflowService.approveArchitecture(project.id);
+      await context.workflowService.startStage({ stageKey: "planning", itemId: item.id, projectId: project.id });
+      context.workflowService.approvePlanning(project.id);
+
+      const first = await context.workflowService.startExecution(project.id);
+      expect(first.executions[0]?.status).toBe("review_required");
+      expect(first.executions[0]?.phase).toBe("story_review");
+
+      const shown = context.workflowService.showExecution(project.id) as {
+        waves: Array<{
+          waveExecution: { status: string } | null;
+          stories: Array<{
+            latestExecution: { status: string } | null;
+            latestStoryReviewRun: { status: string } | null;
+          }>;
+        }>;
+      };
+      expect(shown.waves[0]?.waveExecution?.status).toBe("review_required");
+      expect(shown.waves[0]?.stories[0]?.latestExecution?.status).toBe("review_required");
+      expect(shown.waves[0]?.stories[0]?.latestStoryReviewRun?.status).toBe("review_required");
+      context.connection.close();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("marks execution failed when story review returns failed", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const originalScript = readFileSync("scripts/local-agent.mjs", "utf8");
+    const adapterScriptPath = join(root, "local-agent-story-review-failed.mjs");
+    const dbPath = join(root, "app.sqlite");
+
+    try {
+      const failedScript = originalScript.replace(
+        "function storyReview(payload) {\n  const findings = [];",
+        `function storyReview(payload) {\n  const findings = [{
+    severity: "high",
+    category: "security",
+    title: "Critical story review finding",
+    description: "A high-severity technical issue was injected for the test fixture.",
+    evidence: "Observed in the bounded review fixture.",
+    filePath: "src/workflow/workflow-service.ts",
+    line: 1,
+    suggestedFix: "Address the high-severity issue before completing the story."
+  }];`
+      );
+      writeFileSync(adapterScriptPath, failedScript);
+      const context = createAppContext(dbPath, { adapterScriptPath });
+
+      const item = context.repositories.itemRepository.create({
+        title: "Story Review Failure",
+        description: "Trigger story review failure"
+      });
+      await context.workflowService.startStage({ stageKey: "brainstorm", itemId: item.id });
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      context.workflowService.approveConcept(concept!.id);
+      context.workflowService.importProjects(item.id);
+      const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
+      await context.workflowService.startStage({ stageKey: "requirements", itemId: item.id, projectId: project.id });
+      context.workflowService.approveStories(project.id);
+      await context.workflowService.startStage({ stageKey: "architecture", itemId: item.id, projectId: project.id });
+      context.workflowService.approveArchitecture(project.id);
+      await context.workflowService.startStage({ stageKey: "planning", itemId: item.id, projectId: project.id });
+      context.workflowService.approvePlanning(project.id);
+
+      const first = await context.workflowService.startExecution(project.id);
+      expect(first.executions[0]?.status).toBe("failed");
+      expect(first.executions[0]?.phase).toBe("story_review");
+
+      const shown = context.workflowService.showExecution(project.id) as {
+        waves: Array<{
+          waveExecution: { status: string } | null;
+          stories: Array<{
+            latestExecution: { status: string } | null;
+            latestStoryReviewRun: { status: string } | null;
+          }>;
+        }>;
+      };
+      expect(shown.waves[0]?.waveExecution?.status).toBe("failed");
+      expect(shown.waves[0]?.stories[0]?.latestExecution?.status).toBe("failed");
+      expect(shown.waves[0]?.stories[0]?.latestStoryReviewRun?.status).toBe("failed");
+      context.connection.close();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("runs project QA after completed execution and stores findings and sessions", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const { item, project } = await prepareProjectThroughCompletedExecution(context, {
+        title: "QA Flow",
+        description: "Run project QA"
+      });
+
+      const result = await context.workflowService.startQa(project.id);
+      expect(result.status).toBe("passed");
+
+      const shown = context.workflowService.showQa(project.id) as {
+        latestQaRun: { id: string; status: string; summaryJson: string | null } | null;
+        qaRuns: Array<{
+          qaRun: { status: string };
+          findings: Array<{ severity: string }>;
+          sessions: Array<{ adapterKey: string }>;
+        }>;
+      };
+
+      expect(shown.latestQaRun?.status).toBe("passed");
+      expect(shown.latestQaRun?.summaryJson).toContain("overallStatus");
+      expect(shown.qaRuns).toHaveLength(1);
+      expect(shown.qaRuns[0]?.findings).toHaveLength(0);
+      expect(shown.qaRuns[0]?.sessions[0]?.adapterKey).toBe("local-cli");
+      expect(context.repositories.itemRepository.getById(item.id)?.phaseStatus).toBe("completed");
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("marks QA review_required when the QA worker returns only medium findings and supports retry", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const originalScript = readFileSync("scripts/local-agent.mjs", "utf8");
+    const adapterScriptPath = join(root, "local-agent-qa-review-required.mjs");
+    const dbPath = join(root, "app.sqlite");
+
+    try {
+      const reviewScript = originalScript.replace(
+        "  const findings = [];",
+        `  const findings = [{
+    severity: "medium",
+    category: "functional",
+    title: "Cross-story flow needs follow-up",
+    description: "A medium project-level QA issue was injected for the fixture.",
+    evidence: "Observed in the bounded QA fixture.",
+    reproSteps: ["Open the assembled flow", "Repeat the relevant transition"],
+    suggestedFix: "Tighten the flow before sign-off.",
+    storyCode: payload.stories[0]?.code ?? null,
+    acceptanceCriterionCode: null
+  }];`
+      );
+      writeFileSync(adapterScriptPath, reviewScript);
+      const context = createAppContext(dbPath, { adapterScriptPath });
+      const { item, project } = await prepareProjectThroughCompletedExecution(context, {
+        title: "QA Review Required",
+        description: "Trigger QA follow-up"
+      });
+
+      const first = await context.workflowService.startQa(project.id);
+      expect(first.status).toBe("review_required");
+
+      const firstShown = context.workflowService.showQa(project.id) as {
+        latestQaRun: { id: string; status: string } | null;
+        qaRuns: Array<{ findings: Array<{ severity: string }> }>;
+      };
+      expect(firstShown.latestQaRun?.status).toBe("review_required");
+      expect(firstShown.qaRuns[0]?.findings[0]?.severity).toBe("medium");
+      expect(context.repositories.itemRepository.getById(item.id)?.phaseStatus).toBe("review_required");
+
+      writeFileSync(adapterScriptPath, originalScript);
+      const retried = await context.workflowService.retryQa(first.qaRunId);
+      expect(retried.retriedFromQaRunId).toBe(first.qaRunId);
+      expect(retried.status).toBe("passed");
+      expect(context.repositories.qaRunRepository.listByProjectId(project.id)).toHaveLength(2);
+      expect(context.repositories.itemRepository.getById(item.id)?.phaseStatus).toBe("completed");
+
+      context.connection.close();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks QA start until execution is fully completed", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const item = context.repositories.itemRepository.create({
+        title: "QA Blocked",
+        description: "Execution must finish first"
+      });
+      await context.workflowService.startStage({ stageKey: "brainstorm", itemId: item.id });
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      context.workflowService.approveConcept(concept!.id);
+      context.workflowService.importProjects(item.id);
+      const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
+      await context.workflowService.startStage({ stageKey: "requirements", itemId: item.id, projectId: project.id });
+      context.workflowService.approveStories(project.id);
+      await context.workflowService.startStage({ stageKey: "architecture", itemId: item.id, projectId: project.id });
+      context.workflowService.approveArchitecture(project.id);
+      await context.workflowService.startStage({ stageKey: "planning", itemId: item.id, projectId: project.id });
+      context.workflowService.approvePlanning(project.id);
+
+      await expect(context.workflowService.startQa(project.id)).rejects.toMatchObject({
+        code: "QA_EXECUTION_INCOMPLETE"
+      });
+    } finally {
+      context.connection.close();
       rmSync(root, { recursive: true, force: true });
     }
   });

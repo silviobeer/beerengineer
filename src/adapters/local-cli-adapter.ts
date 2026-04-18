@@ -10,8 +10,12 @@ import type {
   AdapterRunResult,
   ExecutionAdapterRunRequest,
   ExecutionAdapterRunResult,
+  QaAdapterRunRequest,
+  QaAdapterRunResult,
   RalphVerificationAdapterRunRequest,
   RalphVerificationAdapterRunResult,
+  StoryReviewAdapterRunRequest,
+  StoryReviewAdapterRunResult,
   TestPreparationAdapterRunRequest,
   TestPreparationAdapterRunResult
 } from "./types.js";
@@ -80,12 +84,36 @@ export class LocalCliAdapter implements AgentAdapter {
     };
   }
 
+  public async runProjectQa(request: QaAdapterRunRequest): Promise<QaAdapterRunResult> {
+    const parsed = this.executePayload(request) as { output: QaAdapterRunResult["output"] };
+    return {
+      output: parsed.output,
+      stdout: JSON.stringify(parsed),
+      stderr: "",
+      exitCode: 0,
+      command: [process.execPath, resolve(this.repoRoot, this.scriptPath)]
+    };
+  }
+
+  public async runStoryReview(request: StoryReviewAdapterRunRequest): Promise<StoryReviewAdapterRunResult> {
+    const parsed = this.executePayload(request) as { output: StoryReviewAdapterRunResult["output"] };
+    return {
+      output: parsed.output,
+      stdout: JSON.stringify(parsed),
+      stderr: "",
+      exitCode: 0,
+      command: [process.execPath, resolve(this.repoRoot, this.scriptPath)]
+    };
+  }
+
   private executePayload(
     request:
       | AdapterRunRequest
       | ExecutionAdapterRunRequest
       | TestPreparationAdapterRunRequest
       | RalphVerificationAdapterRunRequest
+      | StoryReviewAdapterRunRequest
+      | QaAdapterRunRequest
   ): unknown {
     const tempDir = mkdtempSync(join(tmpdir(), "beerengineer-agent-"));
     const payloadPath = join(tempDir, "payload.json");

@@ -1,10 +1,10 @@
 # Beerengineer
 
-CLI-first Workflow-Engine fuer einen modularen, agentengetriebenen Entwicklungsprozess. Der aktuelle MVP bildet den fachlichen Flow von `Item` bis in die erste deterministiche Execution-Schicht lokal und reproduzierbar ab.
+CLI-first Workflow-Engine fuer einen modularen, agentengetriebenen Entwicklungsprozess. Der aktuelle MVP bildet den fachlichen Flow von `Item` bis in die projektweite QA-Schicht lokal und reproduzierbar ab.
 
 ## Status
 
-Der dokumentierte MVP-Schnitt bis zur ersten Execution-Schicht ist umgesetzt:
+Der dokumentierte MVP-Schnitt bis zur projektweiten QA-Schicht ist umgesetzt:
 
 - TypeScript/Vitest/SQLite/Drizzle-Basis
 - Domainmodell und Gate-Logik
@@ -14,11 +14,13 @@ Der dokumentierte MVP-Schnitt bis zur ersten Execution-Schicht ist umgesetzt:
 - `ImplementationPlan`, `Wave`, `WaveStory` und `WaveStoryDependency` als persistierte Planungsschicht
 - `ProjectExecutionContext`, `WaveExecution`, `WaveStoryTestRun`, `TestAgentSession`, `WaveStoryExecution`, `ExecutionAgentSession` und `VerificationRun` als persistierte Runtime-Schicht
 - zweistufige Verifikation pro Story mit `basic`- und `ralph`-Verification-Runs
+- bounded Story-Review pro Story-Ausfuehrung mit eigenen Findings und Sessions
+- projektweiter QA-Lauf mit `QaRun`, `QaFinding` und `QaAgentSession`
 - dateibasiertes Artefakt- und Output-Contract-System
 - StageRuns mit Prompt- und Skill-Snapshots
 - ausformulierte Skills und System-Prompts fuer `brainstorm`, `requirements`, `architecture` und `planning`
 - lokaler CLI-Adapter
-- CLI-Happy-Path von `item:create` bis `execution:tick` mit vorgeschalteter TDD-Testvorbereitung und Ralph-AC-Verifikation pro Story
+- CLI-Happy-Path von `item:create` bis `qa:start` mit vorgeschalteter TDD-Testvorbereitung, Ralph-AC-Verifikation, Story-Review und projektweiter QA
 
 ## Voraussetzungen
 

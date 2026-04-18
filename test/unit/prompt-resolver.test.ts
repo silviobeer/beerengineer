@@ -15,7 +15,6 @@ describe("prompt resolver", () => {
     try {
       const resolver = new PromptResolver(root);
       const resolved = resolver.resolve({
-        stageKey: "brainstorm",
         promptPath: "prompt.md",
         skillPaths: ["skill.md"]
       });

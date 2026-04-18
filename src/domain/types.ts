@@ -43,6 +43,12 @@ export type TestPreparationWorkerRole = (typeof testPreparationWorkerRoles)[numb
 export const verificationWorkerRoles = ["ralph-verifier"] as const;
 export type VerificationWorkerRole = (typeof verificationWorkerRoles)[number];
 
+export const storyReviewWorkerRoles = ["story-reviewer"] as const;
+export type StoryReviewWorkerRole = (typeof storyReviewWorkerRoles)[number];
+
+export const qaWorkerRoles = ["qa-verifier"] as const;
+export type QaWorkerRole = (typeof qaWorkerRoles)[number];
+
 export const waveExecutionStatuses = [
   "pending",
   "running",
@@ -64,6 +70,40 @@ export type VerificationRunStatus = (typeof verificationRunStatuses)[number];
 
 export const verificationRunModes = ["basic", "ralph"] as const;
 export type VerificationRunMode = (typeof verificationRunModes)[number];
+
+export const qaRunModes = ["functional", "security", "regression", "full"] as const;
+export type QaRunMode = (typeof qaRunModes)[number];
+
+export const qaRunStatuses = ["running", "review_required", "passed", "failed"] as const;
+export type QaRunStatus = (typeof qaRunStatuses)[number];
+
+export const qaFindingSeverities = ["critical", "high", "medium", "low"] as const;
+export type QaFindingSeverity = (typeof qaFindingSeverities)[number];
+
+export const qaFindingCategories = ["functional", "security", "regression", "ux"] as const;
+export type QaFindingCategory = (typeof qaFindingCategories)[number];
+
+export const qaFindingStatuses = ["open", "accepted", "resolved", "false_positive"] as const;
+export type QaFindingStatus = (typeof qaFindingStatuses)[number];
+
+export const storyReviewRunStatuses = ["running", "review_required", "passed", "failed"] as const;
+export type StoryReviewRunStatus = (typeof storyReviewRunStatuses)[number];
+
+export const storyReviewFindingSeverities = ["critical", "high", "medium", "low"] as const;
+export type StoryReviewFindingSeverity = (typeof storyReviewFindingSeverities)[number];
+
+export const storyReviewFindingCategories = [
+  "correctness",
+  "security",
+  "reliability",
+  "performance",
+  "maintainability",
+  "persistence"
+] as const;
+export type StoryReviewFindingCategory = (typeof storyReviewFindingCategories)[number];
+
+export const storyReviewFindingStatuses = ["open", "accepted", "resolved", "false_positive"] as const;
+export type StoryReviewFindingStatus = (typeof storyReviewFindingStatuses)[number];
 
 export type Item = {
   id: string;
@@ -210,6 +250,8 @@ export type WaveStoryExecution = {
   status: WaveStoryExecutionStatus;
   attempt: number;
   workerRole: ExecutionWorkerRole;
+  systemPromptSnapshot: string;
+  skillsSnapshotJson: string;
   businessContextSnapshotJson: string;
   repoContextSnapshotJson: string;
   outputSummaryJson: string | null;
@@ -227,6 +269,8 @@ export type WaveStoryTestRun = {
   status: WaveStoryTestRunStatus;
   attempt: number;
   workerRole: TestPreparationWorkerRole;
+  systemPromptSnapshot: string;
+  skillsSnapshotJson: string;
   businessContextSnapshotJson: string;
   repoContextSnapshotJson: string;
   outputSummaryJson: string | null;
@@ -268,8 +312,99 @@ export type VerificationRun = {
   waveStoryExecutionId: string | null;
   mode: VerificationRunMode;
   status: VerificationRunStatus;
+  systemPromptSnapshot: string | null;
+  skillsSnapshotJson: string | null;
   summaryJson: string;
   errorMessage: string | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type StoryReviewRun = {
+  id: string;
+  waveStoryExecutionId: string;
+  status: StoryReviewRunStatus;
+  inputSnapshotJson: string;
+  systemPromptSnapshot: string;
+  skillsSnapshotJson: string;
+  summaryJson: string | null;
+  errorMessage: string | null;
+  createdAt: number;
+  updatedAt: number;
+  completedAt: number | null;
+};
+
+export type StoryReviewFinding = {
+  id: string;
+  storyReviewRunId: string;
+  severity: StoryReviewFindingSeverity;
+  category: StoryReviewFindingCategory;
+  title: string;
+  description: string;
+  evidence: string;
+  filePath: string | null;
+  line: number | null;
+  suggestedFix: string | null;
+  status: StoryReviewFindingStatus;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type StoryReviewAgentSession = {
+  id: string;
+  storyReviewRunId: string;
+  adapterKey: string;
+  status: "running" | "completed" | "failed";
+  commandJson: string;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type QaRun = {
+  id: string;
+  projectId: string;
+  mode: QaRunMode;
+  status: QaRunStatus;
+  inputSnapshotJson: string;
+  systemPromptSnapshot: string;
+  skillsSnapshotJson: string;
+  summaryJson: string | null;
+  errorMessage: string | null;
+  createdAt: number;
+  updatedAt: number;
+  completedAt: number | null;
+};
+
+export type QaFinding = {
+  id: string;
+  qaRunId: string;
+  severity: QaFindingSeverity;
+  category: QaFindingCategory;
+  title: string;
+  description: string;
+  evidence: string;
+  reproSteps: string[];
+  suggestedFix: string | null;
+  status: QaFindingStatus;
+  storyId: string | null;
+  acceptanceCriterionId: string | null;
+  waveStoryExecutionId: string | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type QaAgentSession = {
+  id: string;
+  qaRunId: string;
+  adapterKey: string;
+  status: "running" | "completed" | "failed";
+  commandJson: string;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
   createdAt: number;
   updatedAt: number;
 };

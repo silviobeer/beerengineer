@@ -1,5 +1,6 @@
 import type {
   ExecutionWorkerRole,
+  StoryReviewWorkerRole,
   StageKey,
   TestPreparationWorkerRole,
   VerificationRunStatus,
@@ -7,6 +8,8 @@ import type {
 } from "../domain/types.js";
 import type {
   RalphVerificationOutput,
+  QaOutput,
+  StoryReviewOutput,
   StoryExecutionOutput,
   TestPreparationOutput
 } from "../schemas/output-contracts.js";
@@ -51,6 +54,8 @@ export type AdapterRunResult = {
 
 export type ExecutionAdapterRunRequest = {
   workerRole: ExecutionWorkerRole;
+  prompt: string;
+  skills: Array<{ path: string; content: string }>;
   item: {
     id: string;
     code: string;
@@ -132,6 +137,8 @@ export type ExecutionAdapterRunResult = {
 
 export type TestPreparationAdapterRunRequest = {
   workerRole: TestPreparationWorkerRole;
+  prompt: string;
+  skills: Array<{ path: string; content: string }>;
   item: ExecutionAdapterRunRequest["item"];
   project: ExecutionAdapterRunRequest["project"];
   implementationPlan: ExecutionAdapterRunRequest["implementationPlan"];
@@ -154,6 +161,8 @@ export type TestPreparationAdapterRunResult = {
 
 export type RalphVerificationAdapterRunRequest = {
   workerRole: VerificationWorkerRole;
+  prompt: string;
+  skills: Array<{ path: string; content: string }>;
   item: ExecutionAdapterRunRequest["item"];
   project: ExecutionAdapterRunRequest["project"];
   implementationPlan: ExecutionAdapterRunRequest["implementationPlan"];
@@ -185,10 +194,123 @@ export type RalphVerificationAdapterRunResult = {
   command: string[];
 };
 
+export type QaAdapterRunRequest = {
+  workerRole: "qa-verifier";
+  prompt: string;
+  skills: Array<{ path: string; content: string }>;
+  item: ExecutionAdapterRunRequest["item"];
+  project: ExecutionAdapterRunRequest["project"];
+  implementationPlan: ExecutionAdapterRunRequest["implementationPlan"];
+  architecture: ExecutionAdapterRunRequest["architecture"];
+  projectExecutionContext: ExecutionAdapterRunRequest["projectExecutionContext"];
+  inputSnapshotJson: string;
+  waves: Array<{
+    id: string;
+    code: string;
+    goal: string;
+    position: number;
+  }>;
+  stories: Array<{
+    id: string;
+    code: string;
+    title: string;
+    description: string;
+    actor: string;
+    goal: string;
+    benefit: string;
+    priority: string;
+    acceptanceCriteria: Array<{
+      id: string;
+      code: string;
+      text: string;
+      position: number;
+    }>;
+    latestExecution: {
+      id: string;
+      status: string;
+      outputSummaryJson: string | null;
+      businessContextSnapshotJson: string;
+      repoContextSnapshotJson: string;
+    };
+    latestRalphVerification: {
+      id: string;
+      status: string;
+      summaryJson: string;
+    };
+    latestStoryReview: {
+      id: string;
+      status: string;
+      summaryJson: string | null;
+    };
+  }>;
+};
+
+export type QaAdapterRunResult = {
+  output: QaOutput;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  command: string[];
+};
+
+export type StoryReviewAdapterRunRequest = {
+  workerRole: StoryReviewWorkerRole;
+  prompt: string;
+  skills: Array<{ path: string; content: string }>;
+  item: ExecutionAdapterRunRequest["item"];
+  project: ExecutionAdapterRunRequest["project"];
+  implementationPlan: ExecutionAdapterRunRequest["implementationPlan"];
+  wave: ExecutionAdapterRunRequest["wave"];
+  story: ExecutionAdapterRunRequest["story"];
+  acceptanceCriteria: ExecutionAdapterRunRequest["acceptanceCriteria"];
+  architecture: ExecutionAdapterRunRequest["architecture"];
+  projectExecutionContext: ExecutionAdapterRunRequest["projectExecutionContext"];
+  inputSnapshotJson: string;
+  businessContextSnapshotJson: string;
+  repoContextSnapshotJson: string;
+  testPreparation: ExecutionAdapterRunRequest["testPreparation"];
+  implementation: StoryExecutionOutput;
+  basicVerification: {
+    status: VerificationRunStatus;
+    summary: {
+      storyCode: string;
+      changedFiles: string[];
+      testsRun: StoryExecutionOutput["testsRun"];
+      blockers: string[];
+    };
+  };
+  ralphVerification: {
+    status: VerificationRunStatus;
+    summary: {
+      storyCode: string;
+      overallStatus: "passed" | "review_required" | "failed";
+      summary: string;
+      acceptanceCriteriaResults: Array<{
+        acceptanceCriterionId: string;
+        acceptanceCriterionCode: string;
+        status: "passed" | "review_required" | "failed";
+        evidence: string;
+        notes: string;
+      }>;
+      blockers: string[];
+    };
+  };
+};
+
+export type StoryReviewAdapterRunResult = {
+  output: StoryReviewOutput;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  command: string[];
+};
+
 export interface AgentAdapter {
   readonly key: string;
   run(request: AdapterRunRequest): Promise<AdapterRunResult>;
   runStoryTestPreparation(request: TestPreparationAdapterRunRequest): Promise<TestPreparationAdapterRunResult>;
   runStoryExecution(request: ExecutionAdapterRunRequest): Promise<ExecutionAdapterRunResult>;
   runStoryRalphVerification(request: RalphVerificationAdapterRunRequest): Promise<RalphVerificationAdapterRunResult>;
+  runStoryReview(request: StoryReviewAdapterRunRequest): Promise<StoryReviewAdapterRunResult>;
+  runProjectQa?(request: QaAdapterRunRequest): Promise<QaAdapterRunResult>;
 }

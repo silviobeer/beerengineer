@@ -99,6 +99,45 @@ export const ralphVerificationOutputSchema = z.object({
   blockers: z.array(z.string().min(1))
 });
 
+export const qaOutputSchema = z.object({
+  projectCode: z.string().min(1),
+  overallStatus: z.enum(["passed", "review_required", "failed"]),
+  summary: z.string().min(1),
+  findings: z.array(
+    z.object({
+      severity: z.enum(["critical", "high", "medium", "low"]),
+      category: z.enum(["functional", "security", "regression", "ux"]),
+      title: z.string().min(1),
+      description: z.string().min(1),
+      evidence: z.string().min(1),
+      reproSteps: z.array(z.string().min(1)),
+      suggestedFix: z.string().min(1),
+      storyCode: z.string().min(1).nullable().optional(),
+      acceptanceCriterionCode: z.string().min(1).nullable().optional()
+    })
+  ),
+  recommendations: z.array(z.string().min(1)).default([])
+});
+
+export const storyReviewOutputSchema = z.object({
+  storyCode: z.string().min(1),
+  overallStatus: z.enum(["passed", "review_required", "failed"]),
+  summary: z.string().min(1),
+  findings: z.array(
+    z.object({
+      severity: z.enum(["critical", "high", "medium", "low"]),
+      category: z.enum(["correctness", "security", "reliability", "performance", "maintainability", "persistence"]),
+      title: z.string().min(1),
+      description: z.string().min(1),
+      evidence: z.string().min(1),
+      filePath: z.string().min(1).nullable().optional(),
+      line: z.number().int().positive().nullable().optional(),
+      suggestedFix: z.string().min(1).nullable().optional()
+    })
+  ),
+  recommendations: z.array(z.string().min(1)).default([])
+});
+
 export type ProjectsOutput = z.infer<typeof projectsOutputSchema>;
 export type StoriesOutput = z.infer<typeof storiesOutputSchema>;
 export type ArchitecturePlanOutput = z.infer<typeof architecturePlanOutputSchema>;
@@ -106,3 +145,5 @@ export type ImplementationPlanOutput = z.infer<typeof implementationPlanOutputSc
 export type StoryExecutionOutput = z.infer<typeof storyExecutionOutputSchema>;
 export type TestPreparationOutput = z.infer<typeof testPreparationOutputSchema>;
 export type RalphVerificationOutput = z.infer<typeof ralphVerificationOutputSchema>;
+export type QaOutput = z.infer<typeof qaOutputSchema>;
+export type StoryReviewOutput = z.infer<typeof storyReviewOutputSchema>;

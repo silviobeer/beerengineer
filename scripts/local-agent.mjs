@@ -249,6 +249,102 @@ function ralphVerification(payload) {
   };
 }
 
+function qaVerification(payload) {
+  const findings = [];
+
+  for (const story of payload.stories) {
+    let implementation = null;
+    try {
+      implementation = story.latestExecution.outputSummaryJson
+        ? JSON.parse(story.latestExecution.outputSummaryJson)
+        : null;
+    } catch {
+      implementation = null;
+    }
+    const changedFiles = implementation?.changedFiles ?? [];
+    const hasPassingTestEvidence = (implementation?.testsRun ?? []).some((testRun) => testRun.status === "passed");
+    if (!changedFiles.some((path) => path.includes("test")) && !hasPassingTestEvidence) {
+      findings.push({
+        severity: "medium",
+        category: "regression",
+        title: `No concrete test file mutation recorded for ${story.code}`,
+        description: `${story.code} completed without a changed file path under test/, which is a regression risk at project level.`,
+        evidence: `Changed files: ${changedFiles.join(", ") || "none recorded"}.`,
+        reproSteps: [
+          "Inspect the implementation output for the completed story",
+          "Confirm that only source files were reported as changed"
+        ],
+        suggestedFix: "Persist at least one concrete test file mutation or extend the generated execution output to show the committed test artifact.",
+        storyCode: story.code,
+        acceptanceCriterionCode: null
+      });
+    }
+  }
+
+  const highestSeverity = findings.some((finding) => finding.severity === "critical" || finding.severity === "high")
+    ? "failed"
+    : findings.length > 0
+      ? "review_required"
+      : "passed";
+
+  return {
+    output: {
+      projectCode: payload.project.code,
+      overallStatus: highestSeverity,
+      summary:
+        highestSeverity === "passed"
+          ? `QA passed for ${payload.project.code} with no project-level findings.`
+          : `QA found ${findings.length} project-level issue(s) for ${payload.project.code}.`,
+      findings,
+      recommendations:
+        findings.length > 0
+          ? ["Tighten the implementation output so QA can trace concrete test file mutations per story."]
+          : ["No additional QA follow-up is required in the local stub."]
+    }
+  };
+}
+
+function storyReview(payload) {
+  const findings = [];
+  const changedFiles = payload.implementation.changedFiles ?? [];
+  const hasTargetedTests = payload.implementation.testsRun.some((testRun) => testRun.status === "passed");
+
+  if (!hasTargetedTests) {
+    findings.push({
+      severity: "high",
+      category: "correctness",
+      title: `No passing test evidence recorded for ${payload.story.code}`,
+      description: `${payload.story.code} reached story review without any passing test command in the implementation output.`,
+      evidence: `Implementation tests: ${payload.implementation.testsRun.map((testRun) => `${testRun.command}:${testRun.status}`).join(", ") || "none recorded"}.`,
+      filePath: changedFiles[0] ?? null,
+      line: null,
+      suggestedFix: "Ensure the implementation worker records at least one passing test command before story review."
+    });
+  }
+
+  const overallStatus = findings.some((finding) => finding.severity === "critical" || finding.severity === "high")
+    ? "failed"
+    : findings.length > 0
+      ? "review_required"
+      : "passed";
+
+  return {
+    output: {
+      storyCode: payload.story.code,
+      overallStatus,
+      summary:
+        overallStatus === "passed"
+          ? `No technical risks were found in the bounded story review for ${payload.story.code}.`
+          : `Story review found ${findings.length} technical issue(s) for ${payload.story.code}.`,
+      findings,
+      recommendations:
+        findings.length > 0
+          ? ["Tighten the implementation evidence and re-run the story after addressing the review findings."]
+          : ["No additional story-review follow-up is required in the local stub."]
+    }
+  };
+}
+
 let result;
 if (payload.stageKey === "brainstorm") {
   result = brainstorming(payload.item);
@@ -262,6 +358,10 @@ if (payload.stageKey === "brainstorm") {
   result = testPreparation(payload);
 } else if (payload.workerRole === "ralph-verifier") {
   result = ralphVerification(payload);
+} else if (payload.workerRole === "story-reviewer") {
+  result = storyReview(payload);
+} else if (payload.workerRole === "qa-verifier") {
+  result = qaVerification(payload);
 } else if (payload.workerRole) {
   result = storyExecution(payload);
 } else {

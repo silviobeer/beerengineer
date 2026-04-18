@@ -17,6 +17,9 @@ npm run cli -- execution:start --project-id <projectId>
 npm run cli -- execution:tick --project-id <projectId>
 npm run cli -- execution:show --project-id <projectId>
 npm run cli -- execution:retry --wave-story-execution-id <waveStoryExecutionId>
+npm run cli -- qa:start --project-id <projectId>
+npm run cli -- qa:show --project-id <projectId>
+npm run cli -- qa:retry --qa-run-id <qaRunId>
 ```
 
 Optional:
@@ -73,24 +76,57 @@ Beim `execution:start`- und `execution:tick`-Pfad werden heute zusaetzlich diese
 - `WaveStoryExecution`
 - `ExecutionAgentSession`
 - `VerificationRun`
+- `StoryReviewRun`
+- `StoryReviewFinding`
+- `StoryReviewAgentSession`
+- `QaRun`
+- `QaFinding`
+- `QaAgentSession`
 
 Die Engine entscheidet dabei deterministisch:
 
 - welche Wave aktiv ist
 - welche Stories ausfuehrbar sind
 - dass jede Story zuerst einen `test-writer`-Lauf durchlaeuft
-- dass jede erfolgreiche Implementierung danach durch `basic`- und `ralph`-Verifikation laeuft
+- dass jede erfolgreiche Implementierung danach durch `basic`-, `ralph`- und `story_review`-Schritte laeuft
 - welche Worker-Rolle verwendet wird
 - wann Retry oder Review erforderlich ist
 
 Der Worker selbst bekommt nur den bounded Story-Kontext plus gespeicherte Business- und Repo-Snapshots.
 
-Im aktuellen TDD-Schnitt gilt:
+Im aktuellen Execution-Schnitt gilt:
 
-- `execution:start` und `execution:tick` erzwingen `test_preparation -> implementation -> verification_basic -> verification_ralph`
+- `execution:start` und `execution:tick` erzwingen `test_preparation -> implementation -> verification_basic -> verification_ralph -> story_review`
 - `execution:show` zeigt den neuesten `WaveStoryTestRun` und die zugehoerigen `TestAgentSession`-Records pro Story
 - `execution:show` zeigt zusaetzlich die neuesten `basic`- und `ralph`-Verification-Runs pro Story
+- `execution:show` zeigt ausserdem den neuesten `StoryReviewRun`, dessen `StoryReviewFinding`-Records und die `StoryReviewAgentSession` pro Story
 - Implementierung startet nur, wenn der neueste Test-Run fuer die Story `completed` ist
 - der Implementer bekommt den gespeicherten Test-Run-Output als Eingabe und arbeitet gegen diese vorab erzeugten Testziele
 - jede `WaveStoryExecution` referenziert den konkret verwendeten Test-Run direkt ueber `testPreparationRunId`
-- eine Story darf erst dann `completed` werden, wenn der neueste Ralph-Run `passed` ist
+- eine Story darf erst dann `completed` werden, wenn der neueste Ralph-Run `passed` ist und der neueste Story-Review-Run `passed` ist
+
+## QA Runtime
+
+Beim `qa:start`-, `qa:show`- und `qa:retry`-Pfad werden heute diese projektweiten Runtime-Ebenen genutzt:
+
+- `QaRun`
+- `QaFinding`
+- `QaAgentSession`
+
+Die Engine entscheidet dabei deterministisch:
+
+- dass QA erst nach vollstaendig abgeschlossener Execution laufen darf
+- dass alle Waves `completed` sein muessen
+- dass alle Story-Ausfuehrungen `completed` sein muessen
+- dass der neueste Ralph- und Story-Review-Stand pro Story `passed` sein muss
+- wie der projektweite QA-Status aus den Findings abgeleitet wird
+
+Im aktuellen QA-Schnitt gilt:
+
+- `qa:start` startet genau einen bounded `qa-verifier`-Lauf fuer ein Project
+- `qa:show` zeigt den neuesten `QaRun` sowie Findings und Sessions aller QA-Versuche fuer das Project
+- `qa:retry` erlaubt genau dann einen neuen QA-Lauf, wenn der letzte `QaRun` auf `review_required` oder `failed` steht
+- `QaRun.status` wird engine-seitig aus dem strukturierten Output aufgeloest:
+  - keine Findings -> `passed`
+  - mindestens ein `critical` oder `high` -> `failed`
+  - nur `medium` / `low` -> `review_required`
