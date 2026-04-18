@@ -11,6 +11,12 @@ npm run cli -- requirements:start --item-id <itemId> --project-id <projectId>
 npm run cli -- stories:approve --project-id <projectId>
 npm run cli -- architecture:start --item-id <itemId> --project-id <projectId>
 npm run cli -- architecture:approve --project-id <projectId>
+npm run cli -- planning:start --item-id <itemId> --project-id <projectId>
+npm run cli -- planning:approve --project-id <projectId>
+npm run cli -- execution:start --project-id <projectId>
+npm run cli -- execution:tick --project-id <projectId>
+npm run cli -- execution:show --project-id <projectId>
+npm run cli -- execution:retry --wave-story-execution-id <waveStoryExecutionId>
 ```
 
 Optional:
@@ -32,6 +38,7 @@ Fehler werden als JSON auf `stderr` mit `error.code` und `error.message` ausgege
 - importierte Projekte erhalten abgeleitete Codes wie `ITEM-0001-P01`
 - importierte User Stories erhalten abgeleitete Codes wie `ITEM-0001-P01-US01`
 - importierte Acceptance Criteria erhalten abgeleitete Codes wie `ITEM-0001-P01-US01-AC01`
+- importierte Waves erhalten stabile Wave-Codes innerhalb des Projekts wie `W01`, `W02`
 
 Die Codes werden von der Engine vergeben und bleiben stabil, auch wenn Titel spaeter angepasst werden.
 
@@ -43,3 +50,33 @@ Beim `requirements:start`-Pfad werden heute zwei fachliche Ebenen persistiert:
 - `AcceptanceCriterion`
 
 Acceptance Criteria werden nicht mehr nur als Story-JSON mitgefuehrt, sondern als eigene Records gespeichert und koennen spaeter direkt fuer QA oder Verifikation verwendet werden.
+
+## Planning Import
+
+Beim `planning:start`-Pfad werden heute vier fachliche Ebenen persistiert:
+
+- `ImplementationPlan`
+- `Wave`
+- `WaveStory`
+- `WaveStoryDependency`
+
+Die Planning-Stage ordnet jede Story genau einer Wave zu und speichert explizite Story-Abhaengigkeiten fuer spaetere parallele Execution.
+
+## Execution Runtime
+
+Beim `execution:start`- und `execution:tick`-Pfad werden heute zusaetzlich diese Runtime-Ebenen genutzt:
+
+- `ProjectExecutionContext`
+- `WaveExecution`
+- `WaveStoryExecution`
+- `ExecutionAgentSession`
+- `VerificationRun`
+
+Die Engine entscheidet dabei deterministisch:
+
+- welche Wave aktiv ist
+- welche Stories ausfuehrbar sind
+- welche Worker-Rolle verwendet wird
+- wann Retry oder Review erforderlich ist
+
+Der Worker selbst bekommt nur den bounded Story-Kontext plus gespeicherte Business- und Repo-Snapshots.

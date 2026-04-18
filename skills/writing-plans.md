@@ -99,8 +99,9 @@ Acceptance criteria remain the verification basis.
 
 For planning purposes:
 - every story must appear in exactly one wave
-- every story may optionally name same-wave parallel peers or blocking story codes when useful
-- every wave should name the story codes it contains
+- every planned story should carry its own blocking story codes when needed
+- every planned story may optionally declare a same-wave `parallelGroup`
+- every wave should name the stories it contains
 - acceptance criteria should shape sequencing and risk notes
 - the plan should not duplicate all AC text unless needed for clarity
 

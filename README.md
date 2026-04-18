@@ -1,21 +1,23 @@
 # Beerengineer
 
-CLI-first Workflow-Engine fuer einen modularen, agentengetriebenen Entwicklungsprozess. Der erste MVP bildet den fachlichen Flow von `Item` bis `ArchitecturePlan` lokal und reproduzierbar ab.
+CLI-first Workflow-Engine fuer einen modularen, agentengetriebenen Entwicklungsprozess. Der aktuelle MVP bildet den fachlichen Flow von `Item` bis in die erste deterministiche Execution-Schicht lokal und reproduzierbar ab.
 
 ## Status
 
-Der dokumentierte MVP-Schnitt bis zur Architekturphase ist umgesetzt:
+Der dokumentierte MVP-Schnitt bis zur ersten Execution-Schicht ist umgesetzt:
 
 - TypeScript/Vitest/SQLite/Drizzle-Basis
 - Domainmodell und Gate-Logik
 - Persistenzschema und Repositories
 - stabile Codes fuer `Item`, `Project`, `UserStory` und `AcceptanceCriterion`
 - `AcceptanceCriterion` als eigene persistierte Entity fuer spaetere QA-Verwendung
+- `ImplementationPlan`, `Wave`, `WaveStory` und `WaveStoryDependency` als persistierte Planungsschicht
+- `ProjectExecutionContext`, `WaveExecution`, `WaveStoryExecution`, `ExecutionAgentSession` und `VerificationRun` als persistierte Runtime-Schicht
 - dateibasiertes Artefakt- und Output-Contract-System
 - StageRuns mit Prompt- und Skill-Snapshots
-- ausformulierte Skills und System-Prompts fuer `brainstorm`, `requirements` und `architecture`
+- ausformulierte Skills und System-Prompts fuer `brainstorm`, `requirements`, `architecture` und `planning`
 - lokaler CLI-Adapter
-- CLI-Happy-Path von `item:create` bis `architecture:approve`
+- CLI-Happy-Path von `item:create` bis `execution:tick`
 
 ## Voraussetzungen
 

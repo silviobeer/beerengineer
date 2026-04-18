@@ -121,6 +121,71 @@ program
   );
 
 program
+  .command("planning:start")
+  .requiredOption("--item-id <itemId>")
+  .requiredOption("--project-id <projectId>")
+  .action(
+    withContext<{ itemId: string; projectId: string }>(async ({ workflowService }, options) => {
+      const result = await workflowService.startStage({
+        stageKey: "planning",
+        itemId: options.itemId,
+        projectId: options.projectId
+      });
+      console.log(JSON.stringify(result, null, 2));
+    })
+  );
+
+program
+  .command("planning:approve")
+  .requiredOption("--project-id <projectId>")
+  .action(
+    withContext<{ projectId: string }>(({ workflowService }, options) => {
+      workflowService.approvePlanning(options.projectId);
+      console.log(JSON.stringify({ status: "approved", projectId: options.projectId }, null, 2));
+    })
+  );
+
+program
+  .command("execution:start")
+  .requiredOption("--project-id <projectId>")
+  .action(
+    withContext<{ projectId: string }>(async ({ workflowService }, options) => {
+      const result = await workflowService.startExecution(options.projectId);
+      console.log(JSON.stringify(result, null, 2));
+    })
+  );
+
+program
+  .command("execution:tick")
+  .requiredOption("--project-id <projectId>")
+  .action(
+    withContext<{ projectId: string }>(async ({ workflowService }, options) => {
+      const result = await workflowService.tickExecution(options.projectId);
+      console.log(JSON.stringify(result, null, 2));
+    })
+  );
+
+program
+  .command("execution:show")
+  .requiredOption("--project-id <projectId>")
+  .action(
+    withContext<{ projectId: string }>(({ workflowService }, options) => {
+      const result = workflowService.showExecution(options.projectId);
+      console.log(JSON.stringify(result, null, 2));
+    })
+  );
+
+program
+  .command("execution:retry")
+  .requiredOption("--wave-story-execution-id <waveStoryExecutionId>")
+  .action(
+    withContext<{ waveStoryExecutionId: string }>(async ({ workflowService }, options) => {
+      const result = await workflowService.retryWaveStoryExecution(options.waveStoryExecutionId);
+      console.log(JSON.stringify(result, null, 2));
+    })
+  );
+
+program
   .command("item:show")
   .requiredOption("--item-id <itemId>")
   .action(

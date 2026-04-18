@@ -5,13 +5,24 @@ import type {
   ArchitecturePlan,
   BoardColumn,
   Concept,
+  ExecutionAgentSession,
+  ImplementationPlan,
   Item,
   ItemPhaseStatus,
+  ProjectExecutionContext,
   Project,
   RecordStatus,
   StageKey,
   StageRunStatus,
-  UserStory
+  UserStory,
+  VerificationRun,
+  Wave,
+  WaveExecution,
+  WaveExecutionStatus,
+  WaveStory,
+  WaveStoryDependency,
+  WaveStoryExecution,
+  WaveStoryExecutionStatus
 } from "../domain/types.js";
 import { formatItemCode, parseItemCodeSequence } from "../shared/codes.js";
 import { createId } from "../shared/ids.js";
@@ -22,15 +33,32 @@ import {
   architecturePlans,
   artifacts,
   concepts,
+  executionAgentSessions,
+  implementationPlans,
   items,
+  projectExecutionContexts,
   projects,
   stageRunInputArtifacts,
   stageRuns,
-  userStories
+  userStories,
+  verificationRuns,
+  waveExecutions,
+  waveStoryExecutions,
+  waveStories,
+  waves,
+  waveStoryDependencies
 } from "./schema.js";
 
 function now(): number {
   return Date.now();
+}
+
+function parseStringList(value: string): string[] {
+  return JSON.parse(value) as string[];
+}
+
+function stringifyStringList(value: string[]): string {
+  return JSON.stringify(value);
 }
 
 function isItemsCodeUniqueViolation(error: unknown): boolean {
@@ -193,6 +221,10 @@ export class UserStoryRepository {
       .all() as UserStory[];
   }
 
+  public getById(id: string): UserStory | null {
+    return (this.db.select().from(userStories).where(eq(userStories.id, id)).get() as UserStory | undefined) ?? null;
+  }
+
   public createMany(input: Array<Omit<UserStory, "id" | "createdAt" | "updatedAt">>): UserStory[] {
     const timestamp = now();
     const rows = input.map((story) => ({
@@ -299,6 +331,385 @@ export class ArchitecturePlanRepository {
       .set({ status, updatedAt: now() })
       .where(eq(architecturePlans.id, id))
       .run();
+  }
+}
+
+export class ImplementationPlanRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public getLatestByProjectId(projectId: string): ImplementationPlan | null {
+    return (
+      this.db
+        .select()
+        .from(implementationPlans)
+        .where(eq(implementationPlans.projectId, projectId))
+        .orderBy(desc(implementationPlans.version))
+        .get() as ImplementationPlan | undefined
+    ) ?? null;
+  }
+
+  public create(input: Omit<ImplementationPlan, "id" | "createdAt" | "updatedAt">): ImplementationPlan {
+    const timestamp = now();
+    const row: ImplementationPlan = {
+      ...input,
+      id: createId("plan"),
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+    this.db.insert(implementationPlans).values(row).run();
+    return row;
+  }
+
+  public updateStatus(id: string, status: RecordStatus): void {
+    this.db
+      .update(implementationPlans)
+      .set({ status, updatedAt: now() })
+      .where(eq(implementationPlans.id, id))
+      .run();
+  }
+}
+
+export class WaveRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public getById(id: string): Wave | null {
+    return (this.db.select().from(waves).where(eq(waves.id, id)).get() as Wave | undefined) ?? null;
+  }
+
+  public listByImplementationPlanId(implementationPlanId: string): Wave[] {
+    return this.db
+      .select()
+      .from(waves)
+      .where(eq(waves.implementationPlanId, implementationPlanId))
+      .orderBy(waves.position)
+      .all() as Wave[];
+  }
+
+  public createMany(input: Array<Omit<Wave, "id" | "createdAt" | "updatedAt">>): Wave[] {
+    const timestamp = now();
+    const rows = input.map((wave) => ({
+      ...wave,
+      id: createId("wave"),
+      createdAt: timestamp,
+      updatedAt: timestamp
+    }));
+    this.db.insert(waves).values(rows).run();
+    return rows as Wave[];
+  }
+}
+
+export class WaveStoryRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public listByWaveId(waveId: string): WaveStory[] {
+    return this.db.select().from(waveStories).where(eq(waveStories.waveId, waveId)).orderBy(waveStories.position).all() as WaveStory[];
+  }
+
+  public getById(id: string): WaveStory | null {
+    return (this.db.select().from(waveStories).where(eq(waveStories.id, id)).get() as WaveStory | undefined) ?? null;
+  }
+
+  public getByStoryId(storyId: string): WaveStory | null {
+    return (this.db.select().from(waveStories).where(eq(waveStories.storyId, storyId)).get() as WaveStory | undefined) ?? null;
+  }
+
+  public createMany(input: Array<Omit<WaveStory, "id" | "createdAt" | "updatedAt">>): WaveStory[] {
+    const timestamp = now();
+    const rows = input.map((waveStory) => ({
+      ...waveStory,
+      id: createId("wave_story"),
+      createdAt: timestamp,
+      updatedAt: timestamp
+    }));
+    this.db.insert(waveStories).values(rows).run();
+    return rows as WaveStory[];
+  }
+}
+
+export class WaveStoryDependencyRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public listByDependentStoryId(dependentStoryId: string): WaveStoryDependency[] {
+    return this.db
+      .select()
+      .from(waveStoryDependencies)
+      .where(eq(waveStoryDependencies.dependentStoryId, dependentStoryId))
+      .all() as WaveStoryDependency[];
+  }
+
+  public createMany(input: WaveStoryDependency[]): WaveStoryDependency[] {
+    if (input.length === 0) {
+      return [];
+    }
+    this.db.insert(waveStoryDependencies).values(input).run();
+    return input;
+  }
+}
+
+type ProjectExecutionContextRow = {
+  id: string;
+  projectId: string;
+  relevantDirectoriesJson: string;
+  relevantFilesJson: string;
+  integrationPointsJson: string;
+  testLocationsJson: string;
+  repoConventionsJson: string;
+  executionNotesJson: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
+function mapProjectExecutionContext(row: ProjectExecutionContextRow): ProjectExecutionContext {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    relevantDirectories: parseStringList(row.relevantDirectoriesJson),
+    relevantFiles: parseStringList(row.relevantFilesJson),
+    integrationPoints: parseStringList(row.integrationPointsJson),
+    testLocations: parseStringList(row.testLocationsJson),
+    repoConventions: parseStringList(row.repoConventionsJson),
+    executionNotes: parseStringList(row.executionNotesJson),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+  };
+}
+
+export class ProjectExecutionContextRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public getByProjectId(projectId: string): ProjectExecutionContext | null {
+    const row = this.db
+      .select()
+      .from(projectExecutionContexts)
+      .where(eq(projectExecutionContexts.projectId, projectId))
+      .get() as ProjectExecutionContextRow | undefined;
+    return row ? mapProjectExecutionContext(row) : null;
+  }
+
+  public upsert(input: Omit<ProjectExecutionContext, "id" | "createdAt" | "updatedAt">): ProjectExecutionContext {
+    const existing = this.getByProjectId(input.projectId);
+    const timestamp = now();
+    if (existing) {
+      this.db
+        .update(projectExecutionContexts)
+        .set({
+          relevantDirectoriesJson: stringifyStringList(input.relevantDirectories),
+          relevantFilesJson: stringifyStringList(input.relevantFiles),
+          integrationPointsJson: stringifyStringList(input.integrationPoints),
+          testLocationsJson: stringifyStringList(input.testLocations),
+          repoConventionsJson: stringifyStringList(input.repoConventions),
+          executionNotesJson: stringifyStringList(input.executionNotes),
+          updatedAt: timestamp
+        })
+        .where(eq(projectExecutionContexts.projectId, input.projectId))
+        .run();
+      return {
+        ...existing,
+        ...input,
+        updatedAt: timestamp
+      };
+    }
+
+    const row: ProjectExecutionContextRow = {
+      id: createId("project_context"),
+      projectId: input.projectId,
+      relevantDirectoriesJson: stringifyStringList(input.relevantDirectories),
+      relevantFilesJson: stringifyStringList(input.relevantFiles),
+      integrationPointsJson: stringifyStringList(input.integrationPoints),
+      testLocationsJson: stringifyStringList(input.testLocations),
+      repoConventionsJson: stringifyStringList(input.repoConventions),
+      executionNotesJson: stringifyStringList(input.executionNotes),
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+    this.db.insert(projectExecutionContexts).values(row).run();
+    return mapProjectExecutionContext(row);
+  }
+}
+
+export class WaveExecutionRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public getById(id: string): WaveExecution | null {
+    return (this.db.select().from(waveExecutions).where(eq(waveExecutions.id, id)).get() as WaveExecution | undefined) ?? null;
+  }
+
+  public listByWaveId(waveId: string): WaveExecution[] {
+    return this.db
+      .select()
+      .from(waveExecutions)
+      .where(eq(waveExecutions.waveId, waveId))
+      .orderBy(waveExecutions.attempt)
+      .all() as WaveExecution[];
+  }
+
+  public getLatestByWaveId(waveId: string): WaveExecution | null {
+    return (
+      this.db
+        .select()
+        .from(waveExecutions)
+        .where(eq(waveExecutions.waveId, waveId))
+        .orderBy(desc(waveExecutions.attempt))
+        .limit(1)
+        .get() as WaveExecution | undefined
+    ) ?? null;
+  }
+
+  public create(input: Omit<WaveExecution, "id" | "createdAt" | "updatedAt" | "completedAt">): WaveExecution {
+    const timestamp = now();
+    const row: WaveExecution = {
+      ...input,
+      id: createId("wave_execution"),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      completedAt: null
+    };
+    this.db.insert(waveExecutions).values(row).run();
+    return row;
+  }
+
+  public updateStatus(id: string, status: WaveExecutionStatus): void {
+    this.db
+      .update(waveExecutions)
+      .set({
+        status,
+        updatedAt: now(),
+        completedAt: status === "completed" || status === "failed" || status === "review_required" ? now() : null
+      })
+      .where(eq(waveExecutions.id, id))
+      .run();
+  }
+}
+
+export class WaveStoryExecutionRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public getById(id: string): WaveStoryExecution | null {
+    return (
+      this.db.select().from(waveStoryExecutions).where(eq(waveStoryExecutions.id, id)).get() as
+        | WaveStoryExecution
+        | undefined
+    ) ?? null;
+  }
+
+  public listByWaveExecutionId(waveExecutionId: string): WaveStoryExecution[] {
+    return this.db
+      .select()
+      .from(waveStoryExecutions)
+      .where(eq(waveStoryExecutions.waveExecutionId, waveExecutionId))
+      .orderBy(waveStoryExecutions.createdAt)
+      .all() as WaveStoryExecution[];
+  }
+
+  public listByWaveStoryId(waveStoryId: string): WaveStoryExecution[] {
+    return this.db
+      .select()
+      .from(waveStoryExecutions)
+      .where(eq(waveStoryExecutions.waveStoryId, waveStoryId))
+      .orderBy(waveStoryExecutions.attempt)
+      .all() as WaveStoryExecution[];
+  }
+
+  public getLatestByWaveStoryId(waveStoryId: string): WaveStoryExecution | null {
+    return (
+      this.db
+        .select()
+        .from(waveStoryExecutions)
+        .where(eq(waveStoryExecutions.waveStoryId, waveStoryId))
+        .orderBy(desc(waveStoryExecutions.attempt))
+        .limit(1)
+        .get() as WaveStoryExecution | undefined
+    ) ?? null;
+  }
+
+  public create(input: Omit<WaveStoryExecution, "id" | "createdAt" | "updatedAt" | "completedAt">): WaveStoryExecution {
+    const timestamp = now();
+    const row: WaveStoryExecution = {
+      ...input,
+      id: createId("wave_story_execution"),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      completedAt: null
+    };
+    this.db.insert(waveStoryExecutions).values(row).run();
+    return row;
+  }
+
+  public updateStatus(
+    id: string,
+    status: WaveStoryExecutionStatus,
+    options?: { outputSummaryJson?: string | null; errorMessage?: string | null }
+  ): void {
+    this.db
+      .update(waveStoryExecutions)
+      .set({
+        status,
+        outputSummaryJson: options?.outputSummaryJson,
+        errorMessage: options?.errorMessage ?? null,
+        updatedAt: now(),
+        completedAt: status === "completed" || status === "failed" || status === "review_required" ? now() : null
+      })
+      .where(eq(waveStoryExecutions.id, id))
+      .run();
+  }
+}
+
+export class ExecutionAgentSessionRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public create(input: Omit<ExecutionAgentSession, "id" | "createdAt" | "updatedAt">): ExecutionAgentSession {
+    const timestamp = now();
+    const row: ExecutionAgentSession = {
+      ...input,
+      id: createId("execution_session"),
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+    this.db.insert(executionAgentSessions).values(row).run();
+    return row;
+  }
+
+  public listByWaveStoryExecutionId(waveStoryExecutionId: string): ExecutionAgentSession[] {
+    return this.db
+      .select()
+      .from(executionAgentSessions)
+      .where(eq(executionAgentSessions.waveStoryExecutionId, waveStoryExecutionId))
+      .orderBy(executionAgentSessions.createdAt)
+      .all() as ExecutionAgentSession[];
+  }
+}
+
+export class VerificationRunRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public create(input: Omit<VerificationRun, "id" | "createdAt" | "updatedAt">): VerificationRun {
+    const timestamp = now();
+    const row: VerificationRun = {
+      ...input,
+      id: createId("verification"),
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+    this.db.insert(verificationRuns).values(row).run();
+    return row;
+  }
+
+  public listByWaveStoryExecutionId(waveStoryExecutionId: string): VerificationRun[] {
+    return this.db
+      .select()
+      .from(verificationRuns)
+      .where(eq(verificationRuns.waveStoryExecutionId, waveStoryExecutionId))
+      .orderBy(verificationRuns.createdAt)
+      .all() as VerificationRun[];
+  }
+
+  public listByWaveExecutionId(waveExecutionId: string): VerificationRun[] {
+    return this.db
+      .select()
+      .from(verificationRuns)
+      .where(eq(verificationRuns.waveExecutionId, waveExecutionId))
+      .orderBy(verificationRuns.createdAt)
+      .all() as VerificationRun[];
   }
 }
 

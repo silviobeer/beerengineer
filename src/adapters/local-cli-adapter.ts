@@ -4,7 +4,13 @@ import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 import { AppError } from "../shared/errors.js";
-import type { AgentAdapter, AdapterRunRequest, AdapterRunResult } from "./types.js";
+import type {
+  AgentAdapter,
+  AdapterRunRequest,
+  AdapterRunResult,
+  ExecutionAdapterRunRequest,
+  ExecutionAdapterRunResult
+} from "./types.js";
 
 export class AgentExecutionError extends AppError {
   public constructor(message: string) {
@@ -23,6 +29,28 @@ export class LocalCliAdapter implements AgentAdapter {
   ) {}
 
   public async run(request: AdapterRunRequest): Promise<AdapterRunResult> {
+    const parsed = this.executePayload(request) as Omit<AdapterRunResult, "stdout" | "stderr" | "exitCode" | "command">;
+    return {
+      ...parsed,
+      stdout: parsed ? JSON.stringify(parsed) : "",
+      stderr: "",
+      exitCode: 0,
+      command: [process.execPath, resolve(this.repoRoot, this.scriptPath)]
+    };
+  }
+
+  public async runStoryExecution(request: ExecutionAdapterRunRequest): Promise<ExecutionAdapterRunResult> {
+    const parsed = this.executePayload(request) as { output: ExecutionAdapterRunResult["output"] };
+    return {
+      output: parsed.output,
+      stdout: JSON.stringify(parsed),
+      stderr: "",
+      exitCode: 0,
+      command: [process.execPath, resolve(this.repoRoot, this.scriptPath)]
+    };
+  }
+
+  private executePayload(request: AdapterRunRequest | ExecutionAdapterRunRequest): unknown {
     const tempDir = mkdtempSync(join(tmpdir(), "beerengineer-agent-"));
     const payloadPath = join(tempDir, "payload.json");
     writeFileSync(payloadPath, JSON.stringify(request, null, 2), "utf8");
@@ -47,15 +75,7 @@ export class LocalCliAdapter implements AgentAdapter {
         throw new AgentExecutionError(result.stderr || "Agent process failed");
       }
 
-      const parsed = JSON.parse(result.stdout) as Omit<AdapterRunResult, "stdout" | "stderr" | "exitCode" | "command">;
-
-      return {
-        ...parsed,
-        stdout: result.stdout,
-        stderr: result.stderr,
-        exitCode: result.status ?? 0,
-        command
-      };
+      return JSON.parse(result.stdout);
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

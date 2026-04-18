@@ -9,10 +9,19 @@ import {
   ArtifactRepository,
   AgentSessionRepository,
   ConceptRepository,
+  ExecutionAgentSessionRepository,
+  ImplementationPlanRepository,
   ItemRepository,
+  ProjectExecutionContextRepository,
   ProjectRepository,
   StageRunRepository,
-  UserStoryRepository
+  UserStoryRepository,
+  VerificationRunRepository,
+  WaveRepository,
+  WaveExecutionRepository,
+  WaveStoryDependencyRepository,
+  WaveStoryExecutionRepository,
+  WaveStoryRepository
 } from "./persistence/repositories.js";
 import { baseMigrations } from "./persistence/migration-registry.js";
 import { applyMigrations } from "./persistence/migrator.js";
@@ -33,6 +42,15 @@ export type AppContext = {
     userStoryRepository: UserStoryRepository;
     acceptanceCriterionRepository: AcceptanceCriterionRepository;
     architecturePlanRepository: ArchitecturePlanRepository;
+    implementationPlanRepository: ImplementationPlanRepository;
+    waveRepository: WaveRepository;
+    waveStoryRepository: WaveStoryRepository;
+    waveStoryDependencyRepository: WaveStoryDependencyRepository;
+    projectExecutionContextRepository: ProjectExecutionContextRepository;
+    waveExecutionRepository: WaveExecutionRepository;
+    waveStoryExecutionRepository: WaveStoryExecutionRepository;
+    executionAgentSessionRepository: ExecutionAgentSessionRepository;
+    verificationRunRepository: VerificationRunRepository;
     stageRunRepository: StageRunRepository;
     artifactRepository: ArtifactRepository;
     agentSessionRepository: AgentSessionRepository;
@@ -52,6 +70,15 @@ export function createAppContext(dbPath: string): AppContext {
   const userStoryRepository = new UserStoryRepository(db);
   const acceptanceCriterionRepository = new AcceptanceCriterionRepository(db);
   const architecturePlanRepository = new ArchitecturePlanRepository(db);
+  const implementationPlanRepository = new ImplementationPlanRepository(db);
+  const waveRepository = new WaveRepository(db);
+  const waveStoryRepository = new WaveStoryRepository(db);
+  const waveStoryDependencyRepository = new WaveStoryDependencyRepository(db);
+  const projectExecutionContextRepository = new ProjectExecutionContextRepository(db);
+  const waveExecutionRepository = new WaveExecutionRepository(db);
+  const waveStoryExecutionRepository = new WaveStoryExecutionRepository(db);
+  const executionAgentSessionRepository = new ExecutionAgentSessionRepository(db);
+  const verificationRunRepository = new VerificationRunRepository(db);
   const stageRunRepository = new StageRunRepository(db);
   const artifactRepository = new ArtifactRepository(db);
   const agentSessionRepository = new AgentSessionRepository(db);
@@ -67,6 +94,15 @@ export function createAppContext(dbPath: string): AppContext {
       userStoryRepository,
       acceptanceCriterionRepository,
       architecturePlanRepository,
+      implementationPlanRepository,
+      waveRepository,
+      waveStoryRepository,
+      waveStoryDependencyRepository,
+      projectExecutionContextRepository,
+      waveExecutionRepository,
+      waveStoryExecutionRepository,
+      executionAgentSessionRepository,
+      verificationRunRepository,
       stageRunRepository,
       artifactRepository,
       agentSessionRepository
@@ -82,6 +118,15 @@ export function createAppContext(dbPath: string): AppContext {
       userStoryRepository,
       acceptanceCriterionRepository,
       architecturePlanRepository,
+      implementationPlanRepository,
+      waveRepository,
+      waveStoryRepository,
+      waveStoryDependencyRepository,
+      projectExecutionContextRepository,
+      waveExecutionRepository,
+      waveStoryExecutionRepository,
+      executionAgentSessionRepository,
+      verificationRunRepository,
       stageRunRepository,
       artifactRepository,
       agentSessionRepository

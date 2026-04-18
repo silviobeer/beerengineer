@@ -106,3 +106,34 @@ Verifiziert mit:
 - `npm run build`
 - `npm run lint`
 - `npm test`
+
+## Execution Core
+
+Umgesetzt:
+
+- deterministischer Execution-Loop fuer den neuesten freigegebenen `ImplementationPlan`
+- persistierte Runtime-Entities fuer Kontext, Wave-Execution, Story-Execution, Agent-Session und Verifikation
+- CLI-Kommandos `execution:start`, `execution:tick`, `execution:show` und `execution:retry`
+- gespeicherte Business- und Repo-Context-Snapshots pro `WaveStoryExecution`
+- engine-seitige Worker-Rollenwahl statt LLM-gesteuerter Orchestrierung
+- lokaler Demo-Adapter fuer bounded Story-Ausfuehrung
+- Workflow-, Repository- und E2E-Abdeckung fuer den neuen Execution-Pfad
+
+Verifiziert mit:
+
+- `npm run build`
+- `npm run lint`
+- `npm test`
+
+Aktueller Stand:
+
+- 12 Testdateien
+- 30 gruene Tests
+- Live-CLI-Durchlauf von `item:create` bis `execution:tick` erfolgreich
+
+Live verifiziert:
+
+- beide Waves einer freigegebenen Planung wurden sequentiell auf `completed` gebracht
+- pro `WaveStoryExecution` wurden Business- und Repo-Snapshots gespeichert
+- pro Story wurde ein `ExecutionAgentSession`-Record angelegt
+- pro Story wurde ein `VerificationRun` mit Status `passed` gespeichert

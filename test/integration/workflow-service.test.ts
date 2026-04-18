@@ -179,6 +179,11 @@ describe("workflow service", () => {
         itemId: item.id,
         projectId: project!.id
       });
+      await context.workflowService.startStage({
+        stageKey: "planning",
+        itemId: item.id,
+        projectId: project!.id
+      });
 
       const stories = context.repositories.userStoryRepository.listByProjectId(project!.id);
       expect(stories.map((story) => story.code)).toEqual(["ITEM-0001-P01-US01", "ITEM-0001-P01-US02"]);
@@ -192,9 +197,71 @@ describe("workflow service", () => {
 
       context.workflowService.approveArchitecture(project!.id);
       context.workflowService.approveArchitecture(project!.id);
+      context.workflowService.approvePlanning(project!.id);
+      context.workflowService.approvePlanning(project!.id);
 
       const itemState = context.repositories.itemRepository.getById(item.id);
+      expect(itemState?.currentColumn).toBe("done");
       expect(itemState?.phaseStatus).toBe("completed");
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("imports implementation plans with waves and story dependencies", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const item = context.repositories.itemRepository.create({
+        title: "Planning Flow",
+        description: "Persist implementation plans"
+      });
+      await context.workflowService.startStage({
+        stageKey: "brainstorm",
+        itemId: item.id
+      });
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      context.workflowService.approveConcept(concept!.id);
+      context.workflowService.importProjects(item.id);
+      const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
+
+      await context.workflowService.startStage({
+        stageKey: "requirements",
+        itemId: item.id,
+        projectId: project.id
+      });
+      context.workflowService.approveStories(project.id);
+      await context.workflowService.startStage({
+        stageKey: "architecture",
+        itemId: item.id,
+        projectId: project.id
+      });
+      context.workflowService.approveArchitecture(project.id);
+
+      const result = await context.workflowService.startStage({
+        stageKey: "planning",
+        itemId: item.id,
+        projectId: project.id
+      });
+      expect(result.status).toBe("completed");
+
+      const implementationPlan = context.repositories.implementationPlanRepository.getLatestByProjectId(project.id);
+      expect(implementationPlan?.summary).toContain("implementation plan");
+
+      const waves = context.repositories.waveRepository.listByImplementationPlanId(implementationPlan!.id);
+      expect(waves.map((wave) => wave.code)).toEqual(["W01", "W02"]);
+
+      const firstWaveStories = context.repositories.waveStoryRepository.listByWaveId(waves[0]!.id);
+      const secondWaveStories = context.repositories.waveStoryRepository.listByWaveId(waves[1]!.id);
+      expect(firstWaveStories).toHaveLength(1);
+      expect(secondWaveStories).toHaveLength(1);
+
+      const dependencies = context.repositories.waveStoryDependencyRepository.listByDependentStoryId(secondWaveStories[0]!.storyId);
+      expect(dependencies).toHaveLength(1);
+      expect(dependencies[0]?.blockingStoryId).toBe(firstWaveStories[0]?.storyId);
     } finally {
       context.connection.close();
       rmSync(root, { recursive: true, force: true });
@@ -231,6 +298,80 @@ describe("workflow service", () => {
         .get(requirementsRun.runId) as { count: number };
 
       expect(linkedInputs.count).toBeGreaterThan(0);
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("runs execution wave by wave with stored contexts and sessions", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const item = context.repositories.itemRepository.create({
+        title: "Execution Flow",
+        description: "Run planned waves"
+      });
+      await context.workflowService.startStage({
+        stageKey: "brainstorm",
+        itemId: item.id
+      });
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      context.workflowService.approveConcept(concept!.id);
+      context.workflowService.importProjects(item.id);
+      const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
+
+      await context.workflowService.startStage({
+        stageKey: "requirements",
+        itemId: item.id,
+        projectId: project.id
+      });
+      context.workflowService.approveStories(project.id);
+      await context.workflowService.startStage({
+        stageKey: "architecture",
+        itemId: item.id,
+        projectId: project.id
+      });
+      context.workflowService.approveArchitecture(project.id);
+      await context.workflowService.startStage({
+        stageKey: "planning",
+        itemId: item.id,
+        projectId: project.id
+      });
+      context.workflowService.approvePlanning(project.id);
+
+      const first = await context.workflowService.startExecution(project.id);
+      expect(first.activeWaveCode).toBe("W01");
+      expect(first.scheduledCount).toBe(1);
+      expect(first.executions[0]?.status).toBe("completed");
+
+      const second = await context.workflowService.tickExecution(project.id);
+      expect(second.activeWaveCode).toBe("W02");
+      expect(second.scheduledCount).toBe(1);
+      expect(second.executions[0]?.status).toBe("completed");
+
+      const shown = context.workflowService.showExecution(project.id) as {
+        projectExecutionContext: { relevantDirectories: string[] } | null;
+        activeWave: { code: string } | null;
+        waves: Array<{
+          waveExecution: { status: string } | null;
+          stories: Array<{
+            latestExecution: { businessContextSnapshotJson: string; repoContextSnapshotJson: string } | null;
+            verificationRuns: Array<{ status: string }>;
+            agentSessions: Array<{ adapterKey: string }>;
+          }>;
+        }>;
+      };
+
+      expect(shown.projectExecutionContext?.relevantDirectories).toContain("src");
+      expect(shown.activeWave).toBeNull();
+      expect(shown.waves.map((wave) => wave.waveExecution?.status)).toEqual(["completed", "completed"]);
+      expect(shown.waves[0]?.stories[0]?.latestExecution?.businessContextSnapshotJson).toContain("ITEM-0001-P01-US01");
+      expect(shown.waves[1]?.stories[0]?.latestExecution?.repoContextSnapshotJson).toContain("src");
+      expect(shown.waves[0]?.stories[0]?.verificationRuns[0]?.status).toBe("passed");
+      expect(shown.waves[0]?.stories[0]?.agentSessions[0]?.adapterKey).toBe("local-cli");
     } finally {
       context.connection.close();
       rmSync(root, { recursive: true, force: true });

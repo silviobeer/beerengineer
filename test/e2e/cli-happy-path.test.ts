@@ -37,7 +37,7 @@ function runCliError(args: string[], cwd: string): { error: { code: string; mess
 
 describe("cli happy path", () => {
   it(
-    "runs item creation through architecture approval",
+    "runs item creation through execution completion",
     () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-e2e-"));
     const dbPath = join(root, "app.sqlite");
@@ -78,6 +78,28 @@ describe("cli happy path", () => {
       runCli(["--db", dbPath, "stories:approve", "--project-id", projectId], cwd);
       runCli(["--db", dbPath, "architecture:start", "--item-id", item.id, "--project-id", projectId], cwd);
       runCli(["--db", dbPath, "architecture:approve", "--project-id", projectId], cwd);
+      runCli(["--db", dbPath, "planning:start", "--item-id", item.id, "--project-id", projectId], cwd);
+      runCli(["--db", dbPath, "planning:approve", "--project-id", projectId], cwd);
+      const firstExecution = runCli(["--db", dbPath, "execution:start", "--project-id", projectId], cwd) as {
+        activeWaveCode: string | null;
+        scheduledCount: number;
+      };
+      expect(firstExecution.activeWaveCode).toBe("W01");
+      expect(firstExecution.scheduledCount).toBe(1);
+
+      const secondExecution = runCli(["--db", dbPath, "execution:tick", "--project-id", projectId], cwd) as {
+        activeWaveCode: string | null;
+        scheduledCount: number;
+      };
+      expect(secondExecution.activeWaveCode).toBe("W02");
+      expect(secondExecution.scheduledCount).toBe(1);
+
+      const executionShow = runCli(["--db", dbPath, "execution:show", "--project-id", projectId], cwd) as {
+        activeWave: { code: string } | null;
+        waves: Array<{ waveExecution: { status: string } | null }>;
+      };
+      expect(executionShow.activeWave).toBeNull();
+      expect(executionShow.waves.map((wave) => wave.waveExecution?.status)).toEqual(["completed", "completed"]);
 
       const artifacts = runCli(["--db", dbPath, "artifacts:list", "--item-id", item.id], cwd) as Array<{ id: string }>;
       expect(artifacts.length).toBeGreaterThan(0);
@@ -86,13 +108,13 @@ describe("cli happy path", () => {
         item: { currentColumn: string; phaseStatus: string };
       };
 
-      expect(finalState.item.currentColumn).toBe("implementation");
+      expect(finalState.item.currentColumn).toBe("done");
       expect(finalState.item.phaseStatus).toBe("completed");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
     },
-    15000
+    25000
   );
 
   it("returns structured errors for invalid commands", () => {

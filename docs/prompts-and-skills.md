@@ -19,9 +19,6 @@ Damit bleiben alte Runs nachvollziehbar, auch wenn Prompt- oder Skill-Dateien sp
 - `architecture`
   Prompt: `prompts/system/architecture.md`
   Skill: `skills/architecture.md`
-
-## Planned Next Stage Files
-
 - `planning`
   Prompt: `prompts/system/planning.md`
   Skill: `skills/writing-plans.md`
@@ -31,7 +28,7 @@ Damit bleiben alte Runs nachvollziehbar, auch wenn Prompt- oder Skill-Dateien sp
 - `brainstorm` beschreibt ein Item und leitet daraus ein oder mehrere Projekte ab
 - `requirements` arbeitet auf genau einem Projekt und erzeugt Stories plus Acceptance Criteria
 - `architecture` arbeitet auf genau einem Projekt und erzeugt eine kurze repo-geerdete Architekturentscheidung
-- `planning` ist als naechster Ausbau fuer genau ein Projekt vorbereitet und soll aus Architektur plus Stories einen kompakten `ImplementationPlan` mit 1..n Waves ableiten
+- `planning` arbeitet auf genau einem Projekt und leitet aus Architektur plus Stories einen kompakten `ImplementationPlan` mit 1..n Waves ab
 - `planning` soll dabei fachliche Parallelisierbarkeit auf Story-Ebene sichtbar machen, aber noch keine konkrete Subagent-Zuteilung festschreiben
 
 ## Responsibility Split

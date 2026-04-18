@@ -1,34 +1,51 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { buildItemWorkflowSnapshot } from "../domain/aggregate-status.js";
 import { assertCanMoveItem } from "../domain/workflow-rules.js";
-import type { StageKey } from "../domain/types.js";
+import type { ExecutionWorkerRole, StageKey } from "../domain/types.js";
 import { PromptResolver } from "../services/prompt-resolver.js";
 import { ArtifactService } from "../services/artifact-service.js";
 import {
+  implementationPlanOutputSchema,
   architecturePlanOutputSchema,
   projectsOutputSchema,
-  storiesOutputSchema
+  storiesOutputSchema,
+  storyExecutionOutputSchema
 } from "../schemas/output-contracts.js";
 import type {
+  ImplementationPlanOutput,
   ArchitecturePlanOutput,
   ProjectsOutput,
-  StoriesOutput
+  StoriesOutput,
+  StoryExecutionOutput
 } from "../schemas/output-contracts.js";
 import { AppError } from "../shared/errors.js";
-import { formatAcceptanceCriterionCode, formatProjectCode, formatStoryCode } from "../shared/codes.js";
+import {
+  formatAcceptanceCriterionCode,
+  formatProjectCode,
+  formatStoryCode
+} from "../shared/codes.js";
 import type {
+  ExecutionAgentSessionRepository,
+  ProjectExecutionContextRepository,
+  VerificationRunRepository,
   AcceptanceCriterionRepository,
   ArchitecturePlanRepository,
   ArtifactRecord,
   ArtifactRepository,
   AgentSessionRepository,
   ConceptRepository,
+  ImplementationPlanRepository,
   ItemRepository,
   ProjectRepository,
   StageRunRepository,
-  UserStoryRepository
+  UserStoryRepository,
+  WaveRepository,
+  WaveExecutionRepository,
+  WaveStoryDependencyRepository,
+  WaveStoryExecutionRepository,
+  WaveStoryRepository
 } from "../persistence/repositories.js";
 import { assertStageRunTransitionAllowed } from "./stage-run-rules.js";
 import { runProfiles } from "./run-profiles.js";
@@ -45,6 +62,15 @@ type WorkflowDeps = {
   userStoryRepository: UserStoryRepository;
   acceptanceCriterionRepository: AcceptanceCriterionRepository;
   architecturePlanRepository: ArchitecturePlanRepository;
+  implementationPlanRepository: ImplementationPlanRepository;
+  waveRepository: WaveRepository;
+  waveStoryRepository: WaveStoryRepository;
+  waveStoryDependencyRepository: WaveStoryDependencyRepository;
+  projectExecutionContextRepository: ProjectExecutionContextRepository;
+  waveExecutionRepository: WaveExecutionRepository;
+  waveStoryExecutionRepository: WaveStoryExecutionRepository;
+  executionAgentSessionRepository: ExecutionAgentSessionRepository;
+  verificationRunRepository: VerificationRunRepository;
   stageRunRepository: StageRunRepository;
   artifactRepository: ArtifactRepository;
   agentSessionRepository: AgentSessionRepository;
@@ -128,6 +154,21 @@ export class WorkflowService {
               title: project.title,
               summary: project.summary,
               goal: project.goal
+            }
+          : null,
+        context: project
+          ? {
+              conceptSummary: this.deps.conceptRepository.getLatestByItemId(item.id)?.summary ?? null,
+              architectureSummary: this.deps.architecturePlanRepository.getLatestByProjectId(project.id)?.summary ?? null,
+              stories: this.deps.userStoryRepository.listByProjectId(project.id).map((story) => ({
+                code: story.code,
+                title: story.title,
+                priority: story.priority,
+                acceptanceCriteria: this.deps.acceptanceCriterionRepository.listByStoryId(story.id).map((criterion) => ({
+                  code: criterion.code,
+                  text: criterion.text
+                }))
+              }))
             }
           : null
       });
@@ -259,7 +300,7 @@ export class WorkflowService {
   }
 
   public approveArchitecture(projectId: string): void {
-    const project = this.requireProject(projectId);
+    this.requireProject(projectId);
     const latest = this.deps.architecturePlanRepository.getLatestByProjectId(projectId);
     if (!latest) {
       throw new AppError("ARCHITECTURE_NOT_FOUND", "No architecture plan found for project");
@@ -268,9 +309,23 @@ export class WorkflowService {
       return;
     }
     this.deps.architecturePlanRepository.updateStatus(latest.id, "approved");
+  }
+
+  public approvePlanning(projectId: string): void {
+    const project = this.requireProject(projectId);
+    const latest = this.deps.implementationPlanRepository.getLatestByProjectId(projectId);
+    if (!latest) {
+      throw new AppError("IMPLEMENTATION_PLAN_NOT_FOUND", "No implementation plan found for project");
+    }
+    if (latest.status === "approved") {
+      return;
+    }
+    this.deps.implementationPlanRepository.updateStatus(latest.id, "approved");
     const snapshot = this.buildSnapshot(project.itemId);
-    if (snapshot.allArchitectureApproved) {
-      this.deps.itemRepository.updatePhaseStatus(project.itemId, "completed");
+    if (snapshot.allImplementationPlansApproved) {
+      const item = this.requireItem(project.itemId);
+      assertCanMoveItem(item.currentColumn, "done", snapshot);
+      this.deps.itemRepository.updateColumn(project.itemId, "done", "completed");
     }
   }
 
@@ -335,20 +390,550 @@ export class WorkflowService {
     return this.deps.agentSessionRepository.listByStageRunId(runId);
   }
 
+  public async startExecution(projectId: string) {
+    return this.advanceExecution(projectId);
+  }
+
+  public async tickExecution(projectId: string) {
+    return this.advanceExecution(projectId);
+  }
+
+  public async retryWaveStoryExecution(waveStoryExecutionId: string) {
+    const previous = this.deps.waveStoryExecutionRepository.getById(waveStoryExecutionId);
+    if (!previous) {
+      throw new AppError("WAVE_STORY_EXECUTION_NOT_FOUND", `Wave story execution ${waveStoryExecutionId} not found`);
+    }
+    if (previous.status !== "failed" && previous.status !== "review_required") {
+      throw new AppError("WAVE_STORY_EXECUTION_NOT_RETRYABLE", "Wave story execution is not retryable");
+    }
+
+    const waveStory = this.requireWaveStory(previous.waveStoryId);
+    const waveExecution = this.requireWaveExecution(previous.waveExecutionId);
+    const story = this.requireStory(previous.storyId);
+    const project = this.requireProject(story.projectId);
+    const plan = this.requireImplementationPlanForProject(project.id);
+    const wave = this.requireWave(waveExecution.waveId);
+    const result = await this.executeWaveStory({
+      project,
+      implementationPlan: plan,
+      wave,
+      waveExecution,
+      waveStory,
+      story
+    });
+    this.refreshWaveExecutionStatus(waveExecution.id);
+    return result;
+  }
+
+  public showExecution(projectId: string) {
+    const project = this.requireProject(projectId);
+    const plan = this.requireImplementationPlanForProject(projectId);
+    const context = this.deps.projectExecutionContextRepository.getByProjectId(projectId);
+    const waves = this.deps.waveRepository.listByImplementationPlanId(plan.id);
+    const wavePayload = waves.map((wave) => {
+      const waveExecution = this.deps.waveExecutionRepository.getLatestByWaveId(wave.id);
+      const waveStories = this.deps.waveStoryRepository.listByWaveId(wave.id);
+      const storyExecutions = waveStories.map((waveStory) => {
+        const story = this.requireStory(waveStory.storyId);
+        const latestExecution = this.deps.waveStoryExecutionRepository.getLatestByWaveStoryId(waveStory.id);
+        const blockers = this.deps.waveStoryDependencyRepository
+          .listByDependentStoryId(story.id)
+          .map((dependency) => this.requireStory(dependency.blockingStoryId))
+          .filter((blockingStory) => {
+            const blockingWaveStory = this.requireWaveStoryByStoryId(blockingStory.id);
+            const blockingExecution = this.deps.waveStoryExecutionRepository.getLatestByWaveStoryId(blockingWaveStory.id);
+            return blockingExecution?.status !== "completed";
+          })
+          .map((blockingStory) => blockingStory.code);
+        return {
+          waveStory,
+          story,
+          latestExecution,
+          blockers,
+          verificationRuns: latestExecution
+            ? this.deps.verificationRunRepository.listByWaveStoryExecutionId(latestExecution.id)
+            : [],
+          agentSessions: latestExecution
+            ? this.deps.executionAgentSessionRepository.listByWaveStoryExecutionId(latestExecution.id)
+            : []
+        };
+      });
+      return {
+        wave,
+        waveExecution,
+        stories: storyExecutions
+      };
+    });
+
+    const activeWave = wavePayload.find((entry) => entry.waveExecution?.status !== "completed") ?? null;
+
+    return {
+      project,
+      implementationPlan: plan,
+      projectExecutionContext: context,
+      activeWave: activeWave?.wave ?? null,
+      waves: wavePayload
+    };
+  }
+
+  private async advanceExecution(projectId: string) {
+    const project = this.requireProject(projectId);
+    const implementationPlan = this.requireImplementationPlanForProject(projectId);
+    const waves = this.deps.waveRepository.listByImplementationPlanId(implementationPlan.id);
+    if (waves.length === 0) {
+      throw new AppError("WAVES_NOT_FOUND", "Implementation plan has no waves");
+    }
+
+    const activeWave = this.resolveActiveWave(waves);
+    if (!activeWave) {
+      return {
+        projectId,
+        implementationPlanId: implementationPlan.id,
+        activeWaveCode: null,
+        scheduledCount: 0,
+        completed: true,
+        executions: []
+      };
+    }
+
+    const projectExecutionContext = this.ensureProjectExecutionContext(project, implementationPlan);
+    const waveExecution = this.ensureWaveExecution(activeWave.id);
+    if (waveExecution.status === "failed") {
+      return {
+        projectId,
+        implementationPlanId: implementationPlan.id,
+        activeWaveCode: activeWave.code,
+        scheduledCount: 0,
+        completed: false,
+        blockedByFailure: true,
+        executions: []
+      };
+    }
+    const executableStories = this.resolveExecutableWaveStories(activeWave.id);
+    if (executableStories.length === 0) {
+      this.refreshWaveExecutionStatus(waveExecution.id);
+      return {
+        projectId,
+        implementationPlanId: implementationPlan.id,
+        activeWaveCode: activeWave.code,
+        scheduledCount: 0,
+        completed: false,
+        blockedByFailure: false,
+        executions: []
+      };
+    }
+
+    const executions = [];
+    for (const waveStory of executableStories) {
+      const story = this.requireStory(waveStory.storyId);
+      const result = await this.executeWaveStory({
+        project,
+        implementationPlan,
+        wave: activeWave,
+        waveExecution,
+        waveStory,
+        story,
+        projectExecutionContext
+      });
+      executions.push(result);
+    }
+
+    this.refreshWaveExecutionStatus(waveExecution.id);
+    return {
+      projectId,
+      implementationPlanId: implementationPlan.id,
+      activeWaveCode: activeWave.code,
+      scheduledCount: executions.length,
+      completed: false,
+      blockedByFailure: false,
+      executions
+    };
+  }
+
+  private async executeWaveStory(input: {
+    project: ReturnType<WorkflowService["requireProject"]>;
+    implementationPlan: ReturnType<WorkflowService["requireImplementationPlanForProject"]>;
+    wave: ReturnType<WorkflowService["requireWave"]>;
+    waveExecution: ReturnType<WorkflowService["requireWaveExecution"]>;
+    waveStory: ReturnType<WorkflowService["requireWaveStory"]>;
+    story: ReturnType<WorkflowService["requireStory"]>;
+    projectExecutionContext?: ReturnType<WorkflowService["ensureProjectExecutionContext"]>;
+  }) {
+    const item = this.requireItem(input.project.itemId);
+    const architecture = this.deps.architecturePlanRepository.getLatestByProjectId(input.project.id);
+    const acceptanceCriteria = this.deps.acceptanceCriterionRepository.listByStoryId(input.story.id);
+    const projectExecutionContext =
+      input.projectExecutionContext ?? this.ensureProjectExecutionContext(input.project, input.implementationPlan);
+    const businessContextSnapshotJson = this.buildBusinessContextSnapshot({
+      item,
+      project: input.project,
+      implementationPlan: input.implementationPlan,
+      wave: input.wave,
+      story: input.story,
+      acceptanceCriteria,
+      architecture
+    });
+    const repoContextSnapshotJson = this.buildRepoContextSnapshot({
+      project: input.project,
+      story: input.story,
+      architectureSummary: architecture?.summary ?? null,
+      projectExecutionContext
+    });
+    const workerRole = this.selectWorkerRole(input.story, acceptanceCriteria);
+    const previousAttempts = this.deps.waveStoryExecutionRepository.listByWaveStoryId(input.waveStory.id);
+    const execution = this.deps.waveStoryExecutionRepository.create({
+      waveExecutionId: input.waveExecution.id,
+      waveStoryId: input.waveStory.id,
+      storyId: input.story.id,
+      status: "running",
+      attempt: previousAttempts.length + 1,
+      workerRole,
+      businessContextSnapshotJson,
+      repoContextSnapshotJson,
+      outputSummaryJson: null,
+      errorMessage: null
+    });
+
+    try {
+      const result = await this.deps.adapter.runStoryExecution({
+        workerRole,
+        item,
+        project: input.project,
+        implementationPlan: {
+          id: input.implementationPlan.id,
+          summary: input.implementationPlan.summary,
+          version: input.implementationPlan.version
+        },
+        wave: {
+          id: input.wave.id,
+          code: input.wave.code,
+          goal: input.wave.goal,
+          position: input.wave.position
+        },
+        story: input.story,
+        acceptanceCriteria,
+        architecture: architecture
+          ? {
+              id: architecture.id,
+              summary: architecture.summary,
+              version: architecture.version
+            }
+          : null,
+        projectExecutionContext,
+        businessContextSnapshotJson,
+        repoContextSnapshotJson
+      });
+
+      const parsed = storyExecutionOutputSchema.parse(result.output) as StoryExecutionOutput;
+      this.deps.executionAgentSessionRepository.create({
+        waveStoryExecutionId: execution.id,
+        adapterKey: this.deps.adapter.key,
+        status: result.exitCode === 0 ? "completed" : "failed",
+        commandJson: JSON.stringify(result.command),
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exitCode: result.exitCode
+      });
+
+      const verificationStatus = this.resolveVerificationStatus(parsed, result.exitCode);
+      const outputSummaryJson = JSON.stringify(parsed, null, 2);
+      this.deps.verificationRunRepository.create({
+        waveExecutionId: input.waveExecution.id,
+        waveStoryExecutionId: execution.id,
+        status: verificationStatus,
+        summaryJson: JSON.stringify(
+          {
+            changedFiles: parsed.changedFiles,
+            testsRun: parsed.testsRun,
+            blockers: parsed.blockers
+          },
+          null,
+          2
+        ),
+        errorMessage: verificationStatus === "failed" ? "Execution worker reported failed verification" : null
+      });
+      this.deps.waveStoryExecutionRepository.updateStatus(
+        execution.id,
+        verificationStatus === "passed" ? "completed" : verificationStatus,
+        {
+          outputSummaryJson,
+          errorMessage: parsed.blockers.join("; ") || null
+        }
+      );
+      return {
+        waveStoryExecutionId: execution.id,
+        waveStoryId: input.waveStory.id,
+        storyCode: input.story.code,
+        status: verificationStatus === "passed" ? "completed" : verificationStatus
+      };
+    } catch (error) {
+      this.deps.executionAgentSessionRepository.create({
+        waveStoryExecutionId: execution.id,
+        adapterKey: this.deps.adapter.key,
+        status: "failed",
+        commandJson: JSON.stringify([]),
+        stdout: "",
+        stderr: error instanceof Error ? error.message : String(error),
+        exitCode: 1
+      });
+      this.deps.verificationRunRepository.create({
+        waveExecutionId: input.waveExecution.id,
+        waveStoryExecutionId: execution.id,
+        status: "failed",
+        summaryJson: JSON.stringify({ changedFiles: [], testsRun: [], blockers: [] }, null, 2),
+        errorMessage: error instanceof Error ? error.message : String(error)
+      });
+      this.deps.waveStoryExecutionRepository.updateStatus(execution.id, "failed", {
+        errorMessage: error instanceof Error ? error.message : String(error)
+      });
+      return {
+        waveStoryExecutionId: execution.id,
+        waveStoryId: input.waveStory.id,
+        storyCode: input.story.code,
+        status: "failed"
+      };
+    }
+  }
+
+  private ensureProjectExecutionContext(
+    project: ReturnType<WorkflowService["requireProject"]>,
+    implementationPlan: ReturnType<WorkflowService["requireImplementationPlanForProject"]>
+  ) {
+    const existing = this.deps.projectExecutionContextRepository.getByProjectId(project.id);
+    const architecture = this.deps.architecturePlanRepository.getLatestByProjectId(project.id);
+    const relevantDirectories = ["src", "test", "docs"].filter((directory) =>
+      existsSync(resolve(this.deps.repoRoot, directory))
+    );
+    const relevantFiles = ["README.md", "AGENTS.md", "docs/architecture.md"].filter((filePath) =>
+      existsSync(resolve(this.deps.repoRoot, filePath))
+    );
+    const integrationPoints = [
+      `implementation-plan:${implementationPlan.id}`,
+      architecture ? `architecture-plan:${architecture.id}` : null,
+      "cli",
+      "workflow-service"
+    ].filter((value): value is string => value !== null);
+    const testLocations = ["test/unit", "test/integration", "test/e2e"];
+    const repoConventions = [
+      "Engine controls orchestration and retries",
+      "One bounded worker run per executable story",
+      "Prompts and skills stay file-based with stored snapshots"
+    ];
+    const executionNotes = existing?.executionNotes ?? ["Initial execution context created by engine heuristics"];
+
+    return this.deps.projectExecutionContextRepository.upsert({
+      projectId: project.id,
+      relevantDirectories,
+      relevantFiles,
+      integrationPoints,
+      testLocations,
+      repoConventions,
+      executionNotes
+    });
+  }
+
+  private resolveActiveWave(waves: Array<ReturnType<WorkflowService["requireWave"]>>) {
+    for (const wave of waves) {
+      const latestExecution = this.deps.waveExecutionRepository.getLatestByWaveId(wave.id);
+      if (!latestExecution || latestExecution.status !== "completed") {
+        return wave;
+      }
+    }
+    return null;
+  }
+
+  private ensureWaveExecution(waveId: string) {
+    const latest = this.deps.waveExecutionRepository.getLatestByWaveId(waveId);
+    if (latest?.status === "failed") {
+      return latest;
+    }
+    if (latest && latest.status !== "completed") {
+      if (latest.status !== "running") {
+        this.deps.waveExecutionRepository.updateStatus(latest.id, "running");
+        return this.requireWaveExecution(latest.id);
+      }
+      return latest;
+    }
+    return this.deps.waveExecutionRepository.create({
+      waveId,
+      status: "running",
+      attempt: (latest?.attempt ?? 0) + 1
+    });
+  }
+
+  private resolveExecutableWaveStories(waveId: string) {
+    return this.deps.waveStoryRepository.listByWaveId(waveId).filter((waveStory) => {
+      const latestExecution = this.deps.waveStoryExecutionRepository.getLatestByWaveStoryId(waveStory.id);
+      if (latestExecution) {
+        return false;
+      }
+      const story = this.requireStory(waveStory.storyId);
+      return this.deps.waveStoryDependencyRepository
+        .listByDependentStoryId(story.id)
+        .every((dependency) => {
+          const blockingWaveStory = this.requireWaveStoryByStoryId(dependency.blockingStoryId);
+          const blockingExecution = this.deps.waveStoryExecutionRepository.getLatestByWaveStoryId(blockingWaveStory.id);
+          return blockingExecution?.status === "completed";
+        });
+    });
+  }
+
+  private refreshWaveExecutionStatus(waveExecutionId: string): void {
+    const waveExecution = this.requireWaveExecution(waveExecutionId);
+    const waveStories = this.deps.waveStoryRepository.listByWaveId(waveExecution.waveId);
+    const latestStoryExecutions = waveStories.map((waveStory) =>
+      this.deps.waveStoryExecutionRepository.getLatestByWaveStoryId(waveStory.id)
+    );
+
+    if (latestStoryExecutions.some((execution) => execution?.status === "failed")) {
+      this.deps.waveExecutionRepository.updateStatus(waveExecutionId, "failed");
+      return;
+    }
+    if (latestStoryExecutions.some((execution) => execution?.status === "review_required")) {
+      this.deps.waveExecutionRepository.updateStatus(waveExecutionId, "review_required");
+      return;
+    }
+    if (latestStoryExecutions.length > 0 && latestStoryExecutions.every((execution) => execution?.status === "completed")) {
+      this.deps.waveExecutionRepository.updateStatus(waveExecutionId, "completed");
+      return;
+    }
+    if (latestStoryExecutions.some((execution) => execution?.status === "running")) {
+      this.deps.waveExecutionRepository.updateStatus(waveExecutionId, "running");
+      return;
+    }
+    this.deps.waveExecutionRepository.updateStatus(waveExecutionId, "blocked");
+  }
+
+  private buildBusinessContextSnapshot(input: {
+    item: ReturnType<WorkflowService["requireItem"]>;
+    project: ReturnType<WorkflowService["requireProject"]>;
+    implementationPlan: ReturnType<WorkflowService["requireImplementationPlanForProject"]>;
+    wave: ReturnType<WorkflowService["requireWave"]>;
+    story: ReturnType<WorkflowService["requireStory"]>;
+    acceptanceCriteria: ReturnType<AcceptanceCriterionRepository["listByStoryId"]>;
+    architecture: ReturnType<ArchitecturePlanRepository["getLatestByProjectId"]>;
+  }): string {
+    return JSON.stringify(
+      {
+        item: {
+          code: input.item.code,
+          title: input.item.title,
+          description: input.item.description
+        },
+        project: {
+          code: input.project.code,
+          title: input.project.title,
+          summary: input.project.summary,
+          goal: input.project.goal
+        },
+        implementationPlan: {
+          id: input.implementationPlan.id,
+          version: input.implementationPlan.version,
+          summary: input.implementationPlan.summary
+        },
+        wave: {
+          code: input.wave.code,
+          goal: input.wave.goal,
+          position: input.wave.position
+        },
+        story: {
+          code: input.story.code,
+          title: input.story.title,
+          description: input.story.description,
+          actor: input.story.actor,
+          goal: input.story.goal,
+          benefit: input.story.benefit,
+          priority: input.story.priority
+        },
+        acceptanceCriteria: input.acceptanceCriteria.map((criterion) => ({
+          code: criterion.code,
+          text: criterion.text,
+          position: criterion.position
+        })),
+        architecture: input.architecture
+          ? {
+              version: input.architecture.version,
+              summary: input.architecture.summary
+            }
+          : null
+      },
+      null,
+      2
+    );
+  }
+
+  private buildRepoContextSnapshot(input: {
+    project: ReturnType<WorkflowService["requireProject"]>;
+    story: ReturnType<WorkflowService["requireStory"]>;
+    architectureSummary: string | null;
+    projectExecutionContext: ReturnType<WorkflowService["ensureProjectExecutionContext"]>;
+  }): string {
+    const storyText = `${input.story.title} ${input.story.description} ${input.story.goal} ${input.story.benefit}`.toLowerCase();
+    const relevantFiles = [...input.projectExecutionContext.relevantFiles];
+    if (storyText.includes("workflow")) {
+      relevantFiles.push("src/workflow/workflow-service.ts");
+    }
+    if (storyText.includes("cli")) {
+      relevantFiles.push("src/cli/main.ts");
+    }
+    if (storyText.includes("story") || storyText.includes("requirement")) {
+      relevantFiles.push("src/persistence/repositories.ts");
+    }
+    const repoContext = {
+      projectCode: input.project.code,
+      relevantDirectories: input.projectExecutionContext.relevantDirectories,
+      relevantFiles: Array.from(new Set(relevantFiles)),
+      nearbyTests: input.projectExecutionContext.testLocations,
+      repoConventions: input.projectExecutionContext.repoConventions,
+      integrationPoints: input.projectExecutionContext.integrationPoints,
+      architectureSummary: input.architectureSummary
+    };
+    return JSON.stringify(repoContext, null, 2);
+  }
+
+  private selectWorkerRole(
+    story: ReturnType<WorkflowService["requireStory"]>,
+    acceptanceCriteria: ReturnType<AcceptanceCriterionRepository["listByStoryId"]>
+  ): ExecutionWorkerRole {
+    const combinedText = `${story.title} ${story.description} ${story.goal} ${acceptanceCriteria.map((criterion) => criterion.text).join(" ")}`.toLowerCase();
+    const frontendKeywords = ["ui", "screen", "page", "component", "route", "form"];
+    const backendKeywords = ["workflow", "database", "repository", "api", "engine", "cli", "persist"];
+    if (frontendKeywords.some((keyword) => combinedText.includes(keyword))) {
+      return "frontend-implementer";
+    }
+    if (backendKeywords.some((keyword) => combinedText.includes(keyword))) {
+      return "backend-implementer";
+    }
+    return "implementer";
+  }
+
+  private resolveVerificationStatus(
+    output: StoryExecutionOutput,
+    exitCode: number
+  ): "passed" | "review_required" | "failed" {
+    if (exitCode !== 0 || output.testsRun.some((testRun) => testRun.status === "failed")) {
+      return "failed";
+    }
+    if (output.blockers.length > 0) {
+      return "review_required";
+    }
+    return "passed";
+  }
+
   private buildSnapshot(itemId: string) {
     const concept = this.deps.conceptRepository.getLatestByItemId(itemId);
     const projects = this.deps.projectRepository.listByItemId(itemId);
     const storiesByProjectId = new Map(
       projects.map((project) => [project.id, this.deps.userStoryRepository.listByProjectId(project.id)])
     );
-    const architecturePlansByProjectId = new Map(
-      projects.map((project) => [project.id, this.deps.architecturePlanRepository.getLatestByProjectId(project.id)])
+    const implementationPlansByProjectId = new Map(
+      projects.map((project) => [project.id, this.deps.implementationPlanRepository.getLatestByProjectId(project.id)])
     );
     return buildItemWorkflowSnapshot({
       concept,
       projects,
       storiesByProjectId,
-      architecturePlansByProjectId
+      implementationPlansByProjectId
     });
   }
 
@@ -364,7 +949,10 @@ export class WorkflowService {
     if (input.stageKey === "requirements") {
       return this.importRequirementsOutputs(input);
     }
-    return this.importArchitectureOutputs(input);
+    if (input.stageKey === "architecture") {
+      return this.importArchitectureOutputs(input);
+    }
+    return this.importPlanningOutputs(input);
   }
 
   private importBrainstormOutputs(input: {
@@ -502,6 +1090,150 @@ export class WorkflowService {
     }
   }
 
+  private importPlanningOutputs(input: {
+    projectId: string | null;
+    artifactsByKind: Map<string, ArtifactRecord>;
+  }): { status: "completed" | "review_required"; reviewReason: string | null } {
+    if (!input.projectId) {
+      throw new AppError("PROJECT_REQUIRED", "Planning stage requires a project");
+    }
+    const markdownArtifact = input.artifactsByKind.get("implementation-plan");
+    const jsonArtifact = input.artifactsByKind.get("implementation-plan-data");
+    if (!markdownArtifact || !jsonArtifact) {
+      return {
+        status: "review_required",
+        reviewReason: "Planning output is missing markdown or structured implementation plan artifact"
+      };
+    }
+    try {
+      const parsed = implementationPlanOutputSchema.parse(
+        JSON.parse(readFileSync(resolve(this.deps.artifactRoot, jsonArtifact.path), "utf8"))
+      ) as ImplementationPlanOutput;
+      const previous = this.deps.implementationPlanRepository.getLatestByProjectId(input.projectId);
+      if (previous?.structuredArtifactId === jsonArtifact.id) {
+        return { status: "completed", reviewReason: null };
+      }
+
+      const stories = this.deps.userStoryRepository.listByProjectId(input.projectId);
+      const storyByCode = new Map(stories.map((story) => [story.code, story]));
+      const assignedStoryCodes = new Set<string>();
+      const waveCodeSet = new Set<string>();
+
+      parsed.waves.forEach((wave, waveIndex) => {
+        if (waveCodeSet.has(wave.waveCode)) {
+          throw new Error(`Duplicate wave code ${wave.waveCode}`);
+        }
+        waveCodeSet.add(wave.waveCode);
+
+        if (wave.stories.length === 0) {
+          throw new Error(`Wave ${wave.waveCode} must contain at least one story`);
+        }
+
+        wave.stories.forEach((plannedStory) => {
+          if (!storyByCode.has(plannedStory.storyCode)) {
+            throw new Error(`Unknown story code ${plannedStory.storyCode} in wave ${wave.waveCode}`);
+          }
+          if (assignedStoryCodes.has(plannedStory.storyCode)) {
+            throw new Error(`Story ${plannedStory.storyCode} is assigned more than once`);
+          }
+          assignedStoryCodes.add(plannedStory.storyCode);
+          plannedStory.dependsOnStoryCodes.forEach((dependencyCode) => {
+            if (!storyByCode.has(dependencyCode)) {
+              throw new Error(`Unknown story dependency ${dependencyCode} for ${plannedStory.storyCode}`);
+            }
+          });
+        });
+
+        if (waveIndex === 0 && wave.dependsOn.length > 0) {
+          throw new Error(`First wave ${wave.waveCode} cannot depend on earlier waves`);
+        }
+      });
+
+      if (assignedStoryCodes.size !== stories.length) {
+        throw new Error("Implementation plan must assign every project story exactly once");
+      }
+
+      const waveIndexByCode = new Map(parsed.waves.map((wave, index) => [wave.waveCode, index]));
+      const storyWaveIndexByCode = new Map<string, number>();
+      parsed.waves.forEach((wave, waveIndex) => {
+        wave.stories.forEach((plannedStory) => {
+          storyWaveIndexByCode.set(plannedStory.storyCode, waveIndex);
+        });
+      });
+
+      parsed.waves.forEach((wave) => {
+        wave.stories.forEach((plannedStory) => {
+          plannedStory.dependsOnStoryCodes.forEach((dependencyCode) => {
+            const dependencyWaveIndex = storyWaveIndexByCode.get(dependencyCode);
+            const plannedWaveIndex = storyWaveIndexByCode.get(plannedStory.storyCode);
+            if (dependencyWaveIndex === undefined || plannedWaveIndex === undefined) {
+              throw new Error(`Missing wave assignment for story dependency ${dependencyCode}`);
+            }
+            if (dependencyWaveIndex > plannedWaveIndex) {
+              throw new Error(`Story ${plannedStory.storyCode} depends on later story ${dependencyCode}`);
+            }
+          });
+        });
+
+        wave.dependsOn.forEach((dependencyWaveCode) => {
+          const dependencyIndex = waveIndexByCode.get(dependencyWaveCode);
+          const currentIndex = waveIndexByCode.get(wave.waveCode);
+          if (dependencyIndex === undefined || currentIndex === undefined || dependencyIndex >= currentIndex) {
+            throw new Error(`Wave ${wave.waveCode} depends on unknown or non-earlier wave ${dependencyWaveCode}`);
+          }
+        });
+      });
+
+      const createdPlan = this.deps.implementationPlanRepository.create({
+        projectId: input.projectId,
+        version: (previous?.version ?? 0) + 1,
+        summary: parsed.summary,
+        status: "draft",
+        markdownArtifactId: markdownArtifact.id,
+        structuredArtifactId: jsonArtifact.id
+      });
+
+      const createdWaves = this.deps.waveRepository.createMany(
+        parsed.waves.map((wave, index) => ({
+          implementationPlanId: createdPlan.id,
+          code: wave.waveCode,
+          goal: wave.goal,
+          position: index
+        }))
+      );
+      const waveByCode = new Map(createdWaves.map((wave) => [wave.code, wave]));
+
+      const createdWaveStories = this.deps.waveStoryRepository.createMany(
+        parsed.waves.flatMap((wave) =>
+          wave.stories.map((plannedStory, index) => ({
+            waveId: waveByCode.get(wave.waveCode)!.id,
+            storyId: storyByCode.get(plannedStory.storyCode)!.id,
+            parallelGroup: plannedStory.parallelGroup ?? null,
+            position: index
+          }))
+        )
+      );
+      if (createdWaveStories.length !== stories.length) {
+        throw new Error("Implementation plan import created a different number of wave stories than planned");
+      }
+
+      this.deps.waveStoryDependencyRepository.createMany(
+        parsed.waves.flatMap((wave) =>
+          wave.stories.flatMap((plannedStory) =>
+            plannedStory.dependsOnStoryCodes.map((dependencyCode) => ({
+              blockingStoryId: storyByCode.get(dependencyCode)!.id,
+              dependentStoryId: storyByCode.get(plannedStory.storyCode)!.id
+            }))
+          )
+        )
+      );
+
+      return { status: "completed", reviewReason: null };
+    } catch (error) {
+      return this.buildReviewOutcome("planning", error);
+    }
+  }
+
   private persistArtifacts(input: {
     itemId: string;
     projectId: string | null;
@@ -584,6 +1316,54 @@ export class WorkflowService {
     return project;
   }
 
+  private requireStory(storyId: string) {
+    const story = this.deps.userStoryRepository.getById(storyId);
+    if (!story) {
+      throw new AppError("STORY_NOT_FOUND", `Story ${storyId} not found`);
+    }
+    return story;
+  }
+
+  private requireWave(waveId: string) {
+    const wave = this.deps.waveRepository.getById(waveId);
+    if (!wave) {
+      throw new AppError("WAVE_NOT_FOUND", `Wave ${waveId} not found`);
+    }
+    return wave;
+  }
+
+  private requireWaveStory(waveStoryId: string) {
+    const waveStory = this.deps.waveStoryRepository.getById(waveStoryId);
+    if (!waveStory) {
+      throw new AppError("WAVE_STORY_NOT_FOUND", `Wave story ${waveStoryId} not found`);
+    }
+    return waveStory;
+  }
+
+  private requireWaveStoryByStoryId(storyId: string) {
+    const waveStory = this.deps.waveStoryRepository.getByStoryId(storyId);
+    if (!waveStory) {
+      throw new AppError("WAVE_STORY_NOT_FOUND", `No wave story found for story ${storyId}`);
+    }
+    return waveStory;
+  }
+
+  private requireWaveExecution(waveExecutionId: string) {
+    const waveExecution = this.deps.waveExecutionRepository.getById(waveExecutionId);
+    if (!waveExecution) {
+      throw new AppError("WAVE_EXECUTION_NOT_FOUND", `Wave execution ${waveExecutionId} not found`);
+    }
+    return waveExecution;
+  }
+
+  private requireImplementationPlanForProject(projectId: string) {
+    const implementationPlan = this.deps.implementationPlanRepository.getLatestByProjectId(projectId);
+    if (!implementationPlan || implementationPlan.status !== "approved") {
+      throw new AppError("IMPLEMENTATION_PLAN_NOT_APPROVED", "Approved implementation plan is required for execution");
+    }
+    return implementationPlan;
+  }
+
   private extractHeading(markdown: string): string {
     const line = markdown.split("\n").find((entry) => entry.startsWith("# "));
     return line ? line.replace(/^#\s+/, "") : "Concept";
@@ -593,7 +1373,15 @@ export class WorkflowService {
     const kindsByStage: Record<StageKey, string[]> = {
       brainstorm: [],
       requirements: ["concept", "projects"],
-      architecture: ["concept", "projects", "stories", "stories-markdown"]
+      architecture: ["concept", "projects", "stories", "stories-markdown"],
+      planning: [
+        "concept",
+        "projects",
+        "stories",
+        "stories-markdown",
+        "architecture-plan",
+        "architecture-plan-data"
+      ]
     };
 
     const ids = new Set<string>();

@@ -10,7 +10,7 @@ describe("workflow rules", () => {
         hasApprovedConcept: false,
         projectCount: 0,
         allStoriesApproved: false,
-        allArchitectureApproved: false
+        allImplementationPlansApproved: false
       })
     ).toBe(true);
   });
@@ -21,7 +21,7 @@ describe("workflow rules", () => {
         hasApprovedConcept: false,
         projectCount: 0,
         allStoriesApproved: false,
-        allArchitectureApproved: false
+        allImplementationPlansApproved: false
       })
     ).toBe(false);
   });
@@ -32,7 +32,7 @@ describe("workflow rules", () => {
         hasApprovedConcept: true,
         projectCount: 1,
         allStoriesApproved: false,
-        allArchitectureApproved: false
+        allImplementationPlansApproved: false
       })
     ).toBe(false);
   });
@@ -88,14 +88,14 @@ describe("workflow rules", () => {
           ]
         ]
       ]),
-      architecturePlansByProjectId: new Map([["project_1", null]])
+      implementationPlansByProjectId: new Map([["project_1", null]])
     });
 
     expect(snapshot).toEqual({
       hasApprovedConcept: true,
       projectCount: 1,
       allStoriesApproved: true,
-      allArchitectureApproved: false
+      allImplementationPlansApproved: false
     });
   });
 });

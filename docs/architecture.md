@@ -4,7 +4,7 @@ Der MVP ist engine-first aufgebaut:
 
 - `domain/` enthaelt Entitaeten, Statuswerte und Gate-Regeln
 - `persistence/` kapselt SQLite, Migrationen, Drizzle-Schema und Repositories
-- `workflow/` steuert `StageRun`-Lifecycle, Imports und Statuswechsel
+- `workflow/` steuert `StageRun`-Lifecycle, Planning-Importe, Execution-Orchestrierung und Statuswechsel
 - `services/` kapseln dateibasierte Resolver und Artefaktablage
 - `adapters/` entkoppeln die technische Agent-Ausfuehrung vom Workflow
 - `cli/` bleibt duenn und delegiert in Services
@@ -38,3 +38,27 @@ Damit koennen Requirements spaeter in QA und Verifikation wiederverwendet werden
 5. Validierte JSON-Artefakte werden in Domain-Daten importiert
 
 Die erste Adapter-Implementierung ist lokal und deterministisch, damit der MVP reproduzierbar testbar bleibt.
+
+## Execution Runtime
+
+Die erste Execution-Schicht ist bewusst engine-gesteuert:
+
+- Planning beschreibt nur fachliche Reihenfolge und Parallelisierbarkeit
+- die Engine entscheidet, welche `WaveStory` wirklich ausfuehrbar ist
+- pro ausfuehrbarer Story wird genau ein bounded Worker-Run gestartet
+- Worker-Rollen sind Registry, nicht Scheduler
+
+Persistiert werden dafuer:
+
+- `ProjectExecutionContext` als wiederverwendbarer Projektkontext
+- `WaveExecution` als Laufzeitversuch fuer eine Wave
+- `WaveStoryExecution` als Laufzeitversuch fuer genau eine Story-in-Wave-Zuordnung
+- `ExecutionAgentSession` fuer den konkreten Worker-Lauf
+- `VerificationRun` fuer das strukturierte Ergebnis der Verifikation
+
+Vor jedem Story-Run erzeugt die Engine und speichert:
+
+- einen Business-Context-Snapshot
+- einen Repo-Context-Snapshot
+
+Dadurch bleibt der Ausfuehrungspfad nachvollziehbar und reproduzierbar, ohne das Scheduling dem LLM zu ueberlassen.

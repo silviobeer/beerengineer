@@ -30,7 +30,7 @@ export function canMoveItem(
   }
 
   if (currentColumn === "implementation" && targetColumn === "done") {
-    return snapshot.projectCount > 0 && snapshot.allArchitectureApproved;
+    return snapshot.projectCount > 0 && snapshot.allImplementationPlansApproved;
   }
 
   return false;

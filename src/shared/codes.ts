@@ -2,6 +2,7 @@ const ITEM_CODE_WIDTH = 4;
 const PROJECT_CODE_WIDTH = 2;
 const STORY_CODE_WIDTH = 2;
 const ACCEPTANCE_CRITERION_CODE_WIDTH = 2;
+const WAVE_CODE_WIDTH = 2;
 
 function pad(value: number, width: number): string {
   return String(value).padStart(width, "0");
@@ -21,6 +22,10 @@ export function formatStoryCode(projectCode: string, sequence: number): string {
 
 export function formatAcceptanceCriterionCode(storyCode: string, sequence: number): string {
   return `${storyCode}-AC${pad(sequence, ACCEPTANCE_CRITERION_CODE_WIDTH)}`;
+}
+
+export function formatWaveCode(sequence: number): string {
+  return `W${pad(sequence, WAVE_CODE_WIDTH)}`;
 }
 
 export function parseItemCodeSequence(code: string): number | null {

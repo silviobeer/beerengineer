@@ -21,5 +21,10 @@ export const runProfiles: Record<StageKey, RunProfile> = {
     stageKey: "architecture",
     promptPath: "prompts/system/architecture.md",
     skillPaths: ["skills/architecture.md"]
+  },
+  planning: {
+    stageKey: "planning",
+    promptPath: "prompts/system/planning.md",
+    skillPaths: ["skills/writing-plans.md"]
   }
 };
