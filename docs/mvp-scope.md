@@ -15,15 +15,16 @@ Enthalten:
 - zweistufige Story-Verifikation mit `basic`- und `ralph`-Runs nach jeder Implementierung
 - bounded Story-Review-Schicht innerhalb der Execution-Pipeline
 - projektweite QA-Schicht mit `QaRun`, `QaFinding` und `QaAgentSession`
+- projektweite Dokumentationsschicht mit `DocumentationRun`, `DocumentationAgentSession` und den Artefakten `delivery-report` / `delivery-report-data`
 - CLI-Kommandos fuer `execution:start`, `execution:tick`, `execution:show` und `execution:retry`
 - CLI-Kommandos fuer `qa:start`, `qa:show` und `qa:retry`
-- engine-erzwungene Reihenfolge `test_preparation -> implementation -> verification_basic -> verification_ralph -> story_review -> qa`
+- CLI-Kommandos fuer `documentation:start`, `documentation:show` und `documentation:retry`
+- engine-erzwungene Reihenfolge `test_preparation -> implementation -> verification_basic -> verification_ralph -> story_review -> qa -> documentation`
 
 Bewusst nicht enthalten:
 
 - UI
 - Multi-Provider-Adapter
 - freie LLM-Orchestrierung oder agentenseitige Scheduling-Entscheidungen
-- Dokumentations-Schritt
 - Session-Recovery ueber Prozessneustarts hinaus
 - Legacy-Kompatibilitaet fuer wegwerfbare Baumodus-Datenbanken

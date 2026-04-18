@@ -138,6 +138,51 @@ export const storyReviewOutputSchema = z.object({
   recommendations: z.array(z.string().min(1)).default([])
 });
 
+export const documentationOutputSchema = z.object({
+  projectCode: z.string().min(1),
+  overallStatus: z.enum(["completed", "review_required"]),
+  summary: z.string().min(1),
+  originalScope: z.string().min(1),
+  deliveredScope: z.string().min(1),
+  architectureSnapshot: z.string().min(1),
+  waves: z.array(
+    z.object({
+      waveCode: z.string().min(1),
+      goal: z.string().min(1),
+      storiesDelivered: z.array(z.string().min(1)).min(1)
+    })
+  ).min(1),
+  storiesDelivered: z.array(
+    z.object({
+      storyCode: z.string().min(1),
+      summary: z.string().min(1)
+    })
+  ).min(1),
+  verificationSummary: z.object({
+    ralphPassedStoryCodes: z.array(z.string().min(1)),
+    storyReviewPassedStoryCodes: z.array(z.string().min(1)),
+    qaStatus: z.enum(["passed", "review_required"]),
+    qaOpenFindingCount: z.number().int().nonnegative()
+  }),
+  technicalReviewSummary: z.object({
+    reviewedStoryCodes: z.array(z.string().min(1)),
+    openFindingCounts: z.object({
+      critical: z.number().int().nonnegative(),
+      high: z.number().int().nonnegative(),
+      medium: z.number().int().nonnegative(),
+      low: z.number().int().nonnegative()
+    })
+  }),
+  qaSummary: z.object({
+    status: z.enum(["passed", "review_required"]),
+    summary: z.string().min(1),
+    openFindings: z.number().int().nonnegative()
+  }),
+  openFollowUps: z.array(z.string().min(1)),
+  keyChangedAreas: z.array(z.string().min(1)),
+  reportMarkdown: z.string().min(1)
+});
+
 export type ProjectsOutput = z.infer<typeof projectsOutputSchema>;
 export type StoriesOutput = z.infer<typeof storiesOutputSchema>;
 export type ArchitecturePlanOutput = z.infer<typeof architecturePlanOutputSchema>;
@@ -147,3 +192,4 @@ export type TestPreparationOutput = z.infer<typeof testPreparationOutputSchema>;
 export type RalphVerificationOutput = z.infer<typeof ralphVerificationOutputSchema>;
 export type QaOutput = z.infer<typeof qaOutputSchema>;
 export type StoryReviewOutput = z.infer<typeof storyReviewOutputSchema>;
+export type DocumentationOutput = z.infer<typeof documentationOutputSchema>;

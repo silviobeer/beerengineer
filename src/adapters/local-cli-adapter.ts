@@ -10,6 +10,8 @@ import type {
   AdapterRunResult,
   ExecutionAdapterRunRequest,
   ExecutionAdapterRunResult,
+  DocumentationAdapterRunRequest,
+  DocumentationAdapterRunResult,
   QaAdapterRunRequest,
   QaAdapterRunResult,
   RalphVerificationAdapterRunRequest,
@@ -95,6 +97,19 @@ export class LocalCliAdapter implements AgentAdapter {
     };
   }
 
+  public async runProjectDocumentation(
+    request: DocumentationAdapterRunRequest
+  ): Promise<DocumentationAdapterRunResult> {
+    const parsed = this.executePayload(request) as { output: DocumentationAdapterRunResult["output"] };
+    return {
+      output: parsed.output,
+      stdout: JSON.stringify(parsed),
+      stderr: "",
+      exitCode: 0,
+      command: [process.execPath, resolve(this.repoRoot, this.scriptPath)]
+    };
+  }
+
   public async runStoryReview(request: StoryReviewAdapterRunRequest): Promise<StoryReviewAdapterRunResult> {
     const parsed = this.executePayload(request) as { output: StoryReviewAdapterRunResult["output"] };
     return {
@@ -114,6 +129,7 @@ export class LocalCliAdapter implements AgentAdapter {
       | RalphVerificationAdapterRunRequest
       | StoryReviewAdapterRunRequest
       | QaAdapterRunRequest
+      | DocumentationAdapterRunRequest
   ): unknown {
     const tempDir = mkdtempSync(join(tmpdir(), "beerengineer-agent-"));
     const payloadPath = join(tempDir, "payload.json");

@@ -8,6 +8,8 @@ import {
   ArtifactRepository,
   ArchitecturePlanRepository,
   ConceptRepository,
+  DocumentationAgentSessionRepository,
+  DocumentationRunRepository,
   ExecutionAgentSessionRepository,
   ImplementationPlanRepository,
   ItemRepository,
@@ -58,6 +60,8 @@ describe("repositories", () => {
     const qaRunRepository = new QaRunRepository(db);
     const qaFindingRepository = new QaFindingRepository(db);
     const qaAgentSessionRepository = new QaAgentSessionRepository(db);
+    const documentationRunRepository = new DocumentationRunRepository(db);
+    const documentationAgentSessionRepository = new DocumentationAgentSessionRepository(db);
     const artifactRepository = new ArtifactRepository(db);
 
     try {
@@ -354,6 +358,24 @@ describe("repositories", () => {
         stderr: "",
         exitCode: 0
       });
+      const documentationRun = documentationRunRepository.create({
+        projectId: projects[0]!.id,
+        status: "review_required",
+        inputSnapshotJson: "{\"projectCode\":\"ITEM-0001-P01\"}",
+        systemPromptSnapshot: "documentation prompt",
+        skillsSnapshotJson: JSON.stringify([{ path: "skills/documentation-writer.md", content: "Documentation skill" }]),
+        summaryJson: "{\"overallStatus\":\"review_required\",\"artifactIds\":[]}",
+        errorMessage: null
+      });
+      const documentationSession = documentationAgentSessionRepository.create({
+        documentationRunId: documentationRun.id,
+        adapterKey: "local-cli",
+        status: "completed",
+        commandJson: "[\"node\"]",
+        stdout: "{}",
+        stderr: "",
+        exitCode: 0
+      });
 
       expect(architecturePlan.id).toContain("architecture_");
       expect(implementationPlan.id).toContain("plan_");
@@ -384,6 +406,11 @@ describe("repositories", () => {
       expect(qaFindingRepository.listByQaRunId(qaRun.id)).toHaveLength(1);
       expect(qaSession.id).toContain("qa_session_");
       expect(qaAgentSessionRepository.listByQaRunId(qaRun.id)).toHaveLength(1);
+      expect(documentationRun.id).toContain("documentation_run_");
+      expect(documentationRunRepository.getLatestByProjectId(projects[0]!.id)?.status).toBe("review_required");
+      expect(documentationRunRepository.listByProjectId(projects[0]!.id)).toHaveLength(1);
+      expect(documentationSession.id).toContain("documentation_session_");
+      expect(documentationAgentSessionRepository.listByDocumentationRunId(documentationRun.id)).toHaveLength(1);
     } finally {
       testDb.cleanup();
     }

@@ -321,6 +321,33 @@ export const qaAgentSessions = sqliteTable("qa_agent_sessions", {
   updatedAt: integer("updated_at").notNull()
 });
 
+export const documentationRuns = sqliteTable("documentation_runs", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull().references(() => projects.id),
+  status: text("status").notNull(),
+  inputSnapshotJson: text("input_snapshot_json").notNull(),
+  systemPromptSnapshot: text("system_prompt_snapshot").notNull(),
+  skillsSnapshotJson: text("skills_snapshot_json").notNull(),
+  summaryJson: text("summary_json"),
+  errorMessage: text("error_message"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+  completedAt: integer("completed_at")
+});
+
+export const documentationAgentSessions = sqliteTable("documentation_agent_sessions", {
+  id: text("id").primaryKey(),
+  documentationRunId: text("documentation_run_id").notNull().references(() => documentationRuns.id),
+  adapterKey: text("adapter_key").notNull(),
+  status: text("status").notNull(),
+  commandJson: text("command_json").notNull(),
+  stdout: text("stdout").notNull(),
+  stderr: text("stderr").notNull(),
+  exitCode: integer("exit_code").notNull(),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull()
+});
+
 export const stageRuns = sqliteTable("stage_runs", {
   id: text("id").primaryKey(),
   itemId: text("item_id").notNull().references(() => items.id),

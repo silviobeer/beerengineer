@@ -216,6 +216,36 @@ program
   );
 
 program
+  .command("documentation:start")
+  .requiredOption("--project-id <projectId>")
+  .action(
+    withContext<{ projectId: string }>(async ({ workflowService }, options) => {
+      const result = await workflowService.startDocumentation(options.projectId);
+      console.log(JSON.stringify(result, null, 2));
+    })
+  );
+
+program
+  .command("documentation:show")
+  .requiredOption("--project-id <projectId>")
+  .action(
+    withContext<{ projectId: string }>(({ workflowService }, options) => {
+      const result = workflowService.showDocumentation(options.projectId);
+      console.log(JSON.stringify(result, null, 2));
+    })
+  );
+
+program
+  .command("documentation:retry")
+  .requiredOption("--documentation-run-id <documentationRunId>")
+  .action(
+    withContext<{ documentationRunId: string }>(async ({ workflowService }, options) => {
+      const result = await workflowService.retryDocumentation(options.documentationRunId);
+      console.log(JSON.stringify(result, null, 2));
+    })
+  );
+
+program
   .command("item:show")
   .requiredOption("--item-id <itemId>")
   .action(

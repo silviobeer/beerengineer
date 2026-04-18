@@ -49,6 +49,9 @@ export type StoryReviewWorkerRole = (typeof storyReviewWorkerRoles)[number];
 export const qaWorkerRoles = ["qa-verifier"] as const;
 export type QaWorkerRole = (typeof qaWorkerRoles)[number];
 
+export const documentationWorkerRoles = ["documentation-writer"] as const;
+export type DocumentationWorkerRole = (typeof documentationWorkerRoles)[number];
+
 export const waveExecutionStatuses = [
   "pending",
   "running",
@@ -76,6 +79,9 @@ export type QaRunMode = (typeof qaRunModes)[number];
 
 export const qaRunStatuses = ["running", "review_required", "passed", "failed"] as const;
 export type QaRunStatus = (typeof qaRunStatuses)[number];
+
+export const documentationRunStatuses = ["running", "review_required", "completed", "failed"] as const;
+export type DocumentationRunStatus = (typeof documentationRunStatuses)[number];
 
 export const qaFindingSeverities = ["critical", "high", "medium", "low"] as const;
 export type QaFindingSeverity = (typeof qaFindingSeverities)[number];
@@ -399,6 +405,33 @@ export type QaFinding = {
 export type QaAgentSession = {
   id: string;
   qaRunId: string;
+  adapterKey: string;
+  status: "running" | "completed" | "failed";
+  commandJson: string;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type DocumentationRun = {
+  id: string;
+  projectId: string;
+  status: DocumentationRunStatus;
+  inputSnapshotJson: string;
+  systemPromptSnapshot: string;
+  skillsSnapshotJson: string;
+  summaryJson: string | null;
+  errorMessage: string | null;
+  createdAt: number;
+  updatedAt: number;
+  completedAt: number | null;
+};
+
+export type DocumentationAgentSession = {
+  id: string;
+  documentationRunId: string;
   adapterKey: string;
   status: "running" | "completed" | "failed";
   commandJson: string;

@@ -36,9 +36,10 @@ describe("migration runner", () => {
         "0001_add_verification_run_mode",
         "0002_add_qa_runtime_tables",
         "0003_add_story_review_runtime_tables",
-        "0004_add_worker_prompt_skill_snapshots"
+        "0004_add_worker_prompt_skill_snapshots",
+        "0005_add_documentation_runtime_tables"
       ]);
-      expect(row?.count).toBe(5);
+      expect(row?.count).toBe(6);
       expect(indexes.map((index) => index.name)).toContain("idx_qa_runs_project_id");
     } finally {
       secondConnection.close();
@@ -64,7 +65,8 @@ describe("migration runner", () => {
         "0001_add_verification_run_mode",
         "0002_add_qa_runtime_tables",
         "0003_add_story_review_runtime_tables",
-        "0004_add_worker_prompt_skill_snapshots"
+        "0004_add_worker_prompt_skill_snapshots",
+        "0005_add_documentation_runtime_tables"
       ]);
       expect(columns.map((column) => column.name)).toContain("mode");
       expect(executionColumns.map((column) => column.name)).toContain("system_prompt_snapshot");
@@ -87,7 +89,12 @@ describe("migration runner", () => {
       const findingIndexes = qaLegacyDb.prepare("PRAGMA index_list(qa_findings)").all() as Array<{ name: string }>;
       const sessionIndexes = qaLegacyDb.prepare("PRAGMA index_list(qa_agent_sessions)").all() as Array<{ name: string }>;
 
-      expect(applied).toEqual(["0002_add_qa_runtime_tables", "0003_add_story_review_runtime_tables", "0004_add_worker_prompt_skill_snapshots"]);
+      expect(applied).toEqual([
+        "0002_add_qa_runtime_tables",
+        "0003_add_story_review_runtime_tables",
+        "0004_add_worker_prompt_skill_snapshots",
+        "0005_add_documentation_runtime_tables"
+      ]);
       expect(runIndexes.map((index) => index.name)).toContain("idx_qa_runs_project_id");
       expect(findingIndexes.map((index) => index.name)).toContain("idx_qa_findings_qa_run_id");
       expect(sessionIndexes.map((index) => index.name)).toContain("idx_qa_agent_sessions_qa_run_id");
@@ -112,7 +119,11 @@ describe("migration runner", () => {
       const findingIndexes = reviewLegacyDb.prepare("PRAGMA index_list(story_review_findings)").all() as Array<{ name: string }>;
       const sessionIndexes = reviewLegacyDb.prepare("PRAGMA index_list(story_review_agent_sessions)").all() as Array<{ name: string }>;
 
-      expect(applied).toEqual(["0003_add_story_review_runtime_tables", "0004_add_worker_prompt_skill_snapshots"]);
+      expect(applied).toEqual([
+        "0003_add_story_review_runtime_tables",
+        "0004_add_worker_prompt_skill_snapshots",
+        "0005_add_documentation_runtime_tables"
+      ]);
       expect(tables.map((table) => table.name)).toEqual([
         "story_review_agent_sessions",
         "story_review_findings",
@@ -125,6 +136,40 @@ describe("migration runner", () => {
       expect(qaRunColumns.map((column) => column.name)).toContain("system_prompt_snapshot");
     } finally {
       reviewLegacyDb.close();
+      testDb.cleanup();
+    }
+  });
+
+  it("adds documentation tables and indexes when the documentation migration is applied", () => {
+    const testDb = createTestDatabase();
+    const documentationLegacyDb = createSqliteConnection(testDb.filePath.replace("test.sqlite", "documentation-legacy.sqlite"));
+
+    try {
+      applyMigrations(documentationLegacyDb, [
+        baseMigrations[0]!,
+        baseMigrations[1]!,
+        baseMigrations[2]!,
+        baseMigrations[3]!,
+        baseMigrations[4]!
+      ]);
+
+      const applied = applyMigrations(documentationLegacyDb, baseMigrations);
+      const tables = documentationLegacyDb
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('documentation_runs', 'documentation_agent_sessions') ORDER BY name")
+        .all() as Array<{ name: string }>;
+      const runIndexes = documentationLegacyDb.prepare("PRAGMA index_list(documentation_runs)").all() as Array<{ name: string }>;
+      const sessionIndexes = documentationLegacyDb
+        .prepare("PRAGMA index_list(documentation_agent_sessions)")
+        .all() as Array<{ name: string }>;
+
+      expect(applied).toEqual(["0005_add_documentation_runtime_tables"]);
+      expect(tables.map((table) => table.name)).toEqual(["documentation_agent_sessions", "documentation_runs"]);
+      expect(runIndexes.map((index) => index.name)).toContain("idx_documentation_runs_project_id");
+      expect(sessionIndexes.map((index) => index.name)).toContain(
+        "idx_documentation_agent_sessions_documentation_run_id"
+      );
+    } finally {
+      documentationLegacyDb.close();
       testDb.cleanup();
     }
   });

@@ -42,6 +42,9 @@ Damit bleiben alte Runs nachvollziehbar, auch wenn Prompt- oder Skill-Dateien sp
 - `qa`
   Prompt: `prompts/workers/qa.md`
   Skill: `skills/qa-verifier.md`
+- `documentation`
+  Prompt: `prompts/workers/documentation.md`
+  Skill: `skills/documentation-writer.md`
 
 ## Current Intent
 
@@ -76,6 +79,7 @@ Das gilt heute fuer:
 - `ralph`
 - `story_review`
 - `qa`
+- `documentation`
 
 Die Stage-Prompts sind bewusst enger geschnitten als allgemeine Agent-Skills:
 

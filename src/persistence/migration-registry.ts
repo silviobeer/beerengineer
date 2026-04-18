@@ -418,5 +418,39 @@ export const baseMigrations: readonly SqlMigration[] = [
       `ALTER TABLE qa_runs ADD COLUMN system_prompt_snapshot TEXT NOT NULL DEFAULT ''`,
       `ALTER TABLE qa_runs ADD COLUMN skills_snapshot_json TEXT NOT NULL DEFAULT '[]'`
     ]
+  },
+  {
+    id: "0005_add_documentation_runtime_tables",
+    statements: [
+      `CREATE TABLE IF NOT EXISTS documentation_runs (
+        id TEXT PRIMARY KEY NOT NULL,
+        project_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        input_snapshot_json TEXT NOT NULL,
+        system_prompt_snapshot TEXT NOT NULL,
+        skills_snapshot_json TEXT NOT NULL,
+        summary_json TEXT,
+        error_message TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        FOREIGN KEY (project_id) REFERENCES projects(id)
+      )`,
+      `CREATE TABLE IF NOT EXISTS documentation_agent_sessions (
+        id TEXT PRIMARY KEY NOT NULL,
+        documentation_run_id TEXT NOT NULL,
+        adapter_key TEXT NOT NULL,
+        status TEXT NOT NULL,
+        command_json TEXT NOT NULL,
+        stdout TEXT NOT NULL,
+        stderr TEXT NOT NULL,
+        exit_code INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (documentation_run_id) REFERENCES documentation_runs(id)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_documentation_runs_project_id ON documentation_runs(project_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_documentation_agent_sessions_documentation_run_id ON documentation_agent_sessions(documentation_run_id)`
+    ]
   }
 ];

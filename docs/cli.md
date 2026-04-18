@@ -20,6 +20,9 @@ npm run cli -- execution:retry --wave-story-execution-id <waveStoryExecutionId>
 npm run cli -- qa:start --project-id <projectId>
 npm run cli -- qa:show --project-id <projectId>
 npm run cli -- qa:retry --qa-run-id <qaRunId>
+npm run cli -- documentation:start --project-id <projectId>
+npm run cli -- documentation:show --project-id <projectId>
+npm run cli -- documentation:retry --documentation-run-id <documentationRunId>
 ```
 
 Optional:
@@ -82,6 +85,8 @@ Beim `execution:start`- und `execution:tick`-Pfad werden heute zusaetzlich diese
 - `QaRun`
 - `QaFinding`
 - `QaAgentSession`
+- `DocumentationRun`
+- `DocumentationAgentSession`
 
 Die Engine entscheidet dabei deterministisch:
 
@@ -130,3 +135,22 @@ Im aktuellen QA-Schnitt gilt:
   - keine Findings -> `passed`
   - mindestens ein `critical` oder `high` -> `failed`
   - nur `medium` / `low` -> `review_required`
+
+## Documentation Runtime
+
+Beim `documentation:start`-, `documentation:show`- und `documentation:retry`-Pfad werden heute diese projektweiten Runtime-Ebenen genutzt:
+
+- `DocumentationRun`
+- `DocumentationAgentSession`
+
+Zusammen mit den Artefakten:
+
+- `delivery-report`
+- `delivery-report-data`
+
+Im aktuellen Documentation-Schnitt gilt:
+
+- `documentation:start` startet genau einen bounded `documentation-writer`-Lauf fuer ein Project
+- Dokumentation startet nur nach einem `QaRun` mit Status `passed` oder `review_required`
+- `documentation:show` zeigt den neuesten `DocumentationRun` sowie Sessions und zugehoerige Artefakte aller Dokumentationsversuche fuer das Project
+- `documentation:retry` erlaubt genau dann einen neuen Dokumentationslauf, wenn der letzte `DocumentationRun` auf `review_required` oder `failed` steht

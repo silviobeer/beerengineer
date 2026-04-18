@@ -254,6 +254,27 @@ Live verifiziert:
   - beide Waves `completed`
   - Item-Endzustand `currentColumn = done`, `phaseStatus = completed`
 
+## Documentation Slice
+
+Umgesetzt:
+
+- projektweiter Dokumentationslauf mit `DocumentationRun` und `DocumentationAgentSession`
+- CLI-Kommandos `documentation:start`, `documentation:show` und `documentation:retry`
+- finale Artefakte `delivery-report` und `delivery-report-data`
+- engine-seitige Guards: Dokumentation startet nur nach `QaRun.status = passed | review_required`
+- item-phase wird nach erfolgreicher Dokumentation erneut auf `completed` oder `review_required` aufgeloest
+
+Verifiziert mit:
+
+- `npm run build`
+- `npm run lint`
+- `npm test`
+
+Aktueller Stand:
+
+- 12 Testdateien
+- 44 gruene Tests
+
 ## Migration Hardening
 
 Umgesetzt:

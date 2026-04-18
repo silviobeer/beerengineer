@@ -1,5 +1,7 @@
 import type {
+  DocumentationWorkerRole,
   ExecutionWorkerRole,
+  QaRunStatus,
   StoryReviewWorkerRole,
   StageKey,
   TestPreparationWorkerRole,
@@ -7,6 +9,7 @@ import type {
   VerificationWorkerRole
 } from "../domain/types.js";
 import type {
+  DocumentationOutput,
   RalphVerificationOutput,
   QaOutput,
   StoryReviewOutput,
@@ -253,6 +256,95 @@ export type QaAdapterRunResult = {
   command: string[];
 };
 
+export type DocumentationAdapterRunRequest = {
+  workerRole: DocumentationWorkerRole;
+  prompt: string;
+  skills: Array<{ path: string; content: string }>;
+  item: ExecutionAdapterRunRequest["item"];
+  project: ExecutionAdapterRunRequest["project"];
+  concept: {
+    id: string;
+    version: number;
+    title: string;
+    summary: string;
+  } | null;
+  implementationPlan: ExecutionAdapterRunRequest["implementationPlan"];
+  architecture: ExecutionAdapterRunRequest["architecture"];
+  projectExecutionContext: ExecutionAdapterRunRequest["projectExecutionContext"];
+  inputSnapshotJson: string;
+  latestQaRun: {
+    id: string;
+    status: QaRunStatus;
+    summaryJson: string | null;
+  };
+  openQaFindings: Array<{
+    severity: "critical" | "high" | "medium" | "low";
+    category: "functional" | "security" | "regression" | "ux";
+    title: string;
+    description: string;
+    evidence: string;
+    reproSteps: string[];
+    suggestedFix: string | null;
+    storyCode: string | null;
+    acceptanceCriterionCode: string | null;
+  }>;
+  waves: Array<{
+    id: string;
+    code: string;
+    goal: string;
+    position: number;
+    storiesDelivered: string[];
+  }>;
+  stories: Array<{
+    id: string;
+    code: string;
+    title: string;
+    description: string;
+    acceptanceCriteria: Array<{
+      id: string;
+      code: string;
+      text: string;
+      position: number;
+    }>;
+    latestTestPreparation: TestPreparationOutput;
+    latestExecution: StoryExecutionOutput;
+    latestBasicVerification: {
+      id: string;
+      status: VerificationRunStatus;
+      summaryJson: string;
+    };
+    latestRalphVerification: {
+      id: string;
+      status: VerificationRunStatus;
+      summary: RalphVerificationOutput;
+    };
+    latestStoryReview: {
+      id: string;
+      status: "passed";
+      summary: StoryReviewOutput;
+      findings: Array<{
+        severity: "critical" | "high" | "medium" | "low";
+        category: "correctness" | "security" | "reliability" | "performance" | "maintainability" | "persistence";
+        title: string;
+        description: string;
+        evidence: string;
+        filePath: string | null;
+        line: number | null;
+        suggestedFix: string | null;
+        status: "open" | "accepted" | "resolved" | "false_positive";
+      }>;
+    };
+  }>;
+};
+
+export type DocumentationAdapterRunResult = {
+  output: DocumentationOutput;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  command: string[];
+};
+
 export type StoryReviewAdapterRunRequest = {
   workerRole: StoryReviewWorkerRole;
   prompt: string;
@@ -313,4 +405,5 @@ export interface AgentAdapter {
   runStoryRalphVerification(request: RalphVerificationAdapterRunRequest): Promise<RalphVerificationAdapterRunResult>;
   runStoryReview(request: StoryReviewAdapterRunRequest): Promise<StoryReviewAdapterRunResult>;
   runProjectQa?(request: QaAdapterRunRequest): Promise<QaAdapterRunResult>;
+  runProjectDocumentation?(request: DocumentationAdapterRunRequest): Promise<DocumentationAdapterRunResult>;
 }

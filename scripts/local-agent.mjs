@@ -345,6 +345,107 @@ function storyReview(payload) {
   };
 }
 
+function documentationWriter(payload) {
+  let qaSummary = null;
+  try {
+    qaSummary = payload.latestQaRun.summaryJson ? JSON.parse(payload.latestQaRun.summaryJson) : null;
+  } catch {
+    qaSummary = null;
+  }
+  const qaOpenFindings = payload.openQaFindings.length;
+  const changedAreas = Array.from(
+    new Set(payload.stories.flatMap((story) => story.latestExecution.changedFiles ?? []))
+  );
+  const technicalReviewCounts = payload.stories.flatMap((story) => story.latestStoryReview.findings).reduce(
+    (acc, finding) => {
+      acc[finding.severity] += finding.status === "open" ? 1 : 0;
+      return acc;
+    },
+    { critical: 0, high: 0, medium: 0, low: 0 }
+  );
+  const overallStatus = payload.latestQaRun.status === "review_required" ? "review_required" : "completed";
+  const reportMarkdown = `# ${payload.project.code} Delivery Report
+
+## Outcome Summary
+${payload.project.title} completed through execution, QA, and documentation with status \`${overallStatus}\`.
+
+## Original Scope
+${payload.concept?.summary ?? `Deliver the first usable slice for ${payload.project.title}.`}
+
+## Delivered Scope
+${payload.stories.map((story) => `- ${story.code}: ${story.title}`).join("\n")}
+
+## Architecture Snapshot
+${payload.architecture?.summary ?? "No separate architecture summary was stored."}
+
+## Execution Summary By Wave
+${payload.waves.map((wave) => `- ${wave.code}: ${wave.goal} (${wave.storiesDelivered.join(", ")})`).join("\n")}
+
+## Test And Verification Summary
+- Ralph passed for ${payload.stories.map((story) => story.code).join(", ")}
+- QA status: ${payload.latestQaRun.status}
+
+## Technical Review Summary
+- Reviewed stories: ${payload.stories.map((story) => story.code).join(", ")}
+- Open technical findings: critical ${technicalReviewCounts.critical}, high ${technicalReviewCounts.high}, medium ${technicalReviewCounts.medium}, low ${technicalReviewCounts.low}
+
+## QA Summary
+${qaSummary?.summary ?? `QA found ${qaOpenFindings} open finding(s).`}
+
+## Open Follow-Ups
+${qaOpenFindings > 0 ? payload.openQaFindings.map((finding) => `- ${finding.title}`).join("\n") : "- None."}
+
+## Key Changed Areas
+${changedAreas.length > 0 ? changedAreas.map((area) => `- ${area}`).join("\n") : "- No changed areas were recorded."}
+`;
+
+  return {
+    output: {
+      projectCode: payload.project.code,
+      overallStatus,
+      summary:
+        overallStatus === "completed"
+          ? `Documentation completed for ${payload.project.code}.`
+          : `Documentation completed with open follow-ups for ${payload.project.code}.`,
+      originalScope: payload.concept?.summary ?? `Deliver the first usable slice for ${payload.project.title}.`,
+      deliveredScope: `Delivered ${payload.stories.length} stories across ${payload.waves.length} waves.`,
+      architectureSnapshot: payload.architecture?.summary ?? "No architecture summary was stored.",
+      waves: payload.waves.map((wave) => ({
+        waveCode: wave.code,
+        goal: wave.goal,
+        storiesDelivered: wave.storiesDelivered
+      })),
+      storiesDelivered: payload.stories.map((story) => ({
+        storyCode: story.code,
+        summary: story.latestExecution.summary
+      })),
+      verificationSummary: {
+        ralphPassedStoryCodes: payload.stories.map((story) => story.code),
+        storyReviewPassedStoryCodes: payload.stories
+          .filter((story) => story.latestStoryReview.status === "passed")
+          .map((story) => story.code),
+        qaStatus: payload.latestQaRun.status,
+        qaOpenFindingCount: qaOpenFindings
+      },
+      technicalReviewSummary: {
+        reviewedStoryCodes: payload.stories.map((story) => story.code),
+        openFindingCounts: technicalReviewCounts
+      },
+      qaSummary: {
+        status: payload.latestQaRun.status,
+        summary: qaSummary?.summary ?? `QA found ${qaOpenFindings} open finding(s).`,
+        openFindings: qaOpenFindings
+      },
+      openFollowUps:
+        qaOpenFindings > 0
+          ? payload.openQaFindings.map((finding) => finding.title)
+          : ["No open follow-ups remain in the local documentation stub."],
+      keyChangedAreas: changedAreas,
+      reportMarkdown
+    }
+  };
+}
+
 let result;
 if (payload.stageKey === "brainstorm") {
   result = brainstorming(payload.item);
@@ -362,6 +463,8 @@ if (payload.stageKey === "brainstorm") {
   result = storyReview(payload);
 } else if (payload.workerRole === "qa-verifier") {
   result = qaVerification(payload);
+} else if (payload.workerRole === "documentation-writer") {
+  result = documentationWriter(payload);
 } else if (payload.workerRole) {
   result = storyExecution(payload);
 } else {

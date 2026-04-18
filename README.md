@@ -1,10 +1,10 @@
 # Beerengineer
 
-CLI-first Workflow-Engine fuer einen modularen, agentengetriebenen Entwicklungsprozess. Der aktuelle MVP bildet den fachlichen Flow von `Item` bis in die projektweite QA-Schicht lokal und reproduzierbar ab.
+CLI-first Workflow-Engine fuer einen modularen, agentengetriebenen Entwicklungsprozess. Der aktuelle MVP bildet den fachlichen Flow von `Item` bis in die projektweite Dokumentationsschicht lokal und reproduzierbar ab.
 
 ## Status
 
-Der dokumentierte MVP-Schnitt bis zur projektweiten QA-Schicht ist umgesetzt:
+Der dokumentierte MVP-Schnitt bis zur projektweiten Dokumentationsschicht ist umgesetzt:
 
 - TypeScript/Vitest/SQLite/Drizzle-Basis
 - Domainmodell und Gate-Logik
@@ -16,11 +16,12 @@ Der dokumentierte MVP-Schnitt bis zur projektweiten QA-Schicht ist umgesetzt:
 - zweistufige Verifikation pro Story mit `basic`- und `ralph`-Verification-Runs
 - bounded Story-Review pro Story-Ausfuehrung mit eigenen Findings und Sessions
 - projektweiter QA-Lauf mit `QaRun`, `QaFinding` und `QaAgentSession`
+- projektweiter Dokumentationslauf mit `DocumentationRun`, `DocumentationAgentSession` und den Artefakten `delivery-report` / `delivery-report-data`
 - dateibasiertes Artefakt- und Output-Contract-System
 - StageRuns mit Prompt- und Skill-Snapshots
 - ausformulierte Skills und System-Prompts fuer `brainstorm`, `requirements`, `architecture` und `planning`
 - lokaler CLI-Adapter
-- CLI-Happy-Path von `item:create` bis `qa:start` mit vorgeschalteter TDD-Testvorbereitung, Ralph-AC-Verifikation, Story-Review und projektweiter QA
+- CLI-Happy-Path von `item:create` bis `documentation:start` mit vorgeschalteter TDD-Testvorbereitung, Ralph-AC-Verifikation, Story-Review, projektweiter QA und finaler Dokumentation
 
 ## Voraussetzungen
 

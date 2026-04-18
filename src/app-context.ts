@@ -9,6 +9,8 @@ import {
   ArtifactRepository,
   AgentSessionRepository,
   ConceptRepository,
+  DocumentationAgentSessionRepository,
+  DocumentationRunRepository,
   ExecutionAgentSessionRepository,
   ImplementationPlanRepository,
   ItemRepository,
@@ -67,6 +69,8 @@ export type AppContext = {
     qaRunRepository: QaRunRepository;
     qaFindingRepository: QaFindingRepository;
     qaAgentSessionRepository: QaAgentSessionRepository;
+    documentationRunRepository: DocumentationRunRepository;
+    documentationAgentSessionRepository: DocumentationAgentSessionRepository;
     stageRunRepository: StageRunRepository;
     artifactRepository: ArtifactRepository;
     agentSessionRepository: AgentSessionRepository;
@@ -108,6 +112,8 @@ export function createAppContext(
   const qaRunRepository = new QaRunRepository(db);
   const qaFindingRepository = new QaFindingRepository(db);
   const qaAgentSessionRepository = new QaAgentSessionRepository(db);
+  const documentationRunRepository = new DocumentationRunRepository(db);
+  const documentationAgentSessionRepository = new DocumentationAgentSessionRepository(db);
   const stageRunRepository = new StageRunRepository(db);
   const artifactRepository = new ArtifactRepository(db);
   const agentSessionRepository = new AgentSessionRepository(db);
@@ -140,6 +146,8 @@ export function createAppContext(
       qaRunRepository,
       qaFindingRepository,
       qaAgentSessionRepository,
+      documentationRunRepository,
+      documentationAgentSessionRepository,
       stageRunRepository,
       artifactRepository,
       agentSessionRepository
@@ -172,6 +180,8 @@ export function createAppContext(
       qaRunRepository,
       qaFindingRepository,
       qaAgentSessionRepository,
+      documentationRunRepository,
+      documentationAgentSessionRepository,
       stageRunRepository,
       artifactRepository,
       agentSessionRepository

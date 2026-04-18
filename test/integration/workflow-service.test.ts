@@ -32,6 +32,18 @@ describe("workflow service", () => {
     return { item, project };
   }
 
+  async function prepareProjectThroughQa(
+    context: ReturnType<typeof createAppContext>,
+    input: { title: string; description: string }
+  ) {
+    const prepared = await prepareProjectThroughCompletedExecution(context, input);
+    const qa = await context.workflowService.startQa(prepared.project.id);
+    return {
+      ...prepared,
+      qa
+    };
+  }
+
   it("starts a brainstorm run and stores prompt snapshots", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
     const dbPath = join(root, "app.sqlite");
@@ -760,6 +772,115 @@ describe("workflow service", () => {
 
       await expect(context.workflowService.startQa(project.id)).rejects.toMatchObject({
         code: "QA_EXECUTION_INCOMPLETE"
+      });
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("runs project documentation after QA and stores artifacts and sessions", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const { item, project } = await prepareProjectThroughQa(context, {
+        title: "Documentation Flow",
+        description: "Run project documentation"
+      });
+
+      const result = await context.workflowService.startDocumentation(project.id);
+      expect(result.status).toBe("completed");
+
+      const shown = context.workflowService.showDocumentation(project.id) as {
+        latestDocumentationRun: { id: string; status: string; summaryJson: string | null } | null;
+        documentationRuns: Array<{
+          documentationRun: { status: string };
+          artifacts: Array<{ kind: string }>;
+          sessions: Array<{ adapterKey: string }>;
+        }>;
+      };
+
+      expect(shown.latestDocumentationRun?.status).toBe("completed");
+      expect(shown.latestDocumentationRun?.summaryJson).toContain("artifactIds");
+      expect(shown.documentationRuns).toHaveLength(1);
+      expect(shown.documentationRuns[0]?.artifacts.map((artifact) => artifact.kind)).toEqual([
+        "delivery-report",
+        "delivery-report-data"
+      ]);
+      expect(shown.documentationRuns[0]?.sessions[0]?.adapterKey).toBe("local-cli");
+      expect(context.repositories.itemRepository.getById(item.id)?.phaseStatus).toBe("completed");
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("marks documentation review_required when QA is review_required and supports retry", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const originalScript = readFileSync("scripts/local-agent.mjs", "utf8");
+    const adapterScriptPath = join(root, "local-agent-documentation-review-required.mjs");
+    const dbPath = join(root, "app.sqlite");
+
+    try {
+      const reviewScript = originalScript.replace(
+        "  const findings = [];",
+        `  const findings = [{
+    severity: "medium",
+    category: "functional",
+    title: "Documentation follow-up fixture",
+    description: "A medium QA finding was injected for the documentation flow.",
+    evidence: "Observed in the QA fixture.",
+    reproSteps: ["Open the flow", "Inspect the remaining project-level issue"],
+    suggestedFix: "Address the medium QA issue before final sign-off.",
+    storyCode: payload.stories[0]?.code ?? null,
+    acceptanceCriterionCode: null
+  }];`
+      );
+      writeFileSync(adapterScriptPath, reviewScript);
+      const context = createAppContext(dbPath, { adapterScriptPath });
+      const { item, project } = await prepareProjectThroughCompletedExecution(context, {
+        title: "Documentation Review Required",
+        description: "Trigger documentation follow-up"
+      });
+
+      const qa = await context.workflowService.startQa(project.id);
+      expect(qa.status).toBe("review_required");
+
+      const firstDocumentation = await context.workflowService.startDocumentation(project.id);
+      expect(firstDocumentation.status).toBe("review_required");
+      expect(context.repositories.itemRepository.getById(item.id)?.phaseStatus).toBe("review_required");
+
+      writeFileSync(adapterScriptPath, originalScript);
+      const retriedQa = await context.workflowService.retryQa(qa.qaRunId);
+      expect(retriedQa.status).toBe("passed");
+
+      const retriedDocumentation = await context.workflowService.retryDocumentation(firstDocumentation.documentationRunId);
+      expect(retriedDocumentation.retriedFromDocumentationRunId).toBe(firstDocumentation.documentationRunId);
+      expect(retriedDocumentation.status).toBe("completed");
+      expect(context.repositories.documentationRunRepository.listByProjectId(project.id)).toHaveLength(2);
+      expect(context.repositories.itemRepository.getById(item.id)?.phaseStatus).toBe("completed");
+
+      context.connection.close();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks documentation start until QA has completed", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const { project } = await prepareProjectThroughCompletedExecution(context, {
+        title: "Documentation Blocked",
+        description: "QA must finish first"
+      });
+
+      await expect(context.workflowService.startDocumentation(project.id)).rejects.toMatchObject({
+        code: "DOCUMENTATION_QA_INCOMPLETE"
       });
     } finally {
       context.connection.close();

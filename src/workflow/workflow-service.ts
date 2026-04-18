@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { buildItemWorkflowSnapshot } from "../domain/aggregate-status.js";
 import { assertCanMoveItem } from "../domain/workflow-rules.js";
 import type {
+  DocumentationRunStatus,
   ExecutionWorkerRole,
   QaRunStatus,
   StageKey,
@@ -15,6 +16,7 @@ import { ArtifactService } from "../services/artifact-service.js";
 import {
   implementationPlanOutputSchema,
   architecturePlanOutputSchema,
+  documentationOutputSchema,
   qaOutputSchema,
   projectsOutputSchema,
   ralphVerificationOutputSchema,
@@ -26,6 +28,7 @@ import {
 import type {
   ImplementationPlanOutput,
   ArchitecturePlanOutput,
+  DocumentationOutput,
   ProjectsOutput,
   QaOutput,
   RalphVerificationOutput,
@@ -42,6 +45,8 @@ import {
 } from "../shared/codes.js";
 import type {
   ExecutionAgentSessionRepository,
+  DocumentationAgentSessionRepository,
+  DocumentationRunRepository,
   QaAgentSessionRepository,
   QaFindingRepository,
   QaRunRepository,
@@ -102,6 +107,8 @@ type WorkflowDeps = {
   qaRunRepository: QaRunRepository;
   qaFindingRepository: QaFindingRepository;
   qaAgentSessionRepository: QaAgentSessionRepository;
+  documentationRunRepository: DocumentationRunRepository;
+  documentationAgentSessionRepository: DocumentationAgentSessionRepository;
   stageRunRepository: StageRunRepository;
   artifactRepository: ArtifactRepository;
   agentSessionRepository: AgentSessionRepository;
@@ -484,7 +491,12 @@ export class WorkflowService {
     const implementationPlan = this.requireImplementationPlanForProject(projectId);
     const architecture = this.deps.architecturePlanRepository.getLatestByProjectId(projectId);
     const projectExecutionContext = this.ensureProjectExecutionContext(project, implementationPlan);
-    const qaContext = this.buildQaRunContext(projectId, implementationPlan, projectExecutionContext);
+    const qaContext = this.buildQaRunContext({
+      project,
+      item,
+      implementationPlan,
+      projectExecutionContext
+    });
     const resolvedWorkerProfile = this.resolveWorkerProfile("qa");
 
     this.deps.itemRepository.updatePhaseStatus(item.id, "running");
@@ -635,6 +647,204 @@ export class WorkflowService {
     return {
       ...next,
       retriedFromQaRunId: qaRunId
+    };
+  }
+
+  public async startDocumentation(projectId: string) {
+    const project = this.requireProject(projectId);
+    const item = this.requireItem(project.itemId);
+    const implementationPlan = this.requireImplementationPlanForProject(projectId);
+    const projectExecutionContext = this.ensureProjectExecutionContext(project, implementationPlan);
+    const documentationContext = this.buildDocumentationRunContext({
+      project,
+      item,
+      implementationPlan,
+      projectExecutionContext
+    });
+    const resolvedWorkerProfile = this.resolveWorkerProfile("documentation");
+
+    this.deps.itemRepository.updatePhaseStatus(item.id, "running");
+
+    const documentationRun = this.deps.documentationRunRepository.create({
+      projectId,
+      status: "running",
+      inputSnapshotJson: documentationContext.inputSnapshotJson,
+      systemPromptSnapshot: resolvedWorkerProfile.promptContent,
+      skillsSnapshotJson: JSON.stringify(resolvedWorkerProfile.skills, null, 2),
+      summaryJson: null,
+      errorMessage: null
+    });
+
+    try {
+      if (!this.deps.adapter.runProjectDocumentation) {
+        throw new AppError("DOCUMENTATION_ADAPTER_UNSUPPORTED", "Configured adapter does not support project documentation");
+      }
+
+      const result = await this.deps.adapter.runProjectDocumentation({
+        workerRole: "documentation-writer",
+        prompt: resolvedWorkerProfile.promptContent,
+        skills: resolvedWorkerProfile.skills,
+        item: {
+          id: item.id,
+          code: item.code,
+          title: item.title,
+          description: item.description
+        },
+        project: {
+          id: project.id,
+          code: project.code,
+          title: project.title,
+          summary: project.summary,
+          goal: project.goal
+        },
+        concept: documentationContext.concept
+          ? {
+              id: documentationContext.concept.id,
+              version: documentationContext.concept.version,
+              title: documentationContext.concept.title,
+              summary: documentationContext.concept.summary
+            }
+          : null,
+        implementationPlan: {
+          id: implementationPlan.id,
+          summary: implementationPlan.summary,
+          version: implementationPlan.version
+        },
+        architecture: documentationContext.architecture
+          ? {
+              id: documentationContext.architecture.id,
+              summary: documentationContext.architecture.summary,
+              version: documentationContext.architecture.version
+            }
+          : null,
+        projectExecutionContext: documentationContext.projectExecutionContext,
+        inputSnapshotJson: documentationRun.inputSnapshotJson,
+        latestQaRun: {
+          id: documentationContext.latestQaRun.id,
+          status: documentationContext.latestQaRun.status,
+          summaryJson: documentationContext.latestQaRun.summaryJson
+        },
+        openQaFindings: documentationContext.openQaFindings,
+        waves: documentationContext.waves,
+        stories: documentationContext.stories
+      });
+
+      const parsed = documentationOutputSchema.parse(result.output) as DocumentationOutput;
+      this.deps.documentationAgentSessionRepository.create({
+        documentationRunId: documentationRun.id,
+        adapterKey: this.deps.adapter.key,
+        status: result.exitCode === 0 ? "completed" : "failed",
+        commandJson: JSON.stringify(result.command),
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exitCode: result.exitCode
+      });
+      const artifactRecords = this.persistArtifacts({
+        itemId: item.id,
+        projectId: project.id,
+        runId: documentationRun.id,
+        linkStageRunId: false,
+        markdownArtifacts: [{ kind: "delivery-report", content: parsed.reportMarkdown }],
+        structuredArtifacts: [
+          {
+            kind: "delivery-report-data",
+            content: {
+              projectCode: parsed.projectCode,
+              overallStatus: parsed.overallStatus,
+              summary: parsed.summary,
+              originalScope: parsed.originalScope,
+              deliveredScope: parsed.deliveredScope,
+              architectureSnapshot: parsed.architectureSnapshot,
+              waves: parsed.waves,
+              storiesDelivered: parsed.storiesDelivered,
+              verificationSummary: parsed.verificationSummary,
+              technicalReviewSummary: parsed.technicalReviewSummary,
+              qaSummary: parsed.qaSummary,
+              openFollowUps: parsed.openFollowUps,
+              keyChangedAreas: parsed.keyChangedAreas
+            }
+          }
+        ]
+      });
+      const status = this.resolveDocumentationRunStatus(documentationContext.latestQaRun.status, result.exitCode, parsed);
+      this.deps.documentationRunRepository.updateStatus(documentationRun.id, status, {
+        summaryJson: JSON.stringify(
+          {
+            projectCode: parsed.projectCode,
+            overallStatus: parsed.overallStatus,
+            summary: parsed.summary,
+            originalScope: parsed.originalScope,
+            deliveredScope: parsed.deliveredScope,
+            architectureSnapshot: parsed.architectureSnapshot,
+            waves: parsed.waves,
+            storiesDelivered: parsed.storiesDelivered,
+            verificationSummary: parsed.verificationSummary,
+            technicalReviewSummary: parsed.technicalReviewSummary,
+            qaSummary: parsed.qaSummary,
+            openFollowUps: parsed.openFollowUps,
+            keyChangedAreas: parsed.keyChangedAreas,
+            artifactIds: artifactRecords.map((artifact) => artifact.id),
+            artifactKinds: artifactRecords.map((artifact) => artifact.kind)
+          },
+          null,
+          2
+        ),
+        errorMessage: null
+      });
+      this.deps.itemRepository.updatePhaseStatus(item.id, this.mapDocumentationRunStatusToItemPhaseStatus(status));
+
+      return {
+        projectId,
+        documentationRunId: documentationRun.id,
+        status
+      };
+    } catch (error) {
+      this.deps.documentationAgentSessionRepository.create({
+        documentationRunId: documentationRun.id,
+        adapterKey: this.deps.adapter.key,
+        status: "failed",
+        commandJson: JSON.stringify([]),
+        stdout: "",
+        stderr: error instanceof Error ? error.message : String(error),
+        exitCode: 1
+      });
+      this.deps.documentationRunRepository.updateStatus(documentationRun.id, "failed", {
+        errorMessage: error instanceof Error ? error.message : String(error)
+      });
+      this.deps.itemRepository.updatePhaseStatus(item.id, "failed");
+      throw error;
+    }
+  }
+
+  public showDocumentation(projectId: string) {
+    const project = this.requireProject(projectId);
+    const implementationPlan = this.requireImplementationPlanForProject(projectId);
+    const documentationRuns = this.deps.documentationRunRepository.listByProjectId(projectId);
+
+    return {
+      project,
+      implementationPlan,
+      latestDocumentationRun: documentationRuns.at(-1) ?? null,
+      documentationRuns: documentationRuns.map((documentationRun) => ({
+        documentationRun,
+        artifacts: this.listArtifactsForDocumentationRun(documentationRun),
+        sessions: this.deps.documentationAgentSessionRepository.listByDocumentationRunId(documentationRun.id)
+      }))
+    };
+  }
+
+  public async retryDocumentation(documentationRunId: string) {
+    const documentationRun = this.requireDocumentationRun(documentationRunId);
+    if (documentationRun.status !== "review_required" && documentationRun.status !== "failed") {
+      throw new AppError(
+        "DOCUMENTATION_RUN_NOT_RETRYABLE",
+        `Documentation run ${documentationRunId} is not retryable`
+      );
+    }
+    const next = await this.startDocumentation(documentationRun.projectId);
+    return {
+      ...next,
+      retriedFromDocumentationRunId: documentationRunId
     };
   }
 
@@ -1272,20 +1482,19 @@ export class WorkflowService {
     this.deps.waveExecutionRepository.updateStatus(waveExecutionId, "blocked");
   }
 
-  private buildQaRunContext(
-    projectId: string,
-    implementationPlan: ReturnType<WorkflowService["requireImplementationPlanForProject"]>,
-    projectExecutionContext: ReturnType<WorkflowService["ensureProjectExecutionContext"]>
-  ) {
-    const project = this.requireProject(projectId);
-    const item = this.requireItem(project.itemId);
-    const architecture = this.deps.architecturePlanRepository.getLatestByProjectId(projectId);
-    const waves = this.deps.waveRepository.listByImplementationPlanId(implementationPlan.id);
+  private buildQaRunContext(input: {
+    project: ReturnType<WorkflowService["requireProject"]>;
+    item: ReturnType<WorkflowService["requireItem"]>;
+    implementationPlan: ReturnType<WorkflowService["requireImplementationPlanForProject"]>;
+    projectExecutionContext: ReturnType<WorkflowService["ensureProjectExecutionContext"]>;
+  }) {
+    const architecture = this.deps.architecturePlanRepository.getLatestByProjectId(input.project.id);
+    const waves = this.deps.waveRepository.listByImplementationPlanId(input.implementationPlan.id);
     if (waves.length === 0) {
       throw new AppError("WAVES_NOT_FOUND", "Implementation plan has no waves");
     }
 
-    const stories = this.deps.userStoryRepository.listByProjectId(projectId).map((story) => {
+    const stories = this.deps.userStoryRepository.listByProjectId(input.project.id).map((story) => {
       const acceptanceCriteria = this.deps.acceptanceCriterionRepository.listByStoryId(story.id);
       const waveStory = this.requireWaveStoryByStoryId(story.id);
       const latestExecution = this.deps.waveStoryExecutionRepository.getLatestByWaveStoryId(waveStory.id);
@@ -1345,19 +1554,19 @@ export class WorkflowService {
     const inputSnapshotJson = JSON.stringify(
       {
         item: {
-          id: item.id,
-          code: item.code,
-          title: item.title
+          id: input.item.id,
+          code: input.item.code,
+          title: input.item.title
         },
         project: {
-          id: project.id,
-          code: project.code,
-          title: project.title
+          id: input.project.id,
+          code: input.project.code,
+          title: input.project.title
         },
         implementationPlan: {
-          id: implementationPlan.id,
-          version: implementationPlan.version,
-          summary: implementationPlan.summary
+          id: input.implementationPlan.id,
+          version: input.implementationPlan.version,
+          summary: input.implementationPlan.summary
         },
         architecture: architecture
           ? {
@@ -1385,14 +1594,171 @@ export class WorkflowService {
     );
 
     return {
-      item,
-      projectExecutionContext,
+      item: input.item,
+      projectExecutionContext: input.projectExecutionContext,
       inputSnapshotJson,
       waves: waves.map((wave) => ({
         id: wave.id,
         code: wave.code,
         goal: wave.goal,
         position: wave.position
+      })),
+      stories
+    };
+  }
+
+  private buildDocumentationRunContext(input: {
+    project: ReturnType<WorkflowService["requireProject"]>;
+    item: ReturnType<WorkflowService["requireItem"]>;
+    implementationPlan: ReturnType<WorkflowService["requireImplementationPlanForProject"]>;
+    projectExecutionContext: ReturnType<WorkflowService["ensureProjectExecutionContext"]>;
+  }) {
+    const concept = this.deps.conceptRepository.getLatestByItemId(input.item.id);
+    const architecture = this.deps.architecturePlanRepository.getLatestByProjectId(input.project.id);
+    const latestQaRun = this.deps.qaRunRepository.getLatestByProjectId(input.project.id);
+    if (!latestQaRun || (latestQaRun.status !== "passed" && latestQaRun.status !== "review_required")) {
+      throw new AppError("DOCUMENTATION_QA_INCOMPLETE", "Documentation requires a passed or review-required QA run");
+    }
+
+    const waves = this.deps.waveRepository.listByImplementationPlanId(input.implementationPlan.id);
+    if (waves.length === 0) {
+      throw new AppError("WAVES_NOT_FOUND", "Implementation plan has no waves");
+    }
+
+    const waveStoryCodesByWaveId = new Map(
+      waves.map((wave) => [
+        wave.id,
+        this.deps.waveStoryRepository
+          .listByWaveId(wave.id)
+          .map((waveStory) => this.requireStory(waveStory.storyId).code)
+      ])
+    );
+
+    const stories = this.deps.userStoryRepository.listByProjectId(input.project.id).map((story) => {
+      const acceptanceCriteria = this.deps.acceptanceCriterionRepository.listByStoryId(story.id);
+      const waveStory = this.requireWaveStoryByStoryId(story.id);
+      const latestTestPreparationRun = this.deps.waveStoryTestRunRepository.getLatestByWaveStoryId(waveStory.id);
+      if (!latestTestPreparationRun || latestTestPreparationRun.status !== "completed") {
+        throw new AppError("DOCUMENTATION_TEST_PREPARATION_INCOMPLETE", `Story ${story.code} has no completed test preparation run`);
+      }
+      const latestExecution = this.deps.waveStoryExecutionRepository.getLatestByWaveStoryId(waveStory.id);
+      if (!latestExecution || latestExecution.status !== "completed") {
+        throw new AppError("DOCUMENTATION_EXECUTION_INCOMPLETE", `Story ${story.code} is not completed yet`);
+      }
+      const latestBasicVerification = this.deps.verificationRunRepository.getLatestByWaveStoryExecutionIdAndMode(
+        latestExecution.id,
+        "basic"
+      );
+      if (!latestBasicVerification || latestBasicVerification.status !== "passed") {
+        throw new AppError("DOCUMENTATION_BASIC_VERIFICATION_INCOMPLETE", `Story ${story.code} has no passing basic verification`);
+      }
+      const latestRalphVerification = this.deps.verificationRunRepository.getLatestByWaveStoryExecutionIdAndMode(
+        latestExecution.id,
+        "ralph"
+      );
+      if (!latestRalphVerification || latestRalphVerification.status !== "passed") {
+        throw new AppError("DOCUMENTATION_RALPH_INCOMPLETE", `Story ${story.code} has no passing Ralph verification`);
+      }
+      const latestStoryReview = this.deps.storyReviewRunRepository.getLatestByWaveStoryExecutionId(latestExecution.id);
+      if (!latestStoryReview || latestStoryReview.status !== "passed" || !latestStoryReview.summaryJson) {
+        throw new AppError("DOCUMENTATION_STORY_REVIEW_INCOMPLETE", `Story ${story.code} has no passing story review`);
+      }
+
+      const storyReviewFindings = this.deps.storyReviewFindingRepository.listByStoryReviewRunId(latestStoryReview.id);
+
+      return {
+        id: story.id,
+        code: story.code,
+        title: story.title,
+        description: story.description,
+        acceptanceCriteria,
+        latestTestPreparation: this.parseTestPreparationOutput(latestTestPreparationRun),
+        latestExecution: this.parseStoryExecutionOutput(latestExecution),
+        latestBasicVerification: latestBasicVerification,
+        latestRalphVerification: {
+          id: latestRalphVerification.id,
+          status: latestRalphVerification.status,
+          summary: this.parseRalphVerificationOutput(latestRalphVerification)
+        },
+        latestStoryReview: {
+          id: latestStoryReview.id,
+          status: latestStoryReview.status,
+          summary: this.parseStoryReviewOutput(latestStoryReview),
+          findings: storyReviewFindings
+        }
+      };
+    });
+
+    const openQaFindings = this.deps.qaFindingRepository
+      .listByQaRunId(latestQaRun.id)
+      .filter((finding) => finding.status === "open")
+      .map((finding) => ({
+        severity: finding.severity,
+        category: finding.category,
+        title: finding.title,
+        description: finding.description,
+        evidence: finding.evidence,
+        reproSteps: finding.reproSteps,
+        suggestedFix: finding.suggestedFix,
+        storyCode: finding.storyId ? this.requireStory(finding.storyId).code : null,
+        acceptanceCriterionCode: finding.acceptanceCriterionId
+          ? this.requireAcceptanceCriterion(finding.acceptanceCriterionId).code
+          : null
+      }));
+
+    const inputSnapshotJson = JSON.stringify(
+      {
+        item: {
+          id: input.item.id,
+          code: input.item.code,
+          title: input.item.title
+        },
+        project: {
+          id: input.project.id,
+          code: input.project.code,
+          title: input.project.title
+        },
+        concept: concept ? { id: concept.id, version: concept.version } : null,
+        implementationPlan: {
+          id: input.implementationPlan.id,
+          version: input.implementationPlan.version
+        },
+        architecture: architecture ? { id: architecture.id, version: architecture.version } : null,
+        latestQaRun: {
+          id: latestQaRun.id,
+          status: latestQaRun.status
+        },
+        openQaFindingCount: openQaFindings.length,
+        waves: waves.map((wave) => ({
+          id: wave.id,
+          code: wave.code,
+          storyCodes: waveStoryCodesByWaveId.get(wave.id) ?? []
+        })),
+        stories: stories.map((story) => ({
+          code: story.code,
+          latestBasicVerificationId: story.latestBasicVerification.id,
+          latestRalphVerificationId: story.latestRalphVerification.id,
+          latestStoryReviewId: story.latestStoryReview.id
+        }))
+      },
+      null,
+      2
+    );
+
+    return {
+      item: input.item,
+      concept,
+      architecture,
+      latestQaRun,
+      openQaFindings,
+      projectExecutionContext: input.projectExecutionContext,
+      inputSnapshotJson,
+      waves: waves.map((wave) => ({
+        id: wave.id,
+        code: wave.code,
+        goal: wave.goal,
+        position: wave.position,
+        storiesDelivered: waveStoryCodesByWaveId.get(wave.id) ?? []
       })),
       stories
     };
@@ -1572,6 +1938,33 @@ export class WorkflowService {
       throw new AppError("TEST_RUN_OUTPUT_MISSING", `Test run ${testRun.id} has no output summary`);
     }
     return testPreparationOutputSchema.parse(JSON.parse(testRun.outputSummaryJson)) as TestPreparationOutput;
+  }
+
+  private parseStoryExecutionOutput(
+    execution: ReturnType<WorkflowService["requireWaveStoryExecution"]>
+  ): StoryExecutionOutput {
+    if (!execution.outputSummaryJson) {
+      throw new AppError("EXECUTION_OUTPUT_MISSING", `Execution ${execution.id} has no output summary`);
+    }
+    return storyExecutionOutputSchema.parse(JSON.parse(execution.outputSummaryJson)) as StoryExecutionOutput;
+  }
+
+  private parseRalphVerificationOutput(
+    verificationRun: ReturnType<VerificationRunRepository["getLatestByWaveStoryExecutionIdAndMode"]>
+  ): RalphVerificationOutput {
+    if (!verificationRun?.summaryJson) {
+      throw new AppError("RALPH_OUTPUT_MISSING", "Ralph verification has no summary");
+    }
+    return ralphVerificationOutputSchema.parse(JSON.parse(verificationRun.summaryJson)) as RalphVerificationOutput;
+  }
+
+  private parseStoryReviewOutput(
+    storyReviewRun: ReturnType<StoryReviewRunRepository["getLatestByWaveStoryExecutionId"]>
+  ): StoryReviewOutput {
+    if (!storyReviewRun?.summaryJson) {
+      throw new AppError("STORY_REVIEW_OUTPUT_MISSING", "Story review has no summary");
+    }
+    return storyReviewOutputSchema.parse(JSON.parse(storyReviewRun.summaryJson)) as StoryReviewOutput;
   }
 
   private async executeRalphVerification(input: {
@@ -1874,8 +2267,34 @@ export class WorkflowService {
     return "passed";
   }
 
+  private resolveDocumentationRunStatus(
+    qaRunStatus: QaRunStatus,
+    exitCode: number,
+    output: DocumentationOutput
+  ): DocumentationRunStatus {
+    if (exitCode !== 0) {
+      return "failed";
+    }
+    if (qaRunStatus === "review_required" || output.overallStatus === "review_required") {
+      return "review_required";
+    }
+    return "completed";
+  }
+
   private mapQaRunStatusToItemPhaseStatus(status: QaRunStatus): "completed" | "review_required" | "failed" {
     if (status === "passed") {
+      return "completed";
+    }
+    if (status === "review_required") {
+      return "review_required";
+    }
+    return "failed";
+  }
+
+  private mapDocumentationRunStatusToItemPhaseStatus(
+    status: DocumentationRunStatus
+  ): "completed" | "review_required" | "failed" {
+    if (status === "completed") {
       return "completed";
     }
     if (status === "review_required") {
@@ -2220,6 +2639,7 @@ export class WorkflowService {
     itemId: string;
     projectId: string | null;
     runId: string;
+    linkStageRunId?: boolean;
     markdownArtifacts: Array<{ kind: string; content: string }>;
     structuredArtifacts: Array<{ kind: string; content: unknown }>;
   }): ArtifactRecord[] {
@@ -2235,7 +2655,7 @@ export class WorkflowService {
         content: artifact.content
       });
       const record = this.deps.artifactRepository.create({
-        stageRunId: input.runId,
+        stageRunId: input.linkStageRunId === false ? null : input.runId,
         itemId: input.itemId,
         projectId: input.projectId,
         kind: artifact.kind,
@@ -2257,7 +2677,7 @@ export class WorkflowService {
         content: JSON.stringify(artifact.content, null, 2)
       });
       const record = this.deps.artifactRepository.create({
-        stageRunId: input.runId,
+        stageRunId: input.linkStageRunId === false ? null : input.runId,
         itemId: input.itemId,
         projectId: input.projectId,
         kind: artifact.kind,
@@ -2270,6 +2690,20 @@ export class WorkflowService {
     }
 
     return records;
+  }
+
+  private listArtifactsForDocumentationRun(documentationRun: ReturnType<DocumentationRunRepository["getById"]>) {
+    if (!documentationRun?.summaryJson) {
+      return [];
+    }
+    try {
+      const parsed = JSON.parse(documentationRun.summaryJson) as { artifactIds?: string[] };
+      return (parsed.artifactIds ?? [])
+        .map((artifactId) => this.deps.artifactRepository.getById(artifactId))
+        .filter((artifact): artifact is ArtifactRecord => artifact !== null);
+    } catch {
+      return [];
+    }
   }
 
   private transitionRun(
@@ -2304,6 +2738,14 @@ export class WorkflowService {
       throw new AppError("STORY_NOT_FOUND", `Story ${storyId} not found`);
     }
     return story;
+  }
+
+  private requireAcceptanceCriterion(acceptanceCriterionId: string) {
+    const acceptanceCriterion = this.deps.acceptanceCriterionRepository.getById(acceptanceCriterionId);
+    if (!acceptanceCriterion) {
+      throw new AppError("ACCEPTANCE_CRITERION_NOT_FOUND", `Acceptance criterion ${acceptanceCriterionId} not found`);
+    }
+    return acceptanceCriterion;
   }
 
   private requireWave(waveId: string) {
@@ -2346,12 +2788,28 @@ export class WorkflowService {
     return waveStoryTestRun;
   }
 
+  private requireWaveStoryExecution(waveStoryExecutionId: string) {
+    const waveStoryExecution = this.deps.waveStoryExecutionRepository.getById(waveStoryExecutionId);
+    if (!waveStoryExecution) {
+      throw new AppError("WAVE_STORY_EXECUTION_NOT_FOUND", `Wave story execution ${waveStoryExecutionId} not found`);
+    }
+    return waveStoryExecution;
+  }
+
   private requireQaRun(qaRunId: string) {
     const qaRun = this.deps.qaRunRepository.getById(qaRunId);
     if (!qaRun) {
       throw new AppError("QA_RUN_NOT_FOUND", `QA run ${qaRunId} not found`);
     }
     return qaRun;
+  }
+
+  private requireDocumentationRun(documentationRunId: string) {
+    const documentationRun = this.deps.documentationRunRepository.getById(documentationRunId);
+    if (!documentationRun) {
+      throw new AppError("DOCUMENTATION_RUN_NOT_FOUND", `Documentation run ${documentationRunId} not found`);
+    }
+    return documentationRun;
   }
 
   private requireImplementationPlanForProject(projectId: string) {

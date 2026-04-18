@@ -26,6 +26,8 @@ Kernentitaeten des aktuellen MVP:
 - `QaRun`: projektweiter QA-Versuch nach komplett abgeschlossener Execution
 - `QaFinding`: strukturierter projektweiter QA-Finding-Record mit Severity, Evidence und Repro-Schritten
 - `QaAgentSession`: Session-Metadaten des konkreten QA-Workers
+- `DocumentationRun`: projektweiter Dokumentationsversuch nach QA
+- `DocumentationAgentSession`: Session-Metadaten des konkreten Dokumentations-Workers
 - optional spaeter `WaveParallelGroup`: fachliche Kennzeichnung fuer sicher parallel ausfuehrbare Story-Gruppen innerhalb einer Wave
 
 Die Entitaeten leben im Domain-Layer und werden nicht aus CLI-Kommandos heraus modelliert.
@@ -38,4 +40,5 @@ Wichtig:
 - Die Ralph-Schicht erzwingt AC-by-AC-Verifikation nach der Implementierung.
 - Die Story-Review-Schicht erzwingt einen bounded technischen Review nach Ralph und vor finaler Story-Completion.
 - Die QA-Schicht erzwingt einen projektweiten integrierten Check nach vollstaendig abgeschlossener Story-Execution.
+- Die Dokumentations-Schicht erzeugt danach den finalen lesbaren Project-Report aus persistierter Wahrheit.
 - Worker-Rollen sind Registry und Ausfuehrungsprofil, aber nicht der Scheduler.

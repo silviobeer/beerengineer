@@ -5,6 +5,9 @@ import type {
   ArchitecturePlan,
   BoardColumn,
   Concept,
+  DocumentationAgentSession,
+  DocumentationRun,
+  DocumentationRunStatus,
   ExecutionAgentSession,
   ImplementationPlan,
   Item,
@@ -52,6 +55,8 @@ import {
   architecturePlans,
   artifacts,
   concepts,
+  documentationAgentSessions,
+  documentationRuns,
   executionAgentSessions,
   implementationPlans,
   items,
@@ -357,6 +362,14 @@ export class UserStoryRepository {
 
 export class AcceptanceCriterionRepository {
   public constructor(private readonly db: DatabaseClient) {}
+
+  public getById(id: string): AcceptanceCriterion | null {
+    return (
+      this.db.select().from(acceptanceCriteria).where(eq(acceptanceCriteria.id, id)).get() as
+        | AcceptanceCriterion
+        | undefined
+    ) ?? null;
+  }
 
   public listByStoryId(storyId: string): AcceptanceCriterion[] {
     return this.db
@@ -1178,6 +1191,93 @@ export class QaAgentSessionRepository {
   }
 }
 
+export class DocumentationRunRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public getById(id: string): DocumentationRun | null {
+    return (
+      this.db.select().from(documentationRuns).where(eq(documentationRuns.id, id)).get() as DocumentationRun | undefined
+    ) ?? null;
+  }
+
+  public getLatestByProjectId(projectId: string): DocumentationRun | null {
+    return (
+      this.db
+        .select()
+        .from(documentationRuns)
+        .where(eq(documentationRuns.projectId, projectId))
+        .orderBy(desc(documentationRuns.createdAt), desc(documentationRuns.id))
+        .limit(1)
+        .get() as DocumentationRun | undefined
+    ) ?? null;
+  }
+
+  public listByProjectId(projectId: string): DocumentationRun[] {
+    return this.db
+      .select()
+      .from(documentationRuns)
+      .where(eq(documentationRuns.projectId, projectId))
+      .orderBy(documentationRuns.createdAt)
+      .all() as DocumentationRun[];
+  }
+
+  public create(input: Omit<DocumentationRun, "id" | "createdAt" | "updatedAt" | "completedAt">): DocumentationRun {
+    const timestamp = now();
+    const row: DocumentationRun = {
+      ...input,
+      id: createId("documentation_run"),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      completedAt: null
+    };
+    this.db.insert(documentationRuns).values(row).run();
+    return row;
+  }
+
+  public updateStatus(
+    id: string,
+    status: DocumentationRunStatus,
+    options?: { summaryJson?: string | null; errorMessage?: string | null }
+  ): void {
+    this.db
+      .update(documentationRuns)
+      .set({
+        status,
+        summaryJson: options?.summaryJson,
+        errorMessage: options?.errorMessage ?? null,
+        updatedAt: now(),
+        completedAt: status === "completed" || status === "failed" || status === "review_required" ? now() : null
+      })
+      .where(eq(documentationRuns.id, id))
+      .run();
+  }
+}
+
+export class DocumentationAgentSessionRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public create(input: Omit<DocumentationAgentSession, "id" | "createdAt" | "updatedAt">): DocumentationAgentSession {
+    const timestamp = now();
+    const row: DocumentationAgentSession = {
+      ...input,
+      id: createId("documentation_session"),
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+    this.db.insert(documentationAgentSessions).values(row).run();
+    return row;
+  }
+
+  public listByDocumentationRunId(documentationRunId: string): DocumentationAgentSession[] {
+    return this.db
+      .select()
+      .from(documentationAgentSessions)
+      .where(eq(documentationAgentSessions.documentationRunId, documentationRunId))
+      .orderBy(documentationAgentSessions.createdAt)
+      .all() as DocumentationAgentSession[];
+  }
+}
+
 export type ArtifactRecord = {
   id: string;
   stageRunId: string | null;
@@ -1202,6 +1302,10 @@ export class ArtifactRepository {
     };
     this.db.insert(artifacts).values(row).run();
     return row;
+  }
+
+  public getById(id: string): ArtifactRecord | null {
+    return (this.db.select().from(artifacts).where(eq(artifacts.id, id)).get() as ArtifactRecord | undefined) ?? null;
   }
 
   public listByStageRunId(stageRunId: string): ArtifactRecord[] {

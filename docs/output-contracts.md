@@ -11,5 +11,6 @@ Strukturierte JSON-Ausgaben werden mit `zod` validiert:
 - `ralph-verification.json`: strukturierter AC-by-AC-Verifikationsoutput mit Story-Verdict, Evidence und Notes pro `AcceptanceCriterion`
 - `story-review.json`: strukturierter technischer Review-Output pro `WaveStoryExecution` mit Severity-basierten Findings und Empfehlungen
 - `qa.json`: strukturierter projektweiter QA-Output mit Findings, Evidence und Recommendations
+- `documentation.json`: strukturierter projektweiter Dokumentations-Output mit Delivery-Report-Abschnitten plus `reportMarkdown`
 
 Wenn Markdown vorhanden ist, das JSON aber nicht valide ist, wird der Run auf `review_required` gesetzt.

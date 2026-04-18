@@ -18,6 +18,10 @@ export const workerProfiles = {
   qa: {
     promptPath: "prompts/workers/qa.md",
     skillPaths: ["skills/qa-verifier.md"]
+  },
+  documentation: {
+    promptPath: "prompts/workers/documentation.md",
+    skillPaths: ["skills/documentation-writer.md"]
   }
 } as const;
 
