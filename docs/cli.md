@@ -79,6 +79,7 @@ Die Engine entscheidet dabei deterministisch:
 - welche Wave aktiv ist
 - welche Stories ausfuehrbar sind
 - dass jede Story zuerst einen `test-writer`-Lauf durchlaeuft
+- dass jede erfolgreiche Implementierung danach durch `basic`- und `ralph`-Verifikation laeuft
 - welche Worker-Rolle verwendet wird
 - wann Retry oder Review erforderlich ist
 
@@ -86,8 +87,10 @@ Der Worker selbst bekommt nur den bounded Story-Kontext plus gespeicherte Busine
 
 Im aktuellen TDD-Schnitt gilt:
 
-- `execution:start` und `execution:tick` erzwingen zuerst `test_preparation`, dann `implementation`
+- `execution:start` und `execution:tick` erzwingen `test_preparation -> implementation -> verification_basic -> verification_ralph`
 - `execution:show` zeigt den neuesten `WaveStoryTestRun` und die zugehoerigen `TestAgentSession`-Records pro Story
+- `execution:show` zeigt zusaetzlich die neuesten `basic`- und `ralph`-Verification-Runs pro Story
 - Implementierung startet nur, wenn der neueste Test-Run fuer die Story `completed` ist
 - der Implementer bekommt den gespeicherten Test-Run-Output als Eingabe und arbeitet gegen diese vorab erzeugten Testziele
 - jede `WaveStoryExecution` referenziert den konkret verwendeten Test-Run direkt ueber `testPreparationRunId`
+- eine Story darf erst dann `completed` werden, wenn der neueste Ralph-Run `passed` ist

@@ -83,9 +83,26 @@ export const testPreparationOutputSchema = z.object({
   blockers: z.array(z.string().min(1))
 });
 
+export const ralphVerificationOutputSchema = z.object({
+  storyCode: z.string().min(1),
+  overallStatus: z.enum(["passed", "review_required", "failed"]),
+  summary: z.string().min(1),
+  acceptanceCriteriaResults: z.array(
+    z.object({
+      acceptanceCriterionId: z.string().min(1),
+      acceptanceCriterionCode: z.string().min(1),
+      status: z.enum(["passed", "review_required", "failed"]),
+      evidence: z.string().min(1),
+      notes: z.string().min(1)
+    })
+  ).min(1),
+  blockers: z.array(z.string().min(1))
+});
+
 export type ProjectsOutput = z.infer<typeof projectsOutputSchema>;
 export type StoriesOutput = z.infer<typeof storiesOutputSchema>;
 export type ArchitecturePlanOutput = z.infer<typeof architecturePlanOutputSchema>;
 export type ImplementationPlanOutput = z.infer<typeof implementationPlanOutputSchema>;
 export type StoryExecutionOutput = z.infer<typeof storyExecutionOutputSchema>;
 export type TestPreparationOutput = z.infer<typeof testPreparationOutputSchema>;
+export type RalphVerificationOutput = z.infer<typeof ralphVerificationOutputSchema>;

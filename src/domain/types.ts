@@ -40,6 +40,9 @@ export type ExecutionWorkerRole = (typeof executionWorkerRoles)[number];
 export const testPreparationWorkerRoles = ["test-writer"] as const;
 export type TestPreparationWorkerRole = (typeof testPreparationWorkerRoles)[number];
 
+export const verificationWorkerRoles = ["ralph-verifier"] as const;
+export type VerificationWorkerRole = (typeof verificationWorkerRoles)[number];
+
 export const waveExecutionStatuses = [
   "pending",
   "running",
@@ -58,6 +61,9 @@ export type WaveStoryTestRunStatus = (typeof waveStoryTestRunStatuses)[number];
 
 export const verificationRunStatuses = ["passed", "review_required", "failed"] as const;
 export type VerificationRunStatus = (typeof verificationRunStatuses)[number];
+
+export const verificationRunModes = ["basic", "ralph"] as const;
+export type VerificationRunMode = (typeof verificationRunModes)[number];
 
 export type Item = {
   id: string;
@@ -260,6 +266,7 @@ export type VerificationRun = {
   id: string;
   waveExecutionId: string | null;
   waveStoryExecutionId: string | null;
+  mode: VerificationRunMode;
   status: VerificationRunStatus;
   summaryJson: string;
   errorMessage: string | null;

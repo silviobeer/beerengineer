@@ -1,5 +1,15 @@
-import type { ExecutionWorkerRole, StageKey, TestPreparationWorkerRole } from "../domain/types.js";
-import type { StoryExecutionOutput, TestPreparationOutput } from "../schemas/output-contracts.js";
+import type {
+  ExecutionWorkerRole,
+  StageKey,
+  TestPreparationWorkerRole,
+  VerificationRunStatus,
+  VerificationWorkerRole
+} from "../domain/types.js";
+import type {
+  RalphVerificationOutput,
+  StoryExecutionOutput,
+  TestPreparationOutput
+} from "../schemas/output-contracts.js";
 
 export type AdapterRunRequest = {
   stageKey: StageKey;
@@ -142,9 +152,43 @@ export type TestPreparationAdapterRunResult = {
   command: string[];
 };
 
+export type RalphVerificationAdapterRunRequest = {
+  workerRole: VerificationWorkerRole;
+  item: ExecutionAdapterRunRequest["item"];
+  project: ExecutionAdapterRunRequest["project"];
+  implementationPlan: ExecutionAdapterRunRequest["implementationPlan"];
+  wave: ExecutionAdapterRunRequest["wave"];
+  story: ExecutionAdapterRunRequest["story"];
+  acceptanceCriteria: ExecutionAdapterRunRequest["acceptanceCriteria"];
+  architecture: ExecutionAdapterRunRequest["architecture"];
+  projectExecutionContext: ExecutionAdapterRunRequest["projectExecutionContext"];
+  businessContextSnapshotJson: string;
+  repoContextSnapshotJson: string;
+  testPreparation: ExecutionAdapterRunRequest["testPreparation"];
+  implementation: StoryExecutionOutput;
+  basicVerification: {
+    status: VerificationRunStatus;
+    summary: {
+      storyCode: string;
+      changedFiles: string[];
+      testsRun: StoryExecutionOutput["testsRun"];
+      blockers: string[];
+    };
+  };
+};
+
+export type RalphVerificationAdapterRunResult = {
+  output: RalphVerificationOutput;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  command: string[];
+};
+
 export interface AgentAdapter {
   readonly key: string;
   run(request: AdapterRunRequest): Promise<AdapterRunResult>;
   runStoryTestPreparation(request: TestPreparationAdapterRunRequest): Promise<TestPreparationAdapterRunResult>;
   runStoryExecution(request: ExecutionAdapterRunRequest): Promise<ExecutionAdapterRunResult>;
+  runStoryRalphVerification(request: RalphVerificationAdapterRunRequest): Promise<RalphVerificationAdapterRunResult>;
 }

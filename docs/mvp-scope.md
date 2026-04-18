@@ -12,6 +12,7 @@ Enthalten:
 - schlanke projektbezogene Requirements-, Architektur- und Planning-Stages
 - persistierte Planning-Schicht mit `ImplementationPlan`, `Wave`, `WaveStory` und `WaveStoryDependency`
 - persistierte Runtime-Schicht mit `ProjectExecutionContext`, `WaveExecution`, `WaveStoryTestRun`, `TestAgentSession`, `WaveStoryExecution`, `ExecutionAgentSession` und `VerificationRun`
+- zweistufige Story-Verifikation mit `basic`- und `ralph`-Runs nach jeder Implementierung
 - CLI-Kommandos fuer `execution:start`, `execution:tick`, `execution:show` und `execution:retry`
 - engine-erzwungene TDD-Reihenfolge `test_preparation -> implementation -> verification`
 

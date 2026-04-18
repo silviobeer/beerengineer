@@ -100,6 +100,8 @@ describe("cli happy path", () => {
           waveExecution: { status: string } | null;
           stories: Array<{
             latestTestRun: { id: string } | null;
+            latestRalphVerification: { mode: string; status: string } | null;
+            verificationRuns: Array<{ mode: string; status: string }>;
             testAgentSessions: Array<{ id: string }>;
           }>;
         }>;
@@ -107,6 +109,8 @@ describe("cli happy path", () => {
       expect(executionShow.activeWave).toBeNull();
       expect(executionShow.waves.map((wave) => wave.waveExecution?.status)).toEqual(["completed", "completed"]);
       expect(executionShow.waves[0]?.stories[0]?.latestTestRun?.id).toContain("wave_story_test_run_");
+      expect(executionShow.waves[0]?.stories[0]?.verificationRuns.map((run) => run.mode)).toEqual(["basic", "ralph"]);
+      expect(executionShow.waves[0]?.stories[0]?.latestRalphVerification?.status).toBe("passed");
       expect(executionShow.waves[0]?.stories[0]?.testAgentSessions.length).toBe(1);
 
       const artifacts = runCli(["--db", dbPath, "artifacts:list", "--item-id", item.id], cwd) as Array<{ id: string }>;

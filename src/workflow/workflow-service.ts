@@ -3,13 +3,14 @@ import { resolve } from "node:path";
 
 import { buildItemWorkflowSnapshot } from "../domain/aggregate-status.js";
 import { assertCanMoveItem } from "../domain/workflow-rules.js";
-import type { ExecutionWorkerRole, StageKey } from "../domain/types.js";
+import type { ExecutionWorkerRole, StageKey, VerificationRunStatus } from "../domain/types.js";
 import { PromptResolver } from "../services/prompt-resolver.js";
 import { ArtifactService } from "../services/artifact-service.js";
 import {
   implementationPlanOutputSchema,
   architecturePlanOutputSchema,
   projectsOutputSchema,
+  ralphVerificationOutputSchema,
   storiesOutputSchema,
   storyExecutionOutputSchema,
   testPreparationOutputSchema
@@ -18,6 +19,7 @@ import type {
   ImplementationPlanOutput,
   ArchitecturePlanOutput,
   ProjectsOutput,
+  RalphVerificationOutput,
   StoriesOutput,
   StoryExecutionOutput,
   TestPreparationOutput
@@ -465,6 +467,11 @@ export class WorkflowService {
         const story = this.requireStory(waveStory.storyId);
         const latestTestRun = this.deps.waveStoryTestRunRepository.getLatestByWaveStoryId(waveStory.id);
         const latestExecution = this.deps.waveStoryExecutionRepository.getLatestByWaveStoryId(waveStory.id);
+        const verificationRuns = latestExecution
+          ? this.deps.verificationRunRepository.listByWaveStoryExecutionId(latestExecution.id)
+          : [];
+        const latestBasicVerification = verificationRuns.filter((run) => run.mode === "basic").at(-1) ?? null;
+        const latestRalphVerification = verificationRuns.filter((run) => run.mode === "ralph").at(-1) ?? null;
         const blockers = this.deps.waveStoryDependencyRepository
           .listByDependentStoryId(story.id)
           .map((dependency) => this.requireStory(dependency.blockingStoryId))
@@ -483,9 +490,9 @@ export class WorkflowService {
           testAgentSessions: latestTestRun
             ? this.deps.testAgentSessionRepository.listByWaveStoryTestRunId(latestTestRun.id)
             : [],
-          verificationRuns: latestExecution
-            ? this.deps.verificationRunRepository.listByWaveStoryExecutionId(latestExecution.id)
-            : [],
+          verificationRuns,
+          latestBasicVerification,
+          latestRalphVerification,
           agentSessions: latestExecution
             ? this.deps.executionAgentSessionRepository.listByWaveStoryExecutionId(latestExecution.id)
             : []
@@ -680,29 +687,46 @@ export class WorkflowService {
         exitCode: result.exitCode
       });
 
-      const verificationStatus = this.resolveVerificationStatus(parsed, result.exitCode);
-      const outputSummaryJson = JSON.stringify(parsed, null, 2);
+      const basicVerificationStatus = this.resolveVerificationStatus(parsed, result.exitCode);
+      const basicVerificationSummary = {
+        storyCode: input.story.code,
+        changedFiles: parsed.changedFiles,
+        testsRun: parsed.testsRun,
+        blockers: parsed.blockers
+      };
       this.deps.verificationRunRepository.create({
         waveExecutionId: input.waveExecution.id,
         waveStoryExecutionId: execution.id,
-        status: verificationStatus,
-        summaryJson: JSON.stringify(
-          {
-            changedFiles: parsed.changedFiles,
-            testsRun: parsed.testsRun,
-            blockers: parsed.blockers
-          },
-          null,
-          2
-        ),
-        errorMessage: verificationStatus === "failed" ? "Execution worker reported failed verification" : null
+        mode: "basic",
+        status: basicVerificationStatus,
+        summaryJson: JSON.stringify(basicVerificationSummary, null, 2),
+        errorMessage: basicVerificationStatus === "failed" ? "Execution worker reported failed verification" : null
       });
+      const ralphVerification = await this.executeRalphVerification({
+        project: input.project,
+        implementationPlan: input.implementationPlan,
+        wave: input.wave,
+        waveExecution: input.waveExecution,
+        story: input.story,
+        storyRunContext,
+        testPreparationRun,
+        parsedTestPreparation,
+        execution,
+        implementationOutput: parsed,
+        basicVerificationStatus,
+        basicVerificationSummary
+      });
+      const finalExecutionStatus = this.resolveOverallExecutionStatus(
+        basicVerificationStatus,
+        ralphVerification.status
+      );
+      const outputSummaryJson = JSON.stringify(parsed, null, 2);
       this.deps.waveStoryExecutionRepository.updateStatus(
         execution.id,
-        verificationStatus === "passed" ? "completed" : verificationStatus,
+        finalExecutionStatus === "passed" ? "completed" : finalExecutionStatus,
         {
           outputSummaryJson,
-          errorMessage: parsed.blockers.join("; ") || null
+          errorMessage: parsed.blockers.join("; ") || ralphVerification.errorMessage
         }
       );
       return {
@@ -710,7 +734,7 @@ export class WorkflowService {
         waveStoryExecutionId: execution.id,
         waveStoryId: input.waveStory.id,
         storyCode: input.story.code,
-        status: verificationStatus === "passed" ? "completed" : verificationStatus
+        status: finalExecutionStatus === "passed" ? "completed" : finalExecutionStatus
       };
     } catch (error) {
       this.deps.executionAgentSessionRepository.create({
@@ -725,8 +749,27 @@ export class WorkflowService {
       this.deps.verificationRunRepository.create({
         waveExecutionId: input.waveExecution.id,
         waveStoryExecutionId: execution.id,
+        mode: "basic",
         status: "failed",
         summaryJson: JSON.stringify({ changedFiles: [], testsRun: [], blockers: [] }, null, 2),
+        errorMessage: error instanceof Error ? error.message : String(error)
+      });
+      this.deps.verificationRunRepository.create({
+        waveExecutionId: input.waveExecution.id,
+        waveStoryExecutionId: execution.id,
+        mode: "ralph",
+        status: "failed",
+        summaryJson: JSON.stringify(
+          {
+            storyCode: input.story.code,
+            overallStatus: "failed",
+            summary: `Ralph verification could not run for ${input.story.code}.`,
+            acceptanceCriteriaResults: [],
+            blockers: [error instanceof Error ? error.message : String(error)]
+          },
+          null,
+          2
+        ),
         errorMessage: error instanceof Error ? error.message : String(error)
       });
       this.deps.waveStoryExecutionRepository.updateStatus(execution.id, "failed", {
@@ -950,6 +993,9 @@ export class WorkflowService {
     const latestStoryExecutions = waveStories.map((waveStory) =>
       this.deps.waveStoryExecutionRepository.getLatestByWaveStoryId(waveStory.id)
     );
+    const latestRalphRuns = latestStoryExecutions.map((execution) =>
+      execution ? this.deps.verificationRunRepository.getLatestByWaveStoryExecutionIdAndMode(execution.id, "ralph") : null
+    );
 
     if (latestTestRuns.some((testRun) => testRun?.status === "failed") || latestStoryExecutions.some((execution) => execution?.status === "failed")) {
       this.deps.waveExecutionRepository.updateStatus(waveExecutionId, "failed");
@@ -968,7 +1014,8 @@ export class WorkflowService {
     if (
       latestStoryExecutions.length > 0 &&
       latestTestRuns.every((testRun) => testRun?.status === "completed") &&
-      latestStoryExecutions.every((execution) => execution?.status === "completed")
+      latestStoryExecutions.every((execution) => execution?.status === "completed") &&
+      latestRalphRuns.every((run) => run?.status === "passed")
     ) {
       this.deps.waveExecutionRepository.updateStatus(waveExecutionId, "completed");
       return;
@@ -1157,6 +1204,136 @@ export class WorkflowService {
       throw new AppError("TEST_RUN_OUTPUT_MISSING", `Test run ${testRun.id} has no output summary`);
     }
     return testPreparationOutputSchema.parse(JSON.parse(testRun.outputSummaryJson)) as TestPreparationOutput;
+  }
+
+  private async executeRalphVerification(input: {
+    project: ReturnType<WorkflowService["requireProject"]>;
+    implementationPlan: ReturnType<WorkflowService["requireImplementationPlanForProject"]>;
+    wave: ReturnType<WorkflowService["requireWave"]>;
+    waveExecution: ReturnType<WorkflowService["requireWaveExecution"]>;
+    story: ReturnType<WorkflowService["requireStory"]>;
+    storyRunContext: ReturnType<WorkflowService["buildStoryRunContext"]>;
+    testPreparationRun: ReturnType<WorkflowService["requireWaveStoryTestRun"]>;
+    parsedTestPreparation: TestPreparationOutput;
+    execution: ReturnType<WaveStoryExecutionRepository["create"]>;
+    implementationOutput: StoryExecutionOutput;
+    basicVerificationStatus: VerificationRunStatus;
+    basicVerificationSummary: {
+      storyCode: string;
+      changedFiles: string[];
+      testsRun: StoryExecutionOutput["testsRun"];
+      blockers: string[];
+    };
+  }): Promise<{ status: VerificationRunStatus; errorMessage: string | null }> {
+    try {
+      const result = await this.deps.adapter.runStoryRalphVerification({
+        workerRole: "ralph-verifier",
+        item: input.storyRunContext.item,
+        project: input.project,
+        implementationPlan: {
+          id: input.implementationPlan.id,
+          summary: input.implementationPlan.summary,
+          version: input.implementationPlan.version
+        },
+        wave: {
+          id: input.wave.id,
+          code: input.wave.code,
+          goal: input.wave.goal,
+          position: input.wave.position
+        },
+        story: input.story,
+        acceptanceCriteria: input.storyRunContext.acceptanceCriteria,
+        architecture: input.storyRunContext.architecture
+          ? {
+              id: input.storyRunContext.architecture.id,
+              summary: input.storyRunContext.architecture.summary,
+              version: input.storyRunContext.architecture.version
+            }
+          : null,
+        projectExecutionContext: input.storyRunContext.projectExecutionContext,
+        businessContextSnapshotJson: input.storyRunContext.businessContextSnapshotJson,
+        repoContextSnapshotJson: input.storyRunContext.repoContextSnapshotJson,
+        testPreparation: {
+          id: input.testPreparationRun.id,
+          summary: input.parsedTestPreparation.summary,
+          testFiles: input.parsedTestPreparation.testFiles,
+          testsGenerated: input.parsedTestPreparation.testsGenerated,
+          assumptions: input.parsedTestPreparation.assumptions
+        },
+        implementation: input.implementationOutput,
+        basicVerification: {
+          status: input.basicVerificationStatus,
+          summary: input.basicVerificationSummary
+        }
+      });
+
+      const parsed = ralphVerificationOutputSchema.parse(result.output) as RalphVerificationOutput;
+      const status = this.resolveRalphVerificationStatus(parsed, result.exitCode);
+      this.deps.verificationRunRepository.create({
+        waveExecutionId: input.waveExecution.id,
+        waveStoryExecutionId: input.execution.id,
+        mode: "ralph",
+        status,
+        summaryJson: JSON.stringify(parsed, null, 2),
+        errorMessage: status === "failed" ? parsed.blockers.join("; ") || "Ralph verification failed" : null
+      });
+      return {
+        status,
+        errorMessage: parsed.blockers.join("; ") || null
+      };
+    } catch (error) {
+      this.deps.verificationRunRepository.create({
+        waveExecutionId: input.waveExecution.id,
+        waveStoryExecutionId: input.execution.id,
+        mode: "ralph",
+        status: "failed",
+        summaryJson: JSON.stringify(
+          {
+            storyCode: input.story.code,
+            overallStatus: "failed",
+            summary: `Ralph verification failed to execute for ${input.story.code}.`,
+            acceptanceCriteriaResults: input.storyRunContext.acceptanceCriteria.map((criterion) => ({
+              acceptanceCriterionId: criterion.id,
+              acceptanceCriterionCode: criterion.code,
+              status: "failed",
+              evidence: "No Ralph verifier output was produced.",
+              notes: "Verification execution failed before a per-criterion verdict could be recorded."
+            })),
+            blockers: [error instanceof Error ? error.message : String(error)]
+          },
+          null,
+          2
+        ),
+        errorMessage: error instanceof Error ? error.message : String(error)
+      });
+      return {
+        status: "failed",
+        errorMessage: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
+
+  private resolveRalphVerificationStatus(
+    output: RalphVerificationOutput,
+    exitCode: number
+  ): VerificationRunStatus {
+    if (exitCode !== 0) {
+      return "failed";
+    }
+    return output.overallStatus;
+  }
+
+  private resolveOverallExecutionStatus(
+    basicStatus: VerificationRunStatus,
+    ralphStatus: VerificationRunStatus
+  ): VerificationRunStatus {
+    if (basicStatus === "failed" || ralphStatus === "failed") {
+      return "failed";
+    }
+    if (basicStatus === "review_required" || ralphStatus === "review_required") {
+      return "review_required";
+    }
+    return "passed";
   }
 
   private buildSnapshot(itemId: string) {

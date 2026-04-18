@@ -62,7 +62,12 @@ export type AppContext = {
   workflowService: WorkflowService;
 };
 
-export function createAppContext(dbPath: string): AppContext {
+export function createAppContext(
+  dbPath: string,
+  options?: {
+    adapterScriptPath?: string;
+  }
+): AppContext {
   const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
   const artifactRoot = resolve(repoRoot, "var/artifacts");
   const { connection, db } = createDatabase(dbPath);
@@ -88,7 +93,7 @@ export function createAppContext(dbPath: string): AppContext {
   const stageRunRepository = new StageRunRepository(db);
   const artifactRepository = new ArtifactRepository(db);
   const agentSessionRepository = new AgentSessionRepository(db);
-  const adapter = new LocalCliAdapter(repoRoot);
+  const adapter = new LocalCliAdapter(repoRoot, options?.adapterScriptPath);
 
   return {
     connection,

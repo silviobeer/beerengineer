@@ -367,7 +367,9 @@ describe("workflow service", () => {
               testPreparationRunId: string;
             } | null;
             testAgentSessions: Array<{ adapterKey: string }>;
-            verificationRuns: Array<{ status: string }>;
+            verificationRuns: Array<{ mode: string; status: string }>;
+            latestBasicVerification: { mode: string; status: string } | null;
+            latestRalphVerification: { mode: string; status: string } | null;
             agentSessions: Array<{ adapterKey: string }>;
           }>;
         }>;
@@ -383,10 +385,114 @@ describe("workflow service", () => {
       );
       expect(shown.waves[1]?.stories[0]?.latestExecution?.repoContextSnapshotJson).toContain("src");
       expect(shown.waves[0]?.stories[0]?.testAgentSessions[0]?.adapterKey).toBe("local-cli");
-      expect(shown.waves[0]?.stories[0]?.verificationRuns[0]?.status).toBe("passed");
+      expect(shown.waves[0]?.stories[0]?.verificationRuns.map((run) => run.mode)).toEqual(["basic", "ralph"]);
+      expect(shown.waves[0]?.stories[0]?.latestBasicVerification?.status).toBe("passed");
+      expect(shown.waves[0]?.stories[0]?.latestRalphVerification?.status).toBe("passed");
       expect(shown.waves[0]?.stories[0]?.agentSessions[0]?.adapterKey).toBe("local-cli");
     } finally {
       context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("marks execution review_required when Ralph returns review_required", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const originalScript = readFileSync("scripts/local-agent.mjs", "utf8");
+    const adapterScriptPath = join(root, "local-agent-review.mjs");
+    const dbPath = join(root, "app.sqlite");
+
+    try {
+      const reviewScript = originalScript.replace(
+        /const status = payload\.basicVerification\.status === "failed"[\s\S]*?: "passed";/,
+        'const status = "review_required";'
+      );
+      writeFileSync(adapterScriptPath, reviewScript);
+      const context = createAppContext(dbPath, { adapterScriptPath });
+
+      const item = context.repositories.itemRepository.create({
+        title: "Ralph Review",
+        description: "Trigger Ralph review"
+      });
+      await context.workflowService.startStage({ stageKey: "brainstorm", itemId: item.id });
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      context.workflowService.approveConcept(concept!.id);
+      context.workflowService.importProjects(item.id);
+      const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
+      await context.workflowService.startStage({ stageKey: "requirements", itemId: item.id, projectId: project.id });
+      context.workflowService.approveStories(project.id);
+      await context.workflowService.startStage({ stageKey: "architecture", itemId: item.id, projectId: project.id });
+      context.workflowService.approveArchitecture(project.id);
+      await context.workflowService.startStage({ stageKey: "planning", itemId: item.id, projectId: project.id });
+      context.workflowService.approvePlanning(project.id);
+
+      const first = await context.workflowService.startExecution(project.id);
+      expect(first.executions[0]?.status).toBe("review_required");
+
+      const shown = context.workflowService.showExecution(project.id) as {
+        waves: Array<{
+          waveExecution: { status: string } | null;
+          stories: Array<{
+            latestRalphVerification: { status: string } | null;
+            latestExecution: { status: string } | null;
+          }>;
+        }>;
+      };
+      expect(shown.waves[0]?.waveExecution?.status).toBe("review_required");
+      expect(shown.waves[0]?.stories[0]?.latestExecution?.status).toBe("review_required");
+      expect(shown.waves[0]?.stories[0]?.latestRalphVerification?.status).toBe("review_required");
+      context.connection.close();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("marks execution failed when Ralph returns failed", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const originalScript = readFileSync("scripts/local-agent.mjs", "utf8");
+    const adapterScriptPath = join(root, "local-agent-failed.mjs");
+    const dbPath = join(root, "app.sqlite");
+
+    try {
+      const failedScript = originalScript.replace(
+        /const status = payload\.basicVerification\.status === "failed"[\s\S]*?: "passed";/,
+        'const status = "failed";'
+      );
+      writeFileSync(adapterScriptPath, failedScript);
+      const context = createAppContext(dbPath, { adapterScriptPath });
+
+      const item = context.repositories.itemRepository.create({
+        title: "Ralph Failure",
+        description: "Trigger Ralph failure"
+      });
+      await context.workflowService.startStage({ stageKey: "brainstorm", itemId: item.id });
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      context.workflowService.approveConcept(concept!.id);
+      context.workflowService.importProjects(item.id);
+      const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
+      await context.workflowService.startStage({ stageKey: "requirements", itemId: item.id, projectId: project.id });
+      context.workflowService.approveStories(project.id);
+      await context.workflowService.startStage({ stageKey: "architecture", itemId: item.id, projectId: project.id });
+      context.workflowService.approveArchitecture(project.id);
+      await context.workflowService.startStage({ stageKey: "planning", itemId: item.id, projectId: project.id });
+      context.workflowService.approvePlanning(project.id);
+
+      const first = await context.workflowService.startExecution(project.id);
+      expect(first.executions[0]?.status).toBe("failed");
+
+      const shown = context.workflowService.showExecution(project.id) as {
+        waves: Array<{
+          waveExecution: { status: string } | null;
+          stories: Array<{
+            latestRalphVerification: { status: string } | null;
+            latestExecution: { status: string } | null;
+          }>;
+        }>;
+      };
+      expect(shown.waves[0]?.waveExecution?.status).toBe("failed");
+      expect(shown.waves[0]?.stories[0]?.latestExecution?.status).toBe("failed");
+      expect(shown.waves[0]?.stories[0]?.latestRalphVerification?.status).toBe("failed");
+      context.connection.close();
+    } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });

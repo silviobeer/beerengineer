@@ -218,6 +218,7 @@ export const verificationRuns = sqliteTable("verification_runs", {
   id: text("id").primaryKey(),
   waveExecutionId: text("wave_execution_id").references(() => waveExecutions.id),
   waveStoryExecutionId: text("wave_story_execution_id").references(() => waveStoryExecutions.id),
+  mode: text("mode").notNull(),
   status: text("status").notNull(),
   summaryJson: text("summary_json").notNull(),
   errorMessage: text("error_message"),

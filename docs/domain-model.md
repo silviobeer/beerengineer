@@ -19,6 +19,7 @@ Kernentitaeten des aktuellen MVP:
   mit direkter Referenz auf den konkret verwendeten `WaveStoryTestRun`
 - `ExecutionAgentSession`: Session-Metadaten eines konkreten Worker-Laufs
 - `VerificationRun`: strukturierter Verifikationsstand fuer Story- oder Wave-Ausfuehrung
+  mit explizitem `mode` (`basic` oder `ralph`)
 - optional spaeter `WaveParallelGroup`: fachliche Kennzeichnung fuer sicher parallel ausfuehrbare Story-Gruppen innerhalb einer Wave
 
 Die Entitaeten leben im Domain-Layer und werden nicht aus CLI-Kommandos heraus modelliert.
@@ -28,4 +29,5 @@ Wichtig:
 - Die Planning-Schicht soll Parallelisierbarkeit fachlich beschreiben.
 - Die Execution-Schicht entscheidet die konkrete Laufzeitorchestrierung engine-seitig.
 - Die TDD-Schicht erzwingt `test_preparation` vor `implementation`.
+- Die Ralph-Schicht erzwingt AC-by-AC-Verifikation nach der Implementierung.
 - Worker-Rollen sind Registry und Ausfuehrungsprofil, aber nicht der Scheduler.

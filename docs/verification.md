@@ -165,3 +165,42 @@ Live verifiziert:
 - jede ausgefuehrte Story erzeugt zuerst einen `WaveStoryTestRun`
 - pro Test-Run wird ein `TestAgentSession`-Record gespeichert
 - die anschliessende Implementierung nutzt den gespeicherten Test-Run-Output als vorab definiertes Ziel
+
+## Ralph Verification Slice
+
+Umgesetzt:
+
+- `VerificationRun.mode` mit `basic` und `ralph`
+- engine-erzwungene Reihenfolge `test_preparation -> implementation -> verification_basic -> verification_ralph`
+- AC-by-AC-Ralph-Output mit strukturierten Verdicts, Evidence und Notes
+- `execution:show` surfacet den neuesten `basic`- und `ralph`-Run pro Story
+- eine Story wird erst `completed`, wenn der neueste Ralph-Run `passed` ist
+
+Verifiziert mit:
+
+- `npm run lint`
+- `npm run build`
+- `npm test`
+
+Aktueller Stand:
+
+- 12 Testdateien
+- 33 gruene Tests
+
+Live zu verifizieren:
+
+- pro erfolgreicher Story liegen jetzt zwei `VerificationRun`-Records vor: `basic` und `ralph`
+- Wave-Abschluss haengt explizit am Ralph-Status jeder Story
+
+## Migration Hardening
+
+Umgesetzt:
+
+- eigene inkrementelle Migration `0001_add_verification_run_mode`
+- bestehende Datenbanken erhalten `verification_runs.mode` nachtraeglich statt nur ueber frische Basisschemata
+- Testhaertung: Ralph-Integrationstests mutieren nicht mehr `scripts/local-agent.mjs`, sondern verwenden temporaere Adapter-Skripte
+
+Verifiziert mit:
+
+- `npm run build`
+- `npm test`

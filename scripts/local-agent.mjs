@@ -216,6 +216,39 @@ function storyExecution(payload) {
   };
 }
 
+function ralphVerification(payload) {
+  const status = payload.basicVerification.status === "failed"
+    ? "failed"
+    : payload.basicVerification.status === "review_required"
+      ? "review_required"
+      : "passed";
+
+  return {
+    output: {
+      storyCode: payload.story.code,
+      overallStatus: status,
+      summary:
+        status === "passed"
+          ? `Ralph verification passed for ${payload.story.code}.`
+          : `Ralph verification requires follow-up for ${payload.story.code}.`,
+      acceptanceCriteriaResults: payload.acceptanceCriteria.map((criterion) => ({
+        acceptanceCriterionId: criterion.id,
+        acceptanceCriterionCode: criterion.code,
+        status,
+        evidence:
+          status === "passed"
+            ? `Observed in ${payload.implementation.testsRun.map((testRun) => testRun.command).join(", ")} and implementation summary.`
+            : `Basic verification status was ${payload.basicVerification.status}; acceptance criterion cannot be considered complete.`,
+        notes:
+          status === "passed"
+            ? `Criterion ${criterion.code} is covered by the stored test and implementation evidence.`
+            : `Criterion ${criterion.code} needs follow-up before completion.`
+      })),
+      blockers: status === "passed" ? [] : payload.implementation.blockers
+    }
+  };
+}
+
 let result;
 if (payload.stageKey === "brainstorm") {
   result = brainstorming(payload.item);
@@ -227,6 +260,8 @@ if (payload.stageKey === "brainstorm") {
   result = planning(payload.project, payload.context);
 } else if (payload.workerRole === "test-writer") {
   result = testPreparation(payload);
+} else if (payload.workerRole === "ralph-verifier") {
+  result = ralphVerification(payload);
 } else if (payload.workerRole) {
   result = storyExecution(payload);
 } else {

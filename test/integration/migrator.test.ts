@@ -28,10 +28,28 @@ describe("migration runner", () => {
         .prepare("SELECT count(*) as count FROM __migrations")
         .get() as { count: number } | undefined;
 
-      expect(applied).toEqual(["0000_initial"]);
-      expect(row?.count).toBe(1);
+      expect(applied).toEqual(["0000_initial", "0001_add_verification_run_mode"]);
+      expect(row?.count).toBe(2);
     } finally {
       secondConnection.close();
+      testDb.cleanup();
+    }
+  });
+
+  it("adds verification_runs.mode for databases that already had the initial migration", () => {
+    const testDb = createTestDatabase();
+    const legacyDb = createSqliteConnection(testDb.filePath.replace("test.sqlite", "legacy.sqlite"));
+
+    try {
+      applyMigrations(legacyDb, [baseMigrations[0]!]);
+
+      const applied = applyMigrations(legacyDb, baseMigrations);
+      const columns = legacyDb.prepare("PRAGMA table_info(verification_runs)").all() as Array<{ name: string }>;
+
+      expect(applied).toEqual(["0001_add_verification_run_mode"]);
+      expect(columns.map((column) => column.name)).toContain("mode");
+    } finally {
+      legacyDb.close();
       testDb.cleanup();
     }
   });

@@ -261,6 +261,7 @@ describe("repositories", () => {
       const verificationRun = verificationRunRepository.create({
         waveExecutionId: waveExecution.id,
         waveStoryExecutionId: waveStoryExecution.id,
+        mode: "basic",
         status: "passed",
         summaryJson: "{\"testsRun\":[{\"command\":\"npm test\",\"status\":\"passed\"}]}",
         errorMessage: null

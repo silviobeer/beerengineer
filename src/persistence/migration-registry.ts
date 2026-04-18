@@ -293,4 +293,11 @@ export const baseMigrations: readonly SqlMigration[] = [
       )`
     ]
   }
+  ,
+  {
+    id: "0001_add_verification_run_mode",
+    statements: [
+      `ALTER TABLE verification_runs ADD COLUMN mode TEXT NOT NULL DEFAULT 'basic'`
+    ]
+  }
 ];

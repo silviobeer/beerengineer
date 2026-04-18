@@ -10,6 +10,8 @@ import type {
   AdapterRunResult,
   ExecutionAdapterRunRequest,
   ExecutionAdapterRunResult,
+  RalphVerificationAdapterRunRequest,
+  RalphVerificationAdapterRunResult,
   TestPreparationAdapterRunRequest,
   TestPreparationAdapterRunResult
 } from "./types.js";
@@ -65,7 +67,26 @@ export class LocalCliAdapter implements AgentAdapter {
     };
   }
 
-  private executePayload(request: AdapterRunRequest | ExecutionAdapterRunRequest | TestPreparationAdapterRunRequest): unknown {
+  public async runStoryRalphVerification(
+    request: RalphVerificationAdapterRunRequest
+  ): Promise<RalphVerificationAdapterRunResult> {
+    const parsed = this.executePayload(request) as { output: RalphVerificationAdapterRunResult["output"] };
+    return {
+      output: parsed.output,
+      stdout: JSON.stringify(parsed),
+      stderr: "",
+      exitCode: 0,
+      command: [process.execPath, resolve(this.repoRoot, this.scriptPath)]
+    };
+  }
+
+  private executePayload(
+    request:
+      | AdapterRunRequest
+      | ExecutionAdapterRunRequest
+      | TestPreparationAdapterRunRequest
+      | RalphVerificationAdapterRunRequest
+  ): unknown {
     const tempDir = mkdtempSync(join(tmpdir(), "beerengineer-agent-"));
     const payloadPath = join(tempDir, "payload.json");
     writeFileSync(payloadPath, JSON.stringify(request, null, 2), "utf8");

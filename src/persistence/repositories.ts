@@ -17,6 +17,7 @@ import type {
   TestAgentSession,
   UserStory,
   VerificationRun,
+  VerificationRunMode,
   Wave,
   WaveExecution,
   WaveExecutionStatus,
@@ -804,6 +805,21 @@ export class VerificationRunRepository {
       .where(eq(verificationRuns.waveStoryExecutionId, waveStoryExecutionId))
       .orderBy(verificationRuns.createdAt)
       .all() as VerificationRun[];
+  }
+
+  public getLatestByWaveStoryExecutionIdAndMode(
+    waveStoryExecutionId: string,
+    mode: VerificationRunMode
+  ): VerificationRun | null {
+    return (
+      (this.db
+        .select()
+        .from(verificationRuns)
+        .where(and(eq(verificationRuns.waveStoryExecutionId, waveStoryExecutionId), eq(verificationRuns.mode, mode)))
+        .orderBy(desc(verificationRuns.createdAt), desc(verificationRuns.id))
+        .limit(1)
+        .get() as VerificationRun | undefined) ?? null
+    );
   }
 
   public listByWaveExecutionId(waveExecutionId: string): VerificationRun[] {
