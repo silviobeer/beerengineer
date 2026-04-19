@@ -208,6 +208,60 @@ export const documentationOutputSchema = z.object({
   reportMarkdown: z.string().min(1)
 });
 
+export const interactiveBrainstormDraftPatchSchema = z.object({
+  problem: z.string().min(1).nullable().optional(),
+  coreOutcome: z.string().min(1).nullable().optional(),
+  targetUsers: z.array(z.string().min(1)).optional(),
+  useCases: z.array(z.string().min(1)).optional(),
+  constraints: z.array(z.string().min(1)).optional(),
+  nonGoals: z.array(z.string().min(1)).optional(),
+  risks: z.array(z.string().min(1)).optional(),
+  openQuestions: z.array(z.string().min(1)).optional(),
+  candidateDirections: z.array(z.string().min(1)).optional(),
+  recommendedDirection: z.string().min(1).nullable().optional(),
+  scopeNotes: z.string().min(1).nullable().optional(),
+  assumptions: z.array(z.string().min(1)).optional()
+});
+
+export const interactiveBrainstormAgentOutputSchema = z.object({
+  assistantMessage: z.string().min(1),
+  draftPatch: interactiveBrainstormDraftPatchSchema,
+  needsStructuredFollowUp: z.boolean().default(false),
+  followUpHint: z.string().min(1).nullable().optional()
+});
+
+export const interactiveReviewEntryUpdateOutputSchema = z.object({
+  entryId: z.string().min(1),
+  status: z.enum(["pending", "accepted", "needs_revision", "rejected", "resolved"]),
+  summary: z.string().min(1),
+  changeRequest: z.string().min(1).nullable().optional(),
+  rationale: z.string().min(1).nullable().optional(),
+  severity: z.enum(["critical", "high", "medium", "low"]).nullable().optional()
+});
+
+export const interactiveStoryReviewAgentOutputSchema = z.object({
+  assistantMessage: z.string().min(1),
+  entryUpdates: z.array(interactiveReviewEntryUpdateOutputSchema).default([]),
+  needsStructuredFollowUp: z.boolean().default(false),
+  followUpHint: z.string().min(1).nullable().optional(),
+  recommendedResolution: z
+    .object({
+      action: z.enum([
+        "approve",
+        "approve_and_autorun",
+        "approve_all",
+        "approve_all_and_autorun",
+        "approve_selected",
+        "request_changes",
+        "request_story_revisions",
+        "apply_story_edits"
+      ]),
+      storyIds: z.array(z.string().min(1)).default([])
+    })
+    .nullable()
+    .optional()
+});
+
 export type ProjectsOutput = z.infer<typeof projectsOutputSchema>;
 export type StoriesOutput = z.infer<typeof storiesOutputSchema>;
 export type ArchitecturePlanOutput = z.infer<typeof architecturePlanOutputSchema>;
@@ -219,3 +273,7 @@ export type AppVerificationOutput = z.infer<typeof appVerificationOutputSchema>;
 export type QaOutput = z.infer<typeof qaOutputSchema>;
 export type StoryReviewOutput = z.infer<typeof storyReviewOutputSchema>;
 export type DocumentationOutput = z.infer<typeof documentationOutputSchema>;
+export type InteractiveBrainstormDraftPatch = z.infer<typeof interactiveBrainstormDraftPatchSchema>;
+export type InteractiveBrainstormAgentOutput = z.infer<typeof interactiveBrainstormAgentOutputSchema>;
+export type InteractiveReviewEntryUpdateOutput = z.infer<typeof interactiveReviewEntryUpdateOutputSchema>;
+export type InteractiveStoryReviewAgentOutput = z.infer<typeof interactiveStoryReviewAgentOutputSchema>;

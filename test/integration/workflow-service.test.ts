@@ -121,9 +121,9 @@ describe("workflow service", () => {
       expect(shown.session.status).toBe("waiting_for_user");
       expect(shown.session.mode).toBe("explore");
       expect(shown.draft.revision).toBe(1);
-      expect(shown.messages.map((message) => message.role)).toEqual(["system", "assistant"]);
+      expect(shown.messages.map((message) => message.role).sort()).toEqual(["assistant", "system"]);
 
-      const chatted = context.workflowService.chatBrainstorm(
+      const chatted = await context.workflowService.chatBrainstorm(
         started.sessionId,
         [
           "problem: Teams cannot see review state across workflow runs",
@@ -411,7 +411,7 @@ describe("workflow service", () => {
       expect(session.messages.map((message) => message.role).sort()).toEqual(["assistant", "system"]);
 
       const firstStory = context.repositories.userStoryRepository.listByProjectId(project.id)[0]!;
-      const chatted = context.workflowService.chatInteractiveReview(
+      const chatted = await context.workflowService.chatInteractiveReview(
         started.sessionId,
         `${firstStory.code} needs revision because acceptance criteria are too vague`
       );
@@ -540,7 +540,7 @@ describe("workflow service", () => {
 
       const started = context.workflowService.startInteractiveReview({ type: "stories", projectId: project.id });
       const firstStory = context.repositories.userStoryRepository.listByProjectId(project.id)[0]!;
-      const chatted = context.workflowService.chatInteractiveReview(
+      const chatted = await context.workflowService.chatInteractiveReview(
         started.sessionId,
         `Do not approve ${firstStory.code} yet and don't change anything else`
       );
@@ -550,6 +550,91 @@ describe("workflow service", () => {
         entries: Array<{ entryId: string; status: string }>;
       };
       expect(review.entries.find((entry) => entry.entryId === firstStory.id)?.status).toBe("pending");
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails interactive brainstorm chat on invalid structured agent output", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const scriptPath = join(root, "interactive-agent.mjs");
+    writeFileSync(
+      scriptPath,
+      [
+        'import { readFileSync } from "node:fs";',
+        "const payload = JSON.parse(readFileSync(process.argv[2], 'utf8'));",
+        "if (payload.interactionType === 'brainstorm_chat') {",
+        "  process.stdout.write(JSON.stringify({ output: { assistantMessage: '', draftPatch: {} } }));",
+        "} else {",
+        "  process.stdout.write(JSON.stringify({ markdownArtifacts: [], structuredArtifacts: [] }));",
+        "}"
+      ].join("\n"),
+      "utf8"
+    );
+    const context = createAppContext(dbPath, { adapterScriptPath: scriptPath });
+
+    try {
+      const item = createWorkspaceItem(context, {
+        title: "Interactive Output Validation",
+        description: "Validate invalid brainstorm chat output"
+      });
+      const started = context.workflowService.startBrainstormSession(item.id);
+
+      await expect(context.workflowService.chatBrainstorm(started.sessionId, "problem: invalid output test")).rejects.toMatchObject({
+        code: "INTERACTIVE_AGENT_OUTPUT_INVALID"
+      } satisfies Partial<AppError>);
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails interactive review chat on invalid structured agent output", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const scriptPath = join(root, "interactive-review-agent.mjs");
+    writeFileSync(
+      scriptPath,
+      [
+        'import { readFileSync } from "node:fs";',
+        "const payload = JSON.parse(readFileSync(process.argv[2], 'utf8'));",
+        "if (payload.interactionType === 'story_review_chat') {",
+        "  process.stdout.write(JSON.stringify({ output: { assistantMessage: '', entryUpdates: [] } }));",
+        "} else {",
+        "  process.stdout.write(JSON.stringify({ markdownArtifacts: [], structuredArtifacts: [] }));",
+        "}"
+      ].join("\n"),
+      "utf8"
+    );
+    const setupContext = createAppContext(dbPath);
+    let sessionId = "";
+
+    try {
+      const item = createWorkspaceItem(setupContext, {
+        title: "Interactive Review Output Validation",
+        description: "Validate invalid review chat output"
+      });
+      await setupContext.workflowService.startStage({
+        stageKey: "brainstorm",
+        itemId: item.id
+      });
+      const concept = setupContext.repositories.conceptRepository.getLatestByItemId(item.id);
+      setupContext.workflowService.approveConcept(concept!.id);
+      setupContext.workflowService.importProjects(item.id);
+      const project = setupContext.repositories.projectRepository.listByItemId(item.id)[0]!;
+      await setupContext.workflowService.startStage({ stageKey: "requirements", itemId: item.id, projectId: project.id });
+      sessionId = setupContext.workflowService.startInteractiveReview({ type: "stories", projectId: project.id }).sessionId;
+    } finally {
+      setupContext.connection.close();
+    }
+
+    const context = createAppContext(dbPath, { adapterScriptPath: scriptPath });
+    try {
+      await expect(context.workflowService.chatInteractiveReview(sessionId, "Please review the first story")).rejects.toMatchObject({
+        code: "INTERACTIVE_AGENT_OUTPUT_INVALID"
+      } satisfies Partial<AppError>);
     } finally {
       context.connection.close();
       rmSync(root, { recursive: true, force: true });

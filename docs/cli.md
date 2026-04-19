@@ -79,7 +79,7 @@ Project-Ebene:
 
 - `review:start` legt eine persistente Session fuer den Story-Satz eines Projects an oder oeffnet eine bestehende offene Session erneut.
 - `review:show` liefert Session, persistierte Messages, strukturierte Story-Eintraege und formale Resolutionen.
-- `review:chat` speichert User- und Assistant-Nachrichten und leitet einfache strukturierte Story-Updates aus Story-Code/-Titel und Review-Signalen wie `approve` oder `needs revision` ab.
+- `review:chat` speichert User- und Assistant-Nachrichten, ruft den konfigurierten Interactive-Chat-Adapter auf und validiert dessen strukturierte Story-Updates strikt gegen das Engine-Schema.
 - `review:entry:update` erlaubt explizite maschinenlesbare Story-Status wie `accepted`, `needs_revision` oder `rejected`.
 - `review:story:edit` fuehrt Guided Edit direkt auf Story-Feldern und optional auf den Acceptance Criteria aus; die Aenderung wird sofort am Artefakt gespeichert und im Review-Entry nachvollziehbar markiert.
 - `review:resolve` unterstuetzt heute diese Story-Resolutionen:
@@ -102,8 +102,8 @@ Der interaktive Brainstorm-Slice arbeitet auf Item-Ebene und ergaenzt den
 bestehenden einmaligen Stage-Run `brainstorm:start` um einen persistenten
 Human-in-the-loop-Pfad:
 
-- `brainstorm:show` legt fuer ein Item eine persistente Session an oder oeffnet eine bestehende offene Session erneut und liefert Session, Messages und den aktuellen Draft zurueck.
-- `brainstorm:chat` speichert User- und Assistant-Nachrichten und verdichtet freie Texteingaben in einen versionierten Brainstorm-Draft mit Feldern wie Problem, Zielnutzer, Use Cases, Constraints, Risiken und offenen Fragen.
+- `brainstorm:show` liefert fuer ein Item die neueste persistente Session zurueck und initialisiert nur dann eine neue Session, wenn fuer das Item noch keine interaktive Brainstorm-Session existiert.
+- `brainstorm:chat` speichert User- und Assistant-Nachrichten, ruft den konfigurierten Interactive-Chat-Adapter auf und validiert dessen strukturierte Draft-Patches strikt gegen das Engine-Schema.
 - `brainstorm:draft` gibt den neuesten versionierten Draft fuer eine Session direkt aus.
 - `brainstorm:draft:update` erlaubt gezielte feldweise Aenderungen am Draft, inklusive wiederholbarer Listenfelder wie `--target-user`, `--use-case`, `--candidate-direction` und optionalem Leeren ueber `--clear-*`.
 - `brainstorm:promote` erzeugt aus dem Draft die manuellen Artefakte `concept` und `projects`, legt einen `Concept`-Record an und schliesst die Brainstorm-Session formal ab.
@@ -112,7 +112,8 @@ Human-in-the-loop-Pfad:
 Wichtig:
 
 - `brainstorm:start` bleibt absichtlich der bestehende nicht-interaktive Stage-Run.
-- `brainstorm:chat` versteht jetzt auch markierte Eingaben wie `problem: ...`, `users: ...`, `use cases: ...`, `recommended direction: ...`.
+- `brainstorm:chat` ist jetzt provider-agnostisch: Codex, Claude oder ein anderer Adapter muessen denselben strukturierten Draft-Patch-Vertrag liefern.
+- `review:chat` ist ebenfalls provider-agnostisch und akzeptiert nur schema-valide Entry-Updates fuer Stories.
 - Fuer praezise maschinenlesbare Aenderungen ist `brainstorm:draft:update` der verlässlichere Pfad.
 - `brainstorm:promote` ist der formale Uebergang von `brainstorm` nach `concept`.
 

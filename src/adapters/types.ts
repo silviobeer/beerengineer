@@ -1,7 +1,12 @@
 import type {
   AppVerificationRunner,
+  BrainstormSessionMode,
+  BrainstormSessionStatus,
   DocumentationWorkerRole,
   ExecutionWorkerRole,
+  InteractiveReviewEntryStatus,
+  InteractiveReviewSeverity,
+  InteractiveReviewStatus,
   QaRunStatus,
   StoryReviewRunStatus,
   StoryReviewWorkerRole,
@@ -13,6 +18,8 @@ import type {
 import type {
   AppVerificationOutput,
   DocumentationOutput,
+  InteractiveBrainstormAgentOutput,
+  InteractiveStoryReviewAgentOutput,
   RalphVerificationOutput,
   QaOutput,
   StoryReviewOutput,
@@ -427,6 +434,95 @@ export type DocumentationAdapterRunResult = {
   command: string[];
 };
 
+export type InteractiveBrainstormAdapterRunRequest = {
+  interactionType: "brainstorm_chat";
+  prompt: string;
+  session: {
+    id: string;
+    status: BrainstormSessionStatus;
+    mode: BrainstormSessionMode;
+  };
+  item: AdapterRunRequest["item"];
+  draft: {
+    revision: number;
+    status: string;
+    problem: string | null;
+    coreOutcome: string | null;
+    targetUsers: string[];
+    useCases: string[];
+    constraints: string[];
+    nonGoals: string[];
+    risks: string[];
+    openQuestions: string[];
+    candidateDirections: string[];
+    recommendedDirection: string | null;
+    scopeNotes: string | null;
+    assumptions: string[];
+  };
+  messages: Array<{
+    role: "system" | "assistant" | "user";
+    content: string;
+  }>;
+  userMessage: string;
+  allowedActions: Array<"suggest_patch" | "request_structured_follow_up" | "suggest_promote">;
+};
+
+export type InteractiveBrainstormAdapterRunResult = {
+  output: InteractiveBrainstormAgentOutput;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  command: string[];
+};
+
+export type InteractiveStoryReviewAdapterRunRequest = {
+  interactionType: "story_review_chat";
+  prompt: string;
+  session: {
+    id: string;
+    status: InteractiveReviewStatus;
+    artifactType: "stories";
+    reviewType: string;
+  };
+  item: AdapterRunRequest["item"];
+  project: NonNullable<AdapterRunRequest["project"]>;
+  stories: Array<{
+    id: string;
+    // Engine-owned review entry id. Adapters must echo this value back in entryUpdates.
+    entryId: string;
+    code: string;
+    title: string;
+    description: string;
+    priority: string;
+    status: string;
+    acceptanceCriteria: Array<{ id: string; code: string; text: string; position: number }>;
+  }>;
+  entries: Array<{
+    entryId: string;
+    title: string;
+    status: InteractiveReviewEntryStatus;
+    summary: string | null;
+    changeRequest: string | null;
+    rationale: string | null;
+    severity: InteractiveReviewSeverity | null;
+  }>;
+  messages: Array<{
+    role: "system" | "assistant" | "user";
+    content: string;
+  }>;
+  userMessage: string;
+  allowedStatuses: InteractiveReviewEntryStatus[];
+  allowedActions: Array<"update_entries" | "request_structured_follow_up" | "suggest_resolution">;
+};
+
+export type InteractiveStoryReviewAdapterRunResult = {
+  output: InteractiveStoryReviewAgentOutput;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  command: string[];
+};
+
 export type StoryReviewAdapterRunRequest = {
   workerRole: StoryReviewWorkerRole;
   prompt: string;
@@ -482,6 +578,8 @@ export type StoryReviewAdapterRunResult = {
 export interface AgentAdapter {
   readonly key: string;
   run(request: AdapterRunRequest): Promise<AdapterRunResult>;
+  runInteractiveBrainstorm(request: InteractiveBrainstormAdapterRunRequest): Promise<InteractiveBrainstormAdapterRunResult>;
+  runInteractiveStoryReview(request: InteractiveStoryReviewAdapterRunRequest): Promise<InteractiveStoryReviewAdapterRunResult>;
   runStoryTestPreparation(request: TestPreparationAdapterRunRequest): Promise<TestPreparationAdapterRunResult>;
   runStoryExecution(request: ExecutionAdapterRunRequest): Promise<ExecutionAdapterRunResult>;
   runStoryRalphVerification(request: RalphVerificationAdapterRunRequest): Promise<RalphVerificationAdapterRunResult>;

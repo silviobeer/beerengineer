@@ -183,8 +183,8 @@ program
   .requiredOption("--session-id <sessionId>")
   .requiredOption("--message <message>")
   .action(
-    withContext<{ sessionId: string; message: string }>(({ workflowService }, options) => {
-      console.log(JSON.stringify(workflowService.chatBrainstorm(options.sessionId, options.message), null, 2));
+    withContext<{ sessionId: string; message: string }>(async ({ workflowService }, options) => {
+      console.log(JSON.stringify(await workflowService.chatBrainstorm(options.sessionId, options.message), null, 2));
     })
   );
 
@@ -378,8 +378,8 @@ program
   .requiredOption("--session-id <sessionId>")
   .requiredOption("--message <message>")
   .action(
-    withContext<{ sessionId: string; message: string }>(({ workflowService }, options) => {
-      console.log(JSON.stringify(workflowService.chatInteractiveReview(options.sessionId, options.message), null, 2));
+    withContext<{ sessionId: string; message: string }>(async ({ workflowService }, options) => {
+      console.log(JSON.stringify(await workflowService.chatInteractiveReview(options.sessionId, options.message), null, 2));
     })
   );
 

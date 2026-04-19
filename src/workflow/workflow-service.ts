@@ -36,6 +36,8 @@ import {
   appVerificationOutputSchema,
   architecturePlanOutputSchema,
   documentationOutputSchema,
+  interactiveBrainstormAgentOutputSchema,
+  interactiveStoryReviewAgentOutputSchema,
   qaOutputSchema,
   projectsOutputSchema,
   ralphVerificationOutputSchema,
@@ -49,6 +51,8 @@ import type {
   ArchitecturePlanOutput,
   AppVerificationOutput,
   DocumentationOutput,
+  InteractiveBrainstormAgentOutput,
+  InteractiveStoryReviewAgentOutput,
   ProjectsOutput,
   QaOutput,
   RalphVerificationOutput,
@@ -111,10 +115,7 @@ import { workerProfiles, type WorkerProfileKey } from "./worker-profiles.js";
 import type { AgentAdapter } from "../adapters/types.js";
 import { AutorunOrchestrator } from "./autorun-orchestrator.js";
 import type { AutorunSummary, AutorunStep } from "./autorun-types.js";
-import {
-  interactiveReviewEntryStatuses,
-  interactiveReviewSeverities
-} from "../domain/types.js";
+import { interactiveReviewEntryStatuses, interactiveReviewSeverities } from "../domain/types.js";
 
 const supportedInteractiveReviewResolutionActions = [
   "approve",
@@ -789,11 +790,35 @@ export class WorkflowService {
     });
   }
 
-  public chatBrainstorm(sessionId: string, message: string) {
+  public async chatBrainstorm(sessionId: string, message: string) {
     const session = this.requireBrainstormSession(sessionId);
     this.assertBrainstormSessionOpen(session);
     const item = this.requireItem(session.itemId);
     const previousDraft = this.requireLatestBrainstormDraft(session.id);
+    const messages = this.deps.brainstormMessageRepository.listBySessionId(session.id).map((entry) => ({
+      role: entry.role,
+      content: entry.content
+    }));
+    const agentResult = await this.deps.adapter.runInteractiveBrainstorm({
+      interactionType: "brainstorm_chat",
+      prompt: this.buildInteractiveBrainstormPrompt(),
+      session: {
+        id: session.id,
+        status: session.status,
+        mode: session.mode
+      },
+      item: {
+        id: item.id,
+        code: item.code,
+        title: item.title,
+        description: item.description
+      },
+      draft: this.mapBrainstormDraft(previousDraft),
+      messages,
+      userMessage: message,
+      allowedActions: ["suggest_patch", "request_structured_follow_up", "suggest_promote"]
+    });
+    const agentOutput = this.parseInteractiveBrainstormAgentOutput(agentResult.output);
 
     return this.deps.runInTransaction(() => {
       const userMessage = this.deps.brainstormMessageRepository.create({
@@ -803,7 +828,7 @@ export class WorkflowService {
         structuredPayloadJson: null,
         derivedUpdatesJson: null
       });
-      const draftUpdate = this.deriveBrainstormDraftUpdate(previousDraft, message);
+      const draftUpdate = this.mapInteractiveBrainstormDraftPatch(agentOutput.draftPatch);
       const nextDraft = this.deps.brainstormDraftRepository.createRevision(previousDraft, {
         ...draftUpdate,
         status: this.computeBrainstormDraftStatus({
@@ -815,15 +840,24 @@ export class WorkflowService {
       const assistantMessage = this.deps.brainstormMessageRepository.create({
         sessionId: session.id,
         role: "assistant",
-        content: this.buildBrainstormFollowUpMessage(item, nextDraft),
+        content: agentOutput.assistantMessage,
         structuredPayloadJson: JSON.stringify(
           {
-            draftRevision: nextDraft.revision
+            draftRevision: nextDraft.revision,
+            needsStructuredFollowUp: agentOutput.needsStructuredFollowUp,
+            followUpHint: agentOutput.followUpHint ?? null
           },
           null,
           2
         ),
-        derivedUpdatesJson: JSON.stringify(this.mapBrainstormDraft(nextDraft), null, 2)
+        derivedUpdatesJson: JSON.stringify(
+          {
+            draftPatch: agentOutput.draftPatch,
+            nextDraft: this.mapBrainstormDraft(nextDraft)
+          },
+          null,
+          2
+        )
       });
       const nextStatus = this.computeBrainstormSessionStatus(nextDraft);
       const nextMode = this.computeBrainstormSessionMode(nextDraft);
@@ -840,7 +874,9 @@ export class WorkflowService {
         assistantMessageId: assistantMessage.id,
         status: nextStatus,
         mode: nextMode,
-        draft: this.mapBrainstormDraft(nextDraft)
+        draft: this.mapBrainstormDraft(nextDraft),
+        needsStructuredFollowUp: agentOutput.needsStructuredFollowUp,
+        followUpHint: agentOutput.followUpHint ?? null
       };
     });
   }
@@ -1013,21 +1049,83 @@ export class WorkflowService {
     if (session.artifactType === "stories" && session.scopeType === "project") {
       const project = this.requireProject(session.scopeId);
       const item = this.requireItem(project.itemId);
-      const stories = this.deps.userStoryRepository.listByProjectId(project.id).map((story) => ({
+      const stories = this.deps.userStoryRepository.listByProjectId(project.id);
+      const acceptanceCriteriaByStoryId = this.groupAcceptanceCriteriaByStoryId(project.id);
+      const enrichedStories = stories.map((story) => ({
         ...story,
-        acceptanceCriteria: this.deps.acceptanceCriterionRepository.listByStoryId(story.id)
+        acceptanceCriteria: acceptanceCriteriaByStoryId.get(story.id) ?? []
       }));
-      return { session, item, project, stories, messages, entries, resolutions };
+      return { session, item, project, stories: enrichedStories, messages, entries, resolutions };
     }
 
     return { session, messages, entries, resolutions };
   }
 
-  public chatInteractiveReview(sessionId: string, message: string) {
+  public async chatInteractiveReview(sessionId: string, message: string) {
     const session = this.requireInteractiveReviewSession(sessionId);
     this.assertInteractiveReviewOpen(session);
     const storyScope = this.getStoryReviewScope(session);
-    const derivedUpdates = this.deriveStoryEntryUpdates(storyScope.stories, message);
+    const existingMessages = this.deps.interactiveReviewMessageRepository.listBySessionId(sessionId).map((entry) => ({
+      role: entry.role,
+      content: entry.content
+    }));
+    const existingEntries = this.deps.interactiveReviewEntryRepository.listBySessionId(sessionId);
+    const entryIdByStoryId = new Map(existingEntries.map((entry) => [entry.entryId, entry.entryId]));
+    const acceptanceCriteriaByStoryId = this.groupAcceptanceCriteriaByStoryId(storyScope.project.id);
+    const agentResult = await this.deps.adapter.runInteractiveStoryReview({
+      interactionType: "story_review_chat",
+      prompt: this.buildInteractiveStoryReviewPrompt(),
+      session: {
+        id: session.id,
+        status: session.status,
+        artifactType: "stories",
+        reviewType: session.reviewType
+      },
+      item: {
+        id: storyScope.item.id,
+        code: storyScope.item.code,
+        title: storyScope.item.title,
+        description: storyScope.item.description
+      },
+      project: {
+        id: storyScope.project.id,
+        code: storyScope.project.code,
+        title: storyScope.project.title,
+        summary: storyScope.project.summary,
+        goal: storyScope.project.goal
+      },
+      stories: storyScope.stories.map((story) => ({
+        id: story.id,
+        entryId: entryIdByStoryId.get(story.id) ?? story.id,
+        code: story.code,
+        title: story.title,
+        description: story.description,
+        priority: story.priority,
+        status: story.status,
+        acceptanceCriteria: acceptanceCriteriaByStoryId.get(story.id) ?? []
+      })),
+      entries: existingEntries.map((entry) => ({
+        entryId: entry.entryId,
+        title: entry.title,
+        status: entry.status,
+        summary: entry.summary,
+        changeRequest: entry.changeRequest,
+        rationale: entry.rationale,
+        severity: entry.severity
+      })),
+      messages: existingMessages,
+      userMessage: message,
+      allowedStatuses: [...interactiveReviewEntryStatuses],
+      allowedActions: ["update_entries", "request_structured_follow_up", "suggest_resolution"]
+    });
+    const agentOutput = this.parseInteractiveStoryReviewAgentOutput(agentResult.output);
+    const validEntryIds = new Set(existingEntries.map((entry) => entry.entryId));
+    for (const update of agentOutput.entryUpdates) {
+      if (!validEntryIds.has(update.entryId)) {
+        throw new AppError("INTERACTIVE_AGENT_OUTPUT_INVALID", `Interactive review agent referenced unknown entry ${update.entryId}`);
+      }
+    }
+    const derivedUpdates = agentOutput.entryUpdates;
 
     const result = this.deps.runInTransaction(() => {
       const userMessage = this.deps.interactiveReviewMessageRepository.create({
@@ -1035,7 +1133,14 @@ export class WorkflowService {
         role: "user",
         content: message,
         structuredPayloadJson: null,
-        derivedUpdatesJson: derivedUpdates.length > 0 ? JSON.stringify({ entryUpdates: derivedUpdates }, null, 2) : null
+        derivedUpdatesJson: JSON.stringify(
+          {
+            entryUpdates: derivedUpdates,
+            recommendedResolution: agentOutput.recommendedResolution ?? null
+          },
+          null,
+          2
+        )
       });
       this.deps.interactiveReviewSessionRepository.update(sessionId, {
         lastUserMessageId: userMessage.id
@@ -1054,16 +1159,26 @@ export class WorkflowService {
       const assistantMessage = this.deps.interactiveReviewMessageRepository.create({
         sessionId,
         role: "assistant",
-        content: this.buildStoryReviewFollowUpMessage(storyScope.project.code, entries, derivedUpdates),
+        content: agentOutput.assistantMessage,
         structuredPayloadJson: JSON.stringify(
           {
             availableActions: [...supportedInteractiveReviewResolutionActions],
-            derivedUpdateCount: derivedUpdates.length
+            derivedUpdateCount: derivedUpdates.length,
+            needsStructuredFollowUp: agentOutput.needsStructuredFollowUp,
+            followUpHint: agentOutput.followUpHint ?? null,
+            recommendedResolution: agentOutput.recommendedResolution ?? null
           },
           null,
           2
         ),
-        derivedUpdatesJson: derivedUpdates.length > 0 ? JSON.stringify({ entryUpdates: derivedUpdates }, null, 2) : null
+        derivedUpdatesJson: JSON.stringify(
+          {
+            entryUpdates: derivedUpdates,
+            recommendedResolution: agentOutput.recommendedResolution ?? null
+          },
+          null,
+          2
+        )
       });
       const nextStatus = this.computeInteractiveReviewStatus(entries);
       this.deps.interactiveReviewSessionRepository.update(sessionId, {
@@ -1076,7 +1191,10 @@ export class WorkflowService {
         userMessageId: userMessage.id,
         assistantMessageId: assistantMessage.id,
         status: nextStatus,
-        derivedUpdates
+        derivedUpdates,
+        needsStructuredFollowUp: agentOutput.needsStructuredFollowUp,
+        followUpHint: agentOutput.followUpHint ?? null,
+        recommendedResolution: agentOutput.recommendedResolution ?? null
       };
     });
 
@@ -4529,96 +4647,65 @@ export class WorkflowService {
     };
   }
 
-  private deriveBrainstormDraftUpdate(previousDraft: BrainstormDraft, message: string): Partial<BrainstormDraft> {
-    const view = this.mapBrainstormDraft(previousDraft);
-    const normalized = message.trim();
-    const targetUsers = [...view.targetUsers];
-    const useCases = [...view.useCases];
-    const constraints = [...view.constraints];
-    const nonGoals = [...view.nonGoals];
-    const risks = [...view.risks];
-    const openQuestions = [...view.openQuestions];
-    const candidateDirections = [...view.candidateDirections];
-    const assumptions = [...view.assumptions];
-    const labeled = this.parseBrainstormStructuredMessage(normalized);
+  private buildInteractiveBrainstormPrompt(): string {
+    return [
+      "You are assisting an interactive brainstorm session.",
+      "Return only structured brainstorm updates grounded in the provided item, draft, and chat history.",
+      "Prefer additive updates and preserve existing intent unless the latest user message clearly changes it.",
+      "If the user message is ambiguous, keep the patch narrow and set needsStructuredFollowUp=true with a short hint.",
+      "Do not claim workflow transitions. Suggest them only through the structured response."
+    ].join("\n");
+  }
 
-    const pushUnique = (list: string[], value: string) => {
-      if (value && !list.includes(value)) {
-        list.push(value);
-      }
-    };
-    const pushMany = (list: string[], values: string[]) => {
-      for (const value of values) {
-        pushUnique(list, value);
-      }
-    };
-
-    if (!view.problem) {
-      pushUnique(openQuestions, "What problem is most important to solve first?");
+  private parseInteractiveBrainstormAgentOutput(output: unknown): InteractiveBrainstormAgentOutput {
+    const parsed = interactiveBrainstormAgentOutputSchema.safeParse(output);
+    if (!parsed.success) {
+      throw new AppError("INTERACTIVE_AGENT_OUTPUT_INVALID", parsed.error.message);
     }
+    return parsed.data;
+  }
 
-    pushMany(targetUsers, labeled.targetUsers);
-    pushMany(useCases, labeled.useCases);
-    pushMany(constraints, labeled.constraints);
-    pushMany(nonGoals, labeled.nonGoals);
-    pushMany(risks, labeled.risks);
-    pushMany(openQuestions, labeled.openQuestions);
-    pushMany(candidateDirections, labeled.candidateDirections);
-    pushMany(assumptions, labeled.assumptions);
-
-    const unlabeledLines = labeled.unlabeled;
-    for (const line of unlabeledLines) {
-      const lineLower = line.toLowerCase();
-      if (lineLower.includes("?")) {
-        pushUnique(openQuestions, line);
-      } else if (
-        lineLower.includes("direction") ||
-        lineLower.includes("approach") ||
-        lineLower.includes("option") ||
-        lineLower.includes("should") ||
-        lineLower.includes("could")
-      ) {
-        pushUnique(candidateDirections, line);
-      } else if (lineLower.includes("constraint") || lineLower.includes("must") || lineLower.includes("cannot")) {
-        pushUnique(constraints, line);
-      } else if (lineLower.includes("non-goal") || lineLower.includes("out of scope") || lineLower.startsWith("not ")) {
-        pushUnique(nonGoals, line);
-      } else if (lineLower.includes("risk") || lineLower.includes("danger")) {
-        pushUnique(risks, line);
-      } else if (lineLower.includes("assume") || lineLower.includes("likely") || lineLower.includes("probably")) {
-        pushUnique(assumptions, line);
-      } else if (
-        lineLower.includes("user") ||
-        lineLower.includes("operator") ||
-        lineLower.includes("admin") ||
-        lineLower.includes("customer")
-      ) {
-        pushUnique(targetUsers, line);
-      } else {
-        pushUnique(useCases, line);
+  private mapInteractiveBrainstormDraftPatch(patch: InteractiveBrainstormAgentOutput["draftPatch"]): Partial<BrainstormDraft> {
+    const result: Partial<BrainstormDraft> = {};
+    const assignList = (
+      key:
+        | "targetUsersJson"
+        | "useCasesJson"
+        | "constraintsJson"
+        | "nonGoalsJson"
+        | "risksJson"
+        | "openQuestionsJson"
+        | "candidateDirectionsJson"
+        | "assumptionsJson",
+      value?: string[]
+    ) => {
+      if (value === undefined) {
+        return;
       }
-    }
-
-    const nextProblem = labeled.problem ?? view.problem ?? normalized;
-    const nextCoreOutcome = labeled.coreOutcome ?? view.coreOutcome ?? (normalized.length > 0 ? normalized : null);
-    const nextRecommendedDirection =
-      labeled.recommendedDirection ?? view.recommendedDirection ?? (candidateDirections[0] ?? null);
-    const nextScopeNotes = this.appendBrainstormScopeNotes(view.scopeNotes, normalized);
-
-    return {
-      problem: nextProblem,
-      coreOutcome: nextCoreOutcome,
-      targetUsersJson: JSON.stringify(this.normalizeBrainstormEntries(targetUsers)),
-      useCasesJson: JSON.stringify(this.normalizeBrainstormEntries(useCases)),
-      constraintsJson: JSON.stringify(this.normalizeBrainstormEntries(constraints)),
-      nonGoalsJson: JSON.stringify(this.normalizeBrainstormEntries(nonGoals)),
-      risksJson: JSON.stringify(this.normalizeBrainstormEntries(risks)),
-      openQuestionsJson: JSON.stringify(this.normalizeBrainstormEntries(openQuestions)),
-      candidateDirectionsJson: JSON.stringify(this.normalizeBrainstormEntries(candidateDirections)),
-      recommendedDirection: nextRecommendedDirection,
-      assumptionsJson: JSON.stringify(this.normalizeBrainstormEntries(assumptions)),
-      scopeNotes: labeled.scopeNotes ?? nextScopeNotes
+      result[key] = JSON.stringify(this.normalizeBrainstormEntries(value));
     };
+
+    if (patch.problem !== undefined) {
+      result.problem = patch.problem;
+    }
+    if (patch.coreOutcome !== undefined) {
+      result.coreOutcome = patch.coreOutcome;
+    }
+    if (patch.recommendedDirection !== undefined) {
+      result.recommendedDirection = patch.recommendedDirection;
+    }
+    if (patch.scopeNotes !== undefined) {
+      result.scopeNotes = patch.scopeNotes;
+    }
+    assignList("targetUsersJson", patch.targetUsers);
+    assignList("useCasesJson", patch.useCases);
+    assignList("constraintsJson", patch.constraints);
+    assignList("nonGoalsJson", patch.nonGoals);
+    assignList("risksJson", patch.risks);
+    assignList("openQuestionsJson", patch.openQuestions);
+    assignList("candidateDirectionsJson", patch.candidateDirections);
+    assignList("assumptionsJson", patch.assumptions);
+    return result;
   }
 
   private normalizeBrainstormEntries(values: string[]): string[] {
@@ -4634,132 +4721,6 @@ export class WorkflowService {
       result.push(normalized);
     }
     return result;
-  }
-
-  private splitBrainstormEntries(value: string): string[] {
-    return this.normalizeBrainstormEntries(value.split(/\n|;|,/g));
-  }
-
-  private parseBrainstormStructuredMessage(message: string): {
-    problem?: string;
-    coreOutcome?: string;
-    targetUsers: string[];
-    useCases: string[];
-    constraints: string[];
-    nonGoals: string[];
-    risks: string[];
-    openQuestions: string[];
-    candidateDirections: string[];
-    recommendedDirection?: string;
-    assumptions: string[];
-    scopeNotes?: string;
-    unlabeled: string[];
-  } {
-    const result = {
-      targetUsers: [],
-      useCases: [],
-      constraints: [],
-      nonGoals: [],
-      risks: [],
-      openQuestions: [],
-      candidateDirections: [],
-      assumptions: [],
-      unlabeled: []
-    } as {
-      problem?: string;
-      coreOutcome?: string;
-      targetUsers: string[];
-      useCases: string[];
-      constraints: string[];
-      nonGoals: string[];
-      risks: string[];
-      openQuestions: string[];
-      candidateDirections: string[];
-      recommendedDirection?: string;
-      assumptions: string[];
-      scopeNotes?: string;
-      unlabeled: string[];
-    };
-
-    const lines = message
-      .split("\n")
-      .map((line) => line.replace(/^\s*[-*]\s*/, "").trim())
-      .filter((line) => line.length > 0);
-
-    for (const line of lines) {
-      const match = line.match(/^([a-z ]+):\s*(.+)$/i);
-      if (!match) {
-        result.unlabeled.push(line);
-        continue;
-      }
-      const label = match[1].trim().toLowerCase();
-      const value = match[2].trim();
-      if (!value) {
-        continue;
-      }
-      if (label === "problem") {
-        result.problem = value;
-        continue;
-      }
-      if (label === "outcome" || label === "core outcome" || label === "goal") {
-        result.coreOutcome = value;
-        continue;
-      }
-      if (label === "user" || label === "users" || label === "target user" || label === "target users" || label === "actor") {
-        result.targetUsers.push(...this.splitBrainstormEntries(value));
-        continue;
-      }
-      if (label === "use case" || label === "use cases") {
-        result.useCases.push(...this.splitBrainstormEntries(value));
-        continue;
-      }
-      if (label === "constraint" || label === "constraints") {
-        result.constraints.push(...this.splitBrainstormEntries(value));
-        continue;
-      }
-      if (label === "non-goal" || label === "non-goals") {
-        result.nonGoals.push(...this.splitBrainstormEntries(value));
-        continue;
-      }
-      if (label === "risk" || label === "risks") {
-        result.risks.push(...this.splitBrainstormEntries(value));
-        continue;
-      }
-      if (label === "question" || label === "questions" || label === "open question" || label === "open questions") {
-        result.openQuestions.push(...this.splitBrainstormEntries(value));
-        continue;
-      }
-      if (label === "direction" || label === "directions" || label === "candidate direction" || label === "candidate directions") {
-        result.candidateDirections.push(...this.splitBrainstormEntries(value));
-        continue;
-      }
-      if (label === "recommended direction" || label === "recommendation") {
-        result.recommendedDirection = value;
-        continue;
-      }
-      if (label === "assumption" || label === "assumptions") {
-        result.assumptions.push(...this.splitBrainstormEntries(value));
-        continue;
-      }
-      if (label === "scope notes" || label === "scope") {
-        result.scopeNotes = value;
-        continue;
-      }
-      result.unlabeled.push(line);
-    }
-
-    return result;
-  }
-
-  private appendBrainstormScopeNotes(previous: string | null, message: string): string | null {
-    const normalized = message.trim();
-    if (!normalized) {
-      return previous;
-    }
-    if (!previous) {
-      return normalized;
-    }
-    return `${previous}\n${normalized}`;
   }
 
   private computeBrainstormDraftStatus(draft: BrainstormDraft): BrainstormDraftStatus {
@@ -4958,86 +4919,22 @@ export class WorkflowService {
     ].join("\n");
   }
 
-  private buildStoryReviewFollowUpMessage(
-    projectCode: string,
-    entries: Array<{ title: string; status: string }>,
-    derivedUpdates: Array<{ title: string; status: string }>
-  ): string {
-    const accepted = entries.filter((entry) => entry.status === "accepted").length;
-    const needsRevision = entries.filter((entry) => entry.status === "needs_revision").length;
-    const rejected = entries.filter((entry) => entry.status === "rejected").length;
-    const pending = entries.filter((entry) => entry.status === "pending").length;
-    const updatedLines =
-      derivedUpdates.length > 0
-        ? derivedUpdates.map((update) => `- ${update.title}: ${update.status}`).join("\n")
-        : "- no structured story updates derived automatically";
-
+  private buildInteractiveStoryReviewPrompt(): string {
     return [
-      `Story review summary for ${projectCode}:`,
-      `accepted=${accepted}, needs_revision=${needsRevision}, rejected=${rejected}, pending=${pending}`,
-      "",
-      "Latest structured updates:",
-      updatedLines,
-      "",
-      "If needed, refine individual story states with `review:entry:update`, then resolve the session."
+      "You are assisting an interactive review of project stories.",
+      "Return only structured per-story entry updates grounded in the provided stories, entries, and chat history.",
+      "Only update entries when the user message clearly references a specific story or an unambiguous set of stories.",
+      "If the user feedback is ambiguous, leave entryUpdates empty and set needsStructuredFollowUp=true with a short hint.",
+      "Do not directly mutate stories or resolve the workflow. Suggest next steps through the structured response."
     ].join("\n");
   }
 
-  private deriveStoryEntryUpdates(
-    stories: Array<{ id: string; code: string; title: string }>,
-    message: string
-  ): Array<{
-    entryId: string;
-    title: string;
-    status: InteractiveReviewEntryStatus;
-    summary: string;
-    changeRequest: string | null;
-    severity: InteractiveReviewSeverity | null;
-  }> {
-    const normalized = message.toLowerCase();
-    const revisionSignals = ["needs revision", "need revision", "revise", "revision", "change", "fix", "ueberarbeiten"];
-    const rejectSignals = ["reject", "rejected", "ablehnen"];
-    const approveSignals = ["approve", "approved", "looks good", "ok", "passt", "freigeben"];
-    const severitySignals: Array<{ severity: InteractiveReviewSeverity; keywords: string[] }> = [
-      { severity: "critical", keywords: ["critical"] },
-      { severity: "high", keywords: ["high"] },
-      { severity: "medium", keywords: ["medium"] },
-      { severity: "low", keywords: ["low"] }
-    ];
-
-    const hasPositiveSignal = (signals: string[]): boolean =>
-      signals.some((signal) => this.messageIncludesPositiveSignal(normalized, signal));
-
-    const status = hasPositiveSignal(rejectSignals)
-      ? "rejected"
-      : hasPositiveSignal(revisionSignals)
-        ? "needs_revision"
-        : hasPositiveSignal(approveSignals)
-          ? "accepted"
-          : null;
-
-    if (!status) {
-      return [];
+  private parseInteractiveStoryReviewAgentOutput(output: unknown): InteractiveStoryReviewAgentOutput {
+    const parsed = interactiveStoryReviewAgentOutputSchema.safeParse(output);
+    if (!parsed.success) {
+      throw new AppError("INTERACTIVE_AGENT_OUTPUT_INVALID", parsed.error.message);
     }
-
-    const severity = severitySignals.find((candidate) => candidate.keywords.some((keyword) => normalized.includes(keyword)))?.severity ?? null;
-    const matchedStories = stories.filter(
-      (story) => normalized.includes(story.code.toLowerCase()) || normalized.includes(story.title.toLowerCase())
-    );
-
-    // v1 heuristic: story targeting still relies on code/title substring matches.
-    // Keep this explicit until entries are updated from structured UI selections.
-    return matchedStories.map((story) => ({
-      entryId: story.id,
-      title: `${story.code} ${story.title}`,
-      status,
-      summary: this.buildDerivedStoryEntrySummary(status),
-      changeRequest:
-        status === "needs_revision" || status === "rejected"
-          ? this.buildDerivedStoryEntryChangeRequest(story.code, message, matchedStories.length)
-          : null,
-      severity
-    }));
+    return parsed.data;
   }
 
   private computeInteractiveReviewStatus(entries: Array<{ status: string }>): "waiting_for_user" | "ready_for_resolution" {
@@ -5096,41 +4993,6 @@ export class WorkflowService {
     if (!(supportedInteractiveReviewResolutionActions as readonly string[]).includes(action)) {
       throw new AppError("INTERACTIVE_REVIEW_ACTION_INVALID", `Interactive review action ${action} is invalid`);
     }
-  }
-
-  private messageIncludesPositiveSignal(message: string, signal: string): boolean {
-    const escapedSignal = this.escapeRegExp(signal);
-    const negativePrefixes = ["do not", "don't", "dont", "no", "not", "never", "avoid", "skip"];
-    if (negativePrefixes.some((prefix) => new RegExp(`\\b${this.escapeRegExp(prefix)}\\s+${escapedSignal}\\b`).test(message))) {
-      return false;
-    }
-    return new RegExp(`\\b${escapedSignal}\\b`).test(message);
-  }
-
-  private buildDerivedStoryEntrySummary(status: InteractiveReviewEntryStatus): string {
-    switch (status) {
-      case "accepted":
-        return "Accepted from review chat";
-      case "needs_revision":
-        return "Revision requested from review chat";
-      case "rejected":
-        return "Rejected from review chat";
-      case "resolved":
-        return "Resolved from review chat";
-      default:
-        return "Updated from review chat";
-    }
-  }
-
-  private buildDerivedStoryEntryChangeRequest(storyCode: string, message: string, matchCount: number): string {
-    if (matchCount === 1) {
-      return message;
-    }
-    return `Shared review feedback requested changes affecting ${storyCode}. Inspect the session chat for the full combined message.`;
-  }
-
-  private escapeRegExp(value: string): string {
-    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
 
   private requireItem(itemId: string) {

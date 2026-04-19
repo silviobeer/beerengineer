@@ -2,6 +2,226 @@ import { readFileSync } from "node:fs";
 
 const payload = JSON.parse(readFileSync(process.argv[2], "utf8"));
 
+function normalizeEntries(values) {
+  const seen = new Set();
+  const result = [];
+  for (const value of values) {
+    const normalized = `${value}`.replace(/\s+/g, " ").trim();
+    const dedupeKey = normalized.toLowerCase();
+    if (!normalized || seen.has(dedupeKey)) {
+      continue;
+    }
+    seen.add(dedupeKey);
+    result.push(normalized);
+  }
+  return result;
+}
+
+function splitEntries(value) {
+  return normalizeEntries(`${value}`.split(/\n|;|,/g));
+}
+
+function parseLabeledBrainstormMessage(message) {
+  const result = {
+    targetUsers: [],
+    useCases: [],
+    constraints: [],
+    nonGoals: [],
+    risks: [],
+    openQuestions: [],
+    candidateDirections: [],
+    assumptions: [],
+    unlabeled: []
+  };
+  const lines = `${message}`
+    .split("\n")
+    .map((line) => line.replace(/^\s*[-*]\s*/, "").trim())
+    .filter(Boolean);
+
+  for (const line of lines) {
+    const match = line.match(/^([a-z ]+):\s*(.+)$/i);
+    if (!match) {
+      result.unlabeled.push(line);
+      continue;
+    }
+    const label = match[1].trim().toLowerCase();
+    const value = match[2].trim();
+    if (!value) {
+      continue;
+    }
+    if (label === "problem") {
+      result.problem = value;
+      continue;
+    }
+    if (label === "outcome" || label === "core outcome" || label === "goal") {
+      result.coreOutcome = value;
+      continue;
+    }
+    if (label === "user" || label === "users" || label === "target user" || label === "target users" || label === "actor") {
+      result.targetUsers.push(...splitEntries(value));
+      continue;
+    }
+    if (label === "use case" || label === "use cases") {
+      result.useCases.push(...splitEntries(value));
+      continue;
+    }
+    if (label === "constraint" || label === "constraints") {
+      result.constraints.push(...splitEntries(value));
+      continue;
+    }
+    if (label === "non-goal" || label === "non-goals") {
+      result.nonGoals.push(...splitEntries(value));
+      continue;
+    }
+    if (label === "risk" || label === "risks") {
+      result.risks.push(...splitEntries(value));
+      continue;
+    }
+    if (label === "question" || label === "questions" || label === "open question" || label === "open questions") {
+      result.openQuestions.push(...splitEntries(value));
+      continue;
+    }
+    if (label === "direction" || label === "directions" || label === "candidate direction" || label === "candidate directions") {
+      result.candidateDirections.push(...splitEntries(value));
+      continue;
+    }
+    if (label === "recommended direction" || label === "recommendation") {
+      result.recommendedDirection = value;
+      continue;
+    }
+    if (label === "assumption" || label === "assumptions") {
+      result.assumptions.push(...splitEntries(value));
+      continue;
+    }
+    if (label === "scope notes" || label === "scope") {
+      result.scopeNotes = value;
+      continue;
+    }
+    result.unlabeled.push(line);
+  }
+  return result;
+}
+
+function brainstormChat(payload) {
+  const parsed = parseLabeledBrainstormMessage(payload.userMessage);
+  const draftPatch = {};
+  if (parsed.problem !== undefined) {
+    draftPatch.problem = parsed.problem;
+  }
+  if (parsed.coreOutcome !== undefined) {
+    draftPatch.coreOutcome = parsed.coreOutcome;
+  }
+  if (parsed.targetUsers.length > 0) {
+    draftPatch.targetUsers = normalizeEntries([...payload.draft.targetUsers, ...parsed.targetUsers]);
+  }
+  if (parsed.useCases.length > 0) {
+    draftPatch.useCases = normalizeEntries([...payload.draft.useCases, ...parsed.useCases]);
+  }
+  if (parsed.constraints.length > 0) {
+    draftPatch.constraints = normalizeEntries([...payload.draft.constraints, ...parsed.constraints]);
+  }
+  if (parsed.nonGoals.length > 0) {
+    draftPatch.nonGoals = normalizeEntries([...payload.draft.nonGoals, ...parsed.nonGoals]);
+  }
+  if (parsed.risks.length > 0) {
+    draftPatch.risks = normalizeEntries([...payload.draft.risks, ...parsed.risks]);
+  }
+  if (parsed.openQuestions.length > 0) {
+    draftPatch.openQuestions = normalizeEntries([...payload.draft.openQuestions, ...parsed.openQuestions]);
+  }
+  if (parsed.candidateDirections.length > 0) {
+    draftPatch.candidateDirections = normalizeEntries([...payload.draft.candidateDirections, ...parsed.candidateDirections]);
+  }
+  if (parsed.assumptions.length > 0) {
+    draftPatch.assumptions = normalizeEntries([...payload.draft.assumptions, ...parsed.assumptions]);
+  }
+  if (parsed.recommendedDirection !== undefined) {
+    draftPatch.recommendedDirection = parsed.recommendedDirection;
+  } else if (parsed.candidateDirections.length > 0 && !payload.draft.recommendedDirection) {
+    draftPatch.recommendedDirection = parsed.candidateDirections[0];
+  }
+  if (parsed.scopeNotes !== undefined) {
+    draftPatch.scopeNotes = parsed.scopeNotes;
+  } else if (parsed.unlabeled.length > 0) {
+    const previousNotes = payload.draft.scopeNotes ? [payload.draft.scopeNotes] : [];
+    draftPatch.scopeNotes = normalizeEntries([...previousNotes, ...parsed.unlabeled]).join("\n");
+  }
+
+  const needsStructuredFollowUp = Object.keys(draftPatch).length === 0;
+  return {
+    output: {
+      assistantMessage: needsStructuredFollowUp
+        ? "I could not safely extract a structured brainstorm change. Use labeled fields or `brainstorm:draft:update` for precise edits."
+        : `Captured brainstorm updates for ${payload.item.code}. Review the draft and continue refining or promote when ready.`,
+      draftPatch,
+      needsStructuredFollowUp,
+      followUpHint: needsStructuredFollowUp
+        ? "Use labels like `problem:`, `users:`, `use cases:` or switch to `brainstorm:draft:update`."
+        : null
+    }
+  };
+}
+
+function messageIncludesPositiveSignal(message, signal) {
+  const escapedSignal = signal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const negativePrefixes = ["do not", "don't", "dont", "no", "not", "never", "avoid", "skip"];
+  if (negativePrefixes.some((prefix) => new RegExp(`\\b${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+${escapedSignal}\\b`).test(message))) {
+    return false;
+  }
+  return new RegExp(`\\b${escapedSignal}\\b`).test(message);
+}
+
+function storyReviewChat(payload) {
+  const normalized = payload.userMessage.toLowerCase();
+  const revisionSignals = ["needs revision", "need revision", "revise", "revision", "change", "fix", "ueberarbeiten"];
+  const rejectSignals = ["reject", "rejected", "ablehnen"];
+  const approveSignals = ["approve", "approved", "looks good", "ok", "passt", "freigeben"];
+  const severitySignals = [
+    { severity: "critical", keywords: ["critical"] },
+    { severity: "high", keywords: ["high"] },
+    { severity: "medium", keywords: ["medium"] },
+    { severity: "low", keywords: ["low"] }
+  ];
+  const status = rejectSignals.some((signal) => messageIncludesPositiveSignal(normalized, signal))
+    ? "rejected"
+    : revisionSignals.some((signal) => messageIncludesPositiveSignal(normalized, signal))
+      ? "needs_revision"
+      : approveSignals.some((signal) => messageIncludesPositiveSignal(normalized, signal))
+        ? "accepted"
+        : null;
+  const severity = severitySignals.find((candidate) => candidate.keywords.some((keyword) => normalized.includes(keyword)))?.severity ?? null;
+  const matchedStories = payload.stories.filter(
+    (story) => normalized.includes(story.code.toLowerCase()) || normalized.includes(story.title.toLowerCase())
+  );
+  const entryUpdates = status
+    ? matchedStories.map((story) => ({
+        entryId: story.entryId,
+        status,
+        summary:
+          status === "accepted"
+            ? "Accepted from interactive review chat"
+            : status === "needs_revision"
+              ? "Revision requested from interactive review chat"
+              : "Rejected from interactive review chat",
+        changeRequest: status === "accepted" ? null : payload.userMessage,
+        rationale: null,
+        severity
+      }))
+    : [];
+  const needsStructuredFollowUp = entryUpdates.length === 0;
+  return {
+    output: {
+      assistantMessage: needsStructuredFollowUp
+        ? `I could not safely map that feedback to a specific story in ${payload.project.code}. Use the story code/title or switch to \`review:entry:update\` / \`review:story:edit\`.`
+        : `Captured ${entryUpdates.length} structured review update(s) for ${payload.project.code}.`,
+      entryUpdates,
+      needsStructuredFollowUp,
+      followUpHint: needsStructuredFollowUp ? "Reference a specific story code or use the structured review commands." : null,
+      recommendedResolution: null
+    }
+  };
+}
+
 function brainstorming(item) {
   const projectTitle = `${item.title} Core Flow`;
   return {
@@ -503,7 +723,11 @@ ${changedAreas.length > 0 ? changedAreas.map((area) => `- ${area}`).join("\n") :
 }
 
 let result;
-if (payload.stageKey === "brainstorm") {
+if (payload.interactionType === "brainstorm_chat") {
+  result = brainstormChat(payload);
+} else if (payload.interactionType === "story_review_chat") {
+  result = storyReviewChat(payload);
+} else if (payload.stageKey === "brainstorm") {
   result = brainstorming(payload.item);
 } else if (payload.stageKey === "requirements") {
   result = requirements(payload.project);

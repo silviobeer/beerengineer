@@ -14,6 +14,10 @@ import type {
   ExecutionAdapterRunResult,
   DocumentationAdapterRunRequest,
   DocumentationAdapterRunResult,
+  InteractiveBrainstormAdapterRunRequest,
+  InteractiveBrainstormAdapterRunResult,
+  InteractiveStoryReviewAdapterRunRequest,
+  InteractiveStoryReviewAdapterRunResult,
   QaAdapterRunRequest,
   QaAdapterRunResult,
   RalphVerificationAdapterRunRequest,
@@ -45,6 +49,31 @@ export class LocalCliAdapter implements AgentAdapter {
     return {
       ...parsed,
       stdout: parsed ? JSON.stringify(parsed) : "",
+      stderr: "",
+      exitCode: 0,
+      command: [process.execPath, resolve(this.repoRoot, this.scriptPath)]
+    };
+  }
+
+  public async runInteractiveBrainstorm(
+    request: InteractiveBrainstormAdapterRunRequest
+  ): Promise<InteractiveBrainstormAdapterRunResult> {
+    return this.executeInteraction<{ output: InteractiveBrainstormAdapterRunResult["output"] }>(request);
+  }
+
+  public async runInteractiveStoryReview(
+    request: InteractiveStoryReviewAdapterRunRequest
+  ): Promise<InteractiveStoryReviewAdapterRunResult> {
+    return this.executeInteraction<{ output: InteractiveStoryReviewAdapterRunResult["output"] }>(request);
+  }
+
+  private executeInteraction<TResult extends { output: unknown }>(
+    request: InteractiveBrainstormAdapterRunRequest | InteractiveStoryReviewAdapterRunRequest
+  ): TResult & { stdout: string; stderr: string; exitCode: number; command: string[] } {
+    const parsed = this.executePayload(request) as TResult;
+    return {
+      ...parsed,
+      stdout: JSON.stringify(parsed),
       stderr: "",
       exitCode: 0,
       command: [process.execPath, resolve(this.repoRoot, this.scriptPath)]
@@ -139,6 +168,8 @@ export class LocalCliAdapter implements AgentAdapter {
   private executePayload(
     request:
       | AdapterRunRequest
+      | InteractiveBrainstormAdapterRunRequest
+      | InteractiveStoryReviewAdapterRunRequest
       | ExecutionAdapterRunRequest
       | TestPreparationAdapterRunRequest
       | RalphVerificationAdapterRunRequest
