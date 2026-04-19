@@ -14,6 +14,10 @@ import {
   DocumentationRunRepository,
   ExecutionAgentSessionRepository,
   ImplementationPlanRepository,
+  InteractiveReviewEntryRepository,
+  InteractiveReviewMessageRepository,
+  InteractiveReviewResolutionRepository,
+  InteractiveReviewSessionRepository,
   ItemRepository,
   QaAgentSessionRepository,
   QaFindingRepository,
@@ -93,6 +97,10 @@ export type AppContext = {
     qaAgentSessionRepository: QaAgentSessionRepository;
     documentationRunRepository: DocumentationRunRepository;
     documentationAgentSessionRepository: DocumentationAgentSessionRepository;
+    interactiveReviewSessionRepository: InteractiveReviewSessionRepository;
+    interactiveReviewMessageRepository: InteractiveReviewMessageRepository;
+    interactiveReviewEntryRepository: InteractiveReviewEntryRepository;
+    interactiveReviewResolutionRepository: InteractiveReviewResolutionRepository;
     stageRunRepository: StageRunRepository;
     artifactRepository: ArtifactRepository;
     agentSessionRepository: AgentSessionRepository;
@@ -143,6 +151,10 @@ export function createAppContext(
   const qaAgentSessionRepository = new QaAgentSessionRepository(db);
   const documentationRunRepository = new DocumentationRunRepository(db);
   const documentationAgentSessionRepository = new DocumentationAgentSessionRepository(db);
+  const interactiveReviewSessionRepository = new InteractiveReviewSessionRepository(db);
+  const interactiveReviewMessageRepository = new InteractiveReviewMessageRepository(db);
+  const interactiveReviewEntryRepository = new InteractiveReviewEntryRepository(db);
+  const interactiveReviewResolutionRepository = new InteractiveReviewResolutionRepository(db);
   const stageRunRepository = new StageRunRepository(db);
   const artifactRepository = new ArtifactRepository(db);
   const agentSessionRepository = new AgentSessionRepository(db);
@@ -199,6 +211,10 @@ export function createAppContext(
       qaAgentSessionRepository,
       documentationRunRepository,
       documentationAgentSessionRepository,
+      interactiveReviewSessionRepository,
+      interactiveReviewMessageRepository,
+      interactiveReviewEntryRepository,
+      interactiveReviewResolutionRepository,
       stageRunRepository,
       artifactRepository,
       agentSessionRepository
@@ -238,6 +254,10 @@ export function createAppContext(
       qaAgentSessionRepository,
       documentationRunRepository,
       documentationAgentSessionRepository,
+      interactiveReviewSessionRepository,
+      interactiveReviewMessageRepository,
+      interactiveReviewEntryRepository,
+      interactiveReviewResolutionRepository,
       stageRunRepository,
       artifactRepository,
       agentSessionRepository

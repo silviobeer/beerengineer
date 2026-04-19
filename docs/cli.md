@@ -12,6 +12,12 @@ npm run cli -- project:import --item-id <itemId>
 npm run cli -- requirements:start --item-id <itemId> --project-id <projectId>
 npm run cli -- stories:approve --project-id <projectId>
 npm run cli -- stories:approve --project-id <projectId> --autorun
+npm run cli -- review:start --type stories --project-id <projectId>
+npm run cli -- review:show --session-id <sessionId>
+npm run cli -- review:chat --session-id <sessionId> --message "..."
+npm run cli -- review:entry:update --session-id <sessionId> --story-id <storyId> --status needs_revision
+npm run cli -- review:resolve --session-id <sessionId> --action approve
+npm run cli -- review:resolve --session-id <sessionId> --action approve_and_autorun
 npm run cli -- architecture:start --item-id <itemId> --project-id <projectId>
 npm run cli -- architecture:approve --project-id <projectId>
 npm run cli -- architecture:approve --project-id <projectId> --autorun
@@ -55,6 +61,17 @@ Fehler werden als JSON auf `stderr` mit `error.code` und `error.message` ausgege
 uebergibt danach an den engine-seitigen Autorun-Orchestrator. Die CLI gibt
 dann einen strukturierten Summary-Block mit `trigger`, `steps`,
 `finalStatus`, `stopReason` und erzeugten Run-/Execution-IDs zurueck.
+
+## Interactive Review
+
+Der erste interaktive Review-Slice unterstuetzt aktuell `stories` auf
+Project-Ebene:
+
+- `review:start` legt eine persistente Session fuer den Story-Satz eines Projects an oder oeffnet eine bestehende offene Session erneut.
+- `review:show` liefert Session, persistierte Messages, strukturierte Story-Eintraege und formale Resolutionen.
+- `review:chat` speichert User- und Assistant-Nachrichten und leitet einfache strukturierte Story-Updates aus Story-Code/-Titel und Review-Signalen wie `approve` oder `needs revision` ab.
+- `review:entry:update` erlaubt explizite maschinenlesbare Story-Status wie `accepted`, `needs_revision` oder `rejected`.
+- `review:resolve --action approve|approve_and_autorun|request_changes` beendet die Session formell und koppelt optional an den bestehenden Autorun-Orchestrator an.
 
 Fuer reproduzierbare Live-Runs akzeptiert die CLI global:
 

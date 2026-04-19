@@ -431,6 +431,54 @@ export const documentationAgentSessions = sqliteTable("documentation_agent_sessi
   updatedAt: integer("updated_at").notNull()
 });
 
+export const interactiveReviewSessions = sqliteTable("interactive_review_sessions", {
+  id: text("id").primaryKey(),
+  scopeType: text("scope_type").notNull(),
+  scopeId: text("scope_id").notNull(),
+  artifactType: text("artifact_type").notNull(),
+  reviewType: text("review_type").notNull(),
+  status: text("status").notNull(),
+  startedAt: integer("started_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+  resolvedAt: integer("resolved_at"),
+  lastAssistantMessageId: text("last_assistant_message_id"),
+  lastUserMessageId: text("last_user_message_id")
+});
+
+export const interactiveReviewMessages = sqliteTable("interactive_review_messages", {
+  id: text("id").primaryKey(),
+  sessionId: text("session_id").notNull().references(() => interactiveReviewSessions.id),
+  role: text("role").notNull(),
+  content: text("content").notNull(),
+  structuredPayloadJson: text("structured_payload_json"),
+  derivedUpdatesJson: text("derived_updates_json"),
+  createdAt: integer("created_at").notNull()
+});
+
+export const interactiveReviewEntries = sqliteTable("interactive_review_entries", {
+  id: text("id").primaryKey(),
+  sessionId: text("session_id").notNull().references(() => interactiveReviewSessions.id),
+  entryType: text("entry_type").notNull(),
+  entryId: text("entry_id").notNull(),
+  title: text("title").notNull(),
+  status: text("status").notNull(),
+  summary: text("summary"),
+  changeRequest: text("change_request"),
+  rationale: text("rationale"),
+  severity: text("severity"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull()
+}, (table) => [uniqueIndex("interactive_review_entry_unique_idx").on(table.sessionId, table.entryType, table.entryId)]);
+
+export const interactiveReviewResolutions = sqliteTable("interactive_review_resolutions", {
+  id: text("id").primaryKey(),
+  sessionId: text("session_id").notNull().references(() => interactiveReviewSessions.id),
+  resolutionType: text("resolution_type").notNull(),
+  payloadJson: text("payload_json"),
+  createdAt: integer("created_at").notNull(),
+  appliedAt: integer("applied_at")
+});
+
 export const stageRuns = sqliteTable("stage_runs", {
   id: text("id").primaryKey(),
   itemId: text("item_id").notNull().references(() => items.id),
