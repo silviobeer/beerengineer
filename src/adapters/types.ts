@@ -27,7 +27,22 @@ import type {
   TestPreparationOutput
 } from "../schemas/output-contracts.js";
 
+export type AgentExecutionPolicy = {
+  autonomyMode: "yolo";
+  approvalMode: "never";
+  filesystemMode: "danger-full-access";
+  networkMode: "enabled";
+  interactionMode: "non_blocking";
+};
+
+export type AdapterRuntimeContext = {
+  provider: string;
+  model: string | null;
+  policy: AgentExecutionPolicy;
+};
+
 export type AdapterRunRequest = {
+  runtime: AdapterRuntimeContext;
   stageKey: StageKey;
   prompt: string;
   skills: Array<{ path: string; content: string }>;
@@ -66,6 +81,7 @@ export type AdapterRunResult = {
 };
 
 export type ExecutionAdapterRunRequest = {
+  runtime: AdapterRuntimeContext;
   workerRole: ExecutionWorkerRole;
   prompt: string;
   skills: Array<{ path: string; content: string }>;
@@ -149,6 +165,7 @@ export type ExecutionAdapterRunResult = {
 };
 
 export type TestPreparationAdapterRunRequest = {
+  runtime: AdapterRuntimeContext;
   workerRole: TestPreparationWorkerRole;
   prompt: string;
   skills: Array<{ path: string; content: string }>;
@@ -173,6 +190,7 @@ export type TestPreparationAdapterRunResult = {
 };
 
 export type RalphVerificationAdapterRunRequest = {
+  runtime: AdapterRuntimeContext;
   workerRole: VerificationWorkerRole;
   prompt: string;
   skills: Array<{ path: string; content: string }>;
@@ -208,6 +226,7 @@ export type RalphVerificationAdapterRunResult = {
 };
 
 export type AppVerificationAdapterRunRequest = {
+  runtime: AdapterRuntimeContext;
   workerRole: "app-verifier";
   prompt: string;
   skills: Array<{ path: string; content: string }>;
@@ -287,6 +306,7 @@ export type AppVerificationAdapterRunResult = {
 };
 
 export type QaAdapterRunRequest = {
+  runtime: AdapterRuntimeContext;
   workerRole: "qa-verifier";
   prompt: string;
   skills: Array<{ path: string; content: string }>;
@@ -346,6 +366,7 @@ export type QaAdapterRunResult = {
 };
 
 export type DocumentationAdapterRunRequest = {
+  runtime: AdapterRuntimeContext;
   workerRole: DocumentationWorkerRole;
   prompt: string;
   skills: Array<{ path: string; content: string }>;
@@ -435,6 +456,7 @@ export type DocumentationAdapterRunResult = {
 };
 
 export type InteractiveBrainstormAdapterRunRequest = {
+  runtime: AdapterRuntimeContext;
   interactionType: "brainstorm_chat";
   prompt: string;
   session: {
@@ -476,6 +498,7 @@ export type InteractiveBrainstormAdapterRunResult = {
 };
 
 export type InteractiveStoryReviewAdapterRunRequest = {
+  runtime: AdapterRuntimeContext;
   interactionType: "story_review_chat";
   prompt: string;
   session: {
@@ -524,6 +547,7 @@ export type InteractiveStoryReviewAdapterRunResult = {
 };
 
 export type StoryReviewAdapterRunRequest = {
+  runtime: AdapterRuntimeContext;
   workerRole: StoryReviewWorkerRole;
   prompt: string;
   skills: Array<{ path: string; content: string }>;

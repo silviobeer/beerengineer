@@ -112,7 +112,8 @@ import type {
 import { assertStageRunTransitionAllowed } from "./stage-run-rules.js";
 import { runProfiles } from "./run-profiles.js";
 import { workerProfiles, type WorkerProfileKey } from "./worker-profiles.js";
-import type { AgentAdapter } from "../adapters/types.js";
+import type { AdapterRuntimeContext } from "../adapters/types.js";
+import { type AgentRuntimeResolver, runtimeWorkerKeyByProfileKey, type InteractiveFlowKey } from "../adapters/runtime.js";
 import { AutorunOrchestrator } from "./autorun-orchestrator.js";
 import type { AutorunSummary, AutorunStep } from "./autorun-types.js";
 import { interactiveReviewEntryStatuses, interactiveReviewSeverities } from "../domain/types.js";
@@ -163,7 +164,7 @@ type WorkflowDeps = {
   workspaceRoot: string;
   artifactRoot: string;
   runInTransaction<T>(fn: () => T): T;
-  adapter: AgentAdapter;
+  agentRuntimeResolver: AgentRuntimeResolver;
   itemRepository: ItemRepository;
   brainstormSessionRepository: BrainstormSessionRepository;
   brainstormMessageRepository: BrainstormMessageRepository;
@@ -264,11 +265,32 @@ export class WorkflowService {
     });
   }
 
+  private resolveStageRuntime(stageKey: StageKey) {
+    return this.deps.agentRuntimeResolver.resolveStage(stageKey);
+  }
+
+  private resolveInteractiveRuntime(flow: InteractiveFlowKey) {
+    return this.deps.agentRuntimeResolver.resolveInteractive(flow);
+  }
+
+  private resolveWorkerRuntime(workerProfileKey: WorkerProfileKey) {
+    return this.deps.agentRuntimeResolver.resolveWorker(runtimeWorkerKeyByProfileKey[workerProfileKey]);
+  }
+
+  private buildAdapterRuntimeContext(input: { providerKey: string; model: string | null; policy: AdapterRuntimeContext["policy"] }): AdapterRuntimeContext {
+    return {
+      provider: input.providerKey,
+      model: input.model,
+      policy: input.policy
+    };
+  }
+
   public async startStage(input: { stageKey: StageKey; itemId: string; projectId?: string }): Promise<{ runId: string; status: string }> {
     const item = this.requireItem(input.itemId);
     const project = input.projectId ? this.requireProject(input.projectId) : null;
     const profile = runProfiles[input.stageKey];
     const resolved = this.promptResolver.resolve(profile);
+    const runtime = this.resolveStageRuntime(input.stageKey);
     const inputArtifactIds = this.resolveInputArtifactIds(input.stageKey, item.id, project?.id ?? null);
 
     const inputSnapshot = JSON.stringify(
@@ -316,7 +338,8 @@ export class WorkflowService {
     });
 
     try {
-      const result = await this.deps.adapter.run({
+      const result = await runtime.adapter.run({
+        runtime: this.buildAdapterRuntimeContext(runtime),
         stageKey: input.stageKey,
         prompt: resolved.promptContent,
         skills: resolved.skills,
@@ -355,7 +378,7 @@ export class WorkflowService {
       const completion = this.deps.runInTransaction(() => {
         this.deps.agentSessionRepository.create({
           stageRunId: run.id,
-          adapterKey: this.deps.adapter.key,
+          adapterKey: runtime.adapterKey,
           status: result.exitCode === 0 ? "completed" : "failed",
           commandJson: JSON.stringify(result.command),
           stdout: result.stdout,
@@ -799,7 +822,9 @@ export class WorkflowService {
       role: entry.role,
       content: entry.content
     }));
-    const agentResult = await this.deps.adapter.runInteractiveBrainstorm({
+    const runtime = this.resolveInteractiveRuntime("brainstorm_chat");
+    const agentResult = await runtime.adapter.runInteractiveBrainstorm({
+      runtime: this.buildAdapterRuntimeContext(runtime),
       interactionType: "brainstorm_chat",
       prompt: this.buildInteractiveBrainstormPrompt(),
       session: {
@@ -1072,7 +1097,9 @@ export class WorkflowService {
     const existingEntries = this.deps.interactiveReviewEntryRepository.listBySessionId(sessionId);
     const entryIdByStoryId = new Map(existingEntries.map((entry) => [entry.entryId, entry.entryId]));
     const acceptanceCriteriaByStoryId = this.groupAcceptanceCriteriaByStoryId(storyScope.project.id);
-    const agentResult = await this.deps.adapter.runInteractiveStoryReview({
+    const runtime = this.resolveInteractiveRuntime("story_review_chat");
+    const agentResult = await runtime.adapter.runInteractiveStoryReview({
+      runtime: this.buildAdapterRuntimeContext(runtime),
       interactionType: "story_review_chat",
       prompt: this.buildInteractiveStoryReviewPrompt(),
       session: {
@@ -1767,6 +1794,7 @@ export class WorkflowService {
       2
     );
     const gitMetadata = this.gitWorkflowService.ensureStoryRemediationBranch(project.code, story.code, storyReviewRun.id);
+    const runtime = this.resolveWorkerRuntime("storyReviewRemediation");
     const remediationRun = this.deps.runInTransaction(() => {
       const createdRun = this.deps.storyReviewRemediationRunRepository.create({
         storyReviewRunId: storyReviewRun.id,
@@ -1812,7 +1840,7 @@ export class WorkflowService {
       });
       this.deps.storyReviewRemediationAgentSessionRepository.create({
         storyReviewRemediationRunId: remediationRun.id,
-        adapterKey: this.deps.adapter.key,
+        adapterKey: runtime.adapterKey,
         status: result.status === "failed" ? "failed" : "completed",
         commandJson: JSON.stringify(["remediation", storyReviewRun.id]),
         stdout: JSON.stringify(result),
@@ -1867,7 +1895,7 @@ export class WorkflowService {
     } catch (error) {
       this.deps.storyReviewRemediationAgentSessionRepository.create({
         storyReviewRemediationRunId: remediationRun.id,
-        adapterKey: this.deps.adapter.key,
+        adapterKey: runtime.adapterKey,
         status: "failed",
         commandJson: JSON.stringify(["remediation", storyReviewRun.id]),
         stdout: "",
@@ -1920,6 +1948,7 @@ export class WorkflowService {
       projectExecutionContext
     });
     const resolvedWorkerProfile = this.resolveWorkerProfile("qa");
+    const runtime = this.resolveWorkerRuntime("qa");
 
     this.deps.itemRepository.updatePhaseStatus(item.id, "running");
 
@@ -1935,7 +1964,8 @@ export class WorkflowService {
     });
 
     try {
-      const result = await this.deps.adapter.runProjectQa({
+      const result = await runtime.adapter.runProjectQa({
+        runtime: this.buildAdapterRuntimeContext(runtime),
         workerRole: "qa-verifier",
         prompt: resolvedWorkerProfile.promptContent,
         skills: resolvedWorkerProfile.skills,
@@ -1973,7 +2003,7 @@ export class WorkflowService {
       const parsed = qaOutputSchema.parse(result.output) as QaOutput;
       this.deps.qaAgentSessionRepository.create({
         qaRunId: qaRun.id,
-        adapterKey: this.deps.adapter.key,
+        adapterKey: runtime.adapterKey,
         status: result.exitCode === 0 ? "completed" : "failed",
         commandJson: JSON.stringify(result.command),
         stdout: result.stdout,
@@ -2024,7 +2054,7 @@ export class WorkflowService {
     } catch (error) {
       this.deps.qaAgentSessionRepository.create({
         qaRunId: qaRun.id,
-        adapterKey: this.deps.adapter.key,
+        adapterKey: runtime.adapterKey,
         status: "failed",
         commandJson: JSON.stringify([]),
         stdout: "",
@@ -2081,6 +2111,7 @@ export class WorkflowService {
     });
     const staleDocumentationRun = this.deps.documentationRunRepository.getLatestByProjectId(projectId);
     const resolvedWorkerProfile = this.resolveWorkerProfile("documentation");
+    const runtime = this.resolveWorkerRuntime("documentation");
 
     this.deps.itemRepository.updatePhaseStatus(item.id, "running");
 
@@ -2097,7 +2128,8 @@ export class WorkflowService {
     });
 
     try {
-      const result = await this.deps.adapter.runProjectDocumentation({
+      const result = await runtime.adapter.runProjectDocumentation({
+        runtime: this.buildAdapterRuntimeContext(runtime),
         workerRole: "documentation-writer",
         prompt: resolvedWorkerProfile.promptContent,
         skills: resolvedWorkerProfile.skills,
@@ -2149,7 +2181,7 @@ export class WorkflowService {
       const parsed = documentationOutputSchema.parse(result.output) as DocumentationOutput;
       this.deps.documentationAgentSessionRepository.create({
         documentationRunId: documentationRun.id,
-        adapterKey: this.deps.adapter.key,
+        adapterKey: runtime.adapterKey,
         status: result.exitCode === 0 ? "completed" : "failed",
         commandJson: JSON.stringify(result.command),
         stdout: result.stdout,
@@ -2223,7 +2255,7 @@ export class WorkflowService {
     } catch (error) {
       this.deps.documentationAgentSessionRepository.create({
         documentationRunId: documentationRun.id,
-        adapterKey: this.deps.adapter.key,
+        adapterKey: runtime.adapterKey,
         status: "failed",
         commandJson: JSON.stringify([]),
         stdout: "",
@@ -2460,6 +2492,7 @@ export class WorkflowService {
     gitMetadata?: GitBranchMetadata | null;
   }) {
     const resolvedWorkerProfile = this.resolveWorkerProfile(input.workerProfileKey ?? "execution");
+    const runtime = this.resolveWorkerRuntime(input.workerProfileKey ?? "execution");
     const storyRunContext = this.buildStoryRunContext({
       project: input.project,
       implementationPlan: input.implementationPlan,
@@ -2491,7 +2524,8 @@ export class WorkflowService {
     });
 
     try {
-      const result = await this.deps.adapter.runStoryExecution({
+      const result = await runtime.adapter.runStoryExecution({
+        runtime: this.buildAdapterRuntimeContext(runtime),
         workerRole,
         prompt: resolvedWorkerProfile.promptContent,
         skills: resolvedWorkerProfile.skills,
@@ -2532,7 +2566,7 @@ export class WorkflowService {
       const parsed = storyExecutionOutputSchema.parse(result.output) as StoryExecutionOutput;
       this.deps.executionAgentSessionRepository.create({
         waveStoryExecutionId: execution.id,
-        adapterKey: this.deps.adapter.key,
+        adapterKey: runtime.adapterKey,
         status: result.exitCode === 0 ? "completed" : "failed",
         commandJson: JSON.stringify(result.command),
         stdout: result.stdout,
@@ -2634,7 +2668,7 @@ export class WorkflowService {
     } catch (error) {
       this.deps.executionAgentSessionRepository.create({
         waveStoryExecutionId: execution.id,
-        adapterKey: this.deps.adapter.key,
+        adapterKey: runtime.adapterKey,
         status: "failed",
         commandJson: JSON.stringify([]),
         stdout: "",
@@ -2706,6 +2740,7 @@ export class WorkflowService {
     }
 
     const resolvedWorkerProfile = this.resolveWorkerProfile("testPreparation");
+    const runtime = this.resolveWorkerRuntime("testPreparation");
     const storyRunContext = this.buildStoryRunContext({
       project: input.project,
       implementationPlan: input.implementationPlan,
@@ -2730,7 +2765,8 @@ export class WorkflowService {
     });
 
     try {
-      const result = await this.deps.adapter.runStoryTestPreparation({
+      const result = await runtime.adapter.runStoryTestPreparation({
+        runtime: this.buildAdapterRuntimeContext(runtime),
         workerRole: "test-writer",
         prompt: resolvedWorkerProfile.promptContent,
         skills: resolvedWorkerProfile.skills,
@@ -2764,7 +2800,7 @@ export class WorkflowService {
       const parsed = testPreparationOutputSchema.parse(result.output) as TestPreparationOutput;
       this.deps.testAgentSessionRepository.create({
         waveStoryTestRunId: testRun.id,
-        adapterKey: this.deps.adapter.key,
+        adapterKey: runtime.adapterKey,
         status: result.exitCode === 0 ? "completed" : "failed",
         commandJson: JSON.stringify(result.command),
         stdout: result.stdout,
@@ -2788,7 +2824,7 @@ export class WorkflowService {
     } catch (error) {
       this.deps.testAgentSessionRepository.create({
         waveStoryTestRunId: testRun.id,
-        adapterKey: this.deps.adapter.key,
+        adapterKey: runtime.adapterKey,
         status: "failed",
         commandJson: JSON.stringify([]),
         stdout: "",
@@ -3629,8 +3665,10 @@ export class WorkflowService {
     };
   }): Promise<{ status: VerificationRunStatus; summary: RalphVerificationOutput; errorMessage: string | null }> {
     const resolvedWorkerProfile = this.resolveWorkerProfile("ralph");
+    const runtime = this.resolveWorkerRuntime("ralph");
     try {
-      const result = await this.deps.adapter.runStoryRalphVerification({
+      const result = await runtime.adapter.runStoryRalphVerification({
+        runtime: this.buildAdapterRuntimeContext(runtime),
         workerRole: "ralph-verifier",
         prompt: resolvedWorkerProfile.promptContent,
         skills: resolvedWorkerProfile.skills,
@@ -3743,6 +3781,7 @@ export class WorkflowService {
     ralphVerificationSummary: RalphVerificationOutput;
   }): Promise<{ status: StoryReviewRunStatus; errorMessage: string | null }> {
     const resolvedWorkerProfile = this.resolveWorkerProfile("storyReview");
+    const runtime = this.resolveWorkerRuntime("storyReview");
     const reviewRun = this.deps.storyReviewRunRepository.create({
       waveStoryExecutionId: input.execution.id,
       status: "running",
@@ -3769,7 +3808,8 @@ export class WorkflowService {
     });
 
     try {
-      const result = await this.deps.adapter.runStoryReview({
+      const result = await runtime.adapter.runStoryReview({
+        runtime: this.buildAdapterRuntimeContext(runtime),
         workerRole: "story-reviewer",
         prompt: resolvedWorkerProfile.promptContent,
         skills: resolvedWorkerProfile.skills,
@@ -3820,7 +3860,7 @@ export class WorkflowService {
       const parsed = storyReviewOutputSchema.parse(result.output) as StoryReviewOutput;
       this.deps.storyReviewAgentSessionRepository.create({
         storyReviewRunId: reviewRun.id,
-        adapterKey: this.deps.adapter.key,
+        adapterKey: runtime.adapterKey,
         status: result.exitCode === 0 ? "completed" : "failed",
         commandJson: JSON.stringify(result.command),
         stdout: result.stdout,
@@ -3853,7 +3893,7 @@ export class WorkflowService {
     } catch (error) {
       this.deps.storyReviewAgentSessionRepository.create({
         storyReviewRunId: reviewRun.id,
-        adapterKey: this.deps.adapter.key,
+        adapterKey: runtime.adapterKey,
         status: "failed",
         commandJson: JSON.stringify([]),
         stdout: "",
@@ -3880,6 +3920,7 @@ export class WorkflowService {
     implementationOutput: StoryExecutionOutput;
   }): Promise<{ status: "passed" | "review_required" | "failed"; errorMessage: string | null; runId: string }> {
     const resolvedWorkerProfile = this.resolveWorkerProfile("appVerification");
+    const runtime = this.resolveWorkerRuntime("appVerification");
     const previousRuns = this.deps.appVerificationRunRepository.listByWaveStoryExecutionId(input.execution.id);
     const projectAppTestContext = this.buildProjectAppTestContext(input.project);
     const storyAppVerificationContext = this.buildStoryAppVerificationContext({
@@ -3937,7 +3978,8 @@ export class WorkflowService {
         preparedSessionJson: JSON.stringify(preparedSession, null, 2)
       });
 
-      const result = await this.deps.adapter.runStoryAppVerification({
+      const result = await runtime.adapter.runStoryAppVerification({
+        runtime: this.buildAdapterRuntimeContext(runtime),
         workerRole: "app-verifier",
         prompt: resolvedWorkerProfile.promptContent,
         skills: resolvedWorkerProfile.skills,

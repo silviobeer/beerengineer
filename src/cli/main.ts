@@ -8,6 +8,7 @@ import { AppError } from "../shared/errors.js";
 const program = new Command();
 program.name("beerengineer");
 program.option("--db <path>", "SQLite database path", "./var/data/beerengineer.sqlite");
+program.option("--agent-runtime-config <path>", "Path to the agent runtime config file");
 program.option("--adapter-script-path <path>", "Override the local adapter script used for bounded agent runs");
 program.option("--workspace <key>", "Select the active workspace", "default");
 program.option("--workspace-root <path>", "Override the workspace root used for git workflow operations");
@@ -23,6 +24,7 @@ function withContext<TOptions extends object>(
   return async (options: TOptions) => {
     const programOptions = program.opts<{
       db: string;
+      agentRuntimeConfig?: string;
       adapterScriptPath?: string;
       workspace: string;
       workspaceRoot?: string;
@@ -31,6 +33,9 @@ function withContext<TOptions extends object>(
     let context: AppContext | null = null;
     try {
       context = createAppContext(dbPath, {
+        agentRuntimeConfigPath: programOptions.agentRuntimeConfig
+          ? resolve(programOptions.agentRuntimeConfig)
+          : undefined,
         adapterScriptPath: programOptions.adapterScriptPath ? resolve(programOptions.adapterScriptPath) : undefined,
         workspaceKey: programOptions.workspace,
         workspaceRoot: programOptions.workspaceRoot ? resolve(programOptions.workspaceRoot) : undefined

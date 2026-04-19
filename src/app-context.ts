@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
-import { LocalCliAdapter } from "./adapters/local-cli-adapter.js";
+import { AgentRuntimeResolver, loadAgentRuntimeConfig, type AgentRuntimeConfig } from "./adapters/runtime.js";
 import type { Workspace, WorkspaceSettings } from "./domain/types.js";
 import { createDatabase } from "./persistence/database.js";
 import {
@@ -57,6 +57,13 @@ export type EffectiveWorkspaceConfig = {
   defaultAdapterKey: string;
   defaultModel: string | null;
   workspaceRoot: string;
+  agentRuntimeConfigPath: string;
+};
+
+export type AgentRuntimeContext = {
+  configPath: string;
+  config: AgentRuntimeConfig;
+  resolver: AgentRuntimeResolver;
 };
 
 export type AppContext = {
@@ -70,6 +77,7 @@ export type AppContext = {
   workspace: Workspace;
   workspaceSettings: WorkspaceSettings;
   effectiveConfig: EffectiveWorkspaceConfig;
+  agentRuntime: AgentRuntimeContext;
   repositories: {
     workspaceRepository: WorkspaceRepository;
     workspaceSettingsRepository: WorkspaceSettingsRepository;
@@ -120,12 +128,19 @@ export function createAppContext(
   dbPath: string,
   options?: {
     adapterScriptPath?: string;
+    agentRuntimeConfigPath?: string;
     workspaceKey?: string;
     workspaceRoot?: string;
   }
 ): AppContext {
   const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
   const artifactRoot = resolve(repoRoot, "var/artifacts");
+  const agentRuntimeConfigPath = options?.agentRuntimeConfigPath ?? resolve(repoRoot, "config/agent-runtime.json");
+  const agentRuntimeConfig = loadAgentRuntimeConfig(agentRuntimeConfigPath);
+  const agentRuntimeResolver = new AgentRuntimeResolver(agentRuntimeConfig, {
+    repoRoot,
+    adapterScriptPath: options?.adapterScriptPath
+  });
   const { connection, db } = createDatabase(dbPath);
   applyMigrations(connection, baseMigrations);
 
@@ -170,7 +185,6 @@ export function createAppContext(
   const stageRunRepository = new StageRunRepository(db);
   const artifactRepository = new ArtifactRepository(db);
   const agentSessionRepository = new AgentSessionRepository(db);
-  const adapter = new LocalCliAdapter(repoRoot, options?.adapterScriptPath);
   const requestedWorkspaceKey = options?.workspaceKey ?? DEFAULT_WORKSPACE_KEY;
   const workspace = workspaceRepository.getByKey(requestedWorkspaceKey);
   if (!workspace) {
@@ -180,10 +194,12 @@ export function createAppContext(
   if (!workspaceSettings) {
     throw new AppError("WORKSPACE_SETTINGS_NOT_FOUND", `Workspace settings for ${workspace.key} not found`);
   }
+  const defaultRuntime = agentRuntimeResolver.resolveDefault("autonomous");
   const effectiveConfig: EffectiveWorkspaceConfig = {
-    defaultAdapterKey: workspaceSettings.defaultAdapterKey ?? adapter.key,
-    defaultModel: workspaceSettings.defaultModel,
-    workspaceRoot: options?.workspaceRoot ?? workspace.rootPath ?? repoRoot
+    defaultAdapterKey: defaultRuntime.adapterKey,
+    defaultModel: defaultRuntime.model ?? workspaceSettings.defaultModel,
+    workspaceRoot: options?.workspaceRoot ?? workspace.rootPath ?? repoRoot,
+    agentRuntimeConfigPath
   };
 
   return {
@@ -192,6 +208,11 @@ export function createAppContext(
     workspace,
     workspaceSettings,
     effectiveConfig,
+    agentRuntime: {
+      configPath: agentRuntimeConfigPath,
+      config: agentRuntimeConfig,
+      resolver: agentRuntimeResolver
+    },
     repositories: {
       workspaceRepository,
       workspaceSettingsRepository,
@@ -242,7 +263,7 @@ export function createAppContext(
       workspaceRoot: effectiveConfig.workspaceRoot,
       artifactRoot,
       runInTransaction: <T>(fn: () => T): T => connection.transaction(fn)(),
-      adapter,
+      agentRuntimeResolver,
       itemRepository,
       brainstormSessionRepository,
       brainstormMessageRepository,

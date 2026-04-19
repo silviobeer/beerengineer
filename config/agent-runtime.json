@@ -1,0 +1,53 @@
+{
+  "defaultProvider": "local",
+  "policy": {
+    "autonomyMode": "yolo",
+    "approvalMode": "never",
+    "filesystemMode": "danger-full-access",
+    "networkMode": "enabled",
+    "interactionMode": "non_blocking"
+  },
+  "defaults": {
+    "interactive": {
+      "provider": "local",
+      "model": "local-fixture"
+    },
+    "autonomous": {
+      "provider": "local",
+      "model": "local-fixture"
+    }
+  },
+  "interactive": {},
+  "stages": {},
+  "workers": {},
+  "providers": {
+    "local": {
+      "adapterKey": "local-cli",
+      "model": "local-fixture",
+      "command": [
+        "node",
+        "scripts/local-agent.mjs"
+      ],
+      "env": {},
+      "timeoutMs": 120000
+    },
+    "codex": {
+      "adapterKey": "codex",
+      "model": "gpt-5.4",
+      "command": [
+        "codex"
+      ],
+      "env": {},
+      "timeoutMs": 1800000
+    },
+    "claude": {
+      "adapterKey": "claude",
+      "model": "claude-sonnet",
+      "command": [
+        "claude"
+      ],
+      "env": {},
+      "timeoutMs": 1800000
+    }
+  }
+}

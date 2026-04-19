@@ -120,8 +120,14 @@ Wichtig:
 Fuer reproduzierbare Live-Runs akzeptiert die CLI global:
 
 - `--workspace <key>` zum Auswaehlen des fachlichen Workspaces
+- `--agent-runtime-config <path>` zum Ueberschreiben der provider-/modellbezogenen Runtime-Konfiguration
 - `--adapter-script-path <path>` zum Ueberschreiben des lokalen Adapter-Skripts
 - `--workspace-root <path>` zum Ueberschreiben des Git-Workspace-Wurzels
+
+Standardmaessig laedt die CLI `config/agent-runtime.json`. Darin werden pro
+interaktivem Flow, Stage und Worker-Typ Provider und Modell bestimmt. Der
+lokale Fake-Adapter bleibt als `local-cli` fuer Tests und deterministische
+Fixture-Runs erhalten.
 
 Workspace-Kommandos:
 
