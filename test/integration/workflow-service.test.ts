@@ -178,6 +178,33 @@ describe("workflow service", () => {
     }
   });
 
+  it("shows the latest brainstorm session by item without reopening a resolved session", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const item = createWorkspaceItem(context, {
+        title: "Resolved Brainstorm",
+        description: "Inspect a closed brainstorm session"
+      });
+
+      const started = context.workflowService.startBrainstormSession(item.id);
+      await context.workflowService.promoteBrainstorm(started.sessionId);
+
+      const shown = context.workflowService.showBrainstormSession(item.id) as {
+        session: { id: string; status: string };
+      };
+
+      expect(shown.session.id).toBe(started.sessionId);
+      expect(shown.session.status).toBe("resolved");
+      expect(context.repositories.brainstormSessionRepository.findOpenByItemId(item.id)).toBeNull();
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("keeps prior prompt snapshots after prompt file changes", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
     const dbPath = join(root, "app.sqlite");

@@ -29,6 +29,7 @@ describe("cli interactive brainstorm", () => {
         const item = runCli(["--db", dbPath, "item:create", "--title", "Brainstorm CLI", "--description", "Interactive concept shaping"], cwd) as {
           id: string;
         };
+        runCli(["--db", dbPath, "brainstorm:start", "--item-id", item.id], cwd);
 
         const shown = runCli(["--db", dbPath, "brainstorm:show", "--item-id", item.id], cwd) as {
           session: { id: string; status: string };
@@ -115,6 +116,56 @@ describe("cli interactive brainstorm", () => {
           importedCount: number;
         };
         expect(imported.importedCount).toBe(3);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+    25000
+  );
+
+  it(
+    "shows a resolved brainstorm session without creating a new one",
+    () => {
+      const root = mkdtempSync(join(tmpdir(), "beerengineer-e2e-"));
+      const dbPath = join(root, "app.sqlite");
+      const cwd = resolve(".");
+
+      try {
+        const item = runCli(["--db", dbPath, "item:create", "--title", "Resolved Brainstorm CLI", "--description", "Inspect closed session"], cwd) as {
+          id: string;
+        };
+        runCli(["--db", dbPath, "brainstorm:start", "--item-id", item.id], cwd);
+
+        const shown = runCli(["--db", dbPath, "brainstorm:show", "--item-id", item.id], cwd) as {
+          session: { id: string };
+        };
+        runCli(
+          [
+            "--db",
+            dbPath,
+            "brainstorm:draft:update",
+            "--session-id",
+            shown.session.id,
+            "--problem",
+            "Need a stable read-only inspect path",
+            "--target-user",
+            "operator",
+            "--use-case",
+            "inspect resolved brainstorms",
+            "--recommended-direction",
+            "read-only brainstorm summary"
+          ],
+          cwd
+        );
+        runCli(["--db", dbPath, "brainstorm:promote", "--session-id", shown.session.id], cwd);
+
+        const afterPromotion = runCli(["--db", dbPath, "brainstorm:show", "--item-id", item.id], cwd) as {
+          session: { id: string; status: string };
+          draft: { revision: number };
+        };
+        expect(afterPromotion.session.id).toBe(shown.session.id);
+        expect(afterPromotion.session.status).toBe("resolved");
+        expect(afterPromotion.draft.revision).toBe(2);
       } finally {
         rmSync(root, { recursive: true, force: true });
       }

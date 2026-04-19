@@ -640,6 +640,16 @@ export class WorkflowService {
     };
   }
 
+  public showBrainstormSession(itemId: string) {
+    const item = this.requireItem(itemId);
+    const session = this.deps.brainstormSessionRepository.getLatestByItemId(item.id);
+    if (session) {
+      return this.showBrainstormBySessionId(session.id);
+    }
+    const started = this.startBrainstormSession(item.id);
+    return this.showBrainstormBySessionId(started.sessionId);
+  }
+
   public showBrainstormDraft(sessionId: string) {
     const session = this.requireBrainstormSession(sessionId);
     this.requireItem(session.itemId);
@@ -4474,9 +4484,9 @@ export class WorkflowService {
   }
 
   private requireBrainstormSessionByItemId(itemId: string): BrainstormSession {
-    const session = this.deps.brainstormSessionRepository.findOpenByItemId(itemId);
+    const session = this.deps.brainstormSessionRepository.getLatestByItemId(itemId);
     if (!session) {
-      throw new AppError("BRAINSTORM_SESSION_NOT_FOUND", `No open brainstorm session found for item ${itemId}`);
+      throw new AppError("BRAINSTORM_SESSION_NOT_FOUND", `No brainstorm session found for item ${itemId}`);
     }
     return session;
   }

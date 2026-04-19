@@ -174,8 +174,7 @@ program
   .requiredOption("--item-id <itemId>")
   .action(
     withContext<{ itemId: string }>(({ workflowService }, options) => {
-      const started = workflowService.startBrainstormSession(options.itemId);
-      console.log(JSON.stringify(workflowService.showBrainstormBySessionId(started.sessionId), null, 2));
+      console.log(JSON.stringify(workflowService.showBrainstormSession(options.itemId), null, 2));
     })
   );
 

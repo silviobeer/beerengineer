@@ -239,6 +239,18 @@ export class WorkspaceSettingsRepository {
 export class BrainstormSessionRepository {
   public constructor(private readonly db: DatabaseClient) {}
 
+  public getLatestByItemId(itemId: string): BrainstormSession | null {
+    return (
+      this.db
+        .select()
+        .from(brainstormSessions)
+        .where(eq(brainstormSessions.itemId, itemId))
+        .orderBy(desc(brainstormSessions.startedAt), desc(brainstormSessions.id))
+        .limit(1)
+        .get() as BrainstormSession | undefined
+    ) ?? null;
+  }
+
   public getById(id: string): BrainstormSession | null {
     return (
       this.db.select().from(brainstormSessions).where(eq(brainstormSessions.id, id)).get() as
