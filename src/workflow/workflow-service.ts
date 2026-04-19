@@ -160,6 +160,22 @@ type AutorunDecision =
       stopReason: string;
     };
 
+type RetryWaveStoryExecutionResult =
+  | {
+      phase: "test_preparation";
+      waveStoryTestRunId: string;
+      waveStoryId: string;
+      storyCode: string;
+      status: "review_required" | "failed";
+    }
+  | {
+      phase: "implementation" | "story_review";
+      waveStoryExecutionId: string;
+      waveStoryId: string;
+      storyCode: string;
+      status: string;
+    };
+
 export class WorkflowService {
   private readonly promptResolver: PromptResolver;
   private readonly artifactService: ArtifactService;
@@ -506,7 +522,7 @@ export class WorkflowService {
     return this.advanceExecution(projectId);
   }
 
-  public async retryWaveStoryExecution(waveStoryExecutionId: string) {
+  public async retryWaveStoryExecution(waveStoryExecutionId: string): Promise<RetryWaveStoryExecutionResult> {
     const previous = this.deps.waveStoryExecutionRepository.getById(waveStoryExecutionId);
     if (!previous) {
       throw new AppError("WAVE_STORY_EXECUTION_NOT_FOUND", `Wave story execution ${waveStoryExecutionId} not found`);
@@ -554,7 +570,10 @@ export class WorkflowService {
       gitMetadata
     });
     this.refreshWaveExecutionStatus(waveExecution.id);
-    return result;
+    return {
+      ...result,
+      phase: result.phase as "implementation" | "story_review"
+    };
   }
 
   public showStoryReviewRemediation(storyId: string) {
@@ -3167,10 +3186,11 @@ export class WorkflowService {
     }
 
     this.completeItemIfDeliveryFinished(itemId);
+    const finalItem = this.requireItem(itemId);
     return {
       kind: "stop",
-      finalStatus: this.requireItem(itemId).currentColumn === "done" ? "completed" : "stopped",
-      stopReason: this.requireItem(itemId).currentColumn === "done" ? "item_completed" : "project_incomplete"
+      finalStatus: finalItem.currentColumn === "done" ? "completed" : "stopped",
+      stopReason: finalItem.currentColumn === "done" ? "item_completed" : "project_incomplete"
     };
   }
 
@@ -3353,17 +3373,7 @@ export class WorkflowService {
   }
 
   private resolveExecutionAutorunDecision(projectId: string): AutorunDecision | null {
-    const execution = this.showExecution(projectId) as {
-      waves: Array<{
-        waveExecution: { id: string; status: string } | null;
-        stories: Array<{
-          story: { id: string };
-          latestTestRun: { id: string; status: string } | null;
-          latestExecution: { id: string; status: string } | null;
-          latestStoryReviewRun: { id: string; status: string } | null;
-        }>;
-      }>;
-    };
+    const execution = this.showExecution(projectId);
 
     let hasIncompleteWave = false;
     let hasStartedExecution = false;
@@ -3439,7 +3449,7 @@ export class WorkflowService {
         action: hasStartedExecution ? "execution:tick" : "execution:start",
         scopeType: "project",
         scopeId: projectId,
-        execute: () => this.startExecution(projectId)
+        execute: () => (hasStartedExecution ? this.tickExecution(projectId) : this.startExecution(projectId))
       };
     }
 

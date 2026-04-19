@@ -8,6 +8,12 @@ import { describe, expect, it } from "vitest";
 import { createAppContext } from "../../src/app-context.js";
 
 describe("workflow service", () => {
+  function replaceRequired(source: string, searchValue: string, replaceValue: string): string {
+    const patched = source.replace(searchValue, replaceValue);
+    expect(patched).not.toBe(source);
+    return patched;
+  }
+
   function createGitWorkspace(root: string): string {
     const workspaceRoot = join(root, "workspace");
     execFileSync("mkdir", ["-p", workspaceRoot]);
@@ -459,7 +465,11 @@ describe("workflow service", () => {
     const dbPath = join(root, "app.sqlite");
 
     try {
-      const reviewScript = originalScript.replace("      overallStatus: status,", '      overallStatus: "review_required",');
+      const reviewScript = replaceRequired(
+        originalScript,
+        "      overallStatus: status,",
+        '      overallStatus: "review_required",'
+      );
       writeFileSync(adapterScriptPath, reviewScript);
       const context = createAppContext(dbPath, { adapterScriptPath });
 
@@ -509,7 +519,7 @@ describe("workflow service", () => {
     const dbPath = join(root, "app.sqlite");
 
     try {
-      const failedScript = originalScript.replace("      overallStatus: status,", '      overallStatus: "failed",');
+      const failedScript = replaceRequired(originalScript, "      overallStatus: status,", '      overallStatus: "failed",');
       writeFileSync(adapterScriptPath, failedScript);
       const context = createAppContext(dbPath, { adapterScriptPath });
 
@@ -559,7 +569,8 @@ describe("workflow service", () => {
     const dbPath = join(root, "app.sqlite");
 
     try {
-      const reviewScript = originalScript.replace(
+      const reviewScript = replaceRequired(
+        originalScript,
         "function storyReview(payload) {\n  const findings = [];",
         `function storyReview(payload) {\n  const findings = [{
     severity: "medium",
@@ -621,7 +632,8 @@ describe("workflow service", () => {
     const workspaceRoot = createGitWorkspace(root);
 
     try {
-      const remediationScript = originalScript.replace(
+      const remediationScript = replaceRequired(
+        originalScript,
         "function storyReview(payload) {\n  const findings = [];",
         `function storyReview(payload) {\n  const findings = payload.implementation.summary.includes("story-review-remediator") ? [] : [{
     severity: "medium",
@@ -742,7 +754,8 @@ describe("workflow service", () => {
     const dbPath = join(root, "app.sqlite");
 
     try {
-      const reviewScript = originalScript.replace(
+      const reviewScript = replaceRequired(
+        originalScript,
         "  const findings = [];",
         `  const findings = [{
     severity: "medium",
@@ -793,7 +806,8 @@ describe("workflow service", () => {
     const workspaceRoot = createGitWorkspace(root);
 
     try {
-      const remediationScript = originalScript.replace(
+      const remediationScript = replaceRequired(
+        originalScript,
         "function storyReview(payload) {\n  const findings = [];",
         `function storyReview(payload) {\n  const findings = payload.implementation.summary.includes("story-review-remediator") ? [] : [{
     severity: "medium",
@@ -841,7 +855,8 @@ describe("workflow service", () => {
     const dbPath = join(root, "app.sqlite");
 
     try {
-      const failedScript = originalScript.replace(
+      const failedScript = replaceRequired(
+        originalScript,
         "function storyReview(payload) {\n  const findings = [];",
         `function storyReview(payload) {\n  const findings = [{
     severity: "high",
@@ -937,7 +952,8 @@ describe("workflow service", () => {
     const dbPath = join(root, "app.sqlite");
 
     try {
-      const reviewScript = originalScript.replace(
+      const reviewScript = replaceRequired(
+        originalScript,
         "  const findings = [];",
         `  const findings = [{
     severity: "medium",
@@ -1059,7 +1075,8 @@ describe("workflow service", () => {
     const dbPath = join(root, "app.sqlite");
 
     try {
-      const reviewScript = originalScript.replace(
+      const reviewScript = replaceRequired(
+        originalScript,
         "  const findings = [];",
         `  const findings = [{
     severity: "medium",

@@ -270,17 +270,24 @@ program
       }
       const result = await context.workflowService.retryWaveStoryExecution(options.waveStoryExecutionId);
       if (options.autorun) {
+        const initialStep =
+          result.phase === "test_preparation"
+            ? {
+                action: "execution:retry",
+                scopeType: "project" as const,
+                scopeId: story.projectId,
+                status: String(result.status)
+              }
+            : {
+                action: "execution:retry",
+                scopeType: "execution" as const,
+                scopeId: result.waveStoryExecutionId,
+                status: String(result.status)
+              };
         await printAutorunForProject(context, {
           projectId: story.projectId,
           trigger: "execution:retry",
-          initialSteps: [
-            {
-              action: "execution:retry",
-              scopeType: "waveStoryExecutionId" in result ? "execution" : "project",
-              scopeId: "waveStoryExecutionId" in result ? String(result.waveStoryExecutionId) : story.projectId,
-              status: String(result.status)
-            }
-          ]
+          initialSteps: [initialStep]
         });
         return;
       }

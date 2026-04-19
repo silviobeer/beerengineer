@@ -35,6 +35,12 @@ function runCliError(args: string[], cwd: string): { error: { code: string; mess
   }
 }
 
+function replaceRequired(source: string, searchValue: string, replaceValue: string): string {
+  const patched = source.replace(searchValue, replaceValue);
+  expect(patched).not.toBe(source);
+  return patched;
+}
+
 function createGitWorkspace(root: string): string {
   const workspaceRoot = join(root, "workspace");
   execFileSync("mkdir", ["-p", workspaceRoot]);
@@ -232,7 +238,8 @@ describe("cli happy path", () => {
 
       try {
         const originalScript = readFileSync(resolve(cwd, "scripts/local-agent.mjs"), "utf8");
-        const remediationScript = originalScript.replace(
+        const remediationScript = replaceRequired(
+          originalScript,
           "function storyReview(payload) {\n  const findings = [];",
           `function storyReview(payload) {\n  const findings = payload.implementation.summary.includes("story-review-remediator") ? [] : [{
     severity: "medium",
