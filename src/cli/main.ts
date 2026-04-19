@@ -13,6 +13,10 @@ program.option("--workspace <key>", "Select the active workspace", "default");
 program.option("--workspace-root <path>", "Override the workspace root used for git workflow operations");
 program.showHelpAfterError();
 
+function collectOptionValues(value: string, previous: string[] = []): string[] {
+  return [...previous, value];
+}
+
 function withContext<TOptions extends object>(
   handler: (context: AppContext, options: TOptions, dbPath: string) => Promise<void> | void
 ) {
@@ -96,6 +100,7 @@ program
           qaDefaultsJson: null,
           gitDefaultsJson: null,
           executionDefaultsJson: null,
+          appTestConfigJson: null,
           uiMetadataJson: null
         });
         return createdWorkspace;
@@ -161,6 +166,122 @@ program
         itemId: options.itemId
       });
       console.log(JSON.stringify(result, null, 2));
+    })
+  );
+
+program
+  .command("brainstorm:show")
+  .requiredOption("--item-id <itemId>")
+  .action(
+    withContext<{ itemId: string }>(({ workflowService }, options) => {
+      const started = workflowService.startBrainstormSession(options.itemId);
+      console.log(JSON.stringify(workflowService.showBrainstormBySessionId(started.sessionId), null, 2));
+    })
+  );
+
+program
+  .command("brainstorm:chat")
+  .requiredOption("--session-id <sessionId>")
+  .requiredOption("--message <message>")
+  .action(
+    withContext<{ sessionId: string; message: string }>(({ workflowService }, options) => {
+      console.log(JSON.stringify(workflowService.chatBrainstorm(options.sessionId, options.message), null, 2));
+    })
+  );
+
+program
+  .command("brainstorm:draft")
+  .requiredOption("--session-id <sessionId>")
+  .action(
+    withContext<{ sessionId: string }>(({ workflowService }, options) => {
+      console.log(JSON.stringify(workflowService.showBrainstormDraft(options.sessionId), null, 2));
+    })
+  );
+
+program
+  .command("brainstorm:draft:update")
+  .requiredOption("--session-id <sessionId>")
+  .option("--problem <problem>")
+  .option("--core-outcome <coreOutcome>")
+  .option("--target-user <value>", "Repeatable target user", collectOptionValues, [])
+  .option("--use-case <value>", "Repeatable use case", collectOptionValues, [])
+  .option("--constraint <value>", "Repeatable constraint", collectOptionValues, [])
+  .option("--non-goal <value>", "Repeatable non-goal", collectOptionValues, [])
+  .option("--risk <value>", "Repeatable risk", collectOptionValues, [])
+  .option("--open-question <value>", "Repeatable open question", collectOptionValues, [])
+  .option("--candidate-direction <value>", "Repeatable candidate direction", collectOptionValues, [])
+  .option("--assumption <value>", "Repeatable assumption", collectOptionValues, [])
+  .option("--recommended-direction <value>")
+  .option("--scope-notes <value>")
+  .option("--clear-target-users", "Clear target users before writing")
+  .option("--clear-use-cases", "Clear use cases before writing")
+  .option("--clear-constraints", "Clear constraints before writing")
+  .option("--clear-non-goals", "Clear non-goals before writing")
+  .option("--clear-risks", "Clear risks before writing")
+  .option("--clear-open-questions", "Clear open questions before writing")
+  .option("--clear-candidate-directions", "Clear candidate directions before writing")
+  .option("--clear-assumptions", "Clear assumptions before writing")
+  .option("--clear-recommended-direction", "Clear the recommended direction")
+  .option("--clear-scope-notes", "Clear scope notes")
+  .action(
+    withContext<{
+      sessionId: string;
+      problem?: string;
+      coreOutcome?: string;
+      targetUser: string[];
+      useCase: string[];
+      constraint: string[];
+      nonGoal: string[];
+      risk: string[];
+      openQuestion: string[];
+      candidateDirection: string[];
+      assumption: string[];
+      recommendedDirection?: string;
+      scopeNotes?: string;
+      clearTargetUsers?: boolean;
+      clearUseCases?: boolean;
+      clearConstraints?: boolean;
+      clearNonGoals?: boolean;
+      clearRisks?: boolean;
+      clearOpenQuestions?: boolean;
+      clearCandidateDirections?: boolean;
+      clearAssumptions?: boolean;
+      clearRecommendedDirection?: boolean;
+      clearScopeNotes?: boolean;
+    }>(({ workflowService }, options) => {
+      const resolveList = (values: string[], clear?: boolean): string[] | undefined =>
+        values.length > 0 ? values : clear ? [] : undefined;
+      console.log(
+        JSON.stringify(
+          workflowService.updateBrainstormDraft({
+            sessionId: options.sessionId,
+            problem: options.problem,
+            coreOutcome: options.coreOutcome,
+            targetUsers: resolveList(options.targetUser, options.clearTargetUsers),
+            useCases: resolveList(options.useCase, options.clearUseCases),
+            constraints: resolveList(options.constraint, options.clearConstraints),
+            nonGoals: resolveList(options.nonGoal, options.clearNonGoals),
+            risks: resolveList(options.risk, options.clearRisks),
+            openQuestions: resolveList(options.openQuestion, options.clearOpenQuestions),
+            candidateDirections: resolveList(options.candidateDirection, options.clearCandidateDirections),
+            assumptions: resolveList(options.assumption, options.clearAssumptions),
+            recommendedDirection: options.clearRecommendedDirection ? null : options.recommendedDirection,
+            scopeNotes: options.clearScopeNotes ? null : options.scopeNotes
+          }),
+          null,
+          2
+        )
+      );
+    })
+  );
+
+program
+  .command("brainstorm:promote")
+  .requiredOption("--session-id <sessionId>")
+  .option("--autorun", "Approve concept and continue automatically after promotion")
+  .action(
+    withContext<{ sessionId: string; autorun?: boolean }>(async ({ workflowService }, options) => {
+      console.log(JSON.stringify(await workflowService.promoteBrainstorm(options.sessionId, { autorun: options.autorun }), null, 2));
     })
   );
 
@@ -296,7 +417,7 @@ program
   .option("--goal <goal>")
   .option("--benefit <benefit>")
   .option("--priority <priority>")
-  .option("--acceptance-criterion <text>", "Repeatable acceptance criterion", (value, previous: string[] = []) => [...previous, value], [])
+  .option("--acceptance-criterion <text>", "Repeatable acceptance criterion", collectOptionValues, [])
   .option("--summary <summary>")
   .option("--rationale <rationale>")
   .addOption(new Option("--status <status>").choices(["resolved", "accepted", "needs_revision"]))
@@ -355,7 +476,7 @@ program
       ] satisfies Array<(typeof interactiveReviewResolutionTypes)[number]>)
       .makeOptionMandatory()
   )
-  .option("--story-id <storyId>", "Repeatable story target", (value, previous: string[] = []) => [...previous, value], [])
+  .option("--story-id <storyId>", "Repeatable story target", collectOptionValues, [])
   .option("--rationale <rationale>")
   .action(
     withContext<{
@@ -527,6 +648,36 @@ program
         });
         return;
       }
+      console.log(JSON.stringify(result, null, 2));
+    })
+  );
+
+program
+  .command("app-verification:start")
+  .requiredOption("--wave-story-execution-id <waveStoryExecutionId>")
+  .action(
+    withContext<{ waveStoryExecutionId: string }>(async ({ workflowService }, options) => {
+      const result = await workflowService.startAppVerification(options.waveStoryExecutionId);
+      console.log(JSON.stringify(result, null, 2));
+    })
+  );
+
+program
+  .command("app-verification:show")
+  .requiredOption("--app-verification-run-id <appVerificationRunId>")
+  .action(
+    withContext<{ appVerificationRunId: string }>(({ workflowService }, options) => {
+      const result = workflowService.showAppVerification(options.appVerificationRunId);
+      console.log(JSON.stringify(result, null, 2));
+    })
+  );
+
+program
+  .command("app-verification:retry")
+  .requiredOption("--app-verification-run-id <appVerificationRunId>")
+  .action(
+    withContext<{ appVerificationRunId: string }>(async ({ workflowService }, options) => {
+      const result = await workflowService.retryAppVerification(options.appVerificationRunId);
       console.log(JSON.stringify(result, null, 2));
     })
   );

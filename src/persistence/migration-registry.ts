@@ -710,5 +710,89 @@ export const baseMigrations: readonly SqlMigration[] = [
       `CREATE INDEX IF NOT EXISTS idx_interactive_review_sessions_resolved_at
         ON interactive_review_sessions(resolved_at)`
     ]
+  },
+  {
+    id: "0010_brainstorm_interactive",
+    statements: [
+      `CREATE TABLE IF NOT EXISTS brainstorm_sessions (
+        id TEXT PRIMARY KEY NOT NULL,
+        item_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        mode TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        resolved_at INTEGER,
+        last_assistant_message_id TEXT,
+        last_user_message_id TEXT,
+        FOREIGN KEY (item_id) REFERENCES items(id)
+      )`,
+      `CREATE TABLE IF NOT EXISTS brainstorm_messages (
+        id TEXT PRIMARY KEY NOT NULL,
+        session_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        structured_payload_json TEXT,
+        derived_updates_json TEXT,
+        FOREIGN KEY (session_id) REFERENCES brainstorm_sessions(id)
+      )`,
+      `CREATE TABLE IF NOT EXISTS brainstorm_drafts (
+        id TEXT PRIMARY KEY NOT NULL,
+        item_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        revision INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        problem TEXT,
+        target_users_json TEXT NOT NULL,
+        core_outcome TEXT,
+        use_cases_json TEXT NOT NULL,
+        constraints_json TEXT NOT NULL,
+        non_goals_json TEXT NOT NULL,
+        risks_json TEXT NOT NULL,
+        open_questions_json TEXT NOT NULL,
+        candidate_directions_json TEXT NOT NULL,
+        recommended_direction TEXT,
+        scope_notes TEXT,
+        assumptions_json TEXT NOT NULL,
+        last_updated_at INTEGER NOT NULL,
+        last_updated_from_message_id TEXT,
+        FOREIGN KEY (item_id) REFERENCES items(id),
+        FOREIGN KEY (session_id) REFERENCES brainstorm_sessions(id)
+      )`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS brainstorm_drafts_session_revision_unique_idx
+        ON brainstorm_drafts(session_id, revision)`,
+      `CREATE INDEX IF NOT EXISTS idx_brainstorm_sessions_item_id
+        ON brainstorm_sessions(item_id, started_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_brainstorm_messages_session_id
+        ON brainstorm_messages(session_id, created_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_brainstorm_drafts_session_id
+        ON brainstorm_drafts(session_id, revision)`
+    ]
+  },
+  {
+    id: "0011_app_verification_runtime",
+    statements: [
+      `ALTER TABLE workspace_settings ADD COLUMN app_test_config_json TEXT`,
+      `CREATE TABLE IF NOT EXISTS app_verification_runs (
+        id TEXT PRIMARY KEY NOT NULL,
+        wave_story_execution_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        runner TEXT NOT NULL,
+        attempt INTEGER NOT NULL,
+        started_at INTEGER,
+        completed_at INTEGER,
+        project_app_test_context_json TEXT,
+        story_context_json TEXT,
+        prepared_session_json TEXT,
+        result_json TEXT,
+        artifacts_json TEXT,
+        failure_summary TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (wave_story_execution_id) REFERENCES wave_story_executions(id)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_app_verification_runs_wave_story_execution_id
+        ON app_verification_runs(wave_story_execution_id, created_at)`
+    ]
   }
 ];

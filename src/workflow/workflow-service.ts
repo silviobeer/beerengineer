@@ -1,9 +1,18 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { z } from "zod";
 
 import { buildItemWorkflowSnapshot } from "../domain/aggregate-status.js";
 import { assertCanMoveItem } from "../domain/workflow-rules.js";
 import type {
+  AppVerificationRun,
+  AppVerificationRunStatus,
+  AppVerificationRunner,
+  BrainstormDraft,
+  BrainstormDraftStatus,
+  BrainstormSession,
+  BrainstormSessionMode,
+  BrainstormSessionStatus,
   DocumentationRunStatus,
   ExecutionWorkerRole,
   GitBranchMetadata,
@@ -16,13 +25,15 @@ import type {
   StoryReviewFindingSeverity,
   StoryReviewRunStatus,
   VerificationRunStatus,
-  Workspace
+  Workspace,
+  WorkspaceSettings
 } from "../domain/types.js";
 import { PromptResolver } from "../services/prompt-resolver.js";
 import { ArtifactService } from "../services/artifact-service.js";
 import { GitWorkflowService } from "../services/git-workflow-service.js";
 import {
   implementationPlanOutputSchema,
+  appVerificationOutputSchema,
   architecturePlanOutputSchema,
   documentationOutputSchema,
   qaOutputSchema,
@@ -36,6 +47,7 @@ import {
 import type {
   ImplementationPlanOutput,
   ArchitecturePlanOutput,
+  AppVerificationOutput,
   DocumentationOutput,
   ProjectsOutput,
   QaOutput,
@@ -72,10 +84,14 @@ import type {
   TestAgentSessionRepository,
   VerificationRunRepository,
   AcceptanceCriterionRepository,
+  AppVerificationRunRepository,
   ArchitecturePlanRepository,
   ArtifactRecord,
   ArtifactRepository,
   AgentSessionRepository,
+  BrainstormDraftRepository,
+  BrainstormMessageRepository,
+  BrainstormSessionRepository,
   ConceptRepository,
   ImplementationPlanRepository,
   ItemRepository,
@@ -111,14 +127,46 @@ const supportedInteractiveReviewResolutionActions = [
   "apply_story_edits"
 ] as const;
 
+const appTestConfigSchema = z.object({
+  baseUrl: z.string().min(1).optional(),
+  runnerPreference: z.array(z.enum(["agent_browser", "playwright"])).min(1).optional(),
+  readiness: z.object({
+    healthUrl: z.string().min(1).optional(),
+    command: z.string().min(1).optional(),
+    timeoutMs: z.number().int().positive().optional()
+  }).nullable().optional(),
+  auth: z.object({
+    strategy: z.enum(["password", "existing_session"]),
+    defaultRole: z.string().min(1).optional()
+  }).optional(),
+  users: z.array(
+    z.object({
+      key: z.string().min(1),
+      role: z.string().min(1),
+      email: z.string().min(1).optional(),
+      passwordSecretRef: z.string().min(1).optional()
+    })
+  ).optional(),
+  fixtures: z.object({
+    seedCommand: z.string().min(1).optional(),
+    resetCommand: z.string().min(1).optional()
+  }).nullable().optional(),
+  routes: z.record(z.string(), z.string().min(1)).optional(),
+  featureFlags: z.record(z.string(), z.union([z.boolean(), z.string()])).optional()
+});
+
 type WorkflowDeps = {
   repoRoot: string;
   workspace: Workspace;
+  workspaceSettings: WorkspaceSettings;
   workspaceRoot: string;
   artifactRoot: string;
   runInTransaction<T>(fn: () => T): T;
   adapter: AgentAdapter;
   itemRepository: ItemRepository;
+  brainstormSessionRepository: BrainstormSessionRepository;
+  brainstormMessageRepository: BrainstormMessageRepository;
+  brainstormDraftRepository: BrainstormDraftRepository;
   conceptRepository: ConceptRepository;
   projectRepository: ProjectRepository;
   userStoryRepository: UserStoryRepository;
@@ -153,6 +201,7 @@ type WorkflowDeps = {
   stageRunRepository: StageRunRepository;
   artifactRepository: ArtifactRepository;
   agentSessionRepository: AgentSessionRepository;
+  appVerificationRunRepository: AppVerificationRunRepository;
 };
 
 type RetryWaveStoryExecutionResult =
@@ -164,7 +213,7 @@ type RetryWaveStoryExecutionResult =
       status: "review_required" | "failed";
     }
   | {
-      phase: "implementation" | "story_review";
+      phase: "implementation" | "app_verification" | "story_review";
       waveStoryExecutionId: string;
       waveStoryId: string;
       storyCode: string;
@@ -494,6 +543,361 @@ export class WorkflowService {
     const projects = this.deps.projectRepository.listByItemId(itemId);
     const stageRuns = this.deps.stageRunRepository.listByItemId(itemId);
     return { item, concept, projects, stageRuns };
+  }
+
+  public startBrainstormSession(itemId: string) {
+    const item = this.requireItem(itemId);
+    const existing = this.deps.brainstormSessionRepository.findOpenByItemId(item.id);
+    if (existing) {
+      return {
+        sessionId: existing.id,
+        status: existing.status,
+        reused: true
+      };
+    }
+
+    const created = this.deps.runInTransaction(() => {
+      if (item.currentColumn === "idea") {
+        this.deps.itemRepository.updateColumn(item.id, "brainstorm", "running");
+      }
+      const session = this.deps.brainstormSessionRepository.create({
+        itemId: item.id,
+        status: "open",
+        mode: "explore"
+      });
+      this.deps.brainstormMessageRepository.create({
+        sessionId: session.id,
+        role: "system",
+        content: "Interactive brainstorm session for item.",
+        structuredPayloadJson: JSON.stringify(
+          {
+            itemId: item.id,
+            itemCode: item.code
+          },
+          null,
+          2
+        ),
+        derivedUpdatesJson: null
+      });
+      const draft = this.deps.brainstormDraftRepository.create({
+        itemId: item.id,
+        sessionId: session.id,
+        revision: 1,
+        status: "needs_input",
+        problem: item.description || item.title,
+        targetUsersJson: JSON.stringify([]),
+        coreOutcome: item.title,
+        useCasesJson: JSON.stringify([]),
+        constraintsJson: JSON.stringify([]),
+        nonGoalsJson: JSON.stringify([]),
+        risksJson: JSON.stringify([]),
+        openQuestionsJson: JSON.stringify(["What is the smallest useful user outcome for this item?"]),
+        candidateDirectionsJson: JSON.stringify([]),
+        recommendedDirection: null,
+        scopeNotes: null,
+        assumptionsJson: JSON.stringify([]),
+        lastUpdatedFromMessageId: null
+      });
+      const assistantMessage = this.deps.brainstormMessageRepository.create({
+        sessionId: session.id,
+        role: "assistant",
+        content: this.buildBrainstormKickoffMessage(item),
+        structuredPayloadJson: JSON.stringify(
+          {
+            draftRevision: draft.revision
+          },
+          null,
+          2
+        ),
+        derivedUpdatesJson: null
+      });
+      const nextStatus = this.computeBrainstormSessionStatus(draft);
+      const nextMode = this.computeBrainstormSessionMode(draft);
+      this.deps.brainstormSessionRepository.update(session.id, {
+        status: nextStatus,
+        mode: nextMode,
+        lastAssistantMessageId: assistantMessage.id
+      });
+      return { sessionId: session.id, status: nextStatus };
+    });
+
+    return {
+      ...created,
+      reused: false
+    };
+  }
+
+  public showBrainstormBySessionId(sessionId: string) {
+    const session = this.requireBrainstormSession(sessionId);
+    const item = this.requireItem(session.itemId);
+    const draft = this.requireLatestBrainstormDraft(session.id);
+    const messages = this.deps.brainstormMessageRepository.listBySessionId(session.id);
+    return {
+      session,
+      item,
+      draft: this.mapBrainstormDraft(draft),
+      messages
+    };
+  }
+
+  public showBrainstormDraft(sessionId: string) {
+    const session = this.requireBrainstormSession(sessionId);
+    this.requireItem(session.itemId);
+    return this.mapBrainstormDraft(this.requireLatestBrainstormDraft(session.id));
+  }
+
+  public updateBrainstormDraft(input: {
+    sessionId: string;
+    problem?: string;
+    coreOutcome?: string;
+    targetUsers?: string[];
+    useCases?: string[];
+    constraints?: string[];
+    nonGoals?: string[];
+    risks?: string[];
+    openQuestions?: string[];
+    candidateDirections?: string[];
+    recommendedDirection?: string | null;
+    scopeNotes?: string | null;
+    assumptions?: string[];
+  }) {
+    const session = this.requireBrainstormSession(input.sessionId);
+    this.assertBrainstormSessionOpen(session);
+    const item = this.requireItem(session.itemId);
+    const previousDraft = this.requireLatestBrainstormDraft(session.id);
+    const previousView = this.mapBrainstormDraft(previousDraft);
+
+    const draftUpdate: Partial<BrainstormDraft> = {};
+    const summaryParts: string[] = [];
+
+    const assignScalar = (
+      key: "problem" | "coreOutcome" | "recommendedDirection" | "scopeNotes",
+      nextValue: string | null | undefined,
+      label: string
+    ) => {
+      if (nextValue === undefined) {
+        return;
+      }
+      draftUpdate[key] = nextValue;
+      summaryParts.push(`${label}=${nextValue ?? "cleared"}`);
+    };
+
+    const assignList = (
+      key:
+        | "targetUsersJson"
+        | "useCasesJson"
+        | "constraintsJson"
+        | "nonGoalsJson"
+        | "risksJson"
+        | "openQuestionsJson"
+        | "candidateDirectionsJson"
+        | "assumptionsJson",
+      nextValue: string[] | undefined,
+      label: string
+    ) => {
+      if (nextValue === undefined) {
+        return;
+      }
+      const normalized = this.normalizeBrainstormEntries(nextValue);
+      draftUpdate[key] = JSON.stringify(normalized);
+      summaryParts.push(`${label}=${normalized.length}`);
+    };
+
+    assignScalar("problem", input.problem, "problem");
+    assignScalar("coreOutcome", input.coreOutcome, "coreOutcome");
+    assignScalar("recommendedDirection", input.recommendedDirection, "recommendedDirection");
+    assignScalar("scopeNotes", input.scopeNotes, "scopeNotes");
+    assignList("targetUsersJson", input.targetUsers, "targetUsers");
+    assignList("useCasesJson", input.useCases, "useCases");
+    assignList("constraintsJson", input.constraints, "constraints");
+    assignList("nonGoalsJson", input.nonGoals, "nonGoals");
+    assignList("risksJson", input.risks, "risks");
+    assignList("openQuestionsJson", input.openQuestions, "openQuestions");
+    assignList("candidateDirectionsJson", input.candidateDirections, "candidateDirections");
+    assignList("assumptionsJson", input.assumptions, "assumptions");
+
+    if (summaryParts.length === 0) {
+      throw new AppError("BRAINSTORM_DRAFT_UPDATE_EMPTY", "No brainstorm draft changes were provided");
+    }
+
+    return this.deps.runInTransaction(() => {
+      const userMessage = this.deps.brainstormMessageRepository.create({
+        sessionId: session.id,
+        role: "user",
+        content: `Structured brainstorm draft update: ${summaryParts.join(", ")}`,
+        structuredPayloadJson: JSON.stringify(input, null, 2),
+        derivedUpdatesJson: null
+      });
+      const nextDraftInput = {
+        ...previousDraft,
+        ...draftUpdate,
+        lastUpdatedFromMessageId: userMessage.id
+      } as BrainstormDraft;
+      const nextDraft = this.deps.brainstormDraftRepository.createRevision(previousDraft, {
+        ...draftUpdate,
+        status: this.computeBrainstormDraftStatus(nextDraftInput),
+        lastUpdatedFromMessageId: userMessage.id
+      });
+      const assistantMessage = this.deps.brainstormMessageRepository.create({
+        sessionId: session.id,
+        role: "assistant",
+        content: this.buildBrainstormFollowUpMessage(item, nextDraft),
+        structuredPayloadJson: JSON.stringify(
+          {
+            draftRevision: nextDraft.revision,
+            updateType: "structured"
+          },
+          null,
+          2
+        ),
+        derivedUpdatesJson: JSON.stringify(
+          {
+            previousDraft: previousView,
+            nextDraft: this.mapBrainstormDraft(nextDraft)
+          },
+          null,
+          2
+        )
+      });
+      const nextStatus = this.computeBrainstormSessionStatus(nextDraft);
+      const nextMode = this.computeBrainstormSessionMode(nextDraft);
+      this.deps.brainstormSessionRepository.update(session.id, {
+        status: nextStatus,
+        mode: nextMode,
+        lastAssistantMessageId: assistantMessage.id,
+        lastUserMessageId: userMessage.id
+      });
+      this.deps.itemRepository.updatePhaseStatus(item.id, nextStatus === "ready_for_concept" ? "completed" : "running");
+      return {
+        sessionId: session.id,
+        userMessageId: userMessage.id,
+        assistantMessageId: assistantMessage.id,
+        status: nextStatus,
+        mode: nextMode,
+        draft: this.mapBrainstormDraft(nextDraft)
+      };
+    });
+  }
+
+  public chatBrainstorm(sessionId: string, message: string) {
+    const session = this.requireBrainstormSession(sessionId);
+    this.assertBrainstormSessionOpen(session);
+    const item = this.requireItem(session.itemId);
+    const previousDraft = this.requireLatestBrainstormDraft(session.id);
+
+    return this.deps.runInTransaction(() => {
+      const userMessage = this.deps.brainstormMessageRepository.create({
+        sessionId: session.id,
+        role: "user",
+        content: message,
+        structuredPayloadJson: null,
+        derivedUpdatesJson: null
+      });
+      const draftUpdate = this.deriveBrainstormDraftUpdate(previousDraft, message);
+      const nextDraft = this.deps.brainstormDraftRepository.createRevision(previousDraft, {
+        ...draftUpdate,
+        status: this.computeBrainstormDraftStatus({
+          ...previousDraft,
+          ...draftUpdate
+        } as BrainstormDraft),
+        lastUpdatedFromMessageId: userMessage.id
+      });
+      const assistantMessage = this.deps.brainstormMessageRepository.create({
+        sessionId: session.id,
+        role: "assistant",
+        content: this.buildBrainstormFollowUpMessage(item, nextDraft),
+        structuredPayloadJson: JSON.stringify(
+          {
+            draftRevision: nextDraft.revision
+          },
+          null,
+          2
+        ),
+        derivedUpdatesJson: JSON.stringify(this.mapBrainstormDraft(nextDraft), null, 2)
+      });
+      const nextStatus = this.computeBrainstormSessionStatus(nextDraft);
+      const nextMode = this.computeBrainstormSessionMode(nextDraft);
+      this.deps.brainstormSessionRepository.update(session.id, {
+        status: nextStatus,
+        mode: nextMode,
+        lastAssistantMessageId: assistantMessage.id,
+        lastUserMessageId: userMessage.id
+      });
+      this.deps.itemRepository.updatePhaseStatus(item.id, nextStatus === "ready_for_concept" ? "completed" : "running");
+      return {
+        sessionId: session.id,
+        userMessageId: userMessage.id,
+        assistantMessageId: assistantMessage.id,
+        status: nextStatus,
+        mode: nextMode,
+        draft: this.mapBrainstormDraft(nextDraft)
+      };
+    });
+  }
+
+  public async promoteBrainstorm(sessionId: string, options?: { autorun?: boolean }) {
+    const session = this.requireBrainstormSession(sessionId);
+    this.assertBrainstormSessionOpen(session);
+    const item = this.requireItem(session.itemId);
+    const draft = this.requireLatestBrainstormDraft(session.id);
+    const draftView = this.mapBrainstormDraft(draft);
+    const previousConcept = this.deps.conceptRepository.getLatestByItemId(item.id);
+
+    const result = this.deps.runInTransaction(() => {
+      const conceptMarkdown = this.renderConceptFromBrainstormDraft(item, draftView);
+      const projectsPayload = this.buildProjectsFromBrainstormDraft(item, draftView);
+      const conceptArtifactRecord = this.persistManualArtifact({
+        item,
+        sessionScopedId: session.id,
+        kind: "concept",
+        format: "md",
+        content: conceptMarkdown
+      });
+      const projectsArtifactRecord = this.persistManualArtifact({
+        item,
+        sessionScopedId: session.id,
+        kind: "projects",
+        format: "json",
+        content: JSON.stringify(projectsPayload, null, 2)
+      });
+      const concept = this.deps.conceptRepository.create({
+        itemId: item.id,
+        version: (previousConcept?.version ?? 0) + 1,
+        title: `${item.title} Concept`,
+        summary: projectsPayload.projects.map((project) => project.title).join(", "),
+        status: "draft",
+        markdownArtifactId: conceptArtifactRecord.id,
+        structuredArtifactId: projectsArtifactRecord.id
+      });
+      this.deps.brainstormSessionRepository.update(session.id, {
+        status: "resolved",
+        resolvedAt: Date.now()
+      });
+      this.deps.itemRepository.updatePhaseStatus(item.id, "completed");
+      return { concept, draftRevision: draft.revision };
+    });
+
+    if (options?.autorun) {
+      this.approveConcept(result.concept.id);
+      const autorun = await this.autorunForItem({
+        itemId: item.id,
+        trigger: "brainstorm:promote",
+        initialSteps: [{ action: "brainstorm:promote", scopeType: "item", scopeId: item.id, status: "promoted" }]
+      });
+      return {
+        sessionId: session.id,
+        conceptId: result.concept.id,
+        draftRevision: result.draftRevision,
+        autorun
+      };
+    }
+
+    return {
+      sessionId: session.id,
+      conceptId: result.concept.id,
+      draftRevision: result.draftRevision,
+      status: "promoted"
+    };
   }
 
   public startInteractiveReview(input: { type: "stories"; projectId: string }) {
@@ -1043,8 +1447,132 @@ export class WorkflowService {
     this.refreshWaveExecutionStatus(waveExecution.id);
     return {
       ...result,
-      phase: result.phase as "implementation" | "story_review"
+      phase: result.phase as "implementation" | "app_verification" | "story_review"
     };
+  }
+
+  public async startAppVerification(waveStoryExecutionId: string) {
+    const execution = this.requireWaveStoryExecution(waveStoryExecutionId);
+    const latestBasicVerification = this.deps.verificationRunRepository.getLatestByWaveStoryExecutionIdAndMode(
+      execution.id,
+      "basic"
+    );
+    const latestRalphVerification = this.deps.verificationRunRepository.getLatestByWaveStoryExecutionIdAndMode(
+      execution.id,
+      "ralph"
+    );
+    if (latestBasicVerification?.status !== "passed" || latestRalphVerification?.status !== "passed") {
+      throw new AppError(
+        "APP_VERIFICATION_NOT_READY",
+        `Wave story execution ${waveStoryExecutionId} has not passed basic and Ralph verification`
+      );
+    }
+
+    const latestAppVerification = this.deps.appVerificationRunRepository.getLatestByWaveStoryExecutionId(execution.id);
+    if (latestAppVerification?.status === "passed") {
+      throw new AppError(
+        "APP_VERIFICATION_ALREADY_PASSED",
+        `Wave story execution ${waveStoryExecutionId} already has a passed app verification`
+      );
+    }
+
+    const story = this.requireStory(execution.storyId);
+    const project = this.requireProject(story.projectId);
+    const implementationPlan = this.requireImplementationPlanForProject(project.id);
+    const waveExecution = this.requireWaveExecution(execution.waveExecutionId);
+    const wave = this.requireWave(waveExecution.waveId);
+    const testPreparationRun = this.requireWaveStoryTestRun(execution.testPreparationRunId);
+    const parsedTestPreparation = this.parseTestPreparationOutput(testPreparationRun);
+    const implementationOutput = this.parseStoryExecutionOutput(execution);
+    const basicVerificationSummary = JSON.parse(latestBasicVerification.summaryJson) as {
+      storyCode: string;
+      changedFiles: string[];
+      testsRun: StoryExecutionOutput["testsRun"];
+      blockers: string[];
+    };
+    const ralphVerificationSummary = this.parseRalphVerificationOutput(latestRalphVerification);
+    const storyRunContext = this.buildStoryRunContext({
+      project,
+      implementationPlan,
+      wave,
+      story
+    });
+
+    const appVerification = await this.executeAppVerification({
+      project,
+      implementationPlan,
+      wave,
+      story,
+      storyRunContext,
+      execution,
+      implementationOutput
+    });
+
+    const storyReview =
+      appVerification.status === "passed"
+        ? await this.executeStoryReview({
+            project,
+            implementationPlan,
+            wave,
+            story,
+            storyRunContext,
+            testPreparationRun,
+            parsedTestPreparation,
+            execution,
+            implementationOutput,
+            basicVerificationStatus: latestBasicVerification.status,
+            basicVerificationSummary,
+            ralphVerificationStatus: latestRalphVerification.status,
+            ralphVerificationSummary
+          })
+        : null;
+    const finalExecutionStatus = this.resolveOverallExecutionStatus(
+      latestBasicVerification.status,
+      latestRalphVerification.status,
+      appVerification.status,
+      storyReview?.status ?? null
+    );
+    this.deps.waveStoryExecutionRepository.updateStatus(
+      execution.id,
+      finalExecutionStatus === "passed" ? "completed" : finalExecutionStatus,
+      {
+        outputSummaryJson: execution.outputSummaryJson,
+        errorMessage: appVerification.errorMessage ?? storyReview?.errorMessage ?? null
+      }
+    );
+    this.refreshWaveExecutionStatus(waveExecution.id);
+
+    return {
+      phase: storyReview ? "story_review" : "app_verification",
+      appVerificationRunId: appVerification.runId,
+      waveStoryExecutionId: execution.id,
+      storyCode: story.code,
+      status: finalExecutionStatus === "passed" ? "completed" : finalExecutionStatus
+    };
+  }
+
+  public showAppVerification(appVerificationRunId: string) {
+    const run = this.requireAppVerificationRun(appVerificationRunId);
+    const execution = this.requireWaveStoryExecution(run.waveStoryExecutionId);
+    const story = this.requireStory(execution.storyId);
+    return {
+      run,
+      execution,
+      story,
+      projectAppTestContext: this.parseStoredJson(run.projectAppTestContextJson, "APP_VERIFICATION_CONTEXT_INVALID", "Project app test context"),
+      storyContext: this.parseStoredJson(run.storyContextJson, "APP_VERIFICATION_CONTEXT_INVALID", "Story app verification context"),
+      preparedSession: this.parseStoredJson(run.preparedSessionJson, "APP_VERIFICATION_CONTEXT_INVALID", "Prepared app verification session"),
+      result: this.parseStoredJson(run.resultJson, "APP_VERIFICATION_RESULT_INVALID", "App verification result"),
+      artifacts: this.parseStoredJson(run.artifactsJson, "APP_VERIFICATION_ARTIFACTS_INVALID", "App verification artifacts") ?? []
+    };
+  }
+
+  public async retryAppVerification(appVerificationRunId: string) {
+    const run = this.requireAppVerificationRun(appVerificationRunId);
+    if (run.status !== "failed" && run.status !== "review_required") {
+      throw new AppError("APP_VERIFICATION_RUN_NOT_RETRYABLE", `App verification run ${appVerificationRunId} is not retryable`);
+    }
+    return this.startAppVerification(run.waveStoryExecutionId);
   }
 
   public showStoryReviewRemediation(storyId: string) {
@@ -1630,8 +2158,12 @@ export class WorkflowService {
         const verificationRuns = latestExecution
           ? this.deps.verificationRunRepository.listByWaveStoryExecutionId(latestExecution.id)
           : [];
+        const appVerificationRuns = latestExecution
+          ? this.deps.appVerificationRunRepository.listByWaveStoryExecutionId(latestExecution.id)
+          : [];
         const latestBasicVerification = verificationRuns.filter((run) => run.mode === "basic").at(-1) ?? null;
         const latestRalphVerification = verificationRuns.filter((run) => run.mode === "ralph").at(-1) ?? null;
+        const latestAppVerificationRun = appVerificationRuns.at(-1) ?? null;
         const latestStoryReviewRun = latestExecution
           ? this.deps.storyReviewRunRepository.getLatestByWaveStoryExecutionId(latestExecution.id)
           : null;
@@ -1655,8 +2187,10 @@ export class WorkflowService {
             ? this.deps.testAgentSessionRepository.listByWaveStoryTestRunId(latestTestRun.id)
             : [],
           verificationRuns,
+          appVerificationRuns,
           latestBasicVerification,
           latestRalphVerification,
+          latestAppVerificationRun,
           latestStoryReviewRun,
           latestStoryReviewFindings: latestStoryReviewRun
             ? this.deps.storyReviewFindingRepository.listByStoryReviewRunId(latestStoryReviewRun.id)
@@ -1909,8 +2443,22 @@ export class WorkflowService {
         basicVerificationStatus,
         basicVerificationSummary
       });
-      const storyReview =
+      const appVerification =
         basicVerificationStatus === "passed" && ralphVerification.status === "passed"
+          ? await this.executeAppVerification({
+              project: input.project,
+              implementationPlan: input.implementationPlan,
+              wave: input.wave,
+              story: input.story,
+              storyRunContext,
+              execution,
+              implementationOutput: parsed
+            })
+          : null;
+      const storyReview =
+        basicVerificationStatus === "passed" &&
+        ralphVerification.status === "passed" &&
+        appVerification?.status === "passed"
           ? await this.executeStoryReview({
               project: input.project,
               implementationPlan: input.implementationPlan,
@@ -1930,6 +2478,7 @@ export class WorkflowService {
       const finalExecutionStatus = this.resolveOverallExecutionStatus(
         basicVerificationStatus,
         ralphVerification.status,
+        appVerification?.status ?? null,
         storyReview?.status ?? null
       );
       const outputSummaryJson = JSON.stringify(parsed, null, 2);
@@ -1942,12 +2491,13 @@ export class WorkflowService {
           errorMessage:
             parsed.blockers.join("; ") ||
             ralphVerification.errorMessage ||
+            appVerification?.errorMessage ||
             storyReview?.errorMessage ||
             null
         }
       );
       return {
-        phase: storyReview ? "story_review" : "implementation",
+        phase: storyReview ? "story_review" : appVerification ? "app_verification" : "implementation",
         waveStoryExecutionId: execution.id,
         waveStoryId: input.waveStory.id,
         storyCode: input.story.code,
@@ -2787,6 +3337,15 @@ export class WorkflowService {
     return ralphVerificationOutputSchema.parse(JSON.parse(verificationRun.summaryJson)) as RalphVerificationOutput;
   }
 
+  private parseAppVerificationOutput(
+    appVerificationRun: ReturnType<AppVerificationRunRepository["getLatestByWaveStoryExecutionId"]>
+  ): AppVerificationOutput {
+    if (!appVerificationRun?.resultJson) {
+      throw new AppError("APP_VERIFICATION_OUTPUT_MISSING", "App verification has no stored result");
+    }
+    return appVerificationOutputSchema.parse(JSON.parse(appVerificationRun.resultJson)) as AppVerificationOutput;
+  }
+
   private parseStoryReviewOutput(
     storyReviewRun: ReturnType<StoryReviewRunRepository["getLatestByWaveStoryExecutionId"]>
   ): StoryReviewOutput {
@@ -2794,6 +3353,132 @@ export class WorkflowService {
       throw new AppError("STORY_REVIEW_OUTPUT_MISSING", "Story review has no summary");
     }
     return storyReviewOutputSchema.parse(JSON.parse(storyReviewRun.summaryJson)) as StoryReviewOutput;
+  }
+
+  private getDefaultAppTestConfig() {
+    return {
+      baseUrl: "http://127.0.0.1:3000",
+      runnerPreference: ["agent_browser", "playwright"] as AppVerificationRunner[],
+      readiness: null,
+      auth: {
+        strategy: "existing_session" as const,
+        defaultRole: "user"
+      },
+      users: [],
+      fixtures: null,
+      routes: {} as Record<string, string>,
+      featureFlags: {} as Record<string, boolean | string>
+    };
+  }
+
+  private parseStoredJson<T>(value: string | null, errorCode: string, label: string): T | null {
+    if (value === null) {
+      return null;
+    }
+    try {
+      return JSON.parse(value) as T;
+    } catch (error) {
+      throw new AppError(errorCode, `${label} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  private buildProjectAppTestContext(project: ReturnType<WorkflowService["requireProject"]>) {
+    const defaults = this.getDefaultAppTestConfig();
+    const raw = this.deps.workspaceSettings.appTestConfigJson;
+    if (!raw) {
+      return {
+        projectId: project.id,
+        workspaceRoot: this.deps.workspaceRoot,
+        ...defaults
+      };
+    }
+
+    let parsed: z.infer<typeof appTestConfigSchema>;
+    try {
+      parsed = appTestConfigSchema.parse(JSON.parse(raw));
+    } catch (error) {
+      throw new AppError(
+        "APP_TEST_CONFIG_INVALID",
+        `Workspace app test config is invalid: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+
+    return {
+      projectId: project.id,
+      workspaceRoot: this.deps.workspaceRoot,
+      baseUrl: parsed.baseUrl ?? defaults.baseUrl,
+      runnerPreference: (parsed.runnerPreference as AppVerificationRunner[] | undefined) ?? defaults.runnerPreference,
+      readiness: parsed.readiness ?? defaults.readiness,
+      auth: {
+        strategy: parsed.auth?.strategy ?? defaults.auth.strategy,
+        defaultRole: parsed.auth?.defaultRole ?? defaults.auth.defaultRole
+      },
+      users: parsed.users ?? defaults.users,
+      fixtures: parsed.fixtures ?? defaults.fixtures,
+      routes: parsed.routes ?? defaults.routes,
+      featureFlags: parsed.featureFlags ?? defaults.featureFlags
+    };
+  }
+
+  private buildStoryAppVerificationContext(input: {
+    execution: ReturnType<WaveStoryExecutionRepository["create"]> | ReturnType<WorkflowService["requireWaveStoryExecution"]>;
+    story: ReturnType<WorkflowService["requireStory"]>;
+    storyRunContext: ReturnType<WorkflowService["buildStoryRunContext"]>;
+    implementationOutput: StoryExecutionOutput;
+    projectAppTestContext: ReturnType<WorkflowService["buildProjectAppTestContext"]>;
+  }) {
+    const startRoute =
+      input.projectAppTestContext.routes[input.story.code] ??
+      input.projectAppTestContext.routes.default ??
+      "/";
+    return {
+      waveStoryExecutionId: input.execution.id,
+      storyId: input.story.id,
+      storyTitle: input.story.title,
+      summary: input.implementationOutput.summary,
+      acceptanceCriteria: input.storyRunContext.acceptanceCriteria.map((criterion) => criterion.text),
+      preferredRole: input.projectAppTestContext.auth.defaultRole,
+      startRoute,
+      changedFiles: input.implementationOutput.changedFiles,
+      checks: input.storyRunContext.acceptanceCriteria.map((criterion) => ({
+        id: criterion.code,
+        description: criterion.text,
+        expectedOutcome: `Acceptance criterion ${criterion.code} is satisfied in the app flow.`
+      })),
+      preconditions: [
+        `Base URL ${input.projectAppTestContext.baseUrl} is reachable`,
+        `Story ${input.story.code} is available in the running product flow`
+      ],
+      notes: [
+        `Execution summary: ${input.implementationOutput.summary}`,
+        `Changed files: ${input.implementationOutput.changedFiles.join(", ") || "none"}`
+      ]
+    };
+  }
+
+  private prepareAppVerificationSession(input: {
+    projectAppTestContext: ReturnType<WorkflowService["buildProjectAppTestContext"]>;
+    storyAppVerificationContext: ReturnType<WorkflowService["buildStoryAppVerificationContext"]>;
+  }) {
+    const runner = input.projectAppTestContext.runnerPreference[0] ?? "agent_browser";
+    const loginRole = input.storyAppVerificationContext.preferredRole ?? input.projectAppTestContext.auth.defaultRole;
+    const loginUser = loginRole
+      ? input.projectAppTestContext.users.find((user) => user.role === loginRole) ?? null
+      : null;
+    const baseUrl = input.projectAppTestContext.baseUrl.replace(/\/+$/, "");
+    const route = input.storyAppVerificationContext.startRoute.startsWith("/")
+      ? input.storyAppVerificationContext.startRoute
+      : `/${input.storyAppVerificationContext.startRoute}`;
+    return {
+      runner,
+      baseUrl: input.projectAppTestContext.baseUrl,
+      ready: baseUrl.length > 0,
+      ...(loginRole ? { loginRole } : {}),
+      ...(loginUser ? { loginUserKey: loginUser.key } : {}),
+      resolvedStartUrl: `${baseUrl}${route}`,
+      seeded: Boolean(input.projectAppTestContext.fixtures?.seedCommand),
+      artifactsDir: "artifacts/app-verification"
+    };
   }
 
   private async executeRalphVerification(input: {
@@ -3057,10 +3742,156 @@ export class WorkflowService {
     }
   }
 
+  private async executeAppVerification(input: {
+    project: ReturnType<WorkflowService["requireProject"]>;
+    implementationPlan: ReturnType<WorkflowService["requireImplementationPlanForProject"]>;
+    wave: ReturnType<WorkflowService["requireWave"]>;
+    story: ReturnType<WorkflowService["requireStory"]>;
+    storyRunContext: ReturnType<WorkflowService["buildStoryRunContext"]>;
+    execution: ReturnType<WaveStoryExecutionRepository["create"]> | ReturnType<WorkflowService["requireWaveStoryExecution"]>;
+    implementationOutput: StoryExecutionOutput;
+  }): Promise<{ status: "passed" | "review_required" | "failed"; errorMessage: string | null; runId: string }> {
+    const resolvedWorkerProfile = this.resolveWorkerProfile("appVerification");
+    const previousRuns = this.deps.appVerificationRunRepository.listByWaveStoryExecutionId(input.execution.id);
+    const projectAppTestContext = this.buildProjectAppTestContext(input.project);
+    const storyAppVerificationContext = this.buildStoryAppVerificationContext({
+      execution: input.execution,
+      story: input.story,
+      storyRunContext: input.storyRunContext,
+      implementationOutput: input.implementationOutput,
+      projectAppTestContext
+    });
+    const preparedSession = this.prepareAppVerificationSession({
+      projectAppTestContext,
+      storyAppVerificationContext
+    });
+    const startedAt = Date.now();
+    const run = this.deps.appVerificationRunRepository.create({
+      waveStoryExecutionId: input.execution.id,
+      status: "pending",
+      runner: preparedSession.runner,
+      attempt: previousRuns.length + 1,
+      projectAppTestContextJson: null,
+      storyContextJson: null,
+      preparedSessionJson: null,
+      resultJson: null,
+      artifactsJson: null,
+      failureSummary: null
+    });
+
+    try {
+      this.deps.appVerificationRunRepository.updateStatus(run.id, "preparing", {
+        runner: preparedSession.runner,
+        startedAt,
+        projectAppTestContextJson: JSON.stringify(projectAppTestContext, null, 2),
+        storyContextJson: JSON.stringify(storyAppVerificationContext, null, 2)
+      });
+
+      if (!preparedSession.ready) {
+        this.deps.appVerificationRunRepository.updateStatus(run.id, "failed", {
+          runner: preparedSession.runner,
+          startedAt,
+          preparedSessionJson: JSON.stringify(preparedSession, null, 2),
+          failureSummary: "App verification session could not be prepared."
+        });
+        return {
+          status: "failed",
+          errorMessage: "App verification session could not be prepared.",
+          runId: run.id
+        };
+      }
+
+      this.deps.appVerificationRunRepository.updateStatus(run.id, "in_progress", {
+        runner: preparedSession.runner,
+        startedAt,
+        projectAppTestContextJson: JSON.stringify(projectAppTestContext, null, 2),
+        storyContextJson: JSON.stringify(storyAppVerificationContext, null, 2),
+        preparedSessionJson: JSON.stringify(preparedSession, null, 2)
+      });
+
+      const result = await this.deps.adapter.runStoryAppVerification({
+        workerRole: "app-verifier",
+        prompt: resolvedWorkerProfile.promptContent,
+        skills: resolvedWorkerProfile.skills,
+        item: input.storyRunContext.item,
+        project: input.project,
+        implementationPlan: {
+          id: input.implementationPlan.id,
+          summary: input.implementationPlan.summary,
+          version: input.implementationPlan.version
+        },
+        wave: {
+          id: input.wave.id,
+          code: input.wave.code,
+          goal: input.wave.goal,
+          position: input.wave.position
+        },
+        story: input.story,
+        acceptanceCriteria: input.storyRunContext.acceptanceCriteria,
+        architecture: input.storyRunContext.architecture
+          ? {
+              id: input.storyRunContext.architecture.id,
+              summary: input.storyRunContext.architecture.summary,
+              version: input.storyRunContext.architecture.version
+            }
+          : null,
+        projectExecutionContext: input.storyRunContext.projectExecutionContext,
+        businessContextSnapshotJson: input.storyRunContext.businessContextSnapshotJson,
+        repoContextSnapshotJson: input.storyRunContext.repoContextSnapshotJson,
+        implementation: input.implementationOutput,
+        projectAppTestContext,
+        storyAppVerificationContext,
+        preparedSession
+      });
+
+      const parsed = appVerificationOutputSchema.parse(result.output) as AppVerificationOutput;
+      const status = this.resolveAppVerificationStatus(parsed, result.exitCode);
+      this.deps.appVerificationRunRepository.updateStatus(run.id, status, {
+        runner: parsed.runner,
+        startedAt,
+        projectAppTestContextJson: JSON.stringify(projectAppTestContext, null, 2),
+        storyContextJson: JSON.stringify(storyAppVerificationContext, null, 2),
+        preparedSessionJson: JSON.stringify(preparedSession, null, 2),
+        resultJson: JSON.stringify(parsed, null, 2),
+        artifactsJson: JSON.stringify(parsed.artifacts, null, 2),
+        failureSummary: parsed.failureSummary ?? null
+      });
+      return {
+        status,
+        errorMessage: status === "failed" ? parsed.failureSummary ?? "App verification failed" : null,
+        runId: run.id
+      };
+    } catch (error) {
+      this.deps.appVerificationRunRepository.updateStatus(run.id, "failed", {
+        runner: preparedSession.runner,
+        startedAt,
+        projectAppTestContextJson: JSON.stringify(projectAppTestContext, null, 2),
+        storyContextJson: JSON.stringify(storyAppVerificationContext, null, 2),
+        preparedSessionJson: JSON.stringify(preparedSession, null, 2),
+        failureSummary: error instanceof Error ? error.message : String(error)
+      });
+      return {
+        status: "failed",
+        errorMessage: error instanceof Error ? error.message : String(error),
+        runId: run.id
+      };
+    }
+  }
+
   private resolveRalphVerificationStatus(
     output: RalphVerificationOutput,
     exitCode: number
   ): VerificationRunStatus {
+    if (exitCode !== 0) {
+      return "failed";
+    }
+    return output.overallStatus;
+  }
+
+  private resolveAppVerificationStatus(
+    output: AppVerificationOutput,
+    exitCode: number
+  ): "passed" | "review_required" | "failed" {
     if (exitCode !== 0) {
       return "failed";
     }
@@ -3135,14 +3966,21 @@ export class WorkflowService {
   private resolveOverallExecutionStatus(
     basicStatus: VerificationRunStatus,
     ralphStatus: VerificationRunStatus,
+    appVerificationStatus: AppVerificationRunStatus | null,
     storyReviewStatus: StoryReviewRunStatus | null
   ): VerificationRunStatus {
-    if (basicStatus === "failed" || ralphStatus === "failed" || storyReviewStatus === "failed") {
+    if (
+      basicStatus === "failed" ||
+      ralphStatus === "failed" ||
+      appVerificationStatus === "failed" ||
+      storyReviewStatus === "failed"
+    ) {
       return "failed";
     }
     if (
       basicStatus === "review_required" ||
       ralphStatus === "review_required" ||
+      appVerificationStatus === "review_required" ||
       storyReviewStatus === "review_required"
     ) {
       return "review_required";
@@ -3627,6 +4465,469 @@ export class WorkflowService {
     return session;
   }
 
+  private requireBrainstormSession(sessionId: string): BrainstormSession {
+    const session = this.deps.brainstormSessionRepository.getById(sessionId);
+    if (!session) {
+      throw new AppError("BRAINSTORM_SESSION_NOT_FOUND", `Brainstorm session ${sessionId} not found`);
+    }
+    return session;
+  }
+
+  private requireBrainstormSessionByItemId(itemId: string): BrainstormSession {
+    const session = this.deps.brainstormSessionRepository.findOpenByItemId(itemId);
+    if (!session) {
+      throw new AppError("BRAINSTORM_SESSION_NOT_FOUND", `No open brainstorm session found for item ${itemId}`);
+    }
+    return session;
+  }
+
+  private requireLatestBrainstormDraft(sessionId: string): BrainstormDraft {
+    const draft = this.deps.brainstormDraftRepository.getLatestBySessionId(sessionId);
+    if (!draft) {
+      throw new AppError("BRAINSTORM_DRAFT_NOT_FOUND", `No brainstorm draft found for session ${sessionId}`);
+    }
+    return draft;
+  }
+
+  private assertBrainstormSessionOpen(session: BrainstormSession): void {
+    if (session.status === "resolved" || session.status === "cancelled") {
+      throw new AppError("BRAINSTORM_SESSION_CLOSED", `Brainstorm session ${session.id} is already closed`);
+    }
+  }
+
+  private mapBrainstormDraft(draft: BrainstormDraft) {
+    return {
+      id: draft.id,
+      itemId: draft.itemId,
+      sessionId: draft.sessionId,
+      revision: draft.revision,
+      status: draft.status,
+      problem: draft.problem,
+      targetUsers: JSON.parse(draft.targetUsersJson) as string[],
+      coreOutcome: draft.coreOutcome,
+      useCases: JSON.parse(draft.useCasesJson) as string[],
+      constraints: JSON.parse(draft.constraintsJson) as string[],
+      nonGoals: JSON.parse(draft.nonGoalsJson) as string[],
+      risks: JSON.parse(draft.risksJson) as string[],
+      openQuestions: JSON.parse(draft.openQuestionsJson) as string[],
+      candidateDirections: JSON.parse(draft.candidateDirectionsJson) as string[],
+      recommendedDirection: draft.recommendedDirection,
+      scopeNotes: draft.scopeNotes,
+      assumptions: JSON.parse(draft.assumptionsJson) as string[],
+      lastUpdatedAt: draft.lastUpdatedAt,
+      lastUpdatedFromMessageId: draft.lastUpdatedFromMessageId
+    };
+  }
+
+  private deriveBrainstormDraftUpdate(previousDraft: BrainstormDraft, message: string): Partial<BrainstormDraft> {
+    const view = this.mapBrainstormDraft(previousDraft);
+    const normalized = message.trim();
+    const targetUsers = [...view.targetUsers];
+    const useCases = [...view.useCases];
+    const constraints = [...view.constraints];
+    const nonGoals = [...view.nonGoals];
+    const risks = [...view.risks];
+    const openQuestions = [...view.openQuestions];
+    const candidateDirections = [...view.candidateDirections];
+    const assumptions = [...view.assumptions];
+    const labeled = this.parseBrainstormStructuredMessage(normalized);
+
+    const pushUnique = (list: string[], value: string) => {
+      if (value && !list.includes(value)) {
+        list.push(value);
+      }
+    };
+    const pushMany = (list: string[], values: string[]) => {
+      for (const value of values) {
+        pushUnique(list, value);
+      }
+    };
+
+    if (!view.problem) {
+      pushUnique(openQuestions, "What problem is most important to solve first?");
+    }
+
+    pushMany(targetUsers, labeled.targetUsers);
+    pushMany(useCases, labeled.useCases);
+    pushMany(constraints, labeled.constraints);
+    pushMany(nonGoals, labeled.nonGoals);
+    pushMany(risks, labeled.risks);
+    pushMany(openQuestions, labeled.openQuestions);
+    pushMany(candidateDirections, labeled.candidateDirections);
+    pushMany(assumptions, labeled.assumptions);
+
+    const unlabeledLines = labeled.unlabeled;
+    for (const line of unlabeledLines) {
+      const lineLower = line.toLowerCase();
+      if (lineLower.includes("?")) {
+        pushUnique(openQuestions, line);
+      } else if (
+        lineLower.includes("direction") ||
+        lineLower.includes("approach") ||
+        lineLower.includes("option") ||
+        lineLower.includes("should") ||
+        lineLower.includes("could")
+      ) {
+        pushUnique(candidateDirections, line);
+      } else if (lineLower.includes("constraint") || lineLower.includes("must") || lineLower.includes("cannot")) {
+        pushUnique(constraints, line);
+      } else if (lineLower.includes("non-goal") || lineLower.includes("out of scope") || lineLower.startsWith("not ")) {
+        pushUnique(nonGoals, line);
+      } else if (lineLower.includes("risk") || lineLower.includes("danger")) {
+        pushUnique(risks, line);
+      } else if (lineLower.includes("assume") || lineLower.includes("likely") || lineLower.includes("probably")) {
+        pushUnique(assumptions, line);
+      } else if (
+        lineLower.includes("user") ||
+        lineLower.includes("operator") ||
+        lineLower.includes("admin") ||
+        lineLower.includes("customer")
+      ) {
+        pushUnique(targetUsers, line);
+      } else {
+        pushUnique(useCases, line);
+      }
+    }
+
+    const nextProblem = labeled.problem ?? view.problem ?? normalized;
+    const nextCoreOutcome = labeled.coreOutcome ?? view.coreOutcome ?? (normalized.length > 0 ? normalized : null);
+    const nextRecommendedDirection =
+      labeled.recommendedDirection ?? view.recommendedDirection ?? (candidateDirections[0] ?? null);
+    const nextScopeNotes = this.appendBrainstormScopeNotes(view.scopeNotes, normalized);
+
+    return {
+      problem: nextProblem,
+      coreOutcome: nextCoreOutcome,
+      targetUsersJson: JSON.stringify(this.normalizeBrainstormEntries(targetUsers)),
+      useCasesJson: JSON.stringify(this.normalizeBrainstormEntries(useCases)),
+      constraintsJson: JSON.stringify(this.normalizeBrainstormEntries(constraints)),
+      nonGoalsJson: JSON.stringify(this.normalizeBrainstormEntries(nonGoals)),
+      risksJson: JSON.stringify(this.normalizeBrainstormEntries(risks)),
+      openQuestionsJson: JSON.stringify(this.normalizeBrainstormEntries(openQuestions)),
+      candidateDirectionsJson: JSON.stringify(this.normalizeBrainstormEntries(candidateDirections)),
+      recommendedDirection: nextRecommendedDirection,
+      assumptionsJson: JSON.stringify(this.normalizeBrainstormEntries(assumptions)),
+      scopeNotes: labeled.scopeNotes ?? nextScopeNotes
+    };
+  }
+
+  private normalizeBrainstormEntries(values: string[]): string[] {
+    const seen = new Set<string>();
+    const result: string[] = [];
+    for (const value of values) {
+      const normalized = value.replace(/\s+/g, " ").trim();
+      const dedupeKey = normalized.toLowerCase();
+      if (!normalized || seen.has(dedupeKey)) {
+        continue;
+      }
+      seen.add(dedupeKey);
+      result.push(normalized);
+    }
+    return result;
+  }
+
+  private splitBrainstormEntries(value: string): string[] {
+    return this.normalizeBrainstormEntries(value.split(/\n|;|,/g));
+  }
+
+  private parseBrainstormStructuredMessage(message: string): {
+    problem?: string;
+    coreOutcome?: string;
+    targetUsers: string[];
+    useCases: string[];
+    constraints: string[];
+    nonGoals: string[];
+    risks: string[];
+    openQuestions: string[];
+    candidateDirections: string[];
+    recommendedDirection?: string;
+    assumptions: string[];
+    scopeNotes?: string;
+    unlabeled: string[];
+  } {
+    const result = {
+      targetUsers: [],
+      useCases: [],
+      constraints: [],
+      nonGoals: [],
+      risks: [],
+      openQuestions: [],
+      candidateDirections: [],
+      assumptions: [],
+      unlabeled: []
+    } as {
+      problem?: string;
+      coreOutcome?: string;
+      targetUsers: string[];
+      useCases: string[];
+      constraints: string[];
+      nonGoals: string[];
+      risks: string[];
+      openQuestions: string[];
+      candidateDirections: string[];
+      recommendedDirection?: string;
+      assumptions: string[];
+      scopeNotes?: string;
+      unlabeled: string[];
+    };
+
+    const lines = message
+      .split("\n")
+      .map((line) => line.replace(/^\s*[-*]\s*/, "").trim())
+      .filter((line) => line.length > 0);
+
+    for (const line of lines) {
+      const match = line.match(/^([a-z ]+):\s*(.+)$/i);
+      if (!match) {
+        result.unlabeled.push(line);
+        continue;
+      }
+      const label = match[1].trim().toLowerCase();
+      const value = match[2].trim();
+      if (!value) {
+        continue;
+      }
+      if (label === "problem") {
+        result.problem = value;
+        continue;
+      }
+      if (label === "outcome" || label === "core outcome" || label === "goal") {
+        result.coreOutcome = value;
+        continue;
+      }
+      if (label === "user" || label === "users" || label === "target user" || label === "target users" || label === "actor") {
+        result.targetUsers.push(...this.splitBrainstormEntries(value));
+        continue;
+      }
+      if (label === "use case" || label === "use cases") {
+        result.useCases.push(...this.splitBrainstormEntries(value));
+        continue;
+      }
+      if (label === "constraint" || label === "constraints") {
+        result.constraints.push(...this.splitBrainstormEntries(value));
+        continue;
+      }
+      if (label === "non-goal" || label === "non-goals") {
+        result.nonGoals.push(...this.splitBrainstormEntries(value));
+        continue;
+      }
+      if (label === "risk" || label === "risks") {
+        result.risks.push(...this.splitBrainstormEntries(value));
+        continue;
+      }
+      if (label === "question" || label === "questions" || label === "open question" || label === "open questions") {
+        result.openQuestions.push(...this.splitBrainstormEntries(value));
+        continue;
+      }
+      if (label === "direction" || label === "directions" || label === "candidate direction" || label === "candidate directions") {
+        result.candidateDirections.push(...this.splitBrainstormEntries(value));
+        continue;
+      }
+      if (label === "recommended direction" || label === "recommendation") {
+        result.recommendedDirection = value;
+        continue;
+      }
+      if (label === "assumption" || label === "assumptions") {
+        result.assumptions.push(...this.splitBrainstormEntries(value));
+        continue;
+      }
+      if (label === "scope notes" || label === "scope") {
+        result.scopeNotes = value;
+        continue;
+      }
+      result.unlabeled.push(line);
+    }
+
+    return result;
+  }
+
+  private appendBrainstormScopeNotes(previous: string | null, message: string): string | null {
+    const normalized = message.trim();
+    if (!normalized) {
+      return previous;
+    }
+    if (!previous) {
+      return normalized;
+    }
+    return `${previous}\n${normalized}`;
+  }
+
+  private computeBrainstormDraftStatus(draft: BrainstormDraft): BrainstormDraftStatus {
+    const view = this.mapBrainstormDraft(draft);
+    const hasCore = Boolean(view.problem && view.coreOutcome);
+    const hasUsers = view.targetUsers.length > 0;
+    const hasUseCases = view.useCases.length > 0;
+    const hasDirection = Boolean(view.recommendedDirection || view.candidateDirections.length > 0);
+    if (hasCore && hasUsers && hasUseCases && hasDirection) {
+      return "ready_for_concept";
+    }
+    return hasCore ? "drafting" : "needs_input";
+  }
+
+  private computeBrainstormSessionStatus(draft: BrainstormDraft): BrainstormSessionStatus {
+    const status = this.computeBrainstormDraftStatus(draft);
+    if (status === "ready_for_concept") {
+      return "ready_for_concept";
+    }
+    return "waiting_for_user";
+  }
+
+  private computeBrainstormSessionMode(draft: BrainstormDraft): BrainstormSessionMode {
+    const view = this.mapBrainstormDraft(draft);
+    if (this.computeBrainstormDraftStatus(draft) === "ready_for_concept") {
+      return "converge";
+    }
+    if (!view.problem || view.targetUsers.length === 0) {
+      return "explore";
+    }
+    if (view.candidateDirections.length > 1) {
+      return "compare";
+    }
+    return "shape";
+  }
+
+  private buildBrainstormKickoffMessage(item: { code: string; title: string; description: string }): string {
+    return [
+      `Interactive brainstorm for ${item.code} is open.`,
+      "",
+      `Current item: ${item.title}`,
+      item.description ? `Description: ${item.description}` : "Description: none provided",
+      "",
+      "Start by clarifying the core problem, the target users, or the smallest useful outcome."
+    ].join("\n");
+  }
+
+  private buildBrainstormFollowUpMessage(item: { code: string; title: string }, draft: BrainstormDraft): string {
+    const view = this.mapBrainstormDraft(draft);
+    const nextQuestion =
+      view.targetUsers.length === 0
+        ? "Who is the primary user or actor for this item?"
+        : view.useCases.length === 0
+          ? "What is the first concrete use case we should support?"
+          : view.recommendedDirection === null
+            ? "Which direction should become the recommended MVP approach?"
+            : "The draft is converging. Add any remaining assumptions or promote it to a concept.";
+    return [
+      `Brainstorm summary for ${item.code}:`,
+      `problem=${view.problem ?? "missing"}`,
+      `targetUsers=${view.targetUsers.length}`,
+      `useCases=${view.useCases.length}`,
+      `candidateDirections=${view.candidateDirections.length}`,
+      "",
+      nextQuestion
+    ].join("\n");
+  }
+
+  private renderConceptFromBrainstormDraft(
+    item: { code: string; title: string; description: string },
+    draft: ReturnType<WorkflowService["mapBrainstormDraft"]>
+  ): string {
+    return [
+      `# ${item.title} Concept`,
+      "",
+      "## Item Code",
+      item.code,
+      "",
+      "## Problem",
+      draft.problem ?? item.description,
+      "",
+      "## Desired Outcome",
+      draft.coreOutcome ?? item.title,
+      "",
+      "## Target Users",
+      draft.targetUsers.length > 0 ? draft.targetUsers.map((entry) => `- ${entry}`).join("\n") : "- TBD",
+      "",
+      "## Use Cases",
+      draft.useCases.length > 0 ? draft.useCases.map((entry) => `- ${entry}`).join("\n") : "- TBD",
+      "",
+      "## Constraints",
+      draft.constraints.length > 0 ? draft.constraints.map((entry) => `- ${entry}`).join("\n") : "- None captured",
+      "",
+      "## Non-Goals",
+      draft.nonGoals.length > 0 ? draft.nonGoals.map((entry) => `- ${entry}`).join("\n") : "- None captured",
+      "",
+      "## Risks",
+      draft.risks.length > 0 ? draft.risks.map((entry) => `- ${entry}`).join("\n") : "- None captured",
+      "",
+      "## Recommended Approach",
+      draft.recommendedDirection ?? draft.candidateDirections[0] ?? "Refine during concept review",
+      "",
+      "## Assumptions",
+      draft.assumptions.length > 0 ? draft.assumptions.map((entry) => `- ${entry}`).join("\n") : "- None captured",
+      "",
+      "## Scope Notes",
+      draft.scopeNotes ?? "No additional scope notes captured.",
+      ""
+    ].join("\n");
+  }
+
+  private buildProjectsFromBrainstormDraft(
+    item: { title: string },
+    draft: ReturnType<WorkflowService["mapBrainstormDraft"]>
+  ): { projects: Array<{ title: string; summary: string; goal: string }> } {
+    const candidateSeeds = this.normalizeBrainstormEntries([
+      ...(draft.recommendedDirection ? [draft.recommendedDirection] : []),
+      ...draft.candidateDirections,
+      ...draft.useCases
+    ]).slice(0, 3);
+
+    if (candidateSeeds.length === 0) {
+      candidateSeeds.push(draft.coreOutcome ?? draft.problem ?? item.title);
+    }
+
+    return {
+      projects: candidateSeeds.map((seed, index) => ({
+        title: this.buildBrainstormProjectTitle(item.title, seed, index),
+        summary: index === 0 ? draft.problem ?? seed : seed,
+        goal:
+          candidateSeeds.length === 1
+            ? draft.coreOutcome ?? `Deliver the first usable slice for ${item.title}.`
+            : `${draft.coreOutcome ?? `Deliver the first usable slice for ${item.title}`}: ${seed}`
+      }))
+    };
+  }
+
+  private buildBrainstormProjectTitle(itemTitle: string, seed: string, index: number): string {
+    const cleaned = seed
+      .replace(/^(build|create|support|enable|deliver)\s+/i, "")
+      .replace(/[.?!].*$/, "")
+      .trim();
+    if (!cleaned) {
+      return `${itemTitle} Track ${index + 1}`;
+    }
+    const words = cleaned.split(/\s+/).slice(0, 6);
+    const title = words.map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
+    return title.toLowerCase().startsWith(itemTitle.toLowerCase()) ? title : `${itemTitle} ${title}`;
+  }
+
+  private persistManualArtifact(input: {
+    item: { id: string };
+    sessionScopedId: string;
+    kind: string;
+    format: "md" | "json";
+    content: string;
+  }): ArtifactRecord {
+    const written = this.artifactService.writeArtifact({
+      workspaceKey: this.deps.workspace.key,
+      itemId: input.item.id,
+      projectId: null,
+      stageRunId: input.sessionScopedId,
+      kind: input.kind,
+      format: input.format,
+      content: input.content
+    });
+    return this.deps.artifactRepository.create({
+      stageRunId: null,
+      itemId: input.item.id,
+      projectId: null,
+      kind: input.kind,
+      format: input.format,
+      path: written.path,
+      sha256: written.sha256,
+      sizeBytes: written.sizeBytes
+    });
+  }
+
   private getStoryReviewScope(session: InteractiveReviewSession) {
     this.assertStoryProjectSession(session);
     const project = this.requireProject(session.scopeId);
@@ -3907,6 +5208,14 @@ export class WorkflowService {
       throw new AppError("WAVE_STORY_EXECUTION_NOT_FOUND", `Wave story execution ${waveStoryExecutionId} not found`);
     }
     return waveStoryExecution;
+  }
+
+  private requireAppVerificationRun(appVerificationRunId: string): AppVerificationRun {
+    const appVerificationRun = this.deps.appVerificationRunRepository.getById(appVerificationRunId);
+    if (!appVerificationRun) {
+      throw new AppError("APP_VERIFICATION_RUN_NOT_FOUND", `App verification run ${appVerificationRunId} not found`);
+    }
+    return appVerificationRun;
   }
 
   private requireStoryReviewRun(storyReviewRunId: string) {

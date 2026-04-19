@@ -99,6 +99,85 @@ describe("workflow service", () => {
     }
   });
 
+  it("supports interactive brainstorm sessions, draft updates, and promotion", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const item = createWorkspaceItem(context, {
+        title: "Interactive Brainstorm",
+        description: "Clarify the concept collaboratively"
+      });
+
+      const started = context.workflowService.startBrainstormSession(item.id);
+      expect(started.reused).toBe(false);
+
+      const shown = context.workflowService.showBrainstormBySessionId(started.sessionId) as {
+        session: { status: string; mode: string };
+        draft: { revision: number; problem: string | null; openQuestions: string[] };
+        messages: Array<{ role: string }>;
+      };
+      expect(shown.session.status).toBe("waiting_for_user");
+      expect(shown.session.mode).toBe("explore");
+      expect(shown.draft.revision).toBe(1);
+      expect(shown.messages.map((message) => message.role)).toEqual(["system", "assistant"]);
+
+      const chatted = context.workflowService.chatBrainstorm(
+        started.sessionId,
+        [
+          "problem: Teams cannot see review state across workflow runs",
+          "users: support operator; delivery lead",
+          "use cases: inspect active review sessions; spot blocked approvals",
+          "candidate directions: review inbox dashboard; timeline view",
+          "recommended direction: review inbox dashboard"
+        ].join("\n")
+      ) as {
+        mode: string;
+        draft: { revision: number; problem: string | null; targetUsers: string[]; useCases: string[]; candidateDirections: string[] };
+      };
+      expect(chatted.draft.revision).toBe(2);
+      expect(chatted.mode).toBe("converge");
+      expect(chatted.draft.problem).toContain("review state");
+      expect(chatted.draft.targetUsers).toEqual(["support operator", "delivery lead"]);
+      expect(chatted.draft.useCases.length).toBe(2);
+      expect(chatted.draft.candidateDirections).toEqual(["review inbox dashboard", "timeline view"]);
+
+      const updated = context.workflowService.updateBrainstormDraft({
+        sessionId: started.sessionId,
+        coreOutcome: "Give delivery teams one shared review control surface",
+        useCases: ["inspect active review sessions", "spot blocked approvals", "resume stalled reviews"],
+        openQuestions: [],
+        assumptions: ["Existing workflow records already contain enough metadata for a first MVP"]
+      }) as {
+        status: string;
+        mode: string;
+        draft: { revision: number; coreOutcome: string | null; useCases: string[]; openQuestions: string[] };
+      };
+      expect(updated.status).toBe("ready_for_concept");
+      expect(updated.mode).toBe("converge");
+      expect(updated.draft.revision).toBe(3);
+      expect(updated.draft.coreOutcome).toContain("shared review control surface");
+      expect(updated.draft.useCases).toContain("resume stalled reviews");
+      expect(updated.draft.openQuestions).toEqual([]);
+
+      const promoted = await context.workflowService.promoteBrainstorm(started.sessionId);
+      expect(promoted.status).toBe("promoted");
+      expect(context.repositories.conceptRepository.getLatestByItemId(item.id)?.id).toBe(promoted.conceptId);
+      const projectsArtifact = context.repositories.artifactRepository.getLatestByKind({ itemId: item.id, kind: "projects" });
+      expect(projectsArtifact?.id).toBeTruthy();
+      const projectsPayload = JSON.parse(readFileSync(join("var/artifacts", projectsArtifact!.path), "utf8")) as {
+        projects: Array<{ title: string; goal: string }>;
+      };
+      expect(projectsPayload.projects.length).toBe(3);
+      expect(projectsPayload.projects[0]?.title).toContain("Review");
+      expect(projectsPayload.projects[1]?.goal).toContain("shared review control surface");
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("keeps prior prompt snapshots after prompt file changes", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
     const dbPath = join(root, "app.sqlite");
@@ -611,6 +690,8 @@ describe("workflow service", () => {
             verificationRuns: Array<{ mode: string; status: string }>;
             latestBasicVerification: { mode: string; status: string } | null;
             latestRalphVerification: { mode: string; status: string } | null;
+            appVerificationRuns: Array<{ status: string; runner: string }>;
+            latestAppVerificationRun: { status: string; runner: string; resultJson: string | null } | null;
             agentSessions: Array<{ adapterKey: string }>;
             latestStoryReviewRun: { status: string; summaryJson: string | null } | null;
             latestStoryReviewFindings: Array<{ severity: string }>;
@@ -632,6 +713,10 @@ describe("workflow service", () => {
       expect(shown.waves[0]?.stories[0]?.verificationRuns.map((run) => run.mode)).toEqual(["basic", "ralph"]);
       expect(shown.waves[0]?.stories[0]?.latestBasicVerification?.status).toBe("passed");
       expect(shown.waves[0]?.stories[0]?.latestRalphVerification?.status).toBe("passed");
+      expect(shown.waves[0]?.stories[0]?.appVerificationRuns).toHaveLength(1);
+      expect(shown.waves[0]?.stories[0]?.latestAppVerificationRun?.status).toBe("passed");
+      expect(shown.waves[0]?.stories[0]?.latestAppVerificationRun?.runner).toBe("agent_browser");
+      expect(shown.waves[0]?.stories[0]?.latestAppVerificationRun?.resultJson).toContain("overallStatus");
       expect(shown.waves[0]?.stories[0]?.latestStoryReviewRun?.status).toBe("passed");
       expect(shown.waves[0]?.stories[0]?.latestStoryReviewRun?.summaryJson).toContain("overallStatus");
       expect(shown.waves[0]?.stories[0]?.latestStoryReviewFindings).toHaveLength(0);
@@ -742,6 +827,92 @@ describe("workflow service", () => {
       expect(shown.waves[0]?.stories[0]?.latestRalphVerification?.status).toBe("failed");
       expect(shown.waves[0]?.stories[0]?.latestStoryReviewRun).toBeNull();
       context.connection.close();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("stores app verification runs, surfaces them in execution state, and supports retry", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const originalScript = readFileSync("scripts/local-agent.mjs", "utf8");
+    const adapterScriptPath = join(root, "local-agent-app-review-required.mjs");
+    const dbPath = join(root, "app.sqlite");
+
+    try {
+      const reviewScript = replaceRequired(
+        originalScript,
+        '  let overallStatus = "passed";',
+        '  let overallStatus = "review_required";'
+      );
+      writeFileSync(adapterScriptPath, reviewScript);
+      const reviewContext = createAppContext(dbPath, { adapterScriptPath });
+
+      const item = createWorkspaceItem(reviewContext, {
+        title: "App Verification Required",
+        description: "Trigger app verification follow-up"
+      });
+      await reviewContext.workflowService.startStage({ stageKey: "brainstorm", itemId: item.id });
+      const concept = reviewContext.repositories.conceptRepository.getLatestByItemId(item.id);
+      reviewContext.workflowService.approveConcept(concept!.id);
+      reviewContext.workflowService.importProjects(item.id);
+      const project = reviewContext.repositories.projectRepository.listByItemId(item.id)[0]!;
+      await reviewContext.workflowService.startStage({ stageKey: "requirements", itemId: item.id, projectId: project.id });
+      reviewContext.workflowService.approveStories(project.id);
+      await reviewContext.workflowService.startStage({ stageKey: "architecture", itemId: item.id, projectId: project.id });
+      reviewContext.workflowService.approveArchitecture(project.id);
+      await reviewContext.workflowService.startStage({ stageKey: "planning", itemId: item.id, projectId: project.id });
+      reviewContext.workflowService.approvePlanning(project.id);
+
+      const first = await reviewContext.workflowService.startExecution(project.id);
+      expect(first.executions[0]?.status).toBe("review_required");
+      expect(first.executions[0]?.phase).toBe("app_verification");
+
+      const shown = reviewContext.workflowService.showExecution(project.id) as {
+        waves: Array<{
+          waveExecution: { status: string } | null;
+          stories: Array<{
+            latestExecution: { status: string; id?: string } | null;
+            latestAppVerificationRun: { id: string; status: string } | null;
+            latestStoryReviewRun: { status: string } | null;
+          }>;
+        }>;
+      };
+      expect(shown.waves[0]?.waveExecution?.status).toBe("review_required");
+      expect(shown.waves[0]?.stories[0]?.latestExecution?.status).toBe("review_required");
+      expect(shown.waves[0]?.stories[0]?.latestAppVerificationRun?.status).toBe("review_required");
+      expect(shown.waves[0]?.stories[0]?.latestStoryReviewRun).toBeNull();
+
+      const appVerificationRunId = shown.waves[0]?.stories[0]?.latestAppVerificationRun?.id;
+      expect(appVerificationRunId).toBeTruthy();
+      reviewContext.connection.close();
+
+      const retryContext = createAppContext(dbPath);
+      const retried = await retryContext.workflowService.retryAppVerification(appVerificationRunId!);
+      expect(retried.status).toBe("completed");
+      expect(retried.phase).toBe("story_review");
+
+      const appVerification = retryContext.workflowService.showAppVerification(retried.appVerificationRunId) as {
+        run: { status: string };
+        result: { overallStatus: string } | null;
+      };
+      expect(appVerification.run.status).toBe("passed");
+      expect(appVerification.result?.overallStatus).toBe("passed");
+
+      const finalExecution = retryContext.workflowService.showExecution(project.id) as {
+        waves: Array<{
+          waveExecution: { status: string } | null;
+          stories: Array<{
+            latestExecution: { status: string } | null;
+            latestAppVerificationRun: { status: string } | null;
+            latestStoryReviewRun: { status: string } | null;
+          }>;
+        }>;
+      };
+      expect(finalExecution.waves[0]?.waveExecution?.status).toBe("completed");
+      expect(finalExecution.waves[0]?.stories[0]?.latestExecution?.status).toBe("completed");
+      expect(finalExecution.waves[0]?.stories[0]?.latestAppVerificationRun?.status).toBe("passed");
+      expect(finalExecution.waves[0]?.stories[0]?.latestStoryReviewRun?.status).toBe("passed");
+      retryContext.connection.close();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -1348,6 +1519,7 @@ describe("workflow service", () => {
         qaDefaultsJson: null,
         gitDefaultsJson: null,
         executionDefaultsJson: null,
+        appTestConfigJson: null,
         uiMetadataJson: null
       });
 

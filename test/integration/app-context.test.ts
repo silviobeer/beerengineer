@@ -33,6 +33,7 @@ describe("app context", () => {
             qaDefaultsJson: null,
             gitDefaultsJson: null,
             executionDefaultsJson: null,
+            appTestConfigJson: null,
             uiMetadataJson: null
           });
 
@@ -47,6 +48,7 @@ describe("app context", () => {
             qaDefaultsJson: null,
             gitDefaultsJson: null,
             executionDefaultsJson: null,
+            appTestConfigJson: null,
             uiMetadataJson: null
           });
         })

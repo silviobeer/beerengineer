@@ -6,9 +6,13 @@ import type { Workspace, WorkspaceSettings } from "./domain/types.js";
 import { createDatabase } from "./persistence/database.js";
 import {
   AcceptanceCriterionRepository,
+  AppVerificationRunRepository,
   ArchitecturePlanRepository,
   ArtifactRepository,
   AgentSessionRepository,
+  BrainstormDraftRepository,
+  BrainstormMessageRepository,
+  BrainstormSessionRepository,
   ConceptRepository,
   DocumentationAgentSessionRepository,
   DocumentationRunRepository,
@@ -69,6 +73,9 @@ export type AppContext = {
   repositories: {
     workspaceRepository: WorkspaceRepository;
     workspaceSettingsRepository: WorkspaceSettingsRepository;
+    brainstormSessionRepository: BrainstormSessionRepository;
+    brainstormMessageRepository: BrainstormMessageRepository;
+    brainstormDraftRepository: BrainstormDraftRepository;
     itemRepository: ItemRepository;
     conceptRepository: ConceptRepository;
     projectRepository: ProjectRepository;
@@ -86,6 +93,7 @@ export type AppContext = {
     waveStoryExecutionRepository: WaveStoryExecutionRepository;
     executionAgentSessionRepository: ExecutionAgentSessionRepository;
     verificationRunRepository: VerificationRunRepository;
+    appVerificationRunRepository: AppVerificationRunRepository;
     storyReviewRunRepository: StoryReviewRunRepository;
     storyReviewFindingRepository: StoryReviewFindingRepository;
     storyReviewAgentSessionRepository: StoryReviewAgentSessionRepository;
@@ -123,6 +131,9 @@ export function createAppContext(
 
   const workspaceRepository = new WorkspaceRepository(db);
   const workspaceSettingsRepository = new WorkspaceSettingsRepository(db);
+  const brainstormSessionRepository = new BrainstormSessionRepository(db);
+  const brainstormMessageRepository = new BrainstormMessageRepository(db);
+  const brainstormDraftRepository = new BrainstormDraftRepository(db);
   const itemRepository = new ItemRepository(db);
   const conceptRepository = new ConceptRepository(db);
   const projectRepository = new ProjectRepository(db);
@@ -140,6 +151,7 @@ export function createAppContext(
   const waveStoryExecutionRepository = new WaveStoryExecutionRepository(db);
   const executionAgentSessionRepository = new ExecutionAgentSessionRepository(db);
   const verificationRunRepository = new VerificationRunRepository(db);
+  const appVerificationRunRepository = new AppVerificationRunRepository(db);
   const storyReviewRunRepository = new StoryReviewRunRepository(db);
   const storyReviewFindingRepository = new StoryReviewFindingRepository(db);
   const storyReviewAgentSessionRepository = new StoryReviewAgentSessionRepository(db);
@@ -183,6 +195,9 @@ export function createAppContext(
     repositories: {
       workspaceRepository,
       workspaceSettingsRepository,
+      brainstormSessionRepository,
+      brainstormMessageRepository,
+      brainstormDraftRepository,
       itemRepository,
       conceptRepository,
       projectRepository,
@@ -200,6 +215,7 @@ export function createAppContext(
       waveStoryExecutionRepository,
       executionAgentSessionRepository,
       verificationRunRepository,
+      appVerificationRunRepository,
       storyReviewRunRepository,
       storyReviewFindingRepository,
       storyReviewAgentSessionRepository,
@@ -222,11 +238,15 @@ export function createAppContext(
     workflowService: new WorkflowService({
       repoRoot,
       workspace,
+      workspaceSettings,
       workspaceRoot: effectiveConfig.workspaceRoot,
       artifactRoot,
       runInTransaction: <T>(fn: () => T): T => connection.transaction(fn)(),
       adapter,
       itemRepository,
+      brainstormSessionRepository,
+      brainstormMessageRepository,
+      brainstormDraftRepository,
       conceptRepository,
       projectRepository,
       userStoryRepository,
@@ -243,6 +263,7 @@ export function createAppContext(
       waveStoryExecutionRepository,
       executionAgentSessionRepository,
       verificationRunRepository,
+      appVerificationRunRepository,
       storyReviewRunRepository,
       storyReviewFindingRepository,
       storyReviewAgentSessionRepository,

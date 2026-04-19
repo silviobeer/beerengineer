@@ -99,6 +99,31 @@ export const ralphVerificationOutputSchema = z.object({
   blockers: z.array(z.string().min(1))
 });
 
+export const appVerificationOutputSchema = z.object({
+  storyCode: z.string().min(1),
+  runner: z.enum(["agent_browser", "playwright"]),
+  overallStatus: z.enum(["passed", "review_required", "failed"]),
+  summary: z.string().min(1),
+  resolvedStartUrl: z.string().min(1).nullable().optional(),
+  checks: z.array(
+    z.object({
+      id: z.string().min(1),
+      description: z.string().min(1),
+      status: z.enum(["passed", "review_required", "failed"]),
+      evidence: z.string().min(1)
+    })
+  ).min(1),
+  artifacts: z.array(
+    z.object({
+      kind: z.enum(["screenshot", "log", "trace", "report"]),
+      path: z.string().min(1),
+      label: z.string().min(1),
+      contentType: z.string().min(1)
+    })
+  ).default([]),
+  failureSummary: z.string().min(1).nullable().optional()
+});
+
 export const qaOutputSchema = z.object({
   projectCode: z.string().min(1),
   overallStatus: z.enum(["passed", "review_required", "failed"]),
@@ -190,6 +215,7 @@ export type ImplementationPlanOutput = z.infer<typeof implementationPlanOutputSc
 export type StoryExecutionOutput = z.infer<typeof storyExecutionOutputSchema>;
 export type TestPreparationOutput = z.infer<typeof testPreparationOutputSchema>;
 export type RalphVerificationOutput = z.infer<typeof ralphVerificationOutputSchema>;
+export type AppVerificationOutput = z.infer<typeof appVerificationOutputSchema>;
 export type QaOutput = z.infer<typeof qaOutputSchema>;
 export type StoryReviewOutput = z.infer<typeof storyReviewOutputSchema>;
 export type DocumentationOutput = z.infer<typeof documentationOutputSchema>;

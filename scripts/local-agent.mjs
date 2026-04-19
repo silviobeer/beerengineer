@@ -249,6 +249,61 @@ function ralphVerification(payload) {
   };
 }
 
+function appVerification(payload) {
+  const storyText = `${payload.story.title} ${payload.story.description} ${payload.story.goal}`.toLowerCase();
+  const hasConfig = Boolean(payload.projectAppTestContext?.baseUrl);
+  const runner = payload.preparedSession?.runner ?? payload.projectAppTestContext?.runnerPreference?.[0] ?? "agent_browser";
+  const resolvedStartUrl = payload.preparedSession?.resolvedStartUrl ?? payload.projectAppTestContext?.baseUrl ?? null;
+
+  let overallStatus = "passed";
+  let failureSummary = null;
+  if (!hasConfig) {
+    overallStatus = "failed";
+    failureSummary = "App test configuration is missing a baseUrl.";
+  } else if (storyText.includes("browser infra fail") || storyText.includes("app infra fail")) {
+    overallStatus = "failed";
+    failureSummary = `The local browser runner could not prepare ${payload.story.code}.`;
+  } else if (storyText.includes("browser fail") || storyText.includes("ui fail") || storyText.includes("app review required")) {
+    overallStatus = "review_required";
+    failureSummary = `The local browser flow exposed a product issue for ${payload.story.code}.`;
+  }
+
+  return {
+    output: {
+      storyCode: payload.story.code,
+      runner,
+      overallStatus,
+      summary:
+        overallStatus === "passed"
+          ? `App verification passed for ${payload.story.code}.`
+          : overallStatus === "review_required"
+            ? `App verification found a product issue for ${payload.story.code}.`
+            : `App verification failed to prepare the browser session for ${payload.story.code}.`,
+      resolvedStartUrl,
+      checks: payload.storyAppVerificationContext.checks.map((check, index) => ({
+        id: check.id || `check-${index + 1}`,
+        description: check.description,
+        status: overallStatus,
+        evidence:
+          overallStatus === "passed"
+            ? `Observed expected product signal at ${resolvedStartUrl ?? payload.projectAppTestContext.baseUrl}.`
+            : overallStatus === "review_required"
+              ? `The UI flow did not satisfy the expected outcome: ${check.expectedOutcome}.`
+              : failureSummary ?? "Browser session preparation failed before the story flow could be executed."
+      })),
+      artifacts: [
+        {
+          kind: "report",
+          path: `artifacts/app-verification/${payload.story.code.toLowerCase()}.json`,
+          label: `${payload.story.code} app verification report`,
+          contentType: "application/json"
+        }
+      ],
+      failureSummary
+    }
+  };
+}
+
 function qaVerification(payload) {
   const findings = [];
 
@@ -460,6 +515,8 @@ if (payload.stageKey === "brainstorm") {
   result = testPreparation(payload);
 } else if (payload.workerRole === "ralph-verifier") {
   result = ralphVerification(payload);
+} else if (payload.workerRole === "app-verifier") {
+  result = appVerification(payload);
 } else if (payload.workerRole === "story-reviewer") {
   result = storyReview(payload);
 } else if (payload.workerRole === "qa-verifier") {

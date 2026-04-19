@@ -2,7 +2,15 @@ import { and, desc, eq, inArray, isNull, notInArray } from "drizzle-orm";
 
 import type {
   AcceptanceCriterion,
+  AppVerificationRun,
+  AppVerificationRunStatus,
   ArchitecturePlan,
+  BrainstormDraft,
+  BrainstormDraftStatus,
+  BrainstormMessage,
+  BrainstormSession,
+  BrainstormSessionMode,
+  BrainstormSessionStatus,
   BoardColumn,
   Concept,
   DocumentationAgentSession,
@@ -66,10 +74,14 @@ import {
   agentSessions,
   architecturePlans,
   artifacts,
+  brainstormDrafts,
+  brainstormMessages,
+  brainstormSessions,
   concepts,
   documentationAgentSessions,
   documentationRuns,
   executionAgentSessions,
+  appVerificationRuns,
   implementationPlans,
   interactiveReviewEntries,
   interactiveReviewMessages,
@@ -211,6 +223,7 @@ export class WorkspaceSettingsRepository {
         promptOverridesJson: updated.promptOverridesJson,
         skillOverridesJson: updated.skillOverridesJson,
         verificationDefaultsJson: updated.verificationDefaultsJson,
+        appTestConfigJson: updated.appTestConfigJson,
         qaDefaultsJson: updated.qaDefaultsJson,
         gitDefaultsJson: updated.gitDefaultsJson,
         executionDefaultsJson: updated.executionDefaultsJson,
@@ -220,6 +233,155 @@ export class WorkspaceSettingsRepository {
       .where(eq(workspaceSettings.workspaceId, workspaceId))
       .run();
     return updated;
+  }
+}
+
+export class BrainstormSessionRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public getById(id: string): BrainstormSession | null {
+    return (
+      this.db.select().from(brainstormSessions).where(eq(brainstormSessions.id, id)).get() as
+        | BrainstormSession
+        | undefined
+    ) ?? null;
+  }
+
+  public findOpenByItemId(itemId: string): BrainstormSession | null {
+    return (
+      this.db
+        .select()
+        .from(brainstormSessions)
+        .where(and(eq(brainstormSessions.itemId, itemId), notInArray(brainstormSessions.status, ["resolved", "cancelled"])))
+        .orderBy(desc(brainstormSessions.startedAt), desc(brainstormSessions.id))
+        .limit(1)
+        .get() as BrainstormSession | undefined
+    ) ?? null;
+  }
+
+  public create(input: Omit<BrainstormSession, "id" | "startedAt" | "updatedAt" | "resolvedAt" | "lastAssistantMessageId" | "lastUserMessageId">): BrainstormSession {
+    const timestamp = now();
+    const row: BrainstormSession = {
+      ...input,
+      id: createId("brainstorm_session"),
+      startedAt: timestamp,
+      updatedAt: timestamp,
+      resolvedAt: null,
+      lastAssistantMessageId: null,
+      lastUserMessageId: null
+    };
+    this.db.insert(brainstormSessions).values(row).run();
+    return row;
+  }
+
+  public update(
+    id: string,
+    input: Partial<Pick<BrainstormSession, "status" | "mode" | "resolvedAt" | "lastAssistantMessageId" | "lastUserMessageId">>
+  ): void {
+    this.db
+      .update(brainstormSessions)
+      .set({
+        ...(input.status !== undefined ? { status: input.status } : {}),
+        ...(input.mode !== undefined ? { mode: input.mode } : {}),
+        ...(input.resolvedAt !== undefined ? { resolvedAt: input.resolvedAt } : {}),
+        ...(input.lastAssistantMessageId !== undefined ? { lastAssistantMessageId: input.lastAssistantMessageId } : {}),
+        ...(input.lastUserMessageId !== undefined ? { lastUserMessageId: input.lastUserMessageId } : {}),
+        updatedAt: now()
+      })
+      .where(eq(brainstormSessions.id, id))
+      .run();
+  }
+}
+
+export class BrainstormMessageRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public create(input: Omit<BrainstormMessage, "id" | "createdAt">): BrainstormMessage {
+    const row: BrainstormMessage = {
+      ...input,
+      id: createId("brainstorm_message"),
+      createdAt: now()
+    };
+    this.db.insert(brainstormMessages).values(row).run();
+    return row;
+  }
+
+  public listBySessionId(sessionId: string): BrainstormMessage[] {
+    return this.db
+      .select()
+      .from(brainstormMessages)
+      .where(eq(brainstormMessages.sessionId, sessionId))
+      .orderBy(brainstormMessages.createdAt, brainstormMessages.id)
+      .all() as BrainstormMessage[];
+  }
+}
+
+export class BrainstormDraftRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public getLatestBySessionId(sessionId: string): BrainstormDraft | null {
+    return (
+      this.db
+        .select()
+        .from(brainstormDrafts)
+        .where(eq(brainstormDrafts.sessionId, sessionId))
+        .orderBy(desc(brainstormDrafts.revision), desc(brainstormDrafts.id))
+        .limit(1)
+        .get() as BrainstormDraft | undefined
+    ) ?? null;
+  }
+
+  public create(input: Omit<BrainstormDraft, "id" | "lastUpdatedAt">): BrainstormDraft {
+    const row: BrainstormDraft = {
+      ...input,
+      id: createId("brainstorm_draft"),
+      lastUpdatedAt: now()
+    };
+    this.db.insert(brainstormDrafts).values(row).run();
+    return row;
+  }
+
+  public createRevision(
+    previous: BrainstormDraft,
+    input: Partial<
+      Pick<
+        BrainstormDraft,
+        | "status"
+        | "problem"
+        | "targetUsersJson"
+        | "coreOutcome"
+        | "useCasesJson"
+        | "constraintsJson"
+        | "nonGoalsJson"
+        | "risksJson"
+        | "openQuestionsJson"
+        | "candidateDirectionsJson"
+        | "recommendedDirection"
+        | "scopeNotes"
+        | "assumptionsJson"
+        | "lastUpdatedFromMessageId"
+      >
+    >
+  ): BrainstormDraft {
+    return this.create({
+      itemId: previous.itemId,
+      sessionId: previous.sessionId,
+      revision: previous.revision + 1,
+      status: input.status ?? previous.status,
+      problem: input.problem !== undefined ? input.problem : previous.problem,
+      targetUsersJson: input.targetUsersJson ?? previous.targetUsersJson,
+      coreOutcome: input.coreOutcome !== undefined ? input.coreOutcome : previous.coreOutcome,
+      useCasesJson: input.useCasesJson ?? previous.useCasesJson,
+      constraintsJson: input.constraintsJson ?? previous.constraintsJson,
+      nonGoalsJson: input.nonGoalsJson ?? previous.nonGoalsJson,
+      risksJson: input.risksJson ?? previous.risksJson,
+      openQuestionsJson: input.openQuestionsJson ?? previous.openQuestionsJson,
+      candidateDirectionsJson: input.candidateDirectionsJson ?? previous.candidateDirectionsJson,
+      recommendedDirection: input.recommendedDirection !== undefined ? input.recommendedDirection : previous.recommendedDirection,
+      scopeNotes: input.scopeNotes !== undefined ? input.scopeNotes : previous.scopeNotes,
+      assumptionsJson: input.assumptionsJson ?? previous.assumptionsJson,
+      lastUpdatedFromMessageId: input.lastUpdatedFromMessageId !== undefined ? input.lastUpdatedFromMessageId : previous.lastUpdatedFromMessageId
+    });
   }
 }
 
@@ -1152,6 +1314,89 @@ export class VerificationRunRepository {
     return waveStoryExecutionIds
       .map((waveStoryExecutionId) => this.getLatestByWaveStoryExecutionIdAndMode(waveStoryExecutionId, mode))
       .filter((run): run is VerificationRun => run !== null);
+  }
+}
+
+export class AppVerificationRunRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public getById(id: string): AppVerificationRun | null {
+    return (
+      this.db.select().from(appVerificationRuns).where(eq(appVerificationRuns.id, id)).get() as
+        | AppVerificationRun
+        | undefined
+    ) ?? null;
+  }
+
+  public listByWaveStoryExecutionId(waveStoryExecutionId: string): AppVerificationRun[] {
+    return this.db
+      .select()
+      .from(appVerificationRuns)
+      .where(eq(appVerificationRuns.waveStoryExecutionId, waveStoryExecutionId))
+      .orderBy(appVerificationRuns.createdAt)
+      .all() as AppVerificationRun[];
+  }
+
+  public getLatestByWaveStoryExecutionId(waveStoryExecutionId: string): AppVerificationRun | null {
+    return (
+      this.db
+        .select()
+        .from(appVerificationRuns)
+        .where(eq(appVerificationRuns.waveStoryExecutionId, waveStoryExecutionId))
+        .orderBy(desc(appVerificationRuns.attempt), desc(appVerificationRuns.id))
+        .limit(1)
+        .get() as AppVerificationRun | undefined
+    ) ?? null;
+  }
+
+  public create(
+    input: Omit<AppVerificationRun, "id" | "createdAt" | "updatedAt" | "startedAt" | "completedAt">
+  ): AppVerificationRun {
+    const timestamp = now();
+    const row: AppVerificationRun = {
+      ...input,
+      id: createId("app_verification_run"),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      startedAt: null,
+      completedAt: null
+    };
+    this.db.insert(appVerificationRuns).values(row).run();
+    return row;
+  }
+
+  public updateStatus(
+    id: string,
+    status: AppVerificationRunStatus,
+    options?: {
+      runner?: AppVerificationRun["runner"];
+      projectAppTestContextJson?: string | null;
+      storyContextJson?: string | null;
+      preparedSessionJson?: string | null;
+      resultJson?: string | null;
+      artifactsJson?: string | null;
+      failureSummary?: string | null;
+      startedAt?: number | null;
+    }
+  ): void {
+    const terminal = status === "passed" || status === "review_required" || status === "failed";
+    this.db
+      .update(appVerificationRuns)
+      .set({
+        runner: options?.runner,
+        status,
+        projectAppTestContextJson: options?.projectAppTestContextJson,
+        storyContextJson: options?.storyContextJson,
+        preparedSessionJson: options?.preparedSessionJson,
+        resultJson: options?.resultJson,
+        artifactsJson: options?.artifactsJson,
+        failureSummary: options?.failureSummary ?? null,
+        startedAt: options?.startedAt,
+        updatedAt: now(),
+        completedAt: terminal ? now() : null
+      })
+      .where(eq(appVerificationRuns.id, id))
+      .run();
   }
 }
 

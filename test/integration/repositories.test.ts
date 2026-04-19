@@ -5,6 +5,7 @@ import { applyMigrations } from "../../src/persistence/migrator.js";
 import { baseMigrations } from "../../src/persistence/migration-registry.js";
 import {
   AcceptanceCriterionRepository,
+  AppVerificationRunRepository,
   ArtifactRepository,
   ArchitecturePlanRepository,
   ConceptRepository,
@@ -65,6 +66,7 @@ describe("repositories", () => {
     const waveStoryExecutionRepository = new WaveStoryExecutionRepository(db);
     const executionAgentSessionRepository = new ExecutionAgentSessionRepository(db);
     const verificationRunRepository = new VerificationRunRepository(db);
+    const appVerificationRunRepository = new AppVerificationRunRepository(db);
     const storyReviewRunRepository = new StoryReviewRunRepository(db);
     const storyReviewFindingRepository = new StoryReviewFindingRepository(db);
     const storyReviewAgentSessionRepository = new StoryReviewAgentSessionRepository(db);
@@ -312,6 +314,28 @@ describe("repositories", () => {
         summaryJson: "{\"testsRun\":[{\"command\":\"npm test\",\"status\":\"passed\"}]}",
         errorMessage: null
       });
+      const appVerificationRun = appVerificationRunRepository.create({
+        waveStoryExecutionId: waveStoryExecution.id,
+        status: "in_progress",
+        runner: "agent_browser",
+        attempt: 1,
+        projectAppTestContextJson: "{\"baseUrl\":\"http://127.0.0.1:3000\"}",
+        storyContextJson: "{\"storyCode\":\"ITEM-0001-P01-US01\"}",
+        preparedSessionJson: "{\"ready\":true}",
+        resultJson: null,
+        artifactsJson: null,
+        failureSummary: null
+      });
+      appVerificationRunRepository.updateStatus(appVerificationRun.id, "passed", {
+        runner: "playwright",
+        projectAppTestContextJson: "{\"baseUrl\":\"http://127.0.0.1:3000\"}",
+        storyContextJson: "{\"storyCode\":\"ITEM-0001-P01-US01\"}",
+        preparedSessionJson: "{\"ready\":true}",
+        resultJson: "{\"overallStatus\":\"passed\"}",
+        artifactsJson: "[]",
+        failureSummary: null,
+        startedAt: Date.now()
+      });
       const qaRun = qaRunRepository.create({
         projectId: projects[0]!.id,
         mode: "full",
@@ -495,6 +519,9 @@ describe("repositories", () => {
       expect(waveStoryExecution.id).toContain("wave_story_execution_");
       expect(executionSession.id).toContain("execution_session_");
       expect(verificationRun.id).toContain("verification_");
+      expect(appVerificationRun.id).toContain("app_verification_run_");
+      expect(appVerificationRunRepository.getLatestByWaveStoryExecutionId(waveStoryExecution.id)?.status).toBe("passed");
+      expect(appVerificationRunRepository.listByWaveStoryExecutionId(waveStoryExecution.id)).toHaveLength(1);
       expect(storyReviewRun.id).toContain("story_review_run_");
       expect(storyReviewRunRepository.getLatestByWaveStoryExecutionId(waveStoryExecution.id)?.status).toBe("review_required");
       expect(storyReviewFindings[0]?.line).toBe(123);
@@ -605,6 +632,7 @@ describe("repositories", () => {
         qaDefaultsJson: null,
         gitDefaultsJson: null,
         executionDefaultsJson: null,
+        appTestConfigJson: null,
         uiMetadataJson: null
       });
 

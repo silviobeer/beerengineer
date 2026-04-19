@@ -140,6 +140,7 @@ describe("cli happy path", () => {
           stories: Array<{
             latestTestRun: { id: string } | null;
             latestRalphVerification: { mode: string; status: string } | null;
+            latestAppVerificationRun: { id: string; status: string; runner: string } | null;
             verificationRuns: Array<{ mode: string; status: string }>;
             testAgentSessions: Array<{ id: string }>;
           }>;
@@ -150,7 +151,25 @@ describe("cli happy path", () => {
       expect(executionShow.waves[0]?.stories[0]?.latestTestRun?.id).toContain("wave_story_test_run_");
       expect(executionShow.waves[0]?.stories[0]?.verificationRuns.map((run) => run.mode)).toEqual(["basic", "ralph"]);
       expect(executionShow.waves[0]?.stories[0]?.latestRalphVerification?.status).toBe("passed");
+      expect(executionShow.waves[0]?.stories[0]?.latestAppVerificationRun?.status).toBe("passed");
+      expect(executionShow.waves[0]?.stories[0]?.latestAppVerificationRun?.runner).toBe("agent_browser");
       expect(executionShow.waves[0]?.stories[0]?.testAgentSessions.length).toBe(1);
+
+      const appVerificationShow = runCli(
+        [
+          "--db",
+          dbPath,
+          "app-verification:show",
+          "--app-verification-run-id",
+          executionShow.waves[0]!.stories[0]!.latestAppVerificationRun!.id
+        ],
+        cwd
+      ) as {
+        run: { status: string };
+        result: { overallStatus: string } | null;
+      };
+      expect(appVerificationShow.run.status).toBe("passed");
+      expect(appVerificationShow.result?.overallStatus).toBe("passed");
 
       const artifacts = runCli(["--db", dbPath, "artifacts:list", "--item-id", item.id], cwd) as Array<{ id: string }>;
       expect(artifacts.length).toBeGreaterThan(0);
@@ -165,7 +184,7 @@ describe("cli happy path", () => {
       rmSync(root, { recursive: true, force: true });
     }
     },
-    25000
+    35000
   );
 
   it("returns structured errors for invalid commands", () => {
@@ -194,6 +213,97 @@ describe("cli happy path", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it(
+    "supports app verification retry via CLI",
+    () => {
+      const root = mkdtempSync(join(tmpdir(), "beerengineer-e2e-"));
+      const dbPath = join(root, "app.sqlite");
+      const cwd = resolve(".");
+      const originalScript = readFileSync("scripts/local-agent.mjs", "utf8");
+      const adapterScriptPath = join(root, "local-agent-app-review-required.mjs");
+
+      try {
+        const reviewScript = replaceRequired(
+          originalScript,
+          '  let overallStatus = "passed";',
+          '  let overallStatus = "review_required";'
+        );
+        writeFileSync(adapterScriptPath, reviewScript, "utf8");
+
+        const item = runCli(
+          ["--db", dbPath, "item:create", "--title", "App Retry", "--description", "Desc"],
+          cwd
+        ) as { id: string };
+        runCli(["--db", dbPath, "brainstorm:start", "--item-id", item.id], cwd);
+        const itemShow = runCli(["--db", dbPath, "item:show", "--item-id", item.id], cwd) as {
+          concept: { id: string };
+        };
+        runCli(["--db", dbPath, "concept:approve", "--concept-id", itemShow.concept.id], cwd);
+        runCli(["--db", dbPath, "project:import", "--item-id", item.id], cwd);
+        const imported = runCli(["--db", dbPath, "item:show", "--item-id", item.id], cwd) as {
+          projects: Array<{ id: string }>;
+        };
+        const projectId = imported.projects[0]!.id;
+        runCli(["--db", dbPath, "requirements:start", "--item-id", item.id, "--project-id", projectId], cwd);
+        runCli(["--db", dbPath, "stories:approve", "--project-id", projectId], cwd);
+        runCli(["--db", dbPath, "architecture:start", "--item-id", item.id, "--project-id", projectId], cwd);
+        runCli(["--db", dbPath, "architecture:approve", "--project-id", projectId], cwd);
+        runCli(["--db", dbPath, "planning:start", "--item-id", item.id, "--project-id", projectId], cwd);
+        runCli(["--db", dbPath, "planning:approve", "--project-id", projectId], cwd);
+
+        const firstExecution = runCli(
+          ["--db", dbPath, "--adapter-script-path", adapterScriptPath, "execution:start", "--project-id", projectId],
+          cwd
+        ) as { executions: Array<{ status: string; phase: string }> };
+        expect(firstExecution.executions[0]?.status).toBe("review_required");
+        expect(firstExecution.executions[0]?.phase).toBe("app_verification");
+
+        const executionShow = runCli(["--db", dbPath, "execution:show", "--project-id", projectId], cwd) as {
+          waves: Array<{
+            waveExecution: { status: string } | null;
+            stories: Array<{
+              latestExecution: { status: string } | null;
+              latestAppVerificationRun: { id: string; status: string } | null;
+            }>;
+          }>;
+        };
+        expect(executionShow.waves[0]?.waveExecution?.status).toBe("review_required");
+        expect(executionShow.waves[0]?.stories[0]?.latestAppVerificationRun?.status).toBe("review_required");
+
+        const retried = runCli(
+          [
+            "--db",
+            dbPath,
+            "app-verification:retry",
+            "--app-verification-run-id",
+            executionShow.waves[0]!.stories[0]!.latestAppVerificationRun!.id
+          ],
+          cwd
+        ) as { status: string; phase: string };
+        expect(retried.status).toBe("completed");
+        expect(retried.phase).toBe("story_review");
+
+        const finalExecution = runCli(["--db", dbPath, "execution:show", "--project-id", projectId], cwd) as {
+          waves: Array<{
+            waveExecution: { status: string } | null;
+            stories: Array<{
+              latestExecution: { status: string } | null;
+              latestAppVerificationRun: { status: string } | null;
+              latestStoryReviewRun: { status: string } | null;
+            }>;
+          }>;
+        };
+        expect(finalExecution.waves[0]?.waveExecution?.status).toBe("completed");
+        expect(finalExecution.waves[0]?.stories[0]?.latestExecution?.status).toBe("completed");
+        expect(finalExecution.waves[0]?.stories[0]?.latestAppVerificationRun?.status).toBe("passed");
+        expect(finalExecution.waves[0]?.stories[0]?.latestStoryReviewRun?.status).toBe("passed");
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+    25000
+  );
 
   it.skip(
     "supports interactive review commands for story approval and autorun",
