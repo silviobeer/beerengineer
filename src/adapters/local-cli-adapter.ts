@@ -8,6 +8,8 @@ import type {
   AgentAdapter,
   AdapterRunRequest,
   AdapterRunResult,
+  AppVerificationAdapterRunRequest,
+  AppVerificationAdapterRunResult,
   ExecutionAdapterRunRequest,
   ExecutionAdapterRunResult,
   DocumentationAdapterRunRequest,
@@ -86,6 +88,19 @@ export class LocalCliAdapter implements AgentAdapter {
     };
   }
 
+  public async runStoryAppVerification(
+    request: AppVerificationAdapterRunRequest
+  ): Promise<AppVerificationAdapterRunResult> {
+    const parsed = this.executePayload(request) as { output: AppVerificationAdapterRunResult["output"] };
+    return {
+      output: parsed.output,
+      stdout: JSON.stringify(parsed),
+      stderr: "",
+      exitCode: 0,
+      command: [process.execPath, resolve(this.repoRoot, this.scriptPath)]
+    };
+  }
+
   public async runProjectQa(request: QaAdapterRunRequest): Promise<QaAdapterRunResult> {
     const parsed = this.executePayload(request) as { output: QaAdapterRunResult["output"] };
     return {
@@ -127,6 +142,7 @@ export class LocalCliAdapter implements AgentAdapter {
       | ExecutionAdapterRunRequest
       | TestPreparationAdapterRunRequest
       | RalphVerificationAdapterRunRequest
+      | AppVerificationAdapterRunRequest
       | StoryReviewAdapterRunRequest
       | QaAdapterRunRequest
       | DocumentationAdapterRunRequest

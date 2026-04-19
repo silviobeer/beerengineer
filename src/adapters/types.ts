@@ -1,4 +1,5 @@
 import type {
+  AppVerificationRunner,
   DocumentationWorkerRole,
   ExecutionWorkerRole,
   QaRunStatus,
@@ -10,6 +11,7 @@ import type {
   VerificationWorkerRole
 } from "../domain/types.js";
 import type {
+  AppVerificationOutput,
   DocumentationOutput,
   RalphVerificationOutput,
   QaOutput,
@@ -192,6 +194,85 @@ export type RalphVerificationAdapterRunRequest = {
 
 export type RalphVerificationAdapterRunResult = {
   output: RalphVerificationOutput;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  command: string[];
+};
+
+export type AppVerificationAdapterRunRequest = {
+  workerRole: "app-verifier";
+  prompt: string;
+  skills: Array<{ path: string; content: string }>;
+  item: ExecutionAdapterRunRequest["item"];
+  project: ExecutionAdapterRunRequest["project"];
+  implementationPlan: ExecutionAdapterRunRequest["implementationPlan"];
+  wave: ExecutionAdapterRunRequest["wave"];
+  story: ExecutionAdapterRunRequest["story"];
+  acceptanceCriteria: ExecutionAdapterRunRequest["acceptanceCriteria"];
+  architecture: ExecutionAdapterRunRequest["architecture"];
+  projectExecutionContext: ExecutionAdapterRunRequest["projectExecutionContext"];
+  businessContextSnapshotJson: string;
+  repoContextSnapshotJson: string;
+  implementation: StoryExecutionOutput;
+  projectAppTestContext: {
+    projectId: string;
+    workspaceRoot: string;
+    baseUrl: string;
+    runnerPreference: AppVerificationRunner[];
+    readiness: {
+      healthUrl?: string;
+      command?: string;
+      timeoutMs?: number;
+    } | null;
+    auth: {
+      strategy: "password" | "existing_session";
+      defaultRole?: string;
+    };
+    users: Array<{
+      key: string;
+      role: string;
+      email?: string;
+      passwordSecretRef?: string;
+    }>;
+    fixtures: {
+      seedCommand?: string;
+      resetCommand?: string;
+    } | null;
+    routes: Record<string, string>;
+    featureFlags: Record<string, boolean | string>;
+  };
+  storyAppVerificationContext: {
+    waveStoryExecutionId: string;
+    storyId: string;
+    storyTitle: string;
+    summary: string;
+    acceptanceCriteria: string[];
+    preferredRole?: string;
+    startRoute?: string;
+    changedFiles: string[];
+    checks: Array<{
+      id: string;
+      description: string;
+      expectedOutcome: string;
+    }>;
+    preconditions: string[];
+    notes: string[];
+  };
+  preparedSession: {
+    runner: AppVerificationRunner;
+    baseUrl: string;
+    ready: boolean;
+    loginRole?: string;
+    loginUserKey?: string;
+    resolvedStartUrl?: string;
+    seeded: boolean;
+    artifactsDir?: string;
+  };
+};
+
+export type AppVerificationAdapterRunResult = {
+  output: AppVerificationOutput;
   stdout: string;
   stderr: string;
   exitCode: number;
@@ -404,6 +485,7 @@ export interface AgentAdapter {
   runStoryTestPreparation(request: TestPreparationAdapterRunRequest): Promise<TestPreparationAdapterRunResult>;
   runStoryExecution(request: ExecutionAdapterRunRequest): Promise<ExecutionAdapterRunResult>;
   runStoryRalphVerification(request: RalphVerificationAdapterRunRequest): Promise<RalphVerificationAdapterRunResult>;
+  runStoryAppVerification(request: AppVerificationAdapterRunRequest): Promise<AppVerificationAdapterRunResult>;
   runStoryReview(request: StoryReviewAdapterRunRequest): Promise<StoryReviewAdapterRunResult>;
   runProjectQa(request: QaAdapterRunRequest): Promise<QaAdapterRunResult>;
   runProjectDocumentation(request: DocumentationAdapterRunRequest): Promise<DocumentationAdapterRunResult>;

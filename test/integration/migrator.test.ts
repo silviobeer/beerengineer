@@ -41,9 +41,11 @@ describe("migration runner", () => {
         "0006_add_remediation_and_git_runtime_tables",
         "0007_add_workspaces",
         "0008_interactive_review",
-        "0009_add_interactive_review_resolved_at_index"
+        "0009_add_interactive_review_resolved_at_index",
+        "0010_brainstorm_interactive",
+        "0011_app_verification_runtime"
       ]);
-      expect(row?.count).toBe(10);
+      expect(row?.count).toBe(12);
       expect(indexes.map((index) => index.name)).toContain("idx_qa_runs_project_id");
     } finally {
       secondConnection.close();
@@ -74,7 +76,9 @@ describe("migration runner", () => {
         "0006_add_remediation_and_git_runtime_tables",
         "0007_add_workspaces",
         "0008_interactive_review",
-        "0009_add_interactive_review_resolved_at_index"
+        "0009_add_interactive_review_resolved_at_index",
+        "0010_brainstorm_interactive",
+        "0011_app_verification_runtime"
       ]);
       expect(columns.map((column) => column.name)).toContain("mode");
       expect(executionColumns.map((column) => column.name)).toContain("system_prompt_snapshot");
@@ -105,7 +109,9 @@ describe("migration runner", () => {
         "0006_add_remediation_and_git_runtime_tables",
         "0007_add_workspaces",
         "0008_interactive_review",
-        "0009_add_interactive_review_resolved_at_index"
+        "0009_add_interactive_review_resolved_at_index",
+        "0010_brainstorm_interactive",
+        "0011_app_verification_runtime"
       ]);
       expect(runIndexes.map((index) => index.name)).toContain("idx_qa_runs_project_id");
       expect(findingIndexes.map((index) => index.name)).toContain("idx_qa_findings_qa_run_id");
@@ -138,7 +144,9 @@ describe("migration runner", () => {
         "0006_add_remediation_and_git_runtime_tables",
         "0007_add_workspaces",
         "0008_interactive_review",
-        "0009_add_interactive_review_resolved_at_index"
+        "0009_add_interactive_review_resolved_at_index",
+        "0010_brainstorm_interactive",
+        "0011_app_verification_runtime"
       ]);
       expect(tables.map((table) => table.name)).toEqual([
         "story_review_agent_sessions",
@@ -183,7 +191,9 @@ describe("migration runner", () => {
         "0006_add_remediation_and_git_runtime_tables",
         "0007_add_workspaces",
         "0008_interactive_review",
-        "0009_add_interactive_review_resolved_at_index"
+        "0009_add_interactive_review_resolved_at_index",
+        "0010_brainstorm_interactive",
+        "0011_app_verification_runtime"
       ]);
       expect(tables.map((table) => table.name)).toEqual(["documentation_agent_sessions", "documentation_runs"]);
       expect(runIndexes.map((index) => index.name)).toContain("idx_documentation_runs_project_id");
@@ -225,7 +235,9 @@ describe("migration runner", () => {
         "0006_add_remediation_and_git_runtime_tables",
         "0007_add_workspaces",
         "0008_interactive_review",
-        "0009_add_interactive_review_resolved_at_index"
+        "0009_add_interactive_review_resolved_at_index",
+        "0010_brainstorm_interactive",
+        "0011_app_verification_runtime"
       ]);
       expect(tables.map((table) => table.name)).toEqual([
         "story_review_remediation_agent_sessions",
@@ -236,6 +248,30 @@ describe("migration runner", () => {
       expect(indexes.map((index) => index.name)).toContain("idx_story_review_remediation_runs_story_id");
     } finally {
       remediationLegacyDb.close();
+      testDb.cleanup();
+    }
+  });
+
+  it("adds app verification runtime tables and workspace config when the app verification migration is applied", () => {
+    const testDb = createTestDatabase();
+    const verificationLegacyDb = createSqliteConnection(testDb.filePath.replace("test.sqlite", "app-verification-legacy.sqlite"));
+
+    try {
+      applyMigrations(verificationLegacyDb, baseMigrations.slice(0, 11));
+
+      const applied = applyMigrations(verificationLegacyDb, baseMigrations);
+      const tables = verificationLegacyDb
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('app_verification_runs') ORDER BY name")
+        .all() as Array<{ name: string }>;
+      const workspaceColumns = verificationLegacyDb.prepare("PRAGMA table_info(workspace_settings)").all() as Array<{ name: string }>;
+      const runIndexes = verificationLegacyDb.prepare("PRAGMA index_list(app_verification_runs)").all() as Array<{ name: string }>;
+
+      expect(applied).toEqual(["0011_app_verification_runtime"]);
+      expect(tables.map((table) => table.name)).toEqual(["app_verification_runs"]);
+      expect(workspaceColumns.map((column) => column.name)).toContain("app_test_config_json");
+      expect(runIndexes.map((index) => index.name)).toContain("idx_app_verification_runs_wave_story_execution_id");
+    } finally {
+      verificationLegacyDb.close();
       testDb.cleanup();
     }
   });

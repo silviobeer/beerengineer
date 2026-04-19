@@ -79,6 +79,19 @@ export type VerificationRunStatus = (typeof verificationRunStatuses)[number];
 export const verificationRunModes = ["basic", "ralph"] as const;
 export type VerificationRunMode = (typeof verificationRunModes)[number];
 
+export const appVerificationRunStatuses = [
+  "pending",
+  "preparing",
+  "in_progress",
+  "passed",
+  "review_required",
+  "failed"
+] as const;
+export type AppVerificationRunStatus = (typeof appVerificationRunStatuses)[number];
+
+export const appVerificationRunners = ["agent_browser", "playwright"] as const;
+export type AppVerificationRunner = (typeof appVerificationRunners)[number];
+
 export const qaRunModes = ["functional", "security", "regression", "full"] as const;
 export type QaRunMode = (typeof qaRunModes)[number];
 
@@ -165,6 +178,22 @@ export const interactiveReviewResolutionTypes = [
 ] as const;
 export type InteractiveReviewResolutionType = (typeof interactiveReviewResolutionTypes)[number];
 
+export const brainstormSessionStatuses = [
+  "open",
+  "waiting_for_user",
+  "synthesizing",
+  "ready_for_concept",
+  "resolved",
+  "cancelled"
+] as const;
+export type BrainstormSessionStatus = (typeof brainstormSessionStatuses)[number];
+
+export const brainstormSessionModes = ["explore", "shape", "compare", "converge"] as const;
+export type BrainstormSessionMode = (typeof brainstormSessionModes)[number];
+
+export const brainstormDraftStatuses = ["drafting", "needs_input", "ready_for_concept", "superseded"] as const;
+export type BrainstormDraftStatus = (typeof brainstormDraftStatuses)[number];
+
 export const qaFindingSeverities = ["critical", "high", "medium", "low"] as const;
 export type QaFindingSeverity = (typeof qaFindingSeverities)[number];
 
@@ -233,6 +262,7 @@ export type WorkspaceSettings = {
   promptOverridesJson: string | null;
   skillOverridesJson: string | null;
   verificationDefaultsJson: string | null;
+  appTestConfigJson: string | null;
   qaDefaultsJson: string | null;
   gitDefaultsJson: string | null;
   executionDefaultsJson: string | null;
@@ -460,6 +490,24 @@ export type VerificationRun = {
   updatedAt: number;
 };
 
+export type AppVerificationRun = {
+  id: string;
+  waveStoryExecutionId: string;
+  status: AppVerificationRunStatus;
+  runner: AppVerificationRunner;
+  attempt: number;
+  startedAt: number | null;
+  completedAt: number | null;
+  projectAppTestContextJson: string | null;
+  storyContextJson: string | null;
+  preparedSessionJson: string | null;
+  resultJson: string | null;
+  artifactsJson: string | null;
+  failureSummary: string | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
 export type StoryReviewRun = {
   id: string;
   waveStoryExecutionId: string;
@@ -654,6 +702,50 @@ export type InteractiveReviewResolution = {
   payloadJson: string | null;
   createdAt: number;
   appliedAt: number | null;
+};
+
+export type BrainstormSession = {
+  id: string;
+  itemId: string;
+  status: BrainstormSessionStatus;
+  mode: BrainstormSessionMode;
+  startedAt: number;
+  updatedAt: number;
+  resolvedAt: number | null;
+  lastAssistantMessageId: string | null;
+  lastUserMessageId: string | null;
+};
+
+export type BrainstormMessage = {
+  id: string;
+  sessionId: string;
+  role: "system" | "assistant" | "user";
+  content: string;
+  createdAt: number;
+  structuredPayloadJson: string | null;
+  derivedUpdatesJson: string | null;
+};
+
+export type BrainstormDraft = {
+  id: string;
+  itemId: string;
+  sessionId: string;
+  revision: number;
+  status: BrainstormDraftStatus;
+  problem: string | null;
+  targetUsersJson: string;
+  coreOutcome: string | null;
+  useCasesJson: string;
+  constraintsJson: string;
+  nonGoalsJson: string;
+  risksJson: string;
+  openQuestionsJson: string;
+  candidateDirectionsJson: string;
+  recommendedDirection: string | null;
+  scopeNotes: string | null;
+  assumptionsJson: string;
+  lastUpdatedAt: number;
+  lastUpdatedFromMessageId: string | null;
 };
 
 export type DocumentationAgentSession = {

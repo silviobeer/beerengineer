@@ -18,6 +18,7 @@ export const workspaceSettings = sqliteTable("workspace_settings", {
   promptOverridesJson: text("prompt_overrides_json"),
   skillOverridesJson: text("skill_overrides_json"),
   verificationDefaultsJson: text("verification_defaults_json"),
+  appTestConfigJson: text("app_test_config_json"),
   qaDefaultsJson: text("qa_defaults_json"),
   gitDefaultsJson: text("git_defaults_json"),
   executionDefaultsJson: text("execution_defaults_json"),
@@ -262,6 +263,24 @@ export const verificationRuns = sqliteTable("verification_runs", {
   updatedAt: integer("updated_at").notNull()
 });
 
+export const appVerificationRuns = sqliteTable("app_verification_runs", {
+  id: text("id").primaryKey(),
+  waveStoryExecutionId: text("wave_story_execution_id").notNull().references(() => waveStoryExecutions.id),
+  status: text("status").notNull(),
+  runner: text("runner").notNull(),
+  attempt: integer("attempt").notNull(),
+  startedAt: integer("started_at"),
+  completedAt: integer("completed_at"),
+  projectAppTestContextJson: text("project_app_test_context_json"),
+  storyContextJson: text("story_context_json"),
+  preparedSessionJson: text("prepared_session_json"),
+  resultJson: text("result_json"),
+  artifactsJson: text("artifacts_json"),
+  failureSummary: text("failure_summary"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull()
+});
+
 export const storyReviewRuns = sqliteTable("story_review_runs", {
   id: text("id").primaryKey(),
   waveStoryExecutionId: text("wave_story_execution_id").notNull().references(() => waveStoryExecutions.id),
@@ -478,6 +497,50 @@ export const interactiveReviewResolutions = sqliteTable("interactive_review_reso
   createdAt: integer("created_at").notNull(),
   appliedAt: integer("applied_at")
 });
+
+export const brainstormSessions = sqliteTable("brainstorm_sessions", {
+  id: text("id").primaryKey(),
+  itemId: text("item_id").notNull().references(() => items.id),
+  status: text("status").notNull(),
+  mode: text("mode").notNull(),
+  startedAt: integer("started_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+  resolvedAt: integer("resolved_at"),
+  lastAssistantMessageId: text("last_assistant_message_id"),
+  lastUserMessageId: text("last_user_message_id")
+});
+
+export const brainstormMessages = sqliteTable("brainstorm_messages", {
+  id: text("id").primaryKey(),
+  sessionId: text("session_id").notNull().references(() => brainstormSessions.id),
+  role: text("role").notNull(),
+  content: text("content").notNull(),
+  createdAt: integer("created_at").notNull(),
+  structuredPayloadJson: text("structured_payload_json"),
+  derivedUpdatesJson: text("derived_updates_json")
+});
+
+export const brainstormDrafts = sqliteTable("brainstorm_drafts", {
+  id: text("id").primaryKey(),
+  itemId: text("item_id").notNull().references(() => items.id),
+  sessionId: text("session_id").notNull().references(() => brainstormSessions.id),
+  revision: integer("revision").notNull(),
+  status: text("status").notNull(),
+  problem: text("problem"),
+  targetUsersJson: text("target_users_json").notNull(),
+  coreOutcome: text("core_outcome"),
+  useCasesJson: text("use_cases_json").notNull(),
+  constraintsJson: text("constraints_json").notNull(),
+  nonGoalsJson: text("non_goals_json").notNull(),
+  risksJson: text("risks_json").notNull(),
+  openQuestionsJson: text("open_questions_json").notNull(),
+  candidateDirectionsJson: text("candidate_directions_json").notNull(),
+  recommendedDirection: text("recommended_direction"),
+  scopeNotes: text("scope_notes"),
+  assumptionsJson: text("assumptions_json").notNull(),
+  lastUpdatedAt: integer("last_updated_at").notNull(),
+  lastUpdatedFromMessageId: text("last_updated_from_message_id")
+}, (table) => [uniqueIndex("brainstorm_drafts_session_revision_unique_idx").on(table.sessionId, table.revision)]);
 
 export const stageRuns = sqliteTable("stage_runs", {
   id: text("id").primaryKey(),

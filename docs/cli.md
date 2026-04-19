@@ -6,6 +6,12 @@ Wichtige MVP-Kommandos:
 npm run cli -- item:create --title "My Item" --description "..."
 npm run cli -- --adapter-script-path ./tmp/local-agent.mjs --workspace-root ./tmp/workspace concept:approve --concept-id <conceptId> --autorun
 npm run cli -- brainstorm:start --item-id <itemId>
+npm run cli -- brainstorm:show --item-id <itemId>
+npm run cli -- brainstorm:chat --session-id <sessionId> --message "..."
+npm run cli -- brainstorm:draft --session-id <sessionId>
+npm run cli -- brainstorm:draft:update --session-id <sessionId> --problem "..." --target-user "..." --use-case "..."
+npm run cli -- brainstorm:promote --session-id <sessionId>
+npm run cli -- brainstorm:promote --session-id <sessionId> --autorun
 npm run cli -- concept:approve --concept-id <conceptId>
 npm run cli -- concept:approve --concept-id <conceptId> --autorun
 npm run cli -- project:import --item-id <itemId>
@@ -89,6 +95,26 @@ Wichtig:
 - `approve_selected` gibt nur die angegebenen Stories frei; der Wechsel nach `implementation` passiert erst, wenn danach wirklich alle Stories approved sind.
 - `review:story:edit` mutiert das zugrunde liegende Story-Artefakt bewusst kontrolliert und setzt die betroffene Story wieder auf `draft`.
 - `apply_story_edits` ist die formale Abschluss-Resolution nach einem oder mehreren Guided-Edit-Schritten.
+
+## Interactive Brainstorm
+
+Der interaktive Brainstorm-Slice arbeitet auf Item-Ebene und ergaenzt den
+bestehenden einmaligen Stage-Run `brainstorm:start` um einen persistenten
+Human-in-the-loop-Pfad:
+
+- `brainstorm:show` legt fuer ein Item eine persistente Session an oder oeffnet eine bestehende offene Session erneut und liefert Session, Messages und den aktuellen Draft zurueck.
+- `brainstorm:chat` speichert User- und Assistant-Nachrichten und verdichtet freie Texteingaben in einen versionierten Brainstorm-Draft mit Feldern wie Problem, Zielnutzer, Use Cases, Constraints, Risiken und offenen Fragen.
+- `brainstorm:draft` gibt den neuesten versionierten Draft fuer eine Session direkt aus.
+- `brainstorm:draft:update` erlaubt gezielte feldweise Aenderungen am Draft, inklusive wiederholbarer Listenfelder wie `--target-user`, `--use-case`, `--candidate-direction` und optionalem Leeren ueber `--clear-*`.
+- `brainstorm:promote` erzeugt aus dem Draft die manuellen Artefakte `concept` und `projects`, legt einen `Concept`-Record an und schliesst die Brainstorm-Session formal ab.
+- `brainstorm:promote --autorun` approvt den aus dem Draft erzeugten Concept-Schritt unmittelbar und uebergibt danach an den Autorun-Orchestrator.
+
+Wichtig:
+
+- `brainstorm:start` bleibt absichtlich der bestehende nicht-interaktive Stage-Run.
+- `brainstorm:chat` versteht jetzt auch markierte Eingaben wie `problem: ...`, `users: ...`, `use cases: ...`, `recommended direction: ...`.
+- Fuer praezise maschinenlesbare Aenderungen ist `brainstorm:draft:update` der verlässlichere Pfad.
+- `brainstorm:promote` ist der formale Uebergang von `brainstorm` nach `concept`.
 
 Fuer reproduzierbare Live-Runs akzeptiert die CLI global:
 
