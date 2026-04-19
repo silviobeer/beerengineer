@@ -9,6 +9,7 @@ import type {
   GitBranchMetadata,
   QaRunStatus,
   StageKey,
+  StoryReviewFindingSeverity,
   StoryReviewRunStatus,
   VerificationRunStatus
 } from "../domain/types.js";
@@ -122,6 +123,42 @@ type WorkflowDeps = {
   artifactRepository: ArtifactRepository;
   agentSessionRepository: AgentSessionRepository;
 };
+
+type AutorunScopeType = "item" | "project";
+
+type AutorunStep = {
+  action: string;
+  scopeType: AutorunScopeType | "run" | "execution" | "remediation" | "qa" | "documentation";
+  scopeId: string;
+  status: string;
+};
+
+type AutorunSummary = {
+  trigger: string;
+  scopeType: AutorunScopeType;
+  scopeId: string;
+  steps: AutorunStep[];
+  finalStatus: "completed" | "stopped" | "failed";
+  stopReason: string;
+  createdRunIds: string[];
+  createdExecutionIds: string[];
+  createdRemediationRunIds: string[];
+  successful: boolean;
+};
+
+type AutorunDecision =
+  | {
+      kind: "step";
+      action: string;
+      scopeType: AutorunStep["scopeType"];
+      scopeId: string;
+      execute: () => Promise<unknown> | unknown;
+    }
+  | {
+      kind: "stop";
+      finalStatus: AutorunSummary["finalStatus"];
+      stopReason: string;
+    };
 
 export class WorkflowService {
   private readonly promptResolver: PromptResolver;
@@ -361,7 +398,7 @@ export class WorkflowService {
   }
 
   public approvePlanning(projectId: string): void {
-    const project = this.requireProject(projectId);
+    this.requireProject(projectId);
     const latest = this.deps.implementationPlanRepository.getLatestByProjectId(projectId);
     if (!latest) {
       throw new AppError("IMPLEMENTATION_PLAN_NOT_FOUND", "No implementation plan found for project");
@@ -370,12 +407,34 @@ export class WorkflowService {
       return;
     }
     this.deps.implementationPlanRepository.updateStatus(latest.id, "approved");
-    const snapshot = this.buildSnapshot(project.itemId);
-    if (snapshot.allImplementationPlansApproved) {
-      const item = this.requireItem(project.itemId);
-      assertCanMoveItem(item.currentColumn, "done", snapshot);
-      this.deps.itemRepository.updateColumn(project.itemId, "done", "completed");
-    }
+  }
+
+  public async autorunForItem(input: {
+    itemId: string;
+    trigger: string;
+    initialSteps?: AutorunStep[];
+  }): Promise<AutorunSummary> {
+    this.requireItem(input.itemId);
+    return this.executeAutorun({
+      trigger: input.trigger,
+      scopeType: "item",
+      scopeId: input.itemId,
+      initialSteps: input.initialSteps ?? []
+    });
+  }
+
+  public async autorunForProject(input: {
+    projectId: string;
+    trigger: string;
+    initialSteps?: AutorunStep[];
+  }): Promise<AutorunSummary> {
+    this.requireProject(input.projectId);
+    return this.executeAutorun({
+      trigger: input.trigger,
+      scopeType: "project",
+      scopeId: input.projectId,
+      initialSteps: input.initialSteps ?? []
+    });
   }
 
   public async retryRun(runId: string): Promise<{ runId: string; status: string; retriedFromRunId: string }> {
@@ -1004,6 +1063,9 @@ export class WorkflowService {
         errorMessage: null
       });
       this.deps.itemRepository.updatePhaseStatus(item.id, this.mapDocumentationRunStatusToItemPhaseStatus(status));
+      if (status === "completed") {
+        this.completeItemIfDeliveryFinished(item.id);
+      }
 
       return {
         projectId,
@@ -2990,6 +3052,528 @@ export class WorkflowService {
   ): void {
     assertStageRunTransitionAllowed(current, next);
     this.deps.stageRunRepository.updateStatus(runId, next, options);
+  }
+
+  private async executeAutorun(input: {
+    trigger: string;
+    scopeType: AutorunScopeType;
+    scopeId: string;
+    initialSteps: AutorunStep[];
+  }): Promise<AutorunSummary> {
+    const summary: AutorunSummary = {
+      trigger: input.trigger,
+      scopeType: input.scopeType,
+      scopeId: input.scopeId,
+      steps: [...input.initialSteps],
+      finalStatus: "stopped",
+      stopReason: "no_action",
+      createdRunIds: [],
+      createdExecutionIds: [],
+      createdRemediationRunIds: [],
+      successful: false
+    };
+    this.collectAutorunIds(summary, input.initialSteps);
+
+    for (let index = 0; index < 100; index += 1) {
+      const decision =
+        input.scopeType === "item"
+          ? this.resolveNextItemAutorunDecision(input.scopeId)
+          : this.resolveNextProjectAutorunDecision(input.scopeId);
+
+      if (decision.kind === "stop") {
+        summary.finalStatus = decision.finalStatus;
+        summary.stopReason = decision.stopReason;
+        summary.successful = decision.finalStatus === "completed";
+        return summary;
+      }
+
+      try {
+        const result = await decision.execute();
+        const step = this.buildAutorunStep(decision, result);
+        summary.steps.push(step);
+        this.collectAutorunIds(summary, [step]);
+      } catch (error) {
+        summary.finalStatus = "failed";
+        summary.stopReason = error instanceof AppError ? error.code : "AUTORUN_STEP_FAILED";
+        summary.successful = false;
+        return summary;
+      }
+    }
+
+    summary.finalStatus = "failed";
+    summary.stopReason = "AUTORUN_STEP_LIMIT_REACHED";
+    summary.successful = false;
+    return summary;
+  }
+
+  private resolveNextItemAutorunDecision(itemId: string): AutorunDecision {
+    const item = this.requireItem(itemId);
+    if (item.phaseStatus === "failed") {
+      return {
+        kind: "stop",
+        finalStatus: "failed",
+        stopReason: "item_failed"
+      };
+    }
+
+    const concept = this.deps.conceptRepository.getLatestByItemId(itemId);
+    const latestBrainstormRun = this.getLatestStageRun({ itemId, stageKey: "brainstorm" });
+    if (!concept) {
+      if (latestBrainstormRun?.status === "review_required") {
+        return {
+          kind: "stop",
+          finalStatus: "stopped",
+          stopReason: "brainstorm_review_required"
+        };
+      }
+      if (latestBrainstormRun?.status === "failed") {
+        return {
+          kind: "stop",
+          finalStatus: "failed",
+          stopReason: "brainstorm_failed"
+        };
+      }
+      return {
+        kind: "stop",
+        finalStatus: "stopped",
+        stopReason: "concept_missing"
+      };
+    }
+
+    if (concept.status !== "approved" && concept.status !== "completed") {
+      return {
+        kind: "stop",
+        finalStatus: "stopped",
+        stopReason: "concept_approval_required"
+      };
+    }
+
+    const projects = this.deps.projectRepository.listByItemId(itemId);
+    if (projects.length === 0) {
+      return {
+        kind: "step",
+        action: "project:import",
+        scopeType: "item",
+        scopeId: itemId,
+        execute: () => this.importProjects(itemId)
+      };
+    }
+
+    for (const project of projects) {
+      const decision = this.resolveNextProjectAutorunDecision(project.id);
+      if (decision.kind !== "stop" || decision.stopReason !== "project_completed") {
+        return decision;
+      }
+    }
+
+    this.completeItemIfDeliveryFinished(itemId);
+    return {
+      kind: "stop",
+      finalStatus: this.requireItem(itemId).currentColumn === "done" ? "completed" : "stopped",
+      stopReason: this.requireItem(itemId).currentColumn === "done" ? "item_completed" : "project_incomplete"
+    };
+  }
+
+  private resolveNextProjectAutorunDecision(projectId: string): AutorunDecision {
+    const project = this.requireProject(projectId);
+
+    const requirementsDecision = this.resolveStageAutorunDecision({
+      itemId: project.itemId,
+      projectId,
+      stageKey: "requirements",
+      hasStageOutput: this.deps.userStoryRepository.hasAnyByProjectId(projectId),
+      approvalSatisfied: this.deps.userStoryRepository
+        .listByProjectId(projectId)
+        .every((story) => story.status === "approved"),
+      startAction: "requirements:start",
+      approveAction: "stories:approve",
+      approveScopeType: "project",
+      approve: () => this.approveStories(projectId)
+    });
+    if (requirementsDecision) {
+      return requirementsDecision;
+    }
+
+    const architectureDecision = this.resolveStageAutorunDecision({
+      itemId: project.itemId,
+      projectId,
+      stageKey: "architecture",
+      hasStageOutput: this.deps.architecturePlanRepository.getLatestByProjectId(projectId) !== null,
+      approvalSatisfied: this.deps.architecturePlanRepository.getLatestByProjectId(projectId)?.status === "approved",
+      startAction: "architecture:start",
+      approveAction: "architecture:approve",
+      approveScopeType: "project",
+      approve: () => this.approveArchitecture(projectId)
+    });
+    if (architectureDecision) {
+      return architectureDecision;
+    }
+
+    const planningDecision = this.resolveStageAutorunDecision({
+      itemId: project.itemId,
+      projectId,
+      stageKey: "planning",
+      hasStageOutput: this.deps.implementationPlanRepository.getLatestByProjectId(projectId) !== null,
+      approvalSatisfied: this.deps.implementationPlanRepository.getLatestByProjectId(projectId)?.status === "approved",
+      startAction: "planning:start",
+      approveAction: "planning:approve",
+      approveScopeType: "project",
+      approve: () => this.approvePlanning(projectId)
+    });
+    if (planningDecision) {
+      return planningDecision;
+    }
+
+    const executionDecision = this.resolveExecutionAutorunDecision(projectId);
+    if (executionDecision) {
+      return executionDecision;
+    }
+
+    const latestQaRun = this.deps.qaRunRepository.getLatestByProjectId(projectId);
+    if (!latestQaRun) {
+      return {
+        kind: "step",
+        action: "qa:start",
+        scopeType: "project",
+        scopeId: projectId,
+        execute: () => this.startQa(projectId)
+      };
+    }
+    if (latestQaRun.status === "failed") {
+      return {
+        kind: "stop",
+        finalStatus: "failed",
+        stopReason: "qa_failed"
+      };
+    }
+    if (latestQaRun.status === "review_required") {
+      return {
+        kind: "stop",
+        finalStatus: "stopped",
+        stopReason: "qa_review_required"
+      };
+    }
+
+    const latestDocumentationRun = this.deps.documentationRunRepository.getLatestByProjectId(projectId);
+    if (!latestDocumentationRun || latestDocumentationRun.staleAt !== null) {
+      return {
+        kind: "step",
+        action: "documentation:start",
+        scopeType: "project",
+        scopeId: projectId,
+        execute: () => this.startDocumentation(projectId)
+      };
+    }
+    if (latestDocumentationRun.status === "failed") {
+      return {
+        kind: "stop",
+        finalStatus: "failed",
+        stopReason: "documentation_failed"
+      };
+    }
+    if (latestDocumentationRun.status === "review_required") {
+      return {
+        kind: "stop",
+        finalStatus: "stopped",
+        stopReason: "documentation_review_required"
+      };
+    }
+    if (latestDocumentationRun.status === "completed" && latestDocumentationRun.staleAt === null) {
+      return {
+        kind: "stop",
+        finalStatus: "completed",
+        stopReason: "project_completed"
+      };
+    }
+
+    return {
+      kind: "stop",
+      finalStatus: "stopped",
+      stopReason: "documentation_pending"
+    };
+  }
+
+  private resolveStageAutorunDecision(input: {
+    itemId: string;
+    projectId: string;
+    stageKey: Exclude<StageKey, "brainstorm">;
+    hasStageOutput: boolean;
+    approvalSatisfied: boolean;
+    startAction: string;
+    approveAction: string;
+    approveScopeType: AutorunStep["scopeType"];
+    approve: () => void;
+  }): AutorunDecision | null {
+    const latestRun = this.getLatestStageRun({
+      itemId: input.itemId,
+      projectId: input.projectId,
+      stageKey: input.stageKey
+    });
+
+    if (!input.hasStageOutput) {
+      if (latestRun?.status === "review_required") {
+        return {
+          kind: "stop",
+          finalStatus: "stopped",
+          stopReason: `${input.stageKey}_review_required`
+        };
+      }
+      if (latestRun?.status === "failed") {
+        return {
+          kind: "stop",
+          finalStatus: "failed",
+          stopReason: `${input.stageKey}_failed`
+        };
+      }
+      return {
+        kind: "step",
+        action: input.startAction,
+        scopeType: "project",
+        scopeId: input.projectId,
+        execute: () =>
+          this.startStage({
+            stageKey: input.stageKey,
+            itemId: input.itemId,
+            projectId: input.projectId
+          })
+      };
+    }
+
+    if (!input.approvalSatisfied) {
+      return {
+        kind: "step",
+        action: input.approveAction,
+        scopeType: input.approveScopeType,
+        scopeId: input.projectId,
+        execute: () => input.approve()
+      };
+    }
+
+    return null;
+  }
+
+  private resolveExecutionAutorunDecision(projectId: string): AutorunDecision | null {
+    const execution = this.showExecution(projectId) as {
+      waves: Array<{
+        waveExecution: { id: string; status: string } | null;
+        stories: Array<{
+          story: { id: string };
+          latestTestRun: { id: string; status: string } | null;
+          latestExecution: { id: string; status: string } | null;
+          latestStoryReviewRun: { id: string; status: string } | null;
+        }>;
+      }>;
+    };
+
+    let hasIncompleteWave = false;
+    let hasStartedExecution = false;
+
+    for (const wave of execution.waves) {
+      if (wave.waveExecution) {
+        hasStartedExecution = true;
+        if (wave.waveExecution.status === "failed") {
+          return {
+            kind: "stop",
+            finalStatus: "failed",
+            stopReason: "execution_failed"
+          };
+        }
+      }
+
+      for (const storyEntry of wave.stories) {
+        if (storyEntry.latestTestRun?.status === "failed") {
+          return {
+            kind: "stop",
+            finalStatus: "failed",
+            stopReason: "test_preparation_failed"
+          };
+        }
+        if (storyEntry.latestTestRun?.status === "review_required") {
+          return {
+            kind: "stop",
+            finalStatus: "stopped",
+            stopReason: "test_preparation_review_required"
+          };
+        }
+        if (storyEntry.latestExecution) {
+          hasStartedExecution = true;
+          if (storyEntry.latestExecution.status === "failed") {
+            return {
+              kind: "stop",
+              finalStatus: "failed",
+              stopReason: "execution_failed"
+            };
+          }
+          if (storyEntry.latestExecution.status === "review_required") {
+            const latestStoryReviewRun = storyEntry.latestStoryReviewRun
+              ? this.requireStoryReviewRun(storyEntry.latestStoryReviewRun.id)
+              : null;
+            if (latestStoryReviewRun && this.canAutorunStoryReviewRemediate(latestStoryReviewRun.id)) {
+              return {
+                kind: "step",
+                action: "remediation:story-review:start",
+                scopeType: "remediation",
+                scopeId: latestStoryReviewRun.id,
+                execute: () => this.startStoryReviewRemediation(latestStoryReviewRun.id)
+              };
+            }
+            return {
+              kind: "stop",
+              finalStatus: "stopped",
+              stopReason: latestStoryReviewRun
+                ? this.getStoryReviewRemediationStopReason(latestStoryReviewRun.id)
+                : "execution_review_required"
+            };
+          }
+        }
+      }
+
+      if (wave.waveExecution?.status !== "completed") {
+        hasIncompleteWave = true;
+      }
+    }
+
+    if (hasIncompleteWave || !hasStartedExecution) {
+      return {
+        kind: "step",
+        action: hasStartedExecution ? "execution:tick" : "execution:start",
+        scopeType: "project",
+        scopeId: projectId,
+        execute: () => this.startExecution(projectId)
+      };
+    }
+
+    return null;
+  }
+
+  private canAutorunStoryReviewRemediate(storyReviewRunId: string): boolean {
+    const storyReviewRun = this.requireStoryReviewRun(storyReviewRunId);
+    if (storyReviewRun.status !== "review_required") {
+      return false;
+    }
+    const findings = this.deps.storyReviewFindingRepository
+      .listByStoryReviewRunId(storyReviewRunId)
+      .filter((finding) => finding.status === "open");
+    if (findings.length === 0) {
+      return false;
+    }
+    if (findings.some((finding) => !this.isAutoFixableStoryReviewSeverity(finding.severity))) {
+      return false;
+    }
+    return this.deps.storyReviewRemediationRunRepository.listByStoryReviewRunId(storyReviewRunId).length < 2;
+  }
+
+  private getStoryReviewRemediationStopReason(storyReviewRunId: string): string {
+    const storyReviewRun = this.requireStoryReviewRun(storyReviewRunId);
+    if (storyReviewRun.status === "failed") {
+      return "story_review_failed";
+    }
+    const findings = this.deps.storyReviewFindingRepository
+      .listByStoryReviewRunId(storyReviewRunId)
+      .filter((finding) => finding.status === "open");
+    if (findings.some((finding) => !this.isAutoFixableStoryReviewSeverity(finding.severity))) {
+      return "story_review_review_required";
+    }
+    if (this.deps.storyReviewRemediationRunRepository.listByStoryReviewRunId(storyReviewRunId).length >= 2) {
+      return "story_review_remediation_limit_reached";
+    }
+    return "story_review_review_required";
+  }
+
+  private isAutoFixableStoryReviewSeverity(severity: StoryReviewFindingSeverity): boolean {
+    return severity === "medium" || severity === "low";
+  }
+
+  private buildAutorunStep(decision: Extract<AutorunDecision, { kind: "step" }>, result: unknown): AutorunStep {
+    const payload = result && typeof result === "object" ? (result as Record<string, unknown>) : {};
+    return {
+      action: decision.action,
+      scopeType: this.resolveAutorunStepScopeType(decision, payload),
+      scopeId: this.resolveAutorunStepScopeId(decision, payload),
+      status: typeof payload.status === "string" ? payload.status : "completed"
+    };
+  }
+
+  private resolveAutorunStepScopeType(
+    decision: Extract<AutorunDecision, { kind: "step" }>,
+    payload: Record<string, unknown>
+  ): AutorunStep["scopeType"] {
+    if (typeof payload.runId === "string") {
+      return "run";
+    }
+    if (typeof payload.waveStoryExecutionId === "string") {
+      return "execution";
+    }
+    if (typeof payload.storyReviewRemediationRunId === "string") {
+      return "remediation";
+    }
+    if (typeof payload.qaRunId === "string") {
+      return "qa";
+    }
+    if (typeof payload.documentationRunId === "string") {
+      return "documentation";
+    }
+    return decision.scopeType;
+  }
+
+  private resolveAutorunStepScopeId(
+    decision: Extract<AutorunDecision, { kind: "step" }>,
+    payload: Record<string, unknown>
+  ): string {
+    const candidateIds = [
+      payload.runId,
+      payload.waveStoryExecutionId,
+      payload.storyReviewRemediationRunId,
+      payload.qaRunId,
+      payload.documentationRunId
+    ];
+    const resolved = candidateIds.find((value): value is string => typeof value === "string");
+    return resolved ?? decision.scopeId;
+  }
+
+  private collectAutorunIds(summary: AutorunSummary, steps: AutorunStep[]): void {
+    for (const step of steps) {
+      if (step.scopeType === "run") {
+        summary.createdRunIds.push(step.scopeId);
+      } else if (step.scopeType === "execution") {
+        summary.createdExecutionIds.push(step.scopeId);
+      } else if (step.scopeType === "remediation") {
+        summary.createdRemediationRunIds.push(step.scopeId);
+      }
+    }
+  }
+
+  private getLatestStageRun(input: {
+    itemId: string;
+    projectId?: string;
+    stageKey: StageKey;
+  }) {
+    const runs = input.projectId
+      ? this.deps.stageRunRepository.listByProjectId(input.projectId)
+      : this.deps.stageRunRepository.listByItemId(input.itemId);
+    return runs.filter((run) => run.stageKey === input.stageKey).at(-1) ?? null;
+  }
+
+  private completeItemIfDeliveryFinished(itemId: string): void {
+    const item = this.requireItem(itemId);
+    const projects = this.deps.projectRepository.listByItemId(itemId);
+    if (projects.length === 0 || projects.some((project) => !this.isProjectDeliveryComplete(project.id))) {
+      return;
+    }
+
+    const snapshot = this.buildSnapshot(itemId);
+    if (item.currentColumn !== "done") {
+      assertCanMoveItem(item.currentColumn, "done", snapshot);
+      this.deps.itemRepository.updateColumn(itemId, "done", "completed");
+      return;
+    }
+
+    this.deps.itemRepository.updatePhaseStatus(itemId, "completed");
+  }
+
+  private isProjectDeliveryComplete(projectId: string): boolean {
+    const latestDocumentationRun = this.deps.documentationRunRepository.getLatestByProjectId(projectId);
+    return latestDocumentationRun?.status === "completed" && latestDocumentationRun.staleAt === null;
   }
 
   private requireItem(itemId: string) {

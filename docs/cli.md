@@ -6,23 +6,33 @@ Wichtige MVP-Kommandos:
 npm run cli -- item:create --title "My Item" --description "..."
 npm run cli -- brainstorm:start --item-id <itemId>
 npm run cli -- concept:approve --concept-id <conceptId>
+npm run cli -- concept:approve --concept-id <conceptId> --autorun
 npm run cli -- project:import --item-id <itemId>
 npm run cli -- requirements:start --item-id <itemId> --project-id <projectId>
 npm run cli -- stories:approve --project-id <projectId>
+npm run cli -- stories:approve --project-id <projectId> --autorun
 npm run cli -- architecture:start --item-id <itemId> --project-id <projectId>
 npm run cli -- architecture:approve --project-id <projectId>
+npm run cli -- architecture:approve --project-id <projectId> --autorun
 npm run cli -- planning:start --item-id <itemId> --project-id <projectId>
 npm run cli -- planning:approve --project-id <projectId>
+npm run cli -- planning:approve --project-id <projectId> --autorun
 npm run cli -- execution:start --project-id <projectId>
 npm run cli -- execution:tick --project-id <projectId>
 npm run cli -- execution:show --project-id <projectId>
 npm run cli -- execution:retry --wave-story-execution-id <waveStoryExecutionId>
+npm run cli -- execution:retry --wave-story-execution-id <waveStoryExecutionId> --autorun
 npm run cli -- qa:start --project-id <projectId>
 npm run cli -- qa:show --project-id <projectId>
 npm run cli -- qa:retry --qa-run-id <qaRunId>
+npm run cli -- qa:retry --qa-run-id <qaRunId> --autorun
 npm run cli -- documentation:start --project-id <projectId>
 npm run cli -- documentation:show --project-id <projectId>
 npm run cli -- documentation:retry --documentation-run-id <documentationRunId>
+npm run cli -- documentation:retry --documentation-run-id <documentationRunId> --autorun
+npm run cli -- remediation:story-review:retry --remediation-run-id <remediationRunId> --autorun
+npm run cli -- autorun:start --item-id <itemId>
+npm run cli -- autorun:resume --project-id <projectId>
 ```
 
 Optional:
@@ -37,6 +47,17 @@ npm run cli -- sessions:list --run-id <runId>
 ```
 
 Fehler werden als JSON auf `stderr` mit `error.code` und `error.message` ausgegeben.
+
+## Autorun
+
+`--autorun` fuehrt zuerst den expliziten Approval- oder Retry-Schritt aus und
+uebergibt danach an den engine-seitigen Autorun-Orchestrator. Die CLI gibt
+dann einen strukturierten Summary-Block mit `trigger`, `steps`,
+`finalStatus`, `stopReason` und erzeugten Run-/Execution-IDs zurueck.
+
+`Item.currentColumn = done` wird dabei erst nach erfolgreicher Documentation
+gesetzt. Nach `planning:approve` bleibt das Item in `implementation`, bis
+Execution, QA und Documentation erfolgreich abgeschlossen sind.
 
 ## Stable Codes
 

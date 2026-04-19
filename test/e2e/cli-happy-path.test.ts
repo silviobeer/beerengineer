@@ -94,6 +94,18 @@ describe("cli happy path", () => {
       expect(secondExecution.activeWaveCode).toBe("W02");
       expect(secondExecution.scheduledCount).toBe(1);
 
+      const qa = runCli(["--db", dbPath, "qa:start", "--project-id", projectId], cwd) as {
+        qaRunId: string;
+        status: string;
+      };
+      expect(qa.status).toBe("passed");
+
+      const documentation = runCli(["--db", dbPath, "documentation:start", "--project-id", projectId], cwd) as {
+        documentationRunId: string;
+        status: string;
+      };
+      expect(documentation.status).toBe("completed");
+
       const executionShow = runCli(["--db", dbPath, "execution:show", "--project-id", projectId], cwd) as {
         activeWave: { code: string } | null;
         waves: Array<{
@@ -155,4 +167,45 @@ describe("cli happy path", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it(
+    "supports approve plus autorun from concept approval",
+    () => {
+      const root = mkdtempSync(join(tmpdir(), "beerengineer-e2e-"));
+      const dbPath = join(root, "app.sqlite");
+      const cwd = resolve(".");
+
+      try {
+        const item = runCli(["--db", dbPath, "item:create", "--title", "Autorun CLI", "--description", "Desc"], cwd) as {
+          id: string;
+        };
+        runCli(["--db", dbPath, "brainstorm:start", "--item-id", item.id], cwd);
+        const itemShow = runCli(["--db", dbPath, "item:show", "--item-id", item.id], cwd) as {
+          concept: { id: string };
+        };
+
+        const autorun = runCli(
+          ["--db", dbPath, "concept:approve", "--concept-id", itemShow.concept.id, "--autorun"],
+          cwd
+        ) as {
+          finalStatus: string;
+          stopReason: string;
+          steps: Array<{ action: string }>;
+        };
+
+        expect(autorun.finalStatus).toBe("completed");
+        expect(autorun.stopReason).toBe("item_completed");
+        expect(autorun.steps.some((step) => step.action === "documentation:start")).toBe(true);
+
+        const finalState = runCli(["--db", dbPath, "item:show", "--item-id", item.id], cwd) as {
+          item: { currentColumn: string; phaseStatus: string };
+        };
+        expect(finalState.item.currentColumn).toBe("done");
+        expect(finalState.item.phaseStatus).toBe("completed");
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+    25000
+  );
 });

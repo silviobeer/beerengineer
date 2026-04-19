@@ -251,7 +251,7 @@ describe("workflow service", () => {
       context.workflowService.approvePlanning(project!.id);
 
       const itemState = context.repositories.itemRepository.getById(item.id);
-      expect(itemState?.currentColumn).toBe("done");
+      expect(itemState?.currentColumn).toBe("implementation");
       expect(itemState?.phaseStatus).toBe("completed");
     } finally {
       context.connection.close();
@@ -689,6 +689,151 @@ describe("workflow service", () => {
     }
   });
 
+  it("autoruns from concept approval through documentation completion", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const item = context.repositories.itemRepository.create({
+        title: "Autorun Happy Path",
+        description: "Continue from concept approval"
+      });
+      await context.workflowService.startStage({ stageKey: "brainstorm", itemId: item.id });
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      context.workflowService.approveConcept(concept!.id);
+
+      const result = await context.workflowService.autorunForItem({
+        itemId: item.id,
+        trigger: "concept:approve",
+        initialSteps: [{ action: "concept:approve", scopeType: "item", scopeId: item.id, status: "approved" }]
+      });
+
+      expect(result.finalStatus).toBe("completed");
+      expect(result.stopReason).toBe("item_completed");
+      expect(result.steps.map((step) => step.action)).toEqual([
+        "concept:approve",
+        "project:import",
+        "requirements:start",
+        "stories:approve",
+        "architecture:start",
+        "architecture:approve",
+        "planning:start",
+        "planning:approve",
+        "execution:start",
+        "execution:tick",
+        "qa:start",
+        "documentation:start"
+      ]);
+
+      const itemState = context.repositories.itemRepository.getById(item.id);
+      expect(itemState?.currentColumn).toBe("done");
+      expect(itemState?.phaseStatus).toBe("completed");
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("autorun stops when QA ends in review_required", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const originalScript = readFileSync("scripts/local-agent.mjs", "utf8");
+    const adapterScriptPath = join(root, "local-agent-autorun-qa-review-required.mjs");
+    const dbPath = join(root, "app.sqlite");
+
+    try {
+      const reviewScript = originalScript.replace(
+        "  const findings = [];",
+        `  const findings = [{
+    severity: "medium",
+    category: "functional",
+    title: "Autorun QA follow-up",
+    description: "The QA worker requests manual review.",
+    evidence: "Injected by the autorun test fixture.",
+    reproSteps: ["Open the flow", "Observe the project-level issue"],
+    suggestedFix: "Address the medium issue before sign-off.",
+    storyCode: payload.stories[0]?.code ?? null,
+    acceptanceCriterionCode: null
+  }];`
+      );
+      writeFileSync(adapterScriptPath, reviewScript);
+      const context = createAppContext(dbPath, { adapterScriptPath });
+
+      const item = context.repositories.itemRepository.create({
+        title: "Autorun QA Stop",
+        description: "Stop at QA review required"
+      });
+      await context.workflowService.startStage({ stageKey: "brainstorm", itemId: item.id });
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      context.workflowService.approveConcept(concept!.id);
+
+      const result = await context.workflowService.autorunForItem({
+        itemId: item.id,
+        trigger: "concept:approve",
+        initialSteps: [{ action: "concept:approve", scopeType: "item", scopeId: item.id, status: "approved" }]
+      });
+
+      expect(result.finalStatus).toBe("stopped");
+      expect(result.stopReason).toBe("qa_review_required");
+      expect(result.steps.at(-1)?.action).toBe("qa:start");
+      expect(context.repositories.itemRepository.getById(item.id)?.currentColumn).toBe("implementation");
+      expect(context.repositories.itemRepository.getById(item.id)?.phaseStatus).toBe("review_required");
+
+      context.connection.close();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("autorun triggers story-review remediation automatically", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const originalScript = readFileSync("scripts/local-agent.mjs", "utf8");
+    const adapterScriptPath = join(root, "local-agent-autorun-story-review-remediation.mjs");
+    const dbPath = join(root, "app.sqlite");
+    const workspaceRoot = createGitWorkspace(root);
+
+    try {
+      const remediationScript = originalScript.replace(
+        "function storyReview(payload) {\n  const findings = [];",
+        `function storyReview(payload) {\n  const findings = payload.implementation.summary.includes("story-review-remediator") ? [] : [{
+    severity: "medium",
+    category: "maintainability",
+    title: "Autorun remediation target",
+    description: "The first story review requests a bounded remediation.",
+    evidence: "Injected by the autorun remediation fixture.",
+    filePath: "src/workflow/workflow-service.ts",
+    line: 1,
+    suggestedFix: "Use the remediation loop."
+  }];`
+      );
+      writeFileSync(adapterScriptPath, remediationScript);
+      const context = createAppContext(dbPath, { adapterScriptPath, workspaceRoot });
+
+      const item = context.repositories.itemRepository.create({
+        title: "Autorun Remediation",
+        description: "Automatically remediate story review findings"
+      });
+      await context.workflowService.startStage({ stageKey: "brainstorm", itemId: item.id });
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      context.workflowService.approveConcept(concept!.id);
+
+      const result = await context.workflowService.autorunForItem({
+        itemId: item.id,
+        trigger: "concept:approve",
+        initialSteps: [{ action: "concept:approve", scopeType: "item", scopeId: item.id, status: "approved" }]
+      });
+
+      expect(result.finalStatus).toBe("completed");
+      expect(result.steps.some((step) => step.action === "remediation:story-review:start")).toBe(true);
+      expect(result.createdRemediationRunIds.length).toBeGreaterThan(0);
+      expect(context.repositories.itemRepository.getById(item.id)?.currentColumn).toBe("done");
+
+      context.connection.close();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("marks execution failed when story review returns failed", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
     const originalScript = readFileSync("scripts/local-agent.mjs", "utf8");
@@ -899,6 +1044,7 @@ describe("workflow service", () => {
         "delivery-report-data"
       ]);
       expect(shown.documentationRuns[0]?.sessions[0]?.adapterKey).toBe("local-cli");
+      expect(context.repositories.itemRepository.getById(item.id)?.currentColumn).toBe("done");
       expect(context.repositories.itemRepository.getById(item.id)?.phaseStatus).toBe("completed");
     } finally {
       context.connection.close();
