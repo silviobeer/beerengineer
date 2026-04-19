@@ -4,6 +4,8 @@ export type AutorunScopeType = "item" | "project";
 
 export type AutorunStep = {
   action: string;
+  // Only `run`, `execution`, and `remediation` are collected into created*Ids on AutorunSummary.
+  // `qa` and `documentation` remain visible in ordered steps but do not currently have dedicated arrays.
   scopeType: AutorunScopeType | "run" | "execution" | "remediation" | "qa" | "documentation";
   scopeId: string;
   status: string;
@@ -36,25 +38,12 @@ export type AutorunDecision =
       stopReason: string;
     };
 
-export type RetryWaveStoryExecutionResult =
-  | {
-      phase: "test_preparation";
-      waveStoryTestRunId: string;
-      waveStoryId: string;
-      storyCode: string;
-      status: "review_required" | "failed";
-    }
-  | {
-      phase: "implementation" | "story_review";
-      waveStoryExecutionId: string;
-      waveStoryId: string;
-      storyCode: string;
-      status: string;
-    };
-
 export type AutorunHost = {
   requireItem(itemId: string): { currentColumn: string; phaseStatus: string };
   requireProject(projectId: string): { id: string; itemId: string };
+  // The orchestrator may pass a latestStoryReviewRun.id from showExecution into these methods.
+  // Hosts must treat the id as opaque and re-load the canonical run from persistence.
+  requireStoryReviewRunById(storyReviewRunId: string): { id: string; status: string };
   getLatestConceptByItemId(itemId: string): { status: string } | null;
   getProjectsByItemId(itemId: string): Array<{ id: string }>;
   getLatestStageRun(input: { itemId: string; projectId?: string; stageKey: StageKey }): { status: string } | null;

@@ -85,7 +85,7 @@ import { runProfiles } from "./run-profiles.js";
 import { workerProfiles, type WorkerProfileKey } from "./worker-profiles.js";
 import type { AgentAdapter } from "../adapters/types.js";
 import { AutorunOrchestrator } from "./autorun-orchestrator.js";
-import type { AutorunStep, RetryWaveStoryExecutionResult } from "./autorun-types.js";
+import type { AutorunSummary, AutorunStep } from "./autorun-types.js";
 
 type WorkflowDeps = {
   repoRoot: string;
@@ -126,6 +126,22 @@ type WorkflowDeps = {
   agentSessionRepository: AgentSessionRepository;
 };
 
+type RetryWaveStoryExecutionResult =
+  | {
+      phase: "test_preparation";
+      waveStoryTestRunId: string;
+      waveStoryId: string;
+      storyCode: string;
+      status: "review_required" | "failed";
+    }
+  | {
+      phase: "implementation" | "story_review";
+      waveStoryExecutionId: string;
+      waveStoryId: string;
+      storyCode: string;
+      status: string;
+    };
+
 export class WorkflowService {
   private readonly promptResolver: PromptResolver;
   private readonly artifactService: ArtifactService;
@@ -139,6 +155,7 @@ export class WorkflowService {
     this.autorunOrchestrator = new AutorunOrchestrator({
       requireItem: (itemId) => this.requireItem(itemId),
       requireProject: (projectId) => this.requireProject(projectId),
+      requireStoryReviewRunById: (storyReviewRunId) => this.requireStoryReviewRun(storyReviewRunId),
       getLatestConceptByItemId: (itemId) => this.deps.conceptRepository.getLatestByItemId(itemId),
       getProjectsByItemId: (itemId) => this.deps.projectRepository.listByItemId(itemId),
       getLatestStageRun: (input) => this.getLatestStageRun(input),
@@ -410,7 +427,7 @@ export class WorkflowService {
     itemId: string;
     trigger: string;
     initialSteps?: AutorunStep[];
-  }) {
+  }): Promise<AutorunSummary> {
     return this.autorunOrchestrator.executeForItem(input);
   }
 
@@ -418,7 +435,7 @@ export class WorkflowService {
     projectId: string;
     trigger: string;
     initialSteps?: AutorunStep[];
-  }) {
+  }): Promise<AutorunSummary> {
     return this.autorunOrchestrator.executeForProject(input);
   }
 

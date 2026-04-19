@@ -2,6 +2,8 @@ import { AppError } from "../shared/errors.js";
 import type { StageKey } from "../domain/types.js";
 import type { AutorunDecision, AutorunHost, AutorunScopeType, AutorunStep, AutorunSummary } from "./autorun-types.js";
 
+const MAX_AUTORUN_STEPS = 100;
+
 export class AutorunOrchestrator {
   public constructor(private readonly host: AutorunHost) {}
 
@@ -53,7 +55,7 @@ export class AutorunOrchestrator {
     };
     this.collectIds(summary, input.initialSteps);
 
-    for (let index = 0; index < 100; index += 1) {
+    for (let index = 0; index < MAX_AUTORUN_STEPS; index += 1) {
       const decision =
         input.scopeType === "item"
           ? this.resolveNextItemDecision(input.scopeId)
@@ -172,12 +174,13 @@ export class AutorunOrchestrator {
       return requirementsDecision;
     }
 
+    const latestArchitecturePlan = this.host.getLatestArchitecturePlanByProjectId(projectId);
     const architectureDecision = this.resolveStageDecision({
       itemId: project.itemId,
       projectId,
       stageKey: "architecture",
-      hasStageOutput: this.host.getLatestArchitecturePlanByProjectId(projectId) !== null,
-      approvalSatisfied: this.host.getLatestArchitecturePlanByProjectId(projectId)?.status === "approved",
+      hasStageOutput: latestArchitecturePlan !== null,
+      approvalSatisfied: latestArchitecturePlan?.status === "approved",
       startAction: "architecture:start",
       approveAction: "architecture:approve",
       approveScopeType: "project",
@@ -187,12 +190,13 @@ export class AutorunOrchestrator {
       return architectureDecision;
     }
 
+    const latestImplementationPlan = this.host.getLatestImplementationPlanByProjectId(projectId);
     const planningDecision = this.resolveStageDecision({
       itemId: project.itemId,
       projectId,
       stageKey: "planning",
-      hasStageOutput: this.host.getLatestImplementationPlanByProjectId(projectId) !== null,
-      approvalSatisfied: this.host.getLatestImplementationPlanByProjectId(projectId)?.status === "approved",
+      hasStageOutput: latestImplementationPlan !== null,
+      approvalSatisfied: latestImplementationPlan?.status === "approved",
       startAction: "planning:start",
       approveAction: "planning:approve",
       approveScopeType: "project",
@@ -373,7 +377,9 @@ export class AutorunOrchestrator {
             };
           }
           if (storyEntry.latestExecution.status === "review_required") {
-            const latestStoryReviewRun = storyEntry.latestStoryReviewRun;
+            const latestStoryReviewRun = storyEntry.latestStoryReviewRun
+              ? this.host.requireStoryReviewRunById(storyEntry.latestStoryReviewRun.id)
+              : null;
             if (latestStoryReviewRun && this.host.canAutorunStoryReviewRemediate(latestStoryReviewRun.id)) {
               return {
                 kind: "step",
@@ -413,7 +419,7 @@ export class AutorunOrchestrator {
   }
 
   private buildStep(decision: Extract<AutorunDecision, { kind: "step" }>, result: unknown): AutorunStep {
-    const payload = result && typeof result === "object" ? (result as Record<string, unknown>) : {};
+    const payload = result && typeof result === "object" && !Array.isArray(result) ? (result as Record<string, unknown>) : {};
     return {
       action: decision.action,
       scopeType: this.resolveStepScopeType(decision, payload),
