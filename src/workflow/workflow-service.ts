@@ -281,7 +281,8 @@ export class WorkflowService {
     return {
       provider: input.providerKey,
       model: input.model,
-      policy: input.policy
+      policy: input.policy,
+      workspaceRoot: this.deps.workspaceRoot
     };
   }
 

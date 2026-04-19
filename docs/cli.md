@@ -129,6 +129,15 @@ interaktivem Flow, Stage und Worker-Typ Provider und Modell bestimmt. Der
 lokale Fake-Adapter bleibt als `local-cli` fuer Tests und deterministische
 Fixture-Runs erhalten.
 
+Die Runtime-Config kann jetzt echte Provider-Slots aufloesen:
+
+- `local-cli` fuer deterministische Test- und Fixture-Runs
+- `codex` fuer reale Codex-CLI-Laeufe
+- `claude` fuer reale Claude-Code-Laeufe
+
+Interactive und autonome Pfade nutzen dabei denselben Resolver und dieselbe
+YOLO-Policy.
+
 Workspace-Kommandos:
 
 ```bash

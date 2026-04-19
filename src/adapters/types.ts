@@ -39,6 +39,7 @@ export type AdapterRuntimeContext = {
   provider: string;
   model: string | null;
   policy: AgentExecutionPolicy;
+  workspaceRoot: string;
 };
 
 export type AdapterRunRequest = {

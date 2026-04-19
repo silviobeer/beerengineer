@@ -5,6 +5,8 @@ import { ZodError, z } from "zod";
 import type { StageKey } from "../domain/types.js";
 import { AppError } from "../shared/errors.js";
 import type { WorkerProfileKey } from "../workflow/worker-profiles.js";
+import { CodexCliAdapter } from "./hosted/providers/codex-adapter.js";
+import { ClaudeCliAdapter } from "./hosted/providers/claude-adapter.js";
 import { LocalCliAdapter } from "./local-cli-adapter.js";
 import type { AgentAdapter, AgentExecutionPolicy } from "./types.js";
 
@@ -156,7 +158,6 @@ class UnsupportedProviderAdapter implements AgentAdapter {
     return this.fail();
   }
 }
-
 export function loadAgentRuntimeConfig(configPath: string): AgentRuntimeConfig {
   if (!existsSync(configPath)) {
     throw new AppError("AGENT_RUNTIME_CONFIG_NOT_FOUND", `Agent runtime config ${configPath} not found`);
@@ -219,7 +220,12 @@ function createProviderAdapter(input: {
   if (input.providerConfig.adapterKey === "local-cli") {
     return new LocalCliAdapter(input.repoRoot, input.adapterScriptPath, input.providerConfig.timeoutMs);
   }
-
+  if (input.providerConfig.adapterKey === "codex") {
+    return new CodexCliAdapter(input.providerConfig.command, input.providerConfig.env, input.providerConfig.timeoutMs);
+  }
+  if (input.providerConfig.adapterKey === "claude") {
+    return new ClaudeCliAdapter(input.providerConfig.command, input.providerConfig.env, input.providerConfig.timeoutMs);
+  }
   return new UnsupportedProviderAdapter(input.providerConfig.adapterKey, input.providerKey);
 }
 
