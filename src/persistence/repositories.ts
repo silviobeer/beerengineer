@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, notInArray } from "drizzle-orm";
 
 import type {
   AcceptanceCriterion,
@@ -10,6 +10,11 @@ import type {
   DocumentationRunStatus,
   ExecutionAgentSession,
   GitBranchMetadata,
+  InteractiveReviewEntry,
+  InteractiveReviewEntryStatus,
+  InteractiveReviewMessage,
+  InteractiveReviewResolution,
+  InteractiveReviewSession,
   ImplementationPlan,
   Item,
   ItemPhaseStatus,
@@ -67,6 +72,10 @@ import {
   documentationRuns,
   executionAgentSessions,
   implementationPlans,
+  interactiveReviewEntries,
+  interactiveReviewMessages,
+  interactiveReviewResolutions,
+  interactiveReviewSessions,
   items,
   qaAgentSessions,
   qaFindings,
@@ -1654,6 +1663,204 @@ export class DocumentationAgentSessionRepository {
       .where(eq(documentationAgentSessions.documentationRunId, documentationRunId))
       .orderBy(documentationAgentSessions.createdAt)
       .all() as DocumentationAgentSession[];
+  }
+}
+
+export class InteractiveReviewSessionRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public getById(id: string): InteractiveReviewSession | null {
+    return (
+      this.db.select().from(interactiveReviewSessions).where(eq(interactiveReviewSessions.id, id)).get() as
+        | InteractiveReviewSession
+        | undefined
+    ) ?? null;
+  }
+
+  public findOpenByScope(input: {
+    scopeType: InteractiveReviewSession["scopeType"];
+    scopeId: string;
+    artifactType: InteractiveReviewSession["artifactType"];
+    reviewType: InteractiveReviewSession["reviewType"];
+  }): InteractiveReviewSession | null {
+    return (
+      this.db
+        .select()
+        .from(interactiveReviewSessions)
+        .where(
+          and(
+            eq(interactiveReviewSessions.scopeType, input.scopeType),
+            eq(interactiveReviewSessions.scopeId, input.scopeId),
+            eq(interactiveReviewSessions.artifactType, input.artifactType),
+            eq(interactiveReviewSessions.reviewType, input.reviewType),
+            notInArray(interactiveReviewSessions.status, ["resolved", "cancelled"])
+          )
+        )
+        .orderBy(desc(interactiveReviewSessions.startedAt), desc(interactiveReviewSessions.id))
+        .limit(1)
+        .get() as InteractiveReviewSession | undefined
+    ) ?? null;
+  }
+
+  public create(
+    input: Omit<InteractiveReviewSession, "id" | "startedAt" | "updatedAt" | "resolvedAt" | "lastAssistantMessageId" | "lastUserMessageId">
+  ): InteractiveReviewSession {
+    const timestamp = now();
+    const row: InteractiveReviewSession = {
+      ...input,
+      id: createId("interactive_review_session"),
+      startedAt: timestamp,
+      updatedAt: timestamp,
+      resolvedAt: null,
+      lastAssistantMessageId: null,
+      lastUserMessageId: null
+    };
+    this.db.insert(interactiveReviewSessions).values(row).run();
+    return row;
+  }
+
+  public update(
+    id: string,
+    input: Partial<Pick<InteractiveReviewSession, "status" | "resolvedAt" | "lastAssistantMessageId" | "lastUserMessageId">>
+  ): void {
+    this.db
+      .update(interactiveReviewSessions)
+      .set({
+        ...(input.status !== undefined ? { status: input.status } : {}),
+        ...(input.resolvedAt !== undefined ? { resolvedAt: input.resolvedAt } : {}),
+        ...(input.lastAssistantMessageId !== undefined ? { lastAssistantMessageId: input.lastAssistantMessageId } : {}),
+        ...(input.lastUserMessageId !== undefined ? { lastUserMessageId: input.lastUserMessageId } : {}),
+        updatedAt: now()
+      })
+      .where(eq(interactiveReviewSessions.id, id))
+      .run();
+  }
+}
+
+export class InteractiveReviewMessageRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public create(
+    input: Omit<InteractiveReviewMessage, "id" | "createdAt">
+  ): InteractiveReviewMessage {
+    const row: InteractiveReviewMessage = {
+      ...input,
+      id: createId("interactive_review_message"),
+      createdAt: now()
+    };
+    this.db.insert(interactiveReviewMessages).values(row).run();
+    return row;
+  }
+
+  public listBySessionId(sessionId: string): InteractiveReviewMessage[] {
+    return this.db
+      .select()
+      .from(interactiveReviewMessages)
+      .where(eq(interactiveReviewMessages.sessionId, sessionId))
+      .orderBy(interactiveReviewMessages.createdAt, interactiveReviewMessages.id)
+      .all() as InteractiveReviewMessage[];
+  }
+}
+
+export class InteractiveReviewEntryRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public createMany(
+    input: Array<Omit<InteractiveReviewEntry, "id" | "createdAt" | "updatedAt">>
+  ): InteractiveReviewEntry[] {
+    if (input.length === 0) {
+      return [];
+    }
+    const timestamp = now();
+    const rows: InteractiveReviewEntry[] = input.map((entry) => ({
+      ...entry,
+      id: createId("interactive_review_entry"),
+      createdAt: timestamp,
+      updatedAt: timestamp
+    }));
+    this.db.insert(interactiveReviewEntries).values(rows).run();
+    return rows;
+  }
+
+  public listBySessionId(sessionId: string): InteractiveReviewEntry[] {
+    return this.db
+      .select()
+      .from(interactiveReviewEntries)
+      .where(eq(interactiveReviewEntries.sessionId, sessionId))
+      .orderBy(interactiveReviewEntries.createdAt, interactiveReviewEntries.id)
+      .all() as InteractiveReviewEntry[];
+  }
+
+  public updateByEntryId(
+    sessionId: string,
+    entryId: string,
+    input: {
+      status?: InteractiveReviewEntryStatus;
+      summary?: string | null;
+      changeRequest?: string | null;
+      rationale?: string | null;
+      severity?: InteractiveReviewEntry["severity"];
+    }
+  ): void {
+    this.db
+      .update(interactiveReviewEntries)
+      .set({
+        ...(input.status ? { status: input.status } : {}),
+        ...(input.summary !== undefined ? { summary: input.summary } : {}),
+        ...(input.changeRequest !== undefined ? { changeRequest: input.changeRequest } : {}),
+        ...(input.rationale !== undefined ? { rationale: input.rationale } : {}),
+        ...(input.severity !== undefined ? { severity: input.severity } : {}),
+        updatedAt: now()
+      })
+      .where(and(eq(interactiveReviewEntries.sessionId, sessionId), eq(interactiveReviewEntries.entryId, entryId)))
+      .run();
+  }
+}
+
+export class InteractiveReviewResolutionRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public create(
+    input: Omit<InteractiveReviewResolution, "id" | "createdAt" | "appliedAt">
+  ): InteractiveReviewResolution {
+    const timestamp = now();
+    const row: InteractiveReviewResolution = {
+      ...input,
+      id: createId("interactive_review_resolution"),
+      createdAt: timestamp,
+      appliedAt: null
+    };
+    this.db.insert(interactiveReviewResolutions).values(row).run();
+    return row;
+  }
+
+  public listBySessionId(sessionId: string): InteractiveReviewResolution[] {
+    return this.db
+      .select()
+      .from(interactiveReviewResolutions)
+      .where(eq(interactiveReviewResolutions.sessionId, sessionId))
+      .orderBy(interactiveReviewResolutions.createdAt, interactiveReviewResolutions.id)
+      .all() as InteractiveReviewResolution[];
+  }
+
+  public markApplied(id: string): void {
+    this.db
+      .update(interactiveReviewResolutions)
+      .set({
+        appliedAt: now()
+      })
+      .where(eq(interactiveReviewResolutions.id, id))
+      .run();
+  }
+
+  public updatePayloadJson(id: string, payloadJson: string | null): void {
+    this.db
+      .update(interactiveReviewResolutions)
+      .set({
+        payloadJson
+      })
+      .where(eq(interactiveReviewResolutions.id, id))
+      .run();
   }
 }
 

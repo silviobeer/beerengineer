@@ -39,9 +39,11 @@ describe("migration runner", () => {
         "0004_add_worker_prompt_skill_snapshots",
         "0005_add_documentation_runtime_tables",
         "0006_add_remediation_and_git_runtime_tables",
-        "0007_add_workspaces"
+        "0007_add_workspaces",
+        "0008_interactive_review",
+        "0009_add_interactive_review_resolved_at_index"
       ]);
-      expect(row?.count).toBe(8);
+      expect(row?.count).toBe(10);
       expect(indexes.map((index) => index.name)).toContain("idx_qa_runs_project_id");
     } finally {
       secondConnection.close();
@@ -70,7 +72,9 @@ describe("migration runner", () => {
         "0004_add_worker_prompt_skill_snapshots",
         "0005_add_documentation_runtime_tables",
         "0006_add_remediation_and_git_runtime_tables",
-        "0007_add_workspaces"
+        "0007_add_workspaces",
+        "0008_interactive_review",
+        "0009_add_interactive_review_resolved_at_index"
       ]);
       expect(columns.map((column) => column.name)).toContain("mode");
       expect(executionColumns.map((column) => column.name)).toContain("system_prompt_snapshot");
@@ -99,7 +103,9 @@ describe("migration runner", () => {
         "0004_add_worker_prompt_skill_snapshots",
         "0005_add_documentation_runtime_tables",
         "0006_add_remediation_and_git_runtime_tables",
-        "0007_add_workspaces"
+        "0007_add_workspaces",
+        "0008_interactive_review",
+        "0009_add_interactive_review_resolved_at_index"
       ]);
       expect(runIndexes.map((index) => index.name)).toContain("idx_qa_runs_project_id");
       expect(findingIndexes.map((index) => index.name)).toContain("idx_qa_findings_qa_run_id");
@@ -130,7 +136,9 @@ describe("migration runner", () => {
         "0004_add_worker_prompt_skill_snapshots",
         "0005_add_documentation_runtime_tables",
         "0006_add_remediation_and_git_runtime_tables",
-        "0007_add_workspaces"
+        "0007_add_workspaces",
+        "0008_interactive_review",
+        "0009_add_interactive_review_resolved_at_index"
       ]);
       expect(tables.map((table) => table.name)).toEqual([
         "story_review_agent_sessions",
@@ -173,7 +181,9 @@ describe("migration runner", () => {
       expect(applied).toEqual([
         "0005_add_documentation_runtime_tables",
         "0006_add_remediation_and_git_runtime_tables",
-        "0007_add_workspaces"
+        "0007_add_workspaces",
+        "0008_interactive_review",
+        "0009_add_interactive_review_resolved_at_index"
       ]);
       expect(tables.map((table) => table.name)).toEqual(["documentation_agent_sessions", "documentation_runs"]);
       expect(runIndexes.map((index) => index.name)).toContain("idx_documentation_runs_project_id");
@@ -211,7 +221,12 @@ describe("migration runner", () => {
         .prepare("PRAGMA index_list(story_review_remediation_runs)")
         .all() as Array<{ name: string }>;
 
-      expect(applied).toEqual(["0006_add_remediation_and_git_runtime_tables", "0007_add_workspaces"]);
+      expect(applied).toEqual([
+        "0006_add_remediation_and_git_runtime_tables",
+        "0007_add_workspaces",
+        "0008_interactive_review",
+        "0009_add_interactive_review_resolved_at_index"
+      ]);
       expect(tables.map((table) => table.name)).toEqual([
         "story_review_remediation_agent_sessions",
         "story_review_remediation_findings",

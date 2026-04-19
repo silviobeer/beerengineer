@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 
 import { createAppContext } from "../../src/app-context.js";
-import { AppError } from "../../src/shared/errors.js";
+import type { AppError } from "../../src/shared/errors.js";
 
 describe("workflow service", () => {
   function replaceRequired(source: string, searchValue: string, replaceValue: string): string {
@@ -260,6 +260,129 @@ describe("workflow service", () => {
       const itemState = context.repositories.itemRepository.getById(item.id);
       expect(itemState?.currentColumn).toBe("implementation");
       expect(itemState?.phaseStatus).toBe("completed");
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("supports interactive story review sessions with messages, entries and resolution", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const item = context.repositories.itemRepository.create({
+        title: "Interactive Review",
+        description: "Story review flow"
+      });
+      await context.workflowService.startStage({
+        stageKey: "brainstorm",
+        itemId: item.id
+      });
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      context.workflowService.approveConcept(concept!.id);
+      context.workflowService.importProjects(item.id);
+      const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
+      await context.workflowService.startStage({ stageKey: "requirements", itemId: item.id, projectId: project.id });
+
+      const started = context.workflowService.startInteractiveReview({ type: "stories", projectId: project.id });
+      const session = context.workflowService.showInteractiveReview(started.sessionId) as {
+        session: { status: string };
+        entries: Array<{ entryId: string; status: string }>;
+        messages: Array<{ role: string }>;
+      };
+      expect(session.session.status).toBe("waiting_for_user");
+      expect(session.entries.length).toBeGreaterThan(0);
+      expect(session.messages.map((message) => message.role).sort()).toEqual(["assistant", "system"]);
+
+      const firstStory = context.repositories.userStoryRepository.listByProjectId(project.id)[0]!;
+      const chatted = context.workflowService.chatInteractiveReview(
+        started.sessionId,
+        `${firstStory.code} needs revision because acceptance criteria are too vague`
+      );
+      expect(chatted.derivedUpdates).toHaveLength(1);
+
+      const updated = context.workflowService.showInteractiveReview(started.sessionId) as {
+        session: { status: string };
+        entries: Array<{ entryId: string; status: string }>;
+      };
+      expect(updated.session.status).toBe("waiting_for_user");
+      expect(updated.entries.find((entry) => entry.entryId === firstStory.id)?.status).toBe("needs_revision");
+
+      const remainingEntries = updated.entries.filter((entry) => entry.entryId !== firstStory.id);
+      for (const entry of remainingEntries) {
+        context.workflowService.updateInteractiveReviewEntry({
+          sessionId: started.sessionId,
+          storyId: entry.entryId,
+          status: "accepted",
+          summary: "Reviewed explicitly in integration test"
+        });
+      }
+
+      expect((context.workflowService.showInteractiveReview(started.sessionId) as { session: { status: string } }).session.status).toBe(
+        "ready_for_resolution"
+      );
+
+      const resolution = await context.workflowService.resolveInteractiveReview({
+        sessionId: started.sessionId,
+        action: "request_changes",
+        rationale: "Story set still needs refinement"
+      });
+      expect(resolution.status).toBe("resolved");
+      expect(context.repositories.itemRepository.getById(item.id)?.phaseStatus).toBe("review_required");
+      expect(context.repositories.interactiveReviewResolutionRepository.listBySessionId(started.sessionId)).toHaveLength(1);
+
+      try {
+        context.workflowService.updateInteractiveReviewEntry({
+          sessionId: started.sessionId,
+          storyId: firstStory.id,
+          status: "accepted"
+        });
+        throw new Error("Expected closed interactive review session to reject entry updates");
+      } catch (error) {
+        expect(error).toMatchObject({
+          code: "INTERACTIVE_REVIEW_CLOSED"
+        } satisfies Partial<AppError>);
+      }
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not derive positive story updates from negated chat instructions", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const item = context.repositories.itemRepository.create({
+        title: "Interactive Review Negation",
+        description: "Negation handling"
+      });
+      await context.workflowService.startStage({
+        stageKey: "brainstorm",
+        itemId: item.id
+      });
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      context.workflowService.approveConcept(concept!.id);
+      context.workflowService.importProjects(item.id);
+      const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
+      await context.workflowService.startStage({ stageKey: "requirements", itemId: item.id, projectId: project.id });
+
+      const started = context.workflowService.startInteractiveReview({ type: "stories", projectId: project.id });
+      const firstStory = context.repositories.userStoryRepository.listByProjectId(project.id)[0]!;
+      const chatted = context.workflowService.chatInteractiveReview(
+        started.sessionId,
+        `Do not approve ${firstStory.code} yet and don't change anything else`
+      );
+
+      expect(chatted.derivedUpdates).toHaveLength(0);
+      const review = context.workflowService.showInteractiveReview(started.sessionId) as {
+        entries: Array<{ entryId: string; status: string }>;
+      };
+      expect(review.entries.find((entry) => entry.entryId === firstStory.id)?.status).toBe("pending");
     } finally {
       context.connection.close();
       rmSync(root, { recursive: true, force: true });

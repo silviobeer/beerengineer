@@ -12,6 +12,10 @@ import {
   DocumentationRunRepository,
   ExecutionAgentSessionRepository,
   ImplementationPlanRepository,
+  InteractiveReviewEntryRepository,
+  InteractiveReviewMessageRepository,
+  InteractiveReviewResolutionRepository,
+  InteractiveReviewSessionRepository,
   ItemRepository,
   QaAgentSessionRepository,
   QaFindingRepository,
@@ -72,6 +76,10 @@ describe("repositories", () => {
     const qaAgentSessionRepository = new QaAgentSessionRepository(db);
     const documentationRunRepository = new DocumentationRunRepository(db);
     const documentationAgentSessionRepository = new DocumentationAgentSessionRepository(db);
+    const interactiveReviewSessionRepository = new InteractiveReviewSessionRepository(db);
+    const interactiveReviewMessageRepository = new InteractiveReviewMessageRepository(db);
+    const interactiveReviewEntryRepository = new InteractiveReviewEntryRepository(db);
+    const interactiveReviewResolutionRepository = new InteractiveReviewResolutionRepository(db);
     const artifactRepository = new ArtifactRepository(db);
 
     try {
@@ -427,6 +435,49 @@ describe("repositories", () => {
         stderr: "",
         exitCode: 0
       });
+      const interactiveReviewSession = interactiveReviewSessionRepository.create({
+        scopeType: "project",
+        scopeId: projects[0]!.id,
+        artifactType: "stories",
+        reviewType: "collection_review",
+        status: "open"
+      });
+      const interactiveReviewMessage = interactiveReviewMessageRepository.create({
+        sessionId: interactiveReviewSession.id,
+        role: "assistant",
+        content: "Review started",
+        structuredPayloadJson: null,
+        derivedUpdatesJson: null
+      });
+      const interactiveReviewEntries = interactiveReviewEntryRepository.createMany([
+        {
+          sessionId: interactiveReviewSession.id,
+          entryType: "story",
+          entryId: stories[0]!.id,
+          title: stories[0]!.title,
+          status: "pending",
+          summary: null,
+          changeRequest: null,
+          rationale: null,
+          severity: null
+        }
+      ]);
+      interactiveReviewEntryRepository.updateByEntryId(interactiveReviewSession.id, stories[0]!.id, {
+        status: "needs_revision",
+        summary: "Story needs clarification",
+        changeRequest: "Clarify acceptance criteria",
+        severity: "medium"
+      });
+      const interactiveReviewResolution = interactiveReviewResolutionRepository.create({
+        sessionId: interactiveReviewSession.id,
+        resolutionType: "request_changes",
+        payloadJson: "{\"rationale\":\"scope unclear\"}"
+      });
+      interactiveReviewResolutionRepository.markApplied(interactiveReviewResolution.id);
+      interactiveReviewSessionRepository.update(interactiveReviewSession.id, {
+        lastAssistantMessageId: interactiveReviewMessage.id,
+        status: "ready_for_resolution"
+      });
 
       expect(architecturePlan.id).toContain("architecture_");
       expect(implementationPlan.id).toContain("plan_");
@@ -468,6 +519,16 @@ describe("repositories", () => {
       expect(documentationRunRepository.listByProjectId(projects[0]!.id)).toHaveLength(1);
       expect(documentationSession.id).toContain("documentation_session_");
       expect(documentationAgentSessionRepository.listByDocumentationRunId(documentationRun.id)).toHaveLength(1);
+      expect(interactiveReviewSessionRepository.findOpenByScope({
+        scopeType: "project",
+        scopeId: projects[0]!.id,
+        artifactType: "stories",
+        reviewType: "collection_review"
+      })?.id).toBe(interactiveReviewSession.id);
+      expect(interactiveReviewMessageRepository.listBySessionId(interactiveReviewSession.id)).toHaveLength(1);
+      expect(interactiveReviewEntries[0]?.id).toContain("interactive_review_entry_");
+      expect(interactiveReviewEntryRepository.listBySessionId(interactiveReviewSession.id)[0]?.status).toBe("needs_revision");
+      expect(interactiveReviewResolutionRepository.listBySessionId(interactiveReviewSession.id)[0]?.appliedAt).not.toBeNull();
     } finally {
       testDb.cleanup();
     }

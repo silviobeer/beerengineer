@@ -88,6 +88,77 @@ export type QaRunStatus = (typeof qaRunStatuses)[number];
 export const documentationRunStatuses = ["running", "review_required", "completed", "failed"] as const;
 export type DocumentationRunStatus = (typeof documentationRunStatuses)[number];
 
+export const interactiveReviewScopeTypes = [
+  "item",
+  "project",
+  "concept",
+  "story_collection",
+  "story",
+  "architecture",
+  "implementation_plan",
+  "qa_run",
+  "documentation_run"
+] as const;
+export type InteractiveReviewScopeType = (typeof interactiveReviewScopeTypes)[number];
+
+export const interactiveReviewArtifactTypes = [
+  "concept",
+  "stories",
+  "architecture",
+  "implementation_plan",
+  "qa",
+  "documentation"
+] as const;
+export type InteractiveReviewArtifactType = (typeof interactiveReviewArtifactTypes)[number];
+
+export const interactiveReviewTypes = [
+  "artifact_review",
+  "collection_review",
+  "exception_review",
+  "guided_edit"
+] as const;
+export type InteractiveReviewType = (typeof interactiveReviewTypes)[number];
+
+export const interactiveReviewStatuses = [
+  "open",
+  "waiting_for_user",
+  "ready_for_resolution",
+  "resolved",
+  "cancelled"
+] as const;
+export type InteractiveReviewStatus = (typeof interactiveReviewStatuses)[number];
+
+export const interactiveReviewMessageRoles = ["system", "assistant", "user"] as const;
+export type InteractiveReviewMessageRole = (typeof interactiveReviewMessageRoles)[number];
+
+export const interactiveReviewEntryTypes = ["story", "section", "finding", "option"] as const;
+export type InteractiveReviewEntryType = (typeof interactiveReviewEntryTypes)[number];
+
+export const interactiveReviewEntryStatuses = [
+  "pending",
+  "accepted",
+  "needs_revision",
+  "rejected",
+  "resolved"
+] as const;
+export type InteractiveReviewEntryStatus = (typeof interactiveReviewEntryStatuses)[number];
+
+export const interactiveReviewSeverities = ["critical", "high", "medium", "low"] as const;
+export type InteractiveReviewSeverity = (typeof interactiveReviewSeverities)[number];
+
+export const interactiveReviewResolutionTypes = [
+  "approve",
+  "approve_and_autorun",
+  "request_changes",
+  "apply_guided_changes",
+  "retry",
+  "retry_and_autorun",
+  "accept_with_rationale",
+  "reject",
+  "defer"
+] as const;
+export type InteractiveReviewResolutionType = (typeof interactiveReviewResolutionTypes)[number];
+
 export const qaFindingSeverities = ["critical", "high", "medium", "low"] as const;
 export type QaFindingSeverity = (typeof qaFindingSeverities)[number];
 
@@ -529,6 +600,54 @@ export type DocumentationRun = {
   createdAt: number;
   updatedAt: number;
   completedAt: number | null;
+};
+
+export type InteractiveReviewSession = {
+  id: string;
+  scopeType: InteractiveReviewScopeType;
+  scopeId: string;
+  artifactType: InteractiveReviewArtifactType;
+  reviewType: InteractiveReviewType;
+  status: InteractiveReviewStatus;
+  startedAt: number;
+  updatedAt: number;
+  resolvedAt: number | null;
+  lastAssistantMessageId: string | null;
+  lastUserMessageId: string | null;
+};
+
+export type InteractiveReviewMessage = {
+  id: string;
+  sessionId: string;
+  role: InteractiveReviewMessageRole;
+  content: string;
+  structuredPayloadJson: string | null;
+  derivedUpdatesJson: string | null;
+  createdAt: number;
+};
+
+export type InteractiveReviewEntry = {
+  id: string;
+  sessionId: string;
+  entryType: InteractiveReviewEntryType;
+  entryId: string;
+  title: string;
+  status: InteractiveReviewEntryStatus;
+  summary: string | null;
+  changeRequest: string | null;
+  rationale: string | null;
+  severity: InteractiveReviewSeverity | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type InteractiveReviewResolution = {
+  id: string;
+  sessionId: string;
+  resolutionType: InteractiveReviewResolutionType;
+  payloadJson: string | null;
+  createdAt: number;
+  appliedAt: number | null;
 };
 
 export type DocumentationAgentSession = {

@@ -89,10 +89,47 @@ function rebuildLegacyItemsTable(connection: SqliteDatabase): void {
   transaction();
 }
 
+function defaultWorkspaceSeedPresent(connection: SqliteDatabase): boolean {
+  const workspace = connection
+    .prepare("SELECT id FROM workspaces WHERE id = ?")
+    .get(DEFAULT_WORKSPACE_ID) as { id: string } | undefined;
+  const settings = connection
+    .prepare("SELECT workspace_id FROM workspace_settings WHERE workspace_id = ?")
+    .get(DEFAULT_WORKSPACE_ID) as { workspace_id: string } | undefined;
+  return workspace?.id === DEFAULT_WORKSPACE_ID && settings?.workspace_id === DEFAULT_WORKSPACE_ID;
+}
+
+function workspaceCompatibilitySatisfied(connection: SqliteDatabase): boolean {
+  if (!tableExists(connection, "workspaces") || !tableExists(connection, "workspace_settings")) {
+    return false;
+  }
+
+  if (!defaultWorkspaceSeedPresent(connection)) {
+    return false;
+  }
+
+  if (!tableExists(connection, "items")) {
+    return true;
+  }
+
+  if (!columnExists(connection, "items", "workspace_id")) {
+    return false;
+  }
+
+  if (hasLegacyItemsCodeUniqueConstraint(connection)) {
+    return false;
+  }
+
+  return indexExists(connection, "idx_items_workspace_code_unique");
+}
+
 function ensureWorkspaceCompatibility(connection: SqliteDatabase): void {
   // Fresh installs get workspace tables from the base schema. This compatibility
   // pass exists for older databases that predate the workspace layer and may
   // still carry the legacy global UNIQUE(code) constraint on items.
+  if (workspaceCompatibilitySatisfied(connection)) {
+    return;
+  }
   const timestamp = 0;
   connection.exec(
     `CREATE TABLE IF NOT EXISTS workspaces (

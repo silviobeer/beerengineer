@@ -581,6 +581,10 @@ export const baseMigrations: readonly SqlMigration[] = [
   },
   {
     id: "0007_add_workspaces",
+    // New installs already get these tables from 0000_initial. This migration
+    // records the workspace rollout for pre-workspace databases, while the
+    // migrator compatibility pass handles older edge cases such as legacy item
+    // schema repair on startup.
     statements: [
       `CREATE TABLE IF NOT EXISTS workspaces (
         id TEXT PRIMARY KEY NOT NULL,
@@ -638,6 +642,73 @@ export const baseMigrations: readonly SqlMigration[] = [
         ${migrationTimestamp},
         ${migrationTimestamp}
       )`
+    ]
+  },
+  {
+    id: "0008_interactive_review",
+    statements: [
+      `CREATE TABLE IF NOT EXISTS interactive_review_sessions (
+        id TEXT PRIMARY KEY NOT NULL,
+        scope_type TEXT NOT NULL,
+        scope_id TEXT NOT NULL,
+        artifact_type TEXT NOT NULL,
+        review_type TEXT NOT NULL,
+        status TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        resolved_at INTEGER,
+        last_assistant_message_id TEXT,
+        last_user_message_id TEXT
+      )`,
+      `CREATE TABLE IF NOT EXISTS interactive_review_messages (
+        id TEXT PRIMARY KEY NOT NULL,
+        session_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        structured_payload_json TEXT,
+        derived_updates_json TEXT,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY (session_id) REFERENCES interactive_review_sessions(id)
+      )`,
+      `CREATE TABLE IF NOT EXISTS interactive_review_entries (
+        id TEXT PRIMARY KEY NOT NULL,
+        session_id TEXT NOT NULL,
+        entry_type TEXT NOT NULL,
+        entry_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        status TEXT NOT NULL,
+        summary TEXT,
+        change_request TEXT,
+        rationale TEXT,
+        severity TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (session_id) REFERENCES interactive_review_sessions(id)
+      )`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS interactive_review_entry_unique_idx
+        ON interactive_review_entries(session_id, entry_type, entry_id)`,
+      `CREATE TABLE IF NOT EXISTS interactive_review_resolutions (
+        id TEXT PRIMARY KEY NOT NULL,
+        session_id TEXT NOT NULL,
+        resolution_type TEXT NOT NULL,
+        payload_json TEXT,
+        created_at INTEGER NOT NULL,
+        applied_at INTEGER,
+        FOREIGN KEY (session_id) REFERENCES interactive_review_sessions(id)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_interactive_review_sessions_scope
+        ON interactive_review_sessions(scope_type, scope_id, artifact_type, review_type)`,
+      `CREATE INDEX IF NOT EXISTS idx_interactive_review_messages_session_id
+        ON interactive_review_messages(session_id, created_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_interactive_review_resolutions_session_id
+        ON interactive_review_resolutions(session_id, created_at)`
+    ]
+  },
+  {
+    id: "0009_add_interactive_review_resolved_at_index",
+    statements: [
+      `CREATE INDEX IF NOT EXISTS idx_interactive_review_sessions_resolved_at
+        ON interactive_review_sessions(resolved_at)`
     ]
   }
 ];

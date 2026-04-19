@@ -7,6 +7,10 @@ import type {
   DocumentationRunStatus,
   ExecutionWorkerRole,
   GitBranchMetadata,
+  InteractiveReviewEntryStatus,
+  InteractiveReviewSeverity,
+  InteractiveReviewResolutionType,
+  InteractiveReviewSession,
   QaRunStatus,
   StageKey,
   StoryReviewFindingSeverity,
@@ -51,6 +55,10 @@ import type {
   ExecutionAgentSessionRepository,
   DocumentationAgentSessionRepository,
   DocumentationRunRepository,
+  InteractiveReviewEntryRepository,
+  InteractiveReviewMessageRepository,
+  InteractiveReviewResolutionRepository,
+  InteractiveReviewSessionRepository,
   QaAgentSessionRepository,
   QaFindingRepository,
   QaRunRepository,
@@ -87,6 +95,12 @@ import { workerProfiles, type WorkerProfileKey } from "./worker-profiles.js";
 import type { AgentAdapter } from "../adapters/types.js";
 import { AutorunOrchestrator } from "./autorun-orchestrator.js";
 import type { AutorunSummary, AutorunStep } from "./autorun-types.js";
+import {
+  interactiveReviewEntryStatuses,
+  interactiveReviewSeverities
+} from "../domain/types.js";
+
+const supportedInteractiveReviewResolutionActions = ["approve", "approve_and_autorun", "request_changes"] as const;
 
 type WorkflowDeps = {
   repoRoot: string;
@@ -123,6 +137,10 @@ type WorkflowDeps = {
   qaAgentSessionRepository: QaAgentSessionRepository;
   documentationRunRepository: DocumentationRunRepository;
   documentationAgentSessionRepository: DocumentationAgentSessionRepository;
+  interactiveReviewSessionRepository: InteractiveReviewSessionRepository;
+  interactiveReviewMessageRepository: InteractiveReviewMessageRepository;
+  interactiveReviewEntryRepository: InteractiveReviewEntryRepository;
+  interactiveReviewResolutionRepository: InteractiveReviewResolutionRepository;
   stageRunRepository: StageRunRepository;
   artifactRepository: ArtifactRepository;
   agentSessionRepository: AgentSessionRepository;
@@ -467,6 +485,285 @@ export class WorkflowService {
     const projects = this.deps.projectRepository.listByItemId(itemId);
     const stageRuns = this.deps.stageRunRepository.listByItemId(itemId);
     return { item, concept, projects, stageRuns };
+  }
+
+  public startInteractiveReview(input: { type: "stories"; projectId: string }) {
+    if (input.type !== "stories") {
+      throw new AppError("INTERACTIVE_REVIEW_TYPE_NOT_SUPPORTED", `Review type ${input.type} is not supported yet`);
+    }
+
+    const project = this.requireProject(input.projectId);
+    const item = this.requireItem(project.itemId);
+    const stories = this.deps.userStoryRepository.listByProjectId(project.id);
+    if (stories.length === 0) {
+      throw new AppError("STORIES_NOT_FOUND", "No user stories found for project");
+    }
+
+    const existing = this.deps.interactiveReviewSessionRepository.findOpenByScope({
+      scopeType: "project",
+      scopeId: project.id,
+      artifactType: "stories",
+      reviewType: "collection_review"
+    });
+    if (existing) {
+      return {
+        sessionId: existing.id,
+        status: existing.status,
+        reused: true
+      };
+    }
+
+    const created = this.deps.runInTransaction(() => {
+      const session = this.deps.interactiveReviewSessionRepository.create({
+        scopeType: "project",
+        scopeId: project.id,
+        artifactType: "stories",
+        reviewType: "collection_review",
+        status: "open"
+      });
+      this.deps.interactiveReviewMessageRepository.create({
+        sessionId: session.id,
+        role: "system",
+        content: "Interactive review session for project stories.",
+        structuredPayloadJson: JSON.stringify(
+          {
+            itemId: item.id,
+            projectId: project.id,
+            storyIds: stories.map((story) => story.id)
+          },
+          null,
+          2
+        ),
+        derivedUpdatesJson: null
+      });
+      const assistantMessage = this.deps.interactiveReviewMessageRepository.create({
+        sessionId: session.id,
+        role: "assistant",
+        content: this.buildStoryReviewKickoffMessage(project.code, stories),
+        structuredPayloadJson: JSON.stringify(
+          {
+            availableActions: ["approve", "approve_and_autorun", "request_changes"]
+          },
+          null,
+          2
+        ),
+        derivedUpdatesJson: null
+      });
+      this.deps.interactiveReviewEntryRepository.createMany(
+        stories.map((story) => ({
+          sessionId: session.id,
+          entryType: "story",
+          entryId: story.id,
+          title: `${story.code} ${story.title}`,
+          status: story.status === "approved" ? "accepted" : "pending",
+          summary: null,
+          changeRequest: null,
+          rationale: null,
+          severity: null
+        }))
+      );
+      const nextStatus = this.computeInteractiveReviewStatus(
+        stories.map((story) => ({
+          status: story.status === "approved" ? "accepted" : "pending"
+        }))
+      );
+      this.deps.interactiveReviewSessionRepository.update(session.id, {
+        lastAssistantMessageId: assistantMessage.id,
+        status: nextStatus
+      });
+      return session;
+    });
+
+    return {
+      sessionId: created.id,
+      status: this.showInteractiveReview(created.id).session.status,
+      reused: false
+    };
+  }
+
+  public showInteractiveReview(sessionId: string) {
+    const session = this.requireInteractiveReviewSession(sessionId);
+    const messages = this.deps.interactiveReviewMessageRepository.listBySessionId(sessionId);
+    const entries = this.deps.interactiveReviewEntryRepository.listBySessionId(sessionId);
+    const resolutions = this.deps.interactiveReviewResolutionRepository.listBySessionId(sessionId);
+
+    if (session.artifactType === "stories" && session.scopeType === "project") {
+      const project = this.requireProject(session.scopeId);
+      const item = this.requireItem(project.itemId);
+      const stories = this.deps.userStoryRepository.listByProjectId(project.id).map((story) => ({
+        ...story,
+        acceptanceCriteria: this.deps.acceptanceCriterionRepository.listByStoryId(story.id)
+      }));
+      return { session, item, project, stories, messages, entries, resolutions };
+    }
+
+    return { session, messages, entries, resolutions };
+  }
+
+  public chatInteractiveReview(sessionId: string, message: string) {
+    const session = this.requireInteractiveReviewSession(sessionId);
+    this.assertInteractiveReviewOpen(session);
+    const storyScope = this.getStoryReviewScope(session);
+    const derivedUpdates = this.deriveStoryEntryUpdates(storyScope.stories, message);
+
+    const result = this.deps.runInTransaction(() => {
+      const userMessage = this.deps.interactiveReviewMessageRepository.create({
+        sessionId,
+        role: "user",
+        content: message,
+        structuredPayloadJson: null,
+        derivedUpdatesJson: derivedUpdates.length > 0 ? JSON.stringify({ entryUpdates: derivedUpdates }, null, 2) : null
+      });
+      this.deps.interactiveReviewSessionRepository.update(sessionId, {
+        lastUserMessageId: userMessage.id
+      });
+
+      for (const update of derivedUpdates) {
+        this.deps.interactiveReviewEntryRepository.updateByEntryId(sessionId, update.entryId, {
+          status: update.status,
+          summary: update.summary,
+          changeRequest: update.changeRequest,
+          severity: update.severity
+        });
+      }
+
+      const entries = this.deps.interactiveReviewEntryRepository.listBySessionId(sessionId);
+      const assistantMessage = this.deps.interactiveReviewMessageRepository.create({
+        sessionId,
+        role: "assistant",
+        content: this.buildStoryReviewFollowUpMessage(storyScope.project.code, entries, derivedUpdates),
+        structuredPayloadJson: JSON.stringify(
+          {
+            availableActions: ["approve", "approve_and_autorun", "request_changes"],
+            derivedUpdateCount: derivedUpdates.length
+          },
+          null,
+          2
+        ),
+        derivedUpdatesJson: derivedUpdates.length > 0 ? JSON.stringify({ entryUpdates: derivedUpdates }, null, 2) : null
+      });
+      const nextStatus = this.computeInteractiveReviewStatus(entries);
+      this.deps.interactiveReviewSessionRepository.update(sessionId, {
+        lastAssistantMessageId: assistantMessage.id,
+        status: nextStatus
+      });
+
+      return {
+        sessionId,
+        userMessageId: userMessage.id,
+        assistantMessageId: assistantMessage.id,
+        status: nextStatus,
+        derivedUpdates
+      };
+    });
+
+    return result;
+  }
+
+  public updateInteractiveReviewEntry(input: {
+    sessionId: string;
+    storyId: string;
+    status: InteractiveReviewEntryStatus;
+    summary?: string;
+    changeRequest?: string;
+    rationale?: string;
+    severity?: "critical" | "high" | "medium" | "low";
+  }) {
+    const session = this.requireInteractiveReviewSession(input.sessionId);
+    this.assertInteractiveReviewOpen(session);
+    this.assertInteractiveReviewEntryStatus(input.status);
+    this.assertInteractiveReviewSeverity(input.severity);
+    const storyScope = this.getStoryReviewScope(session);
+    const project = storyScope.project;
+    const story = this.deps.userStoryRepository.getById(input.storyId);
+    if (!story || story.projectId !== project.id) {
+      throw new AppError("STORY_NOT_FOUND", `Story ${input.storyId} not found in review scope`);
+    }
+
+    this.deps.interactiveReviewEntryRepository.updateByEntryId(session.id, story.id, {
+      status: input.status,
+      summary: input.summary ?? null,
+      changeRequest: input.changeRequest ?? null,
+      rationale: input.rationale ?? null,
+      severity: input.severity ?? null
+    });
+    const entries = this.deps.interactiveReviewEntryRepository.listBySessionId(session.id);
+    const nextStatus = this.computeInteractiveReviewStatus(entries);
+    this.deps.interactiveReviewSessionRepository.update(session.id, {
+      status: nextStatus
+    });
+    return {
+      sessionId: session.id,
+      storyId: story.id,
+      status: nextStatus
+    };
+  }
+
+  public async resolveInteractiveReview(input: {
+    sessionId: string;
+    action: Extract<InteractiveReviewResolutionType, "approve" | "approve_and_autorun" | "request_changes">;
+    rationale?: string;
+  }) {
+    const session = this.requireInteractiveReviewSession(input.sessionId);
+    this.assertInteractiveReviewOpen(session);
+    this.assertInteractiveReviewResolutionAction(input.action);
+    const storyScope = this.getStoryReviewScope(session);
+    const { project, item } = storyScope;
+    const resolution = this.deps.runInTransaction(() => {
+      const payload = input.rationale ? { rationale: input.rationale } : null;
+      const createdResolution = this.deps.interactiveReviewResolutionRepository.create({
+        sessionId: session.id,
+        resolutionType: input.action,
+        payloadJson: payload ? JSON.stringify(payload, null, 2) : null
+      });
+
+      if (input.action === "approve" || input.action === "approve_and_autorun") {
+        this.approveStories(project.id);
+      }
+
+      if (input.action === "request_changes") {
+        this.deps.itemRepository.updatePhaseStatus(item.id, "review_required");
+      }
+
+      this.deps.interactiveReviewResolutionRepository.markApplied(createdResolution.id);
+      this.deps.interactiveReviewSessionRepository.update(session.id, {
+        status: "resolved",
+        resolvedAt: Date.now()
+      });
+      return createdResolution;
+    });
+
+    if (input.action === "approve_and_autorun") {
+      const autorun = await this.autorunForProject({
+        projectId: project.id,
+        trigger: "review:resolve",
+        initialSteps: [{ action: "review:resolve", scopeType: "project", scopeId: project.id, status: "approved" }]
+      });
+      this.deps.interactiveReviewResolutionRepository.updatePayloadJson(
+        resolution.id,
+        JSON.stringify(
+          {
+            ...(input.rationale ? { rationale: input.rationale } : {}),
+            autorun
+          },
+          null,
+          2
+        )
+      );
+      return {
+        sessionId: session.id,
+        resolutionId: resolution.id,
+        status: "resolved",
+        autorun
+      };
+    }
+
+    return {
+      sessionId: session.id,
+      resolutionId: resolution.id,
+      status: "resolved",
+      action: input.action
+    };
   }
 
   public listRuns(input: { itemId?: string; projectId?: string }) {
@@ -3144,6 +3441,187 @@ export class WorkflowService {
 
   private isAutoFixableStoryReviewSeverity(severity: StoryReviewFindingSeverity): boolean {
     return severity === "medium" || severity === "low";
+  }
+
+  private requireInteractiveReviewSession(sessionId: string): InteractiveReviewSession {
+    const session = this.deps.interactiveReviewSessionRepository.getById(sessionId);
+    if (!session) {
+      throw new AppError("INTERACTIVE_REVIEW_SESSION_NOT_FOUND", `Interactive review session ${sessionId} not found`);
+    }
+    return session;
+  }
+
+  private getStoryReviewScope(session: InteractiveReviewSession) {
+    this.assertStoryProjectSession(session);
+    const project = this.requireProject(session.scopeId);
+    const item = this.requireItem(project.itemId);
+    const stories = this.deps.userStoryRepository.listByProjectId(project.id);
+    return { item, project, stories };
+  }
+
+  private buildStoryReviewKickoffMessage(projectCode: string, stories: Array<{ code: string; title: string; priority: string }>): string {
+    const storyLines = stories.map((story) => `- ${story.code}: ${story.title} (${story.priority})`).join("\n");
+    return [
+      `Story review for ${projectCode} is open.`,
+      "",
+      "Current scope:",
+      storyLines,
+      "",
+      "Use `review:chat` for feedback, `review:entry:update` for structured per-story status, then finish with `review:resolve`."
+    ].join("\n");
+  }
+
+  private buildStoryReviewFollowUpMessage(
+    projectCode: string,
+    entries: Array<{ title: string; status: string }>,
+    derivedUpdates: Array<{ title: string; status: string }>
+  ): string {
+    const accepted = entries.filter((entry) => entry.status === "accepted").length;
+    const needsRevision = entries.filter((entry) => entry.status === "needs_revision").length;
+    const rejected = entries.filter((entry) => entry.status === "rejected").length;
+    const pending = entries.filter((entry) => entry.status === "pending").length;
+    const updatedLines =
+      derivedUpdates.length > 0
+        ? derivedUpdates.map((update) => `- ${update.title}: ${update.status}`).join("\n")
+        : "- no structured story updates derived automatically";
+
+    return [
+      `Story review summary for ${projectCode}:`,
+      `accepted=${accepted}, needs_revision=${needsRevision}, rejected=${rejected}, pending=${pending}`,
+      "",
+      "Latest structured updates:",
+      updatedLines,
+      "",
+      "If needed, refine individual story states with `review:entry:update`, then resolve the session."
+    ].join("\n");
+  }
+
+  private deriveStoryEntryUpdates(
+    stories: Array<{ id: string; code: string; title: string }>,
+    message: string
+  ): Array<{
+    entryId: string;
+    title: string;
+    status: InteractiveReviewEntryStatus;
+    summary: string;
+    changeRequest: string | null;
+    severity: InteractiveReviewSeverity | null;
+  }> {
+    const normalized = message.toLowerCase();
+    const revisionSignals = ["needs revision", "need revision", "revise", "revision", "change", "fix", "ueberarbeiten"];
+    const rejectSignals = ["reject", "rejected", "ablehnen"];
+    const approveSignals = ["approve", "approved", "looks good", "ok", "passt", "freigeben"];
+    const severitySignals: Array<{ severity: InteractiveReviewSeverity; keywords: string[] }> = [
+      { severity: "critical", keywords: ["critical"] },
+      { severity: "high", keywords: ["high"] },
+      { severity: "medium", keywords: ["medium"] },
+      { severity: "low", keywords: ["low"] }
+    ];
+
+    const hasPositiveSignal = (signals: string[]): boolean =>
+      signals.some((signal) => this.messageIncludesPositiveSignal(normalized, signal));
+
+    const status = hasPositiveSignal(rejectSignals)
+      ? "rejected"
+      : hasPositiveSignal(revisionSignals)
+        ? "needs_revision"
+        : hasPositiveSignal(approveSignals)
+          ? "accepted"
+          : null;
+
+    if (!status) {
+      return [];
+    }
+
+    const severity = severitySignals.find((candidate) => candidate.keywords.some((keyword) => normalized.includes(keyword)))?.severity ?? null;
+    const matchedStories = stories.filter(
+      (story) => normalized.includes(story.code.toLowerCase()) || normalized.includes(story.title.toLowerCase())
+    );
+
+    // v1 heuristic: story targeting still relies on code/title substring matches.
+    // Keep this explicit until entries are updated from structured UI selections.
+    return matchedStories.map((story) => ({
+      entryId: story.id,
+      title: `${story.code} ${story.title}`,
+      status,
+      summary: this.buildDerivedStoryEntrySummary(status),
+      changeRequest:
+        status === "needs_revision" || status === "rejected"
+          ? this.buildDerivedStoryEntryChangeRequest(story.code, message, matchedStories.length)
+          : null,
+      severity
+    }));
+  }
+
+  private computeInteractiveReviewStatus(entries: Array<{ status: string }>): "waiting_for_user" | "ready_for_resolution" {
+    return entries.length > 0 && entries.every((entry) => entry.status !== "pending") ? "ready_for_resolution" : "waiting_for_user";
+  }
+
+  private assertInteractiveReviewOpen(session: InteractiveReviewSession): void {
+    if (session.status === "resolved" || session.status === "cancelled") {
+      throw new AppError("INTERACTIVE_REVIEW_CLOSED", `Interactive review session ${session.id} is already closed`);
+    }
+  }
+
+  private assertStoryProjectSession(session: InteractiveReviewSession): void {
+    if (session.scopeType !== "project" || session.artifactType !== "stories") {
+      throw new AppError("INTERACTIVE_REVIEW_TYPE_NOT_SUPPORTED", "Session is not a story review");
+    }
+  }
+
+  private assertInteractiveReviewEntryStatus(status: string): asserts status is InteractiveReviewEntryStatus {
+    if (!(interactiveReviewEntryStatuses as readonly string[]).includes(status)) {
+      throw new AppError("INTERACTIVE_REVIEW_ENTRY_STATUS_INVALID", `Interactive review entry status ${status} is invalid`);
+    }
+  }
+
+  private assertInteractiveReviewSeverity(severity?: string): asserts severity is InteractiveReviewSeverity | undefined {
+    if (severity !== undefined && !(interactiveReviewSeverities as readonly string[]).includes(severity)) {
+      throw new AppError("INTERACTIVE_REVIEW_SEVERITY_INVALID", `Interactive review severity ${severity} is invalid`);
+    }
+  }
+
+  private assertInteractiveReviewResolutionAction(
+    action: string
+  ): asserts action is Extract<InteractiveReviewResolutionType, "approve" | "approve_and_autorun" | "request_changes"> {
+    if (!(supportedInteractiveReviewResolutionActions as readonly string[]).includes(action)) {
+      throw new AppError("INTERACTIVE_REVIEW_ACTION_INVALID", `Interactive review action ${action} is invalid`);
+    }
+  }
+
+  private messageIncludesPositiveSignal(message: string, signal: string): boolean {
+    const escapedSignal = this.escapeRegExp(signal);
+    const negativePrefixes = ["do not", "don't", "dont", "no", "not", "never", "avoid", "skip"];
+    if (negativePrefixes.some((prefix) => new RegExp(`\\b${this.escapeRegExp(prefix)}\\s+${escapedSignal}\\b`).test(message))) {
+      return false;
+    }
+    return new RegExp(`\\b${escapedSignal}\\b`).test(message);
+  }
+
+  private buildDerivedStoryEntrySummary(status: InteractiveReviewEntryStatus): string {
+    switch (status) {
+      case "accepted":
+        return "Accepted from review chat";
+      case "needs_revision":
+        return "Revision requested from review chat";
+      case "rejected":
+        return "Rejected from review chat";
+      case "resolved":
+        return "Resolved from review chat";
+      default:
+        return "Updated from review chat";
+    }
+  }
+
+  private buildDerivedStoryEntryChangeRequest(storyCode: string, message: string, matchCount: number): string {
+    if (matchCount === 1) {
+      return message;
+    }
+    return `Shared review feedback requested changes affecting ${storyCode}. Inspect the session chat for the full combined message.`;
+  }
+
+  private escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
 
   private requireItem(itemId: string) {

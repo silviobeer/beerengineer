@@ -1,7 +1,8 @@
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import { resolve } from "node:path";
 
 import { createAppContext, type AppContext } from "../app-context.js";
+import { interactiveReviewEntryStatuses, interactiveReviewSeverities } from "../domain/types.js";
 import { AppError } from "../shared/errors.js";
 
 const program = new Command();
@@ -63,7 +64,7 @@ async function printAutorunForProject(
 program
   .command("workspace:list")
   .action(
-    withContext<{}>(({ repositories }) => {
+    withContext<Record<string, never>>(({ repositories }) => {
       console.log(JSON.stringify(repositories.workspaceRepository.listAll(), null, 2));
     })
   );
@@ -104,12 +105,12 @@ program
 
 program
   .command("workspace:show")
-  .option("--workspace <key>")
+  .option("--workspace-key <key>")
   .action(
-    withContext<{ workspace?: string }>(({ repositories, workspace }, options) => {
-      const resolvedWorkspace = options.workspace ? repositories.workspaceRepository.getByKey(options.workspace) : workspace;
+    withContext<{ workspaceKey?: string }>(({ repositories, workspace }, options) => {
+      const resolvedWorkspace = options.workspaceKey ? repositories.workspaceRepository.getByKey(options.workspaceKey) : workspace;
       if (!resolvedWorkspace) {
-        throw new AppError("WORKSPACE_NOT_FOUND", `Workspace ${options.workspace} not found`);
+        throw new AppError("WORKSPACE_NOT_FOUND", `Workspace ${options.workspaceKey} not found`);
       }
       const settings = repositories.workspaceSettingsRepository.getByWorkspaceId(resolvedWorkspace.id);
       console.log(JSON.stringify({ workspace: resolvedWorkspace, settings }, null, 2));
@@ -226,6 +227,76 @@ program
         return;
       }
       console.log(JSON.stringify({ status: "approved", projectId: options.projectId }, null, 2));
+    })
+  );
+
+program
+  .command("review:start")
+  .requiredOption("--type <type>")
+  .option("--project-id <projectId>")
+  .action(
+    withContext<{ type: string; projectId?: string }>(({ workflowService }, options) => {
+      if (options.type !== "stories" || !options.projectId) {
+        throw new AppError("INTERACTIVE_REVIEW_INVALID_INPUT", "Currently only --type stories --project-id <id> is supported");
+      }
+      console.log(JSON.stringify(workflowService.startInteractiveReview({ type: "stories", projectId: options.projectId }), null, 2));
+    })
+  );
+
+program
+  .command("review:show")
+  .requiredOption("--session-id <sessionId>")
+  .action(
+    withContext<{ sessionId: string }>(({ workflowService }, options) => {
+      console.log(JSON.stringify(workflowService.showInteractiveReview(options.sessionId), null, 2));
+    })
+  );
+
+program
+  .command("review:chat")
+  .requiredOption("--session-id <sessionId>")
+  .requiredOption("--message <message>")
+  .action(
+    withContext<{ sessionId: string; message: string }>(({ workflowService }, options) => {
+      console.log(JSON.stringify(workflowService.chatInteractiveReview(options.sessionId, options.message), null, 2));
+    })
+  );
+
+program
+  .command("review:entry:update")
+  .requiredOption("--session-id <sessionId>")
+  .requiredOption("--story-id <storyId>")
+  .addOption(new Option("--status <status>", "Review entry status").choices([...interactiveReviewEntryStatuses]).makeOptionMandatory())
+  .option("--summary <summary>")
+  .option("--change-request <changeRequest>")
+  .option("--rationale <rationale>")
+  .addOption(new Option("--severity <severity>").choices([...interactiveReviewSeverities]))
+  .action(
+    withContext<{
+      sessionId: string;
+      storyId: string;
+      status: "pending" | "accepted" | "needs_revision" | "rejected" | "resolved";
+      summary?: string;
+      changeRequest?: string;
+      rationale?: string;
+      severity?: "critical" | "high" | "medium" | "low";
+    }>(({ workflowService }, options) => {
+      console.log(JSON.stringify(workflowService.updateInteractiveReviewEntry(options), null, 2));
+    })
+  );
+
+program
+  .command("review:resolve")
+  .requiredOption("--session-id <sessionId>")
+  .addOption(new Option("--action <action>", "Review resolution action").choices(["approve", "approve_and_autorun", "request_changes"]).makeOptionMandatory())
+  .option("--rationale <rationale>")
+  .action(
+    withContext<{
+      sessionId: string;
+      action: "approve" | "approve_and_autorun" | "request_changes";
+      rationale?: string;
+    }>(async ({ workflowService }, options) => {
+      console.log(JSON.stringify(await workflowService.resolveInteractiveReview(options), null, 2));
     })
   );
 
