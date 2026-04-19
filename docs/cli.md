@@ -4,6 +4,7 @@ Wichtige MVP-Kommandos:
 
 ```bash
 npm run cli -- item:create --title "My Item" --description "..."
+npm run cli -- --adapter-script-path ./tmp/local-agent.mjs --workspace-root ./tmp/workspace concept:approve --concept-id <conceptId> --autorun
 npm run cli -- brainstorm:start --item-id <itemId>
 npm run cli -- concept:approve --concept-id <conceptId>
 npm run cli -- concept:approve --concept-id <conceptId> --autorun
@@ -54,6 +55,11 @@ Fehler werden als JSON auf `stderr` mit `error.code` und `error.message` ausgege
 uebergibt danach an den engine-seitigen Autorun-Orchestrator. Die CLI gibt
 dann einen strukturierten Summary-Block mit `trigger`, `steps`,
 `finalStatus`, `stopReason` und erzeugten Run-/Execution-IDs zurueck.
+
+Fuer reproduzierbare Live-Runs akzeptiert die CLI global:
+
+- `--adapter-script-path <path>` zum Ueberschreiben des lokalen Adapter-Skripts
+- `--workspace-root <path>` zum Ueberschreiben des Git-Workspace-Wurzels
 
 `Item.currentColumn = done` wird dabei erst nach erfolgreicher Documentation
 gesetzt. Nach `planning:approve` bleibt das Item in `implementation`, bis

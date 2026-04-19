@@ -7,14 +7,24 @@ import { AppError } from "../shared/errors.js";
 const program = new Command();
 program.name("beerengineer");
 program.option("--db <path>", "SQLite database path", "./var/data/beerengineer.sqlite");
+program.option("--adapter-script-path <path>", "Override the local adapter script used for bounded agent runs");
+program.option("--workspace-root <path>", "Override the workspace root used for git workflow operations");
 program.showHelpAfterError();
 
 function withContext<TOptions extends object>(
   handler: (context: AppContext, options: TOptions, dbPath: string) => Promise<void> | void
 ) {
   return async (options: TOptions) => {
-    const dbPath = resolve(program.opts<{ db: string }>().db);
-    const context = createAppContext(dbPath);
+    const programOptions = program.opts<{
+      db: string;
+      adapterScriptPath?: string;
+      workspaceRoot?: string;
+    }>();
+    const dbPath = resolve(programOptions.db);
+    const context = createAppContext(dbPath, {
+      adapterScriptPath: programOptions.adapterScriptPath ? resolve(programOptions.adapterScriptPath) : undefined,
+      workspaceRoot: programOptions.workspaceRoot ? resolve(programOptions.workspaceRoot) : undefined
+    });
     try {
       await handler(context, options, dbPath);
     } finally {

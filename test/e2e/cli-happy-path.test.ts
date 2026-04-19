@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -33,6 +33,18 @@ function runCliError(args: string[], cwd: string): { error: { code: string; mess
     const stderr = (error as { stderr?: string }).stderr ?? "";
     return JSON.parse(stderr) as { error: { code: string; message: string } };
   }
+}
+
+function createGitWorkspace(root: string): string {
+  const workspaceRoot = join(root, "workspace");
+  execFileSync("mkdir", ["-p", workspaceRoot]);
+  execFileSync("git", ["init", "-b", "main"], { cwd: workspaceRoot });
+  writeFileSync(join(workspaceRoot, "README.md"), "# temp workspace\n", "utf8");
+  execFileSync("git", ["add", "README.md"], { cwd: workspaceRoot });
+  execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "init"], {
+    cwd: workspaceRoot
+  });
+  return workspaceRoot;
 }
 
 describe("cli happy path", () => {
@@ -207,5 +219,103 @@ describe("cli happy path", () => {
       }
     },
     25000
+  );
+
+  it(
+    "supports live remediation runs via adapter and workspace overrides",
+    () => {
+      const root = mkdtempSync(join(tmpdir(), "beerengineer-e2e-"));
+      const dbPath = join(root, "app.sqlite");
+      const cwd = resolve(".");
+      const workspaceRoot = createGitWorkspace(root);
+      const adapterScriptPath = join(root, "local-agent-story-review-remediation.mjs");
+
+      try {
+        const originalScript = readFileSync(resolve(cwd, "scripts/local-agent.mjs"), "utf8");
+        const remediationScript = originalScript.replace(
+          "function storyReview(payload) {\n  const findings = [];",
+          `function storyReview(payload) {\n  const findings = payload.implementation.summary.includes("story-review-remediator") ? [] : [{
+    severity: "medium",
+    category: "maintainability",
+    title: "CLI remediation target",
+    description: "The first story review requests a bounded remediation.",
+    evidence: "Injected by the CLI remediation fixture.",
+    filePath: "src/workflow/workflow-service.ts",
+    line: 1,
+    suggestedFix: "Use the remediation loop."
+  }];`
+        );
+        writeFileSync(adapterScriptPath, remediationScript, "utf8");
+
+        const baseArgs = [
+          "--db",
+          dbPath,
+          "--adapter-script-path",
+          adapterScriptPath,
+          "--workspace-root",
+          workspaceRoot
+        ];
+        const item = runCli([...baseArgs, "item:create", "--title", "CLI Remediation", "--description", "Desc"], cwd) as {
+          id: string;
+        };
+        runCli([...baseArgs, "brainstorm:start", "--item-id", item.id], cwd);
+        const itemShow = runCli([...baseArgs, "item:show", "--item-id", item.id], cwd) as {
+          concept: { id: string };
+        };
+
+        const autorun = runCli(
+          [...baseArgs, "concept:approve", "--concept-id", itemShow.concept.id, "--autorun"],
+          cwd
+        ) as {
+          finalStatus: string;
+          createdRemediationRunIds: string[];
+          steps: Array<{ action: string }>;
+        };
+
+        expect(autorun.finalStatus).toBe("completed");
+        expect(autorun.steps.some((step) => step.action === "remediation:story-review:start")).toBe(true);
+        expect(autorun.createdRemediationRunIds.length).toBeGreaterThan(0);
+
+        const finalState = runCli([...baseArgs, "item:show", "--item-id", item.id], cwd) as {
+          item: { currentColumn: string; phaseStatus: string };
+          projects: Array<{ id: string }>;
+        };
+        expect(finalState.item.currentColumn).toBe("done");
+        expect(finalState.item.phaseStatus).toBe("completed");
+
+        const execution = runCli(
+          [...baseArgs, "execution:show", "--project-id", finalState.projects[0]!.id],
+          cwd
+        ) as {
+          waves: Array<{
+            stories: Array<{
+              story: { id: string };
+              latestStoryReviewRun: { status: string } | null;
+            }>;
+          }>;
+        };
+        expect(execution.waves[0]?.stories[0]?.latestStoryReviewRun?.status).toBe("passed");
+
+        const remediation = runCli(
+          [...baseArgs, "remediation:story-review:show", "--story-id", execution.waves[0]!.stories[0]!.story.id],
+          cwd
+        ) as {
+          latestRemediationRun: { status: string; gitBranchName: string | null } | null;
+          openFindings: Array<unknown>;
+        };
+        expect(remediation.latestRemediationRun?.status).toBe("completed");
+        expect(remediation.latestRemediationRun?.gitBranchName).toContain("fix/");
+        expect(remediation.openFindings).toHaveLength(0);
+        expect(execFileSync("git", ["branch", "--list", "story/*"], { cwd: workspaceRoot, encoding: "utf8" })).toContain(
+          "story/"
+        );
+        expect(execFileSync("git", ["branch", "--list", "fix/*"], { cwd: workspaceRoot, encoding: "utf8" })).toContain(
+          "fix/"
+        );
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+    30000
   );
 });
