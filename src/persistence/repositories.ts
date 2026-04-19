@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 
 import type {
   AcceptanceCriterion,
@@ -532,6 +532,18 @@ export class WaveStoryRepository {
     return (this.db.select().from(waveStories).where(eq(waveStories.storyId, storyId)).get() as WaveStory | undefined) ?? null;
   }
 
+  public listByStoryIds(storyIds: string[]): WaveStory[] {
+    if (storyIds.length === 0) {
+      return [];
+    }
+    return this.db
+      .select()
+      .from(waveStories)
+      .where(inArray(waveStories.storyId, storyIds))
+      .orderBy(waveStories.position)
+      .all() as WaveStory[];
+  }
+
   public createMany(input: Array<Omit<WaveStory, "id" | "createdAt" | "updatedAt">>): WaveStory[] {
     const timestamp = now();
     const rows = input.map((waveStory) => ({
@@ -741,6 +753,15 @@ export class WaveStoryExecutionRepository {
     ) ?? null;
   }
 
+  public listLatestByWaveStoryIds(waveStoryIds: string[]): WaveStoryExecution[] {
+    if (waveStoryIds.length === 0) {
+      return [];
+    }
+    return waveStoryIds
+      .map((waveStoryId) => this.getLatestByWaveStoryId(waveStoryId))
+      .filter((execution): execution is WaveStoryExecution => execution !== null);
+  }
+
   public create(input: Omit<WaveStoryExecution, "id" | "createdAt" | "updatedAt" | "completedAt">): WaveStoryExecution {
     const timestamp = now();
     const row: WaveStoryExecution = {
@@ -815,6 +836,15 @@ export class WaveStoryTestRunRepository {
         .limit(1)
         .get() as WaveStoryTestRun | undefined
     ) ?? null;
+  }
+
+  public listLatestByWaveStoryIds(waveStoryIds: string[]): WaveStoryTestRun[] {
+    if (waveStoryIds.length === 0) {
+      return [];
+    }
+    return waveStoryIds
+      .map((waveStoryId) => this.getLatestByWaveStoryId(waveStoryId))
+      .filter((testRun): testRun is WaveStoryTestRun => testRun !== null);
   }
 
   public create(input: Omit<WaveStoryTestRun, "id" | "createdAt" | "updatedAt" | "completedAt">): WaveStoryTestRun {
@@ -946,6 +976,18 @@ export class VerificationRunRepository {
       .orderBy(verificationRuns.createdAt)
       .all() as VerificationRun[];
   }
+
+  public listLatestByWaveStoryExecutionIdsAndMode(
+    waveStoryExecutionIds: string[],
+    mode: VerificationRunMode
+  ): VerificationRun[] {
+    if (waveStoryExecutionIds.length === 0) {
+      return [];
+    }
+    return waveStoryExecutionIds
+      .map((waveStoryExecutionId) => this.getLatestByWaveStoryExecutionIdAndMode(waveStoryExecutionId, mode))
+      .filter((run): run is VerificationRun => run !== null);
+  }
 }
 
 export class StoryReviewRunRepository {
@@ -974,6 +1016,15 @@ export class StoryReviewRunRepository {
         .limit(1)
         .get() as StoryReviewRun | undefined
     ) ?? null;
+  }
+
+  public listLatestByWaveStoryExecutionIds(waveStoryExecutionIds: string[]): StoryReviewRun[] {
+    if (waveStoryExecutionIds.length === 0) {
+      return [];
+    }
+    return waveStoryExecutionIds
+      .map((waveStoryExecutionId) => this.getLatestByWaveStoryExecutionId(waveStoryExecutionId))
+      .filter((run): run is StoryReviewRun => run !== null);
   }
 
   public create(input: Omit<StoryReviewRun, "id" | "createdAt" | "updatedAt" | "completedAt">): StoryReviewRun {
@@ -1072,6 +1123,19 @@ export class StoryReviewFindingRepository {
       .innerJoin(storyReviewRuns, eq(storyReviewFindings.storyReviewRunId, storyReviewRuns.id))
       .innerJoin(waveStoryExecutions, eq(storyReviewRuns.waveStoryExecutionId, waveStoryExecutions.id))
       .where(and(eq(waveStoryExecutions.storyId, storyId), eq(storyReviewFindings.status, "open")))
+      .orderBy(storyReviewFindings.createdAt)
+      .all() as StoryReviewFindingRow[];
+    return rows.map(mapStoryReviewFinding);
+  }
+
+  public listByStoryReviewRunIds(storyReviewRunIds: string[]): StoryReviewFinding[] {
+    if (storyReviewRunIds.length === 0) {
+      return [];
+    }
+    const rows = this.db
+      .select()
+      .from(storyReviewFindings)
+      .where(inArray(storyReviewFindings.storyReviewRunId, storyReviewRunIds))
       .orderBy(storyReviewFindings.createdAt)
       .all() as StoryReviewFindingRow[];
     return rows.map(mapStoryReviewFinding);
@@ -1418,14 +1482,12 @@ export class DocumentationRunRepository {
   public updateStatus(
     id: string,
     status: DocumentationRunStatus,
-    options?: { summaryJson?: string | null; errorMessage?: string | null; staleAt?: number | null; staleReason?: string | null }
+    options?: { summaryJson?: string | null; errorMessage?: string | null }
   ): void {
     this.db
       .update(documentationRuns)
       .set({
         status,
-        staleAt: options?.staleAt,
-        staleReason: options?.staleReason ?? null,
         summaryJson: options?.summaryJson,
         errorMessage: options?.errorMessage ?? null,
         updatedAt: now(),

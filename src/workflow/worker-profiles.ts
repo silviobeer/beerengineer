@@ -16,6 +16,7 @@ export const workerProfiles = {
     skillPaths: ["skills/story-reviewer.md"]
   },
   storyReviewRemediation: {
+    // Remediation stays implementation-shaped on purpose; the engine already narrows scope to selected findings.
     promptPath: "prompts/workers/story-review-remediation.md",
     skillPaths: ["skills/execution-implementer.md"]
   },

@@ -2,6 +2,7 @@ import type {
   DocumentationWorkerRole,
   ExecutionWorkerRole,
   QaRunStatus,
+  StoryReviewRunStatus,
   StoryReviewWorkerRole,
   StageKey,
   TestPreparationWorkerRole,
@@ -320,7 +321,7 @@ export type DocumentationAdapterRunRequest = {
     };
     latestStoryReview: {
       id: string;
-      status: "passed";
+      status: StoryReviewRunStatus;
       summary: StoryReviewOutput;
       findings: Array<{
         severity: "critical" | "high" | "medium" | "low";
@@ -404,6 +405,6 @@ export interface AgentAdapter {
   runStoryExecution(request: ExecutionAdapterRunRequest): Promise<ExecutionAdapterRunResult>;
   runStoryRalphVerification(request: RalphVerificationAdapterRunRequest): Promise<RalphVerificationAdapterRunResult>;
   runStoryReview(request: StoryReviewAdapterRunRequest): Promise<StoryReviewAdapterRunResult>;
-  runProjectQa?(request: QaAdapterRunRequest): Promise<QaAdapterRunResult>;
-  runProjectDocumentation?(request: DocumentationAdapterRunRequest): Promise<DocumentationAdapterRunResult>;
+  runProjectQa(request: QaAdapterRunRequest): Promise<QaAdapterRunResult>;
+  runProjectDocumentation(request: DocumentationAdapterRunRequest): Promise<DocumentationAdapterRunResult>;
 }

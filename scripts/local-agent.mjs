@@ -261,7 +261,7 @@ function qaVerification(payload) {
     } catch {
       implementation = null;
     }
-    const changedFiles = implementation?.changedFiles ?? [];
+    const changedFiles = implementation?.changedFiles ?? story.latestExecution?.changedFiles ?? [];
     const hasPassingTestEvidence = (implementation?.testsRun ?? []).some((testRun) => testRun.status === "passed");
     if (!changedFiles.some((path) => path.includes("test")) && !hasPassingTestEvidence) {
       findings.push({
@@ -306,8 +306,9 @@ function qaVerification(payload) {
 
 function storyReview(payload) {
   const findings = [];
-  const changedFiles = payload.implementation.changedFiles ?? [];
-  const hasTargetedTests = payload.implementation.testsRun.some((testRun) => testRun.status === "passed");
+  const changedFiles = payload.implementation?.changedFiles ?? [];
+  const testsRun = payload.implementation?.testsRun ?? [];
+  const hasTargetedTests = testsRun.some((testRun) => testRun.status === "passed");
 
   if (!hasTargetedTests) {
     findings.push({
@@ -315,7 +316,7 @@ function storyReview(payload) {
       category: "correctness",
       title: `No passing test evidence recorded for ${payload.story.code}`,
       description: `${payload.story.code} reached story review without any passing test command in the implementation output.`,
-      evidence: `Implementation tests: ${payload.implementation.testsRun.map((testRun) => `${testRun.command}:${testRun.status}`).join(", ") || "none recorded"}.`,
+      evidence: `Implementation tests: ${testsRun.map((testRun) => `${testRun.command}:${testRun.status}`).join(", ") || "none recorded"}.`,
       filePath: changedFiles[0] ?? null,
       line: null,
       suggestedFix: "Ensure the implementation worker records at least one passing test command before story review."

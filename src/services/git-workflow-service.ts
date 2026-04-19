@@ -7,6 +7,7 @@ type GitWorkflowContext = {
   projectCode: string;
   storyCode?: string;
   findingRunId?: string;
+  branchRole: GitBranchMetadata["branchRole"];
 };
 
 function sanitizeRefSegment(value: string): string {
@@ -31,7 +32,8 @@ export class GitWorkflowService {
   public ensureProjectBranch(projectCode: string): GitBranchMetadata {
     return this.ensureBranch({
       workspaceRoot: this.workspaceRoot,
-      projectCode
+      projectCode,
+      branchRole: "project"
     });
   }
 
@@ -39,7 +41,8 @@ export class GitWorkflowService {
     return this.ensureBranch({
       workspaceRoot: this.workspaceRoot,
       projectCode,
-      storyCode
+      storyCode,
+      branchRole: "story"
     });
   }
 
@@ -48,7 +51,8 @@ export class GitWorkflowService {
       workspaceRoot: this.workspaceRoot,
       projectCode,
       storyCode,
-      findingRunId
+      findingRunId,
+      branchRole: "story-remediation"
     });
   }
 
@@ -61,20 +65,27 @@ export class GitWorkflowService {
         : this.describeProjectBranch(context.projectCode);
 
     if (!this.isGitRepository()) {
-      return this.simulatedMetadata(context.workspaceRoot, baseRef, branchName, this.currentHeadOrNull(), "workspace is not a git repository");
+      return this.simulatedMetadata(
+        context.branchRole,
+        context.workspaceRoot,
+        baseRef,
+        branchName,
+        this.currentHeadOrNull(),
+        "workspace is not a git repository"
+      );
     }
 
     const dirty = this.hasUncommittedChanges();
     const headBefore = this.currentHeadOrNull();
     if (dirty) {
-      return this.simulatedMetadata(context.workspaceRoot, baseRef, branchName, headBefore, "workspace has uncommitted changes");
+      return this.simulatedMetadata(context.branchRole, context.workspaceRoot, baseRef, branchName, headBefore, "workspace has uncommitted changes");
     }
 
     try {
       this.ensureBaseRefExists(baseRef);
-      this.runGit(["branch", "--force", branchName, baseRef]);
+      this.ensureBranchRef(branchName, baseRef);
       return {
-        branchRole: context.findingRunId ? "story-remediation" : context.storyCode ? "story" : "project",
+        branchRole: context.branchRole,
         baseRef,
         branchName,
         workspaceRoot: context.workspaceRoot,
@@ -88,6 +99,7 @@ export class GitWorkflowService {
       };
     } catch (error) {
       return this.simulatedMetadata(
+        context.branchRole,
         context.workspaceRoot,
         baseRef,
         branchName,
@@ -98,6 +110,7 @@ export class GitWorkflowService {
   }
 
   private simulatedMetadata(
+    branchRole: GitBranchMetadata["branchRole"],
     workspaceRoot: string,
     baseRef: string,
     branchName: string,
@@ -105,7 +118,7 @@ export class GitWorkflowService {
     reason: string
   ): GitBranchMetadata {
     return {
-      branchRole: branchName.startsWith("fix/") ? "story-remediation" : branchName.startsWith("story/") ? "story" : "project",
+      branchRole,
       baseRef,
       branchName,
       workspaceRoot,
@@ -152,10 +165,28 @@ export class GitWorkflowService {
     }
   }
 
+  private ensureBranchRef(branchName: string, baseRef: string): void {
+    try {
+      const existingRef = this.runGit(["rev-parse", "--verify", branchName]);
+      const targetRef = this.runGit(["rev-parse", "--verify", baseRef]);
+      if (existingRef !== targetRef) {
+        throw new Error(`Refusing to move existing branch ${branchName}; it already points to ${existingRef}`);
+      }
+      return;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!message.includes("Needed a single revision") && !message.includes("unknown revision")) {
+        throw error instanceof Error ? error : new Error(message);
+      }
+    }
+    this.runGit(["branch", branchName, baseRef]);
+  }
+
   private runGit(args: string[]): string {
     return execFileSync("git", args, {
       cwd: this.workspaceRoot,
-      encoding: "utf8"
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"]
     }).trim();
   }
 }
