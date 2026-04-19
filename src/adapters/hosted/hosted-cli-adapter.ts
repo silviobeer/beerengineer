@@ -151,12 +151,26 @@ export abstract class HostedCliAdapterBase {
       prompt?: string;
       skills?: Array<{ path: string; content: string }>;
     };
+    const responseEnvelopeInstructions =
+      kind === "stage_run"
+        ? [
+            "The final JSON object must use this exact top-level shape:",
+            '{ "markdownArtifacts": Array<{ "kind": string, "content": string }>, "structuredArtifacts": Array<{ "kind": string, "content": unknown }> }'
+          ].join("\n")
+        : [
+            "The final JSON object must use this exact top-level shape:",
+            '{ "output": <the structured result payload> }',
+            "Do not place assistant text or structured fields at the top level. Put the full result inside `output`."
+          ].join("\n");
+    const structuredPayloadInstructions = this.buildStructuredPayloadInstructions(request);
     const sections = [
       "You are the BeerEngineer provider backend.",
       "Return exactly one JSON object matching the requested result envelope.",
       "Do not wrap the response in markdown fences or prose.",
       "The runtime policy is engine-owned and must be followed exactly.",
       "Use the provided prompt and skills as the authoritative work instructions.",
+      responseEnvelopeInstructions,
+      structuredPayloadInstructions,
       `Request kind: ${kind}`,
       `Provider: ${runtime.provider}`,
       `Model: ${runtime.model ?? "default"}`,
@@ -169,6 +183,24 @@ export abstract class HostedCliAdapterBase {
       `Execution payload:\n${JSON.stringify(rest, null, 2)}`
     ].filter((value): value is string => Boolean(value));
     return sections.join("\n\n");
+  }
+
+  private buildStructuredPayloadInstructions(request: AnyAdapterRequest): string | null {
+    if ("interactionType" in request && request.interactionType === "brainstorm_chat") {
+      return [
+        "Inside `output`, return exactly these fields:",
+        '{ "assistantMessage": string, "draftPatch": { "problem"?: string|null, "coreOutcome"?: string|null, "targetUsers"?: string[], "useCases"?: string[], "constraints"?: string[], "nonGoals"?: string[], "risks"?: string[], "openQuestions"?: string[], "candidateDirections"?: string[], "recommendedDirection"?: string|null, "scopeNotes"?: string|null, "assumptions"?: string[] }, "needsStructuredFollowUp": boolean, "followUpHint": string|null }',
+        "Keep `draftPatch` narrow and only include keys you are actually changing."
+      ].join("\n");
+    }
+    if ("interactionType" in request && request.interactionType === "story_review_chat") {
+      return [
+        "Inside `output`, return exactly these fields:",
+        '{ "assistantMessage": string, "entryUpdates": Array<{ "entryId": string, "status": "pending"|"accepted"|"needs_revision"|"rejected"|"resolved", "summary": string, "changeRequest"?: string|null, "rationale"?: string|null, "severity"?: "critical"|"high"|"medium"|"low"|null }>, "needsStructuredFollowUp": boolean, "followUpHint": string|null, "recommendedResolution": "approve"|"approve_and_autorun"|"approve_all"|"approve_all_and_autorun"|"approve_selected"|"request_changes"|"request_story_revisions"|"apply_story_edits"|null }',
+        "If feedback is ambiguous, return an empty `entryUpdates` array and set `needsStructuredFollowUp` to true."
+      ].join("\n");
+    }
+    return null;
   }
 
   private async executeCommand(input: {
