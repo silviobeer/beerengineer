@@ -6,6 +6,7 @@ import { assertCanMoveItem } from "../domain/workflow-rules.js";
 import type {
   DocumentationRunStatus,
   ExecutionWorkerRole,
+  GitBranchMetadata,
   QaRunStatus,
   StageKey,
   StoryReviewRunStatus,
@@ -13,6 +14,7 @@ import type {
 } from "../domain/types.js";
 import { PromptResolver } from "../services/prompt-resolver.js";
 import { ArtifactService } from "../services/artifact-service.js";
+import { GitWorkflowService } from "../services/git-workflow-service.js";
 import {
   implementationPlanOutputSchema,
   architecturePlanOutputSchema,
@@ -53,6 +55,9 @@ import type {
   ProjectExecutionContextRepository,
   StoryReviewAgentSessionRepository,
   StoryReviewFindingRepository,
+  StoryReviewRemediationAgentSessionRepository,
+  StoryReviewRemediationFindingRepository,
+  StoryReviewRemediationRunRepository,
   StoryReviewRunRepository,
   TestAgentSessionRepository,
   VerificationRunRepository,
@@ -81,6 +86,7 @@ import type { AgentAdapter } from "../adapters/types.js";
 
 type WorkflowDeps = {
   repoRoot: string;
+  workspaceRoot: string;
   artifactRoot: string;
   runInTransaction<T>(fn: () => T): T;
   adapter: AgentAdapter;
@@ -104,6 +110,9 @@ type WorkflowDeps = {
   storyReviewRunRepository: StoryReviewRunRepository;
   storyReviewFindingRepository: StoryReviewFindingRepository;
   storyReviewAgentSessionRepository: StoryReviewAgentSessionRepository;
+  storyReviewRemediationRunRepository: StoryReviewRemediationRunRepository;
+  storyReviewRemediationFindingRepository: StoryReviewRemediationFindingRepository;
+  storyReviewRemediationAgentSessionRepository: StoryReviewRemediationAgentSessionRepository;
   qaRunRepository: QaRunRepository;
   qaFindingRepository: QaFindingRepository;
   qaAgentSessionRepository: QaAgentSessionRepository;
@@ -117,10 +126,12 @@ type WorkflowDeps = {
 export class WorkflowService {
   private readonly promptResolver: PromptResolver;
   private readonly artifactService: ArtifactService;
+  private readonly gitWorkflowService: GitWorkflowService;
 
   public constructor(private readonly deps: WorkflowDeps) {
     this.promptResolver = new PromptResolver(deps.repoRoot);
     this.artifactService = new ArtifactService(deps.artifactRoot);
+    this.gitWorkflowService = new GitWorkflowService(deps.workspaceRoot);
   }
 
   public async startStage(input: { stageKey: StageKey; itemId: string; projectId?: string }): Promise<{ runId: string; status: string }> {
@@ -471,6 +482,7 @@ export class WorkflowService {
         status: testRun.status
       };
     }
+    const gitMetadata = this.gitWorkflowService.ensureStoryBranch(project.code, story.code);
     const result = await this.executeWaveStory({
       project,
       implementationPlan: plan,
@@ -479,10 +491,202 @@ export class WorkflowService {
       waveStory,
       story,
       projectExecutionContext,
-      testPreparationRunId: testRun.waveStoryTestRunId
+      testPreparationRunId: testRun.waveStoryTestRunId,
+      gitMetadata
     });
     this.refreshWaveExecutionStatus(waveExecution.id);
     return result;
+  }
+
+  public showStoryReviewRemediation(storyId: string) {
+    const story = this.requireStory(storyId);
+    const remediationRuns = this.deps.storyReviewRemediationRunRepository.listByStoryId(storyId);
+    return {
+      story,
+      latestRemediationRun: remediationRuns.at(-1) ?? null,
+      remediationRuns: remediationRuns.map((remediationRun) => ({
+        remediationRun,
+        selectedFindings: this.deps.storyReviewRemediationFindingRepository.listByRunId(remediationRun.id),
+        sessions: this.deps.storyReviewRemediationAgentSessionRepository.listByRunId(remediationRun.id)
+      })),
+      openFindings: this.deps.storyReviewFindingRepository.listOpenByStoryId(storyId)
+    };
+  }
+
+  public async startStoryReviewRemediation(storyReviewRunId: string) {
+    const storyReviewRun = this.requireStoryReviewRun(storyReviewRunId);
+    const sourceExecution = this.requireWaveStoryExecution(storyReviewRun.waveStoryExecutionId);
+    if (storyReviewRun.status !== "review_required" && storyReviewRun.status !== "failed") {
+      throw new AppError("STORY_REVIEW_RUN_NOT_REMEDIABLE", `Story review run ${storyReviewRunId} is not remediable`);
+    }
+
+    const story = this.requireStory(sourceExecution.storyId);
+    const project = this.requireProject(story.projectId);
+    const implementationPlan = this.requireImplementationPlanForProject(project.id);
+    const waveStory = this.requireWaveStory(sourceExecution.waveStoryId);
+    const waveExecution = this.requireWaveExecution(sourceExecution.waveExecutionId);
+    const wave = this.requireWave(waveExecution.waveId);
+    const projectExecutionContext = this.ensureProjectExecutionContext(project, implementationPlan);
+    const selectedFindings = this.deps.storyReviewFindingRepository
+      .listByStoryReviewRunId(storyReviewRun.id)
+      .filter((finding) => finding.status === "open");
+    if (selectedFindings.length === 0) {
+      throw new AppError("STORY_REVIEW_FINDINGS_NOT_FOUND", `Story review run ${storyReviewRunId} has no open findings`);
+    }
+
+    const priorAttempts = this.deps.storyReviewRemediationRunRepository.listByStoryReviewRunId(storyReviewRun.id);
+    if (priorAttempts.length >= 2) {
+      throw new AppError("STORY_REVIEW_REMEDIATION_LIMIT_REACHED", `Story review run ${storyReviewRunId} reached remediation limit`);
+    }
+
+    const openFindings = this.deps.storyReviewFindingRepository.listOpenByStoryId(story.id);
+    const resolvedWorkerProfile = this.resolveWorkerProfile("storyReviewRemediation");
+    const inputSnapshotJson = JSON.stringify(
+      {
+        item: { id: project.itemId, code: this.requireItem(project.itemId).code },
+        project: { id: project.id, code: project.code, title: project.title },
+        story: { id: story.id, code: story.code, title: story.title },
+        storyReviewRun: { id: storyReviewRun.id, status: storyReviewRun.status },
+        selectedFindingIds: selectedFindings.map((finding) => finding.id),
+        openFindingIds: openFindings.map((finding) => finding.id),
+        allowedPaths: this.deriveAllowedPathsFromStoryContext(projectExecutionContext, sourceExecution),
+        successCriteria: [
+          "Selected story-review findings are no longer reproduced",
+          "Basic verification passes",
+          "Ralph verification passes",
+          "Story review passes"
+        ]
+      },
+      null,
+      2
+    );
+    const gitMetadata = this.gitWorkflowService.ensureStoryRemediationBranch(project.code, story.code, storyReviewRun.id);
+    const remediationRun = this.deps.storyReviewRemediationRunRepository.create({
+      storyReviewRunId: storyReviewRun.id,
+      waveStoryExecutionId: sourceExecution.id,
+      remediationWaveStoryExecutionId: null,
+      storyId: story.id,
+      status: "running",
+      attempt: priorAttempts.length + 1,
+      workerRole: "story-review-remediator",
+      inputSnapshotJson,
+      systemPromptSnapshot: resolvedWorkerProfile.promptContent,
+      skillsSnapshotJson: JSON.stringify(resolvedWorkerProfile.skills, null, 2),
+      gitBranchName: gitMetadata.branchName,
+      gitBaseRef: gitMetadata.baseRef,
+      gitMetadataJson: JSON.stringify(gitMetadata, null, 2),
+      outputSummaryJson: null,
+      errorMessage: null
+    });
+    this.deps.storyReviewRemediationFindingRepository.createMany(
+      selectedFindings.map((finding) => ({
+        storyReviewRemediationRunId: remediationRun.id,
+        storyReviewFindingId: finding.id,
+        resolutionStatus: "selected"
+      }))
+    );
+    selectedFindings.forEach((finding) => this.deps.storyReviewFindingRepository.updateStatus(finding.id, "in_progress"));
+
+    try {
+      const result = await this.executeWaveStory({
+        project,
+        implementationPlan,
+        wave,
+        waveExecution,
+        waveStory,
+        story,
+        projectExecutionContext,
+        testPreparationRunId: sourceExecution.testPreparationRunId,
+        workerProfileKey: "storyReviewRemediation",
+        workerRoleOverride: "story-review-remediator",
+        gitMetadata
+      });
+      this.deps.storyReviewRemediationAgentSessionRepository.create({
+        storyReviewRemediationRunId: remediationRun.id,
+        adapterKey: this.deps.adapter.key,
+        status: result.status === "failed" ? "failed" : "completed",
+        commandJson: JSON.stringify(["remediation", storyReviewRun.id]),
+        stdout: JSON.stringify(result),
+        stderr: "",
+        exitCode: result.status === "failed" ? 1 : 0
+      });
+      const remediationExecution = this.requireWaveStoryExecution(result.waveStoryExecutionId);
+      const latestStoryReviewRun = this.deps.storyReviewRunRepository.getLatestByWaveStoryExecutionId(remediationExecution.id);
+      if (!latestStoryReviewRun) {
+        throw new AppError("STORY_REVIEW_RUN_NOT_FOUND", "Remediation execution did not create a story review run");
+      }
+      const latestFindings = this.deps.storyReviewFindingRepository.listByStoryReviewRunId(latestStoryReviewRun.id);
+      const latestOpenKeys = new Set(latestFindings.filter((finding) => finding.status === "open").map((finding) => this.findingFingerprint(finding)));
+      selectedFindings.forEach((finding) => {
+        const stillOpen = latestOpenKeys.has(this.findingFingerprint(finding));
+        this.deps.storyReviewRemediationFindingRepository.updateResolutionStatus(
+          remediationRun.id,
+          finding.id,
+          stillOpen ? "still_open" : "resolved"
+        );
+        this.deps.storyReviewFindingRepository.updateStatus(finding.id, stillOpen ? "open" : "resolved");
+      });
+      const remediationStatus =
+        latestStoryReviewRun.status === "passed"
+          ? "completed"
+          : latestStoryReviewRun.status === "review_required"
+            ? "review_required"
+            : "failed";
+      this.deps.storyReviewRemediationRunRepository.updateStatus(remediationRun.id, remediationStatus, {
+        remediationWaveStoryExecutionId: remediationExecution.id,
+        outputSummaryJson: JSON.stringify(
+          {
+            waveStoryExecutionId: remediationExecution.id,
+            storyReviewRunId: latestStoryReviewRun.id,
+            selectedFindingIds: selectedFindings.map((finding) => finding.id)
+          },
+          null,
+          2
+        ),
+        gitMetadata,
+        errorMessage: remediationStatus === "failed" ? remediationExecution.errorMessage : null
+      });
+      if (remediationStatus === "completed") {
+        this.invalidateDocumentationForProject(project.id, `story review remediation ${remediationRun.id}`);
+      }
+      this.refreshWaveExecutionStatus(waveExecution.id);
+      return {
+        storyReviewRemediationRunId: remediationRun.id,
+        remediationWaveStoryExecutionId: remediationExecution.id,
+        status: remediationStatus
+      };
+    } catch (error) {
+      this.deps.storyReviewRemediationAgentSessionRepository.create({
+        storyReviewRemediationRunId: remediationRun.id,
+        adapterKey: this.deps.adapter.key,
+        status: "failed",
+        commandJson: JSON.stringify(["remediation", storyReviewRun.id]),
+        stdout: "",
+        stderr: error instanceof Error ? error.message : String(error),
+        exitCode: 1
+      });
+      selectedFindings.forEach((finding) => this.deps.storyReviewFindingRepository.updateStatus(finding.id, "open"));
+      this.deps.storyReviewRemediationRunRepository.updateStatus(remediationRun.id, "failed", {
+        gitMetadata,
+        errorMessage: error instanceof Error ? error.message : String(error)
+      });
+      throw error;
+    }
+  }
+
+  public async retryStoryReviewRemediation(storyReviewRemediationRunId: string) {
+    const remediationRun = this.requireStoryReviewRemediationRun(storyReviewRemediationRunId);
+    if (remediationRun.status !== "review_required" && remediationRun.status !== "failed") {
+      throw new AppError(
+        "STORY_REVIEW_REMEDIATION_NOT_RETRYABLE",
+        `Story review remediation ${storyReviewRemediationRunId} is not retryable`
+      );
+    }
+    const next = await this.startStoryReviewRemediation(remediationRun.storyReviewRunId);
+    return {
+      ...next,
+      retriedFromStoryReviewRemediationRunId: storyReviewRemediationRunId
+    };
   }
 
   public async startQa(projectId: string) {
@@ -671,6 +875,8 @@ export class WorkflowService {
       inputSnapshotJson: documentationContext.inputSnapshotJson,
       systemPromptSnapshot: resolvedWorkerProfile.promptContent,
       skillsSnapshotJson: JSON.stringify(resolvedWorkerProfile.skills, null, 2),
+      staleAt: null,
+      staleReason: null,
       summaryJson: null,
       errorMessage: null
     });
@@ -868,6 +1074,7 @@ export class WorkflowService {
         const latestStoryReviewRun = latestExecution
           ? this.deps.storyReviewRunRepository.getLatestByWaveStoryExecutionId(latestExecution.id)
           : null;
+        const remediationRuns = this.deps.storyReviewRemediationRunRepository.listByStoryId(story.id);
         const blockers = this.deps.waveStoryDependencyRepository
           .listByDependentStoryId(story.id)
           .map((dependency) => this.requireStory(dependency.blockingStoryId))
@@ -893,6 +1100,12 @@ export class WorkflowService {
           latestStoryReviewFindings: latestStoryReviewRun
             ? this.deps.storyReviewFindingRepository.listByStoryReviewRunId(latestStoryReviewRun.id)
             : [],
+          latestStoryReviewRemediationRun: remediationRuns.at(-1) ?? null,
+          storyReviewRemediationRuns: remediationRuns.map((remediationRun) => ({
+            remediationRun,
+            selectedFindings: this.deps.storyReviewRemediationFindingRepository.listByRunId(remediationRun.id),
+            sessions: this.deps.storyReviewRemediationAgentSessionRepository.listByRunId(remediationRun.id)
+          })),
           agentSessions: latestExecution
             ? this.deps.executionAgentSessionRepository.listByWaveStoryExecutionId(latestExecution.id)
             : [],
@@ -921,6 +1134,7 @@ export class WorkflowService {
 
   private async advanceExecution(projectId: string) {
     const project = this.requireProject(projectId);
+    this.gitWorkflowService.ensureProjectBranch(project.code);
     const implementationPlan = this.requireImplementationPlanForProject(projectId);
     const waves = this.deps.waveRepository.listByImplementationPlanId(implementationPlan.id);
     if (waves.length === 0) {
@@ -969,6 +1183,7 @@ export class WorkflowService {
     const executions = [];
     for (const waveStory of executableStories) {
       const story = this.requireStory(waveStory.storyId);
+      const gitMetadata = this.gitWorkflowService.ensureStoryBranch(project.code, story.code);
       const testRun = await this.ensureWaveStoryTestPreparation({
         project,
         implementationPlan,
@@ -990,7 +1205,8 @@ export class WorkflowService {
         waveStory,
         story,
         projectExecutionContext,
-        testPreparationRunId: testRun.waveStoryTestRunId
+        testPreparationRunId: testRun.waveStoryTestRunId,
+        gitMetadata
       });
       executions.push(result);
     }
@@ -1016,8 +1232,11 @@ export class WorkflowService {
     story: ReturnType<WorkflowService["requireStory"]>;
     projectExecutionContext?: ReturnType<WorkflowService["ensureProjectExecutionContext"]>;
     testPreparationRunId: string;
+    workerProfileKey?: WorkerProfileKey;
+    workerRoleOverride?: ExecutionWorkerRole;
+    gitMetadata?: GitBranchMetadata | null;
   }) {
-    const resolvedWorkerProfile = this.resolveWorkerProfile("execution");
+    const resolvedWorkerProfile = this.resolveWorkerProfile(input.workerProfileKey ?? "execution");
     const storyRunContext = this.buildStoryRunContext({
       project: input.project,
       implementationPlan: input.implementationPlan,
@@ -1027,7 +1246,7 @@ export class WorkflowService {
     });
     const testPreparationRun = this.requireWaveStoryTestRun(input.testPreparationRunId);
     const parsedTestPreparation = this.parseTestPreparationOutput(testPreparationRun);
-    const workerRole = this.selectWorkerRole(input.story, storyRunContext.acceptanceCriteria);
+    const workerRole = input.workerRoleOverride ?? this.selectWorkerRole(input.story, storyRunContext.acceptanceCriteria);
     const previousAttempts = this.deps.waveStoryExecutionRepository.listByWaveStoryId(input.waveStory.id);
     const execution = this.deps.waveStoryExecutionRepository.create({
       waveExecutionId: input.waveExecution.id,
@@ -1041,6 +1260,9 @@ export class WorkflowService {
       skillsSnapshotJson: JSON.stringify(resolvedWorkerProfile.skills, null, 2),
       businessContextSnapshotJson: storyRunContext.businessContextSnapshotJson,
       repoContextSnapshotJson: storyRunContext.repoContextSnapshotJson,
+      gitBranchName: input.gitMetadata?.branchName ?? null,
+      gitBaseRef: input.gitMetadata?.baseRef ?? null,
+      gitMetadataJson: input.gitMetadata ? JSON.stringify(input.gitMetadata, null, 2) : null,
       outputSummaryJson: null,
       errorMessage: null
     });
@@ -1155,6 +1377,7 @@ export class WorkflowService {
         finalExecutionStatus === "passed" ? "completed" : finalExecutionStatus,
         {
           outputSummaryJson,
+          gitMetadata: input.gitMetadata ?? null,
           errorMessage:
             parsed.blockers.join("; ") ||
             ralphVerification.errorMessage ||
@@ -1210,6 +1433,7 @@ export class WorkflowService {
         errorMessage: error instanceof Error ? error.message : String(error)
       });
       this.deps.waveStoryExecutionRepository.updateStatus(execution.id, "failed", {
+        gitMetadata: input.gitMetadata ?? null,
         errorMessage: error instanceof Error ? error.message : String(error)
       });
       return {
@@ -2796,6 +3020,25 @@ export class WorkflowService {
     return waveStoryExecution;
   }
 
+  private requireStoryReviewRun(storyReviewRunId: string) {
+    const storyReviewRun = this.deps.storyReviewRunRepository.getById(storyReviewRunId);
+    if (!storyReviewRun) {
+      throw new AppError("STORY_REVIEW_RUN_NOT_FOUND", `Story review run ${storyReviewRunId} not found`);
+    }
+    return storyReviewRun;
+  }
+
+  private requireStoryReviewRemediationRun(storyReviewRemediationRunId: string) {
+    const remediationRun = this.deps.storyReviewRemediationRunRepository.getById(storyReviewRemediationRunId);
+    if (!remediationRun) {
+      throw new AppError(
+        "STORY_REVIEW_REMEDIATION_RUN_NOT_FOUND",
+        `Story review remediation run ${storyReviewRemediationRunId} not found`
+      );
+    }
+    return remediationRun;
+  }
+
   private requireQaRun(qaRunId: string) {
     const qaRun = this.deps.qaRunRepository.getById(qaRunId);
     if (!qaRun) {
@@ -2810,6 +3053,35 @@ export class WorkflowService {
       throw new AppError("DOCUMENTATION_RUN_NOT_FOUND", `Documentation run ${documentationRunId} not found`);
     }
     return documentationRun;
+  }
+
+  private findingFingerprint(finding: {
+    category: string;
+    title: string;
+    filePath: string | null;
+    line: number | null;
+  }) {
+    return `${finding.category}::${finding.title}::${finding.filePath ?? ""}::${finding.line ?? ""}`;
+  }
+
+  private deriveAllowedPathsFromStoryContext(
+    projectExecutionContext: ReturnType<WorkflowService["ensureProjectExecutionContext"]>,
+    sourceExecution: ReturnType<WorkflowService["requireWaveStoryExecution"]>
+  ): string[] {
+    const implementation = sourceExecution.outputSummaryJson ? JSON.parse(sourceExecution.outputSummaryJson) as StoryExecutionOutput : null;
+    const changedFiles = implementation?.changedFiles ?? [];
+    return Array.from(new Set([...changedFiles, ...projectExecutionContext.relevantFiles]));
+  }
+
+  private invalidateDocumentationForProject(projectId: string, reason: string): void {
+    const latestDocumentationRun = this.deps.documentationRunRepository.getLatestByProjectId(projectId);
+    if (!latestDocumentationRun) {
+      return;
+    }
+    if (latestDocumentationRun.status !== "completed" && latestDocumentationRun.status !== "review_required") {
+      return;
+    }
+    this.deps.documentationRunRepository.markStale(latestDocumentationRun.id, reason);
   }
 
   private requireImplementationPlanForProject(projectId: string) {

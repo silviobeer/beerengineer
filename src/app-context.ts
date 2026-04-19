@@ -21,6 +21,9 @@ import {
   ProjectRepository,
   StoryReviewAgentSessionRepository,
   StoryReviewFindingRepository,
+  StoryReviewRemediationAgentSessionRepository,
+  StoryReviewRemediationFindingRepository,
+  StoryReviewRemediationRunRepository,
   StoryReviewRunRepository,
   StageRunRepository,
   TestAgentSessionRepository,
@@ -66,6 +69,9 @@ export type AppContext = {
     storyReviewRunRepository: StoryReviewRunRepository;
     storyReviewFindingRepository: StoryReviewFindingRepository;
     storyReviewAgentSessionRepository: StoryReviewAgentSessionRepository;
+    storyReviewRemediationRunRepository: StoryReviewRemediationRunRepository;
+    storyReviewRemediationFindingRepository: StoryReviewRemediationFindingRepository;
+    storyReviewRemediationAgentSessionRepository: StoryReviewRemediationAgentSessionRepository;
     qaRunRepository: QaRunRepository;
     qaFindingRepository: QaFindingRepository;
     qaAgentSessionRepository: QaAgentSessionRepository;
@@ -82,6 +88,7 @@ export function createAppContext(
   dbPath: string,
   options?: {
     adapterScriptPath?: string;
+    workspaceRoot?: string;
   }
 ): AppContext {
   const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -109,6 +116,9 @@ export function createAppContext(
   const storyReviewRunRepository = new StoryReviewRunRepository(db);
   const storyReviewFindingRepository = new StoryReviewFindingRepository(db);
   const storyReviewAgentSessionRepository = new StoryReviewAgentSessionRepository(db);
+  const storyReviewRemediationRunRepository = new StoryReviewRemediationRunRepository(db);
+  const storyReviewRemediationFindingRepository = new StoryReviewRemediationFindingRepository(db);
+  const storyReviewRemediationAgentSessionRepository = new StoryReviewRemediationAgentSessionRepository(db);
   const qaRunRepository = new QaRunRepository(db);
   const qaFindingRepository = new QaFindingRepository(db);
   const qaAgentSessionRepository = new QaAgentSessionRepository(db);
@@ -143,6 +153,9 @@ export function createAppContext(
       storyReviewRunRepository,
       storyReviewFindingRepository,
       storyReviewAgentSessionRepository,
+      storyReviewRemediationRunRepository,
+      storyReviewRemediationFindingRepository,
+      storyReviewRemediationAgentSessionRepository,
       qaRunRepository,
       qaFindingRepository,
       qaAgentSessionRepository,
@@ -154,6 +167,7 @@ export function createAppContext(
     },
     workflowService: new WorkflowService({
       repoRoot,
+      workspaceRoot: options?.workspaceRoot ?? repoRoot,
       artifactRoot,
       runInTransaction: <T>(fn: () => T): T => connection.transaction(fn)(),
       adapter,
@@ -177,6 +191,9 @@ export function createAppContext(
       storyReviewRunRepository,
       storyReviewFindingRepository,
       storyReviewAgentSessionRepository,
+      storyReviewRemediationRunRepository,
+      storyReviewRemediationFindingRepository,
+      storyReviewRemediationAgentSessionRepository,
       qaRunRepository,
       qaFindingRepository,
       qaAgentSessionRepository,

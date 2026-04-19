@@ -9,6 +9,7 @@ import type {
   DocumentationRun,
   DocumentationRunStatus,
   ExecutionAgentSession,
+  GitBranchMetadata,
   ImplementationPlan,
   Item,
   ItemPhaseStatus,
@@ -17,6 +18,9 @@ import type {
   StoryReviewFindingCategory,
   StoryReviewFindingSeverity,
   StoryReviewFindingStatus,
+  StoryReviewRemediationAgentSession,
+  StoryReviewRemediationFinding,
+  StoryReviewRemediationRun,
   StoryReviewRun,
   StoryReviewRunStatus,
   QaAgentSession,
@@ -67,6 +71,9 @@ import {
   projects,
   storyReviewAgentSessions,
   storyReviewFindings,
+  storyReviewRemediationAgentSessions,
+  storyReviewRemediationFindings,
+  storyReviewRemediationRuns,
   storyReviewRuns,
   stageRunInputArtifacts,
   stageRuns,
@@ -750,11 +757,14 @@ export class WaveStoryExecutionRepository {
   public updateStatus(
     id: string,
     status: WaveStoryExecutionStatus,
-    options?: { outputSummaryJson?: string | null; errorMessage?: string | null }
+    options?: { outputSummaryJson?: string | null; errorMessage?: string | null; gitMetadata?: GitBranchMetadata | null }
   ): void {
     this.db
       .update(waveStoryExecutions)
       .set({
+        gitBranchName: options?.gitMetadata?.branchName,
+        gitBaseRef: options?.gitMetadata?.baseRef,
+        gitMetadataJson: options?.gitMetadata ? JSON.stringify(options.gitMetadata, null, 2) : undefined,
         status,
         outputSummaryJson: options?.outputSummaryJson,
         errorMessage: options?.errorMessage ?? null,
@@ -1036,6 +1046,36 @@ export class StoryReviewFindingRepository {
     this.db.insert(storyReviewFindings).values(rows).run();
     return rows.map(mapStoryReviewFinding);
   }
+
+  public updateStatus(id: string, status: StoryReviewFindingStatus): void {
+    this.db.update(storyReviewFindings).set({ status, updatedAt: now() }).where(eq(storyReviewFindings.id, id)).run();
+  }
+
+  public listOpenByStoryId(storyId: string): StoryReviewFinding[] {
+    const rows = this.db
+      .select({
+        id: storyReviewFindings.id,
+        storyReviewRunId: storyReviewFindings.storyReviewRunId,
+        severity: storyReviewFindings.severity,
+        category: storyReviewFindings.category,
+        title: storyReviewFindings.title,
+        description: storyReviewFindings.description,
+        evidence: storyReviewFindings.evidence,
+        filePath: storyReviewFindings.filePath,
+        line: storyReviewFindings.line,
+        suggestedFix: storyReviewFindings.suggestedFix,
+        status: storyReviewFindings.status,
+        createdAt: storyReviewFindings.createdAt,
+        updatedAt: storyReviewFindings.updatedAt
+      })
+      .from(storyReviewFindings)
+      .innerJoin(storyReviewRuns, eq(storyReviewFindings.storyReviewRunId, storyReviewRuns.id))
+      .innerJoin(waveStoryExecutions, eq(storyReviewRuns.waveStoryExecutionId, waveStoryExecutions.id))
+      .where(and(eq(waveStoryExecutions.storyId, storyId), eq(storyReviewFindings.status, "open")))
+      .orderBy(storyReviewFindings.createdAt)
+      .all() as StoryReviewFindingRow[];
+    return rows.map(mapStoryReviewFinding);
+  }
 }
 
 export class StoryReviewAgentSessionRepository {
@@ -1060,6 +1100,147 @@ export class StoryReviewAgentSessionRepository {
       .where(eq(storyReviewAgentSessions.storyReviewRunId, storyReviewRunId))
       .orderBy(storyReviewAgentSessions.createdAt)
       .all() as StoryReviewAgentSession[];
+  }
+}
+
+export class StoryReviewRemediationRunRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public getById(id: string): StoryReviewRemediationRun | null {
+    return (
+      this.db.select().from(storyReviewRemediationRuns).where(eq(storyReviewRemediationRuns.id, id)).get() as
+        | StoryReviewRemediationRun
+        | undefined
+    ) ?? null;
+  }
+
+  public listByStoryId(storyId: string): StoryReviewRemediationRun[] {
+    return this.db
+      .select()
+      .from(storyReviewRemediationRuns)
+      .where(eq(storyReviewRemediationRuns.storyId, storyId))
+      .orderBy(storyReviewRemediationRuns.createdAt)
+      .all() as StoryReviewRemediationRun[];
+  }
+
+  public listByStoryReviewRunId(storyReviewRunId: string): StoryReviewRemediationRun[] {
+    return this.db
+      .select()
+      .from(storyReviewRemediationRuns)
+      .where(eq(storyReviewRemediationRuns.storyReviewRunId, storyReviewRunId))
+      .orderBy(storyReviewRemediationRuns.createdAt)
+      .all() as StoryReviewRemediationRun[];
+  }
+
+  public create(
+    input: Omit<StoryReviewRemediationRun, "id" | "createdAt" | "updatedAt" | "completedAt">
+  ): StoryReviewRemediationRun {
+    const timestamp = now();
+    const row: StoryReviewRemediationRun = {
+      ...input,
+      id: createId("story_review_remediation_run"),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      completedAt: null
+    };
+    this.db.insert(storyReviewRemediationRuns).values(row).run();
+    return row;
+  }
+
+  public updateStatus(
+    id: string,
+    status: StoryReviewRemediationRun["status"],
+    options?: {
+      remediationWaveStoryExecutionId?: string | null;
+      outputSummaryJson?: string | null;
+      errorMessage?: string | null;
+      gitMetadata?: GitBranchMetadata | null;
+    }
+  ): void {
+    this.db
+      .update(storyReviewRemediationRuns)
+      .set({
+        remediationWaveStoryExecutionId: options?.remediationWaveStoryExecutionId,
+        gitBranchName: options?.gitMetadata?.branchName,
+        gitBaseRef: options?.gitMetadata?.baseRef,
+        gitMetadataJson: options?.gitMetadata ? JSON.stringify(options.gitMetadata, null, 2) : undefined,
+        status,
+        outputSummaryJson: options?.outputSummaryJson,
+        errorMessage: options?.errorMessage ?? null,
+        updatedAt: now(),
+        completedAt: status === "completed" || status === "failed" || status === "review_required" ? now() : null
+      })
+      .where(eq(storyReviewRemediationRuns.id, id))
+      .run();
+  }
+}
+
+export class StoryReviewRemediationFindingRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public createMany(
+    input: Array<Omit<StoryReviewRemediationFinding, "createdAt" | "updatedAt">>
+  ): StoryReviewRemediationFinding[] {
+    if (input.length === 0) {
+      return [];
+    }
+    const timestamp = now();
+    const rows = input.map((entry) => ({ ...entry, createdAt: timestamp, updatedAt: timestamp }));
+    this.db.insert(storyReviewRemediationFindings).values(rows).run();
+    return rows as StoryReviewRemediationFinding[];
+  }
+
+  public listByRunId(storyReviewRemediationRunId: string): StoryReviewRemediationFinding[] {
+    return this.db
+      .select()
+      .from(storyReviewRemediationFindings)
+      .where(eq(storyReviewRemediationFindings.storyReviewRemediationRunId, storyReviewRemediationRunId))
+      .orderBy(storyReviewRemediationFindings.createdAt)
+      .all() as StoryReviewRemediationFinding[];
+  }
+
+  public updateResolutionStatus(
+    storyReviewRemediationRunId: string,
+    storyReviewFindingId: string,
+    resolutionStatus: StoryReviewRemediationFinding["resolutionStatus"]
+  ): void {
+    this.db
+      .update(storyReviewRemediationFindings)
+      .set({ resolutionStatus, updatedAt: now() })
+      .where(
+        and(
+          eq(storyReviewRemediationFindings.storyReviewRemediationRunId, storyReviewRemediationRunId),
+          eq(storyReviewRemediationFindings.storyReviewFindingId, storyReviewFindingId)
+        )
+      )
+      .run();
+  }
+}
+
+export class StoryReviewRemediationAgentSessionRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public create(
+    input: Omit<StoryReviewRemediationAgentSession, "id" | "createdAt" | "updatedAt">
+  ): StoryReviewRemediationAgentSession {
+    const timestamp = now();
+    const row: StoryReviewRemediationAgentSession = {
+      ...input,
+      id: createId("story_review_remediation_session"),
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+    this.db.insert(storyReviewRemediationAgentSessions).values(row).run();
+    return row;
+  }
+
+  public listByRunId(storyReviewRemediationRunId: string): StoryReviewRemediationAgentSession[] {
+    return this.db
+      .select()
+      .from(storyReviewRemediationAgentSessions)
+      .where(eq(storyReviewRemediationAgentSessions.storyReviewRemediationRunId, storyReviewRemediationRunId))
+      .orderBy(storyReviewRemediationAgentSessions.createdAt)
+      .all() as StoryReviewRemediationAgentSession[];
   }
 }
 
@@ -1237,16 +1418,30 @@ export class DocumentationRunRepository {
   public updateStatus(
     id: string,
     status: DocumentationRunStatus,
-    options?: { summaryJson?: string | null; errorMessage?: string | null }
+    options?: { summaryJson?: string | null; errorMessage?: string | null; staleAt?: number | null; staleReason?: string | null }
   ): void {
     this.db
       .update(documentationRuns)
       .set({
         status,
+        staleAt: options?.staleAt,
+        staleReason: options?.staleReason ?? null,
         summaryJson: options?.summaryJson,
         errorMessage: options?.errorMessage ?? null,
         updatedAt: now(),
         completedAt: status === "completed" || status === "failed" || status === "review_required" ? now() : null
+      })
+      .where(eq(documentationRuns.id, id))
+      .run();
+  }
+
+  public markStale(id: string, reason: string): void {
+    this.db
+      .update(documentationRuns)
+      .set({
+        staleAt: now(),
+        staleReason: reason,
+        updatedAt: now()
       })
       .where(eq(documentationRuns.id, id))
       .run();

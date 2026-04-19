@@ -37,9 +37,10 @@ describe("migration runner", () => {
         "0002_add_qa_runtime_tables",
         "0003_add_story_review_runtime_tables",
         "0004_add_worker_prompt_skill_snapshots",
-        "0005_add_documentation_runtime_tables"
+        "0005_add_documentation_runtime_tables",
+        "0006_add_remediation_and_git_runtime_tables"
       ]);
-      expect(row?.count).toBe(6);
+      expect(row?.count).toBe(7);
       expect(indexes.map((index) => index.name)).toContain("idx_qa_runs_project_id");
     } finally {
       secondConnection.close();
@@ -66,7 +67,8 @@ describe("migration runner", () => {
         "0002_add_qa_runtime_tables",
         "0003_add_story_review_runtime_tables",
         "0004_add_worker_prompt_skill_snapshots",
-        "0005_add_documentation_runtime_tables"
+        "0005_add_documentation_runtime_tables",
+        "0006_add_remediation_and_git_runtime_tables"
       ]);
       expect(columns.map((column) => column.name)).toContain("mode");
       expect(executionColumns.map((column) => column.name)).toContain("system_prompt_snapshot");
@@ -93,7 +95,8 @@ describe("migration runner", () => {
         "0002_add_qa_runtime_tables",
         "0003_add_story_review_runtime_tables",
         "0004_add_worker_prompt_skill_snapshots",
-        "0005_add_documentation_runtime_tables"
+        "0005_add_documentation_runtime_tables",
+        "0006_add_remediation_and_git_runtime_tables"
       ]);
       expect(runIndexes.map((index) => index.name)).toContain("idx_qa_runs_project_id");
       expect(findingIndexes.map((index) => index.name)).toContain("idx_qa_findings_qa_run_id");
@@ -122,7 +125,8 @@ describe("migration runner", () => {
       expect(applied).toEqual([
         "0003_add_story_review_runtime_tables",
         "0004_add_worker_prompt_skill_snapshots",
-        "0005_add_documentation_runtime_tables"
+        "0005_add_documentation_runtime_tables",
+        "0006_add_remediation_and_git_runtime_tables"
       ]);
       expect(tables.map((table) => table.name)).toEqual([
         "story_review_agent_sessions",
@@ -162,14 +166,56 @@ describe("migration runner", () => {
         .prepare("PRAGMA index_list(documentation_agent_sessions)")
         .all() as Array<{ name: string }>;
 
-      expect(applied).toEqual(["0005_add_documentation_runtime_tables"]);
+      expect(applied).toEqual([
+        "0005_add_documentation_runtime_tables",
+        "0006_add_remediation_and_git_runtime_tables"
+      ]);
       expect(tables.map((table) => table.name)).toEqual(["documentation_agent_sessions", "documentation_runs"]);
       expect(runIndexes.map((index) => index.name)).toContain("idx_documentation_runs_project_id");
       expect(sessionIndexes.map((index) => index.name)).toContain(
         "idx_documentation_agent_sessions_documentation_run_id"
       );
+      const documentationColumns = documentationLegacyDb.prepare("PRAGMA table_info(documentation_runs)").all() as Array<{ name: string }>;
+      expect(documentationColumns.map((column) => column.name)).toContain("stale_at");
     } finally {
       documentationLegacyDb.close();
+      testDb.cleanup();
+    }
+  });
+
+  it("adds remediation tables and execution git metadata when the remediation migration is applied", () => {
+    const testDb = createTestDatabase();
+    const remediationLegacyDb = createSqliteConnection(testDb.filePath.replace("test.sqlite", "remediation-legacy.sqlite"));
+
+    try {
+      applyMigrations(remediationLegacyDb, [
+        baseMigrations[0]!,
+        baseMigrations[1]!,
+        baseMigrations[2]!,
+        baseMigrations[3]!,
+        baseMigrations[4]!,
+        baseMigrations[5]!
+      ]);
+
+      const applied = applyMigrations(remediationLegacyDb, baseMigrations);
+      const tables = remediationLegacyDb
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('story_review_remediation_runs', 'story_review_remediation_findings', 'story_review_remediation_agent_sessions') ORDER BY name")
+        .all() as Array<{ name: string }>;
+      const executionColumns = remediationLegacyDb.prepare("PRAGMA table_info(wave_story_executions)").all() as Array<{ name: string }>;
+      const indexes = remediationLegacyDb
+        .prepare("PRAGMA index_list(story_review_remediation_runs)")
+        .all() as Array<{ name: string }>;
+
+      expect(applied).toEqual(["0006_add_remediation_and_git_runtime_tables"]);
+      expect(tables.map((table) => table.name)).toEqual([
+        "story_review_remediation_agent_sessions",
+        "story_review_remediation_findings",
+        "story_review_remediation_runs"
+      ]);
+      expect(executionColumns.map((column) => column.name)).toContain("git_branch_name");
+      expect(indexes.map((index) => index.name)).toContain("idx_story_review_remediation_runs_story_id");
+    } finally {
+      remediationLegacyDb.close();
       testDb.cleanup();
     }
   });

@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -7,6 +8,18 @@ import { describe, expect, it } from "vitest";
 import { createAppContext } from "../../src/app-context.js";
 
 describe("workflow service", () => {
+  function createGitWorkspace(root: string): string {
+    const workspaceRoot = join(root, "workspace");
+    execFileSync("mkdir", ["-p", workspaceRoot]);
+    execFileSync("git", ["init", "-b", "main"], { cwd: workspaceRoot });
+    writeFileSync(join(workspaceRoot, "README.md"), "# temp workspace\n", "utf8");
+    execFileSync("git", ["add", "README.md"], { cwd: workspaceRoot });
+    execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "init"], {
+      cwd: workspaceRoot
+    });
+    return workspaceRoot;
+  }
+
   async function prepareProjectThroughCompletedExecution(
     context: ReturnType<typeof createAppContext>,
     input: { title: string; description: string }
@@ -594,6 +607,82 @@ describe("workflow service", () => {
       expect(shown.waves[0]?.waveExecution?.status).toBe("review_required");
       expect(shown.waves[0]?.stories[0]?.latestExecution?.status).toBe("review_required");
       expect(shown.waves[0]?.stories[0]?.latestStoryReviewRun?.status).toBe("review_required");
+      context.connection.close();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("runs story-review remediation and records applied git metadata in a clean workspace", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const originalScript = readFileSync("scripts/local-agent.mjs", "utf8");
+    const adapterScriptPath = join(root, "local-agent-story-review-remediation.mjs");
+    const dbPath = join(root, "app.sqlite");
+    const workspaceRoot = createGitWorkspace(root);
+
+    try {
+      const remediationScript = originalScript.replace(
+        "function storyReview(payload) {\n  const findings = [];",
+        `function storyReview(payload) {\n  const findings = payload.implementation.summary.includes("story-review-remediator") ? [] : [{
+    severity: "medium",
+    category: "maintainability",
+    title: "Story review remediation target",
+    description: "The initial execution leaves one bounded review finding behind.",
+    evidence: "Injected by the remediation fixture.",
+    filePath: "src/workflow/workflow-service.ts",
+    line: 1,
+    suggestedFix: "Run the dedicated remediation path."
+  }];`
+      );
+      writeFileSync(adapterScriptPath, remediationScript);
+      const context = createAppContext(dbPath, { adapterScriptPath, workspaceRoot });
+
+      const item = context.repositories.itemRepository.create({
+        title: "Story Review Remediation",
+        description: "Exercise remediation and git metadata"
+      });
+      await context.workflowService.startStage({ stageKey: "brainstorm", itemId: item.id });
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      context.workflowService.approveConcept(concept!.id);
+      context.workflowService.importProjects(item.id);
+      const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
+      await context.workflowService.startStage({ stageKey: "requirements", itemId: item.id, projectId: project.id });
+      context.workflowService.approveStories(project.id);
+      await context.workflowService.startStage({ stageKey: "architecture", itemId: item.id, projectId: project.id });
+      context.workflowService.approveArchitecture(project.id);
+      await context.workflowService.startStage({ stageKey: "planning", itemId: item.id, projectId: project.id });
+      context.workflowService.approvePlanning(project.id);
+      await context.workflowService.startExecution(project.id);
+
+      const shownBefore = context.workflowService.showExecution(project.id) as {
+        waves: Array<{
+          stories: Array<{
+            story: { id: string };
+            latestExecution: { gitMetadataJson: string | null };
+            latestStoryReviewRun: { id: string; status: string } | null;
+          }>;
+        }>;
+      };
+      const firstStory = shownBefore.waves[0]!.stories[0]!;
+      expect(firstStory.latestStoryReviewRun?.status).toBe("review_required");
+      expect(firstStory.latestExecution.gitMetadataJson).toContain('"strategy": "applied"');
+
+      const remediation = await context.workflowService.startStoryReviewRemediation(firstStory.latestStoryReviewRun!.id);
+      expect(remediation.status).toBe("completed");
+
+      const remediationShow = context.workflowService.showStoryReviewRemediation(firstStory.story.id) as {
+        latestRemediationRun: { gitMetadataJson: string | null; status: string } | null;
+        openFindings: Array<unknown>;
+      };
+      expect(remediationShow.latestRemediationRun?.status).toBe("completed");
+      expect(remediationShow.latestRemediationRun?.gitMetadataJson).toContain('"branchName": "fix/');
+      expect(remediationShow.openFindings).toHaveLength(0);
+      expect(execFileSync("git", ["branch", "--list", "story/*"], { cwd: workspaceRoot, encoding: "utf8" })).toContain(
+        "story/"
+      );
+      expect(execFileSync("git", ["branch", "--list", "fix/*"], { cwd: workspaceRoot, encoding: "utf8" })).toContain(
+        "fix/"
+      );
       context.connection.close();
     } finally {
       rmSync(root, { recursive: true, force: true });

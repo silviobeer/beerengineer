@@ -186,6 +186,36 @@ program
   );
 
 program
+  .command("remediation:story-review:start")
+  .requiredOption("--story-review-run-id <storyReviewRunId>")
+  .action(
+    withContext<{ storyReviewRunId: string }>(async ({ workflowService }, options) => {
+      const result = await workflowService.startStoryReviewRemediation(options.storyReviewRunId);
+      console.log(JSON.stringify(result, null, 2));
+    })
+  );
+
+program
+  .command("remediation:story-review:show")
+  .requiredOption("--story-id <storyId>")
+  .action(
+    withContext<{ storyId: string }>(({ workflowService }, options) => {
+      const result = workflowService.showStoryReviewRemediation(options.storyId);
+      console.log(JSON.stringify(result, null, 2));
+    })
+  );
+
+program
+  .command("remediation:story-review:retry")
+  .requiredOption("--remediation-run-id <remediationRunId>")
+  .action(
+    withContext<{ remediationRunId: string }>(async ({ workflowService }, options) => {
+      const result = await workflowService.retryStoryReviewRemediation(options.remediationRunId);
+      console.log(JSON.stringify(result, null, 2));
+    })
+  );
+
+program
   .command("qa:start")
   .requiredOption("--project-id <projectId>")
   .action(

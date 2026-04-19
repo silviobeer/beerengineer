@@ -34,7 +34,12 @@ export const stageRunStatuses = [
 
 export type StageRunStatus = (typeof stageRunStatuses)[number];
 
-export const executionWorkerRoles = ["implementer", "backend-implementer", "frontend-implementer"] as const;
+export const executionWorkerRoles = [
+  "implementer",
+  "backend-implementer",
+  "frontend-implementer",
+  "story-review-remediator"
+] as const;
 export type ExecutionWorkerRole = (typeof executionWorkerRoles)[number];
 
 export const testPreparationWorkerRoles = ["test-writer"] as const;
@@ -89,7 +94,7 @@ export type QaFindingSeverity = (typeof qaFindingSeverities)[number];
 export const qaFindingCategories = ["functional", "security", "regression", "ux"] as const;
 export type QaFindingCategory = (typeof qaFindingCategories)[number];
 
-export const qaFindingStatuses = ["open", "accepted", "resolved", "false_positive"] as const;
+export const qaFindingStatuses = ["open", "in_progress", "accepted", "resolved", "false_positive"] as const;
 export type QaFindingStatus = (typeof qaFindingStatuses)[number];
 
 export const storyReviewRunStatuses = ["running", "review_required", "passed", "failed"] as const;
@@ -108,8 +113,30 @@ export const storyReviewFindingCategories = [
 ] as const;
 export type StoryReviewFindingCategory = (typeof storyReviewFindingCategories)[number];
 
-export const storyReviewFindingStatuses = ["open", "accepted", "resolved", "false_positive"] as const;
+export const storyReviewFindingStatuses = ["open", "in_progress", "accepted", "resolved", "false_positive"] as const;
 export type StoryReviewFindingStatus = (typeof storyReviewFindingStatuses)[number];
+
+export const remediationRunStatuses = ["running", "completed", "review_required", "failed"] as const;
+export type RemediationRunStatus = (typeof remediationRunStatuses)[number];
+
+export const remediationResolutionStatuses = ["selected", "resolved", "still_open", "not_reproducible"] as const;
+export type RemediationResolutionStatus = (typeof remediationResolutionStatuses)[number];
+
+export type GitBranchRole = "project" | "story" | "story-remediation";
+
+export type GitBranchMetadata = {
+  branchRole: GitBranchRole;
+  baseRef: string;
+  branchName: string;
+  workspaceRoot: string;
+  headBefore: string | null;
+  headAfter: string | null;
+  commitSha: string | null;
+  mergedIntoRef: string | null;
+  mergedCommitSha: string | null;
+  strategy: "applied" | "simulated";
+  reason: string | null;
+};
 
 export type Item = {
   id: string;
@@ -260,6 +287,9 @@ export type WaveStoryExecution = {
   skillsSnapshotJson: string;
   businessContextSnapshotJson: string;
   repoContextSnapshotJson: string;
+  gitBranchName: string | null;
+  gitBaseRef: string | null;
+  gitMetadataJson: string | null;
   outputSummaryJson: string | null;
   errorMessage: string | null;
   createdAt: number;
@@ -356,6 +386,49 @@ export type StoryReviewFinding = {
   updatedAt: number;
 };
 
+export type StoryReviewRemediationRun = {
+  id: string;
+  storyReviewRunId: string;
+  waveStoryExecutionId: string;
+  remediationWaveStoryExecutionId: string | null;
+  storyId: string;
+  status: RemediationRunStatus;
+  attempt: number;
+  workerRole: ExecutionWorkerRole;
+  inputSnapshotJson: string;
+  systemPromptSnapshot: string;
+  skillsSnapshotJson: string;
+  gitBranchName: string | null;
+  gitBaseRef: string | null;
+  gitMetadataJson: string | null;
+  outputSummaryJson: string | null;
+  errorMessage: string | null;
+  createdAt: number;
+  updatedAt: number;
+  completedAt: number | null;
+};
+
+export type StoryReviewRemediationFinding = {
+  storyReviewRemediationRunId: string;
+  storyReviewFindingId: string;
+  resolutionStatus: RemediationResolutionStatus;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type StoryReviewRemediationAgentSession = {
+  id: string;
+  storyReviewRemediationRunId: string;
+  adapterKey: string;
+  status: "running" | "completed" | "failed";
+  commandJson: string;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
 export type StoryReviewAgentSession = {
   id: string;
   storyReviewRunId: string;
@@ -422,6 +495,8 @@ export type DocumentationRun = {
   inputSnapshotJson: string;
   systemPromptSnapshot: string;
   skillsSnapshotJson: string;
+  staleAt: number | null;
+  staleReason: string | null;
   summaryJson: string | null;
   errorMessage: string | null;
   createdAt: number;

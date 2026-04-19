@@ -20,6 +20,9 @@ import {
   ProjectRepository,
   StoryReviewAgentSessionRepository,
   StoryReviewFindingRepository,
+  StoryReviewRemediationAgentSessionRepository,
+  StoryReviewRemediationFindingRepository,
+  StoryReviewRemediationRunRepository,
   StoryReviewRunRepository,
   TestAgentSessionRepository,
   UserStoryRepository,
@@ -57,6 +60,9 @@ describe("repositories", () => {
     const storyReviewRunRepository = new StoryReviewRunRepository(db);
     const storyReviewFindingRepository = new StoryReviewFindingRepository(db);
     const storyReviewAgentSessionRepository = new StoryReviewAgentSessionRepository(db);
+    const storyReviewRemediationRunRepository = new StoryReviewRemediationRunRepository(db);
+    const storyReviewRemediationFindingRepository = new StoryReviewRemediationFindingRepository(db);
+    const storyReviewRemediationAgentSessionRepository = new StoryReviewRemediationAgentSessionRepository(db);
     const qaRunRepository = new QaRunRepository(db);
     const qaFindingRepository = new QaFindingRepository(db);
     const qaAgentSessionRepository = new QaAgentSessionRepository(db);
@@ -266,6 +272,9 @@ describe("repositories", () => {
         skillsSnapshotJson: JSON.stringify([{ path: "skills/execution-implementer.md", content: "Execution skill" }]),
         businessContextSnapshotJson: "{\"story\":\"ITEM-0001-P01-US01\"}",
         repoContextSnapshotJson: "{\"files\":[\"src/workflow/workflow-service.ts\"]}",
+        gitBranchName: "story/ITEM-0001-P01/ITEM-0001-P01-US01",
+        gitBaseRef: "proj/ITEM-0001-P01",
+        gitMetadataJson: "{\"strategy\":\"simulated\"}",
         outputSummaryJson: "{\"summary\":\"done\"}",
         errorMessage: null
       });
@@ -358,12 +367,47 @@ describe("repositories", () => {
         stderr: "",
         exitCode: 0
       });
+      const remediationRun = storyReviewRemediationRunRepository.create({
+        storyReviewRunId: storyReviewRun.id,
+        waveStoryExecutionId: waveStoryExecution.id,
+        remediationWaveStoryExecutionId: waveStoryExecution.id,
+        storyId: stories[0]!.id,
+        status: "completed",
+        attempt: 1,
+        workerRole: "story-review-remediator",
+        inputSnapshotJson: "{\"selectedFindingIds\":[]}",
+        systemPromptSnapshot: "story remediation prompt",
+        skillsSnapshotJson: JSON.stringify([{ path: "skills/execution-implementer.md", content: "Execution skill" }]),
+        gitBranchName: "fix/ITEM-0001-P01-US01/story_review_run_1",
+        gitBaseRef: "proj/ITEM-0001-P01",
+        gitMetadataJson: "{\"strategy\":\"simulated\"}",
+        outputSummaryJson: "{\"status\":\"completed\"}",
+        errorMessage: null
+      });
+      const remediationFindings = storyReviewRemediationFindingRepository.createMany([
+        {
+          storyReviewRemediationRunId: remediationRun.id,
+          storyReviewFindingId: storyReviewFindings[0]!.id,
+          resolutionStatus: "resolved"
+        }
+      ]);
+      const remediationSession = storyReviewRemediationAgentSessionRepository.create({
+        storyReviewRemediationRunId: remediationRun.id,
+        adapterKey: "local-cli",
+        status: "completed",
+        commandJson: "[\"node\"]",
+        stdout: "{}",
+        stderr: "",
+        exitCode: 0
+      });
       const documentationRun = documentationRunRepository.create({
         projectId: projects[0]!.id,
         status: "review_required",
         inputSnapshotJson: "{\"projectCode\":\"ITEM-0001-P01\"}",
         systemPromptSnapshot: "documentation prompt",
         skillsSnapshotJson: JSON.stringify([{ path: "skills/documentation-writer.md", content: "Documentation skill" }]),
+        staleAt: null,
+        staleReason: null,
         summaryJson: "{\"overallStatus\":\"review_required\",\"artifactIds\":[]}",
         errorMessage: null
       });
@@ -399,6 +443,12 @@ describe("repositories", () => {
       expect(storyReviewFindingRepository.listByStoryReviewRunId(storyReviewRun.id)).toHaveLength(1);
       expect(storyReviewSession.id).toContain("story_review_session_");
       expect(storyReviewAgentSessionRepository.listByStoryReviewRunId(storyReviewRun.id)).toHaveLength(1);
+      expect(remediationRun.id).toContain("story_review_remediation_run_");
+      expect(storyReviewRemediationRunRepository.listByStoryId(stories[0]!.id)).toHaveLength(1);
+      expect(remediationFindings[0]?.resolutionStatus).toBe("resolved");
+      expect(storyReviewRemediationFindingRepository.listByRunId(remediationRun.id)).toHaveLength(1);
+      expect(remediationSession.id).toContain("story_review_remediation_session_");
+      expect(storyReviewRemediationAgentSessionRepository.listByRunId(remediationRun.id)).toHaveLength(1);
       expect(qaRun.id).toContain("qa_run_");
       expect(qaRunRepository.getLatestByProjectId(projects[0]!.id)?.status).toBe("review_required");
       expect(qaRunRepository.listByProjectId(projects[0]!.id)).toHaveLength(1);

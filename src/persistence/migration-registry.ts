@@ -452,5 +452,67 @@ export const baseMigrations: readonly SqlMigration[] = [
       `CREATE INDEX IF NOT EXISTS idx_documentation_runs_project_id ON documentation_runs(project_id)`,
       `CREATE INDEX IF NOT EXISTS idx_documentation_agent_sessions_documentation_run_id ON documentation_agent_sessions(documentation_run_id)`
     ]
+  },
+  {
+    id: "0006_add_remediation_and_git_runtime_tables",
+    statements: [
+      `ALTER TABLE wave_story_executions ADD COLUMN git_branch_name TEXT`,
+      `ALTER TABLE wave_story_executions ADD COLUMN git_base_ref TEXT`,
+      `ALTER TABLE wave_story_executions ADD COLUMN git_metadata_json TEXT`,
+      `ALTER TABLE documentation_runs ADD COLUMN stale_at INTEGER`,
+      `ALTER TABLE documentation_runs ADD COLUMN stale_reason TEXT`,
+      `CREATE TABLE IF NOT EXISTS story_review_remediation_runs (
+        id TEXT PRIMARY KEY NOT NULL,
+        story_review_run_id TEXT NOT NULL,
+        wave_story_execution_id TEXT NOT NULL,
+        remediation_wave_story_execution_id TEXT,
+        story_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        attempt INTEGER NOT NULL,
+        worker_role TEXT NOT NULL,
+        input_snapshot_json TEXT NOT NULL,
+        system_prompt_snapshot TEXT NOT NULL,
+        skills_snapshot_json TEXT NOT NULL,
+        git_branch_name TEXT,
+        git_base_ref TEXT,
+        git_metadata_json TEXT,
+        output_summary_json TEXT,
+        error_message TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        FOREIGN KEY (story_review_run_id) REFERENCES story_review_runs(id),
+        FOREIGN KEY (wave_story_execution_id) REFERENCES wave_story_executions(id),
+        FOREIGN KEY (remediation_wave_story_execution_id) REFERENCES wave_story_executions(id),
+        FOREIGN KEY (story_id) REFERENCES user_stories(id)
+      )`,
+      `CREATE TABLE IF NOT EXISTS story_review_remediation_findings (
+        story_review_remediation_run_id TEXT NOT NULL,
+        story_review_finding_id TEXT NOT NULL,
+        resolution_status TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (story_review_remediation_run_id, story_review_finding_id),
+        FOREIGN KEY (story_review_remediation_run_id) REFERENCES story_review_remediation_runs(id),
+        FOREIGN KEY (story_review_finding_id) REFERENCES story_review_findings(id)
+      )`,
+      `CREATE TABLE IF NOT EXISTS story_review_remediation_agent_sessions (
+        id TEXT PRIMARY KEY NOT NULL,
+        story_review_remediation_run_id TEXT NOT NULL,
+        adapter_key TEXT NOT NULL,
+        status TEXT NOT NULL,
+        command_json TEXT NOT NULL,
+        stdout TEXT NOT NULL,
+        stderr TEXT NOT NULL,
+        exit_code INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (story_review_remediation_run_id) REFERENCES story_review_remediation_runs(id)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_story_review_remediation_runs_story_id ON story_review_remediation_runs(story_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_story_review_remediation_runs_story_review_run_id ON story_review_remediation_runs(story_review_run_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_story_review_remediation_findings_run_id ON story_review_remediation_findings(story_review_remediation_run_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_story_review_remediation_agent_sessions_run_id ON story_review_remediation_agent_sessions(story_review_remediation_run_id)`
+    ]
   }
 ];

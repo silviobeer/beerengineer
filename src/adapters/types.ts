@@ -331,7 +331,7 @@ export type DocumentationAdapterRunRequest = {
         filePath: string | null;
         line: number | null;
         suggestedFix: string | null;
-        status: "open" | "accepted" | "resolved" | "false_positive";
+        status: "open" | "in_progress" | "accepted" | "resolved" | "false_positive";
       }>;
     };
   }>;

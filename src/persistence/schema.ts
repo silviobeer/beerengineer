@@ -185,6 +185,9 @@ export const waveStoryExecutions = sqliteTable("wave_story_executions", {
   skillsSnapshotJson: text("skills_snapshot_json").notNull(),
   businessContextSnapshotJson: text("business_context_snapshot_json").notNull(),
   repoContextSnapshotJson: text("repo_context_snapshot_json").notNull(),
+  gitBranchName: text("git_branch_name"),
+  gitBaseRef: text("git_base_ref"),
+  gitMetadataJson: text("git_metadata_json"),
   outputSummaryJson: text("output_summary_json"),
   errorMessage: text("error_message"),
   createdAt: integer("created_at").notNull(),
@@ -262,6 +265,57 @@ export const storyReviewFindings = sqliteTable("story_review_findings", {
   updatedAt: integer("updated_at").notNull()
 });
 
+export const storyReviewRemediationRuns = sqliteTable("story_review_remediation_runs", {
+  id: text("id").primaryKey(),
+  storyReviewRunId: text("story_review_run_id").notNull().references(() => storyReviewRuns.id),
+  waveStoryExecutionId: text("wave_story_execution_id").notNull().references(() => waveStoryExecutions.id),
+  remediationWaveStoryExecutionId: text("remediation_wave_story_execution_id").references(() => waveStoryExecutions.id),
+  storyId: text("story_id").notNull().references(() => userStories.id),
+  status: text("status").notNull(),
+  attempt: integer("attempt").notNull(),
+  workerRole: text("worker_role").notNull(),
+  inputSnapshotJson: text("input_snapshot_json").notNull(),
+  systemPromptSnapshot: text("system_prompt_snapshot").notNull(),
+  skillsSnapshotJson: text("skills_snapshot_json").notNull(),
+  gitBranchName: text("git_branch_name"),
+  gitBaseRef: text("git_base_ref"),
+  gitMetadataJson: text("git_metadata_json"),
+  outputSummaryJson: text("output_summary_json"),
+  errorMessage: text("error_message"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+  completedAt: integer("completed_at")
+});
+
+export const storyReviewRemediationFindings = sqliteTable(
+  "story_review_remediation_findings",
+  {
+    storyReviewRemediationRunId: text("story_review_remediation_run_id")
+      .notNull()
+      .references(() => storyReviewRemediationRuns.id),
+    storyReviewFindingId: text("story_review_finding_id").notNull().references(() => storyReviewFindings.id),
+    resolutionStatus: text("resolution_status").notNull(),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull()
+  },
+  (table) => [primaryKey({ columns: [table.storyReviewRemediationRunId, table.storyReviewFindingId] })]
+);
+
+export const storyReviewRemediationAgentSessions = sqliteTable("story_review_remediation_agent_sessions", {
+  id: text("id").primaryKey(),
+  storyReviewRemediationRunId: text("story_review_remediation_run_id")
+    .notNull()
+    .references(() => storyReviewRemediationRuns.id),
+  adapterKey: text("adapter_key").notNull(),
+  status: text("status").notNull(),
+  commandJson: text("command_json").notNull(),
+  stdout: text("stdout").notNull(),
+  stderr: text("stderr").notNull(),
+  exitCode: integer("exit_code").notNull(),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull()
+});
+
 export const storyReviewAgentSessions = sqliteTable("story_review_agent_sessions", {
   id: text("id").primaryKey(),
   storyReviewRunId: text("story_review_run_id").notNull().references(() => storyReviewRuns.id),
@@ -328,6 +382,8 @@ export const documentationRuns = sqliteTable("documentation_runs", {
   inputSnapshotJson: text("input_snapshot_json").notNull(),
   systemPromptSnapshot: text("system_prompt_snapshot").notNull(),
   skillsSnapshotJson: text("skills_snapshot_json").notNull(),
+  staleAt: integer("stale_at"),
+  staleReason: text("stale_reason"),
   summaryJson: text("summary_json"),
   errorMessage: text("error_message"),
   createdAt: integer("created_at").notNull(),
