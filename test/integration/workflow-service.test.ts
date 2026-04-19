@@ -31,10 +31,7 @@ describe("workflow service", () => {
     context: ReturnType<typeof createAppContext>,
     input: { title: string; description: string }
   ) {
-    const item = context.repositories.itemRepository.create({
-      title: input.title,
-      description: input.description
-    });
+    const item = createWorkspaceItem(context, input);
     await context.workflowService.startStage({ stageKey: "brainstorm", itemId: item.id });
     const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
     context.workflowService.approveConcept(concept!.id);
@@ -64,13 +61,24 @@ describe("workflow service", () => {
     };
   }
 
+  function createWorkspaceItem(
+    context: ReturnType<typeof createAppContext>,
+    input: { title: string; description: string }
+  ) {
+    return context.repositories.itemRepository.create({
+      workspaceId: context.workspace.id,
+      title: input.title,
+      description: input.description
+    });
+  }
+
   it("starts a brainstorm run and stores prompt snapshots", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
     const dbPath = join(root, "app.sqlite");
     const context = createAppContext(dbPath);
 
     try {
-      const item = context.repositories.itemRepository.create({
+      const item = createWorkspaceItem(context, {
         title: "Agent Workflow",
         description: "Build the flow"
       });
@@ -98,7 +106,7 @@ describe("workflow service", () => {
     const originalPrompt = readFileSync("prompts/system/brainstorm.md", "utf8");
 
     try {
-      const item = context.repositories.itemRepository.create({
+      const item = createWorkspaceItem(context, {
         title: "Snapshot Test",
         description: "Snapshots"
       });
@@ -133,7 +141,7 @@ describe("workflow service", () => {
     const context = createAppContext(dbPath);
 
     try {
-      const item = context.repositories.itemRepository.create({
+      const item = createWorkspaceItem(context, {
         title: "Review Path",
         description: "Bad json"
       });
@@ -165,7 +173,7 @@ describe("workflow service", () => {
     const context = createAppContext(dbPath);
 
     try {
-      const item = context.repositories.itemRepository.create({
+      const item = createWorkspaceItem(context, {
         title: "Retry Path",
         description: "Retry invalid output"
       });
@@ -200,7 +208,7 @@ describe("workflow service", () => {
     const context = createAppContext(dbPath);
 
     try {
-      const item = context.repositories.itemRepository.create({
+      const item = createWorkspaceItem(context, {
         title: "Idempotency",
         description: "Stable approvals"
       });
@@ -272,7 +280,7 @@ describe("workflow service", () => {
     const context = createAppContext(dbPath);
 
     try {
-      const item = context.repositories.itemRepository.create({
+      const item = createWorkspaceItem(context, {
         title: "Interactive Review",
         description: "Story review flow"
       });
@@ -351,13 +359,66 @@ describe("workflow service", () => {
     }
   });
 
+  it("supports guided story edits and partial story approval in interactive review", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const item = createWorkspaceItem(context, {
+        title: "Interactive Review Edits",
+        description: "Story edit flow"
+      });
+      await context.workflowService.startStage({
+        stageKey: "brainstorm",
+        itemId: item.id
+      });
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      context.workflowService.approveConcept(concept!.id);
+      context.workflowService.importProjects(item.id);
+      const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
+      await context.workflowService.startStage({ stageKey: "requirements", itemId: item.id, projectId: project.id });
+
+      const stories = context.repositories.userStoryRepository.listByProjectId(project.id);
+      const session = context.workflowService.startInteractiveReview({ type: "stories", projectId: project.id });
+
+      const edited = context.workflowService.applyInteractiveReviewStoryEdits({
+        sessionId: session.sessionId,
+        storyId: stories[0]!.id,
+        title: "Sharpened Story Title",
+        acceptanceCriteria: ["First criterion clarified", "Second criterion added"],
+        summary: "Story sharpened from review",
+        status: "resolved"
+      });
+      expect(edited.story.title).toBe("Sharpened Story Title");
+      expect(edited.acceptanceCriteria.map((criterion) => criterion.text)).toEqual([
+        "First criterion clarified",
+        "Second criterion added"
+      ]);
+
+      const partialApproval = await context.workflowService.resolveInteractiveReview({
+        sessionId: session.sessionId,
+        action: "approve_selected",
+        storyIds: [stories[0]!.id],
+        rationale: "First story is ready"
+      });
+      expect(partialApproval.status).toBe("resolved");
+      expect(context.repositories.userStoryRepository.getById(stories[0]!.id)?.status).toBe("approved");
+      expect(context.repositories.userStoryRepository.getById(stories[1]!.id)?.status).toBe("draft");
+      expect(context.repositories.itemRepository.getById(item.id)?.currentColumn).toBe("requirements");
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("does not derive positive story updates from negated chat instructions", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
     const dbPath = join(root, "app.sqlite");
     const context = createAppContext(dbPath);
 
     try {
-      const item = context.repositories.itemRepository.create({
+      const item = createWorkspaceItem(context, {
         title: "Interactive Review Negation",
         description: "Negation handling"
       });
@@ -395,7 +456,7 @@ describe("workflow service", () => {
     const context = createAppContext(dbPath);
 
     try {
-      const item = context.repositories.itemRepository.create({
+      const item = createWorkspaceItem(context, {
         title: "Planning Flow",
         description: "Persist implementation plans"
       });
@@ -454,7 +515,7 @@ describe("workflow service", () => {
     const context = createAppContext(dbPath);
 
     try {
-      const item = context.repositories.itemRepository.create({
+      const item = createWorkspaceItem(context, {
         title: "Provenance",
         description: "Track inputs"
       });
@@ -490,7 +551,7 @@ describe("workflow service", () => {
     const context = createAppContext(dbPath);
 
     try {
-      const item = context.repositories.itemRepository.create({
+      const item = createWorkspaceItem(context, {
         title: "Execution Flow",
         description: "Run planned waves"
       });
@@ -597,7 +658,7 @@ describe("workflow service", () => {
       writeFileSync(adapterScriptPath, reviewScript);
       const context = createAppContext(dbPath, { adapterScriptPath });
 
-      const item = context.repositories.itemRepository.create({
+      const item = createWorkspaceItem(context, {
         title: "Ralph Review",
         description: "Trigger Ralph review"
       });
@@ -647,7 +708,7 @@ describe("workflow service", () => {
       writeFileSync(adapterScriptPath, failedScript);
       const context = createAppContext(dbPath, { adapterScriptPath });
 
-      const item = context.repositories.itemRepository.create({
+      const item = createWorkspaceItem(context, {
         title: "Ralph Failure",
         description: "Trigger Ralph failure"
       });
@@ -710,7 +771,7 @@ describe("workflow service", () => {
       writeFileSync(adapterScriptPath, reviewScript);
       const context = createAppContext(dbPath, { adapterScriptPath });
 
-      const item = context.repositories.itemRepository.create({
+      const item = createWorkspaceItem(context, {
         title: "Story Review Required",
         description: "Trigger story review follow-up"
       });
@@ -773,7 +834,7 @@ describe("workflow service", () => {
       writeFileSync(adapterScriptPath, remediationScript);
       const context = createAppContext(dbPath, { adapterScriptPath, workspaceRoot });
 
-      const item = context.repositories.itemRepository.create({
+      const item = createWorkspaceItem(context, {
         title: "Story Review Remediation",
         description: "Exercise remediation and git metadata"
       });
@@ -831,7 +892,7 @@ describe("workflow service", () => {
     const context = createAppContext(dbPath);
 
     try {
-      const item = context.repositories.itemRepository.create({
+      const item = createWorkspaceItem(context, {
         title: "Autorun Happy Path",
         description: "Continue from concept approval"
       });
@@ -896,7 +957,7 @@ describe("workflow service", () => {
       writeFileSync(adapterScriptPath, reviewScript);
       const context = createAppContext(dbPath, { adapterScriptPath });
 
-      const item = context.repositories.itemRepository.create({
+      const item = createWorkspaceItem(context, {
         title: "Autorun QA Stop",
         description: "Stop at QA review required"
       });
@@ -947,7 +1008,7 @@ describe("workflow service", () => {
       writeFileSync(adapterScriptPath, remediationScript);
       const context = createAppContext(dbPath, { adapterScriptPath, workspaceRoot });
 
-      const item = context.repositories.itemRepository.create({
+      const item = createWorkspaceItem(context, {
         title: "Autorun Remediation",
         description: "Automatically remediate story review findings"
       });
@@ -996,7 +1057,7 @@ describe("workflow service", () => {
       writeFileSync(adapterScriptPath, failedScript);
       const context = createAppContext(dbPath, { adapterScriptPath });
 
-      const item = context.repositories.itemRepository.create({
+      const item = createWorkspaceItem(context, {
         title: "Story Review Failure",
         description: "Trigger story review failure"
       });
@@ -1128,7 +1189,7 @@ describe("workflow service", () => {
     const context = createAppContext(dbPath);
 
     try {
-      const item = context.repositories.itemRepository.create({
+      const item = createWorkspaceItem(context, {
         title: "QA Blocked",
         description: "Execution must finish first"
       });

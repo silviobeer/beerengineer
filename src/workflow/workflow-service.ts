@@ -100,7 +100,16 @@ import {
   interactiveReviewSeverities
 } from "../domain/types.js";
 
-const supportedInteractiveReviewResolutionActions = ["approve", "approve_and_autorun", "request_changes"] as const;
+const supportedInteractiveReviewResolutionActions = [
+  "approve",
+  "approve_and_autorun",
+  "approve_all",
+  "approve_all_and_autorun",
+  "approve_selected",
+  "request_changes",
+  "request_story_revisions",
+  "apply_story_edits"
+] as const;
 
 type WorkflowDeps = {
   repoRoot: string;
@@ -542,7 +551,7 @@ export class WorkflowService {
         content: this.buildStoryReviewKickoffMessage(project.code, stories),
         structuredPayloadJson: JSON.stringify(
           {
-            availableActions: ["approve", "approve_and_autorun", "request_changes"]
+            availableActions: [...supportedInteractiveReviewResolutionActions]
           },
           null,
           2
@@ -634,7 +643,7 @@ export class WorkflowService {
         content: this.buildStoryReviewFollowUpMessage(storyScope.project.code, entries, derivedUpdates),
         structuredPayloadJson: JSON.stringify(
           {
-            availableActions: ["approve", "approve_and_autorun", "request_changes"],
+            availableActions: [...supportedInteractiveReviewResolutionActions],
             derivedUpdateCount: derivedUpdates.length
           },
           null,
@@ -699,9 +708,126 @@ export class WorkflowService {
     };
   }
 
+  public applyInteractiveReviewStoryEdits(input: {
+    sessionId: string;
+    storyId: string;
+    title?: string;
+    description?: string;
+    actor?: string;
+    goal?: string;
+    benefit?: string;
+    priority?: string;
+    acceptanceCriteria?: string[];
+    summary?: string;
+    rationale?: string;
+    status?: Extract<InteractiveReviewEntryStatus, "resolved" | "accepted" | "needs_revision">;
+  }) {
+    const session = this.requireInteractiveReviewSession(input.sessionId);
+    this.assertInteractiveReviewOpen(session);
+    const storyScope = this.getStoryReviewScope(session);
+    const story = this.requireStory(input.storyId);
+    if (story.projectId !== storyScope.project.id) {
+      throw new AppError("STORY_NOT_FOUND", `Story ${input.storyId} not found in review scope`);
+    }
+
+    const sanitizedAcceptanceCriteria = input.acceptanceCriteria?.map((criterion) => criterion.trim()).filter(Boolean);
+    if (sanitizedAcceptanceCriteria && sanitizedAcceptanceCriteria.length === 0) {
+      throw new AppError("ACCEPTANCE_CRITERIA_INVALID", "Acceptance criteria must not be empty when provided");
+    }
+    const nextEntryStatus = input.status ?? "resolved";
+
+    const updatedStory = this.deps.runInTransaction(() => {
+      this.deps.userStoryRepository.update(story.id, {
+        ...(input.title !== undefined ? { title: input.title.trim() } : {}),
+        ...(input.description !== undefined ? { description: input.description.trim() } : {}),
+        ...(input.actor !== undefined ? { actor: input.actor.trim() } : {}),
+        ...(input.goal !== undefined ? { goal: input.goal.trim() } : {}),
+        ...(input.benefit !== undefined ? { benefit: input.benefit.trim() } : {}),
+        ...(input.priority !== undefined ? { priority: input.priority.trim() } : {}),
+        status: "draft"
+      });
+
+      if (sanitizedAcceptanceCriteria) {
+        this.deps.acceptanceCriterionRepository.deleteByStoryId(story.id);
+        this.deps.acceptanceCriterionRepository.createMany(
+          sanitizedAcceptanceCriteria.map((criterion, index) => ({
+            storyId: story.id,
+            code: formatAcceptanceCriterionCode(story.code, index + 1),
+            text: criterion,
+            position: index
+          }))
+        );
+      }
+
+      this.deps.interactiveReviewEntryRepository.updateByEntryId(session.id, story.id, {
+        status: nextEntryStatus,
+        summary: input.summary ?? "Guided edits applied",
+        changeRequest: null,
+        rationale: input.rationale ?? null,
+        severity: null
+      });
+      const assistantMessage = this.deps.interactiveReviewMessageRepository.create({
+        sessionId: session.id,
+        role: "assistant",
+        content: `Applied guided edits to ${story.code}.`,
+        structuredPayloadJson: JSON.stringify(
+          {
+            storyId: story.id,
+            changedFields: [
+              ...(input.title !== undefined ? ["title"] : []),
+              ...(input.description !== undefined ? ["description"] : []),
+              ...(input.actor !== undefined ? ["actor"] : []),
+              ...(input.goal !== undefined ? ["goal"] : []),
+              ...(input.benefit !== undefined ? ["benefit"] : []),
+              ...(input.priority !== undefined ? ["priority"] : []),
+              ...(sanitizedAcceptanceCriteria ? ["acceptanceCriteria"] : [])
+            ]
+          },
+          null,
+          2
+        ),
+        derivedUpdatesJson: JSON.stringify(
+          {
+            entryUpdates: [
+              {
+                entryId: story.id,
+                status: nextEntryStatus
+              }
+            ]
+          },
+          null,
+          2
+        )
+      });
+      const entries = this.deps.interactiveReviewEntryRepository.listBySessionId(session.id);
+      this.deps.interactiveReviewSessionRepository.update(session.id, {
+        lastAssistantMessageId: assistantMessage.id,
+        status: this.computeInteractiveReviewStatus(entries)
+      });
+      return this.requireStory(story.id);
+    });
+
+    return {
+      sessionId: session.id,
+      story: updatedStory,
+      acceptanceCriteria: this.deps.acceptanceCriterionRepository.listByStoryId(story.id)
+    };
+  }
+
   public async resolveInteractiveReview(input: {
     sessionId: string;
-    action: Extract<InteractiveReviewResolutionType, "approve" | "approve_and_autorun" | "request_changes">;
+    action: Extract<
+      InteractiveReviewResolutionType,
+      | "approve"
+      | "approve_and_autorun"
+      | "approve_all"
+      | "approve_all_and_autorun"
+      | "approve_selected"
+      | "request_changes"
+      | "request_story_revisions"
+      | "apply_story_edits"
+    >;
+    storyIds?: string[];
     rationale?: string;
   }) {
     const session = this.requireInteractiveReviewSession(input.sessionId);
@@ -709,20 +835,70 @@ export class WorkflowService {
     this.assertInteractiveReviewResolutionAction(input.action);
     const storyScope = this.getStoryReviewScope(session);
     const { project, item } = storyScope;
+    const targetedStoryIds = input.storyIds ? this.resolveInteractiveReviewStoryIds(project.id, input.storyIds) : [];
     const resolution = this.deps.runInTransaction(() => {
-      const payload = input.rationale ? { rationale: input.rationale } : null;
+      const payload = {
+        ...(input.rationale ? { rationale: input.rationale } : {}),
+        ...(targetedStoryIds.length > 0 ? { storyIds: targetedStoryIds } : {})
+      };
       const createdResolution = this.deps.interactiveReviewResolutionRepository.create({
         sessionId: session.id,
         resolutionType: input.action,
-        payloadJson: payload ? JSON.stringify(payload, null, 2) : null
+        payloadJson: Object.keys(payload).length > 0 ? JSON.stringify(payload, null, 2) : null
       });
 
-      if (input.action === "approve" || input.action === "approve_and_autorun") {
+      if (input.action === "approve" || input.action === "approve_and_autorun" || input.action === "approve_all" || input.action === "approve_all_and_autorun") {
         this.approveStories(project.id);
       }
 
-      if (input.action === "request_changes") {
+      if (input.action === "approve_selected") {
+        if (targetedStoryIds.length === 0) {
+          throw new AppError("INTERACTIVE_REVIEW_STORY_IDS_REQUIRED", "approve_selected requires at least one story id");
+        }
+        this.deps.userStoryRepository.approveByIds(targetedStoryIds);
+        for (const storyId of targetedStoryIds) {
+          this.deps.interactiveReviewEntryRepository.updateByEntryId(session.id, storyId, {
+            status: "accepted",
+            summary: "Approved via selected resolution",
+            changeRequest: null
+          });
+        }
+        this.maybeAdvanceAfterPartialStoryApproval(project.id);
+      }
+
+      if (input.action === "request_changes" || input.action === "request_story_revisions") {
+        const affectedStoryIds =
+          targetedStoryIds.length > 0
+            ? targetedStoryIds
+            : this.deps.interactiveReviewEntryRepository
+                .listBySessionId(session.id)
+                .filter((entry) => entry.entryType === "story")
+                .map((entry) => entry.entryId);
+        if (input.action === "request_story_revisions") {
+          for (const storyId of affectedStoryIds) {
+            this.deps.interactiveReviewEntryRepository.updateByEntryId(session.id, storyId, {
+              status: "needs_revision",
+              summary: "Revision requested via session resolution",
+              changeRequest: input.rationale ?? "Revise the story based on review feedback"
+            });
+          }
+        }
         this.deps.itemRepository.updatePhaseStatus(item.id, "review_required");
+      }
+
+      if (input.action === "apply_story_edits") {
+        if (targetedStoryIds.length === 0) {
+          throw new AppError("INTERACTIVE_REVIEW_STORY_IDS_REQUIRED", "apply_story_edits requires at least one edited story id");
+        }
+        for (const storyId of targetedStoryIds) {
+          this.deps.interactiveReviewEntryRepository.updateByEntryId(session.id, storyId, {
+            status: "resolved",
+            summary: "Guided edits applied and accepted for follow-up workflow",
+            changeRequest: null,
+            rationale: input.rationale ?? null
+          });
+        }
+        this.deps.itemRepository.updatePhaseStatus(item.id, "draft");
       }
 
       this.deps.interactiveReviewResolutionRepository.markApplied(createdResolution.id);
@@ -733,7 +909,7 @@ export class WorkflowService {
       return createdResolution;
     });
 
-    if (input.action === "approve_and_autorun") {
+    if (input.action === "approve_and_autorun" || input.action === "approve_all_and_autorun") {
       const autorun = await this.autorunForProject({
         projectId: project.id,
         trigger: "review:resolve",
@@ -3467,7 +3643,7 @@ export class WorkflowService {
       "Current scope:",
       storyLines,
       "",
-      "Use `review:chat` for feedback, `review:entry:update` for structured per-story status, then finish with `review:resolve`."
+      "Use `review:chat` for feedback, `review:entry:update` for structured per-story status, `review:story:edit` for guided edits, then finish with `review:resolve`."
     ].join("\n");
   }
 
@@ -3557,6 +3733,28 @@ export class WorkflowService {
     return entries.length > 0 && entries.every((entry) => entry.status !== "pending") ? "ready_for_resolution" : "waiting_for_user";
   }
 
+  private resolveInteractiveReviewStoryIds(projectId: string, storyIds: string[]): string[] {
+    const uniqueStoryIds = Array.from(new Set(storyIds));
+    const projectStoryIds = new Set(this.deps.userStoryRepository.listByProjectId(projectId).map((story) => story.id));
+    for (const storyId of uniqueStoryIds) {
+      if (!projectStoryIds.has(storyId)) {
+        throw new AppError("STORY_NOT_FOUND", `Story ${storyId} not found in review scope`);
+      }
+    }
+    return uniqueStoryIds;
+  }
+
+  private maybeAdvanceAfterPartialStoryApproval(projectId: string): void {
+    const project = this.requireProject(projectId);
+    const snapshot = this.buildSnapshot(project.itemId);
+    if (!snapshot.allStoriesApproved) {
+      return;
+    }
+    const item = this.requireItem(project.itemId);
+    assertCanMoveItem(item.currentColumn, "implementation", snapshot);
+    this.deps.itemRepository.updateColumn(project.itemId, "implementation", "draft");
+  }
+
   private assertInteractiveReviewOpen(session: InteractiveReviewSession): void {
     if (session.status === "resolved" || session.status === "cancelled") {
       throw new AppError("INTERACTIVE_REVIEW_CLOSED", `Interactive review session ${session.id} is already closed`);
@@ -3583,7 +3781,7 @@ export class WorkflowService {
 
   private assertInteractiveReviewResolutionAction(
     action: string
-  ): asserts action is Extract<InteractiveReviewResolutionType, "approve" | "approve_and_autorun" | "request_changes"> {
+  ): asserts action is (typeof supportedInteractiveReviewResolutionActions)[number] {
     if (!(supportedInteractiveReviewResolutionActions as readonly string[]).includes(action)) {
       throw new AppError("INTERACTIVE_REVIEW_ACTION_INVALID", `Interactive review action ${action} is invalid`);
     }

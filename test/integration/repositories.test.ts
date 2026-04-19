@@ -83,8 +83,8 @@ describe("repositories", () => {
     const artifactRepository = new ArtifactRepository(db);
 
     try {
-      const item = itemRepository.create({ title: "Item", description: "Desc" });
       const defaultWorkspace = workspaceRepository.getByKey("default");
+      const item = itemRepository.create({ workspaceId: defaultWorkspace!.id, title: "Item", description: "Desc" });
       const concept = conceptRepository.create({
         itemId: item.id,
         version: 1,
@@ -538,10 +538,12 @@ describe("repositories", () => {
     const testDb = createTestDatabase();
     const db = createDatabase(testDb.filePath).db;
     const itemRepository = new ItemRepository(db);
+    const workspaceRepository = new WorkspaceRepository(db);
     const artifactRepository = new ArtifactRepository(db);
 
     try {
-      const item = itemRepository.create({ title: "Item", description: "Desc" });
+      const defaultWorkspace = workspaceRepository.getByKey("default");
+      const item = itemRepository.create({ workspaceId: defaultWorkspace!.id, title: "Item", description: "Desc" });
       const artifact = artifactRepository.create({
         stageRunId: null,
         itemId: item.id,
@@ -563,10 +565,12 @@ describe("repositories", () => {
     const testDb = createTestDatabase();
     const db = createDatabase(testDb.filePath).db;
     const itemRepository = new ItemRepository(db);
+    const workspaceRepository = new WorkspaceRepository(db);
 
     try {
-      const first = itemRepository.create({ title: "First", description: "Desc" });
-      const second = itemRepository.create({ title: "Second", description: "Desc" });
+      const defaultWorkspace = workspaceRepository.getByKey("default");
+      const first = itemRepository.create({ workspaceId: defaultWorkspace!.id, title: "First", description: "Desc" });
+      const second = itemRepository.create({ workspaceId: defaultWorkspace!.id, title: "Second", description: "Desc" });
 
       expect(first.code).toBe("ITEM-0001");
       expect(second.code).toBe("ITEM-0002");
@@ -583,6 +587,7 @@ describe("repositories", () => {
     const workspaceSettingsRepository = new WorkspaceSettingsRepository(db);
 
     try {
+      const defaultWorkspace = workspaceRepository.getByKey("default")!;
       const secondWorkspace = workspaceRepository.create({
         key: "second",
         name: "Second Workspace",
@@ -603,7 +608,7 @@ describe("repositories", () => {
         uiMetadataJson: null
       });
 
-      const defaultItem = itemRepository.create({ title: "Default", description: "Desc" });
+      const defaultItem = itemRepository.create({ workspaceId: defaultWorkspace.id, title: "Default", description: "Desc" });
       const secondItem = itemRepository.create({
         workspaceId: secondWorkspace.id,
         title: "Second",
@@ -623,10 +628,12 @@ describe("repositories", () => {
     const { connection, db } = createDatabase(testDb.filePath);
     applyMigrations(connection, baseMigrations);
     const itemRepository = new ItemRepository(db);
+    const workspaceRepository = new WorkspaceRepository(db);
     const conceptRepository = new ConceptRepository(db);
 
     try {
-      const item = itemRepository.create({ title: "Item", description: "Desc" });
+      const defaultWorkspace = workspaceRepository.getByKey("default");
+      const item = itemRepository.create({ workspaceId: defaultWorkspace!.id, title: "Item", description: "Desc" });
       const concept = conceptRepository.create({
         itemId: item.id,
         version: 1,

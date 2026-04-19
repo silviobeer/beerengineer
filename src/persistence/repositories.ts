@@ -60,7 +60,6 @@ import type {
 import { AppError } from "../shared/errors.js";
 import { formatItemCode, parseItemCodeSequence } from "../shared/codes.js";
 import { createId } from "../shared/ids.js";
-import { DEFAULT_WORKSPACE_ID } from "../shared/workspaces.js";
 import type { DatabaseClient } from "./database.js";
 import {
   acceptanceCriteria,
@@ -313,8 +312,8 @@ function isItemsCodeUniqueViolation(error: unknown): boolean {
 export class ItemRepository {
   public constructor(private readonly db: DatabaseClient) {}
 
-  public create(input: { workspaceId?: string; title: string; description: string }): Item {
-    const workspaceId = input.workspaceId ?? DEFAULT_WORKSPACE_ID;
+  public create(input: { workspaceId: string; title: string; description: string }): Item {
+    const workspaceId = input.workspaceId;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const timestamp = now();
       const item: Item = {
@@ -487,6 +486,37 @@ export class UserStoryRepository {
       .run();
   }
 
+  public approveByIds(storyIds: string[]): void {
+    if (storyIds.length === 0) {
+      return;
+    }
+    this.db
+      .update(userStories)
+      .set({ status: "approved", updatedAt: now() })
+      .where(inArray(userStories.id, storyIds))
+      .run();
+  }
+
+  public update(
+    id: string,
+    input: Partial<Pick<UserStory, "title" | "description" | "actor" | "goal" | "benefit" | "priority" | "status">>
+  ): void {
+    this.db
+      .update(userStories)
+      .set({
+        ...(input.title !== undefined ? { title: input.title } : {}),
+        ...(input.description !== undefined ? { description: input.description } : {}),
+        ...(input.actor !== undefined ? { actor: input.actor } : {}),
+        ...(input.goal !== undefined ? { goal: input.goal } : {}),
+        ...(input.benefit !== undefined ? { benefit: input.benefit } : {}),
+        ...(input.priority !== undefined ? { priority: input.priority } : {}),
+        ...(input.status !== undefined ? { status: input.status } : {}),
+        updatedAt: now()
+      })
+      .where(eq(userStories.id, id))
+      .run();
+  }
+
   public hasAnyByProjectId(projectId: string): boolean {
     const row = this.db
       .select({ id: userStories.id })
@@ -546,6 +576,10 @@ export class AcceptanceCriterionRepository {
     }));
     this.db.insert(acceptanceCriteria).values(rows).run();
     return rows as AcceptanceCriterion[];
+  }
+
+  public deleteByStoryId(storyId: string): void {
+    this.db.delete(acceptanceCriteria).where(eq(acceptanceCriteria.storyId, storyId)).run();
   }
 }
 

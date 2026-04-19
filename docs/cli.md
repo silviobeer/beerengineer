@@ -16,8 +16,12 @@ npm run cli -- review:start --type stories --project-id <projectId>
 npm run cli -- review:show --session-id <sessionId>
 npm run cli -- review:chat --session-id <sessionId> --message "..."
 npm run cli -- review:entry:update --session-id <sessionId> --story-id <storyId> --status needs_revision
+npm run cli -- review:story:edit --session-id <sessionId> --story-id <storyId> --title "..." --acceptance-criterion "..."
 npm run cli -- review:resolve --session-id <sessionId> --action approve
 npm run cli -- review:resolve --session-id <sessionId> --action approve_and_autorun
+npm run cli -- review:resolve --session-id <sessionId> --action approve_selected --story-id <storyId>
+npm run cli -- review:resolve --session-id <sessionId> --action request_story_revisions --story-id <storyId>
+npm run cli -- review:resolve --session-id <sessionId> --action apply_story_edits --story-id <storyId>
 npm run cli -- architecture:start --item-id <itemId> --project-id <projectId>
 npm run cli -- architecture:approve --project-id <projectId>
 npm run cli -- architecture:approve --project-id <projectId> --autorun
@@ -71,7 +75,20 @@ Project-Ebene:
 - `review:show` liefert Session, persistierte Messages, strukturierte Story-Eintraege und formale Resolutionen.
 - `review:chat` speichert User- und Assistant-Nachrichten und leitet einfache strukturierte Story-Updates aus Story-Code/-Titel und Review-Signalen wie `approve` oder `needs revision` ab.
 - `review:entry:update` erlaubt explizite maschinenlesbare Story-Status wie `accepted`, `needs_revision` oder `rejected`.
-- `review:resolve --action approve|approve_and_autorun|request_changes` beendet die Session formell und koppelt optional an den bestehenden Autorun-Orchestrator an.
+- `review:story:edit` fuehrt Guided Edit direkt auf Story-Feldern und optional auf den Acceptance Criteria aus; die Aenderung wird sofort am Artefakt gespeichert und im Review-Entry nachvollziehbar markiert.
+- `review:resolve` unterstuetzt heute diese Story-Resolutionen:
+  - `approve`, `approve_all`
+  - `approve_and_autorun`, `approve_all_and_autorun`
+  - `approve_selected --story-id <id> ...`
+  - `request_changes`
+  - `request_story_revisions --story-id <id> ...`
+  - `apply_story_edits --story-id <id> ...`
+
+Wichtig:
+
+- `approve_selected` gibt nur die angegebenen Stories frei; der Wechsel nach `implementation` passiert erst, wenn danach wirklich alle Stories approved sind.
+- `review:story:edit` mutiert das zugrunde liegende Story-Artefakt bewusst kontrolliert und setzt die betroffene Story wieder auf `draft`.
+- `apply_story_edits` ist die formale Abschluss-Resolution nach einem oder mehreren Guided-Edit-Schritten.
 
 Fuer reproduzierbare Live-Runs akzeptiert die CLI global:
 

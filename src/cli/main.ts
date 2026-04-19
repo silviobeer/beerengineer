@@ -2,7 +2,7 @@ import { Command, Option } from "commander";
 import { resolve } from "node:path";
 
 import { createAppContext, type AppContext } from "../app-context.js";
-import { interactiveReviewEntryStatuses, interactiveReviewSeverities } from "../domain/types.js";
+import { interactiveReviewEntryStatuses, interactiveReviewResolutionTypes, interactiveReviewSeverities } from "../domain/types.js";
 import { AppError } from "../shared/errors.js";
 
 const program = new Command();
@@ -24,15 +24,16 @@ function withContext<TOptions extends object>(
       workspaceRoot?: string;
     }>();
     const dbPath = resolve(programOptions.db);
-    const context = createAppContext(dbPath, {
-      adapterScriptPath: programOptions.adapterScriptPath ? resolve(programOptions.adapterScriptPath) : undefined,
-      workspaceKey: programOptions.workspace,
-      workspaceRoot: programOptions.workspaceRoot ? resolve(programOptions.workspaceRoot) : undefined
-    });
+    let context: AppContext | null = null;
     try {
+      context = createAppContext(dbPath, {
+        adapterScriptPath: programOptions.adapterScriptPath ? resolve(programOptions.adapterScriptPath) : undefined,
+        workspaceKey: programOptions.workspace,
+        workspaceRoot: programOptions.workspaceRoot ? resolve(programOptions.workspaceRoot) : undefined
+      });
       await handler(context, options, dbPath);
     } finally {
-      context.connection.close();
+      context?.connection.close();
     }
   };
 }
@@ -286,17 +287,103 @@ program
   );
 
 program
+  .command("review:story:edit")
+  .requiredOption("--session-id <sessionId>")
+  .requiredOption("--story-id <storyId>")
+  .option("--title <title>")
+  .option("--description <description>")
+  .option("--actor <actor>")
+  .option("--goal <goal>")
+  .option("--benefit <benefit>")
+  .option("--priority <priority>")
+  .option("--acceptance-criterion <text>", "Repeatable acceptance criterion", (value, previous: string[] = []) => [...previous, value], [])
+  .option("--summary <summary>")
+  .option("--rationale <rationale>")
+  .addOption(new Option("--status <status>").choices(["resolved", "accepted", "needs_revision"]))
+  .action(
+    withContext<{
+      sessionId: string;
+      storyId: string;
+      title?: string;
+      description?: string;
+      actor?: string;
+      goal?: string;
+      benefit?: string;
+      priority?: string;
+      acceptanceCriterion: string[];
+      summary?: string;
+      rationale?: string;
+      status?: "resolved" | "accepted" | "needs_revision";
+    }>(({ workflowService }, options) => {
+      console.log(
+        JSON.stringify(
+          workflowService.applyInteractiveReviewStoryEdits({
+            sessionId: options.sessionId,
+            storyId: options.storyId,
+            title: options.title,
+            description: options.description,
+            actor: options.actor,
+            goal: options.goal,
+            benefit: options.benefit,
+            priority: options.priority,
+            acceptanceCriteria: options.acceptanceCriterion.length > 0 ? options.acceptanceCriterion : undefined,
+            summary: options.summary,
+            rationale: options.rationale,
+            status: options.status
+          }),
+          null,
+          2
+        )
+      );
+    })
+  );
+
+program
   .command("review:resolve")
   .requiredOption("--session-id <sessionId>")
-  .addOption(new Option("--action <action>", "Review resolution action").choices(["approve", "approve_and_autorun", "request_changes"]).makeOptionMandatory())
+  .addOption(
+    new Option("--action <action>", "Review resolution action")
+      .choices([
+        "approve",
+        "approve_and_autorun",
+        "approve_all",
+        "approve_all_and_autorun",
+        "approve_selected",
+        "request_changes",
+        "request_story_revisions",
+        "apply_story_edits"
+      ] satisfies Array<(typeof interactiveReviewResolutionTypes)[number]>)
+      .makeOptionMandatory()
+  )
+  .option("--story-id <storyId>", "Repeatable story target", (value, previous: string[] = []) => [...previous, value], [])
   .option("--rationale <rationale>")
   .action(
     withContext<{
       sessionId: string;
-      action: "approve" | "approve_and_autorun" | "request_changes";
+      action:
+        | "approve"
+        | "approve_and_autorun"
+        | "approve_all"
+        | "approve_all_and_autorun"
+        | "approve_selected"
+        | "request_changes"
+        | "request_story_revisions"
+        | "apply_story_edits";
+      storyId: string[];
       rationale?: string;
     }>(async ({ workflowService }, options) => {
-      console.log(JSON.stringify(await workflowService.resolveInteractiveReview(options), null, 2));
+      console.log(
+        JSON.stringify(
+          await workflowService.resolveInteractiveReview({
+            sessionId: options.sessionId,
+            action: options.action,
+            storyIds: options.storyId.length > 0 ? options.storyId : undefined,
+            rationale: options.rationale
+          }),
+          null,
+          2
+        )
+      );
     })
   );
 

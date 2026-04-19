@@ -149,6 +149,12 @@ export type InteractiveReviewSeverity = (typeof interactiveReviewSeverities)[num
 export const interactiveReviewResolutionTypes = [
   "approve",
   "approve_and_autorun",
+  "approve_all",
+  "approve_all_and_autorun",
+  "approve_selected",
+  "request_story_revisions",
+  "apply_story_edits",
+  "regenerate_story_set",
   "request_changes",
   "apply_guided_changes",
   "retry",
