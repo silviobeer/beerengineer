@@ -46,8 +46,7 @@ Beispiele:
 - `execution:retry --wave-story-execution-id <id> --autorun`
 - `qa:retry --qa-run-id <id> --autorun`
 - `documentation:retry --documentation-run-id <id> --autorun`
-- spaeter:
-  - `remediation:story-review:retry --remediation-run-id <id> --autorun`
+- `remediation:story-review:retry --remediation-run-id <id> --autorun`
 
 Optional zusaetzlich:
 
@@ -256,6 +255,45 @@ Beispielhafte Felder:
 - `createdRunIds[]`
 - `createdExecutionIds[]`
 - `createdRemediationRunIds[]`
+
+## Implementierter erster Slice
+
+Der aktuelle Implementierungsstand deckt bereits diese Pfade ab:
+
+- `concept:approve --autorun`
+- `stories:approve --autorun`
+- `architecture:approve --autorun`
+- `planning:approve --autorun`
+- `execution:retry --autorun`
+- `qa:retry --autorun`
+- `documentation:retry --autorun`
+- `remediation:story-review:retry --autorun`
+- `autorun:start --item-id <id>`
+- `autorun:resume --project-id <id>`
+
+Der aktuelle Autorun-Output enthaelt:
+
+- `trigger`
+- `scopeType`
+- `scopeId`
+- `steps`
+- `finalStatus`
+- `stopReason`
+- `createdRunIds`
+- `createdExecutionIds`
+- `createdRemediationRunIds`
+- `successful`
+
+Im ersten Slice gilt fuer automatische Story-Review-Remediation konkret:
+
+- nur offene `story_review`-Findings mit Severity `medium` oder `low` gelten als auto-fixable
+- `critical` oder `high` stoppen weiterhin auf `review_required` oder `failed`
+- pro `StoryReviewRun` sind hoechstens zwei automatische Remediation-Versuche erlaubt
+
+Fuer reproduzierbare Live-Runs unterstuetzt die CLI zusaetzlich global:
+
+- `--adapter-script-path <path>`
+- `--workspace-root <path>`
 
 ## UI-Semantik
 

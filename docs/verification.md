@@ -240,7 +240,7 @@ Verifiziert mit:
 Aktueller Stand:
 
 - 12 Testdateien
-- 40 gruene Tests
+- 50 gruene Tests
 
 Live verifiziert:
 
@@ -252,7 +252,7 @@ Live verifiziert:
   - Project `ITEM-0002-P01`
   - `QaRun.status = passed`
   - beide Waves `completed`
-  - Item-Endzustand `currentColumn = done`, `phaseStatus = completed`
+  - Item-Endzustand nach zusaetzlicher Documentation: `currentColumn = done`, `phaseStatus = completed`
 
 ## Documentation Slice
 
@@ -273,7 +273,19 @@ Verifiziert mit:
 Aktueller Stand:
 
 - 12 Testdateien
-- 44 gruene Tests
+- 50 gruene Tests
+
+Autorun und Live-Runs zusaetzlich verifiziert:
+
+- `concept:approve --autorun` laeuft in einem frischen CLI-Live-Run bis `item_completed`
+- Endzustand danach: `currentColumn = done`, `phaseStatus = completed`
+- QA endet auf `passed`
+- Documentation endet auf `completed`
+- `hasStaleDocumentation = false`
+- reproduzierbarer CLI-Live-Run mit
+  `--adapter-script-path` und `--workspace-root` bestaetigt den Auto-Remediation-Pfad
+- dabei wurden automatische `story_review`-Remediations ausgefuehrt, offene Findings auf `0` reduziert
+  und `fix/*`-Branches korrekt angelegt
 
 ## Migration Hardening
 
