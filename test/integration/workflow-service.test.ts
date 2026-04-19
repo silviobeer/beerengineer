@@ -1,12 +1,18 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
 import { describe, expect, it } from "vitest";
 
 import { createAppContext } from "../../src/app-context.js";
 import type { AppError } from "../../src/shared/errors.js";
+
+const localAgentScriptPath = fileURLToPath(new URL("../../scripts/local-agent.mjs", import.meta.url));
+const asRunnableConnection = (connection: unknown) => connection as {
+  prepare(sql: string): { run(...args: unknown[]): unknown };
+};
 
 describe("workflow service", () => {
   function replaceRequired(source: string, searchValue: string, replaceValue: string): string {
@@ -17,7 +23,7 @@ describe("workflow service", () => {
 
   function createGitWorkspace(root: string): string {
     const workspaceRoot = join(root, "workspace");
-    execFileSync("mkdir", ["-p", workspaceRoot]);
+    mkdirSync(workspaceRoot, { recursive: true });
     execFileSync("git", ["init", "-b", "main"], { cwd: workspaceRoot });
     writeFileSync(join(workspaceRoot, "README.md"), "# temp workspace\n", "utf8");
     execFileSync("git", ["add", "README.md"], { cwd: workspaceRoot });
@@ -99,6 +105,231 @@ describe("workflow service", () => {
     }
   });
 
+  it("shows project detail including stories and latest plans", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const item = createWorkspaceItem(context, {
+        title: "Project Show",
+        description: "Inspect one imported project"
+      });
+
+      await context.workflowService.startStage({
+        stageKey: "brainstorm",
+        itemId: item.id
+      });
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      context.workflowService.approveConcept(concept!.id);
+      context.workflowService.importProjects(item.id);
+      const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
+      await context.workflowService.startStage({
+        stageKey: "requirements",
+        itemId: item.id,
+        projectId: project.id
+      });
+      context.workflowService.approveStories(project.id);
+      await context.workflowService.startStage({
+        stageKey: "architecture",
+        itemId: item.id,
+        projectId: project.id
+      });
+      context.workflowService.approveArchitecture(project.id);
+      await context.workflowService.startStage({
+        stageKey: "planning",
+        itemId: item.id,
+        projectId: project.id
+      });
+
+      const shown = context.workflowService.showProject(project.id) as {
+        item: { id: string };
+        project: { id: string };
+        deliveryStatus: string;
+        stories: Array<{ acceptanceCriteria: Array<{ text: string }> }>;
+        latestArchitecturePlan: { projectId: string } | null;
+        latestImplementationPlan: { projectId: string } | null;
+        stageRuns: Array<{ stageKey: string }>;
+      };
+
+      expect(shown.item.id).toBe(item.id);
+      expect(shown.project.id).toBe(project.id);
+      expect(shown.deliveryStatus).toBe("pending");
+      expect(shown.stories.length).toBeGreaterThan(0);
+      expect(shown.stories[0]?.acceptanceCriteria.length).toBeGreaterThan(0);
+      expect(shown.latestArchitecturePlan?.projectId).toBe(project.id);
+      expect(shown.latestImplementationPlan?.projectId).toBe(project.id);
+      expect(shown.stageRuns.some((run) => run.stageKey === "requirements")).toBe(true);
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("shows item delivery summaries and materializes documentation into the workspace docs folder", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const workspaceRoot = join(root, "workspace");
+    mkdirSync(workspaceRoot, { recursive: true });
+    const context = createAppContext(dbPath, { workspaceRoot });
+
+    try {
+      const { item, project } = await prepareProjectThroughCompletedExecution(context, {
+        title: "Workspace Documentation",
+        description: "Materialize delivery documentation in the project workspace"
+      });
+
+      const qa = await context.workflowService.startQa(project.id);
+      expect(qa.status).toBe("passed");
+      const documentation = await context.workflowService.startDocumentation(project.id);
+      expect(documentation.status).toBe("completed");
+
+      const itemState = context.workflowService.showItem(item.id) as {
+        projectSummaries: Array<{
+          project: { id: string };
+          deliveryStatus: string;
+          latestQaStatus: string | null;
+          latestDocumentationStatus: string | null;
+        }>;
+        deliverySummary: { totalProjects: number; completedProjects: number; pendingProjects: number };
+      };
+      expect(itemState.deliverySummary).toMatchObject({
+        totalProjects: 1,
+        completedProjects: 1,
+        pendingProjects: 0
+      });
+      expect(itemState.projectSummaries[0]).toMatchObject({
+        project: { id: project.id },
+        deliveryStatus: "completed",
+        latestQaStatus: "passed",
+        latestDocumentationStatus: "completed"
+      });
+
+      const markdownPath = join(workspaceRoot, "docs", `${project.code}-delivery-report.md`);
+      const jsonPath = join(workspaceRoot, "docs", `${project.code}-delivery-report.json`);
+      expect(existsSync(markdownPath)).toBe(true);
+      expect(existsSync(jsonPath)).toBe(true);
+      expect(readFileSync(markdownPath, "utf8")).toContain(`${project.code} Delivery Report`);
+      expect(JSON.parse(readFileSync(jsonPath, "utf8"))).toMatchObject({
+        projectCode: project.code,
+        overallStatus: "completed"
+      });
+
+      const shownDocumentation = context.workflowService.showDocumentation(project.id) as {
+        latestDocumentationRun: { summaryJson: string | null } | null;
+      };
+      expect(shownDocumentation.latestDocumentationRun?.summaryJson).toContain("workspaceArtifacts");
+      expect(shownDocumentation.latestDocumentationRun?.summaryJson).toContain(`${project.code}-delivery-report.md`);
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("materializes documentation into the latest execution workspace without requiring a fresh workspace override", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const executionWorkspaceRoot = createGitWorkspace(root);
+    const setupContext = createAppContext(dbPath, { workspaceRoot: executionWorkspaceRoot });
+
+    try {
+      const { project } = await prepareProjectThroughCompletedExecution(setupContext, {
+        title: "Workspace Resolution",
+        description: "Reuse the execution workspace when documentation is rerun later"
+      });
+      const qa = await setupContext.workflowService.startQa(project.id);
+      expect(qa.status).toBe("passed");
+
+      setupContext.connection.close();
+
+      const documentationContext = createAppContext(dbPath);
+      try {
+        const documentation = await documentationContext.workflowService.startDocumentation(project.id);
+        expect(documentation.status).toBe("completed");
+
+        const markdownPath = join(executionWorkspaceRoot, "docs", `${project.code}-delivery-report.md`);
+        const jsonPath = join(executionWorkspaceRoot, "docs", `${project.code}-delivery-report.json`);
+        expect(existsSync(markdownPath)).toBe(true);
+        expect(existsSync(jsonPath)).toBe(true);
+      } finally {
+        documentationContext.connection.close();
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("prefers the dominant execution workspace when a project has mixed execution roots", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const executionWorkspaceRoot = createGitWorkspace(root);
+    const setupContext = createAppContext(dbPath, { workspaceRoot: executionWorkspaceRoot });
+
+    try {
+      const { project } = await prepareProjectThroughCompletedExecution(setupContext, {
+        title: "Workspace Majority",
+        description: "Prefer the project workspace that most executions used"
+      });
+      const qa = await setupContext.workflowService.startQa(project.id);
+      expect(qa.status).toBe("passed");
+
+      const implementationPlan = setupContext.repositories.implementationPlanRepository.getLatestByProjectId(project.id)!;
+      const waves = setupContext.repositories.waveRepository.listByImplementationPlanId(implementationPlan.id);
+      const waveStories = waves.flatMap((wave) => setupContext.repositories.waveStoryRepository.listByWaveId(wave.id));
+      const latestExecutions = waveStories
+        .map((waveStory) => setupContext.repositories.waveStoryExecutionRepository.getLatestByWaveStoryId(waveStory.id))
+        .filter((execution): execution is NonNullable<typeof execution> => execution !== null);
+      expect(latestExecutions.length).toBeGreaterThanOrEqual(2);
+
+      const mixedExecution = latestExecutions.at(-1)!;
+      const gitMetadata = JSON.parse(mixedExecution.gitMetadataJson ?? "{}") as {
+        branchRole?: "project" | "story" | "story-remediation";
+        baseRef?: string;
+        branchName?: string;
+        workspaceRoot?: string;
+        headBefore?: string | null;
+        headAfter?: string | null;
+        commitSha?: string | null;
+        mergedIntoRef?: string | null;
+        mergedCommitSha?: string | null;
+        strategy?: "applied" | "simulated";
+        reason?: string | null;
+      };
+      setupContext.repositories.waveStoryExecutionRepository.updateStatus(mixedExecution.id, mixedExecution.status, {
+        outputSummaryJson: mixedExecution.outputSummaryJson,
+        errorMessage: mixedExecution.errorMessage,
+        gitMetadata: {
+          branchRole: gitMetadata.branchRole ?? "story",
+          baseRef: gitMetadata.baseRef ?? "proj/test",
+          branchName: gitMetadata.branchName ?? "story/test",
+          workspaceRoot: resolve("."),
+          headBefore: gitMetadata.headBefore ?? null,
+          headAfter: gitMetadata.headAfter ?? null,
+          commitSha: gitMetadata.commitSha ?? null,
+          mergedIntoRef: gitMetadata.mergedIntoRef ?? null,
+          mergedCommitSha: gitMetadata.mergedCommitSha ?? null,
+          strategy: gitMetadata.strategy ?? "simulated",
+          reason: gitMetadata.reason ?? null
+        }
+      });
+
+      setupContext.connection.close();
+
+      const documentationContext = createAppContext(dbPath);
+      try {
+        const documentation = await documentationContext.workflowService.startDocumentation(project.id);
+        expect(documentation.status).toBe("completed");
+
+        const markdownPath = join(executionWorkspaceRoot, "docs", `${project.code}-delivery-report.md`);
+        expect(existsSync(markdownPath)).toBe(true);
+      } finally {
+        documentationContext.connection.close();
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("supports interactive brainstorm sessions, draft updates, and promotion", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
     const dbPath = join(root, "app.sqlite");
@@ -169,9 +400,9 @@ describe("workflow service", () => {
       const projectsPayload = JSON.parse(readFileSync(join("var/artifacts", projectsArtifact!.path), "utf8")) as {
         projects: Array<{ title: string; goal: string }>;
       };
-      expect(projectsPayload.projects.length).toBe(3);
+      expect(projectsPayload.projects.length).toBe(1);
       expect(projectsPayload.projects[0]?.title).toContain("Review");
-      expect(projectsPayload.projects[1]?.goal).toContain("shared review control surface");
+      expect(projectsPayload.projects[0]?.goal).toContain("shared review control surface");
     } finally {
       context.connection.close();
       rmSync(root, { recursive: true, force: true });
@@ -241,7 +472,7 @@ describe("workflow service", () => {
 
   it("marks run review_required when structured output is invalid", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
-    const repoScript = "scripts/local-agent.mjs";
+    const repoScript = localAgentScriptPath;
     const originalScript = readFileSync(repoScript, "utf8");
     const dbPath = join(root, "app.sqlite");
     const context = createAppContext(dbPath);
@@ -273,7 +504,7 @@ describe("workflow service", () => {
 
   it("retries a review_required run and completes after fixing the adapter output", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
-    const repoScript = "scripts/local-agent.mjs";
+    const repoScript = localAgentScriptPath;
     const originalScript = readFileSync(repoScript, "utf8");
     const dbPath = join(root, "app.sqlite");
     const context = createAppContext(dbPath);
@@ -840,9 +1071,220 @@ describe("workflow service", () => {
     }
   });
 
+  it("shows a compact execution summary and story-specific execution logs", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const { project } = await prepareProjectThroughCompletedExecution(context, {
+        title: "Execution Observability",
+        description: "Inspect compact execution status and logs"
+      });
+
+      const compact = context.workflowService.showExecutionCompact(project.id) as {
+        overallStatus: string;
+        activeWaveCode: string | null;
+        waves: Array<{
+          waveCode: string;
+          status: string;
+          completedStoryCount: number;
+          stories: Array<{ storyCode: string; status: string; lastPhase: string }>;
+        }>;
+      };
+      expect(compact.overallStatus).toBe("completed");
+      expect(compact.activeWaveCode).toBeNull();
+      expect(compact.waves.map((wave) => wave.status)).toEqual(["completed", "completed"]);
+      expect(compact.waves[0]?.completedStoryCount).toBe(1);
+      expect(compact.waves[0]?.stories[0]).toMatchObject({
+        storyCode: "ITEM-0001-P01-US01",
+        status: "completed",
+        lastPhase: "story_review"
+      });
+
+      const logs = context.workflowService.showExecutionLogs({
+        projectId: project.id,
+        storyCode: "ITEM-0001-P01-US01"
+      }) as {
+        wave: { code: string };
+        story: { code: string };
+        latestTestPreparation: { sessions: Array<{ adapterKey: string; stdout: string }> } | null;
+        latestExecution: { sessions: Array<{ adapterKey: string; stdout: string }>; verificationRuns: Array<{ mode: string }> } | null;
+        latestStoryReview: { sessions: Array<{ adapterKey: string; stdout: string }> } | null;
+      };
+      expect(logs.wave.code).toBe("W01");
+      expect(logs.story.code).toBe("ITEM-0001-P01-US01");
+      expect(logs.latestTestPreparation?.sessions[0]?.adapterKey).toBe("local-cli");
+      expect(logs.latestExecution?.sessions[0]?.adapterKey).toBe("local-cli");
+      expect(logs.latestExecution?.verificationRuns.map((run) => run.mode)).toEqual(["basic", "ralph"]);
+      expect(logs.latestStoryReview?.sessions[0]?.adapterKey).toBe("local-cli");
+      expect(logs.latestStoryReview?.sessions[0]?.stdout).toContain("\"overallStatus\":\"passed\"");
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps compact execution status running until story review starts after app verification", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const { project } = await prepareProjectThroughCompletedExecution(context, {
+        title: "Execution Midflight State",
+        description: "Expose compact state between app verification and story review"
+      });
+
+      const execution = context.workflowService.showExecution(project.id);
+      const storyReviewRunId = execution.waves[0]?.stories[0]?.latestStoryReviewRun?.id;
+      expect(storyReviewRunId).toBeTruthy();
+      asRunnableConnection(context.connection)
+        .prepare("DELETE FROM story_review_agent_sessions WHERE story_review_run_id = ?")
+        .run(storyReviewRunId);
+      asRunnableConnection(context.connection)
+        .prepare("DELETE FROM story_review_runs WHERE id = ?")
+        .run(storyReviewRunId);
+
+      const compact = context.workflowService.showExecutionCompact(project.id);
+      expect(compact.waves[0]?.stories[0]).toMatchObject({
+        status: "running",
+        lastPhase: "app_verification"
+      });
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("marks documentation review_required when workspace materialization fails after successful agent output", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const executionWorkspaceRoot = createGitWorkspace(root);
+    const setupContext = createAppContext(dbPath, { workspaceRoot: executionWorkspaceRoot });
+
+    try {
+      const { item, project } = await prepareProjectThroughCompletedExecution(setupContext, {
+        title: "Documentation Materialization Failure",
+        description: "Do not leave documentation runs stuck in running"
+      });
+      const qa = await setupContext.workflowService.startQa(project.id);
+      expect(qa.status).toBe("passed");
+
+      const implementationPlan = setupContext.repositories.implementationPlanRepository.getLatestByProjectId(project.id)!;
+      const waves = setupContext.repositories.waveRepository.listByImplementationPlanId(implementationPlan.id);
+      const waveStories = setupContext.repositories.waveStoryRepository.listByWaveIds(waves.map((wave) => wave.id));
+      const executions = setupContext.repositories.waveStoryExecutionRepository.listLatestByWaveStoryIds(
+        waveStories.map((waveStory) => waveStory.id)
+      );
+      asRunnableConnection(setupContext.connection)
+        .prepare("UPDATE wave_story_executions SET git_metadata_json = NULL")
+        .run();
+      setupContext.connection.close();
+
+      const invalidWorkspaceRoot = join(root, "invalid-workspace-root");
+      writeFileSync(invalidWorkspaceRoot, "not a directory", "utf8");
+      const documentationContext = createAppContext(dbPath, { workspaceRoot: invalidWorkspaceRoot });
+      try {
+        const documentation = await documentationContext.workflowService.startDocumentation(project.id);
+        expect(executions.length).toBeGreaterThan(0);
+        expect(documentation.status).toBe("review_required");
+
+        const shown = documentationContext.workflowService.showDocumentation(project.id);
+        expect(shown.latestDocumentationRun?.status).toBe("review_required");
+        expect(shown.latestDocumentationRun?.errorMessage).toBeTruthy();
+        expect(shown.latestDocumentationRun?.summaryJson).toContain("workspaceMaterializationError");
+        expect(documentationContext.repositories.itemRepository.getById(item.id)?.phaseStatus).toBe("review_required");
+      } finally {
+        documentationContext.connection.close();
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("retries a failed test-preparation wave when execution is started again after fixing the adapter", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const originalScript = readFileSync(localAgentScriptPath, "utf8");
+    const adapterScriptPath = join(root, "local-agent-test-prep-invalid.mjs");
+    const dbPath = join(root, "app.sqlite");
+
+    try {
+      const invalidTestPreparationScript = replaceRequired(
+        originalScript,
+        "      testsGenerated: payload.acceptanceCriteria.map((criterion) => ({",
+        "      testsGenerated: undefined,\n      testsGeneratedBroken: payload.acceptanceCriteria.map((criterion) => ({"
+      );
+      writeFileSync(adapterScriptPath, invalidTestPreparationScript);
+      const failingContext = createAppContext(dbPath, { adapterScriptPath });
+
+      const item = createWorkspaceItem(failingContext, {
+        title: "Execution Retry After Test Preparation Failure",
+        description: "Allow retry after fixing the test preparation worker output"
+      });
+      await failingContext.workflowService.startStage({ stageKey: "brainstorm", itemId: item.id });
+      const concept = failingContext.repositories.conceptRepository.getLatestByItemId(item.id);
+      failingContext.workflowService.approveConcept(concept!.id);
+      failingContext.workflowService.importProjects(item.id);
+      const project = failingContext.repositories.projectRepository.listByItemId(item.id)[0]!;
+      await failingContext.workflowService.startStage({ stageKey: "requirements", itemId: item.id, projectId: project.id });
+      failingContext.workflowService.approveStories(project.id);
+      await failingContext.workflowService.startStage({ stageKey: "architecture", itemId: item.id, projectId: project.id });
+      failingContext.workflowService.approveArchitecture(project.id);
+      await failingContext.workflowService.startStage({ stageKey: "planning", itemId: item.id, projectId: project.id });
+      failingContext.workflowService.approvePlanning(project.id);
+
+      const first = await failingContext.workflowService.startExecution(project.id);
+      expect(first.executions[0]?.phase).toBe("test_preparation");
+      expect(first.executions[0]?.status).toBe("failed");
+
+      const failedExecution = failingContext.workflowService.showExecution(project.id) as {
+        waves: Array<{
+          waveExecution: { status: string } | null;
+          stories: Array<{
+            latestTestRun: { status: string } | null;
+            latestExecution: { status: string } | null;
+          }>;
+        }>;
+      };
+      expect(failedExecution.waves[0]?.waveExecution?.status).toBe("failed");
+      expect(failedExecution.waves[0]?.stories[0]?.latestTestRun?.status).toBe("failed");
+      expect(failedExecution.waves[0]?.stories[0]?.latestExecution).toBeNull();
+      failingContext.connection.close();
+
+      const retryContext = createAppContext(dbPath);
+      const retried = await retryContext.workflowService.startExecution(project.id);
+      expect(retried.activeWaveCode).toBe("W01");
+      expect(retried.blockedByFailure).toBe(false);
+      expect(retried.executions[0]?.status).toBe("completed");
+      expect(retried.executions[0]?.phase).toBe("story_review");
+
+      const finalExecution = retryContext.workflowService.showExecution(project.id) as {
+        waves: Array<{
+          waveExecution: { status: string } | null;
+          stories: Array<{
+            waveStory: { id: string };
+            latestTestRun: { status: string } | null;
+            latestExecution: { status: string } | null;
+          }>;
+        }>;
+      };
+      const firstWaveStoryId = finalExecution.waves[0]?.stories[0]?.waveStory.id;
+      expect(firstWaveStoryId).toBeTruthy();
+      const testRuns = retryContext.repositories.waveStoryTestRunRepository.listByWaveStoryId(firstWaveStoryId!);
+      expect(finalExecution.waves[0]?.waveExecution?.status).toBe("completed");
+      expect(testRuns.map((run) => run.status)).toEqual(["failed", "completed"]);
+      expect(finalExecution.waves[0]?.stories[0]?.latestTestRun?.status).toBe("completed");
+      expect(finalExecution.waves[0]?.stories[0]?.latestExecution?.status).toBe("completed");
+      retryContext.connection.close();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("marks execution review_required when Ralph returns review_required", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
-    const originalScript = readFileSync("scripts/local-agent.mjs", "utf8");
+    const originalScript = readFileSync(localAgentScriptPath, "utf8");
     const adapterScriptPath = join(root, "local-agent-review.mjs");
     const dbPath = join(root, "app.sqlite");
 
@@ -896,7 +1338,7 @@ describe("workflow service", () => {
 
   it("marks execution failed when Ralph returns failed", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
-    const originalScript = readFileSync("scripts/local-agent.mjs", "utf8");
+    const originalScript = readFileSync(localAgentScriptPath, "utf8");
     const adapterScriptPath = join(root, "local-agent-failed.mjs");
     const dbPath = join(root, "app.sqlite");
 
@@ -946,7 +1388,7 @@ describe("workflow service", () => {
 
   it("stores app verification runs, surfaces them in execution state, and supports retry", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
-    const originalScript = readFileSync("scripts/local-agent.mjs", "utf8");
+    const originalScript = readFileSync(localAgentScriptPath, "utf8");
     const adapterScriptPath = join(root, "local-agent-app-review-required.mjs");
     const dbPath = join(root, "app.sqlite");
 
@@ -1032,7 +1474,7 @@ describe("workflow service", () => {
 
   it("marks execution review_required when story review returns review_required", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
-    const originalScript = readFileSync("scripts/local-agent.mjs", "utf8");
+    const originalScript = readFileSync(localAgentScriptPath, "utf8");
     const adapterScriptPath = join(root, "local-agent-story-review-required.mjs");
     const dbPath = join(root, "app.sqlite");
 
@@ -1094,7 +1536,7 @@ describe("workflow service", () => {
 
   it("runs story-review remediation and records applied git metadata in a clean workspace", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
-    const originalScript = readFileSync("scripts/local-agent.mjs", "utf8");
+    const originalScript = readFileSync(localAgentScriptPath, "utf8");
     const adapterScriptPath = join(root, "local-agent-story-review-remediation.mjs");
     const dbPath = join(root, "app.sqlite");
     const workspaceRoot = createGitWorkspace(root);
@@ -1217,7 +1659,7 @@ describe("workflow service", () => {
 
   it("autorun stops when QA ends in review_required", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
-    const originalScript = readFileSync("scripts/local-agent.mjs", "utf8");
+    const originalScript = readFileSync(localAgentScriptPath, "utf8");
     const adapterScriptPath = join(root, "local-agent-autorun-qa-review-required.mjs");
     const dbPath = join(root, "app.sqlite");
 
@@ -1268,7 +1710,7 @@ describe("workflow service", () => {
 
   it("autorun triggers story-review remediation automatically", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
-    const originalScript = readFileSync("scripts/local-agent.mjs", "utf8");
+    const originalScript = readFileSync(localAgentScriptPath, "utf8");
     const adapterScriptPath = join(root, "local-agent-autorun-story-review-remediation.mjs");
     const dbPath = join(root, "app.sqlite");
     const workspaceRoot = createGitWorkspace(root);
@@ -1318,7 +1760,7 @@ describe("workflow service", () => {
 
   it("marks execution failed when story review returns failed", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
-    const originalScript = readFileSync("scripts/local-agent.mjs", "utf8");
+    const originalScript = readFileSync(localAgentScriptPath, "utf8");
     const adapterScriptPath = join(root, "local-agent-story-review-failed.mjs");
     const dbPath = join(root, "app.sqlite");
 
@@ -1415,7 +1857,7 @@ describe("workflow service", () => {
 
   it("marks QA review_required when the QA worker returns only medium findings and supports retry", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
-    const originalScript = readFileSync("scripts/local-agent.mjs", "utf8");
+    const originalScript = readFileSync(localAgentScriptPath, "utf8");
     const adapterScriptPath = join(root, "local-agent-qa-review-required.mjs");
     const dbPath = join(root, "app.sqlite");
 
@@ -1538,7 +1980,7 @@ describe("workflow service", () => {
 
   it("marks documentation review_required when QA is review_required and supports retry", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
-    const originalScript = readFileSync("scripts/local-agent.mjs", "utf8");
+    const originalScript = readFileSync(localAgentScriptPath, "utf8");
     const adapterScriptPath = join(root, "local-agent-documentation-review-required.mjs");
     const dbPath = join(root, "app.sqlite");
 

@@ -55,6 +55,38 @@ export class HostedAgentExecutionError extends AppError {
 }
 
 export abstract class HostedCliAdapterBase {
+  private static readonly structuredPayloadInstructionsByKind: Record<string, string> = {
+    story_test_preparation: [
+      "Inside `output`, return exactly these fields:",
+      '{ "summary": string, "testFiles": Array<{ "path": string, "content": string, "writeMode": "proposed"|"written" }>, "testsGenerated": Array<{ "path": string, "intent": string }>, "assumptions": string[], "blockers": string[] }',
+      "`testFiles` and `testsGenerated` are required and must be non-empty when the run succeeds."
+    ].join("\n"),
+    story_execution: [
+      "Inside `output`, return exactly these fields:",
+      '{ "summary": string, "changedFiles": string[], "testsRun": Array<{ "command": string, "status": "passed"|"failed"|"not_run" }>, "implementationNotes": string[], "blockers": string[] }'
+    ].join("\n"),
+    story_ralph_verification: [
+      "Inside `output`, return exactly these fields:",
+      '{ "storyCode": string, "overallStatus": "passed"|"review_required"|"failed", "summary": string, "acceptanceCriteriaResults": Array<{ "acceptanceCriterionId": string, "acceptanceCriterionCode": string, "status": "passed"|"review_required"|"failed", "evidence": string, "notes": string }>, "blockers": string[] }'
+    ].join("\n"),
+    story_app_verification: [
+      "Inside `output`, return exactly these fields:",
+      '{ "storyCode": string, "runner": "agent_browser"|"playwright", "overallStatus": "passed"|"review_required"|"failed", "summary": string, "resolvedStartUrl"?: string|null, "checks": Array<{ "id": string, "description": string, "status": "passed"|"review_required"|"failed", "evidence": string }>, "artifacts": Array<{ "kind": "screenshot"|"log"|"trace"|"report", "path": string, "label": string, "contentType": string }>, "failureSummary"?: string|null }'
+    ].join("\n"),
+    story_review: [
+      "Inside `output`, return exactly these fields:",
+      '{ "storyCode": string, "overallStatus": "passed"|"review_required"|"failed", "summary": string, "findings": Array<{ "severity": "critical"|"high"|"medium"|"low", "category": "correctness"|"security"|"reliability"|"performance"|"maintainability"|"persistence", "title": string, "description": string, "evidence": string, "filePath"?: string|null, "line"?: number|null, "suggestedFix"?: string|null }>, "recommendations": string[] }'
+    ].join("\n"),
+    project_qa: [
+      "Inside `output`, return exactly these fields:",
+      '{ "projectCode": string, "overallStatus": "passed"|"review_required"|"failed", "summary": string, "findings": Array<{ "severity": "critical"|"high"|"medium"|"low", "category": "functional"|"security"|"regression"|"ux", "title": string, "description": string, "evidence": string, "reproSteps": string[], "suggestedFix": string, "storyCode"?: string|null, "acceptanceCriterionCode"?: string|null }>, "recommendations": string[] }'
+    ].join("\n"),
+    project_documentation: [
+      "Inside `output`, return exactly these fields:",
+      '{ "projectCode": string, "overallStatus": "completed"|"review_required", "summary": string, "originalScope": string, "deliveredScope": string, "architectureSnapshot": string, "waves": Array<{ "waveCode": string, "goal": string, "storiesDelivered": string[] }>, "storiesDelivered": Array<{ "storyCode": string, "summary": string }>, "verificationSummary": { "ralphPassedStoryCodes": string[], "storyReviewPassedStoryCodes": string[], "qaStatus": "passed"|"review_required", "qaOpenFindingCount": number }, "technicalReviewSummary": { "reviewedStoryCodes": string[], "openFindingCounts": { "critical": number, "high": number, "medium": number, "low": number } }, "qaSummary": { "status": "passed"|"review_required", "summary": string, "openFindings": number }, "openFollowUps": string[], "keyChangedAreas": string[], "reportMarkdown": string }'
+    ].join("\n")
+  };
+
   protected constructor(
     public readonly key: string,
     protected readonly baseCommand: string[],
@@ -162,7 +194,7 @@ export abstract class HostedCliAdapterBase {
             '{ "output": <the structured result payload> }',
             "Do not place assistant text or structured fields at the top level. Put the full result inside `output`."
           ].join("\n");
-    const structuredPayloadInstructions = this.buildStructuredPayloadInstructions(request);
+    const structuredPayloadInstructions = this.buildStructuredPayloadInstructions(kind, request);
     const sections = [
       "You are the BeerEngineer provider backend.",
       "Return exactly one JSON object matching the requested result envelope.",
@@ -185,7 +217,7 @@ export abstract class HostedCliAdapterBase {
     return sections.join("\n\n");
   }
 
-  private buildStructuredPayloadInstructions(request: AnyAdapterRequest): string | null {
+  private buildStructuredPayloadInstructions(kind: string, request: AnyAdapterRequest): string | null {
     if ("interactionType" in request && request.interactionType === "brainstorm_chat") {
       return [
         "Inside `output`, return exactly these fields:",
@@ -200,7 +232,7 @@ export abstract class HostedCliAdapterBase {
         "If feedback is ambiguous, return an empty `entryUpdates` array and set `needsStructuredFollowUp` to true."
       ].join("\n");
     }
-    return null;
+    return HostedCliAdapterBase.structuredPayloadInstructionsByKind[kind] ?? null;
   }
 
   private async executeCommand(input: {

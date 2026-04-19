@@ -37,6 +37,9 @@ npm run cli -- planning:approve --project-id <projectId> --autorun
 npm run cli -- execution:start --project-id <projectId>
 npm run cli -- execution:tick --project-id <projectId>
 npm run cli -- execution:show --project-id <projectId>
+npm run cli -- execution:show --project-id <projectId> --compact
+npm run cli -- execution:logs --project-id <projectId> --story-code <storyCode>
+npm run cli -- execution:watch --project-id <projectId>
 npm run cli -- execution:retry --wave-story-execution-id <waveStoryExecutionId>
 npm run cli -- execution:retry --wave-story-execution-id <waveStoryExecutionId> --autorun
 npm run cli -- qa:start --project-id <projectId>
@@ -107,6 +110,7 @@ Human-in-the-loop-Pfad:
 - `brainstorm:draft` gibt den neuesten versionierten Draft fuer eine Session direkt aus.
 - `brainstorm:draft:update` erlaubt gezielte feldweise Aenderungen am Draft, inklusive wiederholbarer Listenfelder wie `--target-user`, `--use-case`, `--candidate-direction` und optionalem Leeren ueber `--clear-*`.
 - `brainstorm:promote` erzeugt aus dem Draft die manuellen Artefakte `concept` und `projects`, legt einen `Concept`-Record an und schliesst die Brainstorm-Session formal ab.
+- Wenn ein `recommended direction` vorhanden ist, promoted `brainstorm:promote` standardmaessig genau ein fokussiertes Projekt statt mehrere lose Seeds aus Richtungen und Use Cases zu importieren.
 - `brainstorm:promote --autorun` approvt den aus dem Draft erzeugten Concept-Schritt unmittelbar und uebergibt danach an den Autorun-Orchestrator.
 
 Wichtig:
@@ -223,6 +227,9 @@ Im aktuellen Execution-Schnitt gilt:
 - `execution:show` zeigt den neuesten `WaveStoryTestRun` und die zugehoerigen `TestAgentSession`-Records pro Story
 - `execution:show` zeigt zusaetzlich die neuesten `basic`- und `ralph`-Verification-Runs pro Story
 - `execution:show` zeigt ausserdem den neuesten `StoryReviewRun`, dessen `StoryReviewFinding`-Records und die `StoryReviewAgentSession` pro Story
+- `execution:show --compact` reduziert den Output auf Wave-/Story-Status, letzte Phase, Blocker und letzte Fehler
+- `execution:logs --project-id ... --story-code ...` zeigt die neuesten Test-, Execution- und Story-Review-Logs fuer genau eine Story
+- `execution:watch` pollt den kompakten Status laufend und stoppt automatisch bei `completed`, `failed` oder `review_required`
 - Implementierung startet nur, wenn der neueste Test-Run fuer die Story `completed` ist
 - der Implementer bekommt den gespeicherten Test-Run-Output als Eingabe und arbeitet gegen diese vorab erzeugten Testziele
 - jede `WaveStoryExecution` referenziert den konkret verwendeten Test-Run direkt ueber `testPreparationRunId`
@@ -272,3 +279,4 @@ Im aktuellen Documentation-Schnitt gilt:
 - Dokumentation startet nur nach einem `QaRun` mit Status `passed` oder `review_required`
 - `documentation:show` zeigt den neuesten `DocumentationRun` sowie Sessions und zugehoerige Artefakte aller Dokumentationsversuche fuer das Project
 - `documentation:retry` erlaubt genau dann einen neuen Dokumentationslauf, wenn der letzte `DocumentationRun` auf `review_required` oder `failed` steht
+- `documentation:start` materialisiert den fertigen Delivery-Report zusaetzlich in den Workspace unter `docs/<projectCode>-delivery-report.md` und `docs/<projectCode>-delivery-report.json`

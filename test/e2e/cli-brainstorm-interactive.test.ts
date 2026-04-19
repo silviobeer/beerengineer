@@ -115,7 +115,7 @@ describe("cli interactive brainstorm", () => {
         const imported = runCli(["--db", dbPath, "project:import", "--item-id", item.id], cwd) as {
           importedCount: number;
         };
-        expect(imported.importedCount).toBe(3);
+        expect(imported.importedCount).toBe(1);
       } finally {
         rmSync(root, { recursive: true, force: true });
       }

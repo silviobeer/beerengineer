@@ -806,6 +806,15 @@ export class ImplementationPlanRepository {
     ) ?? null;
   }
 
+  public listLatestByProjectIds(projectIds: string[]): ImplementationPlan[] {
+    if (projectIds.length === 0) {
+      return [];
+    }
+    return projectIds
+      .map((projectId) => this.getLatestByProjectId(projectId))
+      .filter((plan): plan is ImplementationPlan => plan !== null);
+  }
+
   public create(input: Omit<ImplementationPlan, "id" | "createdAt" | "updatedAt">): ImplementationPlan {
     const timestamp = now();
     const row: ImplementationPlan = {
@@ -861,6 +870,18 @@ export class WaveStoryRepository {
 
   public listByWaveId(waveId: string): WaveStory[] {
     return this.db.select().from(waveStories).where(eq(waveStories.waveId, waveId)).orderBy(waveStories.position).all() as WaveStory[];
+  }
+
+  public listByWaveIds(waveIds: string[]): WaveStory[] {
+    if (waveIds.length === 0) {
+      return [];
+    }
+    return this.db
+      .select()
+      .from(waveStories)
+      .where(inArray(waveStories.waveId, waveIds))
+      .orderBy(waveStories.waveId, waveStories.position)
+      .all() as WaveStory[];
   }
 
   public getById(id: string): WaveStory | null {
@@ -1749,6 +1770,15 @@ export class QaRunRepository {
     ) ?? null;
   }
 
+  public listLatestByProjectIds(projectIds: string[]): QaRun[] {
+    if (projectIds.length === 0) {
+      return [];
+    }
+    return projectIds
+      .map((projectId) => this.getLatestByProjectId(projectId))
+      .filter((run): run is QaRun => run !== null);
+  }
+
   public listByProjectId(projectId: string): QaRun[] {
     return this.db
       .select()
@@ -1877,6 +1907,15 @@ export class DocumentationRunRepository {
         .limit(1)
         .get() as DocumentationRun | undefined
     ) ?? null;
+  }
+
+  public listLatestByProjectIds(projectIds: string[]): DocumentationRun[] {
+    if (projectIds.length === 0) {
+      return [];
+    }
+    return projectIds
+      .map((projectId) => this.getLatestByProjectId(projectId))
+      .filter((run): run is DocumentationRun => run !== null);
   }
 
   public listByProjectId(projectId: string): DocumentationRun[] {

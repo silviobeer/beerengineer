@@ -71,6 +71,54 @@ async function printAutorunForProject(
   console.log(JSON.stringify(result, null, 2));
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
+}
+
+function formatExecutionCompactSummary(compact: {
+  project: { code: string; title: string };
+  implementationPlan: { version: number; status: string };
+  activeWaveCode: string | null;
+  overallStatus: string;
+  waves: Array<{
+    waveCode: string;
+    goal: string;
+    status: string;
+    storyCount: number;
+    completedStoryCount: number;
+    stories: Array<{
+      storyCode: string;
+      title: string;
+      status: string;
+      lastPhase: string;
+      blockers: string[];
+      lastError: string | null;
+    }>;
+  }>;
+}): string {
+  const lines = [
+    `Project ${compact.project.code}: ${compact.project.title}`,
+    `Plan v${compact.implementationPlan.version} (${compact.implementationPlan.status})`,
+    `Overall: ${compact.overallStatus}`,
+    `Active wave: ${compact.activeWaveCode ?? "none"}`
+  ];
+
+  for (const wave of compact.waves) {
+    lines.push("");
+    lines.push(`Wave ${wave.waveCode} [${wave.status}] ${wave.completedStoryCount}/${wave.storyCount} completed`);
+    lines.push(`Goal: ${wave.goal}`);
+    for (const story of wave.stories) {
+      const suffix = story.blockers.length > 0 ? ` blockers=${story.blockers.join(",")}` : "";
+      lines.push(`- ${story.storyCode} [${story.status}] phase=${story.lastPhase}${suffix}`);
+      if (story.lastError) {
+        lines.push(`  error: ${story.lastError}`);
+      }
+    }
+  }
+
+  return lines.join("\n");
+}
+
 program
   .command("workspace:list")
   .action(
@@ -319,6 +367,15 @@ program
     withContext<{ itemId: string }>(({ workflowService }, options) => {
       const result = workflowService.importProjects(options.itemId);
       console.log(JSON.stringify(result, null, 2));
+    })
+  );
+
+program
+  .command("project:show")
+  .requiredOption("--project-id <projectId>")
+  .action(
+    withContext<{ projectId: string }>(({ workflowService }, options) => {
+      console.log(JSON.stringify(workflowService.showProject(options.projectId), null, 2));
     })
   );
 
@@ -605,10 +662,64 @@ program
 program
   .command("execution:show")
   .requiredOption("--project-id <projectId>")
+  .option("--compact", "Show a reduced execution summary")
   .action(
-    withContext<{ projectId: string }>(({ workflowService }, options) => {
-      const result = workflowService.showExecution(options.projectId);
+    withContext<{ projectId: string; compact?: boolean }>(({ workflowService }, options) => {
+      const result = options.compact
+        ? workflowService.showExecutionCompact(options.projectId)
+        : workflowService.showExecution(options.projectId);
       console.log(JSON.stringify(result, null, 2));
+    })
+  );
+
+program
+  .command("execution:logs")
+  .requiredOption("--project-id <projectId>")
+  .requiredOption("--story-code <storyCode>")
+  .action(
+    withContext<{ projectId: string; storyCode: string }>(({ workflowService }, options) => {
+      const result = workflowService.showExecutionLogs({
+        projectId: options.projectId,
+        storyCode: options.storyCode
+      });
+      console.log(JSON.stringify(result, null, 2));
+    })
+  );
+
+program
+  .command("execution:watch")
+  .requiredOption("--project-id <projectId>")
+  .option("--interval-ms <intervalMs>", "Polling interval in milliseconds", "3000")
+  .option("--max-iterations <maxIterations>", "Stop after this many refreshes")
+  .action(
+    withContext<{ projectId: string; intervalMs: string; maxIterations?: string }>(async ({ workflowService }, options) => {
+      const intervalMs = Number.parseInt(options.intervalMs, 10);
+      const maxIterations = options.maxIterations ? Number.parseInt(options.maxIterations, 10) : null;
+      if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
+        throw new AppError("INVALID_INTERVAL", "interval-ms must be a positive integer");
+      }
+      if (maxIterations !== null && (!Number.isFinite(maxIterations) || maxIterations <= 0)) {
+        throw new AppError("INVALID_MAX_ITERATIONS", "max-iterations must be a positive integer");
+      }
+
+      let iteration = 0;
+      while (true) {
+        iteration += 1;
+        const compact = workflowService.showExecutionCompact(options.projectId);
+        if (iteration > 1) {
+          process.stdout.write("\n---\n");
+        }
+        process.stdout.write(`${formatExecutionCompactSummary(compact)}\n`);
+
+        const terminal =
+          compact.overallStatus === "completed" ||
+          compact.overallStatus === "failed" ||
+          compact.overallStatus === "review_required";
+        if (terminal || (maxIterations !== null && iteration >= maxIterations)) {
+          return;
+        }
+        await sleep(intervalMs);
+      }
     })
   );
 

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { z } from "zod";
 
@@ -216,11 +216,49 @@ type RetryWaveStoryExecutionResult =
     }
   | {
       phase: "implementation" | "app_verification" | "story_review";
-      waveStoryExecutionId: string;
+    waveStoryExecutionId: string;
       waveStoryId: string;
       storyCode: string;
       status: string;
     };
+
+type ExecutionViewStory = {
+  waveStory: ReturnType<WaveStoryRepository["getById"]> extends infer T ? Exclude<T, null> : never;
+  story: ReturnType<UserStoryRepository["getById"]> extends infer T ? Exclude<T, null> : never;
+  latestTestRun: ReturnType<WaveStoryTestRunRepository["getLatestByWaveStoryId"]>;
+  latestExecution: ReturnType<WaveStoryExecutionRepository["getLatestByWaveStoryId"]>;
+  blockers: string[];
+  testAgentSessions: ReturnType<TestAgentSessionRepository["listByWaveStoryTestRunId"]>;
+  verificationRuns: ReturnType<VerificationRunRepository["listByWaveStoryExecutionId"]>;
+  appVerificationRuns: ReturnType<AppVerificationRunRepository["listByWaveStoryExecutionId"]>;
+  latestBasicVerification: ReturnType<VerificationRunRepository["getLatestByWaveStoryExecutionIdAndMode"]>;
+  latestRalphVerification: ReturnType<VerificationRunRepository["getLatestByWaveStoryExecutionIdAndMode"]>;
+  latestAppVerificationRun: ReturnType<AppVerificationRunRepository["getLatestByWaveStoryExecutionId"]>;
+  latestStoryReviewRun: ReturnType<StoryReviewRunRepository["getLatestByWaveStoryExecutionId"]>;
+  latestStoryReviewFindings: ReturnType<StoryReviewFindingRepository["listByStoryReviewRunId"]>;
+  latestStoryReviewRemediationRun: ReturnType<StoryReviewRemediationRunRepository["listByStoryId"]>[number] | null;
+  storyReviewRemediationRuns: Array<{
+    remediationRun: ReturnType<StoryReviewRemediationRunRepository["listByStoryId"]>[number];
+    selectedFindings: ReturnType<StoryReviewRemediationFindingRepository["listByRunId"]>;
+    sessions: ReturnType<StoryReviewRemediationAgentSessionRepository["listByRunId"]>;
+  }>;
+  agentSessions: ReturnType<ExecutionAgentSessionRepository["listByWaveStoryExecutionId"]>;
+  storyReviewAgentSessions: ReturnType<StoryReviewAgentSessionRepository["listByStoryReviewRunId"]>;
+};
+
+type ExecutionViewWave = {
+  wave: ReturnType<WaveRepository["getById"]> extends infer T ? Exclude<T, null> : never;
+  waveExecution: ReturnType<WaveExecutionRepository["getLatestByWaveId"]>;
+  stories: ExecutionViewStory[];
+};
+
+type ExecutionView = {
+  project: ReturnType<ProjectRepository["getById"]> extends infer T ? Exclude<T, null> : never;
+  implementationPlan: ReturnType<ImplementationPlanRepository["getLatestByProjectId"]> extends infer T ? Exclude<T, null> : never;
+  projectExecutionContext: ReturnType<ProjectExecutionContextRepository["getByProjectId"]>;
+  activeWave: ExecutionViewWave["wave"] | null;
+  waves: ExecutionViewWave[];
+};
 
 export class WorkflowService {
   private readonly promptResolver: PromptResolver;
@@ -567,7 +605,65 @@ export class WorkflowService {
     const concept = this.deps.conceptRepository.getLatestByItemId(itemId);
     const projects = this.deps.projectRepository.listByItemId(itemId);
     const stageRuns = this.deps.stageRunRepository.listByItemId(itemId);
-    return { item, concept, projects, stageRuns };
+    const projectIds = projects.map((project) => project.id);
+    const implementationPlansByProjectId = new Map(
+      this.deps.implementationPlanRepository.listLatestByProjectIds(projectIds).map((plan) => [plan.projectId, plan] as const)
+    );
+    const qaRunsByProjectId = new Map(
+      this.deps.qaRunRepository.listLatestByProjectIds(projectIds).map((run) => [run.projectId, run] as const)
+    );
+    const documentationRunsByProjectId = new Map(
+      this.deps.documentationRunRepository.listLatestByProjectIds(projectIds).map((run) => [run.projectId, run] as const)
+    );
+    const projectSummaries = projects.map((project) => {
+      const latestImplementationPlan = implementationPlansByProjectId.get(project.id) ?? null;
+      const latestQaRun = qaRunsByProjectId.get(project.id) ?? null;
+      const latestDocumentationRun = documentationRunsByProjectId.get(project.id) ?? null;
+      return {
+        project,
+        deliveryStatus: latestDocumentationRun?.status === "completed" && latestDocumentationRun.staleAt === null
+          ? "completed"
+          : "pending",
+        latestImplementationPlanStatus: latestImplementationPlan?.status ?? null,
+        latestQaStatus: latestQaRun?.status ?? null,
+        latestDocumentationStatus: latestDocumentationRun?.status ?? null
+      };
+    });
+    return {
+      item,
+      concept,
+      projects,
+      projectSummaries,
+      deliverySummary: {
+        totalProjects: projects.length,
+        completedProjects: projectSummaries.filter((project) => project.deliveryStatus === "completed").length,
+        pendingProjects: projectSummaries.filter((project) => project.deliveryStatus !== "completed").length
+      },
+      stageRuns
+    };
+  }
+
+  public showProject(projectId: string) {
+    const project = this.requireProject(projectId);
+    const item = this.requireItem(project.itemId);
+    const stories = this.deps.userStoryRepository.listByProjectId(projectId);
+    const acceptanceCriteriaByStoryId = this.groupAcceptanceCriteriaByStoryId(projectId);
+    const stageRuns = this.deps.stageRunRepository.listByProjectId(projectId);
+
+    return {
+      item,
+      project,
+      deliveryStatus: this.isProjectDeliveryComplete(projectId) ? "completed" : "pending",
+      stories: stories.map((story) => ({
+        ...story,
+        acceptanceCriteria: acceptanceCriteriaByStoryId.get(story.id) ?? []
+      })),
+      latestArchitecturePlan: this.deps.architecturePlanRepository.getLatestByProjectId(projectId),
+      latestImplementationPlan: this.deps.implementationPlanRepository.getLatestByProjectId(projectId),
+      latestQaRun: this.deps.qaRunRepository.getLatestByProjectId(projectId),
+      latestDocumentationRun: this.deps.documentationRunRepository.getLatestByProjectId(projectId),
+      stageRuns
+    };
   }
 
   public startBrainstormSession(itemId: string) {
@@ -2218,7 +2314,15 @@ export class WorkflowService {
         ]
       });
       const status = this.resolveDocumentationRunStatus(documentationContext.latestQaRun.status, result.exitCode, parsed);
-      this.deps.documentationRunRepository.updateStatus(documentationRun.id, status, {
+      let workspaceArtifacts: { markdownPath: string; jsonPath: string } | null = null;
+      let workspaceMaterializationError: string | null = null;
+      try {
+        workspaceArtifacts = this.materializeDocumentationArtifactsInWorkspace(project.id, project.code, parsed);
+      } catch (error) {
+        workspaceMaterializationError = error instanceof Error ? error.message : String(error);
+      }
+      const persistedStatus = workspaceMaterializationError ? "review_required" : status;
+      this.deps.documentationRunRepository.updateStatus(documentationRun.id, persistedStatus, {
         summaryJson: JSON.stringify(
           {
             projectCode: parsed.projectCode,
@@ -2234,23 +2338,25 @@ export class WorkflowService {
             qaSummary: parsed.qaSummary,
             openFollowUps: parsed.openFollowUps,
             keyChangedAreas: parsed.keyChangedAreas,
+            workspaceArtifacts,
+            workspaceMaterializationError,
             artifactIds: artifactRecords.map((artifact) => artifact.id),
             artifactKinds: artifactRecords.map((artifact) => artifact.kind)
           },
           null,
           2
         ),
-        errorMessage: null
+        errorMessage: workspaceMaterializationError
       });
-      this.deps.itemRepository.updatePhaseStatus(item.id, this.mapDocumentationRunStatusToItemPhaseStatus(status));
-      if (status === "completed") {
+      this.deps.itemRepository.updatePhaseStatus(item.id, this.mapDocumentationRunStatusToItemPhaseStatus(persistedStatus));
+      if (persistedStatus === "completed") {
         this.completeItemIfDeliveryFinished(item.id);
       }
 
       return {
         projectId,
         documentationRunId: documentationRun.id,
-        status,
+        status: persistedStatus,
         replacesStaleDocumentationRunId: staleDocumentationRun?.staleAt ? staleDocumentationRun.id : null
       };
     } catch (error) {
@@ -2304,7 +2410,7 @@ export class WorkflowService {
     };
   }
 
-  public showExecution(projectId: string) {
+  public showExecution(projectId: string): ExecutionView {
     const project = this.requireProject(projectId);
     const plan = this.requireImplementationPlanForProject(projectId);
     const context = this.deps.projectExecutionContextRepository.getByProjectId(projectId);
@@ -2388,6 +2494,116 @@ export class WorkflowService {
     };
   }
 
+  public showExecutionCompact(projectId: string) {
+    const execution = this.showExecution(projectId);
+    const waves = execution.waves.map((waveEntry) => {
+      const stories = waveEntry.stories.map((storyEntry) => {
+        const lastUpdatedAt = [
+          storyEntry.latestTestRun?.updatedAt ?? 0,
+          storyEntry.latestExecution?.updatedAt ?? 0,
+          storyEntry.latestAppVerificationRun?.updatedAt ?? 0,
+          storyEntry.latestStoryReviewRun?.updatedAt ?? 0
+        ].reduce((latest, current) => Math.max(latest, current), 0);
+        return {
+          storyId: storyEntry.story.id,
+          storyCode: storyEntry.story.code,
+          title: storyEntry.story.title,
+          status: this.resolveCompactExecutionStoryStatus(storyEntry),
+          lastPhase: this.resolveCompactExecutionStoryPhase(storyEntry),
+          blockers: storyEntry.blockers,
+          lastError:
+            storyEntry.latestStoryReviewRun?.errorMessage ??
+            storyEntry.latestAppVerificationRun?.failureSummary ??
+            storyEntry.latestExecution?.errorMessage ??
+            storyEntry.latestTestRun?.errorMessage ??
+            null,
+          lastUpdatedAt: lastUpdatedAt > 0 ? lastUpdatedAt : null
+        };
+      });
+      return {
+        waveId: waveEntry.wave.id,
+        waveCode: waveEntry.wave.code,
+        goal: waveEntry.wave.goal,
+        status: waveEntry.waveExecution?.status ?? "pending",
+        storyCount: stories.length,
+        completedStoryCount: stories.filter((story) => story.status === "completed").length,
+        stories
+      };
+    });
+
+    return {
+      project: {
+        id: execution.project.id,
+        code: execution.project.code,
+        title: execution.project.title
+      },
+      implementationPlan: {
+        id: execution.implementationPlan.id,
+        version: execution.implementationPlan.version,
+        status: execution.implementationPlan.status
+      },
+      activeWaveCode: execution.activeWave?.code ?? null,
+      overallStatus: this.resolveCompactExecutionOverallStatus(waves),
+      waves
+    };
+  }
+
+  public showExecutionLogs(input: { projectId: string; storyCode: string }) {
+    const project = this.requireProject(input.projectId);
+    const story = this.deps
+      .userStoryRepository.listByProjectId(project.id)
+      .find((candidate) => candidate.code === input.storyCode);
+    if (!story) {
+      throw new AppError("STORY_NOT_FOUND", `Story ${input.storyCode} not found in project ${project.code}`);
+    }
+    const waveStory = this.requireWaveStoryByStoryId(story.id);
+    const wave = this.requireWave(waveStory.waveId);
+    const latestTestRun = this.deps.waveStoryTestRunRepository.getLatestByWaveStoryId(waveStory.id);
+    const latestExecution = this.deps.waveStoryExecutionRepository.getLatestByWaveStoryId(waveStory.id);
+    const latestStoryReviewRun = latestExecution
+      ? this.deps.storyReviewRunRepository.getLatestByWaveStoryExecutionId(latestExecution.id)
+      : null;
+
+    return {
+      project: {
+        id: project.id,
+        code: project.code,
+        title: project.title
+      },
+      wave: {
+        id: wave.id,
+        code: wave.code,
+        goal: wave.goal
+      },
+      story: {
+        id: story.id,
+        code: story.code,
+        title: story.title
+      },
+      latestTestPreparation: latestTestRun
+        ? {
+            run: latestTestRun,
+            sessions: this.deps.testAgentSessionRepository.listByWaveStoryTestRunId(latestTestRun.id)
+          }
+        : null,
+      latestExecution: latestExecution
+        ? {
+            run: latestExecution,
+            sessions: this.deps.executionAgentSessionRepository.listByWaveStoryExecutionId(latestExecution.id),
+            verificationRuns: this.deps.verificationRunRepository.listByWaveStoryExecutionId(latestExecution.id),
+            appVerificationRuns: this.deps.appVerificationRunRepository.listByWaveStoryExecutionId(latestExecution.id)
+          }
+        : null,
+      latestStoryReview: latestStoryReviewRun
+        ? {
+            run: latestStoryReviewRun,
+            findings: this.deps.storyReviewFindingRepository.listByStoryReviewRunId(latestStoryReviewRun.id),
+            sessions: this.deps.storyReviewAgentSessionRepository.listByStoryReviewRunId(latestStoryReviewRun.id)
+          }
+        : null
+    };
+  }
+
   private async advanceExecution(projectId: string) {
     const project = this.requireProject(projectId);
     this.gitWorkflowService.ensureProjectBranch(project.code);
@@ -2412,6 +2628,22 @@ export class WorkflowService {
     const projectExecutionContext = this.ensureProjectExecutionContext(project, implementationPlan);
     const waveExecution = this.ensureWaveExecution(activeWave.id);
     if (waveExecution.status === "failed") {
+      if (this.canRetryFailedWaveExecutionFromTestPreparation(waveExecution.id)) {
+        this.deps.waveExecutionRepository.updateStatus(waveExecution.id, "running");
+      } else {
+        return {
+          projectId,
+          implementationPlanId: implementationPlan.id,
+          activeWaveCode: activeWave.code,
+          scheduledCount: 0,
+          completed: false,
+          blockedByFailure: true,
+          executions: []
+        };
+      }
+    }
+    const activeWaveExecution = this.requireWaveExecution(waveExecution.id);
+    if (activeWaveExecution.status === "failed") {
       return {
         projectId,
         implementationPlanId: implementationPlan.id,
@@ -2444,7 +2676,7 @@ export class WorkflowService {
         project,
         implementationPlan,
         wave: activeWave,
-        waveExecution,
+        waveExecution: activeWaveExecution,
         waveStory,
         story,
         projectExecutionContext
@@ -2457,7 +2689,7 @@ export class WorkflowService {
         project,
         implementationPlan,
         wave: activeWave,
-        waveExecution,
+        waveExecution: activeWaveExecution,
         waveStory,
         story,
         projectExecutionContext,
@@ -2477,6 +2709,139 @@ export class WorkflowService {
       blockedByFailure: false,
       executions
     };
+  }
+
+  private resolveCompactExecutionOverallStatus(
+    waves: Array<{
+      status: string;
+      stories: Array<{ status: string }>;
+    }>
+  ): "completed" | "running" | "review_required" | "failed" | "pending" {
+    if (waves.length > 0 && waves.every((wave) => wave.status === "completed")) {
+      return "completed";
+    }
+    if (waves.some((wave) => wave.status === "failed" || wave.stories.some((story) => story.status === "failed"))) {
+      return "failed";
+    }
+    if (waves.some((wave) => wave.status === "review_required" || wave.stories.some((story) => story.status === "review_required"))) {
+      return "review_required";
+    }
+    if (waves.some((wave) => wave.status === "running" || wave.stories.some((story) => story.status === "running"))) {
+      return "running";
+    }
+    return "pending";
+  }
+
+  private resolveCompactExecutionStoryStatus(storyEntry: {
+    latestTestRun: { status: string } | null;
+    latestExecution: { status: string } | null;
+    latestAppVerificationRun: { status: string } | null;
+    latestStoryReviewRun: { status: string } | null;
+    blockers: string[];
+  }): "pending" | "blocked" | "running" | "review_required" | "failed" | "completed" {
+    if (storyEntry.latestStoryReviewRun?.status === "passed") {
+      return "completed";
+    }
+    if (storyEntry.latestStoryReviewRun?.status === "review_required") {
+      return "review_required";
+    }
+    if (storyEntry.latestStoryReviewRun?.status === "failed") {
+      return "failed";
+    }
+    if (storyEntry.latestAppVerificationRun?.status === "passed") {
+      return "running";
+    }
+    if (storyEntry.latestAppVerificationRun?.status === "review_required") {
+      return "review_required";
+    }
+    if (storyEntry.latestAppVerificationRun?.status === "failed") {
+      return "failed";
+    }
+    if (storyEntry.latestExecution?.status === "completed") {
+      return "completed";
+    }
+    if (storyEntry.latestExecution?.status === "review_required") {
+      return "review_required";
+    }
+    if (storyEntry.latestExecution?.status === "failed") {
+      return "failed";
+    }
+    if (storyEntry.latestExecution?.status === "running") {
+      return "running";
+    }
+    if (storyEntry.latestTestRun?.status === "completed") {
+      return "running";
+    }
+    if (storyEntry.latestTestRun?.status === "review_required") {
+      return "review_required";
+    }
+    if (storyEntry.latestTestRun?.status === "failed") {
+      return "failed";
+    }
+    if (storyEntry.latestTestRun?.status === "running") {
+      return "running";
+    }
+    if (storyEntry.blockers.length > 0) {
+      return "blocked";
+    }
+    return "pending";
+  }
+
+  private resolveCompactExecutionStoryPhase(storyEntry: {
+    latestTestRun: { status: string } | null;
+    latestExecution: { status: string } | null;
+    latestAppVerificationRun: { status: string } | null;
+    latestStoryReviewRun: { status: string } | null;
+    blockers: string[];
+  }): "pending" | "blocked" | "test_preparation" | "execution" | "app_verification" | "story_review" {
+    if (storyEntry.latestStoryReviewRun) {
+      return "story_review";
+    }
+    if (storyEntry.latestAppVerificationRun) {
+      return "app_verification";
+    }
+    if (storyEntry.latestExecution) {
+      return "execution";
+    }
+    if (storyEntry.latestTestRun) {
+      return "test_preparation";
+    }
+    if (storyEntry.blockers.length > 0) {
+      return "blocked";
+    }
+    return "pending";
+  }
+
+  private canRetryFailedWaveExecutionFromTestPreparation(waveExecutionId: string): boolean {
+    const waveExecution = this.requireWaveExecution(waveExecutionId);
+    const waveStories = this.deps.waveStoryRepository.listByWaveId(waveExecution.waveId);
+    if (waveStories.length === 0) {
+      return false;
+    }
+
+    const latestTestRuns = waveStories.map((waveStory) => this.deps.waveStoryTestRunRepository.getLatestByWaveStoryId(waveStory.id));
+    const latestStoryExecutions = waveStories.map((waveStory) =>
+      this.deps.waveStoryExecutionRepository.getLatestByWaveStoryId(waveStory.id)
+    );
+
+    const hasRetryableFailedTestPreparation = waveStories.some((waveStory, index) => {
+      const latestTestRun = latestTestRuns[index];
+      const latestExecution = latestStoryExecutions[index];
+      return latestTestRun?.status === "failed" && latestExecution === null;
+    });
+
+    if (!hasRetryableFailedTestPreparation) {
+      return false;
+    }
+
+    const hasBlockingExecutionFailure = latestStoryExecutions.some(
+      (execution) => execution !== null && execution.status !== "completed"
+    );
+    if (hasBlockingExecutionFailure) {
+      return false;
+    }
+
+    return !latestTestRuns.some((testRun) => testRun?.status === "review_required");
   }
 
   private async executeWaveStory(input: {
@@ -4590,6 +4955,98 @@ export class WorkflowService {
     return latestDocumentationRun?.status === "completed" && latestDocumentationRun.staleAt === null;
   }
 
+  private materializeDocumentationArtifactsInWorkspace(projectId: string, projectCode: string, parsed: DocumentationOutput): {
+    markdownPath: string;
+    jsonPath: string;
+  } {
+    const docsDir = resolve(this.resolveProjectWorkspaceRoot(projectId), "docs");
+    mkdirSync(docsDir, { recursive: true });
+    const markdownPath = resolve(docsDir, `${projectCode}-delivery-report.md`);
+    const jsonPath = resolve(docsDir, `${projectCode}-delivery-report.json`);
+    writeFileSync(markdownPath, parsed.reportMarkdown, "utf8");
+    writeFileSync(
+      jsonPath,
+      JSON.stringify(
+        {
+          projectCode: parsed.projectCode,
+          overallStatus: parsed.overallStatus,
+          summary: parsed.summary,
+          originalScope: parsed.originalScope,
+          deliveredScope: parsed.deliveredScope,
+          architectureSnapshot: parsed.architectureSnapshot,
+          waves: parsed.waves,
+          storiesDelivered: parsed.storiesDelivered,
+          verificationSummary: parsed.verificationSummary,
+          technicalReviewSummary: parsed.technicalReviewSummary,
+          qaSummary: parsed.qaSummary,
+          openFollowUps: parsed.openFollowUps,
+          keyChangedAreas: parsed.keyChangedAreas
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    return {
+      markdownPath,
+      jsonPath
+    };
+  }
+
+  private resolveProjectWorkspaceRoot(projectId: string): string {
+    const implementationPlan = this.deps.implementationPlanRepository.getLatestByProjectId(projectId);
+    if (!implementationPlan) {
+      return this.deps.workspaceRoot;
+    }
+
+    const waves = this.deps.waveRepository.listByImplementationPlanId(implementationPlan.id);
+    const waveStories = this.deps.waveStoryRepository.listByWaveIds(waves.map((wave) => wave.id));
+    const latestExecutions = this.deps.waveStoryExecutionRepository.listLatestByWaveStoryIds(
+      waveStories.map((waveStory) => waveStory.id)
+    );
+
+    const workspaceCandidates = latestExecutions.flatMap((execution) => {
+      if (!execution.gitMetadataJson) {
+        return [];
+      }
+      try {
+        const gitMetadata = JSON.parse(execution.gitMetadataJson) as Partial<GitBranchMetadata>;
+        return typeof gitMetadata.workspaceRoot === "string" && gitMetadata.workspaceRoot.length > 0
+          ? [{ workspaceRoot: gitMetadata.workspaceRoot, updatedAt: execution.updatedAt }]
+          : [];
+      } catch {
+        return [];
+      }
+    });
+
+    if (workspaceCandidates.length === 0) {
+      return this.deps.workspaceRoot;
+    }
+
+    const candidateSummary = new Map<string, { count: number; latestUpdatedAt: number }>();
+    for (const candidate of workspaceCandidates) {
+      const existing = candidateSummary.get(candidate.workspaceRoot);
+      candidateSummary.set(candidate.workspaceRoot, {
+        count: (existing?.count ?? 0) + 1,
+        latestUpdatedAt: Math.max(existing?.latestUpdatedAt ?? 0, candidate.updatedAt)
+      });
+    }
+
+    return [...candidateSummary.entries()]
+      .sort((left, right) => {
+        const byCount = right[1].count - left[1].count;
+        if (byCount !== 0) {
+          return byCount;
+        }
+        const leftIsRepoRoot = left[0] === this.deps.repoRoot;
+        const rightIsRepoRoot = right[0] === this.deps.repoRoot;
+        if (leftIsRepoRoot !== rightIsRepoRoot) {
+          return Number(leftIsRepoRoot) - Number(rightIsRepoRoot);
+        }
+        return right[1].latestUpdatedAt - left[1].latestUpdatedAt;
+      })[0]?.[0] ?? this.deps.workspaceRoot;
+  }
+
   private canAutorunStoryReviewRemediate(storyReviewRunId: string): boolean {
     const storyReviewRun = this.requireStoryReviewRun(storyReviewRunId);
     if (storyReviewRun.status !== "review_required") {
@@ -4879,11 +5336,7 @@ export class WorkflowService {
     item: { title: string },
     draft: ReturnType<WorkflowService["mapBrainstormDraft"]>
   ): { projects: Array<{ title: string; summary: string; goal: string }> } {
-    const candidateSeeds = this.normalizeBrainstormEntries([
-      ...(draft.recommendedDirection ? [draft.recommendedDirection] : []),
-      ...draft.candidateDirections,
-      ...draft.useCases
-    ]).slice(0, 3);
+    const candidateSeeds = this.selectBrainstormProjectSeeds(draft, item.title);
 
     if (candidateSeeds.length === 0) {
       candidateSeeds.push(draft.coreOutcome ?? draft.problem ?? item.title);
@@ -4899,6 +5352,30 @@ export class WorkflowService {
             : `${draft.coreOutcome ?? `Deliver the first usable slice for ${item.title}`}: ${seed}`
       }))
     };
+  }
+
+  private selectBrainstormProjectSeeds(
+    draft: ReturnType<WorkflowService["mapBrainstormDraft"]>,
+    itemTitle: string
+  ): string[] {
+    if (draft.recommendedDirection) {
+      return [draft.recommendedDirection];
+    }
+
+    const normalizedDirections = this.normalizeBrainstormEntries(draft.candidateDirections);
+    if (normalizedDirections.length > 1) {
+      return normalizedDirections.slice(0, 3);
+    }
+    if (normalizedDirections.length === 1) {
+      return normalizedDirections;
+    }
+
+    const normalizedUseCases = this.normalizeBrainstormEntries(draft.useCases);
+    if (normalizedUseCases.length > 0) {
+      return [draft.coreOutcome ?? normalizedUseCases[0]!];
+    }
+
+    return [draft.coreOutcome ?? draft.problem ?? itemTitle];
   }
 
   private buildBrainstormProjectTitle(itemTitle: string, seed: string, index: number): string {
