@@ -9,6 +9,21 @@ Der MVP ist engine-first aufgebaut:
 - `adapters/` entkoppeln die technische Agent-Ausfuehrung vom Workflow
 - `cli/` bleibt duenn und delegiert in Services
 
+## Workspace Layer
+
+BeerEngineer besitzt jetzt einen echten Workspace-Layer:
+
+- `Workspace` ist die fachliche Scope-Grenze fuer Daten, Runs und Artefakte
+- `WorkspaceSettings` enthaelt workspace-spezifische Defaults
+- `Item` ist der direkte Workspace-Anker
+
+Davon getrennt bleibt:
+
+- `workspaceRoot` als technischer Repo-/Git-Pfad fuer einen konkreten Lauf
+
+Damit koennen mehrere Apps dieselbe Engine und dieselbe SQLite-Instanz nutzen,
+ohne ihre Item-Historien zu vermischen.
+
 ## Stable Record Codes
 
 Der MVP fuehrt fachliche Lesecodes fuer die Planungsobjekte:

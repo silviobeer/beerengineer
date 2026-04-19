@@ -138,8 +138,35 @@ export type GitBranchMetadata = {
   reason: string | null;
 };
 
+export type Workspace = {
+  id: string;
+  key: string;
+  name: string;
+  description: string | null;
+  rootPath: string | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type WorkspaceSettings = {
+  workspaceId: string;
+  defaultAdapterKey: string | null;
+  defaultModel: string | null;
+  autorunPolicyJson: string | null;
+  promptOverridesJson: string | null;
+  skillOverridesJson: string | null;
+  verificationDefaultsJson: string | null;
+  qaDefaultsJson: string | null;
+  gitDefaultsJson: string | null;
+  executionDefaultsJson: string | null;
+  uiMetadataJson: string | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
 export type Item = {
   id: string;
+  workspaceId: string;
   code: string;
   title: string;
   description: string;

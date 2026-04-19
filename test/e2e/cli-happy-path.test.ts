@@ -325,4 +325,36 @@ describe("cli happy path", () => {
     },
     30000
   );
+
+  it("separates item codes by workspace and exposes workspace commands", () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-e2e-"));
+    const dbPath = join(root, "app.sqlite");
+    const cwd = resolve(".");
+
+    try {
+      const createdWorkspace = runCli(
+        ["--db", dbPath, "workspace:create", "--key", "app-two", "--name", "App Two"],
+        cwd
+      ) as { key: string };
+      expect(createdWorkspace.key).toBe("app-two");
+
+      const workspaces = runCli(["--db", dbPath, "workspace:list"], cwd) as Array<{ key: string }>;
+      expect(workspaces.map((workspace) => workspace.key)).toContain("default");
+      expect(workspaces.map((workspace) => workspace.key)).toContain("app-two");
+
+      const firstItem = runCli(
+        ["--db", dbPath, "--workspace", "default", "item:create", "--title", "One", "--description", "Desc"],
+        cwd
+      ) as { code: string };
+      const secondItem = runCli(
+        ["--db", dbPath, "--workspace", "app-two", "item:create", "--title", "Two", "--description", "Desc"],
+        cwd
+      ) as { code: string };
+
+      expect(firstItem.code).toBe("ITEM-0001");
+      expect(secondItem.code).toBe("ITEM-0001");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

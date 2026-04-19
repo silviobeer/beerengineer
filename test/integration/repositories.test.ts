@@ -27,6 +27,8 @@ import {
   TestAgentSessionRepository,
   UserStoryRepository,
   VerificationRunRepository,
+  WorkspaceRepository,
+  WorkspaceSettingsRepository,
   WaveRepository,
   WaveExecutionRepository,
   WaveStoryTestRunRepository,
@@ -41,6 +43,8 @@ describe("repositories", () => {
     const testDb = createTestDatabase();
     const db = createDatabase(testDb.filePath).db;
     const itemRepository = new ItemRepository(db);
+    const workspaceRepository = new WorkspaceRepository(db);
+    const workspaceSettingsRepository = new WorkspaceSettingsRepository(db);
     const conceptRepository = new ConceptRepository(db);
     const projectRepository = new ProjectRepository(db);
     const userStoryRepository = new UserStoryRepository(db);
@@ -72,6 +76,7 @@ describe("repositories", () => {
 
     try {
       const item = itemRepository.create({ title: "Item", description: "Desc" });
+      const defaultWorkspace = workspaceRepository.getByKey("default");
       const concept = conceptRepository.create({
         itemId: item.id,
         version: 1,
@@ -96,6 +101,8 @@ describe("repositories", () => {
 
       expect(itemRepository.getById(item.id)?.title).toBe("Item");
       expect(itemRepository.getById(item.id)?.code).toBe("ITEM-0001");
+      expect(itemRepository.getById(item.id)?.workspaceId).toBe(defaultWorkspace?.id);
+      expect(workspaceSettingsRepository.getByWorkspaceId(defaultWorkspace!.id)?.workspaceId).toBe(defaultWorkspace?.id);
       expect(conceptRepository.getLatestByItemId(item.id)?.id).toBe(concept.id);
       expect(projects[0]?.code).toBe("ITEM-0001-P01");
       expect(projects).toHaveLength(1);
@@ -502,6 +509,49 @@ describe("repositories", () => {
 
       expect(first.code).toBe("ITEM-0001");
       expect(second.code).toBe("ITEM-0002");
+    } finally {
+      testDb.cleanup();
+    }
+  });
+
+  it("allocates item codes independently per workspace", () => {
+    const testDb = createTestDatabase();
+    const db = createDatabase(testDb.filePath).db;
+    const itemRepository = new ItemRepository(db);
+    const workspaceRepository = new WorkspaceRepository(db);
+    const workspaceSettingsRepository = new WorkspaceSettingsRepository(db);
+
+    try {
+      const secondWorkspace = workspaceRepository.create({
+        key: "second",
+        name: "Second Workspace",
+        description: null,
+        rootPath: null
+      });
+      workspaceSettingsRepository.create({
+        workspaceId: secondWorkspace.id,
+        defaultAdapterKey: null,
+        defaultModel: null,
+        autorunPolicyJson: null,
+        promptOverridesJson: null,
+        skillOverridesJson: null,
+        verificationDefaultsJson: null,
+        qaDefaultsJson: null,
+        gitDefaultsJson: null,
+        executionDefaultsJson: null,
+        uiMetadataJson: null
+      });
+
+      const defaultItem = itemRepository.create({ title: "Default", description: "Desc" });
+      const secondItem = itemRepository.create({
+        workspaceId: secondWorkspace.id,
+        title: "Second",
+        description: "Desc"
+      });
+
+      expect(defaultItem.code).toBe("ITEM-0001");
+      expect(secondItem.code).toBe("ITEM-0001");
+      expect(itemRepository.listByWorkspaceId(secondWorkspace.id)).toHaveLength(1);
     } finally {
       testDb.cleanup();
     }

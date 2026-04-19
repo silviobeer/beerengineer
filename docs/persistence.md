@@ -2,6 +2,8 @@
 
 SQLite enthaelt im MVP die Kernobjekte:
 
+- `workspaces`
+- `workspace_settings`
 - `items`
 - `concepts`
 - `projects`
@@ -13,6 +15,17 @@ SQLite enthaelt im MVP die Kernobjekte:
 - `stage_run_input_artifacts`
 
 Migrationen werden ueber `src/persistence/migration-registry.ts` definiert und bei CLI-Starts automatisch angewendet.
+
+## Workspace Scope
+
+Der persistierte Top-Level-Scope ist jetzt `Workspace`.
+
+- jedes `Item` gehoert direkt zu genau einem Workspace
+- alles unterhalb von `Item` bleibt indirekt workspace-scoped ueber die bestehenden Beziehungen
+- Workspace-Einstellungen leben separat in `workspace_settings`
+
+Der technische `workspaceRoot` fuer Git-/Repo-Ausfuehrung ist bewusst nicht
+gleich dem fachlichen Workspace-Scope.
 
 Wichtig:
 

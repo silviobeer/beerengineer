@@ -1,15 +1,42 @@
-import { integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+
+export const workspaces = sqliteTable("workspaces", {
+  id: text("id").primaryKey(),
+  key: text("key").notNull().unique(),
+  name: text("name").notNull(),
+  description: text("description"),
+  rootPath: text("root_path"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull()
+});
+
+export const workspaceSettings = sqliteTable("workspace_settings", {
+  workspaceId: text("workspace_id").primaryKey().references(() => workspaces.id),
+  defaultAdapterKey: text("default_adapter_key"),
+  defaultModel: text("default_model"),
+  autorunPolicyJson: text("autorun_policy_json"),
+  promptOverridesJson: text("prompt_overrides_json"),
+  skillOverridesJson: text("skill_overrides_json"),
+  verificationDefaultsJson: text("verification_defaults_json"),
+  qaDefaultsJson: text("qa_defaults_json"),
+  gitDefaultsJson: text("git_defaults_json"),
+  executionDefaultsJson: text("execution_defaults_json"),
+  uiMetadataJson: text("ui_metadata_json"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull()
+});
 
 export const items = sqliteTable("items", {
   id: text("id").primaryKey(),
-  code: text("code").notNull().unique(),
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id),
+  code: text("code").notNull(),
   title: text("title").notNull(),
   description: text("description").notNull(),
   currentColumn: text("current_column").notNull(),
   phaseStatus: text("phase_status").notNull(),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull()
-});
+}, (table) => [uniqueIndex("items_workspace_code_unique_idx").on(table.workspaceId, table.code)]);
 
 export const concepts = sqliteTable("concepts", {
   id: text("id").primaryKey(),

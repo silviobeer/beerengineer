@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 import { LocalCliAdapter } from "./adapters/local-cli-adapter.js";
+import type { Workspace, WorkspaceSettings } from "./domain/types.js";
 import { createDatabase } from "./persistence/database.js";
 import {
   AcceptanceCriterionRepository,
@@ -29,6 +30,8 @@ import {
   TestAgentSessionRepository,
   UserStoryRepository,
   VerificationRunRepository,
+  WorkspaceRepository,
+  WorkspaceSettingsRepository,
   WaveRepository,
   WaveExecutionRepository,
   WaveStoryTestRunRepository,
@@ -38,7 +41,15 @@ import {
 } from "./persistence/repositories.js";
 import { baseMigrations } from "./persistence/migration-registry.js";
 import { applyMigrations } from "./persistence/migrator.js";
+import { AppError } from "./shared/errors.js";
+import { DEFAULT_WORKSPACE_KEY } from "./shared/workspaces.js";
 import { WorkflowService } from "./workflow/workflow-service.js";
+
+export type EffectiveWorkspaceConfig = {
+  defaultAdapterKey: string;
+  defaultModel: string | null;
+  workspaceRoot: string;
+};
 
 export type AppContext = {
   connection: {
@@ -48,7 +59,12 @@ export type AppContext = {
     close(): void;
   };
   runInTransaction<T>(fn: () => T): T;
+  workspace: Workspace;
+  workspaceSettings: WorkspaceSettings;
+  effectiveConfig: EffectiveWorkspaceConfig;
   repositories: {
+    workspaceRepository: WorkspaceRepository;
+    workspaceSettingsRepository: WorkspaceSettingsRepository;
     itemRepository: ItemRepository;
     conceptRepository: ConceptRepository;
     projectRepository: ProjectRepository;
@@ -88,6 +104,7 @@ export function createAppContext(
   dbPath: string,
   options?: {
     adapterScriptPath?: string;
+    workspaceKey?: string;
     workspaceRoot?: string;
   }
 ): AppContext {
@@ -96,6 +113,8 @@ export function createAppContext(
   const { connection, db } = createDatabase(dbPath);
   applyMigrations(connection, baseMigrations);
 
+  const workspaceRepository = new WorkspaceRepository(db);
+  const workspaceSettingsRepository = new WorkspaceSettingsRepository(db);
   const itemRepository = new ItemRepository(db);
   const conceptRepository = new ConceptRepository(db);
   const projectRepository = new ProjectRepository(db);
@@ -128,11 +147,30 @@ export function createAppContext(
   const artifactRepository = new ArtifactRepository(db);
   const agentSessionRepository = new AgentSessionRepository(db);
   const adapter = new LocalCliAdapter(repoRoot, options?.adapterScriptPath);
+  const requestedWorkspaceKey = options?.workspaceKey ?? DEFAULT_WORKSPACE_KEY;
+  const workspace = workspaceRepository.getByKey(requestedWorkspaceKey);
+  if (!workspace) {
+    throw new AppError("WORKSPACE_NOT_FOUND", `Workspace ${requestedWorkspaceKey} not found`);
+  }
+  const workspaceSettings = workspaceSettingsRepository.getByWorkspaceId(workspace.id);
+  if (!workspaceSettings) {
+    throw new AppError("WORKSPACE_SETTINGS_NOT_FOUND", `Workspace settings for ${workspace.key} not found`);
+  }
+  const effectiveConfig: EffectiveWorkspaceConfig = {
+    defaultAdapterKey: workspaceSettings.defaultAdapterKey ?? adapter.key,
+    defaultModel: workspaceSettings.defaultModel,
+    workspaceRoot: options?.workspaceRoot ?? workspace.rootPath ?? repoRoot
+  };
 
   return {
     connection,
     runInTransaction: <T>(fn: () => T): T => connection.transaction(fn)(),
+    workspace,
+    workspaceSettings,
+    effectiveConfig,
     repositories: {
+      workspaceRepository,
+      workspaceSettingsRepository,
       itemRepository,
       conceptRepository,
       projectRepository,
@@ -167,7 +205,8 @@ export function createAppContext(
     },
     workflowService: new WorkflowService({
       repoRoot,
-      workspaceRoot: options?.workspaceRoot ?? repoRoot,
+      workspace,
+      workspaceRoot: effectiveConfig.workspaceRoot,
       artifactRoot,
       runInTransaction: <T>(fn: () => T): T => connection.transaction(fn)(),
       adapter,

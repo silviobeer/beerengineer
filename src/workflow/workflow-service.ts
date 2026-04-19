@@ -11,7 +11,8 @@ import type {
   StageKey,
   StoryReviewFindingSeverity,
   StoryReviewRunStatus,
-  VerificationRunStatus
+  VerificationRunStatus,
+  Workspace
 } from "../domain/types.js";
 import { PromptResolver } from "../services/prompt-resolver.js";
 import { ArtifactService } from "../services/artifact-service.js";
@@ -89,6 +90,7 @@ import type { AutorunSummary, AutorunStep } from "./autorun-types.js";
 
 type WorkflowDeps = {
   repoRoot: string;
+  workspace: Workspace;
   workspaceRoot: string;
   artifactRoot: string;
   runInTransaction<T>(fn: () => T): T;
@@ -285,6 +287,7 @@ export class WorkflowService {
         });
 
         const outputArtifacts = this.persistArtifacts({
+          workspaceKey: this.deps.workspace.key,
           itemId: item.id,
           projectId: project?.id ?? null,
           runId: run.id,
@@ -468,9 +471,11 @@ export class WorkflowService {
 
   public listRuns(input: { itemId?: string; projectId?: string }) {
     if (input.projectId) {
+      this.requireProject(input.projectId);
       return this.deps.stageRunRepository.listByProjectId(input.projectId);
     }
     if (input.itemId) {
+      this.requireItem(input.itemId);
       return this.deps.stageRunRepository.listByItemId(input.itemId);
     }
     throw new AppError("LIST_SCOPE_REQUIRED", "Either itemId or projectId is required");
@@ -481,6 +486,7 @@ export class WorkflowService {
     if (!run) {
       throw new AppError("RUN_NOT_FOUND", `Stage run ${runId} not found`);
     }
+    this.requireItem(run.itemId);
     const artifacts = this.deps.artifactRepository.listByStageRunId(runId);
     const sessions = this.deps.agentSessionRepository.listByStageRunId(runId);
     return { run, artifacts, sessions };
@@ -488,9 +494,15 @@ export class WorkflowService {
 
   public listArtifacts(input: { runId?: string; itemId?: string }) {
     if (input.runId) {
+      const run = this.deps.stageRunRepository.getById(input.runId);
+      if (!run) {
+        throw new AppError("RUN_NOT_FOUND", `Stage run ${input.runId} not found`);
+      }
+      this.requireItem(run.itemId);
       return this.deps.artifactRepository.listByStageRunId(input.runId);
     }
     if (input.itemId) {
+      this.requireItem(input.itemId);
       return this.deps.artifactRepository.listByItemId(input.itemId);
     }
     throw new AppError("LIST_SCOPE_REQUIRED", "Either runId or itemId is required");
@@ -1016,6 +1028,7 @@ export class WorkflowService {
         exitCode: result.exitCode
       });
       const artifactRecords = this.persistArtifacts({
+        workspaceKey: this.deps.workspace.key,
         itemId: item.id,
         projectId: project.id,
         runId: documentationRun.id,
@@ -2979,6 +2992,7 @@ export class WorkflowService {
   }
 
   private persistArtifacts(input: {
+    workspaceKey: string;
     itemId: string;
     projectId: string | null;
     runId: string;
@@ -2990,6 +3004,7 @@ export class WorkflowService {
 
     for (const artifact of input.markdownArtifacts) {
       const written = this.artifactService.writeArtifact({
+        workspaceKey: input.workspaceKey,
         itemId: input.itemId,
         projectId: input.projectId,
         stageRunId: input.runId,
@@ -3012,6 +3027,7 @@ export class WorkflowService {
 
     for (const artifact of input.structuredArtifacts) {
       const written = this.artifactService.writeArtifact({
+        workspaceKey: input.workspaceKey,
         itemId: input.itemId,
         projectId: input.projectId,
         stageRunId: input.runId,
@@ -3135,6 +3151,9 @@ export class WorkflowService {
     if (!item) {
       throw new AppError("ITEM_NOT_FOUND", `Item ${itemId} not found`);
     }
+    if (item.workspaceId !== this.deps.workspace.id) {
+      throw new AppError("ITEM_NOT_FOUND", `Item ${itemId} not found in workspace ${this.deps.workspace.key}`);
+    }
     return item;
   }
 
@@ -3143,6 +3162,7 @@ export class WorkflowService {
     if (!project) {
       throw new AppError("PROJECT_NOT_FOUND", `Project ${projectId} not found`);
     }
+    this.requireItem(project.itemId);
     return project;
   }
 
@@ -3151,6 +3171,7 @@ export class WorkflowService {
     if (!story) {
       throw new AppError("STORY_NOT_FOUND", `Story ${storyId} not found`);
     }
+    this.requireProject(story.projectId);
     return story;
   }
 
@@ -3159,6 +3180,7 @@ export class WorkflowService {
     if (!acceptanceCriterion) {
       throw new AppError("ACCEPTANCE_CRITERION_NOT_FOUND", `Acceptance criterion ${acceptanceCriterionId} not found`);
     }
+    this.requireStory(acceptanceCriterion.storyId);
     return acceptanceCriterion;
   }
 
@@ -3175,6 +3197,7 @@ export class WorkflowService {
     if (!waveStory) {
       throw new AppError("WAVE_STORY_NOT_FOUND", `Wave story ${waveStoryId} not found`);
     }
+    this.requireStory(waveStory.storyId);
     return waveStory;
   }
 

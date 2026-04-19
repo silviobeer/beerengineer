@@ -3,6 +3,11 @@ export type SqlMigration = {
   readonly statements: readonly string[];
 };
 
+import { DEFAULT_WORKSPACE_ID } from "../shared/workspaces.js";
+
+const defaultWorkspaceId = DEFAULT_WORKSPACE_ID;
+const migrationTimestamp = 0;
+
 export const baseMigrations: readonly SqlMigration[] = [
   {
     id: "0000_initial",
@@ -12,16 +17,75 @@ export const baseMigrations: readonly SqlMigration[] = [
         applied_at TEXT NOT NULL
       )`,
       `PRAGMA foreign_keys = ON`,
+      `CREATE TABLE IF NOT EXISTS workspaces (
+        id TEXT PRIMARY KEY NOT NULL,
+        key TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        description TEXT,
+        root_path TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )`,
+      `CREATE TABLE IF NOT EXISTS workspace_settings (
+        workspace_id TEXT PRIMARY KEY NOT NULL,
+        default_adapter_key TEXT,
+        default_model TEXT,
+        autorun_policy_json TEXT,
+        prompt_overrides_json TEXT,
+        skill_overrides_json TEXT,
+        verification_defaults_json TEXT,
+        qa_defaults_json TEXT,
+        git_defaults_json TEXT,
+        execution_defaults_json TEXT,
+        ui_metadata_json TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+      )`,
+      `INSERT OR IGNORE INTO workspaces (id, key, name, description, root_path, created_at, updated_at)
+        VALUES ('${defaultWorkspaceId}', 'default', 'Default Workspace', NULL, NULL, ${migrationTimestamp}, ${migrationTimestamp})`,
+      `INSERT OR IGNORE INTO workspace_settings (
+        workspace_id,
+        default_adapter_key,
+        default_model,
+        autorun_policy_json,
+        prompt_overrides_json,
+        skill_overrides_json,
+        verification_defaults_json,
+        qa_defaults_json,
+        git_defaults_json,
+        execution_defaults_json,
+        ui_metadata_json,
+        created_at,
+        updated_at
+      ) VALUES (
+        '${defaultWorkspaceId}',
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        ${migrationTimestamp},
+        ${migrationTimestamp}
+      )`,
       `CREATE TABLE IF NOT EXISTS items (
         id TEXT PRIMARY KEY NOT NULL,
-        code TEXT NOT NULL UNIQUE,
+        workspace_id TEXT NOT NULL,
+        code TEXT NOT NULL,
         title TEXT NOT NULL,
         description TEXT NOT NULL,
         current_column TEXT NOT NULL,
         phase_status TEXT NOT NULL,
         created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
       )`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_items_workspace_code_unique ON items(workspace_id, code)`,
       `CREATE TABLE IF NOT EXISTS stage_runs (
         id TEXT PRIMARY KEY NOT NULL,
         item_id TEXT NOT NULL,
@@ -513,6 +577,67 @@ export const baseMigrations: readonly SqlMigration[] = [
       `CREATE INDEX IF NOT EXISTS idx_story_review_remediation_runs_story_review_run_id ON story_review_remediation_runs(story_review_run_id)`,
       `CREATE INDEX IF NOT EXISTS idx_story_review_remediation_findings_run_id ON story_review_remediation_findings(story_review_remediation_run_id)`,
       `CREATE INDEX IF NOT EXISTS idx_story_review_remediation_agent_sessions_run_id ON story_review_remediation_agent_sessions(story_review_remediation_run_id)`
+    ]
+  },
+  {
+    id: "0007_add_workspaces",
+    statements: [
+      `CREATE TABLE IF NOT EXISTS workspaces (
+        id TEXT PRIMARY KEY NOT NULL,
+        key TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        description TEXT,
+        root_path TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )`,
+      `CREATE TABLE IF NOT EXISTS workspace_settings (
+        workspace_id TEXT PRIMARY KEY NOT NULL,
+        default_adapter_key TEXT,
+        default_model TEXT,
+        autorun_policy_json TEXT,
+        prompt_overrides_json TEXT,
+        skill_overrides_json TEXT,
+        verification_defaults_json TEXT,
+        qa_defaults_json TEXT,
+        git_defaults_json TEXT,
+        execution_defaults_json TEXT,
+        ui_metadata_json TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+      )`,
+      `INSERT OR IGNORE INTO workspaces (id, key, name, description, root_path, created_at, updated_at)
+        VALUES ('${defaultWorkspaceId}', 'default', 'Default Workspace', NULL, NULL, ${migrationTimestamp}, ${migrationTimestamp})`,
+      `INSERT OR IGNORE INTO workspace_settings (
+        workspace_id,
+        default_adapter_key,
+        default_model,
+        autorun_policy_json,
+        prompt_overrides_json,
+        skill_overrides_json,
+        verification_defaults_json,
+        qa_defaults_json,
+        git_defaults_json,
+        execution_defaults_json,
+        ui_metadata_json,
+        created_at,
+        updated_at
+      ) VALUES (
+        '${defaultWorkspaceId}',
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        ${migrationTimestamp},
+        ${migrationTimestamp}
+      )`
     ]
   }
 ];

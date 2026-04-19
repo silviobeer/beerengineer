@@ -40,6 +40,8 @@ import type {
   UserStory,
   VerificationRun,
   VerificationRunMode,
+  Workspace,
+  WorkspaceSettings,
   Wave,
   WaveExecution,
   WaveExecutionStatus,
@@ -50,8 +52,10 @@ import type {
   WaveStoryExecution,
   WaveStoryExecutionStatus
 } from "../domain/types.js";
+import { AppError } from "../shared/errors.js";
 import { formatItemCode, parseItemCodeSequence } from "../shared/codes.js";
 import { createId } from "../shared/ids.js";
+import { DEFAULT_WORKSPACE_ID } from "../shared/workspaces.js";
 import type { DatabaseClient } from "./database.js";
 import {
   acceptanceCriteria,
@@ -69,6 +73,8 @@ import {
   qaRuns,
   projectExecutionContexts,
   projects,
+  workspaceSettings,
+  workspaces,
   storyReviewAgentSessions,
   storyReviewFindings,
   storyReviewRemediationAgentSessions,
@@ -98,6 +104,115 @@ function parseStringList(value: string): string[] {
 
 function stringifyStringList(value: string[]): string {
   return JSON.stringify(value);
+}
+
+export class WorkspaceRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public getById(id: string): Workspace | null {
+    return (this.db.select().from(workspaces).where(eq(workspaces.id, id)).get() as Workspace | undefined) ?? null;
+  }
+
+  public getByKey(key: string): Workspace | null {
+    return (this.db.select().from(workspaces).where(eq(workspaces.key, key)).get() as Workspace | undefined) ?? null;
+  }
+
+  public listAll(): Workspace[] {
+    return this.db.select().from(workspaces).orderBy(workspaces.createdAt, workspaces.id).all() as Workspace[];
+  }
+
+  public create(input: Omit<Workspace, "id" | "createdAt" | "updatedAt">): Workspace {
+    const timestamp = now();
+    const row: Workspace = {
+      ...input,
+      id: createId("workspace"),
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+    this.db.insert(workspaces).values(row).run();
+    return row;
+  }
+
+  public update(input: Pick<Workspace, "id"> & Partial<Pick<Workspace, "name" | "description" | "rootPath">>): Workspace {
+    const existing = this.getById(input.id);
+    if (!existing) {
+      throw new AppError("WORKSPACE_NOT_FOUND", `Workspace ${input.id} not found`);
+    }
+    const updated: Workspace = {
+      ...existing,
+      ...input,
+      updatedAt: now()
+    };
+    this.db
+      .update(workspaces)
+      .set({
+        name: updated.name,
+        description: updated.description,
+        rootPath: updated.rootPath,
+        updatedAt: updated.updatedAt
+      })
+      .where(eq(workspaces.id, input.id))
+      .run();
+    return updated;
+  }
+}
+
+export class WorkspaceSettingsRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public getByWorkspaceId(workspaceId: string): WorkspaceSettings | null {
+    return (
+      this.db.select().from(workspaceSettings).where(eq(workspaceSettings.workspaceId, workspaceId)).get() as
+        | WorkspaceSettings
+        | undefined
+    ) ?? null;
+  }
+
+  public create(input: Omit<WorkspaceSettings, "createdAt" | "updatedAt">): WorkspaceSettings {
+    const timestamp = now();
+    const row: WorkspaceSettings = {
+      ...input,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+    this.db.insert(workspaceSettings).values(row).run();
+    return row;
+  }
+
+  public update(
+    workspaceId: string,
+    input: Partial<
+      Omit<WorkspaceSettings, "workspaceId" | "createdAt" | "updatedAt">
+    >
+  ): WorkspaceSettings {
+    const existing = this.getByWorkspaceId(workspaceId);
+    if (!existing) {
+      throw new AppError("WORKSPACE_SETTINGS_NOT_FOUND", `Workspace settings for ${workspaceId} not found`);
+    }
+    const updated: WorkspaceSettings = {
+      ...existing,
+      ...input,
+      updatedAt: now()
+    };
+    this.db
+      .update(workspaceSettings)
+      .set({
+        defaultAdapterKey: updated.defaultAdapterKey,
+        defaultModel: updated.defaultModel,
+        autorunPolicyJson: updated.autorunPolicyJson,
+        promptOverridesJson: updated.promptOverridesJson,
+        skillOverridesJson: updated.skillOverridesJson,
+        verificationDefaultsJson: updated.verificationDefaultsJson,
+        qaDefaultsJson: updated.qaDefaultsJson,
+        gitDefaultsJson: updated.gitDefaultsJson,
+        executionDefaultsJson: updated.executionDefaultsJson,
+        uiMetadataJson: updated.uiMetadataJson,
+        updatedAt: updated.updatedAt
+      })
+      .where(eq(workspaceSettings.workspaceId, workspaceId))
+      .run();
+    return updated;
+  }
 }
 
 type QaFindingRow = {
@@ -189,12 +304,14 @@ function isItemsCodeUniqueViolation(error: unknown): boolean {
 export class ItemRepository {
   public constructor(private readonly db: DatabaseClient) {}
 
-  public create(input: { title: string; description: string }): Item {
+  public create(input: { workspaceId?: string; title: string; description: string }): Item {
+    const workspaceId = input.workspaceId ?? DEFAULT_WORKSPACE_ID;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const timestamp = now();
       const item: Item = {
         id: createId("item"),
-        code: this.allocateNextCode(),
+        workspaceId,
+        code: this.allocateNextCode(workspaceId),
         title: input.title,
         description: input.description,
         currentColumn: "idea",
@@ -217,10 +334,15 @@ export class ItemRepository {
     throw new Error("Failed to allocate a unique item code");
   }
 
-  private allocateNextCode(): string {
+  public listByWorkspaceId(workspaceId: string): Item[] {
+    return this.db.select().from(items).where(eq(items.workspaceId, workspaceId)).orderBy(items.createdAt, items.id).all() as Item[];
+  }
+
+  private allocateNextCode(workspaceId: string): string {
     const latestCodeRow = this.db
       .select({ code: items.code, createdAt: items.createdAt, id: items.id })
       .from(items)
+      .where(eq(items.workspaceId, workspaceId))
       .orderBy(desc(items.createdAt), desc(items.id))
       .limit(1)
       .get() as { code: string | null; createdAt: number; id: string } | undefined;

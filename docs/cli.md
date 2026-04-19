@@ -58,8 +58,23 @@ dann einen strukturierten Summary-Block mit `trigger`, `steps`,
 
 Fuer reproduzierbare Live-Runs akzeptiert die CLI global:
 
+- `--workspace <key>` zum Auswaehlen des fachlichen Workspaces
 - `--adapter-script-path <path>` zum Ueberschreiben des lokalen Adapter-Skripts
 - `--workspace-root <path>` zum Ueberschreiben des Git-Workspace-Wurzels
+
+Workspace-Kommandos:
+
+```bash
+npm run cli -- workspace:list
+npm run cli -- workspace:create --key app-two --name "App Two"
+npm run cli -- workspace:show --workspace app-two
+npm run cli -- workspace:update-root --workspace app-two --root-path ./tmp/app-two
+```
+
+Wichtig:
+
+- `--workspace` bestimmt den Daten- und Sichtbarkeits-Scope
+- `--workspace-root` bestimmt nur das technische Repo-/Git-Verzeichnis fuer den Lauf
 
 `Item.currentColumn = done` wird dabei erst nach erfolgreicher Documentation
 gesetzt. Nach `planning:approve` bleibt das Item in `implementation`, bis

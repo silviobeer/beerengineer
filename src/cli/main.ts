@@ -8,6 +8,7 @@ const program = new Command();
 program.name("beerengineer");
 program.option("--db <path>", "SQLite database path", "./var/data/beerengineer.sqlite");
 program.option("--adapter-script-path <path>", "Override the local adapter script used for bounded agent runs");
+program.option("--workspace <key>", "Select the active workspace", "default");
 program.option("--workspace-root <path>", "Override the workspace root used for git workflow operations");
 program.showHelpAfterError();
 
@@ -18,11 +19,13 @@ function withContext<TOptions extends object>(
     const programOptions = program.opts<{
       db: string;
       adapterScriptPath?: string;
+      workspace: string;
       workspaceRoot?: string;
     }>();
     const dbPath = resolve(programOptions.db);
     const context = createAppContext(dbPath, {
       adapterScriptPath: programOptions.adapterScriptPath ? resolve(programOptions.adapterScriptPath) : undefined,
+      workspaceKey: programOptions.workspace,
       workspaceRoot: programOptions.workspaceRoot ? resolve(programOptions.workspaceRoot) : undefined
     });
     try {
@@ -58,12 +61,87 @@ async function printAutorunForProject(
 }
 
 program
+  .command("workspace:list")
+  .action(
+    withContext<{}>(({ repositories }) => {
+      console.log(JSON.stringify(repositories.workspaceRepository.listAll(), null, 2));
+    })
+  );
+
+program
+  .command("workspace:create")
+  .requiredOption("--key <key>")
+  .requiredOption("--name <name>")
+  .option("--description <description>")
+  .option("--root-path <rootPath>")
+  .action(
+    withContext<{ key: string; name: string; description?: string; rootPath?: string }>(({ repositories, runInTransaction }, options) => {
+      const workspace = runInTransaction(() => {
+        const createdWorkspace = repositories.workspaceRepository.create({
+          key: options.key,
+          name: options.name,
+          description: options.description ?? null,
+          rootPath: options.rootPath ? resolve(options.rootPath) : null
+        });
+        repositories.workspaceSettingsRepository.create({
+          workspaceId: createdWorkspace.id,
+          defaultAdapterKey: null,
+          defaultModel: null,
+          autorunPolicyJson: null,
+          promptOverridesJson: null,
+          skillOverridesJson: null,
+          verificationDefaultsJson: null,
+          qaDefaultsJson: null,
+          gitDefaultsJson: null,
+          executionDefaultsJson: null,
+          uiMetadataJson: null
+        });
+        return createdWorkspace;
+      });
+      console.log(JSON.stringify(workspace, null, 2));
+    })
+  );
+
+program
+  .command("workspace:show")
+  .option("--workspace <key>")
+  .action(
+    withContext<{ workspace?: string }>(({ repositories, workspace }, options) => {
+      const resolvedWorkspace = options.workspace ? repositories.workspaceRepository.getByKey(options.workspace) : workspace;
+      if (!resolvedWorkspace) {
+        throw new AppError("WORKSPACE_NOT_FOUND", `Workspace ${options.workspace} not found`);
+      }
+      const settings = repositories.workspaceSettingsRepository.getByWorkspaceId(resolvedWorkspace.id);
+      console.log(JSON.stringify({ workspace: resolvedWorkspace, settings }, null, 2));
+    })
+  );
+
+program
+  .command("workspace:update-root")
+  .requiredOption("--workspace <key>")
+  .requiredOption("--root-path <rootPath>")
+  .action(
+    withContext<{ workspace: string; rootPath: string }>(({ repositories }, options) => {
+      const workspace = repositories.workspaceRepository.getByKey(options.workspace);
+      if (!workspace) {
+        throw new AppError("WORKSPACE_NOT_FOUND", `Workspace ${options.workspace} not found`);
+      }
+      const updated = repositories.workspaceRepository.update({
+        id: workspace.id,
+        rootPath: resolve(options.rootPath)
+      });
+      console.log(JSON.stringify(updated, null, 2));
+    })
+  );
+
+program
   .command("item:create")
   .requiredOption("--title <title>")
   .option("--description <description>", "", "")
   .action(
-    withContext<{ title: string; description: string }>(({ repositories }, options) => {
+    withContext<{ title: string; description: string }>(({ repositories, workspace }, options) => {
       const item = repositories.itemRepository.create({
+        workspaceId: workspace.id,
         title: options.title,
         description: options.description
       });

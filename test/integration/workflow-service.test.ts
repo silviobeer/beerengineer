@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 
 import { createAppContext } from "../../src/app-context.js";
+import { AppError } from "../../src/shared/errors.js";
 
 describe("workflow service", () => {
   function replaceRequired(source: string, searchValue: string, replaceValue: string): string {
@@ -1136,6 +1137,50 @@ describe("workflow service", () => {
       });
     } finally {
       context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects access to items from another workspace", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const defaultContext = createAppContext(dbPath);
+
+    try {
+      const secondWorkspace = defaultContext.repositories.workspaceRepository.create({
+        key: "secondary",
+        name: "Secondary Workspace",
+        description: null,
+        rootPath: null
+      });
+      defaultContext.repositories.workspaceSettingsRepository.create({
+        workspaceId: secondWorkspace.id,
+        defaultAdapterKey: null,
+        defaultModel: null,
+        autorunPolicyJson: null,
+        promptOverridesJson: null,
+        skillOverridesJson: null,
+        verificationDefaultsJson: null,
+        qaDefaultsJson: null,
+        gitDefaultsJson: null,
+        executionDefaultsJson: null,
+        uiMetadataJson: null
+      });
+
+      const foreignContext = createAppContext(dbPath, { workspaceKey: "secondary" });
+      const item = defaultContext.repositories.itemRepository.create({
+        workspaceId: defaultContext.workspace.id,
+        title: "Scoped Item",
+        description: "Visible only in default"
+      });
+
+      await expect(foreignContext.workflowService.startStage({ stageKey: "brainstorm", itemId: item.id })).rejects.toMatchObject({
+        code: "ITEM_NOT_FOUND"
+      } satisfies Partial<AppError>);
+
+      foreignContext.connection.close();
+    } finally {
+      defaultContext.connection.close();
       rmSync(root, { recursive: true, force: true });
     }
   });
