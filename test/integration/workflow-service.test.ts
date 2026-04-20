@@ -286,6 +286,65 @@ describe("workflow service", () => {
     }
   });
 
+  it("snapshots the adapter context payload on requirements runs", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const item = createWorkspaceItem(context, {
+        title: "Requirements Snapshot",
+        description: "Verify adapter input is captured"
+      });
+
+      const started = context.workflowService.startBrainstormSession(item.id);
+      await context.workflowService.chatBrainstorm(
+        started.sessionId,
+        [
+          "problem: Teams lack visibility into review state",
+          "users: support operator; delivery lead",
+          "use cases: inspect active review sessions; spot blocked approvals",
+          "constraints: must run offline",
+          "candidate directions: review inbox dashboard",
+          "recommended direction: review inbox dashboard"
+        ].join("\n")
+      );
+      await context.workflowService.promoteBrainstorm(started.sessionId);
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      context.workflowService.approveConcept(concept!.id);
+      context.workflowService.importProjects(item.id);
+      const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
+
+      const result = await context.workflowService.startStage({
+        stageKey: "requirements",
+        itemId: item.id,
+        projectId: project.id
+      });
+
+      const run = context.repositories.stageRunRepository.getById(result.runId);
+      expect(run?.inputSnapshotJson).toBeTruthy();
+      const snapshot = JSON.parse(run!.inputSnapshotJson) as {
+        item: { id: string };
+        project: { id: string } | null;
+        context: {
+          stageKey: string;
+          upstreamSource: { targetUsers: string[]; useCases: string[]; constraints: string[] } | null;
+          stories: unknown[];
+        } | null;
+      };
+      expect(snapshot.item.id).toBe(item.id);
+      expect(snapshot.project?.id).toBe(project.id);
+      expect(snapshot.context?.stageKey).toBe("requirements");
+      expect(snapshot.context?.stories).toEqual([]);
+      expect(snapshot.context?.upstreamSource?.targetUsers).toContain("support operator");
+      expect(snapshot.context?.upstreamSource?.useCases.length).toBeGreaterThanOrEqual(2);
+      expect(snapshot.context?.upstreamSource?.constraints).toContain("must run offline");
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("shows project detail including stories and latest plans", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
     const dbPath = join(root, "app.sqlite");

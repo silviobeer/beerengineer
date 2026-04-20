@@ -75,7 +75,8 @@ export class StageService {
     const resolved = this.options.promptResolver.resolve(profile);
     const runtime = this.options.resolveStageRuntime(input.stageKey);
     const inputArtifactIds = this.resolveInputArtifactIds(input.stageKey, item.id, project?.id ?? null);
-    const inputSnapshot = this.buildStageInputSnapshot(item, project);
+    const adapterContext = project ? this.buildProjectStageContext(input.stageKey, project.id, item.id) : null;
+    const inputSnapshot = this.buildStageInputSnapshot(item, project, adapterContext);
 
     const run = this.options.deps.runInTransaction(() => {
       const createdRun = this.options.deps.stageRunRepository.create({
@@ -119,7 +120,7 @@ export class StageService {
               goal: project.goal
             }
           : null,
-        context: project ? this.buildProjectStageContext(input.stageKey, project.id, item.id) : null
+        context: adapterContext
       });
 
       const completedRun = this.options.deps.runInTransaction(() => {
@@ -415,7 +416,8 @@ export class StageService {
 
   private buildStageInputSnapshot(
     item: ReturnType<WorkflowEntityLoaders["requireItem"]>,
-    project: ReturnType<WorkflowEntityLoaders["requireProject"]> | null
+    project: ReturnType<WorkflowEntityLoaders["requireProject"]> | null,
+    adapterContext: ReturnType<StageService["buildProjectStageContext"]> | null
   ): string {
     return JSON.stringify(
       {
@@ -434,7 +436,8 @@ export class StageService {
               summary: project.summary,
               goal: project.goal
             }
-          : null
+          : null,
+        context: adapterContext
       },
       null,
       2
