@@ -214,6 +214,70 @@ describe("cli happy path", () => {
     }
   });
 
+  it("supports quality integration config and Sonar fixture commands via CLI", () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-e2e-"));
+    const dbPath = join(root, "app.sqlite");
+    const cwd = resolve(".");
+
+    try {
+      const sonarConfig = runCli(
+        [
+          "--db",
+          dbPath,
+          "sonar",
+          "config",
+          "set",
+          "--host-url",
+          "https://sonarcloud.io",
+          "--organization",
+          "silviobeer",
+          "--project-key",
+          "silviobeer_beerengineer",
+          "--token",
+          "secret-token",
+          "--gating-mode",
+          "story_gate"
+        ],
+        cwd
+      ) as { config: { hasToken: boolean; gatingMode: string } };
+      expect(sonarConfig.config.hasToken).toBe(true);
+      expect(sonarConfig.config.gatingMode).toBe("story_gate");
+
+      const sonarScan = runCli(["--db", dbPath, "sonar", "scan"], cwd) as {
+        gate: { status: string };
+        findings: { issueCount: number };
+        knowledgeEntries: Array<{ id: string }>;
+      };
+      expect(sonarScan.gate.status).toBeTruthy();
+      expect(sonarScan.findings.issueCount).toBeGreaterThan(0);
+      expect(sonarScan.knowledgeEntries.length).toBeGreaterThan(0);
+
+      const coderabbitConfig = runCli(
+        [
+          "--db",
+          dbPath,
+          "coderabbit",
+          "config",
+          "set",
+          "--organization",
+          "silviobeer",
+          "--repository",
+          "beerengineer",
+          "--token",
+          "secret-token"
+        ],
+        cwd
+      ) as { config: { hasToken: boolean; repository: string } };
+      expect(coderabbitConfig.config.hasToken).toBe(true);
+      expect(coderabbitConfig.config.repository).toBe("beerengineer");
+
+      const coderabbitTest = runCli(["--db", dbPath, "coderabbit", "config", "test"], cwd) as { valid: boolean };
+      expect(coderabbitTest.valid).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it(
     "supports app verification retry via CLI",
     () => {

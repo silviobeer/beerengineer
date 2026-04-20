@@ -7,6 +7,7 @@ import type { WorkflowEntityLoaders } from "./entity-loaders.js";
 import type { WorkerProfileKey } from "./worker-profiles.js";
 import type { ExecutionService } from "./execution-service.js";
 import type { BuildAdapterRuntimeContext, ResolvedWorkerProfile, ResolvedWorkerRuntime } from "./runtime-types.js";
+import { createQaKnowledgeEntries } from "../services/quality-knowledge-service.js";
 
 type QaServiceOptions = {
   deps: WorkflowDeps;
@@ -108,13 +109,9 @@ export class QaService {
       });
       const status = this.resolveQaRunStatus(parsed, result.exitCode);
       const storyByCode = new Map(qaContext.stories.map((story) => [story.code, story]));
-      const acceptanceCriterionByCode = new Map(
-        qaContext.stories.flatMap((story) =>
-          story.acceptanceCriteria.map((criterion) => [criterion.code, criterion] as const)
-        )
-      );
+      const acceptanceCriterionByCode = new Map(qaContext.stories.flatMap((story) => story.acceptanceCriteria.map((criterion) => [criterion.code, criterion])));
 
-      this.options.deps.qaFindingRepository.createMany(
+      const storedFindings = this.options.deps.qaFindingRepository.createMany(
         parsed.findings.map((finding) => {
           const storyContext = finding.storyCode ? storyByCode.get(finding.storyCode) ?? null : null;
           const acceptanceCriterion = finding.acceptanceCriterionCode
@@ -134,6 +131,17 @@ export class QaService {
             acceptanceCriterionId: acceptanceCriterion?.id ?? null,
             waveStoryExecutionId: storyContext?.latestExecution.id ?? null
           };
+        })
+      );
+      this.options.deps.qualityKnowledgeEntryRepository.createMany(
+        createQaKnowledgeEntries({
+          workspace: this.options.deps.workspace,
+          projectId,
+          waveIds: qaContext.waves.map((wave) => wave.id),
+          projectCode: project.code,
+          findings: storedFindings,
+          recommendations: parsed.recommendations,
+          storyCodeByStoryId: new Map(qaContext.stories.map((story) => [story.id, story.code]))
         })
       );
       this.options.deps.qaRunRepository.updateStatus(qaRun.id, status, {
@@ -226,23 +234,28 @@ export class QaService {
         .listLatestByWaveStoryExecutionIds(Array.from(latestExecutionByWaveStoryId.values()).map((execution) => execution.id))
         .map((run) => [run.waveStoryExecutionId, run])
     );
+    const projectQualityKnowledge = this.options.deps.qualityKnowledgeEntryRepository.listRecurringByProjectId(input.project.id, 12);
+    const workspaceConstraints = this.options.deps.qualityKnowledgeEntryRepository.listRecentConstraintsByWorkspaceId(
+      this.options.deps.workspace.id,
+      8
+    );
 
-    const qaStories = stories.map((story) => {
+      const qaStories = stories.map((story) => {
       const acceptanceCriteria = acceptanceCriteriaByStoryId.get(story.id) ?? [];
       const waveStory = waveStoryByStoryId.get(story.id);
       if (!waveStory) {
         throw new AppError("WAVE_STORY_NOT_FOUND", `No wave story found for story ${story.code}`);
       }
       const latestExecution = latestExecutionByWaveStoryId.get(waveStory.id);
-      if (latestExecution?.status !== "completed") {
+      if (!latestExecution || latestExecution.status !== "completed") {
         throw new AppError("QA_EXECUTION_INCOMPLETE", `Story ${story.code} is not completed yet`);
       }
       const latestRalphVerification = latestRalphVerificationByExecutionId.get(latestExecution.id);
-      if (latestRalphVerification?.status !== "passed") {
+      if (!latestRalphVerification || latestRalphVerification.status !== "passed") {
         throw new AppError("QA_RALPH_INCOMPLETE", `Story ${story.code} has no passing Ralph verification`);
       }
       const latestStoryReview = latestStoryReviewByExecutionId.get(latestExecution.id);
-      if (latestStoryReview?.status !== "passed") {
+      if (!latestStoryReview || latestStoryReview.status !== "passed") {
         throw new AppError("QA_STORY_REVIEW_INCOMPLETE", `Story ${story.code} has no passing story review`);
       }
 
@@ -314,6 +327,18 @@ export class QaService {
           goal: wave.goal,
           position: wave.position
         })),
+        qualityKnowledge: {
+          recurringProjectIssues: projectQualityKnowledge.map((entry) => ({
+            source: entry.source,
+            summary: entry.summary,
+            status: entry.status
+          })),
+          recentConstraints: workspaceConstraints.map((entry) => ({
+            source: entry.source,
+            summary: entry.summary,
+            status: entry.status
+          }))
+        },
         stories: qaStories.map((story) => ({
           code: story.code,
           acceptanceCriteria: story.acceptanceCriteria.map((criterion) => criterion.code),

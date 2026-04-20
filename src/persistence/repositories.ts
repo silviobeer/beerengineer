@@ -43,6 +43,8 @@ import type {
   QaRunStatus,
   ProjectExecutionContext,
   Project,
+  QualityKnowledgeEntry,
+  QualityKnowledgeSource,
   RecordStatus,
   StageKey,
   StageRunStatus,
@@ -51,7 +53,9 @@ import type {
   VerificationRun,
   VerificationRunMode,
   Workspace,
+  WorkspaceCoderabbitSettings,
   WorkspaceSettings,
+  WorkspaceSonarSettings,
   Wave,
   WaveExecution,
   WaveExecutionStatus,
@@ -85,12 +89,15 @@ import {
   interactiveReviewResolutions,
   interactiveReviewSessions,
   items,
+  qualityKnowledgeEntries,
   qaAgentSessions,
   qaFindings,
   qaRuns,
   projectExecutionContexts,
   projects,
   workspaceSettings,
+  workspaceCoderabbitSettings,
+  workspaceSonarSettings,
   workspaces,
   storyReviewAgentSessions,
   storyReviewFindings,
@@ -123,6 +130,20 @@ function stringifyStringList(value: string[]): string {
   return JSON.stringify(value);
 }
 
+function parseQualityRelevanceTags(value: string): {
+  files: string[];
+  storyCodes: string[];
+  modules: string[];
+  categories: string[];
+} {
+  return JSON.parse(value) as {
+    files: string[];
+    storyCodes: string[];
+    modules: string[];
+    categories: string[];
+  };
+}
+
 function definedField<TKey extends string, TValue>(key: TKey, value: TValue | undefined): Partial<Record<TKey, TValue>> {
   if (value === undefined) {
     return {};
@@ -141,6 +162,14 @@ type OptionalQueryRow<TValue> = TValue | undefined;
 
 type WorkspaceCreateInput = Omit<Workspace, "id" | "createdAt" | "updatedAt">;
 type WorkspaceSettingsCreateInput = Omit<WorkspaceSettings, "createdAt" | "updatedAt">;
+type WorkspaceSonarSettingsUpsertInput = Omit<
+  WorkspaceSonarSettings,
+  "createdAt" | "updatedAt" | "lastTestedAt" | "lastError"
+> & { lastTestedAt?: number | null; lastError?: string | null };
+type WorkspaceCoderabbitSettingsUpsertInput = Omit<
+  WorkspaceCoderabbitSettings,
+  "createdAt" | "updatedAt" | "lastTestedAt" | "lastError"
+> & { lastTestedAt?: number | null; lastError?: string | null };
 type BrainstormSessionCreateInput = Omit<
   BrainstormSession,
   "id" | "startedAt" | "updatedAt" | "resolvedAt" | "lastAssistantMessageId" | "lastUserMessageId"
@@ -173,6 +202,7 @@ type StoryReviewAgentSessionCreateInput = Omit<StoryReviewAgentSession, "id" | "
 type QaRunCreateInput = Omit<QaRun, "id" | "createdAt" | "updatedAt" | "completedAt">;
 type QaFindingCreateInput = Omit<QaFinding, "id" | "createdAt" | "updatedAt">;
 type QaAgentSessionCreateInput = Omit<QaAgentSession, "id" | "createdAt" | "updatedAt">;
+type QualityKnowledgeEntryCreateInput = Omit<QualityKnowledgeEntry, "id" | "createdAt" | "updatedAt">;
 type DocumentationRunCreateInput = Omit<DocumentationRun, "id" | "createdAt" | "updatedAt" | "completedAt">;
 type DocumentationAgentSessionCreateInput = Omit<DocumentationAgentSession, "id" | "createdAt" | "updatedAt">;
 type ArtifactCreateInput = Omit<ArtifactRecord, "id" | "createdAt">;
@@ -292,6 +322,120 @@ export class WorkspaceSettingsRepository {
       .where(eq(workspaceSettings.workspaceId, workspaceId))
       .run();
     return updated;
+  }
+}
+
+export class WorkspaceSonarSettingsRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public getByWorkspaceId(workspaceId: string): WorkspaceSonarSettings | null {
+    return (
+      this.db.select().from(workspaceSonarSettings).where(eq(workspaceSonarSettings.workspaceId, workspaceId)).get() as
+        | WorkspaceSonarSettings
+        | undefined
+    ) ?? null;
+  }
+
+  public upsertByWorkspaceId(input: WorkspaceSonarSettingsUpsertInput): WorkspaceSonarSettings {
+    const existing = this.getByWorkspaceId(input.workspaceId);
+    const timestamp = now();
+    const row: WorkspaceSonarSettings = {
+      workspaceId: input.workspaceId,
+      enabled: input.enabled,
+      providerType: input.providerType,
+      hostUrl: input.hostUrl,
+      organization: input.organization,
+      projectKey: input.projectKey,
+      token: input.token,
+      defaultBranch: input.defaultBranch,
+      gatingMode: input.gatingMode,
+      validationStatus: input.validationStatus,
+      lastTestedAt: input.lastTestedAt ?? null,
+      lastError: input.lastError ?? null,
+      createdAt: existing?.createdAt ?? timestamp,
+      updatedAt: timestamp
+    };
+
+    if (existing) {
+      this.db.update(workspaceSonarSettings).set(row).where(eq(workspaceSonarSettings.workspaceId, input.workspaceId)).run();
+    } else {
+      this.db.insert(workspaceSonarSettings).values(row).run();
+    }
+
+    return row;
+  }
+
+  public clearToken(workspaceId: string): void {
+    this.db
+      .update(workspaceSonarSettings)
+      .set({ token: null, validationStatus: "untested", lastError: null, updatedAt: now() })
+      .where(eq(workspaceSonarSettings.workspaceId, workspaceId))
+      .run();
+  }
+
+  public isConfigured(workspaceId: string): boolean {
+    const settings = this.getByWorkspaceId(workspaceId);
+    return Boolean(settings?.hostUrl && settings.organization && settings.projectKey && settings.token);
+  }
+}
+
+export class WorkspaceCoderabbitSettingsRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public getByWorkspaceId(workspaceId: string): WorkspaceCoderabbitSettings | null {
+    return (
+      this.db
+        .select()
+        .from(workspaceCoderabbitSettings)
+        .where(eq(workspaceCoderabbitSettings.workspaceId, workspaceId))
+        .get() as WorkspaceCoderabbitSettings | undefined
+    ) ?? null;
+  }
+
+  public upsertByWorkspaceId(input: WorkspaceCoderabbitSettingsUpsertInput): WorkspaceCoderabbitSettings {
+    const existing = this.getByWorkspaceId(input.workspaceId);
+    const timestamp = now();
+    const row: WorkspaceCoderabbitSettings = {
+      workspaceId: input.workspaceId,
+      enabled: input.enabled,
+      providerType: input.providerType,
+      hostUrl: input.hostUrl,
+      organization: input.organization,
+      repository: input.repository,
+      token: input.token,
+      defaultBranch: input.defaultBranch,
+      gatingMode: input.gatingMode,
+      validationStatus: input.validationStatus,
+      lastTestedAt: input.lastTestedAt ?? null,
+      lastError: input.lastError ?? null,
+      createdAt: existing?.createdAt ?? timestamp,
+      updatedAt: timestamp
+    };
+
+    if (existing) {
+      this.db
+        .update(workspaceCoderabbitSettings)
+        .set(row)
+        .where(eq(workspaceCoderabbitSettings.workspaceId, input.workspaceId))
+        .run();
+    } else {
+      this.db.insert(workspaceCoderabbitSettings).values(row).run();
+    }
+
+    return row;
+  }
+
+  public clearToken(workspaceId: string): void {
+    this.db
+      .update(workspaceCoderabbitSettings)
+      .set({ token: null, validationStatus: "untested", lastError: null, updatedAt: now() })
+      .where(eq(workspaceCoderabbitSettings.workspaceId, workspaceId))
+      .run();
+  }
+
+  public isConfigured(workspaceId: string): boolean {
+    const settings = this.getByWorkspaceId(workspaceId);
+    return Boolean(settings?.hostUrl && settings.organization && settings.repository && settings.token);
   }
 }
 
@@ -1948,6 +2092,148 @@ export class QaAgentSessionRepository {
       .where(eq(qaAgentSessions.qaRunId, qaRunId))
       .orderBy(qaAgentSessions.createdAt)
       .all() as QaAgentSession[];
+  }
+}
+
+export class QualityKnowledgeEntryRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public createMany(input: QualityKnowledgeEntryCreateInput[]): QualityKnowledgeEntry[] {
+    if (input.length === 0) {
+      return [];
+    }
+
+    const timestamp = now();
+    const rows: QualityKnowledgeEntry[] = input.map((entry) => ({
+      ...entry,
+      id: createId("quality_knowledge"),
+      createdAt: timestamp,
+      updatedAt: timestamp
+    }));
+
+    for (const row of rows) {
+      const existing = this.db
+        .select()
+        .from(qualityKnowledgeEntries)
+        .where(
+          and(
+            eq(qualityKnowledgeEntries.workspaceId, row.workspaceId),
+            eq(qualityKnowledgeEntries.source, row.source),
+            eq(qualityKnowledgeEntries.scopeType, row.scopeType),
+            eq(qualityKnowledgeEntries.scopeId, row.scopeId),
+            eq(qualityKnowledgeEntries.kind, row.kind),
+            eq(qualityKnowledgeEntries.summary, row.summary)
+          )
+        )
+        .get() as QualityKnowledgeEntry | undefined;
+
+      if (existing) {
+        this.db
+          .update(qualityKnowledgeEntries)
+          .set({
+            evidenceJson: row.evidenceJson,
+            status: row.status,
+            relevanceTagsJson: row.relevanceTagsJson,
+            updatedAt: timestamp
+          })
+          .where(eq(qualityKnowledgeEntries.id, existing.id))
+          .run();
+      } else {
+        this.db.insert(qualityKnowledgeEntries).values(row).run();
+      }
+    }
+
+    return this.listByWorkspaceId(input[0]!.workspaceId, { limit: rows.length * 4 }).filter((entry) =>
+      input.some(
+        (candidate) =>
+          candidate.workspaceId === entry.workspaceId &&
+          candidate.source === entry.source &&
+          candidate.scopeType === entry.scopeType &&
+          candidate.scopeId === entry.scopeId &&
+          candidate.kind === entry.kind &&
+          candidate.summary === entry.summary
+      )
+    );
+  }
+
+  public listByWorkspaceId(
+    workspaceId: string,
+    options?: {
+      source?: QualityKnowledgeSource;
+      status?: string;
+      limit?: number;
+    }
+  ): QualityKnowledgeEntry[] {
+    const rows = this.db
+      .select()
+      .from(qualityKnowledgeEntries)
+      .where(eq(qualityKnowledgeEntries.workspaceId, workspaceId))
+      .orderBy(desc(qualityKnowledgeEntries.createdAt), desc(qualityKnowledgeEntries.id))
+      .all() as QualityKnowledgeEntry[];
+
+    return rows
+      .filter((entry) => (options?.source ? entry.source === options.source : true))
+      .filter((entry) => (options?.status ? entry.status === options.status : true))
+      .slice(0, options?.limit ?? rows.length);
+  }
+
+  public listRelevantForStory(input: {
+    workspaceId: string;
+    projectId: string;
+    waveId?: string | null;
+    storyId: string;
+    filePaths?: string[];
+    modules?: string[];
+    limit?: number;
+  }): QualityKnowledgeEntry[] {
+    const rows = this.listByWorkspaceId(input.workspaceId, { limit: 400 });
+    const filePathSet = new Set(input.filePaths ?? []);
+    const moduleSet = new Set(input.modules ?? []);
+
+    return rows
+      .filter((entry) => !entry.projectId || entry.projectId === input.projectId)
+      .filter((entry) => !entry.waveId || !input.waveId || entry.waveId === input.waveId)
+      .filter((entry) => {
+        if (entry.storyId && entry.storyId === input.storyId) {
+          return true;
+        }
+        if (entry.scopeType === "project" || entry.scopeType === "workspace") {
+          return true;
+        }
+        const tags = parseQualityRelevanceTags(entry.relevanceTagsJson);
+        return (
+          tags.storyCodes.length > 0 ||
+          tags.files.some((file) => filePathSet.has(file)) ||
+          tags.modules.some((module) => moduleSet.has(module))
+        );
+      })
+      .slice(0, input.limit ?? 20);
+  }
+
+  public listRecurringByProjectId(projectId: string, limit = 20): QualityKnowledgeEntry[] {
+    const rows = this.db
+      .select()
+      .from(qualityKnowledgeEntries)
+      .where(eq(qualityKnowledgeEntries.projectId, projectId))
+      .orderBy(desc(qualityKnowledgeEntries.updatedAt), desc(qualityKnowledgeEntries.id))
+      .all() as QualityKnowledgeEntry[];
+    return rows.filter((entry) => entry.kind === "recurring_issue").slice(0, limit);
+  }
+
+  public listUnresolvedByWaveId(waveId: string, limit = 20): QualityKnowledgeEntry[] {
+    const rows = this.db
+      .select()
+      .from(qualityKnowledgeEntries)
+      .where(eq(qualityKnowledgeEntries.waveId, waveId))
+      .orderBy(desc(qualityKnowledgeEntries.updatedAt), desc(qualityKnowledgeEntries.id))
+      .all() as QualityKnowledgeEntry[];
+    return rows.filter((entry) => entry.status !== "resolved").slice(0, limit);
+  }
+
+  public listRecentConstraintsByWorkspaceId(workspaceId: string, limit = 20): QualityKnowledgeEntry[] {
+    return this.listByWorkspaceId(workspaceId, { limit: 200 })
+      .filter((entry) => entry.kind === "constraint")
+      .slice(0, limit);
   }
 }
 

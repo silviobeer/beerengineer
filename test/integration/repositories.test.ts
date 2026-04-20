@@ -18,6 +18,7 @@ import {
   InteractiveReviewResolutionRepository,
   InteractiveReviewSessionRepository,
   ItemRepository,
+  QualityKnowledgeEntryRepository,
   QaAgentSessionRepository,
   QaFindingRepository,
   QaRunRepository,
@@ -33,7 +34,9 @@ import {
   UserStoryRepository,
   VerificationRunRepository,
   WorkspaceRepository,
+  WorkspaceCoderabbitSettingsRepository,
   WorkspaceSettingsRepository,
+  WorkspaceSonarSettingsRepository,
   WaveRepository,
   WaveExecutionRepository,
   WaveStoryTestRunRepository,
@@ -50,6 +53,8 @@ describe("repositories", () => {
     const itemRepository = new ItemRepository(db);
     const workspaceRepository = new WorkspaceRepository(db);
     const workspaceSettingsRepository = new WorkspaceSettingsRepository(db);
+    const workspaceSonarSettingsRepository = new WorkspaceSonarSettingsRepository(db);
+    const workspaceCoderabbitSettingsRepository = new WorkspaceCoderabbitSettingsRepository(db);
     const conceptRepository = new ConceptRepository(db);
     const projectRepository = new ProjectRepository(db);
     const userStoryRepository = new UserStoryRepository(db);
@@ -76,6 +81,7 @@ describe("repositories", () => {
     const qaRunRepository = new QaRunRepository(db);
     const qaFindingRepository = new QaFindingRepository(db);
     const qaAgentSessionRepository = new QaAgentSessionRepository(db);
+    const qualityKnowledgeEntryRepository = new QualityKnowledgeEntryRepository(db);
     const documentationRunRepository = new DocumentationRunRepository(db);
     const documentationAgentSessionRepository = new DocumentationAgentSessionRepository(db);
     const interactiveReviewSessionRepository = new InteractiveReviewSessionRepository(db);
@@ -113,6 +119,38 @@ describe("repositories", () => {
       expect(itemRepository.getById(item.id)?.code).toBe("ITEM-0001");
       expect(itemRepository.getById(item.id)?.workspaceId).toBe(defaultWorkspace?.id);
       expect(workspaceSettingsRepository.getByWorkspaceId(defaultWorkspace!.id)?.workspaceId).toBe(defaultWorkspace?.id);
+      const sonarSettings = workspaceSonarSettingsRepository.upsertByWorkspaceId({
+        workspaceId: defaultWorkspace!.id,
+        enabled: 1,
+        providerType: "sonarcloud",
+        hostUrl: "https://sonarcloud.io",
+        organization: "acme",
+        projectKey: "acme_beerengineer",
+        token: "secret-sonar-token",
+        defaultBranch: "main",
+        gatingMode: "story_gate",
+        validationStatus: "valid",
+        lastError: null,
+        lastTestedAt: 123
+      });
+      const coderabbitSettings = workspaceCoderabbitSettingsRepository.upsertByWorkspaceId({
+        workspaceId: defaultWorkspace!.id,
+        enabled: 1,
+        providerType: "coderabbit",
+        hostUrl: "https://api.coderabbit.ai",
+        organization: "acme",
+        repository: "beerengineer",
+        token: "secret-coderabbit-token",
+        defaultBranch: "main",
+        gatingMode: "advisory",
+        validationStatus: "untested",
+        lastError: null,
+        lastTestedAt: null
+      });
+      expect(sonarSettings.validationStatus).toBe("valid");
+      expect(workspaceSonarSettingsRepository.isConfigured(defaultWorkspace!.id)).toBe(true);
+      expect(coderabbitSettings.repository).toBe("beerengineer");
+      expect(workspaceCoderabbitSettingsRepository.isConfigured(defaultWorkspace!.id)).toBe(true);
       expect(conceptRepository.getLatestByItemId(item.id)?.id).toBe(concept.id);
       expect(projects[0]?.code).toBe("ITEM-0001-P01");
       expect(projects).toHaveLength(1);
@@ -406,6 +444,23 @@ describe("repositories", () => {
         stderr: "",
         exitCode: 0
       });
+      const qualityKnowledgeEntries = qualityKnowledgeEntryRepository.createMany([
+        {
+          workspaceId: defaultWorkspace!.id,
+          projectId: projects[0]!.id,
+          waveId: createdWaves[0]!.id,
+          storyId: stories[0]!.id,
+          source: "story_review",
+          scopeType: "file",
+          scopeId: "src/persistence/repositories.ts",
+          kind: "recurring_issue",
+          summary: "Repository persistence invariants need explicit guards",
+          evidenceJson: "{\"severity\":\"medium\"}",
+          status: "open",
+          relevanceTagsJson:
+            "{\"files\":[\"src/persistence/repositories.ts\"],\"storyCodes\":[\"ITEM-0001-P01-US01\"],\"modules\":[\"src/persistence\"],\"categories\":[\"persistence\"]}"
+        }
+      ]);
       const remediationRun = storyReviewRemediationRunRepository.create({
         storyReviewRunId: storyReviewRun.id,
         waveStoryExecutionId: waveStoryExecution.id,
@@ -528,6 +583,17 @@ describe("repositories", () => {
       expect(storyReviewFindingRepository.listByStoryReviewRunId(storyReviewRun.id)).toHaveLength(1);
       expect(storyReviewSession.id).toContain("story_review_session_");
       expect(storyReviewAgentSessionRepository.listByStoryReviewRunId(storyReviewRun.id)).toHaveLength(1);
+      expect(qualityKnowledgeEntries[0]?.id).toContain("quality_knowledge_");
+      expect(
+        qualityKnowledgeEntryRepository.listRelevantForStory({
+          workspaceId: defaultWorkspace!.id,
+          projectId: projects[0]!.id,
+          waveId: createdWaves[0]!.id,
+          storyId: stories[0]!.id,
+          filePaths: ["src/persistence/repositories.ts"],
+          modules: ["src/persistence"]
+        })
+      ).toHaveLength(1);
       expect(remediationRun.id).toContain("story_review_remediation_run_");
       expect(storyReviewRemediationRunRepository.listByStoryId(stories[0]!.id)).toHaveLength(1);
       expect(remediationFindings[0]?.resolutionStatus).toBe("resolved");

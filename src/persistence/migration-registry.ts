@@ -794,5 +794,75 @@ export const baseMigrations: readonly SqlMigration[] = [
       `CREATE INDEX IF NOT EXISTS idx_app_verification_runs_wave_story_execution_id
         ON app_verification_runs(wave_story_execution_id, created_at)`
     ]
+  },
+  {
+    id: "0012_quality_integrations",
+    statements: [
+      `CREATE TABLE IF NOT EXISTS workspace_sonar_settings (
+        workspace_id TEXT PRIMARY KEY NOT NULL,
+        enabled INTEGER NOT NULL,
+        provider_type TEXT NOT NULL,
+        host_url TEXT,
+        organization TEXT,
+        project_key TEXT,
+        token_ref TEXT,
+        default_branch TEXT,
+        gating_mode TEXT NOT NULL,
+        validation_status TEXT NOT NULL,
+        last_tested_at INTEGER,
+        last_error TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+      )`,
+      `CREATE TABLE IF NOT EXISTS workspace_coderabbit_settings (
+        workspace_id TEXT PRIMARY KEY NOT NULL,
+        enabled INTEGER NOT NULL,
+        provider_type TEXT NOT NULL,
+        host_url TEXT,
+        organization TEXT,
+        repository TEXT,
+        token_ref TEXT,
+        default_branch TEXT,
+        gating_mode TEXT NOT NULL,
+        validation_status TEXT NOT NULL,
+        last_tested_at INTEGER,
+        last_error TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+      )`,
+      `CREATE TABLE IF NOT EXISTS quality_knowledge_entries (
+        id TEXT PRIMARY KEY NOT NULL,
+        workspace_id TEXT NOT NULL,
+        project_id TEXT,
+        wave_id TEXT,
+        story_id TEXT,
+        source TEXT NOT NULL,
+        scope_type TEXT NOT NULL,
+        scope_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        evidence_json TEXT NOT NULL,
+        status TEXT NOT NULL,
+        relevance_tags_json TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+        FOREIGN KEY (project_id) REFERENCES projects(id),
+        FOREIGN KEY (wave_id) REFERENCES waves(id),
+        FOREIGN KEY (story_id) REFERENCES user_stories(id)
+      )`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_quality_knowledge_entries_workspace_scope_summary_unique
+        ON quality_knowledge_entries(workspace_id, source, scope_type, scope_id, kind, summary)`,
+      `CREATE INDEX IF NOT EXISTS idx_quality_knowledge_entries_workspace_created_at
+        ON quality_knowledge_entries(workspace_id, created_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_quality_knowledge_entries_project_created_at
+        ON quality_knowledge_entries(project_id, created_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_quality_knowledge_entries_wave_created_at
+        ON quality_knowledge_entries(wave_id, created_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_quality_knowledge_entries_story_created_at
+        ON quality_knowledge_entries(story_id, created_at)`
+    ]
   }
 ];

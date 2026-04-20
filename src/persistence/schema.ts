@@ -27,6 +27,40 @@ export const workspaceSettings = sqliteTable("workspace_settings", {
   updatedAt: integer("updated_at").notNull()
 });
 
+export const workspaceSonarSettings = sqliteTable("workspace_sonar_settings", {
+  workspaceId: text("workspace_id").primaryKey().references(() => workspaces.id),
+  enabled: integer("enabled").notNull(),
+  providerType: text("provider_type").notNull(),
+  hostUrl: text("host_url"),
+  organization: text("organization"),
+  projectKey: text("project_key"),
+  token: text("token_ref"),
+  defaultBranch: text("default_branch"),
+  gatingMode: text("gating_mode").notNull(),
+  validationStatus: text("validation_status").notNull(),
+  lastTestedAt: integer("last_tested_at"),
+  lastError: text("last_error"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull()
+});
+
+export const workspaceCoderabbitSettings = sqliteTable("workspace_coderabbit_settings", {
+  workspaceId: text("workspace_id").primaryKey().references(() => workspaces.id),
+  enabled: integer("enabled").notNull(),
+  providerType: text("provider_type").notNull(),
+  hostUrl: text("host_url"),
+  organization: text("organization"),
+  repository: text("repository"),
+  token: text("token_ref"),
+  defaultBranch: text("default_branch"),
+  gatingMode: text("gating_mode").notNull(),
+  validationStatus: text("validation_status").notNull(),
+  lastTestedAt: integer("last_tested_at"),
+  lastError: text("last_error"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull()
+});
+
 export const items = sqliteTable("items", {
   id: text("id").primaryKey(),
   workspaceId: text("workspace_id").notNull().references(() => workspaces.id),
@@ -420,6 +454,33 @@ export const qaAgentSessions = sqliteTable("qa_agent_sessions", {
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull()
 });
+
+export const qualityKnowledgeEntries = sqliteTable("quality_knowledge_entries", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id),
+  projectId: text("project_id").references(() => projects.id),
+  waveId: text("wave_id").references(() => waves.id),
+  storyId: text("story_id").references(() => userStories.id),
+  source: text("source").notNull(),
+  scopeType: text("scope_type").notNull(),
+  scopeId: text("scope_id").notNull(),
+  kind: text("kind").notNull(),
+  summary: text("summary").notNull(),
+  evidenceJson: text("evidence_json").notNull(),
+  status: text("status").notNull(),
+  relevanceTagsJson: text("relevance_tags_json").notNull(),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull()
+}, (table) => [
+  uniqueIndex("quality_knowledge_entries_workspace_scope_summary_unique_idx").on(
+    table.workspaceId,
+    table.source,
+    table.scopeType,
+    table.scopeId,
+    table.kind,
+    table.summary
+  )
+]);
 
 export const documentationRuns = sqliteTable("documentation_runs", {
   id: text("id").primaryKey(),

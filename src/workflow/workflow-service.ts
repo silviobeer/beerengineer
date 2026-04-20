@@ -505,6 +505,14 @@ export class WorkflowService {
     return this.verificationService.showAppVerification(appVerificationRunId);
   }
 
+  public async startStoryReview(waveStoryExecutionId: string) {
+    return this.verificationService.startStoryReview(waveStoryExecutionId);
+  }
+
+  public showStoryReview(storyId: string) {
+    return this.verificationService.showStoryReview(storyId);
+  }
+
   public async retryAppVerification(appVerificationRunId: string) {
     return this.verificationService.retryAppVerification(appVerificationRunId);
   }

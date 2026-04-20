@@ -206,6 +206,24 @@ export type QaFindingStatus = (typeof qaFindingStatuses)[number];
 export const storyReviewRunStatuses = ["running", "review_required", "passed", "failed"] as const;
 export type StoryReviewRunStatus = (typeof storyReviewRunStatuses)[number];
 
+export const qualityGatingModes = ["off", "advisory", "story_gate", "wave_gate"] as const;
+export type QualityGatingMode = (typeof qualityGatingModes)[number];
+
+export const integrationValidationStatuses = ["untested", "valid", "invalid"] as const;
+export type IntegrationValidationStatus = (typeof integrationValidationStatuses)[number];
+
+export const qualityDecisionStatuses = ["passed", "review_required", "failed", "blocked"] as const;
+export type QualityDecisionStatus = (typeof qualityDecisionStatuses)[number];
+
+export const qualityKnowledgeSources = ["sonar", "coderabbit", "verification", "qa", "story_review"] as const;
+export type QualityKnowledgeSource = (typeof qualityKnowledgeSources)[number];
+
+export const qualityKnowledgeScopeTypes = ["workspace", "project", "wave", "story", "file", "module"] as const;
+export type QualityKnowledgeScopeType = (typeof qualityKnowledgeScopeTypes)[number];
+
+export const qualityKnowledgeKinds = ["rule", "constraint", "lesson", "recurring_issue", "recommendation"] as const;
+export type QualityKnowledgeKind = (typeof qualityKnowledgeKinds)[number];
+
 export const storyReviewFindingSeverities = ["critical", "high", "medium", "low"] as const;
 export type StoryReviewFindingSeverity = (typeof storyReviewFindingSeverities)[number];
 
@@ -267,6 +285,40 @@ export type WorkspaceSettings = {
   gitDefaultsJson: string | null;
   executionDefaultsJson: string | null;
   uiMetadataJson: string | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type WorkspaceSonarSettings = {
+  workspaceId: string;
+  enabled: number;
+  providerType: string;
+  hostUrl: string | null;
+  organization: string | null;
+  projectKey: string | null;
+  token: string | null;
+  defaultBranch: string | null;
+  gatingMode: QualityGatingMode;
+  validationStatus: IntegrationValidationStatus;
+  lastTestedAt: number | null;
+  lastError: string | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type WorkspaceCoderabbitSettings = {
+  workspaceId: string;
+  enabled: number;
+  providerType: string;
+  hostUrl: string | null;
+  organization: string | null;
+  repository: string | null;
+  token: string | null;
+  defaultBranch: string | null;
+  gatingMode: QualityGatingMode;
+  validationStatus: IntegrationValidationStatus;
+  lastTestedAt: number | null;
+  lastError: string | null;
   createdAt: number;
   updatedAt: number;
 };
@@ -636,6 +688,24 @@ export type QaAgentSession = {
   stdout: string;
   stderr: string;
   exitCode: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type QualityKnowledgeEntry = {
+  id: string;
+  workspaceId: string;
+  projectId: string | null;
+  waveId: string | null;
+  storyId: string | null;
+  source: QualityKnowledgeSource;
+  scopeType: QualityKnowledgeScopeType;
+  scopeId: string;
+  kind: QualityKnowledgeKind;
+  summary: string;
+  evidenceJson: string;
+  status: string;
+  relevanceTagsJson: string;
   createdAt: number;
   updatedAt: number;
 };

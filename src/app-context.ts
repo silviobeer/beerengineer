@@ -23,6 +23,7 @@ import {
   InteractiveReviewResolutionRepository,
   InteractiveReviewSessionRepository,
   ItemRepository,
+  QualityKnowledgeEntryRepository,
   QaAgentSessionRepository,
   QaFindingRepository,
   QaRunRepository,
@@ -39,7 +40,9 @@ import {
   UserStoryRepository,
   VerificationRunRepository,
   WorkspaceRepository,
+  WorkspaceCoderabbitSettingsRepository,
   WorkspaceSettingsRepository,
+  WorkspaceSonarSettingsRepository,
   WaveRepository,
   WaveExecutionRepository,
   WaveStoryTestRunRepository,
@@ -51,6 +54,9 @@ import { baseMigrations } from "./persistence/migration-registry.js";
 import { applyMigrations } from "./persistence/migrator.js";
 import { AppError } from "./shared/errors.js";
 import { DEFAULT_WORKSPACE_KEY } from "./shared/workspaces.js";
+import { CoderabbitService } from "./services/coderabbit-service.js";
+import { QualityKnowledgeService } from "./services/quality-knowledge-service.js";
+import { SonarService } from "./services/sonar-service.js";
 import { WorkflowService } from "./workflow/workflow-service.js";
 
 export type EffectiveWorkspaceConfig = {
@@ -81,6 +87,8 @@ export type AppContext = {
   repositories: {
     workspaceRepository: WorkspaceRepository;
     workspaceSettingsRepository: WorkspaceSettingsRepository;
+    workspaceSonarSettingsRepository: WorkspaceSonarSettingsRepository;
+    workspaceCoderabbitSettingsRepository: WorkspaceCoderabbitSettingsRepository;
     brainstormSessionRepository: BrainstormSessionRepository;
     brainstormMessageRepository: BrainstormMessageRepository;
     brainstormDraftRepository: BrainstormDraftRepository;
@@ -111,6 +119,7 @@ export type AppContext = {
     qaRunRepository: QaRunRepository;
     qaFindingRepository: QaFindingRepository;
     qaAgentSessionRepository: QaAgentSessionRepository;
+    qualityKnowledgeEntryRepository: QualityKnowledgeEntryRepository;
     documentationRunRepository: DocumentationRunRepository;
     documentationAgentSessionRepository: DocumentationAgentSessionRepository;
     interactiveReviewSessionRepository: InteractiveReviewSessionRepository;
@@ -120,6 +129,11 @@ export type AppContext = {
     stageRunRepository: StageRunRepository;
     artifactRepository: ArtifactRepository;
     agentSessionRepository: AgentSessionRepository;
+  };
+  services: {
+    sonarService: SonarService;
+    coderabbitService: CoderabbitService;
+    qualityKnowledgeService: QualityKnowledgeService;
   };
   workflowService: WorkflowService;
 };
@@ -146,6 +160,8 @@ export function createAppContext(
 
   const workspaceRepository = new WorkspaceRepository(db);
   const workspaceSettingsRepository = new WorkspaceSettingsRepository(db);
+  const workspaceSonarSettingsRepository = new WorkspaceSonarSettingsRepository(db);
+  const workspaceCoderabbitSettingsRepository = new WorkspaceCoderabbitSettingsRepository(db);
   const brainstormSessionRepository = new BrainstormSessionRepository(db);
   const brainstormMessageRepository = new BrainstormMessageRepository(db);
   const brainstormDraftRepository = new BrainstormDraftRepository(db);
@@ -176,6 +192,7 @@ export function createAppContext(
   const qaRunRepository = new QaRunRepository(db);
   const qaFindingRepository = new QaFindingRepository(db);
   const qaAgentSessionRepository = new QaAgentSessionRepository(db);
+  const qualityKnowledgeEntryRepository = new QualityKnowledgeEntryRepository(db);
   const documentationRunRepository = new DocumentationRunRepository(db);
   const documentationAgentSessionRepository = new DocumentationAgentSessionRepository(db);
   const interactiveReviewSessionRepository = new InteractiveReviewSessionRepository(db);
@@ -201,6 +218,15 @@ export function createAppContext(
     workspaceRoot: options?.workspaceRoot ?? workspace.rootPath ?? repoRoot,
     agentRuntimeConfigPath
   };
+  const qualityKnowledgeService = new QualityKnowledgeService(qualityKnowledgeEntryRepository, workspace);
+  const sonarService = new SonarService(
+    workspace,
+    effectiveConfig.workspaceRoot,
+    workspaceSonarSettingsRepository,
+    qualityKnowledgeEntryRepository,
+    repoRoot
+  );
+  const coderabbitService = new CoderabbitService(workspace, effectiveConfig.workspaceRoot, workspaceCoderabbitSettingsRepository);
 
   return {
     connection,
@@ -216,6 +242,8 @@ export function createAppContext(
     repositories: {
       workspaceRepository,
       workspaceSettingsRepository,
+      workspaceSonarSettingsRepository,
+      workspaceCoderabbitSettingsRepository,
       brainstormSessionRepository,
       brainstormMessageRepository,
       brainstormDraftRepository,
@@ -246,6 +274,7 @@ export function createAppContext(
       qaRunRepository,
       qaFindingRepository,
       qaAgentSessionRepository,
+      qualityKnowledgeEntryRepository,
       documentationRunRepository,
       documentationAgentSessionRepository,
       interactiveReviewSessionRepository,
@@ -255,6 +284,11 @@ export function createAppContext(
       stageRunRepository,
       artifactRepository,
       agentSessionRepository
+    },
+    services: {
+      sonarService,
+      coderabbitService,
+      qualityKnowledgeService
     },
     workflowService: new WorkflowService({
       repoRoot,
@@ -294,6 +328,7 @@ export function createAppContext(
       qaRunRepository,
       qaFindingRepository,
       qaAgentSessionRepository,
+      qualityKnowledgeEntryRepository,
       documentationRunRepository,
       documentationAgentSessionRepository,
       interactiveReviewSessionRepository,

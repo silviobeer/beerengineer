@@ -474,6 +474,20 @@ export class ExecutionService {
     const acceptanceCriteria = this.options.deps.acceptanceCriterionRepository.listByStoryId(input.story.id);
     const projectExecutionContext =
       input.projectExecutionContext ?? this.ensureProjectExecutionContext(input.project, input.implementationPlan);
+    const relevantKnowledge = this.options.deps.qualityKnowledgeEntryRepository.listRelevantForStory({
+      workspaceId: this.options.deps.workspace.id,
+      projectId: input.project.id,
+      waveId: input.wave.id,
+      storyId: input.story.id,
+      filePaths: projectExecutionContext.relevantFiles,
+      modules: projectExecutionContext.relevantDirectories,
+      limit: 12
+    });
+    const recurringProjectIssues = this.options.deps.qualityKnowledgeEntryRepository.listRecurringByProjectId(input.project.id, 8);
+    const recentConstraints = this.options.deps.qualityKnowledgeEntryRepository.listRecentConstraintsByWorkspaceId(
+      this.options.deps.workspace.id,
+      8
+    );
     const businessContextSnapshotJson = this.buildBusinessContextSnapshot({
       item,
       project: input.project,
@@ -481,13 +495,16 @@ export class ExecutionService {
       wave: input.wave,
       story: input.story,
       acceptanceCriteria,
-      architecture
+      architecture,
+      qualityKnowledge: relevantKnowledge
     });
     const repoContextSnapshotJson = this.buildRepoContextSnapshot({
       project: input.project,
       story: input.story,
       architectureSummary: architecture?.summary ?? null,
-      projectExecutionContext
+      projectExecutionContext,
+      recurringProjectIssues,
+      recentConstraints
     });
 
     return {
@@ -1119,6 +1136,7 @@ export class ExecutionService {
     story: ReturnType<WorkflowEntityLoaders["requireStory"]>;
     acceptanceCriteria: ReturnType<AcceptanceCriterionRepository["listByStoryId"]>;
     architecture: ReturnType<ArchitecturePlanRepository["getLatestByProjectId"]>;
+    qualityKnowledge: ReturnType<WorkflowDeps["qualityKnowledgeEntryRepository"]["listRelevantForStory"]>;
   }): string {
     return JSON.stringify(
       {
@@ -1162,7 +1180,14 @@ export class ExecutionService {
               version: input.architecture.version,
               summary: input.architecture.summary
             }
-          : null
+          : null,
+        qualityGuidance: input.qualityKnowledge.map((entry) => ({
+          source: entry.source,
+          kind: entry.kind,
+          scopeType: entry.scopeType,
+          summary: entry.summary,
+          status: entry.status
+        }))
       },
       null,
       2
@@ -1174,6 +1199,8 @@ export class ExecutionService {
     story: ReturnType<WorkflowEntityLoaders["requireStory"]>;
     architectureSummary: string | null;
     projectExecutionContext: ReturnType<ExecutionService["ensureProjectExecutionContext"]>;
+    recurringProjectIssues: ReturnType<WorkflowDeps["qualityKnowledgeEntryRepository"]["listRecurringByProjectId"]>;
+    recentConstraints: ReturnType<WorkflowDeps["qualityKnowledgeEntryRepository"]["listRecentConstraintsByWorkspaceId"]>;
   }): string {
     const storyText = `${input.story.title} ${input.story.description} ${input.story.goal} ${input.story.benefit}`.toLowerCase();
     const relevantFiles = [...input.projectExecutionContext.relevantFiles];
@@ -1194,7 +1221,17 @@ export class ExecutionService {
         nearbyTests: input.projectExecutionContext.testLocations,
         repoConventions: input.projectExecutionContext.repoConventions,
         integrationPoints: input.projectExecutionContext.integrationPoints,
-        architectureSummary: input.architectureSummary
+        architectureSummary: input.architectureSummary,
+        recurringQualityRisks: input.recurringProjectIssues.map((entry) => ({
+          source: entry.source,
+          summary: entry.summary,
+          status: entry.status
+        })),
+        engineeringConstraints: input.recentConstraints.map((entry) => ({
+          source: entry.source,
+          summary: entry.summary,
+          status: entry.status
+        }))
       },
       null,
       2

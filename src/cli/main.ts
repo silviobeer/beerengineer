@@ -2,7 +2,7 @@ import { Command, Option } from "commander";
 import { resolve } from "node:path";
 
 import { createAppContext, type AppContext } from "../app-context.js";
-import { interactiveReviewEntryStatuses, interactiveReviewResolutionTypes, interactiveReviewSeverities } from "../domain/types.js";
+import { interactiveReviewEntryStatuses, interactiveReviewSeverities } from "../domain/types.js";
 import { AppError } from "../shared/errors.js";
 
 const program = new Command();
@@ -72,7 +72,7 @@ async function printAutorunForProject(
 }
 
 function sleep(ms: number): Promise<void> {
-  return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
+  return new Promise((resolveDelay) => globalThis.setTimeout(resolveDelay, ms));
 }
 
 function resolveOptionalList(values: string[], clear?: boolean): string[] | undefined {
@@ -80,6 +80,19 @@ function resolveOptionalList(values: string[], clear?: boolean): string[] | unde
     return values;
   }
   return clear ? [] : undefined;
+}
+
+function parseBooleanFlag(value: string | undefined): boolean | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === "true") {
+    return true;
+  }
+  if (value === "false") {
+    return false;
+  }
+  throw new AppError("INVALID_BOOLEAN_OPTION", `Expected true or false, received ${value}`);
 }
 
 function buildCliErrorPayload(error: unknown): { error: { code: string; message: string } } {
@@ -554,7 +567,7 @@ program
         "request_changes",
         "request_story_revisions",
         "apply_story_edits"
-      ] satisfies Array<(typeof interactiveReviewResolutionTypes)[number]>)
+      ] satisfies string[])
       .makeOptionMandatory()
   )
   .option("--story-id <storyId>", "Repeatable story target", collectOptionValues, [])
@@ -1064,6 +1077,191 @@ program
     withContext<{ runId: string }>(({ workflowService }, options) => {
       const sessions = workflowService.listSessions(options.runId);
       console.log(JSON.stringify(sessions, null, 2));
+    })
+  );
+
+const sonarCommand = program.command("sonar");
+const sonarConfigCommand = sonarCommand.command("config");
+
+sonarConfigCommand.command("show").action(
+  withContext<Record<string, never>>(({ services }) => {
+    console.log(JSON.stringify(services.sonarService.showConfig(), null, 2));
+  })
+);
+
+sonarConfigCommand
+  .command("set")
+  .addOption(new Option("--enabled <enabled>").choices(["true", "false"]))
+  .option("--provider-type <providerType>")
+  .option("--host-url <hostUrl>")
+  .option("--organization <organization>")
+  .option("--project-key <projectKey>")
+  .option("--token <token>")
+  .option("--default-branch <defaultBranch>")
+  .addOption(new Option("--gating-mode <gatingMode>").choices(["off", "advisory", "story_gate", "wave_gate"]))
+  .action(
+    withContext<{
+      enabled?: string;
+      providerType?: string;
+      hostUrl?: string;
+      organization?: string;
+      projectKey?: string;
+      token?: string;
+      defaultBranch?: string;
+      gatingMode?: "off" | "advisory" | "story_gate" | "wave_gate";
+    }>(({ services }, options) => {
+      console.log(
+        JSON.stringify(
+          services.sonarService.setConfig({
+            enabled: parseBooleanFlag(options.enabled),
+            providerType: options.providerType,
+            hostUrl: options.hostUrl,
+            organization: options.organization,
+            projectKey: options.projectKey,
+            token: options.token,
+            defaultBranch: options.defaultBranch,
+            gatingMode: options.gatingMode
+          }),
+          null,
+          2
+        )
+      );
+    })
+  );
+
+sonarConfigCommand.command("test").action(
+  withContext<Record<string, never>>(({ services }) => {
+    console.log(JSON.stringify(services.sonarService.testConfig(), null, 2));
+  })
+);
+
+sonarConfigCommand.command("clear-token").action(
+  withContext<Record<string, never>>(({ services }) => {
+    console.log(JSON.stringify(services.sonarService.clearToken(), null, 2));
+  })
+);
+
+sonarCommand.command("scan").action(
+  withContext<Record<string, never>>(({ services }) => {
+    console.log(JSON.stringify(services.sonarService.scan(), null, 2));
+  })
+);
+
+sonarCommand.command("status").action(
+  withContext<Record<string, never>>(({ services }) => {
+    console.log(JSON.stringify(services.sonarService.status(), null, 2));
+  })
+);
+
+sonarCommand.command("issues").action(
+  withContext<Record<string, never>>(({ services }) => {
+    console.log(JSON.stringify(services.sonarService.issues(), null, 2));
+  })
+);
+
+sonarCommand.command("hotspots").action(
+  withContext<Record<string, never>>(({ services }) => {
+    console.log(JSON.stringify(services.sonarService.hotspots(), null, 2));
+  })
+);
+
+const coderabbitCommand = program.command("coderabbit");
+const coderabbitConfigCommand = coderabbitCommand.command("config");
+
+coderabbitConfigCommand.command("show").action(
+  withContext<Record<string, never>>(({ services }) => {
+    console.log(JSON.stringify(services.coderabbitService.showConfig(), null, 2));
+  })
+);
+
+coderabbitConfigCommand
+  .command("set")
+  .addOption(new Option("--enabled <enabled>").choices(["true", "false"]))
+  .option("--provider-type <providerType>")
+  .option("--host-url <hostUrl>")
+  .option("--organization <organization>")
+  .option("--repository <repository>")
+  .option("--token <token>")
+  .option("--default-branch <defaultBranch>")
+  .addOption(new Option("--gating-mode <gatingMode>").choices(["off", "advisory", "story_gate", "wave_gate"]))
+  .action(
+    withContext<{
+      enabled?: string;
+      providerType?: string;
+      hostUrl?: string;
+      organization?: string;
+      repository?: string;
+      token?: string;
+      defaultBranch?: string;
+      gatingMode?: "off" | "advisory" | "story_gate" | "wave_gate";
+    }>(({ services }, options) => {
+      console.log(
+        JSON.stringify(
+          services.coderabbitService.setConfig({
+            enabled: parseBooleanFlag(options.enabled),
+            providerType: options.providerType,
+            hostUrl: options.hostUrl,
+            organization: options.organization,
+            repository: options.repository,
+            token: options.token,
+            defaultBranch: options.defaultBranch,
+            gatingMode: options.gatingMode
+          }),
+          null,
+          2
+        )
+      );
+    })
+  );
+
+coderabbitConfigCommand.command("test").action(
+  withContext<Record<string, never>>(({ services }) => {
+    console.log(JSON.stringify(services.coderabbitService.testConfig(), null, 2));
+  })
+);
+
+coderabbitConfigCommand.command("clear-token").action(
+  withContext<Record<string, never>>(({ services }) => {
+    console.log(JSON.stringify(services.coderabbitService.clearToken(), null, 2));
+  })
+);
+
+const reviewOpsCommand = program.command("review");
+
+reviewOpsCommand
+  .command("run")
+  .requiredOption("--story <storyId>")
+  .action(
+    withContext<{ story: string }>(async ({ repositories, workflowService }, options) => {
+      const waveStory = repositories.waveStoryRepository.listByStoryIds([options.story])[0];
+      if (!waveStory) {
+        throw new AppError("WAVE_STORY_NOT_FOUND", `No wave story found for story ${options.story}`);
+      }
+      const execution = repositories.waveStoryExecutionRepository.getLatestByWaveStoryId(waveStory.id);
+      if (!execution) {
+        throw new AppError("WAVE_STORY_EXECUTION_NOT_FOUND", `No execution found for story ${options.story}`);
+      }
+      const result = await workflowService.startStoryReview(execution.id);
+      console.log(JSON.stringify(result, null, 2));
+    })
+  );
+
+reviewOpsCommand
+  .command("status")
+  .requiredOption("--story <storyId>")
+  .action(
+    withContext<{ story: string }>(({ workflowService }, options) => {
+      console.log(JSON.stringify(workflowService.showStoryReview(options.story), null, 2));
+    })
+  );
+
+reviewOpsCommand
+  .command("remediate")
+  .requiredOption("--story-review-run <storyReviewRunId>")
+  .action(
+    withContext<{ storyReviewRun: string }>(async ({ workflowService }, options) => {
+      const result = await workflowService.startStoryReviewRemediation(options.storyReviewRun);
+      console.log(JSON.stringify(result, null, 2));
     })
   );
 try {

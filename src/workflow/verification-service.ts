@@ -22,6 +22,7 @@ import type {
   VerificationRunStatus
 } from "../domain/types.js";
 import type { WaveStoryExecutionRepository } from "../persistence/repositories.js";
+import { createStoryReviewKnowledgeEntries } from "../services/quality-knowledge-service.js";
 import type { WorkerProfileKey } from "./worker-profiles.js";
 import type { WorkflowDeps } from "./workflow-deps.js";
 import type { WorkflowEntityLoaders } from "./entity-loaders.js";
@@ -134,6 +135,89 @@ type VerificationServiceOptions = {
 
 export class VerificationService {
   public constructor(private readonly options: VerificationServiceOptions) {}
+
+  public async startStoryReview(waveStoryExecutionId: string) {
+    const execution = this.options.loaders.requireWaveStoryExecution(waveStoryExecutionId);
+    const latestBasicVerification = this.options.deps.verificationRunRepository.getLatestByWaveStoryExecutionIdAndMode(
+      execution.id,
+      "basic"
+    );
+    const latestRalphVerification = this.options.deps.verificationRunRepository.getLatestByWaveStoryExecutionIdAndMode(
+      execution.id,
+      "ralph"
+    );
+    if (latestBasicVerification?.status !== "passed" || latestRalphVerification?.status !== "passed") {
+      throw new AppError(
+        "STORY_REVIEW_NOT_READY",
+        `Wave story execution ${waveStoryExecutionId} has not passed basic and Ralph verification`
+      );
+    }
+
+    const latestAppVerification = this.options.deps.appVerificationRunRepository.getLatestByWaveStoryExecutionId(execution.id);
+    if (latestAppVerification && latestAppVerification.status !== "passed") {
+      throw new AppError(
+        "STORY_REVIEW_NOT_READY",
+        `Wave story execution ${waveStoryExecutionId} has not passed app verification`
+      );
+    }
+
+    const story = this.options.loaders.requireStory(execution.storyId);
+    const project = this.options.loaders.requireProject(story.projectId);
+    const implementationPlan = this.options.loaders.requireImplementationPlanForProject(project.id);
+    const waveExecution = this.options.loaders.requireWaveExecution(execution.waveExecutionId);
+    const wave = this.options.loaders.requireWave(waveExecution.waveId);
+    const testPreparationRun = this.options.loaders.requireWaveStoryTestRun(execution.testPreparationRunId);
+    const parsedTestPreparation = this.options.parseTestPreparationOutput(testPreparationRun);
+    const implementationOutput = this.options.parseStoryExecutionOutput(execution);
+    const basicVerificationSummary = JSON.parse(latestBasicVerification.summaryJson) as {
+      storyCode: string;
+      changedFiles: string[];
+      testsRun: StoryExecutionOutput["testsRun"];
+      blockers: string[];
+    };
+    const ralphVerificationSummary = this.parseRalphVerificationOutput(latestRalphVerification);
+    const storyRunContext = this.options.buildStoryRunContext({
+      project,
+      implementationPlan,
+      wave,
+      story
+    });
+    const storyReview = await this.executeStoryReview({
+      project,
+      implementationPlan,
+      wave,
+      story,
+      storyRunContext,
+      testPreparationRun,
+      parsedTestPreparation,
+      execution,
+      implementationOutput,
+      basicVerificationStatus: latestBasicVerification.status,
+      basicVerificationSummary,
+      ralphVerificationStatus: latestRalphVerification.status,
+      ralphVerificationSummary
+    });
+
+    if (execution.status !== "completed" && execution.status !== "review_required") {
+      this.options.deps.waveStoryExecutionRepository.updateStatus(
+        execution.id,
+        storyReview.status === "passed" ? "completed" : "review_required",
+        {
+          outputSummaryJson: execution.outputSummaryJson,
+          errorMessage: storyReview.errorMessage
+        }
+      );
+      this.options.refreshWaveExecutionStatus(waveExecution.id);
+    }
+
+    const latestStoryReviewRun = this.options.deps.storyReviewRunRepository.getLatestByWaveStoryExecutionId(execution.id);
+    return {
+      waveStoryExecutionId: execution.id,
+      storyReviewRunId: latestStoryReviewRun?.id ?? null,
+      storyCode: story.code,
+      status: storyReview.status
+    };
+  }
 
   public async startAppVerification(waveStoryExecutionId: string) {
     const execution = this.options.loaders.requireWaveStoryExecution(waveStoryExecutionId);
@@ -248,6 +332,28 @@ export class VerificationService {
       preparedSession: this.parseStoredJson(run.preparedSessionJson, "APP_VERIFICATION_CONTEXT_INVALID", "Prepared app verification session"),
       result: this.parseStoredJson(run.resultJson, "APP_VERIFICATION_RESULT_INVALID", "App verification result"),
       artifacts: this.parseStoredJson(run.artifactsJson, "APP_VERIFICATION_ARTIFACTS_INVALID", "App verification artifacts") ?? []
+    };
+  }
+
+  public showStoryReview(storyId: string) {
+    const story = this.options.loaders.requireStory(storyId);
+    const waveStory = this.options.deps.waveStoryRepository.listByStoryIds([storyId])[0];
+    if (!waveStory) {
+      throw new AppError("WAVE_STORY_NOT_FOUND", `No wave story found for story ${story.code}`);
+    }
+    const executions = this.options.deps.waveStoryExecutionRepository.listByWaveStoryId(waveStory.id);
+    const reviewRuns = executions.flatMap((execution) =>
+      this.options.deps.storyReviewRunRepository.listByWaveStoryExecutionId(execution.id).map((storyReviewRun) => ({
+        execution,
+        storyReviewRun,
+        findings: this.options.deps.storyReviewFindingRepository.listByStoryReviewRunId(storyReviewRun.id),
+        sessions: this.options.deps.storyReviewAgentSessionRepository.listByStoryReviewRunId(storyReviewRun.id)
+      }))
+    );
+    return {
+      story,
+      latestStoryReviewRun: reviewRuns.at(-1)?.storyReviewRun ?? null,
+      reviewRuns
     };
   }
 
@@ -873,7 +979,7 @@ export class VerificationService {
         exitCode: result.exitCode
       });
       const status = this.resolveStoryReviewStatus(parsed, result.exitCode);
-      this.options.deps.storyReviewFindingRepository.createMany(
+      const storedFindings = this.options.deps.storyReviewFindingRepository.createMany(
         parsed.findings.map((finding) => ({
           storyReviewRunId: reviewRun.id,
           severity: finding.severity,
@@ -886,6 +992,17 @@ export class VerificationService {
           suggestedFix: finding.suggestedFix ?? null,
           status: "open"
         }))
+      );
+      this.options.deps.qualityKnowledgeEntryRepository.createMany(
+        createStoryReviewKnowledgeEntries({
+          workspace: this.options.deps.workspace,
+          projectId: input.project.id,
+          waveId: input.wave.id,
+          storyId: input.story.id,
+          storyCode: input.story.code,
+          findings: storedFindings,
+          recommendations: parsed.recommendations
+        })
       );
       this.options.deps.storyReviewRunRepository.updateStatus(reviewRun.id, status, {
         summaryJson: JSON.stringify(parsed, null, 2),

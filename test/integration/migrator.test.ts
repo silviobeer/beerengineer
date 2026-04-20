@@ -43,9 +43,10 @@ describe("migration runner", () => {
         "0008_interactive_review",
         "0009_add_interactive_review_resolved_at_index",
         "0010_brainstorm_interactive",
-        "0011_app_verification_runtime"
+        "0011_app_verification_runtime",
+        "0012_quality_integrations"
       ]);
-      expect(row?.count).toBe(12);
+      expect(row?.count).toBe(13);
       expect(indexes.map((index) => index.name)).toContain("idx_qa_runs_project_id");
     } finally {
       secondConnection.close();
@@ -78,7 +79,8 @@ describe("migration runner", () => {
         "0008_interactive_review",
         "0009_add_interactive_review_resolved_at_index",
         "0010_brainstorm_interactive",
-        "0011_app_verification_runtime"
+        "0011_app_verification_runtime",
+        "0012_quality_integrations"
       ]);
       expect(columns.map((column) => column.name)).toContain("mode");
       expect(executionColumns.map((column) => column.name)).toContain("system_prompt_snapshot");
@@ -111,7 +113,8 @@ describe("migration runner", () => {
         "0008_interactive_review",
         "0009_add_interactive_review_resolved_at_index",
         "0010_brainstorm_interactive",
-        "0011_app_verification_runtime"
+        "0011_app_verification_runtime",
+        "0012_quality_integrations"
       ]);
       expect(runIndexes.map((index) => index.name)).toContain("idx_qa_runs_project_id");
       expect(findingIndexes.map((index) => index.name)).toContain("idx_qa_findings_qa_run_id");
@@ -146,7 +149,8 @@ describe("migration runner", () => {
         "0008_interactive_review",
         "0009_add_interactive_review_resolved_at_index",
         "0010_brainstorm_interactive",
-        "0011_app_verification_runtime"
+        "0011_app_verification_runtime",
+        "0012_quality_integrations"
       ]);
       expect(tables.map((table) => table.name)).toEqual([
         "story_review_agent_sessions",
@@ -193,7 +197,8 @@ describe("migration runner", () => {
         "0008_interactive_review",
         "0009_add_interactive_review_resolved_at_index",
         "0010_brainstorm_interactive",
-        "0011_app_verification_runtime"
+        "0011_app_verification_runtime",
+        "0012_quality_integrations"
       ]);
       expect(tables.map((table) => table.name)).toEqual(["documentation_agent_sessions", "documentation_runs"]);
       expect(runIndexes.map((index) => index.name)).toContain("idx_documentation_runs_project_id");
@@ -237,7 +242,8 @@ describe("migration runner", () => {
         "0008_interactive_review",
         "0009_add_interactive_review_resolved_at_index",
         "0010_brainstorm_interactive",
-        "0011_app_verification_runtime"
+        "0011_app_verification_runtime",
+        "0012_quality_integrations"
       ]);
       expect(tables.map((table) => table.name)).toEqual([
         "story_review_remediation_agent_sessions",
@@ -261,15 +267,24 @@ describe("migration runner", () => {
 
       const applied = applyMigrations(verificationLegacyDb, baseMigrations);
       const tables = verificationLegacyDb
-        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('app_verification_runs') ORDER BY name")
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('app_verification_runs', 'workspace_sonar_settings', 'workspace_coderabbit_settings', 'quality_knowledge_entries') ORDER BY name"
+        )
         .all() as Array<{ name: string }>;
       const workspaceColumns = verificationLegacyDb.prepare("PRAGMA table_info(workspace_settings)").all() as Array<{ name: string }>;
       const runIndexes = verificationLegacyDb.prepare("PRAGMA index_list(app_verification_runs)").all() as Array<{ name: string }>;
+      const qualityIndexes = verificationLegacyDb.prepare("PRAGMA index_list(quality_knowledge_entries)").all() as Array<{ name: string }>;
 
-      expect(applied).toEqual(["0011_app_verification_runtime"]);
-      expect(tables.map((table) => table.name)).toEqual(["app_verification_runs"]);
+      expect(applied).toEqual(["0011_app_verification_runtime", "0012_quality_integrations"]);
+      expect(tables.map((table) => table.name)).toEqual([
+        "app_verification_runs",
+        "quality_knowledge_entries",
+        "workspace_coderabbit_settings",
+        "workspace_sonar_settings"
+      ]);
       expect(workspaceColumns.map((column) => column.name)).toContain("app_test_config_json");
       expect(runIndexes.map((index) => index.name)).toContain("idx_app_verification_runs_wave_story_execution_id");
+      expect(qualityIndexes.map((index) => index.name)).toContain("idx_quality_knowledge_entries_story_created_at");
     } finally {
       verificationLegacyDb.close();
       testDb.cleanup();

@@ -16,6 +16,7 @@ import type {
   InteractiveReviewResolutionRepository,
   InteractiveReviewSessionRepository,
   ItemRepository,
+  QualityKnowledgeEntryRepository,
   ProjectExecutionContextRepository,
   ProjectRepository,
   QaAgentSessionRepository,
@@ -79,6 +80,7 @@ export type WorkflowDeps = {
   qaRunRepository: QaRunRepository;
   qaFindingRepository: QaFindingRepository;
   qaAgentSessionRepository: QaAgentSessionRepository;
+  qualityKnowledgeEntryRepository: QualityKnowledgeEntryRepository;
   documentationRunRepository: DocumentationRunRepository;
   documentationAgentSessionRepository: DocumentationAgentSessionRepository;
   interactiveReviewSessionRepository: InteractiveReviewSessionRepository;

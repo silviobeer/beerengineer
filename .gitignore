@@ -1,7 +1,31 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
+
+# Test coverage
 coverage/
+
+# SonarCloud scanner working directory
+.scannerwork/
+
+# Runtime data (SQLite databases, agent artifacts)
 var/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+
+# Secrets
+.env
+.env.local
+scripts/sonar-*.json
+docs/*-delivery-report.json
+docs/*-delivery-report.md
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
