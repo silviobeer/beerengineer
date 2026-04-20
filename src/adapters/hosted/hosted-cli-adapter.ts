@@ -93,7 +93,7 @@ export abstract class HostedCliAdapterBase {
     ].join("\n"),
     planning_review: [
       "Inside `output`, return exactly these fields:",
-      '{ "status": "in_review"|"needs_clarification"|"ready"|"blocked"|"failed", "readiness": "ready"|"ready_with_assumptions"|"needs_evidence"|"needs_human_review"|"high_risk", "summary": string, "findings": Array<{ "type": "blocker"|"major_concern"|"question"|"suggestion", "title": string, "detail": string, "evidence"?: string|null }>, "missingInformation": string[], "recommendedNextEvidence": string[], "assumptionsDetected": string[] }'
+      '{ "status": "in_review"|"needs_clarification"|"questions_only"|"ready"|"blocked"|"failed", "readiness": "ready"|"ready_with_assumptions"|"needs_evidence"|"needs_human_review"|"high_risk", "summary": string, "findings": Array<{ "type": "blocker"|"major_concern"|"question"|"suggestion", "title": string, "detail": string, "evidence"?: string|null }>, "missingInformation": string[], "recommendedNextEvidence": string[], "assumptionsDetected": string[] }'
     ].join("\n")
   };
 

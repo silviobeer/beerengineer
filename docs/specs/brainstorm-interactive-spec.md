@@ -223,6 +223,9 @@ Im aktuellen Implementierungsstand kann ein `BrainstormDraft` auch direkt als
 
 - `sourceType=brainstorm_draft`
 
+Wenn ein Planning Review automatisch aus `brainstorm:promote` gestartet wird,
+wird der Lauf aktuell mit `automationLevel=auto_comment` persistiert.
+
 Empfohlene Statuswerte:
 
 - `drafting`

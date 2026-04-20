@@ -287,8 +287,13 @@ Wichtig:
 Planning Review haengt in V1 advisory an bestehende Workflow-Schritte an:
 
 - nach `brainstorm:promote`
+- nach `review:start --type stories`
 - nach erfolgreichem `architecture:start`
 - nach erfolgreichem `planning:start`
+
+Der aktuelle `review:start --type stories`-Response kann deshalb neben
+`sessionId`, `status` und `reused` auch einen advisory `planningReview`-Block
+enthalten. Dieser Trigger wird aktuell als `auto_comment` persistiert.
 
 Der Trigger verbleibt bewusst in den bestehenden workflow-owned Services. Es
 gibt in V1 kein separates Event-Bus-System dafuer.

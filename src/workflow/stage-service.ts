@@ -1,6 +1,6 @@
 import { buildItemWorkflowSnapshot } from "../domain/aggregate-status.js";
 import { assertCanMoveItem } from "../domain/workflow-rules.js";
-import type { StageKey } from "../domain/types.js";
+import type { PlanningReviewReadinessResult, PlanningReviewRun, StageKey } from "../domain/types.js";
 import type { AdapterRuntimeContext } from "../adapters/types.js";
 import type { ArtifactRecord } from "../persistence/repositories.js";
 import { AppError } from "../shared/errors.js";
@@ -43,6 +43,7 @@ export class StageService {
         step: "architecture" | "plan_writing";
         reviewMode: "readiness";
         interactionMode: "interactive";
+        automationLevel: "auto_comment";
       }): Promise<unknown>;
     }
   ) {}
@@ -163,7 +164,8 @@ export class StageService {
                 sourceId: latest.id,
                 step: "architecture",
                 reviewMode: "readiness",
-                interactionMode: "interactive"
+                interactionMode: "interactive",
+                automationLevel: "auto_comment"
               })
             };
           }
@@ -178,7 +180,8 @@ export class StageService {
                 sourceId: latest.id,
                 step: "plan_writing",
                 reviewMode: "readiness",
-                interactionMode: "interactive"
+                interactionMode: "interactive",
+                automationLevel: "auto_comment"
               })
             };
           }
@@ -248,6 +251,7 @@ export class StageService {
     if (!this.options.deps.userStoryRepository.hasAnyByProjectId(projectId)) {
       throw new AppError("STORIES_NOT_FOUND", "No user stories found for project");
     }
+    this.assertRequirementsPlanningReviewGate(projectId);
     this.options.deps.userStoryRepository.approveByProjectId(projectId);
     const project = this.options.loaders.requireProject(projectId);
     const snapshot = this.buildSnapshot(project.itemId);
@@ -264,6 +268,11 @@ export class StageService {
     if (!latest) {
       throw new AppError("ARCHITECTURE_NOT_FOUND", "No architecture plan found for project");
     }
+    this.assertPlanningReviewGate({
+      sourceType: "architecture_plan",
+      sourceId: latest.id,
+      stepLabel: "architecture approval"
+    });
     if (latest.status !== "approved") {
       this.options.deps.architecturePlanRepository.updateStatus(latest.id, "approved");
     }
@@ -275,9 +284,69 @@ export class StageService {
     if (!latest) {
       throw new AppError("IMPLEMENTATION_PLAN_NOT_FOUND", "No implementation plan found for project");
     }
+    this.assertPlanningReviewGate({
+      sourceType: "implementation_plan",
+      sourceId: latest.id,
+      stepLabel: "planning approval"
+    });
     if (latest.status !== "approved") {
       this.options.deps.implementationPlanRepository.updateStatus(latest.id, "approved");
     }
+  }
+
+  private assertRequirementsPlanningReviewGate(projectId: string): void {
+    const latestInteractiveReview = this.options.deps.interactiveReviewSessionRepository.getLatestByScope({
+      scopeType: "project",
+      scopeId: projectId,
+      artifactType: "stories",
+      reviewType: "collection_review"
+    });
+    if (!latestInteractiveReview) {
+      return;
+    }
+    this.assertPlanningReviewGate({
+      sourceType: "interactive_review_session",
+      sourceId: latestInteractiveReview.id,
+      stepLabel: "story approval"
+    });
+  }
+
+  private assertPlanningReviewGate(input: {
+    sourceType: PlanningReviewRun["sourceType"];
+    sourceId: string;
+    stepLabel: string;
+  }): void {
+    const latestRun = this.options.deps.planningReviewRunRepository.getLatestBySource({
+      sourceType: input.sourceType,
+      sourceId: input.sourceId
+    });
+    if (!this.shouldEnforcePlanningReviewGate(latestRun)) {
+      return;
+    }
+    throw new AppError(
+      "PLANNING_REVIEW_GATE_BLOCKED",
+      `${input.stepLabel} is blocked by planning review ${latestRun.id} (${latestRun.status}/${latestRun.readiness}).`
+    );
+  }
+
+  private shouldEnforcePlanningReviewGate(run: PlanningReviewRun | null): run is PlanningReviewRun {
+    if (!run) {
+      return false;
+    }
+    if (run.automationLevel !== "auto_gate") {
+      return false;
+    }
+    if (run.gateEligibility !== "advisory") {
+      return false;
+    }
+    return !this.isPlanningReviewReadyForGate(run.readiness, run.status);
+  }
+
+  private isPlanningReviewReadyForGate(
+    readiness: PlanningReviewReadinessResult | null,
+    status: PlanningReviewRun["status"]
+  ): boolean {
+    return status === "ready" && (readiness === "ready" || readiness === "ready_with_assumptions");
   }
 
   public async retryRun(runId: string): Promise<{ runId: string; status: string; retriedFromRunId: string }> {

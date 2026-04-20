@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, notInArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt, notInArray, not } from "drizzle-orm";
 
 import type {
   AcceptanceCriterion,
@@ -682,6 +682,34 @@ export class PlanningReviewRunRepository {
     ) ?? null;
   }
 
+  public getPreviousComparable(input: {
+    sourceType: PlanningReviewRun["sourceType"];
+    sourceId: string;
+    step: PlanningReviewRun["step"];
+    reviewMode: PlanningReviewRun["reviewMode"];
+    beforeStartedAt: number;
+    excludeRunId: string;
+  }): PlanningReviewRun | null {
+    return (
+      this.db
+        .select()
+        .from(planningReviewRuns)
+        .where(
+          and(
+            eq(planningReviewRuns.sourceType, input.sourceType),
+            eq(planningReviewRuns.sourceId, input.sourceId),
+            eq(planningReviewRuns.step, input.step),
+            eq(planningReviewRuns.reviewMode, input.reviewMode),
+            lt(planningReviewRuns.startedAt, input.beforeStartedAt),
+            not(eq(planningReviewRuns.id, input.excludeRunId))
+          )
+        )
+        .orderBy(desc(planningReviewRuns.startedAt), desc(planningReviewRuns.id))
+        .limit(1)
+        .get() as PlanningReviewRun | undefined
+    ) ?? null;
+  }
+
   public create(input: PlanningReviewRunCreateInput): PlanningReviewRun {
     const timestamp = now();
     const row: PlanningReviewRun = {
@@ -702,6 +730,7 @@ export class PlanningReviewRunRepository {
         PlanningReviewRun,
         | "status"
         | "interactionMode"
+        | "automationLevel"
         | "actualMode"
         | "readiness"
         | "confidence"
@@ -720,6 +749,7 @@ export class PlanningReviewRunRepository {
       .set({
         ...definedField("status", input.status),
         ...definedField("interactionMode", input.interactionMode),
+        ...definedField("automationLevel", input.automationLevel),
         ...definedField("actualMode", input.actualMode),
         ...definedField("readiness", input.readiness),
         ...definedField("confidence", input.confidence),
@@ -2764,6 +2794,30 @@ export class InteractiveReviewSessionRepository {
             eq(interactiveReviewSessions.artifactType, input.artifactType),
             eq(interactiveReviewSessions.reviewType, input.reviewType),
             notInArray(interactiveReviewSessions.status, ["resolved", "cancelled"])
+          )
+        )
+        .orderBy(desc(interactiveReviewSessions.startedAt), desc(interactiveReviewSessions.id))
+        .limit(1)
+        .get() as InteractiveReviewSession | undefined
+    ) ?? null;
+  }
+
+  public getLatestByScope(input: {
+    scopeType: InteractiveReviewSession["scopeType"];
+    scopeId: string;
+    artifactType: InteractiveReviewSession["artifactType"];
+    reviewType: InteractiveReviewSession["reviewType"];
+  }): InteractiveReviewSession | null {
+    return (
+      this.db
+        .select()
+        .from(interactiveReviewSessions)
+        .where(
+          and(
+            eq(interactiveReviewSessions.scopeType, input.scopeType),
+            eq(interactiveReviewSessions.scopeId, input.scopeId),
+            eq(interactiveReviewSessions.artifactType, input.artifactType),
+            eq(interactiveReviewSessions.reviewType, input.reviewType)
           )
         )
         .orderBy(desc(interactiveReviewSessions.startedAt), desc(interactiveReviewSessions.id))

@@ -134,7 +134,8 @@ export class WorkflowService {
       buildAdapterRuntimeContext: (input) => this.buildAdapterRuntimeContext(input),
       approveStories: (projectId) => this.stageService.approveStories(projectId),
       buildSnapshot: (itemId) => this.stageService.buildSnapshot(itemId),
-      autorunForProject: (input) => this.autorunForProject(input)
+      autorunForProject: (input) => this.autorunForProject(input),
+      triggerPlanningReview: (input) => this.planningReviewService.startReview(input)
     });
     this.planningReviewService = new PlanningReviewService({
       deps,
@@ -374,6 +375,7 @@ export class WorkflowService {
     step: import("../domain/types.js").PlanningReviewStep;
     reviewMode: import("../domain/types.js").PlanningReviewMode;
     interactionMode: import("../domain/types.js").PlanningReviewInteractionMode;
+    automationLevel?: import("../domain/types.js").PlanningReviewAutomationLevel;
   }) {
     return this.planningReviewService.startReview(input);
   }
@@ -416,7 +418,7 @@ export class WorkflowService {
     return this.brainstormService.promoteBrainstorm(sessionId, options);
   }
 
-  public startInteractiveReview(input: { type: "stories"; projectId: string }) {
+  public async startInteractiveReview(input: { type: "stories"; projectId: string }) {
     return this.interactiveReviewService.startInteractiveReview(input);
   }
 

@@ -202,11 +202,9 @@ export const planningReviewSteps = ["requirements_engineering", "architecture", 
 export type PlanningReviewStep = (typeof planningReviewSteps)[number];
 
 export const planningReviewStatuses = [
-  "brainstorming",
-  "drafting",
   "synthesizing",
-  "in_review",
-  "needs_clarification",
+  "blocker_present",
+  "questions_only",
   "revising",
   "ready",
   "blocked",
@@ -236,6 +234,15 @@ export const planningReviewExecutionModes = [
   "minimal_review"
 ] as const;
 export type PlanningReviewExecutionMode = (typeof planningReviewExecutionModes)[number];
+
+export const planningReviewConfidenceLevels = ["high", "medium", "reduced", "low"] as const;
+export type PlanningReviewConfidenceLevel = (typeof planningReviewConfidenceLevels)[number];
+
+export const planningReviewGateEligibilities = ["advisory", "advisory_only"] as const;
+export type PlanningReviewGateEligibility = (typeof planningReviewGateEligibilities)[number];
+
+export const planningReviewAutomationLevels = ["manual", "auto_suggest", "auto_comment", "auto_gate"] as const;
+export type PlanningReviewAutomationLevel = (typeof planningReviewAutomationLevels)[number];
 
 export const planningReviewSourceTypes = [
   "brainstorm_session",
@@ -931,11 +938,12 @@ export type PlanningReviewRun = {
   status: PlanningReviewStatus;
   interactionMode: PlanningReviewInteractionMode;
   reviewMode: PlanningReviewMode;
+  automationLevel: PlanningReviewAutomationLevel;
   requestedMode: PlanningReviewExecutionMode;
   actualMode: PlanningReviewExecutionMode;
   readiness: PlanningReviewReadinessResult | null;
-  confidence: string;
-  gateEligibility: string;
+  confidence: PlanningReviewConfidenceLevel;
+  gateEligibility: PlanningReviewGateEligibility;
   normalizedArtifactJson: string;
   providersUsedJson: string;
   missingCapabilitiesJson: string;

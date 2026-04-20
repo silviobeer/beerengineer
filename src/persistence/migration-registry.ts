@@ -984,5 +984,11 @@ export const baseMigrations: readonly SqlMigration[] = [
       `CREATE INDEX IF NOT EXISTS idx_planning_review_assumptions_run
         ON planning_review_assumptions(run_id, created_at)`
     ]
+  },
+  {
+    id: "0015_planning_review_automation_level",
+    statements: [
+      `ALTER TABLE planning_review_runs ADD COLUMN automation_level TEXT NOT NULL DEFAULT 'manual'`
+    ]
   }
 ];

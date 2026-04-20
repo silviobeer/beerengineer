@@ -129,17 +129,27 @@ Wichtige Parameter fuer `planning-review:start`:
 - `--step requirements_engineering|architecture|plan_writing`
 - `--review-mode critique|risk|alternatives|readiness`
 - `--mode interactive|auto`
+- `--automation-level manual|auto_suggest|auto_comment|auto_gate`
 
 Rueckgabe:
 
 - `run`
-  - inkl. `requestedMode`, `actualMode`, `confidence`, `gateEligibility`
+  - inkl. `automationLevel`, `requestedMode`, `actualMode`, `confidence`, `gateEligibility`
 - `artifact`
   - normalisierte Review-Eingabe
 - `findings`
 - `synthesis`
 - `questions`
 - `assumptions`
+- `questionSummary`
+  - `totalQuestions`
+  - `openQuestions`
+  - `answeredQuestions`
+  - `deferredQuestionsCount`
+- `comparisonToPrevious`
+  - nur vorhanden, wenn ein vergleichbarer vorheriger Run existiert
+  - enthaelt `previousRunId`, `changedFields`, `changedFieldCount`,
+    `findingDelta` und `plausiblyImpactedFindingTitles`
 
 Wichtig:
 
@@ -150,6 +160,21 @@ Wichtig:
   Fragen eines bestehenden Runs.
 - `planning-review:rerun` startet einen neuen Review-Lauf auf Basis desselben
   Source-Artefakts und bereits beantworteter Fragen.
+- Interaktive Runs unterscheiden jetzt sichtbar zwischen:
+  - `blocker_present`
+    - harte Luecken sind offen
+  - `questions_only`
+    - nur noch Praezisierungen sind offen
+- automatisch ausgelöste Planning Reviews persistieren aktuell
+  `automationLevel = auto_comment`
+- `auto_gate` ist jetzt nicht mehr nur Metadatum:
+  - `stories:approve`, `architecture:approve` und `planning:approve`
+    werden blockiert, wenn der neueste relevante Planning-Review-Run
+    gleichzeitig
+    - `automationLevel = auto_gate`
+    - `gateEligibility = advisory`
+    - und nicht `ready` mit `readiness = ready|ready_with_assumptions`
+      ist
 
 ## Interactive Brainstorm
 
@@ -193,8 +218,14 @@ Im aktuellen CLI-Stand koennen deshalb `architecture:start` und
 `planning:start` neben `runId` und `status` zusaetzlich einen
 `planningReview`-Block im Response liefern.
 
-Diese Trigger laufen advisory-only. Sie blockieren den Workflow in V1 nicht
-hart.
+`review:start --type stories` kann ebenfalls einen `planningReview`-Block
+enthalten, weil der Start einer Story-Review-Session als Requirements-nahe
+advisory Review-Kante behandelt wird.
+
+Diese automatisch gestarteten Trigger laufen weiterhin advisory-only, weil sie
+mit `automationLevel = auto_comment` erzeugt werden. Hartes Blocking entsteht
+erst bei explizit als `auto_gate` gestarteten Planning-Review-Runs mit voller
+Gate-Eignung.
 
 Fuer reproduzierbare Live-Runs akzeptiert die CLI global:
 
@@ -253,7 +284,7 @@ Die neuen Setup-Kommandos verhalten sich bewusst unterschiedlich:
 - `workspace:assist --message "..."` gibt dem Assist-Pfad zusaetzlichen Nutzerkontext; der Output bleibt trotzdem rein planend
 - `workspace:assist` arbeitet jetzt als persistente Session pro Workspace und liefert Session, Nachrichtenverlauf, `currentPlan` und `recommendedNextCommand`
 - `workspace:assist:list` zeigt alle Setup-Sessions des Workspaces, inklusive Marker fuer die neueste, offene und aktuell fuer `workspace:bootstrap` empfohlene Session sowie `recommendedNextCommand`
-- `workspace:assist:show` zeigt die neueste oder eine explizite Workspace-Assist-Session erneut an und liefert `recommendedBootstrapCommand`, `recommendedNextCommand` sowie `nextCommand`
+- `workspace:assist:show` zeigt die neueste oder eine explizite Workspace-Assist-Session erneut an und liefert denselben konsolidierten Folgehinweis ueber `recommendedNextCommand`
 - `workspace:assist:resolve` markiert eine Session formal als abgeschlossen und zeigt als `recommendedNextCommand` den Bootstrap der Session
 - `workspace:assist:cancel` bricht eine offene Session formal ab und zeigt als `recommendedNextCommand` den Start einer neuen Assist-Session
 - `workspace:assist` unterscheidet dabei zwischen Greenfield und Brownfield und setzt fuer bestehende Projekte `scaffoldProjectFiles=false`
@@ -392,6 +423,7 @@ Im aktuellen Documentation-Schnitt gilt:
 - `documentation:retry` erlaubt genau dann einen neuen Dokumentationslauf, wenn der letzte `DocumentationRun` auf `review_required` oder `failed` steht
 - `documentation:start` materialisiert den fertigen Delivery-Report zusaetzlich in den Workspace unter `.beerengineer/artifacts/delivery-reports/<projectCode>-delivery-report.md` und `.beerengineer/artifacts/delivery-reports/<projectCode>-delivery-report.json`
 - `beerengineer sonar preflight` prueft die Laufzeitvoraussetzungen fuer Live-Sonar (`java`, `sonar-scanner`, `SONAR_TOKEN`) und gibt klare naechste Schritte aus
+- `beerengineer coderabbit preflight` prueft die optionalen Voraussetzungen fuer spaetere Live-Coderabbit-Reviews (`CODERABBIT_TOKEN`, Organisation/Repository, Git-Repo) und gibt klare naechste Schritte aus
 
 ## Sonar Runtime
 
@@ -409,3 +441,20 @@ Empfohlener Ablauf fuer Live-Sonar:
 4. erst dann `beerengineer sonar scan`
 
 Wenn die Toolchain dauerhaft reproduzierbar gemacht werden soll, sind `mise`, `asdf`, Devcontainer oder `Nix` sinnvolle Optionen.
+
+## Coderabbit Runtime
+
+Die App laeuft auch ohne Coderabbit. In diesem Fall fehlen nur Review-/Qualitaetssignale, nicht die Grundfunktionalitaet.
+
+Fuer spaetere Live-Coderabbit-Reviews gelten diese Voraussetzungen:
+
+- `CODERABBIT_TOKEN` muss in der Workspace-Konfiguration oder in `.env.local` gesetzt sein
+- Organisation und Repository muessen konfiguriert sein
+- der Workspace-Root sollte ein Git-Repository sein
+
+Empfohlener Ablauf:
+
+1. `beerengineer coderabbit preflight`
+2. fehlende Coderabbit-Voraussetzungen beheben
+3. `beerengineer coderabbit config test`
+4. erst dann einen echten Review-Run darauf aufbauen

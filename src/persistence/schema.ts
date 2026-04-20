@@ -633,6 +633,7 @@ export const planningReviewRuns = sqliteTable("planning_review_runs", {
   status: text("status").notNull(),
   interactionMode: text("interaction_mode").notNull(),
   reviewMode: text("review_mode").notNull(),
+  automationLevel: text("automation_level").notNull(),
   requestedMode: text("requested_mode").notNull(),
   actualMode: text("actual_mode").notNull(),
   readiness: text("readiness"),

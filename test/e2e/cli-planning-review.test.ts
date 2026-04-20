@@ -58,10 +58,11 @@ describe("cli planning review", () => {
         );
 
         const promoted = runCli(["--db", dbPath, "brainstorm:promote", "--session-id", brainstorm.session.id], cwd) as {
-          planningReview?: { run: { id: string; status: string } };
+          planningReview?: { run: { id: string; status: string; automationLevel: string } };
           conceptId: string;
         };
         expect(promoted.planningReview?.run.status).toBe("ready");
+        expect(promoted.planningReview?.run.automationLevel).toBe("auto_comment");
 
         runCli(["--db", dbPath, "concept:approve", "--concept-id", promoted.conceptId], cwd);
         runCli(["--db", dbPath, "project:import", "--item-id", item.id], cwd);
@@ -74,19 +75,21 @@ describe("cli planning review", () => {
         runCli(["--db", dbPath, "stories:approve", "--project-id", projectId], cwd);
 
         const architecture = runCli(["--db", dbPath, "architecture:start", "--item-id", item.id, "--project-id", projectId], cwd) as {
-          planningReview?: { run: { status: string } };
+          planningReview?: { run: { status: string; automationLevel: string } };
           status: string;
         };
         expect(architecture.status).toBe("completed");
         expect(architecture.planningReview?.run.status).toBe("ready");
+        expect(architecture.planningReview?.run.automationLevel).toBe("auto_comment");
 
         runCli(["--db", dbPath, "architecture:approve", "--project-id", projectId], cwd);
         const planning = runCli(["--db", dbPath, "planning:start", "--item-id", item.id, "--project-id", projectId], cwd) as {
-          planningReview?: { run: { status: string } };
+          planningReview?: { run: { status: string; automationLevel: string } };
           status: string;
         };
         expect(planning.status).toBe("completed");
-        expect(planning.planningReview?.run.status).toBe("needs_clarification");
+        expect(planning.planningReview?.run.status).toBe("questions_only");
+        expect(planning.planningReview?.run.automationLevel).toBe("auto_comment");
       } finally {
         rmSync(root, { recursive: true, force: true });
       }
@@ -151,12 +154,17 @@ describe("cli planning review", () => {
           ],
           cwd
         ) as {
-          run: { id: string; status: string };
-          questions: Array<{ id: string; question: string }>;
+          run: { id: string; status: string; automationLevel: string };
+          questions: Array<{ id: string; question: string; reason: string; impact: string }>;
+          questionSummary: { deferredQuestionsCount: number };
         };
 
-        expect(started.run.status).toBe("needs_clarification");
+        expect(started.run.status).toBe("questions_only");
+        expect(started.run.automationLevel).toBe("manual");
         expect(started.questions.length).toBeGreaterThanOrEqual(2);
+        expect(started.questions.some((question) => question.reason.includes("credible test path."))).toBe(true);
+        expect(started.questions.some((question) => question.impact.includes("readiness remains reduced"))).toBe(true);
+        expect(started.questionSummary.deferredQuestionsCount).toBe(0);
 
         const testQuestion = started.questions.find((question) => question.question.toLowerCase().includes("test")) ?? started.questions[0]!;
         const rolloutQuestion =
@@ -195,17 +203,95 @@ describe("cli planning review", () => {
           run: { id: string; status: string };
           findings: Array<{ status: string }>;
           synthesis: { readiness: string } | null;
+          comparisonToPrevious: {
+            previousRunId: string;
+            changedFieldCount: number;
+            changedFields: Array<{ field: string }>;
+            findingDelta: { resolvedCount: number };
+          } | null;
         };
 
         expect(rerun.run.status).toBe("ready");
         expect(rerun.synthesis?.readiness).toBe("ready");
         expect(rerun.findings).toHaveLength(0);
+        expect(rerun.comparisonToPrevious?.previousRunId).toBe(started.run.id);
+        expect(rerun.comparisonToPrevious?.changedFieldCount).toBeGreaterThan(0);
+        expect(rerun.comparisonToPrevious?.changedFields.some((field) => field.field === "clarificationAnswers")).toBe(true);
+        expect(rerun.comparisonToPrevious?.findingDelta.resolvedCount).toBeGreaterThan(0);
 
         const originalRun = runCli(["--db", dbPath, "planning-review:show", "--run-id", started.run.id], cwd) as {
           findings: Array<{ status: string }>;
         };
         expect(originalRun.findings.length).toBeGreaterThan(0);
         expect(originalRun.findings.every((finding) => finding.status === "resolved")).toBe(true);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+    25000
+  );
+
+  it(
+    "accepts explicit automation levels for manual planning-review starts",
+    () => {
+      const root = mkdtempSync(join(tmpdir(), "beerengineer-planning-review-automation-"));
+      const dbPath = join(root, "app.sqlite");
+      const cwd = resolve(".");
+
+      try {
+        const item = runCli(["--db", dbPath, "item:create", "--title", "Planning Automation CLI", "--description", "Set automation levels explicitly"], cwd) as {
+          id: string;
+        };
+        runCli(["--db", dbPath, "brainstorm:start", "--item-id", item.id], cwd);
+        const shown = runCli(["--db", dbPath, "brainstorm:show", "--item-id", item.id], cwd) as {
+          session: { id: string };
+        };
+        runCli(
+          [
+            "--db",
+            dbPath,
+            "brainstorm:draft:update",
+            "--session-id",
+            shown.session.id,
+            "--problem",
+            "Need explicit automation-level control",
+            "--core-outcome",
+            "Planning-review starts should persist the requested automation level",
+            "--target-user",
+            "delivery lead",
+            "--use-case",
+            "start a planning review in auto-suggest mode",
+            "--recommended-direction",
+            "Allow automation-level selection via CLI",
+            "--clear-open-questions"
+          ],
+          cwd
+        );
+
+        const started = runCli(
+          [
+            "--db",
+            dbPath,
+            "planning-review:start",
+            "--source-type",
+            "brainstorm_session",
+            "--source-id",
+            shown.session.id,
+            "--step",
+            "requirements_engineering",
+            "--review-mode",
+            "critique",
+            "--mode",
+            "interactive",
+            "--automation-level",
+            "auto_suggest"
+          ],
+          cwd
+        ) as {
+          run: { automationLevel: string };
+        };
+
+        expect(started.run.automationLevel).toBe("auto_suggest");
       } finally {
         rmSync(root, { recursive: true, force: true });
       }
@@ -289,7 +375,10 @@ describe("cli planning review", () => {
 
         const review = runCli(["--db", dbPath, "review:start", "--type", "stories", "--project-id", projectId], cwd) as {
           sessionId: string;
+          planningReview?: { run: { status: string; automationLevel: string } };
         };
+        expect(review.planningReview?.run.status).toBe("blocker_present");
+        expect(review.planningReview?.run.automationLevel).toBe("auto_comment");
         const fromInteractiveReview = runCli(
           [
             "--db",
@@ -310,7 +399,7 @@ describe("cli planning review", () => {
         ) as {
           run: { status: string };
         };
-        expect(fromInteractiveReview.run.status).toBe("needs_clarification");
+        expect(fromInteractiveReview.run.status).toBe("blocker_present");
       } finally {
         rmSync(root, { recursive: true, force: true });
       }
@@ -359,7 +448,7 @@ describe("cli planning review", () => {
           findings: Array<{ title: string; findingType: string }>;
         };
 
-        expect(review.run.status).toBe("needs_clarification");
+        expect(review.run.status).toBe("blocker_present");
         expect(review.findings.some((finding) => finding.title === "proposal is missing" && finding.findingType === "blocker")).toBe(true);
       } finally {
         rmSync(root, { recursive: true, force: true });
@@ -435,6 +524,80 @@ describe("cli planning review", () => {
         };
         expect(rerun.findings.length).toBeGreaterThan(0);
         expect(rerun.findings.every((finding) => finding.status === "open")).toBe(true);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+    25000
+  );
+
+  it(
+    "escalates auto-mode planning reviews without asking user questions",
+    () => {
+      const root = mkdtempSync(join(tmpdir(), "beerengineer-planning-review-auto-"));
+      const dbPath = join(root, "app.sqlite");
+      const cwd = resolve(".");
+
+      try {
+        const item = runCli(["--db", dbPath, "item:create", "--title", "Planning Auto CLI", "--description", "Exercise auto-mode escalation"], cwd) as {
+          id: string;
+        };
+        runCli(["--db", dbPath, "brainstorm:start", "--item-id", item.id], cwd);
+        const shown = runCli(["--db", dbPath, "brainstorm:show", "--item-id", item.id], cwd) as {
+          session: { id: string };
+        };
+        runCli(
+          [
+            "--db",
+            dbPath,
+            "brainstorm:draft:update",
+            "--session-id",
+            shown.session.id,
+            "--problem",
+            "Need a safer automatic planning-review mode",
+            "--core-outcome",
+            "Escalate risky ambiguity without asking the user",
+            "--target-user",
+            "delivery lead",
+            "--use-case",
+            "run readiness review in automode",
+            "--risk",
+            "Migration and rollback details are missing",
+            "--recommended-direction",
+            "Use explicit assumptions and human-review escalation",
+            "--clear-open-questions"
+          ],
+          cwd
+        );
+
+        const started = runCli(
+          [
+            "--db",
+            dbPath,
+            "planning-review:start",
+            "--source-type",
+            "brainstorm_session",
+            "--source-id",
+            shown.session.id,
+            "--step",
+            "plan_writing",
+            "--review-mode",
+            "risk",
+            "--mode",
+            "auto"
+          ],
+          cwd
+        ) as {
+          run: { status: string; readiness: string; automationLevel: string };
+          questions: Array<unknown>;
+          assumptions: Array<{ source: string; statement: string }>;
+        };
+
+        expect(started.run.status).toBe("blocked");
+        expect(started.run.readiness).toBe("needs_human_review");
+        expect(started.run.automationLevel).toBe("manual");
+        expect(started.questions).toHaveLength(0);
+        expect(started.assumptions.some((assumption) => assumption.source === "auto_mode_fallback")).toBe(true);
       } finally {
         rmSync(root, { recursive: true, force: true });
       }

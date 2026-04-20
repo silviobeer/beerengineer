@@ -12,8 +12,11 @@ import type {
   Concept,
   ImplementationPlan,
   PlanningReviewAssumption,
+  PlanningReviewAutomationLevel,
+  PlanningReviewConfidenceLevel,
   PlanningReviewExecutionMode,
   PlanningReviewFinding,
+  PlanningReviewGateEligibility,
   PlanningReviewInteractionMode,
   PlanningReviewMode,
   PlanningReviewProviderRole,
@@ -61,6 +64,16 @@ type ReviewAssignment = {
   role: PlanningReviewProviderRole;
 };
 
+type CapabilityPlan = {
+  requestedMode: PlanningReviewExecutionMode;
+  actualMode: PlanningReviewExecutionMode;
+  assignments: ReviewAssignment[];
+  providersUsed: string[];
+  missingCapabilities: string[];
+  confidence: PlanningReviewConfidenceLevel;
+  gateEligibility: PlanningReviewGateEligibility;
+};
+
 function normalizeEntries(values: Array<string | null | undefined>): string[] {
   const seen = new Set<string>();
   const result: string[] = [];
@@ -89,6 +102,8 @@ function fingerprintFinding(input: {
 }
 
 export class PlanningReviewService {
+  private readonly providerAvailabilityCache = new Map<string, boolean>();
+
   public constructor(private readonly options: PlanningReviewServiceOptions) {}
 
   public async startReview(input: {
@@ -97,6 +112,7 @@ export class PlanningReviewService {
     step: PlanningReviewStep;
     reviewMode: PlanningReviewMode;
     interactionMode: PlanningReviewInteractionMode;
+    automationLevel?: PlanningReviewAutomationLevel;
     clarificationAnswers?: Array<{
       question: string;
       answer: string;
@@ -108,7 +124,7 @@ export class PlanningReviewService {
       step: input.step,
       clarificationAnswers: input.clarificationAnswers ?? []
     });
-    const capability = this.resolveCapabilityPlan();
+    const capability = this.resolveCapabilityPlan(input.reviewMode);
     const previousComparableRun = this.options.deps.planningReviewRunRepository.getLatestComparable({
       sourceType: input.sourceType,
       sourceId: input.sourceId,
@@ -130,6 +146,7 @@ export class PlanningReviewService {
           status: "synthesizing",
           interactionMode: input.interactionMode,
           reviewMode: input.reviewMode,
+          automationLevel: input.automationLevel ?? "manual",
           requestedMode: capability.requestedMode,
           actualMode: capability.actualMode,
           readiness: null,
@@ -317,6 +334,7 @@ export class PlanningReviewService {
       step: run.step,
       reviewMode: run.reviewMode,
       interactionMode: run.interactionMode,
+      automationLevel: run.automationLevel,
       clarificationAnswers: answeredQuestions
     });
   }
@@ -346,6 +364,9 @@ export class PlanningReviewService {
     const synthesis = overrides?.existingSynthesis ?? this.options.deps.planningReviewSynthesisRepository.getLatestByRunId(runId);
     const questions = overrides?.existingQuestions ?? this.options.deps.planningReviewQuestionRepository.listByRunId(runId);
     const assumptions = overrides?.existingAssumptions ?? this.options.deps.planningReviewAssumptionRepository.listByRunId(runId);
+    const comparisonToPrevious = this.buildComparisonToPrevious(run, findings);
+    const openQuestionCount = questions.filter((question) => question.status === "open").length;
+    const answeredQuestionCount = questions.filter((question) => question.status === "answered").length;
     return {
       run,
       artifact: JSON.parse(run.normalizedArtifactJson) as NormalizedPlanningArtifact,
@@ -358,7 +379,14 @@ export class PlanningReviewService {
           }
         : null,
       questions,
-      assumptions
+      assumptions,
+      questionSummary: {
+        totalQuestions: questions.length,
+        openQuestions: openQuestionCount,
+        answeredQuestions: answeredQuestionCount,
+        deferredQuestionsCount: 0
+      },
+      comparisonToPrevious
     };
   }
 
@@ -595,26 +623,25 @@ export class PlanningReviewService {
     return JSON.parse(readFileSync(absolutePath, "utf8")) as unknown;
   }
 
-  private resolveCapabilityPlan(): {
-    requestedMode: PlanningReviewExecutionMode;
-    actualMode: PlanningReviewExecutionMode;
-    assignments: ReviewAssignment[];
-    providersUsed: string[];
-    missingCapabilities: string[];
-    confidence: string;
-    gateEligibility: string;
-  } {
+  private resolveCapabilityPlan(reviewMode: PlanningReviewMode): CapabilityPlan {
     const configuredProviders = Object.entries(this.options.deps.agentRuntimeResolver.config.providers).filter(([_, config]) =>
       this.isProviderAvailable(config.adapterKey, config.command[0] ?? null)
     );
-    const localProvider = configuredProviders.find(([_, config]) => config.adapterKey === "local-cli")?.[0];
-    if (localProvider) {
+    const localProvider = configuredProviders.find(([_, config]) => config.adapterKey === "local-cli")?.[0] ?? null;
+    const nonLocalProviders = configuredProviders.filter(([_, config]) => config.adapterKey !== "local-cli");
+    const primaryRoles = this.selectRolesForMode(reviewMode);
+    const preferredAutonomousProvider = this.options.deps.agentRuntimeResolver.resolveDefault("autonomous");
+    const preferDeterministicLocal = preferredAutonomousProvider.adapterKey === "local-cli" && localProvider !== null;
+    const providerByAdapterKey = new Map(nonLocalProviders.map(([providerKey, config]) => [config.adapterKey, providerKey]));
+    const codexProvider = providerByAdapterKey.get("codex");
+    const claudeProvider = providerByAdapterKey.get("claude");
+    if (preferDeterministicLocal) {
       return {
         requestedMode: "single_model_multi_role",
         actualMode: "single_model_multi_role",
         assignments: [
-          { providerKey: localProvider, role: "implementation_reviewer" },
-          { providerKey: localProvider, role: "decision_auditor" }
+          { providerKey: localProvider, role: primaryRoles[0]! },
+          { providerKey: localProvider, role: primaryRoles[1]! }
         ],
         providersUsed: [localProvider],
         missingCapabilities: ["independent_second_reviewer"],
@@ -622,52 +649,87 @@ export class PlanningReviewService {
         gateEligibility: "advisory_only"
       };
     }
-    const providerByAdapterKey = new Map(configuredProviders.map(([providerKey, config]) => [config.adapterKey, providerKey]));
-    const codexProvider = providerByAdapterKey.get("codex");
-    const claudeProvider = providerByAdapterKey.get("claude");
     if (codexProvider && claudeProvider) {
       return {
         requestedMode: "full_dual_review",
         actualMode: "full_dual_review",
-        assignments: [
-          { providerKey: codexProvider, role: "implementation_reviewer" },
-          { providerKey: claudeProvider, role: "architecture_challenger" }
-        ],
+        assignments: this.assignPreferredDualProviders(primaryRoles, codexProvider, claudeProvider),
         providersUsed: [codexProvider, claudeProvider],
         missingCapabilities: [],
         confidence: "high",
         gateEligibility: "advisory"
       };
     }
-    if (configuredProviders.length >= 2) {
+    if (nonLocalProviders.length >= 2) {
       return {
         requestedMode: "degraded_dual_review",
         actualMode: "degraded_dual_review",
         assignments: [
-          { providerKey: configuredProviders[0]![0], role: "implementation_reviewer" },
-          { providerKey: configuredProviders[1]![0], role: "decision_auditor" }
+          { providerKey: nonLocalProviders[0]![0], role: primaryRoles[0]! },
+          { providerKey: nonLocalProviders[1]![0], role: primaryRoles[1]! }
         ],
-        providersUsed: [configuredProviders[0]![0], configuredProviders[1]![0]],
+        providersUsed: [nonLocalProviders[0]![0], nonLocalProviders[1]![0]],
         missingCapabilities: codexProvider || claudeProvider ? [] : ["preferred_codex_claude_pair"],
         confidence: "medium",
         gateEligibility: "advisory"
       };
     }
-    if (configuredProviders.length >= 1) {
+    if (localProvider) {
       return {
         requestedMode: "single_model_multi_role",
         actualMode: "single_model_multi_role",
         assignments: [
-          { providerKey: configuredProviders[0]![0], role: "implementation_reviewer" },
-          { providerKey: configuredProviders[0]![0], role: "decision_auditor" }
+          { providerKey: localProvider, role: primaryRoles[0]! },
+          { providerKey: localProvider, role: primaryRoles[1]! }
         ],
-        providersUsed: [configuredProviders[0]![0]],
+        providersUsed: [localProvider],
         missingCapabilities: ["independent_second_reviewer"],
         confidence: "reduced",
         gateEligibility: "advisory_only"
       };
     }
+    if (nonLocalProviders.length === 1) {
+      return {
+        requestedMode: "minimal_review",
+        actualMode: "minimal_review",
+        assignments: [{ providerKey: nonLocalProviders[0]![0], role: primaryRoles[0]! }],
+        providersUsed: [nonLocalProviders[0]![0]],
+        missingCapabilities: ["independent_second_reviewer", "cross_role_challenge"],
+        confidence: "low",
+        gateEligibility: "advisory_only"
+      };
+    }
     throw new AppError("PLANNING_REVIEW_PROVIDER_UNAVAILABLE", "No planning review provider is configured");
+  }
+
+  private selectRolesForMode(reviewMode: PlanningReviewMode): [PlanningReviewProviderRole, PlanningReviewProviderRole] {
+    switch (reviewMode) {
+      case "critique":
+        return ["implementation_reviewer", "architecture_challenger"];
+      case "risk":
+        return ["implementation_reviewer", "decision_auditor"];
+      case "alternatives":
+        return ["architecture_challenger", "product_skeptic"];
+      case "readiness":
+      default:
+        return ["implementation_reviewer", "decision_auditor"];
+    }
+  }
+
+  private assignPreferredDualProviders(
+    roles: [PlanningReviewProviderRole, PlanningReviewProviderRole],
+    codexProvider: string,
+    claudeProvider: string
+  ): ReviewAssignment[] {
+    return roles.map((role) => ({
+      providerKey:
+        role === "implementation_reviewer"
+          ? codexProvider
+          : role === "architecture_challenger" || role === "decision_auditor" || role === "product_skeptic"
+            ? claudeProvider
+            : claudeProvider,
+      role
+    }));
   }
 
   private isProviderAvailable(adapterKey: string, command: string | null): boolean {
@@ -677,8 +739,16 @@ export class PlanningReviewService {
     if (!command) {
       return false;
     }
-    const result = spawnSync("which", [command], { cwd: this.options.deps.workspaceRoot, encoding: "utf8" });
-    return result.status === 0;
+    const cacheKey = `${adapterKey}::${command}`;
+    const cached = this.providerAvailabilityCache.get(cacheKey);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const lookupCommand = process.platform === "win32" ? "where" : "which";
+    const result = spawnSync(lookupCommand, [command], { cwd: this.options.deps.workspaceRoot, encoding: "utf8" });
+    const available = result.status === 0;
+    this.providerAvailabilityCache.set(cacheKey, available);
+    return available;
   }
 
   private buildPlanningReviewPrompt(input: {
@@ -734,33 +804,28 @@ export class PlanningReviewService {
       source: string;
     }>;
   } {
-    const uniqueFindingTitles = normalizeEntries(
-      input.reviewerResults.flatMap((result) => result.findings.map((finding) => finding.title))
-    );
-    const blockerCount = input.reviewerResults.flatMap((result) => result.findings).filter((finding) => finding.type === "blocker").length;
-    const questionFindings = input.reviewerResults.flatMap((result) => result.findings).filter((finding) => finding.type === "question");
+    const findings = input.reviewerResults.flatMap((result) => result.findings);
+    const uniqueFindingTitles = normalizeEntries(findings.map((finding) => finding.title));
+    const blockerCount = findings.filter((finding) => finding.type === "blocker").length;
+    const majorConcernCount = findings.filter((finding) => finding.type === "major_concern").length;
     const assumptions = normalizeEntries(input.reviewerResults.flatMap((result) => result.assumptionsDetected)).map((statement) => ({
       statement,
       reason: "Detected during reviewer analysis",
       source: "reviewer"
     }));
+    const reviewerReadinessValues = Array.from(new Set(input.reviewerResults.map((result) => result.readiness)));
+    const reviewerStatusValues = Array.from(new Set(input.reviewerResults.map((result) => result.status)));
     const disagreements = normalizeEntries(
-      input.reviewerResults.length > 1 &&
-        new Set(input.reviewerResults.map((result) => result.readiness)).size > 1
-        ? [
-            `Reviewers disagree on readiness: ${Array.from(new Set(input.reviewerResults.map((result) => result.readiness))).join(", ")}`
-          ]
-        : []
+      [
+        ...(input.reviewerResults.length > 1 && reviewerReadinessValues.length > 1
+          ? [`Reviewers disagree on readiness: ${reviewerReadinessValues.join(", ")}`]
+          : []),
+        ...(input.reviewerResults.length > 1 && reviewerStatusValues.length > 1
+          ? [`Reviewers disagree on review status: ${reviewerStatusValues.join(", ")}`]
+          : [])
+      ]
     );
-    const questions = normalizeEntries(
-      questionFindings.map((finding) => finding.title).concat(input.reviewerResults.flatMap((result) => result.missingInformation))
-    )
-      .slice(0, 3)
-      .map((question) => ({
-        question,
-        reason: "The review surfaced a blocker-relevant information gap.",
-        impact: "Without this answer, readiness remains reduced."
-      }));
+    const questions = this.buildClarificationQuestions(input.reviewerResults);
 
     if (input.interactionMode === "auto" && questions.length > 0) {
       assumptions.push(
@@ -772,14 +837,26 @@ export class PlanningReviewService {
       );
     }
 
+    const autoNeedsHumanReview = this.autoModeNeedsHumanReview({
+      run: input.run,
+      findings,
+      reviewerResults: input.reviewerResults,
+      questions
+    });
+    const autoBlockedByRisk =
+      input.interactionMode === "auto" &&
+      (autoNeedsHumanReview || (majorConcernCount > 0 && input.run.reviewMode === "risk"));
+
     const status: PlanningReviewStatus =
       blockerCount > 0
         ? input.interactionMode === "interactive"
-          ? "needs_clarification"
+          ? "blocker_present"
           : "blocked"
+        : autoBlockedByRisk
+          ? "blocked"
         : questions.length > 0
           ? input.interactionMode === "interactive"
-            ? "needs_clarification"
+            ? "questions_only"
             : "revising"
           : "ready";
     const readiness: PlanningReviewReadinessResult =
@@ -787,18 +864,24 @@ export class PlanningReviewService {
         ? input.interactionMode === "interactive"
           ? "needs_evidence"
           : "needs_human_review"
+        : autoBlockedByRisk
+          ? "needs_human_review"
         : questions.length > 0
           ? input.interactionMode === "interactive"
             ? "needs_evidence"
-            : "ready_with_assumptions"
+            : autoNeedsHumanReview
+              ? "needs_human_review"
+              : "ready_with_assumptions"
           : assumptions.length > 0
             ? "ready_with_assumptions"
             : "ready";
     const summary =
       status === "ready"
         ? "Planning review completed without blocker-level gaps."
-        : status === "needs_clarification"
-          ? "Planning review found decision-relevant gaps that need clarification."
+        : status === "blocker_present"
+          ? "Planning review found blocking gaps that must be resolved before the artifact can proceed."
+          : status === "questions_only"
+            ? "Planning review found clarification questions, but no hard blockers."
           : status === "blocked"
             ? "Planning review could not continue safely in auto mode."
             : "Planning review completed with follow-up work still required.";
@@ -811,13 +894,238 @@ export class PlanningReviewService {
       recommendedAction:
         status === "ready"
           ? "Proceed to the next workflow step."
-          : status === "needs_clarification"
-            ? "Answer the open planning review questions and rerun the review."
+          : status === "blocker_present"
+            ? "Resolve the blocking gaps, answer the linked questions, and rerun the review."
+            : status === "questions_only"
+              ? "Answer the open planning review questions and rerun the review."
             : status === "blocked"
-              ? "Escalate to a human reviewer or strengthen the source artifact."
+              ? "Escalate to a human reviewer or strengthen the source artifact before proceeding."
               : "Revise the source artifact and rerun the review.",
       questions: input.interactionMode === "interactive" ? questions : [],
       assumptions
     };
+  }
+
+  private autoModeNeedsHumanReview(input: {
+    run: PlanningReviewRun;
+    findings: PlanningReviewAdapterRunResult["output"]["findings"];
+    reviewerResults: Array<PlanningReviewAdapterRunResult["output"]>;
+    questions: Array<{ question: string; reason: string; impact: string }>;
+  }): boolean {
+    if (input.run.interactionMode !== "auto") {
+      return false;
+    }
+    if (input.reviewerResults.some((result) => result.readiness === "needs_human_review" || result.readiness === "high_risk")) {
+      return true;
+    }
+    const highRiskPattern = /\b(risk|migration|rollback|security|compliance|production|backward compatibility|data loss)\b/i;
+    if (input.findings.some((finding) => highRiskPattern.test(`${finding.title} ${finding.detail} ${finding.evidence ?? ""}`))) {
+      return true;
+    }
+    if (input.run.reviewMode === "risk" && (input.questions.length > 0 || input.findings.some((finding) => finding.type === "major_concern"))) {
+      return true;
+    }
+    if (input.run.reviewMode === "readiness" && input.questions.length > 1) {
+      return true;
+    }
+    return false;
+  }
+
+  private buildClarificationQuestions(
+    reviewerResults: Array<PlanningReviewAdapterRunResult["output"]>
+  ): Array<{
+    question: string;
+    reason: string;
+    impact: string;
+  }> {
+    const candidates = new Map<
+      string,
+      {
+        question: string;
+        reason: string;
+        impact: string;
+        priority: number;
+      }
+    >();
+
+    const upsertCandidate = (input: {
+      question: string;
+      reason: string;
+      impact: string;
+      priority: number;
+    }) => {
+      const normalizedQuestion = input.question.replace(/\s+/g, " ").trim();
+      if (!normalizedQuestion) {
+        return;
+      }
+      const key = normalizedQuestion.toLowerCase();
+      const existing = candidates.get(key);
+      if (!existing || input.priority > existing.priority) {
+        candidates.set(key, {
+          question: normalizedQuestion,
+          reason: input.reason.trim() || "The review found a missing decision-relevant detail.",
+          impact: input.impact.trim() || "Without this clarification, readiness remains reduced.",
+          priority: input.priority
+        });
+      }
+    };
+
+    for (const result of reviewerResults) {
+      const blockerFindings = result.findings.filter((finding) => finding.type === "blocker");
+      result.missingInformation.forEach((question, index) => {
+        const relatedBlocker = blockerFindings[index] ?? blockerFindings[0] ?? null;
+        upsertCandidate({
+          question,
+          reason: relatedBlocker?.detail ?? "The review surfaced a blocker-level information gap.",
+          impact:
+            relatedBlocker?.evidence ??
+            "Without this answer, the review cannot confirm the artifact is safe to proceed.",
+          priority: relatedBlocker ? 300 : 100
+        });
+      });
+
+      for (const finding of result.findings) {
+        if (finding.type !== "question") {
+          continue;
+        }
+        upsertCandidate({
+          question: finding.title,
+          reason: finding.detail,
+          impact: finding.evidence ?? "Without this clarification, readiness remains reduced.",
+          priority: 200
+        });
+      }
+    }
+
+    return Array.from(candidates.values())
+      .sort((left, right) => right.priority - left.priority || left.question.localeCompare(right.question))
+      .map(({ question, reason, impact }) => ({
+        question,
+        reason,
+        impact
+      }));
+  }
+
+  private buildComparisonToPrevious(run: PlanningReviewRun, findings: PlanningReviewFinding[]) {
+    const previousComparableRun = this.options.deps.planningReviewRunRepository.getPreviousComparable({
+      sourceType: run.sourceType,
+      sourceId: run.sourceId,
+      step: run.step,
+      reviewMode: run.reviewMode,
+      beforeStartedAt: run.startedAt,
+      excludeRunId: run.id
+    });
+    if (!previousComparableRun) {
+      return null;
+    }
+
+    const currentArtifact = JSON.parse(run.normalizedArtifactJson) as NormalizedPlanningArtifact;
+    const previousArtifact = JSON.parse(previousComparableRun.normalizedArtifactJson) as NormalizedPlanningArtifact;
+    const changedFields = this.diffArtifacts(previousArtifact, currentArtifact);
+    const previousFindings = this.options.deps.planningReviewFindingRepository.listByRunId(previousComparableRun.id);
+    const impactedFindingTitles = this.findPlausiblyImpactedFindingTitles(
+      changedFields.map((entry) => entry.field),
+      [...previousFindings, ...findings]
+    );
+
+    return {
+      previousRunId: previousComparableRun.id,
+      changedFields,
+      changedFieldCount: changedFields.length,
+      findingDelta: {
+        newCount: findings.filter((finding) => finding.status === "new").length,
+        openCount: findings.filter((finding) => finding.status === "open").length,
+        resolvedCount: previousFindings.filter(
+          (finding) => !findings.some((currentFinding) => currentFinding.fingerprint === finding.fingerprint)
+        ).length
+      },
+      plausiblyImpactedFindingTitles: impactedFindingTitles
+    };
+  }
+
+  private diffArtifacts(previousArtifact: NormalizedPlanningArtifact, currentArtifact: NormalizedPlanningArtifact) {
+    const changedFields: Array<{
+      field: keyof NormalizedPlanningArtifact;
+      previousValue: string;
+      currentValue: string;
+    }> = [];
+
+    const fields: Array<keyof NormalizedPlanningArtifact> = [
+      "problem",
+      "goal",
+      "nonGoals",
+      "context",
+      "constraints",
+      "proposal",
+      "alternatives",
+      "assumptions",
+      "risks",
+      "openQuestions",
+      "testPlan",
+      "rolloutPlan",
+      "clarificationAnswers"
+    ];
+
+    for (const field of fields) {
+      const previousValue = this.stringifyArtifactField(previousArtifact[field]);
+      const currentValue = this.stringifyArtifactField(currentArtifact[field]);
+      if (previousValue !== currentValue) {
+        changedFields.push({
+          field,
+          previousValue,
+          currentValue
+        });
+      }
+    }
+
+    return changedFields;
+  }
+
+  private stringifyArtifactField(value: NormalizedPlanningArtifact[keyof NormalizedPlanningArtifact]): string {
+    if (value === null) {
+      return "";
+    }
+    if (typeof value === "string") {
+      return value.trim();
+    }
+    if (Array.isArray(value)) {
+      if (value.length === 0) {
+        return "";
+      }
+      if (typeof value[0] === "string") {
+        return normalizeEntries(value as string[]).join("; ");
+      }
+      return (value as Array<{ question: string; answer: string }>)
+        .map((entry) => `${entry.question.trim()} => ${entry.answer.trim()}`)
+        .join("; ");
+    }
+    return "";
+  }
+
+  private findPlausiblyImpactedFindingTitles(fields: Array<keyof NormalizedPlanningArtifact>, findings: PlanningReviewFinding[]): string[] {
+    const keywordMap: Record<keyof NormalizedPlanningArtifact, string[]> = {
+      problem: ["problem"],
+      goal: ["goal", "outcome", "success"],
+      nonGoals: ["non-goal", "scope"],
+      context: ["context", "use case"],
+      constraints: ["constraint"],
+      proposal: ["proposal", "approach", "direction"],
+      alternatives: ["alternative"],
+      assumptions: ["assumption"],
+      risks: ["risk"],
+      openQuestions: ["open question", "question"],
+      testPlan: ["test", "verification", "validate"],
+      rolloutPlan: ["rollout", "deploy", "rollback", "migration"],
+      clarificationAnswers: ["clarification", "answer"]
+    };
+
+    return normalizeEntries(
+      findings
+        .filter((finding) => {
+          const haystack = `${finding.title} ${finding.detail} ${finding.evidence ?? ""}`.toLowerCase();
+          return fields.some((field) => keywordMap[field].some((keyword) => haystack.includes(keyword)));
+        })
+        .map((finding) => finding.title)
+    );
   }
 }

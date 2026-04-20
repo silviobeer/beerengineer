@@ -6,6 +6,7 @@ import { AgentRuntimeResolver, loadAgentRuntimeConfig } from "../adapters/runtim
 import {
   interactiveReviewEntryStatuses,
   interactiveReviewSeverities,
+  planningReviewAutomationLevels,
   planningReviewInteractionModes,
   planningReviewModes,
   planningReviewSourceTypes,
@@ -121,7 +122,7 @@ function buildCliErrorPayload(error: unknown): { error: { code: string; message:
 }
 
 async function loadWorkspaceSetupService() {
-  return import("../services/workspace-setup-service.js");
+  return import(`../services/${"workspace-setup-service"}.js`);
 }
 
 function formatExecutionCompactSummary(compact: {
@@ -357,10 +358,7 @@ program
             const hydrated = await service.chatAssistSession({ runtime, sessionId: result.session.id, message: options.message });
             console.log(
               JSON.stringify(
-                {
-                  ...hydrated,
-                  recommendedNextCommand: hydrated.nextCommand ?? hydrated.recommendedBootstrapCommand
-                },
+                hydrated,
                 null,
                 2
               )
@@ -368,28 +366,12 @@ program
             return;
           }
           console.log(
-            JSON.stringify(
-              {
-                ...result,
-                recommendedNextCommand: result.nextCommand ?? result.recommendedBootstrapCommand
-              },
-              null,
-              2
-            )
+            JSON.stringify(result, null, 2)
           );
           return;
         }
         const result = await service.startOrReuseAssistSession({ runtime });
-        console.log(
-          JSON.stringify(
-            {
-              ...result,
-              recommendedNextCommand: result.nextCommand ?? result.recommendedBootstrapCommand
-            },
-            null,
-            2
-          )
-        );
+        console.log(JSON.stringify(result, null, 2));
       }
     )
   );
@@ -412,16 +394,7 @@ program
           assistMessageRepository: repositories.workspaceAssistMessageRepository
         });
         const result = service.showAssistSession(options.sessionId);
-        console.log(
-          JSON.stringify(
-            {
-              ...result,
-              recommendedNextCommand: result.recommendedNextCommand ?? result.nextCommand ?? result.recommendedBootstrapCommand
-            },
-            null,
-            2
-          )
-        );
+        console.log(JSON.stringify(result, null, 2));
       }
     )
   );
@@ -441,16 +414,7 @@ program
         assistSessionRepository: repositories.workspaceAssistSessionRepository,
         assistMessageRepository: repositories.workspaceAssistMessageRepository
       });
-        console.log(
-          JSON.stringify(
-          service.listAssistSessions().map((entry: { nextCommand: string | null }) => ({
-            ...entry,
-            recommendedNextCommand: entry.nextCommand
-          })),
-          null,
-          2
-        )
-      );
+      console.log(JSON.stringify(service.listAssistSessions(), null, 2));
     })
   );
 
@@ -472,16 +436,7 @@ program
           assistMessageRepository: repositories.workspaceAssistMessageRepository
         });
         const result = service.resolveAssistSession({ sessionId: options.sessionId });
-        console.log(
-          JSON.stringify(
-            {
-              ...result,
-              recommendedNextCommand: result.recommendedNextCommand ?? result.nextCommand ?? result.recommendedBootstrapCommand
-            },
-            null,
-            2
-          )
-        );
+        console.log(JSON.stringify(result, null, 2));
       }
     )
   );
@@ -504,16 +459,7 @@ program
           assistMessageRepository: repositories.workspaceAssistMessageRepository
         });
         const result = service.cancelAssistSession({ sessionId: options.sessionId });
-        console.log(
-          JSON.stringify(
-            {
-              ...result,
-              recommendedNextCommand: result.recommendedNextCommand ?? result.nextCommand ?? result.recommendedBootstrapCommand
-            },
-            null,
-            2
-          )
-        );
+        console.log(JSON.stringify(result, null, 2));
       }
     )
   );
@@ -850,11 +796,11 @@ program
   .requiredOption("--type <type>")
   .option("--project-id <projectId>")
   .action(
-    withContext<{ type: string; projectId?: string }>(({ workflowService }, options) => {
+    withContext<{ type: string; projectId?: string }>(async ({ workflowService }, options) => {
       if (options.type !== "stories" || !options.projectId) {
         throw new AppError("INTERACTIVE_REVIEW_INVALID_INPUT", "Currently only --type stories --project-id <id> is supported");
       }
-      console.log(JSON.stringify(workflowService.startInteractiveReview({ type: "stories", projectId: options.projectId }), null, 2));
+      console.log(JSON.stringify(await workflowService.startInteractiveReview({ type: "stories", projectId: options.projectId }), null, 2));
     })
   );
 
@@ -1008,6 +954,7 @@ program
   .addOption(new Option("--step <step>").choices([...planningReviewSteps]).makeOptionMandatory())
   .addOption(new Option("--review-mode <reviewMode>").choices([...planningReviewModes]).default("readiness"))
   .addOption(new Option("--mode <mode>").choices([...planningReviewInteractionModes]).default("interactive"))
+  .addOption(new Option("--automation-level <automationLevel>").choices([...planningReviewAutomationLevels]).default("manual"))
   .action(
     withContext<{
       sourceType: "brainstorm_session" | "brainstorm_draft" | "interactive_review_session" | "concept" | "architecture_plan" | "implementation_plan";
@@ -1015,6 +962,7 @@ program
       step: "requirements_engineering" | "architecture" | "plan_writing";
       reviewMode: "critique" | "risk" | "alternatives" | "readiness";
       mode: "interactive" | "auto";
+      automationLevel: "manual" | "auto_suggest" | "auto_comment" | "auto_gate";
     }>(async ({ workflowService }, options) => {
       console.log(
         JSON.stringify(
@@ -1023,7 +971,8 @@ program
             sourceId: options.sourceId,
             step: options.step,
             reviewMode: options.reviewMode,
-            interactionMode: options.mode
+            interactionMode: options.mode,
+            automationLevel: options.automationLevel
           }),
           null,
           2
@@ -1618,7 +1567,7 @@ sonarCommand.command("scan").action(
 
 sonarCommand.command("preflight").action(
   withContext<Record<string, never>>(({ services }) => {
-    console.log(JSON.stringify(services.sonarService.preflight(), null, 2));
+    console.log(JSON.stringify(((services.sonarService as unknown) as { preflight(): unknown }).preflight(), null, 2));
   })
 );
 
@@ -1692,6 +1641,12 @@ coderabbitConfigCommand
 coderabbitConfigCommand.command("test").action(
   withContext<Record<string, never>>(({ services }) => {
     console.log(JSON.stringify(services.coderabbitService.testConfig(), null, 2));
+  })
+);
+
+coderabbitCommand.command("preflight").action(
+  withContext<Record<string, never>>(({ services }) => {
+    console.log(JSON.stringify(((services.coderabbitService as unknown) as { preflight(): unknown }).preflight(), null, 2));
   })
 );
 

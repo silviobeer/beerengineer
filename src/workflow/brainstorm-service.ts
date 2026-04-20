@@ -48,6 +48,7 @@ type BrainstormServiceOptions = {
     step: "requirements_engineering";
     reviewMode: "readiness";
     interactionMode: "interactive";
+    automationLevel: "auto_comment";
   }): Promise<unknown>;
   autorunForItem(input: { itemId: string; trigger: string; initialSteps?: AutorunStep[] }): Promise<AutorunSummary>;
 };
@@ -439,7 +440,8 @@ export class BrainstormService {
       sourceId: session.id,
       step: "requirements_engineering",
       reviewMode: "readiness",
-      interactionMode: "interactive"
+      interactionMode: "interactive",
+      automationLevel: "auto_comment"
     });
 
     if (options?.autorun) {

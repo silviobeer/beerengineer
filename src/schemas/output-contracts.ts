@@ -247,7 +247,7 @@ export const planningReviewFindingOutputSchema = z.object({
 });
 
 export const planningReviewReviewerOutputSchema = z.object({
-  status: z.enum(["in_review", "needs_clarification", "ready", "blocked", "failed"]),
+  status: z.enum(["in_review", "needs_clarification", "questions_only", "ready", "blocked", "failed"]),
   readiness: z.enum(["ready", "ready_with_assumptions", "needs_evidence", "needs_human_review", "high_risk"]),
   summary: z.string().min(1),
   findings: z.array(planningReviewFindingOutputSchema),
@@ -316,6 +316,7 @@ export type StoryReviewOutput = z.infer<typeof storyReviewOutputSchema>;
 export type DocumentationOutput = z.infer<typeof documentationOutputSchema>;
 export type InteractiveBrainstormDraftPatch = z.infer<typeof interactiveBrainstormDraftPatchSchema>;
 export type InteractiveBrainstormAgentOutput = z.infer<typeof interactiveBrainstormAgentOutputSchema>;
+export type WorkspaceSetupAssistPlan = z.infer<typeof workspaceSetupAssistPlanSchema>;
 export type WorkspaceSetupAssistOutput = z.infer<typeof workspaceSetupAssistOutputSchema>;
 export type InteractiveReviewEntryUpdateOutput = z.infer<typeof interactiveReviewEntryUpdateOutputSchema>;
 export type InteractiveStoryReviewAgentOutput = z.infer<typeof interactiveStoryReviewAgentOutputSchema>;

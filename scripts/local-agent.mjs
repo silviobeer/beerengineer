@@ -881,7 +881,7 @@ function planningReview(payload) {
 
   return {
     output: {
-      status: hasBlocker ? "needs_clarification" : hasQuestion ? "needs_clarification" : hasMajorConcern ? "in_review" : "ready",
+      status: hasBlocker ? "needs_clarification" : hasQuestion ? "questions_only" : hasMajorConcern ? "in_review" : "ready",
       readiness: hasBlocker ? "needs_evidence" : hasQuestion ? "needs_evidence" : hasMajorConcern ? "ready_with_assumptions" : "ready",
       summary: hasBlocker
         ? `${roleLabel} review found blocking gaps in the artifact.`

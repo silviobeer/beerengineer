@@ -133,7 +133,7 @@ Instead:
   - maps to existing `StageKey` values for early phases
 - proposed `brainstorming` / `drafting`
   - should build on `BrainstormSession` plus `BrainstormDraft`
-- proposed `in_review` / `needs_clarification` / `revising`
+- proposed `synthesizing` / `blocker_present` / `questions_only` / `revising`
   - should build on `InteractiveReviewSession`
 - proposed normalized artifact schema
   - should be derived from existing draft and artifact records, not stored as a
@@ -151,8 +151,8 @@ The workflow should explicitly model both process state and interaction mode.
 - `brainstorming`
 - `drafting`
 - `synthesizing`
-- `in_review`
-- `needs_clarification`
+- `blocker_present`
+- `questions_only`
 - `revising`
 - `ready`
 - `blocked`
@@ -318,13 +318,14 @@ Behavior:
 - surface disagreements
 - classify confidence
 - prepare the next transition to:
-  - `needs_clarification`
+  - `blocker_present`
+  - `questions_only`
   - `revising`
   - `ready`
   - `blocked`
   - `failed`
 
-### 4. Needs Clarification
+### 4. Clarification Needed
 
 Purpose:
 
@@ -634,9 +635,10 @@ It does not remove uncertainty. It changes how uncertainty must be resolved.
   - `assume_and_converge`
 - `drafting`
   - `normalize_without_asking`
-- `in_review`
+- `synthesizing`
   - `classify_confidence`
-- `needs_clarification`
+- `blocker_present`
+- `questions_only`
   - reinterpret as internal `needs_resolution`
 - `revising`
   - `apply_findings_conservatively`
@@ -934,8 +936,8 @@ Supported statuses:
 - `brainstorming`
 - `drafting`
 - `synthesizing`
-- `in_review`
-- `needs_clarification`
+- `blocker_present`
+- `questions_only`
 - `revising`
 - `ready`
 - `blocked`

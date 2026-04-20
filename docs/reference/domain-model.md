@@ -68,3 +68,32 @@ Die eigentliche Laufhistorie liegt in:
 - `planning_review_syntheses`
 - `planning_review_questions`
 - `planning_review_assumptions`
+
+Wichtige sichtbare Planning-Review-Status im aktuellen Runtime-Verhalten:
+
+- `synthesizing`
+- `blocker_present`
+  - mindestens ein blocker-level Gap ist offen
+- `questions_only`
+  - keine Blocker, aber noch gezielte Rueckfragen offen
+- `revising`
+  - nur fuer `auto`-Mode-Folgearbeit ohne User-Rueckfragen
+- `ready`
+- `blocked`
+- `failed`
+
+Wichtige Run-Metadaten:
+
+- `automationLevel`
+  - `manual`
+  - `auto_suggest`
+  - `auto_comment`
+  - `auto_gate`
+- `requestedMode`
+- `actualMode`
+- `confidence`
+- `gateEligibility`
+  - nur Runs mit `gateEligibility = advisory` duerfen als harte Workflow-Gates
+    wirken
+  - `advisory_only` reduziert die Gate-Macht bewusst auch dann, wenn
+    `automationLevel = auto_gate` gesetzt ist
