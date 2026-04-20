@@ -33,6 +33,13 @@ Dabei gilt:
 Der interaktive Brainstorm-Step ersetzt also nicht den Concept-Step, sondern
 liefert dessen vorbereiteten Input.
 
+Aktueller Implementierungsstand:
+
+- `brainstorm:promote` startet zusaetzlich direkt einen advisory
+  `PlanningReviewRun` fuer `requirements_engineering`
+- dieser Review-Lauf ist in V1 eine zusaetzliche Entscheidungs- und
+  Readiness-Sicht, aber kein hartes Gate
+
 ## Grundprinzip
 
 Der Chat ist nicht die Quelle der Wahrheit.
@@ -210,6 +217,14 @@ Beispielhafte Felder:
 - `assumptions`
 - `lastUpdatedAt`
 - `lastUpdatedFromMessageId`
+
+Im aktuellen Implementierungsstand kann ein `BrainstormDraft` auch direkt als
+`planning review`-Quelle verwendet werden:
+
+- `sourceType=brainstorm_draft`
+
+Wenn ein Planning Review automatisch aus `brainstorm:promote` gestartet wird,
+wird der Lauf aktuell mit `automationLevel=auto_comment` persistiert.
 
 Empfohlene Statuswerte:
 
@@ -521,9 +536,14 @@ Moegliche erste Kommandos:
 - `brainstorm:draft --session-id <id>`
 - `brainstorm:promote --session-id <id>`
 - `brainstorm:promote --session-id <id> --autorun`
+- `planning-review:start --source-type brainstorm_session --source-id <id> --step requirements_engineering ...`
+- `planning-review:start --source-type brainstorm_draft --source-id <id> --step requirements_engineering ...`
 
 Fuer eine spaetere API/UI sind dieselben Operationen als strukturierte Endpunkte
 oder Commands abzubilden.
+
+Der aktuelle CLI-Stand liefert bei `brainstorm:promote` neben `conceptId` und
+`draftRevision` auch das Ergebnis des advisory Planning Reviews zurueck.
 
 ## Persistenz- und Versionsstrategie
 
