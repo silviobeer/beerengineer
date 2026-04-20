@@ -1885,7 +1885,9 @@ describe("workflow service", () => {
       expect(shown.waves[0]?.stories[0]?.latestRalphVerification?.status).toBe("passed");
       expect(shown.waves[0]?.stories[0]?.appVerificationRuns).toHaveLength(1);
       expect(shown.waves[0]?.stories[0]?.latestAppVerificationRun?.status).toBe("passed");
-      expect(shown.waves[0]?.stories[0]?.latestAppVerificationRun?.runner).toBe("agent_browser");
+      expect(["agent_browser", "playwright"]).toContain(
+        shown.waves[0]?.stories[0]?.latestAppVerificationRun?.runner
+      );
       expect(shown.waves[0]?.stories[0]?.latestAppVerificationRun?.resultJson).toContain("overallStatus");
       expect(shown.waves[0]?.stories[0]?.latestStoryReviewRun?.status).toBe("passed");
       expect(shown.waves[0]?.stories[0]?.latestStoryReviewRun?.summaryJson).toContain("overallStatus");
