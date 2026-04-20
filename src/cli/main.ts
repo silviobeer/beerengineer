@@ -16,6 +16,33 @@ import {
 } from "../domain/types.js";
 import { AppError } from "../shared/errors.js";
 import { resolveDefaultDbPath } from "../shared/user-data-paths.js";
+import {
+  assertWorkspaceRuntimeInteractiveFlowKey,
+  assertWorkspaceRuntimeProfileCompatibility,
+  assertWorkspaceRuntimeStageKey,
+  assertWorkspaceRuntimeWorkerKey,
+  convertWorkspaceRuntimeProfileToCustom,
+  createEmptyWorkspaceRuntimeProfile,
+  getBuiltInWorkspaceRuntimeProfilePath,
+  loadBuiltInWorkspaceRuntimeProfile,
+  loadWorkspaceRuntimeProfileFromJsonString,
+  validateWorkspaceRuntimeProfileCompatibility,
+  withWorkspaceRuntimeInteractiveSelection,
+  withWorkspaceRuntimeStageSelection,
+  withWorkspaceRuntimeWorkerSelection,
+  workspaceRuntimeProfileBuiltInKeys,
+  type WorkspaceRuntimeProfile,
+  type WorkspaceRuntimeProfileBuiltInKey
+} from "../shared/workspace-runtime-profile.js";
+import {
+  applyHarnessMcpConfig,
+  assertHarnessMcpTarget,
+  harnessMcpTargets,
+  isHarnessMcpConfigured,
+  renderHarnessMcpConfigPreview,
+  resolveHarnessMcpTargets,
+  type HarnessMcpTarget
+} from "../shared/workspace-mcp.js";
 import { assertSafeWorkspaceRoot } from "../shared/workspace-root-guard.js";
 
 const program = new Command();
@@ -30,7 +57,7 @@ program.showHelpAfterError();
 
 type WorkspaceSetupContextInput = Pick<
   Awaited<ReturnType<typeof createWorkspaceSetupContext>>,
-  "workspace" | "workspaceRoot" | "rootPathSource" | "agentRuntimeConfigPath" | "repositories"
+  "workspace" | "workspaceSettings" | "workspaceRoot" | "rootPathSource" | "agentRuntimeConfigPath" | "agentRuntimeConfig" | "repositories"
 >;
 
 async function createWorkspaceSetupService(context: WorkspaceSetupContextInput) {
@@ -39,9 +66,11 @@ async function createWorkspaceSetupService(context: WorkspaceSetupContextInput) 
   const module = await import(`../services/${"workspace-setup-service"}.js`);
   return new module.WorkspaceSetupService({
     workspace: context.workspace,
+    workspaceSettings: context.workspaceSettings,
     workspaceRoot: context.workspaceRoot,
     rootPathSource: context.rootPathSource,
     agentRuntimeConfigPath: context.agentRuntimeConfigPath,
+    agentRuntimeConfig: context.agentRuntimeConfig,
     sonarSettings: context.repositories.workspaceSonarSettingsRepository.getByWorkspaceId(context.workspace.id),
     coderabbitSettings: context.repositories.workspaceCoderabbitSettingsRepository.getByWorkspaceId(context.workspace.id),
     assistSessionRepository: context.repositories.workspaceAssistSessionRepository,
@@ -130,6 +159,113 @@ function parseBooleanFlag(value: string | undefined): boolean | undefined {
   throw new AppError("INVALID_BOOLEAN_OPTION", `Expected true or false, received ${value}`);
 }
 
+function loadWorkspaceRuntimeProfileFromSettings(context: AppContext): WorkspaceRuntimeProfile | null {
+  return context.workspaceSettings.runtimeProfileJson
+    ? loadWorkspaceRuntimeProfileFromJsonString(context.workspaceSettings.runtimeProfileJson, {
+        kind: "workspace_settings",
+        workspaceKey: context.workspace.key
+      })
+    : null;
+}
+
+function storeWorkspaceRuntimeProfile(
+  updateRuntimeProfileJson: (runtimeProfileJson: string | null) => { runtimeProfileJson: string | null },
+  profile: WorkspaceRuntimeProfile | null
+) {
+  const storedJson = profile ? `${JSON.stringify(profile, null, 2)}\n` : null;
+  return updateRuntimeProfileJson(storedJson);
+}
+
+function printRefreshedRuntimeShow(context: AppContext, dbPath: string) {
+  const refreshed = createAppContext(dbPath, {
+    workspaceKey: context.workspace.key
+  });
+  try {
+    console.log(JSON.stringify(formatRuntimeShowPayload(refreshed), null, 2));
+  } finally {
+    refreshed.connection.close();
+  }
+}
+
+function assertKnownRuntimeProvider(context: AppContext, provider: string): void {
+  if (!context.agentRuntime.config.providers[provider]) {
+    throw new AppError("WORKSPACE_RUNTIME_PROVIDER_INVALID", `Provider ${provider} is not defined in the global runtime config.`);
+  }
+}
+
+function assertBuiltInWorkspaceRuntimeProfileKey(value: string): asserts value is WorkspaceRuntimeProfileBuiltInKey {
+  if (!(workspaceRuntimeProfileBuiltInKeys as readonly string[]).includes(value)) {
+    throw new AppError("WORKSPACE_RUNTIME_PROFILE_NOT_FOUND", `Unknown built-in workspace runtime profile ${value}.`);
+  }
+}
+
+function formatRuntimeShowPayload(context: AppContext) {
+  const compatibility = context.agentRuntime.workspaceProfile
+    ? validateWorkspaceRuntimeProfileCompatibility(context.agentRuntime.config, context.agentRuntime.workspaceProfile)
+    : null;
+  return {
+    workspace: {
+      key: context.workspace.key,
+      name: context.workspace.name
+    },
+    globalRuntime: {
+      source: context.agentRuntime.globalConfigSource,
+      path: context.agentRuntime.globalConfigPath
+    },
+    workspaceProfile: context.agentRuntime.workspaceProfile
+      ? {
+          source: context.agentRuntime.workspaceProfileSource,
+          profileKey: context.agentRuntime.workspaceProfile.profileKey ?? null,
+          label: context.agentRuntime.workspaceProfile.label ?? null,
+          compatibility
+        }
+      : null,
+    effective: {
+      defaultProvider: {
+        provider: context.agentRuntime.config.defaultProvider,
+        source: context.agentRuntime.sources.defaultProvider
+      },
+      defaults: {
+        interactive: {
+          selection: context.agentRuntime.config.defaults.interactive ?? null,
+          source: context.agentRuntime.sources.defaults.interactive
+        },
+        autonomous: {
+          selection: context.agentRuntime.config.defaults.autonomous ?? null,
+          source: context.agentRuntime.sources.defaults.autonomous
+        }
+      },
+      interactive: Object.fromEntries(
+        Object.entries(context.agentRuntime.config.interactive).map(([key, selection]) => [
+          key,
+          {
+            selection: selection ?? null,
+            source: context.agentRuntime.sources.interactive[key as keyof typeof context.agentRuntime.sources.interactive]
+          }
+        ])
+      ),
+      stages: Object.fromEntries(
+        Object.entries(context.agentRuntime.config.stages).map(([key, selection]) => [
+          key,
+          {
+            selection: selection ?? null,
+            source: context.agentRuntime.sources.stages[key as keyof typeof context.agentRuntime.sources.stages]
+          }
+        ])
+      ),
+      workers: Object.fromEntries(
+        Object.entries(context.agentRuntime.config.workers).map(([key, selection]) => [
+          key,
+          {
+            selection: selection ?? null,
+            source: context.agentRuntime.sources.workers[key as keyof typeof context.agentRuntime.sources.workers]
+          }
+        ])
+      )
+    }
+  };
+}
+
 function buildCliErrorPayload(error: unknown): { error: { code: string; message: string } } {
   if (error instanceof AppError) {
     return {
@@ -145,6 +281,20 @@ function buildCliErrorPayload(error: unknown): { error: { code: string; message:
       message: error instanceof Error ? error.message : String(error)
     }
   };
+}
+
+function resolveRequestedMcpTargets(target?: string, targets: string[] = []): HarnessMcpTarget[] {
+  if (target && target !== "all") {
+    assertHarnessMcpTarget(target);
+    return [target];
+  }
+  if (targets.length > 0) {
+    for (const entry of targets) {
+      assertHarnessMcpTarget(entry);
+    }
+    return Array.from(new Set(targets)) as HarnessMcpTarget[];
+  }
+  return [...harnessMcpTargets];
 }
 
 function formatExecutionCompactSummary(compact: {
@@ -251,6 +401,7 @@ program
           workspaceId: createdWorkspace.id,
           defaultAdapterKey: null,
           defaultModel: null,
+          runtimeProfileJson: null,
           autorunPolicyJson: null,
           promptOverridesJson: null,
           skillOverridesJson: null,
@@ -302,12 +453,263 @@ program
   );
 
 program
+  .command("workspace:runtime:profiles")
+  .action(
+    withContext<Record<string, never>>((context) => {
+      const profiles = workspaceRuntimeProfileBuiltInKeys.map((profileKey) => {
+        const profile = loadBuiltInWorkspaceRuntimeProfile(repoRoot, profileKey);
+        const compatibility = validateWorkspaceRuntimeProfileCompatibility(context.agentRuntime.config, profile);
+        return {
+          profileKey,
+          path: getBuiltInWorkspaceRuntimeProfilePath(repoRoot, profileKey),
+          label: profile.label ?? null,
+          meta: profile.meta ?? null,
+          compatible: compatibility.valid,
+          compatibility
+        };
+      });
+      console.log(JSON.stringify({ workspace: context.workspace.key, profiles }, null, 2));
+    })
+  );
+
+program
+  .command("workspace:runtime:show")
+  .action(
+    withContext<Record<string, never>>((context) => {
+      console.log(JSON.stringify(formatRuntimeShowPayload(context), null, 2));
+    })
+  );
+
+program
+  .command("workspace:runtime:apply-profile")
+  .requiredOption("--profile <profileKey>", "Built-in workspace runtime profile key")
+  .action(
+    withContext<{ profile: string }>((context, options, dbPath) => {
+      assertBuiltInWorkspaceRuntimeProfileKey(options.profile);
+      const profileKey = options.profile;
+      const profile = loadBuiltInWorkspaceRuntimeProfile(repoRoot, profileKey);
+      assertWorkspaceRuntimeProfileCompatibility(context.agentRuntime.config, profile, {
+        kind: "builtin",
+        profileKey,
+        path: getBuiltInWorkspaceRuntimeProfilePath(repoRoot, profileKey)
+      });
+      storeWorkspaceRuntimeProfile(
+        (runtimeProfileJson) =>
+          context.repositories.workspaceSettingsRepository.update(context.workspace.id, {
+            runtimeProfileJson
+          }),
+        profile
+      );
+      printRefreshedRuntimeShow(context, dbPath);
+    })
+  );
+
+program
+  .command("workspace:runtime:clear-profile")
+  .action(
+    withContext<Record<string, never>>((context, _options, dbPath) => {
+      storeWorkspaceRuntimeProfile(
+        (runtimeProfileJson) =>
+          context.repositories.workspaceSettingsRepository.update(context.workspace.id, {
+            runtimeProfileJson
+          }),
+        null
+      );
+      printRefreshedRuntimeShow(context, dbPath);
+    })
+  );
+
+program
+  .command("workspace:runtime:set-stage")
+  .requiredOption("--stage <stage>")
+  .requiredOption("--provider <provider>")
+  .option("--model <model>")
+  .action(
+    withContext<{ stage: string; provider: string; model?: string }>((context, options, dbPath) => {
+      assertWorkspaceRuntimeStageKey(options.stage);
+      assertKnownRuntimeProvider(context, options.provider);
+      const existingProfile = loadWorkspaceRuntimeProfileFromSettings(context);
+      const mutableProfile = existingProfile ? convertWorkspaceRuntimeProfileToCustom(existingProfile) : createEmptyWorkspaceRuntimeProfile();
+      const nextProfile = withWorkspaceRuntimeStageSelection(mutableProfile, options.stage, {
+        provider: options.provider,
+        ...(options.model === undefined ? {} : { model: options.model })
+      });
+      assertWorkspaceRuntimeProfileCompatibility(context.agentRuntime.config, nextProfile, {
+        kind: "workspace_settings",
+        workspaceKey: context.workspace.key
+      });
+      storeWorkspaceRuntimeProfile(
+        (runtimeProfileJson) =>
+          context.repositories.workspaceSettingsRepository.update(context.workspace.id, {
+            runtimeProfileJson
+          }),
+        nextProfile
+      );
+      printRefreshedRuntimeShow(context, dbPath);
+    })
+  );
+
+program
+  .command("workspace:runtime:set-worker")
+  .requiredOption("--worker <worker>")
+  .requiredOption("--provider <provider>")
+  .option("--model <model>")
+  .action(
+    withContext<{ worker: string; provider: string; model?: string }>((context, options, dbPath) => {
+      assertWorkspaceRuntimeWorkerKey(options.worker);
+      assertKnownRuntimeProvider(context, options.provider);
+      const existingProfile = loadWorkspaceRuntimeProfileFromSettings(context);
+      const mutableProfile = existingProfile ? convertWorkspaceRuntimeProfileToCustom(existingProfile) : createEmptyWorkspaceRuntimeProfile();
+      const nextProfile = withWorkspaceRuntimeWorkerSelection(mutableProfile, options.worker, {
+        provider: options.provider,
+        ...(options.model === undefined ? {} : { model: options.model })
+      });
+      assertWorkspaceRuntimeProfileCompatibility(context.agentRuntime.config, nextProfile, {
+        kind: "workspace_settings",
+        workspaceKey: context.workspace.key
+      });
+      storeWorkspaceRuntimeProfile(
+        (runtimeProfileJson) =>
+          context.repositories.workspaceSettingsRepository.update(context.workspace.id, {
+            runtimeProfileJson
+          }),
+        nextProfile
+      );
+      printRefreshedRuntimeShow(context, dbPath);
+    })
+  );
+
+program
+  .command("workspace:runtime:set-interactive")
+  .requiredOption("--flow <flow>")
+  .requiredOption("--provider <provider>")
+  .option("--model <model>")
+  .action(
+    withContext<{ flow: string; provider: string; model?: string }>((context, options, dbPath) => {
+      assertWorkspaceRuntimeInteractiveFlowKey(options.flow);
+      assertKnownRuntimeProvider(context, options.provider);
+      const existingProfile = loadWorkspaceRuntimeProfileFromSettings(context);
+      const mutableProfile = existingProfile ? convertWorkspaceRuntimeProfileToCustom(existingProfile) : createEmptyWorkspaceRuntimeProfile();
+      const nextProfile = withWorkspaceRuntimeInteractiveSelection(mutableProfile, options.flow, {
+        provider: options.provider,
+        ...(options.model === undefined ? {} : { model: options.model })
+      });
+      assertWorkspaceRuntimeProfileCompatibility(context.agentRuntime.config, nextProfile, {
+        kind: "workspace_settings",
+        workspaceKey: context.workspace.key
+      });
+      storeWorkspaceRuntimeProfile(
+        (runtimeProfileJson) =>
+          context.repositories.workspaceSettingsRepository.update(context.workspace.id, {
+            runtimeProfileJson
+          }),
+        nextProfile
+      );
+      printRefreshedRuntimeShow(context, dbPath);
+    })
+  );
+
+program
   .command("workspace:doctor")
   .action(
-    withWorkspaceSetupContext<Record<string, never>>(async ({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, repositories }) => {
-      const service = await createWorkspaceSetupService({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, repositories });
+    withWorkspaceSetupContext<Record<string, never>>(async ({ workspace, workspaceSettings, workspaceRoot, rootPathSource, agentRuntimeConfigPath, agentRuntimeConfig, repositories }) => {
+      const service = await createWorkspaceSetupService({
+        workspace,
+        workspaceSettings,
+        workspaceRoot,
+        rootPathSource,
+        agentRuntimeConfigPath,
+        agentRuntimeConfig,
+        repositories
+      });
       console.log(JSON.stringify(service.doctor(), null, 2));
     })
+  );
+
+program
+  .command("workspace:mcp:show")
+  .option("--target <target>", `MCP target (${[...harnessMcpTargets, "all"].join(", ")})`, "all")
+  .action(
+    withWorkspaceSetupContext<{ target?: string }>(
+      async ({ workspace, workspaceRoot }, options) => {
+        if (!workspaceRoot) {
+          throw new AppError("WORKSPACE_ROOT_REQUIRED", "workspace:mcp:show requires a workspace root.");
+        }
+        const targets = resolveRequestedMcpTargets(options.target);
+        const descriptors = resolveHarnessMcpTargets(workspaceRoot).filter((descriptor) => targets.includes(descriptor.target));
+        console.log(
+          JSON.stringify(
+            {
+              workspace: {
+                key: workspace.key,
+                rootPath: workspaceRoot
+              },
+              targets: descriptors.map((descriptor) => ({
+                target: descriptor.target,
+                label: descriptor.label,
+                scope: descriptor.scope,
+                path: descriptor.path,
+                configured: isHarnessMcpConfigured(descriptor),
+                preview: renderHarnessMcpConfigPreview(descriptor)
+              }))
+            },
+            null,
+            2
+          )
+        );
+      }
+    )
+  );
+
+program
+  .command("workspace:mcp:apply")
+  .option("--target <target>", `Single MCP target (${[...harnessMcpTargets, "all"].join(", ")})`, "all")
+  .option("--dry-run", "Show MCP config changes without writing files")
+  .action(
+    withWorkspaceSetupContext<{ target?: string; dryRun?: boolean }>(
+      async ({ workspace, workspaceRoot }, options) => {
+        if (!workspaceRoot) {
+          throw new AppError("WORKSPACE_ROOT_REQUIRED", "workspace:mcp:apply requires a workspace root.");
+        }
+        const targets = resolveRequestedMcpTargets(options.target);
+        const descriptors = resolveHarnessMcpTargets(workspaceRoot).filter((descriptor) => targets.includes(descriptor.target));
+        console.log(
+          JSON.stringify(
+            {
+              workspace: {
+                key: workspace.key,
+                rootPath: workspaceRoot
+              },
+              dryRun: Boolean(options.dryRun),
+              targets: descriptors.map((descriptor) => {
+                const configured = isHarnessMcpConfigured(descriptor);
+                if (options.dryRun || configured) {
+                  return {
+                    target: descriptor.target,
+                    label: descriptor.label,
+                    scope: descriptor.scope,
+                    path: descriptor.path,
+                    configured,
+                    status: configured ? "skipped" : "simulated",
+                    preview: configured ? null : renderHarnessMcpConfigPreview(descriptor)
+                  };
+                }
+                return {
+                  target: descriptor.target,
+                  label: descriptor.label,
+                  scope: descriptor.scope,
+                  configuredBefore: configured,
+                  status: "configured",
+                  ...applyHarnessMcpConfig(descriptor)
+                };
+              })
+            },
+            null,
+            2
+          )
+        );
+      }
+    )
   );
 
 program
@@ -325,8 +727,16 @@ program
   .option("--dry-run", "Show planned actions without mutating the workspace")
   .action(
     withWorkspaceSetupContext<{ createRoot?: boolean; initGit?: boolean; dryRun?: boolean }>(
-      async ({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, repositories }, options) => {
-        const service = await createWorkspaceSetupService({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, repositories });
+      async ({ workspace, workspaceSettings, workspaceRoot, rootPathSource, agentRuntimeConfigPath, agentRuntimeConfig, repositories }, options) => {
+        const service = await createWorkspaceSetupService({
+          workspace,
+          workspaceSettings,
+          workspaceRoot,
+          rootPathSource,
+          agentRuntimeConfigPath,
+          agentRuntimeConfig,
+          repositories
+        });
         console.log(
           JSON.stringify(
             service.init({
@@ -347,10 +757,17 @@ program
   .option("--message <message>", "Additional setup guidance for the planning assistant")
   .action(
     withWorkspaceSetupContext<{ message?: string }>(
-      async ({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, adapterScriptPath, repoRoot, repositories }, options) => {
-        const service = await createWorkspaceSetupService({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, repositories });
-        const runtimeConfig = loadAgentRuntimeConfig(agentRuntimeConfigPath);
-        const resolver = new AgentRuntimeResolver(runtimeConfig, {
+      async ({ workspace, workspaceSettings, workspaceRoot, rootPathSource, agentRuntimeConfigPath, agentRuntimeConfig, adapterScriptPath, repoRoot, repositories }, options) => {
+        const service = await createWorkspaceSetupService({
+          workspace,
+          workspaceSettings,
+          workspaceRoot,
+          rootPathSource,
+          agentRuntimeConfigPath,
+          agentRuntimeConfig,
+          repositories
+        });
+        const resolver = new AgentRuntimeResolver(agentRuntimeConfig, {
           repoRoot,
           adapterScriptPath
         });
@@ -373,8 +790,16 @@ program
   .option("--session-id <sessionId>", "Show a specific workspace assist session")
   .action(
     withWorkspaceSetupContext<{ sessionId?: string }>(
-      async ({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, repositories }, options) => {
-        const service = await createWorkspaceSetupService({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, repositories });
+      async ({ workspace, workspaceSettings, workspaceRoot, rootPathSource, agentRuntimeConfigPath, agentRuntimeConfig, repositories }, options) => {
+        const service = await createWorkspaceSetupService({
+          workspace,
+          workspaceSettings,
+          workspaceRoot,
+          rootPathSource,
+          agentRuntimeConfigPath,
+          agentRuntimeConfig,
+          repositories
+        });
         const result = service.showAssistSession(options.sessionId);
         console.log(JSON.stringify(result, null, 2));
       }
@@ -384,8 +809,16 @@ program
 program
   .command("workspace:assist:list")
   .action(
-    withWorkspaceSetupContext(async ({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, repositories }) => {
-      const service = await createWorkspaceSetupService({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, repositories });
+    withWorkspaceSetupContext(async ({ workspace, workspaceSettings, workspaceRoot, rootPathSource, agentRuntimeConfigPath, agentRuntimeConfig, repositories }) => {
+      const service = await createWorkspaceSetupService({
+        workspace,
+        workspaceSettings,
+        workspaceRoot,
+        rootPathSource,
+        agentRuntimeConfigPath,
+        agentRuntimeConfig,
+        repositories
+      });
       console.log(JSON.stringify(service.listAssistSessions(), null, 2));
     })
   );
@@ -395,8 +828,16 @@ program
   .requiredOption("--session-id <sessionId>", "Resolve a workspace assist session")
   .action(
     withWorkspaceSetupContext<{ sessionId: string }>(
-      async ({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, repositories }, options) => {
-        const service = await createWorkspaceSetupService({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, repositories });
+      async ({ workspace, workspaceSettings, workspaceRoot, rootPathSource, agentRuntimeConfigPath, agentRuntimeConfig, repositories }, options) => {
+        const service = await createWorkspaceSetupService({
+          workspace,
+          workspaceSettings,
+          workspaceRoot,
+          rootPathSource,
+          agentRuntimeConfigPath,
+          agentRuntimeConfig,
+          repositories
+        });
         const result = service.resolveAssistSession({ sessionId: options.sessionId });
         console.log(JSON.stringify(result, null, 2));
       }
@@ -408,8 +849,16 @@ program
   .requiredOption("--session-id <sessionId>", "Cancel a workspace assist session")
   .action(
     withWorkspaceSetupContext<{ sessionId: string }>(
-      async ({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, repositories }, options) => {
-        const service = await createWorkspaceSetupService({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, repositories });
+      async ({ workspace, workspaceSettings, workspaceRoot, rootPathSource, agentRuntimeConfigPath, agentRuntimeConfig, repositories }, options) => {
+        const service = await createWorkspaceSetupService({
+          workspace,
+          workspaceSettings,
+          workspaceRoot,
+          rootPathSource,
+          agentRuntimeConfigPath,
+          agentRuntimeConfig,
+          repositories
+        });
         const result = service.cancelAssistSession({ sessionId: options.sessionId });
         console.log(JSON.stringify(result, null, 2));
       }
@@ -425,6 +874,14 @@ program
   .option("--install-deps", "Install dependencies after scaffolding")
   .option("--with-sonar", "Create Sonar starter config when missing")
   .option("--with-coderabbit", "Create CodeRabbit starter instructions when missing")
+  .option("--runtime-profile <profileKey>", "Apply a built-in workspace runtime profile before bootstrap")
+  .option("--with-mcp", "Configure agent-browser MCP harness files for all supported targets")
+  .option(
+    "--mcp-target <target>",
+    `Configure agent-browser MCP only for the given target (${harnessMcpTargets.join(", ")})`,
+    collectOptionValues,
+    []
+  )
   .option("--plan <path>", "Load bootstrap settings from a JSON plan file")
   .option("--session-id <sessionId>", "Load bootstrap settings from a workspace assist session")
   .option("--dry-run", "Show planned actions without mutating the workspace")
@@ -437,11 +894,22 @@ program
       installDeps?: boolean;
       withSonar?: boolean;
       withCoderabbit?: boolean;
+      runtimeProfile?: string;
+      withMcp?: boolean;
+      mcpTarget?: string[];
       plan?: string;
       sessionId?: string;
       dryRun?: boolean;
-    }>(async ({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, repositories }, options) => {
-      const service = await createWorkspaceSetupService({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, repositories });
+    }>(async ({ workspace, workspaceSettings, workspaceRoot, rootPathSource, agentRuntimeConfigPath, agentRuntimeConfig, repositories }, options) => {
+      const service = await createWorkspaceSetupService({
+        workspace,
+        workspaceSettings,
+        workspaceRoot,
+        rootPathSource,
+        agentRuntimeConfigPath,
+        agentRuntimeConfig,
+        repositories
+      });
       const plan = options.sessionId
         ? service.loadBootstrapPlanFromAssistSession(options.sessionId)
         : options.plan
@@ -456,7 +924,9 @@ program
         Boolean(options.initGit) ||
         Boolean(options.installDeps) ||
         Boolean(options.withSonar) ||
-        Boolean(options.withCoderabbit);
+        Boolean(options.withCoderabbit) ||
+        Boolean(options.withMcp) ||
+        Boolean(options.mcpTarget?.length);
       if (!plan && !hasExplicitBootstrapOptions) {
         throw new AppError(
           "WORKSPACE_BOOTSTRAP_INPUT_REQUIRED",
@@ -482,6 +952,7 @@ program
         version: plan?.version ?? 1,
         workspaceKey: workspace.key,
         rootPath: workspaceRoot,
+        runtimeProfileKey: plan?.runtimeProfileKey ?? null,
         mode: plan?.mode ?? "greenfield",
         stack,
         scaffoldProjectFiles: plan?.scaffoldProjectFiles ?? Boolean(options.scaffoldProjectFiles),
@@ -492,12 +963,47 @@ program
         withCoderabbit: plan?.withCoderabbit ?? Boolean(options.withCoderabbit),
         generatedAt: plan?.generatedAt ?? Date.now()
       };
+      const requestedRuntimeProfileKey = options.runtimeProfile ?? effectivePlan.runtimeProfileKey ?? undefined;
+      const requestedMcpTargets = options.withMcp || options.mcpTarget?.length ? resolveRequestedMcpTargets(undefined, options.mcpTarget ?? []) : [];
+      let runtimeProfileResult: {
+        requestedProfileKey: string;
+        appliedProfileKey: string | null;
+        overwrittenExistingProfile: boolean;
+        dryRun: boolean;
+      } | null = null;
+      if (requestedRuntimeProfileKey) {
+        assertBuiltInWorkspaceRuntimeProfileKey(requestedRuntimeProfileKey);
+        const profileKey = requestedRuntimeProfileKey;
+        const currentProfile = repositories.workspaceSettingsRepository.getByWorkspaceId(workspace.id)?.runtimeProfileJson ?? null;
+        const profile = loadBuiltInWorkspaceRuntimeProfile(repoRoot, profileKey);
+        assertWorkspaceRuntimeProfileCompatibility(agentRuntimeConfig, profile, {
+          kind: "builtin",
+          profileKey,
+          path: getBuiltInWorkspaceRuntimeProfilePath(repoRoot, profileKey)
+        });
+        if (!options.dryRun) {
+          workspaceSettings.runtimeProfileJson = storeWorkspaceRuntimeProfile(
+            (runtimeProfileJson) =>
+              repositories.workspaceSettingsRepository.update(workspace.id, {
+                runtimeProfileJson
+              }),
+            profile
+          ).runtimeProfileJson;
+        }
+        runtimeProfileResult = {
+          requestedProfileKey: profileKey,
+          appliedProfileKey: options.dryRun ? null : profileKey,
+          overwrittenExistingProfile: currentProfile !== null,
+          dryRun: Boolean(options.dryRun)
+        };
+      }
       console.log(
         JSON.stringify(
           {
             planSource,
             planReference,
             effectivePlan,
+            runtimeProfile: runtimeProfileResult,
             ...service.bootstrap({
               stack,
               scaffoldProjectFiles: effectivePlan.scaffoldProjectFiles,
@@ -506,6 +1012,7 @@ program
               installDeps: effectivePlan.installDeps,
               withSonar: effectivePlan.withSonar,
               withCoderabbit: effectivePlan.withCoderabbit,
+              mcpTargets: requestedMcpTargets,
               dryRun: Boolean(options.dryRun)
             })
           },

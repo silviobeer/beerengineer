@@ -314,6 +314,7 @@ Konfigurationsquellen fuer Harness- und Modellwahl:
 
 - Installations-Default: `config/agent-runtime.json`
 - optionaler User-Override: `<userDataDir>/config/agent-runtime.override.json`
+- optionales Workspace-Profil: `workspace_settings.runtime_profile_json`
 - expliziter CLI-Override: `--agent-runtime-config <path>`
 
 Die Runtime-Config kann jetzt echte Provider-Slots aufloesen:
@@ -342,7 +343,18 @@ npm run cli -- --workspace app-two workspace:assist:show
 npm run cli -- --workspace app-two workspace:assist:show --session-id <sessionId>
 npm run cli -- --workspace app-two workspace:assist:resolve --session-id <sessionId>
 npm run cli -- --workspace app-two workspace:assist:cancel --session-id <sessionId>
+npm run cli -- --workspace app-two workspace:runtime:profiles
+npm run cli -- --workspace app-two workspace:runtime:show
+npm run cli -- --workspace app-two workspace:runtime:apply-profile --profile codex_primary
+npm run cli -- --workspace app-two workspace:runtime:clear-profile
+npm run cli -- --workspace app-two workspace:runtime:set-stage --stage planning --provider claude --model sonnet
+npm run cli -- --workspace app-two workspace:runtime:set-worker --worker execution --provider codex --model gpt-5.4
+npm run cli -- --workspace app-two workspace:runtime:set-interactive --flow brainstorm_chat --provider claude --model sonnet
+npm run cli -- --workspace app-two workspace:mcp:show
+npm run cli -- --workspace app-two workspace:mcp:apply --target all
 npm run cli -- --workspace app-two workspace:bootstrap --create-root --init-git --with-sonar --with-coderabbit
+npm run cli -- --workspace app-two workspace:bootstrap --create-root --with-mcp
+npm run cli -- --workspace app-two workspace:bootstrap --create-root --runtime-profile claude_primary
 npm run cli -- --workspace app-two workspace:bootstrap --session-id <sessionId>
 npm run cli -- --workspace app-two workspace:bootstrap --plan ./tmp/bootstrap-plan.json
 ```
@@ -358,22 +370,38 @@ Wichtig:
 Die neuen Setup-Kommandos verhalten sich bewusst unterschiedlich:
 
 - `workspace:doctor` ist read-only und liefert einen strukturierten Gap-Report fuer Harness, Workspace-Root, Git, Laufzeit-Tools und Integrationen
+- fuer Sonar benennt `workspace:doctor` explizit das benoetigte SonarSource CLI `sonar-scanner`
+- fuer Browser- und Repo-Setup benennt `workspace:doctor` jetzt auch explizit `agent-browser`, `npx playwright`, GitHub CLI `gh` und CodeRabbit CLI `cr`/`coderabbit`
+- zusaetzlich prueft `workspace:doctor` jetzt alle unterstuetzten MCP-Harness-Ziele `claude`, `cursor`, `opencode` und `codex` darauf, ob `agent-browser` eingetragen ist
 - `workspace:init` legt nur BeerEngineer-eigene Laufzeitstruktur an und kann optional den Root-Ordner anlegen oder `git init` ausfuehren
 - `workspace:init --dry-run` unterdrueckt alle Seiteneffekte und zeigt nur die geplanten Aktionen
 - `workspace:assist` bleibt planning-only und erzeugt einen JSON-Bootstrap-Plan aus dem aktuellen Doctor-Stand
 - `workspace:assist --message "..."` gibt dem Assist-Pfad zusaetzlichen Nutzerkontext; der Output bleibt trotzdem rein planend
 - `workspace:assist` arbeitet jetzt als persistente Session pro Workspace und liefert Session, Nachrichtenverlauf, `currentPlan` und `recommendedNextCommand`
+- `workspace:assist` transportiert jetzt optional `currentPlan.runtimeProfileKey` und zeigt bei `runtimeProfile`, ob das vorgeschlagene Profil bereits auf den Workspace angewendet wurde
 - `workspace:assist:list` zeigt alle Setup-Sessions des Workspaces, inklusive Marker fuer die neueste, offene und aktuell fuer `workspace:bootstrap` empfohlene Session sowie `recommendedNextCommand`
 - `workspace:assist:show` zeigt die neueste oder eine explizite Workspace-Assist-Session erneut an und liefert denselben konsolidierten Folgehinweis ueber `recommendedNextCommand`
 - `workspace:assist:resolve` markiert eine Session formal als abgeschlossen und zeigt als `recommendedNextCommand` den Bootstrap der Session
 - `workspace:assist:cancel` bricht eine offene Session formal ab und zeigt als `recommendedNextCommand` den Start einer neuen Assist-Session
 - `workspace:assist` unterscheidet dabei zwischen Greenfield und Brownfield und setzt fuer bestehende Projekte `scaffoldProjectFiles=false`; Brownfield wird dabei nicht nur ueber ein Manifest, sondern auch ueber bestehende Repo-Signale wie `tsconfig.json`, `src/`, `sonar-project.properties`, `coderabbit.md` oder `git remote origin` erkannt
+- `workspace:runtime:profiles` listet die eingebauten Presets `codex_primary` und `claude_primary` samt Kompatibilitaet zur aktuell aktiven globalen Runtime
+- `workspace:runtime:show` zeigt globale Runtime-Quelle, aktives Workspace-Profil, Kompatibilitaet und die effektiven Zuordnungen fuer Defaults, Interactive-Flows, Stages und Worker inklusive Herkunft je Slot
+- ein inkompatibles gespeichertes Workspace-Profil blockiert die CLI nicht mehr; `workspace:runtime:show` und `workspace:runtime:clear-profile` bleiben damit als Recovery-Pfad benutzbar und zeigen die Kompatibilitaetsprobleme explizit an
+- `workspace:runtime:apply-profile` ersetzt das bisherige Workspace-Profil durch ein Built-in-Profil
+- `workspace:runtime:clear-profile` entfernt das Workspace-Profil vollstaendig und faellt auf die globale Runtime zurueck
+- `workspace:runtime:set-stage`, `workspace:runtime:set-worker` und `workspace:runtime:set-interactive` materialisieren oder aktualisieren ein Workspace-Custom-Profil; unbekannte Provider werden bereits beim Speichern abgelehnt
+- `workspace:mcp:show` zeigt fuer `claude`, `cursor`, `opencode` und `codex`, wo die MCP-Konfiguration liegt, ob `agent-browser` bereits eingetragen ist und welchen Config-Snippet BeerEngineer dafuer verwenden wuerde
+- `workspace:mcp:apply --target all|claude|cursor|opencode|codex` materialisiert die `agent-browser`-MCP-Konfiguration fuer die gewaehlten Harness-Ziele
 - `workspace:bootstrap` fuehrt einen expliziten Bootstrap aus und kann fuer Greenfield Node/TS-Starterdateien, Sonar-Config und CodeRabbit-Instruktionen anlegen
+- `workspace:bootstrap --with-mcp` richtet die `agent-browser`-MCP-Konfiguration fuer alle unterstuetzten Harness-Ziele ein
+- `workspace:bootstrap --mcp-target <target>` begrenzt das MCP-Setup auf einzelne Ziele und kann mehrfach angegeben werden
+- wenn eine bestehende MCP-Konfig defekt ist, markiert `workspace:bootstrap` den betroffenen MCP-Schritt als `blocked`, statt den gesamten Bootstrap abzubrechen
 - `workspace:bootstrap --scaffold-project-files` erzwingt Starterdateien auch ohne Plan
 - `workspace:bootstrap` verwendet ohne `--plan` und ohne `--session-id` automatisch den aktuellen Plan einer offenen Assist-Session, falls eine existiert
 - `workspace:bootstrap` scheitert mit einem klaren Fehler, wenn weder Planquelle noch offene Assist-Session noch explizite Bootstrap-Flags vorhanden sind
 - `workspace:bootstrap --session-id <sessionId>` fuehrt den aktuellen Plan einer Assist-Session direkt aus
 - `workspace:bootstrap --plan <path>` fuehrt einen zuvor erzeugten Plan deterministisch aus
+- `workspace:bootstrap --runtime-profile <profileKey>` wendet vor dem Bootstrap bewusst ein Built-in-Profil an und meldet in `runtimeProfile`, ob dabei ein bestehendes Profil ueberschrieben wurde
 - `workspace:bootstrap` gibt mit `planSource` und `planReference` aus, ob die Ausfuehrung aus CLI-Optionen, einer Plan-Datei oder einer Assist-Session stammt und welche konkrete Quelle verwendet wurde
 - `workspace:bootstrap` gibt zusaetzlich `effectivePlan` aus, also die tatsaechlich verwendeten Bootstrap-Parameter nach Aufloesung aller Defaults
 - `workspace:bootstrap --dry-run` unterdrueckt auch `npm install` und sonstige Subprozesse mit Seiteneffekten

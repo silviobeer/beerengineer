@@ -313,6 +313,7 @@ export const workspaceSetupAssistPlanSchema = z.object({
   version: z.literal(1),
   workspaceKey: z.string().min(1),
   rootPath: z.string().min(1).nullable(),
+  runtimeProfileKey: z.enum(["codex_primary", "claude_primary"]).nullable().optional(),
   mode: z.enum(["greenfield", "brownfield"]),
   stack: z.enum(["node-ts", "python"]),
   scaffoldProjectFiles: z.boolean(),

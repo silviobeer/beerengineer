@@ -24,14 +24,30 @@ Gedachte Nutzung im spaeteren Workspace-Profil:
 
 ```json
 {
+  "version": 1,
   "profileKey": "codex_primary",
   "label": "Codex Primary",
+  "defaultProvider": "codex",
   "defaults": {
     "interactive": { "provider": "codex", "model": "gpt-5.4" },
     "autonomous": { "provider": "codex", "model": "gpt-5.4" }
   },
   "interactive": {},
   "stages": {},
-  "workers": {}
+  "workers": {},
+  "meta": {
+    "source": "builtin",
+    "description": "Codex handles the code-heavy path."
+  }
 }
 ```
+
+Die Profil-Keys fuer CLI, DB und JSON-Inhalt sind:
+
+- `codex_primary`
+- `claude_primary`
+
+Die Dateien werden explizit gemappt:
+
+- `codex_primary` -> `config/runtime-profiles/codex-primary.json`
+- `claude_primary` -> `config/runtime-profiles/claude-primary.json`

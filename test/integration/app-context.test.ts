@@ -26,6 +26,7 @@ describe("app context", () => {
             workspaceId: workspace.id,
             defaultAdapterKey: null,
             defaultModel: null,
+            runtimeProfileJson: null,
             autorunPolicyJson: null,
             promptOverridesJson: null,
             skillOverridesJson: null,
@@ -41,6 +42,7 @@ describe("app context", () => {
             workspaceId: workspace.id,
             defaultAdapterKey: null,
             defaultModel: null,
+            runtimeProfileJson: null,
             autorunPolicyJson: null,
             promptOverridesJson: null,
             skillOverridesJson: null,
@@ -220,6 +222,105 @@ describe("app context", () => {
       expect(context.effectiveConfig.workspaceRoot).toBe(root);
     } finally {
       context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps app context usable when a stored workspace runtime profile is incompatible", () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-app-context-"));
+    const dbPath = join(root, "app.sqlite");
+    const bootstrap = createAppContext(dbPath);
+
+    try {
+      bootstrap.repositories.workspaceSettingsRepository.update(bootstrap.workspace.id, {
+        runtimeProfileJson: JSON.stringify({
+          version: 1,
+          profileKey: "broken_profile",
+          stages: {
+            planning: {
+              provider: "missing-provider"
+            }
+          }
+        })
+      });
+      bootstrap.connection.close();
+
+      const context = createAppContext(dbPath);
+      try {
+        expect(context.agentRuntime.workspaceProfile?.profileKey).toBe("broken_profile");
+        expect(context.agentRuntime.workspaceProfileCompatibility).toEqual({
+          valid: false,
+          missingProviders: ["missing-provider"],
+          issues: ["Provider missing-provider is not defined in the global runtime config."]
+        });
+      } finally {
+        context.connection.close();
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves workspace defaultModel as effective fallback when runtime default has no model", () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-app-context-"));
+    const dbPath = join(root, "app.sqlite");
+    const configPath = join(root, "agent-runtime.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify(
+        {
+          defaultProvider: "codex",
+          policy: {
+            autonomyMode: "yolo",
+            approvalMode: "never",
+            filesystemMode: "danger-full-access",
+            networkMode: "enabled",
+            interactionMode: "non_blocking"
+          },
+          defaults: {
+            autonomous: {
+              provider: "codex"
+            },
+            interactive: {
+              provider: "codex"
+            }
+          },
+          interactive: {},
+          stages: {},
+          workers: {},
+          providers: {
+            codex: {
+              adapterKey: "codex",
+              command: ["codex"],
+              env: {},
+              timeoutMs: 1800000
+            }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    const bootstrap = createAppContext(dbPath, {
+      agentRuntimeConfigPath: configPath
+    });
+
+    try {
+      bootstrap.repositories.workspaceSettingsRepository.update(bootstrap.workspace.id, {
+        defaultModel: "workspace-model"
+      });
+      bootstrap.connection.close();
+
+      const context = createAppContext(dbPath, {
+        agentRuntimeConfigPath: configPath
+      });
+      try {
+        expect(context.effectiveConfig.defaultModel).toBe("workspace-model");
+      } finally {
+        context.connection.close();
+      }
+    } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });

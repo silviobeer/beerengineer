@@ -14,6 +14,7 @@ export const workspaceSettings = sqliteTable("workspace_settings", {
   workspaceId: text("workspace_id").primaryKey().references(() => workspaces.id),
   defaultAdapterKey: text("default_adapter_key"),
   defaultModel: text("default_model"),
+  runtimeProfileJson: text("runtime_profile_json"),
   autorunPolicyJson: text("autorun_policy_json"),
   promptOverridesJson: text("prompt_overrides_json"),
   skillOverridesJson: text("skill_overrides_json"),

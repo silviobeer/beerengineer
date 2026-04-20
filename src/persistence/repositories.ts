@@ -339,6 +339,7 @@ export class WorkspaceSettingsRepository {
       .set({
         defaultAdapterKey: updated.defaultAdapterKey,
         defaultModel: updated.defaultModel,
+        runtimeProfileJson: updated.runtimeProfileJson,
         autorunPolicyJson: updated.autorunPolicyJson,
         promptOverridesJson: updated.promptOverridesJson,
         skillOverridesJson: updated.skillOverridesJson,

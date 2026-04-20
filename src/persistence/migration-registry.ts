@@ -985,5 +985,9 @@ export const baseMigrations: readonly SqlMigration[] = [
         FOREIGN KEY (run_id) REFERENCES review_runs(id)
       )`
     ]
+  },
+  {
+    id: "0017_workspace_runtime_profiles",
+    statements: [`ALTER TABLE workspace_settings ADD COLUMN runtime_profile_json TEXT`]
   }
 ];

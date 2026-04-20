@@ -691,6 +691,7 @@ describe("repositories", () => {
         workspaceId: secondWorkspace.id,
         defaultAdapterKey: null,
         defaultModel: null,
+        runtimeProfileJson: null,
         autorunPolicyJson: null,
         promptOverridesJson: null,
         skillOverridesJson: null,

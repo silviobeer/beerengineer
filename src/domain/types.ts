@@ -397,6 +397,7 @@ export type WorkspaceSettings = {
   workspaceId: string;
   defaultAdapterKey: string | null;
   defaultModel: string | null;
+  runtimeProfileJson: string | null;
   autorunPolicyJson: string | null;
   promptOverridesJson: string | null;
   skillOverridesJson: string | null;

@@ -89,24 +89,42 @@ export function loadResolvedAgentRuntimeConfig(input: {
   repoRoot: string;
   explicitConfigPath?: string;
   overrideConfigPath?: string;
-}): { configPath: string; config: AgentRuntimeConfig } {
+}): {
+  configPath: string;
+  config: AgentRuntimeConfig;
+  installedConfigPath: string;
+  overrideConfigPath: string | null;
+  source: "installed" | "user_override" | "explicit";
+} {
   const configPath = resolveAgentRuntimeConfigPath(input);
   if (input.explicitConfigPath) {
     return {
       configPath,
-      config: loadAgentRuntimeConfigFromObject(readJsonFile(configPath))
+      config: loadAgentRuntimeConfigFromObject(readJsonFile(configPath)),
+      installedConfigPath: configPath,
+      overrideConfigPath: null,
+      source: "explicit"
     };
   }
 
   const defaultConfig = loadAgentRuntimeConfigFromObject(readJsonFile(configPath));
   const overrideConfigPath = resolve(input.overrideConfigPath ?? resolveDefaultAgentRuntimeOverridePath());
   if (!existsSync(overrideConfigPath)) {
-    return { configPath, config: defaultConfig };
+    return {
+      configPath,
+      config: defaultConfig,
+      installedConfigPath: configPath,
+      overrideConfigPath: null,
+      source: "installed"
+    };
   }
 
   const overrideConfig = loadRuntimeOverrideConfig(overrideConfigPath);
   return {
     configPath: overrideConfigPath,
-    config: loadAgentRuntimeConfigFromObject(mergeRuntimeConfig(defaultConfig, overrideConfig))
+    config: loadAgentRuntimeConfigFromObject(mergeRuntimeConfig(defaultConfig, overrideConfig)),
+    installedConfigPath: configPath,
+    overrideConfigPath,
+    source: "user_override"
   };
 }

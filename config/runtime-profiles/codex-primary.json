@@ -1,7 +1,8 @@
 {
+  "version": 1,
   "profileKey": "codex_primary",
   "label": "Codex Primary",
-  "description": "Codex handles the code-heavy path. Claude covers cheaper review, brainstorm, QA, and documentation roles.",
+  "defaultProvider": "codex",
   "defaults": {
     "interactive": {
       "provider": "codex",
@@ -73,5 +74,9 @@
       "provider": "claude",
       "model": "sonnet"
     }
+  },
+  "meta": {
+    "source": "builtin",
+    "description": "Codex handles the code-heavy path. Claude covers cheaper review, brainstorm, QA, and documentation roles."
   }
 }

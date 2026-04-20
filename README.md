@@ -55,6 +55,15 @@ Im Projekt-Workspace gilt jetzt:
 - `.beerengineer/` ist reiner Runtime-Zustand und sollte gitignoriert bleiben
 - pushbare Delivery-Reports werden unter `docs/delivery-reports/<workspace-key>/` materialisiert
 
+Workspace-spezifische Agent-Strategien lassen sich ueber Runtime-Profile steuern:
+
+- `codex_primary` fuer Codex als primaeren code-lastigen Pfad
+- `claude_primary` fuer Claude als primaeren text- und reviewlastigen Pfad
+
+Fuer Browser-/Tooling-Harnesses kann BeerEngineer ausserdem `agent-browser` als MCP-Server fuer `claude`, `cursor`, `opencode` und `codex` materialisieren.
+
+Die effektive Runtime wird aus globalem Default, optionalem User-Override und optionalem Workspace-Profil aufgeloest. Inkompatible gespeicherte Workspace-Profile bleiben dabei sichtbar, blockieren aber die CLI nicht mehr; Recovery laeuft ueber `workspace:runtime:show` und `workspace:runtime:clear-profile`. Details und CLI-Kommandos stehen in [docs/reference/cli.md](docs/reference/cli.md).
+
 ## Projektstruktur
 
 ```text

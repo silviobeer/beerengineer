@@ -44,9 +44,12 @@ describe("migration runner", () => {
         "0009_add_interactive_review_resolved_at_index",
         "0010_brainstorm_interactive",
         "0011_app_verification_runtime",
-        "0012_quality_integrations"
+        "0012_quality_integrations",
+        "0013_workspace_assist_sessions",
+        "0016_review_core",
+        "0017_workspace_runtime_profiles"
       ]);
-      expect(row?.count).toBe(13);
+      expect(row?.count).toBe(16);
       expect(indexes.map((index) => index.name)).toContain("idx_qa_runs_project_id");
     } finally {
       secondConnection.close();
@@ -80,7 +83,10 @@ describe("migration runner", () => {
         "0009_add_interactive_review_resolved_at_index",
         "0010_brainstorm_interactive",
         "0011_app_verification_runtime",
-        "0012_quality_integrations"
+        "0012_quality_integrations",
+        "0013_workspace_assist_sessions",
+        "0016_review_core",
+        "0017_workspace_runtime_profiles"
       ]);
       expect(columns.map((column) => column.name)).toContain("mode");
       expect(executionColumns.map((column) => column.name)).toContain("system_prompt_snapshot");
@@ -114,7 +120,10 @@ describe("migration runner", () => {
         "0009_add_interactive_review_resolved_at_index",
         "0010_brainstorm_interactive",
         "0011_app_verification_runtime",
-        "0012_quality_integrations"
+        "0012_quality_integrations",
+        "0013_workspace_assist_sessions",
+        "0016_review_core",
+        "0017_workspace_runtime_profiles"
       ]);
       expect(runIndexes.map((index) => index.name)).toContain("idx_qa_runs_project_id");
       expect(findingIndexes.map((index) => index.name)).toContain("idx_qa_findings_qa_run_id");
@@ -150,7 +159,10 @@ describe("migration runner", () => {
         "0009_add_interactive_review_resolved_at_index",
         "0010_brainstorm_interactive",
         "0011_app_verification_runtime",
-        "0012_quality_integrations"
+        "0012_quality_integrations",
+        "0013_workspace_assist_sessions",
+        "0016_review_core",
+        "0017_workspace_runtime_profiles"
       ]);
       expect(tables.map((table) => table.name)).toEqual([
         "story_review_agent_sessions",
@@ -198,7 +210,10 @@ describe("migration runner", () => {
         "0009_add_interactive_review_resolved_at_index",
         "0010_brainstorm_interactive",
         "0011_app_verification_runtime",
-        "0012_quality_integrations"
+        "0012_quality_integrations",
+        "0013_workspace_assist_sessions",
+        "0016_review_core",
+        "0017_workspace_runtime_profiles"
       ]);
       expect(tables.map((table) => table.name)).toEqual(["documentation_agent_sessions", "documentation_runs"]);
       expect(runIndexes.map((index) => index.name)).toContain("idx_documentation_runs_project_id");
@@ -243,7 +258,10 @@ describe("migration runner", () => {
         "0009_add_interactive_review_resolved_at_index",
         "0010_brainstorm_interactive",
         "0011_app_verification_runtime",
-        "0012_quality_integrations"
+        "0012_quality_integrations",
+        "0013_workspace_assist_sessions",
+        "0016_review_core",
+        "0017_workspace_runtime_profiles"
       ]);
       expect(tables.map((table) => table.name)).toEqual([
         "story_review_remediation_agent_sessions",
@@ -275,7 +293,13 @@ describe("migration runner", () => {
       const runIndexes = verificationLegacyDb.prepare("PRAGMA index_list(app_verification_runs)").all() as Array<{ name: string }>;
       const qualityIndexes = verificationLegacyDb.prepare("PRAGMA index_list(quality_knowledge_entries)").all() as Array<{ name: string }>;
 
-      expect(applied).toEqual(["0011_app_verification_runtime", "0012_quality_integrations"]);
+      expect(applied).toEqual([
+        "0011_app_verification_runtime",
+        "0012_quality_integrations",
+        "0013_workspace_assist_sessions",
+        "0016_review_core",
+        "0017_workspace_runtime_profiles"
+      ]);
       expect(tables.map((table) => table.name)).toEqual([
         "app_verification_runs",
         "quality_knowledge_entries",

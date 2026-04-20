@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -67,6 +67,180 @@ describe("WorkspaceSetupService", () => {
     }
   });
 
+  it("names the SonarSource CLI explicitly in doctor runtime checks", () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-workspace-setup-"));
+    const configPath = createRuntimeConfig(root);
+
+    try {
+      const report = createService(root, configPath).doctor();
+      const sonarCheck = report.checks.runtime.find((check: { id: string }) => check.id === "sonar-scanner-binary") as
+        | { message: string; status: string }
+        | undefined;
+      expect(sonarCheck?.message).toContain("SonarSource CLI");
+      expect(sonarCheck?.message).toContain("sonar-scanner");
+      if (sonarCheck?.status !== "ok") {
+        expect(report.suggestedActions.some((action: string) => action.includes("SonarSource CLI"))).toBe(true);
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("names agent-browser, Playwright, GitHub CLI, and CodeRabbit explicitly in doctor runtime checks", () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-workspace-setup-"));
+    const configPath = createRuntimeConfig(root);
+
+    try {
+      const report = createService(root, configPath).doctor();
+      const runtimeChecks = report.checks.runtime as Array<{ id: string; message: string; status: string }>;
+      const ghCheck = runtimeChecks.find((check) => check.id === "gh-binary");
+      const agentBrowserCheck = runtimeChecks.find((check) => check.id === "agent-browser-binary");
+      const playwrightCheck = runtimeChecks.find((check) => check.id === "playwright-binary");
+      const coderabbitCheck = runtimeChecks.find((check) => check.id === "coderabbit-binary");
+
+      expect(ghCheck?.message).toContain("GitHub CLI");
+      expect(ghCheck?.message).toContain("gh");
+      expect(agentBrowserCheck?.message).toContain("Agent Browser CLI");
+      expect(agentBrowserCheck?.message).toContain("agent-browser");
+      expect(playwrightCheck?.message).toContain("Playwright CLI");
+      expect(playwrightCheck?.message).toContain("npx playwright");
+      expect(coderabbitCheck?.message).toContain("CodeRabbit CLI");
+
+      if (ghCheck?.status !== "ok") {
+        expect(report.suggestedActions.some((action: string) => action.includes("GitHub CLI"))).toBe(true);
+      }
+      if (agentBrowserCheck?.status !== "ok") {
+        expect(report.suggestedActions.some((action: string) => action.includes("Agent Browser CLI"))).toBe(true);
+      }
+      if (playwrightCheck?.status !== "ok") {
+        expect(report.suggestedActions.some((action: string) => action.includes("npx playwright"))).toBe(true);
+      }
+      if (coderabbitCheck?.status !== "ok") {
+        expect(report.suggestedActions.some((action: string) => action.includes("CodeRabbit CLI"))).toBe(true);
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("detects PATH binaries and local playwright CLI without relying on which", () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-workspace-setup-"));
+    const configPath = createRuntimeConfig(root);
+    const binDir = join(root, "bin");
+    const playwrightBinDir = join(root, "node_modules", ".bin");
+    mkdirSync(binDir, { recursive: true });
+    mkdirSync(playwrightBinDir, { recursive: true });
+
+    const binaryExtension = process.platform === "win32" ? ".cmd" : "";
+    const scriptBody = process.platform === "win32" ? "@echo off\r\nexit /b 0\r\n" : "#!/bin/sh\nexit 0\n";
+    for (const binary of ["gh", "agent-browser", "cr", "sonar-scanner"]) {
+      const binaryPath = join(binDir, `${binary}${binaryExtension}`);
+      writeFileSync(binaryPath, scriptBody, "utf8");
+      if (process.platform !== "win32") {
+        chmodSync(binaryPath, 0o755);
+      }
+    }
+    const playwrightPath = join(playwrightBinDir, `playwright${binaryExtension}`);
+    writeFileSync(playwrightPath, scriptBody, "utf8");
+    if (process.platform !== "win32") {
+      chmodSync(playwrightPath, 0o755);
+    }
+
+    const previousPath = process.env.PATH;
+    const previousPathExt = process.env.PATHEXT;
+
+    try {
+      process.env.PATH = previousPath ? `${binDir}${process.platform === "win32" ? ";" : ":"}${previousPath}` : binDir;
+      if (process.platform === "win32") {
+        process.env.PATHEXT = ".COM;.EXE;.BAT;.CMD";
+      }
+
+      const report = createService(root, configPath).doctor();
+      const runtimeChecks = report.checks.runtime as Array<{ id: string; status: string }>;
+      expect(runtimeChecks.find((check) => check.id === "gh-binary")?.status).toBe("ok");
+      expect(runtimeChecks.find((check) => check.id === "agent-browser-binary")?.status).toBe("ok");
+      expect(runtimeChecks.find((check) => check.id === "coderabbit-binary")?.status).toBe("ok");
+      expect(runtimeChecks.find((check) => check.id === "sonar-scanner-binary")?.status).toBe("ok");
+      expect(runtimeChecks.find((check) => check.id === "playwright-binary")?.status).toBe("ok");
+    } finally {
+      process.env.PATH = previousPath;
+      if (process.platform === "win32") {
+        process.env.PATHEXT = previousPathExt;
+      }
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("checks all supported MCP harness configs for an agent-browser server entry", () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-workspace-setup-"));
+    const configPath = createRuntimeConfig(root);
+    const binDir = join(root, "bin");
+    mkdirSync(binDir, { recursive: true });
+
+    const binaryExtension = process.platform === "win32" ? ".cmd" : "";
+    const scriptBody = process.platform === "win32" ? "@echo off\r\nexit /b 0\r\n" : "#!/bin/sh\nexit 0\n";
+    const agentBrowserPath = join(binDir, `agent-browser${binaryExtension}`);
+    writeFileSync(agentBrowserPath, scriptBody, "utf8");
+    if (process.platform !== "win32") {
+      chmodSync(agentBrowserPath, 0o755);
+    }
+
+    const previousPath = process.env.PATH;
+    const previousHome = process.env.HOME;
+    const previousUserProfile = process.env.USERPROFILE;
+    const previousAppData = process.env.APPDATA;
+
+    try {
+      process.env.PATH = previousPath ? `${binDir}${process.platform === "win32" ? ";" : ":"}${previousPath}` : binDir;
+      process.env.HOME = root;
+      process.env.USERPROFILE = root;
+      process.env.APPDATA = join(root, "AppData", "Roaming");
+
+      const claudeConfigPath = join(root, ".mcp.json");
+      mkdirSync(root, { recursive: true });
+      writeFileSync(
+        claudeConfigPath,
+        JSON.stringify({
+          mcpServers: {
+            "agent-browser": {
+              command: "agent-browser",
+              args: ["mcp"]
+            }
+          }
+        }),
+        "utf8"
+      );
+
+      const cursorConfigPath = join(root, ".cursor", "mcp.json");
+      mkdirSync(join(root, ".cursor"), { recursive: true });
+      writeFileSync(
+        cursorConfigPath,
+        JSON.stringify({
+          mcpServers: {
+            "agent-browser": {
+              command: "agent-browser",
+              args: ["mcp"]
+            }
+          }
+        }),
+        "utf8"
+      );
+
+      const report = createService(root, configPath).doctor();
+      const integrationChecks = report.checks.integrations as Array<{ id: string; status: string; message: string }>;
+      expect(integrationChecks.find((check) => check.id === "mcp-claude-agent-browser")?.status).toBe("ok");
+      expect(integrationChecks.find((check) => check.id === "mcp-cursor-agent-browser")?.status).toBe("ok");
+      expect(integrationChecks.find((check) => check.id === "mcp-opencode-agent-browser")?.status).toBe("warning");
+      expect(integrationChecks.find((check) => check.id === "mcp-codex-agent-browser")?.status).toBe("warning");
+    } finally {
+      process.env.PATH = previousPath;
+      process.env.HOME = previousHome;
+      process.env.USERPROFILE = previousUserProfile;
+      process.env.APPDATA = previousAppData;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("simulates parent directory creation and uses Python install commands for the python stack", () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-workspace-setup-"));
     const configPath = createRuntimeConfig(root, {
@@ -96,6 +270,47 @@ describe("WorkspaceSetupService", () => {
         | { command?: string[] }
         | undefined;
       expect(installAction?.command?.slice(1)).toEqual(["-m", "pip", "install", "-e", "."]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps bootstrap running when an MCP target config is malformed", () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-workspace-setup-"));
+    const configPath = createRuntimeConfig(root, {
+      policy: {
+        autonomyMode: "yolo",
+        approvalMode: "never",
+        filesystemMode: "danger-full-access",
+        networkMode: "enabled",
+        interactionMode: "non_blocking"
+      }
+    });
+    writeFileSync(join(root, ".mcp.json"), "{ invalid json", "utf8");
+
+    try {
+      const result = createService(root, configPath).bootstrap({
+        stack: "node-ts",
+        scaffoldProjectFiles: false,
+        createRoot: false,
+        initGit: false,
+        installDeps: false,
+        withSonar: false,
+        withCoderabbit: false,
+        mcpTargets: ["claude", "cursor"],
+        dryRun: false
+      });
+
+      const claudeAction = result.actions.find((action: { id: string }) => action.id === "bootstrap-mcp-claude") as
+        | { status: string; message: string }
+        | undefined;
+      const cursorAction = result.actions.find((action: { id: string }) => action.id === "bootstrap-mcp-cursor") as
+        | { status: string }
+        | undefined;
+
+      expect(claudeAction?.status).toBe("blocked");
+      expect(claudeAction?.message).toContain("Failed to configure");
+      expect(cursorAction?.status).toBe("created");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -146,6 +361,64 @@ describe("WorkspaceSetupService", () => {
     try {
       expect(() => service.resolveAssistSession({ sessionId: session.id })).toThrowError(AppError);
       expect(service.showAssistSession(session.id).recommendedNextCommand).toContain("workspace:assist");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("surfaces the suggested runtime profile and whether it is already applied", () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-workspace-setup-"));
+    const configPath = createRuntimeConfig(root);
+    const session = {
+      id: "workspace_assist_session_1",
+      workspaceId: "workspace_1",
+      status: "open",
+      currentPlanJson: JSON.stringify({
+        version: 1,
+        workspaceKey: "hello-world",
+        rootPath: root,
+        runtimeProfileKey: "codex_primary",
+        mode: "greenfield",
+        stack: "node-ts",
+        scaffoldProjectFiles: true,
+        createRoot: false,
+        initGit: false,
+        installDeps: false,
+        withSonar: true,
+        withCoderabbit: true,
+        generatedAt: Date.now()
+      }),
+      startedAt: Date.now(),
+      updatedAt: Date.now(),
+      resolvedAt: null,
+      lastAssistantMessageId: null,
+      lastUserMessageId: null
+    };
+    const service = createService(root, configPath, {
+      workspaceSettings: {
+        runtimeProfileJson: JSON.stringify({
+          version: 1,
+          profileKey: "codex_primary"
+        })
+      },
+      assistSessionRepository: {
+        getById: (id: string) => (id === session.id ? session : null),
+        getLatestByWorkspaceId: () => session,
+        findOpenByWorkspaceId: () => session,
+        listByWorkspaceId: () => [session],
+        update: () => session
+      },
+      assistMessageRepository: {
+        listBySessionId: () => []
+      }
+    });
+
+    try {
+      expect(service.showAssistSession(session.id).runtimeProfile).toEqual({
+        suggestedProfileKey: "codex_primary",
+        appliedProfileKey: "codex_primary",
+        alreadyApplied: true
+      });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

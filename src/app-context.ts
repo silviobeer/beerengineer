@@ -61,6 +61,14 @@ import { baseMigrations } from "./persistence/migration-registry.js";
 import { applyMigrations } from "./persistence/migrator.js";
 import { AppError } from "./shared/errors.js";
 import { loadResolvedAgentRuntimeConfig } from "./shared/runtime-config.js";
+import {
+  loadWorkspaceRuntimeProfileFromJsonString,
+  resolveWorkspaceRuntimeConfig,
+  validateWorkspaceRuntimeProfileCompatibility,
+  type WorkspaceRuntimeCompatibility,
+  type WorkspaceRuntimeProfile,
+  type WorkspaceRuntimeSlotSources
+} from "./shared/workspace-runtime-profile.js";
 import { DEFAULT_WORKSPACE_KEY } from "./shared/workspaces.js";
 import { assertSafeWorkspaceRoot, isUnsafeWorkspaceRoot } from "./shared/workspace-root-guard.js";
 import { CoderabbitService } from "./services/coderabbit-service.js";
@@ -79,6 +87,12 @@ export type AgentRuntimeContext = {
   configPath: string;
   config: AgentRuntimeConfig;
   resolver: AgentRuntimeResolver;
+  globalConfigPath: string;
+  globalConfigSource: "installed" | "user_override" | "explicit";
+  workspaceProfile: WorkspaceRuntimeProfile | null;
+  workspaceProfileSource: string | null;
+  workspaceProfileCompatibility: WorkspaceRuntimeCompatibility | null;
+  sources: WorkspaceRuntimeSlotSources;
 };
 
 export type AppContext = {
@@ -165,6 +179,8 @@ export type WorkspaceSetupContext = {
   rootPathSource: "override" | "workspace" | "unset";
   repoRoot: string;
   agentRuntimeConfigPath: string;
+  agentRuntimeConfig: AgentRuntimeConfig;
+  agentRuntimeConfigSource: "installed" | "user_override" | "explicit";
   adapterScriptPath?: string;
   repositories: {
     workspaceRepository: WorkspaceRepository;
@@ -189,10 +205,6 @@ export function createAppContext(
   const resolvedRuntime = loadResolvedAgentRuntimeConfig({
     repoRoot,
     explicitConfigPath: options?.agentRuntimeConfigPath
-  });
-  const agentRuntimeResolver = new AgentRuntimeResolver(resolvedRuntime.config, {
-    repoRoot,
-    adapterScriptPath: options?.adapterScriptPath
   });
   const { connection, db } = createDatabase(dbPath);
   applyMigrations(connection, baseMigrations);
@@ -257,6 +269,28 @@ export function createAppContext(
   if (!workspaceSettings) {
     throw new AppError("WORKSPACE_SETTINGS_NOT_FOUND", `Workspace settings for ${workspace.key} not found`);
   }
+  const workspaceRuntimeProfile = workspaceSettings.runtimeProfileJson
+    ? loadWorkspaceRuntimeProfileFromJsonString(workspaceSettings.runtimeProfileJson, {
+        kind: "workspace_settings",
+        workspaceKey: workspace.key
+      })
+    : null;
+  const workspaceProfileCompatibility = workspaceRuntimeProfile
+    ? validateWorkspaceRuntimeProfileCompatibility(resolvedRuntime.config, workspaceRuntimeProfile)
+    : null;
+  if (workspaceProfileCompatibility && !workspaceProfileCompatibility.valid) {
+    console.error(
+      `[beerengineer] Workspace runtime profile for ${workspace.key} is incompatible and will be ignored: ${workspaceProfileCompatibility.issues.join("; ")}`
+    );
+  }
+  const resolvedWorkspaceRuntime = resolveWorkspaceRuntimeConfig({
+    globalRuntimeConfig: resolvedRuntime.config,
+    workspaceProfile: workspaceProfileCompatibility?.valid ? workspaceRuntimeProfile : null
+  });
+  const agentRuntimeResolver = new AgentRuntimeResolver(resolvedWorkspaceRuntime.config, {
+    repoRoot,
+    adapterScriptPath: options?.adapterScriptPath
+  });
   const defaultRuntime = agentRuntimeResolver.resolveDefault("autonomous");
   const safeDefaultWorkspaceRoot = isUnsafeWorkspaceRoot(process.cwd(), repoRoot) ? dirname(resolve(dbPath)) : process.cwd();
   const resolvedWorkspaceRoot = options?.workspaceRoot ?? workspace.rootPath ?? safeDefaultWorkspaceRoot;
@@ -286,8 +320,14 @@ export function createAppContext(
     effectiveConfig,
     agentRuntime: {
       configPath: resolvedRuntime.configPath,
-      config: resolvedRuntime.config,
-      resolver: agentRuntimeResolver
+      config: resolvedWorkspaceRuntime.config,
+      resolver: agentRuntimeResolver,
+      globalConfigPath: resolvedRuntime.configPath,
+      globalConfigSource: resolvedRuntime.source,
+      workspaceProfile: workspaceRuntimeProfile,
+      workspaceProfileSource: workspaceRuntimeProfile ? "workspace_settings.runtime_profile_json" : null,
+      workspaceProfileCompatibility: workspaceProfileCompatibility,
+      sources: resolvedWorkspaceRuntime.sources
     },
     repositories: {
       workspaceRepository,
@@ -450,6 +490,8 @@ export function createWorkspaceSetupContext(
     rootPathSource: options?.workspaceRoot ? "override" : workspace.rootPath ? "workspace" : "unset",
     repoRoot,
     agentRuntimeConfigPath: resolvedRuntime.configPath,
+    agentRuntimeConfig: resolvedRuntime.config,
+    agentRuntimeConfigSource: resolvedRuntime.source,
     adapterScriptPath: options?.adapterScriptPath,
     repositories: {
       workspaceRepository,

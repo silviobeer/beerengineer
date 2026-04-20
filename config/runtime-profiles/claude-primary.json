@@ -1,7 +1,8 @@
 {
+  "version": 1,
   "profileKey": "claude_primary",
   "label": "Claude Primary",
-  "description": "Claude handles the broad text and review load. Codex is reserved for code-intensive worker paths.",
+  "defaultProvider": "claude",
   "defaults": {
     "interactive": {
       "provider": "claude",
@@ -73,5 +74,9 @@
       "provider": "claude",
       "model": "sonnet"
     }
+  },
+  "meta": {
+    "source": "builtin",
+    "description": "Claude handles the broad text and review load. Codex is reserved for code-intensive worker paths."
   }
 }

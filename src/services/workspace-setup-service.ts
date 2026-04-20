@@ -1,28 +1,158 @@
-// @ts-nocheck
-
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { accessSync, constants, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
+import type { AgentRuntimeConfig, ResolvedAgentRuntime } from "../adapters/runtime.js";
 import { loadAgentRuntimeConfig } from "../adapters/runtime.js";
-import { workspaceSetupAssistOutputSchema } from "../schemas/output-contracts.js";
+import type { WorkspaceSetupContext } from "../app-context.js";
+import type { WorkspaceAssistMessage, WorkspaceAssistSession, WorkspaceCoderabbitSettings, WorkspaceSonarSettings } from "../domain/types.js";
+import { workspaceSetupAssistOutputSchema, type WorkspaceSetupAssistPlan } from "../schemas/output-contracts.js";
 import { AppError } from "../shared/errors.js";
+import type { HarnessMcpTarget } from "../shared/workspace-mcp.js";
+import { applyHarnessMcpConfig, isHarnessMcpConfigured, renderHarnessMcpConfigPreview, resolveHarnessMcpTargets } from "../shared/workspace-mcp.js";
 import { parseDotEnv } from "./env-config.js";
 const beerengineerOwnedDirectories = [".beerengineer", ".beerengineer/artifacts", ".beerengineer/workspaces"];
 const beerengineerGitignoreEntry = "# beerengineer runtime data (managed by beerengineer CLI)\n.beerengineer/\n";
 const legacyBeerengineerGitignoreEntry = ".beerengineer/worktrees/";
 const supportedProjectManifestFiles = ["package.json", "pyproject.toml", "requirements.txt", "go.mod", "Cargo.toml"];
+const sonarScannerCliName = "sonar-scanner";
+const sonarScannerCliLabel = "SonarSource CLI";
+const agentBrowserCliName = "agent-browser";
+const agentBrowserCliLabel = "Agent Browser CLI";
+const githubCliName = "gh";
+const githubCliLabel = "GitHub CLI";
+const playwrightCliCommand = "npx playwright";
+const playwrightCliLabel = "Playwright CLI";
+const coderabbitCliAliases = ["cr", "coderabbit"];
+const coderabbitCliLabel = "CodeRabbit CLI";
 const setupAutonomyOrder = {
     safe: 0,
     "workspace-write": 1,
     "setup-capable": 2
 };
+type CheckStatus = "ok" | "warning" | "missing" | "blocked" | "not_applicable";
+type DoctorCheck = {
+    id: string;
+    status: string;
+    message: string;
+    details?: Record<string, unknown>;
+};
+type DoctorChecks = {
+    agentHarness: DoctorCheck[];
+    filesystem: DoctorCheck[];
+    git: DoctorCheck[];
+    runtime: DoctorCheck[];
+    quality: DoctorCheck[];
+    integrations: DoctorCheck[];
+};
+type WorkspaceAction = {
+    id: string;
+    status: string;
+    message: string;
+    path?: string;
+    command?: string[];
+    details?: Record<string, unknown>;
+    created?: boolean;
+    configured?: boolean;
+};
+type RuntimeDetectionSuccess = {
+    ok: true;
+    config: AgentRuntimeConfig;
+    defaultProvider: string;
+    activeProviders: Set<string>;
+    parseWarning: string | null;
+};
+type RuntimeDetectionFailure = {
+    ok: false;
+    errorCode: string;
+    errorMessage: string;
+};
+type RuntimeDetection = RuntimeDetectionSuccess | RuntimeDetectionFailure;
+type HarnessStatus = Exclude<CheckStatus, "not_applicable">;
+type DetectedHarness = {
+    providerKey: "local" | "codex" | "claude";
+    adapterKey: string | null;
+    command: string[] | null;
+    configured: boolean;
+    installed: boolean;
+    active: boolean;
+    interactiveCapable: boolean;
+    workspaceWriteCapable: boolean;
+    setupCapable: boolean;
+    autonomyLevel: keyof typeof setupAutonomyOrder;
+    status: HarnessStatus;
+    message: string;
+    errorCode: string | null;
+    errorMessage: string | null;
+};
+type BinaryCheck = {
+    binary: string;
+    status: "ok" | "missing";
+    message: string;
+    resolvedPath: string | null;
+};
+type AnyBinaryCheck = {
+    binary: "coderabbit";
+    resolvedAlias: string | null;
+    status: "ok" | "missing";
+    message: string;
+};
+type IntegrationPresenceInput = {
+    hasStoredConfig: boolean;
+    hasToken: boolean;
+    envFallback: boolean;
+};
+type ProjectState = {
+    manifest: string | null;
+    tsconfig: boolean;
+    sourceDirectory: boolean;
+    sonarProjectFile: boolean;
+    coderabbitInstructionsFile: boolean;
+    gitRemoteOrigin: boolean;
+    brownfieldSignals: string[];
+    isBrownfield: boolean;
+};
+type WorkspaceAssistSessionRepositoryLike = {
+    getById(id: string): WorkspaceAssistSession | null;
+    getLatestByWorkspaceId(workspaceId: string): WorkspaceAssistSession | null;
+    findOpenByWorkspaceId(workspaceId: string): WorkspaceAssistSession | null;
+    listByWorkspaceId(workspaceId: string): WorkspaceAssistSession[];
+    create(input: {
+        workspaceId: string;
+        status: WorkspaceAssistSession["status"];
+        currentPlanJson: string;
+    }): WorkspaceAssistSession;
+    update(inputId: string, input: Partial<Pick<WorkspaceAssistSession, "status" | "currentPlanJson" | "resolvedAt" | "lastAssistantMessageId" | "lastUserMessageId">>): WorkspaceAssistSession;
+};
+type WorkspaceAssistMessageRepositoryLike = {
+    create(input: Omit<WorkspaceAssistMessage, "id" | "createdAt">): WorkspaceAssistMessage;
+    listBySessionId(sessionId: string): WorkspaceAssistMessage[];
+};
+type WorkspaceSetupServiceInput = {
+    workspace: {
+        id: string;
+        key: string;
+        name: string;
+        rootPath?: string | null;
+    } & Record<string, unknown>;
+    workspaceSettings?: {
+        runtimeProfileJson?: string | null;
+    };
+    workspaceRoot: string | null;
+    rootPathSource: WorkspaceSetupContext["rootPathSource"];
+    agentRuntimeConfigPath: string;
+    agentRuntimeConfig?: AgentRuntimeConfig;
+    sonarSettings?: WorkspaceSonarSettings | null;
+    coderabbitSettings?: WorkspaceCoderabbitSettings | null;
+    assistSessionRepository?: WorkspaceAssistSessionRepositoryLike;
+    assistMessageRepository?: WorkspaceAssistMessageRepositoryLike;
+};
 export class WorkspaceSetupService {
-    input;
-    constructor(input) {
+    private readonly input: WorkspaceSetupServiceInput;
+    constructor(input: WorkspaceSetupServiceInput) {
         this.input = input;
     }
     doctor() {
-        const checks = {
+        const checks: DoctorChecks = {
             agentHarness: [],
             filesystem: [],
             git: [],
@@ -72,9 +202,9 @@ export class WorkspaceSetupService {
             autoFixable: Array.from(new Set(autoFixable))
         };
     }
-    init(input) {
+    init(input: { createRoot: boolean; initGit: boolean; dryRun: boolean }) {
         const workspaceRoot = this.requireWorkspaceRoot();
-        const actions = [];
+        const actions: WorkspaceAction[] = [];
         const rootExists = existsSync(workspaceRoot);
         if (!rootExists && !input.createRoot) {
             throw new AppError("WORKSPACE_ROOT_MISSING", `Workspace root ${workspaceRoot} does not exist. Use --create-root to create it.`);
@@ -121,14 +251,14 @@ export class WorkspaceSetupService {
             actions
         };
     }
-    async startOrReuseAssistSession(input) {
+    async startOrReuseAssistSession(input: { runtime: ResolvedAgentRuntime }) {
         const existing = this.requireAssistSessionRepository().findOpenByWorkspaceId(this.input.workspace.id);
         if (existing) {
             return this.showAssistSession(existing.id);
         }
         return this.createAssistSession(input);
     }
-    showAssistSession(sessionId) {
+    showAssistSession(sessionId?: string) {
         const sessionRepository = this.requireAssistSessionRepository();
         const messageRepository = this.requireAssistMessageRepository();
         const session = sessionId
@@ -141,6 +271,7 @@ export class WorkspaceSetupService {
             session,
             messages: messageRepository.listBySessionId(session.id),
             currentPlan: this.parseStoredPlan(session.currentPlanJson),
+            runtimeProfile: this.describeAssistRuntimeProfile(this.parseStoredPlan(session.currentPlanJson)),
             recommendedNextCommand: this.formatNextAssistCommand(session)
         };
     }
@@ -153,6 +284,7 @@ export class WorkspaceSetupService {
         return sessions.map((session) => ({
             session,
             currentPlan: this.parseStoredPlan(session.currentPlanJson),
+            runtimeProfile: this.describeAssistRuntimeProfile(this.parseStoredPlan(session.currentPlanJson)),
             messageCount: messageRepository.listBySessionId(session.id).length,
             isLatest: session.id === latestSessionId,
             isOpen: session.status === "open",
@@ -160,7 +292,7 @@ export class WorkspaceSetupService {
             recommendedNextCommand: session.id === openSessionId ? this.formatBootstrapCommand(session.id) : null
         }));
     }
-    async chatAssistSession(input) {
+    async chatAssistSession(input: { runtime: ResolvedAgentRuntime; sessionId: string; message: string }) {
         const sessionRepository = this.requireAssistSessionRepository();
         const messageRepository = this.requireAssistMessageRepository();
         const session = sessionRepository.getById(input.sessionId);
@@ -199,7 +331,7 @@ export class WorkspaceSetupService {
         });
         return this.showAssistSession(session.id);
     }
-    resolveAssistSession(input) {
+    resolveAssistSession(input: { sessionId: string }) {
         const sessionRepository = this.requireAssistSessionRepository();
         const session = sessionRepository.getById(input.sessionId);
         if (!session) {
@@ -211,7 +343,7 @@ export class WorkspaceSetupService {
         sessionRepository.update(session.id, { status: "resolved", resolvedAt: Date.now() });
         return this.showAssistSession(session.id);
     }
-    cancelAssistSession(input) {
+    cancelAssistSession(input: { sessionId: string }) {
         const sessionRepository = this.requireAssistSessionRepository();
         const session = sessionRepository.getById(input.sessionId);
         if (!session) {
@@ -223,7 +355,17 @@ export class WorkspaceSetupService {
         sessionRepository.update(session.id, { status: "cancelled", resolvedAt: Date.now() });
         return this.showAssistSession(session.id);
     }
-    bootstrap(input) {
+    bootstrap(input: {
+        stack: "node-ts" | "python";
+        scaffoldProjectFiles: boolean;
+        createRoot: boolean;
+        initGit: boolean;
+        installDeps: boolean;
+        withSonar: boolean;
+        withCoderabbit: boolean;
+        mcpTargets?: HarnessMcpTarget[];
+        dryRun: boolean;
+    }) {
         if (input.stack !== "node-ts" && input.stack !== "python") {
             throw new AppError("UNSUPPORTED_WORKSPACE_STACK", `Workspace bootstrap stack ${input.stack} is not supported.`);
         }
@@ -232,7 +374,7 @@ export class WorkspaceSetupService {
         }
         const initResult = this.init({ createRoot: input.createRoot, initGit: input.initGit, dryRun: input.dryRun });
         const workspaceRoot = this.requireWorkspaceRoot();
-        const actions = [...initResult.actions];
+        const actions: WorkspaceAction[] = [...initResult.actions];
         const packageName = this.toPackageName(this.input.workspace.key);
         if (input.scaffoldProjectFiles) {
             actions.push(...this.ensureFile({
@@ -344,12 +486,57 @@ export class WorkspaceSetupService {
                 }
                 : this.installDependenciesAction(workspaceRoot, input.stack));
         }
+        const mcpTargets = input.mcpTargets ?? [];
+        if (mcpTargets.length > 0) {
+            for (const descriptor of resolveHarnessMcpTargets(workspaceRoot).filter((candidate) => mcpTargets.includes(candidate.target))) {
+                const preview = renderHarnessMcpConfigPreview(descriptor);
+                try {
+                    const configured = isHarnessMcpConfigured(descriptor);
+                    actions.push(input.dryRun
+                        ? {
+                            id: `bootstrap-mcp-${descriptor.target}`,
+                            status: configured ? "skipped" : "simulated",
+                            message: configured
+                                ? `${descriptor.label} already includes an agent-browser MCP server entry.`
+                                : `Would configure agent-browser MCP for ${descriptor.label} at ${descriptor.path}.`,
+                            path: descriptor.path,
+                            details: { target: descriptor.target, scope: descriptor.scope, preview }
+                        }
+                        : configured
+                            ? {
+                                id: `bootstrap-mcp-${descriptor.target}`,
+                                status: "skipped",
+                                message: `${descriptor.label} already includes an agent-browser MCP server entry.`,
+                                path: descriptor.path,
+                                details: { target: descriptor.target, scope: descriptor.scope }
+                            }
+                            : {
+                                id: `bootstrap-mcp-${descriptor.target}`,
+                                status: "created",
+                                message: `Configured agent-browser MCP for ${descriptor.label} at ${descriptor.path}.`,
+                                ...applyHarnessMcpConfig(descriptor),
+                                details: { target: descriptor.target, scope: descriptor.scope }
+                            });
+                }
+                catch (error) {
+                    actions.push({
+                        id: `bootstrap-mcp-${descriptor.target}`,
+                        status: "blocked",
+                        message: error instanceof Error
+                            ? `Failed to configure ${descriptor.label}: ${error.message}`
+                            : `Failed to configure ${descriptor.label}.`,
+                        path: descriptor.path,
+                        details: { target: descriptor.target, scope: descriptor.scope, preview }
+                    });
+                }
+            }
+        }
         return { workspace: initResult.workspace, dryRun: input.dryRun, actions };
     }
-    loadBootstrapPlan(planPath) {
+    loadBootstrapPlan(planPath: string) {
         return this.loadParsedBootstrapPlan(JSON.parse(readFileSync(planPath, "utf8")), planPath);
     }
-    loadBootstrapPlanFromAssistSession(sessionId) {
+    loadBootstrapPlanFromAssistSession(sessionId: string) {
         const sessionView = this.showAssistSession(sessionId);
         return this.loadParsedBootstrapPlan(sessionView.currentPlan, `workspace assist session ${sessionView.session.id}`);
     }
@@ -357,8 +544,8 @@ export class WorkspaceSetupService {
         const session = this.requireAssistSessionRepository().findOpenByWorkspaceId(this.input.workspace.id);
         return session ? this.loadBootstrapPlanFromAssistSession(session.id) : null;
     }
-    deduplicateCheckLists(checks) {
-        const unique = (entries) => entries.filter((entry, index) => entries.findIndex((candidate) => candidate.id === entry.id) === index);
+    deduplicateCheckLists(checks: DoctorChecks): DoctorChecks {
+        const unique = (entries: DoctorCheck[]) => entries.filter((entry, index) => entries.findIndex((candidate) => candidate.id === entry.id) === index);
         return {
             agentHarness: unique(checks.agentHarness),
             filesystem: unique(checks.filesystem),
@@ -368,7 +555,7 @@ export class WorkspaceSetupService {
             integrations: unique(checks.integrations)
         };
     }
-    deriveOverallStatus(runtimeDetection, harnesses, checks) {
+    deriveOverallStatus(runtimeDetection: RuntimeDetection, harnesses: DetectedHarness[], checks: DoctorChecks): "blocked" | "limited" | "warning" | "ready" {
         if (!runtimeDetection.ok) {
             return "blocked";
         }
@@ -384,11 +571,11 @@ export class WorkspaceSetupService {
         }
         return "ready";
     }
-    buildAgentHarnessChecks(runtimeDetection, harnesses) {
+    buildAgentHarnessChecks(runtimeDetection: RuntimeDetection, harnesses: DetectedHarness[]): DoctorCheck[] {
         if (!runtimeDetection.ok) {
             return [{ id: "agent-runtime-config", status: "blocked", message: runtimeDetection.errorMessage, details: { errorCode: runtimeDetection.errorCode } }];
         }
-        const checks = [
+        const checks: DoctorCheck[] = [
             {
                 id: "agent-runtime-config",
                 status: "ok",
@@ -461,9 +648,9 @@ export class WorkspaceSetupService {
         });
         return checks;
     }
-    buildGitChecks() {
+    buildGitChecks(): DoctorCheck[] {
         const gitBinary = this.checkBinary("git");
-        const checks = [{ id: "git-binary", status: gitBinary.status, message: gitBinary.message }];
+        const checks: DoctorCheck[] = [{ id: "git-binary", status: gitBinary.status, message: gitBinary.message }];
         if (!this.input.workspaceRoot || !existsSync(this.input.workspaceRoot)) {
             checks.push({ id: "git-repository", status: "not_applicable", message: "Git repository check skipped because the workspace root is missing." });
             return checks;
@@ -489,14 +676,50 @@ export class WorkspaceSetupService {
         }
         return checks;
     }
-    buildRuntimeChecks() {
-        return [this.checkBinary("node"), this.checkBinary("npm"), this.checkBinary("sonar-scanner")].map((entry) => ({
+    buildRuntimeChecks(): DoctorCheck[] {
+        const playwrightCheck = this.checkPlaywrightCli();
+        const coderabbitCheck = this.checkAnyBinary(coderabbitCliAliases);
+        return [
+            this.checkBinary("node"),
+            this.checkBinary("npm"),
+            this.checkBinary(githubCliName),
+            this.checkBinary(agentBrowserCliName),
+            playwrightCheck,
+            this.checkBinary(sonarScannerCliName),
+            coderabbitCheck
+        ].map((entry) => ({
             id: `${entry.binary}-binary`,
             status: entry.status,
-            message: entry.message
+            message: this.formatRuntimeCheckMessage(entry)
         }));
     }
-    buildQualityChecks() {
+    formatRuntimeCheckMessage(entry: { binary: string; status: string; message: string; resolvedAlias?: string | null }) {
+        switch (entry.binary) {
+            case sonarScannerCliName:
+                return entry.status === "ok"
+                    ? `${sonarScannerCliLabel} (${sonarScannerCliName}) is available.`
+                    : `${sonarScannerCliLabel} (${sonarScannerCliName}) is not available on PATH.`;
+            case agentBrowserCliName:
+                return entry.status === "ok"
+                    ? `${agentBrowserCliLabel} (${agentBrowserCliName}) is available.`
+                    : `${agentBrowserCliLabel} (${agentBrowserCliName}) is not available on PATH.`;
+            case githubCliName:
+                return entry.status === "ok"
+                    ? `${githubCliLabel} (${githubCliName}) is available.`
+                    : `${githubCliLabel} (${githubCliName}) is not available on PATH.`;
+            case "playwright":
+                return entry.status === "ok"
+                    ? `${playwrightCliLabel} (${playwrightCliCommand}) is available.`
+                    : `${playwrightCliLabel} (${playwrightCliCommand}) is not available in this workspace.`;
+            case "coderabbit":
+                return entry.status === "ok"
+                    ? `${coderabbitCliLabel} (${(entry as AnyBinaryCheck).resolvedAlias}) is available.`
+                    : `${coderabbitCliLabel} (${coderabbitCliAliases.join(" / ")}) is not available on PATH.`;
+            default:
+                return entry.message;
+        }
+    }
+    buildQualityChecks(): DoctorCheck[] {
         if (!this.input.workspaceRoot || !existsSync(this.input.workspaceRoot)) {
             return [
                 { id: "sonar-project-file", status: "not_applicable", message: "sonar-project.properties check skipped because the workspace root is missing." },
@@ -518,7 +741,7 @@ export class WorkspaceSetupService {
             }
         ];
     }
-    buildIntegrationChecks() {
+    buildIntegrationChecks(): DoctorCheck[] {
         const envConfig = this.input.workspaceRoot && existsSync(this.input.workspaceRoot)
             ? parseDotEnv(resolve(this.input.workspaceRoot, ".env.local"))
             : {};
@@ -534,10 +757,50 @@ export class WorkspaceSetupService {
         };
         return [
             { id: "sonar-config", status: this.integrationStatus(sonarInput), message: this.integrationMessage("Sonar", sonarInput) },
-            { id: "coderabbit-config", status: this.integrationStatus(coderabbitInput), message: this.integrationMessage("Coderabbit", coderabbitInput) }
+            { id: "coderabbit-config", status: this.integrationStatus(coderabbitInput), message: this.integrationMessage("Coderabbit", coderabbitInput) },
+            ...this.buildMcpChecks()
         ];
     }
-    integrationStatus(input) {
+    buildMcpChecks(): DoctorCheck[] {
+        const agentBrowserInstalled = this.checkBinary(agentBrowserCliName).status === "ok";
+        if (!this.input.workspaceRoot || !existsSync(this.input.workspaceRoot)) {
+            return [];
+        }
+        return resolveHarnessMcpTargets(this.input.workspaceRoot).map((descriptor) => {
+            if (!agentBrowserInstalled) {
+                return {
+                    id: `mcp-${descriptor.target}-agent-browser`,
+                    status: "not_applicable",
+                    message: `${descriptor.label} check skipped because ${agentBrowserCliLabel} (${agentBrowserCliName}) is not installed.`
+                };
+            }
+            if (!existsSync(descriptor.path)) {
+                return {
+                    id: `mcp-${descriptor.target}-agent-browser`,
+                    status: "warning",
+                    message: `${descriptor.label} config ${descriptor.path} was not found; agent-browser MCP is not configured there.`
+                };
+            }
+            try {
+                const configured = isHarnessMcpConfigured(descriptor);
+                return {
+                    id: `mcp-${descriptor.target}-agent-browser`,
+                    status: configured ? "ok" : "warning",
+                    message: configured
+                        ? `${descriptor.label} includes an agent-browser MCP server entry.`
+                        : `${descriptor.label} config exists at ${descriptor.path} but does not include an agent-browser MCP server entry.`
+                };
+            }
+            catch {
+                return {
+                    id: `mcp-${descriptor.target}-agent-browser`,
+                    status: "warning",
+                    message: `${descriptor.label} config ${descriptor.path} could not be parsed as the expected config format.`
+                };
+            }
+        });
+    }
+    integrationStatus(input: IntegrationPresenceInput): "ok" | "warning" | "missing" {
         if (input.hasStoredConfig && input.hasToken) {
             return "ok";
         }
@@ -546,7 +809,7 @@ export class WorkspaceSetupService {
         }
         return "missing";
     }
-    integrationMessage(label, input) {
+    integrationMessage(label: string, input: IntegrationPresenceInput): string {
         if (input.hasStoredConfig && input.hasToken) {
             return `${label} workspace configuration is stored in the database.`;
         }
@@ -555,10 +818,10 @@ export class WorkspaceSetupService {
         }
         return `${label} configuration is missing.`;
     }
-    detectRuntimeConfig() {
+    detectRuntimeConfig(): RuntimeDetection {
         try {
-            const parsedJson = loadAgentRuntimeConfig(this.input.agentRuntimeConfigPath);
-            const activeProviders = new Set();
+            const parsedJson = this.input.agentRuntimeConfig ?? loadAgentRuntimeConfig(this.input.agentRuntimeConfigPath);
+            const activeProviders = new Set<string>();
             const selections = [
                 parsedJson.defaultProvider,
                 parsedJson.defaults?.interactive?.provider,
@@ -567,7 +830,7 @@ export class WorkspaceSetupService {
                 parsedJson.interactive?.story_review_chat?.provider,
                 ...Object.values(parsedJson.stages ?? {}).map((selection) => selection?.provider),
                 ...Object.values(parsedJson.workers ?? {}).map((selection) => selection?.provider)
-            ].filter((value) => Boolean(value));
+            ].filter((value): value is string => Boolean(value));
             for (const selection of selections) {
                 activeProviders.add(selection);
             }
@@ -580,15 +843,48 @@ export class WorkspaceSetupService {
             if (error instanceof AppError) {
                 return { ok: false, errorCode: error.code, errorMessage: error.message };
             }
-            const code = error instanceof Error ? error.code : undefined;
+            const code = error instanceof Error ? (error as NodeJS.ErrnoException).code : undefined;
             if (code === "ENOENT") {
                 return { ok: false, errorCode: "AGENT_RUNTIME_CONFIG_NOT_FOUND", errorMessage: `Agent runtime config ${this.input.agentRuntimeConfigPath} could not be read.` };
             }
             return { ok: false, errorCode: "AGENT_RUNTIME_CONFIG_INVALID", errorMessage: error instanceof Error ? error.message : "Agent runtime config could not be parsed." };
         }
     }
-    detectHarnesses(runtimeDetection) {
-        const providerKeys = ["local", "codex", "claude"];
+    recommendRuntimeProfile(doctor: ReturnType<WorkspaceSetupService["doctor"]>) {
+        const runtimeDetection = this.detectRuntimeConfig();
+        if (!runtimeDetection.ok) {
+            return null;
+        }
+        const providers = runtimeDetection.config.providers ?? {};
+        if (!providers.codex || !providers.claude) {
+            return null;
+        }
+        const interactiveHarness = this.findInteractiveHarness(doctor.harnesses);
+        if (interactiveHarness?.providerKey === "claude") {
+            return "claude_primary";
+        }
+        return "codex_primary";
+    }
+    describeAssistRuntimeProfile(plan: WorkspaceSetupAssistPlan) {
+        const activeProfileJson = this.input.workspaceSettings?.runtimeProfileJson ?? null;
+        let activeProfileKey = null;
+        if (activeProfileJson) {
+            try {
+                const parsed = JSON.parse(activeProfileJson);
+                activeProfileKey = typeof parsed?.profileKey === "string" ? parsed.profileKey : null;
+            }
+            catch {
+                activeProfileKey = null;
+            }
+        }
+        return {
+            suggestedProfileKey: plan.runtimeProfileKey ?? null,
+            appliedProfileKey: activeProfileKey,
+            alreadyApplied: Boolean(plan.runtimeProfileKey) && plan.runtimeProfileKey === activeProfileKey
+        };
+    }
+    detectHarnesses(runtimeDetection: RuntimeDetection): DetectedHarness[] {
+        const providerKeys: DetectedHarness["providerKey"][] = ["local", "codex", "claude"];
         if (!runtimeDetection.ok) {
             return providerKeys.map((providerKey) => ({
                 providerKey,
@@ -644,7 +940,7 @@ export class WorkspaceSetupService {
             };
         });
     }
-    resolveAutonomyLevel(runtimeDetection) {
+    resolveAutonomyLevel(runtimeDetection: RuntimeDetectionSuccess): keyof typeof setupAutonomyOrder {
         const policy = runtimeDetection.config.policy;
         if (policy.autonomyMode === "yolo" && policy.approvalMode === "never" && policy.filesystemMode === "danger-full-access" && policy.networkMode === "enabled") {
             return "setup-capable";
@@ -654,11 +950,88 @@ export class WorkspaceSetupService {
         }
         return "safe";
     }
-    checkBinary(binary) {
-        const result = spawnSync("which", [binary], { encoding: "utf8" });
-        return result.status === 0 ? { binary, status: "ok", message: `${binary} is available.` } : { binary, status: "missing", message: `${binary} is not available on PATH.` };
+    checkBinary(binary: string): BinaryCheck {
+        const resolvedPath = this.findBinaryOnPath(binary);
+        return resolvedPath
+            ? { binary, status: "ok", message: `${binary} is available.`, resolvedPath }
+            : { binary, status: "missing", message: `${binary} is not available on PATH.`, resolvedPath: null };
     }
-    isGitRepository(workspaceRoot) {
+    checkAnyBinary(binaries: string[]): AnyBinaryCheck {
+        for (const binary of binaries) {
+            const result = this.checkBinary(binary);
+            if (result.status === "ok") {
+                return { binary: "coderabbit", resolvedAlias: binary, status: "ok", message: `${binary} is available.` };
+            }
+        }
+        return { binary: "coderabbit", resolvedAlias: null, status: "missing", message: `${binaries.join(" / ")} are not available on PATH.` };
+    }
+    checkPlaywrightCli() {
+        const workspaceRoot = this.input.workspaceRoot ?? process.cwd();
+        const localCliPath = this.findBinaryInDirectory(resolve(workspaceRoot, "node_modules", ".bin"), "playwright");
+        if (localCliPath) {
+            return { binary: "playwright", status: "ok", message: `${playwrightCliCommand} is available.` };
+        }
+        const globalPlaywright = this.checkBinary("playwright");
+        if (globalPlaywright.status === "ok") {
+            return { binary: "playwright", status: "ok", message: `${playwrightCliCommand} is available.` };
+        }
+        const npxBinary = this.checkBinary("npx");
+        if (npxBinary.status !== "ok") {
+            return { binary: "playwright", status: "missing", message: `${playwrightCliLabel} requires npx plus a Playwright installation.` };
+        }
+        return { binary: "playwright", status: "missing", message: `${playwrightCliLabel} (${playwrightCliCommand}) is not installed in this workspace.` };
+    }
+    findBinaryOnPath(binary: string): string | null {
+        const pathValue = process.env.PATH;
+        if (!pathValue) {
+            return null;
+        }
+        for (const directory of pathValue.split(delimiter)) {
+            if (!directory) {
+                continue;
+            }
+            const resolvedBinary = this.findBinaryInDirectory(directory, binary);
+            if (resolvedBinary) {
+                return resolvedBinary;
+            }
+        }
+        return null;
+    }
+    findBinaryInDirectory(directory: string, binary: string): string | null {
+        const candidates = this.binaryCandidates(binary);
+        for (const candidate of candidates) {
+            const candidatePath = resolve(directory, candidate);
+            if (!existsSync(candidatePath)) {
+                continue;
+            }
+            if (process.platform === "win32") {
+                return candidatePath;
+            }
+            try {
+                accessSync(candidatePath, constants.X_OK);
+                return candidatePath;
+            }
+            catch {
+                continue;
+            }
+        }
+        return null;
+    }
+    binaryCandidates(binary: string): string[] {
+        if (process.platform !== "win32") {
+            return [binary];
+        }
+        const extensions = (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
+            .split(";")
+            .filter((value) => value.length > 0)
+            .map((value) => value.toLowerCase());
+        const lowerBinary = binary.toLowerCase();
+        if (extensions.some((extension) => lowerBinary.endsWith(extension))) {
+            return [binary];
+        }
+        return [binary, ...extensions.map((extension) => `${binary}${extension}`)];
+    }
+    isGitRepository(workspaceRoot: string): { isRepository: boolean; details: Record<string, string> } {
         const dotGitPath = resolve(workspaceRoot, ".git");
         if (!existsSync(dotGitPath)) {
             return { isRepository: false, details: { reason: ".git is missing" } };
@@ -671,7 +1044,7 @@ export class WorkspaceSetupService {
             return { isRepository: false, details: { reason: error instanceof Error ? error.message : String(error) } };
         }
     }
-    suggestActionForCheck(id) {
+    suggestActionForCheck(id: string): string | null {
         switch (id) {
             case "agent-runtime-config":
             case "agent-runtime-config-warning":
@@ -701,8 +1074,24 @@ export class WorkspaceSetupService {
                 return "Install Node.js.";
             case "npm-binary":
                 return "Install npm.";
+            case "gh-binary":
+                return `Install the ${githubCliLabel} (${githubCliName}).`;
+            case "agent-browser-binary":
+                return `Install the ${agentBrowserCliLabel} (${agentBrowserCliName}) and run \`${agentBrowserCliName} install\`.`;
+            case "playwright-binary":
+                return `Install the ${playwrightCliLabel} so \`${playwrightCliCommand}\` works in this workspace.`;
             case "sonar-scanner-binary":
-                return "Install sonar-scanner if Sonar checks are required.";
+                return `Install the ${sonarScannerCliLabel} (${sonarScannerCliName}) if Sonar checks are required.`;
+            case "coderabbit-binary":
+                return `Install the ${coderabbitCliLabel} (${coderabbitCliAliases.join(" / ")}).`;
+            case "mcp-claude-agent-browser":
+                return "Add an agent-browser MCP server entry to .mcp.json or run workspace:mcp:apply --target claude.";
+            case "mcp-cursor-agent-browser":
+                return "Add an agent-browser MCP server entry to .cursor/mcp.json or run workspace:mcp:apply --target cursor.";
+            case "mcp-opencode-agent-browser":
+                return "Add an agent-browser MCP server entry to opencode.json(c) or run workspace:mcp:apply --target opencode.";
+            case "mcp-codex-agent-browser":
+                return "Add an agent-browser MCP server entry to ~/.codex/config.toml or run workspace:mcp:apply --target codex.";
             case "sonar-project-file":
                 return "Add sonar-project.properties if this workspace should use Sonar.";
             case "coderabbit-instructions-file":
@@ -715,7 +1104,7 @@ export class WorkspaceSetupService {
                 return null;
         }
     }
-    autoFixForCheck(id) {
+    autoFixForCheck(id: string): string | null {
         switch (id) {
             case "workspace-root-exists":
                 return "workspace:init --create-root";
@@ -728,21 +1117,23 @@ export class WorkspaceSetupService {
                 return null;
         }
     }
-    loadParsedBootstrapPlan(parsed, source) {
+    loadParsedBootstrapPlan(parsed: unknown, source: string): WorkspaceSetupAssistPlan {
         const validated = workspaceSetupAssistOutputSchema.shape.plan.safeParse(parsed);
         if (!validated.success || validated.data.workspaceKey !== this.input.workspace.key) {
             throw new AppError("WORKSPACE_BOOTSTRAP_PLAN_INVALID", `Bootstrap plan ${source} is invalid for workspace ${this.input.workspace.key}.`);
         }
         return validated.data;
     }
-    buildSuggestedPlan(doctor) {
+    buildSuggestedPlan(doctor: ReturnType<WorkspaceSetupService["doctor"]>): WorkspaceSetupAssistPlan {
         const rootPath = this.input.workspaceRoot;
         const hasGitRepo = doctor.checks.git.some((check) => check.id === "git-repository" && check.status === "ok");
         const projectState = this.detectProjectState();
+        const runtimeProfileKey = this.recommendRuntimeProfile(doctor);
         return {
             version: 1,
             workspaceKey: this.input.workspace.key,
             rootPath,
+            runtimeProfileKey,
             mode: projectState.isBrownfield ? "brownfield" : "greenfield",
             stack: projectState.manifest === "pyproject.toml" || projectState.manifest === "requirements.txt" ? "python" : "node-ts",
             scaffoldProjectFiles: !projectState.isBrownfield,
@@ -754,7 +1145,7 @@ export class WorkspaceSetupService {
             generatedAt: Date.now()
         };
     }
-    async assistWithAgent(input) {
+    async assistWithAgent(input: { runtime: ResolvedAgentRuntime; userMessage?: string; currentPlan?: WorkspaceSetupAssistPlan | null }) {
         const doctor = this.doctor();
         if (!this.findInteractiveHarness(doctor.harnesses)) {
             throw new AppError("WORKSPACE_ASSIST_HARNESS_REQUIRED", "workspace:assist requires a configured and installed Codex or Claude harness.");
@@ -795,8 +1186,8 @@ export class WorkspaceSetupService {
             runtime: { providerKey: input.runtime.providerKey, model: input.runtime.model, command: input.runtime.command }
         };
     }
-    simplifyChecksForAssist(checks) {
-        const mapCheck = (entry) => ({ id: entry.id, status: entry.status, message: entry.message });
+    simplifyChecksForAssist(checks: DoctorChecks) {
+        const mapCheck = (entry: DoctorCheck) => ({ id: entry.id, status: entry.status, message: entry.message });
         return {
             agentHarness: checks.agentHarness.map(mapCheck),
             filesystem: checks.filesystem.map(mapCheck),
@@ -806,18 +1197,20 @@ export class WorkspaceSetupService {
             integrations: checks.integrations.map(mapCheck)
         };
     }
-    buildWorkspaceAssistPrompt(doctor, userMessage) {
+    buildWorkspaceAssistPrompt(doctor: ReturnType<WorkspaceSetupService["doctor"]>, userMessage?: string) {
         return [
             "You are planning a BeerEngineer workspace setup flow.",
             "Return a planning-only result. Do not execute commands.",
             "Prefer preserving existing brownfield projects over scaffolding starter files.",
+            "For runtime profiles, recommend codex_primary or claude_primary only when both Codex and Claude are available.",
+            "If no built-in profile is a clean fit, set runtimeProfileKey to null and explain the manual_custom next steps: workspace:runtime:profiles, workspace:runtime:show, workspace:runtime:set-stage, workspace:runtime:set-worker, workspace:runtime:set-interactive.",
             `Workspace status: ${doctor.status}`,
             userMessage ? `User setup request:\n${userMessage}` : null
         ]
             .filter((value) => Boolean(value))
             .join("\n\n");
     }
-    async createAssistSession(input) {
+    async createAssistSession(input: { runtime: ResolvedAgentRuntime }) {
         const sessionRepository = this.requireAssistSessionRepository();
         const messageRepository = this.requireAssistMessageRepository();
         const assisted = await this.assistWithAgent({ runtime: input.runtime });
@@ -849,10 +1242,10 @@ export class WorkspaceSetupService {
         sessionRepository.update(session.id, { lastAssistantMessageId: assistantMessage.id });
         return this.showAssistSession(session.id);
     }
-    parseStoredPlan(value) {
+    parseStoredPlan(value: string): WorkspaceSetupAssistPlan {
         return this.loadParsedBootstrapPlan(JSON.parse(value), "session");
     }
-    detectProjectState() {
+    detectProjectState(): ProjectState {
         if (!this.input.workspaceRoot || !existsSync(this.input.workspaceRoot)) {
             return {
                 manifest: null,
@@ -879,7 +1272,7 @@ export class WorkspaceSetupService {
             sonarProjectFile ? "sonar-project" : null,
             coderabbitInstructionsFile ? "coderabbit-instructions" : null,
             gitRemoteOrigin ? "git-remote-origin" : null
-        ].filter((value) => Boolean(value));
+        ].filter((value): value is string => Boolean(value));
         return {
             manifest,
             tsconfig,
@@ -891,13 +1284,13 @@ export class WorkspaceSetupService {
             isBrownfield: brownfieldSignals.length > 0
         };
     }
-    findInteractiveHarness(harnesses) {
+    findInteractiveHarness(harnesses: DetectedHarness[]): DetectedHarness | null {
         return harnesses.find((harness) => harness.interactiveCapable) ?? null;
     }
-    findSetupCapableHarness(harnesses) {
+    findSetupCapableHarness(harnesses: DetectedHarness[]): DetectedHarness | null {
         return harnesses.find((harness) => harness.setupCapable) ?? null;
     }
-    detectGitRemoteOrigin(workspaceRoot) {
+    detectGitRemoteOrigin(workspaceRoot: string): string | null {
         try {
             const output = execFileSync("git", ["remote", "get-url", "origin"], {
                 cwd: workspaceRoot,
@@ -916,24 +1309,24 @@ export class WorkspaceSetupService {
         }
         return this.input.workspaceRoot;
     }
-    formatBootstrapCommand(sessionId) {
+    formatBootstrapCommand(sessionId: string): string {
         return `npm run cli -- --workspace ${this.input.workspace.key} workspace:bootstrap --session-id ${sessionId}`;
     }
     formatAssistCommand() {
         return `npm run cli -- --workspace ${this.input.workspace.key} workspace:assist`;
     }
-    formatNextAssistCommand(session) {
+    formatNextAssistCommand(session: WorkspaceAssistSession): string {
         return session.status === "open" ? this.formatBootstrapCommand(session.id) : this.formatAssistCommand();
     }
-    createDirectoryAction(id, path, message) {
+    createDirectoryAction(id: string, path: string, message: string): WorkspaceAction {
         mkdirSync(path, { recursive: true });
         return { id, status: "created", message, path };
     }
-    gitInitAction(workspaceRoot) {
+    gitInitAction(workspaceRoot: string): WorkspaceAction {
         execFileSync("git", ["init", "-b", "main"], { cwd: workspaceRoot, stdio: ["ignore", "pipe", "pipe"] });
         return { id: "git-init", status: "created", message: `Initialized a git repository in ${workspaceRoot}.`, command: ["git", "init", "-b", "main"] };
     }
-    ensureFile(input) {
+    ensureFile(input: { id: string; path: string; content: string; dryRun: boolean; ensureParentDirectory?: boolean }): WorkspaceAction[] {
         if (existsSync(input.path)) {
             return [{ id: input.id, status: "skipped", message: `${input.path} already exists.`, path: input.path }];
         }
@@ -999,7 +1392,7 @@ export class WorkspaceSetupService {
             }
         ];
     }
-    installDependenciesCommand(stack) {
+    installDependenciesCommand(stack: "node-ts" | "python"): string[] {
         if (stack === "python") {
             const pythonBinary = this.checkBinary("python3").status === "ok"
                 ? "python3"
@@ -1013,7 +1406,7 @@ export class WorkspaceSetupService {
         }
         return ["npm", "install"];
     }
-    installDependenciesAction(workspaceRoot, stack) {
+    installDependenciesAction(workspaceRoot: string, stack: "node-ts" | "python"): WorkspaceAction {
         const command = this.installDependenciesCommand(stack);
         execFileSync(command[0], command.slice(1), { cwd: workspaceRoot, stdio: ["ignore", "pipe", "pipe"] });
         return {
@@ -1023,7 +1416,7 @@ export class WorkspaceSetupService {
             command
         };
     }
-    toPackageName(value) {
+    toPackageName(value: string): string {
         const normalized = value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
         return normalized.length > 0 ? normalized : "beerengineer-app";
     }
