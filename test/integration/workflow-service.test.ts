@@ -1014,6 +1014,62 @@ describe("workflow service", () => {
     }
   });
 
+  it("blocks requirements with review_required when generic stories miss UI-shell upstream entries", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const item = createWorkspaceItem(context, {
+        title: "UI Shell",
+        description: "Review the workflow through a shared UI shell"
+      });
+      const started = context.workflowService.startBrainstormSession(item.id);
+      context.workflowService.updateBrainstormDraft({
+        sessionId: started.sessionId,
+        problem: "Operators lack a shared UI shell to review workflow runs",
+        coreOutcome: "Ship a unified board, overlay, and inbox for the workflow engine",
+        targetUsers: ["workflow operator", "reviewer"],
+        useCases: [
+          "board",
+          "overlay",
+          "inbox",
+          "runs and artifacts",
+          "chat",
+          "component system",
+          "showcase",
+          "component inventory",
+          "shared core services"
+        ],
+        constraints: ["must run offline"],
+        nonGoals: ["multi-tenant sharing"],
+        risks: ["unbounded artifact storage"],
+        candidateDirections: ["single board with overlay"],
+        recommendedDirection: "single board with overlay"
+      });
+      await context.workflowService.promoteBrainstorm(started.sessionId);
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      context.workflowService.approveConcept(concept!.id);
+      context.workflowService.importProjects(item.id);
+      const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
+
+      const result = await context.workflowService.startStage({
+        stageKey: "requirements",
+        itemId: item.id,
+        projectId: project.id
+      });
+
+      expect(result.status).toBe("review_required");
+      const run = context.repositories.stageRunRepository.getById(result.runId);
+      expect(run?.status).toBe("review_required");
+      expect(run?.errorMessage ?? "").toContain("Requirements coverage gate blocked");
+      expect(run?.errorMessage ?? "").toMatch(/overlay|inbox|board/);
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("extracts labeled lists from bulleted chat messages when the adapter leaves fields empty", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
     const dbPath = join(root, "app.sqlite");
