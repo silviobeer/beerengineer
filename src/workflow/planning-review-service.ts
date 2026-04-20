@@ -7,28 +7,26 @@ import type { AdapterRuntimeContext } from "../adapters/types.js";
 import type {
   ArchitecturePlan,
   BrainstormDraft,
-  BrainstormSession,
   Concept,
   ImplementationPlan,
-  PlanningReviewAssumption,
   PlanningReviewAutomationLevel,
   PlanningReviewConfidenceLevel,
   PlanningReviewExecutionMode,
-  PlanningReviewFinding,
   PlanningReviewGateEligibility,
   PlanningReviewInteractionMode,
   PlanningReviewMode,
   PlanningReviewProviderRole,
-  PlanningReviewQuestion,
   PlanningReviewReadinessResult,
-  PlanningReviewRun,
   PlanningReviewSourceType,
   PlanningReviewStatus,
   PlanningReviewStep,
-  PlanningReviewSynthesis
+  ReviewAssumption,
+  ReviewFinding,
+  ReviewQuestion,
+  ReviewRun,
+  ReviewSynthesis
 } from "../domain/types.js";
 import { ReviewExecutionPlanner, type ReviewAssignment, type ReviewCapabilityPlan } from "../review/review-execution-planner.js";
-import type { ReviewCoreService } from "../review/review-core-service.js";
 import type { WorkflowDeps } from "./workflow-deps.js";
 import { AppError } from "../shared/errors.js";
 
@@ -51,9 +49,47 @@ type NormalizedPlanningArtifact = {
   }>;
 };
 
+type PlanningReviewView = {
+  run: {
+    id: string;
+    sourceType: PlanningReviewSourceType;
+    sourceId: string;
+    step: PlanningReviewStep;
+    status: PlanningReviewStatus;
+    interactionMode: PlanningReviewInteractionMode | null;
+    reviewMode: PlanningReviewMode | null;
+    automationLevel: PlanningReviewAutomationLevel;
+    requestedMode: string | null;
+    actualMode: string | null;
+    readiness: string | null;
+    confidence: string | null;
+    gateEligibility: PlanningReviewGateEligibility;
+    reviewSummary: string | null;
+    startedAt: number;
+    updatedAt: number;
+    completedAt: number | null;
+    failedReason: string | null;
+  };
+  artifact: NormalizedPlanningArtifact;
+  findings: ReviewFinding[];
+  synthesis:
+    | (ReviewSynthesis & {
+        keyPoints: string[];
+        disagreements: string[];
+      })
+    | null;
+  questions: ReviewQuestion[];
+  assumptions: ReviewAssumption[];
+  questionSummary: {
+    totalQuestions: number;
+    openQuestions: number;
+    answeredQuestions: number;
+  };
+  comparisonToPrevious: unknown;
+};
+
 type PlanningReviewServiceOptions = {
   deps: WorkflowDeps;
-  reviewCoreService: ReviewCoreService;
   buildAdapterRuntimeContext(input: {
     providerKey: string;
     model: string | null;
@@ -132,25 +168,27 @@ export class PlanningReviewService {
       clarificationAnswers: input.clarificationAnswers ?? []
     });
     const capability = this.resolveCapabilityPlan(input.reviewMode);
-    const previousComparableRun = this.options.deps.planningReviewRunRepository.getLatestComparable({
-      sourceType: input.sourceType,
-      sourceId: input.sourceId,
-      step: input.step,
+    const previousComparableRun = this.options.deps.reviewRunRepository.getLatestComparable({
+      reviewKind: "planning",
+      subjectType: input.sourceType,
+      subjectId: input.sourceId,
+      subjectStep: input.step,
       reviewMode: input.reviewMode
     });
     const previousUnresolvedFindings = previousComparableRun
-      ? this.options.deps.planningReviewFindingRepository.listUnresolvedByRunId(previousComparableRun.id)
+      ? this.options.deps.reviewFindingRepository.listUnresolvedByRunId(previousComparableRun.id)
       : [];
     const previousFingerprintSet = new Set(previousUnresolvedFindings.map((finding) => finding.fingerprint));
-    let run: PlanningReviewRun | undefined;
+    let run: ReviewRun | undefined;
 
     try {
       run = this.options.deps.runInTransaction(() =>
-        this.options.deps.planningReviewRunRepository.create({
-          sourceType: input.sourceType,
-          sourceId: input.sourceId,
-          step: input.step,
-          status: "synthesizing",
+        this.options.deps.reviewRunRepository.create({
+          reviewKind: "planning",
+          subjectType: input.sourceType,
+          subjectId: input.sourceId,
+          subjectStep: input.step,
+          status: "in_progress",
           interactionMode: input.interactionMode,
           reviewMode: input.reviewMode,
           automationLevel: input.automationLevel ?? "manual",
@@ -159,7 +197,7 @@ export class PlanningReviewService {
           readiness: null,
           confidence: capability.confidence,
           gateEligibility: capability.gateEligibility,
-          normalizedArtifactJson: JSON.stringify(normalization.artifact, null, 2),
+          sourceSummaryJson: JSON.stringify(normalization.artifact, null, 2),
           providersUsedJson: JSON.stringify(capability.providersUsed),
           missingCapabilitiesJson: JSON.stringify(capability.missingCapabilities),
           reviewSummary: null,
@@ -200,8 +238,16 @@ export class PlanningReviewService {
         const findings = reviewerResults.flatMap(({ assignment, response }) =>
           response.output.findings.map((finding) => ({
             runId: reviewRun.id,
+            sourceSystem: "planning_review" as const,
             reviewerRole: assignment.role,
             findingType: finding.type,
+            normalizedSeverity:
+              finding.type === "blocker"
+                ? ("high" as const)
+                : finding.type === "major_concern"
+                  ? ("medium" as const)
+                  : ("low" as const),
+            sourceSeverity: finding.type,
             title: finding.title,
             detail: finding.detail,
             evidence: finding.evidence ?? null,
@@ -220,17 +266,20 @@ export class PlanningReviewService {
               type: finding.type,
               title: finding.title,
               detail: finding.detail
-            })
+            }),
+            filePath: null,
+            line: null,
+            fieldPath: null
           }))
         );
-        this.options.deps.planningReviewFindingRepository.createMany(findings);
+        const storedFindings = this.options.deps.reviewFindingRepository.createMany(findings);
 
         if (previousComparableRun) {
-          const currentFingerprints = new Set(findings.map((finding) => finding.fingerprint));
+          const currentFingerprints = new Set(storedFindings.map((finding) => finding.fingerprint));
           const resolvedFingerprints = previousUnresolvedFindings
             .map((finding) => finding.fingerprint)
             .filter((fingerprint) => !currentFingerprints.has(fingerprint));
-          this.options.deps.planningReviewFindingRepository.markResolved(previousComparableRun.id, resolvedFingerprints);
+          this.options.deps.reviewFindingRepository.markResolved(previousComparableRun.id, resolvedFingerprints);
         }
 
         const synthesis = this.synthesizeReview({
@@ -238,19 +287,20 @@ export class PlanningReviewService {
           interactionMode: input.interactionMode,
           reviewerResults: reviewerResults.map((result) => result.response.output)
         });
-        this.options.deps.planningReviewSynthesisRepository.create({
+        const storedSynthesis = this.options.deps.reviewSynthesisRepository.create({
           runId: reviewRun.id,
           summary: synthesis.summary,
-          status: synthesis.status,
+          status: this.mapCoreStatus(synthesis.status),
           readiness: synthesis.readiness,
           keyPointsJson: JSON.stringify(synthesis.keyPoints),
           disagreementsJson: JSON.stringify(synthesis.disagreements),
-          recommendedAction: synthesis.recommendedAction
+          recommendedAction: synthesis.recommendedAction,
+          gateDecision: synthesis.status === "ready" ? "pass" : synthesis.status === "blocked" ? "needs_human_review" : "advisory"
         });
 
         const questions =
           input.interactionMode === "interactive"
-            ? this.options.deps.planningReviewQuestionRepository.createMany(
+            ? this.options.deps.reviewQuestionRepository.createMany(
                 synthesis.questions.map((question) => ({
                   runId: reviewRun.id,
                   question: question.question,
@@ -262,7 +312,7 @@ export class PlanningReviewService {
                 }))
               )
             : [];
-        const assumptions = this.options.deps.planningReviewAssumptionRepository.createMany(
+        const assumptions = this.options.deps.reviewAssumptionRepository.createMany(
           synthesis.assumptions.map((assumption) => ({
             runId: reviewRun.id,
             statement: assumption.statement,
@@ -271,91 +321,36 @@ export class PlanningReviewService {
           }))
         );
 
-        this.options.deps.planningReviewRunRepository.update(reviewRun.id, {
-          status: synthesis.status,
+        this.options.deps.reviewRunRepository.update(reviewRun.id, {
+          status: this.mapCoreStatus(synthesis.status),
           readiness: synthesis.readiness,
           reviewSummary: synthesis.summary,
           completedAt: Date.now()
         });
 
-        this.options.reviewCoreService.recordReview({
-          reviewKind: "planning",
-          subjectType: input.sourceType,
-          subjectId: input.sourceId,
-          subjectStep: input.step,
-          status: this.mapCoreStatus(synthesis.status),
-          readiness: synthesis.readiness,
-          interactionMode: input.interactionMode,
-          reviewMode: input.reviewMode,
-          automationLevel: input.automationLevel ?? "manual",
-          requestedMode: capability.requestedMode,
-          actualMode: capability.actualMode,
-          confidence: capability.confidence,
-          gateEligibility: capability.gateEligibility,
-          sourceSummary: normalization.artifact,
-          providersUsed: capability.providersUsed,
-          missingCapabilities: capability.missingCapabilities,
-          summary: synthesis.summary,
-          keyPoints: synthesis.keyPoints,
-          disagreements: synthesis.disagreements,
-          recommendedAction: synthesis.recommendedAction,
-          gateDecision: synthesis.status === "ready" ? "pass" : synthesis.status === "blocked" ? "needs_human_review" : "advisory",
-          findings: reviewerResults.flatMap(({ assignment, response }) =>
-            response.output.findings.map((finding) => ({
-              sourceSystem: "planning_review" as const,
-              reviewerRole: assignment.role,
-              findingType: finding.type,
-              normalizedSeverity:
-                finding.type === "blocker" ? "high" : finding.type === "major_concern" ? "medium" : "low",
-              sourceSeverity: finding.type,
-              title: finding.title,
-              detail: finding.detail,
-              evidence: finding.evidence ?? null,
-              filePath: null,
-              line: null,
-              fieldPath: null
-            }))
-          ),
-          questions: synthesis.questions.map((question) => ({
-            question: question.question,
-            reason: question.reason,
-            impact: question.impact
-          })),
-          assumptions: synthesis.assumptions
+        this.persistPlanningQualityKnowledge(storedFindings, {
+          projectId: this.resolveProjectIdForSource(input.sourceType, input.sourceId),
+          waveId: null,
+          storyId: null
         });
 
         return this.showReview(reviewRun.id, {
           existingRun: {
             ...reviewRun,
-            status: synthesis.status,
+            status: this.mapCoreStatus(synthesis.status),
             readiness: synthesis.readiness,
             reviewSummary: synthesis.summary,
             completedAt: Date.now()
           },
-          existingFindings: findings.map((finding, index) => ({
-            id: `transient-${index}`,
-            createdAt: Date.now(),
-            updatedAt: Date.now(),
-            ...finding
-          })) as PlanningReviewFinding[],
-          existingSynthesis: {
-            id: "transient",
-            createdAt: Date.now(),
-            runId: reviewRun.id,
-            summary: synthesis.summary,
-            status: synthesis.status,
-            readiness: synthesis.readiness,
-            keyPointsJson: JSON.stringify(synthesis.keyPoints),
-            disagreementsJson: JSON.stringify(synthesis.disagreements),
-            recommendedAction: synthesis.recommendedAction
-          },
+          existingFindings: storedFindings,
+          existingSynthesis: storedSynthesis,
           existingQuestions: questions,
           existingAssumptions: assumptions
         });
       });
     } catch (error) {
       if (run) {
-        this.options.deps.planningReviewRunRepository.update(run.id, {
+        this.options.deps.reviewRunRepository.update(run.id, {
           status: "failed",
           failedReason: error instanceof Error ? error.message : "Unknown planning review failure",
           completedAt: Date.now()
@@ -367,26 +362,20 @@ export class PlanningReviewService {
 
   public async rerunReview(runId: string) {
     const run = this.requireRun(runId);
-    if (run.status === "synthesizing") {
+    if (run.status === "in_progress") {
       throw new AppError(
         "PLANNING_REVIEW_RERUN_NOT_ALLOWED",
         `Planning review run ${run.id} is still synthesizing and cannot be rerun yet`
       );
     }
-    const answeredQuestions = this.options.deps.planningReviewQuestionRepository
-      .listByRunId(runId)
-      .filter((question) => question.status === "answered" && question.answer)
-      .map((question) => ({
-        question: question.question,
-        answer: question.answer!
-      }));
+    const answeredQuestions = this.listAnsweredQuestions(run);
 
     return this.startReview({
-      sourceType: run.sourceType,
-      sourceId: run.sourceId,
-      step: run.step,
-      reviewMode: run.reviewMode,
-      interactionMode: run.interactionMode,
+      sourceType: run.subjectType as PlanningReviewSourceType,
+      sourceId: run.subjectId,
+      step: run.subjectStep as PlanningReviewStep,
+      reviewMode: run.reviewMode as PlanningReviewMode,
+      interactionMode: (run.interactionMode ?? "interactive") as PlanningReviewInteractionMode,
       automationLevel: run.automationLevel,
       clarificationAnswers: answeredQuestions
     });
@@ -394,35 +383,35 @@ export class PlanningReviewService {
 
   public answerQuestion(input: { runId: string; questionId: string; answer: string }) {
     this.requireRun(input.runId);
-    const question = this.options.deps.planningReviewQuestionRepository.listByRunId(input.runId).find((entry) => entry.id === input.questionId);
+    const question = this.options.deps.reviewQuestionRepository.listByRunId(input.runId).find((entry) => entry.id === input.questionId);
     if (!question) {
       throw new AppError("PLANNING_REVIEW_QUESTION_NOT_FOUND", `Planning review question ${input.questionId} not found`);
     }
-    this.options.deps.planningReviewQuestionRepository.answer(input.questionId, input.answer);
+    this.options.deps.reviewQuestionRepository.answer(input.questionId, input.answer);
     return this.showReview(input.runId);
   }
 
   public showReview(
     runId: string,
     overrides?: {
-      existingRun?: PlanningReviewRun;
-      existingFindings?: PlanningReviewFinding[];
-      existingSynthesis?: PlanningReviewSynthesis;
-      existingQuestions?: PlanningReviewQuestion[];
-      existingAssumptions?: PlanningReviewAssumption[];
+      existingRun?: ReviewRun;
+      existingFindings?: ReviewFinding[];
+      existingSynthesis?: ReviewSynthesis;
+      existingQuestions?: ReviewQuestion[];
+      existingAssumptions?: ReviewAssumption[];
     }
-  ) {
+  ): PlanningReviewView {
     const run = overrides?.existingRun ?? this.requireRun(runId);
-    const findings = overrides?.existingFindings ?? this.options.deps.planningReviewFindingRepository.listByRunId(runId);
-    const synthesis = overrides?.existingSynthesis ?? this.options.deps.planningReviewSynthesisRepository.getLatestByRunId(runId);
-    const questions = overrides?.existingQuestions ?? this.options.deps.planningReviewQuestionRepository.listByRunId(runId);
-    const assumptions = overrides?.existingAssumptions ?? this.options.deps.planningReviewAssumptionRepository.listByRunId(runId);
+    const findings = overrides?.existingFindings ?? this.options.deps.reviewFindingRepository.listByRunId(runId);
+    const synthesis = overrides?.existingSynthesis ?? this.options.deps.reviewSynthesisRepository.getLatestByRunId(runId);
+    const questions = overrides?.existingQuestions ?? this.options.deps.reviewQuestionRepository.listByRunId(runId);
+    const assumptions = overrides?.existingAssumptions ?? this.options.deps.reviewAssumptionRepository.listByRunId(runId);
     const comparisonToPrevious = this.buildComparisonToPrevious(run, findings);
     const openQuestionCount = questions.filter((question) => question.status === "open").length;
     const answeredQuestionCount = questions.filter((question) => question.status === "answered").length;
     return {
-      run,
-      artifact: JSON.parse(run.normalizedArtifactJson) as NormalizedPlanningArtifact,
+      run: this.mapRunToPlanningView(run, findings),
+      artifact: JSON.parse(run.sourceSummaryJson) as NormalizedPlanningArtifact,
       findings,
       synthesis: synthesis
         ? {
@@ -442,12 +431,119 @@ export class PlanningReviewService {
     };
   }
 
-  private requireRun(runId: string): PlanningReviewRun {
-    const run = this.options.deps.planningReviewRunRepository.getById(runId);
-    if (!run) {
+  private mapRunToPlanningView(run: ReviewRun, findings: ReviewFinding[]): PlanningReviewView["run"] {
+    return {
+      id: run.id,
+      sourceType: run.subjectType as PlanningReviewSourceType,
+      sourceId: run.subjectId,
+      step: run.subjectStep as PlanningReviewStep,
+      status: this.mapPlanningStatus(run.status, run.readiness, findings),
+      interactionMode: run.interactionMode as PlanningReviewInteractionMode | null,
+      reviewMode: run.reviewMode as PlanningReviewMode | null,
+      automationLevel: run.automationLevel,
+      requestedMode: run.requestedMode,
+      actualMode: run.actualMode,
+      readiness: run.readiness,
+      confidence: run.confidence,
+      gateEligibility: run.gateEligibility,
+      reviewSummary: run.reviewSummary,
+      startedAt: run.startedAt,
+      updatedAt: run.updatedAt,
+      completedAt: run.completedAt,
+      failedReason: run.failedReason
+    };
+  }
+
+  private requireRun(runId: string): ReviewRun {
+    const run = this.options.deps.reviewRunRepository.getById(runId);
+    if (!run || run.reviewKind !== "planning") {
       throw new AppError("PLANNING_REVIEW_RUN_NOT_FOUND", `Planning review run ${runId} not found`);
     }
     return run;
+  }
+
+  private listAnsweredQuestions(run: ReviewRun) {
+    return this.options.deps.reviewQuestionRepository
+      .listByRunId(run.id)
+      .filter((question) => question.status === "answered" && question.answer)
+      .map((question) => ({
+        question: question.question,
+        answer: question.answer!
+      }));
+  }
+
+  private persistPlanningQualityKnowledge(
+    findings: ReviewFinding[],
+    input: { projectId: string | null; waveId: string | null; storyId: string | null }
+  ): void {
+    if (findings.length === 0) {
+      return;
+    }
+    this.options.deps.qualityKnowledgeService.createEntries(
+      findings.map((finding) => ({
+        workspaceId: this.options.deps.workspace.id,
+        projectId: input.projectId,
+        waveId: input.waveId,
+        storyId: input.storyId,
+        source: "planning_review",
+        scopeType: input.storyId ? "story" : input.waveId ? "wave" : input.projectId ? "project" : "workspace",
+        scopeId: input.storyId ?? input.waveId ?? input.projectId ?? this.options.deps.workspace.id,
+        kind: "recurring_issue",
+        summary: finding.title,
+        evidenceJson: JSON.stringify(
+          {
+            sourceSystem: finding.sourceSystem,
+            severity: finding.normalizedSeverity,
+            sourceSeverity: finding.sourceSeverity,
+            findingType: finding.findingType,
+            detail: finding.detail,
+            evidence: finding.evidence,
+            filePath: finding.filePath,
+            line: finding.line
+          },
+          null,
+          2
+        ),
+        status: finding.status === "resolved" ? "resolved" : "open",
+        relevanceTagsJson: JSON.stringify(
+          {
+            files: finding.filePath ? [finding.filePath] : [],
+            storyCodes: [],
+            modules: [],
+            categories: [finding.findingType]
+          },
+          null,
+          2
+        )
+      }))
+    );
+  }
+
+  private resolveProjectIdForSource(sourceType: PlanningReviewSourceType, sourceId: string): string | null {
+    switch (sourceType) {
+      case "architecture_plan":
+        return this.options.deps.architecturePlanRepository.getById(sourceId)?.projectId ?? null;
+      case "implementation_plan":
+        return this.options.deps.implementationPlanRepository.getById(sourceId)?.projectId ?? null;
+      case "interactive_review_session": {
+        const session = this.options.deps.interactiveReviewSessionRepository.getById(sourceId);
+        if (!session) {
+          return null;
+        }
+        if (session.scopeType === "project") {
+          return session.scopeId;
+        }
+        if (session.artifactType === "architecture" || session.artifactType === "implementation_plan") {
+          return this.resolveProjectIdForSource(
+            session.artifactType === "architecture" ? "architecture_plan" : "implementation_plan",
+            session.scopeId
+          );
+        }
+        return null;
+      }
+      default:
+        return null;
+    }
   }
 
   private normalizeSource(input: {
@@ -734,7 +830,7 @@ export class PlanningReviewService {
   }
 
   private synthesizeReview(input: {
-    run: PlanningReviewRun;
+    run: ReviewRun;
     interactionMode: PlanningReviewInteractionMode;
     reviewerResults: Array<PlanningReviewAdapterRunResult["output"]>;
   }): {
@@ -858,7 +954,7 @@ export class PlanningReviewService {
   }
 
   private autoModeNeedsHumanReview(input: {
-    run: PlanningReviewRun;
+    run: ReviewRun;
     findings: PlanningReviewAdapterRunResult["output"]["findings"];
     reviewerResults: Array<PlanningReviewAdapterRunResult["output"]>;
     questions: Array<{ question: string; reason: string; impact: string }>;
@@ -955,11 +1051,12 @@ export class PlanningReviewService {
       }));
   }
 
-  private buildComparisonToPrevious(run: PlanningReviewRun, findings: PlanningReviewFinding[]) {
-    const previousComparableRun = this.options.deps.planningReviewRunRepository.getPreviousComparable({
-      sourceType: run.sourceType,
-      sourceId: run.sourceId,
-      step: run.step,
+  private buildComparisonToPrevious(run: ReviewRun, findings: ReviewFinding[]) {
+    const previousComparableRun = this.options.deps.reviewRunRepository.getPreviousComparable({
+      reviewKind: "planning",
+      subjectType: run.subjectType,
+      subjectId: run.subjectId,
+      subjectStep: run.subjectStep,
       reviewMode: run.reviewMode,
       beforeStartedAt: run.startedAt,
       excludeRunId: run.id
@@ -968,10 +1065,10 @@ export class PlanningReviewService {
       return null;
     }
 
-    const currentArtifact = JSON.parse(run.normalizedArtifactJson) as NormalizedPlanningArtifact;
-    const previousArtifact = JSON.parse(previousComparableRun.normalizedArtifactJson) as NormalizedPlanningArtifact;
+    const currentArtifact = JSON.parse(run.sourceSummaryJson) as NormalizedPlanningArtifact;
+    const previousArtifact = JSON.parse(previousComparableRun.sourceSummaryJson) as NormalizedPlanningArtifact;
     const changedFields = this.diffArtifacts(previousArtifact, currentArtifact);
-    const previousFindings = this.options.deps.planningReviewFindingRepository.listByRunId(previousComparableRun.id);
+    const previousFindings = this.options.deps.reviewFindingRepository.listByRunId(previousComparableRun.id);
     const impactedFindingTitles = this.findPlausiblyImpactedFindingTitles(
       changedFields.map((entry) => entry.field),
       [...previousFindings, ...findings]
@@ -1051,7 +1148,7 @@ export class PlanningReviewService {
     return "";
   }
 
-  private findPlausiblyImpactedFindingTitles(fields: Array<keyof NormalizedPlanningArtifact>, findings: PlanningReviewFinding[]): string[] {
+  private findPlausiblyImpactedFindingTitles(fields: Array<keyof NormalizedPlanningArtifact>, findings: ReviewFinding[]): string[] {
     return normalizeEntries(
       findings
         .filter((finding) => {
@@ -1074,6 +1171,29 @@ export class PlanningReviewService {
         return "failed" as const;
       default:
         return "action_required" as const;
+    }
+  }
+
+  private mapPlanningStatus(
+    status: ReviewRun["status"],
+    readiness: ReviewRun["readiness"],
+    findings: ReviewFinding[]
+  ): PlanningReviewStatus {
+    switch (status) {
+      case "in_progress":
+        return "synthesizing";
+      case "complete":
+        return "ready";
+      case "blocked":
+        return "blocked";
+      case "failed":
+        return "failed";
+      case "action_required":
+      default:
+        if (findings.some((finding) => finding.findingType === "blocker")) {
+          return "blocker_present";
+        }
+        return readiness === "needs_human_review" ? "blocked" : readiness === "needs_evidence" ? "questions_only" : "revising";
     }
   }
 }

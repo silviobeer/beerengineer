@@ -36,7 +36,7 @@ liefert dessen vorbereiteten Input.
 Aktueller Implementierungsstand:
 
 - `brainstorm:promote` startet zusaetzlich direkt einen advisory
-  `PlanningReviewRun` fuer `requirements_engineering`
+  Planning-Review-Run im generischen Review-Core fuer `requirements_engineering`
 - dieser Review-Lauf ist in V1 eine zusaetzliche Entscheidungs- und
   Readiness-Sicht, aber kein hartes Gate
 

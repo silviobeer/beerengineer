@@ -99,30 +99,24 @@ describe("workflow service", () => {
       gateEligibility?: PlanningReviewGateEligibility;
     }
   ) {
-    return context.repositories.planningReviewRunRepository.create({
-      sourceType: input.sourceType,
-      sourceId: input.sourceId,
-      step: input.step,
-      status: input.status,
-      interactionMode: "interactive",
-      reviewMode: "readiness",
-      automationLevel: input.automationLevel ?? "auto_gate",
-      requestedMode: "full_dual_review",
-      actualMode: "full_dual_review",
+    const mappedStatus: ReviewRunStatus =
+      input.status === "ready"
+        ? "complete"
+        : input.status === "blocked"
+          ? "blocked"
+          : input.status === "failed"
+            ? "failed"
+            : "action_required";
+    return seedGenericReviewRun(context, {
+      reviewKind: "planning",
+      subjectType: input.sourceType,
+      subjectId: input.sourceId,
+      subjectStep: input.step,
+      status: mappedStatus,
       readiness: input.readiness,
-      confidence: "high",
+      automationLevel: input.automationLevel ?? "auto_gate",
       gateEligibility: input.gateEligibility ?? "advisory",
-      normalizedArtifactJson: JSON.stringify({
-        problem: "seeded",
-        goal: "seeded",
-        proposal: "seeded",
-        risks: [],
-        clarificationAnswers: []
-      }),
-      providersUsedJson: JSON.stringify(["seeded"]),
-      missingCapabilitiesJson: JSON.stringify([]),
-      reviewSummary: "seeded planning review",
-      failedReason: null
+      summary: "seeded planning review"
     });
   }
 
@@ -357,6 +351,12 @@ describe("workflow service", () => {
           })
         }
       ]);
+      context.services.coderabbitService.setConfig({
+        hostUrl: "https://api.coderabbit.ai",
+        organization: "beerengineer",
+        repository: "beerengineer",
+        token: "secret-token"
+      });
 
       const review = context.workflowService.startImplementationReview({
         waveStoryExecutionId: latestExecution.id,
@@ -1345,9 +1345,10 @@ describe("workflow service", () => {
         code: "PLANNING_REVIEW_OUTPUT_INVALID"
       } satisfies Partial<AppError>);
 
-      const latestRun = context.repositories.planningReviewRunRepository.getLatestBySource({
-        sourceType: "brainstorm_session",
-        sourceId: brainstorm.sessionId
+      const latestRun = context.repositories.reviewRunRepository.getLatestBySubject({
+        reviewKind: "planning",
+        subjectType: "brainstorm_session",
+        subjectId: brainstorm.sessionId
       });
       expect(latestRun?.status).toBe("failed");
       expect(latestRun?.failedReason).toContain("summary");

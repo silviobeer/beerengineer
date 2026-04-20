@@ -145,7 +145,6 @@ export class WorkflowService {
     });
     this.planningReviewService = new PlanningReviewService({
       deps,
-      reviewCoreService: this.reviewCoreService,
       buildAdapterRuntimeContext: (input) => this.buildAdapterRuntimeContext(input)
     });
     this.implementationReviewService = new ImplementationReviewService({

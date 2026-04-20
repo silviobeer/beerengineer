@@ -1,6 +1,6 @@
 import { buildItemWorkflowSnapshot } from "../domain/aggregate-status.js";
 import { assertCanMoveItem } from "../domain/workflow-rules.js";
-import type { PlanningReviewReadinessResult, PlanningReviewRun, StageKey } from "../domain/types.js";
+import type { PlanningReviewSourceType, StageKey } from "../domain/types.js";
 import type { AdapterRuntimeContext } from "../adapters/types.js";
 import type { ArtifactRecord } from "../persistence/repositories.js";
 import { AppError } from "../shared/errors.js";
@@ -314,7 +314,7 @@ export class StageService {
   }
 
   private assertPlanningReviewGate(input: {
-    sourceType: PlanningReviewRun["sourceType"];
+    sourceType: PlanningReviewSourceType;
     sourceId: string;
     stepLabel: string;
   }): void {
@@ -329,38 +329,6 @@ export class StageService {
         `${input.stepLabel} is blocked by planning review ${latestCoreRun.id} (${latestCoreRun.status}/${latestCoreRun.readiness}).`
       );
     }
-
-    const latestRun = this.options.deps.planningReviewRunRepository.getLatestBySource({
-      sourceType: input.sourceType,
-      sourceId: input.sourceId
-    });
-    if (!this.shouldEnforcePlanningReviewGate(latestRun)) {
-      return;
-    }
-    throw new AppError(
-      "PLANNING_REVIEW_GATE_BLOCKED",
-      `${input.stepLabel} is blocked by planning review ${latestRun.id} (${latestRun.status}/${latestRun.readiness}).`
-    );
-  }
-
-  private shouldEnforcePlanningReviewGate(run: PlanningReviewRun | null): run is PlanningReviewRun {
-    if (!run) {
-      return false;
-    }
-    if (run.automationLevel !== "auto_gate") {
-      return false;
-    }
-    if (run.gateEligibility !== "advisory") {
-      return false;
-    }
-    return !this.isPlanningReviewReadyForGate(run.readiness, run.status);
-  }
-
-  private isPlanningReviewReadyForGate(
-    readiness: PlanningReviewReadinessResult | null,
-    status: PlanningReviewRun["status"]
-  ): boolean {
-    return status === "ready" && (readiness === "ready" || readiness === "ready_with_assumptions");
   }
 
   public async retryRun(runId: string): Promise<{ runId: string; status: string; retriedFromRunId: string }> {

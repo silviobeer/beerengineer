@@ -273,7 +273,7 @@ Abgrenzung:
 Wichtig:
 
 - `InteractiveReviewSession` bleibt bestehen und wird nicht durch
-  `PlanningReviewRun` ersetzt
+  einen planning-spezifischen Sonder-Record ersetzt
 - `InteractiveReviewSession` kann aber als `planning review`-Quelle dienen:
   - `sourceType=interactive_review_session`
 - das ist aktuell fuer diese Artefaktfaelle unterstuetzt:

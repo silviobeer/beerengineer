@@ -23,11 +23,6 @@ import {
   InteractiveReviewResolutionRepository,
   InteractiveReviewSessionRepository,
   ItemRepository,
-  PlanningReviewAssumptionRepository,
-  PlanningReviewFindingRepository,
-  PlanningReviewQuestionRepository,
-  PlanningReviewRunRepository,
-  PlanningReviewSynthesisRepository,
   ReviewAssumptionRepository,
   ReviewFindingRepository,
   ReviewQuestionRepository,
@@ -138,11 +133,6 @@ export type AppContext = {
     interactiveReviewMessageRepository: InteractiveReviewMessageRepository;
     interactiveReviewEntryRepository: InteractiveReviewEntryRepository;
     interactiveReviewResolutionRepository: InteractiveReviewResolutionRepository;
-    planningReviewRunRepository: PlanningReviewRunRepository;
-    planningReviewFindingRepository: PlanningReviewFindingRepository;
-    planningReviewSynthesisRepository: PlanningReviewSynthesisRepository;
-    planningReviewQuestionRepository: PlanningReviewQuestionRepository;
-    planningReviewAssumptionRepository: PlanningReviewAssumptionRepository;
     reviewRunRepository: ReviewRunRepository;
     reviewFindingRepository: ReviewFindingRepository;
     reviewSynthesisRepository: ReviewSynthesisRepository;
@@ -246,11 +236,6 @@ export function createAppContext(
   const interactiveReviewMessageRepository = new InteractiveReviewMessageRepository(db);
   const interactiveReviewEntryRepository = new InteractiveReviewEntryRepository(db);
   const interactiveReviewResolutionRepository = new InteractiveReviewResolutionRepository(db);
-  const planningReviewRunRepository = new PlanningReviewRunRepository(db);
-  const planningReviewFindingRepository = new PlanningReviewFindingRepository(db);
-  const planningReviewSynthesisRepository = new PlanningReviewSynthesisRepository(db);
-  const planningReviewQuestionRepository = new PlanningReviewQuestionRepository(db);
-  const planningReviewAssumptionRepository = new PlanningReviewAssumptionRepository(db);
   const reviewRunRepository = new ReviewRunRepository(db);
   const reviewFindingRepository = new ReviewFindingRepository(db);
   const reviewSynthesisRepository = new ReviewSynthesisRepository(db);
@@ -339,11 +324,6 @@ export function createAppContext(
       interactiveReviewMessageRepository,
       interactiveReviewEntryRepository,
       interactiveReviewResolutionRepository,
-      planningReviewRunRepository,
-      planningReviewFindingRepository,
-      planningReviewSynthesisRepository,
-      planningReviewQuestionRepository,
-      planningReviewAssumptionRepository,
       reviewRunRepository,
       reviewFindingRepository,
       reviewSynthesisRepository,
@@ -403,11 +383,6 @@ export function createAppContext(
       interactiveReviewMessageRepository,
       interactiveReviewEntryRepository,
       interactiveReviewResolutionRepository,
-      planningReviewRunRepository,
-      planningReviewFindingRepository,
-      planningReviewSynthesisRepository,
-      planningReviewQuestionRepository,
-      planningReviewAssumptionRepository,
       reviewRunRepository,
       reviewFindingRepository,
       reviewSynthesisRepository,

@@ -207,11 +207,34 @@ Rueckgabe:
 
 Wichtig:
 
-- V1 ist bewusst advisory-only.
-- Der Lauf persistiert bereits ueber den generischen Review-Core, auch wenn
-  Workflow-Gates fuer Implementation Review noch nicht erzwungen werden.
+- Der Lauf persistiert ueber den generischen Review-Core.
+- Story Review startet danach automatisch einen advisory
+  `implementation`-Review-Run mit `automationLevel = auto_comment`.
+- QA ist jetzt das erste echte Workflow-Gate fuer Implementation Review:
+  `qa:start` wird blockiert, wenn fuer eine relevante Story-Execution der
+  neueste `implementation`-Review-Run gleichzeitig
+  - `automationLevel = auto_gate`
+  - `gateEligibility = advisory`
+  - und nicht `complete` mit
+    `readiness = ready|ready_with_assumptions`
+    ist.
 - `CodeRabbit` wird in V1 ueber bereits bekannte Quality-Knowledge-Signale
   ingestiert; `SonarCloud` ueber den bestehenden Service-/Scan-Pfad.
+
+## Planning Review Runtime
+
+Planning Review schreibt weiterhin seinen planning-spezifischen Laufdatensatz,
+haengt neue Laeufe aber explizit an den generischen Review-Core an.
+
+Fuer neue Runs gilt deshalb:
+
+- `planning-review:show`
+- `planning-review:question:answer`
+- `planning-review:rerun`
+
+arbeiten bevorzugt ueber den verknuepften Core-Run. Die planning-spezifische
+Persistenz bleibt nur noch als Kompatibilitaets-Bridge und fuer aeltere Runs
+erhalten.
 
 ## Interactive Brainstorm
 

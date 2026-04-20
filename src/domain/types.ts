@@ -263,15 +263,6 @@ export const planningReviewProviderRoles = [
 ] as const;
 export type PlanningReviewProviderRole = (typeof planningReviewProviderRoles)[number];
 
-export const planningReviewFindingTypes = ["blocker", "major_concern", "question", "suggestion"] as const;
-export type PlanningReviewFindingType = (typeof planningReviewFindingTypes)[number];
-
-export const planningReviewFindingStatuses = ["new", "open", "resolved"] as const;
-export type PlanningReviewFindingStatus = (typeof planningReviewFindingStatuses)[number];
-
-export const planningReviewQuestionStatuses = ["open", "answered", "dismissed", "assumed"] as const;
-export type PlanningReviewQuestionStatus = (typeof planningReviewQuestionStatuses)[number];
-
 export const reviewKinds = ["planning", "interactive_story", "implementation", "qa", "documentation"] as const;
 export type ReviewKind = (typeof reviewKinds)[number];
 
@@ -965,78 +956,6 @@ export type WorkspaceAssistMessage = {
   content: string;
   structuredPayloadJson: string | null;
   derivedPlanJson: string | null;
-  createdAt: number;
-};
-
-export type PlanningReviewRun = {
-  id: string;
-  sourceType: PlanningReviewSourceType;
-  sourceId: string;
-  step: PlanningReviewStep;
-  status: PlanningReviewStatus;
-  interactionMode: PlanningReviewInteractionMode;
-  reviewMode: PlanningReviewMode;
-  automationLevel: PlanningReviewAutomationLevel;
-  requestedMode: PlanningReviewExecutionMode;
-  actualMode: PlanningReviewExecutionMode;
-  readiness: PlanningReviewReadinessResult | null;
-  confidence: PlanningReviewConfidenceLevel;
-  gateEligibility: PlanningReviewGateEligibility;
-  normalizedArtifactJson: string;
-  providersUsedJson: string;
-  missingCapabilitiesJson: string;
-  reviewSummary: string | null;
-  startedAt: number;
-  updatedAt: number;
-  completedAt: number | null;
-  failedReason: string | null;
-};
-
-export type PlanningReviewFinding = {
-  id: string;
-  runId: string;
-  reviewerRole: PlanningReviewProviderRole;
-  findingType: PlanningReviewFindingType;
-  title: string;
-  detail: string;
-  evidence: string | null;
-  status: PlanningReviewFindingStatus;
-  fingerprint: string;
-  createdAt: number;
-  updatedAt: number;
-};
-
-export type PlanningReviewSynthesis = {
-  id: string;
-  runId: string;
-  summary: string;
-  status: PlanningReviewStatus;
-  readiness: PlanningReviewReadinessResult;
-  keyPointsJson: string;
-  disagreementsJson: string;
-  recommendedAction: string;
-  createdAt: number;
-};
-
-export type PlanningReviewQuestion = {
-  id: string;
-  runId: string;
-  question: string;
-  reason: string;
-  impact: string;
-  status: PlanningReviewQuestionStatus;
-  answer: string | null;
-  createdAt: number;
-  updatedAt: number;
-  answeredAt: number | null;
-};
-
-export type PlanningReviewAssumption = {
-  id: string;
-  runId: string;
-  statement: string;
-  reason: string;
-  source: string;
   createdAt: number;
 };
 

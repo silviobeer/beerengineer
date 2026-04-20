@@ -28,13 +28,6 @@ Kernentitaeten des aktuellen MVP:
 - `QaAgentSession`: Session-Metadaten des konkreten QA-Workers
 - `DocumentationRun`: projektweiter Dokumentationsversuch nach QA
 - `DocumentationAgentSession`: Session-Metadaten des konkreten Dokumentations-Workers
-- `PlanningReviewRun`: persistierter advisory Review-Lauf fuer fruehe
-  Planungsartefakte
-- `PlanningReviewFinding`: strukturierter Finding-Record eines Planning Reviews
-- `PlanningReviewSynthesis`: konsolidiertes Ergebnis eines Planning Reviews
-- `PlanningReviewQuestion`: blocker-relevante Rueckfrage eines Planning Reviews
-- `PlanningReviewAssumption`: explizite Annahme aus `auto`-Mode oder degrade-
-  ten Planning-Review-Laeufen
 - `ReviewRun`: generischer Review-Core-Lauf fuer planning-, implementation- und
   spaetere weitere Review-Arten
 - `ReviewFinding`: generischer normalisierter Finding-Record ueber mehrere
@@ -61,7 +54,8 @@ Wichtig:
 - Die Dokumentations-Schicht erzeugt danach den finalen lesbaren Project-Report aus persistierter Wahrheit.
 - Worker-Rollen sind Registry und Ausfuehrungsprofil, aber nicht der Scheduler.
 
-Persistenzseitig haengt `PlanningReviewRun` an einer generischen Quelle ueber:
+Planning Review haengt im generischen Review-Core an einer generischen Quelle
+ueber:
 
 - `sourceType`
   - z. B. `brainstorm_session`, `brainstorm_draft`,
@@ -69,15 +63,7 @@ Persistenzseitig haengt `PlanningReviewRun` an einer generischen Quelle ueber:
     `implementation_plan`
 - `sourceId`
 
-Die eigentliche Laufhistorie liegt in:
-
-- `planning_review_runs`
-- `planning_review_findings`
-- `planning_review_syntheses`
-- `planning_review_questions`
-- `planning_review_assumptions`
-
-Zusaetzlich existiert jetzt ein generischer Review-Core fuer vereinheitlichte
+Der generische Review-Core ist die einzige Persistenz fuer vereinheitlichte
 Review-Infrastruktur:
 
 - `review_runs`
@@ -89,9 +75,14 @@ Review-Infrastruktur:
 Dieser Core wird aktuell genutzt fuer:
 
 - Planning Review
-  - als generischer Mirror des bestehenden Planning-Review-Workflows
+  - als generischer Review-Core-Run mit planning-spezifischer Source- und
+    Statusprojektion in der API
+- Interactive Story Review
+  - als generischer Mirror abgeschlossener Story-Review-Laeufe
 - Implementation Review
-  - als primaerer Persistenzpfad fuer advisory Code-/Execution-Reviews
+  - als primaerer Persistenzpfad fuer Code-/Execution-Reviews
+- QA Review
+  - als generischer Mirror abgeschlossener QA-Laeufe
 
 Wichtige sichtbare Planning-Review-Status im aktuellen Runtime-Verhalten:
 
@@ -136,3 +127,13 @@ Wichtige Run-Metadaten:
     wirken
   - `advisory_only` reduziert die Gate-Macht bewusst auch dann, wenn
     `automationLevel = auto_gate` gesetzt ist
+
+Aktuelle Gate-Nutzung:
+
+- Planning Review
+  - blockiert `stories:approve`, `architecture:approve` und `planning:approve`
+    ueber den generischen Review-Core, mit Legacy-Fallback auf die
+    planning-spezifische Persistenz
+- Implementation Review
+  - blockiert `qa:start`, wenn fuer eine relevante Story-Execution ein
+    `implementation`-Run mit `auto_gate` nicht bereit ist

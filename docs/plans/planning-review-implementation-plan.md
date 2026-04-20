@@ -770,7 +770,7 @@ Examples:
 - interactive review messages and entry-resolution state stay in existing
   interactive review persistence
 - normalized review runs, synthesized findings, degraded-mode metadata, and
-  explicit `auto`-mode assumptions belong in planning-review tables
+  explicit `auto`-mode assumptions belong in the generic review core
 
 ### Existing Persistence To Extend
 
@@ -783,7 +783,7 @@ Examples:
 
 Recommended new tables or equivalent typed entities:
 
-- `planning_review_runs`
+- `review_runs`
   - one normalized review execution record
   - stores:
     - requested mode
@@ -798,21 +798,21 @@ Recommended new tables or equivalent typed entities:
       - `brainstorm_draft`
       - `interactive_review_session`
       - `concept`
-      - `architecture`
+      - `architecture_plan`
       - `implementation_plan`
     - `source_id`
-- `planning_review_findings`
+- `review_findings`
   - stores normalized findings and lifecycle state
-  - foreign key to `planning_review_runs`
-- `planning_review_syntheses`
+  - foreign key to `review_runs`
+- `review_syntheses`
   - stores consolidated synthesis outputs
-  - foreign key to `planning_review_runs`
-- `planning_review_questions`
+  - foreign key to `review_runs`
+- `review_questions`
   - stores clarification questions and resolution state
-  - foreign key to `planning_review_runs`
-- `planning_review_assumptions`
+  - foreign key to `review_runs`
+- `review_assumptions`
   - stores explicit assumptions created during `auto` mode or degraded review
-  - foreign key to `planning_review_runs`
+  - foreign key to `review_runs`
 
 This keeps the existing brainstorm and interactive review records intact while
 avoiding overloaded JSON payloads for everything new.
