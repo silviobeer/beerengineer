@@ -603,6 +603,101 @@ export const brainstormDrafts = sqliteTable("brainstorm_drafts", {
   lastUpdatedFromMessageId: text("last_updated_from_message_id")
 }, (table) => [uniqueIndex("brainstorm_drafts_session_revision_unique_idx").on(table.sessionId, table.revision)]);
 
+export const workspaceAssistSessions = sqliteTable("workspace_assist_sessions", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id),
+  status: text("status").notNull(),
+  currentPlanJson: text("current_plan_json").notNull(),
+  startedAt: integer("started_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+  resolvedAt: integer("resolved_at"),
+  lastAssistantMessageId: text("last_assistant_message_id"),
+  lastUserMessageId: text("last_user_message_id")
+});
+
+export const workspaceAssistMessages = sqliteTable("workspace_assist_messages", {
+  id: text("id").primaryKey(),
+  sessionId: text("session_id").notNull().references(() => workspaceAssistSessions.id),
+  role: text("role").notNull(),
+  content: text("content").notNull(),
+  structuredPayloadJson: text("structured_payload_json"),
+  derivedPlanJson: text("derived_plan_json"),
+  createdAt: integer("created_at").notNull()
+});
+
+export const planningReviewRuns = sqliteTable("planning_review_runs", {
+  id: text("id").primaryKey(),
+  sourceType: text("source_type").notNull(),
+  sourceId: text("source_id").notNull(),
+  step: text("step").notNull(),
+  status: text("status").notNull(),
+  interactionMode: text("interaction_mode").notNull(),
+  reviewMode: text("review_mode").notNull(),
+  requestedMode: text("requested_mode").notNull(),
+  actualMode: text("actual_mode").notNull(),
+  readiness: text("readiness"),
+  confidence: text("confidence").notNull(),
+  gateEligibility: text("gate_eligibility").notNull(),
+  normalizedArtifactJson: text("normalized_artifact_json").notNull(),
+  providersUsedJson: text("providers_used_json").notNull(),
+  missingCapabilitiesJson: text("missing_capabilities_json").notNull(),
+  reviewSummary: text("review_summary"),
+  startedAt: integer("started_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+  completedAt: integer("completed_at"),
+  failedReason: text("failed_reason")
+}, (table) => [
+  uniqueIndex("planning_review_runs_source_started_unique_idx").on(table.sourceType, table.sourceId, table.startedAt)
+]);
+
+export const planningReviewFindings = sqliteTable("planning_review_findings", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull().references(() => planningReviewRuns.id),
+  reviewerRole: text("reviewer_role").notNull(),
+  findingType: text("finding_type").notNull(),
+  title: text("title").notNull(),
+  detail: text("detail").notNull(),
+  evidence: text("evidence"),
+  status: text("status").notNull(),
+  fingerprint: text("fingerprint").notNull(),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull()
+}, (table) => [uniqueIndex("planning_review_findings_run_fingerprint_unique_idx").on(table.runId, table.fingerprint)]);
+
+export const planningReviewSyntheses = sqliteTable("planning_review_syntheses", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull().references(() => planningReviewRuns.id),
+  summary: text("summary").notNull(),
+  status: text("status").notNull(),
+  readiness: text("readiness").notNull(),
+  keyPointsJson: text("key_points_json").notNull(),
+  disagreementsJson: text("disagreements_json").notNull(),
+  recommendedAction: text("recommended_action").notNull(),
+  createdAt: integer("created_at").notNull()
+});
+
+export const planningReviewQuestions = sqliteTable("planning_review_questions", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull().references(() => planningReviewRuns.id),
+  question: text("question").notNull(),
+  reason: text("reason").notNull(),
+  impact: text("impact").notNull(),
+  status: text("status").notNull(),
+  answer: text("answer"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+  answeredAt: integer("answered_at")
+});
+
+export const planningReviewAssumptions = sqliteTable("planning_review_assumptions", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull().references(() => planningReviewRuns.id),
+  statement: text("statement").notNull(),
+  reason: text("reason").notNull(),
+  source: text("source").notNull(),
+  createdAt: integer("created_at").notNull()
+});
+
 export const stageRuns = sqliteTable("stage_runs", {
   id: text("id").primaryKey(),
   itemId: text("item_id").notNull().references(() => items.id),

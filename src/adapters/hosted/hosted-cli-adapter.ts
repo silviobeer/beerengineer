@@ -15,6 +15,8 @@ import type {
   ExecutionAdapterRunResult,
   InteractiveBrainstormAdapterRunRequest,
   InteractiveBrainstormAdapterRunResult,
+  PlanningReviewAdapterRunRequest,
+  PlanningReviewAdapterRunResult,
   InteractiveStoryReviewAdapterRunRequest,
   InteractiveStoryReviewAdapterRunResult,
   QaAdapterRunRequest,
@@ -24,13 +26,17 @@ import type {
   StoryReviewAdapterRunRequest,
   StoryReviewAdapterRunResult,
   TestPreparationAdapterRunRequest,
-  TestPreparationAdapterRunResult
+  TestPreparationAdapterRunResult,
+  WorkspaceSetupAssistAdapterRunRequest,
+  WorkspaceSetupAssistAdapterRunResult
 } from "../types.js";
 
 export type AnyAdapterRequest =
   | AdapterRunRequest
+  | PlanningReviewAdapterRunRequest
   | InteractiveBrainstormAdapterRunRequest
   | InteractiveStoryReviewAdapterRunRequest
+  | WorkspaceSetupAssistAdapterRunRequest
   | ExecutionAdapterRunRequest
   | TestPreparationAdapterRunRequest
   | RalphVerificationAdapterRunRequest
@@ -84,6 +90,10 @@ export abstract class HostedCliAdapterBase {
     project_documentation: [
       "Inside `output`, return exactly these fields:",
       '{ "projectCode": string, "overallStatus": "completed"|"review_required", "summary": string, "originalScope": string, "deliveredScope": string, "architectureSnapshot": string, "waves": Array<{ "waveCode": string, "goal": string, "storiesDelivered": string[] }>, "storiesDelivered": Array<{ "storyCode": string, "summary": string }>, "verificationSummary": { "ralphPassedStoryCodes": string[], "storyReviewPassedStoryCodes": string[], "qaStatus": "passed"|"review_required", "qaOpenFindingCount": number }, "technicalReviewSummary": { "reviewedStoryCodes": string[], "openFindingCounts": { "critical": number, "high": number, "medium": number, "low": number } }, "qaSummary": { "status": "passed"|"review_required", "summary": string, "openFindings": number }, "openFollowUps": string[], "keyChangedAreas": string[], "reportMarkdown": string }'
+    ].join("\n"),
+    planning_review: [
+      "Inside `output`, return exactly these fields:",
+      '{ "status": "in_review"|"needs_clarification"|"ready"|"blocked"|"failed", "readiness": "ready"|"ready_with_assumptions"|"needs_evidence"|"needs_human_review"|"high_risk", "summary": string, "findings": Array<{ "type": "blocker"|"major_concern"|"question"|"suggestion", "title": string, "detail": string, "evidence"?: string|null }>, "missingInformation": string[], "recommendedNextEvidence": string[], "assumptionsDetected": string[] }'
     ].join("\n")
   };
 
@@ -116,10 +126,22 @@ export abstract class HostedCliAdapterBase {
     return this.executeOutputEnvelope<InteractiveBrainstormAdapterRunResult>("interactive_brainstorm", request);
   }
 
+  public async runPlanningReview(
+    request: PlanningReviewAdapterRunRequest
+  ): Promise<PlanningReviewAdapterRunResult> {
+    return this.executeOutputEnvelope<PlanningReviewAdapterRunResult>("planning_review", request);
+  }
+
   public async runInteractiveStoryReview(
     request: InteractiveStoryReviewAdapterRunRequest
   ): Promise<InteractiveStoryReviewAdapterRunResult> {
     return this.executeOutputEnvelope<InteractiveStoryReviewAdapterRunResult>("interactive_story_review", request);
+  }
+
+  public async runWorkspaceSetupAssist(
+    request: WorkspaceSetupAssistAdapterRunRequest
+  ): Promise<WorkspaceSetupAssistAdapterRunResult> {
+    return this.executeOutputEnvelope<WorkspaceSetupAssistAdapterRunResult>("workspace_setup_assist", request);
   }
 
   public async runStoryTestPreparation(
@@ -232,6 +254,14 @@ export abstract class HostedCliAdapterBase {
         "Inside `output`, return exactly these fields:",
         '{ "assistantMessage": string, "entryUpdates": Array<{ "entryId": string, "status": "pending"|"accepted"|"needs_revision"|"rejected"|"resolved", "summary": string, "changeRequest"?: string|null, "rationale"?: string|null, "severity"?: "critical"|"high"|"medium"|"low"|null }>, "needsStructuredFollowUp": boolean, "followUpHint": string|null, "recommendedResolution": "approve"|"approve_and_autorun"|"approve_all"|"approve_all_and_autorun"|"approve_selected"|"request_changes"|"request_story_revisions"|"apply_story_edits"|null }',
         "If feedback is ambiguous, return an empty `entryUpdates` array and set `needsStructuredFollowUp` to true."
+      ].join("\n");
+    }
+    if ("interactionType" in request && request.interactionType === "workspace_setup_assist") {
+      return [
+        "Inside `output`, return exactly these fields:",
+        '{ "assistantMessage": string, "plan": { "version": 1, "workspaceKey": string, "rootPath": string|null, "mode": "greenfield"|"brownfield", "stack": "node-ts", "scaffoldProjectFiles": boolean, "createRoot": boolean, "initGit": boolean, "installDeps": boolean, "withSonar": boolean, "withCoderabbit": boolean, "generatedAt": number }, "rationale": string[], "warnings": string[], "needsUserInput": boolean, "followUpHint": string|null }',
+        "Keep the response planning-only. Do not ask to execute commands directly.",
+        "Prefer preserving existing brownfield projects over scaffolding new starter files."
       ].join("\n");
     }
     return HostedCliAdapterBase.structuredPayloadInstructionsByKind[kind] ?? null;

@@ -12,6 +12,10 @@ npm run cli -- brainstorm:draft --session-id <sessionId>
 npm run cli -- brainstorm:draft:update --session-id <sessionId> --problem "..." --target-user "..." --use-case "..."
 npm run cli -- brainstorm:promote --session-id <sessionId>
 npm run cli -- brainstorm:promote --session-id <sessionId> --autorun
+npm run cli -- planning-review:start --source-type brainstorm_session --source-id <sessionId> --step requirements_engineering --review-mode readiness --mode interactive
+npm run cli -- planning-review:show --run-id <runId>
+npm run cli -- planning-review:question:answer --run-id <runId> --question-id <questionId> --answer "..."
+npm run cli -- planning-review:rerun --run-id <runId>
 npm run cli -- concept:approve --concept-id <conceptId>
 npm run cli -- concept:approve --concept-id <conceptId> --autorun
 npm run cli -- project:import --item-id <itemId>
@@ -99,6 +103,54 @@ Wichtig:
 - `review:story:edit` mutiert das zugrunde liegende Story-Artefakt bewusst kontrolliert und setzt die betroffene Story wieder auf `draft`.
 - `apply_story_edits` ist die formale Abschluss-Resolution nach einem oder mehreren Guided-Edit-Schritten.
 
+## Planning Review
+
+Planning Review ist eine eigenstaendige advisory Review-Schicht fuer fruehe
+Artefakte. Sie bewertet keine Code-Diffs, sondern normalisierte Planungs-
+Artefakte.
+
+Unterstuetzte CLI-Kommandos:
+
+- `planning-review:start`
+- `planning-review:show`
+- `planning-review:question:answer`
+- `planning-review:rerun`
+
+Wichtige Parameter fuer `planning-review:start`:
+
+- `--source-type`
+  - `brainstorm_session`
+  - `brainstorm_draft`
+  - `interactive_review_session`
+  - `concept`
+  - `architecture_plan`
+  - `implementation_plan`
+- `--source-id <id>`
+- `--step requirements_engineering|architecture|plan_writing`
+- `--review-mode critique|risk|alternatives|readiness`
+- `--mode interactive|auto`
+
+Rueckgabe:
+
+- `run`
+  - inkl. `requestedMode`, `actualMode`, `confidence`, `gateEligibility`
+- `artifact`
+  - normalisierte Review-Eingabe
+- `findings`
+- `synthesis`
+- `questions`
+- `assumptions`
+
+Wichtig:
+
+- V1 bevorzugt absichtlich den lokalen kontrollierten Adapterpfad und reportet
+  das als degradierten Modus (`single_model_multi_role`), statt unbemerkt auf
+  externe Harnesses zu springen.
+- `planning-review:question:answer` beantwortet gezielte blocker-relevante
+  Fragen eines bestehenden Runs.
+- `planning-review:rerun` startet einen neuen Review-Lauf auf Basis desselben
+  Source-Artefakts und bereits beantworteter Fragen.
+
 ## Interactive Brainstorm
 
 Der interaktive Brainstorm-Slice arbeitet auf Item-Ebene und ergaenzt den
@@ -110,6 +162,8 @@ Human-in-the-loop-Pfad:
 - `brainstorm:draft` gibt den neuesten versionierten Draft fuer eine Session direkt aus.
 - `brainstorm:draft:update` erlaubt gezielte feldweise Aenderungen am Draft, inklusive wiederholbarer Listenfelder wie `--target-user`, `--use-case`, `--candidate-direction` und optionalem Leeren ueber `--clear-*`.
 - `brainstorm:promote` erzeugt aus dem Draft die manuellen Artefakte `concept` und `projects`, legt einen `Concept`-Record an und schliesst die Brainstorm-Session formal ab.
+- `brainstorm:promote` startet danach automatisch einen advisory Planning-Review-Lauf fuer den Schritt `requirements_engineering`.
+- `brainstorm:promote` kann deshalb im aktuellen Response zusaetzlich einen `planningReview`-Block enthalten.
 - Wenn ein `recommended direction` vorhanden ist, promoted `brainstorm:promote` standardmaessig genau ein fokussiertes Projekt statt mehrere lose Seeds aus Richtungen und Use Cases zu importieren.
 - `brainstorm:promote --autorun` approvt den aus dem Draft erzeugten Concept-Schritt unmittelbar und uebergibt danach an den Autorun-Orchestrator.
 
@@ -120,6 +174,27 @@ Wichtig:
 - `review:chat` ist ebenfalls provider-agnostisch und akzeptiert nur schema-valide Entry-Updates fuer Stories.
 - Fuer praezise maschinenlesbare Aenderungen ist `brainstorm:draft:update` der verlässlichere Pfad.
 - `brainstorm:promote` ist der formale Uebergang von `brainstorm` nach `concept`.
+
+## Advisory Triggering
+
+Planning Review ist in V1 nicht nur manuell, sondern auch an bestehende
+Workflow-Uebergaenge gekoppelt:
+
+- `brainstorm:promote`
+  - startet automatisch einen Requirements-orientierten Planning Review
+- erfolgreicher `architecture:start`
+  - startet automatisch einen Architecture-Readiness-Review auf dem neuesten
+    `ArchitecturePlan`
+- erfolgreicher `planning:start`
+  - startet automatisch einen Plan-Readiness-Review auf dem neuesten
+    `ImplementationPlan`
+
+Im aktuellen CLI-Stand koennen deshalb `architecture:start` und
+`planning:start` neben `runId` und `status` zusaetzlich einen
+`planningReview`-Block im Response liefern.
+
+Diese Trigger laufen advisory-only. Sie blockieren den Workflow in V1 nicht
+hart.
 
 Fuer reproduzierbare Live-Runs akzeptiert die CLI global:
 
@@ -149,12 +224,48 @@ npm run cli -- workspace:list
 npm run cli -- workspace:create --key app-two --name "App Two"
 npm run cli -- workspace:show --workspace app-two
 npm run cli -- workspace:update-root --workspace app-two --root-path ./tmp/app-two
+npm run cli -- --workspace app-two workspace:doctor
+npm run cli -- --workspace app-two workspace:init --create-root --init-git
+npm run cli -- --workspace app-two workspace:init --create-root --init-git --dry-run
+npm run cli -- --workspace app-two workspace:assist
+npm run cli -- --workspace app-two workspace:assist --message "greenfield new project, install dependencies"
+npm run cli -- --workspace app-two workspace:assist:list
+npm run cli -- --workspace app-two workspace:assist:show
+npm run cli -- --workspace app-two workspace:assist:show --session-id <sessionId>
+npm run cli -- --workspace app-two workspace:assist:resolve --session-id <sessionId>
+npm run cli -- --workspace app-two workspace:assist:cancel --session-id <sessionId>
+npm run cli -- --workspace app-two workspace:bootstrap --create-root --init-git --with-sonar --with-coderabbit
+npm run cli -- --workspace app-two workspace:bootstrap --session-id <sessionId>
+npm run cli -- --workspace app-two workspace:bootstrap --plan ./tmp/bootstrap-plan.json
 ```
 
 Wichtig:
 
 - `--workspace` bestimmt den Daten- und Sichtbarkeits-Scope
 - `--workspace-root` bestimmt nur das technische Repo-/Git-Verzeichnis fuer den Lauf
+
+Die neuen Setup-Kommandos verhalten sich bewusst unterschiedlich:
+
+- `workspace:doctor` ist read-only und liefert einen strukturierten Gap-Report fuer Harness, Workspace-Root, Git, Laufzeit-Tools und Integrationen
+- `workspace:init` legt nur BeerEngineer-eigene Laufzeitstruktur an und kann optional den Root-Ordner anlegen oder `git init` ausfuehren
+- `workspace:init --dry-run` unterdrueckt alle Seiteneffekte und zeigt nur die geplanten Aktionen
+- `workspace:assist` bleibt planning-only und erzeugt einen JSON-Bootstrap-Plan aus dem aktuellen Doctor-Stand
+- `workspace:assist --message "..."` gibt dem Assist-Pfad zusaetzlichen Nutzerkontext; der Output bleibt trotzdem rein planend
+- `workspace:assist` arbeitet jetzt als persistente Session pro Workspace und liefert Session, Nachrichtenverlauf, `currentPlan` und `recommendedNextCommand`
+- `workspace:assist:list` zeigt alle Setup-Sessions des Workspaces, inklusive Marker fuer die neueste, offene und aktuell fuer `workspace:bootstrap` empfohlene Session sowie `recommendedNextCommand`
+- `workspace:assist:show` zeigt die neueste oder eine explizite Workspace-Assist-Session erneut an und liefert `recommendedBootstrapCommand`, `recommendedNextCommand` sowie `nextCommand`
+- `workspace:assist:resolve` markiert eine Session formal als abgeschlossen und zeigt als `recommendedNextCommand` den Bootstrap der Session
+- `workspace:assist:cancel` bricht eine offene Session formal ab und zeigt als `recommendedNextCommand` den Start einer neuen Assist-Session
+- `workspace:assist` unterscheidet dabei zwischen Greenfield und Brownfield und setzt fuer bestehende Projekte `scaffoldProjectFiles=false`
+- `workspace:bootstrap` fuehrt einen expliziten Bootstrap aus und kann fuer Greenfield Node/TS-Starterdateien, Sonar-Config und CodeRabbit-Instruktionen anlegen
+- `workspace:bootstrap --scaffold-project-files` erzwingt Starterdateien auch ohne Plan
+- `workspace:bootstrap` verwendet ohne `--plan` und ohne `--session-id` automatisch den aktuellen Plan einer offenen Assist-Session, falls eine existiert
+- `workspace:bootstrap` scheitert mit einem klaren Fehler, wenn weder Planquelle noch offene Assist-Session noch explizite Bootstrap-Flags vorhanden sind
+- `workspace:bootstrap --session-id <sessionId>` fuehrt den aktuellen Plan einer Assist-Session direkt aus
+- `workspace:bootstrap --plan <path>` fuehrt einen zuvor erzeugten Plan deterministisch aus
+- `workspace:bootstrap` gibt mit `planSource` und `planReference` aus, ob die Ausfuehrung aus CLI-Optionen, einer Plan-Datei oder einer Assist-Session stammt und welche konkrete Quelle verwendet wurde
+- `workspace:bootstrap` gibt zusaetzlich `effectivePlan` aus, also die tatsaechlich verwendeten Bootstrap-Parameter nach Aufloesung aller Defaults
+- `workspace:bootstrap --dry-run` unterdrueckt auch `npm install` und sonstige Subprozesse mit Seiteneffekten
 
 `Item.currentColumn = done` wird dabei erst nach erfolgreicher Documentation
 gesetzt. Nach `planning:approve` bleibt das Item in `implementation`, bis
@@ -280,3 +391,21 @@ Im aktuellen Documentation-Schnitt gilt:
 - `documentation:show` zeigt den neuesten `DocumentationRun` sowie Sessions und zugehoerige Artefakte aller Dokumentationsversuche fuer das Project
 - `documentation:retry` erlaubt genau dann einen neuen Dokumentationslauf, wenn der letzte `DocumentationRun` auf `review_required` oder `failed` steht
 - `documentation:start` materialisiert den fertigen Delivery-Report zusaetzlich in den Workspace unter `.beerengineer/artifacts/delivery-reports/<projectCode>-delivery-report.md` und `.beerengineer/artifacts/delivery-reports/<projectCode>-delivery-report.json`
+- `beerengineer sonar preflight` prueft die Laufzeitvoraussetzungen fuer Live-Sonar (`java`, `sonar-scanner`, `SONAR_TOKEN`) und gibt klare naechste Schritte aus
+
+## Sonar Runtime
+
+Fuer fixture-basierte Sonar-Kommandos reicht die normale BeerEngineer-CLI-Umgebung. Fuer einen echten Live-Sonar-Lauf gelten zusaetzlich diese Voraussetzungen:
+
+- `java` muss im Shell-Environment verfuegbar sein
+- `sonar-scanner` muss in `PATH` verfuegbar sein
+- `SONAR_TOKEN` muss in der Workspace-Konfiguration oder in `.env.local` gesetzt sein
+
+Empfohlener Ablauf fuer Live-Sonar:
+
+1. `beerengineer sonar preflight`
+2. fehlende Runtime-Voraussetzungen beheben
+3. `beerengineer sonar config test`
+4. erst dann `beerengineer sonar scan`
+
+Wenn die Toolchain dauerhaft reproduzierbar gemacht werden soll, sind `mise`, `asdf`, Devcontainer oder `Nix` sinnvolle Optionen.

@@ -16,6 +16,11 @@ import type {
   InteractiveReviewResolutionRepository,
   InteractiveReviewSessionRepository,
   ItemRepository,
+  PlanningReviewAssumptionRepository,
+  PlanningReviewFindingRepository,
+  PlanningReviewQuestionRepository,
+  PlanningReviewRunRepository,
+  PlanningReviewSynthesisRepository,
   QualityKnowledgeEntryRepository,
   ProjectExecutionContextRepository,
   ProjectRepository,
@@ -87,6 +92,11 @@ export type WorkflowDeps = {
   interactiveReviewMessageRepository: InteractiveReviewMessageRepository;
   interactiveReviewEntryRepository: InteractiveReviewEntryRepository;
   interactiveReviewResolutionRepository: InteractiveReviewResolutionRepository;
+  planningReviewRunRepository: PlanningReviewRunRepository;
+  planningReviewFindingRepository: PlanningReviewFindingRepository;
+  planningReviewSynthesisRepository: PlanningReviewSynthesisRepository;
+  planningReviewQuestionRepository: PlanningReviewQuestionRepository;
+  planningReviewAssumptionRepository: PlanningReviewAssumptionRepository;
   stageRunRepository: StageRunRepository;
   artifactRepository: ArtifactRepository;
   agentSessionRepository: AgentSessionRepository;

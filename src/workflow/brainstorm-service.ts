@@ -42,6 +42,13 @@ type BrainstormServiceOptions = {
   artifactService: ArtifactService;
   loaders: Pick<WorkflowEntityLoaders, "requireItem" | "requireBrainstormSession" | "requireLatestBrainstormDraft">;
   approveConcept(conceptId: string): void;
+  triggerPlanningReview(input: {
+    sourceType: "brainstorm_session";
+    sourceId: string;
+    step: "requirements_engineering";
+    reviewMode: "readiness";
+    interactionMode: "interactive";
+  }): Promise<unknown>;
   autorunForItem(input: { itemId: string; trigger: string; initialSteps?: AutorunStep[] }): Promise<AutorunSummary>;
 };
 
@@ -427,6 +434,14 @@ export class BrainstormService {
       return { concept, draftRevision: draft.revision };
     });
 
+    const planningReview = await this.options.triggerPlanningReview({
+      sourceType: "brainstorm_session",
+      sourceId: session.id,
+      step: "requirements_engineering",
+      reviewMode: "readiness",
+      interactionMode: "interactive"
+    });
+
     if (options?.autorun) {
       this.options.approveConcept(result.concept.id);
       const autorun = await this.options.autorunForItem({
@@ -438,6 +453,7 @@ export class BrainstormService {
         sessionId: session.id,
         conceptId: result.concept.id,
         draftRevision: result.draftRevision,
+        planningReview,
         autorun
       };
     }
@@ -446,7 +462,8 @@ export class BrainstormService {
       sessionId: session.id,
       conceptId: result.concept.id,
       draftRevision: result.draftRevision,
-      status: "promoted"
+      status: "promoted",
+      planningReview
     };
   }
 

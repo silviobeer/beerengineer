@@ -28,6 +28,13 @@ Kernentitaeten des aktuellen MVP:
 - `QaAgentSession`: Session-Metadaten des konkreten QA-Workers
 - `DocumentationRun`: projektweiter Dokumentationsversuch nach QA
 - `DocumentationAgentSession`: Session-Metadaten des konkreten Dokumentations-Workers
+- `PlanningReviewRun`: persistierter advisory Review-Lauf fuer fruehe
+  Planungsartefakte
+- `PlanningReviewFinding`: strukturierter Finding-Record eines Planning Reviews
+- `PlanningReviewSynthesis`: konsolidiertes Ergebnis eines Planning Reviews
+- `PlanningReviewQuestion`: blocker-relevante Rueckfrage eines Planning Reviews
+- `PlanningReviewAssumption`: explizite Annahme aus `auto`-Mode oder degrade-
+  ten Planning-Review-Laeufen
 - optional spaeter `WaveParallelGroup`: fachliche Kennzeichnung fuer sicher parallel ausfuehrbare Story-Gruppen innerhalb einer Wave
 
 Die Entitaeten leben im Domain-Layer und werden nicht aus CLI-Kommandos heraus modelliert.
@@ -35,6 +42,9 @@ Die Entitaeten leben im Domain-Layer und werden nicht aus CLI-Kommandos heraus m
 Wichtig:
 
 - Die Planning-Schicht soll Parallelisierbarkeit fachlich beschreiben.
+- Die Planning-Review-Schicht bewertet fruehe Artefakte advisory und bleibt
+  getrennt von `InteractiveReviewSession`, obwohl beide auf denselben
+  persistierten Artefakten arbeiten koennen.
 - Die Execution-Schicht entscheidet die konkrete Laufzeitorchestrierung engine-seitig.
 - Die TDD-Schicht erzwingt `test_preparation` vor `implementation`.
 - Die Ralph-Schicht erzwingt AC-by-AC-Verifikation nach der Implementierung.
@@ -42,3 +52,19 @@ Wichtig:
 - Die QA-Schicht erzwingt einen projektweiten integrierten Check nach vollstaendig abgeschlossener Story-Execution.
 - Die Dokumentations-Schicht erzeugt danach den finalen lesbaren Project-Report aus persistierter Wahrheit.
 - Worker-Rollen sind Registry und Ausfuehrungsprofil, aber nicht der Scheduler.
+
+Persistenzseitig haengt `PlanningReviewRun` an einer generischen Quelle ueber:
+
+- `sourceType`
+  - z. B. `brainstorm_session`, `brainstorm_draft`,
+    `interactive_review_session`, `concept`, `architecture_plan`,
+    `implementation_plan`
+- `sourceId`
+
+Die eigentliche Laufhistorie liegt in:
+
+- `planning_review_runs`
+- `planning_review_findings`
+- `planning_review_syntheses`
+- `planning_review_questions`
+- `planning_review_assumptions`

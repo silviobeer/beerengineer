@@ -1,8 +1,16 @@
 import { Command, Option } from "commander";
 import { resolve } from "node:path";
 
-import { createAppContext, type AppContext } from "../app-context.js";
-import { interactiveReviewEntryStatuses, interactiveReviewSeverities } from "../domain/types.js";
+import { createAppContext, createWorkspaceSetupContext, type AppContext } from "../app-context.js";
+import { AgentRuntimeResolver, loadAgentRuntimeConfig } from "../adapters/runtime.js";
+import {
+  interactiveReviewEntryStatuses,
+  interactiveReviewSeverities,
+  planningReviewInteractionModes,
+  planningReviewModes,
+  planningReviewSourceTypes,
+  planningReviewSteps
+} from "../domain/types.js";
 import { AppError } from "../shared/errors.js";
 
 const program = new Command();
@@ -112,6 +120,10 @@ function buildCliErrorPayload(error: unknown): { error: { code: string; message:
   };
 }
 
+async function loadWorkspaceSetupService() {
+  return import("../services/workspace-setup-service.js");
+}
+
 function formatExecutionCompactSummary(compact: {
   project: { code: string; title: string };
   implementationPlan: { version: number; status: string };
@@ -152,6 +164,37 @@ function formatExecutionCompactSummary(compact: {
   }
 
   return lines.join("\n");
+}
+
+function withWorkspaceSetupContext<TOptions extends object>(
+  handler: (
+    context: ReturnType<typeof createWorkspaceSetupContext>,
+    options: TOptions,
+    dbPath: string
+  ) => Promise<void> | void
+) {
+  return async (options: TOptions) => {
+    const programOptions = program.opts<{
+      db: string;
+      agentRuntimeConfig?: string;
+      adapterScriptPath?: string;
+      workspace: string;
+      workspaceRoot?: string;
+    }>();
+    const dbPath = resolve(programOptions.db);
+    let context: ReturnType<typeof createWorkspaceSetupContext> | null = null;
+    try {
+      context = createWorkspaceSetupContext(dbPath, {
+        agentRuntimeConfigPath: programOptions.agentRuntimeConfig ? resolve(programOptions.agentRuntimeConfig) : undefined,
+        adapterScriptPath: programOptions.adapterScriptPath ? resolve(programOptions.adapterScriptPath) : undefined,
+        workspaceKey: programOptions.workspace,
+        workspaceRoot: programOptions.workspaceRoot ? resolve(programOptions.workspaceRoot) : undefined
+      });
+      await handler(context, options, dbPath);
+    } finally {
+      context?.connection.close();
+    }
+  };
 }
 
 program
@@ -226,6 +269,362 @@ program
         rootPath: resolve(options.rootPath)
       });
       console.log(JSON.stringify(updated, null, 2));
+    })
+  );
+
+program
+  .command("workspace:doctor")
+  .action(
+    withWorkspaceSetupContext<Record<string, never>>(async ({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, repositories }) => {
+      const { WorkspaceSetupService } = await loadWorkspaceSetupService();
+      const service = new WorkspaceSetupService({
+        workspace,
+        workspaceRoot,
+        rootPathSource,
+        agentRuntimeConfigPath,
+        sonarSettings: repositories.workspaceSonarSettingsRepository.getByWorkspaceId(workspace.id),
+        coderabbitSettings: repositories.workspaceCoderabbitSettingsRepository.getByWorkspaceId(workspace.id),
+        assistSessionRepository: repositories.workspaceAssistSessionRepository,
+        assistMessageRepository: repositories.workspaceAssistMessageRepository
+      });
+      console.log(JSON.stringify(service.doctor(), null, 2));
+    })
+  );
+
+program
+  .command("workspace:init")
+  .option("--create-root", "Create the workspace root if it does not exist")
+  .option("--init-git", "Initialize a git repository when missing")
+  .option("--dry-run", "Show planned actions without mutating the workspace")
+  .action(
+    withWorkspaceSetupContext<{ createRoot?: boolean; initGit?: boolean; dryRun?: boolean }>(
+      async ({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, repositories }, options) => {
+        const { WorkspaceSetupService } = await loadWorkspaceSetupService();
+        const service = new WorkspaceSetupService({
+          workspace,
+          workspaceRoot,
+          rootPathSource,
+          agentRuntimeConfigPath,
+          sonarSettings: repositories.workspaceSonarSettingsRepository.getByWorkspaceId(workspace.id),
+          coderabbitSettings: repositories.workspaceCoderabbitSettingsRepository.getByWorkspaceId(workspace.id),
+          assistSessionRepository: repositories.workspaceAssistSessionRepository,
+          assistMessageRepository: repositories.workspaceAssistMessageRepository
+        });
+        console.log(
+          JSON.stringify(
+            service.init({
+              createRoot: Boolean(options.createRoot),
+              initGit: Boolean(options.initGit),
+              dryRun: Boolean(options.dryRun)
+            }),
+            null,
+            2
+          )
+        );
+      }
+    )
+  );
+
+program
+  .command("workspace:assist")
+  .option("--message <message>", "Additional setup guidance for the planning assistant")
+  .action(
+    withWorkspaceSetupContext<{ message?: string }>(
+      async ({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, adapterScriptPath, repoRoot, repositories }, options) => {
+        const { WorkspaceSetupService } = await loadWorkspaceSetupService();
+        const service = new WorkspaceSetupService({
+          workspace,
+          workspaceRoot,
+          rootPathSource,
+          agentRuntimeConfigPath,
+          sonarSettings: repositories.workspaceSonarSettingsRepository.getByWorkspaceId(workspace.id),
+          coderabbitSettings: repositories.workspaceCoderabbitSettingsRepository.getByWorkspaceId(workspace.id),
+          assistSessionRepository: repositories.workspaceAssistSessionRepository,
+          assistMessageRepository: repositories.workspaceAssistMessageRepository
+        });
+        const runtimeConfig = loadAgentRuntimeConfig(agentRuntimeConfigPath);
+        const resolver = new AgentRuntimeResolver(runtimeConfig, {
+          repoRoot,
+          adapterScriptPath
+        });
+        const runtime = resolver.resolveDefault("interactive");
+        if (options.message) {
+          const openSession = repositories.workspaceAssistSessionRepository.findOpenByWorkspaceId(workspace.id);
+          const result = openSession
+            ? await service.chatAssistSession({ runtime, sessionId: openSession.id, message: options.message })
+            : await service.startOrReuseAssistSession({ runtime });
+          if (!openSession) {
+            const hydrated = await service.chatAssistSession({ runtime, sessionId: result.session.id, message: options.message });
+            console.log(
+              JSON.stringify(
+                {
+                  ...hydrated,
+                  recommendedNextCommand: hydrated.nextCommand ?? hydrated.recommendedBootstrapCommand
+                },
+                null,
+                2
+              )
+            );
+            return;
+          }
+          console.log(
+            JSON.stringify(
+              {
+                ...result,
+                recommendedNextCommand: result.nextCommand ?? result.recommendedBootstrapCommand
+              },
+              null,
+              2
+            )
+          );
+          return;
+        }
+        const result = await service.startOrReuseAssistSession({ runtime });
+        console.log(
+          JSON.stringify(
+            {
+              ...result,
+              recommendedNextCommand: result.nextCommand ?? result.recommendedBootstrapCommand
+            },
+            null,
+            2
+          )
+        );
+      }
+    )
+  );
+
+program
+  .command("workspace:assist:show")
+  .option("--session-id <sessionId>", "Show a specific workspace assist session")
+  .action(
+    withWorkspaceSetupContext<{ sessionId?: string }>(
+      async ({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, repositories }, options) => {
+        const { WorkspaceSetupService } = await loadWorkspaceSetupService();
+        const service = new WorkspaceSetupService({
+          workspace,
+          workspaceRoot,
+          rootPathSource,
+          agentRuntimeConfigPath,
+          sonarSettings: repositories.workspaceSonarSettingsRepository.getByWorkspaceId(workspace.id),
+          coderabbitSettings: repositories.workspaceCoderabbitSettingsRepository.getByWorkspaceId(workspace.id),
+          assistSessionRepository: repositories.workspaceAssistSessionRepository,
+          assistMessageRepository: repositories.workspaceAssistMessageRepository
+        });
+        const result = service.showAssistSession(options.sessionId);
+        console.log(
+          JSON.stringify(
+            {
+              ...result,
+              recommendedNextCommand: result.recommendedNextCommand ?? result.nextCommand ?? result.recommendedBootstrapCommand
+            },
+            null,
+            2
+          )
+        );
+      }
+    )
+  );
+
+program
+  .command("workspace:assist:list")
+  .action(
+    withWorkspaceSetupContext(async ({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, repositories }) => {
+      const { WorkspaceSetupService } = await loadWorkspaceSetupService();
+      const service = new WorkspaceSetupService({
+        workspace,
+        workspaceRoot,
+        rootPathSource,
+        agentRuntimeConfigPath,
+        sonarSettings: repositories.workspaceSonarSettingsRepository.getByWorkspaceId(workspace.id),
+        coderabbitSettings: repositories.workspaceCoderabbitSettingsRepository.getByWorkspaceId(workspace.id),
+        assistSessionRepository: repositories.workspaceAssistSessionRepository,
+        assistMessageRepository: repositories.workspaceAssistMessageRepository
+      });
+        console.log(
+          JSON.stringify(
+          service.listAssistSessions().map((entry: { nextCommand: string | null }) => ({
+            ...entry,
+            recommendedNextCommand: entry.nextCommand
+          })),
+          null,
+          2
+        )
+      );
+    })
+  );
+
+program
+  .command("workspace:assist:resolve")
+  .requiredOption("--session-id <sessionId>", "Resolve a workspace assist session")
+  .action(
+    withWorkspaceSetupContext<{ sessionId: string }>(
+      async ({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, repositories }, options) => {
+        const { WorkspaceSetupService } = await loadWorkspaceSetupService();
+        const service = new WorkspaceSetupService({
+          workspace,
+          workspaceRoot,
+          rootPathSource,
+          agentRuntimeConfigPath,
+          sonarSettings: repositories.workspaceSonarSettingsRepository.getByWorkspaceId(workspace.id),
+          coderabbitSettings: repositories.workspaceCoderabbitSettingsRepository.getByWorkspaceId(workspace.id),
+          assistSessionRepository: repositories.workspaceAssistSessionRepository,
+          assistMessageRepository: repositories.workspaceAssistMessageRepository
+        });
+        const result = service.resolveAssistSession({ sessionId: options.sessionId });
+        console.log(
+          JSON.stringify(
+            {
+              ...result,
+              recommendedNextCommand: result.recommendedNextCommand ?? result.nextCommand ?? result.recommendedBootstrapCommand
+            },
+            null,
+            2
+          )
+        );
+      }
+    )
+  );
+
+program
+  .command("workspace:assist:cancel")
+  .requiredOption("--session-id <sessionId>", "Cancel a workspace assist session")
+  .action(
+    withWorkspaceSetupContext<{ sessionId: string }>(
+      async ({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, repositories }, options) => {
+        const { WorkspaceSetupService } = await loadWorkspaceSetupService();
+        const service = new WorkspaceSetupService({
+          workspace,
+          workspaceRoot,
+          rootPathSource,
+          agentRuntimeConfigPath,
+          sonarSettings: repositories.workspaceSonarSettingsRepository.getByWorkspaceId(workspace.id),
+          coderabbitSettings: repositories.workspaceCoderabbitSettingsRepository.getByWorkspaceId(workspace.id),
+          assistSessionRepository: repositories.workspaceAssistSessionRepository,
+          assistMessageRepository: repositories.workspaceAssistMessageRepository
+        });
+        const result = service.cancelAssistSession({ sessionId: options.sessionId });
+        console.log(
+          JSON.stringify(
+            {
+              ...result,
+              recommendedNextCommand: result.recommendedNextCommand ?? result.nextCommand ?? result.recommendedBootstrapCommand
+            },
+            null,
+            2
+          )
+        );
+      }
+    )
+  );
+
+program
+  .command("workspace:bootstrap")
+  .option("--stack <stack>", "Bootstrap stack", "node-ts")
+  .option("--scaffold-project-files", "Create starter project files for a new workspace")
+  .option("--create-root", "Create the workspace root if it does not exist")
+  .option("--init-git", "Initialize a git repository when missing")
+  .option("--install-deps", "Install dependencies after scaffolding")
+  .option("--with-sonar", "Create Sonar starter config when missing")
+  .option("--with-coderabbit", "Create CodeRabbit starter instructions when missing")
+  .option("--plan <path>", "Load bootstrap settings from a JSON plan file")
+  .option("--session-id <sessionId>", "Load bootstrap settings from a workspace assist session")
+  .option("--dry-run", "Show planned actions without mutating the workspace")
+  .action(
+    withWorkspaceSetupContext<{
+      stack?: string;
+      scaffoldProjectFiles?: boolean;
+      createRoot?: boolean;
+      initGit?: boolean;
+      installDeps?: boolean;
+      withSonar?: boolean;
+      withCoderabbit?: boolean;
+      plan?: string;
+      sessionId?: string;
+      dryRun?: boolean;
+    }>(async ({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, repositories }, options) => {
+      const { WorkspaceSetupService } = await loadWorkspaceSetupService();
+      const service = new WorkspaceSetupService({
+        workspace,
+        workspaceRoot,
+        rootPathSource,
+        agentRuntimeConfigPath,
+        sonarSettings: repositories.workspaceSonarSettingsRepository.getByWorkspaceId(workspace.id),
+        coderabbitSettings: repositories.workspaceCoderabbitSettingsRepository.getByWorkspaceId(workspace.id),
+        assistSessionRepository: repositories.workspaceAssistSessionRepository,
+        assistMessageRepository: repositories.workspaceAssistMessageRepository
+      });
+      const plan = options.sessionId
+        ? service.loadBootstrapPlanFromAssistSession(options.sessionId)
+        : options.plan
+          ? service.loadBootstrapPlan(resolve(options.plan))
+          : service.loadBootstrapPlanFromOpenAssistSession();
+      const openAssistSessionId = !options.sessionId && !options.plan
+        ? repositories.workspaceAssistSessionRepository.findOpenByWorkspaceId(workspace.id)?.id ?? null
+        : null;
+      const hasExplicitBootstrapOptions =
+        Boolean(options.scaffoldProjectFiles) ||
+        Boolean(options.createRoot) ||
+        Boolean(options.initGit) ||
+        Boolean(options.installDeps) ||
+        Boolean(options.withSonar) ||
+        Boolean(options.withCoderabbit);
+      if (!plan && !hasExplicitBootstrapOptions) {
+        throw new AppError(
+          "WORKSPACE_BOOTSTRAP_INPUT_REQUIRED",
+          "workspace:bootstrap requires --plan, --session-id, an open workspace assist session, or explicit bootstrap flags."
+        );
+      }
+      const planSource = options.sessionId
+        ? "assist_session"
+        : options.plan
+          ? "plan_file"
+          : plan
+            ? "open_assist_session"
+            : "options";
+      const planReference = options.sessionId
+        ? options.sessionId
+        : options.plan
+          ? resolve(options.plan)
+          : plan
+            ? openAssistSessionId
+            : null;
+      const stack = (plan?.stack ?? options.stack ?? "node-ts") as "node-ts";
+      const effectivePlan = {
+        version: plan?.version ?? 1,
+        workspaceKey: workspace.key,
+        rootPath: workspaceRoot,
+        mode: plan?.mode ?? "greenfield",
+        stack,
+        scaffoldProjectFiles: plan?.scaffoldProjectFiles ?? Boolean(options.scaffoldProjectFiles),
+        createRoot: plan?.createRoot ?? Boolean(options.createRoot),
+        initGit: plan?.initGit ?? Boolean(options.initGit),
+        installDeps: plan?.installDeps ?? Boolean(options.installDeps),
+        withSonar: plan?.withSonar ?? Boolean(options.withSonar),
+        withCoderabbit: plan?.withCoderabbit ?? Boolean(options.withCoderabbit),
+        generatedAt: plan?.generatedAt ?? Date.now()
+      };
+      console.log(
+        JSON.stringify(
+          {
+            planSource,
+            planReference,
+            effectivePlan,
+            ...service.bootstrap({
+              stack,
+              scaffoldProjectFiles: effectivePlan.scaffoldProjectFiles,
+              createRoot: effectivePlan.createRoot,
+              initGit: effectivePlan.initGit,
+              installDeps: effectivePlan.installDeps,
+              withSonar: effectivePlan.withSonar,
+              withCoderabbit: effectivePlan.withCoderabbit,
+              dryRun: Boolean(options.dryRun)
+            })
+          },
+          null,
+          2
+        )
+      );
     })
   );
 
@@ -599,6 +998,76 @@ program
           2
         )
       );
+    })
+  );
+
+program
+  .command("planning-review:start")
+  .addOption(new Option("--source-type <sourceType>").choices([...planningReviewSourceTypes]).makeOptionMandatory())
+  .requiredOption("--source-id <sourceId>")
+  .addOption(new Option("--step <step>").choices([...planningReviewSteps]).makeOptionMandatory())
+  .addOption(new Option("--review-mode <reviewMode>").choices([...planningReviewModes]).default("readiness"))
+  .addOption(new Option("--mode <mode>").choices([...planningReviewInteractionModes]).default("interactive"))
+  .action(
+    withContext<{
+      sourceType: "brainstorm_session" | "brainstorm_draft" | "interactive_review_session" | "concept" | "architecture_plan" | "implementation_plan";
+      sourceId: string;
+      step: "requirements_engineering" | "architecture" | "plan_writing";
+      reviewMode: "critique" | "risk" | "alternatives" | "readiness";
+      mode: "interactive" | "auto";
+    }>(async ({ workflowService }, options) => {
+      console.log(
+        JSON.stringify(
+          await workflowService.startPlanningReview({
+            sourceType: options.sourceType,
+            sourceId: options.sourceId,
+            step: options.step,
+            reviewMode: options.reviewMode,
+            interactionMode: options.mode
+          }),
+          null,
+          2
+        )
+      );
+    })
+  );
+
+program
+  .command("planning-review:show")
+  .requiredOption("--run-id <runId>")
+  .action(
+    withContext<{ runId: string }>(({ workflowService }, options) => {
+      console.log(JSON.stringify(workflowService.showPlanningReview(options.runId), null, 2));
+    })
+  );
+
+program
+  .command("planning-review:question:answer")
+  .requiredOption("--run-id <runId>")
+  .requiredOption("--question-id <questionId>")
+  .requiredOption("--answer <answer>")
+  .action(
+    withContext<{ runId: string; questionId: string; answer: string }>(({ workflowService }, options) => {
+      console.log(
+        JSON.stringify(
+          workflowService.answerPlanningReviewQuestion({
+            runId: options.runId,
+            questionId: options.questionId,
+            answer: options.answer
+          }),
+          null,
+          2
+        )
+      );
+    })
+  );
+
+program
+  .command("planning-review:rerun")
+  .requiredOption("--run-id <runId>")
+  .action(
+    withContext<{ runId: string }>(async ({ workflowService }, options) => {
+      console.log(JSON.stringify(await workflowService.rerunPlanningReview(options.runId), null, 2));
     })
   );
 
@@ -1144,6 +1613,12 @@ sonarConfigCommand.command("clear-token").action(
 sonarCommand.command("scan").action(
   withContext<Record<string, never>>(({ services }) => {
     console.log(JSON.stringify(services.sonarService.scan(), null, 2));
+  })
+);
+
+sonarCommand.command("preflight").action(
+  withContext<Record<string, never>>(({ services }) => {
+    console.log(JSON.stringify(services.sonarService.preflight(), null, 2));
   })
 );
 

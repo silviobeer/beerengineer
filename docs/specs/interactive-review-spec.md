@@ -257,6 +257,42 @@ Moegliche `resolutionType`-Werte:
 
 Ohne dieses Objekt bleibt die Session nur Unterhaltung.
 
+## Beziehung zu Planning Review
+
+Der aktuelle Implementierungsstand fuehrt neben `interactive review` eine
+separate advisory `planning review`-Schicht.
+
+Abgrenzung:
+
+- `interactive review`
+  - usergesteuerte, konvergierende Review-Interaktion auf einem Artefakt
+- `planning review`
+  - strukturierter Readiness- und Entscheidungsreview mit Findings, Synthese,
+    Fragen und Annahmen
+
+Wichtig:
+
+- `InteractiveReviewSession` bleibt bestehen und wird nicht durch
+  `PlanningReviewRun` ersetzt
+- `InteractiveReviewSession` kann aber als `planning review`-Quelle dienen:
+  - `sourceType=interactive_review_session`
+- das ist aktuell fuer diese Artefaktfaelle unterstuetzt:
+  - `stories` auf Project-Ebene
+  - `concept`
+  - `architecture`
+  - `implementation_plan`
+
+## Planning Review Triggering
+
+Planning Review haengt in V1 advisory an bestehende Workflow-Schritte an:
+
+- nach `brainstorm:promote`
+- nach erfolgreichem `architecture:start`
+- nach erfolgreichem `planning:start`
+
+Der Trigger verbleibt bewusst in den bestehenden workflow-owned Services. Es
+gibt in V1 kein separates Event-Bus-System dafuer.
+
 ## Quelle der Wahrheit
 
 Im Review ist die Quelle der Wahrheit immer:

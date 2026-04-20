@@ -27,6 +27,7 @@ import { DocumentationService } from "./documentation-service.js";
 import { ExecutionService, type ExecutionView } from "./execution-service.js";
 import { InteractiveReviewService } from "./interactive-review-service.js";
 import { WorkflowOutputImporters } from "./output-importers.js";
+import { PlanningReviewService } from "./planning-review-service.js";
 import { QaService } from "./qa-service.js";
 import { StageService } from "./stage-service.js";
 import { VerificationService } from "./verification-service.js";
@@ -42,6 +43,7 @@ export class WorkflowService {
   private readonly documentationService: DocumentationService;
   private readonly executionService: ExecutionService;
   private readonly interactiveReviewService: InteractiveReviewService;
+  private readonly planningReviewService: PlanningReviewService;
   private readonly outputImporters: WorkflowOutputImporters;
   private readonly qaService: QaService;
   private readonly stageService: StageService;
@@ -64,7 +66,8 @@ export class WorkflowService {
       loaders: this.entityLoaders,
       outputImporters: this.outputImporters,
       resolveStageRuntime: (stageKey) => this.resolveStageRuntime(stageKey),
-      buildAdapterRuntimeContext: (input) => this.buildAdapterRuntimeContext(input)
+      buildAdapterRuntimeContext: (input) => this.buildAdapterRuntimeContext(input),
+      triggerPlanningReview: (input) => this.planningReviewService.startReview(input)
     });
     this.brainstormService = new BrainstormService({
       deps,
@@ -75,6 +78,7 @@ export class WorkflowService {
         requireLatestBrainstormDraft: (sessionId) => this.entityLoaders.requireLatestBrainstormDraft(sessionId)
       },
       approveConcept: (conceptId) => this.stageService.approveConcept(conceptId),
+      triggerPlanningReview: (input) => this.planningReviewService.startReview(input),
       autorunForItem: (input) => this.autorunForItem(input)
     });
     this.documentationService = new DocumentationService({
@@ -131,6 +135,10 @@ export class WorkflowService {
       approveStories: (projectId) => this.stageService.approveStories(projectId),
       buildSnapshot: (itemId) => this.stageService.buildSnapshot(itemId),
       autorunForProject: (input) => this.autorunForProject(input)
+    });
+    this.planningReviewService = new PlanningReviewService({
+      deps,
+      buildAdapterRuntimeContext: (input) => this.buildAdapterRuntimeContext(input)
     });
     this.qaService = new QaService({
       deps,
@@ -232,7 +240,11 @@ export class WorkflowService {
     };
   }
 
-  public async startStage(input: { stageKey: StageKey; itemId: string; projectId?: string }): Promise<{ runId: string; status: string }> {
+  public async startStage(input: {
+    stageKey: StageKey;
+    itemId: string;
+    projectId?: string;
+  }): Promise<{ runId: string; status: string; planningReview?: unknown }> {
     return this.stageService.startStage(input);
   }
 
@@ -354,6 +366,28 @@ export class WorkflowService {
 
   public showBrainstormDraft(sessionId: string) {
     return this.brainstormService.showBrainstormDraft(sessionId);
+  }
+
+  public async startPlanningReview(input: {
+    sourceType: import("../domain/types.js").PlanningReviewSourceType;
+    sourceId: string;
+    step: import("../domain/types.js").PlanningReviewStep;
+    reviewMode: import("../domain/types.js").PlanningReviewMode;
+    interactionMode: import("../domain/types.js").PlanningReviewInteractionMode;
+  }) {
+    return this.planningReviewService.startReview(input);
+  }
+
+  public showPlanningReview(runId: string) {
+    return this.planningReviewService.showReview(runId);
+  }
+
+  public answerPlanningReviewQuestion(input: { runId: string; questionId: string; answer: string }) {
+    return this.planningReviewService.answerQuestion(input);
+  }
+
+  public async rerunPlanningReview(runId: string) {
+    return this.planningReviewService.rerunReview(runId);
   }
 
   public updateBrainstormDraft(input: {

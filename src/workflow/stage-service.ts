@@ -37,6 +37,13 @@ export class StageService {
         model: string | null;
         policy: AdapterRuntimeContext["policy"];
       }): AdapterRuntimeContext;
+      triggerPlanningReview?(input: {
+        sourceType: "architecture_plan" | "implementation_plan";
+        sourceId: string;
+        step: "architecture" | "plan_writing";
+        reviewMode: "readiness";
+        interactionMode: "interactive";
+      }): Promise<unknown>;
     }
   ) {}
 
@@ -44,7 +51,7 @@ export class StageService {
     stageKey: StageKey;
     itemId: string;
     projectId?: string;
-  }): Promise<{ runId: string; status: string }> {
+  }): Promise<{ runId: string; status: string; planningReview?: unknown }> {
     const item = this.options.loaders.requireItem(input.itemId);
     const project = input.projectId ? this.options.loaders.requireProject(input.projectId) : null;
     const profile = runProfiles[input.stageKey];
@@ -98,7 +105,7 @@ export class StageService {
         context: project ? this.buildProjectStageContext(project.id, item.id) : null
       });
 
-      return this.options.deps.runInTransaction(() => {
+      const completedRun = this.options.deps.runInTransaction(() => {
         this.options.deps.agentSessionRepository.create({
           stageRunId: run.id,
           adapterKey: runtime.adapterKey,
@@ -144,6 +151,41 @@ export class StageService {
         );
         return { runId: run.id, status: importOutcome.status };
       });
+
+      if (completedRun.status === "completed" && this.options.triggerPlanningReview && project) {
+        if (input.stageKey === "architecture") {
+          const latest = this.options.deps.architecturePlanRepository.getLatestByProjectId(project.id);
+          if (latest) {
+            return {
+              ...completedRun,
+              planningReview: await this.options.triggerPlanningReview({
+                sourceType: "architecture_plan",
+                sourceId: latest.id,
+                step: "architecture",
+                reviewMode: "readiness",
+                interactionMode: "interactive"
+              })
+            };
+          }
+        }
+        if (input.stageKey === "planning") {
+          const latest = this.options.deps.implementationPlanRepository.getLatestByProjectId(project.id);
+          if (latest) {
+            return {
+              ...completedRun,
+              planningReview: await this.options.triggerPlanningReview({
+                sourceType: "implementation_plan",
+                sourceId: latest.id,
+                step: "plan_writing",
+                reviewMode: "readiness",
+                interactionMode: "interactive"
+              })
+            };
+          }
+        }
+      }
+
+      return completedRun;
     } catch (error) {
       this.options.deps.runInTransaction(() => {
         this.transitionRun(run.id, "running", "failed", {
