@@ -166,7 +166,11 @@ export class VerificationService {
         waveStoryExecutionId: input.waveStoryExecutionId,
         automationLevel: "auto_comment"
       })
-      .catch(() => {
+      .catch((error) => {
+        console.warn("triggerImplementationReview failed", {
+          waveStoryExecutionId: input.waveStoryExecutionId,
+          error: error instanceof Error ? error.message : String(error)
+        });
         // Keep story execution lifecycle non-blocking even if implementation review follow-up fails.
       });
   }
@@ -1583,6 +1587,11 @@ export class VerificationService {
   private normalizeAppVerificationOutput(output: AppVerificationOutput, exitCode: number): AppVerificationOutput {
     const allChecksPassed = output.checks.length > 0 && output.checks.every((check) => check.status === "passed");
     if (exitCode === 0 && output.overallStatus === "failed" && allChecksPassed) {
+      console.warn("Normalizing inconsistent app verification output", {
+        exitCode,
+        overallStatus: output.overallStatus,
+        checkCount: output.checks.length
+      });
       return {
         ...output,
         overallStatus: "passed",
