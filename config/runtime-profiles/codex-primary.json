@@ -1,0 +1,77 @@
+{
+  "profileKey": "codex_primary",
+  "label": "Codex Primary",
+  "description": "Codex handles the code-heavy path. Claude covers cheaper review, brainstorm, QA, and documentation roles.",
+  "defaults": {
+    "interactive": {
+      "provider": "codex",
+      "model": "gpt-5.4"
+    },
+    "autonomous": {
+      "provider": "codex",
+      "model": "gpt-5.4"
+    }
+  },
+  "interactive": {
+    "brainstorm_chat": {
+      "provider": "claude",
+      "model": "sonnet"
+    },
+    "story_review_chat": {
+      "provider": "codex",
+      "model": "gpt-5.4"
+    }
+  },
+  "stages": {
+    "brainstorm": {
+      "provider": "claude",
+      "model": "sonnet"
+    },
+    "requirements": {
+      "provider": "codex",
+      "model": "gpt-5.4"
+    },
+    "architecture": {
+      "provider": "codex",
+      "model": "gpt-5.4"
+    },
+    "planning": {
+      "provider": "codex",
+      "model": "gpt-5.4"
+    }
+  },
+  "workers": {
+    "test_preparation": {
+      "provider": "codex",
+      "model": "gpt-5.4"
+    },
+    "execution": {
+      "provider": "codex",
+      "model": "gpt-5.4"
+    },
+    "ralph": {
+      "provider": "claude",
+      "model": "sonnet"
+    },
+    "app_verification": {
+      "provider": "codex",
+      "model": "gpt-5.4"
+    },
+    "story_review": {
+      "provider": "claude",
+      "model": "sonnet"
+    },
+    "story_review_remediation": {
+      "provider": "codex",
+      "model": "gpt-5.4"
+    },
+    "qa": {
+      "provider": "claude",
+      "model": "sonnet"
+    },
+    "documentation": {
+      "provider": "claude",
+      "model": "sonnet"
+    }
+  }
+}

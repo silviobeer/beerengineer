@@ -1,0 +1,77 @@
+{
+  "profileKey": "claude_primary",
+  "label": "Claude Primary",
+  "description": "Claude handles the broad text and review load. Codex is reserved for code-intensive worker paths.",
+  "defaults": {
+    "interactive": {
+      "provider": "claude",
+      "model": "sonnet"
+    },
+    "autonomous": {
+      "provider": "claude",
+      "model": "sonnet"
+    }
+  },
+  "interactive": {
+    "brainstorm_chat": {
+      "provider": "claude",
+      "model": "sonnet"
+    },
+    "story_review_chat": {
+      "provider": "claude",
+      "model": "sonnet"
+    }
+  },
+  "stages": {
+    "brainstorm": {
+      "provider": "claude",
+      "model": "sonnet"
+    },
+    "requirements": {
+      "provider": "claude",
+      "model": "sonnet"
+    },
+    "architecture": {
+      "provider": "claude",
+      "model": "sonnet"
+    },
+    "planning": {
+      "provider": "claude",
+      "model": "sonnet"
+    }
+  },
+  "workers": {
+    "test_preparation": {
+      "provider": "codex",
+      "model": "gpt-5.4"
+    },
+    "execution": {
+      "provider": "codex",
+      "model": "gpt-5.4"
+    },
+    "ralph": {
+      "provider": "claude",
+      "model": "sonnet"
+    },
+    "app_verification": {
+      "provider": "codex",
+      "model": "gpt-5.4"
+    },
+    "story_review": {
+      "provider": "claude",
+      "model": "sonnet"
+    },
+    "story_review_remediation": {
+      "provider": "codex",
+      "model": "gpt-5.4"
+    },
+    "qa": {
+      "provider": "claude",
+      "model": "sonnet"
+    },
+    "documentation": {
+      "provider": "claude",
+      "model": "sonnet"
+    }
+  }
+}

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -142,6 +142,82 @@ describe("app context", () => {
 
       expect(result.status).toBe("completed");
       expect(session?.adapterKey).toBe("local-cli");
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("uses a user-data runtime override when no explicit config path is provided", () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-app-context-"));
+    const overrideDir = join(root, ".local", "share", "beerengineer", "config");
+    const overridePath = join(overrideDir, "agent-runtime.override.json");
+    mkdirSync(overrideDir, { recursive: true });
+    writeFileSync(
+      overridePath,
+      JSON.stringify(
+        {
+          defaults: {
+            autonomous: {
+              provider: "local",
+              model: "override-model"
+            }
+          },
+          providers: {
+            local: {
+              adapterKey: "local-cli",
+              model: "override-model",
+              command: ["node", "scripts/local-agent.mjs"],
+              env: {},
+              timeoutMs: 120000
+            }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    const dbPath = join(root, "app.sqlite");
+    const previousHome = process.env.HOME;
+    process.env.HOME = root;
+
+    try {
+      const context = createAppContext(dbPath);
+      expect(context.agentRuntime.configPath).toBe(overridePath);
+      expect(context.agentRuntime.resolver.resolveDefault("autonomous").model).toBe("override-model");
+      context.connection.close();
+    } finally {
+      process.env.HOME = previousHome;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects unsafe stored workspace roots inside the repository", () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-app-context-"));
+    const dbPath = join(root, "app.sqlite");
+    const bootstrap = createAppContext(dbPath);
+
+    try {
+      bootstrap.repositories.workspaceRepository.update({
+        id: bootstrap.workspace.id,
+        rootPath: process.cwd()
+      });
+      bootstrap.connection.close();
+
+      expect(() => createAppContext(dbPath)).toThrow(/WORKSPACE_ROOT_UNSAFE|installation\/repository root/i);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to the database directory when process.cwd() points at the repository root", () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-app-context-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      expect(context.effectiveConfig.workspaceRoot).toBe(root);
     } finally {
       context.connection.close();
       rmSync(root, { recursive: true, force: true });

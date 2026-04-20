@@ -42,9 +42,18 @@ npm run build
 npm run lint
 npm run review
 npm run test
-npm run db:migrate -- ./var/data/beerengineer.sqlite
-npm run db:check -- ./var/data/beerengineer.sqlite
+npm run db:migrate
+npm run db:check
 ```
+
+Standardmaessig liegt die SQLite-DB jetzt in einem update-sicheren
+User-Data-Verzeichnis des Betriebssystems. Ein expliziter `--db`-Pfad
+ueberschreibt diesen Default weiterhin.
+
+Im Projekt-Workspace gilt jetzt:
+
+- `.beerengineer/` ist reiner Runtime-Zustand und sollte gitignoriert bleiben
+- pushbare Delivery-Reports werden unter `docs/delivery-reports/<workspace-key>/` materialisiert
 
 ## Projektstruktur
 

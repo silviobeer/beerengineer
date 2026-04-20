@@ -24,13 +24,13 @@ npm test
 Gezielte Dateipruefung:
 
 ```bash
-npm run db:check -- ./var/data/beerengineer.sqlite
+npm run db:check
 ```
 
 Migration gegen eine Datei:
 
 ```bash
-npm run db:migrate -- ./var/data/beerengineer.sqlite
+npm run db:migrate
 ```
 
 ## Testdaten

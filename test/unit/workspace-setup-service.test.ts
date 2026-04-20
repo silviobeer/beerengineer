@@ -15,7 +15,7 @@ function createRuntimeConfig(root: string, overrides?: Record<string, unknown>):
       autonomyMode: "yolo",
       approvalMode: "never",
       filesystemMode: "workspace-write",
-      networkMode: "disabled",
+      networkMode: "enabled",
       interactionMode: "non_blocking"
     },
     defaults: {
@@ -55,15 +55,13 @@ function createService(root: string, configPath: string, overrides: Record<strin
 }
 
 describe("WorkspaceSetupService", () => {
-  it("reports workspace-write autonomy when runtime policy allows writes but not installs", () => {
+  it("falls back to safe autonomy when the runtime config violates required engine policy", () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-workspace-setup-"));
     const configPath = createRuntimeConfig(root);
 
     try {
       const report = createService(root, configPath).doctor();
-      expect(report.harnesses.find((harness: { providerKey: string }) => harness.providerKey === "codex")?.autonomyLevel).toBe(
-        "workspace-write"
-      );
+      expect(report.harnesses.find((harness: { providerKey: string }) => harness.providerKey === "codex")?.autonomyLevel).toBe("safe");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -166,7 +164,27 @@ describe("WorkspaceSetupService", () => {
       expect(result.actions.some((action: { id: string; status: string }) => action.id === "ensure-beerengineer-worktrees-gitignore")).toBe(
         true
       );
-      expect(readFileSync(join(root, ".gitignore"), "utf8")).toContain(".beerengineer/worktrees/");
+      expect(readFileSync(join(root, ".gitignore"), "utf8")).toContain(".beerengineer/");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("upgrades legacy worktree-only gitignore entries to the runtime-wide ignore rule", () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-workspace-setup-"));
+    const configPath = createRuntimeConfig(root);
+    writeFileSync(join(root, ".gitignore"), ".beerengineer/worktrees/\nnode_modules/\n", "utf8");
+
+    try {
+      createService(root, configPath).init({
+        createRoot: false,
+        initGit: false,
+        dryRun: false
+      });
+
+      const gitignore = readFileSync(join(root, ".gitignore"), "utf8");
+      expect(gitignore).toContain(".beerengineer/\n");
+      expect(gitignore).not.toContain(".beerengineer/worktrees/");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

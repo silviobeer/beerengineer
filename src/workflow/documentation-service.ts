@@ -171,14 +171,14 @@ export class DocumentationService {
         ]
       });
       const status = this.resolveDocumentationRunStatus(documentationContext.latestQaRun.status, result.exitCode, parsed);
-      let workspaceArtifacts: { markdownPath: string; jsonPath: string } | null = null;
-      let workspaceMaterializationError: string | null = null;
+      let exportedArtifacts: { markdownPath: string; jsonPath: string } | null = null;
+      let exportMaterializationError: string | null = null;
       try {
-        workspaceArtifacts = this.materializeDocumentationArtifactsInWorkspace(project.id, project.code, parsed);
+        exportedArtifacts = this.materializeDocumentationArtifactsInWorkspace(project.id, project.code, parsed);
       } catch (error) {
-        workspaceMaterializationError = error instanceof Error ? error.message : String(error);
+        exportMaterializationError = error instanceof Error ? error.message : String(error);
       }
-      const persistedStatus = workspaceMaterializationError ? "review_required" : status;
+      const persistedStatus = exportMaterializationError ? "review_required" : status;
       this.options.deps.documentationRunRepository.updateStatus(documentationRun.id, persistedStatus, {
         summaryJson: JSON.stringify(
           {
@@ -195,15 +195,15 @@ export class DocumentationService {
             qaSummary: parsed.qaSummary,
             openFollowUps: parsed.openFollowUps,
             keyChangedAreas: parsed.keyChangedAreas,
-            workspaceArtifacts,
-            workspaceMaterializationError,
+            exportedArtifacts,
+            exportMaterializationError,
             artifactIds: artifactRecords.map((artifact) => artifact.id),
             artifactKinds: artifactRecords.map((artifact) => artifact.kind)
           },
           null,
           2
         ),
-        errorMessage: workspaceMaterializationError
+        errorMessage: exportMaterializationError
       });
       this.options.deps.itemRepository.updatePhaseStatus(item.id, this.mapDocumentationRunStatusToItemPhaseStatus(persistedStatus));
       if (persistedStatus === "completed") {
@@ -321,9 +321,9 @@ export class DocumentationService {
   ): { markdownPath: string; jsonPath: string } {
     const outputDir = resolve(
       this.resolveProjectWorkspaceRoot(projectId),
-      ".beerengineer",
-      "artifacts",
-      "delivery-reports"
+      "docs",
+      "delivery-reports",
+      this.options.deps.workspace.key
     );
     mkdirSync(outputDir, { recursive: true });
     const markdownPath = resolve(outputDir, `${projectCode}-delivery-report.md`);

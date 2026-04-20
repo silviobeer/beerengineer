@@ -1,5 +1,7 @@
 import { Command, Option } from "commander";
+import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
+import { dirname } from "node:path";
 
 import { createAppContext, createWorkspaceSetupContext, type AppContext } from "../app-context.js";
 import { AgentRuntimeResolver, loadAgentRuntimeConfig } from "../adapters/runtime.js";
@@ -13,10 +15,13 @@ import {
   planningReviewSteps
 } from "../domain/types.js";
 import { AppError } from "../shared/errors.js";
+import { resolveDefaultDbPath } from "../shared/user-data-paths.js";
+import { assertSafeWorkspaceRoot } from "../shared/workspace-root-guard.js";
 
 const program = new Command();
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 program.name("beerengineer");
-program.option("--db <path>", "SQLite database path", "./var/data/beerengineer.sqlite");
+program.option("--db <path>", "SQLite database path");
 program.option("--agent-runtime-config <path>", "Path to the agent runtime config file");
 program.option("--adapter-script-path <path>", "Override the local adapter script used for bounded agent runs");
 program.option("--workspace <key>", "Select the active workspace", "default");
@@ -53,13 +58,13 @@ function withContext<TOptions extends object>(
 ) {
   return async (options: TOptions) => {
     const programOptions = program.opts<{
-      db: string;
+      db?: string;
       agentRuntimeConfig?: string;
       adapterScriptPath?: string;
       workspace: string;
       workspaceRoot?: string;
     }>();
-    const dbPath = resolve(programOptions.db);
+    const dbPath = resolve(programOptions.db ?? resolveDefaultDbPath());
     let context: AppContext | null = null;
     try {
       context = createAppContext(dbPath, {
@@ -193,13 +198,13 @@ function withWorkspaceSetupContext<TOptions extends object>(
 ) {
   return async (options: TOptions) => {
     const programOptions = program.opts<{
-      db: string;
+      db?: string;
       agentRuntimeConfig?: string;
       adapterScriptPath?: string;
       workspace: string;
       workspaceRoot?: string;
     }>();
-    const dbPath = resolve(programOptions.db);
+    const dbPath = resolve(programOptions.db ?? resolveDefaultDbPath());
     let context: ReturnType<typeof createWorkspaceSetupContext> | null = null;
     try {
       context = createWorkspaceSetupContext(dbPath, {
@@ -231,12 +236,16 @@ program
   .option("--root-path <rootPath>")
   .action(
     withContext<{ key: string; name: string; description?: string; rootPath?: string }>(({ repositories, runInTransaction }, options) => {
+      const nextRootPath = options.rootPath ? resolve(options.rootPath) : null;
+      if (nextRootPath) {
+        assertSafeWorkspaceRoot(nextRootPath, repoRoot);
+      }
       const workspace = runInTransaction(() => {
         const createdWorkspace = repositories.workspaceRepository.create({
           key: options.key,
           name: options.name,
           description: options.description ?? null,
-          rootPath: options.rootPath ? resolve(options.rootPath) : null
+          rootPath: nextRootPath
         });
         repositories.workspaceSettingsRepository.create({
           workspaceId: createdWorkspace.id,
@@ -282,9 +291,11 @@ program
       if (!workspace) {
         throw new AppError("WORKSPACE_NOT_FOUND", `Workspace ${options.workspaceKey} not found`);
       }
+      const nextRootPath = resolve(options.rootPath);
+      assertSafeWorkspaceRoot(nextRootPath, repoRoot);
       const updated = repositories.workspaceRepository.update({
         id: workspace.id,
-        rootPath: resolve(options.rootPath)
+        rootPath: nextRootPath
       });
       console.log(JSON.stringify(updated, null, 2));
     })

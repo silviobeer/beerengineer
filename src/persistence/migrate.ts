@@ -3,8 +3,9 @@ import { resolve } from "node:path";
 import { createSqliteConnection } from "./database.js";
 import { baseMigrations } from "./migration-registry.js";
 import { applyMigrations } from "./migrator.js";
+import { resolveDefaultDbPath } from "../shared/user-data-paths.js";
 
-const targetPath = resolve(process.argv[2] ?? "./var/data/beerengineer.sqlite");
+const targetPath = resolve(process.argv[2] ?? resolveDefaultDbPath());
 const connection = createSqliteConnection(targetPath);
 
 try {

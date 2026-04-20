@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
-import { AgentRuntimeResolver, loadAgentRuntimeConfig, type AgentRuntimeConfig } from "./adapters/runtime.js";
+import { AgentRuntimeResolver, type AgentRuntimeConfig } from "./adapters/runtime.js";
 import type { Workspace, WorkspaceSettings } from "./domain/types.js";
 import { createDatabase } from "./persistence/database.js";
 import {
@@ -60,7 +60,9 @@ import {
 import { baseMigrations } from "./persistence/migration-registry.js";
 import { applyMigrations } from "./persistence/migrator.js";
 import { AppError } from "./shared/errors.js";
+import { loadResolvedAgentRuntimeConfig } from "./shared/runtime-config.js";
 import { DEFAULT_WORKSPACE_KEY } from "./shared/workspaces.js";
+import { assertSafeWorkspaceRoot, isUnsafeWorkspaceRoot } from "./shared/workspace-root-guard.js";
 import { CoderabbitService } from "./services/coderabbit-service.js";
 import { QualityKnowledgeService } from "./services/quality-knowledge-service.js";
 import { SonarService } from "./services/sonar-service.js";
@@ -184,9 +186,11 @@ export function createAppContext(
   }
 ): AppContext {
   const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-  const agentRuntimeConfigPath = options?.agentRuntimeConfigPath ?? resolve(repoRoot, "config/agent-runtime.json");
-  const agentRuntimeConfig = loadAgentRuntimeConfig(agentRuntimeConfigPath);
-  const agentRuntimeResolver = new AgentRuntimeResolver(agentRuntimeConfig, {
+  const resolvedRuntime = loadResolvedAgentRuntimeConfig({
+    repoRoot,
+    explicitConfigPath: options?.agentRuntimeConfigPath
+  });
+  const agentRuntimeResolver = new AgentRuntimeResolver(resolvedRuntime.config, {
     repoRoot,
     adapterScriptPath: options?.adapterScriptPath
   });
@@ -254,11 +258,14 @@ export function createAppContext(
     throw new AppError("WORKSPACE_SETTINGS_NOT_FOUND", `Workspace settings for ${workspace.key} not found`);
   }
   const defaultRuntime = agentRuntimeResolver.resolveDefault("autonomous");
+  const safeDefaultWorkspaceRoot = isUnsafeWorkspaceRoot(process.cwd(), repoRoot) ? dirname(resolve(dbPath)) : process.cwd();
+  const resolvedWorkspaceRoot = options?.workspaceRoot ?? workspace.rootPath ?? safeDefaultWorkspaceRoot;
+  assertSafeWorkspaceRoot(resolvedWorkspaceRoot, repoRoot);
   const effectiveConfig: EffectiveWorkspaceConfig = {
     defaultAdapterKey: defaultRuntime.adapterKey,
     defaultModel: defaultRuntime.model ?? workspaceSettings.defaultModel,
-    workspaceRoot: options?.workspaceRoot ?? workspace.rootPath ?? repoRoot,
-    agentRuntimeConfigPath
+    workspaceRoot: resolvedWorkspaceRoot,
+    agentRuntimeConfigPath: resolvedRuntime.configPath
   };
   const artifactRoot = resolve(effectiveConfig.workspaceRoot, ".beerengineer", "artifacts");
   const qualityKnowledgeService = new QualityKnowledgeService(qualityKnowledgeEntryRepository, workspace);
@@ -278,8 +285,8 @@ export function createAppContext(
     workspaceSettings,
     effectiveConfig,
     agentRuntime: {
-      configPath: agentRuntimeConfigPath,
-      config: agentRuntimeConfig,
+      configPath: resolvedRuntime.configPath,
+      config: resolvedRuntime.config,
       resolver: agentRuntimeResolver
     },
     repositories: {
@@ -408,7 +415,10 @@ export function createWorkspaceSetupContext(
   }
 ): WorkspaceSetupContext {
   const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-  const agentRuntimeConfigPath = options?.agentRuntimeConfigPath ?? resolve(repoRoot, "config/agent-runtime.json");
+  const resolvedRuntime = loadResolvedAgentRuntimeConfig({
+    repoRoot,
+    explicitConfigPath: options?.agentRuntimeConfigPath
+  });
   const { connection, db } = createDatabase(dbPath);
   applyMigrations(connection, baseMigrations);
 
@@ -427,15 +437,19 @@ export function createWorkspaceSetupContext(
   if (!workspaceSettings) {
     throw new AppError("WORKSPACE_SETTINGS_NOT_FOUND", `Workspace settings for ${workspace.key} not found`);
   }
+  const resolvedWorkspaceRoot = options?.workspaceRoot ? resolve(options.workspaceRoot) : workspace.rootPath;
+  if (resolvedWorkspaceRoot) {
+    assertSafeWorkspaceRoot(resolvedWorkspaceRoot, repoRoot);
+  }
 
   return {
     connection,
     workspace,
     workspaceSettings,
-    workspaceRoot: options?.workspaceRoot ? resolve(options.workspaceRoot) : workspace.rootPath,
+    workspaceRoot: resolvedWorkspaceRoot,
     rootPathSource: options?.workspaceRoot ? "override" : workspace.rootPath ? "workspace" : "unset",
     repoRoot,
-    agentRuntimeConfigPath,
+    agentRuntimeConfigPath: resolvedRuntime.configPath,
     adapterScriptPath: options?.adapterScriptPath,
     repositories: {
       workspaceRepository,

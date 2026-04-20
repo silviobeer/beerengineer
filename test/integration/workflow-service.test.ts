@@ -607,7 +607,7 @@ describe("workflow service", () => {
     }
   });
 
-  it("shows item delivery summaries and materializes documentation into the workspace artifacts folder", async () => {
+  it("shows item delivery summaries and materializes documentation into the workspace export folder", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
     const dbPath = join(root, "app.sqlite");
     const workspaceRoot = join(root, "workspace");
@@ -648,16 +648,16 @@ describe("workflow service", () => {
 
       const markdownPath = join(
         workspaceRoot,
-        ".beerengineer",
-        "artifacts",
+        "docs",
         "delivery-reports",
+        "default",
         `${project.code}-delivery-report.md`
       );
       const jsonPath = join(
         workspaceRoot,
-        ".beerengineer",
-        "artifacts",
+        "docs",
         "delivery-reports",
+        "default",
         `${project.code}-delivery-report.json`
       );
       expect(existsSync(markdownPath)).toBe(true);
@@ -671,7 +671,7 @@ describe("workflow service", () => {
       const shownDocumentation = context.workflowService.showDocumentation(project.id) as {
         latestDocumentationRun: { summaryJson: string | null } | null;
       };
-      expect(shownDocumentation.latestDocumentationRun?.summaryJson).toContain("workspaceArtifacts");
+      expect(shownDocumentation.latestDocumentationRun?.summaryJson).toContain("exportedArtifacts");
       expect(shownDocumentation.latestDocumentationRun?.summaryJson).toContain(`${project.code}-delivery-report.md`);
     } finally {
       context.connection.close();
@@ -702,16 +702,16 @@ describe("workflow service", () => {
 
         const markdownPath = join(
           executionWorkspaceRoot,
-          ".beerengineer",
-          "artifacts",
+          "docs",
           "delivery-reports",
+          "default",
           `${project.code}-delivery-report.md`
         );
         const jsonPath = join(
           executionWorkspaceRoot,
-          ".beerengineer",
-          "artifacts",
+          "docs",
           "delivery-reports",
+          "default",
           `${project.code}-delivery-report.json`
         );
         expect(existsSync(markdownPath)).toBe(true);
@@ -789,9 +789,9 @@ describe("workflow service", () => {
 
         const markdownPath = join(
           executionWorkspaceRoot,
-          ".beerengineer",
-          "artifacts",
+          "docs",
           "delivery-reports",
+          "default",
           `${project.code}-delivery-report.md`
         );
         expect(existsSync(markdownPath)).toBe(true);
@@ -829,9 +829,9 @@ describe("workflow service", () => {
 
         const markdownPath = join(
           executionWorkspaceRoot,
-          ".beerengineer",
-          "artifacts",
+          "docs",
           "delivery-reports",
+          "default",
           `${project.code}-delivery-report.md`
         );
         expect(existsSync(markdownPath)).toBe(true);

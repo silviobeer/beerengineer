@@ -18,7 +18,18 @@ function sanitizeRefSegment(value: string): string {
 }
 
 export class GitWorkflowService {
-  public constructor(private readonly workspaceRoot: string) {}
+  public constructor(
+    private readonly workspaceRoot: string,
+    private readonly workspaceKey: string
+  ) {}
+
+  public managedWorktreeRoot(): string {
+    return resolve(this.workspaceRoot, ".beerengineer", "workspaces", sanitizeRefSegment(this.workspaceKey), "worktrees");
+  }
+
+  public legacyManagedWorktreeRoot(): string {
+    return resolve(this.workspaceRoot, ".beerengineer", "worktrees");
+  }
 
   public describeProjectBranch(projectCode: string): string {
     return `proj/${sanitizeRefSegment(projectCode)}`;
@@ -33,20 +44,15 @@ export class GitWorkflowService {
   }
 
   public describeStoryWorktreePath(storyCode: string): string {
-    return resolve(this.workspaceRoot, ".beerengineer", "worktrees", sanitizeRefSegment(storyCode));
+    return resolve(this.managedWorktreeRoot(), sanitizeRefSegment(storyCode));
   }
 
   public describeStoryRemediationWorktreePath(storyCode: string, findingRunId: string): string {
-    return resolve(
-      this.workspaceRoot,
-      ".beerengineer",
-      "worktrees",
-      `${sanitizeRefSegment(storyCode)}-fix-${sanitizeRefSegment(findingRunId)}`
-    );
+    return resolve(this.managedWorktreeRoot(), `${sanitizeRefSegment(storyCode)}-fix-${sanitizeRefSegment(findingRunId)}`);
   }
 
   public describeMergeWorktreePath(mergeKey: string): string {
-    return resolve(this.workspaceRoot, ".beerengineer", "worktrees", "_merge", sanitizeRefSegment(mergeKey));
+    return resolve(this.managedWorktreeRoot(), "_merge", sanitizeRefSegment(mergeKey));
   }
 
   public ensureProjectBranch(projectCode: string): GitBranchMetadata {

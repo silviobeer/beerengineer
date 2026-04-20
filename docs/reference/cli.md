@@ -298,10 +298,23 @@ Fuer reproduzierbare Live-Runs akzeptiert die CLI global:
 - `--adapter-script-path <path>` zum Ueberschreiben des lokalen Adapter-Skripts
 - `--workspace-root <path>` zum Ueberschreiben des Git-Workspace-Wurzels
 
-Standardmaessig laedt die CLI `config/agent-runtime.json`. Darin werden pro
+Standardmaessig laedt die CLI die read-only Produkt-Defaults aus
+`config/agent-runtime.json`. Optional kann ein lokaler User-Override aus dem
+OS-spezifischen BeerEngineer-`userDataDir` zugemischt werden. Ein expliziter
+CLI-Pfad ueber `--agent-runtime-config` ersetzt diese Default-Aufloesung
+vollstaendig. Darin werden pro
 interaktivem Flow, Stage und Worker-Typ Provider und Modell bestimmt. Der
 lokale Fake-Adapter bleibt als `local-cli` fuer Tests und deterministische
 Fixture-Runs erhalten.
+
+Die SQLite-DB wird ohne `--db` ebenfalls aus dem OS-spezifischen
+BeerEngineer-`userDataDir` geladen statt aus dem aktuellen Arbeitsverzeichnis.
+
+Konfigurationsquellen fuer Harness- und Modellwahl:
+
+- Installations-Default: `config/agent-runtime.json`
+- optionaler User-Override: `<userDataDir>/config/agent-runtime.override.json`
+- expliziter CLI-Override: `--agent-runtime-config <path>`
 
 Die Runtime-Config kann jetzt echte Provider-Slots aufloesen:
 
@@ -338,6 +351,9 @@ Wichtig:
 
 - `--workspace` bestimmt den Daten- und Sichtbarkeits-Scope
 - `--workspace-root` bestimmt nur das technische Repo-/Git-Verzeichnis fuer den Lauf
+- `workspace:create` und `workspace:update-root` blockieren Roots innerhalb des BeerEngineer-Installations-/Repo-Baums
+- `.beerengineer/` im Workspace ist Runtime-only und sollte gitignoriert bleiben
+- pushbare Delivery-Reports landen unter `docs/delivery-reports/<workspaceKey>/`
 
 Die neuen Setup-Kommandos verhalten sich bewusst unterschiedlich:
 
@@ -450,7 +466,7 @@ Im aktuellen Execution-Schnitt gilt:
 
 - fuehrt `git worktree prune` fuer stale Git-Registrierungen aus
 - entfernt sichere Story-/Fix-Worktrees, deren persistierter Git-Zustand bereits als gemergt gilt
-- entfernt verwaiste Verzeichnisse unter `.beerengineer/worktrees/`, die nicht mehr als Git-Worktree registriert sind
+- entfernt verwaiste Verzeichnisse unter `.beerengineer/workspaces/<workspaceKey>/worktrees/`, die nicht mehr als Git-Worktree registriert sind
 
 ## Project Git Finalization
 
@@ -506,7 +522,8 @@ Im aktuellen Documentation-Schnitt gilt:
 - Dokumentation startet nur nach einem `QaRun` mit Status `passed` oder `review_required`
 - `documentation:show` zeigt den neuesten `DocumentationRun` sowie Sessions und zugehoerige Artefakte aller Dokumentationsversuche fuer das Project
 - `documentation:retry` erlaubt genau dann einen neuen Dokumentationslauf, wenn der letzte `DocumentationRun` auf `review_required` oder `failed` steht
-- `documentation:start` materialisiert den fertigen Delivery-Report zusaetzlich in den Workspace unter `.beerengineer/artifacts/delivery-reports/<projectCode>-delivery-report.md` und `.beerengineer/artifacts/delivery-reports/<projectCode>-delivery-report.json`
+- `documentation:start` materialisiert den fertigen Delivery-Report zusaetzlich in den Workspace unter `docs/delivery-reports/<workspaceKey>/<projectCode>-delivery-report.md` und `docs/delivery-reports/<workspaceKey>/<projectCode>-delivery-report.json`
+- die engine-internen `delivery-report`-Artefakte bleiben weiterhin unter `.beerengineer/artifacts/...` registriert, waehrend die Exportdateien bewusst repo-tauglich sind
 - `documentation:start` liefert bei erfolgreicher Dokumentation zusaetzlich einen `projectFinalization`-Status fuer den anschliessenden `proj/* -> main`-Merge
 - `beerengineer sonar preflight` prueft die Laufzeitvoraussetzungen fuer Live-Sonar (`java`, `sonar-scanner`, `SONAR_TOKEN`) und gibt klare naechste Schritte aus
 - `beerengineer coderabbit preflight` prueft die optionalen Voraussetzungen fuer spaetere Live-Coderabbit-Reviews (`CODERABBIT_TOKEN`, Organisation/Repository, Git-Repo) und gibt klare naechste Schritte aus

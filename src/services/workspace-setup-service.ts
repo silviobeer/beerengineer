@@ -7,8 +7,9 @@ import { loadAgentRuntimeConfig } from "../adapters/runtime.js";
 import { workspaceSetupAssistOutputSchema } from "../schemas/output-contracts.js";
 import { AppError } from "../shared/errors.js";
 import { parseDotEnv } from "./env-config.js";
-const beerengineerOwnedDirectories = [".beerengineer", ".beerengineer/artifacts"];
-const beerengineerGitignoreEntry = "# beerengineer worktrees (managed by beerengineer CLI)\n.beerengineer/worktrees/\n";
+const beerengineerOwnedDirectories = [".beerengineer", ".beerengineer/artifacts", ".beerengineer/workspaces"];
+const beerengineerGitignoreEntry = "# beerengineer runtime data (managed by beerengineer CLI)\n.beerengineer/\n";
+const legacyBeerengineerGitignoreEntry = ".beerengineer/worktrees/";
 const supportedProjectManifestFiles = ["package.json", "pyproject.toml", "requirements.txt", "go.mod", "Cargo.toml"];
 const setupAutonomyOrder = {
     safe: 0,
@@ -960,12 +961,12 @@ export class WorkspaceSetupService {
         const parentDirectory = dirname(input.path);
         const pathExists = existsSync(input.path);
         const currentContent = pathExists ? readFileSync(input.path, "utf8") : "";
-        if (currentContent.includes(".beerengineer/worktrees/")) {
+        if (currentContent.includes(input.entry) || currentContent.endsWith(input.entry.trimEnd())) {
             return [
                 {
                     id: input.id,
                     status: "skipped",
-                    message: `${input.path} already ignores BeerEngineer worktrees.`,
+                    message: `${input.path} already ignores BeerEngineer runtime data.`,
                     path: input.path
                 }
             ];
@@ -976,15 +977,19 @@ export class WorkspaceSetupService {
                     id: input.id,
                     status: "simulated",
                     message: pathExists
-                        ? `Would update ${input.path} to ignore BeerEngineer worktrees.`
-                        : `Would create ${input.path} and ignore BeerEngineer worktrees.`,
+                        ? `Would update ${input.path} to ignore BeerEngineer runtime data.`
+                        : `Would create ${input.path} and ignore BeerEngineer runtime data.`,
                     path: input.path
                 }
             ];
         }
         mkdirSync(parentDirectory, { recursive: true });
         const separator = currentContent.length > 0 && !currentContent.endsWith("\n") ? "\n" : "";
-        writeFileSync(input.path, `${currentContent}${separator}${input.entry}`, "utf8");
+        const upgradedContent = currentContent.includes(legacyBeerengineerGitignoreEntry)
+            ? currentContent.replace(`${legacyBeerengineerGitignoreEntry}\n`, "").replace(legacyBeerengineerGitignoreEntry, "")
+            : currentContent;
+        const upgradedSeparator = upgradedContent.length > 0 && !upgradedContent.endsWith("\n") ? "\n" : "";
+        writeFileSync(input.path, `${upgradedContent}${upgradedSeparator}${input.entry}`, "utf8");
         return [
             {
                 id: input.id,

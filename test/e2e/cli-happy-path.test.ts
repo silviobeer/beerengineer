@@ -283,11 +283,34 @@ describe("cli happy path", () => {
     const dbPath = join(root, "app.sqlite");
     const cwd = resolve(".");
     const workspaceRoot = createGitWorkspace(root);
-    const orphanPath = join(workspaceRoot, ".beerengineer", "worktrees", "orphan-story");
+    const orphanPath = join(workspaceRoot, ".beerengineer", "workspaces", "default", "worktrees", "orphan-story");
 
     try {
       mkdirSync(orphanPath, { recursive: true });
       writeFileSync(join(orphanPath, "README.md"), "orphan\n", "utf8");
+
+      const result = runCli(
+        ["--db", dbPath, "--workspace-root", workspaceRoot, "workspace:prune"],
+        cwd
+      ) as { removed: string[] };
+
+      expect(result.removed).toContain(orphanPath);
+      expect(existsSync(orphanPath)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("prunes orphaned legacy managed worktree directories via CLI", () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-e2e-"));
+    const dbPath = join(root, "app.sqlite");
+    const cwd = resolve(".");
+    const workspaceRoot = createGitWorkspace(root);
+    const orphanPath = join(workspaceRoot, ".beerengineer", "worktrees", "legacy-orphan-story");
+
+    try {
+      mkdirSync(orphanPath, { recursive: true });
+      writeFileSync(join(orphanPath, "README.md"), "legacy orphan\n", "utf8");
 
       const result = runCli(
         ["--db", dbPath, "--workspace-root", workspaceRoot, "workspace:prune"],
@@ -810,7 +833,9 @@ describe("cli happy path", () => {
     30000
   );
 
-  it("separates item codes by workspace and exposes workspace commands", () => {
+  it(
+    "separates item codes by workspace and exposes workspace commands",
+    () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-e2e-"));
     const dbPath = join(root, "app.sqlite");
     const cwd = resolve(".");
@@ -852,5 +877,34 @@ describe("cli happy path", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
-  });
+    },
+    10000
+  );
+
+  it(
+    "rejects workspace roots inside the BeerEngineer repository tree",
+    () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-e2e-"));
+    const dbPath = join(root, "app.sqlite");
+    const cwd = resolve(".");
+
+    try {
+      const createError = runCliError(
+        ["--db", dbPath, "workspace:create", "--key", "unsafe-root", "--name", "Unsafe Root", "--root-path", cwd],
+        cwd
+      );
+      expect(createError.error.code).toBe("WORKSPACE_ROOT_UNSAFE");
+
+      runCli(["--db", dbPath, "workspace:create", "--key", "safe-root", "--name", "Safe Root"], cwd);
+      const updateError = runCliError(
+        ["--db", dbPath, "workspace:update-root", "--workspace-key", "safe-root", "--root-path", cwd],
+        cwd
+      );
+      expect(updateError.error.code).toBe("WORKSPACE_ROOT_UNSAFE");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+    },
+    10000
+  );
 });

@@ -93,6 +93,37 @@ const agentRuntimeConfigSchema = z.object({
 }).strict();
 
 export type AgentRuntimeConfig = z.infer<typeof agentRuntimeConfigSchema>;
+export type AgentRuntimeConfigOverride = z.infer<typeof agentRuntimeConfigOverrideSchema>;
+
+const agentRuntimeConfigOverrideSchema = z.object({
+  defaultProvider: z.string().min(1).optional(),
+  policy: agentExecutionPolicySchema.partial().strict().optional(),
+  defaults: z.object({
+    interactive: providerSelectionSchema.optional(),
+    autonomous: providerSelectionSchema.optional()
+  }).strict().optional(),
+  interactive: z.object({
+    brainstorm_chat: providerSelectionSchema.optional(),
+    story_review_chat: providerSelectionSchema.optional()
+  }).strict().optional(),
+  stages: z.object({
+    brainstorm: providerSelectionSchema.optional(),
+    requirements: providerSelectionSchema.optional(),
+    architecture: providerSelectionSchema.optional(),
+    planning: providerSelectionSchema.optional()
+  }).strict().optional(),
+  workers: z.object({
+    test_preparation: providerSelectionSchema.optional(),
+    execution: providerSelectionSchema.optional(),
+    ralph: providerSelectionSchema.optional(),
+    app_verification: providerSelectionSchema.optional(),
+    story_review: providerSelectionSchema.optional(),
+    story_review_remediation: providerSelectionSchema.optional(),
+    qa: providerSelectionSchema.optional(),
+    documentation: providerSelectionSchema.optional()
+  }).strict().optional(),
+  providers: z.record(z.string().min(1), providerConfigSchema.partial().strict()).optional()
+}).strict();
 
 export type ResolvedAgentRuntime = {
   providerKey: string;
@@ -170,13 +201,7 @@ class UnsupportedProviderAdapter implements AgentAdapter {
     return this.fail();
   }
 }
-export function loadAgentRuntimeConfig(configPath: string): AgentRuntimeConfig {
-  if (!existsSync(configPath)) {
-    throw new AppError("AGENT_RUNTIME_CONFIG_NOT_FOUND", `Agent runtime config ${configPath} not found`);
-  }
-
-  const raw = readFileSync(configPath, "utf8");
-  const parsedJson = JSON.parse(raw) as unknown;
+export function loadAgentRuntimeConfigFromObject(parsedJson: unknown): AgentRuntimeConfig {
   let parsed: AgentRuntimeConfig;
   try {
     parsed = agentRuntimeConfigSchema.parse(parsedJson);
@@ -232,6 +257,26 @@ export function loadAgentRuntimeConfig(configPath: string): AgentRuntimeConfig {
   }
 
   return parsed;
+}
+
+export function loadAgentRuntimeConfigOverrideFromObject(parsedJson: unknown): AgentRuntimeConfigOverride {
+  try {
+    return agentRuntimeConfigOverrideSchema.parse(parsedJson);
+  } catch (error) {
+    if (error instanceof ZodError) {
+      throw new AppError("AGENT_RUNTIME_CONFIG_INVALID", error.issues.map((issue) => issue.message).join("; "));
+    }
+    throw error;
+  }
+}
+
+export function loadAgentRuntimeConfig(configPath: string): AgentRuntimeConfig {
+  if (!existsSync(configPath)) {
+    throw new AppError("AGENT_RUNTIME_CONFIG_NOT_FOUND", `Agent runtime config ${configPath} not found`);
+  }
+
+  const raw = readFileSync(configPath, "utf8");
+  return loadAgentRuntimeConfigFromObject(JSON.parse(raw) as unknown);
 }
 
 function createProviderAdapter(input: {

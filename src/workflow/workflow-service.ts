@@ -62,7 +62,7 @@ export class WorkflowService {
   public constructor(private readonly deps: WorkflowDeps) {
     this.promptResolver = new PromptResolver(deps.repoRoot);
     this.artifactService = new ArtifactService(deps.artifactRoot);
-    this.gitWorkflowService = new GitWorkflowService(deps.workspaceRoot);
+    this.gitWorkflowService = new GitWorkflowService(deps.workspaceRoot, deps.workspace.key);
     this.reviewCoreService = new ReviewCoreService(deps);
     this.entityLoaders = createWorkflowEntityLoaders(deps);
     // Cross-service callbacks intentionally capture `this.*Service` lazily.
@@ -855,8 +855,11 @@ export class WorkflowService {
     }
 
     const registeredWorktrees = new Set(this.gitWorkflowService.worktreeList());
-    const managedRoot = resolve(this.deps.workspaceRoot, ".beerengineer", "worktrees");
-    if (existsSync(managedRoot)) {
+    const managedRoots = [this.gitWorkflowService.managedWorktreeRoot(), this.gitWorkflowService.legacyManagedWorktreeRoot()];
+    for (const managedRoot of managedRoots) {
+      if (!existsSync(managedRoot)) {
+        continue;
+      }
       for (const entry of readdirSync(managedRoot, { withFileTypes: true })) {
         if (!entry.isDirectory()) {
           continue;
