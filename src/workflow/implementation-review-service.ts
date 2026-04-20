@@ -1,7 +1,7 @@
 import type { PlanningReviewAutomationLevel, ReviewFindingSeverity, ReviewGateDecision } from "../domain/types.js";
 import type { ReviewCoreService } from "../review/review-core-service.js";
 import type { ReviewProviderResult } from "../review/types.js";
-import { QualityKnowledgeReviewProvider } from "../review/providers/quality-knowledge-review-provider.js";
+import { CoderabbitReviewProvider } from "../review/providers/coderabbit-review-provider.js";
 import { SonarcloudReviewProvider } from "../review/providers/sonarcloud-review-provider.js";
 import { StoryReviewProvider } from "../review/providers/story-review-provider.js";
 import { VerificationSignalProvider } from "../review/providers/verification-signal-provider.js";
@@ -43,13 +43,13 @@ function mapGateDecision(input: { findings: ReviewProviderResult["findings"]; au
 export class ImplementationReviewService {
   private readonly storyReviewProvider: StoryReviewProvider;
   private readonly verificationSignalProvider: VerificationSignalProvider;
-  private readonly qualityKnowledgeProvider: QualityKnowledgeReviewProvider;
+  private readonly coderabbitProvider: CoderabbitReviewProvider;
   private readonly sonarcloudProvider: SonarcloudReviewProvider;
 
   public constructor(private readonly options: ImplementationReviewServiceOptions) {
     this.storyReviewProvider = new StoryReviewProvider(options.deps);
     this.verificationSignalProvider = new VerificationSignalProvider(options.deps);
-    this.qualityKnowledgeProvider = new QualityKnowledgeReviewProvider(options.deps);
+    this.coderabbitProvider = new CoderabbitReviewProvider(options.deps);
     this.sonarcloudProvider = new SonarcloudReviewProvider(options.deps);
   }
 
@@ -91,8 +91,7 @@ export class ImplementationReviewService {
     const providers: ReviewProviderResult[] = [
       storyReviewProviderResult,
       this.verificationSignalProvider.provide(execution.id),
-      this.qualityKnowledgeProvider.provide({
-        providerId: "coderabbit",
+      this.coderabbitProvider.provide({
         projectId: project.id,
         waveId: wave.id,
         storyId: story.id,

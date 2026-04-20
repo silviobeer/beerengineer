@@ -6,6 +6,7 @@ export class QualityKnowledgeReviewProvider {
 
   public provide(input: {
     providerId: "coderabbit";
+    sourceSystem: "coderabbit";
     projectId: string;
     waveId: string;
     storyId: string;
@@ -23,16 +24,16 @@ export class QualityKnowledgeReviewProvider {
 
     return {
       providerId: input.providerId,
-      sourceSystem: input.providerId,
+      sourceSystem: input.sourceSystem,
       findings: entries
-        .filter((entry) => entry.source === input.providerId)
+        .filter((entry) => entry.source === input.sourceSystem)
         .map((entry) => ({
-          reviewerRole: input.providerId,
+          reviewerRole: input.sourceSystem,
           findingType: entry.kind,
           normalizedSeverity: "medium" as const,
           sourceSeverity: entry.status,
           title: entry.summary,
-          detail: typeof entry.evidence.detail === "string" ? entry.evidence.detail : `${input.providerId} surfaced ${entry.kind}.`,
+          detail: typeof entry.evidence.detail === "string" ? entry.evidence.detail : `${input.sourceSystem} surfaced ${entry.kind}.`,
           evidence: JSON.stringify(entry.evidence),
           filePath: entry.scopeType === "file" ? entry.scopeId : null,
           line: null,
