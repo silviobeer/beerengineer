@@ -1,19 +1,17 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import type {
-  ArchitecturePlanOutput,
-  ImplementationPlanOutput,
-  ProjectsOutput
-} from "../schemas/output-contracts.js";
-import type { StoriesOutput } from "../schemas/output-contracts.js";
 import {
   architecturePlanOutputSchema,
   implementationPlanOutputSchema,
   projectsOutputSchema,
-  storiesOutputSchema
+  storiesOutputSchema,
+  type ArchitecturePlanOutput,
+  type ImplementationPlanOutput,
+  type ProjectsOutput,
+  type StoriesOutput
 } from "../schemas/output-contracts.js";
-import { formatAcceptanceCriterionCode, formatProjectCode, formatStoryCode } from "../shared/codes.js";
+import { formatAcceptanceCriterionCode, formatStoryCode } from "../shared/codes.js";
 import { AppError } from "../shared/errors.js";
 import type { ArtifactRecord } from "../persistence/repositories.js";
 import type { StageKey } from "../domain/types.js";

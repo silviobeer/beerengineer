@@ -11,7 +11,6 @@ import { ralphVerificationOutputSchema, storyReviewOutputSchema } from "../schem
 import type { RalphVerificationOutput, StoryReviewOutput } from "../schemas/output-contracts.js";
 import { AppError } from "../shared/errors.js";
 import type {
-  StoryReviewFindingRepository,
   StoryReviewRunRepository,
   VerificationRunRepository,
   AcceptanceCriterionRepository

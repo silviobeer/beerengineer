@@ -327,7 +327,7 @@ export class InteractiveReviewService {
     this.assertInteractiveReviewSeverity(input.severity);
     const storyScope = this.getStoryReviewScope(session);
     const story = this.options.deps.userStoryRepository.getById(input.storyId);
-    if (!story || story.projectId !== storyScope.project.id) {
+    if (story?.projectId !== storyScope.project.id) {
       throw new AppError("STORY_NOT_FOUND", `Story ${input.storyId} not found in review scope`);
     }
 
@@ -373,19 +373,19 @@ export class InteractiveReviewService {
     }
 
     const sanitizedAcceptanceCriteria = input.acceptanceCriteria?.map((criterion) => criterion.trim()).filter(Boolean);
-    if (sanitizedAcceptanceCriteria && sanitizedAcceptanceCriteria.length === 0) {
+    if (sanitizedAcceptanceCriteria?.length === 0) {
       throw new AppError("ACCEPTANCE_CRITERIA_INVALID", "Acceptance criteria must not be empty when provided");
     }
     const nextEntryStatus = input.status ?? "resolved";
 
     const updatedStory = this.options.deps.runInTransaction(() => {
       this.options.deps.userStoryRepository.update(story.id, {
-        ...(input.title !== undefined ? { title: input.title.trim() } : {}),
-        ...(input.description !== undefined ? { description: input.description.trim() } : {}),
-        ...(input.actor !== undefined ? { actor: input.actor.trim() } : {}),
-        ...(input.goal !== undefined ? { goal: input.goal.trim() } : {}),
-        ...(input.benefit !== undefined ? { benefit: input.benefit.trim() } : {}),
-        ...(input.priority !== undefined ? { priority: input.priority.trim() } : {}),
+        ...(input.title === undefined ? {} : { title: input.title.trim() }),
+        ...(input.description === undefined ? {} : { description: input.description.trim() }),
+        ...(input.actor === undefined ? {} : { actor: input.actor.trim() }),
+        ...(input.goal === undefined ? {} : { goal: input.goal.trim() }),
+        ...(input.benefit === undefined ? {} : { benefit: input.benefit.trim() }),
+        ...(input.priority === undefined ? {} : { priority: input.priority.trim() }),
         status: "draft"
       });
 
@@ -416,12 +416,12 @@ export class InteractiveReviewService {
           {
             storyId: story.id,
             changedFields: [
-              ...(input.title !== undefined ? ["title"] : []),
-              ...(input.description !== undefined ? ["description"] : []),
-              ...(input.actor !== undefined ? ["actor"] : []),
-              ...(input.goal !== undefined ? ["goal"] : []),
-              ...(input.benefit !== undefined ? ["benefit"] : []),
-              ...(input.priority !== undefined ? ["priority"] : []),
+              ...(input.title === undefined ? [] : ["title"]),
+              ...(input.description === undefined ? [] : ["description"]),
+              ...(input.actor === undefined ? [] : ["actor"]),
+              ...(input.goal === undefined ? [] : ["goal"]),
+              ...(input.benefit === undefined ? [] : ["benefit"]),
+              ...(input.priority === undefined ? [] : ["priority"]),
               ...(sanitizedAcceptanceCriteria ? ["acceptanceCriteria"] : [])
             ]
           },
@@ -478,83 +478,9 @@ export class InteractiveReviewService {
     const storyScope = this.getStoryReviewScope(session);
     const { project, item } = storyScope;
     const targetedStoryIds = input.storyIds ? this.resolveInteractiveReviewStoryIds(project.id, input.storyIds) : [];
-    const resolution = this.options.deps.runInTransaction(() => {
-      const payload = {
-        ...(input.rationale ? { rationale: input.rationale } : {}),
-        ...(targetedStoryIds.length > 0 ? { storyIds: targetedStoryIds } : {})
-      };
-      const createdResolution = this.options.deps.interactiveReviewResolutionRepository.create({
-        sessionId: session.id,
-        resolutionType: input.action,
-        payloadJson: Object.keys(payload).length > 0 ? JSON.stringify(payload, null, 2) : null
-      });
-
-      if (
-        input.action === "approve" ||
-        input.action === "approve_and_autorun" ||
-        input.action === "approve_all" ||
-        input.action === "approve_all_and_autorun"
-      ) {
-        this.options.approveStories(project.id);
-      }
-
-      if (input.action === "approve_selected") {
-        if (targetedStoryIds.length === 0) {
-          throw new AppError("INTERACTIVE_REVIEW_STORY_IDS_REQUIRED", "approve_selected requires at least one story id");
-        }
-        this.options.deps.userStoryRepository.approveByIds(targetedStoryIds);
-        for (const storyId of targetedStoryIds) {
-          this.options.deps.interactiveReviewEntryRepository.updateByEntryId(session.id, storyId, {
-            status: "accepted",
-            summary: "Approved via selected resolution",
-            changeRequest: null
-          });
-        }
-        this.maybeAdvanceAfterPartialStoryApproval(project.id);
-      }
-
-      if (input.action === "request_changes" || input.action === "request_story_revisions") {
-        const affectedStoryIds =
-          targetedStoryIds.length > 0
-            ? targetedStoryIds
-            : this.options.deps.interactiveReviewEntryRepository
-                .listBySessionId(session.id)
-                .filter((entry) => entry.entryType === "story")
-                .map((entry) => entry.entryId);
-        if (input.action === "request_story_revisions") {
-          for (const storyId of affectedStoryIds) {
-            this.options.deps.interactiveReviewEntryRepository.updateByEntryId(session.id, storyId, {
-              status: "needs_revision",
-              summary: "Revision requested via session resolution",
-              changeRequest: input.rationale ?? "Revise the story based on review feedback"
-            });
-          }
-        }
-        this.options.deps.itemRepository.updatePhaseStatus(item.id, "review_required");
-      }
-
-      if (input.action === "apply_story_edits") {
-        if (targetedStoryIds.length === 0) {
-          throw new AppError("INTERACTIVE_REVIEW_STORY_IDS_REQUIRED", "apply_story_edits requires at least one edited story id");
-        }
-        for (const storyId of targetedStoryIds) {
-          this.options.deps.interactiveReviewEntryRepository.updateByEntryId(session.id, storyId, {
-            status: "resolved",
-            summary: "Guided edits applied and accepted for follow-up workflow",
-            changeRequest: null,
-            rationale: input.rationale ?? null
-          });
-        }
-        this.options.deps.itemRepository.updatePhaseStatus(item.id, "draft");
-      }
-
-      this.options.deps.interactiveReviewResolutionRepository.markApplied(createdResolution.id);
-      this.options.deps.interactiveReviewSessionRepository.update(session.id, {
-        status: "resolved",
-        resolvedAt: Date.now()
-      });
-      return createdResolution;
-    });
+    const resolution = this.options.deps.runInTransaction(() =>
+      this.applyInteractiveReviewResolutionInTransaction(input, session.id, project.id, item.id, targetedStoryIds)
+    );
 
     if (input.action === "approve_and_autorun" || input.action === "approve_all_and_autorun") {
       const autorun = await this.options.autorunForProject({
@@ -640,6 +566,113 @@ export class InteractiveReviewService {
       }
     }
     return uniqueStoryIds;
+  }
+
+  private applyInteractiveReviewResolutionInTransaction(
+    input: Parameters<InteractiveReviewService["resolveInteractiveReview"]>[0],
+    sessionId: string,
+    projectId: string,
+    itemId: string,
+    targetedStoryIds: string[]
+  ) {
+    const payload = {
+      ...(input.rationale ? { rationale: input.rationale } : {}),
+      ...(targetedStoryIds.length > 0 ? { storyIds: targetedStoryIds } : {})
+    };
+    const createdResolution = this.options.deps.interactiveReviewResolutionRepository.create({
+      sessionId,
+      resolutionType: input.action,
+      payloadJson: Object.keys(payload).length > 0 ? JSON.stringify(payload, null, 2) : null
+    });
+
+    this.applyStoryApprovalAction(input.action, sessionId, projectId, targetedStoryIds);
+    this.applyReviewRequiredAction(input, sessionId, itemId, targetedStoryIds);
+    this.applyStoryEditsResolution(input, sessionId, itemId, targetedStoryIds);
+
+    this.options.deps.interactiveReviewResolutionRepository.markApplied(createdResolution.id);
+    this.options.deps.interactiveReviewSessionRepository.update(sessionId, {
+      status: "resolved",
+      resolvedAt: Date.now()
+    });
+    return createdResolution;
+  }
+
+  private applyStoryApprovalAction(
+    action: Parameters<InteractiveReviewService["resolveInteractiveReview"]>[0]["action"],
+    sessionId: string,
+    projectId: string,
+    targetedStoryIds: string[]
+  ) {
+    if (action === "approve" || action === "approve_and_autorun" || action === "approve_all" || action === "approve_all_and_autorun") {
+      this.options.approveStories(projectId);
+      return;
+    }
+    if (action !== "approve_selected") {
+      return;
+    }
+    if (targetedStoryIds.length === 0) {
+      throw new AppError("INTERACTIVE_REVIEW_STORY_IDS_REQUIRED", "approve_selected requires at least one story id");
+    }
+    this.options.deps.userStoryRepository.approveByIds(targetedStoryIds);
+    for (const storyId of targetedStoryIds) {
+      this.options.deps.interactiveReviewEntryRepository.updateByEntryId(sessionId, storyId, {
+        status: "accepted",
+        summary: "Approved via selected resolution",
+        changeRequest: null
+      });
+    }
+    this.maybeAdvanceAfterPartialStoryApproval(projectId);
+  }
+
+  private applyReviewRequiredAction(
+    input: Parameters<InteractiveReviewService["resolveInteractiveReview"]>[0],
+    sessionId: string,
+    itemId: string,
+    targetedStoryIds: string[]
+  ) {
+    if (input.action !== "request_changes" && input.action !== "request_story_revisions") {
+      return;
+    }
+    const affectedStoryIds =
+      targetedStoryIds.length > 0
+        ? targetedStoryIds
+        : this.options.deps.interactiveReviewEntryRepository
+            .listBySessionId(sessionId)
+            .filter((entry) => entry.entryType === "story")
+            .map((entry) => entry.entryId);
+    if (input.action === "request_story_revisions") {
+      for (const storyId of affectedStoryIds) {
+        this.options.deps.interactiveReviewEntryRepository.updateByEntryId(sessionId, storyId, {
+          status: "needs_revision",
+          summary: "Revision requested via session resolution",
+          changeRequest: input.rationale ?? "Revise the story based on review feedback"
+        });
+      }
+    }
+    this.options.deps.itemRepository.updatePhaseStatus(itemId, "review_required");
+  }
+
+  private applyStoryEditsResolution(
+    input: Parameters<InteractiveReviewService["resolveInteractiveReview"]>[0],
+    sessionId: string,
+    itemId: string,
+    targetedStoryIds: string[]
+  ) {
+    if (input.action !== "apply_story_edits") {
+      return;
+    }
+    if (targetedStoryIds.length === 0) {
+      throw new AppError("INTERACTIVE_REVIEW_STORY_IDS_REQUIRED", "apply_story_edits requires at least one edited story id");
+    }
+    for (const storyId of targetedStoryIds) {
+      this.options.deps.interactiveReviewEntryRepository.updateByEntryId(sessionId, storyId, {
+        status: "resolved",
+        summary: "Guided edits applied and accepted for follow-up workflow",
+        changeRequest: null,
+        rationale: input.rationale ?? null
+      });
+    }
+    this.options.deps.itemRepository.updatePhaseStatus(itemId, "draft");
   }
 
   private maybeAdvanceAfterPartialStoryApproval(projectId: string): void {

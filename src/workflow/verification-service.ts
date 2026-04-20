@@ -13,7 +13,6 @@ import type {
   TestPreparationOutput
 } from "../schemas/output-contracts.js";
 import { AppError } from "../shared/errors.js";
-import type { AdapterRuntimeContext, AgentAdapter } from "../adapters/types.js";
 import type {
   AppVerificationRunner,
   AppVerificationRunStatus,
@@ -26,6 +25,8 @@ import type { WaveStoryExecutionRepository } from "../persistence/repositories.j
 import type { WorkerProfileKey } from "./worker-profiles.js";
 import type { WorkflowDeps } from "./workflow-deps.js";
 import type { WorkflowEntityLoaders } from "./entity-loaders.js";
+import { buildStoryWorkflowAdapterContext } from "./adapter-payloads.js";
+import type { BuildAdapterRuntimeContext, ResolvedWorkerProfile, ResolvedWorkerRuntime } from "./runtime-types.js";
 import { MAX_STORY_REVIEW_REMEDIATION_ATTEMPTS } from "./workflow-constants.js";
 
 const appTestConfigSchema = z.object({
@@ -56,6 +57,16 @@ const appTestConfigSchema = z.object({
   featureFlags: z.record(z.string(), z.union([z.boolean(), z.string()])).optional()
 });
 
+type WaveStoryExecutionRecord =
+  | ReturnType<WaveStoryExecutionRepository["create"]>
+  | ReturnType<WorkflowEntityLoaders["requireWaveStoryExecution"]>;
+
+type AppVerificationExecutionResult = {
+  status: "passed" | "review_required" | "failed";
+  errorMessage: string | null;
+  runId: string;
+};
+
 type VerificationServiceOptions = {
   deps: WorkflowDeps;
   loaders: Pick<
@@ -73,22 +84,9 @@ type VerificationServiceOptions = {
     | "requireStoryReviewRun"
     | "requireStoryReviewRemediationRun"
   >;
-  resolveWorkerProfile(profileKey: WorkerProfileKey): {
-    promptContent: string;
-    skills: Array<{ path: string; content: string }>;
-  };
-  resolveWorkerRuntime(profileKey: WorkerProfileKey): {
-    providerKey: string;
-    adapterKey: string;
-    model: string | null;
-    policy: AdapterRuntimeContext["policy"];
-    adapter: AgentAdapter;
-  };
-  buildAdapterRuntimeContext(input: {
-    providerKey: string;
-    model: string | null;
-    policy: AdapterRuntimeContext["policy"];
-  }): AdapterRuntimeContext;
+  resolveWorkerProfile(profileKey: WorkerProfileKey): ResolvedWorkerProfile;
+  resolveWorkerRuntime(profileKey: WorkerProfileKey): ResolvedWorkerRuntime;
+  buildAdapterRuntimeContext: BuildAdapterRuntimeContext;
   ensureProjectExecutionContext(
     project: ReturnType<WorkflowEntityLoaders["requireProject"]>,
     implementationPlan: ReturnType<WorkflowEntityLoaders["requireImplementationPlanForProject"]>
@@ -398,12 +396,12 @@ export class VerificationService {
         );
         this.options.deps.storyReviewFindingRepository.updateStatus(finding.id, stillOpen ? "open" : "resolved");
       });
-      const remediationStatus =
-        latestStoryReviewRun.status === "passed"
-          ? "completed"
-          : latestStoryReviewRun.status === "review_required"
-            ? "review_required"
-            : "failed";
+      let remediationStatus: "completed" | "review_required" | "failed" = "failed";
+      if (latestStoryReviewRun.status === "passed") {
+        remediationStatus = "completed";
+      } else if (latestStoryReviewRun.status === "review_required") {
+        remediationStatus = "review_required";
+      }
       this.options.deps.storyReviewRemediationRunRepository.updateStatus(remediationRun.id, remediationStatus, {
         remediationWaveStoryExecutionId: remediationExecution.id,
         outputSummaryJson: JSON.stringify(
@@ -594,7 +592,7 @@ export class VerificationService {
     if (!verificationRun?.summaryJson) {
       throw new AppError("RALPH_OUTPUT_MISSING", "Ralph verification has no summary");
     }
-    return ralphVerificationOutputSchema.parse(JSON.parse(verificationRun.summaryJson)) as RalphVerificationOutput;
+    return ralphVerificationOutputSchema.parse(JSON.parse(verificationRun.summaryJson));
   }
 
   private buildProjectAppTestContext(project: ReturnType<WorkflowEntityLoaders["requireProject"]>) {
@@ -622,7 +620,7 @@ export class VerificationService {
       projectId: project.id,
       workspaceRoot: this.options.deps.workspaceRoot,
       baseUrl: parsed.baseUrl ?? defaults.baseUrl,
-      runnerPreference: (parsed.runnerPreference as AppVerificationRunner[] | undefined) ?? defaults.runnerPreference,
+      runnerPreference: parsed.runnerPreference ?? defaults.runnerPreference,
       readiness: parsed.readiness ?? defaults.readiness,
       auth: {
         strategy: parsed.auth?.strategy ?? defaults.auth.strategy,
@@ -717,44 +715,22 @@ export class VerificationService {
   }): Promise<{ status: VerificationRunStatus; summary: RalphVerificationOutput; errorMessage: string | null }> {
     const resolvedWorkerProfile = this.options.resolveWorkerProfile("ralph");
     const runtime = this.options.resolveWorkerRuntime("ralph");
+    const storyWorkflowContext = this.buildStoryWorkflowAdapterContext({
+      project: input.project,
+      implementationPlan: input.implementationPlan,
+      wave: input.wave,
+      story: input.story,
+      storyRunContext: input.storyRunContext
+    });
+    const testPreparation = this.buildTestPreparationPayload(input.testPreparationRun, input.parsedTestPreparation);
     try {
       const result = await runtime.adapter.runStoryRalphVerification({
         runtime: this.options.buildAdapterRuntimeContext(runtime),
         workerRole: "ralph-verifier",
         prompt: resolvedWorkerProfile.promptContent,
         skills: resolvedWorkerProfile.skills,
-        item: input.storyRunContext.item,
-        project: input.project,
-        implementationPlan: {
-          id: input.implementationPlan.id,
-          summary: input.implementationPlan.summary,
-          version: input.implementationPlan.version
-        },
-        wave: {
-          id: input.wave.id,
-          code: input.wave.code,
-          goal: input.wave.goal,
-          position: input.wave.position
-        },
-        story: input.story,
-        acceptanceCriteria: input.storyRunContext.acceptanceCriteria,
-        architecture: input.storyRunContext.architecture
-          ? {
-              id: input.storyRunContext.architecture.id,
-              summary: input.storyRunContext.architecture.summary,
-              version: input.storyRunContext.architecture.version
-            }
-          : null,
-        projectExecutionContext: input.storyRunContext.projectExecutionContext,
-        businessContextSnapshotJson: input.storyRunContext.businessContextSnapshotJson,
-        repoContextSnapshotJson: input.storyRunContext.repoContextSnapshotJson,
-        testPreparation: {
-          id: input.testPreparationRun.id,
-          summary: input.parsedTestPreparation.summary,
-          testFiles: input.parsedTestPreparation.testFiles,
-          testsGenerated: input.parsedTestPreparation.testsGenerated,
-          assumptions: input.parsedTestPreparation.assumptions
-        },
+        ...storyWorkflowContext,
+        testPreparation,
         implementation: input.implementationOutput,
         basicVerification: {
           status: input.basicVerificationStatus,
@@ -762,7 +738,7 @@ export class VerificationService {
         }
       });
 
-      const parsed = ralphVerificationOutputSchema.parse(result.output) as RalphVerificationOutput;
+      const parsed = ralphVerificationOutputSchema.parse(result.output);
       const status = this.resolveRalphVerificationStatus(parsed, result.exitCode);
       this.options.deps.verificationRunRepository.create({
         waveExecutionId: input.waveExecution.id,
@@ -858,45 +834,23 @@ export class VerificationService {
       errorMessage: null
     });
 
+    const storyWorkflowContext = this.buildStoryWorkflowAdapterContext({
+      project: input.project,
+      implementationPlan: input.implementationPlan,
+      wave: input.wave,
+      story: input.story,
+      storyRunContext: input.storyRunContext
+    });
+    const testPreparation = this.buildTestPreparationPayload(input.testPreparationRun, input.parsedTestPreparation);
     try {
       const result = await runtime.adapter.runStoryReview({
         runtime: this.options.buildAdapterRuntimeContext(runtime),
         workerRole: "story-reviewer",
         prompt: resolvedWorkerProfile.promptContent,
         skills: resolvedWorkerProfile.skills,
-        item: input.storyRunContext.item,
-        project: input.project,
-        implementationPlan: {
-          id: input.implementationPlan.id,
-          summary: input.implementationPlan.summary,
-          version: input.implementationPlan.version
-        },
-        wave: {
-          id: input.wave.id,
-          code: input.wave.code,
-          goal: input.wave.goal,
-          position: input.wave.position
-        },
-        story: input.story,
-        acceptanceCriteria: input.storyRunContext.acceptanceCriteria,
-        architecture: input.storyRunContext.architecture
-          ? {
-              id: input.storyRunContext.architecture.id,
-              summary: input.storyRunContext.architecture.summary,
-              version: input.storyRunContext.architecture.version
-            }
-          : null,
-        projectExecutionContext: input.storyRunContext.projectExecutionContext,
+        ...storyWorkflowContext,
         inputSnapshotJson: reviewRun.inputSnapshotJson,
-        businessContextSnapshotJson: input.storyRunContext.businessContextSnapshotJson,
-        repoContextSnapshotJson: input.storyRunContext.repoContextSnapshotJson,
-        testPreparation: {
-          id: input.testPreparationRun.id,
-          summary: input.parsedTestPreparation.summary,
-          testFiles: input.parsedTestPreparation.testFiles,
-          testsGenerated: input.parsedTestPreparation.testsGenerated,
-          assumptions: input.parsedTestPreparation.assumptions
-        },
+        testPreparation,
         implementation: input.implementationOutput,
         basicVerification: {
           status: input.basicVerificationStatus,
@@ -908,7 +862,7 @@ export class VerificationService {
         }
       });
 
-      const parsed = storyReviewOutputSchema.parse(result.output) as StoryReviewOutput;
+      const parsed = storyReviewOutputSchema.parse(result.output);
       this.options.deps.storyReviewAgentSessionRepository.create({
         storyReviewRunId: reviewRun.id,
         adapterKey: runtime.adapterKey,
@@ -967,9 +921,9 @@ export class VerificationService {
     wave: ReturnType<WorkflowEntityLoaders["requireWave"]>;
     story: ReturnType<WorkflowEntityLoaders["requireStory"]>;
     storyRunContext: ReturnType<VerificationServiceOptions["buildStoryRunContext"]>;
-    execution: ReturnType<WaveStoryExecutionRepository["create"]> | ReturnType<WorkflowEntityLoaders["requireWaveStoryExecution"]>;
+    execution: WaveStoryExecutionRecord;
     implementationOutput: StoryExecutionOutput;
-  }): Promise<{ status: "passed" | "review_required" | "failed"; errorMessage: string | null; runId: string }> {
+  }): Promise<AppVerificationExecutionResult> {
     const resolvedWorkerProfile = this.options.resolveWorkerProfile("appVerification");
     const runtime = this.options.resolveWorkerRuntime("appVerification");
     const previousRuns = this.options.deps.appVerificationRunRepository.listByWaveStoryExecutionId(input.execution.id);
@@ -980,6 +934,13 @@ export class VerificationService {
       storyRunContext: input.storyRunContext,
       implementationOutput: input.implementationOutput,
       projectAppTestContext
+    });
+    const storyWorkflowContext = this.buildStoryWorkflowAdapterContext({
+      project: input.project,
+      implementationPlan: input.implementationPlan,
+      wave: input.wave,
+      story: input.story,
+      storyRunContext: input.storyRunContext
     });
     const preparedSession = this.prepareAppVerificationSession({
       projectAppTestContext,
@@ -1034,38 +995,14 @@ export class VerificationService {
         workerRole: "app-verifier",
         prompt: resolvedWorkerProfile.promptContent,
         skills: resolvedWorkerProfile.skills,
-        item: input.storyRunContext.item,
-        project: input.project,
-        implementationPlan: {
-          id: input.implementationPlan.id,
-          summary: input.implementationPlan.summary,
-          version: input.implementationPlan.version
-        },
-        wave: {
-          id: input.wave.id,
-          code: input.wave.code,
-          goal: input.wave.goal,
-          position: input.wave.position
-        },
-        story: input.story,
-        acceptanceCriteria: input.storyRunContext.acceptanceCriteria,
-        architecture: input.storyRunContext.architecture
-          ? {
-              id: input.storyRunContext.architecture.id,
-              summary: input.storyRunContext.architecture.summary,
-              version: input.storyRunContext.architecture.version
-            }
-          : null,
-        projectExecutionContext: input.storyRunContext.projectExecutionContext,
-        businessContextSnapshotJson: input.storyRunContext.businessContextSnapshotJson,
-        repoContextSnapshotJson: input.storyRunContext.repoContextSnapshotJson,
+        ...storyWorkflowContext,
         implementation: input.implementationOutput,
         projectAppTestContext,
         storyAppVerificationContext,
         preparedSession
       });
 
-      const parsed = appVerificationOutputSchema.parse(result.output) as AppVerificationOutput;
+      const parsed = appVerificationOutputSchema.parse(result.output);
       const status = this.resolveAppVerificationStatus(parsed, result.exitCode);
       this.options.deps.appVerificationRunRepository.updateStatus(run.id, status, {
         runner: parsed.runner,
@@ -1110,20 +1047,14 @@ export class VerificationService {
   }
 
   private resolveRalphVerificationStatus(output: RalphVerificationOutput, exitCode: number): VerificationRunStatus {
-    if (exitCode !== 0) {
-      return "failed";
-    }
-    return output.overallStatus;
+    return this.resolveExternalVerificationStatus(output.overallStatus, exitCode);
   }
 
   private resolveAppVerificationStatus(
     output: AppVerificationOutput,
     exitCode: number
   ): "passed" | "review_required" | "failed" {
-    if (exitCode !== 0) {
-      return "failed";
-    }
-    return output.overallStatus;
+    return this.resolveExternalVerificationStatus(output.overallStatus, exitCode);
   }
 
   private resolveStoryReviewStatus(output: StoryReviewOutput, exitCode: number): StoryReviewRunStatus {
@@ -1177,8 +1108,71 @@ export class VerificationService {
     projectExecutionContext: ReturnType<VerificationServiceOptions["ensureProjectExecutionContext"]>,
     sourceExecution: ReturnType<WorkflowEntityLoaders["requireWaveStoryExecution"]>
   ): string[] {
-    const implementation = sourceExecution.outputSummaryJson ? JSON.parse(sourceExecution.outputSummaryJson) as StoryExecutionOutput : null;
+    const implementation = this.parseStoredJson<StoryExecutionOutput>(
+      sourceExecution.outputSummaryJson,
+      "SOURCE_EXECUTION_OUTPUT_INVALID",
+      "Source execution output"
+    );
     const changedFiles = implementation?.changedFiles ?? [];
     return Array.from(new Set([...changedFiles, ...projectExecutionContext.relevantFiles]));
+  }
+
+  private buildStoryWorkflowAdapterContext(input: {
+    project: ReturnType<WorkflowEntityLoaders["requireProject"]>;
+    implementationPlan: ReturnType<WorkflowEntityLoaders["requireImplementationPlanForProject"]>;
+    wave: ReturnType<WorkflowEntityLoaders["requireWave"]>;
+    story: ReturnType<WorkflowEntityLoaders["requireStory"]>;
+    storyRunContext: ReturnType<VerificationServiceOptions["buildStoryRunContext"]>;
+  }) {
+    return buildStoryWorkflowAdapterContext({
+      item: input.storyRunContext.item,
+      project: input.project,
+      implementationPlan: {
+        id: input.implementationPlan.id,
+        summary: input.implementationPlan.summary,
+        version: input.implementationPlan.version
+      },
+      wave: {
+        id: input.wave.id,
+        code: input.wave.code,
+        goal: input.wave.goal,
+        position: input.wave.position
+      },
+      story: input.story,
+      acceptanceCriteria: input.storyRunContext.acceptanceCriteria,
+      architecture: input.storyRunContext.architecture
+        ? {
+            id: input.storyRunContext.architecture.id,
+            summary: input.storyRunContext.architecture.summary,
+            version: input.storyRunContext.architecture.version
+          }
+        : null,
+      projectExecutionContext: input.storyRunContext.projectExecutionContext,
+      businessContextSnapshotJson: input.storyRunContext.businessContextSnapshotJson,
+      repoContextSnapshotJson: input.storyRunContext.repoContextSnapshotJson
+    });
+  }
+
+  private buildTestPreparationPayload(
+    testPreparationRun: ReturnType<WorkflowEntityLoaders["requireWaveStoryTestRun"]>,
+    parsedTestPreparation: TestPreparationOutput
+  ) {
+    return {
+      id: testPreparationRun.id,
+      summary: parsedTestPreparation.summary,
+      testFiles: parsedTestPreparation.testFiles,
+      testsGenerated: parsedTestPreparation.testsGenerated,
+      assumptions: parsedTestPreparation.assumptions
+    };
+  }
+
+  private resolveExternalVerificationStatus<TStatus extends "passed" | "review_required" | "failed">(
+    status: TStatus,
+    exitCode: number
+  ): TStatus {
+    if (exitCode !== 0) {
+      return "failed" as TStatus;
+    }
+    return status;
   }
 }

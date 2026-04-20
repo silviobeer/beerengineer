@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { storyExecutionOutputSchema, testPreparationOutputSchema } from "../schemas/output-contracts.js";
 import type { StoryExecutionOutput, TestPreparationOutput } from "../schemas/output-contracts.js";
 import { AppError } from "../shared/errors.js";
-import type { AdapterRuntimeContext, AgentAdapter } from "../adapters/types.js";
+import type { AgentAdapter } from "../adapters/types.js";
 import type { ExecutionWorkerRole, GitBranchMetadata } from "../domain/types.js";
 import type {
   AcceptanceCriterionRepository,
@@ -25,6 +25,8 @@ import type {
 import type { WorkerProfileKey } from "./worker-profiles.js";
 import type { WorkflowDeps } from "./workflow-deps.js";
 import type { WorkflowEntityLoaders } from "./entity-loaders.js";
+import { buildStoryWorkflowAdapterContext } from "./adapter-payloads.js";
+import type { BuildAdapterRuntimeContext, ResolvedWorkerProfile, ResolvedWorkerRuntime } from "./runtime-types.js";
 import { resolveCompactExecutionStoryPhase, resolveCompactExecutionStoryStatus } from "./status-resolution.js";
 
 type RetryWaveStoryExecutionResult =
@@ -42,6 +44,8 @@ type RetryWaveStoryExecutionResult =
       storyCode: string;
       status: string;
     };
+
+type VerificationRun = ReturnType<VerificationRunRepository["listByWaveStoryExecutionId"]>[number];
 
 export type ExecutionViewStory = {
   waveStory: ReturnType<WaveStoryRepository["getById"]> extends infer T ? Exclude<T, null> : never;
@@ -96,22 +100,9 @@ type ExecutionServiceOptions = {
     | "requireWaveStoryTestRun"
     | "requireStory"
   >;
-  resolveWorkerProfile(profileKey: WorkerProfileKey): {
-    promptContent: string;
-    skills: Array<{ path: string; content: string }>;
-  };
-  resolveWorkerRuntime(profileKey: WorkerProfileKey): {
-    providerKey: string;
-    adapterKey: string;
-    model: string | null;
-    policy: AdapterRuntimeContext["policy"];
-    adapter: AgentAdapter;
-  };
-  buildAdapterRuntimeContext(input: {
-    providerKey: string;
-    model: string | null;
-    policy: AdapterRuntimeContext["policy"];
-  }): AdapterRuntimeContext;
+  resolveWorkerProfile(profileKey: WorkerProfileKey): ResolvedWorkerProfile;
+  resolveWorkerRuntime(profileKey: WorkerProfileKey): ResolvedWorkerRuntime;
+  buildAdapterRuntimeContext: BuildAdapterRuntimeContext;
   ensureProjectBranch(projectCode: string): void;
   ensureStoryBranch(projectCode: string, storyCode: string): GitBranchMetadata;
   executeVerificationPipeline(input: {
@@ -186,10 +177,7 @@ export class ExecutionService {
       gitMetadata
     });
     this.refreshWaveExecutionStatus(waveExecution.id);
-    return {
-      ...result,
-      phase: result.phase as "implementation" | "app_verification" | "story_review"
-    };
+    return result;
   }
 
   public showExecution(projectId: string): ExecutionView {
@@ -210,8 +198,8 @@ export class ExecutionService {
         const appVerificationRuns = latestExecution
           ? this.options.deps.appVerificationRunRepository.listByWaveStoryExecutionId(latestExecution.id)
           : [];
-        const latestBasicVerification = verificationRuns.filter((run) => run.mode === "basic").at(-1) ?? null;
-        const latestRalphVerification = verificationRuns.filter((run) => run.mode === "ralph").at(-1) ?? null;
+        const latestBasicVerification = this.findLatestVerificationRun(verificationRuns, "basic");
+        const latestRalphVerification = this.findLatestVerificationRun(verificationRuns, "ralph");
         const latestAppVerificationRun = appVerificationRuns.at(-1) ?? null;
         const latestStoryReviewRun = latestExecution
           ? this.options.deps.storyReviewRunRepository.getLatestByWaveStoryExecutionId(latestExecution.id)
@@ -518,7 +506,7 @@ export class ExecutionService {
     if (!testRun.outputSummaryJson) {
       throw new AppError("TEST_RUN_OUTPUT_MISSING", `Test run ${testRun.id} has no output summary`);
     }
-    return testPreparationOutputSchema.parse(JSON.parse(testRun.outputSummaryJson)) as TestPreparationOutput;
+    return testPreparationOutputSchema.parse(JSON.parse(testRun.outputSummaryJson));
   }
 
   public parseStoryExecutionOutput(
@@ -527,7 +515,7 @@ export class ExecutionService {
     if (!execution.outputSummaryJson) {
       throw new AppError("EXECUTION_OUTPUT_MISSING", `Execution ${execution.id} has no output summary`);
     }
-    return storyExecutionOutputSchema.parse(JSON.parse(execution.outputSummaryJson)) as StoryExecutionOutput;
+    return storyExecutionOutputSchema.parse(JSON.parse(execution.outputSummaryJson));
   }
 
   public async executeWaveStory(input: {
@@ -576,55 +564,21 @@ export class ExecutionService {
     });
 
     try {
-      const result = await runtime.adapter.runStoryExecution({
-        runtime: this.options.buildAdapterRuntimeContext(runtime),
-        workerRole,
-        prompt: resolvedWorkerProfile.promptContent,
-        skills: resolvedWorkerProfile.skills,
-        item: storyRunContext.item,
-        project: input.project,
-        implementationPlan: {
-          id: input.implementationPlan.id,
-          summary: input.implementationPlan.summary,
-          version: input.implementationPlan.version
-        },
-        wave: {
-          id: input.wave.id,
-          code: input.wave.code,
-          goal: input.wave.goal,
-          position: input.wave.position
-        },
-        story: input.story,
-        acceptanceCriteria: storyRunContext.acceptanceCriteria,
-        architecture: storyRunContext.architecture
-          ? {
-              id: storyRunContext.architecture.id,
-              summary: storyRunContext.architecture.summary,
-              version: storyRunContext.architecture.version
-            }
-          : null,
-        projectExecutionContext: storyRunContext.projectExecutionContext,
-        businessContextSnapshotJson: storyRunContext.businessContextSnapshotJson,
-        repoContextSnapshotJson: storyRunContext.repoContextSnapshotJson,
-        testPreparation: {
-          id: testPreparationRun.id,
-          summary: parsedTestPreparation.summary,
-          testFiles: parsedTestPreparation.testFiles,
-          testsGenerated: parsedTestPreparation.testsGenerated,
-          assumptions: parsedTestPreparation.assumptions
-        }
-      });
+      const result = await runtime.adapter.runStoryExecution(
+        this.buildStoryExecutionAdapterInput({
+          runtime,
+          workerRole,
+          prompt: resolvedWorkerProfile.promptContent,
+          skills: resolvedWorkerProfile.skills,
+          input,
+          storyRunContext,
+          testPreparationRun,
+          parsedTestPreparation
+        })
+      );
 
-      const parsed = storyExecutionOutputSchema.parse(result.output) as StoryExecutionOutput;
-      this.options.deps.executionAgentSessionRepository.create({
-        waveStoryExecutionId: execution.id,
-        adapterKey: runtime.adapterKey,
-        status: result.exitCode === 0 ? "completed" : "failed",
-        commandJson: JSON.stringify(result.command),
-        stdout: result.stdout,
-        stderr: result.stderr,
-        exitCode: result.exitCode
-      });
+      const parsed = storyExecutionOutputSchema.parse(result.output);
+      this.recordExecutionAgentSession(execution.id, runtime.adapterKey, result);
 
       const verification = await this.options.executeVerificationPipeline({
         project: input.project,
@@ -638,80 +592,182 @@ export class ExecutionService {
         execution,
         implementationOutput: parsed
       });
-      const outputSummaryJson = JSON.stringify(parsed, null, 2);
-      this.options.deps.waveStoryExecutionRepository.updateStatus(
-        execution.id,
-        verification.finalExecutionStatus === "passed" ? "completed" : verification.finalExecutionStatus,
-        {
-          outputSummaryJson,
-          gitMetadata: input.gitMetadata ?? null,
-          errorMessage:
-            parsed.blockers.join("; ") ||
-            verification.ralphVerification.errorMessage ||
-            verification.appVerification?.errorMessage ||
-            verification.storyReview?.errorMessage ||
-            null
-        }
-      );
-      return {
-        phase: verification.storyReview ? "story_review" : verification.appVerification ? "app_verification" : "implementation",
-        waveStoryExecutionId: execution.id,
-        waveStoryId: input.waveStory.id,
-        storyCode: input.story.code,
-        status: verification.finalExecutionStatus === "passed" ? "completed" : verification.finalExecutionStatus
-      };
+      return this.completeWaveStoryExecution({
+        input,
+        executionId: execution.id,
+        verification,
+        parsed
+      });
     } catch (error) {
-      this.options.deps.executionAgentSessionRepository.create({
-        waveStoryExecutionId: execution.id,
+      return this.failWaveStoryExecution({
+        input,
+        executionId: execution.id,
         adapterKey: runtime.adapterKey,
-        status: "failed",
-        commandJson: JSON.stringify([]),
-        stdout: "",
-        stderr: error instanceof Error ? error.message : String(error),
-        exitCode: 1
+        error
       });
-      this.options.deps.verificationRunRepository.create({
-        waveExecutionId: input.waveExecution.id,
-        waveStoryExecutionId: execution.id,
-        mode: "basic",
-        status: "failed",
-        systemPromptSnapshot: null,
-        skillsSnapshotJson: null,
-        summaryJson: JSON.stringify({ changedFiles: [], testsRun: [], blockers: [] }, null, 2),
-        errorMessage: error instanceof Error ? error.message : String(error)
-      });
-      this.options.deps.verificationRunRepository.create({
-        waveExecutionId: input.waveExecution.id,
-        waveStoryExecutionId: execution.id,
-        mode: "ralph",
-        status: "failed",
-        systemPromptSnapshot: null,
-        skillsSnapshotJson: null,
-        summaryJson: JSON.stringify(
-          {
-            storyCode: input.story.code,
-            overallStatus: "failed",
-            summary: `Ralph verification could not run for ${input.story.code}.`,
-            acceptanceCriteriaResults: [],
-            blockers: [error instanceof Error ? error.message : String(error)]
-          },
-          null,
-          2
-        ),
-        errorMessage: error instanceof Error ? error.message : String(error)
-      });
-      this.options.deps.waveStoryExecutionRepository.updateStatus(execution.id, "failed", {
-        gitMetadata: input.gitMetadata ?? null,
-        errorMessage: error instanceof Error ? error.message : String(error)
-      });
-      return {
-        phase: "implementation",
-        waveStoryExecutionId: execution.id,
-        waveStoryId: input.waveStory.id,
-        storyCode: input.story.code,
-        status: "failed"
-      };
     }
+  }
+
+  private buildStoryExecutionAdapterInput(input: {
+    runtime: ResolvedWorkerRuntime;
+    workerRole: ExecutionWorkerRole;
+    prompt: string;
+    skills: Array<{ path: string; content: string }>;
+    input: Parameters<ExecutionService["executeWaveStory"]>[0];
+    storyRunContext: ReturnType<ExecutionService["buildStoryRunContext"]>;
+    testPreparationRun: ReturnType<WorkflowEntityLoaders["requireWaveStoryTestRun"]>;
+    parsedTestPreparation: TestPreparationOutput;
+  }) {
+    const adapterContext = buildStoryWorkflowAdapterContext({
+      item: input.storyRunContext.item,
+      project: input.input.project,
+      implementationPlan: {
+        id: input.input.implementationPlan.id,
+        summary: input.input.implementationPlan.summary,
+        version: input.input.implementationPlan.version
+      },
+      wave: {
+        id: input.input.wave.id,
+        code: input.input.wave.code,
+        goal: input.input.wave.goal,
+        position: input.input.wave.position
+      },
+      story: input.input.story,
+      acceptanceCriteria: input.storyRunContext.acceptanceCriteria,
+      architecture: input.storyRunContext.architecture
+        ? {
+            id: input.storyRunContext.architecture.id,
+            summary: input.storyRunContext.architecture.summary,
+            version: input.storyRunContext.architecture.version
+          }
+        : null,
+      projectExecutionContext: input.storyRunContext.projectExecutionContext,
+      businessContextSnapshotJson: input.storyRunContext.businessContextSnapshotJson,
+      repoContextSnapshotJson: input.storyRunContext.repoContextSnapshotJson
+    });
+    return {
+      runtime: this.options.buildAdapterRuntimeContext(input.runtime),
+      workerRole: input.workerRole,
+      prompt: input.prompt,
+      skills: input.skills,
+      ...adapterContext,
+      testPreparation: {
+        id: input.testPreparationRun.id,
+        summary: input.parsedTestPreparation.summary,
+        testFiles: input.parsedTestPreparation.testFiles,
+        testsGenerated: input.parsedTestPreparation.testsGenerated,
+        assumptions: input.parsedTestPreparation.assumptions
+      }
+    };
+  }
+
+  private recordExecutionAgentSession(
+    executionId: string,
+    adapterKey: string,
+    result: Awaited<ReturnType<AgentAdapter["runStoryExecution"]>>
+  ) {
+    this.options.deps.executionAgentSessionRepository.create({
+      waveStoryExecutionId: executionId,
+      adapterKey,
+      status: result.exitCode === 0 ? "completed" : "failed",
+      commandJson: JSON.stringify(result.command),
+      stdout: result.stdout,
+      stderr: result.stderr,
+      exitCode: result.exitCode
+    });
+  }
+
+  private completeWaveStoryExecution(input: {
+    input: Parameters<ExecutionService["executeWaveStory"]>[0];
+    executionId: string;
+    verification: Awaited<ReturnType<ExecutionServiceOptions["executeVerificationPipeline"]>>;
+    parsed: StoryExecutionOutput;
+  }) {
+    const status = input.verification.finalExecutionStatus === "passed" ? "completed" : input.verification.finalExecutionStatus;
+    this.options.deps.waveStoryExecutionRepository.updateStatus(input.executionId, status, {
+      outputSummaryJson: JSON.stringify(input.parsed, null, 2),
+      gitMetadata: input.input.gitMetadata ?? null,
+      errorMessage:
+        input.parsed.blockers.join("; ") ||
+        input.verification.ralphVerification.errorMessage ||
+        input.verification.appVerification?.errorMessage ||
+        input.verification.storyReview?.errorMessage ||
+        null
+    });
+
+    let phase: "implementation" | "app_verification" | "story_review" = "implementation";
+    if (input.verification.storyReview) {
+      phase = "story_review";
+    } else if (input.verification.appVerification) {
+      phase = "app_verification";
+    }
+
+    return {
+      phase,
+      waveStoryExecutionId: input.executionId,
+      waveStoryId: input.input.waveStory.id,
+      storyCode: input.input.story.code,
+      status
+    };
+  }
+
+  private failWaveStoryExecution(input: {
+    input: Parameters<ExecutionService["executeWaveStory"]>[0];
+    executionId: string;
+    adapterKey: string;
+    error: unknown;
+  }) {
+    const errorMessage = input.error instanceof Error ? input.error.message : String(input.error);
+    this.options.deps.executionAgentSessionRepository.create({
+      waveStoryExecutionId: input.executionId,
+      adapterKey: input.adapterKey,
+      status: "failed",
+      commandJson: JSON.stringify([]),
+      stdout: "",
+      stderr: errorMessage,
+      exitCode: 1
+    });
+    this.options.deps.verificationRunRepository.create({
+      waveExecutionId: input.input.waveExecution.id,
+      waveStoryExecutionId: input.executionId,
+      mode: "basic",
+      status: "failed",
+      systemPromptSnapshot: null,
+      skillsSnapshotJson: null,
+      summaryJson: JSON.stringify({ changedFiles: [], testsRun: [], blockers: [] }, null, 2),
+      errorMessage
+    });
+    this.options.deps.verificationRunRepository.create({
+      waveExecutionId: input.input.waveExecution.id,
+      waveStoryExecutionId: input.executionId,
+      mode: "ralph",
+      status: "failed",
+      systemPromptSnapshot: null,
+      skillsSnapshotJson: null,
+      summaryJson: JSON.stringify(
+        {
+          storyCode: input.input.story.code,
+          overallStatus: "failed",
+          summary: `Ralph verification could not run for ${input.input.story.code}.`,
+          acceptanceCriteriaResults: [],
+          blockers: [errorMessage]
+        },
+        null,
+        2
+      ),
+      errorMessage
+    });
+    this.options.deps.waveStoryExecutionRepository.updateStatus(input.executionId, "failed", {
+      gitMetadata: input.input.gitMetadata ?? null,
+      errorMessage
+    });
+    return {
+      phase: "implementation" as const,
+      waveStoryExecutionId: input.executionId,
+      waveStoryId: input.input.waveStory.id,
+      storyCode: input.input.story.code,
+      status: "failed" as const
+    };
   }
 
   private async advanceExecution(projectId: string) {
@@ -952,7 +1008,7 @@ export class ExecutionService {
         repoContextSnapshotJson: storyRunContext.repoContextSnapshotJson
       });
 
-      const parsed = testPreparationOutputSchema.parse(result.output) as TestPreparationOutput;
+      const parsed = testPreparationOutputSchema.parse(result.output);
       this.options.deps.testAgentSessionRepository.create({
         waveStoryTestRunId: testRun.id,
         adapterKey: runtime.adapterKey,
@@ -1002,8 +1058,18 @@ export class ExecutionService {
   private resolveActiveWave(waves: Array<ReturnType<WorkflowEntityLoaders["requireWave"]>>) {
     for (const wave of waves) {
       const latestExecution = this.options.deps.waveExecutionRepository.getLatestByWaveId(wave.id);
-      if (!latestExecution || latestExecution.status !== "completed") {
+      if (latestExecution?.status !== "completed") {
         return wave;
+      }
+    }
+    return null;
+  }
+
+  private findLatestVerificationRun(runs: VerificationRun[], mode: VerificationRun["mode"]) {
+    for (let index = runs.length - 1; index >= 0; index -= 1) {
+      const run = runs[index];
+      if (run?.mode === mode) {
+        return run;
       }
     }
     return null;

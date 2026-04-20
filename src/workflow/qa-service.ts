@@ -1,12 +1,12 @@
 import { qaOutputSchema } from "../schemas/output-contracts.js";
 import type { QaOutput } from "../schemas/output-contracts.js";
 import { AppError } from "../shared/errors.js";
-import type { AdapterRuntimeContext, AgentAdapter } from "../adapters/types.js";
 import type { QaRunStatus } from "../domain/types.js";
 import type { WorkflowDeps } from "./workflow-deps.js";
 import type { WorkflowEntityLoaders } from "./entity-loaders.js";
 import type { WorkerProfileKey } from "./worker-profiles.js";
 import type { ExecutionService } from "./execution-service.js";
+import type { BuildAdapterRuntimeContext, ResolvedWorkerProfile, ResolvedWorkerRuntime } from "./runtime-types.js";
 
 type QaServiceOptions = {
   deps: WorkflowDeps;
@@ -14,22 +14,9 @@ type QaServiceOptions = {
     WorkflowEntityLoaders,
     "requireProject" | "requireItem" | "requireImplementationPlanForProject" | "requireQaRun"
   >;
-  resolveWorkerProfile(profileKey: WorkerProfileKey): {
-    promptContent: string;
-    skills: Array<{ path: string; content: string }>;
-  };
-  resolveWorkerRuntime(profileKey: WorkerProfileKey): {
-    providerKey: string;
-    adapterKey: string;
-    model: string | null;
-    policy: AdapterRuntimeContext["policy"];
-    adapter: AgentAdapter;
-  };
-  buildAdapterRuntimeContext(input: {
-    providerKey: string;
-    model: string | null;
-    policy: AdapterRuntimeContext["policy"];
-  }): AdapterRuntimeContext;
+  resolveWorkerProfile(profileKey: WorkerProfileKey): ResolvedWorkerProfile;
+  resolveWorkerRuntime(profileKey: WorkerProfileKey): ResolvedWorkerRuntime;
+  buildAdapterRuntimeContext: BuildAdapterRuntimeContext;
   ensureProjectExecutionContext(
     project: ReturnType<WorkflowEntityLoaders["requireProject"]>,
     implementationPlan: ReturnType<WorkflowEntityLoaders["requireImplementationPlanForProject"]>
@@ -109,7 +96,7 @@ export class QaService {
         stories: qaContext.stories
       });
 
-      const parsed = qaOutputSchema.parse(result.output) as QaOutput;
+      const parsed = qaOutputSchema.parse(result.output);
       this.options.deps.qaAgentSessionRepository.create({
         qaRunId: qaRun.id,
         adapterKey: runtime.adapterKey,
@@ -247,15 +234,15 @@ export class QaService {
         throw new AppError("WAVE_STORY_NOT_FOUND", `No wave story found for story ${story.code}`);
       }
       const latestExecution = latestExecutionByWaveStoryId.get(waveStory.id);
-      if (!latestExecution || latestExecution.status !== "completed") {
+      if (latestExecution?.status !== "completed") {
         throw new AppError("QA_EXECUTION_INCOMPLETE", `Story ${story.code} is not completed yet`);
       }
       const latestRalphVerification = latestRalphVerificationByExecutionId.get(latestExecution.id);
-      if (!latestRalphVerification || latestRalphVerification.status !== "passed") {
+      if (latestRalphVerification?.status !== "passed") {
         throw new AppError("QA_RALPH_INCOMPLETE", `Story ${story.code} has no passing Ralph verification`);
       }
       const latestStoryReview = latestStoryReviewByExecutionId.get(latestExecution.id);
-      if (!latestStoryReview || latestStoryReview.status !== "passed") {
+      if (latestStoryReview?.status !== "passed") {
         throw new AppError("QA_STORY_REVIEW_INCOMPLETE", `Story ${story.code} has no passing story review`);
       }
 
