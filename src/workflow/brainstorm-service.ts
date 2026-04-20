@@ -14,6 +14,12 @@ import { AppError } from "../shared/errors.js";
 import type { ArtifactRecord } from "../persistence/repositories.js";
 import type { WorkflowDeps } from "./workflow-deps.js";
 import type { WorkflowEntityLoaders } from "./entity-loaders.js";
+import {
+  extractLabeledBrainstormLists,
+  hasAnyExtraction,
+  type BrainstormExtraction,
+  type BrainstormExtractionField
+} from "./brainstorm-message-parser.js";
 
 export type BrainstormDraftView = {
   id: string;
@@ -340,7 +346,13 @@ export class BrainstormService {
         structuredPayloadJson: null,
         derivedUpdatesJson: null
       });
-      const draftUpdate = this.mapInteractiveBrainstormDraftPatch(agentOutput.draftPatch);
+      const adapterDraftUpdate = this.mapInteractiveBrainstormDraftPatch(agentOutput.draftPatch);
+      const extraction = extractLabeledBrainstormLists(message);
+      const draftUpdate = this.augmentDraftUpdateWithMessageExtraction(
+        adapterDraftUpdate,
+        previousDraft,
+        extraction
+      );
       const nextDraft = this.options.deps.brainstormDraftRepository.createRevision(previousDraft, {
         ...draftUpdate,
         status: this.computeBrainstormDraftStatus({
@@ -505,7 +517,13 @@ export class BrainstormService {
       "Return only structured brainstorm updates grounded in the provided item, draft, and chat history.",
       "Prefer additive updates and preserve existing intent unless the latest user message clearly changes it.",
       "If the user message is ambiguous, keep the patch narrow and set needsStructuredFollowUp=true with a short hint.",
-      "Do not claim workflow transitions. Suggest them only through the structured response."
+      "Do not claim workflow transitions. Suggest them only through the structured response.",
+      "",
+      "Structured extraction rules (mandatory):",
+      "- When the user message contains lists of target users, use cases, constraints, non-goals, risks, or assumptions — whether inline (e.g. \"users: a; b\") or bulleted across multiple lines — route EACH entry into the matching draftPatch array (targetUsers, useCases, constraints, nonGoals, risks, assumptions).",
+      "- Never copy list content into scopeNotes. scopeNotes is reserved for free-form context that does not fit any of the structured fields.",
+      "- Recognize common label synonyms: users/actors → targetUsers; scenarios → useCases; out of scope → nonGoals.",
+      "- If the user message is mostly a labeled plan (multiple labeled sections), extract every section even if it enlarges the patch."
     ].join("\n");
   }
 
@@ -557,6 +575,45 @@ export class BrainstormService {
     assignList("openQuestionsJson", patch.openQuestions);
     assignList("candidateDirectionsJson", patch.candidateDirections);
     assignList("assumptionsJson", patch.assumptions);
+    return result;
+  }
+
+  private augmentDraftUpdateWithMessageExtraction(
+    adapterUpdate: Partial<BrainstormDraft>,
+    previousDraft: BrainstormDraft,
+    extraction: BrainstormExtraction
+  ): Partial<BrainstormDraft> {
+    if (!hasAnyExtraction(extraction)) {
+      return adapterUpdate;
+    }
+    const fieldMap: Record<
+      BrainstormExtractionField,
+      "targetUsersJson" | "useCasesJson" | "constraintsJson" | "nonGoalsJson" | "risksJson" | "assumptionsJson"
+    > = {
+      targetUsers: "targetUsersJson",
+      useCases: "useCasesJson",
+      constraints: "constraintsJson",
+      nonGoals: "nonGoalsJson",
+      risks: "risksJson",
+      assumptions: "assumptionsJson"
+    };
+    const result: Partial<BrainstormDraft> = { ...adapterUpdate };
+    for (const field of Object.keys(extraction) as BrainstormExtractionField[]) {
+      const entries = extraction[field];
+      if (entries.length === 0) {
+        continue;
+      }
+      const jsonKey = fieldMap[field];
+      const adapterValue = adapterUpdate[jsonKey];
+      const previousValue = previousDraft[jsonKey];
+      const existingEntries = adapterValue !== undefined
+        ? (JSON.parse(adapterValue) as string[])
+        : (JSON.parse(previousValue) as string[]);
+      if (existingEntries.length > 0) {
+        continue;
+      }
+      result[jsonKey] = JSON.stringify(this.normalizeBrainstormEntries(entries));
+    }
     return result;
   }
 

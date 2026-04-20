@@ -1014,6 +1014,66 @@ describe("workflow service", () => {
     }
   });
 
+  it("extracts labeled lists from bulleted chat messages when the adapter leaves fields empty", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const item = createWorkspaceItem(context, {
+        title: "Bulleted Brainstorm",
+        description: "Plan-like chat input"
+      });
+      const started = context.workflowService.startBrainstormSession(item.id);
+
+      const chatted = await context.workflowService.chatBrainstorm(
+        started.sessionId,
+        [
+          "Here is the plan for the next milestone.",
+          "",
+          "Target users:",
+          "- workflow operator",
+          "- reviewer",
+          "",
+          "Use cases:",
+          "- review overlay",
+          "- browse inbox",
+          "- inspect runs and artifacts",
+          "",
+          "Constraints:",
+          "- must run offline",
+          "",
+          "Non-goals:",
+          "- multi-tenant sharing",
+          "",
+          "Risks:",
+          "- unbounded artifact storage"
+        ].join("\n")
+      ) as {
+        draft: {
+          targetUsers: string[];
+          useCases: string[];
+          constraints: string[];
+          nonGoals: string[];
+          risks: string[];
+          scopeNotes: string | null;
+        };
+      };
+
+      expect(chatted.draft.targetUsers).toContain("workflow operator");
+      expect(chatted.draft.targetUsers).toContain("reviewer");
+      expect(chatted.draft.useCases).toContain("review overlay");
+      expect(chatted.draft.useCases).toContain("browse inbox");
+      expect(chatted.draft.useCases).toContain("inspect runs and artifacts");
+      expect(chatted.draft.constraints).toContain("must run offline");
+      expect(chatted.draft.nonGoals).toContain("multi-tenant sharing");
+      expect(chatted.draft.risks).toContain("unbounded artifact storage");
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("shows the latest brainstorm session by item without reopening a resolved session", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
     const dbPath = join(root, "app.sqlite");
