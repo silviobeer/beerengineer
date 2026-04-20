@@ -75,6 +75,30 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, ms));
 }
 
+function resolveOptionalList(values: string[], clear?: boolean): string[] | undefined {
+  if (values.length > 0) {
+    return values;
+  }
+  return clear ? [] : undefined;
+}
+
+function buildCliErrorPayload(error: unknown): { error: { code: string; message: string } } {
+  if (error instanceof AppError) {
+    return {
+      error: {
+        code: error.code,
+        message: error.message
+      }
+    };
+  }
+  return {
+    error: {
+      code: "UNEXPECTED_ERROR",
+      message: error instanceof Error ? error.message : String(error)
+    }
+  };
+}
+
 function formatExecutionCompactSummary(compact: {
   project: { code: string; title: string };
   implementationPlan: { version: number; status: string };
@@ -104,9 +128,7 @@ function formatExecutionCompactSummary(compact: {
   ];
 
   for (const wave of compact.waves) {
-    lines.push("");
-    lines.push(`Wave ${wave.waveCode} [${wave.status}] ${wave.completedStoryCount}/${wave.storyCount} completed`);
-    lines.push(`Goal: ${wave.goal}`);
+    lines.push("", `Wave ${wave.waveCode} [${wave.status}] ${wave.completedStoryCount}/${wave.storyCount} completed`, `Goal: ${wave.goal}`);
     for (const story of wave.stories) {
       const suffix = story.blockers.length > 0 ? ` blockers=${story.blockers.join(",")}` : "";
       lines.push(`- ${story.storyCode} [${story.status}] phase=${story.lastPhase}${suffix}`);
@@ -301,22 +323,20 @@ program
       clearRecommendedDirection?: boolean;
       clearScopeNotes?: boolean;
     }>(({ workflowService }, options) => {
-      const resolveList = (values: string[], clear?: boolean): string[] | undefined =>
-        values.length > 0 ? values : clear ? [] : undefined;
       console.log(
         JSON.stringify(
           workflowService.updateBrainstormDraft({
             sessionId: options.sessionId,
             problem: options.problem,
             coreOutcome: options.coreOutcome,
-            targetUsers: resolveList(options.targetUser, options.clearTargetUsers),
-            useCases: resolveList(options.useCase, options.clearUseCases),
-            constraints: resolveList(options.constraint, options.clearConstraints),
-            nonGoals: resolveList(options.nonGoal, options.clearNonGoals),
-            risks: resolveList(options.risk, options.clearRisks),
-            openQuestions: resolveList(options.openQuestion, options.clearOpenQuestions),
-            candidateDirections: resolveList(options.candidateDirection, options.clearCandidateDirections),
-            assumptions: resolveList(options.assumption, options.clearAssumptions),
+            targetUsers: resolveOptionalList(options.targetUser, options.clearTargetUsers),
+            useCases: resolveOptionalList(options.useCase, options.clearUseCases),
+            constraints: resolveOptionalList(options.constraint, options.clearConstraints),
+            nonGoals: resolveOptionalList(options.nonGoal, options.clearNonGoals),
+            risks: resolveOptionalList(options.risk, options.clearRisks),
+            openQuestions: resolveOptionalList(options.openQuestion, options.clearOpenQuestions),
+            candidateDirections: resolveOptionalList(options.candidateDirection, options.clearCandidateDirections),
+            assumptions: resolveOptionalList(options.assumption, options.clearAssumptions),
             recommendedDirection: options.clearRecommendedDirection ? null : options.recommendedDirection,
             scopeNotes: options.clearScopeNotes ? null : options.scopeNotes
           }),
@@ -1046,21 +1066,10 @@ program
       console.log(JSON.stringify(sessions, null, 2));
     })
   );
-program.parseAsync(process.argv).catch((error: unknown) => {
-  const payload =
-    error instanceof AppError
-      ? {
-          error: {
-            code: error.code,
-            message: error.message
-          }
-        }
-      : {
-          error: {
-            code: "UNEXPECTED_ERROR",
-            message: error instanceof Error ? error.message : String(error)
-          }
-        };
+try {
+  await program.parseAsync(process.argv);
+} catch (error: unknown) {
+  const payload = buildCliErrorPayload(error);
   console.error(JSON.stringify(payload, null, 2));
   process.exitCode = 1;
-});
+}

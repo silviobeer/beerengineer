@@ -213,35 +213,49 @@ export class WorkflowOutputImporters {
       const waveCodeSet = new Set<string>();
 
       parsed.waves.forEach((wave, waveIndex) => {
-        if (waveCodeSet.has(wave.waveCode)) {
-          throw new Error(`Duplicate wave code ${wave.waveCode}`);
-        }
+        this.assertPlanningImportCondition(
+          !waveCodeSet.has(wave.waveCode),
+          "PLANNING_DUPLICATE_WAVE_CODE",
+          `Duplicate wave code ${wave.waveCode}`
+        );
         waveCodeSet.add(wave.waveCode);
-        if (wave.stories.length === 0) {
-          throw new Error(`Wave ${wave.waveCode} must contain at least one story`);
-        }
+        this.assertPlanningImportCondition(
+          wave.stories.length > 0,
+          "PLANNING_EMPTY_WAVE",
+          `Wave ${wave.waveCode} must contain at least one story`
+        );
         wave.stories.forEach((plannedStory) => {
-          if (!storyByCode.has(plannedStory.storyCode)) {
-            throw new Error(`Unknown story code ${plannedStory.storyCode} in wave ${wave.waveCode}`);
-          }
-          if (assignedStoryCodes.has(plannedStory.storyCode)) {
-            throw new Error(`Story ${plannedStory.storyCode} is assigned more than once`);
-          }
+          this.assertPlanningImportCondition(
+            storyByCode.has(plannedStory.storyCode),
+            "PLANNING_UNKNOWN_STORY_CODE",
+            `Unknown story code ${plannedStory.storyCode} in wave ${wave.waveCode}`
+          );
+          this.assertPlanningImportCondition(
+            !assignedStoryCodes.has(plannedStory.storyCode),
+            "PLANNING_DUPLICATE_STORY_ASSIGNMENT",
+            `Story ${plannedStory.storyCode} is assigned more than once`
+          );
           assignedStoryCodes.add(plannedStory.storyCode);
           plannedStory.dependsOnStoryCodes.forEach((dependencyCode) => {
-            if (!storyByCode.has(dependencyCode)) {
-              throw new Error(`Unknown story dependency ${dependencyCode} for ${plannedStory.storyCode}`);
-            }
+            this.assertPlanningImportCondition(
+              storyByCode.has(dependencyCode),
+              "PLANNING_UNKNOWN_STORY_DEPENDENCY",
+              `Unknown story dependency ${dependencyCode} for ${plannedStory.storyCode}`
+            );
           });
         });
-        if (waveIndex === 0 && wave.dependsOn.length > 0) {
-          throw new Error(`First wave ${wave.waveCode} cannot depend on earlier waves`);
-        }
+        this.assertPlanningImportCondition(
+          waveIndex !== 0 || wave.dependsOn.length === 0,
+          "PLANNING_INVALID_FIRST_WAVE_DEPENDENCY",
+          `First wave ${wave.waveCode} cannot depend on earlier waves`
+        );
       });
 
-      if (assignedStoryCodes.size !== stories.length) {
-        throw new Error("Implementation plan must assign every project story exactly once");
-      }
+      this.assertPlanningImportCondition(
+        assignedStoryCodes.size === stories.length,
+        "PLANNING_INCOMPLETE_STORY_ASSIGNMENT",
+        "Implementation plan must assign every project story exactly once"
+      );
 
       const waveIndexByCode = new Map(parsed.waves.map((wave, index) => [wave.waveCode, index]));
       const storyWaveIndexByCode = new Map<string, number>();
@@ -256,21 +270,27 @@ export class WorkflowOutputImporters {
           plannedStory.dependsOnStoryCodes.forEach((dependencyCode) => {
             const dependencyWaveIndex = storyWaveIndexByCode.get(dependencyCode);
             const plannedWaveIndex = storyWaveIndexByCode.get(plannedStory.storyCode);
-            if (dependencyWaveIndex === undefined || plannedWaveIndex === undefined) {
-              throw new Error(`Missing wave assignment for story dependency ${dependencyCode}`);
-            }
-            if (dependencyWaveIndex > plannedWaveIndex) {
-              throw new Error(`Story ${plannedStory.storyCode} depends on later story ${dependencyCode}`);
-            }
+            this.assertPlanningImportCondition(
+              dependencyWaveIndex !== undefined && plannedWaveIndex !== undefined,
+              "PLANNING_MISSING_DEPENDENCY_ASSIGNMENT",
+              `Missing wave assignment for story dependency ${dependencyCode}`
+            );
+            this.assertPlanningImportCondition(
+              dependencyWaveIndex <= plannedWaveIndex,
+              "PLANNING_FORWARD_STORY_DEPENDENCY",
+              `Story ${plannedStory.storyCode} depends on later story ${dependencyCode}`
+            );
           });
         });
 
         wave.dependsOn.forEach((dependencyWaveCode) => {
           const dependencyIndex = waveIndexByCode.get(dependencyWaveCode);
           const currentIndex = waveIndexByCode.get(wave.waveCode);
-          if (dependencyIndex === undefined || currentIndex === undefined || dependencyIndex >= currentIndex) {
-            throw new Error(`Wave ${wave.waveCode} depends on unknown or non-earlier wave ${dependencyWaveCode}`);
-          }
+          this.assertPlanningImportCondition(
+            dependencyIndex !== undefined && currentIndex !== undefined && dependencyIndex < currentIndex,
+            "PLANNING_INVALID_WAVE_DEPENDENCY",
+            `Wave ${wave.waveCode} depends on unknown or non-earlier wave ${dependencyWaveCode}`
+          );
         });
       });
 
@@ -356,6 +376,12 @@ export class WorkflowOutputImporters {
   private extractHeading(markdown: string): string {
     const line = markdown.split("\n").find((entry) => entry.startsWith("# "));
     return line ? line.replace(/^#\s+/, "") : "Concept";
+  }
+
+  private assertPlanningImportCondition(condition: unknown, code: string, message: string): asserts condition {
+    if (!condition) {
+      throw new AppError(code, message);
+    }
   }
 
   private buildReviewOutcome(stageKey: StageKey, error: unknown): ImportOutcome {

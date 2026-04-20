@@ -11,7 +11,7 @@ type GitWorkflowContext = {
 };
 
 function sanitizeRefSegment(value: string): string {
-  return value.replace(/[^A-Za-z0-9._/-]+/g, "-");
+  return value.replaceAll(/[^A-Za-z0-9._/-]+/g, "-");
 }
 
 export class GitWorkflowService {
@@ -58,11 +58,7 @@ export class GitWorkflowService {
 
   private ensureBranch(context: GitWorkflowContext): GitBranchMetadata {
     const baseRef = context.storyCode ? this.describeProjectBranch(context.projectCode) : "main";
-    const branchName = context.findingRunId
-      ? this.describeStoryRemediationBranch(context.storyCode!, context.findingRunId)
-      : context.storyCode
-        ? this.describeStoryBranch(context.projectCode, context.storyCode)
-        : this.describeProjectBranch(context.projectCode);
+    const branchName = this.describeBranchName(context);
 
     if (!this.isGitRepository()) {
       return this.simulatedMetadata(
@@ -107,6 +103,16 @@ export class GitWorkflowService {
         error instanceof Error ? error.message : String(error)
       );
     }
+  }
+
+  private describeBranchName(context: GitWorkflowContext): string {
+    if (context.findingRunId && context.storyCode) {
+      return this.describeStoryRemediationBranch(context.storyCode, context.findingRunId);
+    }
+    if (context.storyCode) {
+      return this.describeStoryBranch(context.projectCode, context.storyCode);
+    }
+    return this.describeProjectBranch(context.projectCode);
   }
 
   private simulatedMetadata(

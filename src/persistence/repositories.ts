@@ -6,11 +6,8 @@ import type {
   AppVerificationRunStatus,
   ArchitecturePlan,
   BrainstormDraft,
-  BrainstormDraftStatus,
   BrainstormMessage,
   BrainstormSession,
-  BrainstormSessionMode,
-  BrainstormSessionStatus,
   BoardColumn,
   Concept,
   DocumentationAgentSession,
@@ -126,6 +123,68 @@ function stringifyStringList(value: string[]): string {
   return JSON.stringify(value);
 }
 
+function definedField<TKey extends string, TValue>(key: TKey, value: TValue | undefined): Partial<Record<TKey, TValue>> {
+  if (value === undefined) {
+    return {};
+  }
+  return { [key]: value } as Partial<Record<TKey, TValue>>;
+}
+
+function valueOrCurrent<TValue>(value: TValue | undefined, current: TValue): TValue {
+  if (value === undefined) {
+    return current;
+  }
+  return value;
+}
+
+type OptionalQueryRow<TValue> = TValue | undefined;
+
+type WorkspaceCreateInput = Omit<Workspace, "id" | "createdAt" | "updatedAt">;
+type WorkspaceSettingsCreateInput = Omit<WorkspaceSettings, "createdAt" | "updatedAt">;
+type BrainstormSessionCreateInput = Omit<
+  BrainstormSession,
+  "id" | "startedAt" | "updatedAt" | "resolvedAt" | "lastAssistantMessageId" | "lastUserMessageId"
+>;
+type BrainstormMessageCreateInput = Omit<BrainstormMessage, "id" | "createdAt">;
+type BrainstormDraftCreateInput = Omit<BrainstormDraft, "id" | "lastUpdatedAt">;
+
+type ConceptCreateInput = Omit<Concept, "id" | "createdAt" | "updatedAt">;
+
+type ProjectCreateInput = Omit<Project, "id" | "createdAt" | "updatedAt">;
+type UserStoryCreateInput = Omit<UserStory, "id" | "createdAt" | "updatedAt">;
+type AcceptanceCriterionCreateInput = Omit<AcceptanceCriterion, "id" | "createdAt" | "updatedAt">;
+type ArchitecturePlanCreateInput = Omit<ArchitecturePlan, "id" | "createdAt" | "updatedAt">;
+type ImplementationPlanCreateInput = Omit<ImplementationPlan, "id" | "createdAt" | "updatedAt">;
+type WaveCreateInput = Omit<Wave, "id" | "createdAt" | "updatedAt">;
+type WaveStoryCreateInput = Omit<WaveStory, "id" | "createdAt" | "updatedAt">;
+type ProjectExecutionContextUpsertInput = Omit<ProjectExecutionContext, "id" | "createdAt" | "updatedAt">;
+
+type WaveExecutionCreateInput = Omit<WaveExecution, "id" | "createdAt" | "updatedAt" | "completedAt">;
+
+type WaveStoryExecutionCreateInput = Omit<WaveStoryExecution, "id" | "createdAt" | "updatedAt" | "completedAt">;
+
+type WaveStoryTestRunCreateInput = Omit<WaveStoryTestRun, "id" | "createdAt" | "updatedAt" | "completedAt">;
+type TestAgentSessionCreateInput = Omit<TestAgentSession, "id" | "createdAt" | "updatedAt">;
+type ExecutionAgentSessionCreateInput = Omit<ExecutionAgentSession, "id" | "createdAt" | "updatedAt">;
+type VerificationRunCreateInput = Omit<VerificationRun, "id" | "createdAt" | "updatedAt">;
+type StoryReviewRunCreateInput = Omit<StoryReviewRun, "id" | "createdAt" | "updatedAt" | "completedAt">;
+type StoryReviewFindingCreateInput = Omit<StoryReviewFinding, "id" | "createdAt" | "updatedAt">;
+type StoryReviewAgentSessionCreateInput = Omit<StoryReviewAgentSession, "id" | "createdAt" | "updatedAt">;
+type QaRunCreateInput = Omit<QaRun, "id" | "createdAt" | "updatedAt" | "completedAt">;
+type QaFindingCreateInput = Omit<QaFinding, "id" | "createdAt" | "updatedAt">;
+type QaAgentSessionCreateInput = Omit<QaAgentSession, "id" | "createdAt" | "updatedAt">;
+type DocumentationRunCreateInput = Omit<DocumentationRun, "id" | "createdAt" | "updatedAt" | "completedAt">;
+type DocumentationAgentSessionCreateInput = Omit<DocumentationAgentSession, "id" | "createdAt" | "updatedAt">;
+type ArtifactCreateInput = Omit<ArtifactRecord, "id" | "createdAt">;
+type StageRunCreateInput = Omit<StageRunRecord, "id" | "createdAt" | "updatedAt" | "completedAt">;
+type AgentSessionCreateInput = Omit<AgentSessionRecord, "id" | "createdAt" | "updatedAt">;
+
+type LatestItemCodeRow = {
+  code: string | null;
+  createdAt: number;
+  id: string;
+};
+
 export class WorkspaceRepository {
   public constructor(private readonly db: DatabaseClient) {}
 
@@ -141,7 +200,7 @@ export class WorkspaceRepository {
     return this.db.select().from(workspaces).orderBy(workspaces.createdAt, workspaces.id).all() as Workspace[];
   }
 
-  public create(input: Omit<Workspace, "id" | "createdAt" | "updatedAt">): Workspace {
+  public create(input: WorkspaceCreateInput): Workspace {
     const timestamp = now();
     const row: Workspace = {
       ...input,
@@ -188,7 +247,7 @@ export class WorkspaceSettingsRepository {
     ) ?? null;
   }
 
-  public create(input: Omit<WorkspaceSettings, "createdAt" | "updatedAt">): WorkspaceSettings {
+  public create(input: WorkspaceSettingsCreateInput): WorkspaceSettings {
     const timestamp = now();
     const row: WorkspaceSettings = {
       ...input,
@@ -271,7 +330,7 @@ export class BrainstormSessionRepository {
     ) ?? null;
   }
 
-  public create(input: Omit<BrainstormSession, "id" | "startedAt" | "updatedAt" | "resolvedAt" | "lastAssistantMessageId" | "lastUserMessageId">): BrainstormSession {
+  public create(input: BrainstormSessionCreateInput): BrainstormSession {
     const timestamp = now();
     const row: BrainstormSession = {
       ...input,
@@ -293,11 +352,11 @@ export class BrainstormSessionRepository {
     this.db
       .update(brainstormSessions)
       .set({
-        ...(input.status !== undefined ? { status: input.status } : {}),
-        ...(input.mode !== undefined ? { mode: input.mode } : {}),
-        ...(input.resolvedAt !== undefined ? { resolvedAt: input.resolvedAt } : {}),
-        ...(input.lastAssistantMessageId !== undefined ? { lastAssistantMessageId: input.lastAssistantMessageId } : {}),
-        ...(input.lastUserMessageId !== undefined ? { lastUserMessageId: input.lastUserMessageId } : {}),
+        ...definedField("status", input.status),
+        ...definedField("mode", input.mode),
+        ...definedField("resolvedAt", input.resolvedAt),
+        ...definedField("lastAssistantMessageId", input.lastAssistantMessageId),
+        ...definedField("lastUserMessageId", input.lastUserMessageId),
         updatedAt: now()
       })
       .where(eq(brainstormSessions.id, id))
@@ -308,7 +367,7 @@ export class BrainstormSessionRepository {
 export class BrainstormMessageRepository {
   public constructor(private readonly db: DatabaseClient) {}
 
-  public create(input: Omit<BrainstormMessage, "id" | "createdAt">): BrainstormMessage {
+  public create(input: BrainstormMessageCreateInput): BrainstormMessage {
     const row: BrainstormMessage = {
       ...input,
       id: createId("brainstorm_message"),
@@ -343,7 +402,7 @@ export class BrainstormDraftRepository {
     ) ?? null;
   }
 
-  public create(input: Omit<BrainstormDraft, "id" | "lastUpdatedAt">): BrainstormDraft {
+  public create(input: BrainstormDraftCreateInput): BrainstormDraft {
     const row: BrainstormDraft = {
       ...input,
       id: createId("brainstorm_draft"),
@@ -380,19 +439,19 @@ export class BrainstormDraftRepository {
       sessionId: previous.sessionId,
       revision: previous.revision + 1,
       status: input.status ?? previous.status,
-      problem: input.problem !== undefined ? input.problem : previous.problem,
+      problem: valueOrCurrent(input.problem, previous.problem),
       targetUsersJson: input.targetUsersJson ?? previous.targetUsersJson,
-      coreOutcome: input.coreOutcome !== undefined ? input.coreOutcome : previous.coreOutcome,
+      coreOutcome: valueOrCurrent(input.coreOutcome, previous.coreOutcome),
       useCasesJson: input.useCasesJson ?? previous.useCasesJson,
       constraintsJson: input.constraintsJson ?? previous.constraintsJson,
       nonGoalsJson: input.nonGoalsJson ?? previous.nonGoalsJson,
       risksJson: input.risksJson ?? previous.risksJson,
       openQuestionsJson: input.openQuestionsJson ?? previous.openQuestionsJson,
       candidateDirectionsJson: input.candidateDirectionsJson ?? previous.candidateDirectionsJson,
-      recommendedDirection: input.recommendedDirection !== undefined ? input.recommendedDirection : previous.recommendedDirection,
-      scopeNotes: input.scopeNotes !== undefined ? input.scopeNotes : previous.scopeNotes,
+      recommendedDirection: valueOrCurrent(input.recommendedDirection, previous.recommendedDirection),
+      scopeNotes: valueOrCurrent(input.scopeNotes, previous.scopeNotes),
       assumptionsJson: input.assumptionsJson ?? previous.assumptionsJson,
-      lastUpdatedFromMessageId: input.lastUpdatedFromMessageId !== undefined ? input.lastUpdatedFromMessageId : previous.lastUpdatedFromMessageId
+      lastUpdatedFromMessageId: valueOrCurrent(input.lastUpdatedFromMessageId, previous.lastUpdatedFromMessageId)
     });
   }
 }
@@ -527,7 +586,7 @@ export class ItemRepository {
       .where(eq(items.workspaceId, workspaceId))
       .orderBy(desc(items.createdAt), desc(items.id))
       .limit(1)
-      .get() as { code: string | null; createdAt: number; id: string } | undefined;
+      .get() as OptionalQueryRow<LatestItemCodeRow>;
 
     if (!latestCodeRow?.code) {
       return formatItemCode(1);
@@ -580,7 +639,7 @@ export class ConceptRepository {
     ) ?? null;
   }
 
-  public create(input: Omit<Concept, "id" | "createdAt" | "updatedAt">): Concept {
+  public create(input: ConceptCreateInput): Concept {
     const timestamp = now();
     const concept: Concept = {
       ...input,
@@ -612,7 +671,7 @@ export class ProjectRepository {
     return (this.db.select().from(projects).where(eq(projects.id, id)).get() as Project | undefined) ?? null;
   }
 
-  public createMany(input: Array<Omit<Project, "id" | "createdAt" | "updatedAt">>): Project[] {
+  public createMany(input: ProjectCreateInput[]): Project[] {
     const created = input.map((project) => ({
       ...project,
       id: createId("project"),
@@ -640,7 +699,7 @@ export class UserStoryRepository {
     return (this.db.select().from(userStories).where(eq(userStories.id, id)).get() as UserStory | undefined) ?? null;
   }
 
-  public createMany(input: Array<Omit<UserStory, "id" | "createdAt" | "updatedAt">>): UserStory[] {
+  public createMany(input: UserStoryCreateInput[]): UserStory[] {
     const timestamp = now();
     const rows = input.map((story) => ({
       ...story,
@@ -678,13 +737,13 @@ export class UserStoryRepository {
     this.db
       .update(userStories)
       .set({
-        ...(input.title !== undefined ? { title: input.title } : {}),
-        ...(input.description !== undefined ? { description: input.description } : {}),
-        ...(input.actor !== undefined ? { actor: input.actor } : {}),
-        ...(input.goal !== undefined ? { goal: input.goal } : {}),
-        ...(input.benefit !== undefined ? { benefit: input.benefit } : {}),
-        ...(input.priority !== undefined ? { priority: input.priority } : {}),
-        ...(input.status !== undefined ? { status: input.status } : {}),
+        ...definedField("title", input.title),
+        ...definedField("description", input.description),
+        ...definedField("actor", input.actor),
+        ...definedField("goal", input.goal),
+        ...definedField("benefit", input.benefit),
+        ...definedField("priority", input.priority),
+        ...definedField("status", input.status),
         updatedAt: now()
       })
       .where(eq(userStories.id, id))
@@ -740,7 +799,7 @@ export class AcceptanceCriterionRepository {
       .all() as AcceptanceCriterion[];
   }
 
-  public createMany(input: Array<Omit<AcceptanceCriterion, "id" | "createdAt" | "updatedAt">>): AcceptanceCriterion[] {
+  public createMany(input: AcceptanceCriterionCreateInput[]): AcceptanceCriterion[] {
     const timestamp = now();
     const rows = input.map((criterion) => ({
       ...criterion,
@@ -771,7 +830,7 @@ export class ArchitecturePlanRepository {
     ) ?? null;
   }
 
-  public create(input: Omit<ArchitecturePlan, "id" | "createdAt" | "updatedAt">): ArchitecturePlan {
+  public create(input: ArchitecturePlanCreateInput): ArchitecturePlan {
     const timestamp = now();
     const row: ArchitecturePlan = {
       ...input,
@@ -795,6 +854,10 @@ export class ArchitecturePlanRepository {
 export class ImplementationPlanRepository {
   public constructor(private readonly db: DatabaseClient) {}
 
+  public getById(id: string): ImplementationPlan | null {
+    return this.db.select().from(implementationPlans).where(eq(implementationPlans.id, id)).get() as ImplementationPlan | null;
+  }
+
   public getLatestByProjectId(projectId: string): ImplementationPlan | null {
     return (
       this.db
@@ -815,7 +878,7 @@ export class ImplementationPlanRepository {
       .filter((plan): plan is ImplementationPlan => plan !== null);
   }
 
-  public create(input: Omit<ImplementationPlan, "id" | "createdAt" | "updatedAt">): ImplementationPlan {
+  public create(input: ImplementationPlanCreateInput): ImplementationPlan {
     const timestamp = now();
     const row: ImplementationPlan = {
       ...input,
@@ -852,7 +915,7 @@ export class WaveRepository {
       .all() as Wave[];
   }
 
-  public createMany(input: Array<Omit<Wave, "id" | "createdAt" | "updatedAt">>): Wave[] {
+  public createMany(input: WaveCreateInput[]): Wave[] {
     const timestamp = now();
     const rows = input.map((wave) => ({
       ...wave,
@@ -904,7 +967,7 @@ export class WaveStoryRepository {
       .all() as WaveStory[];
   }
 
-  public createMany(input: Array<Omit<WaveStory, "id" | "createdAt" | "updatedAt">>): WaveStory[] {
+  public createMany(input: WaveStoryCreateInput[]): WaveStory[] {
     const timestamp = now();
     const rows = input.map((waveStory) => ({
       ...waveStory,
@@ -977,7 +1040,7 @@ export class ProjectExecutionContextRepository {
     return row ? mapProjectExecutionContext(row) : null;
   }
 
-  public upsert(input: Omit<ProjectExecutionContext, "id" | "createdAt" | "updatedAt">): ProjectExecutionContext {
+  public upsert(input: ProjectExecutionContextUpsertInput): ProjectExecutionContext {
     const existing = this.getByProjectId(input.projectId);
     const timestamp = now();
     if (existing) {
@@ -1022,7 +1085,7 @@ export class WaveExecutionRepository {
   public constructor(private readonly db: DatabaseClient) {}
 
   public getById(id: string): WaveExecution | null {
-    return (this.db.select().from(waveExecutions).where(eq(waveExecutions.id, id)).get() as WaveExecution | undefined) ?? null;
+    return (this.db.select().from(waveExecutions).where(eq(waveExecutions.id, id)).get() as OptionalQueryRow<WaveExecution>) ?? null;
   }
 
   public listByWaveId(waveId: string): WaveExecution[] {
@@ -1042,11 +1105,11 @@ export class WaveExecutionRepository {
         .where(eq(waveExecutions.waveId, waveId))
         .orderBy(desc(waveExecutions.attempt))
         .limit(1)
-        .get() as WaveExecution | undefined
+        .get() as OptionalQueryRow<WaveExecution>
     ) ?? null;
   }
 
-  public create(input: Omit<WaveExecution, "id" | "createdAt" | "updatedAt" | "completedAt">): WaveExecution {
+  public create(input: WaveExecutionCreateInput): WaveExecution {
     const timestamp = now();
     const row: WaveExecution = {
       ...input,
@@ -1122,7 +1185,7 @@ export class WaveStoryExecutionRepository {
       .filter((execution): execution is WaveStoryExecution => execution !== null);
   }
 
-  public create(input: Omit<WaveStoryExecution, "id" | "createdAt" | "updatedAt" | "completedAt">): WaveStoryExecution {
+  public create(input: WaveStoryExecutionCreateInput): WaveStoryExecution {
     const timestamp = now();
     const row: WaveStoryExecution = {
       ...input,
@@ -1207,7 +1270,7 @@ export class WaveStoryTestRunRepository {
       .filter((testRun): testRun is WaveStoryTestRun => testRun !== null);
   }
 
-  public create(input: Omit<WaveStoryTestRun, "id" | "createdAt" | "updatedAt" | "completedAt">): WaveStoryTestRun {
+  public create(input: WaveStoryTestRunCreateInput): WaveStoryTestRun {
     const timestamp = now();
     const row: WaveStoryTestRun = {
       ...input,
@@ -1242,7 +1305,7 @@ export class WaveStoryTestRunRepository {
 export class TestAgentSessionRepository {
   public constructor(private readonly db: DatabaseClient) {}
 
-  public create(input: Omit<TestAgentSession, "id" | "createdAt" | "updatedAt">): TestAgentSession {
+  public create(input: TestAgentSessionCreateInput): TestAgentSession {
     const timestamp = now();
     const row: TestAgentSession = {
       ...input,
@@ -1267,7 +1330,7 @@ export class TestAgentSessionRepository {
 export class ExecutionAgentSessionRepository {
   public constructor(private readonly db: DatabaseClient) {}
 
-  public create(input: Omit<ExecutionAgentSession, "id" | "createdAt" | "updatedAt">): ExecutionAgentSession {
+  public create(input: ExecutionAgentSessionCreateInput): ExecutionAgentSession {
     const timestamp = now();
     const row: ExecutionAgentSession = {
       ...input,
@@ -1292,7 +1355,7 @@ export class ExecutionAgentSessionRepository {
 export class VerificationRunRepository {
   public constructor(private readonly db: DatabaseClient) {}
 
-  public create(input: Omit<VerificationRun, "id" | "createdAt" | "updatedAt">): VerificationRun {
+  public create(input: VerificationRunCreateInput): VerificationRun {
     const timestamp = now();
     const row: VerificationRun = {
       ...input,
@@ -1470,7 +1533,7 @@ export class StoryReviewRunRepository {
       .filter((run): run is StoryReviewRun => run !== null);
   }
 
-  public create(input: Omit<StoryReviewRun, "id" | "createdAt" | "updatedAt" | "completedAt">): StoryReviewRun {
+  public create(input: StoryReviewRunCreateInput): StoryReviewRun {
     const timestamp = now();
     const row: StoryReviewRun = {
       ...input,
@@ -1515,7 +1578,7 @@ export class StoryReviewFindingRepository {
     return rows.map(mapStoryReviewFinding);
   }
 
-  public createMany(input: Array<Omit<StoryReviewFinding, "id" | "createdAt" | "updatedAt">>): StoryReviewFinding[] {
+  public createMany(input: StoryReviewFindingCreateInput[]): StoryReviewFinding[] {
     if (input.length === 0) {
       return [];
     }
@@ -1588,7 +1651,7 @@ export class StoryReviewFindingRepository {
 export class StoryReviewAgentSessionRepository {
   public constructor(private readonly db: DatabaseClient) {}
 
-  public create(input: Omit<StoryReviewAgentSession, "id" | "createdAt" | "updatedAt">): StoryReviewAgentSession {
+  public create(input: StoryReviewAgentSessionCreateInput): StoryReviewAgentSession {
     const timestamp = now();
     const row: StoryReviewAgentSession = {
       ...input,
@@ -1788,7 +1851,7 @@ export class QaRunRepository {
       .all() as QaRun[];
   }
 
-  public create(input: Omit<QaRun, "id" | "createdAt" | "updatedAt" | "completedAt">): QaRun {
+  public create(input: QaRunCreateInput): QaRun {
     const timestamp = now();
     const row: QaRun = {
       ...input,
@@ -1834,7 +1897,7 @@ export class QaFindingRepository {
     return rows.map(mapQaFinding);
   }
 
-  public createMany(input: Array<Omit<QaFinding, "id" | "createdAt" | "updatedAt">>): QaFinding[] {
+  public createMany(input: QaFindingCreateInput[]): QaFinding[] {
     if (input.length === 0) {
       return [];
     }
@@ -1866,7 +1929,7 @@ export class QaFindingRepository {
 export class QaAgentSessionRepository {
   public constructor(private readonly db: DatabaseClient) {}
 
-  public create(input: Omit<QaAgentSession, "id" | "createdAt" | "updatedAt">): QaAgentSession {
+  public create(input: QaAgentSessionCreateInput): QaAgentSession {
     const timestamp = now();
     const row: QaAgentSession = {
       ...input,
@@ -1927,7 +1990,7 @@ export class DocumentationRunRepository {
       .all() as DocumentationRun[];
   }
 
-  public create(input: Omit<DocumentationRun, "id" | "createdAt" | "updatedAt" | "completedAt">): DocumentationRun {
+  public create(input: DocumentationRunCreateInput): DocumentationRun {
     const timestamp = now();
     const row: DocumentationRun = {
       ...input,
@@ -1974,7 +2037,7 @@ export class DocumentationRunRepository {
 export class DocumentationAgentSessionRepository {
   public constructor(private readonly db: DatabaseClient) {}
 
-  public create(input: Omit<DocumentationAgentSession, "id" | "createdAt" | "updatedAt">): DocumentationAgentSession {
+  public create(input: DocumentationAgentSessionCreateInput): DocumentationAgentSession {
     const timestamp = now();
     const row: DocumentationAgentSession = {
       ...input,
@@ -2056,10 +2119,10 @@ export class InteractiveReviewSessionRepository {
     this.db
       .update(interactiveReviewSessions)
       .set({
-        ...(input.status !== undefined ? { status: input.status } : {}),
-        ...(input.resolvedAt !== undefined ? { resolvedAt: input.resolvedAt } : {}),
-        ...(input.lastAssistantMessageId !== undefined ? { lastAssistantMessageId: input.lastAssistantMessageId } : {}),
-        ...(input.lastUserMessageId !== undefined ? { lastUserMessageId: input.lastUserMessageId } : {}),
+        ...definedField("status", input.status),
+        ...definedField("resolvedAt", input.resolvedAt),
+        ...definedField("lastAssistantMessageId", input.lastAssistantMessageId),
+        ...definedField("lastUserMessageId", input.lastUserMessageId),
         updatedAt: now()
       })
       .where(eq(interactiveReviewSessions.id, id))
@@ -2135,11 +2198,11 @@ export class InteractiveReviewEntryRepository {
     this.db
       .update(interactiveReviewEntries)
       .set({
-        ...(input.status ? { status: input.status } : {}),
-        ...(input.summary !== undefined ? { summary: input.summary } : {}),
-        ...(input.changeRequest !== undefined ? { changeRequest: input.changeRequest } : {}),
-        ...(input.rationale !== undefined ? { rationale: input.rationale } : {}),
-        ...(input.severity !== undefined ? { severity: input.severity } : {}),
+        ...definedField("status", input.status),
+        ...definedField("summary", input.summary),
+        ...definedField("changeRequest", input.changeRequest),
+        ...definedField("rationale", input.rationale),
+        ...definedField("severity", input.severity),
         updatedAt: now()
       })
       .where(and(eq(interactiveReviewEntries.sessionId, sessionId), eq(interactiveReviewEntries.entryId, entryId)))
@@ -2210,7 +2273,7 @@ export type ArtifactRecord = {
 export class ArtifactRepository {
   public constructor(private readonly db: DatabaseClient) {}
 
-  public create(input: Omit<ArtifactRecord, "id" | "createdAt">): ArtifactRecord {
+  public create(input: ArtifactCreateInput): ArtifactRecord {
     const row: ArtifactRecord = {
       ...input,
       id: createId("artifact"),
@@ -2233,14 +2296,16 @@ export class ArtifactRepository {
   }
 
   public getLatestByKind(input: { itemId: string; projectId?: string | null; kind: string }): ArtifactRecord | null {
+    let projectFilter = null;
+    if (input.projectId === null) {
+      projectFilter = isNull(artifacts.projectId);
+    } else if (input.projectId !== undefined) {
+      projectFilter = eq(artifacts.projectId, input.projectId);
+    }
     const whereClause =
-      input.projectId === undefined
+      projectFilter === null
         ? and(eq(artifacts.itemId, input.itemId), eq(artifacts.kind, input.kind))
-        : and(
-            eq(artifacts.itemId, input.itemId),
-            eq(artifacts.kind, input.kind),
-            input.projectId === null ? isNull(artifacts.projectId) : eq(artifacts.projectId, input.projectId)
-          );
+        : and(eq(artifacts.itemId, input.itemId), eq(artifacts.kind, input.kind), projectFilter);
 
     return (
       this.db
@@ -2273,7 +2338,7 @@ export type StageRunRecord = {
 export class StageRunRepository {
   public constructor(private readonly db: DatabaseClient) {}
 
-  public create(input: Omit<StageRunRecord, "id" | "createdAt" | "updatedAt" | "completedAt">): StageRunRecord {
+  public create(input: StageRunCreateInput): StageRunRecord {
     const timestamp = now();
     const row: StageRunRecord = {
       ...input,
@@ -2339,7 +2404,7 @@ export type AgentSessionRecord = {
 export class AgentSessionRepository {
   public constructor(private readonly db: DatabaseClient) {}
 
-  public create(input: Omit<AgentSessionRecord, "id" | "createdAt" | "updatedAt">): AgentSessionRecord {
+  public create(input: AgentSessionCreateInput): AgentSessionRecord {
     const timestamp = now();
     const row: AgentSessionRecord = {
       ...input,

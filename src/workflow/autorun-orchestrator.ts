@@ -90,35 +90,13 @@ export class AutorunOrchestrator {
   private resolveNextItemDecision(itemId: string): AutorunDecision {
     const item = this.host.requireItem(itemId);
     if (item.phaseStatus === "failed") {
-      return {
-        kind: "stop",
-        finalStatus: "failed",
-        stopReason: "item_failed"
-      };
+      return this.stop("failed", "item_failed");
     }
 
     const concept = this.host.getLatestConceptByItemId(itemId);
     const latestBrainstormRun = this.host.getLatestStageRun({ itemId, stageKey: "brainstorm" });
     if (!concept) {
-      if (latestBrainstormRun?.status === "review_required") {
-        return {
-          kind: "stop",
-          finalStatus: "stopped",
-          stopReason: "brainstorm_review_required"
-        };
-      }
-      if (latestBrainstormRun?.status === "failed") {
-        return {
-          kind: "stop",
-          finalStatus: "failed",
-          stopReason: "brainstorm_failed"
-        };
-      }
-      return {
-        kind: "stop",
-        finalStatus: "stopped",
-        stopReason: "concept_missing"
-      };
+      return this.resolveMissingConceptDecision(latestBrainstormRun);
     }
 
     if (concept.status !== "approved" && concept.status !== "completed") {
@@ -149,11 +127,9 @@ export class AutorunOrchestrator {
 
     this.host.completeItemIfDeliveryFinished(itemId);
     const finalItem = this.host.requireItem(itemId);
-    return {
-      kind: "stop",
-      finalStatus: finalItem.currentColumn === "done" ? "completed" : "stopped",
-      stopReason: finalItem.currentColumn === "done" ? "item_completed" : "project_incomplete"
-    };
+    return finalItem.currentColumn === "done"
+      ? this.stop("completed", "item_completed")
+      : this.stop("stopped", "project_incomplete");
   }
 
   private resolveNextProjectDecision(projectId: string): AutorunDecision {
@@ -212,67 +188,13 @@ export class AutorunOrchestrator {
     }
 
     const latestQaRun = this.host.getLatestQaRunByProjectId(projectId);
-    if (!latestQaRun) {
-      return {
-        kind: "step",
-        action: "qa:start",
-        scopeType: "project",
-        scopeId: projectId,
-        execute: () => this.host.startQa(projectId)
-      };
-    }
-    if (latestQaRun.status === "failed") {
-      return {
-        kind: "stop",
-        finalStatus: "failed",
-        stopReason: "qa_failed"
-      };
-    }
-    if (latestQaRun.status === "review_required") {
-      return {
-        kind: "stop",
-        finalStatus: "stopped",
-        stopReason: "qa_review_required"
-      };
+    const qaDecision = this.resolveQaDecision(projectId, latestQaRun);
+    if (qaDecision) {
+      return qaDecision;
     }
 
     const latestDocumentationRun = this.host.getLatestDocumentationRunByProjectId(projectId);
-    if (!latestDocumentationRun || latestDocumentationRun.staleAt !== null) {
-      return {
-        kind: "step",
-        action: "documentation:start",
-        scopeType: "project",
-        scopeId: projectId,
-        execute: () => this.host.startDocumentation(projectId)
-      };
-    }
-    if (latestDocumentationRun.status === "failed") {
-      return {
-        kind: "stop",
-        finalStatus: "failed",
-        stopReason: "documentation_failed"
-      };
-    }
-    if (latestDocumentationRun.status === "review_required") {
-      return {
-        kind: "stop",
-        finalStatus: "stopped",
-        stopReason: "documentation_review_required"
-      };
-    }
-    if (latestDocumentationRun.status === "completed" && latestDocumentationRun.staleAt === null) {
-      return {
-        kind: "stop",
-        finalStatus: "completed",
-        stopReason: "project_completed"
-      };
-    }
-
-    return {
-      kind: "stop",
-      finalStatus: "stopped",
-      stopReason: "documentation_pending"
-    };
+    return this.resolveDocumentationDecision(projectId, latestDocumentationRun);
   }
 
   private resolveStageDecision(input: {
@@ -341,81 +263,171 @@ export class AutorunOrchestrator {
     let hasStartedExecution = false;
 
     for (const wave of execution.waves) {
-      if (wave.waveExecution) {
-        hasStartedExecution = true;
-        if (wave.waveExecution.status === "failed") {
-          return {
-            kind: "stop",
-            finalStatus: "failed",
-            stopReason: "execution_failed"
-          };
-        }
-      }
-
-      for (const storyEntry of wave.stories) {
-        if (storyEntry.latestTestRun?.status === "failed") {
-          return {
-            kind: "stop",
-            finalStatus: "failed",
-            stopReason: "test_preparation_failed"
-          };
-        }
-        if (storyEntry.latestTestRun?.status === "review_required") {
-          return {
-            kind: "stop",
-            finalStatus: "stopped",
-            stopReason: "test_preparation_review_required"
-          };
-        }
-        if (storyEntry.latestExecution) {
-          hasStartedExecution = true;
-          if (storyEntry.latestExecution.status === "failed") {
-            return {
-              kind: "stop",
-              finalStatus: "failed",
-              stopReason: "execution_failed"
-            };
-          }
-          if (storyEntry.latestExecution.status === "review_required") {
-            const latestStoryReviewRun = storyEntry.latestStoryReviewRun
-              ? this.host.requireStoryReviewRunById(storyEntry.latestStoryReviewRun.id)
-              : null;
-            if (latestStoryReviewRun && this.host.canAutorunStoryReviewRemediate(latestStoryReviewRun.id)) {
-              return {
-                kind: "step",
-                action: "remediation:story-review:start",
-                scopeType: "remediation",
-                scopeId: latestStoryReviewRun.id,
-                execute: () => this.host.startStoryReviewRemediation(latestStoryReviewRun.id)
-              };
-            }
-            return {
-              kind: "stop",
-              finalStatus: "stopped",
-              stopReason: latestStoryReviewRun
-                ? this.host.getStoryReviewRemediationStopReason(latestStoryReviewRun.id)
-                : "execution_review_required"
-            };
-          }
-        }
-      }
-
-      if (wave.waveExecution?.status !== "completed") {
-        hasIncompleteWave = true;
+      const waveResult = this.resolveWaveExecutionDecision(wave);
+      hasStartedExecution ||= waveResult.hasStartedExecution;
+      hasIncompleteWave ||= !waveResult.isCompleted;
+      if (waveResult.decision) {
+        return waveResult.decision;
       }
     }
 
     if (hasIncompleteWave || !hasStartedExecution) {
+      const action = hasStartedExecution ? "execution:tick" : "execution:start";
+      const execute = () => (hasStartedExecution ? this.host.tickExecution(projectId) : this.host.startExecution(projectId));
       return {
         kind: "step",
-        action: hasStartedExecution ? "execution:tick" : "execution:start",
+        action,
         scopeType: "project",
         scopeId: projectId,
-        execute: () => (hasStartedExecution ? this.host.tickExecution(projectId) : this.host.startExecution(projectId))
+        execute
       };
     }
 
     return null;
+  }
+
+  private resolveMissingConceptDecision(
+    latestBrainstormRun: ReturnType<AutorunHost["getLatestStageRun"]>
+  ): Extract<AutorunDecision, { kind: "stop" }> {
+    if (latestBrainstormRun?.status === "review_required") {
+      return this.stop("stopped", "brainstorm_review_required");
+    }
+    if (latestBrainstormRun?.status === "failed") {
+      return this.stop("failed", "brainstorm_failed");
+    }
+    return this.stop("stopped", "concept_missing");
+  }
+
+  private resolveQaDecision(
+    projectId: string,
+    latestQaRun: ReturnType<AutorunHost["getLatestQaRunByProjectId"]>
+  ): AutorunDecision | null {
+    if (!latestQaRun) {
+      return {
+        kind: "step",
+        action: "qa:start",
+        scopeType: "project",
+        scopeId: projectId,
+        execute: () => this.host.startQa(projectId)
+      };
+    }
+    if (latestQaRun.status === "failed") {
+      return this.stop("failed", "qa_failed");
+    }
+    if (latestQaRun.status === "review_required") {
+      return this.stop("stopped", "qa_review_required");
+    }
+    return null;
+  }
+
+  private resolveDocumentationDecision(
+    projectId: string,
+    latestDocumentationRun: ReturnType<AutorunHost["getLatestDocumentationRunByProjectId"]>
+  ): AutorunDecision {
+    if (latestDocumentationRun?.staleAt !== null) {
+      return {
+        kind: "step",
+        action: "documentation:start",
+        scopeType: "project",
+        scopeId: projectId,
+        execute: () => this.host.startDocumentation(projectId)
+      };
+    }
+    if (latestDocumentationRun.status === "failed") {
+      return this.stop("failed", "documentation_failed");
+    }
+    if (latestDocumentationRun.status === "review_required") {
+      return this.stop("stopped", "documentation_review_required");
+    }
+    if (latestDocumentationRun.status === "completed") {
+      return this.stop("completed", "project_completed");
+    }
+    return this.stop("stopped", "documentation_pending");
+  }
+
+  private resolveWaveExecutionDecision(
+    wave: ReturnType<AutorunHost["showExecution"]>["waves"][number]
+  ): { decision: AutorunDecision | null; hasStartedExecution: boolean; isCompleted: boolean } {
+    let hasStartedExecution = wave.waveExecution !== null;
+    if (wave.waveExecution?.status === "failed") {
+      return this.waveDecisionResult(this.stop("failed", "execution_failed"), hasStartedExecution, false);
+    }
+
+    for (const storyEntry of wave.stories) {
+      const storyDecision = this.resolveStoryExecutionDecision(storyEntry);
+      hasStartedExecution ||= storyDecision.hasStartedExecution;
+      if (storyDecision.decision) {
+        return this.waveDecisionResult(storyDecision.decision, hasStartedExecution, false);
+      }
+    }
+
+    return this.waveDecisionResult(null, hasStartedExecution, wave.waveExecution?.status === "completed");
+  }
+
+  private resolveStoryExecutionDecision(
+    storyEntry: ReturnType<AutorunHost["showExecution"]>["waves"][number]["stories"][number]
+  ): { decision: AutorunDecision | null; hasStartedExecution: boolean } {
+    const testRunStatus = storyEntry.latestTestRun?.status;
+    if (testRunStatus === "failed") {
+      return { decision: this.stop("failed", "test_preparation_failed"), hasStartedExecution: false };
+    }
+    if (testRunStatus === "review_required") {
+      return { decision: this.stop("stopped", "test_preparation_review_required"), hasStartedExecution: false };
+    }
+
+    const latestExecution = storyEntry.latestExecution;
+    if (!latestExecution) {
+      return { decision: null, hasStartedExecution: false };
+    }
+    if (latestExecution.status === "failed") {
+      return { decision: this.stop("failed", "execution_failed"), hasStartedExecution: true };
+    }
+    if (latestExecution.status !== "review_required") {
+      return { decision: null, hasStartedExecution: true };
+    }
+
+    const latestStoryReviewRun = storyEntry.latestStoryReviewRun
+      ? this.host.requireStoryReviewRunById(storyEntry.latestStoryReviewRun.id)
+      : null;
+    const decision = this.resolveStoryReviewDecision(latestStoryReviewRun);
+    return { decision, hasStartedExecution: true };
+  }
+
+  private resolveStoryReviewDecision(
+    latestStoryReviewRun: ReturnType<AutorunHost["requireStoryReviewRunById"]> | null
+  ): AutorunDecision {
+    if (!latestStoryReviewRun) {
+      return this.stop("stopped", "execution_review_required");
+    }
+    if (this.host.canAutorunStoryReviewRemediate(latestStoryReviewRun.id)) {
+      return {
+        kind: "step",
+        action: "remediation:story-review:start",
+        scopeType: "remediation",
+        scopeId: latestStoryReviewRun.id,
+        execute: () => this.host.startStoryReviewRemediation(latestStoryReviewRun.id)
+      };
+    }
+    return this.stop("stopped", this.host.getStoryReviewRemediationStopReason(latestStoryReviewRun.id));
+  }
+
+  private waveDecisionResult(
+    decision: AutorunDecision | null,
+    hasStartedExecution: boolean,
+    isCompleted: boolean
+  ): { decision: AutorunDecision | null; hasStartedExecution: boolean; isCompleted: boolean } {
+    return { decision, hasStartedExecution, isCompleted };
+  }
+
+  private stop(
+    finalStatus: Extract<AutorunSummary["finalStatus"], "completed" | "stopped" | "failed">,
+    stopReason: string
+  ): Extract<AutorunDecision, { kind: "stop" }> {
+    return {
+      kind: "stop",
+      finalStatus,
+      stopReason
+    };
   }
 
   private buildStep(decision: Extract<AutorunDecision, { kind: "step" }>, result: unknown): AutorunStep {

@@ -195,6 +195,10 @@ export abstract class HostedCliAdapterBase {
             "Do not place assistant text or structured fields at the top level. Put the full result inside `output`."
           ].join("\n");
     const structuredPayloadInstructions = this.buildStructuredPayloadInstructions(kind, request);
+    const resolvedSkillsSection =
+      skills && skills.length > 0
+        ? ["Resolved skills:", skills.map((skill) => `Path: ${skill.path}\n${skill.content}`).join("\n\n---\n\n")].join("\n")
+        : null;
     const sections = [
       "You are the BeerEngineer provider backend.",
       "Return exactly one JSON object matching the requested result envelope.",
@@ -209,9 +213,7 @@ export abstract class HostedCliAdapterBase {
       `Workspace root: ${runtime.workspaceRoot}`,
       `Runtime policy:\n${JSON.stringify(runtime.policy, null, 2)}`,
       prompt ? `Primary instructions:\n${prompt}` : null,
-      skills && skills.length > 0
-        ? `Resolved skills:\n${skills.map((skill) => `Path: ${skill.path}\n${skill.content}`).join("\n\n---\n\n")}`
-        : null,
+      resolvedSkillsSection,
       `Execution payload:\n${JSON.stringify(rest, null, 2)}`
     ].filter((value): value is string => Boolean(value));
     return sections.join("\n\n");
@@ -344,7 +346,7 @@ export abstract class HostedCliAdapterBase {
     if (direct.ok) {
       return direct.value;
     }
-    const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
+    const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(text)?.[1];
     if (fenced) {
       const parsedFenced = tryParseJson(fenced);
       if (parsedFenced.ok) {
@@ -364,12 +366,12 @@ export abstract class HostedCliAdapterBase {
   }
 
   private sanitizeErrorOutput(stderr: string): string {
-    const collapsed = stderr.replace(/\s+/g, " ").trim();
+    const collapsed = stderr.replaceAll(/\s+/g, " ").trim();
     if (!collapsed) {
       return "Agent process failed";
     }
     const truncated = collapsed.length > 500 ? `${collapsed.slice(0, 500)}...` : collapsed;
-    return truncated.replace(/(api[_-]?key|token|authorization)\s*[:=]\s*\S+/gi, "$1=[redacted]");
+    return truncated.replaceAll(/(api[_-]?key|token|authorization)\s*[:=]\s*\S+/gi, "$1=[redacted]");
   }
 }
 
@@ -393,39 +395,58 @@ function tryParseJson(text: string): { ok: true; value: unknown } | { ok: false 
 }
 
 function extractJsonObject(text: string): string | null {
-  let start = -1;
-  let depth = 0;
-  let inString = false;
-  let escaping = false;
+  const state: JsonObjectScanState = {
+    start: -1,
+    depth: 0,
+    inString: false,
+    escaping: false
+  };
 
   for (let index = 0; index < text.length; index += 1) {
-    const char = text[index];
-    if (escaping) {
-      escaping = false;
-      continue;
+    const result = scanJsonObjectCharacter(state, text[index], index, text);
+    if (result !== null) {
+      return result;
     }
-    if (char === "\\") {
-      escaping = true;
-      continue;
+  }
+  return null;
+}
+
+type JsonObjectScanState = {
+  start: number;
+  depth: number;
+  inString: boolean;
+  escaping: boolean;
+};
+
+function scanJsonObjectCharacter(state: JsonObjectScanState, char: string, index: number, text: string): string | null {
+  if (state.escaping) {
+    state.escaping = false;
+    return null;
+  }
+  if (char === "\\") {
+    state.escaping = true;
+    return null;
+  }
+  if (char === "\"") {
+    state.inString = !state.inString;
+    return null;
+  }
+  if (state.inString) {
+    return null;
+  }
+  if (char === "{") {
+    if (state.start === -1) {
+      state.start = index;
     }
-    if (char === "\"") {
-      inString = !inString;
-      continue;
-    }
-    if (inString) {
-      continue;
-    }
-    if (char === "{") {
-      if (start === -1) {
-        start = index;
-      }
-      depth += 1;
-    } else if (char === "}") {
-      depth -= 1;
-      if (depth === 0 && start !== -1) {
-        return text.slice(start, index + 1);
-      }
-    }
+    state.depth += 1;
+    return null;
+  }
+  if (char !== "}") {
+    return null;
+  }
+  state.depth -= 1;
+  if (state.depth === 0 && state.start !== -1) {
+    return text.slice(state.start, index + 1);
   }
   return null;
 }

@@ -545,7 +545,7 @@ export class BrainstormService {
     const seen = new Set<string>();
     const result: string[] = [];
     for (const value of values) {
-      const normalized = value.replace(/\s+/g, " ").trim();
+      const normalized = value.replaceAll(/\s+/g, " ").trim();
       const dedupeKey = normalized.toLowerCase();
       if (!normalized || seen.has(dedupeKey)) {
         continue;
@@ -603,14 +603,7 @@ export class BrainstormService {
 
   private buildBrainstormFollowUpMessage(item: { code: string; title: string }, draft: BrainstormDraft): string {
     const view = this.mapBrainstormDraft(draft);
-    const nextQuestion =
-      view.targetUsers.length === 0
-        ? "Who is the primary user or actor for this item?"
-        : view.useCases.length === 0
-          ? "What is the first concrete use case we should support?"
-          : view.recommendedDirection === null
-            ? "Which direction should become the recommended MVP approach?"
-            : "The draft is converging. Add any remaining assumptions or promote it to a concept.";
+    const nextQuestion = this.resolveBrainstormNextQuestion(view);
     return [
       `Brainstorm summary for ${item.code}:`,
       `problem=${view.problem ?? "missing"}`,
@@ -670,6 +663,7 @@ export class BrainstormService {
     draft: BrainstormDraftView
   ): { projects: Array<{ title: string; summary: string; goal: string }> } {
     const candidateSeeds = this.selectBrainstormProjectSeeds(draft, item.title);
+    const defaultGoal = draft.coreOutcome ?? `Deliver the first usable slice for ${item.title}.`;
 
     if (candidateSeeds.length === 0) {
       candidateSeeds.push(draft.coreOutcome ?? draft.problem ?? item.title);
@@ -679,10 +673,7 @@ export class BrainstormService {
       projects: candidateSeeds.map((seed, index) => ({
         title: this.buildBrainstormProjectTitle(item.title, seed, index),
         summary: index === 0 ? draft.problem ?? seed : seed,
-        goal:
-          candidateSeeds.length === 1
-            ? draft.coreOutcome ?? `Deliver the first usable slice for ${item.title}.`
-            : `${draft.coreOutcome ?? `Deliver the first usable slice for ${item.title}`}: ${seed}`
+        goal: candidateSeeds.length === 1 ? defaultGoal : `${defaultGoal.replace(/[.]$/, "")}: ${seed}`
       }))
     };
   }
@@ -702,10 +693,24 @@ export class BrainstormService {
 
     const normalizedUseCases = this.normalizeBrainstormEntries(draft.useCases);
     if (normalizedUseCases.length > 0) {
-      return [draft.coreOutcome ?? normalizedUseCases[0]!];
+      const [firstUseCase] = normalizedUseCases;
+      return [draft.coreOutcome ?? firstUseCase];
     }
 
     return [draft.coreOutcome ?? draft.problem ?? itemTitle];
+  }
+
+  private resolveBrainstormNextQuestion(view: BrainstormDraftView): string {
+    if (view.targetUsers.length === 0) {
+      return "Who is the primary user or actor for this item?";
+    }
+    if (view.useCases.length === 0) {
+      return "What is the first concrete use case we should support?";
+    }
+    if (view.recommendedDirection === null) {
+      return "Which direction should become the recommended MVP approach?";
+    }
+    return "The draft is converging. Add any remaining assumptions or promote it to a concept.";
   }
 
   private buildBrainstormProjectTitle(itemTitle: string, seed: string, index: number): string {

@@ -30,7 +30,7 @@ export type AutorunDecision =
       action: string;
       scopeType: AutorunStep["scopeType"];
       scopeId: string;
-      execute: () => Promise<unknown> | unknown;
+      execute: () => unknown;
     }
   | {
       kind: "stop";

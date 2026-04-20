@@ -46,6 +46,7 @@ export function createWorkflowEntityLoaders(deps: WorkflowDeps) {
     if (!wave) {
       throw new AppError("WAVE_NOT_FOUND", `Wave ${waveId} not found`);
     }
+    requireImplementationPlan(wave.implementationPlanId);
     return wave;
   };
 
@@ -63,6 +64,8 @@ export function createWorkflowEntityLoaders(deps: WorkflowDeps) {
     if (!waveStory) {
       throw new AppError("WAVE_STORY_NOT_FOUND", `No wave story found for story ${storyId}`);
     }
+    requireWave(waveStory.waveId);
+    requireStory(waveStory.storyId);
     return waveStory;
   };
 
@@ -71,6 +74,7 @@ export function createWorkflowEntityLoaders(deps: WorkflowDeps) {
     if (!waveExecution) {
       throw new AppError("WAVE_EXECUTION_NOT_FOUND", `Wave execution ${waveExecutionId} not found`);
     }
+    requireWave(waveExecution.waveId);
     return waveExecution;
   };
 
@@ -79,6 +83,9 @@ export function createWorkflowEntityLoaders(deps: WorkflowDeps) {
     if (!waveStoryTestRun) {
       throw new AppError("WAVE_STORY_TEST_RUN_NOT_FOUND", `Wave story test run ${waveStoryTestRunId} not found`);
     }
+    requireWaveExecution(waveStoryTestRun.waveExecutionId);
+    requireWaveStory(waveStoryTestRun.waveStoryId);
+    requireStory(waveStoryTestRun.storyId);
     return waveStoryTestRun;
   };
 
@@ -87,6 +94,9 @@ export function createWorkflowEntityLoaders(deps: WorkflowDeps) {
     if (!waveStoryExecution) {
       throw new AppError("WAVE_STORY_EXECUTION_NOT_FOUND", `Wave story execution ${waveStoryExecutionId} not found`);
     }
+    requireWaveExecution(waveStoryExecution.waveExecutionId);
+    requireWaveStory(waveStoryExecution.waveStoryId);
+    requireStory(waveStoryExecution.storyId);
     return waveStoryExecution;
   };
 
@@ -116,6 +126,9 @@ export function createWorkflowEntityLoaders(deps: WorkflowDeps) {
         `Story review remediation run ${storyReviewRemediationRunId} not found`
       );
     }
+    requireStoryReviewRun(remediationRun.storyReviewRunId);
+    requireWaveStoryExecution(remediationRun.waveStoryExecutionId);
+    requireStory(remediationRun.storyId);
     return remediationRun;
   };
 
@@ -168,6 +181,7 @@ export function createWorkflowEntityLoaders(deps: WorkflowDeps) {
   };
 
   const requireLatestBrainstormDraft = (sessionId: string): BrainstormDraft => {
+    requireBrainstormSession(sessionId);
     const draft = deps.brainstormDraftRepository.getLatestBySessionId(sessionId);
     if (!draft) {
       throw new AppError("BRAINSTORM_DRAFT_NOT_FOUND", `No brainstorm draft found for session ${sessionId}`);
@@ -177,9 +191,18 @@ export function createWorkflowEntityLoaders(deps: WorkflowDeps) {
 
   const requireImplementationPlanForProject = (projectId: string) => {
     const implementationPlan = deps.implementationPlanRepository.getLatestByProjectId(projectId);
-    if (!implementationPlan || implementationPlan.status !== "approved") {
+    if (implementationPlan?.status !== "approved") {
       throw new AppError("IMPLEMENTATION_PLAN_NOT_APPROVED", "Approved implementation plan is required for execution");
     }
+    return implementationPlan;
+  };
+
+  const requireImplementationPlan = (implementationPlanId: string) => {
+    const implementationPlan = deps.implementationPlanRepository.getById(implementationPlanId);
+    if (!implementationPlan) {
+      throw new AppError("IMPLEMENTATION_PLAN_NOT_FOUND", `Implementation plan ${implementationPlanId} not found`);
+    }
+    requireProject(implementationPlan.projectId);
     return implementationPlan;
   };
 
