@@ -121,8 +121,11 @@ function buildCliErrorPayload(error: unknown): { error: { code: string; message:
   };
 }
 
-async function loadWorkspaceSetupService() {
-  return import(`../services/${"workspace-setup-service"}.js`);
+async function loadWorkspaceSetupService(): Promise<{ WorkspaceSetupService: new (input: any) => any }> {
+  // Keep this dynamic so the CLI can run without the optional workspace-setup implementation
+  // being present in the current source tree while still loading the built runtime artifact.
+  const runtimeSpecifier = "../../dist/src/services/" + "workspace-setup-service.js";
+  return import(runtimeSpecifier);
 }
 
 function formatExecutionCompactSummary(compact: {
@@ -535,7 +538,7 @@ program
           : plan
             ? openAssistSessionId
             : null;
-      const stack = (plan?.stack ?? options.stack ?? "node-ts") as "node-ts";
+      const stack = (plan?.stack ?? options.stack ?? "node-ts") as "node-ts" | "python";
       const effectivePlan = {
         version: plan?.version ?? 1,
         workspaceKey: workspace.key,
@@ -1567,7 +1570,7 @@ sonarCommand.command("scan").action(
 
 sonarCommand.command("preflight").action(
   withContext<Record<string, never>>(({ services }) => {
-    console.log(JSON.stringify(((services.sonarService as unknown) as { preflight(): unknown }).preflight(), null, 2));
+    console.log(JSON.stringify(services.sonarService.preflight(), null, 2));
   })
 );
 
@@ -1646,7 +1649,7 @@ coderabbitConfigCommand.command("test").action(
 
 coderabbitCommand.command("preflight").action(
   withContext<Record<string, never>>(({ services }) => {
-    console.log(JSON.stringify(((services.coderabbitService as unknown) as { preflight(): unknown }).preflight(), null, 2));
+    console.log(JSON.stringify(services.coderabbitService.preflight(), null, 2));
   })
 );
 

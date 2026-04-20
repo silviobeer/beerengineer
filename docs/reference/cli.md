@@ -145,7 +145,6 @@ Rueckgabe:
   - `totalQuestions`
   - `openQuestions`
   - `answeredQuestions`
-  - `deferredQuestionsCount`
 - `comparisonToPrevious`
   - nur vorhanden, wenn ein vergleichbarer vorheriger Run existiert
   - enthaelt `previousRunId`, `changedFields`, `changedFieldCount`,
@@ -287,7 +286,7 @@ Die neuen Setup-Kommandos verhalten sich bewusst unterschiedlich:
 - `workspace:assist:show` zeigt die neueste oder eine explizite Workspace-Assist-Session erneut an und liefert denselben konsolidierten Folgehinweis ueber `recommendedNextCommand`
 - `workspace:assist:resolve` markiert eine Session formal als abgeschlossen und zeigt als `recommendedNextCommand` den Bootstrap der Session
 - `workspace:assist:cancel` bricht eine offene Session formal ab und zeigt als `recommendedNextCommand` den Start einer neuen Assist-Session
-- `workspace:assist` unterscheidet dabei zwischen Greenfield und Brownfield und setzt fuer bestehende Projekte `scaffoldProjectFiles=false`
+- `workspace:assist` unterscheidet dabei zwischen Greenfield und Brownfield und setzt fuer bestehende Projekte `scaffoldProjectFiles=false`; Brownfield wird dabei nicht nur ueber ein Manifest, sondern auch ueber bestehende Repo-Signale wie `tsconfig.json`, `src/`, `sonar-project.properties`, `coderabbit.md` oder `git remote origin` erkannt
 - `workspace:bootstrap` fuehrt einen expliziten Bootstrap aus und kann fuer Greenfield Node/TS-Starterdateien, Sonar-Config und CodeRabbit-Instruktionen anlegen
 - `workspace:bootstrap --scaffold-project-files` erzwingt Starterdateien auch ohne Plan
 - `workspace:bootstrap` verwendet ohne `--plan` und ohne `--session-id` automatisch den aktuellen Plan einer offenen Assist-Session, falls eine existiert

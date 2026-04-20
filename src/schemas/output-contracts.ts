@@ -284,7 +284,7 @@ export const workspaceSetupAssistPlanSchema = z.object({
   workspaceKey: z.string().min(1),
   rootPath: z.string().min(1).nullable(),
   mode: z.enum(["greenfield", "brownfield"]),
-  stack: z.enum(["node-ts"]),
+  stack: z.enum(["node-ts", "python"]),
   scaffoldProjectFiles: z.boolean(),
   createRoot: z.boolean(),
   initGit: z.boolean(),

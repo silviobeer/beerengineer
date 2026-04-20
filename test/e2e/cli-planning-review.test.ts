@@ -156,7 +156,7 @@ describe("cli planning review", () => {
         ) as {
           run: { id: string; status: string; automationLevel: string };
           questions: Array<{ id: string; question: string; reason: string; impact: string }>;
-          questionSummary: { deferredQuestionsCount: number };
+          questionSummary: { totalQuestions: number; openQuestions: number; answeredQuestions: number };
         };
 
         expect(started.run.status).toBe("questions_only");
@@ -164,7 +164,9 @@ describe("cli planning review", () => {
         expect(started.questions.length).toBeGreaterThanOrEqual(2);
         expect(started.questions.some((question) => question.reason.includes("credible test path."))).toBe(true);
         expect(started.questions.some((question) => question.impact.includes("readiness remains reduced"))).toBe(true);
-        expect(started.questionSummary.deferredQuestionsCount).toBe(0);
+        expect(started.questionSummary.totalQuestions).toBe(started.questions.length);
+        expect(started.questionSummary.openQuestions).toBe(started.questions.length);
+        expect(started.questionSummary.answeredQuestions).toBe(0);
 
         const testQuestion = started.questions.find((question) => question.question.toLowerCase().includes("test")) ?? started.questions[0]!;
         const rolloutQuestion =

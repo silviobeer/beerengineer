@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -76,6 +77,19 @@ export type SonarScanResult = {
   };
 };
 
+export type SonarPreflightResult = {
+  config: SonarConfigView;
+  warnings: string[];
+  errors: string[];
+  checks: {
+    javaAvailable: boolean;
+    scannerAvailable: boolean;
+    tokenAvailable: boolean;
+    configured: boolean;
+  };
+  ready: boolean;
+};
+
 export class SonarService {
   public constructor(
     private readonly workspace: Workspace,
@@ -91,6 +105,31 @@ export class SonarService {
 
   public showConfig(): { config: SonarConfigView; warnings: string[] } {
     return this.resolveEffectiveConfig();
+  }
+
+  public preflight(): SonarPreflightResult {
+    const { config, warnings } = this.resolveEffectiveConfig();
+    const javaAvailable = this.isCommandAvailable("java");
+    const scannerAvailable = this.isCommandAvailable("sonar-scanner");
+    const tokenAvailable = config.hasToken;
+    const errors = [
+      javaAvailable ? null : "java is missing",
+      scannerAvailable ? null : "sonar-scanner is missing",
+      tokenAvailable ? null : "token is missing",
+      config.configured ? null : "Sonar configuration is incomplete"
+    ].filter((value): value is string => Boolean(value));
+    return {
+      config,
+      warnings,
+      errors,
+      checks: {
+        javaAvailable,
+        scannerAvailable,
+        tokenAvailable,
+        configured: config.configured
+      },
+      ready: errors.length === 0
+    };
   }
 
   public setConfig(input: {
@@ -313,6 +352,15 @@ export class SonarService {
       source,
       configured: Boolean(config?.hostUrl && config.organization && config.projectKey && config.token)
     };
+  }
+
+  private isCommandAvailable(command: string): boolean {
+    const lookupCommand = process.platform === "win32" ? "where" : "which";
+    const result = spawnSync(lookupCommand, [command], {
+      cwd: this.workspaceRoot,
+      encoding: "utf8"
+    });
+    return result.status === 0;
   }
 
   private loadGateStatus(): SonarGateStatus {

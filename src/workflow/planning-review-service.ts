@@ -74,6 +74,24 @@ type CapabilityPlan = {
   gateEligibility: PlanningReviewGateEligibility;
 };
 
+const HIGH_RISK_PATTERN = /\b(risk|migration|rollback|security|compliance|production|backward compatibility|data loss)\b/i;
+
+const IMPACTED_FINDING_KEYWORD_MAP: Record<keyof NormalizedPlanningArtifact, string[]> = {
+  problem: ["problem"],
+  goal: ["goal", "outcome", "success"],
+  nonGoals: ["non-goal", "scope"],
+  context: ["context", "use case"],
+  constraints: ["constraint"],
+  proposal: ["proposal", "approach", "direction"],
+  alternatives: ["alternative"],
+  assumptions: ["assumption"],
+  risks: ["risk"],
+  openQuestions: ["open question", "question"],
+  testPlan: ["test", "verification", "validate"],
+  rolloutPlan: ["rollout", "deploy", "rollback", "migration"],
+  clarificationAnswers: ["clarification", "answer"]
+};
+
 function normalizeEntries(values: Array<string | null | undefined>): string[] {
   const seen = new Set<string>();
   const result: string[] = [];
@@ -383,8 +401,7 @@ export class PlanningReviewService {
       questionSummary: {
         totalQuestions: questions.length,
         openQuestions: openQuestionCount,
-        answeredQuestions: answeredQuestionCount,
-        deferredQuestionsCount: 0
+        answeredQuestions: answeredQuestionCount
       },
       comparisonToPrevious
     };
@@ -722,12 +739,7 @@ export class PlanningReviewService {
     claudeProvider: string
   ): ReviewAssignment[] {
     return roles.map((role) => ({
-      providerKey:
-        role === "implementation_reviewer"
-          ? codexProvider
-          : role === "architecture_challenger" || role === "decision_auditor" || role === "product_skeptic"
-            ? claudeProvider
-            : claudeProvider,
+      providerKey: role === "implementation_reviewer" ? codexProvider : claudeProvider,
       role
     }));
   }
@@ -778,7 +790,10 @@ export class PlanningReviewService {
     }
     return {
       ...result,
-      output: parsed.data
+      output: {
+        ...parsed.data,
+        status: parsed.data.status === "needs_clarification" ? "questions_only" : parsed.data.status
+      }
     };
   }
 
@@ -918,8 +933,7 @@ export class PlanningReviewService {
     if (input.reviewerResults.some((result) => result.readiness === "needs_human_review" || result.readiness === "high_risk")) {
       return true;
     }
-    const highRiskPattern = /\b(risk|migration|rollback|security|compliance|production|backward compatibility|data loss)\b/i;
-    if (input.findings.some((finding) => highRiskPattern.test(`${finding.title} ${finding.detail} ${finding.evidence ?? ""}`))) {
+    if (input.findings.some((finding) => HIGH_RISK_PATTERN.test(`${finding.title} ${finding.detail} ${finding.evidence ?? ""}`))) {
       return true;
     }
     if (input.run.reviewMode === "risk" && (input.questions.length > 0 || input.findings.some((finding) => finding.type === "major_concern"))) {
@@ -971,16 +985,15 @@ export class PlanningReviewService {
     };
 
     for (const result of reviewerResults) {
-      const blockerFindings = result.findings.filter((finding) => finding.type === "blocker");
-      result.missingInformation.forEach((question, index) => {
-        const relatedBlocker = blockerFindings[index] ?? blockerFindings[0] ?? null;
+      const primaryBlocker = result.findings.find((finding) => finding.type === "blocker") ?? null;
+      result.missingInformation.forEach((question) => {
         upsertCandidate({
           question,
-          reason: relatedBlocker?.detail ?? "The review surfaced a blocker-level information gap.",
+          reason: primaryBlocker?.detail ?? "The review surfaced a blocker-level information gap.",
           impact:
-            relatedBlocker?.evidence ??
+            primaryBlocker?.evidence ??
             "Without this answer, the review cannot confirm the artifact is safe to proceed.",
-          priority: relatedBlocker ? 300 : 100
+          priority: primaryBlocker ? 300 : 100
         });
       });
 
@@ -1103,27 +1116,11 @@ export class PlanningReviewService {
   }
 
   private findPlausiblyImpactedFindingTitles(fields: Array<keyof NormalizedPlanningArtifact>, findings: PlanningReviewFinding[]): string[] {
-    const keywordMap: Record<keyof NormalizedPlanningArtifact, string[]> = {
-      problem: ["problem"],
-      goal: ["goal", "outcome", "success"],
-      nonGoals: ["non-goal", "scope"],
-      context: ["context", "use case"],
-      constraints: ["constraint"],
-      proposal: ["proposal", "approach", "direction"],
-      alternatives: ["alternative"],
-      assumptions: ["assumption"],
-      risks: ["risk"],
-      openQuestions: ["open question", "question"],
-      testPlan: ["test", "verification", "validate"],
-      rolloutPlan: ["rollout", "deploy", "rollback", "migration"],
-      clarificationAnswers: ["clarification", "answer"]
-    };
-
     return normalizeEntries(
       findings
         .filter((finding) => {
           const haystack = `${finding.title} ${finding.detail} ${finding.evidence ?? ""}`.toLowerCase();
-          return fields.some((field) => keywordMap[field].some((keyword) => haystack.includes(keyword)));
+          return fields.some((field) => IMPACTED_FINDING_KEYWORD_MAP[field].some((keyword) => haystack.includes(keyword)));
         })
         .map((finding) => finding.title)
     );
