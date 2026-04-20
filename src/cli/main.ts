@@ -274,13 +274,13 @@ program
 
 program
   .command("workspace:update-root")
-  .requiredOption("--workspace <key>")
+  .requiredOption("--workspace-key <key>")
   .requiredOption("--root-path <rootPath>")
   .action(
-    withContext<{ workspace: string; rootPath: string }>(({ repositories }, options) => {
-      const workspace = repositories.workspaceRepository.getByKey(options.workspace);
+    withContext<{ workspaceKey: string; rootPath: string }>(({ repositories }, options) => {
+      const workspace = repositories.workspaceRepository.getByKey(options.workspaceKey);
       if (!workspace) {
-        throw new AppError("WORKSPACE_NOT_FOUND", `Workspace ${options.workspace} not found`);
+        throw new AppError("WORKSPACE_NOT_FOUND", `Workspace ${options.workspaceKey} not found`);
       }
       const updated = repositories.workspaceRepository.update({
         id: workspace.id,
@@ -964,16 +964,19 @@ program
   .command("implementation-review:start")
   .requiredOption("--wave-story-execution-id <waveStoryExecutionId>")
   .addOption(new Option("--automation-level <automationLevel>").choices([...planningReviewAutomationLevels]).default("manual"))
+  .addOption(new Option("--interaction-mode <interactionMode>").choices(["auto", "assisted", "interactive"]))
   .action(
     withContext<{
       waveStoryExecutionId: string;
       automationLevel: "manual" | "auto_suggest" | "auto_comment" | "auto_gate";
-    }>(({ workflowService }, options) => {
+      interactionMode?: "auto" | "assisted" | "interactive";
+    }>(async ({ workflowService }, options) => {
       console.log(
         JSON.stringify(
-          workflowService.startImplementationReview({
+          await workflowService.startImplementationReview({
             waveStoryExecutionId: options.waveStoryExecutionId,
-            automationLevel: options.automationLevel
+            automationLevel: options.automationLevel,
+            interactionMode: options.interactionMode
           }),
           null,
           2

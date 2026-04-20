@@ -14,6 +14,8 @@ import type {
   ExecutionAdapterRunResult,
   DocumentationAdapterRunRequest,
   DocumentationAdapterRunResult,
+  ImplementationReviewAdapterRunRequest,
+  ImplementationReviewAdapterRunResult,
   InteractiveBrainstormAdapterRunRequest,
   InteractiveBrainstormAdapterRunResult,
   PlanningReviewAdapterRunRequest,
@@ -71,6 +73,12 @@ export class LocalCliAdapter implements AgentAdapter {
     return this.executeInteraction<{ output: PlanningReviewAdapterRunResult["output"] }>(request);
   }
 
+  public async runImplementationReview(
+    request: ImplementationReviewAdapterRunRequest
+  ): Promise<ImplementationReviewAdapterRunResult> {
+    return this.executeInteraction<{ output: ImplementationReviewAdapterRunResult["output"] }>(request);
+  }
+
   public async runInteractiveStoryReview(
     request: InteractiveStoryReviewAdapterRunRequest
   ): Promise<InteractiveStoryReviewAdapterRunResult> {
@@ -88,6 +96,7 @@ export class LocalCliAdapter implements AgentAdapter {
       | InteractiveBrainstormAdapterRunRequest
       | InteractiveStoryReviewAdapterRunRequest
       | PlanningReviewAdapterRunRequest
+      | ImplementationReviewAdapterRunRequest
       | WorkspaceSetupAssistAdapterRunRequest
   ): TResult & { stdout: string; stderr: string; exitCode: number; command: string[] } {
     const parsed = this.executePayload(request) as TResult;
@@ -190,6 +199,7 @@ export class LocalCliAdapter implements AgentAdapter {
       | AdapterRunRequest
       | InteractiveBrainstormAdapterRunRequest
       | PlanningReviewAdapterRunRequest
+      | ImplementationReviewAdapterRunRequest
       | InteractiveStoryReviewAdapterRunRequest
       | WorkspaceSetupAssistAdapterRunRequest
       | ExecutionAdapterRunRequest

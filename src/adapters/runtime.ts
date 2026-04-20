@@ -130,6 +130,10 @@ class UnsupportedProviderAdapter implements AgentAdapter {
     return this.fail();
   }
 
+  public async runImplementationReview() {
+    return this.fail();
+  }
+
   public async runInteractiveStoryReview() {
     return this.fail();
   }
@@ -188,6 +192,17 @@ export function loadAgentRuntimeConfig(configPath: string): AgentRuntimeConfig {
       "AGENT_RUNTIME_CONFIG_INVALID",
       `Default provider ${parsed.defaultProvider} is not defined in providers`
     );
+  }
+
+  for (const [policyKey, requiredValue] of Object.entries(requiredAgentExecutionPolicy) as Array<
+    [keyof AgentExecutionPolicy, AgentExecutionPolicy[keyof AgentExecutionPolicy]]
+  >) {
+    if (parsed.policy[policyKey] !== requiredValue) {
+      throw new AppError(
+        "AGENT_RUNTIME_CONFIG_INVALID",
+        `Policy ${policyKey} must be ${requiredValue}, received ${parsed.policy[policyKey]}`
+      );
+    }
   }
 
   for (const selection of [

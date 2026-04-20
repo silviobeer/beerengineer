@@ -21,8 +21,7 @@ export class ClaudeCliAdapter extends HostedCliAdapterBase {
       "bypassPermissions",
       "--dangerously-skip-permissions",
       "--add-dir",
-      input.request.runtime.workspaceRoot,
-      "--bare"
+      input.request.runtime.workspaceRoot
     ];
     if (input.request.runtime.model) {
       command.push("--model", input.request.runtime.model);

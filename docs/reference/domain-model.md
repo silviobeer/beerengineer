@@ -78,11 +78,11 @@ Dieser Core wird aktuell genutzt fuer:
   - als generischer Review-Core-Run mit planning-spezifischer Source- und
     Statusprojektion in der API
 - Interactive Story Review
-  - als generischer Mirror abgeschlossener Story-Review-Laeufe
+  - als direkter Core-Run parallel zur bounded Story-Review-Runtime
 - Implementation Review
-  - als primaerer Persistenzpfad fuer Code-/Execution-Reviews
+  - als primaerer Persistenzpfad fuer Code-/Execution-Reviews inklusive LLM-Review
 - QA Review
-  - als generischer Mirror abgeschlossener QA-Laeufe
+  - als direkter Core-Run parallel zur bounded QA-Runtime
 
 Wichtige sichtbare Planning-Review-Status im aktuellen Runtime-Verhalten:
 
@@ -132,8 +132,9 @@ Aktuelle Gate-Nutzung:
 
 - Planning Review
   - blockiert `stories:approve`, `architecture:approve` und `planning:approve`
-    ueber den generischen Review-Core, mit Legacy-Fallback auf die
-    planning-spezifische Persistenz
+    ueber den generischen Review-Core
 - Implementation Review
   - blockiert `qa:start`, wenn fuer eine relevante Story-Execution ein
     `implementation`-Run mit `auto_gate` nicht bereit ist
+  - kann im Default-`interactionMode = auto` sichere Story-Review-Remediation
+    direkt selbst ausloesen und den neuesten Re-Review-Run auswerten

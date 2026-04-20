@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -235,6 +235,37 @@ describe("hosted cli adapters", () => {
       expect(record.argv).toContain("--output-last-message");
       expect(record.stdin).toContain("You are the BeerEngineer provider backend.");
       expect(record.stdin).toContain("\"interactionType\": \"brainstorm_chat\"");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves after process exit even when stdout stays inherited by a child", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-claude-adapter-hang-"));
+    const workspaceRoot = join(root, "workspace");
+    mkdirSync(workspaceRoot, { recursive: true });
+    const lingeringStubPath = join(root, "lingering-stdout-stub.mjs");
+    writeFileSync(
+      lingeringStubPath,
+      [
+        "import { readFileSync } from 'node:fs';",
+        "import { spawn } from 'node:child_process';",
+        "readFileSync(0, 'utf8');",
+        "process.stdout.write(JSON.stringify({ output: { assistantMessage: 'ok', entryUpdates: [], needsStructuredFollowUp: false, followUpHint: null, recommendedResolution: null } }));",
+        "spawn(process.execPath, ['-e', \"setTimeout(() => {}, 5000)\"], { detached: true, stdio: ['ignore', 'inherit', 'inherit'] }).unref();",
+        "process.exit(0);"
+      ].join("\n"),
+      "utf8"
+    );
+    const adapter = new ClaudeCliAdapter([process.execPath, lingeringStubPath, "claude"], {}, 5_000);
+
+    try {
+      const startedAt = Date.now();
+      const result = await adapter.runInteractiveStoryReview(buildStoryReviewRequest(workspaceRoot));
+      const elapsedMs = Date.now() - startedAt;
+
+      expect(result.output.assistantMessage).toBe("ok");
+      expect(elapsedMs).toBeLessThan(2_000);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

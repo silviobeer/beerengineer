@@ -1,16 +1,74 @@
-import type { PlanningReviewAutomationLevel, ReviewFindingSeverity, ReviewGateDecision } from "../domain/types.js";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+import type {
+  ImplementationReviewProviderRole,
+  PlanningReviewAutomationLevel,
+  ReviewFindingSeverity,
+  ReviewGateDecision,
+  ReviewInteractionMode,
+  ReviewSourceSystem
+} from "../domain/types.js";
 import type { ReviewCoreService } from "../review/review-core-service.js";
-import type { ReviewProviderResult } from "../review/types.js";
+import { ReviewExecutionPlanner } from "../review/review-execution-planner.js";
 import { CoderabbitReviewProvider } from "../review/providers/coderabbit-review-provider.js";
 import { SonarcloudReviewProvider } from "../review/providers/sonarcloud-review-provider.js";
 import { StoryReviewProvider } from "../review/providers/story-review-provider.js";
 import { VerificationSignalProvider } from "../review/providers/verification-signal-provider.js";
-import type { WorkflowDeps } from "./workflow-deps.js";
+import type { ImplementationReviewProviderResult, ReviewProviderResult } from "../review/types.js";
+import { implementationReviewOutputSchema } from "../schemas/output-contracts.js";
 import { AppError } from "../shared/errors.js";
+import type { WorkflowDeps } from "./workflow-deps.js";
+import type { ReviewRemediationService } from "./review-remediation-service.js";
 
 type ImplementationReviewServiceOptions = {
   deps: WorkflowDeps;
   reviewCoreService: ReviewCoreService;
+  reviewRemediationService: ReviewRemediationService;
+  buildAdapterRuntimeContext(input: {
+    providerKey: string;
+    model: string | null;
+    policy: {
+      autonomyMode: "manual" | "yolo";
+      approvalMode: "always" | "never";
+      filesystemMode: "read-only" | "workspace-write" | "danger-full-access";
+      networkMode: "disabled" | "enabled";
+      interactionMode: "blocking" | "non_blocking";
+    };
+  }): {
+    provider: string;
+    model: string | null;
+    policy: {
+      autonomyMode: "manual" | "yolo";
+      approvalMode: "always" | "never";
+      filesystemMode: "read-only" | "workspace-write" | "danger-full-access";
+      networkMode: "disabled" | "enabled";
+      interactionMode: "blocking" | "non_blocking";
+    };
+    workspaceRoot: string;
+  };
+};
+
+type LoadedExecutionContext = {
+  execution: NonNullable<ReturnType<WorkflowDeps["waveStoryExecutionRepository"]["getById"]>>;
+  story: NonNullable<ReturnType<WorkflowDeps["userStoryRepository"]["getById"]>>;
+  waveStory: NonNullable<ReturnType<WorkflowDeps["waveStoryRepository"]["getByStoryId"]>>;
+  wave: NonNullable<ReturnType<WorkflowDeps["waveRepository"]["getById"]>>;
+  implementationPlan: NonNullable<ReturnType<WorkflowDeps["implementationPlanRepository"]["getById"]>>;
+  project: NonNullable<ReturnType<WorkflowDeps["projectRepository"]["getById"]>>;
+  item: NonNullable<ReturnType<WorkflowDeps["itemRepository"]["getById"]>>;
+  acceptanceCriteria: ReturnType<WorkflowDeps["acceptanceCriterionRepository"]["listByStoryId"]>;
+  projectExecutionContext: NonNullable<ReturnType<WorkflowDeps["projectExecutionContextRepository"]["getByProjectId"]>>;
+  implementationSummary: Record<string, unknown> | null;
+  basicVerificationStatus: "passed" | "review_required" | "failed" | null;
+  basicVerificationSummary: Record<string, unknown> | null;
+  ralphVerificationStatus: "passed" | "review_required" | "failed" | null;
+  ralphVerificationSummary: Record<string, unknown> | null;
+  appVerificationStatus: "pending" | "preparing" | "in_progress" | "passed" | "review_required" | "failed" | null;
+  appVerificationSummary: Record<string, unknown> | null;
+  latestStoryReviewRun: ReturnType<WorkflowDeps["storyReviewRunRepository"]["getLatestByWaveStoryExecutionId"]>;
+  latestStoryReviewSummary: Record<string, unknown> | null;
+  latestStoryReviewFindings: ReturnType<WorkflowDeps["storyReviewFindingRepository"]["listByStoryReviewRunId"]>;
 };
 
 function normalizeSeverity(value: string): ReviewFindingSeverity {
@@ -29,37 +87,182 @@ function normalizeSeverity(value: string): ReviewFindingSeverity {
   }
 }
 
-function mapGateDecision(input: { findings: ReviewProviderResult["findings"]; automationLevel: PlanningReviewAutomationLevel }): ReviewGateDecision {
-  if (input.findings.length === 0) {
-    return "pass";
+function parseStoredJson(value: string | null): Record<string, unknown> | null {
+  if (!value) {
+    return null;
   }
-  const hasCritical = input.findings.some((finding) => finding.normalizedSeverity === "critical" || finding.normalizedSeverity === "high");
+  try {
+    return JSON.parse(value) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function mapLlmResultToProviderResult(input: {
+  providerId: string;
+  reviewerRole: ImplementationReviewProviderRole;
+  result: ImplementationReviewProviderResult;
+}): ReviewProviderResult {
+  return {
+    providerId: input.providerId,
+    sourceSystem: "llm",
+    summary: input.result.summary,
+    findings: input.result.findings.map((finding) => ({
+      reviewerRole: input.reviewerRole,
+      findingType: finding.category,
+      normalizedSeverity: finding.severity,
+      sourceSeverity: finding.remediationClass ?? finding.category,
+      title: finding.title,
+      detail: finding.description,
+      evidence: finding.evidence,
+      filePath: finding.filePath ?? null,
+      line: finding.line ?? null,
+      fieldPath: null
+    }))
+  };
+}
+
+function mapGateDecision(input: {
+  findings: Array<ReviewProviderResult["findings"][number] & { sourceSystem: ReviewSourceSystem }>;
+  interactionMode: ReviewInteractionMode;
+  automationLevel: PlanningReviewAutomationLevel;
+  missingCapabilities: string[];
+}): ReviewGateDecision {
+  if (input.findings.length === 0) {
+    return input.missingCapabilities.length > 0 && input.interactionMode === "auto" ? "needs_human_review" : "pass";
+  }
+  const hasCritical = input.findings.some((finding) => finding.normalizedSeverity === "critical");
   if (hasCritical) {
-    return input.automationLevel === "auto_gate" ? "blocked" : "needs_human_review";
+    return "blocked";
+  }
+  const hasHigh = input.findings.some((finding) => finding.normalizedSeverity === "high");
+  if (hasHigh) {
+    return input.interactionMode === "auto" || input.automationLevel === "auto_gate" ? "needs_human_review" : "advisory";
   }
   return "advisory";
 }
 
+function readPrompt(repoRoot: string): string {
+  try {
+    return readFileSync(resolve(repoRoot, "prompts/workers/implementation-review.md"), "utf8");
+  } catch (error) {
+    throw new AppError(
+      "IMPLEMENTATION_REVIEW_PROMPT_NOT_FOUND",
+      `Implementation review prompt could not be loaded: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
 export class ImplementationReviewService {
+  private readonly executionPlanner: ReviewExecutionPlanner;
   private readonly storyReviewProvider: StoryReviewProvider;
   private readonly verificationSignalProvider: VerificationSignalProvider;
   private readonly coderabbitProvider: CoderabbitReviewProvider;
   private readonly sonarcloudProvider: SonarcloudReviewProvider;
 
   public constructor(private readonly options: ImplementationReviewServiceOptions) {
+    this.executionPlanner = new ReviewExecutionPlanner(options.deps.agentRuntimeResolver, options.deps.workspaceRoot);
     this.storyReviewProvider = new StoryReviewProvider(options.deps);
     this.verificationSignalProvider = new VerificationSignalProvider(options.deps);
     this.coderabbitProvider = new CoderabbitReviewProvider(options.deps);
     this.sonarcloudProvider = new SonarcloudReviewProvider(options.deps);
   }
 
-  public startReview(input: {
+  public async startReview(input: {
     waveStoryExecutionId: string;
     automationLevel?: PlanningReviewAutomationLevel;
+    interactionMode?: ReviewInteractionMode;
   }) {
-    const execution = this.options.deps.waveStoryExecutionRepository.getById(input.waveStoryExecutionId);
+    const promptContent = readPrompt(this.options.deps.repoRoot);
+    const context = this.loadExecutionContext(input.waveStoryExecutionId);
+    const interactionMode = this.resolveInteractionMode(input.interactionMode);
+    const automationLevel = input.automationLevel ?? "manual";
+    const toolProviders = this.collectToolProviders(context);
+    const llmCapability = this.executionPlanner.planDualRoleReview({
+      roles: ["implementation_reviewer", "regression_reviewer"],
+      preferCodexFor: ["implementation_reviewer"],
+      preferClaudeFor: ["regression_reviewer"],
+      unavailableCode: "IMPLEMENTATION_REVIEW_PROVIDER_UNAVAILABLE"
+    });
+    const llmProviders = await this.runLlmProviders(context, llmCapability.assignments, toolProviders, promptContent);
+    const providers = [...toolProviders, ...llmProviders].filter((provider) => provider.findings.length > 0);
+    const findings = providers.flatMap((provider) =>
+      provider.findings.map((finding) => ({
+        ...finding,
+        sourceSystem: provider.sourceSystem
+      }))
+    );
+    const missingCapabilities = [...llmCapability.missingCapabilities];
+    if (llmProviders.length === 0) {
+      missingCapabilities.push("llm_review_not_enabled");
+    }
+    const gateDecision = mapGateDecision({
+      findings,
+      interactionMode,
+      automationLevel,
+      missingCapabilities
+    });
+    const review = this.options.reviewCoreService.recordReview({
+      reviewKind: "implementation",
+      subjectType: "wave_story_execution",
+      subjectId: context.execution.id,
+      subjectStep: "implementation",
+      status: gateDecision === "pass" ? "complete" : gateDecision === "blocked" ? "blocked" : "action_required",
+      readiness: gateDecision === "pass" ? "ready" : gateDecision === "advisory" ? "review_required" : "needs_human_review",
+      interactionMode,
+      reviewMode: "readiness",
+      automationLevel,
+      requestedMode: llmCapability.requestedMode,
+      actualMode: llmCapability.actualMode,
+      confidence: llmCapability.confidence,
+      gateEligibility: llmCapability.gateEligibility,
+      sourceSummary: {
+        waveStoryExecutionId: context.execution.id,
+        storyId: context.story.id,
+        storyCode: context.story.code,
+        projectId: context.project.id,
+        projectCode: context.project.code,
+        waveId: context.wave.id,
+        providerIds: providers.map((provider) => provider.providerId),
+        filePaths: this.collectFilePaths(toolProviders),
+        modules: this.collectModules(toolProviders)
+      },
+      providersUsed: providers.map((provider) => provider.providerId),
+      missingCapabilities: Array.from(new Set(missingCapabilities)),
+      summary: this.buildSummary(gateDecision, findings.length),
+      keyPoints: findings.slice(0, 7).map((finding) => finding.title),
+      disagreements: [],
+      recommendedAction: this.buildRecommendedAction(gateDecision, interactionMode),
+      gateDecision,
+      findings,
+      assumptions: llmProviders.flatMap((provider) =>
+        provider.providerMetadata && Array.isArray(provider.providerMetadata.assumptions)
+          ? (provider.providerMetadata.assumptions as Array<{ statement: string; reason: string; source: string }>)
+          : []
+      ),
+      knowledgeContext: {
+        workspaceId: this.options.deps.workspace.id,
+        projectId: context.project.id,
+        waveId: context.wave.id,
+        storyId: context.story.id
+      }
+    });
+
+    return this.options.reviewRemediationService.remediateImplementationReview({
+      review,
+      waveStoryExecutionId: context.execution.id,
+      interactionMode
+    });
+  }
+
+  public showReview(runId: string) {
+    return this.options.reviewCoreService.showReview(runId);
+  }
+
+  private loadExecutionContext(waveStoryExecutionId: string): LoadedExecutionContext {
+    const execution = this.options.deps.waveStoryExecutionRepository.getById(waveStoryExecutionId);
     if (!execution) {
-      throw new AppError("WAVE_STORY_EXECUTION_NOT_FOUND", `Wave story execution ${input.waveStoryExecutionId} not found`);
+      throw new AppError("WAVE_STORY_EXECUTION_NOT_FOUND", `Wave story execution ${waveStoryExecutionId} not found`);
     }
     const story = this.options.deps.userStoryRepository.getById(execution.storyId);
     if (!story) {
@@ -81,100 +284,258 @@ export class ImplementationReviewService {
     if (!project) {
       throw new AppError("PROJECT_NOT_FOUND", `Project ${implementationPlan.projectId} not found`);
     }
+    const item = this.options.deps.itemRepository.getById(project.itemId);
+    if (!item) {
+      throw new AppError("ITEM_NOT_FOUND", `Item ${project.itemId} not found`);
+    }
+    const projectExecutionContext = this.options.deps.projectExecutionContextRepository.getByProjectId(project.id);
+    if (!projectExecutionContext) {
+      throw new AppError("PROJECT_EXECUTION_CONTEXT_NOT_FOUND", `Project execution context ${project.id} not found`);
+    }
+    const acceptanceCriteria = this.options.deps.acceptanceCriterionRepository.listByStoryId(story.id);
+    const latestStoryReviewRun = this.options.deps.storyReviewRunRepository.getLatestByWaveStoryExecutionId(execution.id);
+    const latestStoryReviewFindings = latestStoryReviewRun
+      ? this.options.deps.storyReviewFindingRepository.listByStoryReviewRunId(latestStoryReviewRun.id)
+      : [];
+    const latestBasicVerification = this.options.deps.verificationRunRepository.getLatestByWaveStoryExecutionIdAndMode(execution.id, "basic");
+    const latestRalphVerification = this.options.deps.verificationRunRepository.getLatestByWaveStoryExecutionIdAndMode(execution.id, "ralph");
+    const latestAppVerification = this.options.deps.appVerificationRunRepository.getLatestByWaveStoryExecutionId(execution.id);
+    return {
+      execution,
+      story,
+      waveStory,
+      wave,
+      implementationPlan,
+      project,
+      item,
+      acceptanceCriteria,
+      projectExecutionContext,
+      implementationSummary: parseStoredJson(execution.outputSummaryJson),
+      basicVerificationStatus: latestBasicVerification?.status ?? null,
+      basicVerificationSummary: parseStoredJson(latestBasicVerification?.summaryJson ?? null),
+      ralphVerificationStatus: latestRalphVerification?.status ?? null,
+      ralphVerificationSummary: parseStoredJson(latestRalphVerification?.summaryJson ?? null),
+      appVerificationStatus: latestAppVerification?.status ?? null,
+      appVerificationSummary: parseStoredJson(latestAppVerification?.resultJson ?? null),
+      latestStoryReviewRun,
+      latestStoryReviewSummary: parseStoredJson(latestStoryReviewRun?.summaryJson ?? null),
+      latestStoryReviewFindings
+    };
+  }
 
-    const storyReviewProviderResult = this.storyReviewProvider.provide(execution.id);
-    const storyFilePaths = Array.from(
-      new Set(storyReviewProviderResult.findings.map((finding) => finding.filePath).filter((value): value is string => Boolean(value)))
-    );
+  private collectToolProviders(context: LoadedExecutionContext): ReviewProviderResult[] {
+    const storyReviewProviderResult = this.storyReviewProvider.provide(context.execution.id);
+    const storyFilePaths = this.collectFilePaths([storyReviewProviderResult]);
     const storyModules = Array.from(new Set(storyFilePaths.map((filePath) => filePath.split("/").slice(0, 2).join("/")).filter(Boolean)));
-
-    const providers: ReviewProviderResult[] = [
+    return [
       storyReviewProviderResult,
-      this.verificationSignalProvider.provide(execution.id),
+      this.verificationSignalProvider.provide(context.execution.id),
       this.coderabbitProvider.provide({
-        projectId: project.id,
-        waveId: wave.id,
-        storyId: story.id,
+        projectId: context.project.id,
+        waveId: context.wave.id,
+        storyId: context.story.id,
         filePaths: storyFilePaths,
         modules: storyModules
       }),
       this.sonarcloudProvider.provide(storyFilePaths)
-    ].filter((provider) => provider.findings.length > 0);
-
-    const allFindings = providers.flatMap((provider) => provider.findings);
-    const gateDecision = mapGateDecision({
-      findings: providers.flatMap((provider) =>
-        provider.findings.map((finding) => ({
-          ...finding,
-          sourceSystem: provider.sourceSystem
-        }))
-      ),
-      automationLevel: input.automationLevel ?? "manual"
-    });
-    const status = gateDecision === "pass" ? "complete" : gateDecision === "blocked" ? "blocked" : "action_required";
-    const readiness = gateDecision === "pass" ? "ready" : gateDecision === "blocked" ? "needs_human_review" : "review_required";
-    const summary =
-      gateDecision === "pass"
-        ? "Implementation review completed without actionable issues."
-        : gateDecision === "blocked"
-          ? "Implementation review found issues severe enough to block auto-gated progression."
-          : "Implementation review found follow-up issues that should be addressed before progressing.";
-    const recommendedAction =
-      gateDecision === "pass"
-        ? "Proceed with the next workflow step."
-        : gateDecision === "blocked"
-          ? "Escalate the implementation findings and resolve them before continuing."
-          : "Review the aggregated findings, remediate them, and rerun the implementation review.";
-
-    return this.options.reviewCoreService.recordReview({
-      reviewKind: "implementation",
-      subjectType: "wave_story_execution",
-      subjectId: execution.id,
-      subjectStep: "implementation",
-      status,
-      readiness,
-      interactionMode: "auto",
-      reviewMode: "readiness",
-      automationLevel: input.automationLevel ?? "manual",
-      requestedMode: null,
-      actualMode: "minimal_review",
-      confidence: providers.length >= 3 ? "high" : providers.length >= 2 ? "medium" : "low",
-      gateEligibility: "advisory_only",
-      sourceSummary: {
-        waveStoryExecutionId: execution.id,
-        storyId: story.id,
-        storyCode: story.code,
-        projectId: project.id,
-        projectCode: project.code,
-        waveId: wave.id,
-        providerIds: providers.map((provider) => provider.providerId),
-        filePaths: storyFilePaths,
-        modules: storyModules
-      },
-      providersUsed: providers.map((provider) => provider.providerId),
-      missingCapabilities: providers.some((provider) => provider.sourceSystem === "llm") ? [] : ["llm_review_not_enabled"],
-      summary,
-      keyPoints: allFindings.slice(0, 7).map((finding) => finding.title),
-      disagreements: [],
-      recommendedAction,
-      gateDecision,
-      findings: providers.flatMap((provider) =>
-        provider.findings.map((finding) => ({
-          ...finding,
-          sourceSystem: provider.sourceSystem
-        }))
-      ),
-      knowledgeContext: {
-        source: "implementation_review",
-        workspaceId: this.options.deps.workspace.id,
-        projectId: project.id,
-        waveId: wave.id,
-        storyId: story.id
-      }
-    });
+    ];
   }
 
-  public showReview(runId: string) {
-    return this.options.reviewCoreService.showReview(runId);
+  private collectFilePaths(providers: ReviewProviderResult[]): string[] {
+    return Array.from(
+      new Set(providers.flatMap((provider) => provider.findings.map((finding) => finding.filePath).filter((value): value is string => Boolean(value))))
+    );
+  }
+
+  private collectModules(providers: ReviewProviderResult[]): string[] {
+    return Array.from(new Set(this.collectFilePaths(providers).map((filePath) => filePath.split("/").slice(0, 2).join("/")).filter(Boolean)));
+  }
+
+  private async runLlmProviders(
+    context: LoadedExecutionContext,
+    assignments: Array<{ providerKey: string; role: ImplementationReviewProviderRole }>,
+    toolProviders: ReviewProviderResult[],
+    promptContent: string
+  ): Promise<ReviewProviderResult[]> {
+    return Promise.all(
+      assignments.map(async (assignment) => {
+        const runtime = this.options.deps.agentRuntimeResolver.resolveProvider(assignment.providerKey);
+        const result = await runtime.adapter.runImplementationReview({
+          runtime: this.options.buildAdapterRuntimeContext(runtime),
+          interactionType: "implementation_review",
+          prompt: promptContent,
+          reviewerRole: assignment.role,
+          item: {
+            id: context.item.id,
+            code: context.item.code,
+            title: context.item.title,
+            description: context.item.description
+          },
+          project: {
+            id: context.project.id,
+            code: context.project.code,
+            title: context.project.title,
+            summary: context.project.summary,
+            goal: context.project.goal
+          },
+          implementationPlan: {
+            id: context.implementationPlan.id,
+            summary: context.implementationPlan.summary,
+            version: context.implementationPlan.version
+          },
+          wave: {
+            id: context.wave.id,
+            code: context.wave.code,
+            goal: context.wave.goal,
+            position: context.wave.position
+          },
+          story: {
+            id: context.story.id,
+            code: context.story.code,
+            title: context.story.title,
+            description: context.story.description,
+            actor: context.story.actor,
+            goal: context.story.goal,
+            benefit: context.story.benefit,
+            priority: context.story.priority
+          },
+          acceptanceCriteria: context.acceptanceCriteria,
+          projectExecutionContext: {
+            relevantDirectories: context.projectExecutionContext.relevantDirectories,
+            relevantFiles: context.projectExecutionContext.relevantFiles,
+            integrationPoints: context.projectExecutionContext.integrationPoints,
+            testLocations: context.projectExecutionContext.testLocations,
+            repoConventions: context.projectExecutionContext.repoConventions,
+            executionNotes: context.projectExecutionContext.executionNotes
+          },
+          implementation: {
+            summary: String(context.implementationSummary?.summary ?? ""),
+            changedFiles: Array.isArray(context.implementationSummary?.changedFiles)
+              ? (context.implementationSummary?.changedFiles as string[])
+              : [],
+            testsRun: Array.isArray(context.implementationSummary?.testsRun)
+              ? (context.implementationSummary?.testsRun as Array<{ command: string; status: "passed" | "failed" | "not_run" }>)
+              : [],
+            implementationNotes: Array.isArray(context.implementationSummary?.implementationNotes)
+              ? (context.implementationSummary?.implementationNotes as string[])
+              : [],
+            blockers: Array.isArray(context.implementationSummary?.blockers) ? (context.implementationSummary?.blockers as string[]) : []
+          },
+          basicVerification: {
+            status: context.basicVerificationStatus,
+            summary: context.basicVerificationSummary
+          },
+          ralphVerification: {
+            status: context.ralphVerificationStatus,
+            summary: context.ralphVerificationSummary
+          },
+          appVerification: {
+            status: context.appVerificationStatus,
+            summary: context.appVerificationSummary
+          },
+          latestStoryReview: {
+            status: context.latestStoryReviewRun?.status ?? null,
+            summary: context.latestStoryReviewSummary,
+            findings: context.latestStoryReviewFindings.map((finding) => ({
+              severity: finding.severity,
+              category: finding.category,
+              title: finding.title,
+              description: finding.description,
+              evidence: finding.evidence,
+              filePath: finding.filePath,
+              line: finding.line,
+              suggestedFix: finding.suggestedFix
+            }))
+          },
+          externalSignals: toolProviders.flatMap((provider) =>
+            provider.findings.map((finding) => ({
+              sourceSystem: provider.sourceSystem,
+              reviewerRole: finding.reviewerRole ?? null,
+              normalizedSeverity: finding.normalizedSeverity,
+              findingType: finding.findingType,
+              title: finding.title,
+              detail: finding.detail,
+              evidence: finding.evidence ?? null,
+              filePath: finding.filePath ?? null,
+              line: finding.line ?? null
+            }))
+          ),
+          qualityKnowledge: this.options.deps.qualityKnowledgeEntryRepository
+            .listRecurringByProjectId(context.project.id, 8)
+            .map((entry) => ({
+              source: entry.source,
+              scopeType: entry.scopeType,
+              scopeId: entry.scopeId,
+              summary: entry.summary,
+              status: entry.status
+            }))
+        });
+        const parsed = implementationReviewOutputSchema.parse(result.output);
+        return mapLlmResultToProviderResult({
+          providerId: `${assignment.providerKey}:${assignment.role}`,
+          reviewerRole: assignment.role,
+          result: {
+            reviewerRole: assignment.role,
+            overallStatus: parsed.overallStatus,
+            summary: parsed.summary,
+            findings: parsed.findings.map((finding) => ({
+              severity: normalizeSeverity(finding.severity),
+              category: finding.category,
+              title: finding.title,
+              description: finding.description,
+              evidence: finding.evidence,
+              filePath: finding.filePath ?? null,
+              line: finding.line ?? null,
+              remediationClass: finding.remediationClass ?? undefined
+            })),
+            assumptions: parsed.assumptions,
+            recommendations: parsed.recommendations
+          }
+        });
+      })
+    );
+  }
+
+  private resolveInteractionMode(override?: ReviewInteractionMode): ReviewInteractionMode {
+    if (override) {
+      return override;
+    }
+    const raw = this.options.deps.workspaceSettings.executionDefaultsJson;
+    if (!raw) {
+      return "auto";
+    }
+    try {
+      const parsed = JSON.parse(raw) as { implementationReview?: { interactionMode?: ReviewInteractionMode } };
+      return parsed.implementationReview?.interactionMode ?? "auto";
+    } catch {
+      return "auto";
+    }
+  }
+
+  private buildSummary(gateDecision: ReviewGateDecision, findingCount: number): string {
+    if (gateDecision === "pass") {
+      return "Implementation review completed without actionable issues.";
+    }
+    if (gateDecision === "blocked") {
+      return "Implementation review found blocking issues.";
+    }
+    if (gateDecision === "needs_human_review") {
+      return `Implementation review found ${findingCount} issue(s) that still require human judgement.`;
+    }
+    return `Implementation review found ${findingCount} follow-up issue(s).`;
+  }
+
+  private buildRecommendedAction(gateDecision: ReviewGateDecision, interactionMode: ReviewInteractionMode): string {
+    if (gateDecision === "pass") {
+      return "Proceed with the next workflow step.";
+    }
+    if (interactionMode === "auto") {
+      return gateDecision === "blocked"
+        ? "Stop automatic progression and escalate the blocking findings."
+        : "Apply safe remediations, rerun review, and escalate any remaining uncertainty.";
+    }
+    return gateDecision === "blocked"
+      ? "Resolve the blocking findings before continuing."
+      : "Review the findings, remediate them, and rerun the implementation review.";
   }
 }

@@ -223,6 +223,7 @@ Live zu verifizieren:
 Umgesetzt:
 
 - projektweiter QA-Lauf mit `QaRun`, `QaFinding` und `QaAgentSession`
+- paralleler Core-nativer QA-Review-Run mit `reviewKind = qa`
 - CLI-Kommandos `qa:start`, `qa:show` und `qa:retry`
 - engine-seitige Guards: QA startet nur nach vollstaendig abgeschlossener Execution
 - strukturierter `qa.json`-Output mit Summary, Findings, Evidence und Recommendations
@@ -247,12 +248,42 @@ Live verifiziert:
 - kompletter CLI-Durchlauf bis `qa:start` und `qa:show` erfolgreich
 - pro Project wird ein `QaRun` mit gespeichertem Input-Snapshot und strukturierter Summary angelegt
 - Findings und QA-Agent-Sessions werden pro Run persistiert
+- QA schreibt zusaetzlich Gate-/Finding-Synthese in den generischen Review Core
 - erfolgreicher Live-Run gegen `/tmp/beerengineer-live-qa.sqlite`:
   - Item `ITEM-0002`
   - Project `ITEM-0002-P01`
   - `QaRun.status = passed`
   - beide Waves `completed`
   - Item-Endzustand nach zusaetzlicher Documentation: `currentColumn = done`, `phaseStatus = completed`
+
+## Review Core Follow-Up
+
+Umgesetzt:
+
+- `implementation` ist jetzt ein nativer Review-Core-Typ mit Tool-Signalen und
+  LLM-Review
+- neue LLM-Rollen fuer `implementation`:
+  - `implementation_reviewer`
+  - `regression_reviewer`
+- `implementation-review:start` unterstuetzt jetzt `interactionMode`
+  - Default: `auto`
+  - optional: `assisted`, `interactive`
+- im `auto`-Mode kann `implementation` sichere Story-Review-Remediation direkt
+  ausloesen und danach den neuesten Re-Review-Run auswerten
+- Story Review schreibt nativ in den Review Core als
+  `reviewKind = interactive_story`
+- QA schreibt nativ in den Review Core als `reviewKind = qa`
+- die alten Mirror-Hooks fuer Story Review und QA wurden entfernt
+
+Verifiziert mit:
+
+- `npm run build`
+- `npm test -- --run test/unit/hosted-cli-adapters.test.ts`
+- gezielten Integrations-Tests fuer:
+  - `implementation`-Review
+  - Story-Review-Remediation
+  - Core-native QA-Reviews
+  - Core-native Planning-Gates
 
 ## Documentation Slice
 

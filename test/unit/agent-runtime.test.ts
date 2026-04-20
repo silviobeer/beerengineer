@@ -54,7 +54,7 @@ function writeConfig(root: string, policyOverride?: Partial<AgentExecutionPolicy
       },
       claude: {
         adapterKey: "claude",
-        model: "claude-sonnet",
+        model: "sonnet",
         command: ["claude"],
         env: {},
         timeoutMs: 1_800_000
@@ -92,7 +92,7 @@ describe("agent runtime config", () => {
         "utf8"
       );
 
-      expect(() => loadAgentRuntimeConfig(configPath)).toThrow(/Invalid literal value, expected "enabled"/i);
+      expect(() => loadAgentRuntimeConfig(configPath)).toThrow(/Policy networkMode must be enabled/i);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -29,23 +29,6 @@ type QaServiceOptions = {
   > extends infer T
     ? Map<string, T>
     : never;
-  mirrorQaReview?(input: {
-    qaRunId: string;
-    projectId: string;
-    itemId: string;
-    status: QaRunStatus;
-    findings: Array<{
-      severity: string;
-      category: string;
-      title: string;
-      description: string;
-      evidence: string;
-      storyId: string | null;
-      waveStoryExecutionId: string | null;
-    }>;
-    summary: QaOutput | null;
-    errorMessage: string | null;
-  }): void;
 };
 
 export class QaService {
@@ -168,7 +151,7 @@ export class QaService {
         summaryJson: JSON.stringify(parsed, null, 2),
         errorMessage: null
       });
-      this.options.mirrorQaReview?.({
+      this.recordQaCoreReview({
         qaRunId: qaRun.id,
         projectId,
         itemId: item.id,
@@ -182,7 +165,6 @@ export class QaService {
           storyId: finding.storyId,
           waveStoryExecutionId: finding.waveStoryExecutionId
         })),
-        summary: parsed,
         errorMessage: null
       });
       this.options.deps.itemRepository.updatePhaseStatus(item.id, this.mapQaRunStatusToItemPhaseStatus(status));
@@ -205,13 +187,12 @@ export class QaService {
       this.options.deps.qaRunRepository.updateStatus(qaRun.id, "failed", {
         errorMessage: error instanceof Error ? error.message : String(error)
       });
-      this.options.mirrorQaReview?.({
+      this.recordQaCoreReview({
         qaRunId: qaRun.id,
         projectId,
         itemId: item.id,
         status: "failed",
         findings: [],
-        summary: null,
         errorMessage: error instanceof Error ? error.message : String(error)
       });
       this.options.deps.itemRepository.updatePhaseStatus(item.id, "failed");
@@ -276,9 +257,14 @@ export class QaService {
         .map((run) => [run.waveStoryExecutionId!, run])
     );
     const latestStoryReviewByExecutionId = new Map(
-      this.options.deps.storyReviewRunRepository
-        .listLatestByWaveStoryExecutionIds(Array.from(latestExecutionByWaveStoryId.values()).map((execution) => execution.id))
-        .map((run) => [run.waveStoryExecutionId, run])
+      Array.from(latestExecutionByWaveStoryId.values()).flatMap((execution) => {
+        const latestReview = this.options.reviewCoreService.getLatestBySubject({
+          reviewKind: "interactive_story",
+          subjectType: "wave_story_execution",
+          subjectId: execution.id
+        });
+        return latestReview ? [[execution.id, latestReview.run]] : [];
+      })
     );
     const projectQualityKnowledge = this.options.deps.qualityKnowledgeEntryRepository.listRecurringByProjectId(input.project.id, 12);
     const workspaceConstraints = this.options.deps.qualityKnowledgeEntryRepository.listRecentConstraintsByWorkspaceId(
@@ -301,7 +287,7 @@ export class QaService {
         throw new AppError("QA_RALPH_INCOMPLETE", `Story ${story.code} has no passing Ralph verification`);
       }
       const latestStoryReview = latestStoryReviewByExecutionId.get(latestExecution.id);
-      if (!latestStoryReview || latestStoryReview.status !== "passed") {
+      if (!latestStoryReview || latestStoryReview.status !== "complete" || latestStoryReview.readiness !== "ready") {
         throw new AppError("QA_STORY_REVIEW_INCOMPLETE", `Story ${story.code} has no passing story review`);
       }
 
@@ -330,7 +316,7 @@ export class QaService {
         latestStoryReview: {
           id: latestStoryReview.id,
           status: latestStoryReview.status,
-          summaryJson: latestStoryReview.summaryJson
+          summaryJson: latestStoryReview.reviewSummary
         }
       };
     });
@@ -457,5 +443,78 @@ export class QaService {
         `Implementation review gate blocks QA until review ${blockingRun.id} is ready`
       );
     }
+  }
+
+  private recordQaCoreReview(input: {
+    qaRunId: string;
+    projectId: string;
+    itemId: string;
+    status: QaRunStatus;
+    findings: Array<{
+      severity: string;
+      category: string;
+      title: string;
+      description: string;
+      evidence: string;
+      storyId: string | null;
+      waveStoryExecutionId: string | null;
+    }>;
+    errorMessage: string | null;
+  }) {
+    const gateDecision =
+      input.status === "passed" ? "pass" : input.status === "failed" ? "blocked" : ("advisory" as const);
+    this.options.reviewCoreService.recordReview({
+      reviewKind: "qa",
+      subjectType: "project",
+      subjectId: input.projectId,
+      subjectStep: "qa",
+      status: input.status === "passed" ? "complete" : input.status === "failed" ? "failed" : "action_required",
+      readiness: input.status === "passed" ? "ready" : input.status === "failed" ? "needs_human_review" : "review_required",
+      interactionMode: "auto",
+      reviewMode: "readiness",
+      automationLevel: "auto_comment",
+      requestedMode: null,
+      actualMode: null,
+      confidence: "medium",
+      gateEligibility: "advisory_only",
+      sourceSummary: {
+        qaRunId: input.qaRunId,
+        projectId: input.projectId,
+        itemId: input.itemId,
+        errorMessage: input.errorMessage
+      },
+      providersUsed: ["qa-verifier"],
+      missingCapabilities: [],
+      summary:
+        input.status === "passed"
+          ? "QA completed without actionable findings."
+          : input.status === "failed"
+            ? "QA failed."
+            : "QA completed with follow-up findings.",
+      keyPoints: input.findings.slice(0, 7).map((finding) => finding.title),
+      disagreements: [],
+      recommendedAction:
+        input.status === "passed"
+          ? "Proceed with documentation or delivery."
+          : input.status === "failed"
+            ? "Retry QA or inspect the failure."
+            : "Resolve the QA findings before continuing.",
+      gateDecision,
+      findings: input.findings.map((finding) => ({
+        sourceSystem: "qa" as const,
+        reviewerRole: "qa-verifier",
+        findingType: finding.category,
+        normalizedSeverity:
+          finding.severity === "critical" ? "critical" : finding.severity === "high" ? "high" : finding.severity === "medium" ? "medium" : "low",
+        sourceSeverity: finding.severity,
+        title: finding.title,
+        detail: finding.description,
+        evidence: finding.evidence,
+        filePath: null,
+        line: null,
+        fieldPath: finding.storyId ?? finding.waveStoryExecutionId
+      })),
+      knowledgeContext: null
+    });
   }
 }

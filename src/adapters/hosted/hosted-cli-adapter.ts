@@ -13,6 +13,8 @@ import type {
   DocumentationAdapterRunResult,
   ExecutionAdapterRunRequest,
   ExecutionAdapterRunResult,
+  ImplementationReviewAdapterRunRequest,
+  ImplementationReviewAdapterRunResult,
   InteractiveBrainstormAdapterRunRequest,
   InteractiveBrainstormAdapterRunResult,
   PlanningReviewAdapterRunRequest,
@@ -34,6 +36,7 @@ import type {
 export type AnyAdapterRequest =
   | AdapterRunRequest
   | PlanningReviewAdapterRunRequest
+  | ImplementationReviewAdapterRunRequest
   | InteractiveBrainstormAdapterRunRequest
   | InteractiveStoryReviewAdapterRunRequest
   | WorkspaceSetupAssistAdapterRunRequest
@@ -94,6 +97,10 @@ export abstract class HostedCliAdapterBase {
     planning_review: [
       "Inside `output`, return exactly these fields:",
       '{ "status": "in_review"|"questions_only"|"ready"|"blocked"|"failed", "readiness": "ready"|"ready_with_assumptions"|"needs_evidence"|"needs_human_review"|"high_risk", "summary": string, "findings": Array<{ "type": "blocker"|"major_concern"|"question"|"suggestion", "title": string, "detail": string, "evidence"?: string|null }>, "missingInformation": string[], "recommendedNextEvidence": string[], "assumptionsDetected": string[] }'
+    ].join("\n"),
+    implementation_review: [
+      "Inside `output`, return exactly these fields:",
+      '{ "overallStatus": "passed"|"review_required"|"failed", "summary": string, "findings": Array<{ "severity": "critical"|"high"|"medium"|"low", "category": "correctness"|"security"|"regression"|"maintainability", "title": string, "description": string, "evidence": string, "filePath"?: string|null, "line"?: number|null, "remediationClass"?: "safe_code_fix"|"test_gap"|"manual_follow_up"|null }>, "assumptions": string[], "recommendations": string[] }'
     ].join("\n")
   };
 
@@ -130,6 +137,12 @@ export abstract class HostedCliAdapterBase {
     request: PlanningReviewAdapterRunRequest
   ): Promise<PlanningReviewAdapterRunResult> {
     return this.executeOutputEnvelope<PlanningReviewAdapterRunResult>("planning_review", request);
+  }
+
+  public async runImplementationReview(
+    request: ImplementationReviewAdapterRunRequest
+  ): Promise<ImplementationReviewAdapterRunResult> {
+    return this.executeOutputEnvelope<ImplementationReviewAdapterRunResult>("implementation_review", request);
   }
 
   public async runInteractiveStoryReview(
@@ -312,6 +325,8 @@ export abstract class HostedCliAdapterBase {
       let stdout = "";
       let stderr = "";
       let settled = false;
+      let exitCode: number | null = null;
+      let exitSignal: NodeJS.Signals | null = null;
       const timer = setTimeout(() => {
         if (settled) {
           return;
@@ -320,6 +335,36 @@ export abstract class HostedCliAdapterBase {
         child.kill("SIGTERM");
         reject(new HostedAgentExecutionError(`Agent process timed out after ${this.timeoutMs}ms`));
       }, this.timeoutMs);
+      let exitFlushTimer: NodeJS.Timeout | null = null;
+
+      const clearTimers = () => {
+        clearTimeout(timer);
+        if (exitFlushTimer) {
+          clearTimeout(exitFlushTimer);
+          exitFlushTimer = null;
+        }
+      };
+
+      const finalize = () => {
+        if (settled || exitCode === null) {
+          return;
+        }
+        settled = true;
+        clearTimers();
+        if (exitSignal) {
+          reject(new HostedAgentExecutionError(`Agent process terminated by signal ${exitSignal}`));
+          return;
+        }
+        if (exitCode !== 0) {
+          reject(new HostedAgentExecutionError(this.sanitizeErrorOutput(stderr)));
+          return;
+        }
+        resolve({
+          stdout,
+          stderr,
+          exitCode
+        });
+      };
 
       child.stdout.setEncoding("utf8");
       child.stderr.setEncoding("utf8");
@@ -334,28 +379,23 @@ export abstract class HostedCliAdapterBase {
           return;
         }
         settled = true;
-        clearTimeout(timer);
+        clearTimers();
         reject(new HostedAgentExecutionError(error.message));
       });
-      child.on("close", (code, signal) => {
+      child.on("exit", (code, signal) => {
         if (settled) {
           return;
         }
-        settled = true;
-        clearTimeout(timer);
-        if (signal) {
-          reject(new HostedAgentExecutionError(`Agent process terminated by signal ${signal}`));
-          return;
+        exitCode = code ?? 0;
+        exitSignal = signal;
+        exitFlushTimer = setTimeout(finalize, 50);
+      });
+      child.on("close", (code, signal) => {
+        if (exitCode === null) {
+          exitCode = code ?? 0;
+          exitSignal = signal;
         }
-        if ((code ?? 1) !== 0) {
-          reject(new HostedAgentExecutionError(this.sanitizeErrorOutput(stderr)));
-          return;
-        }
-        resolve({
-          stdout,
-          stderr,
-          exitCode: code ?? 0
-        });
+        finalize();
       });
       child.stdin.write(stdin, "utf8");
       child.stdin.end();
