@@ -62,6 +62,13 @@ Workspace-spezifische Agent-Strategien lassen sich ueber Runtime-Profile steuern
 
 Fuer Browser-/Tooling-Harnesses kann BeerEngineer ausserdem `agent-browser` als MCP-Server fuer `claude`, `cursor`, `opencode` und `codex` materialisieren.
 
+Fuer Sonar gilt jetzt bewusst eine Zweiteilung:
+
+- `sonar` fuer Login und Nutzerintegration
+- `sonar-scanner` fuer projektbezogene Branch-, PR- und Main-Analysen
+
+Wenn nur ein Teil der Sonar-Toolchain vorhanden ist, bleibt BeerEngineer lauffaehig und faellt fuer Sonar degradiert auf fixture-basierte Signale zurueck, statt die restliche CLI zu blockieren.
+
 Die effektive Runtime wird aus globalem Default, optionalem User-Override und optionalem Workspace-Profil aufgeloest. Inkompatible gespeicherte Workspace-Profile bleiben dabei sichtbar, blockieren aber die CLI nicht mehr; Recovery laeuft ueber `workspace:runtime:show` und `workspace:runtime:clear-profile`. Details und CLI-Kommandos stehen in [docs/reference/cli.md](docs/reference/cli.md).
 
 ## Projektstruktur
@@ -112,3 +119,4 @@ npm run review:agent
 ```
 
 Die zusaetzlichen Review-Instruktionen liegen in [coderabbit.md](coderabbit.md).
+BeerEngineer selbst nutzt dafuer jetzt auch branch-aware CodeRabbit-Kontext ueber `beerengineer coderabbit preflight`, `beerengineer coderabbit context` und bei Bedarf `beerengineer coderabbit review --live`.

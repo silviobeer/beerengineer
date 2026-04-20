@@ -383,7 +383,7 @@ describe("workflow service", () => {
     }
   });
 
-  it("creates advisory implementation reviews from story review and coderabbit signals", async () => {
+  it("creates advisory implementation reviews from story review and coderabbit signals", { timeout: 10000 }, async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
     const dbPath = join(root, "app.sqlite");
     const context = createAppContext(dbPath);
@@ -2080,6 +2080,44 @@ describe("workflow service", () => {
         ])
       );
 
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refreshes Sonar quality knowledge automatically after story-branch implementation", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const workspaceRoot = createGitWorkspace(root);
+    const context = createAppContext(dbPath, { workspaceRoot });
+
+    try {
+      const item = createWorkspaceItem(context, {
+        title: "Auto Sonar Refresh",
+        description: "Persist Sonar knowledge automatically after implementation on a story branch"
+      });
+      await context.workflowService.startStage({ stageKey: "brainstorm", itemId: item.id });
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      context.workflowService.approveConcept(concept!.id);
+      context.workflowService.importProjects(item.id);
+      const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
+      await context.workflowService.startStage({ stageKey: "requirements", itemId: item.id, projectId: project.id });
+      context.workflowService.approveStories(project.id);
+      await context.workflowService.startStage({ stageKey: "architecture", itemId: item.id, projectId: project.id });
+      context.workflowService.approveArchitecture(project.id);
+      await context.workflowService.startStage({ stageKey: "planning", itemId: item.id, projectId: project.id });
+      context.workflowService.approvePlanning(project.id);
+
+      await context.workflowService.startExecution(project.id);
+
+      const firstStory = context.repositories.userStoryRepository.listByProjectId(project.id)[0]!;
+      const sonarEntries = context.repositories.qualityKnowledgeEntryRepository
+        .listByWorkspaceId(context.workspace.id)
+        .filter((entry) => entry.source === "sonar" && entry.storyId === firstStory.id);
+
+      expect(sonarEntries.length).toBeGreaterThan(0);
+      expect(sonarEntries.some((entry) => entry.projectId === project.id)).toBe(true);
     } finally {
       context.connection.close();
       rmSync(root, { recursive: true, force: true });

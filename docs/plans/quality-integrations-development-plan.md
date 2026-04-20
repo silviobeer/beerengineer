@@ -11,7 +11,7 @@ The system should not treat review and verification as pass/fail events only. Ev
 - `.env` is bootstrap-only, not the long-term source of truth.
 - Workspace-scoped settings should drive behavior.
 - Sonar and Coderabbit setup should follow the same integration model.
-- Sonar and Coderabbit should run primarily at story-review time, not only at QA.
+- Sonar and Coderabbit should feed implementation-quality review early, not wait until QA.
 - Wave-level quality handling should aggregate and summarize, not replace story-level review.
 - QA should confirm quality status and add system-level findings, not be the first place quality issues are discovered.
 - Every quality step should produce both:
@@ -242,9 +242,12 @@ These contracts should be UI-ready so the future setup screen and status panels 
    - `beerengineer coderabbit config set`
    - `beerengineer coderabbit config test`
    - `beerengineer coderabbit config clear-token`
+   - `beerengineer coderabbit context`
+   - `beerengineer coderabbit preflight`
 
 4. Add Coderabbit operational commands.
 
+   - `beerengineer coderabbit review --live`
    - `beerengineer review run --story <id>`
    - `beerengineer review status --story <id>`
    - `beerengineer review remediate --story-review-run <id>`
@@ -262,27 +265,37 @@ These contracts should be UI-ready so the future setup screen and status panels 
 
 ## Phase 5: Workflow Integration
 
-### Story Level
+### Story / Branch Level
 
-This is the primary quality gate.
+This is the primary implementation-quality gate.
 
 Recommended default flow:
 
 1. execution
 2. verification
-3. Sonar check
+3. Sonar branch or pull-request analysis
 4. Coderabbit review
 5. remediation if needed
-6. Sonar re-check after remediation
+6. Sonar branch or pull-request re-check after remediation
 7. Coderabbit re-review after remediation
 8. mark complete
 
-Story level is the best place for:
+Story and branch level are the best place for:
 
 - attributable findings
 - small, understandable diffs
 - reusable implementation lessons
 - tight remediation loops
+
+Implementation status update:
+
+- Sonar now follows this branch-/PR-aware model with explicit live-vs-fallback handling.
+- CodeRabbit now mirrors that direction:
+  - CLI-auth detection via `cr auth status --agent`
+  - repository fallback via `git remote origin`
+  - branch-/PR-aware `beerengineer coderabbit context`
+  - explicit `beerengineer coderabbit review --live`
+  - fallback to persisted `qualityKnowledge` when live review is unavailable
 
 ### Wave Level
 
@@ -318,7 +331,7 @@ QA must explicitly consume prior quality knowledge before execution.
 
 QA runs should receive:
 
-- story-level Sonar summaries
+- story- and branch-scoped Sonar summaries
 - Coderabbit findings and remediation history
 - wave-level repeated issue summaries
 - fragile modules and files

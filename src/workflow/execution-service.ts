@@ -614,6 +614,13 @@ export class ExecutionService {
         outputSummaryJson: JSON.stringify(parsed, null, 2),
         gitMetadata: input.gitMetadata ?? null
       });
+      this.refreshSonarSignalsForExecution({
+        projectId: input.project.id,
+        waveId: input.wave.id,
+        storyId: input.story.id,
+        storyCode: input.story.code,
+        gitMetadata: input.gitMetadata ?? null
+      });
 
       const verification = await this.options.executeVerificationPipeline({
         project: input.project,
@@ -713,6 +720,33 @@ export class ExecutionService {
       stderr: result.stderr,
       exitCode: result.exitCode
     });
+  }
+
+  private refreshSonarSignalsForExecution(input: {
+    projectId: string;
+    waveId: string;
+    storyId: string;
+    storyCode: string;
+    gitMetadata: GitBranchMetadata | null;
+  }): void {
+    const branchRole = input.gitMetadata?.branchRole ?? null;
+    if (branchRole !== "story" && branchRole !== "story-remediation") {
+      return;
+    }
+    try {
+      this.options.deps.sonarService.scan({
+        projectId: input.projectId,
+        waveId: input.waveId,
+        storyId: input.storyId,
+        storyCode: input.storyCode
+      });
+    } catch (error) {
+      console.warn("sonar branch refresh failed", {
+        storyId: input.storyId,
+        branchName: input.gitMetadata?.branchName ?? null,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
   }
 
   private completeWaveStoryExecution(input: {

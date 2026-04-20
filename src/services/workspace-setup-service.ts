@@ -7,15 +7,20 @@ import type { WorkspaceSetupContext } from "../app-context.js";
 import type { WorkspaceAssistMessage, WorkspaceAssistSession, WorkspaceCoderabbitSettings, WorkspaceSonarSettings } from "../domain/types.js";
 import { workspaceSetupAssistOutputSchema, type WorkspaceSetupAssistPlan } from "../schemas/output-contracts.js";
 import { AppError } from "../shared/errors.js";
+import { detectCoderabbitCliState } from "../shared/coderabbit-cli.js";
+import { parseGitRemoteRepository } from "../shared/git-remote.js";
 import type { HarnessMcpTarget } from "../shared/workspace-mcp.js";
 import { applyHarnessMcpConfig, isHarnessMcpConfigured, renderHarnessMcpConfigPreview, resolveHarnessMcpTargets } from "../shared/workspace-mcp.js";
+import { detectSonarCliState } from "../shared/sonar-cli.js";
 import { parseDotEnv } from "./env-config.js";
 const beerengineerOwnedDirectories = [".beerengineer", ".beerengineer/artifacts", ".beerengineer/workspaces"];
 const beerengineerGitignoreEntry = "# beerengineer runtime data (managed by beerengineer CLI)\n.beerengineer/\n";
 const legacyBeerengineerGitignoreEntry = ".beerengineer/worktrees/";
 const supportedProjectManifestFiles = ["package.json", "pyproject.toml", "requirements.txt", "go.mod", "Cargo.toml"];
+const sonarCliName = "sonar";
+const sonarCliLabel = "SonarQube CLI";
 const sonarScannerCliName = "sonar-scanner";
-const sonarScannerCliLabel = "SonarSource CLI";
+const sonarScannerCliLabel = "SonarScanner CLI";
 const agentBrowserCliName = "agent-browser";
 const agentBrowserCliLabel = "Agent Browser CLI";
 const githubCliName = "gh";
@@ -99,6 +104,7 @@ type AnyBinaryCheck = {
 type IntegrationPresenceInput = {
     hasStoredConfig: boolean;
     hasToken: boolean;
+    hasCliAuth?: boolean;
     envFallback: boolean;
 };
 type ProjectState = {
@@ -685,6 +691,7 @@ export class WorkspaceSetupService {
             this.checkBinary(githubCliName),
             this.checkBinary(agentBrowserCliName),
             playwrightCheck,
+            this.checkBinary(sonarCliName),
             this.checkBinary(sonarScannerCliName),
             coderabbitCheck
         ].map((entry) => ({
@@ -695,6 +702,10 @@ export class WorkspaceSetupService {
     }
     formatRuntimeCheckMessage(entry: { binary: string; status: string; message: string; resolvedAlias?: string | null }) {
         switch (entry.binary) {
+            case sonarCliName:
+                return entry.status === "ok"
+                    ? `${sonarCliLabel} (${sonarCliName}) is available.`
+                    : `${sonarCliLabel} (${sonarCliName}) is not available on PATH.`;
             case sonarScannerCliName:
                 return entry.status === "ok"
                     ? `${sonarScannerCliLabel} (${sonarScannerCliName}) is available.`
@@ -745,21 +756,120 @@ export class WorkspaceSetupService {
         const envConfig = this.input.workspaceRoot && existsSync(this.input.workspaceRoot)
             ? parseDotEnv(resolve(this.input.workspaceRoot, ".env.local"))
             : {};
+        const sonarCliState = this.input.workspaceRoot && existsSync(this.input.workspaceRoot)
+            ? detectSonarCliState(this.input.workspaceRoot)
+            : { available: false, loggedIn: false, detail: null };
+        const coderabbitCliState = this.input.workspaceRoot && existsSync(this.input.workspaceRoot)
+            ? detectCoderabbitCliState(this.input.workspaceRoot)
+            : { available: false, binary: null, loggedIn: false, detail: null };
         const sonarInput = {
             hasStoredConfig: Boolean(this.input.sonarSettings?.hostUrl && this.input.sonarSettings?.organization && this.input.sonarSettings?.projectKey),
             hasToken: Boolean(this.input.sonarSettings?.token),
+            hasCliAuth: sonarCliState.loggedIn,
             envFallback: Boolean(envConfig.SONAR_HOST_URL || envConfig.SONAR_ORGANIZATION || envConfig.SONAR_PROJECT_KEY || envConfig.SONAR_TOKEN)
         };
         const coderabbitInput = {
             hasStoredConfig: Boolean(this.input.coderabbitSettings?.hostUrl && this.input.coderabbitSettings?.organization && this.input.coderabbitSettings?.repository),
             hasToken: Boolean(this.input.coderabbitSettings?.token),
+            hasCliAuth: coderabbitCliState.loggedIn,
             envFallback: Boolean(envConfig.CODERABBIT_HOST_URL || envConfig.CODERABBIT_ORGANIZATION || envConfig.CODERABBIT_REPOSITORY || envConfig.CODERABBIT_TOKEN)
         };
         return [
-            { id: "sonar-config", status: this.integrationStatus(sonarInput), message: this.integrationMessage("Sonar", sonarInput) },
-            { id: "coderabbit-config", status: this.integrationStatus(coderabbitInput), message: this.integrationMessage("Coderabbit", coderabbitInput) },
+            { id: "sonar-config", status: this.integrationStatus(sonarInput, "sonar"), message: this.integrationMessage("Sonar", sonarInput, "sonar") },
+            this.buildSonarLiveScanCheck(),
+            { id: "coderabbit-config", status: this.integrationStatus(coderabbitInput, "coderabbit"), message: this.integrationMessage("CodeRabbit", coderabbitInput, "coderabbit") },
+            this.buildCoderabbitLiveReviewCheck(),
             ...this.buildMcpChecks()
         ];
+    }
+    buildSonarLiveScanCheck(): DoctorCheck {
+        if (!this.input.workspaceRoot || !existsSync(this.input.workspaceRoot)) {
+            return {
+                id: "sonar-live-scan",
+                status: "not_applicable",
+                message: "Sonar live-scan readiness check skipped because the workspace root is missing."
+            };
+        }
+        const envConfig = parseDotEnv(resolve(this.input.workspaceRoot, ".env.local"));
+        const branchName = this.currentGitBranchName(this.input.workspaceRoot);
+        const defaultBranch = this.input.sonarSettings?.defaultBranch ?? envConfig.SONAR_DEFAULT_BRANCH ?? "main";
+        const pullRequestKey =
+            process.env.SONAR_PULLREQUEST_KEY ??
+                process.env.GITHUB_EVENT_PULL_REQUEST_NUMBER ??
+                process.env.GITHUB_PR_NUMBER ??
+                process.env.CI_MERGE_REQUEST_IID ??
+                null;
+        const analysisTarget = pullRequestKey ? "pull_request" : branchName === defaultBranch || branchName === "main" ? "main" : branchName ? "branch" : "none";
+        const hostUrl = this.input.sonarSettings?.hostUrl ?? envConfig.SONAR_HOST_URL ?? null;
+        const organization = this.input.sonarSettings?.organization ?? envConfig.SONAR_ORGANIZATION ?? null;
+        const projectKey = this.input.sonarSettings?.projectKey ?? envConfig.SONAR_PROJECT_KEY ?? null;
+        const hasToken = Boolean(this.input.sonarSettings?.token || envConfig.SONAR_TOKEN);
+        const javaAvailable = this.checkBinary("java").status === "ok";
+        const scannerAvailable = this.checkBinary(sonarScannerCliName).status === "ok";
+        const ready = Boolean(hostUrl && organization && projectKey && hasToken && javaAvailable && scannerAvailable && analysisTarget !== "none");
+        const errors = [
+            hostUrl ? null : "hostUrl is missing",
+            organization ? null : "organization is missing",
+            projectKey ? null : "projectKey is missing",
+            hasToken ? null : "token is missing",
+            javaAvailable ? null : "java is missing",
+            scannerAvailable ? null : "sonar-scanner is missing",
+            analysisTarget !== "none" ? null : "no active git branch or pull request context was detected"
+        ].filter((value): value is string => Boolean(value));
+        if (ready) {
+            return {
+                id: "sonar-live-scan",
+                status: "ok",
+                message: `Sonar live scan is ready for ${analysisTarget} analysis on ${branchName ?? "the current context"}.`
+            };
+        }
+        return {
+            id: "sonar-live-scan",
+            status: analysisTarget === "none" ? "warning" : "missing",
+            message: `Sonar live scan is not ready for ${analysisTarget} analysis: ${errors.join("; ")}`
+        };
+    }
+    buildCoderabbitLiveReviewCheck(): DoctorCheck {
+        if (!this.input.workspaceRoot || !existsSync(this.input.workspaceRoot)) {
+            return {
+                id: "coderabbit-live-review",
+                status: "not_applicable",
+                message: "CodeRabbit live-review readiness check skipped because the workspace root is missing."
+            };
+        }
+        const envConfig = parseDotEnv(resolve(this.input.workspaceRoot, ".env.local"));
+        const branchName = this.currentGitBranchName(this.input.workspaceRoot);
+        const defaultBranch = this.input.coderabbitSettings?.defaultBranch ?? envConfig.CODERABBIT_DEFAULT_BRANCH ?? "main";
+        const pullRequestKey = process.env.GITHUB_EVENT_PULL_REQUEST_NUMBER ?? process.env.GITHUB_PR_NUMBER ?? process.env.CI_MERGE_REQUEST_IID ?? null;
+        const analysisTarget = pullRequestKey ? "pull_request" : branchName === defaultBranch || branchName === "main" ? "main" : branchName ? "branch" : "none";
+        const remoteOrigin = this.detectGitRemoteOrigin(this.input.workspaceRoot);
+        const inferredRepository = parseGitRemoteRepository(remoteOrigin);
+        const organization = this.input.coderabbitSettings?.organization ?? envConfig.CODERABBIT_ORGANIZATION ?? inferredRepository?.organization ?? null;
+        const repository = this.input.coderabbitSettings?.repository ?? envConfig.CODERABBIT_REPOSITORY ?? inferredRepository?.repository ?? null;
+        const gitAvailable = this.checkBinary("git").status === "ok";
+        const gitRepository = this.isGitRepository(this.input.workspaceRoot).isRepository;
+        const cliAvailable = this.checkAnyBinary(coderabbitCliAliases).status === "ok";
+        const ready = Boolean(gitAvailable && gitRepository && cliAvailable && organization && repository && analysisTarget !== "none");
+        const warnings = [
+            organization ? null : "organization is missing",
+            repository ? null : "repository is missing",
+            gitAvailable ? null : "git is missing",
+            gitRepository ? null : "workspace root is not a git repository",
+            cliAvailable ? null : "CodeRabbit CLI is missing",
+            analysisTarget !== "none" ? null : "no active git branch or pull request context was detected"
+        ].filter((value): value is string => Boolean(value));
+        if (ready) {
+            return {
+                id: "coderabbit-live-review",
+                status: "ok",
+                message: `CodeRabbit live review is ready for ${analysisTarget} analysis on ${branchName ?? "the current context"}.`
+            };
+        }
+        return {
+            id: "coderabbit-live-review",
+            status: analysisTarget === "none" ? "warning" : "missing",
+            message: `CodeRabbit live review is not ready for ${analysisTarget} analysis: ${warnings.join("; ")}`
+        };
     }
     buildMcpChecks(): DoctorCheck[] {
         const agentBrowserInstalled = this.checkBinary(agentBrowserCliName).status === "ok";
@@ -800,21 +910,51 @@ export class WorkspaceSetupService {
             }
         });
     }
-    integrationStatus(input: IntegrationPresenceInput): "ok" | "warning" | "missing" {
-        if (input.hasStoredConfig && input.hasToken) {
+    integrationStatus(input: IntegrationPresenceInput, provider: "generic" | "sonar" | "coderabbit" = "generic"): "ok" | "warning" | "missing" {
+        if (provider === "coderabbit") {
+            if (input.hasStoredConfig) {
+                return "ok";
+            }
+            if (input.envFallback) {
+                return "warning";
+            }
+            return "missing";
+        }
+        if (input.hasStoredConfig && (input.hasToken || input.hasCliAuth)) {
             return "ok";
         }
         if (input.envFallback) {
             return "warning";
         }
+        if (input.hasStoredConfig) {
+            return "warning";
+        }
         return "missing";
     }
-    integrationMessage(label: string, input: IntegrationPresenceInput): string {
+    integrationMessage(label: string, input: IntegrationPresenceInput, provider: "generic" | "sonar" | "coderabbit" = "generic"): string {
         if (input.hasStoredConfig && input.hasToken) {
             return `${label} workspace configuration is stored in the database.`;
         }
+        if (provider === "sonar" && input.hasStoredConfig && input.hasCliAuth) {
+            return "Sonar project configuration is stored in the database and authentication is available via `sonar auth login`.";
+        }
+        if (provider === "coderabbit" && input.hasStoredConfig && input.hasCliAuth) {
+            return "CodeRabbit repository configuration is stored in the database and authentication is available via `cr auth login`.";
+        }
         if (input.envFallback) {
+            if (provider === "sonar" && input.hasCliAuth) {
+                return "Sonar is configured via .env.local fallback and authenticated via `sonar auth login`.";
+            }
+            if (provider === "coderabbit" && input.hasCliAuth) {
+                return "CodeRabbit is configured via .env.local fallback and authenticated via `cr auth login`.";
+            }
             return `${label} is only configured via .env.local fallback.`;
+        }
+        if (provider === "sonar" && input.hasStoredConfig) {
+            return "Sonar project configuration is stored, but authentication is missing. Set a token or login via `sonar auth login`.";
+        }
+        if (provider === "coderabbit" && input.hasStoredConfig) {
+            return "CodeRabbit repository configuration is stored. Authentication is optional, but `cr auth login` or an API key is recommended for higher-quality reviews.";
         }
         return `${label} configuration is missing.`;
     }
@@ -1044,6 +1184,19 @@ export class WorkspaceSetupService {
             return { isRepository: false, details: { reason: error instanceof Error ? error.message : String(error) } };
         }
     }
+    currentGitBranchName(workspaceRoot: string): string | null {
+        try {
+            const branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+                cwd: workspaceRoot,
+                encoding: "utf8",
+                stdio: ["ignore", "pipe", "pipe"]
+            }).trim();
+            return branch === "HEAD" ? null : branch;
+        }
+        catch {
+            return null;
+        }
+    }
     suggestActionForCheck(id: string): string | null {
         switch (id) {
             case "agent-runtime-config":
@@ -1080,8 +1233,10 @@ export class WorkspaceSetupService {
                 return `Install the ${agentBrowserCliLabel} (${agentBrowserCliName}) and run \`${agentBrowserCliName} install\`.`;
             case "playwright-binary":
                 return `Install the ${playwrightCliLabel} so \`${playwrightCliCommand}\` works in this workspace.`;
+            case "sonar-binary":
+                return `Install the ${sonarCliLabel} (${sonarCliName}) and authenticate with \`sonar auth login\` if Sonar integrations are required.`;
             case "sonar-scanner-binary":
-                return `Install the ${sonarScannerCliLabel} (${sonarScannerCliName}) if Sonar checks are required.`;
+                return `Install the ${sonarScannerCliLabel} (${sonarScannerCliName}) if live project scans are required.`;
             case "coderabbit-binary":
                 return `Install the ${coderabbitCliLabel} (${coderabbitCliAliases.join(" / ")}).`;
             case "mcp-claude-agent-browser":
@@ -1097,9 +1252,11 @@ export class WorkspaceSetupService {
             case "coderabbit-instructions-file":
                 return "Add coderabbit.md if this workspace should use CodeRabbit review instructions.";
             case "sonar-config":
-                return "Persist Sonar settings with beerengineer sonar config set.";
+                return "Persist Sonar project settings with beerengineer sonar config set. For SonarQube CLI auth run `sonar auth login`; for live scanner runs also store a token.";
             case "coderabbit-config":
-                return "Persist Coderabbit settings with beerengineer coderabbit config set.";
+                return "Persist CodeRabbit settings with beerengineer coderabbit config set.";
+            case "coderabbit-live-review":
+                return "Ensure the workspace is a git repository on a real branch, install CodeRabbit CLI, and persist or infer organization/repository. `cr auth login` is recommended but optional.";
             default:
                 return null;
         }

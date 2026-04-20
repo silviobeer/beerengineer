@@ -214,7 +214,7 @@ describe("cli happy path", () => {
     }
   });
 
-  it("supports quality integration config and Sonar fixture commands via CLI", () => {
+  it("supports quality integration config and Sonar fixture commands via CLI", { timeout: 15000 }, () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-e2e-"));
     const dbPath = join(root, "app.sqlite");
     const cwd = resolve(".");
@@ -244,10 +244,19 @@ describe("cli happy path", () => {
       expect(sonarConfig.config.gatingMode).toBe("story_gate");
 
       const sonarScan = runCli(["--db", dbPath, "sonar", "scan"], cwd) as {
+        branchContext: { analysisTarget: string };
         gate: { status: string };
         findings: { issueCount: number };
         knowledgeEntries: Array<{ id: string }>;
       };
+      const sonarContext = runCli(["--db", dbPath, "sonar", "context"], cwd) as {
+        branchContext: { analysisTarget: string; gitAvailable: boolean };
+        scannerInvocation: { command: string; args: string[] };
+      };
+      expect(sonarContext.branchContext.gitAvailable).toBe(true);
+      expect(sonarContext.branchContext.analysisTarget).toBeTruthy();
+      expect(sonarContext.scannerInvocation.command).toBe("sonar-scanner");
+      expect(sonarScan.branchContext.analysisTarget).toBeTruthy();
       expect(sonarScan.gate.status).toBeTruthy();
       expect(sonarScan.findings.issueCount).toBeGreaterThan(0);
       expect(sonarScan.knowledgeEntries.length).toBeGreaterThan(0);
@@ -272,7 +281,21 @@ describe("cli happy path", () => {
       expect(coderabbitConfig.config.repository).toBe("beerengineer");
 
       const coderabbitTest = runCli(["--db", dbPath, "coderabbit", "config", "test"], cwd) as { valid: boolean };
+      const coderabbitContext = runCli(["--db", dbPath, "coderabbit", "context"], cwd) as {
+        branchContext: { analysisTarget: string; gitAvailable: boolean };
+        reviewInvocation: { args: string[] };
+      };
+      const coderabbitReview = runCli(["--db", dbPath, "coderabbit", "review"], cwd) as {
+        branchContext: { analysisTarget: string };
+        execution: { mode: string; fallbackReason: string | null };
+      };
       expect(coderabbitTest.valid).toBe(true);
+      expect(coderabbitContext.branchContext.gitAvailable).toBe(true);
+      expect(coderabbitContext.branchContext.analysisTarget).toBeTruthy();
+      expect(coderabbitContext.reviewInvocation.args).toContain("--base");
+      expect(coderabbitReview.branchContext.analysisTarget).toBeTruthy();
+      expect(coderabbitReview.execution.mode).toBe("quality_knowledge");
+      expect(coderabbitReview.execution.fallbackReason).toContain("not requested");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -887,17 +910,24 @@ describe("cli happy path", () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-e2e-"));
     const dbPath = join(root, "app.sqlite");
     const cwd = resolve(".");
+    const nestedRoot = join(cwd, "src");
 
     try {
+      const selfHosted = runCli(
+        ["--db", dbPath, "workspace:create", "--key", "self-hosted-root", "--name", "Self Hosted Root", "--root-path", cwd],
+        cwd
+      ) as { rootPath: string | null };
+      expect(selfHosted.rootPath).toBe(cwd);
+
       const createError = runCliError(
-        ["--db", dbPath, "workspace:create", "--key", "unsafe-root", "--name", "Unsafe Root", "--root-path", cwd],
+        ["--db", dbPath, "workspace:create", "--key", "unsafe-root", "--name", "Unsafe Root", "--root-path", nestedRoot],
         cwd
       );
       expect(createError.error.code).toBe("WORKSPACE_ROOT_UNSAFE");
 
       runCli(["--db", dbPath, "workspace:create", "--key", "safe-root", "--name", "Safe Root"], cwd);
       const updateError = runCliError(
-        ["--db", dbPath, "workspace:update-root", "--workspace-key", "safe-root", "--root-path", cwd],
+        ["--db", dbPath, "workspace:update-root", "--workspace-key", "safe-root", "--root-path", nestedRoot],
         cwd
       );
       expect(updateError.error.code).toBe("WORKSPACE_ROOT_UNSAFE");

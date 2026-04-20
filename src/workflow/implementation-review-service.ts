@@ -334,6 +334,7 @@ export class ImplementationReviewService {
         projectId: context.project.id,
         waveId: context.wave.id,
         storyId: context.story.id,
+        storyCode: context.story.code,
         filePaths: storyFilePaths,
         modules: storyModules
       }),

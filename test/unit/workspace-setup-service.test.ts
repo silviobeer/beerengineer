@@ -1,4 +1,5 @@
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -67,19 +68,27 @@ describe("WorkspaceSetupService", () => {
     }
   });
 
-  it("names the SonarSource CLI explicitly in doctor runtime checks", () => {
+  it("names the Sonar CLIs explicitly in doctor runtime checks", () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-workspace-setup-"));
     const configPath = createRuntimeConfig(root);
 
     try {
       const report = createService(root, configPath).doctor();
+      const sonarCliCheck = report.checks.runtime.find((check: { id: string }) => check.id === "sonar-binary") as
+        | { message: string; status: string }
+        | undefined;
       const sonarCheck = report.checks.runtime.find((check: { id: string }) => check.id === "sonar-scanner-binary") as
         | { message: string; status: string }
         | undefined;
-      expect(sonarCheck?.message).toContain("SonarSource CLI");
+      expect(sonarCliCheck?.message).toContain("SonarQube CLI");
+      expect(sonarCliCheck?.message).toContain("sonar");
+      expect(sonarCheck?.message).toContain("SonarScanner CLI");
       expect(sonarCheck?.message).toContain("sonar-scanner");
+      if (sonarCliCheck?.status !== "ok") {
+        expect(report.suggestedActions.some((action: string) => action.includes("SonarQube CLI"))).toBe(true);
+      }
       if (sonarCheck?.status !== "ok") {
-        expect(report.suggestedActions.some((action: string) => action.includes("SonarSource CLI"))).toBe(true);
+        expect(report.suggestedActions.some((action: string) => action.includes("SonarScanner CLI"))).toBe(true);
       }
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -133,7 +142,7 @@ describe("WorkspaceSetupService", () => {
 
     const binaryExtension = process.platform === "win32" ? ".cmd" : "";
     const scriptBody = process.platform === "win32" ? "@echo off\r\nexit /b 0\r\n" : "#!/bin/sh\nexit 0\n";
-    for (const binary of ["gh", "agent-browser", "cr", "sonar-scanner"]) {
+    for (const binary of ["gh", "agent-browser", "cr", "sonar", "sonar-scanner"]) {
       const binaryPath = join(binDir, `${binary}${binaryExtension}`);
       writeFileSync(binaryPath, scriptBody, "utf8");
       if (process.platform !== "win32") {
@@ -160,12 +169,85 @@ describe("WorkspaceSetupService", () => {
       expect(runtimeChecks.find((check) => check.id === "gh-binary")?.status).toBe("ok");
       expect(runtimeChecks.find((check) => check.id === "agent-browser-binary")?.status).toBe("ok");
       expect(runtimeChecks.find((check) => check.id === "coderabbit-binary")?.status).toBe("ok");
+      expect(runtimeChecks.find((check) => check.id === "sonar-binary")?.status).toBe("ok");
       expect(runtimeChecks.find((check) => check.id === "sonar-scanner-binary")?.status).toBe("ok");
       expect(runtimeChecks.find((check) => check.id === "playwright-binary")?.status).toBe("ok");
     } finally {
       process.env.PATH = previousPath;
       if (process.platform === "win32") {
         process.env.PATHEXT = previousPathExt;
+      }
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("recognizes CodeRabbit CLI auth and current-branch live review readiness in doctor", () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-workspace-setup-"));
+    const configPath = createRuntimeConfig(root);
+    const binDir = join(root, "bin");
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(join(root, "README.md"), "# test\n", "utf8");
+    execFileSync("git", ["init", "-b", "main"], { cwd: root, stdio: "ignore" });
+    execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: root, stdio: "ignore" });
+    execFileSync("git", ["config", "user.name", "Test User"], { cwd: root, stdio: "ignore" });
+    execFileSync("git", ["add", "README.md"], { cwd: root, stdio: "ignore" });
+    execFileSync("git", ["commit", "-m", "init"], { cwd: root, stdio: "ignore" });
+    execFileSync("git", ["remote", "add", "origin", "git@github.com:silviobeer/beerengineer.git"], { cwd: root, stdio: "ignore" });
+    execFileSync("git", ["checkout", "-b", "story/ITEM-0001-P01/ITEM-0001-P01-US01"], { cwd: root, stdio: "ignore" });
+
+    const binaryExtension = process.platform === "win32" ? ".cmd" : "";
+    const scriptBody =
+      process.platform === "win32"
+        ? "@echo off\r\nif \"%1 %2\"==\"auth status\" (\r\necho {\"authenticated\":true}\r\nexit /b 0\r\n)\r\nexit /b 0\r\n"
+        : "#!/bin/sh\nif [ \"$1 $2\" = \"auth status\" ]; then\n  printf '%s\\n' '{\"authenticated\":true}'\n  exit 0\nfi\nexit 0\n";
+    const coderabbitPath = join(binDir, `cr${binaryExtension}`);
+    writeFileSync(coderabbitPath, scriptBody, "utf8");
+    if (process.platform !== "win32") {
+      chmodSync(coderabbitPath, 0o755);
+    }
+
+    const previousPath = process.env.PATH;
+    const previousPr = process.env.GITHUB_PR_NUMBER;
+    const previousBase = process.env.GITHUB_BASE_REF;
+
+    try {
+      process.env.PATH = previousPath ? `${binDir}${process.platform === "win32" ? ";" : ":"}${previousPath}` : binDir;
+      delete process.env.GITHUB_PR_NUMBER;
+      delete process.env.GITHUB_BASE_REF;
+      const report = createService(root, configPath, {
+        coderabbitSettings: {
+          workspaceId: "workspace_1",
+          enabled: 1,
+          providerType: "coderabbit",
+          hostUrl: "https://api.coderabbit.ai",
+          organization: "silviobeer",
+          repository: "beerengineer",
+          token: null,
+          defaultBranch: "main",
+          gatingMode: "advisory",
+          validationStatus: "untested",
+          lastTestedAt: null,
+          lastError: null,
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        }
+      }).doctor();
+      const integrationChecks = report.checks.integrations as Array<{ id: string; status: string; message: string }>;
+      expect(integrationChecks.find((check) => check.id === "coderabbit-config")?.status).toBe("ok");
+      expect(integrationChecks.find((check) => check.id === "coderabbit-config")?.message).toContain("`cr auth login`");
+      expect(integrationChecks.find((check) => check.id === "coderabbit-live-review")?.status).toBe("ok");
+      expect(integrationChecks.find((check) => check.id === "coderabbit-live-review")?.message).toContain("branch");
+    } finally {
+      process.env.PATH = previousPath;
+      if (previousPr === undefined) {
+        delete process.env.GITHUB_PR_NUMBER;
+      } else {
+        process.env.GITHUB_PR_NUMBER = previousPr;
+      }
+      if (previousBase === undefined) {
+        delete process.env.GITHUB_BASE_REF;
+      } else {
+        process.env.GITHUB_BASE_REF = previousBase;
       }
       rmSync(root, { recursive: true, force: true });
     }
@@ -458,6 +540,146 @@ describe("WorkspaceSetupService", () => {
       const gitignore = readFileSync(join(root, ".gitignore"), "utf8");
       expect(gitignore).toContain(".beerengineer/\n");
       expect(gitignore).not.toContain(".beerengineer/worktrees/");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("treats stored Sonar project config plus sonar CLI auth as configured integration", () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-workspace-setup-"));
+    const configPath = createRuntimeConfig(root);
+    const binDir = join(root, "bin");
+    mkdirSync(binDir, { recursive: true });
+
+    const binaryExtension = process.platform === "win32" ? ".cmd" : "";
+    const scriptBody =
+      process.platform === "win32"
+        ? "@echo off\r\nif \"%1 %2\"==\"auth status\" exit /b 0\r\nexit /b 0\r\n"
+        : "#!/bin/sh\nif [ \"$1 $2\" = \"auth status\" ]; then\n  exit 0\nfi\nexit 0\n";
+    const sonarPath = join(binDir, `sonar${binaryExtension}`);
+    writeFileSync(sonarPath, scriptBody, "utf8");
+    if (process.platform !== "win32") {
+      chmodSync(sonarPath, 0o755);
+    }
+
+    const previousPath = process.env.PATH;
+
+    try {
+      process.env.PATH = previousPath ? `${binDir}${process.platform === "win32" ? ";" : ":"}${previousPath}` : binDir;
+      const report = createService(root, configPath, {
+        sonarSettings: {
+          workspaceId: "workspace_1",
+          enabled: 1,
+          providerType: "sonarcloud",
+          hostUrl: "https://sonarcloud.io",
+          organization: "silviobeer",
+          projectKey: "silviobeer_beerengineer",
+          token: null,
+          defaultBranch: "main",
+          gatingMode: "advisory",
+          validationStatus: "untested",
+          lastTestedAt: null,
+          lastError: null,
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        }
+      }).doctor();
+
+      const sonarConfigCheck = (report.checks.integrations as Array<{ id: string; status: string; message: string }>).find(
+        (check) => check.id === "sonar-config"
+      );
+      expect(sonarConfigCheck?.status).toBe("ok");
+      expect(sonarConfigCheck?.message).toContain("sonar auth login");
+    } finally {
+      process.env.PATH = previousPath;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reports Sonar live-scan readiness for the current story branch", () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-workspace-setup-"));
+    const configPath = createRuntimeConfig(root);
+    const binDir = join(root, "bin");
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(join(root, "README.md"), "# test\n", "utf8");
+    execFileSync("git", ["init", "-b", "main"], { cwd: root, stdio: "ignore" });
+    execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: root, stdio: "ignore" });
+    execFileSync("git", ["config", "user.name", "Test User"], { cwd: root, stdio: "ignore" });
+    execFileSync("git", ["add", "README.md"], { cwd: root, stdio: "ignore" });
+    execFileSync("git", ["commit", "-m", "init"], { cwd: root, stdio: "ignore" });
+    execFileSync("git", ["checkout", "-b", "story/ITEM-0001-P01/ITEM-0001-P01-US01"], { cwd: root, stdio: "ignore" });
+
+    const binaryExtension = process.platform === "win32" ? ".cmd" : "";
+    const scriptBody = process.platform === "win32" ? "@echo off\r\nexit /b 0\r\n" : "#!/bin/sh\nexit 0\n";
+    for (const binary of ["java", "sonar-scanner"]) {
+      const binaryPath = join(binDir, `${binary}${binaryExtension}`);
+      writeFileSync(binaryPath, scriptBody, "utf8");
+      if (process.platform !== "win32") {
+        chmodSync(binaryPath, 0o755);
+      }
+    }
+
+    const previousPath = process.env.PATH;
+
+    try {
+      process.env.PATH = previousPath ? `${binDir}${process.platform === "win32" ? ";" : ":"}${previousPath}` : binDir;
+      const report = createService(root, configPath, {
+        sonarSettings: {
+          workspaceId: "workspace_1",
+          enabled: 1,
+          providerType: "sonarcloud",
+          hostUrl: "https://sonarcloud.io",
+          organization: "silviobeer",
+          projectKey: "silviobeer_beerengineer",
+          token: "secret-token",
+          defaultBranch: "main",
+          gatingMode: "advisory",
+          validationStatus: "untested",
+          lastTestedAt: null,
+          lastError: null,
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        }
+      }).doctor();
+      const sonarLiveCheck = (report.checks.integrations as Array<{ id: string; status: string; message: string }>).find(
+        (check) => check.id === "sonar-live-scan"
+      );
+      expect(sonarLiveCheck?.status).toBe("ok");
+      expect(sonarLiveCheck?.message).toContain("story/ITEM-0001-P01/ITEM-0001-P01-US01");
+    } finally {
+      process.env.PATH = previousPath;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reports Sonar live-scan as not ready when branch context or scanner prerequisites are missing", () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-workspace-setup-"));
+    const configPath = createRuntimeConfig(root);
+
+    try {
+      const report = createService(root, configPath, {
+        sonarSettings: {
+          workspaceId: "workspace_1",
+          enabled: 1,
+          providerType: "sonarcloud",
+          hostUrl: "https://sonarcloud.io",
+          organization: "silviobeer",
+          projectKey: "silviobeer_beerengineer",
+          token: null,
+          defaultBranch: "main",
+          gatingMode: "advisory",
+          validationStatus: "untested",
+          lastTestedAt: null,
+          lastError: null,
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        }
+      }).doctor();
+      const sonarLiveCheck = (report.checks.integrations as Array<{ id: string; status: string; message: string }>).find(
+        (check) => check.id === "sonar-live-scan"
+      );
+      expect(sonarLiveCheck?.status).toBe("warning");
+      expect(sonarLiveCheck?.message).toContain("not ready");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

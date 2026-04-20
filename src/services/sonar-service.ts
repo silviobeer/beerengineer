@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -10,6 +10,7 @@ import type {
   WorkspaceSonarSettings
 } from "../domain/types.js";
 import type { QualityKnowledgeEntryRepository, WorkspaceSonarSettingsRepository } from "../persistence/repositories.js";
+import { detectSonarCliState, type SonarCliState } from "../shared/sonar-cli.js";
 import { parseDotEnv } from "./env-config.js";
 import { QualityKnowledgeService } from "./quality-knowledge-service.js";
 
@@ -26,7 +27,11 @@ export type SonarConfigView = {
   lastTestedAt: number | null;
   lastError: string | null;
   source: "db" | "env" | "none";
+  projectConfigured: boolean;
   configured: boolean;
+  authSource: "token" | "sonar_cli" | "none";
+  authCliAvailable: boolean;
+  authCliLoggedIn: boolean;
 };
 
 export type SonarIssueSummary = {
@@ -61,6 +66,8 @@ export type SonarGateStatus = {
 
 export type SonarScanResult = {
   config: SonarConfigView;
+  branchContext: SonarBranchContext;
+  scannerInvocation: SonarScannerInvocation;
   gate: SonarGateStatus;
   issues: SonarIssueSummary[];
   hotspots: SonarHotspotSummary[];
@@ -74,18 +81,54 @@ export type SonarScanResult = {
   execution: {
     mode: "fixture" | "live";
     executed: boolean;
+    analysisTarget: SonarBranchContext["analysisTarget"];
+    attemptedLiveScan: boolean;
+    fallbackReason: string | null;
+  };
+};
+
+type SonarScanScopeInput = {
+  projectId?: string | null;
+  waveId?: string | null;
+  storyId?: string | null;
+  storyCode?: string | null;
+  live?: boolean;
+};
+
+export type SonarBranchContext = {
+  gitAvailable: boolean;
+  gitRepository: boolean;
+  branchName: string | null;
+  baseBranch: string | null;
+  defaultBranch: string | null;
+  branchRole: "main" | "project" | "story" | "story-remediation" | "other" | null;
+  analysisTarget: "none" | "main" | "branch" | "pull_request";
+  pullRequestKey: string | null;
+};
+
+export type SonarScannerInvocation = {
+  command: "sonar-scanner";
+  args: string[];
+  env: {
+    usesSonarToken: boolean;
   };
 };
 
 export type SonarPreflightResult = {
   config: SonarConfigView;
+  branchContext: SonarBranchContext;
+  scannerInvocation: SonarScannerInvocation;
   warnings: string[];
   errors: string[];
   checks: {
     javaAvailable: boolean;
     scannerAvailable: boolean;
+    authCliAvailable: boolean;
+    authCliLoggedIn: boolean;
     tokenAvailable: boolean;
+    projectConfigured: boolean;
     configured: boolean;
+    liveScanReady: boolean;
   };
   ready: boolean;
 };
@@ -107,28 +150,60 @@ export class SonarService {
     return this.resolveEffectiveConfig();
   }
 
+  public context(): {
+    config: SonarConfigView;
+    branchContext: SonarBranchContext;
+    scannerInvocation: SonarScannerInvocation;
+    warnings: string[];
+  } {
+    const { config, warnings } = this.resolveEffectiveConfig();
+    const branchContext = this.resolveBranchContext(config.defaultBranch);
+    return {
+      config,
+      branchContext,
+      scannerInvocation: this.buildScannerInvocation(config, branchContext),
+      warnings
+    };
+  }
+
   public preflight(): SonarPreflightResult {
     const { config, warnings } = this.resolveEffectiveConfig();
+    const branchContext = this.resolveBranchContext(config.defaultBranch);
     const javaAvailable = this.isCommandAvailable("java");
     const scannerAvailable = this.isCommandAvailable("sonar-scanner");
     const tokenAvailable = config.hasToken;
+    const projectConfigured = config.projectConfigured;
+    const liveScanReady = projectConfigured && javaAvailable && scannerAvailable && tokenAvailable;
     const errors = [
       javaAvailable ? null : "java is missing",
       scannerAvailable ? null : "sonar-scanner is missing",
-      tokenAvailable ? null : "token is missing",
-      config.configured ? null : "Sonar configuration is incomplete"
+      tokenAvailable ? null : "token is missing for live sonar-scanner runs",
+      projectConfigured ? null : "Sonar project configuration is incomplete"
     ].filter((value): value is string => Boolean(value));
+    const runtimeWarnings = [...warnings];
+    if (config.authCliLoggedIn && !config.hasToken) {
+      runtimeWarnings.push("sonar CLI is logged in, but live sonar-scanner runs still require a workspace token.");
+    }
+    if (!liveScanReady) {
+      runtimeWarnings.push("BeerEngineer falls back to fixture-backed Sonar data until the live scan toolchain is fully available.");
+    }
     return {
       config,
-      warnings,
+      branchContext,
+      scannerInvocation: this.buildScannerInvocation(config, branchContext),
+      warnings: Array.from(new Set(runtimeWarnings)),
       errors,
       checks: {
         javaAvailable,
         scannerAvailable,
+        authCliAvailable: config.authCliAvailable,
+        authCliLoggedIn: config.authCliLoggedIn,
         tokenAvailable,
-        configured: config.configured
+        projectConfigured,
+        configured: config.configured,
+        liveScanReady
       },
-      ready: errors.length === 0
+      ready: liveScanReady
     };
   }
 
@@ -158,7 +233,7 @@ export class SonarService {
       lastTestedAt: null
     });
     return {
-      config: this.maskConfig(next, "db")
+      config: this.maskConfig(next, "db", detectSonarCliState(this.workspaceRoot))
     };
   }
 
@@ -166,7 +241,7 @@ export class SonarService {
     this.repository.clearToken(this.workspace.id);
     const updated = this.repository.getByWorkspaceId(this.workspace.id);
     return {
-      config: this.maskConfig(updated, updated ? "db" : "none")
+      config: this.maskConfig(updated, updated ? "db" : "none", detectSonarCliState(this.workspaceRoot))
     };
   }
 
@@ -176,10 +251,14 @@ export class SonarService {
       !config.hostUrl ? "hostUrl is missing" : null,
       !config.organization ? "organization is missing" : null,
       !config.projectKey ? "projectKey is missing" : null,
-      !config.hasToken ? "token is missing" : null
+      config.hasToken || config.authCliLoggedIn ? null : "authentication is missing (set a token or login via `sonar auth login`)"
     ].filter((value): value is string => Boolean(value));
     const valid = errors.length === 0;
     const testedAt = Date.now();
+    const nextWarnings = [...warnings];
+    if (config.authCliLoggedIn && !config.hasToken) {
+      nextWarnings.push("Configuration is usable via sonar CLI auth, but live sonar-scanner runs still require a token.");
+    }
     if (storedConfig) {
       this.repository.upsertByWorkspaceId({
         ...storedConfig,
@@ -196,41 +275,51 @@ export class SonarService {
         lastError: valid ? null : errors.join("; ")
       },
       valid,
-      warnings,
+      warnings: Array.from(new Set(nextWarnings)),
       errors
     };
   }
 
-  public status(): { config: SonarConfigView; gate: SonarGateStatus; warnings: string[] } {
+  public status(): { config: SonarConfigView; branchContext: SonarBranchContext; gate: SonarGateStatus; warnings: string[] } {
     const { config, warnings } = this.resolveEffectiveConfig();
     return {
       config,
+      branchContext: this.resolveBranchContext(config.defaultBranch),
       gate: this.loadGateStatus(),
       warnings
     };
   }
 
-  public issues(): { config: SonarConfigView; issues: SonarIssueSummary[]; warnings: string[] } {
+  public issues(): { config: SonarConfigView; branchContext: SonarBranchContext; issues: SonarIssueSummary[]; warnings: string[] } {
     const { config, warnings } = this.resolveEffectiveConfig();
     return {
       config,
+      branchContext: this.resolveBranchContext(config.defaultBranch),
       issues: this.loadIssueSummaries(),
       warnings
     };
   }
 
-  public hotspots(): { config: SonarConfigView; hotspots: SonarHotspotSummary[]; warnings: string[] } {
+  public hotspots(): { config: SonarConfigView; branchContext: SonarBranchContext; hotspots: SonarHotspotSummary[]; warnings: string[] } {
     const { config, warnings } = this.resolveEffectiveConfig();
     return {
       config,
+      branchContext: this.resolveBranchContext(config.defaultBranch),
       hotspots: this.loadHotspotSummaries(),
       warnings
     };
   }
 
-  public scan(): SonarScanResult {
+  public scan(input?: SonarScanScopeInput): SonarScanResult {
     const { config } = this.resolveEffectiveConfig();
-    const executionMode = this.resolveExecutionMode();
+    const branchContext = this.resolveBranchContext(config.defaultBranch);
+    const scannerInvocation = this.buildScannerInvocation(config, branchContext);
+    const liveScan = input?.live ? this.tryLiveScan(config, branchContext, scannerInvocation) : {
+      mode: "fixture" as const,
+      attempted: false,
+      fallbackReason: "live Sonar scan was not requested"
+    };
+    const executionMode = liveScan.mode;
     const gate = this.loadGateStatus();
     const issues = this.loadIssueSummaries();
     const hotspots = this.loadHotspotSummaries();
@@ -249,12 +338,12 @@ export class SonarService {
     const knowledgeEntries = this.knowledgeService.createEntries(
       issues.slice(0, 25).map((issue) => ({
         workspaceId: this.workspace.id,
-        projectId: null,
-        waveId: null,
-        storyId: null,
+        projectId: input?.projectId ?? null,
+        waveId: input?.waveId ?? null,
+        storyId: input?.storyId ?? null,
         source: "sonar" as const,
-        scopeType: issue.filePath ? "file" : "workspace",
-        scopeId: issue.filePath ?? this.workspace.id,
+        scopeType: issue.filePath ? "file" : input?.storyId ? "story" : input?.projectId ? "project" : "workspace",
+        scopeId: issue.filePath ?? input?.storyId ?? input?.projectId ?? this.workspace.id,
         kind: "recurring_issue" as const,
         summary: issue.message,
         evidenceJson: JSON.stringify(issue, null, 2),
@@ -262,7 +351,7 @@ export class SonarService {
         relevanceTagsJson: JSON.stringify(
           {
             files: issue.filePath ? [issue.filePath] : [],
-            storyCodes: [],
+            storyCodes: input?.storyCode ? [input.storyCode] : [],
             modules: issue.filePath ? [issue.filePath.split("/").slice(0, 2).join("/")] : [],
             categories: [issue.category]
           },
@@ -274,6 +363,8 @@ export class SonarService {
 
     return {
       config,
+      branchContext,
+      scannerInvocation,
       gate,
       issues,
       hotspots,
@@ -286,7 +377,10 @@ export class SonarService {
       knowledgeEntries,
       execution: {
         mode: executionMode,
-        executed: true
+        executed: true,
+        analysisTarget: branchContext.analysisTarget,
+        attemptedLiveScan: liveScan.attempted,
+        fallbackReason: liveScan.fallbackReason
       }
     };
   }
@@ -296,10 +390,11 @@ export class SonarService {
     warnings: string[];
     storedConfig: WorkspaceSonarSettings | null;
   } {
+    const sonarCliState = detectSonarCliState(this.workspaceRoot);
     const storedConfig = this.repository.getByWorkspaceId(this.workspace.id);
     if (storedConfig) {
       return {
-        config: this.maskConfig(storedConfig, "db"),
+        config: this.maskConfig(storedConfig, "db", sonarCliState),
         warnings: [],
         storedConfig
       };
@@ -310,11 +405,13 @@ export class SonarService {
     );
     if (!hasEnvConfig) {
       return {
-        config: this.maskConfig(null, "none"),
+        config: this.maskConfig(null, "none", sonarCliState),
         warnings: [],
         storedConfig: null
       };
     }
+    const projectConfigured = Boolean((envConfig.SONAR_HOST_URL ?? "https://sonarcloud.io") && envConfig.SONAR_ORGANIZATION && envConfig.SONAR_PROJECT_KEY);
+    const hasToken = Boolean(envConfig.SONAR_TOKEN);
     return {
       config: {
         enabled: envConfig.SONAR_ENABLED !== "false",
@@ -322,35 +419,48 @@ export class SonarService {
         hostUrl: envConfig.SONAR_HOST_URL ?? "https://sonarcloud.io",
         organization: envConfig.SONAR_ORGANIZATION ?? null,
         projectKey: envConfig.SONAR_PROJECT_KEY ?? null,
-        hasToken: Boolean(envConfig.SONAR_TOKEN),
+        hasToken,
         defaultBranch: envConfig.SONAR_DEFAULT_BRANCH ?? "main",
         gatingMode: (envConfig.SONAR_GATING_MODE as QualityGatingMode | undefined) ?? "advisory",
         validationStatus: "untested",
         lastTestedAt: null,
         lastError: null,
         source: "env",
-        configured: Boolean(envConfig.SONAR_ORGANIZATION && envConfig.SONAR_PROJECT_KEY && envConfig.SONAR_TOKEN)
+        projectConfigured,
+        configured: projectConfigured && (hasToken || sonarCliState.loggedIn),
+        authSource: hasToken ? "token" : sonarCliState.loggedIn ? "sonar_cli" : "none",
+        authCliAvailable: sonarCliState.available,
+        authCliLoggedIn: sonarCliState.loggedIn
       },
       warnings: ["Using .env.local fallback for Sonar configuration. Persist it with `beerengineer sonar config set`."],
       storedConfig: null
     };
   }
 
-  private maskConfig(config: WorkspaceSonarSettings | null, source: SonarConfigView["source"]): SonarConfigView {
+  private maskConfig(config: WorkspaceSonarSettings | null, source: SonarConfigView["source"], sonarCliState: SonarCliState): SonarConfigView {
+    const hostUrl = config?.hostUrl ?? null;
+    const organization = config?.organization ?? null;
+    const projectKey = config?.projectKey ?? null;
+    const hasToken = Boolean(config?.token);
+    const projectConfigured = Boolean(hostUrl && organization && projectKey);
     return {
       enabled: Boolean(config?.enabled ?? 0),
       providerType: config?.providerType ?? "sonarcloud",
-      hostUrl: config?.hostUrl ?? null,
-      organization: config?.organization ?? null,
-      projectKey: config?.projectKey ?? null,
-      hasToken: Boolean(config?.token),
+      hostUrl,
+      organization,
+      projectKey,
+      hasToken,
       defaultBranch: config?.defaultBranch ?? null,
       gatingMode: config?.gatingMode ?? "advisory",
       validationStatus: config?.validationStatus ?? "untested",
       lastTestedAt: config?.lastTestedAt ?? null,
       lastError: config?.lastError ?? null,
       source,
-      configured: Boolean(config?.hostUrl && config.organization && config.projectKey && config.token)
+      projectConfigured,
+      configured: projectConfigured && (hasToken || sonarCliState.loggedIn),
+      authSource: hasToken ? "token" : sonarCliState.loggedIn ? "sonar_cli" : "none",
+      authCliAvailable: sonarCliState.available,
+      authCliLoggedIn: sonarCliState.loggedIn
     };
   }
 
@@ -468,9 +578,194 @@ export class SonarService {
       }));
   }
 
-  private resolveExecutionMode(): "fixture" | "live" {
-    // TODO: derive "live" once the service executes real Sonar scans instead of fixture-backed reads.
-    return "fixture";
+  private tryLiveScan(
+    config: SonarConfigView,
+    branchContext: SonarBranchContext,
+    scannerInvocation: SonarScannerInvocation
+  ): { mode: "fixture" | "live"; attempted: boolean; fallbackReason: string | null } {
+    const liveScanReady =
+      config.projectConfigured &&
+      config.hasToken &&
+      this.isCommandAvailable("java") &&
+      this.isCommandAvailable("sonar-scanner");
+    if (!liveScanReady) {
+      return {
+        mode: "fixture",
+        attempted: false,
+        fallbackReason: "live Sonar scanner prerequisites are incomplete"
+      };
+    }
+
+    const result = spawnSync(scannerInvocation.command, scannerInvocation.args, {
+      cwd: this.workspaceRoot,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        ...(config.hasToken && this.resolveStoredToken() ? { SONAR_TOKEN: this.resolveStoredToken()! } : {})
+      }
+    });
+
+    if (result.status === 0) {
+      return {
+        mode: "live",
+        attempted: true,
+        fallbackReason: null
+      };
+    }
+
+    return {
+      mode: "fixture",
+      attempted: true,
+      fallbackReason: `live Sonar scan failed: ${(result.stderr ?? result.stdout ?? "").trim() || `exit ${result.status ?? "unknown"}`}`
+    };
+  }
+
+  private buildScannerInvocation(config: SonarConfigView, branchContext: SonarBranchContext): SonarScannerInvocation {
+    const args = [
+      `-Dsonar.host.url=${config.hostUrl ?? "https://sonarcloud.io"}`,
+      `-Dsonar.projectKey=${config.projectKey ?? ""}`
+    ];
+    if (config.organization) {
+      args.push(`-Dsonar.organization=${config.organization}`);
+    }
+    const revision = this.currentHeadSha();
+    if (revision) {
+      args.push(`-Dsonar.scm.revision=${revision}`);
+    }
+    if (branchContext.analysisTarget === "pull_request" && branchContext.pullRequestKey && branchContext.branchName) {
+      args.push(`-Dsonar.pullrequest.key=${branchContext.pullRequestKey}`);
+      args.push(`-Dsonar.pullrequest.branch=${branchContext.branchName}`);
+      args.push(`-Dsonar.pullrequest.base=${branchContext.baseBranch ?? branchContext.defaultBranch ?? "main"}`);
+    } else if (branchContext.analysisTarget === "branch" && branchContext.branchName) {
+      args.push(`-Dsonar.branch.name=${branchContext.branchName}`);
+    }
+    return {
+      command: "sonar-scanner",
+      args,
+      env: {
+        usesSonarToken: config.hasToken
+      }
+    };
+  }
+
+  private resolveBranchContext(defaultBranch: string | null): SonarBranchContext {
+    const pullRequestKey = this.resolvePullRequestKey();
+    const baseBranch = this.resolvePullRequestBaseBranch();
+    const gitAvailable = this.isCommandAvailable("git");
+    if (!gitAvailable) {
+      return {
+        gitAvailable: false,
+        gitRepository: false,
+        branchName: null,
+        baseBranch,
+        defaultBranch,
+        branchRole: null,
+        analysisTarget: pullRequestKey ? "pull_request" : "none",
+        pullRequestKey
+      };
+    }
+    const gitRepository = this.isGitRepository();
+    if (!gitRepository) {
+      return {
+        gitAvailable: true,
+        gitRepository: false,
+        branchName: null,
+        baseBranch,
+        defaultBranch,
+        branchRole: null,
+        analysisTarget: pullRequestKey ? "pull_request" : "none",
+        pullRequestKey
+      };
+    }
+    const branchName = this.currentBranchName();
+    const branchRole = this.resolveBranchRole(branchName, defaultBranch);
+    const analysisTarget = pullRequestKey
+      ? "pull_request"
+      : branchRole === "main"
+        ? "main"
+        : branchName
+          ? "branch"
+          : "none";
+    return {
+      gitAvailable: true,
+      gitRepository: true,
+      branchName,
+      baseBranch,
+      defaultBranch,
+      branchRole,
+      analysisTarget,
+      pullRequestKey
+    };
+  }
+
+  private resolveBranchRole(branchName: string | null, defaultBranch: string | null): SonarBranchContext["branchRole"] {
+    if (!branchName) {
+      return null;
+    }
+    if (defaultBranch && branchName === defaultBranch) {
+      return "main";
+    }
+    if (branchName === "main") {
+      return "main";
+    }
+    if (branchName.startsWith("proj/")) {
+      return "project";
+    }
+    if (branchName.startsWith("story/")) {
+      return "story";
+    }
+    if (branchName.startsWith("fix/")) {
+      return "story-remediation";
+    }
+    return "other";
+  }
+
+  private resolvePullRequestKey(): string | null {
+    return (
+      process.env.SONAR_PULLREQUEST_KEY ??
+      process.env.GITHUB_EVENT_PULL_REQUEST_NUMBER ??
+      process.env.GITHUB_PR_NUMBER ??
+      process.env.CI_MERGE_REQUEST_IID ??
+      null
+    );
+  }
+
+  private resolvePullRequestBaseBranch(): string | null {
+    return process.env.SONAR_PULLREQUEST_BASE ?? process.env.GITHUB_BASE_REF ?? process.env.CI_MERGE_REQUEST_TARGET_BRANCH_NAME ?? null;
+  }
+
+  private isGitRepository(): boolean {
+    try {
+      return this.runCommand("git", ["rev-parse", "--is-inside-work-tree"]) === "true";
+    } catch {
+      return false;
+    }
+  }
+
+  private currentBranchName(): string | null {
+    try {
+      const branch = this.runCommand("git", ["rev-parse", "--abbrev-ref", "HEAD"]);
+      return branch === "HEAD" ? null : branch;
+    } catch {
+      return null;
+    }
+  }
+
+  private currentHeadSha(): string | null {
+    try {
+      return this.runCommand("git", ["rev-parse", "HEAD"]);
+    } catch {
+      return null;
+    }
+  }
+
+  private resolveStoredToken(): string | null {
+    const stored = this.repository.getByWorkspaceId(this.workspace.id);
+    if (stored?.token) {
+      return stored.token;
+    }
+    const envConfig = parseDotEnv(resolve(this.workspaceRoot, ".env.local"));
+    return envConfig.SONAR_TOKEN ?? null;
   }
 
   private readJsonFile<TValue>(filePath: string): TValue | null {
@@ -484,5 +779,13 @@ export class SonarService {
   private parseNumericMeasure(value: string): number | null {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  private runCommand(command: string, args: string[]): string {
+    return execFileSync(command, args, {
+      cwd: this.workspaceRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"]
+    }).trim();
   }
 }

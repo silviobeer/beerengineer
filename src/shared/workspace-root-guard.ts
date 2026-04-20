@@ -13,12 +13,23 @@ export function isUnsafeWorkspaceRoot(rootPath: string, repoRoot: string): boole
   return isEqualOrDescendant(resolvedRootPath, resolvedRepoRoot);
 }
 
-export function assertSafeWorkspaceRoot(rootPath: string, repoRoot: string): void {
-  if (!isUnsafeWorkspaceRoot(rootPath, repoRoot)) {
+export function assertSafeWorkspaceRoot(
+  rootPath: string,
+  repoRoot: string,
+  options?: {
+    allowRepoRoot?: boolean;
+  }
+): void {
+  const resolvedRootPath = resolve(rootPath);
+  const resolvedRepoRoot = resolve(repoRoot);
+  if (options?.allowRepoRoot && resolvedRootPath === resolvedRepoRoot) {
+    return;
+  }
+  if (!isUnsafeWorkspaceRoot(resolvedRootPath, resolvedRepoRoot)) {
     return;
   }
   throw new AppError(
     "WORKSPACE_ROOT_UNSAFE",
-    `Workspace root ${resolve(rootPath)} is inside the BeerEngineer installation/repository root ${resolve(repoRoot)}`
+    `Workspace root ${resolvedRootPath} is inside the BeerEngineer installation/repository root ${resolvedRepoRoot}`
   );
 }

@@ -29,3 +29,5 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+# beerengineer runtime data (managed by beerengineer CLI)
+.beerengineer/

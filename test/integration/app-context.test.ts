@@ -195,7 +195,7 @@ describe("app context", () => {
     }
   });
 
-  it("rejects unsafe stored workspace roots inside the repository", () => {
+  it("allows the repository root itself as an explicit self-hosted workspace root", () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-app-context-"));
     const dbPath = join(root, "app.sqlite");
     const bootstrap = createAppContext(dbPath);
@@ -204,6 +204,29 @@ describe("app context", () => {
       bootstrap.repositories.workspaceRepository.update({
         id: bootstrap.workspace.id,
         rootPath: process.cwd()
+      });
+      bootstrap.connection.close();
+
+      const context = createAppContext(dbPath);
+      try {
+        expect(context.effectiveConfig.workspaceRoot).toBe(process.cwd());
+      } finally {
+        context.connection.close();
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects stored workspace roots inside repository subdirectories", () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-app-context-"));
+    const dbPath = join(root, "app.sqlite");
+    const bootstrap = createAppContext(dbPath);
+
+    try {
+      bootstrap.repositories.workspaceRepository.update({
+        id: bootstrap.workspace.id,
+        rootPath: join(process.cwd(), "src")
       });
       bootstrap.connection.close();
 

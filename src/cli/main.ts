@@ -388,7 +388,9 @@ program
     withContext<{ key: string; name: string; description?: string; rootPath?: string }>(({ repositories, runInTransaction }, options) => {
       const nextRootPath = options.rootPath ? resolve(options.rootPath) : null;
       if (nextRootPath) {
-        assertSafeWorkspaceRoot(nextRootPath, repoRoot);
+        assertSafeWorkspaceRoot(nextRootPath, repoRoot, {
+          allowRepoRoot: true
+        });
       }
       const workspace = runInTransaction(() => {
         const createdWorkspace = repositories.workspaceRepository.create({
@@ -443,7 +445,9 @@ program
         throw new AppError("WORKSPACE_NOT_FOUND", `Workspace ${options.workspaceKey} not found`);
       }
       const nextRootPath = resolve(options.rootPath);
-      assertSafeWorkspaceRoot(nextRootPath, repoRoot);
+      assertSafeWorkspaceRoot(nextRootPath, repoRoot, {
+        allowRepoRoot: true
+      });
       const updated = repositories.workspaceRepository.update({
         id: workspace.id,
         rootPath: nextRootPath
@@ -1999,6 +2003,12 @@ sonarConfigCommand.command("show").action(
   })
 );
 
+sonarCommand.command("context").action(
+  withContext<Record<string, never>>(({ services }) => {
+    console.log(JSON.stringify(services.sonarService.context(), null, 2));
+  })
+);
+
 sonarConfigCommand
   .command("set")
   .addOption(new Option("--enabled <enabled>").choices(["true", "false"]))
@@ -2051,11 +2061,13 @@ sonarConfigCommand.command("clear-token").action(
   })
 );
 
-sonarCommand.command("scan").action(
-  withContext<Record<string, never>>(({ services }) => {
-    console.log(JSON.stringify(services.sonarService.scan(), null, 2));
-  })
-);
+sonarCommand.command("scan")
+  .option("--live", "Run a real sonar-scanner invocation when the live toolchain is ready")
+  .action(
+    withContext<{ live?: boolean }>(({ services }, options) => {
+      console.log(JSON.stringify(services.sonarService.scan({ live: Boolean(options.live) }), null, 2));
+    })
+  );
 
 sonarCommand.command("preflight").action(
   withContext<Record<string, never>>(({ services }) => {
@@ -2136,11 +2148,54 @@ coderabbitConfigCommand.command("test").action(
   })
 );
 
+coderabbitCommand.command("context").action(
+  withContext<Record<string, never>>(({ services }) => {
+    console.log(JSON.stringify(services.coderabbitService.context(), null, 2));
+  })
+);
+
 coderabbitCommand.command("preflight").action(
   withContext<Record<string, never>>(({ services }) => {
     console.log(JSON.stringify(services.coderabbitService.preflight(), null, 2));
   })
 );
+
+coderabbitCommand
+  .command("review")
+  .option("--live", "Run a live CodeRabbit CLI review for the current branch or pull request")
+  .option("--project <projectId>")
+  .option("--wave <waveId>")
+  .option("--story <storyId>")
+  .option("--story-code <storyCode>")
+  .option("--file <filePaths...>")
+  .option("--module <modules...>")
+  .action(
+    withContext<{
+      live?: boolean;
+      project?: string;
+      wave?: string;
+      story?: string;
+      storyCode?: string;
+      file?: string[];
+      module?: string[];
+    }>(({ services }, options) => {
+      console.log(
+        JSON.stringify(
+          services.coderabbitService.review({
+            projectId: options.project,
+            waveId: options.wave,
+            storyId: options.story,
+            storyCode: options.storyCode,
+            filePaths: options.file,
+            modules: options.module,
+            live: Boolean(options.live)
+          }),
+          null,
+          2
+        )
+      );
+    })
+  );
 
 coderabbitConfigCommand.command("clear-token").action(
   withContext<Record<string, never>>(({ services }) => {

@@ -294,7 +294,9 @@ export function createAppContext(
   const defaultRuntime = agentRuntimeResolver.resolveDefault("autonomous");
   const safeDefaultWorkspaceRoot = isUnsafeWorkspaceRoot(process.cwd(), repoRoot) ? dirname(resolve(dbPath)) : process.cwd();
   const resolvedWorkspaceRoot = options?.workspaceRoot ?? workspace.rootPath ?? safeDefaultWorkspaceRoot;
-  assertSafeWorkspaceRoot(resolvedWorkspaceRoot, repoRoot);
+  assertSafeWorkspaceRoot(resolvedWorkspaceRoot, repoRoot, {
+    allowRepoRoot: Boolean(options?.workspaceRoot || workspace.rootPath)
+  });
   const effectiveConfig: EffectiveWorkspaceConfig = {
     defaultAdapterKey: defaultRuntime.adapterKey,
     defaultModel: defaultRuntime.model ?? workspaceSettings.defaultModel,
@@ -310,7 +312,12 @@ export function createAppContext(
     qualityKnowledgeEntryRepository,
     repoRoot
   );
-  const coderabbitService = new CoderabbitService(workspace, effectiveConfig.workspaceRoot, workspaceCoderabbitSettingsRepository);
+  const coderabbitService = new CoderabbitService(
+    workspace,
+    effectiveConfig.workspaceRoot,
+    workspaceCoderabbitSettingsRepository,
+    qualityKnowledgeEntryRepository
+  );
 
   return {
     connection,
@@ -479,7 +486,9 @@ export function createWorkspaceSetupContext(
   }
   const resolvedWorkspaceRoot = options?.workspaceRoot ? resolve(options.workspaceRoot) : workspace.rootPath;
   if (resolvedWorkspaceRoot) {
-    assertSafeWorkspaceRoot(resolvedWorkspaceRoot, repoRoot);
+    assertSafeWorkspaceRoot(resolvedWorkspaceRoot, repoRoot, {
+      allowRepoRoot: true
+    });
   }
 
   return {

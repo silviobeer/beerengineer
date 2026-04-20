@@ -363,14 +363,15 @@ Wichtig:
 
 - `--workspace` bestimmt den Daten- und Sichtbarkeits-Scope
 - `--workspace-root` bestimmt nur das technische Repo-/Git-Verzeichnis fuer den Lauf
-- `workspace:create` und `workspace:update-root` blockieren Roots innerhalb des BeerEngineer-Installations-/Repo-Baums
+- `workspace:create` und `workspace:update-root` blockieren Roots innerhalb des BeerEngineer-Installations-/Repo-Baums, erlauben aber bewusst den exakten Repo-Root fuer Self-Hosting des BeerEngineer-Produkts selbst
 - `.beerengineer/` im Workspace ist Runtime-only und sollte gitignoriert bleiben
 - pushbare Delivery-Reports landen unter `docs/delivery-reports/<workspaceKey>/`
 
 Die neuen Setup-Kommandos verhalten sich bewusst unterschiedlich:
 
 - `workspace:doctor` ist read-only und liefert einen strukturierten Gap-Report fuer Harness, Workspace-Root, Git, Laufzeit-Tools und Integrationen
-- fuer Sonar benennt `workspace:doctor` explizit das benoetigte SonarSource CLI `sonar-scanner`
+- fuer Sonar unterscheidet `workspace:doctor` jetzt zwischen `sonar` fuer Login/Integration und `sonar-scanner` fuer projektbezogene Analysen
+- `workspace:doctor` zeigt zusaetzlich explizit, ob ein Live-Sonar-Scan auf dem aktuell erkannten Branch-/PR-Kontext sofort moeglich waere oder nur Preview/Fallback verfuegbar ist
 - fuer Browser- und Repo-Setup benennt `workspace:doctor` jetzt auch explizit `agent-browser`, `npx playwright`, GitHub CLI `gh` und CodeRabbit CLI `cr`/`coderabbit`
 - zusaetzlich prueft `workspace:doctor` jetzt alle unterstuetzten MCP-Harness-Ziele `claude`, `cursor`, `opencode` und `codex` darauf, ob `agent-browser` eingetragen ist
 - `workspace:init` legt nur BeerEngineer-eigene Laufzeitstruktur an und kann optional den Root-Ordner anlegen oder `git init` ausfuehren
@@ -553,23 +554,74 @@ Im aktuellen Documentation-Schnitt gilt:
 - `documentation:start` materialisiert den fertigen Delivery-Report zusaetzlich in den Workspace unter `docs/delivery-reports/<workspaceKey>/<projectCode>-delivery-report.md` und `docs/delivery-reports/<workspaceKey>/<projectCode>-delivery-report.json`
 - die engine-internen `delivery-report`-Artefakte bleiben weiterhin unter `.beerengineer/artifacts/...` registriert, waehrend die Exportdateien bewusst repo-tauglich sind
 - `documentation:start` liefert bei erfolgreicher Dokumentation zusaetzlich einen `projectFinalization`-Status fuer den anschliessenden `proj/* -> main`-Merge
-- `beerengineer sonar preflight` prueft die Laufzeitvoraussetzungen fuer Live-Sonar (`java`, `sonar-scanner`, `SONAR_TOKEN`) und gibt klare naechste Schritte aus
-- `beerengineer coderabbit preflight` prueft die optionalen Voraussetzungen fuer spaetere Live-Coderabbit-Reviews (`CODERABBIT_TOKEN`, Organisation/Repository, Git-Repo) und gibt klare naechste Schritte aus
+- `beerengineer sonar preflight` prueft die Sonar-Toolchain differenziert: `sonar` fuer Login/Integration, `sonar-scanner` plus `java` fuer projektbezogene Branch-/PR-/Main-Analysen und einen Workspace-Token fuer echte Scanner-Laeufe
+- `beerengineer coderabbit preflight` prueft die CodeRabbit-CLI, Git-/Branch-Kontext, Repository-Kontext und Auth-Quelle fuer branch-aware Live-Reviews und gibt klare naechste Schritte aus
 
 ## Sonar Runtime
 
-Fuer fixture-basierte Sonar-Kommandos reicht die normale BeerEngineer-CLI-Umgebung. Fuer einen echten Live-Sonar-Lauf gelten zusaetzlich diese Voraussetzungen:
+BeerEngineer behandelt Sonar jetzt bewusst in zwei Rollen:
+
+- `sonar` ist die SonarQube-CLI fuer Login und Nutzerintegration, z. B. `sonar auth login`
+- `sonar-scanner` ist die Scan-Engine fuer projektbezogene Branch-, PR- und Main-Analysen
+
+Fuer fixture-basierte Sonar-Kommandos reicht die normale BeerEngineer-CLI-Umgebung. Fuer echte projektbezogene Scanner-Laeufe gelten zusaetzlich diese Voraussetzungen:
 
 - `java` muss im Shell-Environment verfuegbar sein
+- `sonar` sollte in `PATH` verfuegbar sein, wenn bestehende SonarQube-CLI-Auth wiederverwendet werden soll
 - `sonar-scanner` muss in `PATH` verfuegbar sein
-- `SONAR_TOKEN` muss in der Workspace-Konfiguration oder in `.env.local` gesetzt sein
+- Projektkontext muss gesetzt sein:
+  - `hostUrl`
+  - `organization`
+  - `projectKey`
+- Fuer `sonar config test` reicht entweder:
+  - ein gespeicherter Token
+  - oder eine vorhandene `sonar auth login`-Session
+- Fuer echte `sonar-scanner`-Laeufe braucht BeerEngineer derzeit weiterhin einen Token in der Workspace-Konfiguration oder in `.env.local`
 
-Empfohlener Ablauf fuer Live-Sonar:
+Wenn Teile der Toolchain fehlen, bleibt BeerEngineer funktional und faellt fuer Sonar auf fixture-basierte bzw. degradierte Qualitaetssignale zurueck, statt die restliche App zu blockieren.
+
+Empfohlener Setup-Ablauf:
 
 1. `beerengineer sonar preflight`
-2. fehlende Runtime-Voraussetzungen beheben
-3. `beerengineer sonar config test`
-4. erst dann `beerengineer sonar scan`
+2. falls gewuenscht `sonar auth login`
+3. Projektkontext mit `beerengineer sonar config set` persistieren
+4. falls echte Scanner-Laeufe benoetigt werden: `SONAR_TOKEN` setzen und `sonar-scanner` + `java` verfuegbar machen
+5. `beerengineer sonar config test`
+6. erst dann projektbezogene `beerengineer sonar scan`-Workflows einplanen
+
+Fuer die aktuelle Git-basierte Sonar-Zielableitung gibt es zusaetzlich:
+
+- `beerengineer sonar context`
+
+Der Command zeigt, ob BeerEngineer den aktuellen Lauf als `main`, `branch` oder `pull_request` einordnet und welche BeerEngineer-Branchrolle erkannt wurde (`proj/*`, `story/*`, `fix/*` oder sonstiger Branch).
+Zusätzlich zeigt er jetzt den abgeleiteten `sonar-scanner`-Plan mit den relevanten `-Dsonar.*`-Parametern.
+
+Wichtig fuer die Produktsemantik:
+
+- Sonar ist in BeerEngineer ein Tool fuer Implementierungs-, Branch-, PR- und Main-Qualitaet
+- Sonar ist nicht das primaere Tool fuer fachliches User-Story- oder Planning-Review
+- Story- und Execution-Kontexte duerfen persistierte Sonar-Erkenntnisse als `qualityKnowledge` konsumieren, fuehren aber nicht automatisch einen Live-Sonar-Scan aus
+
+Aktueller Ablauf im Workflow:
+
+- nach erfolgreicher Umsetzung auf einem BeerEngineer-Story-Branch `story/*` oder einem Remediation-Branch `fix/*` stoesst BeerEngineer automatisch einen Sonar-Refresh an
+- dieser Refresh ist non-blocking und dient dem fruehen Persistieren von branchbezogenen Qualitaetssignalen in `qualityKnowledge`
+- fehlt Sonar oder ist die Toolchain unvollstaendig, wird der Refresh uebersprungen bzw. faellt degradiert auf fixture-basierte Signale zurueck
+- spaetere Implementation-Review- und Kontext-Sichten koennen diese Signale dann wiederverwenden
+
+Die branch-aware Ableitung funktioniert aktuell so:
+
+- PR-Umgebungsvariablen haben Vorrang und fuehren zu `pull_request`
+- der konfigurierte Default-Branch fuehrt zu `main`
+- alle anderen Git-Branches fuehren zu `branch`
+- ohne Git-Kontext bleibt Sonar auf `none` und die App laeuft degradiert weiter
+
+`beerengineer sonar scan` verhaelt sich jetzt so:
+
+- standardmaessig bleibt `beerengineer sonar scan` im fixture-/Preview-Modus und zeigt branch-aware Sonar-Daten plus den abgeleiteten Scanner-Plan
+- mit `beerengineer sonar scan --live` versucht BeerEngineer einen echten branch-/PR-aware `sonar-scanner`-Lauf
+- wenn die Live-Voraussetzungen fehlen oder der Scanner fehlschlaegt, faellt BeerEngineer kontrolliert auf fixture-basierte Sonar-Daten zurueck
+- derselbe branch-aware Plan wird auch fuer den automatischen Sonar-Refresh nach Story-/Remediation-Implementierungen verwendet, ohne den Workflow durch einen erzwungenen Live-Scan zu blockieren
 
 Wenn die Toolchain dauerhaft reproduzierbar gemacht werden soll, sind `mise`, `asdf`, Devcontainer oder `Nix` sinnvolle Optionen.
 
@@ -577,15 +629,48 @@ Wenn die Toolchain dauerhaft reproduzierbar gemacht werden soll, sind `mise`, `a
 
 Die App laeuft auch ohne Coderabbit. In diesem Fall fehlen nur Review-/Qualitaetssignale, nicht die Grundfunktionalitaet.
 
-Fuer spaetere Live-Coderabbit-Reviews gelten diese Voraussetzungen:
+BeerEngineer behandelt CodeRabbit jetzt bewusst aehnlich wie Sonar, aber mit CodeRabbit-spezifischer Semantik:
 
-- `CODERABBIT_TOKEN` muss in der Workspace-Konfiguration oder in `.env.local` gesetzt sein
+- `cr` bzw. `coderabbit` ist die eigentliche Review-CLI
+- `cr auth login` ist die bevorzugte Nutzer-Auth fuer persoenlichere und stabilere Reviews
+- eine gespeicherte API-Key-Konfiguration bleibt zusaetzlich moeglich
+- Git-Remote und aktiver Branch liefern den Repository- und Diff-Kontext fuer branch-aware Reviews
+
+Fuer branch-aware Live-Coderabbit-Reviews gelten diese Voraussetzungen:
+
+- `cr` oder `coderabbit` muss in `PATH` verfuegbar sein
 - Organisation und Repository muessen konfiguriert sein
-- der Workspace-Root sollte ein Git-Repository sein
+- fehlende Organisation/Repository-Angaben duerfen aus `git remote origin` abgeleitet werden
+- der Workspace-Root muss ein Git-Repository mit aktivem Branch oder Pull-Request-Kontext sein
+- Auth ist optional:
+  - bevorzugt `cr auth login`
+  - alternativ ein API-Key in der Workspace-Konfiguration oder in `.env.local`
+  - ohne Auth kann CodeRabbit weiter laufen, aber BeerEngineer weist auf degradierten Qualitaets-/Rate-Limit-Kontext hin
 
 Empfohlener Ablauf:
 
 1. `beerengineer coderabbit preflight`
-2. fehlende Coderabbit-Voraussetzungen beheben
-3. `beerengineer coderabbit config test`
-4. erst dann einen echten Review-Run darauf aufbauen
+2. falls gewuenscht `cr auth login`
+3. Repository-Kontext mit `beerengineer coderabbit config set` persistieren oder aus `git remote origin` ableiten lassen
+4. `beerengineer coderabbit config test`
+5. `beerengineer coderabbit context`
+6. erst dann branch-aware `beerengineer coderabbit review --live`-Runs darauf aufbauen
+
+Fuer die aktuelle Git-basierte CodeRabbit-Zielableitung gibt es zusaetzlich:
+
+- `beerengineer coderabbit context`
+
+Der Command zeigt, ob BeerEngineer den aktuellen Lauf als `main`, `branch` oder `pull_request` einordnet, welche BeerEngineer-Branchrolle erkannt wurde (`proj/*`, `story/*`, `fix/*` oder sonstiger Branch) und mit welchem `cr review --agent`-Aufruf BeerEngineer einen Live-Review planen wuerde.
+
+`beerengineer coderabbit review` verhaelt sich jetzt so:
+
+- standardmaessig bleibt `beerengineer coderabbit review` im Preview-/Fallback-Modus und zeigt den branch-aware Review-Kontext plus den abgeleiteten CodeRabbit-CLI-Aufruf
+- mit `beerengineer coderabbit review --live` versucht BeerEngineer einen echten branch-/PR-aware `cr review --agent`-Lauf
+- wenn Git-, CLI- oder Repository-Voraussetzungen fehlen oder der Review-Run fehlschlaegt, faellt BeerEngineer kontrolliert auf bereits persistiertes `CodeRabbit`-`qualityKnowledge` zurueck
+
+Wichtig fuer die Produktsemantik:
+
+- CodeRabbit ist in BeerEngineer ein Tool fuer Implementierungs-, Branch- und PR-Review
+- CodeRabbit ist nicht das primaere Tool fuer fachliches User-Story- oder Planning-Review
+- `implementation review` versucht jetzt zuerst einen echten, bewusst kurz gebundenen Live-CodeRabbit-Review-Lauf und faellt bei fehlender Live-Bereitschaft, Timeout oder Fehlern auf persistiertes `qualityKnowledge` zurueck
+- `workspace:doctor` zeigt fuer CodeRabbit jetzt nicht nur die Konfiguration, sondern auch, ob auf dem aktuellen Branch sofort ein Live-Review moeglich ist
