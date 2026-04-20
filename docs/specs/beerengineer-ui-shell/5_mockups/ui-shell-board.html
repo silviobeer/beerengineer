@@ -1,0 +1,836 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Beerengineer Board Mockup</title>
+    <style>
+      :root {
+        --petrol: #005a65;
+        --petrol-dark: #003d46;
+        --gold: #d4a843;
+        --bg: #f4f2ec;
+        --surface: #fffdfa;
+        --surface-2: #faf7f1;
+        --line: #d8d4cc;
+        --text: #1a2b2c;
+        --muted: #6f6c64;
+        --warn: #8b6922;
+        --bad: #b6483a;
+        --heading: "Space Grotesk", "Avenir Next", sans-serif;
+        --body: "Inter", "Segoe UI", sans-serif;
+        --mono: "JetBrains Mono", monospace;
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: var(--body);
+      }
+      a { color: inherit; text-decoration: none; }
+
+      .page { padding: 16px; }
+
+      .header {
+        border: 1px solid var(--line);
+        background: var(--surface);
+      }
+
+      .header-top {
+        display: grid;
+        grid-template-columns: auto 280px 1fr auto;
+        gap: 12px;
+        align-items: center;
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .brand-mark {
+        width: 26px;
+        height: 26px;
+        background: var(--petrol-dark);
+      }
+
+      .brand strong {
+        display: block;
+        font: 600 15px/1 var(--heading);
+      }
+
+      .mini,
+      .code {
+        font: 700 10px/1.3 var(--mono);
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .mini { color: var(--gold); }
+
+      .workspace-switcher {
+        padding: 10px 12px;
+        border: 1px solid rgba(0, 90, 101, 0.16);
+        background: rgba(0, 90, 101, 0.04);
+      }
+
+      .workspace-switcher strong {
+        display: block;
+        margin-top: 4px;
+        font: 600 14px/1.2 var(--heading);
+      }
+
+      .workspace-switcher span {
+        display: block;
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .title h1 {
+        margin: 4px 0 0;
+        font: 600 20px/1 var(--heading);
+      }
+
+      .title p {
+        margin: 6px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .header-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .button {
+        padding: 10px 12px;
+        border: 1px solid rgba(212, 168, 67, 0.4);
+        background: transparent;
+        color: #8a6a20;
+        font: 600 12px/1 var(--body);
+      }
+
+      .button.primary {
+        border-color: var(--gold);
+        background: var(--gold);
+        color: var(--text);
+      }
+
+      .header-nav {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: center;
+        padding: 10px 14px;
+        background: var(--surface-2);
+      }
+
+      .nav-links,
+      .header-signals,
+      .filters,
+      .item-signals,
+      .detail-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .nav-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 0;
+        color: var(--muted);
+        font: 600 13px/1 var(--body);
+      }
+
+      .nav-link.active {
+        color: var(--text);
+        border-bottom: 2px solid var(--gold);
+      }
+
+      .signal {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--muted);
+        font: 600 12px/1 var(--body);
+      }
+
+      .signal .icon {
+        color: var(--petrol-dark);
+      }
+
+      .canvas {
+        position: relative;
+        margin-top: 12px;
+        min-height: calc(100vh - 140px);
+        border: 1px solid var(--line);
+        background: #fcfbf8;
+        overflow: hidden;
+      }
+
+      .board-pane { min-height: inherit; }
+
+      .board-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: end;
+        padding: 14px;
+        border-bottom: 1px solid var(--line);
+        background: var(--surface);
+      }
+
+      .board-head h2 {
+        margin: 4px 0 0;
+        font: 600 18px/1 var(--heading);
+      }
+
+      .board-head p {
+        margin: 6px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .filters {
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--line);
+        background: var(--surface-2);
+      }
+
+      .chip {
+        padding: 6px 8px;
+        background: #ece7de;
+        color: var(--text);
+        font: 600 11px/1 var(--body);
+      }
+
+      .chip.petrol {
+        background: rgba(0, 90, 101, 0.08);
+        color: var(--petrol-dark);
+      }
+
+      .chip.gold {
+        background: rgba(212, 168, 67, 0.14);
+        color: #7d611d;
+      }
+
+      .board {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(220px, 1fr));
+        min-height: 720px;
+      }
+
+      .column {
+        border-right: 1px solid var(--line);
+      }
+
+      .column:last-child { border-right: 0; }
+
+      .column-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        align-items: baseline;
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--line);
+        background: #f6f1e8;
+      }
+
+      .column-head h3 {
+        margin: 0;
+        font: 600 16px/1 var(--heading);
+      }
+
+      .count {
+        color: var(--muted);
+        font: 700 12px/1 var(--mono);
+      }
+
+      .item {
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--line);
+        background: white;
+      }
+
+      .item-top {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        align-items: start;
+      }
+
+      .item.selected {
+        background: rgba(0, 90, 101, 0.04);
+        box-shadow: inset 3px 0 0 var(--petrol);
+      }
+
+      .item h4 {
+        margin: 8px 0 0;
+        font: 600 16px/1.22 var(--heading);
+      }
+
+      .item p {
+        margin: 6px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.45;
+      }
+
+      .code {
+        color: var(--petrol);
+      }
+
+      .item-signals span {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 0;
+        color: var(--muted);
+        font: 600 11px/1 var(--body);
+      }
+
+      .mode-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 18px;
+        height: 18px;
+        color: var(--muted);
+        opacity: 0.9;
+      }
+
+      .mode-icon.auto {
+        color: #7d611d;
+      }
+
+      .mode-icon.assisted {
+        color: var(--petrol-dark);
+      }
+
+      .overlay-scrim {
+        position: absolute;
+        inset: 0;
+        background: rgba(26, 43, 44, 0.08);
+        pointer-events: none;
+      }
+
+      .overlay-panel {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 388px;
+        max-width: 42vw;
+        height: 100%;
+        border-left: 1px solid var(--line);
+        background: var(--surface);
+        box-shadow: -24px 0 48px rgba(26, 43, 44, 0.08);
+      }
+
+      .detail-head,
+      .detail-block {
+        padding: 12px 14px;
+      }
+
+      .detail-head {
+        border-bottom: 1px solid var(--line);
+        background: var(--surface-2);
+      }
+
+      .detail-head h2 {
+        margin: 4px 0 0;
+        font: 600 17px/1.1 var(--heading);
+      }
+
+      .detail-head p,
+      .detail-row p,
+      .chat-line p {
+        margin: 6px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.45;
+      }
+
+      .detail-block {
+        border-bottom: 1px solid var(--line);
+      }
+
+      .detail-block h3 {
+        margin: 4px 0 0;
+        font: 600 15px/1.2 var(--heading);
+      }
+
+      .detail-list,
+      .chat-box {
+        margin-top: 8px;
+        border: 1px solid var(--line);
+        background: white;
+      }
+
+      .detail-row,
+      .chat-line {
+        padding: 10px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .detail-row:last-child,
+      .chat-line:last-child {
+        border-bottom: 0;
+      }
+
+      .detail-row strong {
+        display: block;
+        color: var(--muted);
+        font: 700 10px/1.3 var(--mono);
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+
+      .chat-line.user {
+        background: rgba(212, 168, 67, 0.08);
+      }
+
+      .icon {
+        width: 14px;
+        height: 14px;
+        display: inline-block;
+        color: currentColor;
+        flex: 0 0 auto;
+      }
+
+      .icon svg {
+        width: 14px;
+        height: 14px;
+        display: block;
+      }
+
+      @media (max-width: 1280px) {
+        .header-top {
+          grid-template-columns: 1fr;
+        }
+
+        .overlay-panel {
+          max-width: none;
+          width: 440px;
+        }
+      }
+
+      @media (max-width: 1080px) {
+        .board {
+          grid-template-columns: 1fr;
+        }
+
+        .column {
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
+
+        .header-nav {
+          flex-direction: column;
+          align-items: start;
+        }
+
+        .overlay-panel {
+          width: 100%;
+          max-width: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header class="header">
+        <div class="header-top">
+          <div class="brand">
+            <div class="brand-mark"></div>
+            <div>
+              <div class="mini">Beerengineer</div>
+              <strong>Control Panel</strong>
+            </div>
+          </div>
+
+          <div class="workspace-switcher">
+            <div class="mini">Active workspace</div>
+            <strong>beerengineer-cli-ui-prep</strong>
+            <span>Repo root · assisted default · local DB</span>
+          </div>
+
+          <div class="title">
+            <div class="mini">Board / Workspace scope</div>
+            <h1>Workspace-first Shell ohne Sidebar</h1>
+            <p>Workspace, Navigation und globale Zustände leben oben. Das Board bleibt die Primärfläche.</p>
+          </div>
+
+          <div class="header-actions">
+            <a class="button" href="./sitemap.html">Sitemap</a>
+            <a class="button" href="./inbox.html">Inbox</a>
+            <a class="button primary" href="./review-chat-focus.html">Chat Focus</a>
+          </div>
+        </div>
+
+        <div class="header-nav">
+          <div class="nav-links">
+            <span class="nav-link active">
+              <span class="icon">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+                  <path d="M2 3.5h5v4H2zM9 3.5h5v4H9zM2 9h5v4H2zM9 9h5v4H9z"/>
+                </svg>
+              </span>
+              Board
+            </span>
+            <span class="nav-link">
+              <span class="icon">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+                  <path d="M3 4h10v7H6l-3 2V4z"/>
+                </svg>
+              </span>
+              Inbox
+            </span>
+            <span class="nav-link">
+              <span class="icon">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+                  <path d="M3 3h10v10H3z"/><path d="M5.5 6h5M5.5 8h5M5.5 10h3"/>
+                </svg>
+              </span>
+              Runs
+            </span>
+            <span class="nav-link">Artifacts</span>
+            <span class="nav-link">Settings</span>
+          </div>
+
+          <div class="header-signals">
+            <span class="signal">
+              <span class="icon">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+                  <path d="M8 2v12M2 8h12"/>
+                </svg>
+              </span>
+              assisted default
+            </span>
+            <span class="signal">
+              <span class="icon">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+                  <path d="M3 4h10v7H6l-3 2V4z"/>
+                </svg>
+              </span>
+              2 waiting
+            </span>
+            <span class="signal">
+              <span class="icon">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+                  <path d="M8 2.5 13 5v6L8 13.5 3 11V5l5-2.5Z"/><path d="M5.5 8l1.5 1.5L10.5 6"/>
+                </svg>
+              </span>
+              5 review
+            </span>
+            <span class="signal">
+              <span class="icon">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+                  <path d="M8 2.5 13.5 12h-11L8 2.5Z"/><path d="M8 6v3.5M8 11.8h.01"/>
+                </svg>
+              </span>
+              1 failed
+            </span>
+          </div>
+        </div>
+      </header>
+
+      <div class="canvas">
+        <main class="board-pane">
+          <div class="board-head">
+            <div>
+              <div class="mini">Workspace board</div>
+              <h2>beerengineer-cli-ui-prep</h2>
+              <p>Items dieser Codebase. Details öffnen kontextuell als rechtes Overlay.</p>
+            </div>
+            <div class="filters">
+              <span class="chip">all items</span>
+              <span class="chip petrol">requirements focus</span>
+              <span class="chip gold">needs input</span>
+            </div>
+          </div>
+
+          <section class="board">
+            <div class="column">
+              <div class="column-head">
+                <h3>Idea</h3>
+                <div class="count">01</div>
+              </div>
+              <article class="item">
+                <div class="item-top">
+                  <div class="code">ITM-008</div>
+                  <span class="mode-icon" title="manual">
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+                      <path d="M5.5 8V4.5a1 1 0 0 1 2 0V7m0-3a1 1 0 1 1 2 0v3m0-2a1 1 0 1 1 2 0v4.5a2 2 0 0 1-.6 1.4l-1 1a2 2 0 0 1-1.4.6H8a3 3 0 0 1-2.1-.9L3.6 10.3a1 1 0 0 1 1.4-1.4L5.5 9.4"/>
+                    </svg>
+                  </span>
+                </div>
+                <h4>Workspace bootstrap assistant</h4>
+                <p>No run yet. Ready for brainstorm start in this workspace.</p>
+                <div class="item-signals">
+                  <span>draft</span>
+                </div>
+              </article>
+            </div>
+
+            <div class="column">
+              <div class="column-head">
+                <h3>Brainstorm</h3>
+                <div class="count">01</div>
+              </div>
+              <article class="item">
+                <div class="item-top">
+                  <div class="code">ITM-006</div>
+                  <span class="mode-icon assisted" title="assisted">
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+                      <path d="M8 2.5 10 6l3.5 1-2.4 2.4.5 3.6L8 11.2 4.4 13l.5-3.6L2.5 7 6 6 8 2.5Z"/>
+                    </svg>
+                  </span>
+                </div>
+                <h4>Quality dashboard for integrations</h4>
+                <p>Session paused on target-audience clarification.</p>
+                <div class="item-signals">
+                  <span class="gold">
+                    <span class="icon">
+                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+                        <path d="M3 4h10v7H6l-3 2V4z"/>
+                      </svg>
+                    </span>
+                    waiting
+                  </span>
+                </div>
+              </article>
+            </div>
+
+            <div class="column">
+              <div class="column-head">
+                <h3>Requirements</h3>
+                <div class="count">02</div>
+              </div>
+              <article class="item selected">
+                <div class="item-top">
+                  <div class="code">ITM-007</div>
+                  <span class="mode-icon auto" title="auto">
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+                      <path d="M3.5 4.5 8 8l-4.5 3.5v-7Z"/>
+                      <path d="M8 4.5 12.5 8 8 11.5v-7Z"/>
+                    </svg>
+                  </span>
+                </div>
+                <h4>Beerengineer CLI UI shell</h4>
+                <p>Planning review is asking for shell, workspace and autonomy decisions.</p>
+                <div class="item-signals">
+                  <span class="gold">
+                    <span class="icon">
+                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+                        <path d="M8 2.5 13 5v6L8 13.5 3 11V5l5-2.5Z"/><path d="M5.5 8l1.5 1.5L10.5 6"/>
+                      </svg>
+                    </span>
+                    review
+                  </span>
+                  <span>3 projects</span>
+                </div>
+              </article>
+              <article class="item">
+                <div class="item-top">
+                  <div class="code">ITM-005</div>
+                  <span class="mode-icon assisted" title="assisted">
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+                      <path d="M8 2.5 10 6l3.5 1-2.4 2.4.5 3.6L8 11.2 4.4 13l.5-3.6L2.5 7 6 6 8 2.5Z"/>
+                    </svg>
+                  </span>
+                </div>
+                <h4>Story review remediation policy</h4>
+                <p>Requirements run active, no user decision needed yet.</p>
+                <div class="item-signals">
+                  <span>running</span>
+                </div>
+              </article>
+            </div>
+
+            <div class="column">
+              <div class="column-head">
+                <h3>Implementation</h3>
+                <div class="count">02</div>
+              </div>
+              <article class="item">
+                <div class="item-top">
+                  <div class="code">ITM-004</div>
+                  <span class="mode-icon auto" title="auto">
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+                      <path d="M3.5 4.5 8 8l-4.5 3.5v-7Z"/>
+                      <path d="M8 4.5 12.5 8 8 11.5v-7Z"/>
+                    </svg>
+                  </span>
+                </div>
+                <h4>Autorun reliability upgrades</h4>
+                <p>Execution complete, but QA waits on story review resolution.</p>
+                <div class="item-signals">
+                  <span class="gold">qa pending</span>
+                </div>
+              </article>
+              <article class="item">
+                <div class="item-top">
+                  <div class="code">ITM-003</div>
+                  <span class="mode-icon" title="manual">
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+                      <path d="M5.5 8V4.5a1 1 0 0 1 2 0V7m0-3a1 1 0 1 1 2 0v3m0-2a1 1 0 1 1 2 0v4.5a2 2 0 0 1-.6 1.4l-1 1a2 2 0 0 1-1.4.6H8a3 3 0 0 1-2.1-.9L3.6 10.3a1 1 0 0 1 1.4-1.4L5.5 9.4"/>
+                    </svg>
+                  </span>
+                </div>
+                <h4>Workspace setup diagnostics</h4>
+                <p>Documentation run failed and needs retry.</p>
+                <div class="item-signals">
+                  <span class="bad">
+                    <span class="icon">
+                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+                        <path d="M8 2.5 13.5 12h-11L8 2.5Z"/><path d="M8 6v3.5M8 11.8h.01"/>
+                      </svg>
+                    </span>
+                    failed
+                  </span>
+                </div>
+              </article>
+            </div>
+
+            <div class="column">
+              <div class="column-head">
+                <h3>Done</h3>
+                <div class="count">01</div>
+              </div>
+              <article class="item">
+                <div class="item-top">
+                  <div class="code">ITM-002</div>
+                  <span class="mode-icon auto" title="auto">
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+                      <path d="M3.5 4.5 8 8l-4.5 3.5v-7Z"/>
+                      <path d="M8 4.5 12.5 8 8 11.5v-7Z"/>
+                    </svg>
+                  </span>
+                </div>
+                <h4>Review core follow-up</h4>
+                <p>Delivery complete, archived inside the core workspace.</p>
+                <div class="item-signals">
+                  <span>
+                    <span class="icon">
+                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+                        <path d="M3.5 8 6.5 11 12.5 5"/>
+                      </svg>
+                    </span>
+                    done
+                  </span>
+                </div>
+              </article>
+            </div>
+          </section>
+        </main>
+
+        <div class="overlay-scrim"></div>
+
+        <aside class="overlay-panel">
+          <div class="detail-head">
+            <div class="mini">ITM-007</div>
+            <h2>Beerengineer CLI UI shell</h2>
+            <p>Details appear as overlay. The board remains visible and keeps context.</p>
+            <div class="item-signals">
+              <span class="petrol">
+                <span class="icon">
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+                    <path d="M3.5 4.5 8 8l-4.5 3.5v-7Z"/>
+                    <path d="M8 4.5 12.5 8 8 11.5v-7Z"/>
+                  </svg>
+                </span>
+                auto
+              </span>
+              <span class="gold">
+                <span class="icon">
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+                    <path d="M3 4h10v7H6l-3 2V4z"/>
+                  </svg>
+                </span>
+                waiting
+              </span>
+            </div>
+          </div>
+
+          <div class="detail-block">
+            <div class="mini">Progress</div>
+            <h3>Current progression</h3>
+            <div class="detail-list">
+              <div class="detail-row">
+                <strong>brainstorm</strong>
+                <p>resolved, concept approved, projects imported</p>
+              </div>
+              <div class="detail-row">
+                <strong>requirements</strong>
+                <p>interactive review open, planning review `questions_only`</p>
+              </div>
+              <div class="detail-row">
+                <strong>architecture</strong>
+                <p>queued until story resolution</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="detail-block">
+            <div class="mini">Actions</div>
+            <h3>Next actions</h3>
+            <div class="detail-actions">
+              <span class="signal">
+                <span class="icon">
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+                    <path d="M3 4h10v7H6l-3 2V4z"/>
+                  </svg>
+                </span>
+                open chat
+              </span>
+              <span class="signal">
+                <span class="icon">
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+                    <path d="M3.5 8 6.5 11 12.5 5"/>
+                  </svg>
+                </span>
+                approve stories
+              </span>
+              <span class="signal">
+                <span class="icon">
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+                    <path d="M4 8h8M8 4l4 4-4 4"/>
+                  </svg>
+                </span>
+                retry review
+              </span>
+            </div>
+          </div>
+
+          <div class="detail-block">
+            <div class="mini">Chat peek</div>
+            <h3>Latest exchange</h3>
+            <div class="chat-box">
+              <div class="chat-line">
+                <div class="mini">assistant</div>
+                <p>Should the board be item-centric or project-centric?</p>
+              </div>
+              <div class="chat-line user">
+                <div class="mini">user</div>
+                <p>Item-centric. Workspace context should be visible globally, not in a sidebar list.</p>
+              </div>
+              <div class="chat-line">
+                <div class="mini">assistant</div>
+                <p>Accepted. Workspace switching moved to the top control zone and details open as overlay.</p>
+              </div>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </div>
+  </body>
+</html>
