@@ -16,6 +16,8 @@ import type {
   DocumentationAdapterRunResult,
   InteractiveBrainstormAdapterRunRequest,
   InteractiveBrainstormAdapterRunResult,
+  PlanningReviewAdapterRunRequest,
+  PlanningReviewAdapterRunResult,
   InteractiveStoryReviewAdapterRunRequest,
   InteractiveStoryReviewAdapterRunResult,
   QaAdapterRunRequest,
@@ -25,7 +27,9 @@ import type {
   StoryReviewAdapterRunRequest,
   StoryReviewAdapterRunResult,
   TestPreparationAdapterRunRequest,
-  TestPreparationAdapterRunResult
+  TestPreparationAdapterRunResult,
+  WorkspaceSetupAssistAdapterRunRequest,
+  WorkspaceSetupAssistAdapterRunResult
 } from "./types.js";
 
 export class AgentExecutionError extends AppError {
@@ -61,14 +65,30 @@ export class LocalCliAdapter implements AgentAdapter {
     return this.executeInteraction<{ output: InteractiveBrainstormAdapterRunResult["output"] }>(request);
   }
 
+  public async runPlanningReview(
+    request: PlanningReviewAdapterRunRequest
+  ): Promise<PlanningReviewAdapterRunResult> {
+    return this.executeInteraction<{ output: PlanningReviewAdapterRunResult["output"] }>(request);
+  }
+
   public async runInteractiveStoryReview(
     request: InteractiveStoryReviewAdapterRunRequest
   ): Promise<InteractiveStoryReviewAdapterRunResult> {
     return this.executeInteraction<{ output: InteractiveStoryReviewAdapterRunResult["output"] }>(request);
   }
 
+  public async runWorkspaceSetupAssist(
+    request: WorkspaceSetupAssistAdapterRunRequest
+  ): Promise<WorkspaceSetupAssistAdapterRunResult> {
+    return this.executeInteraction<{ output: WorkspaceSetupAssistAdapterRunResult["output"] }>(request);
+  }
+
   private executeInteraction<TResult extends { output: unknown }>(
-    request: InteractiveBrainstormAdapterRunRequest | InteractiveStoryReviewAdapterRunRequest
+    request:
+      | InteractiveBrainstormAdapterRunRequest
+      | InteractiveStoryReviewAdapterRunRequest
+      | PlanningReviewAdapterRunRequest
+      | WorkspaceSetupAssistAdapterRunRequest
   ): TResult & { stdout: string; stderr: string; exitCode: number; command: string[] } {
     const parsed = this.executePayload(request) as TResult;
     return {
@@ -169,7 +189,9 @@ export class LocalCliAdapter implements AgentAdapter {
     request:
       | AdapterRunRequest
       | InteractiveBrainstormAdapterRunRequest
+      | PlanningReviewAdapterRunRequest
       | InteractiveStoryReviewAdapterRunRequest
+      | WorkspaceSetupAssistAdapterRunRequest
       | ExecutionAdapterRunRequest
       | TestPreparationAdapterRunRequest
       | RalphVerificationAdapterRunRequest

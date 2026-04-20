@@ -135,6 +135,7 @@ export type InteractiveReviewType = (typeof interactiveReviewTypes)[number];
 export const interactiveReviewStatuses = [
   "open",
   "waiting_for_user",
+  "synthesizing",
   "ready_for_resolution",
   "resolved",
   "cancelled"
@@ -194,6 +195,116 @@ export type BrainstormSessionMode = (typeof brainstormSessionModes)[number];
 export const brainstormDraftStatuses = ["drafting", "needs_input", "ready_for_concept", "superseded"] as const;
 export type BrainstormDraftStatus = (typeof brainstormDraftStatuses)[number];
 
+export const workspaceAssistSessionStatuses = ["open", "resolved", "cancelled"] as const;
+export type WorkspaceAssistSessionStatus = (typeof workspaceAssistSessionStatuses)[number];
+
+export const planningReviewSteps = ["requirements_engineering", "architecture", "plan_writing"] as const;
+export type PlanningReviewStep = (typeof planningReviewSteps)[number];
+
+export const planningReviewStatuses = [
+  "synthesizing",
+  "blocker_present",
+  "questions_only",
+  "revising",
+  "ready",
+  "blocked",
+  "failed"
+] as const;
+export type PlanningReviewStatus = (typeof planningReviewStatuses)[number];
+
+export const planningReviewInteractionModes = ["interactive", "auto"] as const;
+export type PlanningReviewInteractionMode = (typeof planningReviewInteractionModes)[number];
+
+export const planningReviewReadinessResults = [
+  "ready",
+  "ready_with_assumptions",
+  "needs_evidence",
+  "needs_human_review",
+  "high_risk"
+] as const;
+export type PlanningReviewReadinessResult = (typeof planningReviewReadinessResults)[number];
+
+export const planningReviewModes = ["critique", "risk", "alternatives", "readiness"] as const;
+export type PlanningReviewMode = (typeof planningReviewModes)[number];
+
+export const planningReviewExecutionModes = [
+  "full_dual_review",
+  "degraded_dual_review",
+  "single_model_multi_role",
+  "minimal_review"
+] as const;
+export type PlanningReviewExecutionMode = (typeof planningReviewExecutionModes)[number];
+
+export const planningReviewConfidenceLevels = ["high", "medium", "reduced", "low"] as const;
+export type PlanningReviewConfidenceLevel = (typeof planningReviewConfidenceLevels)[number];
+
+export const planningReviewGateEligibilities = ["advisory", "advisory_only"] as const;
+export type PlanningReviewGateEligibility = (typeof planningReviewGateEligibilities)[number];
+
+export const planningReviewAutomationLevels = ["manual", "auto_suggest", "auto_comment", "auto_gate"] as const;
+export type PlanningReviewAutomationLevel = (typeof planningReviewAutomationLevels)[number];
+
+export const planningReviewSourceTypes = [
+  "brainstorm_session",
+  "brainstorm_draft",
+  "interactive_review_session",
+  "concept",
+  "architecture_plan",
+  "implementation_plan"
+] as const;
+export type PlanningReviewSourceType = (typeof planningReviewSourceTypes)[number];
+
+export const planningReviewProviderRoles = [
+  "implementation_reviewer",
+  "architecture_challenger",
+  "decision_auditor",
+  "product_skeptic",
+  "synthesizer"
+] as const;
+export type PlanningReviewProviderRole = (typeof planningReviewProviderRoles)[number];
+
+export const planningReviewFindingTypes = ["blocker", "major_concern", "question", "suggestion"] as const;
+export type PlanningReviewFindingType = (typeof planningReviewFindingTypes)[number];
+
+export const planningReviewFindingStatuses = ["new", "open", "resolved"] as const;
+export type PlanningReviewFindingStatus = (typeof planningReviewFindingStatuses)[number];
+
+export const planningReviewQuestionStatuses = ["open", "answered", "dismissed", "assumed"] as const;
+export type PlanningReviewQuestionStatus = (typeof planningReviewQuestionStatuses)[number];
+
+export const reviewKinds = ["planning", "interactive_story", "implementation", "qa", "documentation"] as const;
+export type ReviewKind = (typeof reviewKinds)[number];
+
+export const reviewRunStatuses = ["in_progress", "action_required", "complete", "blocked", "failed"] as const;
+export type ReviewRunStatus = (typeof reviewRunStatuses)[number];
+
+export const reviewFindingStatuses = ["new", "open", "resolved"] as const;
+export type ReviewFindingStatus = (typeof reviewFindingStatuses)[number];
+
+export const reviewQuestionStatuses = ["open", "answered", "dismissed", "assumed"] as const;
+export type ReviewQuestionStatus = (typeof reviewQuestionStatuses)[number];
+
+export const reviewSourceSystems = [
+  "llm",
+  "coderabbit",
+  "sonarcloud",
+  "tests",
+  "qa",
+  "story_review",
+  "planning_review",
+  "implementation_review"
+] as const;
+export type ReviewSourceSystem = (typeof reviewSourceSystems)[number];
+
+export const reviewFindingSeverities = ["critical", "high", "medium", "low"] as const;
+export type ReviewFindingSeverity = (typeof reviewFindingSeverities)[number];
+
+export const reviewGateDecisions = ["pass", "advisory", "blocked", "needs_human_review"] as const;
+export type ReviewGateDecision = (typeof reviewGateDecisions)[number];
+
+export const workspaceAssistMessageRoles = ["system", "assistant", "user"] as const;
+export type WorkspaceAssistMessageRole = (typeof workspaceAssistMessageRoles)[number];
+
 export const qaFindingSeverities = ["critical", "high", "medium", "low"] as const;
 export type QaFindingSeverity = (typeof qaFindingSeverities)[number];
 
@@ -215,7 +326,15 @@ export type IntegrationValidationStatus = (typeof integrationValidationStatuses)
 export const qualityDecisionStatuses = ["passed", "review_required", "failed", "blocked"] as const;
 export type QualityDecisionStatus = (typeof qualityDecisionStatuses)[number];
 
-export const qualityKnowledgeSources = ["sonar", "coderabbit", "verification", "qa", "story_review"] as const;
+export const qualityKnowledgeSources = [
+  "sonar",
+  "coderabbit",
+  "verification",
+  "qa",
+  "story_review",
+  "planning_review",
+  "implementation_review"
+] as const;
 export type QualityKnowledgeSource = (typeof qualityKnowledgeSources)[number];
 
 export const qualityKnowledgeScopeTypes = ["workspace", "project", "wave", "story", "file", "module"] as const;
@@ -322,6 +441,15 @@ export type WorkspaceCoderabbitSettings = {
   createdAt: number;
   updatedAt: number;
 };
+
+export const workspaceSetupCheckStatuses = ["ok", "warning", "missing", "blocked", "not_applicable"] as const;
+export type WorkspaceSetupCheckStatus = (typeof workspaceSetupCheckStatuses)[number];
+
+export const workspaceSetupStatuses = ["ready", "limited", "warning", "blocked"] as const;
+export type WorkspaceSetupStatus = (typeof workspaceSetupStatuses)[number];
+
+export const workspaceSetupAutonomyLevels = ["safe", "workspace-write", "setup-capable"] as const;
+export type WorkspaceSetupAutonomyLevel = (typeof workspaceSetupAutonomyLevels)[number];
 
 export type Item = {
   id: string;
@@ -816,6 +944,180 @@ export type BrainstormDraft = {
   assumptionsJson: string;
   lastUpdatedAt: number;
   lastUpdatedFromMessageId: string | null;
+};
+
+export type WorkspaceAssistSession = {
+  id: string;
+  workspaceId: string;
+  status: WorkspaceAssistSessionStatus;
+  currentPlanJson: string;
+  startedAt: number;
+  updatedAt: number;
+  resolvedAt: number | null;
+  lastAssistantMessageId: string | null;
+  lastUserMessageId: string | null;
+};
+
+export type WorkspaceAssistMessage = {
+  id: string;
+  sessionId: string;
+  role: WorkspaceAssistMessageRole;
+  content: string;
+  structuredPayloadJson: string | null;
+  derivedPlanJson: string | null;
+  createdAt: number;
+};
+
+export type PlanningReviewRun = {
+  id: string;
+  sourceType: PlanningReviewSourceType;
+  sourceId: string;
+  step: PlanningReviewStep;
+  status: PlanningReviewStatus;
+  interactionMode: PlanningReviewInteractionMode;
+  reviewMode: PlanningReviewMode;
+  automationLevel: PlanningReviewAutomationLevel;
+  requestedMode: PlanningReviewExecutionMode;
+  actualMode: PlanningReviewExecutionMode;
+  readiness: PlanningReviewReadinessResult | null;
+  confidence: PlanningReviewConfidenceLevel;
+  gateEligibility: PlanningReviewGateEligibility;
+  normalizedArtifactJson: string;
+  providersUsedJson: string;
+  missingCapabilitiesJson: string;
+  reviewSummary: string | null;
+  startedAt: number;
+  updatedAt: number;
+  completedAt: number | null;
+  failedReason: string | null;
+};
+
+export type PlanningReviewFinding = {
+  id: string;
+  runId: string;
+  reviewerRole: PlanningReviewProviderRole;
+  findingType: PlanningReviewFindingType;
+  title: string;
+  detail: string;
+  evidence: string | null;
+  status: PlanningReviewFindingStatus;
+  fingerprint: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type PlanningReviewSynthesis = {
+  id: string;
+  runId: string;
+  summary: string;
+  status: PlanningReviewStatus;
+  readiness: PlanningReviewReadinessResult;
+  keyPointsJson: string;
+  disagreementsJson: string;
+  recommendedAction: string;
+  createdAt: number;
+};
+
+export type PlanningReviewQuestion = {
+  id: string;
+  runId: string;
+  question: string;
+  reason: string;
+  impact: string;
+  status: PlanningReviewQuestionStatus;
+  answer: string | null;
+  createdAt: number;
+  updatedAt: number;
+  answeredAt: number | null;
+};
+
+export type PlanningReviewAssumption = {
+  id: string;
+  runId: string;
+  statement: string;
+  reason: string;
+  source: string;
+  createdAt: number;
+};
+
+export type ReviewRun = {
+  id: string;
+  reviewKind: ReviewKind;
+  subjectType: string;
+  subjectId: string;
+  subjectStep: string | null;
+  status: ReviewRunStatus;
+  readiness: string | null;
+  interactionMode: PlanningReviewInteractionMode | null;
+  reviewMode: string | null;
+  automationLevel: PlanningReviewAutomationLevel;
+  requestedMode: string | null;
+  actualMode: string | null;
+  confidence: string | null;
+  gateEligibility: PlanningReviewGateEligibility;
+  sourceSummaryJson: string;
+  providersUsedJson: string;
+  missingCapabilitiesJson: string;
+  reviewSummary: string | null;
+  startedAt: number;
+  updatedAt: number;
+  completedAt: number | null;
+  failedReason: string | null;
+};
+
+export type ReviewFinding = {
+  id: string;
+  runId: string;
+  sourceSystem: ReviewSourceSystem;
+  reviewerRole: string | null;
+  findingType: string;
+  normalizedSeverity: ReviewFindingSeverity;
+  sourceSeverity: string | null;
+  title: string;
+  detail: string;
+  evidence: string | null;
+  status: ReviewFindingStatus;
+  fingerprint: string;
+  filePath: string | null;
+  line: number | null;
+  fieldPath: string | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type ReviewSynthesis = {
+  id: string;
+  runId: string;
+  summary: string;
+  status: ReviewRunStatus;
+  readiness: string;
+  keyPointsJson: string;
+  disagreementsJson: string;
+  recommendedAction: string;
+  gateDecision: ReviewGateDecision;
+  createdAt: number;
+};
+
+export type ReviewQuestion = {
+  id: string;
+  runId: string;
+  question: string;
+  reason: string;
+  impact: string;
+  status: ReviewQuestionStatus;
+  answer: string | null;
+  createdAt: number;
+  updatedAt: number;
+  answeredAt: number | null;
+};
+
+export type ReviewAssumption = {
+  id: string;
+  runId: string;
+  statement: string;
+  reason: string;
+  source: string;
+  createdAt: number;
 };
 
 export type DocumentationAgentSession = {

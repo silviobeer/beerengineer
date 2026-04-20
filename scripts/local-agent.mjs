@@ -222,6 +222,61 @@ function storyReviewChat(payload) {
   };
 }
 
+function workspaceSetupAssist(payload) {
+  const normalizedMessage = `${payload.userMessage}`.trim().toLowerCase();
+  const plan = {
+    ...payload.currentPlan,
+    generatedAt: Date.now()
+  };
+  const rationale = [];
+  const warnings = [];
+
+  if (normalizedMessage.includes("brownfield") || normalizedMessage.includes("existing project")) {
+    plan.mode = "brownfield";
+    plan.scaffoldProjectFiles = false;
+    rationale.push("The request points to an existing project, so starter scaffold files stay disabled.");
+  }
+
+  if (normalizedMessage.includes("greenfield") || normalizedMessage.includes("new project")) {
+    plan.mode = "greenfield";
+    plan.scaffoldProjectFiles = true;
+    rationale.push("The request points to a new project, so starter scaffold files stay enabled.");
+  }
+
+  if (normalizedMessage.includes("install deps") || normalizedMessage.includes("install dependencies")) {
+    plan.installDeps = true;
+    rationale.push("The user explicitly asked to install dependencies.");
+  }
+
+  if (normalizedMessage.includes("no sonar") || normalizedMessage.includes("without sonar")) {
+    plan.withSonar = false;
+    rationale.push("The user explicitly disabled Sonar bootstrap.");
+  }
+
+  if (normalizedMessage.includes("no coderabbit") || normalizedMessage.includes("without coderabbit")) {
+    plan.withCoderabbit = false;
+    rationale.push("The user explicitly disabled CodeRabbit bootstrap.");
+  }
+
+  if (payload.doctor.status === "blocked") {
+    warnings.push("The doctor report is blocked. Resolve the blocking setup issues before executing the plan.");
+  }
+
+  return {
+    output: {
+      assistantMessage:
+        plan.mode === "brownfield"
+          ? `Prepared a brownfield setup plan for ${payload.workspace.key}. Existing project files remain authoritative.`
+          : `Prepared a greenfield setup plan for ${payload.workspace.key}. Starter files can be scaffolded deterministically.`,
+      plan,
+      rationale,
+      warnings,
+      needsUserInput: false,
+      followUpHint: null
+    }
+  };
+}
+
 function brainstorming(item) {
   const projectTitle = `${item.title} Core Flow`;
   return {
@@ -722,11 +777,134 @@ ${changedAreas.length > 0 ? changedAreas.map((area) => `- ${area}`).join("\n") :
   };
 }
 
+function planningReview(payload) {
+  const findings = [];
+  const missingInformation = [];
+  const recommendedNextEvidence = [];
+  const assumptionsDetected = normalizeEntries(payload.artifact.assumptions ?? []);
+  const clarificationAnswers = payload.artifact.clarificationAnswers ?? [];
+
+  const roleLabel =
+    payload.reviewerRole === "implementation_reviewer"
+      ? "implementation"
+      : payload.reviewerRole === "architecture_challenger"
+        ? "architecture"
+        : payload.reviewerRole === "decision_auditor"
+          ? "decision"
+          : payload.reviewerRole;
+
+  const hasClarificationFor = (keywords) =>
+    clarificationAnswers.some(
+      (entry) =>
+        entry.answer &&
+        keywords.some((keyword) => `${entry.question} ${entry.answer}`.toLowerCase().includes(keyword.toLowerCase()))
+    );
+
+  const requireField = (value, label, question, keywords = []) => {
+    if ((!value || `${value}`.trim().length === 0) && keywords.length > 0 && hasClarificationFor(keywords)) {
+      assumptionsDetected.push(`Clarification answers partially cover missing ${label}.`);
+      return;
+    }
+    if (value && `${value}`.trim().length > 0) {
+      return;
+    }
+    findings.push({
+      type: "blocker",
+      title: `${label} is missing`,
+      detail: `${roleLabel} review cannot validate the artifact without an explicit ${label}.`,
+      evidence: null
+    });
+    missingInformation.push(question);
+  };
+
+  requireField(payload.artifact.problem, "problem statement", "What exact user or delivery problem is being solved?", ["problem"]);
+  requireField(payload.artifact.goal, "goal", "What concrete outcome defines success for this artifact?", ["goal", "success"]);
+  requireField(payload.artifact.proposal, "proposal", "What is the currently preferred approach?", ["proposal", "approach", "direction"]);
+
+  if ((payload.artifact.risks ?? []).length === 0) {
+    findings.push({
+      type: "major_concern",
+      title: "Risks are missing",
+      detail: `${roleLabel} review has no explicit risk register to validate tradeoffs or rollout safety.`,
+      evidence: null
+    });
+    recommendedNextEvidence.push("List the main delivery, migration, and operational risks explicitly.");
+  }
+
+  if (payload.step === "plan_writing" && (payload.artifact.testPlan ?? []).length === 0 && !hasClarificationFor(["test", "verification"])) {
+    findings.push({
+      type: "question",
+      title: "Test plan is missing",
+      detail: "Implementation readiness depends on a credible test path.",
+      evidence: null
+    });
+    missingInformation.push("Which tests or verification steps will prove the plan is complete?");
+  }
+
+  if (payload.step === "plan_writing" && (payload.artifact.rolloutPlan ?? []).length === 0 && !hasClarificationFor(["rollout", "deploy", "rollback"])) {
+    findings.push({
+      type: "question",
+      title: "Rollout plan is missing",
+      detail: "The plan has no explicit rollout or rollback path.",
+      evidence: null
+    });
+    recommendedNextEvidence.push("Add a rollout and rollback outline for production-facing changes.");
+  }
+
+  if (payload.reviewMode === "alternatives" && (payload.artifact.alternatives ?? []).length === 0) {
+    findings.push({
+      type: "major_concern",
+      title: "Alternatives are not documented",
+      detail: "The current proposal converged without any explicit alternative analysis.",
+      evidence: null
+    });
+  }
+
+  if ((payload.artifact.openQuestions ?? []).length > 0) {
+    findings.push({
+      type: "question",
+      title: "Open questions remain",
+      detail: `The artifact still lists ${payload.artifact.openQuestions.length} unresolved question(s).`,
+      evidence: payload.artifact.openQuestions.join("; ")
+    });
+  }
+
+  if ((payload.artifact.clarificationAnswers ?? []).length > 0) {
+    recommendedNextEvidence.push(
+      `Incorporate ${payload.artifact.clarificationAnswers.length} clarification answer(s) back into the source artifact.`
+    );
+  }
+
+  const hasBlocker = findings.some((finding) => finding.type === "blocker");
+  const hasQuestion = findings.some((finding) => finding.type === "question");
+  const hasMajorConcern = findings.some((finding) => finding.type === "major_concern");
+
+  return {
+    output: {
+      status: hasBlocker ? "needs_clarification" : hasQuestion ? "questions_only" : hasMajorConcern ? "in_review" : "ready",
+      readiness: hasBlocker ? "needs_evidence" : hasQuestion ? "needs_evidence" : hasMajorConcern ? "ready_with_assumptions" : "ready",
+      summary: hasBlocker
+        ? `${roleLabel} review found blocking gaps in the artifact.`
+        : hasQuestion || hasMajorConcern
+          ? `${roleLabel} review found follow-up work but no hard blocker.`
+          : `${roleLabel} review found the artifact ready to proceed.`,
+      findings,
+      missingInformation: normalizeEntries(missingInformation),
+      recommendedNextEvidence: normalizeEntries(recommendedNextEvidence),
+      assumptionsDetected
+    }
+  };
+}
+
 let result;
 if (payload.interactionType === "brainstorm_chat") {
   result = brainstormChat(payload);
+} else if (payload.interactionType === "planning_review") {
+  result = planningReview(payload);
 } else if (payload.interactionType === "story_review_chat") {
   result = storyReviewChat(payload);
+} else if (payload.interactionType === "workspace_setup_assist") {
+  result = workspaceSetupAssist(payload);
 } else if (payload.stageKey === "brainstorm") {
   result = brainstorming(payload.item);
 } else if (payload.stageKey === "requirements") {

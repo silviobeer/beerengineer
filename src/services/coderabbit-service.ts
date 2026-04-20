@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 
 import type { IntegrationValidationStatus, QualityGatingMode, Workspace, WorkspaceCoderabbitSettings } from "../domain/types.js";
@@ -20,6 +21,18 @@ export type CoderabbitConfigView = {
   configured: boolean;
 };
 
+export type CoderabbitPreflightResult = {
+  config: CoderabbitConfigView;
+  warnings: string[];
+  errors: string[];
+  checks: {
+    gitAvailable: boolean;
+    tokenAvailable: boolean;
+    repositoryConfigured: boolean;
+  };
+  ready: boolean;
+};
+
 export class CoderabbitService {
   public constructor(
     private readonly workspace: Workspace,
@@ -29,6 +42,29 @@ export class CoderabbitService {
 
   public showConfig(): { config: CoderabbitConfigView; warnings: string[] } {
     return this.resolveEffectiveConfig();
+  }
+
+  public preflight(): CoderabbitPreflightResult {
+    const { config, warnings } = this.resolveEffectiveConfig();
+    const gitAvailable = this.isCommandAvailable("git");
+    const tokenAvailable = config.hasToken;
+    const repositoryConfigured = Boolean(config.organization && config.repository);
+    const errors = [
+      gitAvailable ? null : "git is missing",
+      tokenAvailable ? null : "token is missing",
+      repositoryConfigured ? null : "organization or repository is missing"
+    ].filter((value): value is string => Boolean(value));
+    return {
+      config,
+      warnings,
+      errors,
+      checks: {
+        gitAvailable,
+        tokenAvailable,
+        repositoryConfigured
+      },
+      ready: errors.length === 0
+    };
   }
 
   public setConfig(input: {
@@ -161,5 +197,14 @@ export class CoderabbitService {
       source,
       configured: Boolean(config?.hostUrl && config.organization && config.repository && config.token)
     };
+  }
+
+  private isCommandAvailable(command: string): boolean {
+    const lookupCommand = process.platform === "win32" ? "where" : "which";
+    const result = spawnSync(lookupCommand, [command], {
+      cwd: this.workspaceRoot,
+      encoding: "utf8"
+    });
+    return result.status === 0;
   }
 }

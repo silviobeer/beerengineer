@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, notInArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt, notInArray, not } from "drizzle-orm";
 
 import type {
   AcceptanceCriterion,
@@ -23,6 +23,11 @@ import type {
   ImplementationPlan,
   Item,
   ItemPhaseStatus,
+  PlanningReviewAssumption,
+  PlanningReviewFinding,
+  PlanningReviewQuestion,
+  PlanningReviewRun,
+  PlanningReviewSynthesis,
   StoryReviewAgentSession,
   StoryReviewFinding,
   StoryReviewFindingCategory,
@@ -45,6 +50,17 @@ import type {
   Project,
   QualityKnowledgeEntry,
   QualityKnowledgeSource,
+  ReviewAssumption,
+  ReviewFinding,
+  ReviewFindingSeverity,
+  ReviewFindingStatus,
+  ReviewGateDecision,
+  ReviewKind,
+  ReviewQuestion,
+  ReviewQuestionStatus,
+  ReviewRun,
+  ReviewRunStatus,
+  ReviewSynthesis,
   RecordStatus,
   StageKey,
   StageRunStatus,
@@ -53,6 +69,9 @@ import type {
   VerificationRun,
   VerificationRunMode,
   Workspace,
+  WorkspaceAssistMessage,
+  WorkspaceAssistSession,
+  WorkspaceAssistSessionStatus,
   WorkspaceCoderabbitSettings,
   WorkspaceSettings,
   WorkspaceSonarSettings,
@@ -89,14 +108,26 @@ import {
   interactiveReviewResolutions,
   interactiveReviewSessions,
   items,
+  planningReviewAssumptions,
+  planningReviewFindings,
+  planningReviewQuestions,
+  planningReviewRuns,
+  planningReviewSyntheses,
   qualityKnowledgeEntries,
   qaAgentSessions,
   qaFindings,
   qaRuns,
+  reviewAssumptions,
+  reviewFindings,
+  reviewQuestions,
+  reviewRuns,
+  reviewSyntheses,
   projectExecutionContexts,
   projects,
   workspaceSettings,
   workspaceCoderabbitSettings,
+  workspaceAssistMessages,
+  workspaceAssistSessions,
   workspaceSonarSettings,
   workspaces,
   storyReviewAgentSessions,
@@ -176,6 +207,24 @@ type BrainstormSessionCreateInput = Omit<
 >;
 type BrainstormMessageCreateInput = Omit<BrainstormMessage, "id" | "createdAt">;
 type BrainstormDraftCreateInput = Omit<BrainstormDraft, "id" | "lastUpdatedAt">;
+type PlanningReviewRunCreateInput = Omit<
+  PlanningReviewRun,
+  "id" | "startedAt" | "updatedAt" | "completedAt"
+>;
+type PlanningReviewFindingCreateInput = Omit<PlanningReviewFinding, "id" | "createdAt" | "updatedAt">;
+type PlanningReviewSynthesisCreateInput = Omit<PlanningReviewSynthesis, "id" | "createdAt">;
+type PlanningReviewQuestionCreateInput = Omit<PlanningReviewQuestion, "id" | "createdAt" | "updatedAt">;
+type PlanningReviewAssumptionCreateInput = Omit<PlanningReviewAssumption, "id" | "createdAt">;
+type ReviewRunCreateInput = Omit<ReviewRun, "id" | "startedAt" | "updatedAt" | "completedAt">;
+type ReviewFindingCreateInput = Omit<ReviewFinding, "id" | "createdAt" | "updatedAt">;
+type ReviewSynthesisCreateInput = Omit<ReviewSynthesis, "id" | "createdAt">;
+type ReviewQuestionCreateInput = Omit<ReviewQuestion, "id" | "createdAt" | "updatedAt">;
+type ReviewAssumptionCreateInput = Omit<ReviewAssumption, "id" | "createdAt">;
+type WorkspaceAssistSessionCreateInput = Omit<
+  WorkspaceAssistSession,
+  "id" | "startedAt" | "updatedAt" | "resolvedAt" | "lastAssistantMessageId" | "lastUserMessageId"
+>;
+type WorkspaceAssistMessageCreateInput = Omit<WorkspaceAssistMessage, "id" | "createdAt">;
 
 type ConceptCreateInput = Omit<Concept, "id" | "createdAt" | "updatedAt">;
 
@@ -534,6 +583,12 @@ export class BrainstormMessageRepository {
 export class BrainstormDraftRepository {
   public constructor(private readonly db: DatabaseClient) {}
 
+  public getById(id: string): BrainstormDraft | null {
+    return (
+      this.db.select().from(brainstormDrafts).where(eq(brainstormDrafts.id, id)).get() as BrainstormDraft | undefined
+    ) ?? null;
+  }
+
   public getLatestBySessionId(sessionId: string): BrainstormDraft | null {
     return (
       this.db
@@ -597,6 +652,677 @@ export class BrainstormDraftRepository {
       assumptionsJson: input.assumptionsJson ?? previous.assumptionsJson,
       lastUpdatedFromMessageId: valueOrCurrent(input.lastUpdatedFromMessageId, previous.lastUpdatedFromMessageId)
     });
+  }
+}
+
+export class PlanningReviewRunRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public getById(id: string): PlanningReviewRun | null {
+    return (
+      this.db.select().from(planningReviewRuns).where(eq(planningReviewRuns.id, id)).get() as PlanningReviewRun | undefined
+    ) ?? null;
+  }
+
+  public getLatestBySource(input: {
+    sourceType: PlanningReviewRun["sourceType"];
+    sourceId: string;
+  }): PlanningReviewRun | null {
+    return (
+      this.db
+        .select()
+        .from(planningReviewRuns)
+        .where(and(eq(planningReviewRuns.sourceType, input.sourceType), eq(planningReviewRuns.sourceId, input.sourceId)))
+        .orderBy(desc(planningReviewRuns.startedAt), desc(planningReviewRuns.id))
+        .limit(1)
+        .get() as PlanningReviewRun | undefined
+    ) ?? null;
+  }
+
+  public getLatestComparable(input: {
+    sourceType: PlanningReviewRun["sourceType"];
+    sourceId: string;
+    step: PlanningReviewRun["step"];
+    reviewMode: PlanningReviewRun["reviewMode"];
+  }): PlanningReviewRun | null {
+    return (
+      this.db
+        .select()
+        .from(planningReviewRuns)
+        .where(
+          and(
+            eq(planningReviewRuns.sourceType, input.sourceType),
+            eq(planningReviewRuns.sourceId, input.sourceId),
+            eq(planningReviewRuns.step, input.step),
+            eq(planningReviewRuns.reviewMode, input.reviewMode)
+          )
+        )
+        .orderBy(desc(planningReviewRuns.startedAt), desc(planningReviewRuns.id))
+        .limit(1)
+        .get() as PlanningReviewRun | undefined
+    ) ?? null;
+  }
+
+  public getPreviousComparable(input: {
+    sourceType: PlanningReviewRun["sourceType"];
+    sourceId: string;
+    step: PlanningReviewRun["step"];
+    reviewMode: PlanningReviewRun["reviewMode"];
+    beforeStartedAt: number;
+    excludeRunId: string;
+  }): PlanningReviewRun | null {
+    return (
+      this.db
+        .select()
+        .from(planningReviewRuns)
+        .where(
+          and(
+            eq(planningReviewRuns.sourceType, input.sourceType),
+            eq(planningReviewRuns.sourceId, input.sourceId),
+            eq(planningReviewRuns.step, input.step),
+            eq(planningReviewRuns.reviewMode, input.reviewMode),
+            lt(planningReviewRuns.startedAt, input.beforeStartedAt),
+            not(eq(planningReviewRuns.id, input.excludeRunId))
+          )
+        )
+        .orderBy(desc(planningReviewRuns.startedAt), desc(planningReviewRuns.id))
+        .limit(1)
+        .get() as PlanningReviewRun | undefined
+    ) ?? null;
+  }
+
+  public create(input: PlanningReviewRunCreateInput): PlanningReviewRun {
+    const timestamp = now();
+    const row: PlanningReviewRun = {
+      ...input,
+      id: createId("planning_review_run"),
+      startedAt: timestamp,
+      updatedAt: timestamp,
+      completedAt: null
+    };
+    this.db.insert(planningReviewRuns).values(row).run();
+    return row;
+  }
+
+  public update(
+    id: string,
+    input: Partial<
+      Pick<
+        PlanningReviewRun,
+        | "status"
+        | "interactionMode"
+        | "automationLevel"
+        | "actualMode"
+        | "readiness"
+        | "confidence"
+        | "gateEligibility"
+        | "normalizedArtifactJson"
+        | "providersUsedJson"
+        | "missingCapabilitiesJson"
+        | "reviewSummary"
+        | "completedAt"
+        | "failedReason"
+      >
+    >
+  ): void {
+    this.db
+      .update(planningReviewRuns)
+      .set({
+        ...definedField("status", input.status),
+        ...definedField("interactionMode", input.interactionMode),
+        ...definedField("automationLevel", input.automationLevel),
+        ...definedField("actualMode", input.actualMode),
+        ...definedField("readiness", input.readiness),
+        ...definedField("confidence", input.confidence),
+        ...definedField("gateEligibility", input.gateEligibility),
+        ...definedField("normalizedArtifactJson", input.normalizedArtifactJson),
+        ...definedField("providersUsedJson", input.providersUsedJson),
+        ...definedField("missingCapabilitiesJson", input.missingCapabilitiesJson),
+        ...definedField("reviewSummary", input.reviewSummary),
+        ...definedField("completedAt", input.completedAt),
+        ...definedField("failedReason", input.failedReason),
+        updatedAt: now()
+      })
+      .where(eq(planningReviewRuns.id, id))
+      .run();
+  }
+}
+
+export class PlanningReviewFindingRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public createMany(input: PlanningReviewFindingCreateInput[]): PlanningReviewFinding[] {
+    const timestamp = now();
+    const rows = input.map((entry) => ({
+      ...entry,
+      id: createId("planning_review_finding"),
+      createdAt: timestamp,
+      updatedAt: timestamp
+    }));
+    if (rows.length > 0) {
+      this.db.insert(planningReviewFindings).values(rows).run();
+    }
+    return rows;
+  }
+
+  public listByRunId(runId: string): PlanningReviewFinding[] {
+    return this.db
+      .select()
+      .from(planningReviewFindings)
+      .where(eq(planningReviewFindings.runId, runId))
+      .orderBy(planningReviewFindings.createdAt, planningReviewFindings.id)
+      .all() as PlanningReviewFinding[];
+  }
+
+  public markResolved(runId: string, fingerprints: string[]): void {
+    if (fingerprints.length === 0) {
+      return;
+    }
+    this.db
+      .update(planningReviewFindings)
+      .set({
+        status: "resolved",
+        updatedAt: now()
+      })
+      .where(and(eq(planningReviewFindings.runId, runId), inArray(planningReviewFindings.fingerprint, fingerprints)))
+      .run();
+  }
+
+  public listUnresolvedByRunId(runId: string): PlanningReviewFinding[] {
+    return this.db
+      .select()
+      .from(planningReviewFindings)
+      .where(and(eq(planningReviewFindings.runId, runId), inArray(planningReviewFindings.status, ["new", "open"])))
+      .orderBy(planningReviewFindings.createdAt, planningReviewFindings.id)
+      .all() as PlanningReviewFinding[];
+  }
+}
+
+export class PlanningReviewSynthesisRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public create(input: PlanningReviewSynthesisCreateInput): PlanningReviewSynthesis {
+    const row: PlanningReviewSynthesis = {
+      ...input,
+      id: createId("planning_review_synthesis"),
+      createdAt: now()
+    };
+    this.db.insert(planningReviewSyntheses).values(row).run();
+    return row;
+  }
+
+  public getLatestByRunId(runId: string): PlanningReviewSynthesis | null {
+    return (
+      this.db
+        .select()
+        .from(planningReviewSyntheses)
+        .where(eq(planningReviewSyntheses.runId, runId))
+        .orderBy(desc(planningReviewSyntheses.createdAt), desc(planningReviewSyntheses.id))
+        .limit(1)
+        .get() as PlanningReviewSynthesis | undefined
+    ) ?? null;
+  }
+}
+
+export class PlanningReviewQuestionRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public createMany(input: PlanningReviewQuestionCreateInput[]): PlanningReviewQuestion[] {
+    const timestamp = now();
+    const rows = input.map((entry) => ({
+      ...entry,
+      id: createId("planning_review_question"),
+      createdAt: timestamp,
+      updatedAt: timestamp
+    }));
+    if (rows.length > 0) {
+      this.db.insert(planningReviewQuestions).values(rows).run();
+    }
+    return rows;
+  }
+
+  public listByRunId(runId: string): PlanningReviewQuestion[] {
+    return this.db
+      .select()
+      .from(planningReviewQuestions)
+      .where(eq(planningReviewQuestions.runId, runId))
+      .orderBy(planningReviewQuestions.createdAt, planningReviewQuestions.id)
+      .all() as PlanningReviewQuestion[];
+  }
+
+  public answer(questionId: string, answer: string): void {
+    this.db
+      .update(planningReviewQuestions)
+      .set({
+        answer,
+        status: "answered",
+        answeredAt: now(),
+        updatedAt: now()
+      })
+      .where(eq(planningReviewQuestions.id, questionId))
+      .run();
+  }
+}
+
+export class PlanningReviewAssumptionRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public createMany(input: PlanningReviewAssumptionCreateInput[]): PlanningReviewAssumption[] {
+    const timestamp = now();
+    const rows = input.map((entry) => ({
+      ...entry,
+      id: createId("planning_review_assumption"),
+      createdAt: timestamp
+    }));
+    if (rows.length > 0) {
+      this.db.insert(planningReviewAssumptions).values(rows).run();
+    }
+    return rows;
+  }
+
+  public listByRunId(runId: string): PlanningReviewAssumption[] {
+    return this.db
+      .select()
+      .from(planningReviewAssumptions)
+      .where(eq(planningReviewAssumptions.runId, runId))
+      .orderBy(planningReviewAssumptions.createdAt, planningReviewAssumptions.id)
+      .all() as PlanningReviewAssumption[];
+  }
+}
+
+export class ReviewRunRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public getById(id: string): ReviewRun | null {
+    return (this.db.select().from(reviewRuns).where(eq(reviewRuns.id, id)).get() as ReviewRun | undefined) ?? null;
+  }
+
+  public getLatestBySubject(input: {
+    reviewKind: ReviewKind;
+    subjectType: string;
+    subjectId: string;
+  }): ReviewRun | null {
+    return (
+      this.db
+        .select()
+        .from(reviewRuns)
+        .where(and(eq(reviewRuns.reviewKind, input.reviewKind), eq(reviewRuns.subjectType, input.subjectType), eq(reviewRuns.subjectId, input.subjectId)))
+        .orderBy(desc(reviewRuns.startedAt), desc(reviewRuns.id))
+        .limit(1)
+        .get() as ReviewRun | undefined
+    ) ?? null;
+  }
+
+  public getLatestComparable(input: {
+    reviewKind: ReviewKind;
+    subjectType: string;
+    subjectId: string;
+    subjectStep?: string | null;
+    reviewMode?: string | null;
+  }): ReviewRun | null {
+    const subjectStepClause =
+      input.subjectStep === undefined ? undefined : input.subjectStep === null ? isNull(reviewRuns.subjectStep) : eq(reviewRuns.subjectStep, input.subjectStep);
+    const reviewModeClause =
+      input.reviewMode === undefined ? undefined : input.reviewMode === null ? isNull(reviewRuns.reviewMode) : eq(reviewRuns.reviewMode, input.reviewMode);
+    return (
+      this.db
+        .select()
+        .from(reviewRuns)
+        .where(
+          and(
+            eq(reviewRuns.reviewKind, input.reviewKind),
+            eq(reviewRuns.subjectType, input.subjectType),
+            eq(reviewRuns.subjectId, input.subjectId),
+            subjectStepClause,
+            reviewModeClause
+          )
+        )
+        .orderBy(desc(reviewRuns.startedAt), desc(reviewRuns.id))
+        .limit(1)
+        .get() as ReviewRun | undefined
+    ) ?? null;
+  }
+
+  public getPreviousComparable(input: {
+    reviewKind: ReviewKind;
+    subjectType: string;
+    subjectId: string;
+    subjectStep?: string | null;
+    reviewMode?: string | null;
+    beforeStartedAt: number;
+    excludeRunId: string;
+  }): ReviewRun | null {
+    const subjectStepClause =
+      input.subjectStep === undefined ? undefined : input.subjectStep === null ? isNull(reviewRuns.subjectStep) : eq(reviewRuns.subjectStep, input.subjectStep);
+    const reviewModeClause =
+      input.reviewMode === undefined ? undefined : input.reviewMode === null ? isNull(reviewRuns.reviewMode) : eq(reviewRuns.reviewMode, input.reviewMode);
+    return (
+      this.db
+        .select()
+        .from(reviewRuns)
+        .where(
+          and(
+            eq(reviewRuns.reviewKind, input.reviewKind),
+            eq(reviewRuns.subjectType, input.subjectType),
+            eq(reviewRuns.subjectId, input.subjectId),
+            subjectStepClause,
+            reviewModeClause,
+            lt(reviewRuns.startedAt, input.beforeStartedAt),
+            not(eq(reviewRuns.id, input.excludeRunId))
+          )
+        )
+        .orderBy(desc(reviewRuns.startedAt), desc(reviewRuns.id))
+        .limit(1)
+        .get() as ReviewRun | undefined
+    ) ?? null;
+  }
+
+  public create(input: ReviewRunCreateInput): ReviewRun {
+    const timestamp = now();
+    const row: ReviewRun = {
+      ...input,
+      id: createId("review_run"),
+      startedAt: timestamp,
+      updatedAt: timestamp,
+      completedAt: null
+    };
+    this.db.insert(reviewRuns).values(row).run();
+    return row;
+  }
+
+  public update(
+    id: string,
+    input: Partial<
+      Pick<
+        ReviewRun,
+        | "status"
+        | "readiness"
+        | "interactionMode"
+        | "reviewMode"
+        | "automationLevel"
+        | "requestedMode"
+        | "actualMode"
+        | "confidence"
+        | "gateEligibility"
+        | "sourceSummaryJson"
+        | "providersUsedJson"
+        | "missingCapabilitiesJson"
+        | "reviewSummary"
+        | "completedAt"
+        | "failedReason"
+      >
+    >
+  ): void {
+    this.db
+      .update(reviewRuns)
+      .set({
+        ...definedField("status", input.status),
+        ...definedField("readiness", input.readiness),
+        ...definedField("interactionMode", input.interactionMode),
+        ...definedField("reviewMode", input.reviewMode),
+        ...definedField("automationLevel", input.automationLevel),
+        ...definedField("requestedMode", input.requestedMode),
+        ...definedField("actualMode", input.actualMode),
+        ...definedField("confidence", input.confidence),
+        ...definedField("gateEligibility", input.gateEligibility),
+        ...definedField("sourceSummaryJson", input.sourceSummaryJson),
+        ...definedField("providersUsedJson", input.providersUsedJson),
+        ...definedField("missingCapabilitiesJson", input.missingCapabilitiesJson),
+        ...definedField("reviewSummary", input.reviewSummary),
+        ...definedField("completedAt", input.completedAt),
+        ...definedField("failedReason", input.failedReason),
+        updatedAt: now()
+      })
+      .where(eq(reviewRuns.id, id))
+      .run();
+  }
+}
+
+export class ReviewFindingRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public createMany(input: ReviewFindingCreateInput[]): ReviewFinding[] {
+    const timestamp = now();
+    const rows = input.map((entry) => ({
+      ...entry,
+      id: createId("review_finding"),
+      createdAt: timestamp,
+      updatedAt: timestamp
+    }));
+    if (rows.length > 0) {
+      this.db.insert(reviewFindings).values(rows).run();
+    }
+    return rows;
+  }
+
+  public listByRunId(runId: string): ReviewFinding[] {
+    return this.db
+      .select()
+      .from(reviewFindings)
+      .where(eq(reviewFindings.runId, runId))
+      .orderBy(reviewFindings.createdAt, reviewFindings.id)
+      .all() as ReviewFinding[];
+  }
+
+  public listUnresolvedByRunId(runId: string): ReviewFinding[] {
+    return this.db
+      .select()
+      .from(reviewFindings)
+      .where(and(eq(reviewFindings.runId, runId), inArray(reviewFindings.status, ["new", "open"] satisfies ReviewFindingStatus[])))
+      .orderBy(reviewFindings.createdAt, reviewFindings.id)
+      .all() as ReviewFinding[];
+  }
+
+  public markResolved(runId: string, fingerprints: string[]): void {
+    if (fingerprints.length === 0) {
+      return;
+    }
+    this.db
+      .update(reviewFindings)
+      .set({
+        status: "resolved",
+        updatedAt: now()
+      })
+      .where(and(eq(reviewFindings.runId, runId), inArray(reviewFindings.fingerprint, fingerprints)))
+      .run();
+  }
+}
+
+export class ReviewSynthesisRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public create(input: ReviewSynthesisCreateInput): ReviewSynthesis {
+    const row: ReviewSynthesis = {
+      ...input,
+      id: createId("review_synthesis"),
+      createdAt: now()
+    };
+    this.db.insert(reviewSyntheses).values(row).run();
+    return row;
+  }
+
+  public getLatestByRunId(runId: string): ReviewSynthesis | null {
+    return (
+      this.db
+        .select()
+        .from(reviewSyntheses)
+        .where(eq(reviewSyntheses.runId, runId))
+        .orderBy(desc(reviewSyntheses.createdAt), desc(reviewSyntheses.id))
+        .limit(1)
+        .get() as ReviewSynthesis | undefined
+    ) ?? null;
+  }
+}
+
+export class ReviewQuestionRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public createMany(input: ReviewQuestionCreateInput[]): ReviewQuestion[] {
+    const timestamp = now();
+    const rows = input.map((entry) => ({
+      ...entry,
+      id: createId("review_question"),
+      createdAt: timestamp,
+      updatedAt: timestamp
+    }));
+    if (rows.length > 0) {
+      this.db.insert(reviewQuestions).values(rows).run();
+    }
+    return rows;
+  }
+
+  public listByRunId(runId: string): ReviewQuestion[] {
+    return this.db
+      .select()
+      .from(reviewQuestions)
+      .where(eq(reviewQuestions.runId, runId))
+      .orderBy(reviewQuestions.createdAt, reviewQuestions.id)
+      .all() as ReviewQuestion[];
+  }
+
+  public answer(questionId: string, answer: string): void {
+    this.db
+      .update(reviewQuestions)
+      .set({
+        answer,
+        status: "answered",
+        answeredAt: now(),
+        updatedAt: now()
+      })
+      .where(eq(reviewQuestions.id, questionId))
+      .run();
+  }
+}
+
+export class ReviewAssumptionRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public createMany(input: ReviewAssumptionCreateInput[]): ReviewAssumption[] {
+    const timestamp = now();
+    const rows = input.map((entry) => ({
+      ...entry,
+      id: createId("review_assumption"),
+      createdAt: timestamp
+    }));
+    if (rows.length > 0) {
+      this.db.insert(reviewAssumptions).values(rows).run();
+    }
+    return rows;
+  }
+
+  public listByRunId(runId: string): ReviewAssumption[] {
+    return this.db
+      .select()
+      .from(reviewAssumptions)
+      .where(eq(reviewAssumptions.runId, runId))
+      .orderBy(reviewAssumptions.createdAt, reviewAssumptions.id)
+      .all() as ReviewAssumption[];
+  }
+}
+
+export class WorkspaceAssistSessionRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public getById(id: string): WorkspaceAssistSession | null {
+    return (
+      this.db.select().from(workspaceAssistSessions).where(eq(workspaceAssistSessions.id, id)).get() as
+        | WorkspaceAssistSession
+        | undefined
+    ) ?? null;
+  }
+
+  public getLatestByWorkspaceId(workspaceId: string): WorkspaceAssistSession | null {
+    return (
+      this.db
+        .select()
+        .from(workspaceAssistSessions)
+        .where(eq(workspaceAssistSessions.workspaceId, workspaceId))
+        .orderBy(desc(workspaceAssistSessions.startedAt), desc(workspaceAssistSessions.id))
+        .limit(1)
+        .get() as WorkspaceAssistSession | undefined
+    ) ?? null;
+  }
+
+  public findOpenByWorkspaceId(workspaceId: string): WorkspaceAssistSession | null {
+    return (
+      this.db
+        .select()
+        .from(workspaceAssistSessions)
+        .where(
+          and(
+            eq(workspaceAssistSessions.workspaceId, workspaceId),
+            notInArray(workspaceAssistSessions.status, ["resolved", "cancelled"] satisfies WorkspaceAssistSessionStatus[])
+          )
+        )
+        .orderBy(desc(workspaceAssistSessions.startedAt), desc(workspaceAssistSessions.id))
+        .limit(1)
+        .get() as WorkspaceAssistSession | undefined
+    ) ?? null;
+  }
+
+  public listByWorkspaceId(workspaceId: string): WorkspaceAssistSession[] {
+    return this.db
+      .select()
+      .from(workspaceAssistSessions)
+      .where(eq(workspaceAssistSessions.workspaceId, workspaceId))
+      .orderBy(desc(workspaceAssistSessions.startedAt), desc(workspaceAssistSessions.id))
+      .all() as WorkspaceAssistSession[];
+  }
+
+  public create(input: WorkspaceAssistSessionCreateInput): WorkspaceAssistSession {
+    const timestamp = now();
+    const row: WorkspaceAssistSession = {
+      ...input,
+      id: createId("workspace_assist_session"),
+      startedAt: timestamp,
+      updatedAt: timestamp,
+      resolvedAt: null,
+      lastAssistantMessageId: null,
+      lastUserMessageId: null
+    };
+    this.db.insert(workspaceAssistSessions).values(row).run();
+    return row;
+  }
+
+  public update(
+    id: string,
+    input: Partial<Pick<WorkspaceAssistSession, "status" | "currentPlanJson" | "resolvedAt" | "lastAssistantMessageId" | "lastUserMessageId">>
+  ): void {
+    this.db
+      .update(workspaceAssistSessions)
+      .set({
+        ...definedField("status", input.status),
+        ...definedField("currentPlanJson", input.currentPlanJson),
+        ...definedField("resolvedAt", input.resolvedAt),
+        ...definedField("lastAssistantMessageId", input.lastAssistantMessageId),
+        ...definedField("lastUserMessageId", input.lastUserMessageId),
+        updatedAt: now()
+      })
+      .where(eq(workspaceAssistSessions.id, id))
+      .run();
+  }
+}
+
+export class WorkspaceAssistMessageRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public create(input: WorkspaceAssistMessageCreateInput): WorkspaceAssistMessage {
+    const row: WorkspaceAssistMessage = {
+      ...input,
+      id: createId("workspace_assist_message"),
+      createdAt: now()
+    };
+    this.db.insert(workspaceAssistMessages).values(row).run();
+    return row;
+  }
+
+  public listBySessionId(sessionId: string): WorkspaceAssistMessage[] {
+    return this.db
+      .select()
+      .from(workspaceAssistMessages)
+      .where(eq(workspaceAssistMessages.sessionId, sessionId))
+      .orderBy(workspaceAssistMessages.createdAt, workspaceAssistMessages.id)
+      .all() as WorkspaceAssistMessage[];
   }
 }
 
@@ -962,6 +1688,12 @@ export class AcceptanceCriterionRepository {
 
 export class ArchitecturePlanRepository {
   public constructor(private readonly db: DatabaseClient) {}
+
+  public getById(id: string): ArchitecturePlan | null {
+    return (
+      this.db.select().from(architecturePlans).where(eq(architecturePlans.id, id)).get() as ArchitecturePlan | undefined
+    ) ?? null;
+  }
 
   public getLatestByProjectId(projectId: string): ArchitecturePlan | null {
     return (
@@ -2373,6 +3105,30 @@ export class InteractiveReviewSessionRepository {
             eq(interactiveReviewSessions.artifactType, input.artifactType),
             eq(interactiveReviewSessions.reviewType, input.reviewType),
             notInArray(interactiveReviewSessions.status, ["resolved", "cancelled"])
+          )
+        )
+        .orderBy(desc(interactiveReviewSessions.startedAt), desc(interactiveReviewSessions.id))
+        .limit(1)
+        .get() as InteractiveReviewSession | undefined
+    ) ?? null;
+  }
+
+  public getLatestByScope(input: {
+    scopeType: InteractiveReviewSession["scopeType"];
+    scopeId: string;
+    artifactType: InteractiveReviewSession["artifactType"];
+    reviewType: InteractiveReviewSession["reviewType"];
+  }): InteractiveReviewSession | null {
+    return (
+      this.db
+        .select()
+        .from(interactiveReviewSessions)
+        .where(
+          and(
+            eq(interactiveReviewSessions.scopeType, input.scopeType),
+            eq(interactiveReviewSessions.scopeId, input.scopeId),
+            eq(interactiveReviewSessions.artifactType, input.artifactType),
+            eq(interactiveReviewSessions.reviewType, input.reviewType)
           )
         )
         .orderBy(desc(interactiveReviewSessions.startedAt), desc(interactiveReviewSessions.id))

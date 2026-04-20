@@ -7,6 +7,10 @@ import type {
   InteractiveReviewEntryStatus,
   InteractiveReviewSeverity,
   InteractiveReviewStatus,
+  PlanningReviewInteractionMode,
+  PlanningReviewMode,
+  PlanningReviewProviderRole,
+  PlanningReviewStep,
   QaRunStatus,
   StoryReviewRunStatus,
   StoryReviewWorkerRole,
@@ -20,19 +24,21 @@ import type {
   DocumentationOutput,
   InteractiveBrainstormAgentOutput,
   InteractiveStoryReviewAgentOutput,
+  PlanningReviewReviewerOutput,
   RalphVerificationOutput,
   QaOutput,
   StoryReviewOutput,
   StoryExecutionOutput,
-  TestPreparationOutput
+  TestPreparationOutput,
+  WorkspaceSetupAssistOutput
 } from "../schemas/output-contracts.js";
 
 export type AgentExecutionPolicy = {
-  autonomyMode: "yolo";
-  approvalMode: "never";
-  filesystemMode: "danger-full-access";
-  networkMode: "enabled";
-  interactionMode: "non_blocking";
+  autonomyMode: "manual" | "yolo";
+  approvalMode: "always" | "never";
+  filesystemMode: "read-only" | "workspace-write" | "danger-full-access";
+  networkMode: "disabled" | "enabled";
+  interactionMode: "blocking" | "non_blocking";
 };
 
 export type AdapterRuntimeContext = {
@@ -40,6 +46,87 @@ export type AdapterRuntimeContext = {
   model: string | null;
   policy: AgentExecutionPolicy;
   workspaceRoot: string;
+};
+
+export type WorkspaceSetupAssistAdapterRunRequest = {
+  runtime: AdapterRuntimeContext;
+  interactionType: "workspace_setup_assist";
+  prompt: string;
+  workspace: {
+    key: string;
+    name: string;
+    rootPath: string | null;
+  };
+  doctor: {
+    status: string;
+    missing: string[];
+    suggestedActions: string[];
+    autoFixable: string[];
+    checks: Record<string, Array<{ id: string; status: string; message: string }>>;
+  };
+  currentPlan: {
+    version: 1;
+    workspaceKey: string;
+    rootPath: string | null;
+    mode: "greenfield" | "brownfield";
+    stack: "node-ts" | "python";
+    scaffoldProjectFiles: boolean;
+    createRoot: boolean;
+    initGit: boolean;
+    installDeps: boolean;
+    withSonar: boolean;
+    withCoderabbit: boolean;
+    generatedAt: number;
+  };
+  userMessage: string;
+};
+
+export type WorkspaceSetupAssistAdapterRunResult = {
+  output: WorkspaceSetupAssistOutput;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  command: string[];
+};
+
+export type PlanningReviewAdapterRunRequest = {
+  runtime: AdapterRuntimeContext;
+  interactionType: "planning_review";
+  prompt: string;
+  step: PlanningReviewStep;
+  reviewMode: PlanningReviewMode;
+  interactionMode: PlanningReviewInteractionMode;
+  reviewerRole: PlanningReviewProviderRole;
+  source: {
+    type: string;
+    id: string;
+  };
+  artifact: {
+    problem: string | null;
+    goal: string | null;
+    nonGoals: string[];
+    context: string[];
+    constraints: string[];
+    proposal: string | null;
+    alternatives: string[];
+    assumptions: string[];
+    risks: string[];
+    openQuestions: string[];
+    testPlan: string[];
+    rolloutPlan: string[];
+    clarificationAnswers: Array<{
+      question: string;
+      answer: string;
+    }>;
+  };
+};
+
+export type PlanningReviewAdapterRunResult = {
+  output: PlanningReviewReviewerOutput;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  command: string[];
 };
 
 export type AdapterRunRequest = {
@@ -603,8 +690,10 @@ export type StoryReviewAdapterRunResult = {
 export interface AgentAdapter {
   readonly key: string;
   run(request: AdapterRunRequest): Promise<AdapterRunResult>;
+  runPlanningReview(request: PlanningReviewAdapterRunRequest): Promise<PlanningReviewAdapterRunResult>;
   runInteractiveBrainstorm(request: InteractiveBrainstormAdapterRunRequest): Promise<InteractiveBrainstormAdapterRunResult>;
   runInteractiveStoryReview(request: InteractiveStoryReviewAdapterRunRequest): Promise<InteractiveStoryReviewAdapterRunResult>;
+  runWorkspaceSetupAssist(request: WorkspaceSetupAssistAdapterRunRequest): Promise<WorkspaceSetupAssistAdapterRunResult>;
   runStoryTestPreparation(request: TestPreparationAdapterRunRequest): Promise<TestPreparationAdapterRunResult>;
   runStoryExecution(request: ExecutionAdapterRunRequest): Promise<ExecutionAdapterRunResult>;
   runStoryRalphVerification(request: RalphVerificationAdapterRunRequest): Promise<RalphVerificationAdapterRunResult>;

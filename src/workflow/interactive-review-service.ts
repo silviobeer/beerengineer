@@ -52,12 +52,20 @@ type InteractiveReviewServiceOptions = {
     trigger: string;
     initialSteps?: AutorunStep[];
   }): Promise<AutorunSummary>;
+  triggerPlanningReview?(input: {
+    sourceType: "interactive_review_session";
+    sourceId: string;
+    step: "requirements_engineering";
+    reviewMode: "readiness";
+    interactionMode: "interactive";
+    automationLevel: "auto_comment";
+  }): Promise<unknown>;
 };
 
 export class InteractiveReviewService {
   public constructor(private readonly options: InteractiveReviewServiceOptions) {}
 
-  public startInteractiveReview(input: { type: "stories"; projectId: string }) {
+  public async startInteractiveReview(input: { type: "stories"; projectId: string }) {
     if (input.type !== "stories") {
       throw new AppError("INTERACTIVE_REVIEW_TYPE_NOT_SUPPORTED", `Review type ${input.type} is not supported yet`);
     }
@@ -76,10 +84,22 @@ export class InteractiveReviewService {
       reviewType: "collection_review"
     });
     if (existing) {
+      const planningReview =
+        this.options.triggerPlanningReview && existing.artifactType === "stories" && existing.scopeType === "project"
+          ? await this.options.triggerPlanningReview({
+              sourceType: "interactive_review_session",
+              sourceId: existing.id,
+              step: "requirements_engineering",
+              reviewMode: "readiness",
+              interactionMode: "interactive",
+              automationLevel: "auto_comment"
+            })
+          : undefined;
       return {
         sessionId: existing.id,
         status: existing.status,
-        reused: true
+        reused: true,
+        ...(planningReview ? { planningReview } : {})
       };
     }
 
@@ -144,10 +164,22 @@ export class InteractiveReviewService {
       return session;
     });
 
+    const planningReview =
+      this.options.triggerPlanningReview && created.artifactType === "stories" && created.scopeType === "project"
+        ? await this.options.triggerPlanningReview({
+            sourceType: "interactive_review_session",
+            sourceId: created.id,
+            step: "requirements_engineering",
+            reviewMode: "readiness",
+            interactionMode: "interactive",
+            automationLevel: "auto_comment"
+          })
+        : undefined;
     return {
       sessionId: created.id,
       status: this.showInteractiveReview(created.id).session.status,
-      reused: false
+      reused: false,
+      ...(planningReview ? { planningReview } : {})
     };
   }
 

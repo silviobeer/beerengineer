@@ -1,6 +1,6 @@
 import { buildItemWorkflowSnapshot } from "../domain/aggregate-status.js";
 import { assertCanMoveItem } from "../domain/workflow-rules.js";
-import type { StageKey } from "../domain/types.js";
+import type { PlanningReviewReadinessResult, PlanningReviewRun, StageKey } from "../domain/types.js";
 import type { AdapterRuntimeContext } from "../adapters/types.js";
 import type { ArtifactRecord } from "../persistence/repositories.js";
 import { AppError } from "../shared/errors.js";
@@ -9,6 +9,7 @@ import { assertStageRunTransitionAllowed } from "./stage-run-rules.js";
 import { runProfiles } from "./run-profiles.js";
 import { ArtifactService } from "../services/artifact-service.js";
 import { PromptResolver } from "../services/prompt-resolver.js";
+import type { ReviewCoreService } from "../review/review-core-service.js";
 import type { WorkflowDeps } from "./workflow-deps.js";
 import type { WorkflowEntityLoaders } from "./entity-loaders.js";
 import { WorkflowOutputImporters } from "./output-importers.js";
@@ -19,6 +20,7 @@ export class StageService {
       deps: WorkflowDeps;
       artifactService: ArtifactService;
       promptResolver: PromptResolver;
+      reviewCoreService: ReviewCoreService;
       loaders: WorkflowEntityLoaders;
       outputImporters: WorkflowOutputImporters;
       resolveStageRuntime(stageKey: StageKey): {
@@ -37,6 +39,14 @@ export class StageService {
         model: string | null;
         policy: AdapterRuntimeContext["policy"];
       }): AdapterRuntimeContext;
+      triggerPlanningReview?(input: {
+        sourceType: "architecture_plan" | "implementation_plan";
+        sourceId: string;
+        step: "architecture" | "plan_writing";
+        reviewMode: "readiness";
+        interactionMode: "interactive";
+        automationLevel: "auto_comment";
+      }): Promise<unknown>;
     }
   ) {}
 
@@ -44,7 +54,7 @@ export class StageService {
     stageKey: StageKey;
     itemId: string;
     projectId?: string;
-  }): Promise<{ runId: string; status: string }> {
+  }): Promise<{ runId: string; status: string; planningReview?: unknown }> {
     const item = this.options.loaders.requireItem(input.itemId);
     const project = input.projectId ? this.options.loaders.requireProject(input.projectId) : null;
     const profile = runProfiles[input.stageKey];
@@ -98,7 +108,7 @@ export class StageService {
         context: project ? this.buildProjectStageContext(project.id, item.id) : null
       });
 
-      return this.options.deps.runInTransaction(() => {
+      const completedRun = this.options.deps.runInTransaction(() => {
         this.options.deps.agentSessionRepository.create({
           stageRunId: run.id,
           adapterKey: runtime.adapterKey,
@@ -144,6 +154,43 @@ export class StageService {
         );
         return { runId: run.id, status: importOutcome.status };
       });
+
+      if (completedRun.status === "completed" && this.options.triggerPlanningReview && project) {
+        if (input.stageKey === "architecture") {
+          const latest = this.options.deps.architecturePlanRepository.getLatestByProjectId(project.id);
+          if (latest) {
+            return {
+              ...completedRun,
+              planningReview: await this.options.triggerPlanningReview({
+                sourceType: "architecture_plan",
+                sourceId: latest.id,
+                step: "architecture",
+                reviewMode: "readiness",
+                interactionMode: "interactive",
+                automationLevel: "auto_comment"
+              })
+            };
+          }
+        }
+        if (input.stageKey === "planning") {
+          const latest = this.options.deps.implementationPlanRepository.getLatestByProjectId(project.id);
+          if (latest) {
+            return {
+              ...completedRun,
+              planningReview: await this.options.triggerPlanningReview({
+                sourceType: "implementation_plan",
+                sourceId: latest.id,
+                step: "plan_writing",
+                reviewMode: "readiness",
+                interactionMode: "interactive",
+                automationLevel: "auto_comment"
+              })
+            };
+          }
+        }
+      }
+
+      return completedRun;
     } catch (error) {
       this.options.deps.runInTransaction(() => {
         this.transitionRun(run.id, "running", "failed", {
@@ -206,6 +253,7 @@ export class StageService {
     if (!this.options.deps.userStoryRepository.hasAnyByProjectId(projectId)) {
       throw new AppError("STORIES_NOT_FOUND", "No user stories found for project");
     }
+    this.assertRequirementsPlanningReviewGate(projectId);
     this.options.deps.userStoryRepository.approveByProjectId(projectId);
     const project = this.options.loaders.requireProject(projectId);
     const snapshot = this.buildSnapshot(project.itemId);
@@ -222,6 +270,11 @@ export class StageService {
     if (!latest) {
       throw new AppError("ARCHITECTURE_NOT_FOUND", "No architecture plan found for project");
     }
+    this.assertPlanningReviewGate({
+      sourceType: "architecture_plan",
+      sourceId: latest.id,
+      stepLabel: "architecture approval"
+    });
     if (latest.status !== "approved") {
       this.options.deps.architecturePlanRepository.updateStatus(latest.id, "approved");
     }
@@ -233,9 +286,81 @@ export class StageService {
     if (!latest) {
       throw new AppError("IMPLEMENTATION_PLAN_NOT_FOUND", "No implementation plan found for project");
     }
+    this.assertPlanningReviewGate({
+      sourceType: "implementation_plan",
+      sourceId: latest.id,
+      stepLabel: "planning approval"
+    });
     if (latest.status !== "approved") {
       this.options.deps.implementationPlanRepository.updateStatus(latest.id, "approved");
     }
+  }
+
+  private assertRequirementsPlanningReviewGate(projectId: string): void {
+    const latestInteractiveReview = this.options.deps.interactiveReviewSessionRepository.getLatestByScope({
+      scopeType: "project",
+      scopeId: projectId,
+      artifactType: "stories",
+      reviewType: "collection_review"
+    });
+    if (!latestInteractiveReview) {
+      return;
+    }
+    this.assertPlanningReviewGate({
+      sourceType: "interactive_review_session",
+      sourceId: latestInteractiveReview.id,
+      stepLabel: "story approval"
+    });
+  }
+
+  private assertPlanningReviewGate(input: {
+    sourceType: PlanningReviewRun["sourceType"];
+    sourceId: string;
+    stepLabel: string;
+  }): void {
+    const latestCoreRun = this.options.reviewCoreService.getLatestBlockingRunForGate({
+      reviewKind: "planning",
+      subjectType: input.sourceType,
+      subjectId: input.sourceId
+    });
+    if (latestCoreRun) {
+      throw new AppError(
+        "PLANNING_REVIEW_GATE_BLOCKED",
+        `${input.stepLabel} is blocked by planning review ${latestCoreRun.id} (${latestCoreRun.status}/${latestCoreRun.readiness}).`
+      );
+    }
+
+    const latestRun = this.options.deps.planningReviewRunRepository.getLatestBySource({
+      sourceType: input.sourceType,
+      sourceId: input.sourceId
+    });
+    if (!this.shouldEnforcePlanningReviewGate(latestRun)) {
+      return;
+    }
+    throw new AppError(
+      "PLANNING_REVIEW_GATE_BLOCKED",
+      `${input.stepLabel} is blocked by planning review ${latestRun.id} (${latestRun.status}/${latestRun.readiness}).`
+    );
+  }
+
+  private shouldEnforcePlanningReviewGate(run: PlanningReviewRun | null): run is PlanningReviewRun {
+    if (!run) {
+      return false;
+    }
+    if (run.automationLevel !== "auto_gate") {
+      return false;
+    }
+    if (run.gateEligibility !== "advisory") {
+      return false;
+    }
+    return !this.isPlanningReviewReadyForGate(run.readiness, run.status);
+  }
+
+  private isPlanningReviewReadyForGate(
+    readiness: PlanningReviewReadinessResult | null,
+    status: PlanningReviewRun["status"]
+  ): boolean {
+    return status === "ready" && (readiness === "ready" || readiness === "ready_with_assumptions");
   }
 
   public async retryRun(runId: string): Promise<{ runId: string; status: string; retriedFromRunId: string }> {

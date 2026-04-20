@@ -28,6 +28,21 @@ Kernentitaeten des aktuellen MVP:
 - `QaAgentSession`: Session-Metadaten des konkreten QA-Workers
 - `DocumentationRun`: projektweiter Dokumentationsversuch nach QA
 - `DocumentationAgentSession`: Session-Metadaten des konkreten Dokumentations-Workers
+- `PlanningReviewRun`: persistierter advisory Review-Lauf fuer fruehe
+  Planungsartefakte
+- `PlanningReviewFinding`: strukturierter Finding-Record eines Planning Reviews
+- `PlanningReviewSynthesis`: konsolidiertes Ergebnis eines Planning Reviews
+- `PlanningReviewQuestion`: blocker-relevante Rueckfrage eines Planning Reviews
+- `PlanningReviewAssumption`: explizite Annahme aus `auto`-Mode oder degrade-
+  ten Planning-Review-Laeufen
+- `ReviewRun`: generischer Review-Core-Lauf fuer planning-, implementation- und
+  spaetere weitere Review-Arten
+- `ReviewFinding`: generischer normalisierter Finding-Record ueber mehrere
+  Quellen (`llm`, `story_review`, `coderabbit`, `sonarcloud`, `tests`, ...)
+- `ReviewSynthesis`: generisches zusammengefuehrtes Review-Ergebnis inklusive
+  `gateDecision`
+- `ReviewQuestion`: generische Rueckfrage-Einheit des Review-Cores
+- `ReviewAssumption`: generische Annahme-Einheit des Review-Cores
 - optional spaeter `WaveParallelGroup`: fachliche Kennzeichnung fuer sicher parallel ausfuehrbare Story-Gruppen innerhalb einer Wave
 
 Die Entitaeten leben im Domain-Layer und werden nicht aus CLI-Kommandos heraus modelliert.
@@ -35,6 +50,9 @@ Die Entitaeten leben im Domain-Layer und werden nicht aus CLI-Kommandos heraus m
 Wichtig:
 
 - Die Planning-Schicht soll Parallelisierbarkeit fachlich beschreiben.
+- Die Planning-Review-Schicht bewertet fruehe Artefakte advisory und bleibt
+  getrennt von `InteractiveReviewSession`, obwohl beide auf denselben
+  persistierten Artefakten arbeiten koennen.
 - Die Execution-Schicht entscheidet die konkrete Laufzeitorchestrierung engine-seitig.
 - Die TDD-Schicht erzwingt `test_preparation` vor `implementation`.
 - Die Ralph-Schicht erzwingt AC-by-AC-Verifikation nach der Implementierung.
@@ -42,3 +60,79 @@ Wichtig:
 - Die QA-Schicht erzwingt einen projektweiten integrierten Check nach vollstaendig abgeschlossener Story-Execution.
 - Die Dokumentations-Schicht erzeugt danach den finalen lesbaren Project-Report aus persistierter Wahrheit.
 - Worker-Rollen sind Registry und Ausfuehrungsprofil, aber nicht der Scheduler.
+
+Persistenzseitig haengt `PlanningReviewRun` an einer generischen Quelle ueber:
+
+- `sourceType`
+  - z. B. `brainstorm_session`, `brainstorm_draft`,
+    `interactive_review_session`, `concept`, `architecture_plan`,
+    `implementation_plan`
+- `sourceId`
+
+Die eigentliche Laufhistorie liegt in:
+
+- `planning_review_runs`
+- `planning_review_findings`
+- `planning_review_syntheses`
+- `planning_review_questions`
+- `planning_review_assumptions`
+
+Zusaetzlich existiert jetzt ein generischer Review-Core fuer vereinheitlichte
+Review-Infrastruktur:
+
+- `review_runs`
+- `review_findings`
+- `review_syntheses`
+- `review_questions`
+- `review_assumptions`
+
+Dieser Core wird aktuell genutzt fuer:
+
+- Planning Review
+  - als generischer Mirror des bestehenden Planning-Review-Workflows
+- Implementation Review
+  - als primaerer Persistenzpfad fuer advisory Code-/Execution-Reviews
+
+Wichtige sichtbare Planning-Review-Status im aktuellen Runtime-Verhalten:
+
+- `synthesizing`
+- `blocker_present`
+  - mindestens ein blocker-level Gap ist offen
+- `questions_only`
+  - keine Blocker, aber noch gezielte Rueckfragen offen
+- `revising`
+  - nur fuer `auto`-Mode-Folgearbeit ohne User-Rueckfragen
+- `ready`
+- `blocked`
+- `failed`
+
+Generische Core-Status:
+
+- `in_progress`
+- `action_required`
+- `complete`
+- `blocked`
+- `failed`
+
+Wichtige generische Gate-Entscheidungen:
+
+- `pass`
+- `advisory`
+- `blocked`
+- `needs_human_review`
+
+Wichtige Run-Metadaten:
+
+- `automationLevel`
+  - `manual`
+  - `auto_suggest`
+  - `auto_comment`
+  - `auto_gate`
+- `requestedMode`
+- `actualMode`
+- `confidence`
+- `gateEligibility`
+  - nur Runs mit `gateEligibility = advisory` duerfen als harte Workflow-Gates
+    wirken
+  - `advisory_only` reduziert die Gate-Macht bewusst auch dann, wenn
+    `automationLevel = auto_gate` gesetzt ist

@@ -239,6 +239,23 @@ export const interactiveReviewEntryUpdateOutputSchema = z.object({
   severity: z.enum(["critical", "high", "medium", "low"]).nullable().optional()
 });
 
+export const planningReviewFindingOutputSchema = z.object({
+  type: z.enum(["blocker", "major_concern", "question", "suggestion"]),
+  title: z.string().min(1),
+  detail: z.string().min(1),
+  evidence: z.string().min(1).nullable().optional()
+});
+
+export const planningReviewReviewerOutputSchema = z.object({
+  status: z.enum(["in_review", "needs_clarification", "questions_only", "ready", "blocked", "failed"]),
+  readiness: z.enum(["ready", "ready_with_assumptions", "needs_evidence", "needs_human_review", "high_risk"]),
+  summary: z.string().min(1),
+  findings: z.array(planningReviewFindingOutputSchema),
+  missingInformation: z.array(z.string().min(1)).default([]),
+  recommendedNextEvidence: z.array(z.string().min(1)).default([]),
+  assumptionsDetected: z.array(z.string().min(1)).default([])
+});
+
 export const interactiveStoryReviewAgentOutputSchema = z.object({
   assistantMessage: z.string().min(1),
   entryUpdates: z.array(interactiveReviewEntryUpdateOutputSchema).default([]),
@@ -262,6 +279,30 @@ export const interactiveStoryReviewAgentOutputSchema = z.object({
     .optional()
 });
 
+export const workspaceSetupAssistPlanSchema = z.object({
+  version: z.literal(1),
+  workspaceKey: z.string().min(1),
+  rootPath: z.string().min(1).nullable(),
+  mode: z.enum(["greenfield", "brownfield"]),
+  stack: z.enum(["node-ts", "python"]),
+  scaffoldProjectFiles: z.boolean(),
+  createRoot: z.boolean(),
+  initGit: z.boolean(),
+  installDeps: z.boolean(),
+  withSonar: z.boolean(),
+  withCoderabbit: z.boolean(),
+  generatedAt: z.number().int().nonnegative()
+});
+
+export const workspaceSetupAssistOutputSchema = z.object({
+  assistantMessage: z.string().min(1),
+  plan: workspaceSetupAssistPlanSchema,
+  rationale: z.array(z.string().min(1)).default([]),
+  warnings: z.array(z.string().min(1)).default([]),
+  needsUserInput: z.boolean().default(false),
+  followUpHint: z.string().min(1).nullable().optional()
+});
+
 export type ProjectsOutput = z.infer<typeof projectsOutputSchema>;
 export type StoriesOutput = z.infer<typeof storiesOutputSchema>;
 export type ArchitecturePlanOutput = z.infer<typeof architecturePlanOutputSchema>;
@@ -275,5 +316,8 @@ export type StoryReviewOutput = z.infer<typeof storyReviewOutputSchema>;
 export type DocumentationOutput = z.infer<typeof documentationOutputSchema>;
 export type InteractiveBrainstormDraftPatch = z.infer<typeof interactiveBrainstormDraftPatchSchema>;
 export type InteractiveBrainstormAgentOutput = z.infer<typeof interactiveBrainstormAgentOutputSchema>;
+export type WorkspaceSetupAssistPlan = z.infer<typeof workspaceSetupAssistPlanSchema>;
+export type WorkspaceSetupAssistOutput = z.infer<typeof workspaceSetupAssistOutputSchema>;
 export type InteractiveReviewEntryUpdateOutput = z.infer<typeof interactiveReviewEntryUpdateOutputSchema>;
 export type InteractiveStoryReviewAgentOutput = z.infer<typeof interactiveStoryReviewAgentOutputSchema>;
+export type PlanningReviewReviewerOutput = z.infer<typeof planningReviewReviewerOutputSchema>;

@@ -8,6 +8,15 @@ import { describe, expect, it } from "vitest";
 
 import { createAppContext } from "../../src/app-context.js";
 import type { AppError } from "../../src/shared/errors.js";
+import type {
+  PlanningReviewAutomationLevel,
+  PlanningReviewGateEligibility,
+  PlanningReviewReadinessResult,
+  PlanningReviewSourceType,
+  PlanningReviewStatus,
+  ReviewKind,
+  ReviewRunStatus
+} from "../../src/domain/types.js";
 
 const localAgentScriptPath = fileURLToPath(new URL("../../scripts/local-agent.mjs", import.meta.url));
 const asRunnableConnection = (connection: unknown) => connection as {
@@ -76,6 +85,92 @@ describe("workflow service", () => {
       title: input.title,
       description: input.description
     });
+  }
+
+  function seedPlanningReviewRun(
+    context: ReturnType<typeof createAppContext>,
+    input: {
+      sourceType: PlanningReviewSourceType;
+      sourceId: string;
+      step: "requirements_engineering" | "architecture" | "plan_writing";
+      status: PlanningReviewStatus;
+      readiness: PlanningReviewReadinessResult;
+      automationLevel?: PlanningReviewAutomationLevel;
+      gateEligibility?: PlanningReviewGateEligibility;
+    }
+  ) {
+    return context.repositories.planningReviewRunRepository.create({
+      sourceType: input.sourceType,
+      sourceId: input.sourceId,
+      step: input.step,
+      status: input.status,
+      interactionMode: "interactive",
+      reviewMode: "readiness",
+      automationLevel: input.automationLevel ?? "auto_gate",
+      requestedMode: "full_dual_review",
+      actualMode: "full_dual_review",
+      readiness: input.readiness,
+      confidence: "high",
+      gateEligibility: input.gateEligibility ?? "advisory",
+      normalizedArtifactJson: JSON.stringify({
+        problem: "seeded",
+        goal: "seeded",
+        proposal: "seeded",
+        risks: [],
+        clarificationAnswers: []
+      }),
+      providersUsedJson: JSON.stringify(["seeded"]),
+      missingCapabilitiesJson: JSON.stringify([]),
+      reviewSummary: "seeded planning review",
+      failedReason: null
+    });
+  }
+
+  function seedGenericReviewRun(
+    context: ReturnType<typeof createAppContext>,
+    input: {
+      reviewKind: ReviewKind;
+      subjectType: string;
+      subjectId: string;
+      subjectStep?: string;
+      status: ReviewRunStatus;
+      readiness: string;
+      automationLevel?: PlanningReviewAutomationLevel;
+      gateEligibility?: PlanningReviewGateEligibility;
+      summary?: string;
+    }
+  ) {
+    const run = context.repositories.reviewRunRepository.create({
+      reviewKind: input.reviewKind,
+      subjectType: input.subjectType,
+      subjectId: input.subjectId,
+      subjectStep: input.subjectStep ?? null,
+      status: input.status,
+      readiness: input.readiness,
+      interactionMode: "auto",
+      reviewMode: "readiness",
+      automationLevel: input.automationLevel ?? "auto_gate",
+      requestedMode: "minimal_review",
+      actualMode: "minimal_review",
+      confidence: "medium",
+      gateEligibility: input.gateEligibility ?? "advisory",
+      sourceSummaryJson: JSON.stringify({ seeded: true }),
+      providersUsedJson: JSON.stringify(["seeded"]),
+      missingCapabilitiesJson: JSON.stringify([]),
+      reviewSummary: input.summary ?? "seeded generic review",
+      failedReason: null
+    });
+    context.repositories.reviewSynthesisRepository.create({
+      runId: run.id,
+      summary: input.summary ?? "seeded generic review",
+      status: input.status,
+      readiness: input.readiness,
+      keyPointsJson: JSON.stringify([]),
+      disagreementsJson: JSON.stringify([]),
+      recommendedAction: "seeded action",
+      gateDecision: input.status === "complete" ? "pass" : "blocked"
+    });
+    return run;
   }
 
   it("starts a brainstorm run and stores prompt snapshots", async () => {
@@ -160,6 +255,263 @@ describe("workflow service", () => {
       expect(shown.latestArchitecturePlan?.projectId).toBe(project.id);
       expect(shown.latestImplementationPlan?.projectId).toBe(project.id);
       expect(shown.stageRuns.some((run) => run.stageKey === "requirements")).toBe(true);
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("mirrors planning reviews into the generic review core", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const item = createWorkspaceItem(context, {
+        title: "Planning Core Mirror",
+        description: "Mirror planning reviews into generic review runs"
+      });
+      const startedSession = context.workflowService.startBrainstormSession(item.id);
+      const review = await context.workflowService.startPlanningReview({
+        sourceType: "brainstorm_session",
+        sourceId: startedSession.sessionId,
+        step: "requirements_engineering",
+        reviewMode: "readiness",
+        interactionMode: "interactive"
+      });
+
+      const mirrored = context.repositories.reviewRunRepository.getLatestBySubject({
+        reviewKind: "planning",
+        subjectType: "brainstorm_session",
+        subjectId: startedSession.sessionId
+      });
+
+      expect(review.run.id).toBeTruthy();
+      expect(mirrored?.subjectType).toBe("brainstorm_session");
+      expect(mirrored?.reviewKind).toBe("planning");
+      expect(mirrored?.status).toMatch(/action_required|complete/);
+      expect(context.repositories.reviewFindingRepository.listByRunId(mirrored!.id).length).toBeGreaterThanOrEqual(0);
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("creates advisory implementation reviews from story review and coderabbit signals", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const { project } = await prepareProjectThroughCompletedExecution(context, {
+        title: "Implementation Review",
+        description: "Aggregate quality signals into a generic implementation review"
+      });
+      const implementationPlan = context.repositories.implementationPlanRepository.getLatestByProjectId(project.id)!;
+      const firstWave = context.repositories.waveRepository.listByImplementationPlanId(implementationPlan.id)[0]!;
+      const firstStory = context.repositories.userStoryRepository.listByProjectId(project.id)[0]!;
+      const firstWaveStory = context.repositories.waveStoryRepository.getByStoryId(firstStory.id)!;
+      const latestExecution = context.repositories.waveStoryExecutionRepository.getLatestByWaveStoryId(firstWaveStory.id)!;
+
+      const storyReviewRun = context.repositories.storyReviewRunRepository.create({
+        waveStoryExecutionId: latestExecution.id,
+        status: "review_required",
+        inputSnapshotJson: JSON.stringify({ source: "test" }),
+        systemPromptSnapshot: "test",
+        skillsSnapshotJson: "[]",
+        summaryJson: JSON.stringify({ overallStatus: "review_required" }),
+        errorMessage: null
+      });
+      context.repositories.storyReviewFindingRepository.createMany([
+        {
+          storyReviewRunId: storyReviewRun.id,
+          severity: "high",
+          category: "maintainability",
+          title: "Protect implementation review orchestration",
+          description: "The implementation review path needs regression coverage.",
+          evidence: "Missing review-core integration assertion",
+          filePath: "src/workflow/implementation-review-service.ts",
+          line: 1,
+          suggestedFix: null,
+          status: "open"
+        }
+      ]);
+      context.repositories.qualityKnowledgeEntryRepository.createMany([
+        {
+          workspaceId: context.workspace.id,
+          projectId: project.id,
+          waveId: firstWave.id,
+          storyId: firstStory.id,
+          source: "coderabbit",
+          scopeType: "file",
+          scopeId: "src/workflow/implementation-review-service.ts",
+          kind: "recurring_issue",
+          summary: "Keep implementation review providers degradable",
+          evidenceJson: JSON.stringify({ detail: "CodeRabbit flagged coupling between quality providers." }),
+          status: "open",
+          relevanceTagsJson: JSON.stringify({
+            files: ["src/workflow/implementation-review-service.ts"],
+            storyCodes: [firstStory.code],
+            modules: ["src/workflow"],
+            categories: ["maintainability"]
+          })
+        }
+      ]);
+
+      const review = context.workflowService.startImplementationReview({
+        waveStoryExecutionId: latestExecution.id,
+        automationLevel: "manual"
+      }) as {
+        run: { id: string; status: string; reviewKind: string };
+        findings: Array<{ sourceSystem: string; title: string }>;
+        synthesis: { gateDecision: string } | null;
+      };
+
+      expect(review.run.reviewKind).toBe("implementation");
+      expect(review.run.status).toBe("action_required");
+      expect(review.findings.map((finding) => finding.sourceSystem)).toEqual(
+        expect.arrayContaining(["story_review", "coderabbit"])
+      );
+      expect(review.synthesis?.gateDecision).toBe("needs_human_review");
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("automatically triggers implementation review after completed story review", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const { project } = await prepareProjectThroughCompletedExecution(context, {
+        title: "Implementation Review Trigger",
+        description: "Create implementation review automatically after story review"
+      });
+      const implementationPlan = context.repositories.implementationPlanRepository.getLatestByProjectId(project.id)!;
+      const firstWave = context.repositories.waveRepository.listByImplementationPlanId(implementationPlan.id)[0]!;
+      const firstStory = context.repositories.userStoryRepository.listByProjectId(project.id)[0]!;
+      const firstWaveStory = context.repositories.waveStoryRepository.getByStoryId(firstStory.id)!;
+      const latestExecution = context.repositories.waveStoryExecutionRepository.getLatestByWaveStoryId(firstWaveStory.id)!;
+
+      const latestImplementationReview = context.repositories.reviewRunRepository.getLatestBySubject({
+        reviewKind: "implementation",
+        subjectType: "wave_story_execution",
+        subjectId: latestExecution.id
+      });
+
+      expect(firstWave.id).toBeTruthy();
+      expect(latestImplementationReview?.reviewKind).toBe("implementation");
+      expect(latestImplementationReview?.automationLevel).toBe("auto_comment");
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks qa start when an auto-gate implementation review is not ready", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const { project } = await prepareProjectThroughCompletedExecution(context, {
+        title: "Implementation Review Gate",
+        description: "Block qa when implementation review auto-gate is not ready"
+      });
+      const implementationPlan = context.repositories.implementationPlanRepository.getLatestByProjectId(project.id)!;
+      const firstStory = context.repositories.userStoryRepository.listByProjectId(project.id)[0]!;
+      const firstWaveStory = context.repositories.waveStoryRepository.getByStoryId(firstStory.id)!;
+      const latestExecution = context.repositories.waveStoryExecutionRepository.getLatestByWaveStoryId(firstWaveStory.id)!;
+
+      seedGenericReviewRun(context, {
+        reviewKind: "implementation",
+        subjectType: "wave_story_execution",
+        subjectId: latestExecution.id,
+        subjectStep: "implementation",
+        status: "action_required",
+        readiness: "review_required",
+        automationLevel: "auto_gate",
+        gateEligibility: "advisory",
+        summary: "seeded blocking implementation review"
+      });
+
+      await expect(context.workflowService.startQa(project.id)).rejects.toMatchObject({
+        code: "IMPLEMENTATION_REVIEW_GATE_BLOCKED"
+      });
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks story approval from a mirrored generic planning review gate", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const item = createWorkspaceItem(context, {
+        title: "Generic Planning Gate",
+        description: "Story approval should respect generic planning review gates"
+      });
+      await context.workflowService.startStage({ stageKey: "brainstorm", itemId: item.id });
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id)!;
+      context.workflowService.approveConcept(concept.id);
+      context.workflowService.importProjects(item.id);
+      const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
+      const interactiveReview = context.repositories.interactiveReviewSessionRepository.create({
+        scopeType: "project",
+        scopeId: project.id,
+        artifactType: "stories",
+        reviewType: "collection_review",
+        status: "resolved"
+      });
+
+      seedGenericReviewRun(context, {
+        reviewKind: "planning",
+        subjectType: "interactive_review_session",
+        subjectId: interactiveReview.id,
+        subjectStep: "requirements_engineering",
+        status: "action_required",
+        readiness: "needs_evidence",
+        automationLevel: "auto_gate",
+        gateEligibility: "advisory",
+        summary: "seeded generic planning blocker"
+      });
+
+      await context.workflowService.startStage({ stageKey: "requirements", itemId: item.id, projectId: project.id });
+      await expect(() => context.workflowService.approveStories(project.id)).toThrowError(
+        expect.objectContaining({ code: "PLANNING_REVIEW_GATE_BLOCKED" } satisfies Partial<AppError>)
+      );
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("mirrors qa runs into the generic review core", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const { project, qa } = await prepareProjectThroughQa(context, {
+        title: "QA Review Mirror",
+        description: "Mirror qa runs into the generic review core"
+      });
+
+      const mirrored = context.repositories.reviewRunRepository.getLatestBySubject({
+        reviewKind: "qa",
+        subjectType: "project",
+        subjectId: project.id
+      });
+
+      expect(qa.status).toBeTruthy();
+      expect(mirrored?.reviewKind).toBe("qa");
+      expect(mirrored?.subjectType).toBe("project");
+      expect(context.repositories.reviewSynthesisRepository.getLatestByRunId(mirrored!.id)?.gateDecision).toBeTruthy();
     } finally {
       context.connection.close();
       rmSync(root, { recursive: true, force: true });
@@ -706,7 +1058,7 @@ describe("workflow service", () => {
       const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
       await context.workflowService.startStage({ stageKey: "requirements", itemId: item.id, projectId: project.id });
 
-      const started = context.workflowService.startInteractiveReview({ type: "stories", projectId: project.id });
+      const started = await context.workflowService.startInteractiveReview({ type: "stories", projectId: project.id });
       const session = context.workflowService.showInteractiveReview(started.sessionId) as {
         session: { status: string };
         entries: Array<{ entryId: string; status: string }>;
@@ -792,7 +1144,7 @@ describe("workflow service", () => {
       await context.workflowService.startStage({ stageKey: "requirements", itemId: item.id, projectId: project.id });
 
       const stories = context.repositories.userStoryRepository.listByProjectId(project.id);
-      const session = context.workflowService.startInteractiveReview({ type: "stories", projectId: project.id });
+      const session = await context.workflowService.startInteractiveReview({ type: "stories", projectId: project.id });
 
       const edited = context.workflowService.applyInteractiveReviewStoryEdits({
         sessionId: session.sessionId,
@@ -844,7 +1196,7 @@ describe("workflow service", () => {
       const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
       await context.workflowService.startStage({ stageKey: "requirements", itemId: item.id, projectId: project.id });
 
-      const started = context.workflowService.startInteractiveReview({ type: "stories", projectId: project.id });
+      const started = await context.workflowService.startInteractiveReview({ type: "stories", projectId: project.id });
       const firstStory = context.repositories.userStoryRepository.listByProjectId(project.id)[0]!;
       const chatted = await context.workflowService.chatInteractiveReview(
         started.sessionId,
@@ -931,7 +1283,7 @@ describe("workflow service", () => {
       setupContext.workflowService.importProjects(item.id);
       const project = setupContext.repositories.projectRepository.listByItemId(item.id)[0]!;
       await setupContext.workflowService.startStage({ stageKey: "requirements", itemId: item.id, projectId: project.id });
-      sessionId = setupContext.workflowService.startInteractiveReview({ type: "stories", projectId: project.id }).sessionId;
+      sessionId = (await setupContext.workflowService.startInteractiveReview({ type: "stories", projectId: project.id })).sessionId;
     } finally {
       setupContext.connection.close();
     }
@@ -941,6 +1293,226 @@ describe("workflow service", () => {
       await expect(context.workflowService.chatInteractiveReview(sessionId, "Please review the first story")).rejects.toMatchObject({
         code: "INTERACTIVE_AGENT_OUTPUT_INVALID"
       } satisfies Partial<AppError>);
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("marks planning review runs as failed when reviewer output is invalid", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const scriptPath = join(root, "planning-review-agent.mjs");
+    writeFileSync(
+      scriptPath,
+      [
+        'import { readFileSync } from "node:fs";',
+        "const payload = JSON.parse(readFileSync(process.argv[2], 'utf8'));",
+        "if (payload.interactionType === 'planning_review') {",
+        "  process.stdout.write(JSON.stringify({ output: { status: 'ready', readiness: 'ready', summary: '' } }));",
+        "} else {",
+        "  process.stdout.write(JSON.stringify({ markdownArtifacts: [], structuredArtifacts: [] }));",
+        "}"
+      ].join("\n"),
+      "utf8"
+    );
+    const context = createAppContext(dbPath, { adapterScriptPath: scriptPath });
+
+    try {
+      const item = createWorkspaceItem(context, {
+        title: "Planning Review Failure",
+        description: "Persist failed planning review runs"
+      });
+      const brainstorm = context.workflowService.startBrainstormSession(item.id);
+      context.workflowService.updateBrainstormDraft({
+        sessionId: brainstorm.sessionId,
+        problem: "Need a failed planning review run",
+        coreOutcome: "Track invalid reviewer output correctly",
+        targetUsers: ["delivery lead"],
+        useCases: ["review planning artifacts safely"],
+        recommendedDirection: "Persist failed planning review runs"
+      });
+
+      await expect(
+        context.workflowService.startPlanningReview({
+          sourceType: "brainstorm_session",
+          sourceId: brainstorm.sessionId,
+          step: "plan_writing",
+          reviewMode: "readiness",
+          interactionMode: "interactive"
+        })
+      ).rejects.toMatchObject({
+        code: "PLANNING_REVIEW_OUTPUT_INVALID"
+      } satisfies Partial<AppError>);
+
+      const latestRun = context.repositories.planningReviewRunRepository.getLatestBySource({
+        sourceType: "brainstorm_session",
+        sourceId: brainstorm.sessionId
+      });
+      expect(latestRun?.status).toBe("failed");
+      expect(latestRun?.failedReason).toContain("summary");
+      expect(latestRun?.automationLevel).toBe("manual");
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("enforces auto-gate planning review runs on approval transitions", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const item = createWorkspaceItem(context, {
+        title: "Planning Gate",
+        description: "Enforce planning review gates on approvals"
+      });
+      await context.workflowService.startStage({ stageKey: "brainstorm", itemId: item.id });
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      context.workflowService.approveConcept(concept!.id);
+      context.workflowService.importProjects(item.id);
+      const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
+
+      await context.workflowService.startStage({
+        stageKey: "requirements",
+        itemId: item.id,
+        projectId: project.id
+      });
+      const interactiveReview = await context.workflowService.startInteractiveReview({
+        type: "stories",
+        projectId: project.id
+      });
+      seedPlanningReviewRun(context, {
+        sourceType: "interactive_review_session",
+        sourceId: interactiveReview.sessionId,
+        step: "requirements_engineering",
+        status: "blocker_present",
+        readiness: "needs_evidence"
+      });
+      expect(() => context.workflowService.approveStories(project.id)).toThrowError(
+        expect.objectContaining({ code: "PLANNING_REVIEW_GATE_BLOCKED" } satisfies Partial<AppError>)
+      );
+
+      seedPlanningReviewRun(context, {
+        sourceType: "interactive_review_session",
+        sourceId: interactiveReview.sessionId,
+        step: "requirements_engineering",
+        status: "ready",
+        readiness: "ready"
+      });
+      context.workflowService.approveStories(project.id);
+
+      await context.workflowService.startStage({
+        stageKey: "architecture",
+        itemId: item.id,
+        projectId: project.id
+      });
+      const architecturePlan = context.repositories.architecturePlanRepository.getLatestByProjectId(project.id)!;
+      seedPlanningReviewRun(context, {
+        sourceType: "architecture_plan",
+        sourceId: architecturePlan.id,
+        step: "architecture",
+        status: "questions_only",
+        readiness: "needs_evidence"
+      });
+      expect(() => context.workflowService.approveArchitecture(project.id)).toThrowError(
+        expect.objectContaining({ code: "PLANNING_REVIEW_GATE_BLOCKED" } satisfies Partial<AppError>)
+      );
+
+      seedPlanningReviewRun(context, {
+        sourceType: "architecture_plan",
+        sourceId: architecturePlan.id,
+        step: "architecture",
+        status: "ready",
+        readiness: "ready_with_assumptions"
+      });
+      context.workflowService.approveArchitecture(project.id);
+
+      await context.workflowService.startStage({
+        stageKey: "planning",
+        itemId: item.id,
+        projectId: project.id
+      });
+      const implementationPlan = context.repositories.implementationPlanRepository.getLatestByProjectId(project.id)!;
+      seedPlanningReviewRun(context, {
+        sourceType: "implementation_plan",
+        sourceId: implementationPlan.id,
+        step: "plan_writing",
+        status: "blocked",
+        readiness: "needs_human_review"
+      });
+      expect(() => context.workflowService.approvePlanning(project.id)).toThrowError(
+        expect.objectContaining({ code: "PLANNING_REVIEW_GATE_BLOCKED" } satisfies Partial<AppError>)
+      );
+
+      seedPlanningReviewRun(context, {
+        sourceType: "implementation_plan",
+        sourceId: implementationPlan.id,
+        step: "plan_writing",
+        status: "ready",
+        readiness: "ready"
+      });
+      context.workflowService.approvePlanning(project.id);
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not enforce planning review gates for advisory-only or non-auto-gate runs", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const item = createWorkspaceItem(context, {
+        title: "Advisory Gate Bypass",
+        description: "Only advisory planning reviews should not block approvals"
+      });
+      await context.workflowService.startStage({ stageKey: "brainstorm", itemId: item.id });
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      context.workflowService.approveConcept(concept!.id);
+      context.workflowService.importProjects(item.id);
+      const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
+
+      await context.workflowService.startStage({
+        stageKey: "requirements",
+        itemId: item.id,
+        projectId: project.id
+      });
+      context.workflowService.approveStories(project.id);
+      await context.workflowService.startStage({
+        stageKey: "architecture",
+        itemId: item.id,
+        projectId: project.id
+      });
+      context.workflowService.approveArchitecture(project.id);
+      await context.workflowService.startStage({
+        stageKey: "planning",
+        itemId: item.id,
+        projectId: project.id
+      });
+
+      const implementationPlan = context.repositories.implementationPlanRepository.getLatestByProjectId(project.id)!;
+      seedPlanningReviewRun(context, {
+        sourceType: "implementation_plan",
+        sourceId: implementationPlan.id,
+        step: "plan_writing",
+        status: "blocked",
+        readiness: "needs_human_review",
+        gateEligibility: "advisory_only"
+      });
+      context.workflowService.approvePlanning(project.id);
+      seedPlanningReviewRun(context, {
+        sourceType: "implementation_plan",
+        sourceId: implementationPlan.id,
+        step: "plan_writing",
+        status: "blocker_present",
+        readiness: "needs_evidence",
+        automationLevel: "auto_comment"
+      });
+      context.workflowService.approvePlanning(project.id);
     } finally {
       context.connection.close();
       rmSync(root, { recursive: true, force: true });
@@ -1194,6 +1766,138 @@ describe("workflow service", () => {
       expect(logs.latestExecution?.verificationRuns.map((run) => run.mode)).toEqual(["basic", "ralph"]);
       expect(logs.latestStoryReview?.sessions[0]?.adapterKey).toBe("local-cli");
       expect(logs.latestStoryReview?.sessions[0]?.stdout).toContain("\"overallStatus\":\"passed\"");
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("propagates persisted Sonar and Coderabbit quality knowledge into story review context snapshots", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const item = createWorkspaceItem(context, {
+        title: "Review Quality Signals",
+        description: "Verify persisted quality knowledge is consumed by story review"
+      });
+      await context.workflowService.startStage({ stageKey: "brainstorm", itemId: item.id });
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      context.workflowService.approveConcept(concept!.id);
+      context.workflowService.importProjects(item.id);
+      const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
+      await context.workflowService.startStage({ stageKey: "requirements", itemId: item.id, projectId: project.id });
+      context.workflowService.approveStories(project.id);
+      await context.workflowService.startStage({ stageKey: "architecture", itemId: item.id, projectId: project.id });
+      context.workflowService.approveArchitecture(project.id);
+      await context.workflowService.startStage({ stageKey: "planning", itemId: item.id, projectId: project.id });
+      context.workflowService.approvePlanning(project.id);
+
+      const implementationPlan = context.repositories.implementationPlanRepository.getLatestByProjectId(project.id)!;
+      const firstWave = context.repositories.waveRepository.listByImplementationPlanId(implementationPlan.id)[0]!;
+      const firstStory = context.repositories.userStoryRepository.listByProjectId(project.id)[0]!;
+
+      context.repositories.qualityKnowledgeEntryRepository.createMany([
+        {
+          workspaceId: context.workspace.id,
+          projectId: project.id,
+          waveId: firstWave.id,
+          storyId: null,
+          source: "sonar",
+          scopeType: "project",
+          scopeId: project.id,
+          kind: "recurring_issue",
+          summary: "Guard workflow persistence invariants",
+          evidenceJson: JSON.stringify({ rule: "sonar:persistence-guard" }),
+          status: "open",
+          relevanceTagsJson: JSON.stringify({
+            files: [],
+            storyCodes: [],
+            modules: [],
+            categories: ["reliability"]
+          })
+        },
+        {
+          workspaceId: context.workspace.id,
+          projectId: null,
+          waveId: null,
+          storyId: null,
+          source: "coderabbit",
+          scopeType: "workspace",
+          scopeId: context.workspace.id,
+          kind: "constraint",
+          summary: "Keep review-step integrations optional and degradable",
+          evidenceJson: JSON.stringify({ rule: "coderabbit:degraded-mode" }),
+          status: "open",
+          relevanceTagsJson: JSON.stringify({
+            files: [],
+            storyCodes: [firstStory.code],
+            modules: [],
+            categories: ["maintainability"]
+          })
+        }
+      ]);
+
+      const firstExecution = await context.workflowService.startExecution(project.id);
+      expect(firstExecution.executions[0]?.status).toBe("completed");
+      expect(firstExecution.executions[0]?.phase).toBe("story_review");
+      const shown = context.workflowService.showExecution(project.id) as {
+        waves: Array<{
+          stories: Array<{
+            story: { code: string };
+            latestExecution: {
+              businessContextSnapshotJson: string;
+              repoContextSnapshotJson: string;
+            } | null;
+            latestStoryReviewRun: { status: string } | null;
+          }>;
+        }>;
+      };
+      const latestExecution = shown.waves[0]?.stories[0]?.latestExecution;
+      const businessContext = JSON.parse(latestExecution!.businessContextSnapshotJson) as {
+        qualityGuidance: Array<{ source: string; summary: string; status: string }>;
+      };
+      const repoContext = JSON.parse(latestExecution!.repoContextSnapshotJson) as {
+        recurringQualityRisks: Array<{ source: string; summary: string; status: string }>;
+        engineeringConstraints: Array<{ source: string; summary: string; status: string }>;
+      };
+
+      expect(shown.waves[0]?.stories[0]?.story.code).toBe(firstStory.code);
+      expect(shown.waves[0]?.stories[0]?.latestStoryReviewRun?.status).toBe("passed");
+      expect(businessContext.qualityGuidance).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            source: "sonar",
+            summary: "Guard workflow persistence invariants",
+            status: "open"
+          }),
+          expect.objectContaining({
+            source: "coderabbit",
+            summary: "Keep review-step integrations optional and degradable",
+            status: "open"
+          })
+        ])
+      );
+      expect(repoContext.recurringQualityRisks).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            source: "sonar",
+            summary: "Guard workflow persistence invariants",
+            status: "open"
+          })
+        ])
+      );
+      expect(repoContext.engineeringConstraints).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            source: "coderabbit",
+            summary: "Keep review-step integrations optional and degradable",
+            status: "open"
+          })
+        ])
+      );
+
     } finally {
       context.connection.close();
       rmSync(root, { recursive: true, force: true });

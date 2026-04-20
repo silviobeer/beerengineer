@@ -864,5 +864,221 @@ export const baseMigrations: readonly SqlMigration[] = [
       `CREATE INDEX IF NOT EXISTS idx_quality_knowledge_entries_story_created_at
         ON quality_knowledge_entries(story_id, created_at)`
     ]
+  },
+  {
+    id: "0013_workspace_assist_sessions",
+    statements: [
+      `CREATE TABLE IF NOT EXISTS workspace_assist_sessions (
+        id TEXT PRIMARY KEY NOT NULL,
+        workspace_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        current_plan_json TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        resolved_at INTEGER,
+        last_assistant_message_id TEXT,
+        last_user_message_id TEXT,
+        FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+      )`,
+      `CREATE TABLE IF NOT EXISTS workspace_assist_messages (
+        id TEXT PRIMARY KEY NOT NULL,
+        session_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        structured_payload_json TEXT,
+        derived_plan_json TEXT,
+        FOREIGN KEY (session_id) REFERENCES workspace_assist_sessions(id)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_workspace_assist_sessions_workspace_id
+        ON workspace_assist_sessions(workspace_id, started_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_workspace_assist_messages_session_id
+        ON workspace_assist_messages(session_id, created_at)`
+    ]
+  },
+  {
+    id: "0014_planning_review_runtime",
+    statements: [
+      `CREATE TABLE IF NOT EXISTS planning_review_runs (
+        id TEXT PRIMARY KEY NOT NULL,
+        source_type TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        step TEXT NOT NULL,
+        status TEXT NOT NULL,
+        interaction_mode TEXT NOT NULL,
+        review_mode TEXT NOT NULL,
+        requested_mode TEXT NOT NULL,
+        actual_mode TEXT NOT NULL,
+        readiness TEXT,
+        confidence TEXT NOT NULL,
+        gate_eligibility TEXT NOT NULL,
+        normalized_artifact_json TEXT NOT NULL,
+        providers_used_json TEXT NOT NULL,
+        missing_capabilities_json TEXT NOT NULL,
+        review_summary TEXT,
+        started_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        failed_reason TEXT
+      )`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS planning_review_runs_source_started_unique_idx
+        ON planning_review_runs(source_type, source_id, started_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_planning_review_runs_source
+        ON planning_review_runs(source_type, source_id, started_at)`,
+      `CREATE TABLE IF NOT EXISTS planning_review_findings (
+        id TEXT PRIMARY KEY NOT NULL,
+        run_id TEXT NOT NULL,
+        reviewer_role TEXT NOT NULL,
+        finding_type TEXT NOT NULL,
+        title TEXT NOT NULL,
+        detail TEXT NOT NULL,
+        evidence TEXT,
+        status TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (run_id) REFERENCES planning_review_runs(id)
+      )`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS planning_review_findings_run_fingerprint_unique_idx
+        ON planning_review_findings(run_id, fingerprint)`,
+      `CREATE INDEX IF NOT EXISTS idx_planning_review_findings_run
+        ON planning_review_findings(run_id, created_at)`,
+      `CREATE TABLE IF NOT EXISTS planning_review_syntheses (
+        id TEXT PRIMARY KEY NOT NULL,
+        run_id TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        status TEXT NOT NULL,
+        readiness TEXT NOT NULL,
+        key_points_json TEXT NOT NULL,
+        disagreements_json TEXT NOT NULL,
+        recommended_action TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY (run_id) REFERENCES planning_review_runs(id)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_planning_review_syntheses_run
+        ON planning_review_syntheses(run_id, created_at)`,
+      `CREATE TABLE IF NOT EXISTS planning_review_questions (
+        id TEXT PRIMARY KEY NOT NULL,
+        run_id TEXT NOT NULL,
+        question TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        impact TEXT NOT NULL,
+        status TEXT NOT NULL,
+        answer TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        answered_at INTEGER,
+        FOREIGN KEY (run_id) REFERENCES planning_review_runs(id)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_planning_review_questions_run
+        ON planning_review_questions(run_id, created_at)`,
+      `CREATE TABLE IF NOT EXISTS planning_review_assumptions (
+        id TEXT PRIMARY KEY NOT NULL,
+        run_id TEXT NOT NULL,
+        statement TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        source TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY (run_id) REFERENCES planning_review_runs(id)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_planning_review_assumptions_run
+        ON planning_review_assumptions(run_id, created_at)`
+    ]
+  },
+  {
+    id: "0015_planning_review_automation_level",
+    statements: [
+      `ALTER TABLE planning_review_runs ADD COLUMN automation_level TEXT NOT NULL DEFAULT 'manual'`
+    ]
+  },
+  {
+    id: "0016_review_core",
+    statements: [
+      `CREATE TABLE IF NOT EXISTS review_runs (
+        id TEXT PRIMARY KEY NOT NULL,
+        review_kind TEXT NOT NULL,
+        subject_type TEXT NOT NULL,
+        subject_id TEXT NOT NULL,
+        subject_step TEXT,
+        status TEXT NOT NULL,
+        readiness TEXT,
+        interaction_mode TEXT,
+        review_mode TEXT,
+        automation_level TEXT NOT NULL,
+        requested_mode TEXT,
+        actual_mode TEXT,
+        confidence TEXT,
+        gate_eligibility TEXT NOT NULL,
+        source_summary_json TEXT NOT NULL,
+        providers_used_json TEXT NOT NULL,
+        missing_capabilities_json TEXT NOT NULL,
+        review_summary TEXT,
+        started_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        failed_reason TEXT
+      )`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS review_runs_subject_started_unique_idx
+        ON review_runs(review_kind, subject_type, subject_id, started_at)`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS review_runs_subject_step_mode_started_unique_idx
+        ON review_runs(review_kind, subject_type, subject_id, subject_step, review_mode, started_at)`,
+      `CREATE TABLE IF NOT EXISTS review_findings (
+        id TEXT PRIMARY KEY NOT NULL,
+        run_id TEXT NOT NULL,
+        source_system TEXT NOT NULL,
+        reviewer_role TEXT,
+        finding_type TEXT NOT NULL,
+        normalized_severity TEXT NOT NULL,
+        source_severity TEXT,
+        title TEXT NOT NULL,
+        detail TEXT NOT NULL,
+        evidence TEXT,
+        status TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,
+        file_path TEXT,
+        line INTEGER,
+        field_path TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (run_id) REFERENCES review_runs(id)
+      )`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS review_findings_run_fingerprint_unique_idx
+        ON review_findings(run_id, fingerprint)`,
+      `CREATE TABLE IF NOT EXISTS review_syntheses (
+        id TEXT PRIMARY KEY NOT NULL,
+        run_id TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        status TEXT NOT NULL,
+        readiness TEXT NOT NULL,
+        key_points_json TEXT NOT NULL,
+        disagreements_json TEXT NOT NULL,
+        recommended_action TEXT NOT NULL,
+        gate_decision TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY (run_id) REFERENCES review_runs(id)
+      )`,
+      `CREATE TABLE IF NOT EXISTS review_questions (
+        id TEXT PRIMARY KEY NOT NULL,
+        run_id TEXT NOT NULL,
+        question TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        impact TEXT NOT NULL,
+        status TEXT NOT NULL,
+        answer TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        answered_at INTEGER,
+        FOREIGN KEY (run_id) REFERENCES review_runs(id)
+      )`,
+      `CREATE TABLE IF NOT EXISTS review_assumptions (
+        id TEXT PRIMARY KEY NOT NULL,
+        run_id TEXT NOT NULL,
+        statement TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        source TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY (run_id) REFERENCES review_runs(id)
+      )`
+    ]
   }
 ];

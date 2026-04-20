@@ -23,6 +23,16 @@ import {
   InteractiveReviewResolutionRepository,
   InteractiveReviewSessionRepository,
   ItemRepository,
+  PlanningReviewAssumptionRepository,
+  PlanningReviewFindingRepository,
+  PlanningReviewQuestionRepository,
+  PlanningReviewRunRepository,
+  PlanningReviewSynthesisRepository,
+  ReviewAssumptionRepository,
+  ReviewFindingRepository,
+  ReviewQuestionRepository,
+  ReviewRunRepository,
+  ReviewSynthesisRepository,
   QualityKnowledgeEntryRepository,
   QaAgentSessionRepository,
   QaFindingRepository,
@@ -38,6 +48,8 @@ import {
   StageRunRepository,
   TestAgentSessionRepository,
   UserStoryRepository,
+  WorkspaceAssistMessageRepository,
+  WorkspaceAssistSessionRepository,
   VerificationRunRepository,
   WorkspaceRepository,
   WorkspaceCoderabbitSettingsRepository,
@@ -126,6 +138,16 @@ export type AppContext = {
     interactiveReviewMessageRepository: InteractiveReviewMessageRepository;
     interactiveReviewEntryRepository: InteractiveReviewEntryRepository;
     interactiveReviewResolutionRepository: InteractiveReviewResolutionRepository;
+    planningReviewRunRepository: PlanningReviewRunRepository;
+    planningReviewFindingRepository: PlanningReviewFindingRepository;
+    planningReviewSynthesisRepository: PlanningReviewSynthesisRepository;
+    planningReviewQuestionRepository: PlanningReviewQuestionRepository;
+    planningReviewAssumptionRepository: PlanningReviewAssumptionRepository;
+    reviewRunRepository: ReviewRunRepository;
+    reviewFindingRepository: ReviewFindingRepository;
+    reviewSynthesisRepository: ReviewSynthesisRepository;
+    reviewQuestionRepository: ReviewQuestionRepository;
+    reviewAssumptionRepository: ReviewAssumptionRepository;
     stageRunRepository: StageRunRepository;
     artifactRepository: ArtifactRepository;
     agentSessionRepository: AgentSessionRepository;
@@ -136,6 +158,30 @@ export type AppContext = {
     qualityKnowledgeService: QualityKnowledgeService;
   };
   workflowService: WorkflowService;
+};
+
+export type WorkspaceSetupContext = {
+  connection: {
+    prepare(sql: string): {
+      get(...args: unknown[]): unknown;
+    };
+    close(): void;
+  };
+  workspace: Workspace;
+  workspaceSettings: WorkspaceSettings;
+  workspaceRoot: string | null;
+  rootPathSource: "override" | "workspace" | "unset";
+  repoRoot: string;
+  agentRuntimeConfigPath: string;
+  adapterScriptPath?: string;
+  repositories: {
+    workspaceRepository: WorkspaceRepository;
+    workspaceSettingsRepository: WorkspaceSettingsRepository;
+    workspaceSonarSettingsRepository: WorkspaceSonarSettingsRepository;
+    workspaceCoderabbitSettingsRepository: WorkspaceCoderabbitSettingsRepository;
+    workspaceAssistSessionRepository: WorkspaceAssistSessionRepository;
+    workspaceAssistMessageRepository: WorkspaceAssistMessageRepository;
+  };
 };
 
 export function createAppContext(
@@ -161,6 +207,8 @@ export function createAppContext(
   const workspaceSettingsRepository = new WorkspaceSettingsRepository(db);
   const workspaceSonarSettingsRepository = new WorkspaceSonarSettingsRepository(db);
   const workspaceCoderabbitSettingsRepository = new WorkspaceCoderabbitSettingsRepository(db);
+  const workspaceAssistSessionRepository = new WorkspaceAssistSessionRepository(db);
+  const workspaceAssistMessageRepository = new WorkspaceAssistMessageRepository(db);
   const brainstormSessionRepository = new BrainstormSessionRepository(db);
   const brainstormMessageRepository = new BrainstormMessageRepository(db);
   const brainstormDraftRepository = new BrainstormDraftRepository(db);
@@ -198,6 +246,16 @@ export function createAppContext(
   const interactiveReviewMessageRepository = new InteractiveReviewMessageRepository(db);
   const interactiveReviewEntryRepository = new InteractiveReviewEntryRepository(db);
   const interactiveReviewResolutionRepository = new InteractiveReviewResolutionRepository(db);
+  const planningReviewRunRepository = new PlanningReviewRunRepository(db);
+  const planningReviewFindingRepository = new PlanningReviewFindingRepository(db);
+  const planningReviewSynthesisRepository = new PlanningReviewSynthesisRepository(db);
+  const planningReviewQuestionRepository = new PlanningReviewQuestionRepository(db);
+  const planningReviewAssumptionRepository = new PlanningReviewAssumptionRepository(db);
+  const reviewRunRepository = new ReviewRunRepository(db);
+  const reviewFindingRepository = new ReviewFindingRepository(db);
+  const reviewSynthesisRepository = new ReviewSynthesisRepository(db);
+  const reviewQuestionRepository = new ReviewQuestionRepository(db);
+  const reviewAssumptionRepository = new ReviewAssumptionRepository(db);
   const stageRunRepository = new StageRunRepository(db);
   const artifactRepository = new ArtifactRepository(db);
   const agentSessionRepository = new AgentSessionRepository(db);
@@ -281,6 +339,16 @@ export function createAppContext(
       interactiveReviewMessageRepository,
       interactiveReviewEntryRepository,
       interactiveReviewResolutionRepository,
+      planningReviewRunRepository,
+      planningReviewFindingRepository,
+      planningReviewSynthesisRepository,
+      planningReviewQuestionRepository,
+      planningReviewAssumptionRepository,
+      reviewRunRepository,
+      reviewFindingRepository,
+      reviewSynthesisRepository,
+      reviewQuestionRepository,
+      reviewAssumptionRepository,
       stageRunRepository,
       artifactRepository,
       agentSessionRepository
@@ -335,9 +403,72 @@ export function createAppContext(
       interactiveReviewMessageRepository,
       interactiveReviewEntryRepository,
       interactiveReviewResolutionRepository,
+      planningReviewRunRepository,
+      planningReviewFindingRepository,
+      planningReviewSynthesisRepository,
+      planningReviewQuestionRepository,
+      planningReviewAssumptionRepository,
+      reviewRunRepository,
+      reviewFindingRepository,
+      reviewSynthesisRepository,
+      reviewQuestionRepository,
+      reviewAssumptionRepository,
       stageRunRepository,
       artifactRepository,
-      agentSessionRepository
+      agentSessionRepository,
+      sonarService,
+      coderabbitService,
+      qualityKnowledgeService
     })
+  };
+}
+
+export function createWorkspaceSetupContext(
+  dbPath: string,
+  options?: {
+    agentRuntimeConfigPath?: string;
+    adapterScriptPath?: string;
+    workspaceKey?: string;
+    workspaceRoot?: string;
+  }
+): WorkspaceSetupContext {
+  const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const agentRuntimeConfigPath = options?.agentRuntimeConfigPath ?? resolve(repoRoot, "config/agent-runtime.json");
+  const { connection, db } = createDatabase(dbPath);
+  applyMigrations(connection, baseMigrations);
+
+  const workspaceRepository = new WorkspaceRepository(db);
+  const workspaceSettingsRepository = new WorkspaceSettingsRepository(db);
+  const workspaceSonarSettingsRepository = new WorkspaceSonarSettingsRepository(db);
+  const workspaceCoderabbitSettingsRepository = new WorkspaceCoderabbitSettingsRepository(db);
+  const workspaceAssistSessionRepository = new WorkspaceAssistSessionRepository(db);
+  const workspaceAssistMessageRepository = new WorkspaceAssistMessageRepository(db);
+  const requestedWorkspaceKey = options?.workspaceKey ?? DEFAULT_WORKSPACE_KEY;
+  const workspace = workspaceRepository.getByKey(requestedWorkspaceKey);
+  if (!workspace) {
+    throw new AppError("WORKSPACE_NOT_FOUND", `Workspace ${requestedWorkspaceKey} not found`);
+  }
+  const workspaceSettings = workspaceSettingsRepository.getByWorkspaceId(workspace.id);
+  if (!workspaceSettings) {
+    throw new AppError("WORKSPACE_SETTINGS_NOT_FOUND", `Workspace settings for ${workspace.key} not found`);
+  }
+
+  return {
+    connection,
+    workspace,
+    workspaceSettings,
+    workspaceRoot: options?.workspaceRoot ? resolve(options.workspaceRoot) : workspace.rootPath,
+    rootPathSource: options?.workspaceRoot ? "override" : workspace.rootPath ? "workspace" : "unset",
+    repoRoot,
+    agentRuntimeConfigPath,
+    adapterScriptPath: options?.adapterScriptPath,
+    repositories: {
+      workspaceRepository,
+      workspaceSettingsRepository,
+      workspaceSonarSettingsRepository,
+      workspaceCoderabbitSettingsRepository,
+      workspaceAssistSessionRepository,
+      workspaceAssistMessageRepository
+    }
   };
 }

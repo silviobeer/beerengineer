@@ -42,11 +42,11 @@ export const requiredAgentExecutionPolicy: AgentExecutionPolicy = {
 };
 
 const agentExecutionPolicySchema = z.object({
-  autonomyMode: z.literal("yolo"),
-  approvalMode: z.literal("never"),
-  filesystemMode: z.literal("danger-full-access"),
-  networkMode: z.literal("enabled"),
-  interactionMode: z.literal("non_blocking")
+  autonomyMode: z.enum(["manual", "yolo"]),
+  approvalMode: z.enum(["always", "never"]),
+  filesystemMode: z.enum(["read-only", "workspace-write", "danger-full-access"]),
+  networkMode: z.enum(["disabled", "enabled"]),
+  interactionMode: z.enum(["blocking", "non_blocking"])
 }).strict();
 
 const providerSelectionSchema = z.object({
@@ -126,7 +126,15 @@ class UnsupportedProviderAdapter implements AgentAdapter {
     return this.fail();
   }
 
+  public async runPlanningReview() {
+    return this.fail();
+  }
+
   public async runInteractiveStoryReview() {
+    return this.fail();
+  }
+
+  public async runWorkspaceSetupAssist() {
     return this.fail();
   }
 
@@ -285,6 +293,27 @@ export class AgentRuntimeResolver {
           provider: this.config.defaultProvider
         }
     );
+  }
+
+  public resolveProvider(providerKey: string, modelOverride?: string | null): ResolvedAgentRuntime {
+    const providerConfig = this.config.providers[providerKey];
+    if (!providerConfig) {
+      throw new AppError("AGENT_RUNTIME_CONFIG_INVALID", `Provider ${providerKey} is not defined in providers`);
+    }
+    const adapter = this.adaptersByProviderKey.get(providerKey);
+    if (!adapter) {
+      throw new AppError("AGENT_RUNTIME_CONFIG_INVALID", `Provider ${providerKey} could not be resolved`);
+    }
+    return {
+      providerKey,
+      adapterKey: providerConfig.adapterKey,
+      model: modelOverride === undefined ? providerConfig.model ?? null : modelOverride,
+      command: [...providerConfig.command],
+      env: { ...providerConfig.env },
+      timeoutMs: providerConfig.timeoutMs,
+      policy: this.config.policy,
+      adapter
+    };
   }
 
   private resolveFromSelection(selection: {

@@ -16,6 +16,16 @@ import type {
   InteractiveReviewResolutionRepository,
   InteractiveReviewSessionRepository,
   ItemRepository,
+  PlanningReviewAssumptionRepository,
+  PlanningReviewFindingRepository,
+  PlanningReviewQuestionRepository,
+  PlanningReviewRunRepository,
+  PlanningReviewSynthesisRepository,
+  ReviewAssumptionRepository,
+  ReviewFindingRepository,
+  ReviewQuestionRepository,
+  ReviewRunRepository,
+  ReviewSynthesisRepository,
   QualityKnowledgeEntryRepository,
   ProjectExecutionContextRepository,
   ProjectRepository,
@@ -42,6 +52,9 @@ import type {
 } from "../persistence/repositories.js";
 import type { Workspace, WorkspaceSettings } from "../domain/types.js";
 import type { AgentRuntimeResolver } from "../adapters/runtime.js";
+import type { CoderabbitService } from "../services/coderabbit-service.js";
+import type { QualityKnowledgeService } from "../services/quality-knowledge-service.js";
+import type { SonarService } from "../services/sonar-service.js";
 
 export type WorkflowDeps = {
   repoRoot: string;
@@ -87,8 +100,21 @@ export type WorkflowDeps = {
   interactiveReviewMessageRepository: InteractiveReviewMessageRepository;
   interactiveReviewEntryRepository: InteractiveReviewEntryRepository;
   interactiveReviewResolutionRepository: InteractiveReviewResolutionRepository;
+  planningReviewRunRepository: PlanningReviewRunRepository;
+  planningReviewFindingRepository: PlanningReviewFindingRepository;
+  planningReviewSynthesisRepository: PlanningReviewSynthesisRepository;
+  planningReviewQuestionRepository: PlanningReviewQuestionRepository;
+  planningReviewAssumptionRepository: PlanningReviewAssumptionRepository;
+  reviewRunRepository: ReviewRunRepository;
+  reviewFindingRepository: ReviewFindingRepository;
+  reviewSynthesisRepository: ReviewSynthesisRepository;
+  reviewQuestionRepository: ReviewQuestionRepository;
+  reviewAssumptionRepository: ReviewAssumptionRepository;
   stageRunRepository: StageRunRepository;
   artifactRepository: ArtifactRepository;
   agentSessionRepository: AgentSessionRepository;
   appVerificationRunRepository: AppVerificationRunRepository;
+  sonarService: SonarService;
+  coderabbitService: CoderabbitService;
+  qualityKnowledgeService: QualityKnowledgeService;
 };
