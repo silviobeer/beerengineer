@@ -148,7 +148,6 @@ export function createAppContext(
   }
 ): AppContext {
   const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-  const artifactRoot = resolve(repoRoot, "var/artifacts");
   const agentRuntimeConfigPath = options?.agentRuntimeConfigPath ?? resolve(repoRoot, "config/agent-runtime.json");
   const agentRuntimeConfig = loadAgentRuntimeConfig(agentRuntimeConfigPath);
   const agentRuntimeResolver = new AgentRuntimeResolver(agentRuntimeConfig, {
@@ -218,6 +217,7 @@ export function createAppContext(
     workspaceRoot: options?.workspaceRoot ?? workspace.rootPath ?? repoRoot,
     agentRuntimeConfigPath
   };
+  const artifactRoot = resolve(effectiveConfig.workspaceRoot, ".beerengineer", "artifacts");
   const qualityKnowledgeService = new QualityKnowledgeService(qualityKnowledgeEntryRepository, workspace);
   const sonarService = new SonarService(
     workspace,

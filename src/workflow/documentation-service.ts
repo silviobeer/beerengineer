@@ -319,10 +319,15 @@ export class DocumentationService {
     projectCode: string,
     parsed: DocumentationOutput
   ): { markdownPath: string; jsonPath: string } {
-    const docsDir = resolve(this.resolveProjectWorkspaceRoot(projectId), "docs");
-    mkdirSync(docsDir, { recursive: true });
-    const markdownPath = resolve(docsDir, `${projectCode}-delivery-report.md`);
-    const jsonPath = resolve(docsDir, `${projectCode}-delivery-report.json`);
+    const outputDir = resolve(
+      this.resolveProjectWorkspaceRoot(projectId),
+      ".beerengineer",
+      "artifacts",
+      "delivery-reports"
+    );
+    mkdirSync(outputDir, { recursive: true });
+    const markdownPath = resolve(outputDir, `${projectCode}-delivery-report.md`);
+    const jsonPath = resolve(outputDir, `${projectCode}-delivery-report.json`);
     writeFileSync(markdownPath, parsed.reportMarkdown, "utf8");
     writeFileSync(
       jsonPath,

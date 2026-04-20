@@ -445,7 +445,7 @@ The repo must distinguish clearly between:
 
 ### Should Stay Untracked
 
-- `var/artifacts/`
+- `.beerengineer/artifacts/`
 - SQLite databases
 - temporary worker payloads
 - local worktree scratch files

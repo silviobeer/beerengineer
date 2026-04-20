@@ -147,7 +147,16 @@ export class GitWorkflowService {
   }
 
   private hasUncommittedChanges(): boolean {
-    return this.runGit(["status", "--porcelain"]).trim().length > 0;
+    return (
+      this.runGit([
+        "status",
+        "--porcelain",
+        "--",
+        ".",
+        ":(exclude).beerengineer",
+        ":(exclude)artifacts/app-verification"
+      ]).trim().length > 0
+    );
   }
 
   private currentHeadOrNull(): string | null {

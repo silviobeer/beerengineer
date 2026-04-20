@@ -15,13 +15,13 @@ var/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+.beerengineer/
 
 # Secrets
 .env
 .env.local
 scripts/sonar-*.json
-docs/*-delivery-report.json
-docs/*-delivery-report.md
+artifacts/app-verification/
 
 # OS / editor
 .DS_Store

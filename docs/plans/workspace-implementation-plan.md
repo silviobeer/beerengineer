@@ -409,7 +409,7 @@ Artifacts must be separated per workspace on disk, not only in SQL.
 
 Recommended new path layout:
 
-- `var/artifacts/workspaces/<workspace-key>/items/<item-id>/<project-or-shared>/runs/<run-id>/...`
+- `.beerengineer/artifacts/workspaces/<workspace-key>/items/<item-id>/<project-or-shared>/runs/<run-id>/...`
 
 Benefits:
 
@@ -529,9 +529,9 @@ This avoids:
 
 Update:
 
-- `docs/architecture.md`
-- `docs/persistence.md`
-- `docs/cli.md`
+- `docs/reference/architecture.md`
+- `docs/reference/persistence.md`
+- `docs/reference/cli.md`
 
 So the new scope and settings model are explicit.
 

@@ -166,7 +166,7 @@ describe("workflow service", () => {
     }
   });
 
-  it("shows item delivery summaries and materializes documentation into the workspace docs folder", async () => {
+  it("shows item delivery summaries and materializes documentation into the workspace artifacts folder", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
     const dbPath = join(root, "app.sqlite");
     const workspaceRoot = join(root, "workspace");
@@ -205,8 +205,20 @@ describe("workflow service", () => {
         latestDocumentationStatus: "completed"
       });
 
-      const markdownPath = join(workspaceRoot, "docs", `${project.code}-delivery-report.md`);
-      const jsonPath = join(workspaceRoot, "docs", `${project.code}-delivery-report.json`);
+      const markdownPath = join(
+        workspaceRoot,
+        ".beerengineer",
+        "artifacts",
+        "delivery-reports",
+        `${project.code}-delivery-report.md`
+      );
+      const jsonPath = join(
+        workspaceRoot,
+        ".beerengineer",
+        "artifacts",
+        "delivery-reports",
+        `${project.code}-delivery-report.json`
+      );
       expect(existsSync(markdownPath)).toBe(true);
       expect(existsSync(jsonPath)).toBe(true);
       expect(readFileSync(markdownPath, "utf8")).toContain(`${project.code} Delivery Report`);
@@ -247,8 +259,20 @@ describe("workflow service", () => {
         const documentation = await documentationContext.workflowService.startDocumentation(project.id);
         expect(documentation.status).toBe("completed");
 
-        const markdownPath = join(executionWorkspaceRoot, "docs", `${project.code}-delivery-report.md`);
-        const jsonPath = join(executionWorkspaceRoot, "docs", `${project.code}-delivery-report.json`);
+        const markdownPath = join(
+          executionWorkspaceRoot,
+          ".beerengineer",
+          "artifacts",
+          "delivery-reports",
+          `${project.code}-delivery-report.md`
+        );
+        const jsonPath = join(
+          executionWorkspaceRoot,
+          ".beerengineer",
+          "artifacts",
+          "delivery-reports",
+          `${project.code}-delivery-report.json`
+        );
         expect(existsSync(markdownPath)).toBe(true);
         expect(existsSync(jsonPath)).toBe(true);
       } finally {
@@ -320,7 +344,53 @@ describe("workflow service", () => {
         const documentation = await documentationContext.workflowService.startDocumentation(project.id);
         expect(documentation.status).toBe("completed");
 
-        const markdownPath = join(executionWorkspaceRoot, "docs", `${project.code}-delivery-report.md`);
+        const markdownPath = join(
+          executionWorkspaceRoot,
+          ".beerengineer",
+          "artifacts",
+          "delivery-reports",
+          `${project.code}-delivery-report.md`
+        );
+        expect(existsSync(markdownPath)).toBe(true);
+      } finally {
+        documentationContext.connection.close();
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to the configured workspace root when execution metadata is missing", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const executionWorkspaceRoot = createGitWorkspace(root);
+    const setupContext = createAppContext(dbPath, { workspaceRoot: executionWorkspaceRoot });
+
+    try {
+      const { project } = await prepareProjectThroughCompletedExecution(setupContext, {
+        title: "Workspace Metadata Fallback",
+        description: "Use configured workspace root when no execution metadata is available"
+      });
+      const qa = await setupContext.workflowService.startQa(project.id);
+      expect(qa.status).toBe("passed");
+
+      asRunnableConnection(setupContext.connection)
+        .prepare("UPDATE wave_story_executions SET git_metadata_json = NULL")
+        .run();
+      setupContext.connection.close();
+
+      const documentationContext = createAppContext(dbPath, { workspaceRoot: executionWorkspaceRoot });
+      try {
+        const documentation = await documentationContext.workflowService.startDocumentation(project.id);
+        expect(documentation.status).toBe("completed");
+
+        const markdownPath = join(
+          executionWorkspaceRoot,
+          ".beerengineer",
+          "artifacts",
+          "delivery-reports",
+          `${project.code}-delivery-report.md`
+        );
         expect(existsSync(markdownPath)).toBe(true);
       } finally {
         documentationContext.connection.close();
@@ -397,7 +467,12 @@ describe("workflow service", () => {
       expect(context.repositories.conceptRepository.getLatestByItemId(item.id)?.id).toBe(promoted.conceptId);
       const projectsArtifact = context.repositories.artifactRepository.getLatestByKind({ itemId: item.id, kind: "projects" });
       expect(projectsArtifact?.id).toBeTruthy();
-      const projectsPayload = JSON.parse(readFileSync(join("var/artifacts", projectsArtifact!.path), "utf8")) as {
+      const projectsPayload = JSON.parse(
+        readFileSync(
+          join(context.effectiveConfig.workspaceRoot, ".beerengineer", "artifacts", projectsArtifact!.path),
+          "utf8"
+        )
+      ) as {
         projects: Array<{ title: string; goal: string }>;
       };
       expect(projectsPayload.projects.length).toBe(1);
@@ -1177,14 +1252,28 @@ describe("workflow service", () => {
       const executions = setupContext.repositories.waveStoryExecutionRepository.listLatestByWaveStoryIds(
         waveStories.map((waveStory) => waveStory.id)
       );
-      asRunnableConnection(setupContext.connection)
-        .prepare("UPDATE wave_story_executions SET git_metadata_json = NULL")
-        .run();
-      setupContext.connection.close();
-
       const invalidWorkspaceRoot = join(root, "invalid-workspace-root");
       writeFileSync(invalidWorkspaceRoot, "not a directory", "utf8");
-      const documentationContext = createAppContext(dbPath, { workspaceRoot: invalidWorkspaceRoot });
+      asRunnableConnection(setupContext.connection)
+        .prepare("UPDATE wave_story_executions SET git_metadata_json = ?")
+        .run(
+          JSON.stringify({
+            branchRole: "story",
+            baseRef: "proj/test",
+            branchName: "story/test",
+            workspaceRoot: invalidWorkspaceRoot,
+            headBefore: null,
+            headAfter: null,
+            commitSha: null,
+            mergedIntoRef: null,
+            mergedCommitSha: null,
+            strategy: "simulated",
+            reason: "forced invalid workspace for test"
+          })
+        );
+      setupContext.connection.close();
+
+      const documentationContext = createAppContext(dbPath, { workspaceRoot: executionWorkspaceRoot });
       try {
         const documentation = await documentationContext.workflowService.startDocumentation(project.id);
         expect(executions.length).toBeGreaterThan(0);

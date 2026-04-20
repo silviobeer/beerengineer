@@ -62,6 +62,8 @@ prompts/
   system/
 skills/
 docs/
+artifacts/  # generierte app-nahe Ausgaben
+.beerengineer/  # engine-interne Laufzeitdaten im App-Workspace
 test/
   e2e/
   fixtures/
@@ -71,15 +73,16 @@ test/
 
 ## Dokumentation
 
-- [Teststrategie](docs/testing-strategy.md)
+- [Docs Index](docs/README.md)
+- [Teststrategie](docs/reference/testing-strategy.md)
 
 Weitere Details:
 
-- [Architektur](docs/architecture.md)
-- [CLI](docs/cli.md)
-- [Prompts und Skills](docs/prompts-and-skills.md)
-- [MVP Scope](docs/mvp-scope.md)
-- [Verification](docs/verification.md)
+- [Architektur](docs/reference/architecture.md)
+- [CLI](docs/reference/cli.md)
+- [Prompts und Skills](docs/reference/prompts-and-skills.md)
+- [MVP Scope](docs/reference/mvp-scope.md)
+- [Verification](docs/reference/verification.md)
 
 ## Code Review
 

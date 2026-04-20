@@ -279,4 +279,4 @@ Im aktuellen Documentation-Schnitt gilt:
 - Dokumentation startet nur nach einem `QaRun` mit Status `passed` oder `review_required`
 - `documentation:show` zeigt den neuesten `DocumentationRun` sowie Sessions und zugehoerige Artefakte aller Dokumentationsversuche fuer das Project
 - `documentation:retry` erlaubt genau dann einen neuen Dokumentationslauf, wenn der letzte `DocumentationRun` auf `review_required` oder `failed` steht
-- `documentation:start` materialisiert den fertigen Delivery-Report zusaetzlich in den Workspace unter `docs/<projectCode>-delivery-report.md` und `docs/<projectCode>-delivery-report.json`
+- `documentation:start` materialisiert den fertigen Delivery-Report zusaetzlich in den Workspace unter `.beerengineer/artifacts/delivery-reports/<projectCode>-delivery-report.md` und `.beerengineer/artifacts/delivery-reports/<projectCode>-delivery-report.json`

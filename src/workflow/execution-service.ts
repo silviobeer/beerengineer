@@ -383,7 +383,7 @@ export class ExecutionService {
     const relevantDirectories = ["src", "test", "docs"].filter((directory) =>
       existsSync(resolve(this.options.deps.repoRoot, directory))
     );
-    const relevantFiles = ["README.md", "AGENTS.md", "docs/architecture.md"].filter((filePath) =>
+    const relevantFiles = ["README.md", "AGENTS.md", "docs/reference/architecture.md"].filter((filePath) =>
       existsSync(resolve(this.options.deps.repoRoot, filePath))
     );
     const integrationPoints = [
