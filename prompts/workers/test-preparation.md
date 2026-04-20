@@ -20,3 +20,6 @@ Rules:
 - prefer minimal, targeted tests over broad speculative suites
 - do not redesign architecture
 - do not invent unrelated work
+- treat the pre-implementation state of the repo as normal
+- do not use blockers just because the feature, server, port wiring, or test tooling does not exist yet
+- use blockers only when the provided story, acceptance criteria, architecture, or plan leave the intended observable behavior genuinely ambiguous

@@ -30,6 +30,8 @@ import type { WorkflowEntityLoaders } from "./entity-loaders.js";
 import { buildStoryWorkflowAdapterContext } from "./adapter-payloads.js";
 import type { BuildAdapterRuntimeContext, ResolvedWorkerProfile, ResolvedWorkerRuntime } from "./runtime-types.js";
 import { MAX_STORY_REVIEW_REMEDIATION_ATTEMPTS } from "./workflow-constants.js";
+import type { ReviewCoreService } from "../review/review-core-service.js";
+import type { ReviewRecordInput } from "../review/types.js";
 
 const appTestConfigSchema = z.object({
   baseUrl: z.string().min(1).optional(),
@@ -71,6 +73,7 @@ type AppVerificationExecutionResult = {
 
 type VerificationServiceOptions = {
   deps: WorkflowDeps;
+  reviewCoreService: ReviewCoreService;
   loaders: Pick<
     WorkflowEntityLoaders,
     | "requireWaveStoryExecution"
@@ -131,27 +134,10 @@ type VerificationServiceOptions = {
     status: string;
   }>;
   ensureStoryRemediationBranch(projectCode: string, storyCode: string, storyReviewRunId: string): GitBranchMetadata;
+  ensureStoryRemediationWorktree(storyCode: string, storyReviewRunId: string, gitMetadata: GitBranchMetadata): GitBranchMetadata;
+  finalizeAcceptedExecution?(waveStoryExecutionId: string): void;
+  finalizeAcceptedRemediation?(storyReviewRemediationRunId: string): void;
   invalidateDocumentationForProject(projectId: string, reason: string): void;
-  mirrorStoryReview?(input: {
-    waveStoryExecutionId: string;
-    storyReviewRunId: string;
-    projectId: string;
-    waveId: string;
-    storyId: string;
-    storyCode: string;
-    status: StoryReviewRunStatus;
-    findings: Array<{
-      severity: string;
-      category: string;
-      title: string;
-      description: string;
-      evidence: string;
-      filePath: string | null;
-      line: number | null;
-    }>;
-    summary: StoryReviewOutput | null;
-    errorMessage: string | null;
-  }): void;
   triggerImplementationReview?(input: {
     waveStoryExecutionId: string;
     automationLevel: "auto_comment";
@@ -233,6 +219,9 @@ export class VerificationService {
         }
       );
       this.options.refreshWaveExecutionStatus(waveExecution.id);
+    }
+    if (storyReview.status === "passed") {
+      this.options.finalizeAcceptedExecution?.(execution.id);
     }
 
     const latestStoryReviewRun = this.options.deps.storyReviewRunRepository.getLatestByWaveStoryExecutionId(execution.id);
@@ -334,6 +323,9 @@ export class VerificationService {
       }
     );
     this.options.refreshWaveExecutionStatus(waveExecution.id);
+    if (finalExecutionStatus === "passed") {
+      this.options.finalizeAcceptedExecution?.(execution.id);
+    }
 
     return {
       phase: storyReview ? "story_review" : "app_verification",
@@ -449,7 +441,11 @@ export class VerificationService {
       null,
       2
     );
-    const gitMetadata = this.options.ensureStoryRemediationBranch(project.code, story.code, storyReviewRun.id);
+    const gitMetadata = this.options.ensureStoryRemediationWorktree(
+      story.code,
+      storyReviewRun.id,
+      this.options.ensureStoryRemediationBranch(project.code, story.code, storyReviewRun.id)
+    );
     const remediationRun = this.options.deps.runInTransaction(() => {
       const priorAttempts = this.options.deps.storyReviewRemediationRunRepository.listByStoryReviewRunId(storyReviewRun.id);
       if (priorAttempts.length >= MAX_STORY_REVIEW_REMEDIATION_ATTEMPTS) {
@@ -549,6 +545,7 @@ export class VerificationService {
       });
       if (remediationStatus === "completed") {
         this.options.invalidateDocumentationForProject(project.id, `story review remediation ${remediationRun.id}`);
+        this.options.finalizeAcceptedRemediation?.(remediationRun.id);
       }
       this.options.refreshWaveExecutionStatus(waveExecution.id);
       return {
@@ -706,6 +703,183 @@ export class VerificationService {
     };
   }
 
+  private recordStoryReviewCore(input: {
+    waveStoryExecutionId: string;
+    storyReviewRunId: string;
+    projectId: string;
+    waveId: string;
+    storyId: string;
+    storyCode: string;
+    status: StoryReviewRunStatus;
+    findings: Array<{
+      severity: string;
+      category: string;
+      title: string;
+      description: string;
+      evidence: string;
+      filePath: string | null;
+      line: number | null;
+    }>;
+    errorMessage: string | null;
+  }) {
+    const gateDecision =
+      input.status === "passed" ? "pass" : input.status === "failed" ? "needs_human_review" : ("advisory" as const);
+    this.options.reviewCoreService.recordReview({
+      reviewKind: "interactive_story",
+      subjectType: "wave_story_execution",
+      subjectId: input.waveStoryExecutionId,
+      subjectStep: "story_review",
+      status: input.status === "passed" ? "complete" : input.status === "failed" ? "failed" : "action_required",
+      readiness: input.status === "passed" ? "ready" : input.status === "failed" ? "needs_human_review" : "review_required",
+      interactionMode: "auto",
+      reviewMode: "readiness",
+      automationLevel: "auto_comment",
+      requestedMode: null,
+      actualMode: null,
+      confidence: "medium",
+      gateEligibility: "advisory_only",
+      sourceSummary: {
+        storyReviewRunId: input.storyReviewRunId,
+        storyCode: input.storyCode,
+        storyId: input.storyId,
+        projectId: input.projectId,
+        waveId: input.waveId,
+        errorMessage: input.errorMessage
+      },
+      providersUsed: ["story-reviewer"],
+      missingCapabilities: [],
+      summary:
+        input.status === "passed"
+          ? "Story review completed without blocking findings."
+          : input.status === "failed"
+            ? "Story review failed."
+            : "Story review returned actionable findings.",
+      keyPoints: input.findings.slice(0, 7).map((finding) => finding.title),
+      disagreements: [],
+      recommendedAction:
+        input.status === "passed"
+          ? "Proceed with downstream quality checks."
+          : input.status === "failed"
+            ? "Retry or inspect the failed story review."
+            : "Resolve the story review findings before continuing.",
+      gateDecision,
+      findings: input.findings.map((finding) => ({
+        sourceSystem: "story_review" as const,
+        reviewerRole: "story-reviewer",
+        findingType: finding.category,
+        normalizedSeverity:
+          finding.severity === "critical" ? "critical" : finding.severity === "high" ? "high" : finding.severity === "medium" ? "medium" : "low",
+        sourceSeverity: finding.severity,
+        title: finding.title,
+        detail: finding.description,
+        evidence: finding.evidence,
+        filePath: finding.filePath,
+        line: finding.line,
+        fieldPath: null
+      })),
+      knowledgeContext: {
+        workspaceId: this.options.deps.workspace.id,
+        projectId: input.projectId,
+        waveId: input.waveId,
+        storyId: input.storyId
+      }
+    });
+  }
+
+  private recordAppVerificationCore(input: {
+    appVerificationRunId: string;
+    waveStoryExecutionId: string;
+    projectId: string;
+    waveId: string;
+    storyId: string;
+    storyCode: string;
+    status: AppVerificationRunStatus;
+    runner: AppVerificationRunner;
+    checks: Array<{
+      id: string;
+      description: string;
+      status: "passed" | "review_required" | "failed";
+      evidence: string;
+    }>;
+    errorMessage: string | null;
+  }) {
+    const gateDecision =
+      input.status === "passed" ? "pass" : input.status === "failed" ? "blocked" : ("advisory" as const);
+    const findings: ReviewRecordInput["findings"] = input.checks
+      .filter((check) => check.status !== "passed")
+      .map((check) => ({
+        sourceSystem: "tests" as const,
+        reviewerRole: "app-verifier",
+        findingType: "app_verification_check",
+        normalizedSeverity: check.status === "failed" ? ("critical" as const) : ("high" as const),
+        sourceSeverity: check.status,
+        title: `${check.id}: ${check.description}`,
+        detail: check.evidence,
+        evidence: check.evidence,
+        filePath: null,
+        line: null,
+        fieldPath: check.id
+      }));
+    if (findings.length === 0 && input.status === "failed") {
+      findings.push({
+        sourceSystem: "tests" as const,
+        reviewerRole: "app-verifier",
+        findingType: "app_verification",
+        normalizedSeverity: "critical",
+        sourceSeverity: "failed",
+        title: "App verification failed before checks completed",
+        detail: input.errorMessage ?? "App verification did not complete cleanly.",
+        evidence: input.errorMessage ?? "App verification did not complete cleanly.",
+        filePath: null,
+        line: null,
+        fieldPath: null
+      });
+    }
+    this.options.reviewCoreService.recordReview({
+      reviewKind: "app_verification",
+      subjectType: "wave_story_execution",
+      subjectId: input.waveStoryExecutionId,
+      subjectStep: "app_verification",
+      status: input.status === "passed" ? "complete" : input.status === "failed" ? "failed" : "action_required",
+      readiness: input.status === "passed" ? "ready" : input.status === "failed" ? "needs_human_review" : "review_required",
+      interactionMode: "auto",
+      reviewMode: "readiness",
+      automationLevel: "auto_comment",
+      requestedMode: null,
+      actualMode: null,
+      confidence: "medium",
+      gateEligibility: "advisory_only",
+      sourceSummary: {
+        appVerificationRunId: input.appVerificationRunId,
+        storyCode: input.storyCode,
+        storyId: input.storyId,
+        projectId: input.projectId,
+        waveId: input.waveId,
+        runner: input.runner,
+        errorMessage: input.errorMessage
+      },
+      providersUsed: [input.runner],
+      missingCapabilities: [],
+      summary:
+        input.status === "passed"
+          ? "App verification completed without actionable findings."
+          : input.status === "failed"
+            ? "App verification failed."
+            : "App verification returned follow-up findings.",
+      keyPoints: findings.slice(0, 7).map((finding) => finding.title),
+      disagreements: [],
+      recommendedAction:
+        input.status === "passed"
+          ? "Proceed with story review."
+          : input.status === "failed"
+            ? "Retry app verification or inspect the failure."
+            : "Resolve the app verification findings before continuing.",
+      gateDecision,
+      findings,
+      knowledgeContext: null
+    });
+  }
+
   private parseStoredJson<T>(value: string | null, errorCode: string, label: string): T | null {
     if (value === null) {
       return null;
@@ -717,22 +891,26 @@ export class VerificationService {
     }
   }
 
+  private resolveExecutionGitMetadata(execution: WaveStoryExecutionRecord): GitBranchMetadata | null {
+    return this.parseStoredJson<GitBranchMetadata>(execution.gitMetadataJson, "EXECUTION_GIT_METADATA_INVALID", "Execution git metadata");
+  }
+
   private parseRalphVerificationOutput(
     verificationRun: ReturnType<WorkflowDeps["verificationRunRepository"]["getLatestByWaveStoryExecutionIdAndMode"]>
   ): RalphVerificationOutput {
     if (!verificationRun?.summaryJson) {
       throw new AppError("RALPH_OUTPUT_MISSING", "Ralph verification has no summary");
     }
-    return ralphVerificationOutputSchema.parse(JSON.parse(verificationRun.summaryJson));
+    return this.normalizeRalphVerificationOutput(JSON.parse(verificationRun.summaryJson));
   }
 
-  private buildProjectAppTestContext(project: ReturnType<WorkflowEntityLoaders["requireProject"]>) {
+  private buildProjectAppTestContext(project: ReturnType<WorkflowEntityLoaders["requireProject"]>, workspaceRoot?: string) {
     const defaults = this.getDefaultAppTestConfig();
     const raw = this.options.deps.workspaceSettings.appTestConfigJson;
     if (!raw) {
       return {
         projectId: project.id,
-        workspaceRoot: this.options.deps.workspaceRoot,
+        workspaceRoot: workspaceRoot ?? this.options.deps.workspaceRoot,
         ...defaults
       };
     }
@@ -749,7 +927,7 @@ export class VerificationService {
 
     return {
       projectId: project.id,
-      workspaceRoot: this.options.deps.workspaceRoot,
+      workspaceRoot: workspaceRoot ?? this.options.deps.workspaceRoot,
       baseUrl: parsed.baseUrl ?? defaults.baseUrl,
       runnerPreference: parsed.runnerPreference ?? defaults.runnerPreference,
       readiness: parsed.readiness ?? defaults.readiness,
@@ -825,6 +1003,36 @@ export class VerificationService {
     };
   }
 
+  private async isBaseUrlReachable(baseUrl: string): Promise<boolean> {
+    try {
+      const response = await fetch(baseUrl, {
+        method: "GET",
+        signal: AbortSignal.timeout(2000)
+      });
+      return response.ok || response.status >= 400;
+    } catch {
+      return false;
+    }
+  }
+
+  private async resolvePreparedAppVerificationSession(input: {
+    projectAppTestContext: ReturnType<VerificationService["buildProjectAppTestContext"]>;
+    storyAppVerificationContext: ReturnType<VerificationService["buildStoryAppVerificationContext"]>;
+  }) {
+    const preparedSession = this.prepareAppVerificationSession(input);
+    if (
+      preparedSession.runner === "agent_browser" &&
+      input.projectAppTestContext.runnerPreference.includes("playwright") &&
+      !(await this.isBaseUrlReachable(preparedSession.baseUrl))
+    ) {
+      return {
+        ...preparedSession,
+        runner: "playwright" as const
+      };
+    }
+    return preparedSession;
+  }
+
   private async executeRalphVerification(input: {
     project: ReturnType<WorkflowEntityLoaders["requireProject"]>;
     implementationPlan: ReturnType<WorkflowEntityLoaders["requireImplementationPlanForProject"]>;
@@ -846,6 +1054,7 @@ export class VerificationService {
   }): Promise<{ status: VerificationRunStatus; summary: RalphVerificationOutput; errorMessage: string | null }> {
     const resolvedWorkerProfile = this.options.resolveWorkerProfile("ralph");
     const runtime = this.options.resolveWorkerRuntime("ralph");
+    const gitMetadata = this.resolveExecutionGitMetadata(input.execution);
     const storyWorkflowContext = this.buildStoryWorkflowAdapterContext({
       project: input.project,
       implementationPlan: input.implementationPlan,
@@ -856,7 +1065,10 @@ export class VerificationService {
     const testPreparation = this.buildTestPreparationPayload(input.testPreparationRun, input.parsedTestPreparation);
     try {
       const result = await runtime.adapter.runStoryRalphVerification({
-        runtime: this.options.buildAdapterRuntimeContext(runtime),
+        runtime: this.options.buildAdapterRuntimeContext({
+          ...runtime,
+          workspaceRoot: gitMetadata?.worktreePath ?? undefined
+        }),
         workerRole: "ralph-verifier",
         prompt: resolvedWorkerProfile.promptContent,
         skills: resolvedWorkerProfile.skills,
@@ -869,7 +1081,7 @@ export class VerificationService {
         }
       });
 
-      const parsed = ralphVerificationOutputSchema.parse(result.output);
+      const parsed = this.normalizeRalphVerificationOutput(result.output);
       const status = this.resolveRalphVerificationStatus(parsed, result.exitCode);
       this.options.deps.verificationRunRepository.create({
         waveExecutionId: input.waveExecution.id,
@@ -1033,7 +1245,7 @@ export class VerificationService {
         summaryJson: JSON.stringify(parsed, null, 2),
         errorMessage: null
       });
-      this.options.mirrorStoryReview?.({
+      this.recordStoryReviewCore({
         waveStoryExecutionId: input.execution.id,
         storyReviewRunId: reviewRun.id,
         projectId: input.project.id,
@@ -1050,7 +1262,6 @@ export class VerificationService {
           filePath: finding.filePath,
           line: finding.line
         })),
-        summary: parsed,
         errorMessage: null
       });
       await this.options.triggerImplementationReview?.({
@@ -1074,7 +1285,7 @@ export class VerificationService {
       this.options.deps.storyReviewRunRepository.updateStatus(reviewRun.id, "failed", {
         errorMessage: error instanceof Error ? error.message : String(error)
       });
-      this.options.mirrorStoryReview?.({
+      this.recordStoryReviewCore({
         waveStoryExecutionId: input.execution.id,
         storyReviewRunId: reviewRun.id,
         projectId: input.project.id,
@@ -1083,7 +1294,6 @@ export class VerificationService {
         storyCode: input.story.code,
         status: "failed",
         findings: [],
-        summary: null,
         errorMessage: error instanceof Error ? error.message : String(error)
       });
       await this.options.triggerImplementationReview?.({
@@ -1109,7 +1319,8 @@ export class VerificationService {
     const resolvedWorkerProfile = this.options.resolveWorkerProfile("appVerification");
     const runtime = this.options.resolveWorkerRuntime("appVerification");
     const previousRuns = this.options.deps.appVerificationRunRepository.listByWaveStoryExecutionId(input.execution.id);
-    const projectAppTestContext = this.buildProjectAppTestContext(input.project);
+    const gitMetadata = this.resolveExecutionGitMetadata(input.execution);
+    const projectAppTestContext = this.buildProjectAppTestContext(input.project, gitMetadata?.worktreePath ?? undefined);
     const storyAppVerificationContext = this.buildStoryAppVerificationContext({
       execution: input.execution,
       story: input.story,
@@ -1124,7 +1335,7 @@ export class VerificationService {
       story: input.story,
       storyRunContext: input.storyRunContext
     });
-    const preparedSession = this.prepareAppVerificationSession({
+    const preparedSession = await this.resolvePreparedAppVerificationSession({
       projectAppTestContext,
       storyAppVerificationContext
     });
@@ -1157,6 +1368,18 @@ export class VerificationService {
           preparedSessionJson: JSON.stringify(preparedSession, null, 2),
           failureSummary: "App verification session could not be prepared."
         });
+        this.recordAppVerificationCore({
+          appVerificationRunId: run.id,
+          waveStoryExecutionId: input.execution.id,
+          projectId: input.project.id,
+          waveId: input.wave.id,
+          storyId: input.story.id,
+          storyCode: input.story.code,
+          status: "failed",
+          runner: preparedSession.runner,
+          checks: [],
+          errorMessage: "App verification session could not be prepared."
+        });
         return {
           status: "failed",
           errorMessage: "App verification session could not be prepared.",
@@ -1173,7 +1396,10 @@ export class VerificationService {
       });
 
       const result = await runtime.adapter.runStoryAppVerification({
-        runtime: this.options.buildAdapterRuntimeContext(runtime),
+        runtime: this.options.buildAdapterRuntimeContext({
+          ...runtime,
+          workspaceRoot: gitMetadata?.worktreePath ?? undefined
+        }),
         workerRole: "app-verifier",
         prompt: resolvedWorkerProfile.promptContent,
         skills: resolvedWorkerProfile.skills,
@@ -1196,6 +1422,18 @@ export class VerificationService {
         artifactsJson: JSON.stringify(parsed.artifacts, null, 2),
         failureSummary: parsed.failureSummary ?? null
       });
+      this.recordAppVerificationCore({
+        appVerificationRunId: run.id,
+        waveStoryExecutionId: input.execution.id,
+        projectId: input.project.id,
+        waveId: input.wave.id,
+        storyId: input.story.id,
+        storyCode: input.story.code,
+        status,
+        runner: parsed.runner,
+        checks: parsed.checks,
+        errorMessage: parsed.failureSummary ?? null
+      });
       return {
         status,
         errorMessage: status === "failed" ? parsed.failureSummary ?? "App verification failed" : null,
@@ -1209,6 +1447,18 @@ export class VerificationService {
         storyContextJson: JSON.stringify(storyAppVerificationContext, null, 2),
         preparedSessionJson: JSON.stringify(preparedSession, null, 2),
         failureSummary: error instanceof Error ? error.message : String(error)
+      });
+      this.recordAppVerificationCore({
+        appVerificationRunId: run.id,
+        waveStoryExecutionId: input.execution.id,
+        projectId: input.project.id,
+        waveId: input.wave.id,
+        storyId: input.story.id,
+        storyCode: input.story.code,
+        status: "failed",
+        runner: preparedSession.runner,
+        checks: [],
+        errorMessage: error instanceof Error ? error.message : String(error)
       });
       return {
         status: "failed",
@@ -1228,6 +1478,38 @@ export class VerificationService {
     return "passed";
   }
 
+  private normalizeRalphVerificationOutput(value: unknown): RalphVerificationOutput {
+    const candidate = (value ?? {}) as {
+      acceptanceCriteriaResults?: Array<{
+        evidence?: unknown;
+        notes?: unknown;
+        acceptanceCriterionCode?: unknown;
+        status?: unknown;
+      }>;
+    };
+    const normalized = {
+      ...(typeof value === "object" && value !== null ? value : {}),
+      acceptanceCriteriaResults: Array.isArray(candidate.acceptanceCriteriaResults)
+        ? candidate.acceptanceCriteriaResults.map((result) => {
+            const evidence = typeof result.evidence === "string" ? result.evidence.trim() : "";
+            const notes = typeof result.notes === "string" ? result.notes.trim() : "";
+            const criterionCode =
+              typeof result.acceptanceCriterionCode === "string" && result.acceptanceCriterionCode.trim()
+                ? result.acceptanceCriterionCode.trim()
+                : "this acceptance criterion";
+            const status =
+              typeof result.status === "string" && result.status.trim() ? result.status.trim() : "review_required";
+            return {
+              ...result,
+              evidence: evidence || `No explicit Ralph evidence was provided for ${criterionCode}.`,
+              notes: notes || `${criterionCode} is currently marked ${status}.`
+            };
+          })
+        : []
+    };
+    return ralphVerificationOutputSchema.parse(normalized);
+  }
+
   private resolveRalphVerificationStatus(output: RalphVerificationOutput, exitCode: number): VerificationRunStatus {
     return this.resolveExternalVerificationStatus(output.overallStatus, exitCode);
   }
@@ -1243,10 +1525,13 @@ export class VerificationService {
     if (exitCode !== 0) {
       return "failed";
     }
+    if (output.overallStatus === "failed") {
+      return "failed";
+    }
     if (output.findings.some((finding) => finding.severity === "critical" || finding.severity === "high")) {
       return "failed";
     }
-    if (output.findings.length > 0) {
+    if (output.overallStatus === "review_required") {
       return "review_required";
     }
     return "passed";

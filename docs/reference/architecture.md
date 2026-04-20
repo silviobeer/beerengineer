@@ -5,6 +5,8 @@ Der MVP ist engine-first aufgebaut:
 - `domain/` enthaelt Entitaeten, Statuswerte und Gate-Regeln
 - `persistence/` kapselt SQLite, Migrationen, Drizzle-Schema und Repositories
 - `workflow/` steuert `StageRun`-Lifecycle, Planning-Importe, Execution-Orchestrierung und Statuswechsel
+- `review/` kapselt den generischen Review Core, Provider-Normalisierung und
+  Review-Execution-Planung
 - `services/` kapseln dateibasierte Resolver und Artefaktablage
 - `adapters/` entkoppeln die technische Agent-Ausfuehrung vom Workflow
 - `cli/` bleibt duenn und delegiert in Services
@@ -20,6 +22,13 @@ BeerEngineer besitzt jetzt einen echten Workspace-Layer:
 Davon getrennt bleibt:
 
 - `workspaceRoot` als technischer Repo-/Git-Pfad fuer einen konkreten Lauf
+
+Im Execution-Pfad bedeutet das jetzt konkret:
+
+- der persistierte Workspace bleibt der stabile Projekt-Root
+- Story- und Remediation-Laeufe arbeiten in engine-owned Git-Worktrees unter `.beerengineer/worktrees/`
+- read-only Reviews und projektweite Documentation bleiben am stabilen Workspace-Root
+- Merges werden ueber temporaere Merge-Worktrees oder bestehende Story-Worktrees orchestriert, nicht ueber den Haupt-Checkout
 
 Damit koennen mehrere Apps dieselbe Engine und dieselbe SQLite-Instanz nutzen,
 ohne ihre Item-Historien zu vermischen.
@@ -70,6 +79,15 @@ Persistiert werden dafuer:
 - `WaveStoryExecution` als Laufzeitversuch fuer genau eine Story-in-Wave-Zuordnung
 - `ExecutionAgentSession` fuer den konkreten Worker-Lauf
 - `VerificationRun` fuer das strukturierte Ergebnis der Verifikation
+- `ReviewRun`, `ReviewFinding`, `ReviewSynthesis`, `ReviewQuestion` und
+  `ReviewAssumption` fuer generische Reviews
+
+Git-Isolation wird dabei engine-seitig mitgefuehrt:
+
+- `proj/{code}` als langlebiger Projekt-Branch
+- `story/{project}/{story}` pro Story-Lauf
+- `fix/{story}/{reviewRun}` pro bounded Remediation-Lauf
+- `GitBranchMetadata.worktreePath` als technischer Ausfuehrungspfad fuer Agent-Runs
 
 Vor jedem Story-Run erzeugt die Engine und speichert:
 
@@ -77,3 +95,26 @@ Vor jedem Story-Run erzeugt die Engine und speichert:
 - einen Repo-Context-Snapshot
 
 Dadurch bleibt der Ausfuehrungspfad nachvollziehbar und reproduzierbar, ohne das Scheduling dem LLM zu ueberlassen.
+
+## Review Architecture
+
+Die Review-Schicht ist jetzt zweigeteilt:
+
+- bounded Runtime-Reviews fuer konkrete Worker-Laeufe
+  - `StoryReviewRun`
+  - `QaRun`
+- generischer Review Core fuer vereinheitlichte Review-Auswertung
+  - `planning`
+  - `interactive_story`
+  - `implementation`
+  - `qa`
+
+Wichtig:
+
+- Story Review und QA behalten ihre bounded Runtime-Records fuer Worker-Sessions
+  und fachliche Runtime-Historie
+- die vereinheitlichte Gate-/Finding-Logik lebt aber im Review Core
+- `implementation` ist voll Core-nativ und kombiniert Tool-Signale mit
+  LLM-Review
+- automatische Remediation fuer `implementation` laeuft ueber einen separaten
+  `ReviewRemediationService`, nicht im Core selbst

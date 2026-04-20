@@ -191,6 +191,7 @@ Wichtige Parameter fuer `implementation-review:start`:
 
 - `--wave-story-execution-id <id>`
 - `--automation-level manual|auto_suggest|auto_comment|auto_gate`
+- `--interaction-mode auto|assisted|interactive`
 
 Rueckgabe:
 
@@ -199,7 +200,7 @@ Rueckgabe:
 - `sourceSummary`
   - zusammengefasster Execution-/Story-/Provider-Kontext
 - `findings`
-  - normalisierte Findings aus Story Review, Tests/Verification,
+  - normalisierte Findings aus Core-nativem Story Review, Tests/Verification,
     `CodeRabbit`-Knowledge und `SonarCloud`
 - `synthesis`
   - inklusive `gateDecision`
@@ -208,8 +209,13 @@ Rueckgabe:
 Wichtig:
 
 - Der Lauf persistiert ueber den generischen Review-Core.
+- Der Default fuer `interactionMode` ist `auto` und kann ueber
+  Workspace-`executionDefaultsJson` oder den CLI-Parameter ueberschrieben
+  werden.
 - Story Review startet danach automatisch einen advisory
   `implementation`-Review-Run mit `automationLevel = auto_comment`.
+- Im `auto`-Mode kann der Lauf sichere Story-Review-Remediation direkt
+  anstossen und danach den neuesten Re-Review-Run auswerten.
 - QA ist jetzt das erste echte Workflow-Gate fuer Implementation Review:
   `qa:start` wird blockiert, wenn fuer eine relevante Story-Execution der
   neueste `implementation`-Review-Run gleichzeitig
@@ -223,8 +229,8 @@ Wichtig:
 
 ## Planning Review Runtime
 
-Planning Review schreibt weiterhin seinen planning-spezifischen Laufdatensatz,
-haengt neue Laeufe aber explizit an den generischen Review-Core an.
+Planning Review schreibt seine Review-Ergebnisse nativ in den generischen
+Review-Core.
 
 Fuer neue Runs gilt deshalb:
 
@@ -232,9 +238,7 @@ Fuer neue Runs gilt deshalb:
 - `planning-review:question:answer`
 - `planning-review:rerun`
 
-arbeiten bevorzugt ueber den verknuepften Core-Run. Die planning-spezifische
-Persistenz bleibt nur noch als Kompatibilitaets-Bridge und fuer aeltere Runs
-erhalten.
+arbeiten direkt auf dem Core-Run.
 
 ## Interactive Brainstorm
 
@@ -314,7 +318,7 @@ Workspace-Kommandos:
 npm run cli -- workspace:list
 npm run cli -- workspace:create --key app-two --name "App Two"
 npm run cli -- workspace:show --workspace app-two
-npm run cli -- workspace:update-root --workspace app-two --root-path ./tmp/app-two
+npm run cli -- workspace:update-root --workspace-key app-two --root-path ./tmp/app-two
 npm run cli -- --workspace app-two workspace:doctor
 npm run cli -- --workspace app-two workspace:init --create-root --init-git
 npm run cli -- --workspace app-two workspace:init --create-root --init-git --dry-run
@@ -436,6 +440,27 @@ Im aktuellen Execution-Schnitt gilt:
 - der Implementer bekommt den gespeicherten Test-Run-Output als Eingabe und arbeitet gegen diese vorab erzeugten Testziele
 - jede `WaveStoryExecution` referenziert den konkret verwendeten Test-Run direkt ueber `testPreparationRunId`
 - eine Story darf erst dann `completed` werden, wenn der neueste Ralph-Run `passed` ist und der neueste Story-Review-Run `passed` ist
+- nach bestandenem Story Review merged die Engine den Story-Branch automatisch in den Projekt-Branch und bereinigt Story-Worktree plus `story/*`-Branch
+- nach erfolgreicher Story-Review-Remediation merged die Engine zuerst `fix/* -> story/*`, dann `story/* -> proj/*`, und bereinigt die beteiligten Worktrees/Branches
+- nach erfolgreicher Documentation merged die Engine den Projekt-Branch automatisch nach `main`
+
+## Workspace Prune
+
+`workspace:prune` bereinigt engine-owned Git-Artefakte im aktiven Workspace:
+
+- fuehrt `git worktree prune` fuer stale Git-Registrierungen aus
+- entfernt sichere Story-/Fix-Worktrees, deren persistierter Git-Zustand bereits als gemergt gilt
+- entfernt verwaiste Verzeichnisse unter `.beerengineer/worktrees/`, die nicht mehr als Git-Worktree registriert sind
+
+## Project Git Finalization
+
+`project:finalize-git --project-id ...` versucht den verbliebenen Projekt-Branch
+manuell nach `main` zu mergen.
+
+- typischer Einsatzfall: automatische Documentation war erfolgreich, aber `proj/* -> main` konnte wegen Merge-Konflikten nicht finalisiert werden
+- bei Erfolg liefert der Command `status = "merged"`
+- wenn der Branch bereits aufgeraeumt wurde, liefert er `status = "already_finalized"`
+- bei weiterhin bestehendem Konflikt liefert er `status = "manual_resolution_required"` mit der Git-Fehlermeldung
 
 ## QA Runtime
 
@@ -482,6 +507,7 @@ Im aktuellen Documentation-Schnitt gilt:
 - `documentation:show` zeigt den neuesten `DocumentationRun` sowie Sessions und zugehoerige Artefakte aller Dokumentationsversuche fuer das Project
 - `documentation:retry` erlaubt genau dann einen neuen Dokumentationslauf, wenn der letzte `DocumentationRun` auf `review_required` oder `failed` steht
 - `documentation:start` materialisiert den fertigen Delivery-Report zusaetzlich in den Workspace unter `.beerengineer/artifacts/delivery-reports/<projectCode>-delivery-report.md` und `.beerengineer/artifacts/delivery-reports/<projectCode>-delivery-report.json`
+- `documentation:start` liefert bei erfolgreicher Dokumentation zusaetzlich einen `projectFinalization`-Status fuer den anschliessenden `proj/* -> main`-Merge
 - `beerengineer sonar preflight` prueft die Laufzeitvoraussetzungen fuer Live-Sonar (`java`, `sonar-scanner`, `SONAR_TOKEN`) und gibt klare naechste Schritte aus
 - `beerengineer coderabbit preflight` prueft die optionalen Voraussetzungen fuer spaetere Live-Coderabbit-Reviews (`CODERABBIT_TOKEN`, Organisation/Repository, Git-Repo) und gibt klare naechste Schritte aus
 

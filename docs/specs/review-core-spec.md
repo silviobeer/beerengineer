@@ -89,9 +89,9 @@ Aktuell angebunden:
   - manuell ueber CLI
   - als Gate vor `qa:start`
 - Interactive Story Review
-  - wird nach Abschluss in den Core gespiegelt
+  - schreibt direkt in den Core
 - QA Review
-  - wird nach Abschluss in den Core gespiegelt
+  - schreibt direkt in den Core
 
 ## Nicht-Zustaendigkeiten
 
@@ -100,6 +100,9 @@ Der Review Core uebernimmt nicht:
 - Planning-Artefakt-Normalisierung
 - Story-/Code-Kontextaufbau
 - Sonar-/CodeRabbit-spezifische Parsing-Logik
-- Remediation-Implementierung
+- Remediation-Ausfuehrung selbst
+
+Die geschlossene Remediation-Orchestrierung fuer `implementation` sitzt jetzt im
+`ReviewRemediationService`, nutzt aber die Core-Runs als Fuehrungswahrheit.
 
 Diese Logik bleibt in den fachlichen Services oder Provider-Adaptern.

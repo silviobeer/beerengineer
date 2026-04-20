@@ -1,4 +1,6 @@
 import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 
 import type { GitBranchMetadata } from "../domain/types.js";
 
@@ -8,6 +10,7 @@ type GitWorkflowContext = {
   storyCode?: string;
   findingRunId?: string;
   branchRole: GitBranchMetadata["branchRole"];
+  allowDirtyWorkspace?: boolean;
 };
 
 function sanitizeRefSegment(value: string): string {
@@ -29,6 +32,23 @@ export class GitWorkflowService {
     return `fix/${sanitizeRefSegment(storyCode)}/${sanitizeRefSegment(findingRunId)}`;
   }
 
+  public describeStoryWorktreePath(storyCode: string): string {
+    return resolve(this.workspaceRoot, ".beerengineer", "worktrees", sanitizeRefSegment(storyCode));
+  }
+
+  public describeStoryRemediationWorktreePath(storyCode: string, findingRunId: string): string {
+    return resolve(
+      this.workspaceRoot,
+      ".beerengineer",
+      "worktrees",
+      `${sanitizeRefSegment(storyCode)}-fix-${sanitizeRefSegment(findingRunId)}`
+    );
+  }
+
+  public describeMergeWorktreePath(mergeKey: string): string {
+    return resolve(this.workspaceRoot, ".beerengineer", "worktrees", "_merge", sanitizeRefSegment(mergeKey));
+  }
+
   public ensureProjectBranch(projectCode: string): GitBranchMetadata {
     return this.ensureBranch({
       workspaceRoot: this.workspaceRoot,
@@ -42,7 +62,8 @@ export class GitWorkflowService {
       workspaceRoot: this.workspaceRoot,
       projectCode,
       storyCode,
-      branchRole: "story"
+      branchRole: "story",
+      allowDirtyWorkspace: true
     });
   }
 
@@ -52,8 +73,94 @@ export class GitWorkflowService {
       projectCode,
       storyCode,
       findingRunId,
-      branchRole: "story-remediation"
+      branchRole: "story-remediation",
+      allowDirtyWorkspace: true
     });
+  }
+
+  public worktreeAdd(worktreePath: string, branchName: string): void {
+    const knownWorktrees = new Set(this.worktreeList());
+    if (knownWorktrees.has(worktreePath)) {
+      return;
+    }
+    if (existsSync(worktreePath)) {
+      throw new Error(`Refusing to add worktree at ${worktreePath}; path already exists but is not registered as a git worktree`);
+    }
+    mkdirSync(dirname(worktreePath), { recursive: true });
+    this.runGit(["worktree", "add", worktreePath, branchName]);
+  }
+
+  public worktreeRemove(worktreePath: string): void {
+    const knownWorktrees = new Set(this.worktreeList());
+    if (!knownWorktrees.has(worktreePath)) {
+      return;
+    }
+    this.runGit(["worktree", "remove", worktreePath, "--force"]);
+  }
+
+  public worktreeList(): string[] {
+    const output = this.runGitAllowEmpty(["worktree", "list", "--porcelain"]);
+    if (output.length === 0) {
+      return [];
+    }
+    return output
+      .split("\n")
+      .filter((line) => line.startsWith("worktree "))
+      .map((line) => line.slice("worktree ".length).trim());
+  }
+
+  public pruneWorktrees(): void {
+    if (!this.isGitRepository()) {
+      return;
+    }
+    this.runGit(["worktree", "prune"]);
+  }
+
+  public branchExists(branchName: string): boolean {
+    try {
+      this.runGit(["rev-parse", "--verify", branchName]);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  public mergeBranch(sourceBranch: string, targetBranch: string, mergeKey: string): string {
+    this.ensureBaseRefExists(sourceBranch);
+    this.ensureBaseRefExists(targetBranch);
+    const mergeWorktreePath = this.describeMergeWorktreePath(mergeKey);
+    this.worktreeRemove(mergeWorktreePath);
+    if (existsSync(mergeWorktreePath)) {
+      throw new Error(`Cannot create merge worktree at ${mergeWorktreePath}; path exists unexpectedly`);
+    }
+
+    mkdirSync(dirname(mergeWorktreePath), { recursive: true });
+    try {
+      this.runGit(["worktree", "add", "--detach", mergeWorktreePath, targetBranch]);
+      this.runGitInWorktree(mergeWorktreePath, ["merge", "--no-ff", "--no-edit", sourceBranch]);
+      const mergedCommitSha = this.runGitInWorktree(mergeWorktreePath, ["rev-parse", "HEAD"]);
+      this.runGit(["update-ref", `refs/heads/${targetBranch}`, mergedCommitSha]);
+      return mergedCommitSha;
+    } finally {
+      if (existsSync(mergeWorktreePath) || this.worktreeList().includes(mergeWorktreePath)) {
+        this.runGit(["worktree", "remove", mergeWorktreePath, "--force"]);
+      }
+    }
+  }
+
+  public mergeIntoWorktree(worktreePath: string, sourceBranch: string): string {
+    this.ensureBaseRefExists(sourceBranch);
+    this.runGitInWorktree(worktreePath, ["merge", "--no-ff", "--no-edit", sourceBranch]);
+    return this.runGitInWorktree(worktreePath, ["rev-parse", "HEAD"]);
+  }
+
+  public deleteBranch(branchName: string): void {
+    try {
+      this.runGit(["rev-parse", "--verify", branchName]);
+    } catch {
+      return;
+    }
+    this.runGit(["branch", "-d", branchName]);
   }
 
   private ensureBranch(context: GitWorkflowContext): GitBranchMetadata {
@@ -73,7 +180,7 @@ export class GitWorkflowService {
 
     const dirty = this.hasUncommittedChanges();
     const headBefore = this.currentHeadOrNull();
-    if (dirty) {
+    if (dirty && !context.allowDirtyWorkspace) {
       return this.simulatedMetadata(context.branchRole, context.workspaceRoot, baseRef, branchName, headBefore, "workspace has uncommitted changes");
     }
 
@@ -85,6 +192,7 @@ export class GitWorkflowService {
         baseRef,
         branchName,
         workspaceRoot: context.workspaceRoot,
+        worktreePath: null,
         headBefore,
         headAfter: this.currentHeadOrNull(),
         commitSha: null,
@@ -128,6 +236,7 @@ export class GitWorkflowService {
       baseRef,
       branchName,
       workspaceRoot,
+      worktreePath: null,
       headBefore,
       headAfter: headBefore,
       commitSha: null,
@@ -200,6 +309,26 @@ export class GitWorkflowService {
   private runGit(args: string[]): string {
     return execFileSync("git", args, {
       cwd: this.workspaceRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"]
+    }).trim();
+  }
+
+  private runGitAllowEmpty(args: string[]): string {
+    try {
+      return this.runGit(args);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes("not a git repository")) {
+        return "";
+      }
+      throw error;
+    }
+  }
+
+  private runGitInWorktree(cwd: string, args: string[]): string {
+    return execFileSync("git", args, {
+      cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"]
     }).trim();

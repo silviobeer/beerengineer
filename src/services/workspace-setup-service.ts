@@ -8,6 +8,7 @@ import { workspaceSetupAssistOutputSchema } from "../schemas/output-contracts.js
 import { AppError } from "../shared/errors.js";
 import { parseDotEnv } from "./env-config.js";
 const beerengineerOwnedDirectories = [".beerengineer", ".beerengineer/artifacts"];
+const beerengineerGitignoreEntry = "# beerengineer worktrees (managed by beerengineer CLI)\n.beerengineer/worktrees/\n";
 const supportedProjectManifestFiles = ["package.json", "pyproject.toml", "requirements.txt", "go.mod", "Cargo.toml"];
 const setupAutonomyOrder = {
     safe: 0,
@@ -93,6 +94,12 @@ export class WorkspaceSetupService {
                 ? { id, status: "simulated", message: `Would create ${absolutePath}.`, path: absolutePath }
                 : this.createDirectoryAction(id, absolutePath, `Created ${absolutePath}.`));
         }
+        actions.push(...this.ensureGitignoreContains({
+            id: "ensure-beerengineer-worktrees-gitignore",
+            path: resolve(workspaceRoot, ".gitignore"),
+            entry: beerengineerGitignoreEntry,
+            dryRun: input.dryRun
+        }));
         const gitRepoCheck = this.isGitRepository(workspaceRoot);
         if (input.initGit && !gitRepoCheck.isRepository) {
             actions.push(input.dryRun
@@ -948,6 +955,44 @@ export class WorkspaceSetupService {
         }
         writeFileSync(input.path, input.content, "utf8");
         return [{ id: input.id, status: "created", message: `Created ${input.path}.`, path: input.path }];
+    }
+    ensureGitignoreContains(input: { id: string; path: string; entry: string; dryRun: boolean }) {
+        const parentDirectory = dirname(input.path);
+        const pathExists = existsSync(input.path);
+        const currentContent = pathExists ? readFileSync(input.path, "utf8") : "";
+        if (currentContent.includes(".beerengineer/worktrees/")) {
+            return [
+                {
+                    id: input.id,
+                    status: "skipped",
+                    message: `${input.path} already ignores BeerEngineer worktrees.`,
+                    path: input.path
+                }
+            ];
+        }
+        if (input.dryRun) {
+            return [
+                {
+                    id: input.id,
+                    status: "simulated",
+                    message: pathExists
+                        ? `Would update ${input.path} to ignore BeerEngineer worktrees.`
+                        : `Would create ${input.path} and ignore BeerEngineer worktrees.`,
+                    path: input.path
+                }
+            ];
+        }
+        mkdirSync(parentDirectory, { recursive: true });
+        const separator = currentContent.length > 0 && !currentContent.endsWith("\n") ? "\n" : "";
+        writeFileSync(input.path, `${currentContent}${separator}${input.entry}`, "utf8");
+        return [
+            {
+                id: input.id,
+                status: pathExists ? "updated" : "created",
+                message: `${input.path} ignores BeerEngineer worktrees.`,
+                path: input.path
+            }
+        ];
     }
     installDependenciesCommand(stack) {
         if (stack === "python") {

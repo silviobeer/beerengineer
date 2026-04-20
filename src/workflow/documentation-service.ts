@@ -376,8 +376,10 @@ export class DocumentationService {
       }
       try {
         const gitMetadata = JSON.parse(execution.gitMetadataJson) as Partial<GitBranchMetadata>;
-        return typeof gitMetadata.workspaceRoot === "string" && gitMetadata.workspaceRoot.length > 0
-          ? [{ workspaceRoot: gitMetadata.workspaceRoot, updatedAt: execution.updatedAt }]
+        const candidateWorkspaceRoot =
+          typeof gitMetadata.workspaceRoot === "string" && gitMetadata.workspaceRoot.length > 0 ? gitMetadata.workspaceRoot : null;
+        return candidateWorkspaceRoot
+          ? [{ workspaceRoot: candidateWorkspaceRoot, updatedAt: execution.updatedAt }]
           : [];
       } catch {
         return [];

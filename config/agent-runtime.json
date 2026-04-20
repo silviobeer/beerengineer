@@ -42,7 +42,7 @@
     },
     "claude": {
       "adapterKey": "claude",
-      "model": "claude-sonnet",
+      "model": "sonnet",
       "command": [
         "claude"
       ],
