@@ -89,6 +89,13 @@ Git-Isolation wird dabei engine-seitig mitgefuehrt:
 - `fix/{story}/{reviewRun}` pro bounded Remediation-Lauf
 - `GitBranchMetadata.worktreePath` als technischer Ausfuehrungspfad fuer Agent-Runs
 
+Git-Isolation wird dabei engine-seitig mitgefuehrt:
+
+- `proj/{code}` als langlebiger Projekt-Branch
+- `story/{project}/{story}` pro Story-Lauf
+- `fix/{story}/{reviewRun}` pro bounded Remediation-Lauf
+- `GitBranchMetadata.worktreePath` als technischer Ausfuehrungspfad fuer Agent-Runs
+
 Vor jedem Story-Run erzeugt die Engine und speichert:
 
 - einen Business-Context-Snapshot
