@@ -71,6 +71,19 @@ type AppVerificationExecutionResult = {
   runId: string;
 };
 
+type PreparedAppVerificationSession = {
+  runner: AppVerificationRunner;
+  baseUrl: string;
+  resolvedBaseUrl: string;
+  endpointSource: "configured" | "derived_runtime" | "fallback_playwright";
+  ready: boolean;
+  loginRole?: string;
+  loginUserKey?: string;
+  resolvedStartUrl?: string;
+  seeded: boolean;
+  artifactsDir?: string;
+};
+
 type VerificationServiceOptions = {
   deps: WorkflowDeps;
   reviewCoreService: ReviewCoreService;
@@ -981,7 +994,7 @@ export class VerificationService {
   private prepareAppVerificationSession(input: {
     projectAppTestContext: ReturnType<VerificationService["buildProjectAppTestContext"]>;
     storyAppVerificationContext: ReturnType<VerificationService["buildStoryAppVerificationContext"]>;
-  }) {
+  }): PreparedAppVerificationSession {
     const runner = input.projectAppTestContext.runnerPreference[0] ?? "agent_browser";
     const loginRole = input.storyAppVerificationContext.preferredRole ?? input.projectAppTestContext.auth.defaultRole;
     const loginUser = loginRole
@@ -994,6 +1007,8 @@ export class VerificationService {
     return {
       runner,
       baseUrl: input.projectAppTestContext.baseUrl,
+      resolvedBaseUrl: input.projectAppTestContext.baseUrl,
+      endpointSource: "configured" as const,
       ready: baseUrl.length > 0,
       ...(loginRole ? { loginRole } : {}),
       ...(loginUser ? { loginUserKey: loginUser.key } : {}),
@@ -1001,6 +1016,17 @@ export class VerificationService {
       seeded: Boolean(input.projectAppTestContext.fixtures?.seedCommand),
       artifactsDir: "artifacts/app-verification"
     };
+  }
+
+  private tryDeriveBaseUrlFromStartUrl(startUrl: string | null | undefined): string | null {
+    if (!startUrl) {
+      return null;
+    }
+    try {
+      return new URL(startUrl).origin;
+    } catch {
+      return null;
+    }
   }
 
   private async isBaseUrlReachable(baseUrl: string): Promise<boolean> {
@@ -1018,7 +1044,7 @@ export class VerificationService {
   private async resolvePreparedAppVerificationSession(input: {
     projectAppTestContext: ReturnType<VerificationService["buildProjectAppTestContext"]>;
     storyAppVerificationContext: ReturnType<VerificationService["buildStoryAppVerificationContext"]>;
-  }) {
+  }): Promise<PreparedAppVerificationSession> {
     const preparedSession = this.prepareAppVerificationSession(input);
     if (
       preparedSession.runner === "agent_browser" &&
@@ -1027,10 +1053,30 @@ export class VerificationService {
     ) {
       return {
         ...preparedSession,
-        runner: "playwright" as const
+        runner: "playwright" as const,
+        endpointSource: "fallback_playwright" as const
       };
     }
     return preparedSession;
+  }
+
+  private finalizePreparedAppVerificationSession(input: {
+    preparedSession: PreparedAppVerificationSession;
+    result: AppVerificationOutput;
+  }): PreparedAppVerificationSession {
+    const runtimeBaseUrl = this.tryDeriveBaseUrlFromStartUrl(input.result.resolvedStartUrl);
+    if (!runtimeBaseUrl) {
+      return input.preparedSession;
+    }
+    return {
+      ...input.preparedSession,
+      resolvedBaseUrl: runtimeBaseUrl,
+      endpointSource:
+        runtimeBaseUrl === input.preparedSession.baseUrl
+          ? input.preparedSession.endpointSource
+          : ("derived_runtime" as const),
+      resolvedStartUrl: input.result.resolvedStartUrl ?? input.preparedSession.resolvedStartUrl
+    };
   }
 
   private async executeRalphVerification(input: {
@@ -1412,12 +1458,16 @@ export class VerificationService {
 
       const parsed = appVerificationOutputSchema.parse(result.output);
       const status = this.resolveAppVerificationStatus(parsed, result.exitCode);
+      const finalizedPreparedSession = this.finalizePreparedAppVerificationSession({
+        preparedSession,
+        result: parsed
+      });
       this.options.deps.appVerificationRunRepository.updateStatus(run.id, status, {
         runner: parsed.runner,
         startedAt,
         projectAppTestContextJson: JSON.stringify(projectAppTestContext, null, 2),
         storyContextJson: JSON.stringify(storyAppVerificationContext, null, 2),
-        preparedSessionJson: JSON.stringify(preparedSession, null, 2),
+        preparedSessionJson: JSON.stringify(finalizedPreparedSession, null, 2),
         resultJson: JSON.stringify(parsed, null, 2),
         artifactsJson: JSON.stringify(parsed.artifacts, null, 2),
         failureSummary: parsed.failureSummary ?? null

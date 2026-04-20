@@ -2567,6 +2567,75 @@ describe("workflow service", () => {
     }
   });
 
+  it("persists the runtime-resolved app verification endpoint from resolvedStartUrl", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const originalScript = readFileSync(localAgentScriptPath, "utf8");
+    const adapterScriptPath = join(root, "local-agent-app-runtime-endpoint.mjs");
+    const dbPath = join(root, "app.sqlite");
+
+    try {
+      const runtimeEndpointScript = replaceRequired(
+        originalScript,
+        "  const resolvedStartUrl = payload.preparedSession?.resolvedStartUrl ?? payload.projectAppTestContext?.baseUrl ?? null;",
+        '  const resolvedStartUrl = "http://127.0.0.1:4173/runtime-check";'
+      );
+      writeFileSync(adapterScriptPath, runtimeEndpointScript);
+      const context = createAppContext(dbPath, { adapterScriptPath });
+
+      context.repositories.workspaceSettingsRepository.update(context.workspace.id, {
+        appTestConfigJson: JSON.stringify(
+          {
+            baseUrl: "http://127.0.0.1:3000",
+            runnerPreference: ["agent_browser", "playwright"]
+          },
+          null,
+          2
+        )
+      });
+
+      const item = createWorkspaceItem(context, {
+        title: "App Verification Runtime Endpoint",
+        description: "Persist the actual runtime endpoint used during verification"
+      });
+      await context.workflowService.startStage({ stageKey: "brainstorm", itemId: item.id });
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      context.workflowService.approveConcept(concept!.id);
+      context.workflowService.importProjects(item.id);
+      const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
+      await context.workflowService.startStage({ stageKey: "requirements", itemId: item.id, projectId: project.id });
+      context.workflowService.approveStories(project.id);
+      await context.workflowService.startStage({ stageKey: "architecture", itemId: item.id, projectId: project.id });
+      context.workflowService.approveArchitecture(project.id);
+      await context.workflowService.startStage({ stageKey: "planning", itemId: item.id, projectId: project.id });
+      context.workflowService.approvePlanning(project.id);
+
+      const first = await context.workflowService.startExecution(project.id);
+      expect(first.executions[0]?.status).toBe("completed");
+
+      const latestExecutionId = context.workflowService.showExecution(project.id).waves[0]?.stories[0]?.latestExecution?.id;
+      expect(latestExecutionId).toBeTruthy();
+      const latestRun = context.repositories.appVerificationRunRepository.getLatestByWaveStoryExecutionId(latestExecutionId!);
+      expect(latestRun).toBeTruthy();
+
+      const preparedSession = JSON.parse(latestRun!.preparedSessionJson ?? "{}") as {
+        runner?: string;
+        baseUrl?: string;
+        resolvedBaseUrl?: string;
+        endpointSource?: string;
+        resolvedStartUrl?: string;
+      };
+      expect(preparedSession.runner).toBe("playwright");
+      expect(preparedSession.baseUrl).toBe("http://127.0.0.1:3000");
+      expect(preparedSession.resolvedBaseUrl).toBe("http://127.0.0.1:4173");
+      expect(preparedSession.endpointSource).toBe("derived_runtime");
+      expect(preparedSession.resolvedStartUrl).toBe("http://127.0.0.1:4173/runtime-check");
+
+      context.connection.close();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("resumes orphaned running executions when the implementation summary was already persisted", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
     const dbPath = join(root, "app.sqlite");
