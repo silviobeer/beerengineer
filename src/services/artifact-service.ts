@@ -3,9 +3,9 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
 export type ArtifactPayload = {
-  workspaceKey: string;
   itemId: string;
   projectId?: string | null;
+  stageKey: string;
   stageRunId: string;
   kind: string;
   format: "md" | "json";
@@ -23,11 +23,11 @@ export class ArtifactService {
 
   public writeArtifact(payload: ArtifactPayload): WrittenArtifact {
     const relativePath = join(
-      "workspaces",
-      payload.workspaceKey,
       "items",
       payload.itemId,
       payload.projectId ?? "_shared",
+      "stages",
+      payload.stageKey,
       "runs",
       payload.stageRunId,
       `${payload.kind}.${payload.format}`

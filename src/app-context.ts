@@ -303,7 +303,7 @@ export function createAppContext(
     workspaceRoot: resolvedWorkspaceRoot,
     agentRuntimeConfigPath: resolvedRuntime.configPath
   };
-  const artifactRoot = resolve(effectiveConfig.workspaceRoot, ".beerengineer", "artifacts");
+  const artifactRoot = resolve(effectiveConfig.workspaceRoot, ".beerengineer", "workspaces", workspace.key, "artifacts");
   const qualityKnowledgeService = new QualityKnowledgeService(qualityKnowledgeEntryRepository, workspace);
   const sonarService = new SonarService(
     workspace,

@@ -27,6 +27,7 @@ Im Execution-Pfad bedeutet das jetzt konkret:
 
 - der persistierte Workspace bleibt der stabile Projekt-Root
 - Story- und Remediation-Laeufe arbeiten in engine-owned Git-Worktrees unter `.beerengineer/workspaces/<workspaceKey>/worktrees/`
+- engine-interne Artefakte liegen parallel dazu unter `.beerengineer/workspaces/<workspaceKey>/artifacts/`
 - read-only Reviews und projektweite Documentation bleiben am stabilen Workspace-Root
 - pushbare Delivery-Reports werden bewusst nach `docs/delivery-reports/<workspaceKey>/` exportiert und nicht unter `.beerengineer/` versioniert
 - Merges werden ueber temporaere Merge-Worktrees oder bestehende Story-Worktrees orchestriert, nicht ueber den Haupt-Checkout

@@ -41,6 +41,7 @@ type DocumentationServiceOptions = {
     workspaceKey: string;
     itemId: string;
     projectId: string | null;
+    stageKey: "documentation";
     runId: string;
     linkStageRunId?: boolean;
     markdownArtifacts: Array<{ kind: string; content: string }>;
@@ -146,6 +147,7 @@ export class DocumentationService {
         workspaceKey: this.options.deps.workspace.key,
         itemId: item.id,
         projectId: project.id,
+        stageKey: "documentation",
         runId: documentationRun.id,
         linkStageRunId: false,
         markdownArtifacts: [{ kind: "delivery-report", content: parsed.reportMarkdown }],

@@ -680,7 +680,19 @@ export class BrainstormService {
   private buildProjectsFromBrainstormDraft(
     item: { title: string },
     draft: BrainstormDraftView
-  ): { projects: Array<{ title: string; summary: string; goal: string }> } {
+  ): {
+    projects: Array<{
+      title: string;
+      summary: string;
+      goal: string;
+      targetUsers: string[];
+      useCases: string[];
+      constraints: string[];
+      nonGoals: string[];
+      risks: string[];
+      assumptions: string[];
+    }>;
+  } {
     const candidateSeeds = this.selectBrainstormProjectSeeds(draft, item.title);
     const defaultGoal = draft.coreOutcome ?? `Deliver the first usable slice for ${item.title}.`;
 
@@ -692,7 +704,13 @@ export class BrainstormService {
       projects: candidateSeeds.map((seed, index) => ({
         title: this.buildBrainstormProjectTitle(item.title, seed, index),
         summary: index === 0 ? draft.problem ?? seed : seed,
-        goal: candidateSeeds.length === 1 ? defaultGoal : `${defaultGoal.replace(/[.]$/, "")}: ${seed}`
+        goal: candidateSeeds.length === 1 ? defaultGoal : `${defaultGoal.replace(/[.]$/, "")}: ${seed}`,
+        targetUsers: [...draft.targetUsers],
+        useCases: [...draft.useCases],
+        constraints: [...draft.constraints],
+        nonGoals: [...draft.nonGoals],
+        risks: [...draft.risks],
+        assumptions: [...draft.assumptions]
       }))
     };
   }
@@ -753,9 +771,9 @@ export class BrainstormService {
     content: string;
   }): ArtifactRecord {
     const written = this.options.artifactService.writeArtifact({
-      workspaceKey: this.options.deps.workspace.key,
       itemId: input.item.id,
       projectId: null,
+      stageKey: "brainstorm",
       stageRunId: input.sessionScopedId,
       kind: input.kind,
       format: input.format,

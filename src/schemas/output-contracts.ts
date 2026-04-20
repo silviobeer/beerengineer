@@ -5,7 +5,13 @@ export const projectsOutputSchema = z.object({
     z.object({
       title: z.string().min(1),
       summary: z.string().min(1),
-      goal: z.string().min(1)
+      goal: z.string().min(1),
+      targetUsers: z.array(z.string().min(1)).default([]),
+      useCases: z.array(z.string().min(1)).default([]),
+      constraints: z.array(z.string().min(1)).default([]),
+      nonGoals: z.array(z.string().min(1)).default([]),
+      risks: z.array(z.string().min(1)).default([]),
+      assumptions: z.array(z.string().min(1)).default([])
     })
   ).min(1)
 });

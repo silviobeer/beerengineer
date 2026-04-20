@@ -148,6 +148,15 @@ Rules:
 - `priority` must be one of `low`, `medium`, or `high`
 - the structured stories must match the markdown narrative
 
+## Source Coverage
+
+The stage context exposes the upstream brainstorm/concept via `context.upstreamSource` and `context.conceptMarkdown`.
+Treat every entry in `targetUsers`, `useCases`, `constraints`, `nonGoals`, `risks`, and `assumptions` as input that must be accounted for. For each entry, either:
+- cover it in a user story or acceptance criterion, or
+- declare it explicitly as "Out of scope" in the markdown with a short reason.
+
+The markdown artifact must include a `## Source Coverage` section that lists every upstream entry and maps it to a story code or to an out-of-scope note. Missing coverage for any target user, primary use case, or hard constraint is a blocker — do not emit an apparently ready story set while these gaps exist.
+
 ## Final Check
 
 Before finalizing, verify that:
@@ -158,3 +167,4 @@ Before finalizing, verify that:
 - assumptions are explicit
 - the story set still fits the project scope
 - the markdown and JSON artifacts do not contradict each other
+- every target user, use case, constraint, non-goal, and risk from `context.upstreamSource` is covered in the stories or explicitly declared out of scope

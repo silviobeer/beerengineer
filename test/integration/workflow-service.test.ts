@@ -940,7 +940,7 @@ describe("workflow service", () => {
       expect(projectsArtifact?.id).toBeTruthy();
       const projectsPayload = JSON.parse(
         readFileSync(
-          join(context.effectiveConfig.workspaceRoot, ".beerengineer", "artifacts", projectsArtifact!.path),
+          join(context.effectiveConfig.workspaceRoot, ".beerengineer", "workspaces", context.workspace.key, "artifacts", projectsArtifact!.path),
           "utf8"
         )
       ) as {

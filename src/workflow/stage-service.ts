@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { buildItemWorkflowSnapshot } from "../domain/aggregate-status.js";
 import { assertCanMoveItem } from "../domain/workflow-rules.js";
 import type { PlanningReviewSourceType, StageKey } from "../domain/types.js";
@@ -13,6 +15,18 @@ import type { ReviewCoreService } from "../review/review-core-service.js";
 import type { WorkflowDeps } from "./workflow-deps.js";
 import type { WorkflowEntityLoaders } from "./entity-loaders.js";
 import { WorkflowOutputImporters } from "./output-importers.js";
+
+const STAGE_CONTEXT_MARKDOWN_LIMIT = 12000;
+
+function capMarkdown(value: string | null): string | null {
+  if (!value) {
+    return value;
+  }
+  if (value.length <= STAGE_CONTEXT_MARKDOWN_LIMIT) {
+    return value;
+  }
+  return `${value.slice(0, STAGE_CONTEXT_MARKDOWN_LIMIT)}\n\n…[truncated ${value.length - STAGE_CONTEXT_MARKDOWN_LIMIT} chars of concept markdown]`;
+}
 
 export class StageService {
   public constructor(
@@ -105,7 +119,7 @@ export class StageService {
               goal: project.goal
             }
           : null,
-        context: project ? this.buildProjectStageContext(project.id, item.id) : null
+        context: project ? this.buildProjectStageContext(input.stageKey, project.id, item.id) : null
       });
 
       const completedRun = this.options.deps.runInTransaction(() => {
@@ -123,6 +137,7 @@ export class StageService {
           workspaceKey: this.options.deps.workspace.key,
           itemId: item.id,
           projectId: project?.id ?? null,
+          stageKey: input.stageKey,
           runId: run.id,
           markdownArtifacts: result.markdownArtifacts,
           structuredArtifacts: result.structuredArtifacts
@@ -368,6 +383,7 @@ export class StageService {
     workspaceKey: string;
     itemId: string;
     projectId: string | null;
+    stageKey: string;
     runId: string;
     linkStageRunId?: boolean;
     markdownArtifacts: Array<{ kind: string; content: string }>;
@@ -425,26 +441,110 @@ export class StageService {
     );
   }
 
-  private buildProjectStageContext(projectId: string, itemId: string) {
-    return {
-      conceptSummary: this.options.deps.conceptRepository.getLatestByItemId(itemId)?.summary ?? null,
-      architectureSummary: this.options.deps.architecturePlanRepository.getLatestByProjectId(projectId)?.summary ?? null,
-      stories: this.options.deps.userStoryRepository.listByProjectId(projectId).map((story) => ({
+  private buildProjectStageContext(stageKey: StageKey, projectId: string, itemId: string) {
+    const concept = this.options.deps.conceptRepository.getLatestByItemId(itemId);
+    const conceptSummary = concept?.summary ?? null;
+    const architectureSummary = this.options.deps.architecturePlanRepository.getLatestByProjectId(projectId)?.summary ?? null;
+
+    const loadUpstreamSource = () => {
+      const session = this.options.deps.brainstormSessionRepository.getLatestByItemId(itemId);
+      const draft = session ? this.options.deps.brainstormDraftRepository.getLatestBySessionId(session.id) : null;
+      if (!draft) {
+        return null;
+      }
+      return {
+        problem: draft.problem,
+        coreOutcome: draft.coreOutcome,
+        targetUsers: JSON.parse(draft.targetUsersJson) as string[],
+        useCases: JSON.parse(draft.useCasesJson) as string[],
+        constraints: JSON.parse(draft.constraintsJson) as string[],
+        nonGoals: JSON.parse(draft.nonGoalsJson) as string[],
+        risks: JSON.parse(draft.risksJson) as string[],
+        assumptions: JSON.parse(draft.assumptionsJson) as string[],
+        openQuestions: JSON.parse(draft.openQuestionsJson) as string[],
+        candidateDirections: JSON.parse(draft.candidateDirectionsJson) as string[],
+        recommendedDirection: draft.recommendedDirection,
+        scopeNotes: draft.scopeNotes
+      };
+    };
+
+    const loadStories = () =>
+      this.options.deps.userStoryRepository.listByProjectId(projectId).map((story) => ({
         code: story.code,
         title: story.title,
+        description: story.description,
+        actor: story.actor,
+        goal: story.goal,
+        benefit: story.benefit,
         priority: story.priority,
         acceptanceCriteria: this.options.deps.acceptanceCriterionRepository.listByStoryId(story.id).map((criterion) => ({
           code: criterion.code,
           text: criterion.text
         }))
-      }))
-    };
+      }));
+
+    switch (stageKey) {
+      case "requirements": {
+        const upstreamSource = loadUpstreamSource();
+        const conceptMarkdown = upstreamSource || !concept
+          ? null
+          : capMarkdown(this.readArtifactContentSafe(concept.markdownArtifactId));
+        return {
+          stageKey,
+          conceptSummary,
+          conceptMarkdown,
+          architectureSummary,
+          upstreamSource,
+          stories: []
+        };
+      }
+      case "architecture":
+        return {
+          stageKey,
+          conceptSummary,
+          conceptMarkdown: null,
+          architectureSummary,
+          upstreamSource: null,
+          stories: loadStories()
+        };
+      case "planning":
+        return {
+          stageKey,
+          conceptSummary: null,
+          conceptMarkdown: null,
+          architectureSummary,
+          upstreamSource: null,
+          stories: loadStories()
+        };
+      default:
+        return {
+          stageKey,
+          conceptSummary,
+          conceptMarkdown: null,
+          architectureSummary,
+          upstreamSource: null,
+          stories: loadStories()
+        };
+    }
+  }
+
+  private readArtifactContentSafe(artifactId: string): string | null {
+    const artifact = this.options.deps.artifactRepository.getById(artifactId);
+    if (!artifact) {
+      return null;
+    }
+    try {
+      return readFileSync(resolve(this.options.deps.artifactRoot, artifact.path), "utf8");
+    } catch {
+      return null;
+    }
   }
 
   private persistArtifactRecord(input: {
     workspaceKey: string;
     itemId: string;
     projectId: string | null;
+    stageKey: string;
     runId: string;
     linkStageRunId?: boolean;
     artifact: { kind: string };
@@ -452,9 +552,9 @@ export class StageService {
     content: string;
   }): ArtifactRecord {
     const written = this.options.artifactService.writeArtifact({
-      workspaceKey: input.workspaceKey,
       itemId: input.itemId,
       projectId: input.projectId,
+      stageKey: input.stageKey,
       stageRunId: input.runId,
       kind: input.artifact.kind,
       format: input.format,

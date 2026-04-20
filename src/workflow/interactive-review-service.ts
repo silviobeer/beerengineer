@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { interactiveStoryReviewAgentOutputSchema } from "../schemas/output-contracts.js";
 import type { InteractiveStoryReviewAgentOutput } from "../schemas/output-contracts.js";
 import { AppError } from "../shared/errors.js";
@@ -15,6 +18,18 @@ import type { InteractiveFlowKey } from "../adapters/runtime.js";
 import type { AutorunSummary, AutorunStep } from "./autorun-types.js";
 import type { WorkflowDeps } from "./workflow-deps.js";
 import type { WorkflowEntityLoaders } from "./entity-loaders.js";
+
+const INTERACTIVE_REVIEW_MARKDOWN_LIMIT = 12000;
+
+function capInteractiveReviewMarkdown(value: string | null): string | null {
+  if (!value) {
+    return value;
+  }
+  if (value.length <= INTERACTIVE_REVIEW_MARKDOWN_LIMIT) {
+    return value;
+  }
+  return `${value.slice(0, INTERACTIVE_REVIEW_MARKDOWN_LIMIT)}\n\n…[truncated ${value.length - INTERACTIVE_REVIEW_MARKDOWN_LIMIT} chars of concept markdown]`;
+}
 
 const supportedInteractiveReviewResolutionActions = [
   "approve",
@@ -261,7 +276,8 @@ export class InteractiveReviewService {
       messages: existingMessages,
       userMessage: message,
       allowedStatuses: [...interactiveReviewEntryStatuses],
-      allowedActions: ["update_entries", "request_structured_follow_up", "suggest_resolution"]
+      allowedActions: ["update_entries", "request_structured_follow_up", "suggest_resolution"],
+      upstreamSource: this.loadUpstreamSourceForItem(storyScope.item.id)
     });
     const agentOutput = this.parseInteractiveStoryReviewAgentOutput(agentResult.output);
     const validEntryIds = new Set(existingEntries.map((entry) => entry.entryId));
@@ -573,8 +589,73 @@ export class InteractiveReviewService {
       "Return only structured per-story entry updates grounded in the provided stories, entries, and chat history.",
       "Only update entries when the user message clearly references a specific story or an unambiguous set of stories.",
       "If the user feedback is ambiguous, leave entryUpdates empty and set needsStructuredFollowUp=true with a short hint.",
-      "Do not directly mutate stories or resolve the workflow. Suggest next steps through the structured response."
+      "Do not directly mutate stories or resolve the workflow. Suggest next steps through the structured response.",
+      "",
+      "Coverage check:",
+      "- The `upstreamSource` payload carries the brainstorm draft and the concept markdown this project derives from.",
+      "- For every target user, use case, constraint, non-goal, and risk in the upstream source, verify that it is represented in a story or explicitly declared out of scope.",
+      "- If any source entry is uncovered, flag it via a follow-up hint or by updating the matching story entry to `needs_revision` with a concrete `changeRequest` pointing at the missing source entry.",
+      "- Never recommend `approve` or `approve_all` while any mandatory source entry (target user, core use case, hard constraint) is uncovered."
     ].join("\n");
+  }
+
+  private loadUpstreamSourceForItem(itemId: string): {
+    conceptMarkdown: string | null;
+    brainstormDraft: {
+      problem: string | null;
+      coreOutcome: string | null;
+      targetUsers: string[];
+      useCases: string[];
+      constraints: string[];
+      nonGoals: string[];
+      risks: string[];
+      assumptions: string[];
+      openQuestions: string[];
+      candidateDirections: string[];
+      recommendedDirection: string | null;
+      scopeNotes: string | null;
+    } | null;
+  } | null {
+    const session = this.options.deps.brainstormSessionRepository.getLatestByItemId(itemId);
+    const draft = session ? this.options.deps.brainstormDraftRepository.getLatestBySessionId(session.id) : null;
+    const brainstormDraft = draft
+      ? {
+          problem: draft.problem,
+          coreOutcome: draft.coreOutcome,
+          targetUsers: JSON.parse(draft.targetUsersJson) as string[],
+          useCases: JSON.parse(draft.useCasesJson) as string[],
+          constraints: JSON.parse(draft.constraintsJson) as string[],
+          nonGoals: JSON.parse(draft.nonGoalsJson) as string[],
+          risks: JSON.parse(draft.risksJson) as string[],
+          assumptions: JSON.parse(draft.assumptionsJson) as string[],
+          openQuestions: JSON.parse(draft.openQuestionsJson) as string[],
+          candidateDirections: JSON.parse(draft.candidateDirectionsJson) as string[],
+          recommendedDirection: draft.recommendedDirection,
+          scopeNotes: draft.scopeNotes
+        }
+      : null;
+
+    let conceptMarkdown: string | null = null;
+    if (!brainstormDraft) {
+      const concept = this.options.deps.conceptRepository.getLatestByItemId(itemId);
+      if (concept) {
+        const artifact = this.options.deps.artifactRepository.getById(concept.markdownArtifactId);
+        if (artifact) {
+          try {
+            conceptMarkdown = capInteractiveReviewMarkdown(
+              readFileSync(resolve(this.options.deps.artifactRoot, artifact.path), "utf8")
+            );
+          } catch {
+            conceptMarkdown = null;
+          }
+        }
+      }
+    }
+
+    if (!conceptMarkdown && !brainstormDraft) {
+      return null;
+    }
+    return { conceptMarkdown, brainstormDraft };
   }
 
   private parseInteractiveStoryReviewAgentOutput(output: unknown): InteractiveStoryReviewAgentOutput {

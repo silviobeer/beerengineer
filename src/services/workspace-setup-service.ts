@@ -13,7 +13,7 @@ import type { HarnessMcpTarget } from "../shared/workspace-mcp.js";
 import { applyHarnessMcpConfig, isHarnessMcpConfigured, renderHarnessMcpConfigPreview, resolveHarnessMcpTargets } from "../shared/workspace-mcp.js";
 import { detectSonarCliState } from "../shared/sonar-cli.js";
 import { parseDotEnv } from "./env-config.js";
-const beerengineerOwnedDirectories = [".beerengineer", ".beerengineer/artifacts", ".beerengineer/workspaces"];
+const beerengineerOwnedDirectories = [".beerengineer", ".beerengineer/workspaces"];
 const beerengineerGitignoreEntry = "# beerengineer runtime data (managed by beerengineer CLI)\n.beerengineer/\n";
 const legacyBeerengineerGitignoreEntry = ".beerengineer/worktrees/";
 const supportedProjectManifestFiles = ["package.json", "pyproject.toml", "requirements.txt", "go.mod", "Cargo.toml"];
@@ -1213,7 +1213,6 @@ export class WorkspaceSetupService {
             case "workspace-root-writable":
                 return "Fix workspace root permissions.";
             case "filesystem-.beerengineer":
-            case "filesystem-.beerengineer/artifacts":
                 return "Run workspace:init to create BeerEngineer runtime directories.";
             case "project-manifest":
                 return "Create a project manifest or use workspace:bootstrap for a new project.";
@@ -1266,7 +1265,6 @@ export class WorkspaceSetupService {
             case "workspace-root-exists":
                 return "workspace:init --create-root";
             case "filesystem-.beerengineer":
-            case "filesystem-.beerengineer/artifacts":
                 return "workspace:init";
             case "git-repository":
                 return "workspace:init --init-git";

@@ -552,7 +552,7 @@ Im aktuellen Documentation-Schnitt gilt:
 - `documentation:show` zeigt den neuesten `DocumentationRun` sowie Sessions und zugehoerige Artefakte aller Dokumentationsversuche fuer das Project
 - `documentation:retry` erlaubt genau dann einen neuen Dokumentationslauf, wenn der letzte `DocumentationRun` auf `review_required` oder `failed` steht
 - `documentation:start` materialisiert den fertigen Delivery-Report zusaetzlich in den Workspace unter `docs/delivery-reports/<workspaceKey>/<projectCode>-delivery-report.md` und `docs/delivery-reports/<workspaceKey>/<projectCode>-delivery-report.json`
-- die engine-internen `delivery-report`-Artefakte bleiben weiterhin unter `.beerengineer/artifacts/...` registriert, waehrend die Exportdateien bewusst repo-tauglich sind
+- die engine-internen `delivery-report`-Artefakte bleiben weiterhin unter `.beerengineer/workspaces/<workspaceKey>/artifacts/...` registriert, waehrend die Exportdateien bewusst repo-tauglich sind
 - `documentation:start` liefert bei erfolgreicher Dokumentation zusaetzlich einen `projectFinalization`-Status fuer den anschliessenden `proj/* -> main`-Merge
 - `beerengineer sonar preflight` prueft die Sonar-Toolchain differenziert: `sonar` fuer Login/Integration, `sonar-scanner` plus `java` fuer projektbezogene Branch-/PR-/Main-Analysen und einen Workspace-Token fuer echte Scanner-Laeufe
 - `beerengineer coderabbit preflight` prueft die CodeRabbit-CLI, Git-/Branch-Kontext, Repository-Kontext und Auth-Quelle fuer branch-aware Live-Reviews und gibt klare naechste Schritte aus

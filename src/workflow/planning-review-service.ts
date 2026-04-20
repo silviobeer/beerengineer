@@ -530,21 +530,39 @@ export class PlanningReviewService {
         throw new AppError("PROJECT_NOT_FOUND", `Project ${session.scopeId} not found`);
       }
       const entries = this.options.deps.interactiveReviewEntryRepository.listBySessionId(session.id);
+      const upstream = this.loadUpstreamBrainstormDraftForItem(project.itemId);
+      const storyLines = this.listStoriesForProjectReview(project.id);
+      const entryTitles = normalizeEntries(entries.map((entry) => entry.title));
       return {
-        problem: project.summary,
-        goal: project.goal,
-        nonGoals: [],
-        context: normalizeEntries(entries.map((entry) => entry.title)),
-        constraints: [],
-        proposal: entries.filter((entry) => entry.status === "accepted").map((entry) => entry.title).join("; ") || null,
-        alternatives: [],
-        assumptions: [],
-        risks: normalizeEntries(entries.filter((entry) => entry.status === "needs_revision").map((entry) => entry.summary ?? entry.changeRequest)),
-        openQuestions: normalizeEntries(
-          entries
-            .filter((entry) => entry.status === "pending")
-            .map((entry) => entry.summary ?? entry.changeRequest ?? `Resolve review state for ${entry.title}`)
-        ),
+        problem: upstream?.problem ?? project.summary,
+        goal: upstream?.coreOutcome ?? project.goal,
+        nonGoals: upstream?.nonGoals ?? [],
+        context: normalizeEntries([
+          `Project ${project.code}: ${project.title}`,
+          ...(upstream?.targetUsers.map((user) => `Target user: ${user}`) ?? []),
+          ...(upstream?.useCases.map((useCase) => `Use case: ${useCase}`) ?? []),
+          ...storyLines,
+          ...entryTitles
+        ]),
+        constraints: upstream?.constraints ?? [],
+        proposal:
+          upstream?.recommendedDirection ??
+          upstream?.scopeNotes ??
+          (entries.filter((entry) => entry.status === "accepted").map((entry) => entry.title).join("; ") || null),
+        alternatives: upstream?.candidateDirections.filter((direction) => direction !== upstream?.recommendedDirection) ?? [],
+        assumptions: upstream?.assumptions ?? [],
+        risks: [
+          ...(upstream?.risks ?? []),
+          ...normalizeEntries(entries.filter((entry) => entry.status === "needs_revision").map((entry) => entry.summary ?? entry.changeRequest))
+        ],
+        openQuestions: [
+          ...(upstream?.openQuestions ?? []),
+          ...normalizeEntries(
+            entries
+              .filter((entry) => entry.status === "pending")
+              .map((entry) => entry.summary ?? entry.changeRequest ?? `Resolve review state for ${entry.title}`)
+          )
+        ],
         testPlan: [],
         rolloutPlan: [],
         clarificationAnswers
@@ -667,6 +685,49 @@ export class PlanningReviewService {
     };
   }
 
+  private loadUpstreamBrainstormDraftForItem(itemId: string): {
+    problem: string | null;
+    coreOutcome: string | null;
+    targetUsers: string[];
+    useCases: string[];
+    constraints: string[];
+    nonGoals: string[];
+    risks: string[];
+    assumptions: string[];
+    openQuestions: string[];
+    candidateDirections: string[];
+    recommendedDirection: string | null;
+    scopeNotes: string | null;
+  } | null {
+    const session = this.options.deps.brainstormSessionRepository.getLatestByItemId(itemId);
+    if (!session) {
+      return null;
+    }
+    const draft = this.options.deps.brainstormDraftRepository.getLatestBySessionId(session.id);
+    if (!draft) {
+      return null;
+    }
+    return {
+      problem: draft.problem,
+      coreOutcome: draft.coreOutcome,
+      targetUsers: JSON.parse(draft.targetUsersJson) as string[],
+      useCases: JSON.parse(draft.useCasesJson) as string[],
+      constraints: JSON.parse(draft.constraintsJson) as string[],
+      nonGoals: JSON.parse(draft.nonGoalsJson) as string[],
+      risks: JSON.parse(draft.risksJson) as string[],
+      assumptions: JSON.parse(draft.assumptionsJson) as string[],
+      openQuestions: JSON.parse(draft.openQuestionsJson) as string[],
+      candidateDirections: JSON.parse(draft.candidateDirectionsJson) as string[],
+      recommendedDirection: draft.recommendedDirection,
+      scopeNotes: draft.scopeNotes
+    };
+  }
+
+  private listStoriesForProjectReview(projectId: string): string[] {
+    const stories = this.options.deps.userStoryRepository.listByProjectId(projectId);
+    return stories.map((story) => `Story ${story.code}: ${story.title} (actor=${story.actor}, goal=${story.goal})`);
+  }
+
   private readArtifactJson(artifactId: string): unknown {
     const artifact = this.options.deps.artifactRepository.getById(artifactId);
     if (!artifact) {
@@ -716,7 +777,24 @@ export class PlanningReviewService {
       "Ground every finding in the provided normalized artifact.",
       "Prefer blocker and major_concern findings over generic prose.",
       "Use question findings only for decision-relevant missing information.",
-      "Do not invent implementation details that are absent from the artifact."
+      "Do not invent implementation details that are absent from the artifact.",
+      "",
+      "Coverage check (required for requirements_engineering reviews):",
+      "- The normalized artifact spreads the upstream source across multiple top-level fields. Inspect each one individually:",
+      "  - `problem` and `goal` hold the upstream problem statement and core outcome.",
+      "  - `context` holds the project header, target users, use cases, derived story titles, and review entry titles.",
+      "  - `constraints` holds upstream constraints (not inside `context`).",
+      "  - `nonGoals` holds upstream non-goals (not inside `context`).",
+      "  - `risks` holds upstream risks plus review-entry risks.",
+      "  - `assumptions` holds upstream assumptions.",
+      "  - `openQuestions` holds upstream open questions plus unresolved review entries.",
+      "  - `proposal` holds the recommended direction / scope notes.",
+      "  - `alternatives` holds the other candidate directions.",
+      "- For every target user and use case in `context`, every entry in `constraints`, and every entry in `nonGoals`, verify coverage in a story/acceptance criterion or an explicit out-of-scope declaration.",
+      "- For every entry in `risks`, `assumptions`, and `openQuestions`, verify it is addressed in a story/acceptance criterion or captured as an open question/risk.",
+      "- Missing coverage of any target user, core use case, or hard constraint is a `blocker`.",
+      "- Missing coverage of non-goals, risks, or secondary use cases is at least a `major_concern`.",
+      "- List each uncovered source entry explicitly in `missingInformation` and raise a matching finding. Do not mark readiness as `ready` while coverage gaps remain."
     ].join("\n");
   }
 

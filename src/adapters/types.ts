@@ -218,10 +218,29 @@ export type AdapterRunRequest = {
   } | null;
   context?: {
     conceptSummary?: string | null;
+    conceptMarkdown?: string | null;
     architectureSummary?: string | null;
+    upstreamSource?: {
+      problem: string | null;
+      coreOutcome: string | null;
+      targetUsers: string[];
+      useCases: string[];
+      constraints: string[];
+      nonGoals: string[];
+      risks: string[];
+      assumptions: string[];
+      openQuestions: string[];
+      candidateDirections: string[];
+      recommendedDirection: string | null;
+      scopeNotes: string | null;
+    } | null;
     stories?: Array<{
       code: string;
       title: string;
+      description: string;
+      actor: string;
+      goal: string;
+      benefit: string;
       priority: string;
       acceptanceCriteria: Array<{ code: string; text: string }>;
     }>;
@@ -695,6 +714,23 @@ export type InteractiveStoryReviewAdapterRunRequest = {
   userMessage: string;
   allowedStatuses: InteractiveReviewEntryStatus[];
   allowedActions: Array<"update_entries" | "request_structured_follow_up" | "suggest_resolution">;
+  upstreamSource?: {
+    conceptMarkdown: string | null;
+    brainstormDraft: {
+      problem: string | null;
+      coreOutcome: string | null;
+      targetUsers: string[];
+      useCases: string[];
+      constraints: string[];
+      nonGoals: string[];
+      risks: string[];
+      assumptions: string[];
+      openQuestions: string[];
+      candidateDirections: string[];
+      recommendedDirection: string | null;
+      scopeNotes: string | null;
+    } | null;
+  } | null;
 };
 
 export type InteractiveStoryReviewAdapterRunResult = {
