@@ -151,9 +151,14 @@ Review ist reine Lese-Operation. Kein Commit, kein Worktree.
 
 ### Story Accepted (Review passed)
 
-Engine, ausgefuehrt im Haupt-Workspace:
+Engine merge't **nicht** via Checkout im Haupt-Workspace, da dieser parallel dirty
+sein kann. Stattdessen verwendet `GitWorkflowService` einen temporären
+Merge-Worktree:
 ```bash
-git merge --no-ff story/{p}/{s} proj/{p}
+git worktree add --detach {workspaceRoot}/.beerengineer/worktrees/_merge/{s} proj/{p}
+git -C {workspaceRoot}/.beerengineer/worktrees/_merge/{s} checkout proj/{p}
+git -C {workspaceRoot}/.beerengineer/worktrees/_merge/{s} merge --no-ff story/{p}/{s}
+git worktree remove {workspaceRoot}/.beerengineer/worktrees/_merge/{s} --force
 git worktree remove {workspaceRoot}/.beerengineer/worktrees/{s} --force
 git branch -d story/{p}/{s}
 ```
@@ -181,14 +186,20 @@ Danach: Ralph Verification + Story Review nochmals (read-only, Diff `story/{p}/{
 
 Engine:
 ```bash
-# Fix → Story
-git merge --no-ff fix/{s}/{reviewRunId} story/{p}/{s}
-git worktree remove {workspaceRoot}/.beerengineer/worktrees/{s}-fix-{n}
+# Fix → Story via temp merge-worktree
+git worktree add --detach {workspaceRoot}/.beerengineer/worktrees/_merge/{s}-fix story/{p}/{s}
+git -C {workspaceRoot}/.beerengineer/worktrees/_merge/{s}-fix checkout story/{p}/{s}
+git -C {workspaceRoot}/.beerengineer/worktrees/_merge/{s}-fix merge --no-ff fix/{s}/{reviewRunId}
+git worktree remove {workspaceRoot}/.beerengineer/worktrees/_merge/{s}-fix --force
+git worktree remove {workspaceRoot}/.beerengineer/worktrees/{s}-fix-{n} --force
 git branch -d fix/{s}/{reviewRunId}
 
 # Story → Proj (gleich wie Story Accepted)
-git merge --no-ff story/{p}/{s} proj/{p}
-git worktree remove {workspaceRoot}/.beerengineer/worktrees/{s}
+git worktree add --detach {workspaceRoot}/.beerengineer/worktrees/_merge/{s} proj/{p}
+git -C {workspaceRoot}/.beerengineer/worktrees/_merge/{s} checkout proj/{p}
+git -C {workspaceRoot}/.beerengineer/worktrees/_merge/{s} merge --no-ff story/{p}/{s}
+git worktree remove {workspaceRoot}/.beerengineer/worktrees/_merge/{s} --force
+git worktree remove {workspaceRoot}/.beerengineer/worktrees/{s} --force
 git branch -d story/{p}/{s}
 ```
 
@@ -202,7 +213,10 @@ Naechste Wave startet neue Stories von `proj/{p}`.
 
 Engine:
 ```bash
-git merge --no-ff proj/{code} main
+git worktree add --detach {workspaceRoot}/.beerengineer/worktrees/_merge/project-{code} main
+git -C {workspaceRoot}/.beerengineer/worktrees/_merge/project-{code} checkout main
+git -C {workspaceRoot}/.beerengineer/worktrees/_merge/project-{code} merge --no-ff proj/{code}
+git worktree remove {workspaceRoot}/.beerengineer/worktrees/_merge/project-{code} --force
 git branch -d proj/{code}
 ```
 
@@ -215,21 +229,18 @@ Neu:
 worktreePath: string | null;   // absoluter Pfad zum Worktree, null wenn simulated
 ```
 
-### DB: WaveStoryExecution
+### Persistenzstrategie
 
-Neues Feld:
-```sql
-git_worktree_path TEXT   -- absoluter Worktree-Pfad
-```
+`gitMetadataJson` ist bereits die kanonische Persistenz fuer Git-Laufzeitdaten.
+Deshalb:
+- `worktreePath` wird **zuerst** in `GitBranchMetadata` und `gitMetadataJson` eingefuehrt
+- `WaveStoryExecution.gitBranchName/gitBaseRef` und
+  `StoryReviewRemediationRun.gitBranchName/gitBaseRef` bleiben als Denormalisierung bestehen
+- eine zusaetzliche physische Spalte `git_worktree_path` ist optional und kein Blocker fuer
+  die erste Umsetzung
 
-### DB: StoryReviewRemediationRun
-
-Neues Feld:
-```sql
-git_worktree_path TEXT   -- absoluter Worktree-Pfad (fix-worktree)
-```
-
-Migration entsprechend erstellen.
+Falls spaeter Reporting/Queries auf `worktreePath` noetig werden, kann eine
+Folgemigration die Spalte ergaenzen.
 
 ## 6. GitWorkflowService Erweiterungen
 
@@ -248,9 +259,10 @@ public worktreeList(): string[]
 // Verwaiste Worktree-Eintraege bereinigen
 public pruneWorktrees(): void
 
-// Branch in Ziel-Branch mergen (--no-ff)
+// Branch in Ziel-Branch mergen (--no-ff) ohne Haupt-Workspace-Checkout
+// Nutzt dafuer einen temporaeren Merge-Worktree unter .beerengineer/worktrees/_merge/
 // Gibt merge-commit SHA zurueck
-public mergeBranch(sourceBranch: string, targetBranch: string): string
+public mergeBranch(sourceBranch: string, targetBranch: string, mergeKey: string): string
 
 // Branch loeschen (nur wenn vollstaendig gemergt)
 public deleteBranch(branchName: string): void
@@ -265,11 +277,12 @@ aufrufenden Schicht. `worktreeAdd` wird separat aufgerufen nach `ensureBranch`.
 
 Heute: Dirty Workspace → `strategy: "simulated"`, kein Branch.
 
-Neu: Dirty-Check betrifft nur den Haupt-Workspace.
-Da Agents kuenftig in Worktrees arbeiten, sollte der Haupt-Workspace immer clean
-sein. Der Dirty-Check beim Erstellen des Proj-Branch bleibt sinnvoll (erster
-Branch-Aufbau aus main heraus). Beim Story-Branch-Aufbau ist dirty nur noch eine
-Warnung, kein Hard-Blocker — der Worktree wird trotzdem erstellt.
+Neu:
+- Dirty-Check bleibt fuer `ensureProjectBranch` erhalten
+- `ensureStoryBranch` und `ensureStoryRemediationBranch` duerfen trotz dirty
+  Haupt-Workspace laufen, da der Agent in einem separaten Worktree arbeitet
+- Merge-Operationen duerfen **nicht** vom Dirty-Zustand des Haupt-Workspace
+  abhaengen, da sie in einem temporaeren Merge-Worktree stattfinden
 
 ## 7. Execution-Service Aenderungen
 
@@ -281,6 +294,8 @@ Warnung, kein Hard-Blocker — der Worktree wird trotzdem erstellt.
 - **Neu nach `ensureStoryBranch`**: `worktreeAdd` aufrufen, Pfad in `GitBranchMetadata` schreiben
 
 `buildAdapterRuntimeContext` / `buildStoryExecutionAdapterInput`:
+- `BuildAdapterRuntimeContext` bekommt einen optionalen Override
+  `workspaceRoot?: string`
 - `runtime.workspaceRoot` neu = `gitMetadata.worktreePath ?? workspaceRoot`
 - Gilt fuer TestPreparation, Execution, Ralph, AppVerification
 - Review-Adapter bekommt weiterhin den Haupt-`workspaceRoot`
@@ -294,9 +309,10 @@ Warnung, kein Hard-Blocker — der Worktree wird trotzdem erstellt.
 
 ### Merge Gate nach Story-Completion
 
-Neuer Schritt in `completeWaveStoryExecution`:
+Neuer Orchestrierungsschritt auf `WorkflowService`-/`VerificationService`-Ebene
+nach bestandenem Story Review:
 1. Pruefe ob Story Review bestanden
-2. `mergeBranch(story/{p}/{s}, proj/{p})`
+2. `mergeBranch(story/{p}/{s}, proj/{p}, {storyCode})`
 3. `worktreeRemove(worktreePath)`
 4. `deleteBranch(story/{p}/{s})`
 5. `GitBranchMetadata.mergedIntoRef` und `mergedCommitSha` schreiben
@@ -310,10 +326,10 @@ Merge nur wenn:
 ### Merge Gate nach Remediation
 
 In `startStoryReviewRemediation` nach Remediation-Completion:
-1. `mergeBranch(fix/{s}/{n}, story/{p}/{s})`
+1. `mergeBranch(fix/{s}/{n}, story/{p}/{s}, {storyCode}-fix-{attempt})`
 2. `worktreeRemove(fixWorktreePath)`
 3. `deleteBranch(fix/{s}/{n})`
-4. Danach: `mergeBranch(story/{p}/{s}, proj/{p})` + story-worktree cleanup
+4. Danach: `mergeBranch(story/{p}/{s}, proj/{p}, {storyCode})` + story-worktree cleanup
 
 ## 8. .gitignore Automatik
 
@@ -342,7 +358,9 @@ Faelle wo Worktrees nicht sauber bereinigt wurden:
 
 `workflow-service.ts`: Beim Start von `advanceExecution`:
 - `pruneWorktrees()` aufrufen
-- Logt verwaiste Eintraege, entfernt sie wenn Branch bereits gemergt
+- bereinigt stale git-Registrierungen immer
+- entfernt Dateisystem-Worktrees nur dann automatisch, wenn die zugehoerige
+  Execution/Remediation bereits abgeschlossen ist
 
 ### CLI-Command workspace:prune
 
@@ -383,14 +401,14 @@ Neuer Command `workspace:prune --project {code}`:
 
 1. `GitWorkflowService` um `worktreeAdd`, `worktreeRemove`, `worktreeList`, `pruneWorktrees`, `mergeBranch`, `deleteBranch` erweitern
 2. `GitBranchMetadata` um `worktreePath: string | null` erweitern
-3. DB-Migrations fuer `git_worktree_path` auf `WaveStoryExecution` und `StoryReviewRemediationRun`
+3. JSON-basierte Persistenz ueber `gitMetadataJson` sicherstellen; optionale DB-Spalte ist nachrangig
 
 ### Phase 2: TestPrep und Execution im Worktree
 
 4. `advanceExecution`: nach `ensureStoryBranch` → `worktreeAdd` → Pfad in Metadata
 5. `buildAdapterRuntimeContext`: `workspaceRoot` = Worktree-Pfad fuer ausfuehrende Agents
 6. Review-Adapter behaelt Haupt-`workspaceRoot`
-7. `hasUncommittedChanges` im Worktree-Kontext: nur Warnung, kein Block
+7. `hasUncommittedChanges` im Story-/Fix-Branch-Kontext: nur Warnung, kein Block
 
 ### Phase 3: Merge Gate
 
@@ -408,13 +426,15 @@ Neuer Command `workspace:prune --project {code}`:
 13. `.gitignore`-Automatik im `workspace:setup`
 14. `workspace:prune` CLI-Command
 15. `pruneWorktrees()` beim Start von `advanceExecution`
-16. Project-Complete: proj → main Merge + proj-Branch-Cleanup
+16. `documentation-service.ts` / weitere Leser von `gitMetadataJson` auf
+    `worktreePath` statt altes `workspaceRoot` ausrichten
+17. Project-Complete: proj → main Merge + proj-Branch-Cleanup
 
 ### Phase 6: Tests und Dokumentation
 
-17. Unit-Tests fuer `GitWorkflowService` neue Methoden
-18. Integration-Test: vollstaendiger Story-Lifecycle mit Worktree
-19. Dokumentation im `docs/reference/` nachziehen
+18. Unit-Tests fuer `GitWorkflowService` neue Methoden
+19. Integration-Test: vollstaendiger Story-Lifecycle mit Worktree
+20. Dokumentation im `docs/reference/` nachziehen
 
 ## 13. Nicht-Ziele dieses Plans
 

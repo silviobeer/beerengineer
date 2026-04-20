@@ -1,4 +1,8 @@
+import { existsSync, readdirSync, rmSync } from "node:fs";
+import { resolve } from "node:path";
+
 import type {
+  GitBranchMetadata,
   InteractiveReviewEntryStatus,
   InteractiveReviewResolutionType,
   StageKey,
@@ -126,8 +130,11 @@ export class WorkflowService {
       resolveWorkerProfile: (profileKey) => this.resolveWorkerProfile(profileKey),
       resolveWorkerRuntime: (profileKey) => this.resolveWorkerRuntime(profileKey),
       buildAdapterRuntimeContext: (input) => this.buildAdapterRuntimeContext(input),
+      pruneGitWorktrees: () => this.gitWorkflowService.pruneWorktrees(),
       ensureProjectBranch: (projectCode) => this.gitWorkflowService.ensureProjectBranch(projectCode),
       ensureStoryBranch: (projectCode, storyCode) => this.gitWorkflowService.ensureStoryBranch(projectCode, storyCode),
+      ensureStoryWorktree: (storyCode, gitMetadata) => this.ensureStoryWorktree(storyCode, gitMetadata),
+      finalizeAcceptedExecution: (waveStoryExecutionId) => this.finalizeAcceptedExecution(waveStoryExecutionId),
       executeVerificationPipeline: (input) => this.verificationService.executeVerificationPipeline(input)
     });
     this.interactiveReviewService = new InteractiveReviewService({
@@ -207,6 +214,10 @@ export class WorkflowService {
       executeWaveStory: (input) => this.executionService.executeWaveStory(input),
       ensureStoryRemediationBranch: (projectCode, storyCode, storyReviewRunId) =>
         this.gitWorkflowService.ensureStoryRemediationBranch(projectCode, storyCode, storyReviewRunId),
+      ensureStoryRemediationWorktree: (storyCode, storyReviewRunId, gitMetadata) =>
+        this.ensureStoryRemediationWorktree(storyCode, storyReviewRunId, gitMetadata),
+      finalizeAcceptedExecution: (waveStoryExecutionId) => this.finalizeAcceptedExecution(waveStoryExecutionId),
+      finalizeAcceptedRemediation: (storyReviewRemediationRunId) => this.finalizeAcceptedRemediation(storyReviewRemediationRunId),
       invalidateDocumentationForProject: (projectId, reason) => this.invalidateDocumentationForProject(projectId, reason),
       triggerImplementationReview: (input) => Promise.resolve(this.startImplementationReview(input))
     });
@@ -255,12 +266,176 @@ export class WorkflowService {
     return this.deps.agentRuntimeResolver.resolveWorker(runtimeWorkerKeyByProfileKey[workerProfileKey]);
   }
 
-  private buildAdapterRuntimeContext(input: { providerKey: string; model: string | null; policy: AdapterRuntimeContext["policy"] }): AdapterRuntimeContext {
+  private ensureStoryWorktree(storyCode: string, gitMetadata: GitBranchMetadata): GitBranchMetadata {
+    if (gitMetadata.strategy !== "applied") {
+      return gitMetadata;
+    }
+    const worktreePath = gitMetadata.worktreePath ?? this.gitWorkflowService.describeStoryWorktreePath(storyCode);
+    this.gitWorkflowService.worktreeAdd(worktreePath, gitMetadata.branchName);
+    return { ...gitMetadata, worktreePath };
+  }
+
+  private ensureStoryRemediationWorktree(
+    storyCode: string,
+    storyReviewRunId: string,
+    gitMetadata: GitBranchMetadata
+  ): GitBranchMetadata {
+    if (gitMetadata.strategy !== "applied") {
+      return gitMetadata;
+    }
+    const worktreePath =
+      gitMetadata.worktreePath ?? this.gitWorkflowService.describeStoryRemediationWorktreePath(storyCode, storyReviewRunId);
+    this.gitWorkflowService.worktreeAdd(worktreePath, gitMetadata.branchName);
+    return { ...gitMetadata, worktreePath };
+  }
+
+  private finalizeAcceptedExecution(waveStoryExecutionId: string): void {
+    const execution = this.entityLoaders.requireWaveStoryExecution(waveStoryExecutionId);
+    const gitMetadata = this.parseGitMetadata(execution.gitMetadataJson);
+    if (!gitMetadata || gitMetadata.strategy !== "applied") {
+      return;
+    }
+    const story = this.entityLoaders.requireStory(execution.storyId);
+    const project = this.entityLoaders.requireProject(story.projectId);
+    const projectBranch = this.gitWorkflowService.describeProjectBranch(project.code);
+    if (gitMetadata.mergedIntoRef === projectBranch && gitMetadata.mergedCommitSha) {
+      return;
+    }
+
+    const mergedCommitSha = this.gitWorkflowService.mergeBranch(gitMetadata.branchName, projectBranch, story.code);
+    this.deps.waveStoryExecutionRepository.updateStatus(execution.id, execution.status, {
+      outputSummaryJson: execution.outputSummaryJson,
+      errorMessage: execution.errorMessage,
+      gitMetadata: {
+        ...gitMetadata,
+        mergedIntoRef: projectBranch,
+        mergedCommitSha
+      }
+    });
+    if (gitMetadata.worktreePath) {
+      this.gitWorkflowService.worktreeRemove(gitMetadata.worktreePath);
+    }
+    this.gitWorkflowService.deleteBranch(gitMetadata.branchName);
+  }
+
+  private finalizeAcceptedRemediation(storyReviewRemediationRunId: string): void {
+    const remediationRun = this.entityLoaders.requireStoryReviewRemediationRun(storyReviewRemediationRunId);
+    const gitMetadata = this.parseGitMetadata(remediationRun.gitMetadataJson);
+    if (gitMetadata && gitMetadata.strategy === "applied" && !gitMetadata.mergedCommitSha) {
+      const sourceExecution = this.entityLoaders.requireWaveStoryExecution(remediationRun.waveStoryExecutionId);
+      const story = this.entityLoaders.requireStory(remediationRun.storyId);
+      const sourceGitMetadata = this.parseGitMetadata(sourceExecution.gitMetadataJson);
+      if (!sourceGitMetadata) {
+        throw new AppError(
+          "REMEDIATION_SOURCE_GIT_METADATA_INVALID",
+          `Cannot finalize remediation ${storyReviewRemediationRunId}: source execution has no parseable git metadata`
+        );
+      }
+      const mergedCommitSha =
+        sourceGitMetadata.worktreePath &&
+        gitMetadata.branchName !== sourceGitMetadata.branchName
+          ? this.gitWorkflowService.mergeIntoWorktree(sourceGitMetadata.worktreePath, gitMetadata.branchName)
+          : this.gitWorkflowService.mergeBranch(
+              gitMetadata.branchName,
+              sourceGitMetadata.branchName,
+              `${story.code}-fix-${remediationRun.attempt}`
+            );
+      this.deps.storyReviewRemediationRunRepository.updateStatus(remediationRun.id, remediationRun.status, {
+        remediationWaveStoryExecutionId: remediationRun.remediationWaveStoryExecutionId,
+        outputSummaryJson: remediationRun.outputSummaryJson,
+        errorMessage: remediationRun.errorMessage,
+        gitMetadata: {
+          ...gitMetadata,
+          mergedIntoRef: sourceGitMetadata.branchName,
+          mergedCommitSha
+        }
+      });
+      if (gitMetadata.worktreePath) {
+        this.gitWorkflowService.worktreeRemove(gitMetadata.worktreePath);
+      }
+      this.gitWorkflowService.deleteBranch(gitMetadata.branchName);
+    }
+
+    this.finalizeAcceptedExecution(remediationRun.waveStoryExecutionId);
+  }
+
+  private finalizeCompletedProject(projectId: string):
+    | { status: "merged" | "already_finalized"; message: string }
+    | { status: "manual_resolution_required"; message: string } {
+    if (!this.isProjectDeliveryComplete(projectId)) {
+      return {
+        status: "manual_resolution_required",
+        message: `Project ${projectId} is not delivery-complete yet; finalize Git after completed documentation.`
+      };
+    }
+    const project = this.entityLoaders.requireProject(projectId);
+    const projectBranch = this.gitWorkflowService.describeProjectBranch(project.code);
+    if (!this.gitWorkflowService.branchExists(projectBranch)) {
+      return {
+        status: "already_finalized",
+        message: `Project branch ${projectBranch} is already absent.`
+      };
+    }
+    try {
+      this.gitWorkflowService.mergeBranch(projectBranch, "main", `project-${project.code}`);
+      this.gitWorkflowService.deleteBranch(projectBranch);
+      return {
+        status: "merged",
+        message: `Merged ${projectBranch} into main and cleaned up the project branch.`
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        status: "manual_resolution_required",
+        message: `Project branch ${projectBranch} could not be merged into main automatically: ${message}`
+      };
+    }
+  }
+
+  private parseGitMetadata(gitMetadataJson: string | null): GitBranchMetadata | null {
+    if (!gitMetadataJson) {
+      return null;
+    }
+    try {
+      return JSON.parse(gitMetadataJson) as GitBranchMetadata;
+    } catch {
+      return null;
+    }
+  }
+
+  private listCompletedExecutionsWithGitMetadata() {
+    const items = this.deps.itemRepository.listByWorkspaceId(this.deps.workspace.id);
+    const projects = items.flatMap((item) => this.deps.projectRepository.listByItemId(item.id));
+    const implementationPlans = this.deps.implementationPlanRepository.listLatestByProjectIds(projects.map((project) => project.id));
+    const waves = implementationPlans.flatMap((plan) => this.deps.waveRepository.listByImplementationPlanId(plan.id));
+    const waveStories = this.deps.waveStoryRepository.listByWaveIds(waves.map((wave) => wave.id));
+    return this.deps.waveStoryExecutionRepository
+      .listLatestByWaveStoryIds(waveStories.map((waveStory) => waveStory.id))
+      .filter((execution) => execution.gitMetadataJson && (execution.status === "completed" || execution.status === "failed"));
+  }
+
+  private listCompletedRemediationsWithGitMetadata() {
+    const items = this.deps.itemRepository.listByWorkspaceId(this.deps.workspace.id);
+    const projects = items.flatMap((item) => this.deps.projectRepository.listByItemId(item.id));
+    const stories = projects.flatMap((project) => this.deps.userStoryRepository.listByProjectId(project.id));
+    return stories.flatMap((story) =>
+      this.deps.storyReviewRemediationRunRepository
+        .listByStoryId(story.id)
+        .filter((run) => run.gitMetadataJson && (run.status === "completed" || run.status === "failed"))
+    );
+  }
+
+  private buildAdapterRuntimeContext(input: {
+    providerKey: string;
+    model: string | null;
+    policy: AdapterRuntimeContext["policy"];
+    workspaceRoot?: string;
+  }): AdapterRuntimeContext {
     return {
       provider: input.providerKey,
       model: input.model,
       policy: input.policy,
-      workspaceRoot: this.deps.workspaceRoot
+      workspaceRoot: input.workspaceRoot ?? this.deps.workspaceRoot
     };
   }
 
@@ -613,11 +788,25 @@ export class WorkflowService {
   }
 
   public async startDocumentation(projectId: string) {
-    return this.documentationService.startDocumentation(projectId);
+    const result = await this.documentationService.startDocumentation(projectId);
+    let projectFinalization:
+      | { status: "merged" | "already_finalized"; message: string }
+      | { status: "manual_resolution_required"; message: string } = {
+      status: "already_finalized",
+      message: "Project branch was already finalized."
+    };
+    if (result.status === "completed") {
+      projectFinalization = this.finalizeCompletedProject(projectId);
+    }
+    return { ...result, projectFinalization };
   }
 
   public showDocumentation(projectId: string) {
     return this.documentationService.showDocumentation(projectId);
+  }
+
+  public finalizeProjectGit(projectId: string) {
+    return this.finalizeCompletedProject(projectId);
   }
 
   public async retryDocumentation(documentationRunId: string) {
@@ -634,6 +823,69 @@ export class WorkflowService {
 
   public showExecutionLogs(input: { projectId: string; storyCode: string }) {
     return this.executionService.showExecutionLogs(input);
+  }
+
+  public pruneGitWorktrees() {
+    const before = this.gitWorkflowService.worktreeList();
+    this.gitWorkflowService.pruneWorktrees();
+    const removed: string[] = [];
+
+    for (const execution of this.listCompletedExecutionsWithGitMetadata()) {
+      const gitMetadata = this.parseGitMetadata(execution.gitMetadataJson);
+      if (!gitMetadata?.worktreePath) {
+        continue;
+      }
+      const branchMissing = !this.gitWorkflowService.branchExists(gitMetadata.branchName);
+      if (gitMetadata.mergedIntoRef || branchMissing) {
+        this.gitWorkflowService.worktreeRemove(gitMetadata.worktreePath);
+        removed.push(gitMetadata.worktreePath);
+      }
+    }
+
+    for (const remediationRun of this.listCompletedRemediationsWithGitMetadata()) {
+      const gitMetadata = this.parseGitMetadata(remediationRun.gitMetadataJson);
+      if (!gitMetadata?.worktreePath) {
+        continue;
+      }
+      const branchMissing = !this.gitWorkflowService.branchExists(gitMetadata.branchName);
+      if (gitMetadata.mergedIntoRef || branchMissing) {
+        this.gitWorkflowService.worktreeRemove(gitMetadata.worktreePath);
+        removed.push(gitMetadata.worktreePath);
+      }
+    }
+
+    const registeredWorktrees = new Set(this.gitWorkflowService.worktreeList());
+    const managedRoot = resolve(this.deps.workspaceRoot, ".beerengineer", "worktrees");
+    if (existsSync(managedRoot)) {
+      for (const entry of readdirSync(managedRoot, { withFileTypes: true })) {
+        if (!entry.isDirectory()) {
+          continue;
+        }
+        const candidatePath = resolve(managedRoot, entry.name);
+        if (entry.name === "_merge") {
+          for (const mergeEntry of readdirSync(candidatePath, { withFileTypes: true })) {
+            if (!mergeEntry.isDirectory()) {
+              continue;
+            }
+            const mergeCandidatePath = resolve(candidatePath, mergeEntry.name);
+            if (registeredWorktrees.has(mergeCandidatePath)) {
+              continue;
+            }
+            rmSync(mergeCandidatePath, { recursive: true, force: true });
+            removed.push(mergeCandidatePath);
+          }
+          continue;
+        }
+        if (registeredWorktrees.has(candidatePath)) {
+          continue;
+        }
+        rmSync(candidatePath, { recursive: true, force: true });
+        removed.push(candidatePath);
+      }
+    }
+
+    const after = this.gitWorkflowService.worktreeList();
+    return { before, after, removed };
   }
 
   private parseRalphVerificationOutput(

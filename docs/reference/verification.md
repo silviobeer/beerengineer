@@ -316,7 +316,7 @@ Autorun und Live-Runs zusaetzlich verifiziert:
 - reproduzierbarer CLI-Live-Run mit
   `--adapter-script-path` und `--workspace-root` bestaetigt den Auto-Remediation-Pfad
 - dabei wurden automatische `story_review`-Remediations ausgefuehrt, offene Findings auf `0` reduziert
-  und `fix/*`-Branches korrekt angelegt
+  und anschliessend wieder in `story/*` bzw. `proj/*` gemergt und bereinigt
 
 ## Migration Hardening
 

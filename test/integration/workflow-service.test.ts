@@ -752,6 +752,7 @@ describe("workflow service", () => {
         baseRef?: string;
         branchName?: string;
         workspaceRoot?: string;
+        worktreePath?: string | null;
         headBefore?: string | null;
         headAfter?: string | null;
         commitSha?: string | null;
@@ -768,6 +769,7 @@ describe("workflow service", () => {
           baseRef: gitMetadata.baseRef ?? "proj/test",
           branchName: gitMetadata.branchName ?? "story/test",
           workspaceRoot: resolve("."),
+          worktreePath: gitMetadata.worktreePath ?? null,
           headBefore: gitMetadata.headBefore ?? null,
           headAfter: gitMetadata.headAfter ?? null,
           commitSha: gitMetadata.commitSha ?? null,
@@ -837,6 +839,34 @@ describe("workflow service", () => {
         documentationContext.connection.close();
       }
     } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("merges the project branch into main after completed documentation", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const workspaceRoot = createGitWorkspace(root);
+    const context = createAppContext(dbPath, { workspaceRoot });
+
+    try {
+      const { project } = await prepareProjectThroughCompletedExecution(context, {
+        title: "Project Branch Finalization",
+        description: "Finalize the project branch after delivery completion"
+      });
+      const qa = await context.workflowService.startQa(project.id);
+      expect(qa.status).toBe("passed");
+
+      const documentation = await context.workflowService.startDocumentation(project.id) as {
+        status: string;
+        projectFinalization: { status: string; message: string };
+      };
+      expect(documentation.status).toBe("completed");
+      expect(documentation.projectFinalization.status).toBe("merged");
+
+      expect(execFileSync("git", ["branch", "--list", "proj/*"], { cwd: workspaceRoot, encoding: "utf8" }).trim()).toBe("");
+    } finally {
+      context.connection.close();
       rmSync(root, { recursive: true, force: true });
     }
   });
@@ -2945,13 +2975,10 @@ describe("workflow service", () => {
       };
       expect(remediationShow.latestRemediationRun?.status).toBe("completed");
       expect(remediationShow.latestRemediationRun?.gitMetadataJson).toContain('"branchName": "fix/');
+      expect(remediationShow.latestRemediationRun?.gitMetadataJson).toContain('"mergedIntoRef": "story/');
       expect(remediationShow.openFindings).toHaveLength(0);
-      expect(execFileSync("git", ["branch", "--list", "story/*"], { cwd: workspaceRoot, encoding: "utf8" })).toContain(
-        "story/"
-      );
-      expect(execFileSync("git", ["branch", "--list", "fix/*"], { cwd: workspaceRoot, encoding: "utf8" })).toContain(
-        "fix/"
-      );
+      expect(execFileSync("git", ["branch", "--list", "story/*"], { cwd: workspaceRoot, encoding: "utf8" }).trim()).toBe("");
+      expect(execFileSync("git", ["branch", "--list", "fix/*"], { cwd: workspaceRoot, encoding: "utf8" }).trim()).toBe("");
       context.connection.close();
     } finally {
       rmSync(root, { recursive: true, force: true });

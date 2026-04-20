@@ -17,4 +17,5 @@ export type BuildAdapterRuntimeContext = (input: {
   providerKey: string;
   model: string | null;
   policy: AdapterRuntimeContext["policy"];
+  workspaceRoot?: string;
 }) => AdapterRuntimeContext;

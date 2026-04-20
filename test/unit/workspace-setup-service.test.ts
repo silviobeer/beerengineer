@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -148,6 +148,25 @@ describe("WorkspaceSetupService", () => {
     try {
       expect(() => service.resolveAssistSession({ sessionId: session.id })).toThrowError(AppError);
       expect(service.showAssistSession(session.id).recommendedNextCommand).toContain("workspace:assist");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("adds the managed worktree ignore entry during workspace init", () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-workspace-setup-"));
+    const configPath = createRuntimeConfig(root);
+
+    try {
+      const result = createService(root, configPath).init({
+        createRoot: false,
+        initGit: false,
+        dryRun: false
+      });
+      expect(result.actions.some((action: { id: string; status: string }) => action.id === "ensure-beerengineer-worktrees-gitignore")).toBe(
+        true
+      );
+      expect(readFileSync(join(root, ".gitignore"), "utf8")).toContain(".beerengineer/worktrees/");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
