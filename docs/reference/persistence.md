@@ -27,6 +27,15 @@ Der persistierte Top-Level-Scope ist jetzt `Workspace`.
 Der technische `workspaceRoot` fuer Git-/Repo-Ausfuehrung ist bewusst nicht
 gleich dem fachlichen Workspace-Scope.
 
+Im aktuellen Git-Lifecycle gilt:
+
+- `gitMetadataJson` auf `wave_story_executions` und `story_review_remediation_runs`
+  ist die kanonische Persistenz fuer Branch-, Merge- und Worktree-Zustand
+- `workspaceRoot` in diesen Metadaten bleibt der stabile Projekt-Root
+- `worktreePath` zeigt optional auf den aktiven Story-/Fix-Worktree
+- `mergedIntoRef` und `mergedCommitSha` dokumentieren den engine-seitig
+  ausgefuehrten Merge nach erfolgreichem Gate-Pass
+
 Wichtig:
 
 - `0000_initial` beschreibt das Basisschema

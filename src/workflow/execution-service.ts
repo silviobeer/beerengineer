@@ -103,8 +103,11 @@ type ExecutionServiceOptions = {
   resolveWorkerProfile(profileKey: WorkerProfileKey): ResolvedWorkerProfile;
   resolveWorkerRuntime(profileKey: WorkerProfileKey): ResolvedWorkerRuntime;
   buildAdapterRuntimeContext: BuildAdapterRuntimeContext;
+  pruneGitWorktrees?(): void;
   ensureProjectBranch(projectCode: string): void;
   ensureStoryBranch(projectCode: string, storyCode: string): GitBranchMetadata;
+  ensureStoryWorktree(storyCode: string, gitMetadata: GitBranchMetadata): GitBranchMetadata;
+  finalizeAcceptedExecution?(waveStoryExecutionId: string): void;
   executeVerificationPipeline(input: {
     project: ReturnType<WorkflowEntityLoaders["requireProject"]>;
     implementationPlan: ReturnType<WorkflowEntityLoaders["requireImplementationPlanForProject"]>;
@@ -151,6 +154,10 @@ export class ExecutionService {
     const plan = this.options.loaders.requireImplementationPlanForProject(project.id);
     const wave = this.options.loaders.requireWave(waveExecution.waveId);
     const projectExecutionContext = this.ensureProjectExecutionContext(project, plan);
+    const gitMetadata = this.options.ensureStoryWorktree(
+      story.code,
+      this.options.ensureStoryBranch(project.code, story.code)
+    );
     const testRun = await this.ensureWaveStoryTestPreparation({
       project,
       implementationPlan: plan,
@@ -158,13 +165,13 @@ export class ExecutionService {
       waveExecution,
       waveStory,
       story,
-      projectExecutionContext
+      projectExecutionContext,
+      gitMetadata
     });
     if (testRun.status !== "completed") {
       this.refreshWaveExecutionStatus(waveExecution.id);
       return testRun;
     }
-    const gitMetadata = this.options.ensureStoryBranch(project.code, story.code);
     const result = await this.executeWaveStory({
       project,
       implementationPlan: plan,
@@ -663,7 +670,10 @@ export class ExecutionService {
       repoContextSnapshotJson: input.storyRunContext.repoContextSnapshotJson
     });
     return {
-      runtime: this.options.buildAdapterRuntimeContext(input.runtime),
+      runtime: this.options.buildAdapterRuntimeContext({
+        ...input.runtime,
+        workspaceRoot: input.input.gitMetadata?.worktreePath ?? undefined
+      }),
       workerRole: input.workerRole,
       prompt: input.prompt,
       skills: input.skills,
@@ -789,6 +799,7 @@ export class ExecutionService {
 
   private async advanceExecution(projectId: string) {
     const project = this.options.loaders.requireProject(projectId);
+    this.options.pruneGitWorktrees?.();
     this.options.ensureProjectBranch(project.code);
     const implementationPlan = this.options.loaders.requireImplementationPlanForProject(projectId);
     const waves = this.options.deps.waveRepository.listByImplementationPlanId(implementationPlan.id);
@@ -854,7 +865,10 @@ export class ExecutionService {
     const executions = [];
     for (const waveStory of executableStories) {
       const story = this.options.loaders.requireStory(waveStory.storyId);
-      const gitMetadata = this.options.ensureStoryBranch(project.code, story.code);
+      const gitMetadata = this.options.ensureStoryWorktree(
+        story.code,
+        this.options.ensureStoryBranch(project.code, story.code)
+      );
       const testRun = await this.ensureWaveStoryTestPreparation({
         project,
         implementationPlan,
@@ -862,7 +876,8 @@ export class ExecutionService {
         waveExecution: activeWaveExecution,
         waveStory,
         story,
-        projectExecutionContext
+        projectExecutionContext,
+        gitMetadata
       });
       if (testRun.status !== "completed") {
         executions.push(testRun);
@@ -955,6 +970,7 @@ export class ExecutionService {
     waveStory: ReturnType<WorkflowEntityLoaders["requireWaveStory"]>;
     story: ReturnType<WorkflowEntityLoaders["requireStory"]>;
     projectExecutionContext?: ReturnType<ExecutionService["ensureProjectExecutionContext"]>;
+    gitMetadata?: GitBranchMetadata | null;
   }) {
     const latest = this.options.deps.waveStoryTestRunRepository.getLatestByWaveStoryId(input.waveStory.id);
     if (latest?.status === "completed") {
@@ -994,7 +1010,10 @@ export class ExecutionService {
 
     try {
       const result = await runtime.adapter.runStoryTestPreparation({
-        runtime: this.options.buildAdapterRuntimeContext(runtime),
+        runtime: this.options.buildAdapterRuntimeContext({
+          ...runtime,
+          workspaceRoot: input.gitMetadata?.worktreePath ?? undefined
+        }),
         workerRole: "test-writer",
         prompt: resolvedWorkerProfile.promptContent,
         skills: resolvedWorkerProfile.skills,

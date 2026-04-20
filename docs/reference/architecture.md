@@ -21,6 +21,13 @@ Davon getrennt bleibt:
 
 - `workspaceRoot` als technischer Repo-/Git-Pfad fuer einen konkreten Lauf
 
+Im Execution-Pfad bedeutet das jetzt konkret:
+
+- der persistierte Workspace bleibt der stabile Projekt-Root
+- Story- und Remediation-Laeufe arbeiten in engine-owned Git-Worktrees unter `.beerengineer/worktrees/`
+- read-only Reviews und projektweite Documentation bleiben am stabilen Workspace-Root
+- Merges werden ueber temporaere Merge-Worktrees oder bestehende Story-Worktrees orchestriert, nicht ueber den Haupt-Checkout
+
 Damit koennen mehrere Apps dieselbe Engine und dieselbe SQLite-Instanz nutzen,
 ohne ihre Item-Historien zu vermischen.
 
@@ -70,6 +77,13 @@ Persistiert werden dafuer:
 - `WaveStoryExecution` als Laufzeitversuch fuer genau eine Story-in-Wave-Zuordnung
 - `ExecutionAgentSession` fuer den konkreten Worker-Lauf
 - `VerificationRun` fuer das strukturierte Ergebnis der Verifikation
+
+Git-Isolation wird dabei engine-seitig mitgefuehrt:
+
+- `proj/{code}` als langlebiger Projekt-Branch
+- `story/{project}/{story}` pro Story-Lauf
+- `fix/{story}/{reviewRun}` pro bounded Remediation-Lauf
+- `GitBranchMetadata.worktreePath` als technischer Ausfuehrungspfad fuer Agent-Runs
 
 Vor jedem Story-Run erzeugt die Engine und speichert:
 

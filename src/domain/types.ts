@@ -363,6 +363,7 @@ export type GitBranchMetadata = {
   baseRef: string;
   branchName: string;
   workspaceRoot: string;
+  worktreePath: string | null;
   headBefore: string | null;
   headAfter: string | null;
   commitSha: string | null;

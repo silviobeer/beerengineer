@@ -436,6 +436,27 @@ Im aktuellen Execution-Schnitt gilt:
 - der Implementer bekommt den gespeicherten Test-Run-Output als Eingabe und arbeitet gegen diese vorab erzeugten Testziele
 - jede `WaveStoryExecution` referenziert den konkret verwendeten Test-Run direkt ueber `testPreparationRunId`
 - eine Story darf erst dann `completed` werden, wenn der neueste Ralph-Run `passed` ist und der neueste Story-Review-Run `passed` ist
+- nach bestandenem Story Review merged die Engine den Story-Branch automatisch in den Projekt-Branch und bereinigt Story-Worktree plus `story/*`-Branch
+- nach erfolgreicher Story-Review-Remediation merged die Engine zuerst `fix/* -> story/*`, dann `story/* -> proj/*`, und bereinigt die beteiligten Worktrees/Branches
+- nach erfolgreicher Documentation merged die Engine den Projekt-Branch automatisch nach `main`
+
+## Workspace Prune
+
+`workspace:prune` bereinigt engine-owned Git-Artefakte im aktiven Workspace:
+
+- fuehrt `git worktree prune` fuer stale Git-Registrierungen aus
+- entfernt sichere Story-/Fix-Worktrees, deren persistierter Git-Zustand bereits als gemergt gilt
+- entfernt verwaiste Verzeichnisse unter `.beerengineer/worktrees/`, die nicht mehr als Git-Worktree registriert sind
+
+## Project Git Finalization
+
+`project:finalize-git --project-id ...` versucht den verbliebenen Projekt-Branch
+manuell nach `main` zu mergen.
+
+- typischer Einsatzfall: automatische Documentation war erfolgreich, aber `proj/* -> main` konnte wegen Merge-Konflikten nicht finalisiert werden
+- bei Erfolg liefert der Command `status = "merged"`
+- wenn der Branch bereits aufgeraeumt wurde, liefert er `status = "already_finalized"`
+- bei weiterhin bestehendem Konflikt liefert er `status = "manual_resolution_required"` mit der Git-Fehlermeldung
 
 ## QA Runtime
 
@@ -482,6 +503,7 @@ Im aktuellen Documentation-Schnitt gilt:
 - `documentation:show` zeigt den neuesten `DocumentationRun` sowie Sessions und zugehoerige Artefakte aller Dokumentationsversuche fuer das Project
 - `documentation:retry` erlaubt genau dann einen neuen Dokumentationslauf, wenn der letzte `DocumentationRun` auf `review_required` oder `failed` steht
 - `documentation:start` materialisiert den fertigen Delivery-Report zusaetzlich in den Workspace unter `.beerengineer/artifacts/delivery-reports/<projectCode>-delivery-report.md` und `.beerengineer/artifacts/delivery-reports/<projectCode>-delivery-report.json`
+- `documentation:start` liefert bei erfolgreicher Dokumentation zusaetzlich einen `projectFinalization`-Status fuer den anschliessenden `proj/* -> main`-Merge
 - `beerengineer sonar preflight` prueft die Laufzeitvoraussetzungen fuer Live-Sonar (`java`, `sonar-scanner`, `SONAR_TOKEN`) und gibt klare naechste Schritte aus
 - `beerengineer coderabbit preflight` prueft die optionalen Voraussetzungen fuer spaetere Live-Coderabbit-Reviews (`CODERABBIT_TOKEN`, Organisation/Repository, Git-Repo) und gibt klare naechste Schritte aus
 

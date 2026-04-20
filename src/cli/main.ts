@@ -300,6 +300,14 @@ program
   );
 
 program
+  .command("workspace:prune")
+  .action(
+    withContext<Record<string, never>>(({ workflowService }) => {
+      console.log(JSON.stringify(workflowService.pruneGitWorktrees(), null, 2));
+    })
+  );
+
+program
   .command("workspace:init")
   .option("--create-root", "Create the workspace root if it does not exist")
   .option("--init-git", "Initialize a git repository when missing")
@@ -677,6 +685,15 @@ program
   .action(
     withContext<{ projectId: string }>(({ workflowService }, options) => {
       console.log(JSON.stringify(workflowService.showProject(options.projectId), null, 2));
+    })
+  );
+
+program
+  .command("project:finalize-git")
+  .requiredOption("--project-id <projectId>")
+  .action(
+    withContext<{ projectId: string }>(({ workflowService }, options) => {
+      console.log(JSON.stringify(workflowService.finalizeProjectGit(options.projectId), null, 2));
     })
   );
 

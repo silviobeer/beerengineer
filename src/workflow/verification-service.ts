@@ -131,6 +131,9 @@ type VerificationServiceOptions = {
     status: string;
   }>;
   ensureStoryRemediationBranch(projectCode: string, storyCode: string, storyReviewRunId: string): GitBranchMetadata;
+  ensureStoryRemediationWorktree(storyCode: string, storyReviewRunId: string, gitMetadata: GitBranchMetadata): GitBranchMetadata;
+  finalizeAcceptedExecution?(waveStoryExecutionId: string): void;
+  finalizeAcceptedRemediation?(storyReviewRemediationRunId: string): void;
   invalidateDocumentationForProject(projectId: string, reason: string): void;
   mirrorStoryReview?(input: {
     waveStoryExecutionId: string;
@@ -234,6 +237,9 @@ export class VerificationService {
       );
       this.options.refreshWaveExecutionStatus(waveExecution.id);
     }
+    if (storyReview.status === "passed") {
+      this.options.finalizeAcceptedExecution?.(execution.id);
+    }
 
     const latestStoryReviewRun = this.options.deps.storyReviewRunRepository.getLatestByWaveStoryExecutionId(execution.id);
     return {
@@ -334,6 +340,9 @@ export class VerificationService {
       }
     );
     this.options.refreshWaveExecutionStatus(waveExecution.id);
+    if (finalExecutionStatus === "passed") {
+      this.options.finalizeAcceptedExecution?.(execution.id);
+    }
 
     return {
       phase: storyReview ? "story_review" : "app_verification",
@@ -449,7 +458,11 @@ export class VerificationService {
       null,
       2
     );
-    const gitMetadata = this.options.ensureStoryRemediationBranch(project.code, story.code, storyReviewRun.id);
+    const gitMetadata = this.options.ensureStoryRemediationWorktree(
+      story.code,
+      storyReviewRun.id,
+      this.options.ensureStoryRemediationBranch(project.code, story.code, storyReviewRun.id)
+    );
     const remediationRun = this.options.deps.runInTransaction(() => {
       const priorAttempts = this.options.deps.storyReviewRemediationRunRepository.listByStoryReviewRunId(storyReviewRun.id);
       if (priorAttempts.length >= MAX_STORY_REVIEW_REMEDIATION_ATTEMPTS) {
@@ -549,6 +562,7 @@ export class VerificationService {
       });
       if (remediationStatus === "completed") {
         this.options.invalidateDocumentationForProject(project.id, `story review remediation ${remediationRun.id}`);
+        this.options.finalizeAcceptedRemediation?.(remediationRun.id);
       }
       this.options.refreshWaveExecutionStatus(waveExecution.id);
       return {
@@ -717,6 +731,10 @@ export class VerificationService {
     }
   }
 
+  private resolveExecutionGitMetadata(execution: WaveStoryExecutionRecord): GitBranchMetadata | null {
+    return this.parseStoredJson<GitBranchMetadata>(execution.gitMetadataJson, "EXECUTION_GIT_METADATA_INVALID", "Execution git metadata");
+  }
+
   private parseRalphVerificationOutput(
     verificationRun: ReturnType<WorkflowDeps["verificationRunRepository"]["getLatestByWaveStoryExecutionIdAndMode"]>
   ): RalphVerificationOutput {
@@ -726,13 +744,13 @@ export class VerificationService {
     return ralphVerificationOutputSchema.parse(JSON.parse(verificationRun.summaryJson));
   }
 
-  private buildProjectAppTestContext(project: ReturnType<WorkflowEntityLoaders["requireProject"]>) {
+  private buildProjectAppTestContext(project: ReturnType<WorkflowEntityLoaders["requireProject"]>, workspaceRoot?: string) {
     const defaults = this.getDefaultAppTestConfig();
     const raw = this.options.deps.workspaceSettings.appTestConfigJson;
     if (!raw) {
       return {
         projectId: project.id,
-        workspaceRoot: this.options.deps.workspaceRoot,
+        workspaceRoot: workspaceRoot ?? this.options.deps.workspaceRoot,
         ...defaults
       };
     }
@@ -749,7 +767,7 @@ export class VerificationService {
 
     return {
       projectId: project.id,
-      workspaceRoot: this.options.deps.workspaceRoot,
+      workspaceRoot: workspaceRoot ?? this.options.deps.workspaceRoot,
       baseUrl: parsed.baseUrl ?? defaults.baseUrl,
       runnerPreference: parsed.runnerPreference ?? defaults.runnerPreference,
       readiness: parsed.readiness ?? defaults.readiness,
@@ -846,6 +864,7 @@ export class VerificationService {
   }): Promise<{ status: VerificationRunStatus; summary: RalphVerificationOutput; errorMessage: string | null }> {
     const resolvedWorkerProfile = this.options.resolveWorkerProfile("ralph");
     const runtime = this.options.resolveWorkerRuntime("ralph");
+    const gitMetadata = this.resolveExecutionGitMetadata(input.execution);
     const storyWorkflowContext = this.buildStoryWorkflowAdapterContext({
       project: input.project,
       implementationPlan: input.implementationPlan,
@@ -856,7 +875,10 @@ export class VerificationService {
     const testPreparation = this.buildTestPreparationPayload(input.testPreparationRun, input.parsedTestPreparation);
     try {
       const result = await runtime.adapter.runStoryRalphVerification({
-        runtime: this.options.buildAdapterRuntimeContext(runtime),
+        runtime: this.options.buildAdapterRuntimeContext({
+          ...runtime,
+          workspaceRoot: gitMetadata?.worktreePath ?? undefined
+        }),
         workerRole: "ralph-verifier",
         prompt: resolvedWorkerProfile.promptContent,
         skills: resolvedWorkerProfile.skills,
@@ -1109,7 +1131,8 @@ export class VerificationService {
     const resolvedWorkerProfile = this.options.resolveWorkerProfile("appVerification");
     const runtime = this.options.resolveWorkerRuntime("appVerification");
     const previousRuns = this.options.deps.appVerificationRunRepository.listByWaveStoryExecutionId(input.execution.id);
-    const projectAppTestContext = this.buildProjectAppTestContext(input.project);
+    const gitMetadata = this.resolveExecutionGitMetadata(input.execution);
+    const projectAppTestContext = this.buildProjectAppTestContext(input.project, gitMetadata?.worktreePath ?? undefined);
     const storyAppVerificationContext = this.buildStoryAppVerificationContext({
       execution: input.execution,
       story: input.story,
@@ -1173,7 +1196,10 @@ export class VerificationService {
       });
 
       const result = await runtime.adapter.runStoryAppVerification({
-        runtime: this.options.buildAdapterRuntimeContext(runtime),
+        runtime: this.options.buildAdapterRuntimeContext({
+          ...runtime,
+          workspaceRoot: gitMetadata?.worktreePath ?? undefined
+        }),
         workerRole: "app-verifier",
         prompt: resolvedWorkerProfile.promptContent,
         skills: resolvedWorkerProfile.skills,

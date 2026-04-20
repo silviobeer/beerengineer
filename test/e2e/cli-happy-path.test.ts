@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -273,6 +273,29 @@ describe("cli happy path", () => {
 
       const coderabbitTest = runCli(["--db", dbPath, "coderabbit", "config", "test"], cwd) as { valid: boolean };
       expect(coderabbitTest.valid).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("prunes orphaned managed worktree directories via CLI", () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-e2e-"));
+    const dbPath = join(root, "app.sqlite");
+    const cwd = resolve(".");
+    const workspaceRoot = createGitWorkspace(root);
+    const orphanPath = join(workspaceRoot, ".beerengineer", "worktrees", "orphan-story");
+
+    try {
+      mkdirSync(orphanPath, { recursive: true });
+      writeFileSync(join(orphanPath, "README.md"), "orphan\n", "utf8");
+
+      const result = runCli(
+        ["--db", dbPath, "--workspace-root", workspaceRoot, "workspace:prune"],
+        cwd
+      ) as { removed: string[] };
+
+      expect(result.removed).toContain(orphanPath);
+      expect(existsSync(orphanPath)).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -723,12 +746,63 @@ describe("cli happy path", () => {
         expect(remediation.latestRemediationRun?.status).toBe("completed");
         expect(remediation.latestRemediationRun?.gitBranchName).toContain("fix/");
         expect(remediation.openFindings).toHaveLength(0);
-        expect(execFileSync("git", ["branch", "--list", "story/*"], { cwd: workspaceRoot, encoding: "utf8" })).toContain(
-          "story/"
+        expect(execFileSync("git", ["branch", "--list", "story/*"], { cwd: workspaceRoot, encoding: "utf8" }).trim()).toBe("");
+        expect(execFileSync("git", ["branch", "--list", "fix/*"], { cwd: workspaceRoot, encoding: "utf8" }).trim()).toBe("");
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+    30000
+  );
+
+  it(
+    "reports already-finalized when project git finalization is retried via CLI",
+    () => {
+      const root = mkdtempSync(join(tmpdir(), "beerengineer-e2e-"));
+      const dbPath = join(root, "app.sqlite");
+      const cwd = resolve(".");
+      const workspaceRoot = createGitWorkspace(root);
+
+      try {
+        const item = runCli(
+          ["--db", dbPath, "--workspace-root", workspaceRoot, "item:create", "--title", "Finalize Git", "--description", "Desc"],
+          cwd
+        ) as { id: string };
+        runCli(["--db", dbPath, "--workspace-root", workspaceRoot, "brainstorm:start", "--item-id", item.id], cwd);
+        const itemShow = runCli(["--db", dbPath, "--workspace-root", workspaceRoot, "item:show", "--item-id", item.id], cwd) as {
+          concept: { id: string };
+        };
+        runCli(["--db", dbPath, "--workspace-root", workspaceRoot, "concept:approve", "--concept-id", itemShow.concept.id], cwd);
+        runCli(["--db", dbPath, "--workspace-root", workspaceRoot, "project:import", "--item-id", item.id], cwd);
+        const imported = runCli(["--db", dbPath, "--workspace-root", workspaceRoot, "item:show", "--item-id", item.id], cwd) as {
+          projects: Array<{ id: string }>;
+        };
+        const projectId = imported.projects[0]!.id;
+        runCli(
+          ["--db", dbPath, "--workspace-root", workspaceRoot, "requirements:start", "--item-id", item.id, "--project-id", projectId],
+          cwd
         );
-        expect(execFileSync("git", ["branch", "--list", "fix/*"], { cwd: workspaceRoot, encoding: "utf8" })).toContain(
-          "fix/"
+        runCli(["--db", dbPath, "--workspace-root", workspaceRoot, "stories:approve", "--project-id", projectId], cwd);
+        runCli(
+          ["--db", dbPath, "--workspace-root", workspaceRoot, "architecture:start", "--item-id", item.id, "--project-id", projectId],
+          cwd
         );
+        runCli(["--db", dbPath, "--workspace-root", workspaceRoot, "architecture:approve", "--project-id", projectId], cwd);
+        runCli(
+          ["--db", dbPath, "--workspace-root", workspaceRoot, "planning:start", "--item-id", item.id, "--project-id", projectId],
+          cwd
+        );
+        runCli(["--db", dbPath, "--workspace-root", workspaceRoot, "planning:approve", "--project-id", projectId], cwd);
+        runCli(["--db", dbPath, "--workspace-root", workspaceRoot, "execution:start", "--project-id", projectId], cwd);
+        runCli(["--db", dbPath, "--workspace-root", workspaceRoot, "execution:tick", "--project-id", projectId], cwd);
+        runCli(["--db", dbPath, "--workspace-root", workspaceRoot, "qa:start", "--project-id", projectId], cwd);
+        runCli(["--db", dbPath, "--workspace-root", workspaceRoot, "documentation:start", "--project-id", projectId], cwd);
+
+        const finalization = runCli(
+          ["--db", dbPath, "--workspace-root", workspaceRoot, "project:finalize-git", "--project-id", projectId],
+          cwd
+        ) as { status: string; message: string };
+        expect(finalization.status).toBe("already_finalized");
       } finally {
         rmSync(root, { recursive: true, force: true });
       }
