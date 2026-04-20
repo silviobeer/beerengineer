@@ -28,6 +28,11 @@ import {
   PlanningReviewQuestionRepository,
   PlanningReviewRunRepository,
   PlanningReviewSynthesisRepository,
+  ReviewAssumptionRepository,
+  ReviewFindingRepository,
+  ReviewQuestionRepository,
+  ReviewRunRepository,
+  ReviewSynthesisRepository,
   QualityKnowledgeEntryRepository,
   QaAgentSessionRepository,
   QaFindingRepository,
@@ -138,6 +143,11 @@ export type AppContext = {
     planningReviewSynthesisRepository: PlanningReviewSynthesisRepository;
     planningReviewQuestionRepository: PlanningReviewQuestionRepository;
     planningReviewAssumptionRepository: PlanningReviewAssumptionRepository;
+    reviewRunRepository: ReviewRunRepository;
+    reviewFindingRepository: ReviewFindingRepository;
+    reviewSynthesisRepository: ReviewSynthesisRepository;
+    reviewQuestionRepository: ReviewQuestionRepository;
+    reviewAssumptionRepository: ReviewAssumptionRepository;
     stageRunRepository: StageRunRepository;
     artifactRepository: ArtifactRepository;
     agentSessionRepository: AgentSessionRepository;
@@ -241,6 +251,11 @@ export function createAppContext(
   const planningReviewSynthesisRepository = new PlanningReviewSynthesisRepository(db);
   const planningReviewQuestionRepository = new PlanningReviewQuestionRepository(db);
   const planningReviewAssumptionRepository = new PlanningReviewAssumptionRepository(db);
+  const reviewRunRepository = new ReviewRunRepository(db);
+  const reviewFindingRepository = new ReviewFindingRepository(db);
+  const reviewSynthesisRepository = new ReviewSynthesisRepository(db);
+  const reviewQuestionRepository = new ReviewQuestionRepository(db);
+  const reviewAssumptionRepository = new ReviewAssumptionRepository(db);
   const stageRunRepository = new StageRunRepository(db);
   const artifactRepository = new ArtifactRepository(db);
   const agentSessionRepository = new AgentSessionRepository(db);
@@ -329,6 +344,11 @@ export function createAppContext(
       planningReviewSynthesisRepository,
       planningReviewQuestionRepository,
       planningReviewAssumptionRepository,
+      reviewRunRepository,
+      reviewFindingRepository,
+      reviewSynthesisRepository,
+      reviewQuestionRepository,
+      reviewAssumptionRepository,
       stageRunRepository,
       artifactRepository,
       agentSessionRepository
@@ -388,9 +408,17 @@ export function createAppContext(
       planningReviewSynthesisRepository,
       planningReviewQuestionRepository,
       planningReviewAssumptionRepository,
+      reviewRunRepository,
+      reviewFindingRepository,
+      reviewSynthesisRepository,
+      reviewQuestionRepository,
+      reviewAssumptionRepository,
       stageRunRepository,
       artifactRepository,
-      agentSessionRepository
+      agentSessionRepository,
+      sonarService,
+      coderabbitService,
+      qualityKnowledgeService
     })
   };
 }

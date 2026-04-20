@@ -34,11 +34,11 @@ import type {
 } from "../schemas/output-contracts.js";
 
 export type AgentExecutionPolicy = {
-  autonomyMode: "yolo";
-  approvalMode: "never";
-  filesystemMode: "danger-full-access";
-  networkMode: "enabled";
-  interactionMode: "non_blocking";
+  autonomyMode: "manual" | "yolo";
+  approvalMode: "always" | "never";
+  filesystemMode: "read-only" | "workspace-write" | "danger-full-access";
+  networkMode: "disabled" | "enabled";
+  interactionMode: "blocking" | "non_blocking";
 };
 
 export type AdapterRuntimeContext = {
@@ -69,7 +69,7 @@ export type WorkspaceSetupAssistAdapterRunRequest = {
     workspaceKey: string;
     rootPath: string | null;
     mode: "greenfield" | "brownfield";
-    stack: "node-ts";
+    stack: "node-ts" | "python";
     scaffoldProjectFiles: boolean;
     createRoot: boolean;
     initGit: boolean;

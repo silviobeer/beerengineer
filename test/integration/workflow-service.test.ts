@@ -212,6 +212,204 @@ describe("workflow service", () => {
     }
   });
 
+  it("mirrors planning reviews into the generic review core", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const item = createWorkspaceItem(context, {
+        title: "Planning Core Mirror",
+        description: "Mirror planning reviews into generic review runs"
+      });
+      const startedSession = context.workflowService.startBrainstormSession(item.id);
+      const review = await context.workflowService.startPlanningReview({
+        sourceType: "brainstorm_session",
+        sourceId: startedSession.sessionId,
+        step: "requirements_engineering",
+        reviewMode: "readiness",
+        interactionMode: "interactive"
+      });
+
+      const mirrored = context.repositories.reviewRunRepository.getLatestBySubject({
+        reviewKind: "planning",
+        subjectType: "brainstorm_session",
+        subjectId: startedSession.sessionId
+      });
+
+      expect(review.run.id).toBeTruthy();
+      expect(mirrored?.subjectType).toBe("brainstorm_session");
+      expect(mirrored?.reviewKind).toBe("planning");
+      expect(mirrored?.status).toMatch(/action_required|complete/);
+      expect(context.repositories.reviewFindingRepository.listByRunId(mirrored!.id).length).toBeGreaterThanOrEqual(0);
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("creates advisory implementation reviews from story review and coderabbit signals", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const { project } = await prepareProjectThroughCompletedExecution(context, {
+        title: "Implementation Review",
+        description: "Aggregate quality signals into a generic implementation review"
+      });
+      const implementationPlan = context.repositories.implementationPlanRepository.getLatestByProjectId(project.id)!;
+      const firstWave = context.repositories.waveRepository.listByImplementationPlanId(implementationPlan.id)[0]!;
+      const firstStory = context.repositories.userStoryRepository.listByProjectId(project.id)[0]!;
+      const firstWaveStory = context.repositories.waveStoryRepository.getByStoryId(firstStory.id)!;
+      const latestExecution = context.repositories.waveStoryExecutionRepository.getLatestByWaveStoryId(firstWaveStory.id)!;
+
+      const storyReviewRun = context.repositories.storyReviewRunRepository.create({
+        waveStoryExecutionId: latestExecution.id,
+        status: "review_required",
+        inputSnapshotJson: JSON.stringify({ source: "test" }),
+        systemPromptSnapshot: "test",
+        skillsSnapshotJson: "[]",
+        summaryJson: JSON.stringify({ overallStatus: "review_required" }),
+        errorMessage: null
+      });
+      context.repositories.storyReviewFindingRepository.createMany([
+        {
+          storyReviewRunId: storyReviewRun.id,
+          severity: "high",
+          category: "maintainability",
+          title: "Protect implementation review orchestration",
+          description: "The implementation review path needs regression coverage.",
+          evidence: "Missing review-core integration assertion",
+          filePath: "src/workflow/implementation-review-service.ts",
+          line: 1,
+          suggestedFix: null,
+          status: "open"
+        }
+      ]);
+      context.repositories.qualityKnowledgeEntryRepository.createMany([
+        {
+          workspaceId: context.workspace.id,
+          projectId: project.id,
+          waveId: firstWave.id,
+          storyId: firstStory.id,
+          source: "coderabbit",
+          scopeType: "file",
+          scopeId: "src/workflow/implementation-review-service.ts",
+          kind: "recurring_issue",
+          summary: "Keep implementation review providers degradable",
+          evidenceJson: JSON.stringify({ detail: "CodeRabbit flagged coupling between quality providers." }),
+          status: "open",
+          relevanceTagsJson: JSON.stringify({
+            files: ["src/workflow/implementation-review-service.ts"],
+            storyCodes: [firstStory.code],
+            modules: ["src/workflow"],
+            categories: ["maintainability"]
+          })
+        }
+      ]);
+
+      const review = context.workflowService.startImplementationReview({
+        waveStoryExecutionId: latestExecution.id,
+        automationLevel: "manual"
+      }) as {
+        run: { id: string; status: string; reviewKind: string };
+        findings: Array<{ sourceSystem: string; title: string }>;
+        synthesis: { gateDecision: string } | null;
+      };
+
+      expect(review.run.reviewKind).toBe("implementation");
+      expect(review.run.status).toBe("action_required");
+      expect(review.findings.map((finding) => finding.sourceSystem)).toEqual(
+        expect.arrayContaining(["story_review", "coderabbit"])
+      );
+      expect(review.synthesis?.gateDecision).toBe("needs_human_review");
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("automatically triggers implementation review after completed story review", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const { project } = await prepareProjectThroughCompletedExecution(context, {
+        title: "Implementation Review Trigger",
+        description: "Create implementation review automatically after story review"
+      });
+      const implementationPlan = context.repositories.implementationPlanRepository.getLatestByProjectId(project.id)!;
+      const firstWave = context.repositories.waveRepository.listByImplementationPlanId(implementationPlan.id)[0]!;
+      const firstStory = context.repositories.userStoryRepository.listByProjectId(project.id)[0]!;
+      const firstWaveStory = context.repositories.waveStoryRepository.getByStoryId(firstStory.id)!;
+      const latestExecution = context.repositories.waveStoryExecutionRepository.getLatestByWaveStoryId(firstWaveStory.id)!;
+
+      const latestImplementationReview = context.repositories.reviewRunRepository.getLatestBySubject({
+        reviewKind: "implementation",
+        subjectType: "wave_story_execution",
+        subjectId: latestExecution.id
+      });
+
+      expect(firstWave.id).toBeTruthy();
+      expect(latestImplementationReview?.reviewKind).toBe("implementation");
+      expect(latestImplementationReview?.automationLevel).toBe("auto_comment");
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks qa start when an auto-gate implementation review is not ready", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const { project } = await prepareProjectThroughCompletedExecution(context, {
+        title: "Implementation Review Gate",
+        description: "Block qa when implementation review auto-gate is not ready"
+      });
+      const implementationPlan = context.repositories.implementationPlanRepository.getLatestByProjectId(project.id)!;
+      const firstStory = context.repositories.userStoryRepository.listByProjectId(project.id)[0]!;
+      const firstWaveStory = context.repositories.waveStoryRepository.getByStoryId(firstStory.id)!;
+      const latestExecution = context.repositories.waveStoryExecutionRepository.getLatestByWaveStoryId(firstWaveStory.id)!;
+
+      context.repositories.reviewRunRepository.create({
+        reviewKind: "implementation",
+        subjectType: "wave_story_execution",
+        subjectId: latestExecution.id,
+        subjectStep: "implementation",
+        status: "action_required",
+        readiness: "review_required",
+        interactionMode: "auto",
+        reviewMode: "readiness",
+        automationLevel: "auto_gate",
+        requestedMode: "minimal_review",
+        actualMode: "minimal_review",
+        confidence: "medium",
+        gateEligibility: "advisory",
+        sourceSummaryJson: JSON.stringify({
+          projectId: project.id,
+          implementationPlanId: implementationPlan.id,
+          waveStoryExecutionId: latestExecution.id
+        }),
+        providersUsedJson: JSON.stringify(["seeded"]),
+        missingCapabilitiesJson: JSON.stringify([]),
+        reviewSummary: "seeded blocking implementation review",
+        failedReason: null
+      });
+
+      await expect(context.workflowService.startQa(project.id)).rejects.toMatchObject({
+        code: "IMPLEMENTATION_REVIEW_GATE_BLOCKED"
+      });
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("shows item delivery summaries and materializes documentation into the workspace artifacts folder", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
     const dbPath = join(root, "app.sqlite");

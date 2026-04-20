@@ -23,6 +23,27 @@ program.option("--workspace <key>", "Select the active workspace", "default");
 program.option("--workspace-root <path>", "Override the workspace root used for git workflow operations");
 program.showHelpAfterError();
 
+type WorkspaceSetupContextInput = Pick<
+  Awaited<ReturnType<typeof createWorkspaceSetupContext>>,
+  "workspace" | "workspaceRoot" | "rootPathSource" | "agentRuntimeConfigPath" | "repositories"
+>;
+
+async function createWorkspaceSetupService(context: WorkspaceSetupContextInput) {
+  // Keep workspace setup lazy because this branch may intentionally not carry
+  // the optional implementation files from parallel work on main.
+  const module = await import(`../services/${"workspace-setup-service"}.js`);
+  return new module.WorkspaceSetupService({
+    workspace: context.workspace,
+    workspaceRoot: context.workspaceRoot,
+    rootPathSource: context.rootPathSource,
+    agentRuntimeConfigPath: context.agentRuntimeConfigPath,
+    sonarSettings: context.repositories.workspaceSonarSettingsRepository.getByWorkspaceId(context.workspace.id),
+    coderabbitSettings: context.repositories.workspaceCoderabbitSettingsRepository.getByWorkspaceId(context.workspace.id),
+    assistSessionRepository: context.repositories.workspaceAssistSessionRepository,
+    assistMessageRepository: context.repositories.workspaceAssistMessageRepository
+  });
+}
+
 function collectOptionValues(value: string, previous: string[] = []): string[] {
   return [...previous, value];
 }
@@ -119,13 +140,6 @@ function buildCliErrorPayload(error: unknown): { error: { code: string; message:
       message: error instanceof Error ? error.message : String(error)
     }
   };
-}
-
-async function loadWorkspaceSetupService(): Promise<{ WorkspaceSetupService: new (input: any) => any }> {
-  // Keep this dynamic so the CLI can run without the optional workspace-setup implementation
-  // being present in the current source tree while still loading the built runtime artifact.
-  const runtimeSpecifier = "../../dist/src/services/" + "workspace-setup-service.js";
-  return import(runtimeSpecifier);
 }
 
 function formatExecutionCompactSummary(compact: {
@@ -280,17 +294,7 @@ program
   .command("workspace:doctor")
   .action(
     withWorkspaceSetupContext<Record<string, never>>(async ({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, repositories }) => {
-      const { WorkspaceSetupService } = await loadWorkspaceSetupService();
-      const service = new WorkspaceSetupService({
-        workspace,
-        workspaceRoot,
-        rootPathSource,
-        agentRuntimeConfigPath,
-        sonarSettings: repositories.workspaceSonarSettingsRepository.getByWorkspaceId(workspace.id),
-        coderabbitSettings: repositories.workspaceCoderabbitSettingsRepository.getByWorkspaceId(workspace.id),
-        assistSessionRepository: repositories.workspaceAssistSessionRepository,
-        assistMessageRepository: repositories.workspaceAssistMessageRepository
-      });
+      const service = await createWorkspaceSetupService({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, repositories });
       console.log(JSON.stringify(service.doctor(), null, 2));
     })
   );
@@ -303,17 +307,7 @@ program
   .action(
     withWorkspaceSetupContext<{ createRoot?: boolean; initGit?: boolean; dryRun?: boolean }>(
       async ({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, repositories }, options) => {
-        const { WorkspaceSetupService } = await loadWorkspaceSetupService();
-        const service = new WorkspaceSetupService({
-          workspace,
-          workspaceRoot,
-          rootPathSource,
-          agentRuntimeConfigPath,
-          sonarSettings: repositories.workspaceSonarSettingsRepository.getByWorkspaceId(workspace.id),
-          coderabbitSettings: repositories.workspaceCoderabbitSettingsRepository.getByWorkspaceId(workspace.id),
-          assistSessionRepository: repositories.workspaceAssistSessionRepository,
-          assistMessageRepository: repositories.workspaceAssistMessageRepository
-        });
+        const service = await createWorkspaceSetupService({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, repositories });
         console.log(
           JSON.stringify(
             service.init({
@@ -335,17 +329,7 @@ program
   .action(
     withWorkspaceSetupContext<{ message?: string }>(
       async ({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, adapterScriptPath, repoRoot, repositories }, options) => {
-        const { WorkspaceSetupService } = await loadWorkspaceSetupService();
-        const service = new WorkspaceSetupService({
-          workspace,
-          workspaceRoot,
-          rootPathSource,
-          agentRuntimeConfigPath,
-          sonarSettings: repositories.workspaceSonarSettingsRepository.getByWorkspaceId(workspace.id),
-          coderabbitSettings: repositories.workspaceCoderabbitSettingsRepository.getByWorkspaceId(workspace.id),
-          assistSessionRepository: repositories.workspaceAssistSessionRepository,
-          assistMessageRepository: repositories.workspaceAssistMessageRepository
-        });
+        const service = await createWorkspaceSetupService({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, repositories });
         const runtimeConfig = loadAgentRuntimeConfig(agentRuntimeConfigPath);
         const resolver = new AgentRuntimeResolver(runtimeConfig, {
           repoRoot,
@@ -354,23 +338,9 @@ program
         const runtime = resolver.resolveDefault("interactive");
         if (options.message) {
           const openSession = repositories.workspaceAssistSessionRepository.findOpenByWorkspaceId(workspace.id);
-          const result = openSession
-            ? await service.chatAssistSession({ runtime, sessionId: openSession.id, message: options.message })
-            : await service.startOrReuseAssistSession({ runtime });
-          if (!openSession) {
-            const hydrated = await service.chatAssistSession({ runtime, sessionId: result.session.id, message: options.message });
-            console.log(
-              JSON.stringify(
-                hydrated,
-                null,
-                2
-              )
-            );
-            return;
-          }
-          console.log(
-            JSON.stringify(result, null, 2)
-          );
+          const sessionId = openSession?.id ?? (await service.startOrReuseAssistSession({ runtime })).session.id;
+          const result = await service.chatAssistSession({ runtime, sessionId, message: options.message });
+          console.log(JSON.stringify(result, null, 2));
           return;
         }
         const result = await service.startOrReuseAssistSession({ runtime });
@@ -385,17 +355,7 @@ program
   .action(
     withWorkspaceSetupContext<{ sessionId?: string }>(
       async ({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, repositories }, options) => {
-        const { WorkspaceSetupService } = await loadWorkspaceSetupService();
-        const service = new WorkspaceSetupService({
-          workspace,
-          workspaceRoot,
-          rootPathSource,
-          agentRuntimeConfigPath,
-          sonarSettings: repositories.workspaceSonarSettingsRepository.getByWorkspaceId(workspace.id),
-          coderabbitSettings: repositories.workspaceCoderabbitSettingsRepository.getByWorkspaceId(workspace.id),
-          assistSessionRepository: repositories.workspaceAssistSessionRepository,
-          assistMessageRepository: repositories.workspaceAssistMessageRepository
-        });
+        const service = await createWorkspaceSetupService({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, repositories });
         const result = service.showAssistSession(options.sessionId);
         console.log(JSON.stringify(result, null, 2));
       }
@@ -406,17 +366,7 @@ program
   .command("workspace:assist:list")
   .action(
     withWorkspaceSetupContext(async ({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, repositories }) => {
-      const { WorkspaceSetupService } = await loadWorkspaceSetupService();
-      const service = new WorkspaceSetupService({
-        workspace,
-        workspaceRoot,
-        rootPathSource,
-        agentRuntimeConfigPath,
-        sonarSettings: repositories.workspaceSonarSettingsRepository.getByWorkspaceId(workspace.id),
-        coderabbitSettings: repositories.workspaceCoderabbitSettingsRepository.getByWorkspaceId(workspace.id),
-        assistSessionRepository: repositories.workspaceAssistSessionRepository,
-        assistMessageRepository: repositories.workspaceAssistMessageRepository
-      });
+      const service = await createWorkspaceSetupService({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, repositories });
       console.log(JSON.stringify(service.listAssistSessions(), null, 2));
     })
   );
@@ -427,17 +377,7 @@ program
   .action(
     withWorkspaceSetupContext<{ sessionId: string }>(
       async ({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, repositories }, options) => {
-        const { WorkspaceSetupService } = await loadWorkspaceSetupService();
-        const service = new WorkspaceSetupService({
-          workspace,
-          workspaceRoot,
-          rootPathSource,
-          agentRuntimeConfigPath,
-          sonarSettings: repositories.workspaceSonarSettingsRepository.getByWorkspaceId(workspace.id),
-          coderabbitSettings: repositories.workspaceCoderabbitSettingsRepository.getByWorkspaceId(workspace.id),
-          assistSessionRepository: repositories.workspaceAssistSessionRepository,
-          assistMessageRepository: repositories.workspaceAssistMessageRepository
-        });
+        const service = await createWorkspaceSetupService({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, repositories });
         const result = service.resolveAssistSession({ sessionId: options.sessionId });
         console.log(JSON.stringify(result, null, 2));
       }
@@ -450,17 +390,7 @@ program
   .action(
     withWorkspaceSetupContext<{ sessionId: string }>(
       async ({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, repositories }, options) => {
-        const { WorkspaceSetupService } = await loadWorkspaceSetupService();
-        const service = new WorkspaceSetupService({
-          workspace,
-          workspaceRoot,
-          rootPathSource,
-          agentRuntimeConfigPath,
-          sonarSettings: repositories.workspaceSonarSettingsRepository.getByWorkspaceId(workspace.id),
-          coderabbitSettings: repositories.workspaceCoderabbitSettingsRepository.getByWorkspaceId(workspace.id),
-          assistSessionRepository: repositories.workspaceAssistSessionRepository,
-          assistMessageRepository: repositories.workspaceAssistMessageRepository
-        });
+        const service = await createWorkspaceSetupService({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, repositories });
         const result = service.cancelAssistSession({ sessionId: options.sessionId });
         console.log(JSON.stringify(result, null, 2));
       }
@@ -492,17 +422,7 @@ program
       sessionId?: string;
       dryRun?: boolean;
     }>(async ({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, repositories }, options) => {
-      const { WorkspaceSetupService } = await loadWorkspaceSetupService();
-      const service = new WorkspaceSetupService({
-        workspace,
-        workspaceRoot,
-        rootPathSource,
-        agentRuntimeConfigPath,
-        sonarSettings: repositories.workspaceSonarSettingsRepository.getByWorkspaceId(workspace.id),
-        coderabbitSettings: repositories.workspaceCoderabbitSettingsRepository.getByWorkspaceId(workspace.id),
-        assistSessionRepository: repositories.workspaceAssistSessionRepository,
-        assistMessageRepository: repositories.workspaceAssistMessageRepository
-      });
+      const service = await createWorkspaceSetupService({ workspace, workspaceRoot, rootPathSource, agentRuntimeConfigPath, repositories });
       const plan = options.sessionId
         ? service.loadBootstrapPlanFromAssistSession(options.sessionId)
         : options.plan
@@ -1020,6 +940,37 @@ program
   .action(
     withContext<{ runId: string }>(async ({ workflowService }, options) => {
       console.log(JSON.stringify(await workflowService.rerunPlanningReview(options.runId), null, 2));
+    })
+  );
+
+program
+  .command("implementation-review:start")
+  .requiredOption("--wave-story-execution-id <waveStoryExecutionId>")
+  .addOption(new Option("--automation-level <automationLevel>").choices([...planningReviewAutomationLevels]).default("manual"))
+  .action(
+    withContext<{
+      waveStoryExecutionId: string;
+      automationLevel: "manual" | "auto_suggest" | "auto_comment" | "auto_gate";
+    }>(({ workflowService }, options) => {
+      console.log(
+        JSON.stringify(
+          workflowService.startImplementationReview({
+            waveStoryExecutionId: options.waveStoryExecutionId,
+            automationLevel: options.automationLevel
+          }),
+          null,
+          2
+        )
+      );
+    })
+  );
+
+program
+  .command("implementation-review:show")
+  .requiredOption("--run-id <runId>")
+  .action(
+    withContext<{ runId: string }>(({ workflowService }, options) => {
+      console.log(JSON.stringify(workflowService.showImplementationReview(options.runId), null, 2));
     })
   );
 

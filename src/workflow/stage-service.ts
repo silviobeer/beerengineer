@@ -9,6 +9,7 @@ import { assertStageRunTransitionAllowed } from "./stage-run-rules.js";
 import { runProfiles } from "./run-profiles.js";
 import { ArtifactService } from "../services/artifact-service.js";
 import { PromptResolver } from "../services/prompt-resolver.js";
+import type { ReviewCoreService } from "../review/review-core-service.js";
 import type { WorkflowDeps } from "./workflow-deps.js";
 import type { WorkflowEntityLoaders } from "./entity-loaders.js";
 import { WorkflowOutputImporters } from "./output-importers.js";
@@ -19,6 +20,7 @@ export class StageService {
       deps: WorkflowDeps;
       artifactService: ArtifactService;
       promptResolver: PromptResolver;
+      reviewCoreService: ReviewCoreService;
       loaders: WorkflowEntityLoaders;
       outputImporters: WorkflowOutputImporters;
       resolveStageRuntime(stageKey: StageKey): {
@@ -316,6 +318,18 @@ export class StageService {
     sourceId: string;
     stepLabel: string;
   }): void {
+    const latestCoreRun = this.options.reviewCoreService.getLatestBlockingRunForGate({
+      reviewKind: "planning",
+      subjectType: input.sourceType,
+      subjectId: input.sourceId
+    });
+    if (latestCoreRun) {
+      throw new AppError(
+        "PLANNING_REVIEW_GATE_BLOCKED",
+        `${input.stepLabel} is blocked by planning review ${latestCoreRun.id} (${latestCoreRun.status}/${latestCoreRun.readiness}).`
+      );
+    }
+
     const latestRun = this.options.deps.planningReviewRunRepository.getLatestBySource({
       sourceType: input.sourceType,
       sourceId: input.sourceId

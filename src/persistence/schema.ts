@@ -699,6 +699,96 @@ export const planningReviewAssumptions = sqliteTable("planning_review_assumption
   createdAt: integer("created_at").notNull()
 });
 
+export const reviewRuns = sqliteTable("review_runs", {
+  id: text("id").primaryKey(),
+  reviewKind: text("review_kind").notNull(),
+  subjectType: text("subject_type").notNull(),
+  subjectId: text("subject_id").notNull(),
+  subjectStep: text("subject_step"),
+  status: text("status").notNull(),
+  readiness: text("readiness"),
+  interactionMode: text("interaction_mode"),
+  reviewMode: text("review_mode"),
+  automationLevel: text("automation_level").notNull(),
+  requestedMode: text("requested_mode"),
+  actualMode: text("actual_mode"),
+  confidence: text("confidence"),
+  gateEligibility: text("gate_eligibility").notNull(),
+  sourceSummaryJson: text("source_summary_json").notNull(),
+  providersUsedJson: text("providers_used_json").notNull(),
+  missingCapabilitiesJson: text("missing_capabilities_json").notNull(),
+  reviewSummary: text("review_summary"),
+  startedAt: integer("started_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+  completedAt: integer("completed_at"),
+  failedReason: text("failed_reason")
+}, (table) => [
+  uniqueIndex("review_runs_subject_started_unique_idx").on(table.reviewKind, table.subjectType, table.subjectId, table.startedAt),
+  uniqueIndex("review_runs_subject_step_mode_started_unique_idx").on(
+    table.reviewKind,
+    table.subjectType,
+    table.subjectId,
+    table.subjectStep,
+    table.reviewMode,
+    table.startedAt
+  )
+]);
+
+export const reviewFindings = sqliteTable("review_findings", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull().references(() => reviewRuns.id),
+  sourceSystem: text("source_system").notNull(),
+  reviewerRole: text("reviewer_role"),
+  findingType: text("finding_type").notNull(),
+  normalizedSeverity: text("normalized_severity").notNull(),
+  sourceSeverity: text("source_severity"),
+  title: text("title").notNull(),
+  detail: text("detail").notNull(),
+  evidence: text("evidence"),
+  status: text("status").notNull(),
+  fingerprint: text("fingerprint").notNull(),
+  filePath: text("file_path"),
+  line: integer("line"),
+  fieldPath: text("field_path"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull()
+}, (table) => [uniqueIndex("review_findings_run_fingerprint_unique_idx").on(table.runId, table.fingerprint)]);
+
+export const reviewSyntheses = sqliteTable("review_syntheses", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull().references(() => reviewRuns.id),
+  summary: text("summary").notNull(),
+  status: text("status").notNull(),
+  readiness: text("readiness").notNull(),
+  keyPointsJson: text("key_points_json").notNull(),
+  disagreementsJson: text("disagreements_json").notNull(),
+  recommendedAction: text("recommended_action").notNull(),
+  gateDecision: text("gate_decision").notNull(),
+  createdAt: integer("created_at").notNull()
+});
+
+export const reviewQuestions = sqliteTable("review_questions", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull().references(() => reviewRuns.id),
+  question: text("question").notNull(),
+  reason: text("reason").notNull(),
+  impact: text("impact").notNull(),
+  status: text("status").notNull(),
+  answer: text("answer"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+  answeredAt: integer("answered_at")
+});
+
+export const reviewAssumptions = sqliteTable("review_assumptions", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull().references(() => reviewRuns.id),
+  statement: text("statement").notNull(),
+  reason: text("reason").notNull(),
+  source: text("source").notNull(),
+  createdAt: integer("created_at").notNull()
+});
+
 export const stageRuns = sqliteTable("stage_runs", {
   id: text("id").primaryKey(),
   itemId: text("item_id").notNull().references(() => items.id),

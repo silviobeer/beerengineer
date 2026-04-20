@@ -2,6 +2,7 @@ import { qaOutputSchema } from "../schemas/output-contracts.js";
 import type { QaOutput } from "../schemas/output-contracts.js";
 import { AppError } from "../shared/errors.js";
 import type { QaRunStatus } from "../domain/types.js";
+import type { ReviewCoreService } from "../review/review-core-service.js";
 import type { WorkflowDeps } from "./workflow-deps.js";
 import type { WorkflowEntityLoaders } from "./entity-loaders.js";
 import type { WorkerProfileKey } from "./worker-profiles.js";
@@ -11,6 +12,7 @@ import { createQaKnowledgeEntries } from "../services/quality-knowledge-service.
 
 type QaServiceOptions = {
   deps: WorkflowDeps;
+  reviewCoreService: ReviewCoreService;
   loaders: Pick<
     WorkflowEntityLoaders,
     "requireProject" | "requireItem" | "requireImplementationPlanForProject" | "requireQaRun"
@@ -27,6 +29,23 @@ type QaServiceOptions = {
   > extends infer T
     ? Map<string, T>
     : never;
+  mirrorQaReview?(input: {
+    qaRunId: string;
+    projectId: string;
+    itemId: string;
+    status: QaRunStatus;
+    findings: Array<{
+      severity: string;
+      category: string;
+      title: string;
+      description: string;
+      evidence: string;
+      storyId: string | null;
+      waveStoryExecutionId: string | null;
+    }>;
+    summary: QaOutput | null;
+    errorMessage: string | null;
+  }): void;
 };
 
 export class QaService {
@@ -35,6 +54,7 @@ export class QaService {
   public async startQa(projectId: string) {
     const project = this.options.loaders.requireProject(projectId);
     const item = this.options.loaders.requireItem(project.itemId);
+    this.assertImplementationReviewGate(project.id);
     const implementationPlan = this.options.loaders.requireImplementationPlanForProject(projectId);
     const architecture = this.options.deps.architecturePlanRepository.getLatestByProjectId(projectId);
     const projectExecutionContext = this.options.ensureProjectExecutionContext(project, implementationPlan);
@@ -148,6 +168,23 @@ export class QaService {
         summaryJson: JSON.stringify(parsed, null, 2),
         errorMessage: null
       });
+      this.options.mirrorQaReview?.({
+        qaRunId: qaRun.id,
+        projectId,
+        itemId: item.id,
+        status,
+        findings: storedFindings.map((finding) => ({
+          severity: finding.severity,
+          category: finding.category,
+          title: finding.title,
+          description: finding.description,
+          evidence: finding.evidence,
+          storyId: finding.storyId,
+          waveStoryExecutionId: finding.waveStoryExecutionId
+        })),
+        summary: parsed,
+        errorMessage: null
+      });
       this.options.deps.itemRepository.updatePhaseStatus(item.id, this.mapQaRunStatusToItemPhaseStatus(status));
 
       return {
@@ -166,6 +203,15 @@ export class QaService {
         exitCode: 1
       });
       this.options.deps.qaRunRepository.updateStatus(qaRun.id, "failed", {
+        errorMessage: error instanceof Error ? error.message : String(error)
+      });
+      this.options.mirrorQaReview?.({
+        qaRunId: qaRun.id,
+        projectId,
+        itemId: item.id,
+        status: "failed",
+        findings: [],
+        summary: null,
         errorMessage: error instanceof Error ? error.message : String(error)
       });
       this.options.deps.itemRepository.updatePhaseStatus(item.id, "failed");
@@ -386,5 +432,30 @@ export class QaService {
       return "review_required";
     }
     return "failed";
+  }
+
+  private assertImplementationReviewGate(projectId: string): void {
+    const implementationPlan = this.options.deps.implementationPlanRepository.getLatestByProjectId(projectId);
+    if (!implementationPlan) {
+      return;
+    }
+    const waves = this.options.deps.waveRepository.listByImplementationPlanId(implementationPlan.id);
+    const waveStories = this.options.deps.waveStoryRepository.listByWaveIds(waves.map((wave) => wave.id));
+    const latestExecutions = this.options.deps.waveStoryExecutionRepository.listLatestByWaveStoryIds(waveStories.map((waveStory) => waveStory.id));
+    const blockingRun = latestExecutions
+      .map((execution) =>
+        this.options.reviewCoreService.getLatestBlockingRunForGate({
+          reviewKind: "implementation",
+          subjectType: "wave_story_execution",
+          subjectId: execution.id
+        })
+      )
+      .find((run) => Boolean(run));
+    if (blockingRun) {
+      throw new AppError(
+        "IMPLEMENTATION_REVIEW_GATE_BLOCKED",
+        `Implementation review gate blocks QA until review ${blockingRun.id} is ready`
+      );
+    }
   }
 }

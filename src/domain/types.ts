@@ -272,6 +272,36 @@ export type PlanningReviewFindingStatus = (typeof planningReviewFindingStatuses)
 export const planningReviewQuestionStatuses = ["open", "answered", "dismissed", "assumed"] as const;
 export type PlanningReviewQuestionStatus = (typeof planningReviewQuestionStatuses)[number];
 
+export const reviewKinds = ["planning", "interactive_story", "implementation", "qa", "documentation"] as const;
+export type ReviewKind = (typeof reviewKinds)[number];
+
+export const reviewRunStatuses = ["in_progress", "action_required", "complete", "blocked", "failed"] as const;
+export type ReviewRunStatus = (typeof reviewRunStatuses)[number];
+
+export const reviewFindingStatuses = ["new", "open", "resolved"] as const;
+export type ReviewFindingStatus = (typeof reviewFindingStatuses)[number];
+
+export const reviewQuestionStatuses = ["open", "answered", "dismissed", "assumed"] as const;
+export type ReviewQuestionStatus = (typeof reviewQuestionStatuses)[number];
+
+export const reviewSourceSystems = [
+  "llm",
+  "coderabbit",
+  "sonarcloud",
+  "tests",
+  "qa",
+  "story_review",
+  "planning_review",
+  "implementation_review"
+] as const;
+export type ReviewSourceSystem = (typeof reviewSourceSystems)[number];
+
+export const reviewFindingSeverities = ["critical", "high", "medium", "low"] as const;
+export type ReviewFindingSeverity = (typeof reviewFindingSeverities)[number];
+
+export const reviewGateDecisions = ["pass", "advisory", "blocked", "needs_human_review"] as const;
+export type ReviewGateDecision = (typeof reviewGateDecisions)[number];
+
 export const workspaceAssistMessageRoles = ["system", "assistant", "user"] as const;
 export type WorkspaceAssistMessageRole = (typeof workspaceAssistMessageRoles)[number];
 
@@ -296,7 +326,15 @@ export type IntegrationValidationStatus = (typeof integrationValidationStatuses)
 export const qualityDecisionStatuses = ["passed", "review_required", "failed", "blocked"] as const;
 export type QualityDecisionStatus = (typeof qualityDecisionStatuses)[number];
 
-export const qualityKnowledgeSources = ["sonar", "coderabbit", "verification", "qa", "story_review"] as const;
+export const qualityKnowledgeSources = [
+  "sonar",
+  "coderabbit",
+  "verification",
+  "qa",
+  "story_review",
+  "planning_review",
+  "implementation_review"
+] as const;
 export type QualityKnowledgeSource = (typeof qualityKnowledgeSources)[number];
 
 export const qualityKnowledgeScopeTypes = ["workspace", "project", "wave", "story", "file", "module"] as const;
@@ -994,6 +1032,86 @@ export type PlanningReviewQuestion = {
 };
 
 export type PlanningReviewAssumption = {
+  id: string;
+  runId: string;
+  statement: string;
+  reason: string;
+  source: string;
+  createdAt: number;
+};
+
+export type ReviewRun = {
+  id: string;
+  reviewKind: ReviewKind;
+  subjectType: string;
+  subjectId: string;
+  subjectStep: string | null;
+  status: ReviewRunStatus;
+  readiness: string | null;
+  interactionMode: PlanningReviewInteractionMode | null;
+  reviewMode: string | null;
+  automationLevel: PlanningReviewAutomationLevel;
+  requestedMode: string | null;
+  actualMode: string | null;
+  confidence: string | null;
+  gateEligibility: PlanningReviewGateEligibility;
+  sourceSummaryJson: string;
+  providersUsedJson: string;
+  missingCapabilitiesJson: string;
+  reviewSummary: string | null;
+  startedAt: number;
+  updatedAt: number;
+  completedAt: number | null;
+  failedReason: string | null;
+};
+
+export type ReviewFinding = {
+  id: string;
+  runId: string;
+  sourceSystem: ReviewSourceSystem;
+  reviewerRole: string | null;
+  findingType: string;
+  normalizedSeverity: ReviewFindingSeverity;
+  sourceSeverity: string | null;
+  title: string;
+  detail: string;
+  evidence: string | null;
+  status: ReviewFindingStatus;
+  fingerprint: string;
+  filePath: string | null;
+  line: number | null;
+  fieldPath: string | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type ReviewSynthesis = {
+  id: string;
+  runId: string;
+  summary: string;
+  status: ReviewRunStatus;
+  readiness: string;
+  keyPointsJson: string;
+  disagreementsJson: string;
+  recommendedAction: string;
+  gateDecision: ReviewGateDecision;
+  createdAt: number;
+};
+
+export type ReviewQuestion = {
+  id: string;
+  runId: string;
+  question: string;
+  reason: string;
+  impact: string;
+  status: ReviewQuestionStatus;
+  answer: string | null;
+  createdAt: number;
+  updatedAt: number;
+  answeredAt: number | null;
+};
+
+export type ReviewAssumption = {
   id: string;
   runId: string;
   statement: string;

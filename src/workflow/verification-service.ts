@@ -18,6 +18,7 @@ import type {
   AppVerificationRunStatus,
   ExecutionWorkerRole,
   GitBranchMetadata,
+  ReviewGateDecision,
   StoryReviewRunStatus,
   VerificationRunStatus
 } from "../domain/types.js";
@@ -131,6 +132,30 @@ type VerificationServiceOptions = {
   }>;
   ensureStoryRemediationBranch(projectCode: string, storyCode: string, storyReviewRunId: string): GitBranchMetadata;
   invalidateDocumentationForProject(projectId: string, reason: string): void;
+  mirrorStoryReview?(input: {
+    waveStoryExecutionId: string;
+    storyReviewRunId: string;
+    projectId: string;
+    waveId: string;
+    storyId: string;
+    storyCode: string;
+    status: StoryReviewRunStatus;
+    findings: Array<{
+      severity: string;
+      category: string;
+      title: string;
+      description: string;
+      evidence: string;
+      filePath: string | null;
+      line: number | null;
+    }>;
+    summary: StoryReviewOutput | null;
+    errorMessage: string | null;
+  }): void;
+  triggerImplementationReview?(input: {
+    waveStoryExecutionId: string;
+    automationLevel: "auto_comment";
+  }): Promise<unknown>;
 };
 
 export class VerificationService {
@@ -1008,6 +1033,30 @@ export class VerificationService {
         summaryJson: JSON.stringify(parsed, null, 2),
         errorMessage: null
       });
+      this.options.mirrorStoryReview?.({
+        waveStoryExecutionId: input.execution.id,
+        storyReviewRunId: reviewRun.id,
+        projectId: input.project.id,
+        waveId: input.wave.id,
+        storyId: input.story.id,
+        storyCode: input.story.code,
+        status,
+        findings: storedFindings.map((finding) => ({
+          severity: finding.severity,
+          category: finding.category,
+          title: finding.title,
+          description: finding.description,
+          evidence: finding.evidence,
+          filePath: finding.filePath,
+          line: finding.line
+        })),
+        summary: parsed,
+        errorMessage: null
+      });
+      await this.options.triggerImplementationReview?.({
+        waveStoryExecutionId: input.execution.id,
+        automationLevel: "auto_comment"
+      });
       return {
         status,
         errorMessage: null
@@ -1024,6 +1073,22 @@ export class VerificationService {
       });
       this.options.deps.storyReviewRunRepository.updateStatus(reviewRun.id, "failed", {
         errorMessage: error instanceof Error ? error.message : String(error)
+      });
+      this.options.mirrorStoryReview?.({
+        waveStoryExecutionId: input.execution.id,
+        storyReviewRunId: reviewRun.id,
+        projectId: input.project.id,
+        waveId: input.wave.id,
+        storyId: input.story.id,
+        storyCode: input.story.code,
+        status: "failed",
+        findings: [],
+        summary: null,
+        errorMessage: error instanceof Error ? error.message : String(error)
+      });
+      await this.options.triggerImplementationReview?.({
+        waveStoryExecutionId: input.execution.id,
+        automationLevel: "auto_comment"
       });
       return {
         status: "failed",

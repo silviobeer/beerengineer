@@ -16,6 +16,8 @@ npm run cli -- planning-review:start --source-type brainstorm_session --source-i
 npm run cli -- planning-review:show --run-id <runId>
 npm run cli -- planning-review:question:answer --run-id <runId> --question-id <questionId> --answer "..."
 npm run cli -- planning-review:rerun --run-id <runId>
+npm run cli -- implementation-review:start --wave-story-execution-id <waveStoryExecutionId>
+npm run cli -- implementation-review:show --run-id <runId>
 npm run cli -- concept:approve --concept-id <conceptId>
 npm run cli -- concept:approve --concept-id <conceptId> --autorun
 npm run cli -- project:import --item-id <itemId>
@@ -174,6 +176,42 @@ Wichtig:
     - `gateEligibility = advisory`
     - und nicht `ready` mit `readiness = ready|ready_with_assumptions`
       ist
+
+## Implementation Review
+
+Implementation Review ist der erste Nutzer des neuen generischen Review-Cores
+fuer den eigentlichen Umsetzungs-Schritt.
+
+Unterstuetzte CLI-Kommandos:
+
+- `implementation-review:start`
+- `implementation-review:show`
+
+Wichtige Parameter fuer `implementation-review:start`:
+
+- `--wave-story-execution-id <id>`
+- `--automation-level manual|auto_suggest|auto_comment|auto_gate`
+
+Rueckgabe:
+
+- `run`
+  - generischer Core-Run mit `reviewKind = implementation`
+- `sourceSummary`
+  - zusammengefasster Execution-/Story-/Provider-Kontext
+- `findings`
+  - normalisierte Findings aus Story Review, Tests/Verification,
+    `CodeRabbit`-Knowledge und `SonarCloud`
+- `synthesis`
+  - inklusive `gateDecision`
+- `comparisonToPrevious`
+
+Wichtig:
+
+- V1 ist bewusst advisory-only.
+- Der Lauf persistiert bereits ueber den generischen Review-Core, auch wenn
+  Workflow-Gates fuer Implementation Review noch nicht erzwungen werden.
+- `CodeRabbit` wird in V1 ueber bereits bekannte Quality-Knowledge-Signale
+  ingestiert; `SonarCloud` ueber den bestehenden Service-/Scan-Pfad.
 
 ## Interactive Brainstorm
 

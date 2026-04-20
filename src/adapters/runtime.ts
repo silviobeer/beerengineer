@@ -42,11 +42,11 @@ export const requiredAgentExecutionPolicy: AgentExecutionPolicy = {
 };
 
 const agentExecutionPolicySchema = z.object({
-  autonomyMode: z.literal("yolo"),
-  approvalMode: z.literal("never"),
-  filesystemMode: z.literal("danger-full-access"),
-  networkMode: z.literal("enabled"),
-  interactionMode: z.literal("non_blocking")
+  autonomyMode: z.enum(["manual", "yolo"]),
+  approvalMode: z.enum(["always", "never"]),
+  filesystemMode: z.enum(["read-only", "workspace-write", "danger-full-access"]),
+  networkMode: z.enum(["disabled", "enabled"]),
+  interactionMode: z.enum(["blocking", "non_blocking"])
 }).strict();
 
 const providerSelectionSchema = z.object({

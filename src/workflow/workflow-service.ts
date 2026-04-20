@@ -7,6 +7,7 @@ import type {
 import { PromptResolver } from "../services/prompt-resolver.js";
 import { ArtifactService } from "../services/artifact-service.js";
 import { GitWorkflowService } from "../services/git-workflow-service.js";
+import { ReviewCoreService } from "../review/review-core-service.js";
 import { ralphVerificationOutputSchema, storyReviewOutputSchema } from "../schemas/output-contracts.js";
 import type { RalphVerificationOutput, StoryReviewOutput } from "../schemas/output-contracts.js";
 import { AppError } from "../shared/errors.js";
@@ -25,6 +26,7 @@ import { createWorkflowEntityLoaders, type WorkflowEntityLoaders } from "./entit
 import { BrainstormService } from "./brainstorm-service.js";
 import { DocumentationService } from "./documentation-service.js";
 import { ExecutionService, type ExecutionView } from "./execution-service.js";
+import { ImplementationReviewService } from "./implementation-review-service.js";
 import { InteractiveReviewService } from "./interactive-review-service.js";
 import { WorkflowOutputImporters } from "./output-importers.js";
 import { PlanningReviewService } from "./planning-review-service.js";
@@ -42,17 +44,20 @@ export class WorkflowService {
   private readonly brainstormService: BrainstormService;
   private readonly documentationService: DocumentationService;
   private readonly executionService: ExecutionService;
+  private readonly implementationReviewService: ImplementationReviewService;
   private readonly interactiveReviewService: InteractiveReviewService;
   private readonly planningReviewService: PlanningReviewService;
   private readonly outputImporters: WorkflowOutputImporters;
   private readonly qaService: QaService;
   private readonly stageService: StageService;
   private readonly verificationService: VerificationService;
+  private readonly reviewCoreService: ReviewCoreService;
 
   public constructor(private readonly deps: WorkflowDeps) {
     this.promptResolver = new PromptResolver(deps.repoRoot);
     this.artifactService = new ArtifactService(deps.artifactRoot);
     this.gitWorkflowService = new GitWorkflowService(deps.workspaceRoot);
+    this.reviewCoreService = new ReviewCoreService(deps);
     this.entityLoaders = createWorkflowEntityLoaders(deps);
     // Cross-service callbacks intentionally capture `this.*Service` lazily.
     // They must not be invoked during sub-service construction.
@@ -63,6 +68,7 @@ export class WorkflowService {
       deps,
       artifactService: this.artifactService,
       promptResolver: this.promptResolver,
+      reviewCoreService: this.reviewCoreService,
       loaders: this.entityLoaders,
       outputImporters: this.outputImporters,
       resolveStageRuntime: (stageKey) => this.resolveStageRuntime(stageKey),
@@ -139,10 +145,16 @@ export class WorkflowService {
     });
     this.planningReviewService = new PlanningReviewService({
       deps,
+      reviewCoreService: this.reviewCoreService,
       buildAdapterRuntimeContext: (input) => this.buildAdapterRuntimeContext(input)
+    });
+    this.implementationReviewService = new ImplementationReviewService({
+      deps,
+      reviewCoreService: this.reviewCoreService
     });
     this.qaService = new QaService({
       deps,
+      reviewCoreService: this.reviewCoreService,
       loaders: {
         requireProject: (projectId) => this.entityLoaders.requireProject(projectId),
         requireItem: (itemId) => this.entityLoaders.requireItem(itemId),
@@ -154,7 +166,8 @@ export class WorkflowService {
       buildAdapterRuntimeContext: (input) => this.buildAdapterRuntimeContext(input),
       ensureProjectExecutionContext: (project, implementationPlan) =>
         this.executionService.ensureProjectExecutionContext(project, implementationPlan),
-      groupAcceptanceCriteriaByStoryId: (projectId) => this.groupAcceptanceCriteriaByStoryId(projectId)
+      groupAcceptanceCriteriaByStoryId: (projectId) => this.groupAcceptanceCriteriaByStoryId(projectId),
+      mirrorQaReview: (input) => this.mirrorQaReview(input)
     });
     this.verificationService = new VerificationService({
       deps,
@@ -185,7 +198,9 @@ export class WorkflowService {
       executeWaveStory: (input) => this.executionService.executeWaveStory(input),
       ensureStoryRemediationBranch: (projectCode, storyCode, storyReviewRunId) =>
         this.gitWorkflowService.ensureStoryRemediationBranch(projectCode, storyCode, storyReviewRunId),
-      invalidateDocumentationForProject: (projectId, reason) => this.invalidateDocumentationForProject(projectId, reason)
+      invalidateDocumentationForProject: (projectId, reason) => this.invalidateDocumentationForProject(projectId, reason),
+      mirrorStoryReview: (input) => this.mirrorStoryReview(input),
+      triggerImplementationReview: (input) => Promise.resolve(this.startImplementationReview(input))
     });
     this.autorunOrchestrator = new AutorunOrchestrator({
       requireItem: (itemId) => this.entityLoaders.requireItem(itemId),
@@ -378,6 +393,176 @@ export class WorkflowService {
     automationLevel?: import("../domain/types.js").PlanningReviewAutomationLevel;
   }) {
     return this.planningReviewService.startReview(input);
+  }
+
+  public startImplementationReview(input: {
+    waveStoryExecutionId: string;
+    automationLevel?: "manual" | "auto_suggest" | "auto_comment" | "auto_gate";
+  }) {
+    return this.implementationReviewService.startReview(input);
+  }
+
+  public showImplementationReview(runId: string) {
+    return this.implementationReviewService.showReview(runId);
+  }
+
+  private mirrorStoryReview(input: {
+    waveStoryExecutionId: string;
+    storyReviewRunId: string;
+    projectId: string;
+    waveId: string;
+    storyId: string;
+    storyCode: string;
+    status: string;
+    findings: Array<{
+      severity: string;
+      category: string;
+      title: string;
+      description: string;
+      evidence: string;
+      filePath: string | null;
+      line: number | null;
+    }>;
+    summary: StoryReviewOutput | null;
+    errorMessage: string | null;
+  }) {
+    const gateDecision =
+      input.status === "passed" ? "pass" : input.status === "failed" ? "needs_human_review" : ("advisory" as const);
+    this.reviewCoreService.recordReview({
+      reviewKind: "interactive_story",
+      subjectType: "wave_story_execution",
+      subjectId: input.waveStoryExecutionId,
+      subjectStep: "story_review",
+      status: input.status === "passed" ? "complete" : input.status === "failed" ? "failed" : "action_required",
+      readiness: input.status === "passed" ? "ready" : input.status === "failed" ? "needs_human_review" : "review_required",
+      interactionMode: "auto",
+      reviewMode: "readiness",
+      automationLevel: "auto_comment",
+      requestedMode: null,
+      actualMode: null,
+      confidence: "medium",
+      gateEligibility: "advisory_only",
+      sourceSummary: {
+        storyReviewRunId: input.storyReviewRunId,
+        storyCode: input.storyCode,
+        storyId: input.storyId,
+        projectId: input.projectId,
+        waveId: input.waveId,
+        errorMessage: input.errorMessage
+      },
+      providersUsed: ["story-reviewer"],
+      missingCapabilities: [],
+      summary:
+        input.status === "passed"
+          ? "Story review completed without blocking findings."
+          : input.status === "failed"
+            ? "Story review failed."
+            : "Story review returned actionable findings.",
+      keyPoints: input.findings.slice(0, 7).map((finding) => finding.title),
+      disagreements: [],
+      recommendedAction:
+        input.status === "passed"
+          ? "Proceed with downstream quality checks."
+          : input.status === "failed"
+            ? "Retry or inspect the failed story review."
+            : "Resolve the story review findings before continuing.",
+      gateDecision,
+      findings: input.findings.map((finding) => ({
+        sourceSystem: "story_review" as const,
+        reviewerRole: "story-reviewer",
+        findingType: finding.category,
+        normalizedSeverity:
+          finding.severity === "critical" ? "critical" : finding.severity === "high" ? "high" : finding.severity === "medium" ? "medium" : "low",
+        sourceSeverity: finding.severity,
+        title: finding.title,
+        detail: finding.description,
+        evidence: finding.evidence,
+        filePath: finding.filePath,
+        line: finding.line,
+        fieldPath: null
+      })),
+      knowledgeContext: {
+        source: "implementation_review",
+        workspaceId: this.deps.workspace.id,
+        projectId: input.projectId,
+        waveId: input.waveId,
+        storyId: input.storyId
+      }
+    });
+  }
+
+  private mirrorQaReview(input: {
+    qaRunId: string;
+    projectId: string;
+    itemId: string;
+    status: string;
+    findings: Array<{
+      severity: string;
+      category: string;
+      title: string;
+      description: string;
+      evidence: string;
+      storyId: string | null;
+      waveStoryExecutionId: string | null;
+    }>;
+    summary: import("../schemas/output-contracts.js").QaOutput | null;
+    errorMessage: string | null;
+  }) {
+    const gateDecision =
+      input.status === "passed" ? "pass" : input.status === "failed" ? "blocked" : ("advisory" as const);
+    this.reviewCoreService.recordReview({
+      reviewKind: "qa",
+      subjectType: "project",
+      subjectId: input.projectId,
+      subjectStep: "qa",
+      status: input.status === "passed" ? "complete" : input.status === "failed" ? "failed" : "action_required",
+      readiness: input.status === "passed" ? "ready" : input.status === "failed" ? "needs_human_review" : "review_required",
+      interactionMode: "auto",
+      reviewMode: "readiness",
+      automationLevel: "auto_comment",
+      requestedMode: null,
+      actualMode: null,
+      confidence: "medium",
+      gateEligibility: "advisory_only",
+      sourceSummary: {
+        qaRunId: input.qaRunId,
+        projectId: input.projectId,
+        itemId: input.itemId,
+        errorMessage: input.errorMessage
+      },
+      providersUsed: ["qa-verifier"],
+      missingCapabilities: [],
+      summary:
+        input.status === "passed"
+          ? "QA completed without actionable findings."
+          : input.status === "failed"
+            ? "QA failed."
+            : "QA completed with follow-up findings.",
+      keyPoints: input.findings.slice(0, 7).map((finding) => finding.title),
+      disagreements: [],
+      recommendedAction:
+        input.status === "passed"
+          ? "Proceed with documentation or delivery."
+          : input.status === "failed"
+            ? "Retry QA or inspect the failure."
+            : "Resolve the QA findings before continuing.",
+      gateDecision,
+      findings: input.findings.map((finding) => ({
+        sourceSystem: "qa" as const,
+        reviewerRole: "qa-verifier",
+        findingType: finding.category,
+        normalizedSeverity:
+          finding.severity === "critical" ? "critical" : finding.severity === "high" ? "high" : finding.severity === "medium" ? "medium" : "low",
+        sourceSeverity: finding.severity,
+        title: finding.title,
+        detail: finding.description,
+        evidence: finding.evidence,
+        filePath: null,
+        line: null,
+        fieldPath: finding.storyId ?? finding.waveStoryExecutionId
+      })),
+      knowledgeContext: null
+    });
   }
 
   public showPlanningReview(runId: string) {

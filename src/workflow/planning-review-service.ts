@@ -1,6 +1,5 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { spawnSync } from "node:child_process";
 
 import { architecturePlanOutputSchema, implementationPlanOutputSchema, planningReviewReviewerOutputSchema } from "../schemas/output-contracts.js";
 import type { PlanningReviewAdapterRunResult } from "../adapters/types.js";
@@ -28,6 +27,8 @@ import type {
   PlanningReviewStep,
   PlanningReviewSynthesis
 } from "../domain/types.js";
+import { ReviewExecutionPlanner, type ReviewAssignment, type ReviewCapabilityPlan } from "../review/review-execution-planner.js";
+import type { ReviewCoreService } from "../review/review-core-service.js";
 import type { WorkflowDeps } from "./workflow-deps.js";
 import { AppError } from "../shared/errors.js";
 
@@ -52,26 +53,12 @@ type NormalizedPlanningArtifact = {
 
 type PlanningReviewServiceOptions = {
   deps: WorkflowDeps;
+  reviewCoreService: ReviewCoreService;
   buildAdapterRuntimeContext(input: {
     providerKey: string;
     model: string | null;
     policy: AdapterRuntimeContext["policy"];
   }): AdapterRuntimeContext;
-};
-
-type ReviewAssignment = {
-  providerKey: string;
-  role: PlanningReviewProviderRole;
-};
-
-type CapabilityPlan = {
-  requestedMode: PlanningReviewExecutionMode;
-  actualMode: PlanningReviewExecutionMode;
-  assignments: ReviewAssignment[];
-  providersUsed: string[];
-  missingCapabilities: string[];
-  confidence: PlanningReviewConfidenceLevel;
-  gateEligibility: PlanningReviewGateEligibility;
 };
 
 const HIGH_RISK_PATTERN = /\b(risk|migration|rollback|security|compliance|production|backward compatibility|data loss)\b/i;
@@ -120,9 +107,11 @@ function fingerprintFinding(input: {
 }
 
 export class PlanningReviewService {
-  private readonly providerAvailabilityCache = new Map<string, boolean>();
+  private readonly executionPlanner: ReviewExecutionPlanner;
 
-  public constructor(private readonly options: PlanningReviewServiceOptions) {}
+  public constructor(private readonly options: PlanningReviewServiceOptions) {
+    this.executionPlanner = new ReviewExecutionPlanner(options.deps.agentRuntimeResolver, options.deps.workspaceRoot);
+  }
 
   public async startReview(input: {
     sourceType: PlanningReviewSourceType;
@@ -287,6 +276,52 @@ export class PlanningReviewService {
           readiness: synthesis.readiness,
           reviewSummary: synthesis.summary,
           completedAt: Date.now()
+        });
+
+        this.options.reviewCoreService.recordReview({
+          reviewKind: "planning",
+          subjectType: input.sourceType,
+          subjectId: input.sourceId,
+          subjectStep: input.step,
+          status: this.mapCoreStatus(synthesis.status),
+          readiness: synthesis.readiness,
+          interactionMode: input.interactionMode,
+          reviewMode: input.reviewMode,
+          automationLevel: input.automationLevel ?? "manual",
+          requestedMode: capability.requestedMode,
+          actualMode: capability.actualMode,
+          confidence: capability.confidence,
+          gateEligibility: capability.gateEligibility,
+          sourceSummary: normalization.artifact,
+          providersUsed: capability.providersUsed,
+          missingCapabilities: capability.missingCapabilities,
+          summary: synthesis.summary,
+          keyPoints: synthesis.keyPoints,
+          disagreements: synthesis.disagreements,
+          recommendedAction: synthesis.recommendedAction,
+          gateDecision: synthesis.status === "ready" ? "pass" : synthesis.status === "blocked" ? "needs_human_review" : "advisory",
+          findings: reviewerResults.flatMap(({ assignment, response }) =>
+            response.output.findings.map((finding) => ({
+              sourceSystem: "planning_review" as const,
+              reviewerRole: assignment.role,
+              findingType: finding.type,
+              normalizedSeverity:
+                finding.type === "blocker" ? "high" : finding.type === "major_concern" ? "medium" : "low",
+              sourceSeverity: finding.type,
+              title: finding.title,
+              detail: finding.detail,
+              evidence: finding.evidence ?? null,
+              filePath: null,
+              line: null,
+              fieldPath: null
+            }))
+          ),
+          questions: synthesis.questions.map((question) => ({
+            question: question.question,
+            reason: question.reason,
+            impact: question.impact
+          })),
+          assumptions: synthesis.assumptions
         });
 
         return this.showReview(reviewRun.id, {
@@ -640,83 +675,14 @@ export class PlanningReviewService {
     return JSON.parse(readFileSync(absolutePath, "utf8")) as unknown;
   }
 
-  private resolveCapabilityPlan(reviewMode: PlanningReviewMode): CapabilityPlan {
-    const configuredProviders = Object.entries(this.options.deps.agentRuntimeResolver.config.providers).filter(([_, config]) =>
-      this.isProviderAvailable(config.adapterKey, config.command[0] ?? null)
-    );
-    const localProvider = configuredProviders.find(([_, config]) => config.adapterKey === "local-cli")?.[0] ?? null;
-    const nonLocalProviders = configuredProviders.filter(([_, config]) => config.adapterKey !== "local-cli");
+  private resolveCapabilityPlan(reviewMode: PlanningReviewMode): ReviewCapabilityPlan<PlanningReviewProviderRole> {
     const primaryRoles = this.selectRolesForMode(reviewMode);
-    const preferredAutonomousProvider = this.options.deps.agentRuntimeResolver.resolveDefault("autonomous");
-    const preferDeterministicLocal = preferredAutonomousProvider.adapterKey === "local-cli" && localProvider !== null;
-    const providerByAdapterKey = new Map(nonLocalProviders.map(([providerKey, config]) => [config.adapterKey, providerKey]));
-    const codexProvider = providerByAdapterKey.get("codex");
-    const claudeProvider = providerByAdapterKey.get("claude");
-    if (preferDeterministicLocal) {
-      return {
-        requestedMode: "single_model_multi_role",
-        actualMode: "single_model_multi_role",
-        assignments: [
-          { providerKey: localProvider, role: primaryRoles[0]! },
-          { providerKey: localProvider, role: primaryRoles[1]! }
-        ],
-        providersUsed: [localProvider],
-        missingCapabilities: ["independent_second_reviewer"],
-        confidence: "reduced",
-        gateEligibility: "advisory_only"
-      };
-    }
-    if (codexProvider && claudeProvider) {
-      return {
-        requestedMode: "full_dual_review",
-        actualMode: "full_dual_review",
-        assignments: this.assignPreferredDualProviders(primaryRoles, codexProvider, claudeProvider),
-        providersUsed: [codexProvider, claudeProvider],
-        missingCapabilities: [],
-        confidence: "high",
-        gateEligibility: "advisory"
-      };
-    }
-    if (nonLocalProviders.length >= 2) {
-      return {
-        requestedMode: "degraded_dual_review",
-        actualMode: "degraded_dual_review",
-        assignments: [
-          { providerKey: nonLocalProviders[0]![0], role: primaryRoles[0]! },
-          { providerKey: nonLocalProviders[1]![0], role: primaryRoles[1]! }
-        ],
-        providersUsed: [nonLocalProviders[0]![0], nonLocalProviders[1]![0]],
-        missingCapabilities: codexProvider || claudeProvider ? [] : ["preferred_codex_claude_pair"],
-        confidence: "medium",
-        gateEligibility: "advisory"
-      };
-    }
-    if (localProvider) {
-      return {
-        requestedMode: "single_model_multi_role",
-        actualMode: "single_model_multi_role",
-        assignments: [
-          { providerKey: localProvider, role: primaryRoles[0]! },
-          { providerKey: localProvider, role: primaryRoles[1]! }
-        ],
-        providersUsed: [localProvider],
-        missingCapabilities: ["independent_second_reviewer"],
-        confidence: "reduced",
-        gateEligibility: "advisory_only"
-      };
-    }
-    if (nonLocalProviders.length === 1) {
-      return {
-        requestedMode: "minimal_review",
-        actualMode: "minimal_review",
-        assignments: [{ providerKey: nonLocalProviders[0]![0], role: primaryRoles[0]! }],
-        providersUsed: [nonLocalProviders[0]![0]],
-        missingCapabilities: ["independent_second_reviewer", "cross_role_challenge"],
-        confidence: "low",
-        gateEligibility: "advisory_only"
-      };
-    }
-    throw new AppError("PLANNING_REVIEW_PROVIDER_UNAVAILABLE", "No planning review provider is configured");
+    return this.executionPlanner.planDualRoleReview({
+      roles: primaryRoles,
+      preferCodexFor: ["implementation_reviewer"],
+      preferClaudeFor: ["architecture_challenger", "decision_auditor", "product_skeptic"],
+      unavailableCode: "PLANNING_REVIEW_PROVIDER_UNAVAILABLE"
+    });
   }
 
   private selectRolesForMode(reviewMode: PlanningReviewMode): [PlanningReviewProviderRole, PlanningReviewProviderRole] {
@@ -731,36 +697,6 @@ export class PlanningReviewService {
       default:
         return ["implementation_reviewer", "decision_auditor"];
     }
-  }
-
-  private assignPreferredDualProviders(
-    roles: [PlanningReviewProviderRole, PlanningReviewProviderRole],
-    codexProvider: string,
-    claudeProvider: string
-  ): ReviewAssignment[] {
-    return roles.map((role) => ({
-      providerKey: role === "implementation_reviewer" ? codexProvider : claudeProvider,
-      role
-    }));
-  }
-
-  private isProviderAvailable(adapterKey: string, command: string | null): boolean {
-    if (adapterKey === "local-cli") {
-      return true;
-    }
-    if (!command) {
-      return false;
-    }
-    const cacheKey = `${adapterKey}::${command}`;
-    const cached = this.providerAvailabilityCache.get(cacheKey);
-    if (cached !== undefined) {
-      return cached;
-    }
-    const lookupCommand = process.platform === "win32" ? "where" : "which";
-    const result = spawnSync(lookupCommand, [command], { cwd: this.options.deps.workspaceRoot, encoding: "utf8" });
-    const available = result.status === 0;
-    this.providerAvailabilityCache.set(cacheKey, available);
-    return available;
   }
 
   private buildPlanningReviewPrompt(input: {
@@ -1124,5 +1060,20 @@ export class PlanningReviewService {
         })
         .map((finding) => finding.title)
     );
+  }
+
+  private mapCoreStatus(status: PlanningReviewStatus) {
+    switch (status) {
+      case "synthesizing":
+        return "in_progress" as const;
+      case "ready":
+        return "complete" as const;
+      case "blocked":
+        return "blocked" as const;
+      case "failed":
+        return "failed" as const;
+      default:
+        return "action_required" as const;
+    }
   }
 }

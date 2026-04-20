@@ -35,6 +35,14 @@ Kernentitaeten des aktuellen MVP:
 - `PlanningReviewQuestion`: blocker-relevante Rueckfrage eines Planning Reviews
 - `PlanningReviewAssumption`: explizite Annahme aus `auto`-Mode oder degrade-
   ten Planning-Review-Laeufen
+- `ReviewRun`: generischer Review-Core-Lauf fuer planning-, implementation- und
+  spaetere weitere Review-Arten
+- `ReviewFinding`: generischer normalisierter Finding-Record ueber mehrere
+  Quellen (`llm`, `story_review`, `coderabbit`, `sonarcloud`, `tests`, ...)
+- `ReviewSynthesis`: generisches zusammengefuehrtes Review-Ergebnis inklusive
+  `gateDecision`
+- `ReviewQuestion`: generische Rueckfrage-Einheit des Review-Cores
+- `ReviewAssumption`: generische Annahme-Einheit des Review-Cores
 - optional spaeter `WaveParallelGroup`: fachliche Kennzeichnung fuer sicher parallel ausfuehrbare Story-Gruppen innerhalb einer Wave
 
 Die Entitaeten leben im Domain-Layer und werden nicht aus CLI-Kommandos heraus modelliert.
@@ -69,6 +77,22 @@ Die eigentliche Laufhistorie liegt in:
 - `planning_review_questions`
 - `planning_review_assumptions`
 
+Zusaetzlich existiert jetzt ein generischer Review-Core fuer vereinheitlichte
+Review-Infrastruktur:
+
+- `review_runs`
+- `review_findings`
+- `review_syntheses`
+- `review_questions`
+- `review_assumptions`
+
+Dieser Core wird aktuell genutzt fuer:
+
+- Planning Review
+  - als generischer Mirror des bestehenden Planning-Review-Workflows
+- Implementation Review
+  - als primaerer Persistenzpfad fuer advisory Code-/Execution-Reviews
+
 Wichtige sichtbare Planning-Review-Status im aktuellen Runtime-Verhalten:
 
 - `synthesizing`
@@ -81,6 +105,21 @@ Wichtige sichtbare Planning-Review-Status im aktuellen Runtime-Verhalten:
 - `ready`
 - `blocked`
 - `failed`
+
+Generische Core-Status:
+
+- `in_progress`
+- `action_required`
+- `complete`
+- `blocked`
+- `failed`
+
+Wichtige generische Gate-Entscheidungen:
+
+- `pass`
+- `advisory`
+- `blocked`
+- `needs_human_review`
 
 Wichtige Run-Metadaten:
 
