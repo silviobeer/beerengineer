@@ -445,6 +445,8 @@ export type AppVerificationAdapterRunRequest = {
   preparedSession: {
     runner: AppVerificationRunner;
     baseUrl: string;
+    resolvedBaseUrl: string;
+    endpointSource: "configured" | "derived_runtime" | "fallback_playwright";
     ready: boolean;
     loginRole?: string;
     loginUserKey?: string;
