@@ -215,6 +215,9 @@ export type PlanningReviewStatus = (typeof planningReviewStatuses)[number];
 export const planningReviewInteractionModes = ["interactive", "auto"] as const;
 export type PlanningReviewInteractionMode = (typeof planningReviewInteractionModes)[number];
 
+export const reviewInteractionModes = ["auto", "assisted", "interactive"] as const;
+export type ReviewInteractionMode = (typeof reviewInteractionModes)[number];
+
 export const planningReviewReadinessResults = [
   "ready",
   "ready_with_assumptions",
@@ -263,7 +266,14 @@ export const planningReviewProviderRoles = [
 ] as const;
 export type PlanningReviewProviderRole = (typeof planningReviewProviderRoles)[number];
 
-export const reviewKinds = ["planning", "interactive_story", "implementation", "qa", "documentation"] as const;
+export const implementationReviewProviderRoles = [
+  "implementation_reviewer",
+  "regression_reviewer",
+  "security_reviewer"
+] as const;
+export type ImplementationReviewProviderRole = (typeof implementationReviewProviderRoles)[number];
+
+export const reviewKinds = ["planning", "interactive_story", "implementation", "app_verification", "qa", "documentation"] as const;
 export type ReviewKind = (typeof reviewKinds)[number];
 
 export const reviewRunStatuses = ["in_progress", "action_required", "complete", "blocked", "failed"] as const;
@@ -967,7 +977,7 @@ export type ReviewRun = {
   subjectStep: string | null;
   status: ReviewRunStatus;
   readiness: string | null;
-  interactionMode: PlanningReviewInteractionMode | null;
+  interactionMode: ReviewInteractionMode | null;
   reviewMode: string | null;
   automationLevel: PlanningReviewAutomationLevel;
   requestedMode: string | null;

@@ -2,7 +2,7 @@
 
 ## Ziel
 
-Implementation Review aggregiert Qualitaetssignale fuer einen
+Implementation Review aggregiert Qualitaetssignale und LLM-Review fuer einen
 `wave_story_execution`-Schritt und schreibt das Ergebnis als generischen
 `implementation`-Review-Run in den Review Core.
 
@@ -10,6 +10,9 @@ Implementation Review aggregiert Qualitaetssignale fuer einen
 
 Der Review bezieht aktuell Signale aus:
 
+- LLM-Review-Rollen
+  - `implementation_reviewer`
+  - `regression_reviewer`
 - Story Review Findings
 - Verification-Signalen
   - basic verification
@@ -17,6 +20,12 @@ Der Review bezieht aktuell Signale aus:
   - app verification
 - `CodeRabbit`-Knowledge ueber den Quality-Knowledge-Pfad
 - `SonarCloud`
+
+Der `interactionMode` fuer `implementation` ist jetzt konfigurierbar:
+
+- `auto` (Default)
+- `assisted`
+- `interactive`
 
 ## Persistenz
 
@@ -39,7 +48,7 @@ Die `sourceSummary` eines Runs enthaelt u. a.:
 - `filePaths`
 - `modules`
 
-## Trigger
+## Trigger Und Loop
 
 Aktuell existieren zwei Trigger-Arten:
 
@@ -48,6 +57,14 @@ Aktuell existieren zwei Trigger-Arten:
 - automatisch:
   - nach abgeschlossenem Story Review als advisory Run mit
     `automationLevel = auto_comment`
+
+Im `auto`-Mode ist der Step ein geschlossener Review-/Remediation-Loop:
+
+1. Review ausfuehren
+2. sichere Story-Review-Findings erkennen
+3. bestehende Story-Review-Remediation anstossen
+4. Re-Review fuer die Remediation-Execution lesen
+5. Gate-Entscheidung auf dem neuesten Core-Run treffen
 
 ## Gate-Verhalten
 
@@ -87,11 +104,13 @@ Alle Quellen werden auf ein gemeinsames Finding-Schema gemappt:
 
 ## Aktueller Scope
 
-Implementation Review ist derzeit bewusst schlank:
+Implementation Review ist jetzt ein nativer Review-Core-Nutzer mit:
 
-- advisory und gate-fokussierte Aggregation
-- keine automatische Remediation
-- keine eigene LLM-Review-Orchestrierung
-- keine externe Refresh-Automation fuer Sonar/CodeRabbit
+- Tool-Signalen plus LLM-Review
+- konfigurierbarem `interactionMode`
+- sicherem Auto-Loop ueber bestehende Story-Review-Remediation
 
-Diese Schritte bleiben moegliche Ausbaupunkte auf Basis des Review Cores.
+Nicht enthalten bleiben weiterhin:
+
+- externe Refresh-Automation fuer Sonar/CodeRabbit
+- allgemeine Code-Fix-Strategien jenseits der bestehenden bounded Story-Remediation

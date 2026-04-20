@@ -1,7 +1,8 @@
 import type {
+  ImplementationReviewProviderRole,
   PlanningReviewAutomationLevel,
   PlanningReviewGateEligibility,
-  PlanningReviewInteractionMode,
+  ReviewInteractionMode,
   ReviewFindingSeverity,
   ReviewGateDecision,
   ReviewKind,
@@ -37,7 +38,7 @@ export type ReviewRecordInput = {
   subjectStep?: string | null;
   status: ReviewRunStatus;
   readiness: string;
-  interactionMode?: PlanningReviewInteractionMode | null;
+  interactionMode?: ReviewInteractionMode | null;
   reviewMode?: string | null;
   automationLevel: PlanningReviewAutomationLevel;
   requestedMode?: string | null;
@@ -70,10 +71,27 @@ export type ReviewRecordInput = {
     source: string;
   }>;
   knowledgeContext?: {
-    source: "planning_review" | "implementation_review";
     workspaceId: string;
     projectId?: string | null;
     waveId?: string | null;
     storyId?: string | null;
   } | null;
+};
+
+export type ImplementationReviewProviderResult = {
+  reviewerRole: ImplementationReviewProviderRole;
+  overallStatus: "passed" | "review_required" | "failed";
+  summary: string;
+  findings: Array<{
+    severity: ReviewFindingSeverity;
+    category: "correctness" | "security" | "regression" | "maintainability";
+    title: string;
+    description: string;
+    evidence: string;
+    filePath?: string | null;
+    line?: number | null;
+    remediationClass?: "safe_code_fix" | "test_gap" | "manual_follow_up";
+  }>;
+  assumptions: string[];
+  recommendations: string[];
 };

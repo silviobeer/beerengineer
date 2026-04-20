@@ -30,8 +30,10 @@ function fingerprintFinding(input: {
   ].join("::");
 }
 
-function mapReviewKindToKnowledgeSource(reviewKind: ReviewKind): "planning_review" | "implementation_review" | null {
+function mapReviewKindToKnowledgeSource(reviewKind: ReviewKind): "story_review" | "planning_review" | "implementation_review" | null {
   switch (reviewKind) {
+    case "interactive_story":
+      return "story_review";
     case "planning":
       return "planning_review";
     case "implementation":
@@ -76,26 +78,70 @@ export class ReviewCoreService {
   }
 
   public recordReview(input: ReviewRecordInput) {
-    const previousComparableRun = this.deps.reviewRunRepository.getLatestComparable({
+    const run = this.startReviewRun({
       reviewKind: input.reviewKind,
       subjectType: input.subjectType,
       subjectId: input.subjectId,
       subjectStep: input.subjectStep ?? null,
-      reviewMode: input.reviewMode ?? null
+      interactionMode: input.interactionMode ?? null,
+      reviewMode: input.reviewMode ?? null,
+      automationLevel: input.automationLevel,
+      requestedMode: input.requestedMode ?? null,
+      actualMode: input.actualMode ?? null,
+      confidence: input.confidence ?? null,
+      gateEligibility: input.gateEligibility,
+      sourceSummary: input.sourceSummary,
+      providersUsed: input.providersUsed,
+      missingCapabilities: input.missingCapabilities
     });
-    const previousUnresolvedFindings = previousComparableRun
-      ? this.deps.reviewFindingRepository.listUnresolvedByRunId(previousComparableRun.id)
-      : [];
-    const previousFingerprintSet = new Set(previousUnresolvedFindings.map((finding) => finding.fingerprint));
+    return this.completeReviewRun(run.id, {
+      status: input.status,
+      readiness: input.readiness,
+      interactionMode: input.interactionMode ?? null,
+      automationLevel: input.automationLevel,
+      requestedMode: input.requestedMode ?? null,
+      actualMode: input.actualMode ?? null,
+      confidence: input.confidence ?? null,
+      gateEligibility: input.gateEligibility,
+      sourceSummary: input.sourceSummary,
+      providersUsed: input.providersUsed,
+      missingCapabilities: input.missingCapabilities,
+      summary: input.summary,
+      keyPoints: input.keyPoints,
+      disagreements: input.disagreements,
+      recommendedAction: input.recommendedAction,
+      gateDecision: input.gateDecision,
+      findings: input.findings,
+      questions: input.questions,
+      assumptions: input.assumptions,
+      knowledgeContext: input.knowledgeContext ?? null
+    });
+  }
 
-    return this.deps.runInTransaction(() => {
-      const run = this.deps.reviewRunRepository.create({
+  public startReviewRun(input: {
+    reviewKind: ReviewKind;
+    subjectType: string;
+    subjectId: string;
+    subjectStep?: string | null;
+    interactionMode?: ReviewRecordInput["interactionMode"];
+    reviewMode?: string | null;
+    automationLevel: ReviewRecordInput["automationLevel"];
+    requestedMode?: string | null;
+    actualMode?: string | null;
+    confidence?: string | null;
+    gateEligibility: ReviewRecordInput["gateEligibility"];
+    sourceSummary: Record<string, unknown>;
+    providersUsed: string[];
+    missingCapabilities: string[];
+  }) {
+    return this.deps.runInTransaction(() =>
+      this.deps.reviewRunRepository.create({
         reviewKind: input.reviewKind,
         subjectType: input.subjectType,
         subjectId: input.subjectId,
         subjectStep: input.subjectStep ?? null,
-        status: input.status,
-        readiness: input.readiness,
+        status: "in_progress",
+        readiness: null,
         interactionMode: input.interactionMode ?? null,
         reviewMode: input.reviewMode ?? null,
         automationLevel: input.automationLevel,
@@ -106,105 +152,34 @@ export class ReviewCoreService {
         sourceSummaryJson: JSON.stringify(input.sourceSummary, null, 2),
         providersUsedJson: JSON.stringify(input.providersUsed),
         missingCapabilitiesJson: JSON.stringify(input.missingCapabilities),
-        reviewSummary: input.summary,
-        failedReason: input.status === "failed" ? input.summary : null
-      });
+        reviewSummary: null,
+        failedReason: null
+      })
+    );
+  }
 
-      const findings = this.deps.reviewFindingRepository.createMany(
-        input.findings.map((finding) => {
-          const fingerprint = fingerprintFinding({
-            sourceSystem: finding.sourceSystem,
-            reviewerRole: finding.reviewerRole ?? null,
-            findingType: finding.findingType,
-            title: finding.title,
-            detail: finding.detail,
-            filePath: finding.filePath ?? null,
-            line: finding.line ?? null
-          });
-          return {
-            runId: run.id,
-            sourceSystem: finding.sourceSystem,
-            reviewerRole: finding.reviewerRole ?? null,
-            findingType: finding.findingType,
-            normalizedSeverity: finding.normalizedSeverity,
-            sourceSeverity: finding.sourceSeverity ?? null,
-            title: finding.title,
-            detail: finding.detail,
-            evidence: finding.evidence ?? null,
-            status: previousFingerprintSet.has(fingerprint) ? ("open" as const) : ("new" as const),
-            fingerprint,
-            filePath: finding.filePath ?? null,
-            line: finding.line ?? null,
-            fieldPath: finding.fieldPath ?? null
-          };
-        })
-      );
-
-      if (previousComparableRun) {
-        const currentFingerprints = new Set(findings.map((finding) => finding.fingerprint));
-        const resolvedFingerprints = previousUnresolvedFindings
-          .map((finding) => finding.fingerprint)
-          .filter((fingerprint) => !currentFingerprints.has(fingerprint));
-        this.deps.reviewFindingRepository.markResolved(previousComparableRun.id, resolvedFingerprints);
-      }
-
-      const synthesis = this.deps.reviewSynthesisRepository.create({
-        runId: run.id,
-        summary: input.summary,
-        status: input.status,
-        readiness: input.readiness,
-        keyPointsJson: JSON.stringify(input.keyPoints),
-        disagreementsJson: JSON.stringify(input.disagreements),
-        recommendedAction: input.recommendedAction,
-        gateDecision: input.gateDecision
-      });
-
-      const questions = this.deps.reviewQuestionRepository.createMany(
-        (input.questions ?? []).map((question) => ({
-          runId: run.id,
-          question: question.question,
-          reason: question.reason,
-          impact: question.impact,
-          status: question.status ?? "open",
-          answer: question.answer ?? null,
-          answeredAt: question.answer ? Date.now() : null
-        }))
-      );
-      const assumptions = this.deps.reviewAssumptionRepository.createMany(
-        (input.assumptions ?? []).map((assumption) => ({
-          runId: run.id,
-          statement: assumption.statement,
-          reason: assumption.reason,
-          source: assumption.source
-        }))
-      );
-
-      this.deps.reviewRunRepository.update(run.id, {
-        status: input.status,
-        readiness: input.readiness,
-        reviewSummary: input.summary,
-        completedAt: Date.now()
-      });
-
-      this.persistQualityKnowledge({
-        reviewKind: input.reviewKind,
-        findings,
-        knowledgeContext: input.knowledgeContext ?? null
-      });
-
-      return this.showReview(run.id, {
-        existingRun: {
-          ...run,
-          status: input.status,
-          readiness: input.readiness,
-          reviewSummary: input.summary,
-          completedAt: Date.now()
-        },
-        existingFindings: findings,
-        existingSynthesis: synthesis,
-        existingQuestions: questions,
-        existingAssumptions: assumptions
-      });
+  public completeReviewRun(
+    runId: string,
+    input: Omit<ReviewRecordInput, "reviewKind" | "subjectType" | "subjectId" | "subjectStep" | "reviewMode">
+  ) {
+    const run = this.requireRun(runId);
+    const previousComparableRun = this.deps.reviewRunRepository.getPreviousComparable({
+      reviewKind: run.reviewKind,
+      subjectType: run.subjectType,
+      subjectId: run.subjectId,
+      subjectStep: run.subjectStep,
+      reviewMode: run.reviewMode,
+      beforeStartedAt: run.startedAt,
+      excludeRunId: run.id
+    });
+    const previousUnresolvedFindings = previousComparableRun
+      ? this.deps.reviewFindingRepository.listUnresolvedByRunId(previousComparableRun.id)
+      : [];
+    return this.persistCompletedReview({
+      run,
+      input,
+      previousComparableRun,
+      previousUnresolvedFindings
     });
   }
 
@@ -252,6 +227,119 @@ export class ReviewCoreService {
       throw new Error(`Review run ${runId} not found`);
     }
     return run;
+  }
+
+  private persistCompletedReview(input: {
+    run: ReviewRun;
+    input: Omit<ReviewRecordInput, "reviewKind" | "subjectType" | "subjectId" | "subjectStep" | "reviewMode">;
+    previousComparableRun: ReviewRun | null;
+    previousUnresolvedFindings: ReviewFinding[];
+  }) {
+    const previousFingerprintSet = new Set(input.previousUnresolvedFindings.map((finding) => finding.fingerprint));
+
+    return this.deps.runInTransaction(() => {
+      this.deps.reviewRunRepository.update(input.run.id, {
+        status: input.input.status,
+        readiness: input.input.readiness,
+        interactionMode: input.input.interactionMode ?? null,
+        reviewMode: input.run.reviewMode,
+        automationLevel: input.input.automationLevel,
+        requestedMode: input.input.requestedMode ?? null,
+        actualMode: input.input.actualMode ?? null,
+        confidence: input.input.confidence ?? null,
+        gateEligibility: input.input.gateEligibility,
+        sourceSummaryJson: JSON.stringify(input.input.sourceSummary, null, 2),
+        providersUsedJson: JSON.stringify(input.input.providersUsed),
+        missingCapabilitiesJson: JSON.stringify(input.input.missingCapabilities),
+        reviewSummary: input.input.summary,
+        failedReason: input.input.status === "failed" ? input.input.summary : null,
+        completedAt: Date.now()
+      });
+
+      const findings = this.deps.reviewFindingRepository.createMany(
+        input.input.findings.map((finding) => {
+          const fingerprint = fingerprintFinding({
+            sourceSystem: finding.sourceSystem,
+            reviewerRole: finding.reviewerRole ?? null,
+            findingType: finding.findingType,
+            title: finding.title,
+            detail: finding.detail,
+            filePath: finding.filePath ?? null,
+            line: finding.line ?? null
+          });
+          return {
+            runId: input.run.id,
+            sourceSystem: finding.sourceSystem,
+            reviewerRole: finding.reviewerRole ?? null,
+            findingType: finding.findingType,
+            normalizedSeverity: finding.normalizedSeverity,
+            sourceSeverity: finding.sourceSeverity ?? null,
+            title: finding.title,
+            detail: finding.detail,
+            evidence: finding.evidence ?? null,
+            status: previousFingerprintSet.has(fingerprint) ? ("open" as const) : ("new" as const),
+            fingerprint,
+            filePath: finding.filePath ?? null,
+            line: finding.line ?? null,
+            fieldPath: finding.fieldPath ?? null
+          };
+        })
+      );
+
+      if (input.previousComparableRun) {
+        const currentFingerprints = new Set(findings.map((finding) => finding.fingerprint));
+        const resolvedFingerprints = input.previousUnresolvedFindings
+          .map((finding) => finding.fingerprint)
+          .filter((fingerprint) => !currentFingerprints.has(fingerprint));
+        this.deps.reviewFindingRepository.markResolved(input.previousComparableRun.id, resolvedFingerprints);
+      }
+
+      const synthesis = this.deps.reviewSynthesisRepository.create({
+        runId: input.run.id,
+        summary: input.input.summary,
+        status: input.input.status,
+        readiness: input.input.readiness,
+        keyPointsJson: JSON.stringify(input.input.keyPoints),
+        disagreementsJson: JSON.stringify(input.input.disagreements),
+        recommendedAction: input.input.recommendedAction,
+        gateDecision: input.input.gateDecision
+      });
+
+      const questions = this.deps.reviewQuestionRepository.createMany(
+        (input.input.questions ?? []).map((question) => ({
+          runId: input.run.id,
+          question: question.question,
+          reason: question.reason,
+          impact: question.impact,
+          status: question.status ?? "open",
+          answer: question.answer ?? null,
+          answeredAt: question.answer ? Date.now() : null
+        }))
+      );
+      const assumptions = this.deps.reviewAssumptionRepository.createMany(
+        (input.input.assumptions ?? []).map((assumption) => ({
+          runId: input.run.id,
+          statement: assumption.statement,
+          reason: assumption.reason,
+          source: assumption.source
+        }))
+      );
+
+      const updatedRun = this.requireRun(input.run.id);
+      this.persistQualityKnowledge({
+        reviewKind: updatedRun.reviewKind,
+        findings,
+        knowledgeContext: input.input.knowledgeContext ?? null
+      });
+
+      return this.showReview(input.run.id, {
+        existingRun: updatedRun,
+        existingFindings: findings,
+        existingSynthesis: synthesis,
+        existingQuestions: questions,
+        existingAssumptions: assumptions
+      });
+    });
   }
 
   private persistQualityKnowledge(input: {

@@ -768,6 +768,13 @@ describe("cli happy path", () => {
         workspace: { key: string };
       };
       expect(explicitWorkspace.workspace.key).toBe("app-two");
+
+      const updatedWorkspace = runCli(
+        ["--db", dbPath, "workspace:update-root", "--workspace-key", "app-two", "--root-path", join(root, "app-two")],
+        cwd
+      ) as { key: string; rootPath: string | null };
+      expect(updatedWorkspace.key).toBe("app-two");
+      expect(updatedWorkspace.rootPath).toBe(join(root, "app-two"));
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

@@ -140,6 +140,13 @@ export class ExecutionService {
     if (!previous) {
       throw new AppError("WAVE_STORY_EXECUTION_NOT_FOUND", `Wave story execution ${waveStoryExecutionId} not found`);
     }
+    const latestForWaveStory = this.options.deps.waveStoryExecutionRepository.getLatestByWaveStoryId(previous.waveStoryId);
+    if (latestForWaveStory?.id !== previous.id) {
+      throw new AppError(
+        "WAVE_STORY_EXECUTION_NOT_RETRYABLE",
+        "Only the latest wave story execution attempt can be retried"
+      );
+    }
     if (previous.status !== "failed" && previous.status !== "review_required") {
       throw new AppError("WAVE_STORY_EXECUTION_NOT_RETRYABLE", "Wave story execution is not retryable");
     }
@@ -596,6 +603,10 @@ export class ExecutionService {
 
       const parsed = storyExecutionOutputSchema.parse(result.output);
       this.recordExecutionAgentSession(execution.id, runtime.adapterKey, result);
+      this.options.deps.waveStoryExecutionRepository.updateStatus(execution.id, "running", {
+        outputSummaryJson: JSON.stringify(parsed, null, 2),
+        gitMetadata: input.gitMetadata ?? null
+      });
 
       const verification = await this.options.executeVerificationPipeline({
         project: input.project,
@@ -787,7 +798,15 @@ export class ExecutionService {
     };
   }
 
-  private async advanceExecution(projectId: string) {
+  private async advanceExecution(projectId: string): Promise<{
+    projectId: string;
+    implementationPlanId: string;
+    activeWaveCode: string | null;
+    scheduledCount: number;
+    completed: boolean;
+    blockedByFailure?: boolean;
+    executions: RetryWaveStoryExecutionResult[];
+  }> {
     const project = this.options.loaders.requireProject(projectId);
     this.options.ensureProjectBranch(project.code);
     const implementationPlan = this.options.loaders.requireImplementationPlanForProject(projectId);
@@ -811,6 +830,11 @@ export class ExecutionService {
     const projectExecutionContext = this.ensureProjectExecutionContext(project, implementationPlan);
     const waveExecution = this.ensureWaveExecution(activeWave.id);
     if (waveExecution.status === "failed") {
+      this.refreshWaveExecutionStatus(waveExecution.id);
+      const refreshedWaveExecution = this.options.loaders.requireWaveExecution(waveExecution.id);
+      if (refreshedWaveExecution.status !== "failed") {
+        return this.advanceExecution(projectId);
+      }
       if (this.canRetryFailedWaveExecutionFromTestPreparation(waveExecution.id)) {
         this.options.deps.waveExecutionRepository.updateStatus(waveExecution.id, "running");
       } else {
@@ -835,6 +859,25 @@ export class ExecutionService {
         completed: false,
         blockedByFailure: true,
         executions: []
+      };
+    }
+    const resumedExecutions = await this.resumeRunningWaveStories({
+      project,
+      implementationPlan,
+      wave: activeWave,
+      waveExecution: activeWaveExecution,
+      projectExecutionContext
+    });
+    if (resumedExecutions.length > 0) {
+      this.refreshWaveExecutionStatus(waveExecution.id);
+      return {
+        projectId,
+        implementationPlanId: implementationPlan.id,
+        activeWaveCode: activeWave.code,
+        scheduledCount: resumedExecutions.length,
+        completed: false,
+        blockedByFailure: false,
+        executions: resumedExecutions
       };
     }
     const executableStories = this.resolveExecutableWaveStories(activeWave.id);
@@ -1070,6 +1113,91 @@ export class ExecutionService {
         status: "failed" as const
       };
     }
+  }
+
+  private async resumeRunningWaveStories(input: {
+    project: ReturnType<WorkflowEntityLoaders["requireProject"]>;
+    implementationPlan: ReturnType<WorkflowEntityLoaders["requireImplementationPlanForProject"]>;
+    wave: ReturnType<WorkflowEntityLoaders["requireWave"]>;
+    waveExecution: ReturnType<WorkflowEntityLoaders["requireWaveExecution"]>;
+    projectExecutionContext?: ReturnType<ExecutionService["ensureProjectExecutionContext"]>;
+  }): Promise<RetryWaveStoryExecutionResult[]> {
+    const resumed: RetryWaveStoryExecutionResult[] = [];
+    for (const waveStory of this.options.deps.waveStoryRepository.listByWaveId(input.wave.id)) {
+      const latestExecution = this.options.deps.waveStoryExecutionRepository.getLatestByWaveStoryId(waveStory.id);
+      if (latestExecution?.status !== "running") {
+        continue;
+      }
+
+      const latestTestRun = this.options.deps.waveStoryTestRunRepository.getLatestByWaveStoryId(waveStory.id);
+      if (!latestTestRun || latestTestRun.status !== "completed") {
+        continue;
+      }
+
+      const latestExecutionSession =
+        this.options.deps.executionAgentSessionRepository.listByWaveStoryExecutionId(latestExecution.id).at(-1) ?? null;
+      const latestBasicVerification = this.options.deps.verificationRunRepository.getLatestByWaveStoryExecutionIdAndMode(
+        latestExecution.id,
+        "basic"
+      );
+      if (latestExecutionSession?.status !== "completed" && !latestBasicVerification) {
+        continue;
+      }
+
+      const story = this.options.loaders.requireStory(waveStory.storyId);
+      if (!latestExecution.outputSummaryJson) {
+        this.options.deps.waveStoryExecutionRepository.updateStatus(latestExecution.id, "failed", {
+          errorMessage:
+            "Execution was interrupted before the implementation summary was persisted. Retry the story execution."
+        });
+        resumed.push({
+          phase: "implementation",
+          waveStoryExecutionId: latestExecution.id,
+          waveStoryId: waveStory.id,
+          storyCode: story.code,
+          status: "failed"
+        });
+        continue;
+      }
+
+      const storyRunContext = this.buildStoryRunContext({
+        project: input.project,
+        implementationPlan: input.implementationPlan,
+        wave: input.wave,
+        story,
+        projectExecutionContext: input.projectExecutionContext
+      });
+      const verification = await this.options.executeVerificationPipeline({
+        project: input.project,
+        implementationPlan: input.implementationPlan,
+        wave: input.wave,
+        waveExecution: input.waveExecution,
+        story,
+        storyRunContext,
+        testPreparationRun: latestTestRun,
+        parsedTestPreparation: this.parseTestPreparationOutput(latestTestRun),
+        execution: latestExecution,
+        implementationOutput: this.parseStoryExecutionOutput(latestExecution)
+      });
+      const resumedStatus =
+        verification.finalExecutionStatus === "passed" ? "completed" : verification.finalExecutionStatus;
+      this.options.deps.waveStoryExecutionRepository.updateStatus(latestExecution.id, resumedStatus, {
+        outputSummaryJson: latestExecution.outputSummaryJson,
+        errorMessage: verification.appVerification?.errorMessage ?? verification.storyReview?.errorMessage ?? null
+      });
+      resumed.push({
+        phase: verification.storyReview
+          ? "story_review"
+          : verification.appVerification
+            ? "app_verification"
+            : "implementation",
+        waveStoryExecutionId: latestExecution.id,
+        waveStoryId: waveStory.id,
+        storyCode: story.code,
+        status: resumedStatus
+      });
+    }
+    return resumed;
   }
 
   private resolveActiveWave(waves: Array<ReturnType<WorkflowEntityLoaders["requireWave"]>>) {

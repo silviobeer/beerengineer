@@ -4,6 +4,7 @@ import type {
   BrainstormSessionStatus,
   DocumentationWorkerRole,
   ExecutionWorkerRole,
+  ImplementationReviewProviderRole,
   InteractiveReviewEntryStatus,
   InteractiveReviewSeverity,
   InteractiveReviewStatus,
@@ -23,6 +24,7 @@ import type {
   AppVerificationOutput,
   DocumentationOutput,
   InteractiveBrainstormAgentOutput,
+  ImplementationReviewOutput,
   InteractiveStoryReviewAgentOutput,
   PlanningReviewReviewerOutput,
   RalphVerificationOutput,
@@ -123,6 +125,73 @@ export type PlanningReviewAdapterRunRequest = {
 
 export type PlanningReviewAdapterRunResult = {
   output: PlanningReviewReviewerOutput;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  command: string[];
+};
+
+export type ImplementationReviewAdapterRunRequest = {
+  runtime: AdapterRuntimeContext;
+  interactionType: "implementation_review";
+  prompt: string;
+  reviewerRole: ImplementationReviewProviderRole;
+  story: ExecutionAdapterRunRequest["story"];
+  project: ExecutionAdapterRunRequest["project"];
+  wave: ExecutionAdapterRunRequest["wave"];
+  implementationPlan: ExecutionAdapterRunRequest["implementationPlan"];
+  item: ExecutionAdapterRunRequest["item"];
+  acceptanceCriteria: ExecutionAdapterRunRequest["acceptanceCriteria"];
+  projectExecutionContext: ExecutionAdapterRunRequest["projectExecutionContext"];
+  implementation: StoryExecutionOutput;
+  basicVerification: {
+    status: VerificationRunStatus | null;
+    summary: Record<string, unknown> | null;
+  };
+  ralphVerification: {
+    status: VerificationRunStatus | null;
+    summary: Record<string, unknown> | null;
+  };
+  appVerification: {
+    status: "pending" | "preparing" | "in_progress" | "passed" | "review_required" | "failed" | null;
+    summary: Record<string, unknown> | null;
+  };
+  latestStoryReview: {
+    status: StoryReviewRunStatus | null;
+    summary: Record<string, unknown> | null;
+    findings: Array<{
+      severity: string;
+      category: string;
+      title: string;
+      description: string;
+      evidence: string;
+      filePath: string | null;
+      line: number | null;
+      suggestedFix: string | null;
+    }>;
+  };
+  externalSignals: Array<{
+    sourceSystem: string;
+    reviewerRole: string | null;
+    normalizedSeverity: string;
+    findingType: string;
+    title: string;
+    detail: string;
+    evidence: string | null;
+    filePath: string | null;
+    line: number | null;
+  }>;
+  qualityKnowledge: Array<{
+    source: string;
+    scopeType: string;
+    scopeId: string;
+    summary: string;
+    status: string;
+  }>;
+};
+
+export type ImplementationReviewAdapterRunResult = {
+  output: ImplementationReviewOutput;
   stdout: string;
   stderr: string;
   exitCode: number;
@@ -691,6 +760,7 @@ export interface AgentAdapter {
   readonly key: string;
   run(request: AdapterRunRequest): Promise<AdapterRunResult>;
   runPlanningReview(request: PlanningReviewAdapterRunRequest): Promise<PlanningReviewAdapterRunResult>;
+  runImplementationReview(request: ImplementationReviewAdapterRunRequest): Promise<ImplementationReviewAdapterRunResult>;
   runInteractiveBrainstorm(request: InteractiveBrainstormAdapterRunRequest): Promise<InteractiveBrainstormAdapterRunResult>;
   runInteractiveStoryReview(request: InteractiveStoryReviewAdapterRunRequest): Promise<InteractiveStoryReviewAdapterRunResult>;
   runWorkspaceSetupAssist(request: WorkspaceSetupAssistAdapterRunRequest): Promise<WorkspaceSetupAssistAdapterRunResult>;

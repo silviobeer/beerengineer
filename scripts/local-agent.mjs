@@ -896,11 +896,90 @@ function planningReview(payload) {
   };
 }
 
+function implementationReview(payload) {
+  const findings = [];
+  const changedFiles = payload.implementation?.changedFiles ?? [];
+  const testsRun = payload.implementation?.testsRun ?? [];
+  const externalSignals = payload.externalSignals ?? [];
+  const latestStoryReviewFindings = payload.latestStoryReview?.findings ?? [];
+  const hasReviewRequiredVerification = [payload.basicVerification?.status, payload.ralphVerification?.status, payload.appVerification?.status].some(
+    (status) => status && status !== "passed"
+  );
+
+  if (!testsRun.some((testRun) => testRun.status === "passed")) {
+    findings.push({
+      severity: "high",
+      category: "regression",
+      title: "Passing regression evidence is missing",
+      description: `${payload.reviewerRole} could not find a passing test command in the implementation evidence.`,
+      evidence: `Tests run: ${testsRun.map((testRun) => `${testRun.command}:${testRun.status}`).join(", ") || "none recorded"}.`,
+      filePath: changedFiles[0] ?? null,
+      line: null,
+      remediationClass: "test_gap"
+    });
+  }
+
+  if (hasReviewRequiredVerification) {
+    findings.push({
+      severity: "high",
+      category: "correctness",
+      title: "Verification signals are not fully clean",
+      description: `${payload.reviewerRole} sees at least one verification step that did not pass cleanly.`,
+      evidence: externalSignals
+        .filter((signal) => signal.findingType === "verification")
+        .map((signal) => signal.title)
+        .join("; ") || "A verification step reported follow-up work.",
+      filePath: null,
+      line: null,
+      remediationClass: "manual_follow_up"
+    });
+  }
+
+  if (payload.reviewerRole === "implementation_reviewer" && latestStoryReviewFindings.length > 0) {
+    findings.push(
+      ...latestStoryReviewFindings.map((finding) => ({
+        severity: finding.severity === "critical" || finding.severity === "high" ? "medium" : finding.severity,
+        category: finding.category === "security" ? "security" : "maintainability",
+        title: `Carry forward story-review concern: ${finding.title}`,
+        description: finding.description,
+        evidence: finding.evidence,
+        filePath: finding.filePath ?? null,
+        line: finding.line ?? null,
+        remediationClass: "safe_code_fix"
+      }))
+    );
+  }
+
+  const overallStatus = findings.some((finding) => finding.severity === "critical")
+    ? "failed"
+    : findings.some((finding) => finding.severity === "high")
+      ? "review_required"
+      : "passed";
+
+  return {
+    output: {
+      overallStatus,
+      summary:
+        overallStatus === "passed"
+          ? `${payload.reviewerRole} found the implementation ready.`
+          : `${payload.reviewerRole} found ${findings.length} follow-up issue(s).`,
+      findings,
+      assumptions: ["The local stub only reviews persisted execution evidence, not live repository diffs."],
+      recommendations:
+        findings.length > 0
+          ? ["Address the structured findings and rerun implementation review after remediation."]
+          : ["No additional implementation-review follow-up is required in the local stub."]
+    }
+  };
+}
+
 let result;
 if (payload.interactionType === "brainstorm_chat") {
   result = brainstormChat(payload);
 } else if (payload.interactionType === "planning_review") {
   result = planningReview(payload);
+} else if (payload.interactionType === "implementation_review") {
+  result = implementationReview(payload);
 } else if (payload.interactionType === "story_review_chat") {
   result = storyReviewChat(payload);
 } else if (payload.interactionType === "workspace_setup_assist") {

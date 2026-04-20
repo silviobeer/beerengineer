@@ -5,6 +5,8 @@ Der MVP ist engine-first aufgebaut:
 - `domain/` enthaelt Entitaeten, Statuswerte und Gate-Regeln
 - `persistence/` kapselt SQLite, Migrationen, Drizzle-Schema und Repositories
 - `workflow/` steuert `StageRun`-Lifecycle, Planning-Importe, Execution-Orchestrierung und Statuswechsel
+- `review/` kapselt den generischen Review Core, Provider-Normalisierung und
+  Review-Execution-Planung
 - `services/` kapseln dateibasierte Resolver und Artefaktablage
 - `adapters/` entkoppeln die technische Agent-Ausfuehrung vom Workflow
 - `cli/` bleibt duenn und delegiert in Services
@@ -70,6 +72,8 @@ Persistiert werden dafuer:
 - `WaveStoryExecution` als Laufzeitversuch fuer genau eine Story-in-Wave-Zuordnung
 - `ExecutionAgentSession` fuer den konkreten Worker-Lauf
 - `VerificationRun` fuer das strukturierte Ergebnis der Verifikation
+- `ReviewRun`, `ReviewFinding`, `ReviewSynthesis`, `ReviewQuestion` und
+  `ReviewAssumption` fuer generische Reviews
 
 Vor jedem Story-Run erzeugt die Engine und speichert:
 
@@ -77,3 +81,26 @@ Vor jedem Story-Run erzeugt die Engine und speichert:
 - einen Repo-Context-Snapshot
 
 Dadurch bleibt der Ausfuehrungspfad nachvollziehbar und reproduzierbar, ohne das Scheduling dem LLM zu ueberlassen.
+
+## Review Architecture
+
+Die Review-Schicht ist jetzt zweigeteilt:
+
+- bounded Runtime-Reviews fuer konkrete Worker-Laeufe
+  - `StoryReviewRun`
+  - `QaRun`
+- generischer Review Core fuer vereinheitlichte Review-Auswertung
+  - `planning`
+  - `interactive_story`
+  - `implementation`
+  - `qa`
+
+Wichtig:
+
+- Story Review und QA behalten ihre bounded Runtime-Records fuer Worker-Sessions
+  und fachliche Runtime-Historie
+- die vereinheitlichte Gate-/Finding-Logik lebt aber im Review Core
+- `implementation` ist voll Core-nativ und kombiniert Tool-Signale mit
+  LLM-Review
+- automatische Remediation fuer `implementation` laeuft ueber einen separaten
+  `ReviewRemediationService`, nicht im Core selbst

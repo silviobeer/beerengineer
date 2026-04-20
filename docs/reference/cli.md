@@ -191,6 +191,7 @@ Wichtige Parameter fuer `implementation-review:start`:
 
 - `--wave-story-execution-id <id>`
 - `--automation-level manual|auto_suggest|auto_comment|auto_gate`
+- `--interaction-mode auto|assisted|interactive`
 
 Rueckgabe:
 
@@ -199,7 +200,7 @@ Rueckgabe:
 - `sourceSummary`
   - zusammengefasster Execution-/Story-/Provider-Kontext
 - `findings`
-  - normalisierte Findings aus Story Review, Tests/Verification,
+  - normalisierte Findings aus Core-nativem Story Review, Tests/Verification,
     `CodeRabbit`-Knowledge und `SonarCloud`
 - `synthesis`
   - inklusive `gateDecision`
@@ -208,8 +209,13 @@ Rueckgabe:
 Wichtig:
 
 - Der Lauf persistiert ueber den generischen Review-Core.
+- Der Default fuer `interactionMode` ist `auto` und kann ueber
+  Workspace-`executionDefaultsJson` oder den CLI-Parameter ueberschrieben
+  werden.
 - Story Review startet danach automatisch einen advisory
   `implementation`-Review-Run mit `automationLevel = auto_comment`.
+- Im `auto`-Mode kann der Lauf sichere Story-Review-Remediation direkt
+  anstossen und danach den neuesten Re-Review-Run auswerten.
 - QA ist jetzt das erste echte Workflow-Gate fuer Implementation Review:
   `qa:start` wird blockiert, wenn fuer eine relevante Story-Execution der
   neueste `implementation`-Review-Run gleichzeitig
@@ -223,8 +229,8 @@ Wichtig:
 
 ## Planning Review Runtime
 
-Planning Review schreibt weiterhin seinen planning-spezifischen Laufdatensatz,
-haengt neue Laeufe aber explizit an den generischen Review-Core an.
+Planning Review schreibt seine Review-Ergebnisse nativ in den generischen
+Review-Core.
 
 Fuer neue Runs gilt deshalb:
 
@@ -232,9 +238,7 @@ Fuer neue Runs gilt deshalb:
 - `planning-review:question:answer`
 - `planning-review:rerun`
 
-arbeiten bevorzugt ueber den verknuepften Core-Run. Die planning-spezifische
-Persistenz bleibt nur noch als Kompatibilitaets-Bridge und fuer aeltere Runs
-erhalten.
+arbeiten direkt auf dem Core-Run.
 
 ## Interactive Brainstorm
 
@@ -314,7 +318,7 @@ Workspace-Kommandos:
 npm run cli -- workspace:list
 npm run cli -- workspace:create --key app-two --name "App Two"
 npm run cli -- workspace:show --workspace app-two
-npm run cli -- workspace:update-root --workspace app-two --root-path ./tmp/app-two
+npm run cli -- workspace:update-root --workspace-key app-two --root-path ./tmp/app-two
 npm run cli -- --workspace app-two workspace:doctor
 npm run cli -- --workspace app-two workspace:init --create-root --init-git
 npm run cli -- --workspace app-two workspace:init --create-root --init-git --dry-run

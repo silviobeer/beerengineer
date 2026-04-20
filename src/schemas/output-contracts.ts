@@ -163,6 +163,25 @@ export const storyReviewOutputSchema = z.object({
   recommendations: z.array(z.string().min(1)).default([])
 });
 
+export const implementationReviewOutputSchema = z.object({
+  overallStatus: z.enum(["passed", "review_required", "failed"]),
+  summary: z.string().min(1),
+  findings: z.array(
+    z.object({
+      severity: z.enum(["critical", "high", "medium", "low"]),
+      category: z.enum(["correctness", "security", "regression", "maintainability"]),
+      title: z.string().min(1),
+      description: z.string().min(1),
+      evidence: z.string().min(1),
+      filePath: z.string().min(1).nullable().optional(),
+      line: z.number().int().positive().nullable().optional(),
+      remediationClass: z.enum(["safe_code_fix", "test_gap", "manual_follow_up"]).nullable().optional()
+    })
+  ).default([]),
+  assumptions: z.array(z.string().min(1)).default([]),
+  recommendations: z.array(z.string().min(1)).default([])
+});
+
 export const documentationOutputSchema = z.object({
   projectCode: z.string().min(1),
   overallStatus: z.enum(["completed", "review_required"]),
@@ -247,7 +266,18 @@ export const planningReviewFindingOutputSchema = z.object({
 });
 
 export const planningReviewReviewerOutputSchema = z.object({
-  status: z.enum(["in_review", "needs_clarification", "questions_only", "ready", "blocked", "failed"]),
+  status: z.enum([
+    "in_review",
+    "needs_clarification",
+    "questions_only",
+    "ready",
+    "blocked",
+    "failed",
+    "ready_with_assumptions",
+    "needs_evidence",
+    "needs_human_review",
+    "high_risk"
+  ]),
   readiness: z.enum(["ready", "ready_with_assumptions", "needs_evidence", "needs_human_review", "high_risk"]),
   summary: z.string().min(1),
   findings: z.array(planningReviewFindingOutputSchema),
@@ -313,6 +343,7 @@ export type RalphVerificationOutput = z.infer<typeof ralphVerificationOutputSche
 export type AppVerificationOutput = z.infer<typeof appVerificationOutputSchema>;
 export type QaOutput = z.infer<typeof qaOutputSchema>;
 export type StoryReviewOutput = z.infer<typeof storyReviewOutputSchema>;
+export type ImplementationReviewOutput = z.infer<typeof implementationReviewOutputSchema>;
 export type DocumentationOutput = z.infer<typeof documentationOutputSchema>;
 export type InteractiveBrainstormDraftPatch = z.infer<typeof interactiveBrainstormDraftPatchSchema>;
 export type InteractiveBrainstormAgentOutput = z.infer<typeof interactiveBrainstormAgentOutputSchema>;
