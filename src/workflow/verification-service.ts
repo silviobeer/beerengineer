@@ -160,6 +160,17 @@ type VerificationServiceOptions = {
 export class VerificationService {
   public constructor(private readonly options: VerificationServiceOptions) {}
 
+  private triggerImplementationReviewAsync(input: { waveStoryExecutionId: string }): void {
+    void this.options
+      .triggerImplementationReview?.({
+        waveStoryExecutionId: input.waveStoryExecutionId,
+        automationLevel: "auto_comment"
+      })
+      .catch(() => {
+        // Keep story execution lifecycle non-blocking even if implementation review follow-up fails.
+      });
+  }
+
   public async startStoryReview(waveStoryExecutionId: string) {
     const execution = this.options.loaders.requireWaveStoryExecution(waveStoryExecutionId);
     const latestBasicVerification = this.options.deps.verificationRunRepository.getLatestByWaveStoryExecutionIdAndMode(
@@ -520,41 +531,48 @@ export class VerificationService {
       });
       const remediationExecution = this.options.loaders.requireWaveStoryExecution(result.waveStoryExecutionId);
       const latestStoryReviewRun = this.options.deps.storyReviewRunRepository.getLatestByWaveStoryExecutionId(remediationExecution.id);
-      if (!latestStoryReviewRun) {
-        throw new AppError("STORY_REVIEW_RUN_NOT_FOUND", "Remediation execution did not create a story review run");
-      }
-      const latestFindings = this.options.deps.storyReviewFindingRepository.listByStoryReviewRunId(latestStoryReviewRun.id);
-      const latestOpenKeys = new Set(
-        latestFindings.filter((finding) => finding.status === "open").map((finding) => this.findingFingerprint(finding))
-      );
-      selectedFindings.forEach((finding) => {
-        const stillOpen = latestOpenKeys.has(this.findingFingerprint(finding));
-        this.options.deps.storyReviewRemediationFindingRepository.updateResolutionStatus(
-          remediationRun.id,
-          finding.id,
-          stillOpen ? "still_open" : "resolved"
-        );
-        this.options.deps.storyReviewFindingRepository.updateStatus(finding.id, stillOpen ? "open" : "resolved");
-      });
       let remediationStatus: "completed" | "review_required" | "failed" = "failed";
-      if (latestStoryReviewRun.status === "passed") {
-        remediationStatus = "completed";
-      } else if (latestStoryReviewRun.status === "review_required") {
+      let outputSummary: Record<string, unknown> = {
+        waveStoryExecutionId: remediationExecution.id,
+        selectedFindingIds: selectedFindings.map((finding) => finding.id)
+      };
+
+      if (latestStoryReviewRun) {
+        const latestFindings = this.options.deps.storyReviewFindingRepository.listByStoryReviewRunId(latestStoryReviewRun.id);
+        const latestOpenKeys = new Set(
+          latestFindings.filter((finding) => finding.status === "open").map((finding) => this.findingFingerprint(finding))
+        );
+        selectedFindings.forEach((finding) => {
+          const stillOpen = latestOpenKeys.has(this.findingFingerprint(finding));
+          this.options.deps.storyReviewRemediationFindingRepository.updateResolutionStatus(
+            remediationRun.id,
+            finding.id,
+            stillOpen ? "still_open" : "resolved"
+          );
+          this.options.deps.storyReviewFindingRepository.updateStatus(finding.id, stillOpen ? "open" : "resolved");
+        });
+        outputSummary = {
+          ...outputSummary,
+          storyReviewRunId: latestStoryReviewRun.id
+        };
+        if (latestStoryReviewRun.status === "passed") {
+          remediationStatus = "completed";
+        } else if (latestStoryReviewRun.status === "review_required") {
+          remediationStatus = "review_required";
+        }
+      } else if (remediationExecution.status === "review_required") {
         remediationStatus = "review_required";
       }
+
       this.options.deps.storyReviewRemediationRunRepository.updateStatus(remediationRun.id, remediationStatus, {
         remediationWaveStoryExecutionId: remediationExecution.id,
-        outputSummaryJson: JSON.stringify(
-          {
-            waveStoryExecutionId: remediationExecution.id,
-            storyReviewRunId: latestStoryReviewRun.id,
-            selectedFindingIds: selectedFindings.map((finding) => finding.id)
-          },
-          null,
-          2
-        ),
+        outputSummaryJson: JSON.stringify(outputSummary, null, 2),
         gitMetadata,
-        errorMessage: remediationStatus === "failed" ? remediationExecution.errorMessage : null
+        errorMessage:
+          remediationStatus === "failed"
+            ? remediationExecution.errorMessage ??
+              "Remediation execution did not reach a passing story-review rerun."
+            : null
       });
       if (remediationStatus === "completed") {
         this.options.invalidateDocumentationForProject(project.id, `story review remediation ${remediationRun.id}`);
@@ -1310,9 +1328,8 @@ export class VerificationService {
         })),
         errorMessage: null
       });
-      await this.options.triggerImplementationReview?.({
-        waveStoryExecutionId: input.execution.id,
-        automationLevel: "auto_comment"
+      this.triggerImplementationReviewAsync({
+        waveStoryExecutionId: input.execution.id
       });
       return {
         status,
@@ -1342,9 +1359,8 @@ export class VerificationService {
         findings: [],
         errorMessage: error instanceof Error ? error.message : String(error)
       });
-      await this.options.triggerImplementationReview?.({
-        waveStoryExecutionId: input.execution.id,
-        automationLevel: "auto_comment"
+      this.triggerImplementationReviewAsync({
+        waveStoryExecutionId: input.execution.id
       });
       return {
         status: "failed",
@@ -1456,7 +1472,7 @@ export class VerificationService {
         preparedSession
       });
 
-      const parsed = appVerificationOutputSchema.parse(result.output);
+      const parsed = this.normalizeAppVerificationOutput(appVerificationOutputSchema.parse(result.output), result.exitCode);
       const status = this.resolveAppVerificationStatus(parsed, result.exitCode);
       const finalizedPreparedSession = this.finalizePreparedAppVerificationSession({
         preparedSession,
@@ -1562,6 +1578,19 @@ export class VerificationService {
 
   private resolveRalphVerificationStatus(output: RalphVerificationOutput, exitCode: number): VerificationRunStatus {
     return this.resolveExternalVerificationStatus(output.overallStatus, exitCode);
+  }
+
+  private normalizeAppVerificationOutput(output: AppVerificationOutput, exitCode: number): AppVerificationOutput {
+    const allChecksPassed = output.checks.length > 0 && output.checks.every((check) => check.status === "passed");
+    if (exitCode === 0 && output.overallStatus === "failed" && allChecksPassed) {
+      return {
+        ...output,
+        overallStatus: "passed",
+        summary: "App verification completed successfully; all declared verification checks passed.",
+        failureSummary: null
+      };
+    }
+    return output;
   }
 
   private resolveAppVerificationStatus(

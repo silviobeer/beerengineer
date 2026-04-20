@@ -2636,6 +2636,55 @@ describe("workflow service", () => {
     }
   });
 
+  it("normalizes inconsistent app verification failures when all checks passed", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const originalScript = readFileSync(localAgentScriptPath, "utf8");
+    const adapterScriptPath = join(root, "local-agent-app-inconsistent-status.mjs");
+    const dbPath = join(root, "app.sqlite");
+
+    try {
+      const inconsistentScript = replaceRequired(
+        originalScript,
+        '      overallStatus,',
+        '      overallStatus: "failed",'
+      );
+      writeFileSync(adapterScriptPath, inconsistentScript);
+      const context = createAppContext(dbPath, { adapterScriptPath });
+
+      const item = createWorkspaceItem(context, {
+        title: "Normalize App Verification Status",
+        description: "Treat all-passing app verification checks as passed even when the provider status is wrong"
+      });
+      await context.workflowService.startStage({ stageKey: "brainstorm", itemId: item.id });
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      context.workflowService.approveConcept(concept!.id);
+      context.workflowService.importProjects(item.id);
+      const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
+      await context.workflowService.startStage({ stageKey: "requirements", itemId: item.id, projectId: project.id });
+      context.workflowService.approveStories(project.id);
+      await context.workflowService.startStage({ stageKey: "architecture", itemId: item.id, projectId: project.id });
+      context.workflowService.approveArchitecture(project.id);
+      await context.workflowService.startStage({ stageKey: "planning", itemId: item.id, projectId: project.id });
+      context.workflowService.approvePlanning(project.id);
+
+      const execution = await context.workflowService.startExecution(project.id);
+      expect(execution.executions[0]?.status).toBe("completed");
+
+      const latestAppRunId = context.workflowService.showExecution(project.id).waves[0]?.stories[0]?.latestAppVerificationRun?.id;
+      expect(latestAppRunId).toBeTruthy();
+      const appVerification = context.workflowService.showAppVerification(latestAppRunId!) as {
+        run: { status: string };
+        result: { overallStatus: string; failureSummary?: string | null } | null;
+      };
+      expect(appVerification.run.status).toBe("passed");
+      expect(appVerification.result?.overallStatus).toBe("passed");
+      expect(appVerification.result?.failureSummary ?? null).toBeNull();
+      context.connection.close();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("resumes orphaned running executions when the implementation summary was already persisted", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
     const dbPath = join(root, "app.sqlite");

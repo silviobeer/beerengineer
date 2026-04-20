@@ -42,6 +42,12 @@ export class ReviewRemediationService {
     }
 
     const remediation = await this.options.startStoryReviewRemediation({ storyReviewRunId: latestStoryReviewRun.id });
+    if (remediation.status !== "completed") {
+      throw new AppError(
+        "IMPLEMENTATION_REVIEW_REMEDIATION_INCOMPLETE",
+        `Implementation remediation ended ${remediation.status} for execution ${remediation.remediationWaveStoryExecutionId}`
+      );
+    }
     const rerun = this.options.reviewCoreService.getLatestBySubject({
       reviewKind: "implementation",
       subjectType: "wave_story_execution",
