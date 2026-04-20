@@ -16,6 +16,11 @@ import { AppError } from "../shared/errors.js";
 import type { ArtifactRecord } from "../persistence/repositories.js";
 import type { StageKey } from "../domain/types.js";
 import type { WorkflowDeps } from "./workflow-deps.js";
+import {
+  checkRequirementsCoverage,
+  formatCoverageGapList,
+  type CoverageUpstream
+} from "./coverage-checker.js";
 
 type ImportOutcome = { status: "completed" | "review_required"; reviewReason: string | null };
 
@@ -86,6 +91,7 @@ export class WorkflowOutputImporters {
   }
 
   private importRequirementsOutputs(input: {
+    itemId: string;
     projectId: string | null;
     artifactsByKind: Map<string, ArtifactRecord>;
   }): ImportOutcome {
@@ -139,9 +145,90 @@ export class WorkflowOutputImporters {
           }))
         )
       );
+
+      const coverageOutcome = this.evaluateRequirementsCoverage({
+        itemId: input.itemId,
+        projectTitle: project.title,
+        stories: parsed.stories,
+        artifactsByKind: input.artifactsByKind
+      });
+      if (coverageOutcome) {
+        return coverageOutcome;
+      }
       return { status: "completed", reviewReason: null };
     } catch (error) {
       return this.buildReviewOutcome("requirements", error);
+    }
+  }
+
+  private evaluateRequirementsCoverage(input: {
+    itemId: string;
+    projectTitle: string;
+    stories: StoriesOutput["stories"];
+    artifactsByKind: Map<string, ArtifactRecord>;
+  }): ImportOutcome | null {
+    const upstream = this.loadRequirementsUpstream(input.itemId, input.projectTitle);
+    if (!upstream) {
+      return null;
+    }
+    const storiesMarkdownArtifact = input.artifactsByKind.get("stories-markdown");
+    const storiesMarkdown = storiesMarkdownArtifact ? this.tryReadArtifactContent(storiesMarkdownArtifact) : null;
+    const result = checkRequirementsCoverage({
+      upstream,
+      stories: input.stories,
+      storiesMarkdown
+    });
+    if (result.blockerCount === 0) {
+      return null;
+    }
+    const gapList = formatCoverageGapList(result.gaps);
+    return {
+      status: "review_required",
+      reviewReason: `Requirements coverage gate blocked the run: ${result.summary}\nUncovered upstream entries:\n${gapList}`
+    };
+  }
+
+  private loadRequirementsUpstream(itemId: string, projectTitle: string): CoverageUpstream | null {
+    const projectsArtifact = this.deps.artifactRepository.getLatestByKind({ itemId, kind: "projects" });
+    if (projectsArtifact) {
+      try {
+        const parsed = this.readStructuredArtifact<ProjectsOutput>(projectsArtifact, projectsOutputSchema);
+        const matching = parsed.projects.find((entry) => entry.title === projectTitle) ?? parsed.projects[0];
+        if (matching) {
+          return {
+            targetUsers: matching.targetUsers,
+            useCases: matching.useCases,
+            constraints: matching.constraints,
+            nonGoals: matching.nonGoals,
+            risks: matching.risks,
+            assumptions: matching.assumptions
+          };
+        }
+      } catch {
+        /* fall through to brainstorm draft */
+      }
+    }
+
+    const session = this.deps.brainstormSessionRepository.getLatestByItemId(itemId);
+    const draft = session ? this.deps.brainstormDraftRepository.getLatestBySessionId(session.id) : null;
+    if (!draft) {
+      return null;
+    }
+    return {
+      targetUsers: JSON.parse(draft.targetUsersJson) as string[],
+      useCases: JSON.parse(draft.useCasesJson) as string[],
+      constraints: JSON.parse(draft.constraintsJson) as string[],
+      nonGoals: JSON.parse(draft.nonGoalsJson) as string[],
+      risks: JSON.parse(draft.risksJson) as string[],
+      assumptions: JSON.parse(draft.assumptionsJson) as string[]
+    };
+  }
+
+  private tryReadArtifactContent(artifact: ArtifactRecord): string | null {
+    try {
+      return this.readArtifactContent(artifact);
+    } catch {
+      return null;
     }
   }
 

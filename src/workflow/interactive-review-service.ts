@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
+import { checkRequirementsCoverage, type CoverageGap, type CoverageUpstream } from "./coverage-checker.js";
 import { interactiveStoryReviewAgentOutputSchema } from "../schemas/output-contracts.js";
 import type { InteractiveStoryReviewAgentOutput } from "../schemas/output-contracts.js";
 import { AppError } from "../shared/errors.js";
@@ -230,6 +231,18 @@ export class InteractiveReviewService {
     const existingEntries = this.options.deps.interactiveReviewEntryRepository.listBySessionId(sessionId);
     const entryIdByStoryId = new Map(existingEntries.map((entry) => [entry.entryId, entry.entryId]));
     const acceptanceCriteriaByStoryId = this.groupAcceptanceCriteriaByStoryId(storyScope.project.id);
+    const upstreamSource = this.loadUpstreamSourceForItem(storyScope.item.id);
+    const coverageGaps = this.computeStoryCoverageGaps(storyScope.stories, acceptanceCriteriaByStoryId, upstreamSource);
+    const upstreamSourceWithCoverage = upstreamSource
+      ? {
+          ...upstreamSource,
+          coverageGaps: coverageGaps.map((gap) => ({
+            sourceField: gap.sourceField,
+            sourceEntry: gap.sourceEntry,
+            severity: gap.severity
+          }))
+        }
+      : null;
     const runtime = this.options.resolveInteractiveRuntime("story_review_chat");
     const agentResult = await runtime.adapter.runInteractiveStoryReview({
       runtime: this.options.buildAdapterRuntimeContext(runtime),
@@ -277,7 +290,7 @@ export class InteractiveReviewService {
       userMessage: message,
       allowedStatuses: [...interactiveReviewEntryStatuses],
       allowedActions: ["update_entries", "request_structured_follow_up", "suggest_resolution"],
-      upstreamSource: this.loadUpstreamSourceForItem(storyScope.item.id)
+      upstreamSource: upstreamSourceWithCoverage
     });
     const agentOutput = this.parseInteractiveStoryReviewAgentOutput(agentResult.output);
     const validEntryIds = new Set(existingEntries.map((entry) => entry.entryId));
@@ -593,10 +606,45 @@ export class InteractiveReviewService {
       "",
       "Coverage check:",
       "- The `upstreamSource` payload carries the brainstorm draft and the concept markdown this project derives from.",
-      "- For every target user, use case, constraint, non-goal, and risk in the upstream source, verify that it is represented in a story or explicitly declared out of scope.",
-      "- If any source entry is uncovered, flag it via a follow-up hint or by updating the matching story entry to `needs_revision` with a concrete `changeRequest` pointing at the missing source entry.",
-      "- Never recommend `approve` or `approve_all` while any mandatory source entry (target user, core use case, hard constraint) is uncovered."
+      "- `upstreamSource.coverageGaps` (deterministic, server-computed) lists upstream entries that do not yet appear in any story or acceptance criterion. Treat this list as authoritative.",
+      "- When the user gives general feedback without naming a specific story (e.g. \"stories miss the overlay\"), match the feedback against `coverageGaps` and propose `needs_revision` entry updates for the closest matching stories, referencing the uncovered source entry in `changeRequest`.",
+      "- If the feedback does not map to any story or gap, leave entryUpdates empty and set needsStructuredFollowUp=true with a hint pointing to the relevant coverage gap.",
+      "- Never recommend `approve` or `approve_all` while any `blocker`-severity coverage gap remains."
     ].join("\n");
+  }
+
+  private computeStoryCoverageGaps(
+    stories: Array<{
+      id: string;
+      title: string;
+      description: string;
+      actor: string;
+      goal: string;
+      benefit: string;
+    }>,
+    acceptanceCriteriaByStoryId: Map<string, Array<{ text: string }>>,
+    upstream: { brainstormDraft: CoverageUpstream | null } | null
+  ): CoverageGap[] {
+    if (!upstream?.brainstormDraft) {
+      return [];
+    }
+    const upstreamSlice: CoverageUpstream = {
+      targetUsers: upstream.brainstormDraft.targetUsers,
+      useCases: upstream.brainstormDraft.useCases,
+      constraints: upstream.brainstormDraft.constraints,
+      nonGoals: upstream.brainstormDraft.nonGoals,
+      risks: upstream.brainstormDraft.risks,
+      assumptions: upstream.brainstormDraft.assumptions
+    };
+    const coverageStories = stories.map((story) => ({
+      title: story.title,
+      description: story.description,
+      actor: story.actor,
+      goal: story.goal,
+      benefit: story.benefit,
+      acceptanceCriteria: (acceptanceCriteriaByStoryId.get(story.id) ?? []).map((criterion) => criterion.text)
+    }));
+    return checkRequirementsCoverage({ upstream: upstreamSlice, stories: coverageStories, storiesMarkdown: null }).gaps;
   }
 
   private loadUpstreamSourceForItem(itemId: string): {

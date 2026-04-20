@@ -730,6 +730,11 @@ export type InteractiveStoryReviewAdapterRunRequest = {
       recommendedDirection: string | null;
       scopeNotes: string | null;
     } | null;
+    coverageGaps?: Array<{
+      sourceField: "targetUsers" | "useCases" | "constraints" | "nonGoals" | "risks" | "assumptions";
+      sourceEntry: string;
+      severity: "blocker" | "major";
+    }>;
   } | null;
 };
 
