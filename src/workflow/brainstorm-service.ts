@@ -23,6 +23,7 @@ import {
   type BrainstormListExtractionField,
   type BrainstormMessageStructure
 } from "./brainstorm-message-parser.js";
+import { deriveGenericUpstreamContext } from "./upstream-context.js";
 
 export type BrainstormDraftView = {
   id: string;
@@ -1024,10 +1025,18 @@ export class BrainstormService {
       nonGoals: string[];
       risks: string[];
       assumptions: string[];
+      designConstraints: string[];
+      requiredDeliverables: string[];
+      referenceArtifacts: string[];
     }>;
   } {
     const candidateSeeds = this.selectBrainstormProjectSeeds(draft, item.title);
     const defaultGoal = draft.coreOutcome ?? `Deliver the first usable slice for ${item.title}.`;
+    const genericContext = deriveGenericUpstreamContext({
+      constraints: draft.constraints,
+      nonGoals: draft.nonGoals,
+      scopeNotes: draft.scopeNotes
+    });
 
     if (candidateSeeds.length === 0) {
       candidateSeeds.push(draft.coreOutcome ?? draft.problem ?? item.title);
@@ -1043,7 +1052,10 @@ export class BrainstormService {
         constraints: [...draft.constraints],
         nonGoals: [...draft.nonGoals],
         risks: [...draft.risks],
-        assumptions: [...draft.assumptions]
+        assumptions: [...draft.assumptions],
+        designConstraints: [...genericContext.designConstraints],
+        requiredDeliverables: [...genericContext.requiredDeliverables],
+        referenceArtifacts: [...genericContext.referenceArtifacts]
       }))
     };
   }

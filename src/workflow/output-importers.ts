@@ -21,6 +21,7 @@ import {
   formatCoverageGapList,
   type CoverageUpstream
 } from "./coverage-checker.js";
+import { deriveGenericUpstreamContext } from "./upstream-context.js";
 
 type ImportOutcome = { status: "completed" | "review_required"; reviewReason: string | null };
 
@@ -214,10 +215,19 @@ export class WorkflowOutputImporters {
     if (!draft) {
       return null;
     }
+    const genericContext = deriveGenericUpstreamContext({
+      constraints: JSON.parse(draft.constraintsJson) as string[],
+      nonGoals: JSON.parse(draft.nonGoalsJson) as string[],
+      scopeNotes: draft.scopeNotes
+    });
     return {
       targetUsers: JSON.parse(draft.targetUsersJson) as string[],
       useCases: JSON.parse(draft.useCasesJson) as string[],
-      constraints: JSON.parse(draft.constraintsJson) as string[],
+      constraints: [
+        ...(JSON.parse(draft.constraintsJson) as string[]),
+        ...genericContext.designConstraints,
+        ...genericContext.requiredDeliverables
+      ],
       nonGoals: JSON.parse(draft.nonGoalsJson) as string[],
       risks: JSON.parse(draft.risksJson) as string[],
       assumptions: JSON.parse(draft.assumptionsJson) as string[]

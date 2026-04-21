@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { checkRequirementsCoverage, type CoverageGap, type CoverageUpstream } from "./coverage-checker.js";
+import { deriveGenericUpstreamContext } from "./upstream-context.js";
 import { interactiveStoryReviewAgentOutputSchema } from "../schemas/output-contracts.js";
 import type { InteractiveStoryReviewAgentOutput } from "../schemas/output-contracts.js";
 import { AppError } from "../shared/errors.js";
@@ -667,7 +668,13 @@ export class InteractiveReviewService {
     const session = this.options.deps.brainstormSessionRepository.getLatestByItemId(itemId);
     const draft = session ? this.options.deps.brainstormDraftRepository.getLatestBySessionId(session.id) : null;
     const brainstormDraft = draft
-      ? {
+      ? (() => {
+          const genericContext = deriveGenericUpstreamContext({
+            constraints: JSON.parse(draft.constraintsJson) as string[],
+            nonGoals: JSON.parse(draft.nonGoalsJson) as string[],
+            scopeNotes: draft.scopeNotes
+          });
+          return {
           problem: draft.problem,
           coreOutcome: draft.coreOutcome,
           targetUsers: JSON.parse(draft.targetUsersJson) as string[],
@@ -679,8 +686,12 @@ export class InteractiveReviewService {
           openQuestions: JSON.parse(draft.openQuestionsJson) as string[],
           candidateDirections: JSON.parse(draft.candidateDirectionsJson) as string[],
           recommendedDirection: draft.recommendedDirection,
-          scopeNotes: draft.scopeNotes
-        }
+          scopeNotes: draft.scopeNotes,
+          designConstraints: genericContext.designConstraints,
+          requiredDeliverables: genericContext.requiredDeliverables,
+          referenceArtifacts: genericContext.referenceArtifacts
+        };
+        })()
       : null;
 
     let conceptMarkdown: string | null = null;

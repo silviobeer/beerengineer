@@ -125,4 +125,41 @@ describe("extractLabeledBrainstormLists", () => {
     expect(merged.targetUsers).toEqual(["workflow operator", "reviewer"]);
     expect(merged.useCases).toEqual(["review overlay", "browse inbox"]);
   });
+
+  it("extracts plan-like markdown headings and bullet sections without fragmenting comma phrases", () => {
+    const result = extractBrainstormMessageStructure(
+      [
+        "# UI Shell Implementation Plan",
+        "",
+        "## Goal",
+        "",
+        "Implement a workspace-scoped UI shell for BeerEngineer.",
+        "",
+        "## Main Views",
+        "",
+        "- Board",
+        "- Inbox",
+        "- Runs",
+        "- Artifacts",
+        "",
+        "## Overlay Panel Capabilities",
+        "",
+        "open an item overlay with status, timeline, next actions, and chat preview",
+        "",
+        "## Component Constraints",
+        "",
+        "- do not hardcode workflow logic inside visual components",
+        "- implementation must include a UI showcase"
+      ].join("\n")
+    );
+
+    expect(result.coreOutcome).toBe("Implement a workspace-scoped UI shell for BeerEngineer.");
+    expect(result.useCases).toContain("Board");
+    expect(result.useCases).toContain("Inbox");
+    expect(result.useCases).toContain("Runs");
+    expect(result.useCases).toContain("Artifacts");
+    expect(result.useCases).toContain("open an item overlay with status, timeline, next actions, and chat preview");
+    expect(result.constraints).toContain("do not hardcode workflow logic inside visual components");
+    expect(result.constraints).toContain("implementation must include a UI showcase");
+  });
 });

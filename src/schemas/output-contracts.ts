@@ -11,7 +11,10 @@ export const projectsOutputSchema = z.object({
       constraints: z.array(z.string().min(1)).default([]),
       nonGoals: z.array(z.string().min(1)).default([]),
       risks: z.array(z.string().min(1)).default([]),
-      assumptions: z.array(z.string().min(1)).default([])
+      assumptions: z.array(z.string().min(1)).default([]),
+      designConstraints: z.array(z.string().min(1)).default([]),
+      requiredDeliverables: z.array(z.string().min(1)).default([]),
+      referenceArtifacts: z.array(z.string().min(1)).default([])
     })
   ).min(1)
 });

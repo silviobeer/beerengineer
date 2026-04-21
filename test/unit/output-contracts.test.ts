@@ -15,5 +15,8 @@ describe("output contracts", () => {
     });
 
     expect(parsed.projects).toHaveLength(1);
+    expect(parsed.projects[0]?.designConstraints).toEqual([]);
+    expect(parsed.projects[0]?.requiredDeliverables).toEqual([]);
+    expect(parsed.projects[0]?.referenceArtifacts).toEqual([]);
   });
 });

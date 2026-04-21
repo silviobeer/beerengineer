@@ -18,7 +18,7 @@ function normalizeEntries(values) {
 }
 
 function splitEntries(value) {
-  return normalizeEntries(`${value}`.split(/\n|;|,/g));
+  return normalizeEntries(`${value}`.split(/\n|;/g));
 }
 
 function parseLabeledBrainstormMessage(message) {
@@ -100,6 +100,315 @@ function parseLabeledBrainstormMessage(message) {
     result.unlabeled.push(line);
   }
   return result;
+}
+
+function normalizeEntry(value) {
+  return `${value}`.replace(/\s+/g, " ").trim();
+}
+
+function mergeFragmentedEntries(values) {
+  const merged = [];
+  for (const rawValue of values ?? []) {
+    const value = normalizeEntry(rawValue);
+    if (!value) {
+      continue;
+    }
+    const previous = merged.length > 0 ? merged[merged.length - 1] : null;
+    const normalizedCurrent = value.toLowerCase();
+    const previousNormalized = previous ? previous.toLowerCase() : "";
+    if (
+      previous
+      && (/^(and|or)\b/.test(normalizedCurrent)
+        || (previousNormalized.includes(" with ") && normalizedCurrent.split(" ").length <= 4)
+        || (previousNormalized.includes(" of ") && normalizedCurrent.split(" ").length <= 3))
+    ) {
+      merged[merged.length - 1] = normalizeEntry(`${previous} ${value}`);
+      continue;
+    }
+    merged.push(value);
+  }
+  return normalizeEntries(merged);
+}
+
+function normalizeUpstreamSource(upstreamSource) {
+  if (!upstreamSource) {
+    return {
+      problem: null,
+      coreOutcome: null,
+      targetUsers: [],
+      useCases: [],
+      constraints: [],
+      nonGoals: [],
+      risks: [],
+      assumptions: [],
+      recommendedDirection: null,
+      scopeNotes: null
+    };
+  }
+
+  return {
+    problem: upstreamSource.problem ? normalizeEntry(upstreamSource.problem) : null,
+    coreOutcome: upstreamSource.coreOutcome ? normalizeEntry(upstreamSource.coreOutcome) : null,
+    targetUsers: mergeFragmentedEntries(upstreamSource.targetUsers ?? []),
+    useCases: mergeFragmentedEntries(upstreamSource.useCases ?? []),
+    constraints: mergeFragmentedEntries(upstreamSource.constraints ?? []),
+    nonGoals: mergeFragmentedEntries(upstreamSource.nonGoals ?? []),
+    risks: mergeFragmentedEntries(upstreamSource.risks ?? []),
+    assumptions: mergeFragmentedEntries(upstreamSource.assumptions ?? []),
+    recommendedDirection: upstreamSource.recommendedDirection ? normalizeEntry(upstreamSource.recommendedDirection) : null,
+    scopeNotes: upstreamSource.scopeNotes ? `${upstreamSource.scopeNotes}`.trim() : null
+  };
+}
+
+function tokenize(value) {
+  return normalizeEntry(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9\s/-]+/g, " ")
+    .split(/[\s/.-]+/)
+    .filter((token) => token.length >= 3);
+}
+
+function containsAny(value, keywords) {
+  const normalized = normalizeEntry(value).toLowerCase();
+  return keywords.some((keyword) => normalized.includes(keyword));
+}
+
+function deriveRequirementsActors(upstream) {
+  const explicit = mergeFragmentedEntries(upstream.targetUsers ?? []);
+  if (explicit.length > 0) {
+    return explicit;
+  }
+  return ["workspace operator", "delivery lead", "reviewer"];
+}
+
+function selectPrimaryActor(actors, preferredKeywords) {
+  const normalizedActors = actors.map((actor) => ({ original: actor, normalized: actor.toLowerCase() }));
+  const match = normalizedActors.find((actor) => preferredKeywords.some((keyword) => actor.normalized.includes(keyword)));
+  return match ? match.original : actors[0] ?? "operator";
+}
+
+function dedupeByTitle(stories) {
+  const seen = new Set();
+  const result = [];
+  for (const story of stories) {
+    const key = story.title.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push(story);
+  }
+  return result;
+}
+
+function buildCoverageSection(upstream, storyLabels) {
+  const sections = [];
+  const pushField = (label, entries) => {
+    if (!entries || entries.length === 0) {
+      return;
+    }
+    sections.push(`### ${label}`);
+    for (const entry of entries) {
+      const normalizedEntry = entry.toLowerCase();
+      const matched = storyLabels.filter((story) =>
+        story.coverageTerms.some((term) => normalizedEntry.includes(term) || story.text.includes(term))
+      );
+      const targets = matched.length > 0 ? matched.map((story) => story.label).join(", ") : "Out of scope (not yet mapped)";
+      sections.push(`- ${entry} -> ${targets}`);
+    }
+    sections.push("");
+  };
+
+  pushField("Target Users", upstream.targetUsers);
+  pushField("Use Cases", upstream.useCases);
+  pushField("Constraints", upstream.constraints);
+  pushField("Non-Goals", upstream.nonGoals);
+  pushField("Risks", upstream.risks);
+  pushField("Assumptions", upstream.assumptions);
+  return sections.join("\n").trim();
+}
+
+function deriveGenericPlanningContext(upstream) {
+  const designConstraints = normalizeEntries([
+    ...(upstream.designConstraints ?? []),
+    ...(upstream.constraints ?? []).filter((entry) =>
+      /\b(design|visual|layout|typography|font|color|theme|look|feel|marketing|terminal emulator|shell)\b/i.test(entry)
+    )
+  ]);
+  const requiredDeliverables = normalizeEntries([
+    ...(upstream.requiredDeliverables ?? []),
+    ...(upstream.constraints ?? []).filter((entry) => /\b(showcase|inventory|deliverable)\b/i.test(entry))
+  ]);
+  const referenceArtifacts = normalizeEntries(upstream.referenceArtifacts ?? []);
+  return { designConstraints, requiredDeliverables, referenceArtifacts };
+}
+
+function buildRequirementsStories(project, context) {
+  const upstream = normalizeUpstreamSource(context?.upstreamSource);
+  const genericContext = deriveGenericPlanningContext(context?.upstreamSource ?? {});
+  const actors = deriveRequirementsActors(upstream);
+  const operatorActor = selectPrimaryActor(actors, ["operator", "workspace"]);
+  const deliveryActor = selectPrimaryActor(actors, ["delivery", "lead"]);
+  const reviewerActor = selectPrimaryActor(actors, ["reviewer", "review"]);
+
+  const useCases = upstream.useCases;
+  const constraints = upstream.constraints;
+  const notes = upstream.scopeNotes ? upstream.scopeNotes.toLowerCase() : "";
+  const recommendedDirection = upstream.recommendedDirection ?? project.goal ?? project.summary;
+  const scopeSummary = upstream.coreOutcome ?? project.goal ?? project.summary;
+
+  const stories = [];
+
+  const boardRelated = useCases.filter((entry) => containsAny(entry, ["workspace", "board", "column", "card", "switch"]));
+  if (boardRelated.length > 0) {
+    stories.push({
+      title: "Operate the workspace board",
+      description: `As a ${operatorActor}, I want a workspace-scoped board so that I can manage items from the primary operational view.`,
+      actor: operatorActor,
+      goal: "Switch workspace and work items from the real domain board",
+      benefit: "The workflow stays visible and actionable without leaving the UI shell",
+      acceptanceCriteria: [
+        "The UI exposes the active workspace and lets the user switch to another workspace globally.",
+        "The board groups real items into the domain columns idea, brainstorm, requirements, implementation, and done.",
+        "Each board card shows at least item code, title, mode, and compact attention signals."
+      ],
+      priority: "high",
+      coverageTerms: ["workspace", "board", "column", "card", "switch", "mode", "attention"]
+    });
+  }
+
+  const overlayRelated = useCases.filter((entry) => containsAny(entry, ["overlay", "timeline", "next actions", "chat preview", "status"]));
+  if (overlayRelated.length > 0) {
+    stories.push({
+      title: "Inspect item detail in an overlay panel",
+      description: `As a ${deliveryActor}, I want item detail in a right-side overlay so that I can inspect status and next actions without shrinking the board.`,
+      actor: deliveryActor,
+      goal: "Open a selected item in an on-demand context panel",
+      benefit: "Users get depth without losing the wide board view",
+      acceptanceCriteria: [
+        "Selecting a board card opens a right-side overlay instead of navigating to a separate detail page or reserving a permanent third column.",
+        "The overlay shows the selected item summary, stage timeline, next actions, status or mode summary, and a chat preview.",
+        "Closing the overlay returns focus to the board without losing the selected workspace context."
+      ],
+      priority: "high",
+      coverageTerms: ["overlay", "timeline", "next actions", "chat preview", "status"]
+    });
+  }
+
+  const inboxRelated = useCases.filter((entry) => containsAny(entry, ["inbox", "waiting", "blocked", "failed", "urgency"]));
+  if (inboxRelated.length > 0) {
+    stories.push({
+      title: "Work the operational inbox",
+      description: `As a ${deliveryActor}, I want an inbox of waiting and failed workflow work so that I can address the highest-priority attention items quickly.`,
+      actor: deliveryActor,
+      goal: "Review and prioritize waiting sessions, blocked reviews, and failed work",
+      benefit: "Operational follow-up is visible in one structured queue",
+      acceptanceCriteria: [
+        "The inbox aggregates waiting sessions, blocked reviews, and failed or review-required runs from real workflow entities.",
+        "Inbox entries can be sorted by urgency and provide a primary action back into the relevant item or session.",
+        "The inbox is exposed as a first-class view rather than a hidden secondary utility."
+      ],
+      priority: "high",
+      coverageTerms: ["inbox", "waiting", "blocked", "failed", "urgency", "session"]
+    });
+  }
+
+  const conversationRelated = useCases.filter((entry) => containsAny(entry, ["chat", "brainstorm", "planning-review", "review"]));
+  if (conversationRelated.length > 0) {
+    stories.push({
+      title: "Continue interactive workflow conversations",
+      description: `As a ${reviewerActor}, I want to read and respond to active workflow conversations so that review and planning loops continue directly in the UI.`,
+      actor: reviewerActor,
+      goal: "Work brainstorm, review, and planning-review conversations from the shell",
+      benefit: "Attention-heavy workflow decisions stay inside the product surface",
+      acceptanceCriteria: [
+        "The UI can show the active transcript for brainstorm, interactive review, and planning-review sessions.",
+        "The user can send a reply and then see the refreshed session status and next actionable resolution controls.",
+        "Conversation actions rely on structured workflow services rather than terminal output parsing."
+      ],
+      priority: "high",
+      coverageTerms: ["chat", "brainstorm", "planning-review", "review", "transcript", "resolution"]
+    });
+  }
+
+  const runRelated = useCases.filter((entry) => containsAny(entry, ["runs", "artifacts"]));
+  if (runRelated.length > 0) {
+    stories.push({
+      title: "Inspect workflow runs and artifacts",
+      description: `As a ${operatorActor}, I want dedicated runs and artifacts views so that I can inspect workflow evidence without leaving the UI shell.`,
+      actor: operatorActor,
+      goal: "Navigate run history and generated artifacts from the current workspace",
+      benefit: "Operational debugging and review evidence become directly accessible",
+      acceptanceCriteria: [
+        "The shell includes dedicated Runs and Artifacts views for the active workspace.",
+        "The runs view links to real stage or execution records and reflects current status.",
+        "The artifacts view links to persisted workflow artifacts relevant to the selected workspace or item."
+      ],
+      priority: "medium",
+      coverageTerms: ["runs", "artifacts", "history", "evidence"]
+    });
+  }
+
+  if (
+    containsAny(recommendedDirection, ["apps/ui", "next.js", "core services", "cli"])
+    || constraints.some((entry) => containsAny(entry, ["core workflow", "cli output", "hardcode workflow logic"]))
+  ) {
+    stories.push({
+      title: "Build the shell on shared core services",
+      description: `As a ${operatorActor}, I want the UI to rely on shared workflow services so that the shell stays aligned with the engine instead of wrapping CLI text.`,
+      actor: operatorActor,
+      goal: "Expose structured board, inbox, item-detail, conversation, and action-capability read models through core services",
+      benefit: "UI behavior stays consistent with workflow rules and remains testable",
+      acceptanceCriteria: [
+        "The UI reads board, inbox, item detail, and conversation state from shared application or core services or thin API handlers.",
+        "The shell does not parse terminal output and does not duplicate workflow rules inside visual components.",
+        "Components remain data-driven and consume structured view models and capability lists."
+      ],
+      priority: "high",
+      coverageTerms: ["core services", "cli", "workflow rules", "data-driven", "capability", "read model"]
+    });
+  }
+
+  if (containsAny(notes, ["showcase"]) || constraints.some((entry) => containsAny(entry, ["showcase"]))) {
+    stories.push({
+      title: "Maintain a reusable UI component system",
+      description: `As a ${deliveryActor}, I want a reusable component system with a showcase so that the shell can evolve without page-specific markup drift.`,
+      actor: deliveryActor,
+      goal: "Ship reusable shell components together with a visible showcase and component inventory",
+      benefit: "UI quality and reviewability improve as new screens are added",
+      acceptanceCriteria: [
+        "Core shell, board, overlay, inbox, conversation, and primitive components are implemented as reusable named components.",
+        "The UI includes a showcase route that renders central components in realistic state variants, including empty, loading, and error states.",
+        "A maintained component inventory documents component purpose, main props or view model, and implementation status."
+      ],
+      priority: "medium",
+      coverageTerms: ["component", "showcase", "inventory", "primitive", "reuse"]
+    });
+  }
+
+  if (stories.length === 0) {
+    stories.push({
+      title: `Deliver ${project.title} through the UI shell`,
+      description: `As a ${operatorActor}, I want the first usable slice of ${project.title} represented in the UI shell.`,
+      actor: operatorActor,
+      goal: `Manage ${project.title} from a structured user interface`,
+      benefit: "Traceable workflow execution without terminal wrapping",
+      acceptanceCriteria: [
+        "The UI exposes the project through structured workflow services.",
+        "The resulting shell reflects the primary user outcomes described in the project goal."
+      ],
+      priority: "high",
+      coverageTerms: tokenize(scopeSummary)
+    });
+  }
+
+  return {
+    upstream,
+    genericContext,
+    actors,
+    scopeSummary,
+    stories: dedupeByTitle(stories)
+  };
 }
 
 function brainstormChat(payload) {
@@ -312,46 +621,72 @@ ${item.description || "A locally orchestrated MVP item."}
   };
 }
 
-function requirements(project) {
+function requirements(project, context) {
+  const { upstream, genericContext, stories, scopeSummary } = buildRequirementsStories(project, context);
+  const storyLabels = stories.map((story, index) => ({
+    label: `Story ${index + 1}: ${story.title}`,
+    coverageTerms: story.coverageTerms,
+    text: `${story.title} ${story.description} ${story.goal} ${story.benefit}`.toLowerCase()
+  }));
+  const constraintsSection = mergeFragmentedEntries([
+    ...upstream.constraints,
+    ...upstream.nonGoals,
+    ...upstream.risks,
+    ...upstream.assumptions
+  ]);
+  const edgeCases = [
+    "Empty states for boards, inboxes, transcripts, runs, and artifacts are explicitly represented.",
+    "Failed or review-required workflow work remains visible with a recovery path back into the relevant item or session.",
+    "Workspace switching preserves the current shell context without leaking data from another workspace."
+  ];
+  const sourceCoverage = buildCoverageSection(upstream, storyLabels);
+
   return {
     markdownArtifacts: [
       {
         kind: "stories-markdown",
         content: `# Stories for ${project.code} ${project.title}
 
-- Draft stories generated locally for the MVP path.`
+## Project Goal
+${project.goal}
+
+## Scope Summary
+${scopeSummary}
+
+## User Stories
+${stories.map((story, index) => `### Story ${index + 1}: ${story.title}
+
+- Actor: ${story.actor}
+- Goal: ${story.goal}
+- Benefit: ${story.benefit}
+- Description: ${story.description}
+- Acceptance Criteria:
+${story.acceptanceCriteria.map((criterion) => `  - ${criterion}`).join("\n")}`).join("\n\n")}
+
+## Edge Cases
+${edgeCases.map((entry) => `- ${entry}`).join("\n")}
+
+## Constraints / Notes
+${constraintsSection.map((entry) => `- ${entry}`).join("\n")}
+
+## Design Constraints
+${(genericContext.designConstraints.length > 0 ? genericContext.designConstraints : ["No explicit design constraints captured."]).map((entry) => `- ${entry}`).join("\n")}
+
+## Required Deliverables
+${(genericContext.requiredDeliverables.length > 0 ? genericContext.requiredDeliverables : ["No explicit required deliverables captured."]).map((entry) => `- ${entry}`).join("\n")}
+
+## Reference Artifacts
+${(genericContext.referenceArtifacts.length > 0 ? genericContext.referenceArtifacts : ["No explicit reference artifacts captured."]).map((entry) => `- ${entry}`).join("\n")}
+
+## Source Coverage
+${sourceCoverage || "- No structured upstream coverage entries were available."}`
       }
     ],
     structuredArtifacts: [
       {
         kind: "stories",
         content: {
-          stories: [
-            {
-              title: `Create ${project.title} workflow record`,
-              description: `As an operator I want ${project.title} represented in the engine.`,
-              actor: "operator",
-              goal: `Manage ${project.title}`,
-              benefit: "Traceable workflow execution",
-              acceptanceCriteria: [
-                "A project record exists",
-                "The project can progress through requirements"
-              ],
-              priority: "high"
-            },
-            {
-              title: `Approve ${project.title} stories`,
-              description: `As an operator I want to approve stories before implementation.`,
-              actor: "operator",
-              goal: "Control quality gates",
-              benefit: "Clean transition into implementation",
-              acceptanceCriteria: [
-                "Stories remain draft until approved",
-                "Approved stories unlock implementation"
-              ],
-              priority: "medium"
-            }
-          ]
+          stories: stories.map(({ coverageTerms, ...story }) => story)
         }
       }
     ]
@@ -987,7 +1322,7 @@ if (payload.interactionType === "brainstorm_chat") {
 } else if (payload.stageKey === "brainstorm") {
   result = brainstorming(payload.item);
 } else if (payload.stageKey === "requirements") {
-  result = requirements(payload.project);
+  result = requirements(payload.project, payload.context);
 } else if (payload.stageKey === "architecture") {
   result = architecture(payload.project);
 } else if (payload.stageKey === "planning") {

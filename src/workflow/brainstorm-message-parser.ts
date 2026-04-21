@@ -61,8 +61,12 @@ function emptyExtraction(): BrainstormMessageStructure {
 }
 
 function splitInlineEntries(value: string): string[] {
-  return value
-    .split(/\s*[;,]\s*|\s+\/\s+/g)
+  const normalized = value.trim();
+  if (!normalized) {
+    return [];
+  }
+  return normalized
+    .split(/\s*;\s*|\s+\/\s+/g)
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0);
 }
@@ -111,6 +115,94 @@ function resolveScalarFieldFromLabel(label: string): BrainstormScalarExtractionF
 
 const LABEL_LINE = /^([a-z][a-z\s-]{1,30}):\s*(.*)$/i;
 const BULLET_LINE = /^\s*[-*•]\s+(.+)$/;
+const HEADING_LINE = /^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/;
+
+function normalizeHeading(value: string): string {
+  return value
+    .replace(/[`*_]/g, " ")
+    .replace(/[^\p{L}\p{N}\s-]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function stripMarkdownDecorations(value: string): string {
+  return value
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1")
+    .trim();
+}
+
+function resolveHeadingFields(heading: string): {
+  listField: BrainstormListExtractionField | null;
+  scalarField: BrainstormScalarExtractionField | null;
+} {
+  const normalized = normalizeHeading(heading);
+  if (!normalized) {
+    return { listField: null, scalarField: null };
+  }
+
+  if (normalized === "goal" || normalized === "desired outcome") {
+    return { listField: null, scalarField: "coreOutcome" };
+  }
+  if (normalized === "problem") {
+    return { listField: null, scalarField: "problem" };
+  }
+  if (normalized === "recommended approach") {
+    return { listField: null, scalarField: "recommendedDirection" };
+  }
+  if (normalized === "target users" || normalized === "actors") {
+    return { listField: "targetUsers", scalarField: null };
+  }
+  if (
+    normalized === "main views"
+    || normalized.endsWith("capabilities")
+    || normalized === "use cases"
+  ) {
+    return { listField: "useCases", scalarField: null };
+  }
+  if (
+    normalized === "constraints"
+    || normalized === "component constraints"
+    || normalized === "confirmed design decisions"
+  ) {
+    return { listField: "constraints", scalarField: null };
+  }
+  if (normalized === "non goals" || normalized === "non-goals" || normalized === "out of scope") {
+    return { listField: "nonGoals", scalarField: null };
+  }
+  if (normalized === "risks" || normalized.startsWith("risk ")) {
+    return { listField: "risks", scalarField: null };
+  }
+  if (normalized === "open questions" || normalized === "questions") {
+    return { listField: "openQuestions", scalarField: null };
+  }
+  if (normalized === "candidate directions" || normalized === "alternatives considered") {
+    return { listField: "candidateDirections", scalarField: null };
+  }
+  if (
+    normalized === "required deliverables"
+    || normalized === "ui showcase requirement"
+    || normalized === "component inventory requirement"
+    || normalized === "scope notes"
+  ) {
+    return { listField: null, scalarField: "scopeNotes" };
+  }
+
+  if (
+    normalized === "workspace first"
+    || normalized === "board first"
+    || normalized === "overlay detail panel"
+    || normalized === "inbox is a first class view"
+    || normalized === "ui uses core services not cli text"
+  ) {
+    return { listField: "constraints", scalarField: null };
+  }
+
+  return { listField: null, scalarField: null };
+}
 
 export function extractLabeledBrainstormLists(message: string): BrainstormExtraction {
   const structured = extractBrainstormMessageStructure(message);
@@ -135,22 +227,34 @@ export function extractBrainstormMessageStructure(message: string): BrainstormMe
   const lines = message.split(/\r?\n/);
   let activeListField: BrainstormListExtractionField | null = null;
   let activeScalarField: BrainstormScalarExtractionField | null = null;
+  let activeFromHeading = false;
 
   for (const rawLine of lines) {
     const line = rawLine.trim();
     if (!line) {
-      activeListField = null;
-      activeScalarField = null;
+      if (!activeFromHeading) {
+        activeListField = null;
+        activeScalarField = null;
+      }
+      continue;
+    }
+
+    const headingMatch = line.match(HEADING_LINE);
+    if (headingMatch) {
+      const resolved = resolveHeadingFields(headingMatch[1]!);
+      activeListField = resolved.listField;
+      activeScalarField = resolved.scalarField;
+      activeFromHeading = true;
       continue;
     }
 
     const bulletMatch = line.match(BULLET_LINE);
     if (bulletMatch && activeListField) {
-      result[activeListField].push(bulletMatch[1]!);
+      result[activeListField].push(stripMarkdownDecorations(bulletMatch[1]!));
       continue;
     }
     if (bulletMatch && activeScalarField === "scopeNotes") {
-      result.scopeNotes = [result.scopeNotes, bulletMatch[1]!].filter(Boolean).join("\n");
+      result.scopeNotes = [result.scopeNotes, stripMarkdownDecorations(bulletMatch[1]!)].filter(Boolean).join("\n");
       continue;
     }
 
@@ -160,6 +264,7 @@ export function extractBrainstormMessageStructure(message: string): BrainstormMe
       if (scalarField) {
         activeScalarField = scalarField;
         activeListField = null;
+        activeFromHeading = false;
         const inline = normalizeWhitespace(labelMatch[2]!);
         if (inline) {
           result[scalarField] = inline;
@@ -175,15 +280,31 @@ export function extractBrainstormMessageStructure(message: string): BrainstormMe
       }
       activeListField = listField;
       activeScalarField = null;
+      activeFromHeading = false;
       const inline = labelMatch[2]!.trim();
       if (inline) {
-        result[listField].push(...splitInlineEntries(inline));
+        result[listField].push(...splitInlineEntries(stripMarkdownDecorations(inline)));
       }
+      continue;
+    }
+
+    const normalizedLine = stripMarkdownDecorations(line);
+    if (activeListField) {
+      result[activeListField].push(normalizedLine);
+      continue;
+    }
+    if (activeScalarField === "scopeNotes") {
+      result.scopeNotes = [result.scopeNotes, normalizedLine].filter(Boolean).join("\n");
+      continue;
+    }
+    if (activeScalarField && !result[activeScalarField]) {
+      result[activeScalarField] = normalizeWhitespace(normalizedLine);
       continue;
     }
 
     activeListField = null;
     activeScalarField = null;
+    activeFromHeading = false;
   }
 
   for (const field of [

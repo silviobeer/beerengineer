@@ -1017,7 +1017,30 @@ describe("workflow service", () => {
   it("blocks requirements with review_required when generic stories miss UI-shell upstream entries", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
     const dbPath = join(root, "app.sqlite");
-    const context = createAppContext(dbPath);
+    const adapterScriptPath = join(root, "local-agent-generic-requirements.mjs");
+    writeFileSync(
+      adapterScriptPath,
+      [
+        "import { readFileSync } from \"node:fs\";",
+        "import { execFileSync } from \"node:child_process\";",
+        "const payload = JSON.parse(readFileSync(process.argv[2], \"utf8\"));",
+        `const fallbackScriptPath = ${JSON.stringify(localAgentScriptPath)};`,
+        "if (payload.stageKey === \"requirements\") {",
+        "  process.stdout.write(JSON.stringify({",
+        "    markdownArtifacts: [{ kind: \"stories-markdown\", content: `# Stories for ${payload.project.code} ${payload.project.title}\\n\\n- Generic MVP stories only.` }],",
+        "    structuredArtifacts: [{ kind: \"stories\", content: { stories: [",
+        "      { title: `Create ${payload.project.title} workflow record`, description: `As an operator I want ${payload.project.title} represented in the engine.`, actor: \"operator\", goal: `Manage ${payload.project.title}`, benefit: \"Traceable workflow execution\", acceptanceCriteria: [\"A project record exists\", \"The project can progress through requirements\"], priority: \"high\" },",
+        "      { title: `Approve ${payload.project.title} stories`, description: `As an operator I want to approve stories before implementation.`, actor: \"operator\", goal: \"Control quality gates\", benefit: \"Clean transition into implementation\", acceptanceCriteria: [\"Stories remain draft until approved\", \"Approved stories unlock implementation\"], priority: \"medium\" }",
+        "    ] } }]",
+        "  }));",
+        "} else {",
+        "  const output = execFileSync(process.execPath, [fallbackScriptPath, process.argv[2]], { encoding: \"utf8\" });",
+        "  process.stdout.write(output);",
+        "}"
+      ].join("\n"),
+      "utf8"
+    );
+    const context = createAppContext(dbPath, { adapterScriptPath });
 
     try {
       const item = createWorkspaceItem(context, {
@@ -1064,6 +1087,110 @@ describe("workflow service", () => {
       expect(run?.status).toBe("review_required");
       expect(run?.errorMessage ?? "").toContain("Requirements coverage gate blocked");
       expect(run?.errorMessage ?? "").toMatch(/overlay|inbox|board/);
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("generates UI-shell requirement stories from structured upstream context", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const item = createWorkspaceItem(context, {
+        title: "UI Shell",
+        description: "Build the first real workflow shell"
+      });
+      const started = context.workflowService.startBrainstormSession(item.id);
+      context.workflowService.updateBrainstormDraft({
+        sessionId: started.sessionId,
+        problem: "Operators need a real UI shell instead of terminal output.",
+        coreOutcome: "Ship a workspace-first board, overlay, inbox, and chat shell backed by shared core services.",
+        targetUsers: ["workspace operator", "delivery lead", "reviewer"],
+        useCases: [
+          "switch the active workspace globally",
+          "view items on a real workflow board grouped by domain columns",
+          "open an item overlay with status",
+          "timeline",
+          "next actions",
+          "and chat preview",
+          "work an inbox of waiting sessions",
+          "blocked reviews",
+          "and failed runs",
+          "read and respond to active brainstorm",
+          "review",
+          "and planning-review chats",
+          "inspect runs and artifacts in dedicated views"
+        ],
+        constraints: [
+          "UI must reuse core workflow/application services rather than wrapping CLI output",
+          "board is the primary operational view",
+          "item detail opens in a right-side overlay instead of a permanent third column",
+          "inbox is a first-class structured aggregation over workflow entities",
+          "components must stay data-driven and must not hardcode workflow logic",
+          "implementation must include a UI showcase",
+          "implementation must maintain an explicit component inventory"
+        ],
+        nonGoals: [
+          "do not build a marketing site",
+          "do not build a terminal emulator"
+        ],
+        risks: [
+          "UI may reimplement workflow rules",
+          "inbox and chat may drift apart as separate truths"
+        ],
+        recommendedDirection: "apps/ui Next.js shell with board-first workspace UX, structured inbox, overlay details, and shared core services",
+        scopeNotes: [
+          "Primary visual reference:",
+          "[Board Mockup](../specs/beerengineer-ui-shell/5_mockups/ui-shell-board.html)",
+          "Required deliverables include a showcase route and maintained component inventory."
+        ].join("\n")
+      });
+      await context.workflowService.promoteBrainstorm(started.sessionId);
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      context.workflowService.approveConcept(concept!.id);
+      context.workflowService.importProjects(item.id);
+      const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
+
+      const result = await context.workflowService.startStage({
+        stageKey: "requirements",
+        itemId: item.id,
+        projectId: project.id
+      });
+
+      expect(result.status).toBe("completed");
+      const stories = context.repositories.userStoryRepository.listByProjectId(project.id);
+      const titles = stories.map((story) => story.title);
+      expect(titles).toContain("Operate the workspace board");
+      expect(titles).toContain("Inspect item detail in an overlay panel");
+      expect(titles).toContain("Work the operational inbox");
+      expect(titles).toContain("Continue interactive workflow conversations");
+      expect(titles).toContain("Inspect workflow runs and artifacts");
+      expect(titles).toContain("Build the shell on shared core services");
+      expect(titles).toContain("Maintain a reusable UI component system");
+
+      const run = context.repositories.stageRunRepository.getById(result.runId);
+      expect(run?.status).toBe("completed");
+      const storiesArtifact = context.repositories.artifactRepository.getLatestByKind({
+        itemId: item.id,
+        projectId: project.id,
+        kind: "stories-markdown"
+      });
+      expect(storiesArtifact).not.toBeNull();
+      const storiesMarkdown = readFileSync(
+        join(context.effectiveConfig.workspaceRoot, ".beerengineer", "workspaces", context.workspace.key, "artifacts", storiesArtifact!.path),
+        "utf8"
+      );
+      expect(storiesMarkdown).toContain("## Source Coverage");
+      expect(storiesMarkdown).toContain("## Design Constraints");
+      expect(storiesMarkdown).toContain("## Required Deliverables");
+      expect(storiesMarkdown).toContain("## Reference Artifacts");
+      expect(storiesMarkdown).toContain("switch the active workspace globally");
+      expect(storiesMarkdown).toContain("implementation must include a UI showcase");
+      expect(storiesMarkdown).toContain("component inventory");
+      expect(storiesMarkdown).toContain("Board Mockup");
     } finally {
       context.connection.close();
       rmSync(root, { recursive: true, force: true });

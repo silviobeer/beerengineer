@@ -15,6 +15,7 @@ import type { ReviewCoreService } from "../review/review-core-service.js";
 import type { WorkflowDeps } from "./workflow-deps.js";
 import type { WorkflowEntityLoaders } from "./entity-loaders.js";
 import { WorkflowOutputImporters } from "./output-importers.js";
+import { deriveGenericUpstreamContext } from "./upstream-context.js";
 
 const STAGE_CONTEXT_MARKDOWN_LIMIT = 12000;
 
@@ -455,6 +456,11 @@ export class StageService {
       if (!draft) {
         return null;
       }
+      const genericContext = deriveGenericUpstreamContext({
+        constraints: JSON.parse(draft.constraintsJson) as string[],
+        nonGoals: JSON.parse(draft.nonGoalsJson) as string[],
+        scopeNotes: draft.scopeNotes
+      });
       return {
         problem: draft.problem,
         coreOutcome: draft.coreOutcome,
@@ -467,7 +473,10 @@ export class StageService {
         openQuestions: JSON.parse(draft.openQuestionsJson) as string[],
         candidateDirections: JSON.parse(draft.candidateDirectionsJson) as string[],
         recommendedDirection: draft.recommendedDirection,
-        scopeNotes: draft.scopeNotes
+        scopeNotes: draft.scopeNotes,
+        designConstraints: genericContext.designConstraints,
+        requiredDeliverables: genericContext.requiredDeliverables,
+        referenceArtifacts: genericContext.referenceArtifacts
       };
     };
 

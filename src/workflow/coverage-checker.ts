@@ -77,6 +77,66 @@ function normalizeText(value: string): string {
   return value.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+function dedupeNormalized(values: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const normalized = normalizeText(value);
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    result.push(value.replace(/\s+/g, " ").trim());
+  }
+  return result;
+}
+
+function shouldAppendToPrevious(previous: string | null, current: string): boolean {
+  if (!previous) {
+    return false;
+  }
+  const normalizedCurrent = normalizeText(current);
+  if (/^(and|or)\b/.test(normalizedCurrent)) {
+    return true;
+  }
+  const previousNormalized = normalizeText(previous);
+  if (/\bwith\b/.test(previousNormalized) && normalizedCurrent.split(" ").length <= 4) {
+    return true;
+  }
+  if (/\bof\b/.test(previousNormalized) && normalizedCurrent.split(" ").length <= 3) {
+    return true;
+  }
+  return false;
+}
+
+function mergeFragmentedEntries(values: string[]): string[] {
+  const merged: string[] = [];
+  for (const rawValue of values) {
+    const value = rawValue.replace(/\s+/g, " ").trim();
+    if (!value) {
+      continue;
+    }
+    const previous = merged.length > 0 ? merged[merged.length - 1]! : null;
+    if (shouldAppendToPrevious(previous, value)) {
+      merged[merged.length - 1] = `${previous} ${value}`.replace(/\s+/g, " ").trim();
+      continue;
+    }
+    merged.push(value);
+  }
+  return dedupeNormalized(merged);
+}
+
+export function normalizeCoverageUpstream(upstream: CoverageUpstream): CoverageUpstream {
+  return {
+    targetUsers: mergeFragmentedEntries(upstream.targetUsers),
+    useCases: mergeFragmentedEntries(upstream.useCases),
+    constraints: mergeFragmentedEntries(upstream.constraints),
+    nonGoals: mergeFragmentedEntries(upstream.nonGoals),
+    risks: mergeFragmentedEntries(upstream.risks),
+    assumptions: mergeFragmentedEntries(upstream.assumptions)
+  };
+}
+
 function buildStoryCorpus(stories: CoverageStory[]): string {
   return stories
     .map((story) =>
@@ -118,13 +178,14 @@ export function checkRequirementsCoverage(input: {
   stories: CoverageStory[];
   storiesMarkdown: string | null;
 }): CoverageCheckResult {
+  const upstream = normalizeCoverageUpstream(input.upstream);
   const corpus = buildStoryCorpus(input.stories);
   const markdownCorpus = (input.storiesMarkdown ?? "").toLowerCase();
   const gaps: CoverageGap[] = [];
 
   const fields: CoverageSourceField[] = ["targetUsers", "useCases", "constraints", "nonGoals", "risks", "assumptions"];
   for (const field of fields) {
-    for (const entry of input.upstream[field]) {
+    for (const entry of upstream[field]) {
       const { covered, missingTokens } = isEntryCovered(entry, corpus, markdownCorpus);
       if (!covered) {
         gaps.push({

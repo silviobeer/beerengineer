@@ -31,6 +31,7 @@ import { ReviewExecutionPlanner, type ReviewAssignment, type ReviewCapabilityPla
 import type { ReviewCoreService } from "../review/review-core-service.js";
 import type { WorkflowDeps } from "./workflow-deps.js";
 import { AppError } from "../shared/errors.js";
+import { deriveGenericUpstreamContext } from "./upstream-context.js";
 
 type NormalizedPlanningArtifact = {
   problem: string | null;
@@ -668,12 +669,24 @@ export class PlanningReviewService {
     clarificationAnswers: NormalizedPlanningArtifact["clarificationAnswers"]
   ): NormalizedPlanningArtifact {
     const candidateDirections = JSON.parse(draft.candidateDirectionsJson) as string[];
+    const genericContext = deriveGenericUpstreamContext({
+      constraints: JSON.parse(draft.constraintsJson) as string[],
+      nonGoals: JSON.parse(draft.nonGoalsJson) as string[],
+      scopeNotes: draft.scopeNotes
+    });
     return {
       problem: draft.problem,
       goal: draft.coreOutcome,
       nonGoals: JSON.parse(draft.nonGoalsJson) as string[],
-      context: JSON.parse(draft.useCasesJson) as string[],
-      constraints: JSON.parse(draft.constraintsJson) as string[],
+      context: [
+        ...(JSON.parse(draft.useCasesJson) as string[]),
+        ...genericContext.requiredDeliverables,
+        ...genericContext.referenceArtifacts
+      ],
+      constraints: [
+        ...(JSON.parse(draft.constraintsJson) as string[]),
+        ...genericContext.designConstraints
+      ],
       proposal: draft.recommendedDirection ?? draft.scopeNotes,
       alternatives: candidateDirections.filter((direction) => direction !== draft.recommendedDirection),
       assumptions: JSON.parse(draft.assumptionsJson) as string[],
@@ -698,6 +711,9 @@ export class PlanningReviewService {
     candidateDirections: string[];
     recommendedDirection: string | null;
     scopeNotes: string | null;
+    designConstraints: string[];
+    requiredDeliverables: string[];
+    referenceArtifacts: string[];
   } | null {
     const session = this.options.deps.brainstormSessionRepository.getLatestByItemId(itemId);
     if (!session) {
@@ -707,6 +723,11 @@ export class PlanningReviewService {
     if (!draft) {
       return null;
     }
+    const genericContext = deriveGenericUpstreamContext({
+      constraints: JSON.parse(draft.constraintsJson) as string[],
+      nonGoals: JSON.parse(draft.nonGoalsJson) as string[],
+      scopeNotes: draft.scopeNotes
+    });
     return {
       problem: draft.problem,
       coreOutcome: draft.coreOutcome,
@@ -719,7 +740,10 @@ export class PlanningReviewService {
       openQuestions: JSON.parse(draft.openQuestionsJson) as string[],
       candidateDirections: JSON.parse(draft.candidateDirectionsJson) as string[],
       recommendedDirection: draft.recommendedDirection,
-      scopeNotes: draft.scopeNotes
+      scopeNotes: draft.scopeNotes,
+      designConstraints: genericContext.designConstraints,
+      requiredDeliverables: genericContext.requiredDeliverables,
+      referenceArtifacts: genericContext.referenceArtifacts
     };
   }
 
