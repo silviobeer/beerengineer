@@ -24,6 +24,7 @@ import {
   type BrainstormMessageStructure
 } from "./brainstorm-message-parser.js";
 import { deriveGenericUpstreamContext } from "./upstream-context.js";
+import { assertStageRunTransitionAllowed } from "./stage-run-rules.js";
 import type { StageOwnedReviewFeedback } from "./stage-owned-review-feedback.js";
 
 export type BrainstormDraftView = {
@@ -564,6 +565,10 @@ export class BrainstormService {
         status: "resolved",
         resolvedAt: Date.now()
       });
+      this.closeOpenBrainstormStageRuns(item.id, {
+        sessionId: session.id,
+        conceptId: concept.id
+      });
       this.options.deps.itemRepository.updatePhaseStatus(item.id, "completed");
       return { concept, draftRevision: draft.revision };
     });
@@ -605,6 +610,40 @@ export class BrainstormService {
   private assertBrainstormSessionOpen(session: BrainstormSession): void {
     if (session.status === "resolved" || session.status === "cancelled") {
       throw new AppError("BRAINSTORM_SESSION_CLOSED", `Brainstorm session ${session.id} is already closed`);
+    }
+  }
+
+  private closeOpenBrainstormStageRuns(
+    itemId: string,
+    context: { sessionId: string; conceptId: string }
+  ): void {
+    const runs = this.options.deps.stageRunRepository.listByItemId(itemId);
+    for (const run of runs) {
+      if (run.stageKey !== "brainstorm") {
+        continue;
+      }
+      if (run.status !== "running" && run.status !== "pending") {
+        continue;
+      }
+      if (run.status === "pending") {
+        assertStageRunTransitionAllowed(run.status, "running");
+        this.options.deps.stageRunRepository.updateStatus(run.id, "running");
+      }
+      assertStageRunTransitionAllowed("running", "completed");
+      this.options.deps.stageRunRepository.updateStatus(run.id, "completed", {
+        outputSummaryJson: JSON.stringify(
+          {
+            stageKey: "brainstorm",
+            finalStatus: "completed",
+            resolvedBy: "brainstorm:promote",
+            brainstormSessionId: context.sessionId,
+            conceptId: context.conceptId
+          },
+          null,
+          2
+        ),
+        errorMessage: null
+      });
     }
   }
 

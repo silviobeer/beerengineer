@@ -2139,6 +2139,182 @@ export class WaveExecutionRepository {
       .where(eq(waveExecutions.id, id))
       .run();
   }
+
+  public cleanupSubtreeByWaveIds(waveIds: string[]): void {
+    if (waveIds.length === 0) {
+      return;
+    }
+    const waveExecutionRows = this.db
+      .select({ id: waveExecutions.id })
+      .from(waveExecutions)
+      .where(inArray(waveExecutions.waveId, waveIds))
+      .all() as Array<{ id: string }>;
+    const waveExecutionIds = waveExecutionRows.map((row) => row.id);
+
+    const waveStoryExecutionIds = waveExecutionIds.length === 0
+      ? []
+      : (this.db
+          .select({ id: waveStoryExecutions.id })
+          .from(waveStoryExecutions)
+          .where(inArray(waveStoryExecutions.waveExecutionId, waveExecutionIds))
+          .all() as Array<{ id: string }>).map((row) => row.id);
+
+    const waveStoryTestRunIds = waveExecutionIds.length === 0
+      ? []
+      : (this.db
+          .select({ id: waveStoryTestRuns.id })
+          .from(waveStoryTestRuns)
+          .where(inArray(waveStoryTestRuns.waveExecutionId, waveExecutionIds))
+          .all() as Array<{ id: string }>).map((row) => row.id);
+
+    const storyReviewRunIds = waveStoryExecutionIds.length === 0
+      ? []
+      : (this.db
+          .select({ id: storyReviewRuns.id })
+          .from(storyReviewRuns)
+          .where(inArray(storyReviewRuns.waveStoryExecutionId, waveStoryExecutionIds))
+          .all() as Array<{ id: string }>).map((row) => row.id);
+
+    const remediationRunIds = waveStoryExecutionIds.length === 0
+      ? []
+      : (this.db
+          .select({ id: storyReviewRemediationRuns.id })
+          .from(storyReviewRemediationRuns)
+          .where(
+            or(
+              inArray(storyReviewRemediationRuns.waveStoryExecutionId, waveStoryExecutionIds),
+              inArray(storyReviewRemediationRuns.remediationWaveStoryExecutionId, waveStoryExecutionIds)
+            )
+          )
+          .all() as Array<{ id: string }>).map((row) => row.id);
+
+    if (remediationRunIds.length > 0) {
+      this.db
+        .delete(storyReviewRemediationFindings)
+        .where(inArray(storyReviewRemediationFindings.storyReviewRemediationRunId, remediationRunIds))
+        .run();
+      this.db
+        .delete(storyReviewRemediationAgentSessions)
+        .where(inArray(storyReviewRemediationAgentSessions.storyReviewRemediationRunId, remediationRunIds))
+        .run();
+      this.db
+        .delete(storyReviewRemediationRuns)
+        .where(inArray(storyReviewRemediationRuns.id, remediationRunIds))
+        .run();
+    }
+
+    if (storyReviewRunIds.length > 0) {
+      this.db
+        .delete(storyReviewFindings)
+        .where(inArray(storyReviewFindings.storyReviewRunId, storyReviewRunIds))
+        .run();
+      this.db
+        .delete(storyReviewAgentSessions)
+        .where(inArray(storyReviewAgentSessions.storyReviewRunId, storyReviewRunIds))
+        .run();
+      this.db
+        .delete(storyReviewRuns)
+        .where(inArray(storyReviewRuns.id, storyReviewRunIds))
+        .run();
+    }
+
+    if (waveStoryExecutionIds.length > 0) {
+      this.db
+        .delete(appVerificationRuns)
+        .where(inArray(appVerificationRuns.waveStoryExecutionId, waveStoryExecutionIds))
+        .run();
+      this.db
+        .update(qaFindings)
+        .set({ waveStoryExecutionId: null, updatedAt: now() })
+        .where(inArray(qaFindings.waveStoryExecutionId, waveStoryExecutionIds))
+        .run();
+      this.db
+        .delete(executionAgentSessions)
+        .where(inArray(executionAgentSessions.waveStoryExecutionId, waveStoryExecutionIds))
+        .run();
+      this.db
+        .delete(verificationRuns)
+        .where(inArray(verificationRuns.waveStoryExecutionId, waveStoryExecutionIds))
+        .run();
+    }
+
+    if (waveStoryTestRunIds.length > 0) {
+      this.db
+        .delete(testAgentSessions)
+        .where(inArray(testAgentSessions.waveStoryTestRunId, waveStoryTestRunIds))
+        .run();
+    }
+
+    if (waveStoryExecutionIds.length > 0) {
+      this.db
+        .delete(waveStoryExecutions)
+        .where(inArray(waveStoryExecutions.id, waveStoryExecutionIds))
+        .run();
+    }
+
+    if (waveStoryTestRunIds.length > 0) {
+      this.db
+        .delete(waveStoryTestRuns)
+        .where(inArray(waveStoryTestRuns.id, waveStoryTestRunIds))
+        .run();
+    }
+
+    if (waveExecutionIds.length > 0) {
+      this.db
+        .delete(verificationRuns)
+        .where(inArray(verificationRuns.waveExecutionId, waveExecutionIds))
+        .run();
+      this.db
+        .delete(waveExecutions)
+        .where(inArray(waveExecutions.id, waveExecutionIds))
+        .run();
+    }
+
+    const executionReadinessRunIds = (this.db
+      .select({ id: executionReadinessRuns.id })
+      .from(executionReadinessRuns)
+      .where(inArray(executionReadinessRuns.waveId, waveIds))
+      .all() as Array<{ id: string }>).map((row) => row.id);
+    if (executionReadinessRunIds.length > 0) {
+      this.db
+        .delete(executionReadinessActions)
+        .where(inArray(executionReadinessActions.runId, executionReadinessRunIds))
+        .run();
+      this.db
+        .delete(executionReadinessFindings)
+        .where(inArray(executionReadinessFindings.runId, executionReadinessRunIds))
+        .run();
+      this.db
+        .delete(executionReadinessRuns)
+        .where(inArray(executionReadinessRuns.id, executionReadinessRunIds))
+        .run();
+    }
+
+    const verificationReadinessRunIds = (this.db
+      .select({ id: verificationReadinessRuns.id })
+      .from(verificationReadinessRuns)
+      .where(inArray(verificationReadinessRuns.waveId, waveIds))
+      .all() as Array<{ id: string }>).map((row) => row.id);
+    if (verificationReadinessRunIds.length > 0) {
+      this.db
+        .delete(verificationReadinessActions)
+        .where(inArray(verificationReadinessActions.runId, verificationReadinessRunIds))
+        .run();
+      this.db
+        .delete(verificationReadinessFindings)
+        .where(inArray(verificationReadinessFindings.runId, verificationReadinessRunIds))
+        .run();
+      this.db
+        .delete(verificationReadinessRuns)
+        .where(inArray(verificationReadinessRuns.id, verificationReadinessRunIds))
+        .run();
+    }
+
+    this.db
+      .delete(qualityKnowledgeEntries)
+      .where(inArray(qualityKnowledgeEntries.waveId, waveIds))
+      .run();
+  }
 }
 
 export class WaveStoryExecutionRepository {

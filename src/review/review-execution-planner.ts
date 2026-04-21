@@ -134,6 +134,54 @@ export class ReviewExecutionPlanner {
     throw new AppError(input.unavailableCode ?? "REVIEW_PROVIDER_UNAVAILABLE", "No review provider is configured");
   }
 
+  public planSingleProviderMultiRoleReview<TRole extends string>(input: {
+    roles: TRole[];
+    preferredAdapterKeys?: string[];
+    unavailableCode?: string;
+  }): ReviewCapabilityPlan<TRole> {
+    const configuredProviders = Object.entries(this.runtimeResolver.config.providers).filter(([_, config]) =>
+      this.isProviderAvailable(config.adapterKey, config.command[0] ?? null)
+    );
+    const localProvider = configuredProviders.find(([_, config]) => config.adapterKey === "local-cli")?.[0] ?? null;
+    const nonLocalProviders = configuredProviders.filter(([_, config]) => config.adapterKey !== "local-cli");
+    const providerByAdapterKey = new Map(nonLocalProviders.map(([providerKey, config]) => [config.adapterKey, providerKey]));
+    const preferredAutonomousProvider = this.runtimeResolver.resolveDefault("autonomous");
+
+    const preferredProvider =
+      input.preferredAdapterKeys
+        ?.map((adapterKey) => providerByAdapterKey.get(adapterKey))
+        .find((providerKey): providerKey is string => Boolean(providerKey))
+      ?? (nonLocalProviders.some(([providerKey]) => providerKey === preferredAutonomousProvider.providerKey)
+        ? preferredAutonomousProvider.providerKey
+        : nonLocalProviders[0]?.[0] ?? null);
+
+    if (preferredProvider) {
+      return {
+        requestedMode: "single_model_multi_role",
+        actualMode: "single_model_multi_role",
+        assignments: input.roles.map((role) => ({ providerKey: preferredProvider, role })),
+        providersUsed: [preferredProvider],
+        missingCapabilities: ["independent_second_reviewer"],
+        confidence: "medium",
+        gateEligibility: "advisory_only"
+      };
+    }
+
+    if (localProvider) {
+      return {
+        requestedMode: "single_model_multi_role",
+        actualMode: "single_model_multi_role",
+        assignments: input.roles.map((role) => ({ providerKey: localProvider, role })),
+        providersUsed: [localProvider],
+        missingCapabilities: ["independent_second_reviewer"],
+        confidence: "reduced",
+        gateEligibility: "advisory_only"
+      };
+    }
+
+    throw new AppError(input.unavailableCode ?? "REVIEW_PROVIDER_UNAVAILABLE", "No review provider is configured");
+  }
+
   private isProviderAvailable(adapterKey: string, command: string | null): boolean {
     if (adapterKey === "local-cli") {
       return true;

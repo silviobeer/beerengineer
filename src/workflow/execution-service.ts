@@ -116,7 +116,18 @@ type ExecutionAdvanceResult = {
   completed: boolean;
   blockedByFailure?: boolean;
   blockedByReadiness?: boolean;
-  reason?: "execution_readiness_failed" | "story_verification_readiness_failed";
+  blockedByReview?: boolean;
+  reason?:
+    | "execution_readiness_failed"
+    | "story_verification_readiness_failed"
+    | "test_preparation_review_required"
+    | "execution_review_required"
+    | "app_verification_review_required"
+    | "story_review_review_required";
+  blockingRunId?: string;
+  blockingRunType?: "test_preparation" | "execution" | "app_verification" | "story_review";
+  blockingStoryCode?: string;
+  nextCommand?: string;
   executions: RetryWaveStoryExecutionResult[];
 };
 
@@ -1065,6 +1076,24 @@ export class ExecutionService {
         executions: []
       };
     }
+    if (activeWaveExecution.status === "review_required") {
+      const reviewBlocker = this.resolveReviewBlocker(project.id, activeWave.id);
+      return {
+        projectId,
+        implementationPlanId: implementationPlan.id,
+        activeWaveCode: activeWave.code,
+        scheduledCount: 0,
+        completed: false,
+        blockedByFailure: false,
+        blockedByReview: true,
+        reason: reviewBlocker.reason,
+        blockingRunId: reviewBlocker.runId,
+        blockingRunType: reviewBlocker.runType,
+        blockingStoryCode: reviewBlocker.storyCode,
+        nextCommand: reviewBlocker.nextCommand,
+        executions: []
+      };
+    }
     const resumedExecutions = await this.resumeRunningWaveStories({
       project,
       implementationPlan,
@@ -1486,6 +1515,9 @@ export class ExecutionService {
     if (latest?.status === "failed") {
       return latest;
     }
+    if (latest?.status === "review_required") {
+      return latest;
+    }
     if (latest && latest.status !== "completed") {
       if (latest.status !== "running") {
         this.options.deps.waveExecutionRepository.updateStatus(latest.id, "running");
@@ -1515,6 +1547,63 @@ export class ExecutionService {
           return blockingExecution?.status === "completed";
         });
     });
+  }
+
+  private resolveReviewBlocker(projectId: string, waveId: string): {
+    reason: NonNullable<ExecutionAdvanceResult["reason"]>;
+    runId: string;
+    runType: NonNullable<ExecutionAdvanceResult["blockingRunType"]>;
+    storyCode: string;
+    nextCommand: string;
+  } {
+    for (const waveStory of this.options.deps.waveStoryRepository.listByWaveId(waveId)) {
+      const story = this.options.loaders.requireStory(waveStory.storyId);
+      const latestTestRun = this.options.deps.waveStoryTestRunRepository.getLatestByWaveStoryId(waveStory.id);
+      if (latestTestRun?.status === "review_required") {
+        return {
+          reason: "test_preparation_review_required",
+          runId: latestTestRun.id,
+          runType: "test_preparation",
+          storyCode: story.code,
+          nextCommand: `execution:show --project-id ${projectId}`
+        };
+      }
+
+      const latestExecution = this.options.deps.waveStoryExecutionRepository.getLatestByWaveStoryId(waveStory.id);
+      if (!latestExecution) {
+        continue;
+      }
+      const latestStoryReviewRun = this.options.deps.storyReviewRunRepository.getLatestByWaveStoryExecutionId(latestExecution.id);
+      if (latestStoryReviewRun?.status === "review_required") {
+        return {
+          reason: "story_review_review_required",
+          runId: latestStoryReviewRun.id,
+          runType: "story_review",
+          storyCode: story.code,
+          nextCommand: `review-ops status --story ${story.id}`
+        };
+      }
+      const latestAppVerificationRun = this.options.deps.appVerificationRunRepository.getLatestByWaveStoryExecutionId(latestExecution.id);
+      if (latestAppVerificationRun?.status === "review_required") {
+        return {
+          reason: "app_verification_review_required",
+          runId: latestAppVerificationRun.id,
+          runType: "app_verification",
+          storyCode: story.code,
+          nextCommand: `app-verification:show --app-verification-run-id ${latestAppVerificationRun.id}`
+        };
+      }
+      if (latestExecution.status === "review_required") {
+        return {
+          reason: "execution_review_required",
+          runId: latestExecution.id,
+          runType: "execution",
+          storyCode: story.code,
+          nextCommand: `execution:show --project-id ${projectId}`
+        };
+      }
+    }
+    throw new AppError("EXECUTION_REVIEW_BLOCKER_NOT_FOUND", `Wave ${waveId} is review_required but no blocking run could be resolved`);
   }
 
   private buildBusinessContextSnapshot(input: {

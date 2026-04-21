@@ -177,6 +177,29 @@ export class StageService {
           };
         }
 
+        const structuredValidation = this.options.outputImporters.validateStructuredOutputs({
+          stageKey: input.stageKey,
+          structuredArtifacts: result.structuredArtifacts
+        });
+        if (structuredValidation.status === "review_required") {
+          this.transitionRun(run.id, "running", "review_required", {
+            outputSummaryJson: JSON.stringify(
+              {
+                stageKey: input.stageKey,
+                artifactKinds: [],
+                artifactIds: [],
+                finalStatus: "review_required",
+                reviewReason: structuredValidation.reviewReason
+              },
+              null,
+              2
+            ),
+            errorMessage: structuredValidation.reviewReason
+          });
+          this.options.deps.itemRepository.updatePhaseStatus(item.id, "review_required");
+          return { runId: run.id, status: "review_required" };
+        }
+
         const outputArtifacts = this.persistArtifacts({
           workspaceKey: this.options.deps.workspace.key,
           itemId: item.id,
@@ -315,9 +338,57 @@ export class StageService {
       sourceId: latest.id,
       stepLabel: "planning approval"
     });
+    this.assertPlanningMaterializationIntegrity(projectId, latest.id);
     if (latest.status !== "approved") {
       this.options.deps.implementationPlanRepository.updateStatus(latest.id, "approved");
     }
+  }
+
+  private assertPlanningMaterializationIntegrity(projectId: string, implementationPlanId: string): void {
+    const projectStories = this.options.deps.userStoryRepository.listByProjectId(projectId);
+    const waves = this.options.deps.waveRepository.listByImplementationPlanId(implementationPlanId);
+    if (waves.length === 0) {
+      throw new AppError("PLANNING_WAVES_NOT_MATERIALIZED", "Implementation plan has no persisted waves to approve");
+    }
+    const waveIds = waves.map((wave) => wave.id);
+    const waveStories = this.options.deps.waveStoryRepository.listByWaveIds(waveIds);
+    if (waveStories.length !== projectStories.length) {
+      throw new AppError(
+        "PLANNING_WAVE_STORIES_NOT_MATERIALIZED",
+        "Implementation plan persisted an incomplete set of wave stories and cannot be approved"
+      );
+    }
+    const projectStoryIds = new Set(projectStories.map((story) => story.id));
+    if (new Set(waveStories.map((waveStory) => waveStory.storyId)).size !== projectStoryIds.size) {
+      throw new AppError(
+        "PLANNING_WAVE_STORY_DUPLICATES",
+        "Implementation plan persisted duplicate wave-story assignments and cannot be approved"
+      );
+    }
+    projectStoryIds.forEach((storyId) => {
+      if (!waveStories.some((waveStory) => waveStory.storyId === storyId)) {
+        throw new AppError(
+          "PLANNING_WAVE_STORY_ASSIGNMENT_MISSING",
+          `Implementation plan is missing persisted wave assignment for story ${storyId}`
+        );
+      }
+    });
+    waves.forEach((wave) => {
+      if (!waveStories.some((waveStory) => waveStory.waveId === wave.id)) {
+        throw new AppError("PLANNING_EMPTY_WAVE", `Implementation plan persisted wave ${wave.code} without stories`);
+      }
+    });
+    waveStories.forEach((waveStory) => {
+      const dependencies = this.options.deps.waveStoryDependencyRepository.listByDependentStoryId(waveStory.storyId);
+      dependencies.forEach((dependency) => {
+        if (!projectStoryIds.has(dependency.blockingStoryId)) {
+          throw new AppError(
+            "PLANNING_WAVE_DEPENDENCY_INVALID",
+            `Implementation plan persisted dependency ${dependency.blockingStoryId} outside the project scope`
+          );
+        }
+      });
+    });
   }
 
   private assertRequirementsPlanningReviewGate(projectId: string): void {

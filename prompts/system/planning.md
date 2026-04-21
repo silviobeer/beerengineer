@@ -133,6 +133,8 @@ The markdown artifact should be readable by a human reviewer and should include:
 - Wave Overview
 - Wave Details
 - Dependencies
+- Verification Plan
+- Rollout / Fallback Plan
 - Risks
 - Assumptions / Out-of-Scope Notes
 
@@ -162,6 +164,12 @@ Return valid JSON matching this exact shape:
       ]
     }
   ],
+  "testPlan": [
+    "Validation step one"
+  ],
+  "rolloutPlan": [
+    "Rollout or fallback step one"
+  ],
   "risks": [
     "Risk one"
   ],
@@ -181,9 +189,25 @@ Rules:
 - every `dependsOnStoryCodes` entry must reference a story from the same project
 - story-level dependencies must not point to stories in later waves
 - `parallelGroup` is optional and should only express safe same-wave concurrency
+- `testPlan` must capture the concrete verification evidence needed to prove the planned acceptance outcomes
+- `rolloutPlan` must capture enablement order, fallback/rollback handling, or other operational release controls when the slice changes live behavior
 - `risks` should only include real sequencing or execution risks
 - `assumptions` should stay minimal and explicit
 - the JSON must stay aligned with the markdown artifact
+
+### Verification And Rollout Requirements
+
+Do not treat `testPlan` and `rolloutPlan` as decorative optional fields.
+
+Populate them whenever the project changes live behavior, runtime boundaries, infrastructure seams, or user-visible workflows.
+
+At minimum:
+- If a risk names a runtime prerequisite, packaging seam, migration seam, or environment dependency, add an explicit proof or validation step to `testPlan` or an earlier-wave deliverable.
+- If acceptance criteria mention success, empty, failure, regression, switching, or fallback behavior, add concrete verification coverage to `testPlan`.
+- If the slice replaces existing behavior, live data sources, or primary operator flows, add a release/fallback sequence to `rolloutPlan`.
+- If showcase, component inventory, or other standing UI obligations must stay current, include them as explicit deliverables in the relevant wave details and reflect their verification in `testPlan`.
+
+For low-risk internal slices, `rolloutPlan` may stay short, but it should not be empty when the change can fail in a way that impacts the operator workflow.
 
 ## Final Check
 
@@ -193,6 +217,8 @@ Before finalizing, verify that:
 - every story is assigned exactly once
 - the wave order reflects real dependencies
 - safe same-wave parallelism is made explicit where it matters
+- `testPlan` proves the critical acceptance outcomes and risk mitigations
+- `rolloutPlan` explains how the live slice is enabled safely and what happens if the new path fails
 - the wave count is not inflated
 - the result is not drifting into low-level implementation instructions
 - the markdown and JSON artifacts do not contradict each other

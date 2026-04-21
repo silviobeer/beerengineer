@@ -623,6 +623,53 @@ process.exit(0);
     }
   });
 
+  it("reports an explicit worktree baseline blocker when verification setup exists only as uncommitted workspace changes", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-verification-worktree-baseline-"));
+    const dbPath = join(root, "app.sqlite");
+    const workspaceRoot = createGitWorkspace(root);
+    const browserUrl = resolveWorkspaceBrowserUrl("default");
+    createNodeNextWorkspace(workspaceRoot, { withToolchain: true, baseUrl: browserUrl.baseUrl });
+    commitAllWorkspaceChanges(workspaceRoot, "add UI workspace without committed verification baseline");
+    const context = createAppContext(dbPath, { workspaceRoot, adapterScriptPath: localAgentScriptPath });
+
+    try {
+      const appRoot = join(workspaceRoot, "apps", "ui");
+      const packageJson = JSON.parse(readFileSync(join(appRoot, "package.json"), "utf8")) as {
+        devDependencies?: Record<string, string>;
+      };
+      packageJson.devDependencies = { ...(packageJson.devDependencies ?? {}), "@playwright/test": "^1.55.0" };
+      writeFileSync(join(appRoot, "package.json"), JSON.stringify(packageJson, null, 2), "utf8");
+      mkdirSync(join(appRoot, "tests", "e2e"), { recursive: true });
+      writeFileSync(join(appRoot, "tests", "e2e", "smoke.spec.ts"), "export {};\n", "utf8");
+      writeFileSync(
+        join(appRoot, "playwright.config.ts"),
+        "import { defineConfig } from '@playwright/test';\nexport default defineConfig({ testDir: './tests/e2e' });\n",
+        "utf8"
+      );
+
+      const { project } = await prepareProjectThroughPlanning(context, {
+        title: "Uncommitted Verification Baseline",
+        description: "Surface worktree baseline drift before execution"
+      });
+      const uiStory = markFirstStoryAsUi(context, project.id);
+
+      const execution = await context.workflowService.startExecution(project.id);
+      expect(execution.blockedByReadiness).toBe(true);
+      expect(execution.reason).toBe("story_verification_readiness_failed");
+      expect(execution.executions[0]?.phase).toBe("verification_readiness");
+      if (execution.executions[0]?.phase !== "verification_readiness") {
+        throw new Error("expected verification readiness execution result");
+      }
+      expect(execution.executions[0].storyCode).toBe(uiStory.code);
+      expect(
+        execution.executions[0].verificationReadiness.latestFindings.some((finding) => finding.code === "worktree_baseline_uncommitted")
+      ).toBe(true);
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("blocks a UI story before execution when the UI server contract is missing", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-verification-server-missing-"));
     const dbPath = join(root, "app.sqlite");
@@ -2509,6 +2556,77 @@ export default defineConfig({
     }
   });
 
+  it("closes the open brainstorm stage run before promote autorun continues downstream", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const item = createWorkspaceItem(context, {
+        title: "Promote Autorun Brainstorm Closure",
+        description: "Close the brainstorm run before autorun continues"
+      });
+      const started = context.workflowService.startBrainstormSession(item.id);
+      const pendingRun = context.repositories.stageRunRepository.create({
+        itemId: item.id,
+        projectId: null,
+        stageKey: "brainstorm",
+        status: "pending",
+        inputSnapshotJson: JSON.stringify({ sessionId: started.sessionId }),
+        systemPromptSnapshot: "seeded brainstorm prompt",
+        skillsSnapshotJson: JSON.stringify(["brainstorm-facilitation"]),
+        outputSummaryJson: null,
+        errorMessage: null
+      });
+
+      await context.workflowService.chatBrainstorm(
+        started.sessionId,
+        [
+          "problem: Operators need one place to manage review state",
+          "target users: workflow operator; delivery lead",
+          "use cases: review inbox; blocked run triage; approval timeline",
+          "candidate directions: review operations cockpit",
+          "recommended direction: review operations cockpit"
+        ].join("\n")
+      );
+
+      const promoted = await context.workflowService.promoteBrainstorm(started.sessionId, { autorun: true }) as {
+        conceptId: string;
+        autorun: {
+          finalStatus: string;
+          steps: Array<{ action: string; scopeType: string; scopeId: string; status: string }>;
+        };
+      };
+      const brainstormRun = context.repositories.stageRunRepository.getById(pendingRun.id);
+      const brainstormSummary = JSON.parse(brainstormRun!.outputSummaryJson ?? "{}") as {
+        finalStatus?: string;
+        resolvedBy?: string;
+        brainstormSessionId?: string;
+        conceptId?: string;
+      };
+
+      expect(promoted.autorun.steps[0]).toMatchObject({
+        action: "brainstorm:promote",
+        scopeType: "item",
+        scopeId: item.id,
+        status: "promoted"
+      });
+      expect(promoted.autorun.steps.some((step) => step.action === "project:import")).toBe(true);
+      expect(promoted.autorun.finalStatus).not.toBe("failed");
+      expect(brainstormRun?.status).toBe("completed");
+      expect(brainstormRun?.completedAt).not.toBeNull();
+      expect(brainstormSummary).toMatchObject({
+        finalStatus: "completed",
+        resolvedBy: "brainstorm:promote",
+        brainstormSessionId: started.sessionId,
+        conceptId: promoted.conceptId
+      });
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("keeps prior prompt snapshots after prompt file changes", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
     const dbPath = join(root, "app.sqlite");
@@ -2612,6 +2730,80 @@ export default defineConfig({
     }
   });
 
+  it("marks malformed architecture-plan-data review_required without persisting artifact rows", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const adapterScriptPath = join(root, "local-agent-invalid-architecture-output.mjs");
+    writeFileSync(
+      adapterScriptPath,
+      [
+        "import { readFileSync } from \"node:fs\";",
+        "import { execFileSync } from \"node:child_process\";",
+        "const payload = JSON.parse(readFileSync(process.argv[2], \"utf8\"));",
+        `const fallbackScriptPath = ${JSON.stringify(localAgentScriptPath)};`,
+        "if (payload.stageKey === \"architecture\") {",
+        "  process.stdout.write(JSON.stringify({",
+        "    markdownArtifacts: [{ kind: \"architecture-plan\", content: \"# Architecture\\n\\nMalformed structured payload.\" }],",
+        "    structuredArtifacts: [{ kind: \"architecture-plan-data\", content: { summary: \"Broken architecture output\", decisions: [] } }]",
+        "  }));",
+        "} else {",
+        "  const output = execFileSync(process.execPath, [fallbackScriptPath, process.argv[2]], { encoding: \"utf8\" });",
+        "  process.stdout.write(output);",
+        "}"
+      ].join("\n"),
+      "utf8"
+    );
+    const context = createAppContext(dbPath, { adapterScriptPath });
+
+    try {
+      const item = createWorkspaceItem(context, {
+        title: "Invalid Architecture Data",
+        description: "Reject malformed architecture structured output before persistence"
+      });
+      await context.workflowService.startStage({ stageKey: "brainstorm", itemId: item.id });
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      context.workflowService.approveConcept(concept!.id);
+      context.workflowService.importProjects(item.id);
+      const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
+      await context.workflowService.startStage({ stageKey: "requirements", itemId: item.id, projectId: project.id });
+      context.workflowService.approveStories(project.id);
+
+      const artifactCountBefore = context.repositories.artifactRepository.listByItemId(item.id).length;
+      const result = await context.workflowService.startStage({
+        stageKey: "architecture",
+        itemId: item.id,
+        projectId: project.id
+      });
+      const run = context.repositories.stageRunRepository.getById(result.runId);
+
+      expect(result.status).toBe("review_required");
+      expect(run?.status).toBe("review_required");
+      expect(run?.errorMessage ?? "").toContain("Failed to import architecture output");
+      expect(run?.errorMessage ?? "").toContain("architecture-plan-data");
+      expect(run?.errorMessage ?? "").toContain("decisions");
+      expect(context.repositories.artifactRepository.listByStageRunId(result.runId)).toEqual([]);
+      expect(context.repositories.artifactRepository.listByItemId(item.id)).toHaveLength(artifactCountBefore);
+      expect(
+        context.repositories.artifactRepository.getLatestByKind({
+          itemId: item.id,
+          projectId: project.id,
+          kind: "architecture-plan"
+        })
+      ).toBeNull();
+      expect(
+        context.repositories.artifactRepository.getLatestByKind({
+          itemId: item.id,
+          projectId: project.id,
+          kind: "architecture-plan-data"
+        })
+      ).toBeNull();
+      expect(context.repositories.architecturePlanRepository.getLatestByProjectId(project.id)).toBeNull();
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("keeps project import and approvals idempotent", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
     const dbPath = join(root, "app.sqlite");
@@ -2678,6 +2870,155 @@ export default defineConfig({
       const itemState = context.repositories.itemRepository.getById(item.id);
       expect(itemState?.currentColumn).toBe("implementation");
       expect(itemState?.phaseStatus).toBe("completed");
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("re-imports planning after execution state exists without orphaning the previous wave execution tree", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-planning-reimport-"));
+    const dbPath = join(root, "app.sqlite");
+    const workspaceRoot = createGitWorkspace(root);
+    const adapterScriptPath = join(root, "local-agent-planning-rerun.mjs");
+    writeFileSync(adapterScriptPath, readFileSync(localAgentScriptPath, "utf8"));
+    createNodeNextWorkspace(workspaceRoot, { withToolchain: true });
+    commitAllWorkspaceChanges(workspaceRoot, "add runnable UI workspace");
+    const context = createAppContext(dbPath, { workspaceRoot, adapterScriptPath });
+
+    try {
+      const { project } = await prepareProjectThroughPlanning(context, {
+        title: "Planning Reimport",
+        description: "Replace implementation plan after execution already created wave state"
+      });
+
+      await context.workflowService.startExecution(project.id);
+      await context.workflowService.tickExecution(project.id);
+
+      const firstPlan = context.repositories.implementationPlanRepository.getLatestByProjectId(project.id)!;
+      const firstWave = context.repositories.waveRepository.listByImplementationPlanId(firstPlan.id)[0]!;
+      const previousWaveExecutionIds = context.repositories.waveExecutionRepository.listByWaveId(firstWave.id).map((waveExecution) => waveExecution.id);
+      expect(previousWaveExecutionIds.length).toBeGreaterThan(0);
+
+      writeFileSync(
+        adapterScriptPath,
+        replaceRequired(
+          readFileSync(adapterScriptPath, "utf8"),
+          "summary: `Incremental implementation plan for ${project.title}`,",
+          'summary: `Incremental implementation plan rerun for ${project.title}`,'
+        )
+      );
+
+      context.connection.close();
+      const rerunContext = createAppContext(dbPath, { workspaceRoot, adapterScriptPath });
+      const rerun = await rerunContext.workflowService.startStage({
+        stageKey: "planning",
+        itemId: rerunContext.repositories.projectRepository.getById(project.id)!.itemId,
+        projectId: project.id
+      });
+      expect(rerun.status).toBe("completed");
+      rerunContext.workflowService.approvePlanning(project.id);
+      rerunContext.connection.close();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses planning approval when wave materialization was not persisted completely", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-planning-materialization-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const item = createWorkspaceItem(context, {
+        title: "Planning Integrity",
+        description: "Guard approval against missing persisted waves"
+      });
+      await context.workflowService.startStage({ stageKey: "brainstorm", itemId: item.id });
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      context.workflowService.approveConcept(concept!.id);
+      context.workflowService.importProjects(item.id);
+      const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
+      await context.workflowService.startStage({ stageKey: "requirements", itemId: item.id, projectId: project.id });
+      context.workflowService.approveStories(project.id);
+      await context.workflowService.startStage({ stageKey: "architecture", itemId: item.id, projectId: project.id });
+      context.workflowService.approveArchitecture(project.id);
+      await context.workflowService.startStage({ stageKey: "planning", itemId: item.id, projectId: project.id });
+
+      const plan = context.repositories.implementationPlanRepository.getLatestByProjectId(project.id)!;
+      const waveIds = context.repositories.waveRepository.listByImplementationPlanId(plan.id).map((wave) => wave.id);
+      context.repositories.waveStoryRepository.deleteByWaveIds(waveIds);
+
+      expect(() => context.workflowService.approvePlanning(project.id)).toThrowError(
+        expect.objectContaining({ code: "PLANNING_WAVE_STORIES_NOT_MATERIALIZED" } satisfies Partial<AppError>)
+      );
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reports the blocking review run when execution:start encounters an open execution review gate", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-execution-review-blocker-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const { project } = await prepareProjectThroughPlanning(context, {
+        title: "Execution Review Blocker",
+        description: "Surface the exact blocking execution review run"
+      });
+      const implementationPlan = context.repositories.implementationPlanRepository.getLatestByProjectId(project.id)!;
+      const wave = context.repositories.waveRepository.listByImplementationPlanId(implementationPlan.id)[0]!;
+      const waveStory = context.repositories.waveStoryRepository.listByWaveId(wave.id)[0]!;
+      const story = context.repositories.userStoryRepository.getById(waveStory.storyId)!;
+
+      const waveExecution = context.repositories.waveExecutionRepository.create({
+        waveId: wave.id,
+        status: "review_required",
+        attempt: 1
+      });
+      const testRun = context.repositories.waveStoryTestRunRepository.create({
+        waveExecutionId: waveExecution.id,
+        waveStoryId: waveStory.id,
+        storyId: story.id,
+        status: "completed",
+        attempt: 1,
+        workerRole: "test-writer",
+        systemPromptSnapshot: "test preparation prompt",
+        skillsSnapshotJson: "[]",
+        businessContextSnapshotJson: "{}",
+        repoContextSnapshotJson: "{}",
+        outputSummaryJson: "{\"summary\":\"prepared\"}",
+        errorMessage: null
+      });
+      const execution = context.repositories.waveStoryExecutionRepository.create({
+        waveExecutionId: waveExecution.id,
+        testPreparationRunId: testRun.id,
+        waveStoryId: waveStory.id,
+        storyId: story.id,
+        status: "review_required",
+        attempt: 1,
+        workerRole: "backend-implementer",
+        systemPromptSnapshot: "execution prompt",
+        skillsSnapshotJson: "[]",
+        businessContextSnapshotJson: "{}",
+        repoContextSnapshotJson: "{}",
+        gitBranchName: null,
+        gitBaseRef: null,
+        gitMetadataJson: null,
+        outputSummaryJson: "{\"summary\":\"needs review\"}",
+        errorMessage: null
+      });
+
+      const result = await context.workflowService.startExecution(project.id);
+      expect(result.scheduledCount).toBe(0);
+      expect(result.blockedByReview).toBe(true);
+      expect(result.reason).toBe("execution_review_required");
+      expect(result.blockingRunType).toBe("execution");
+      expect(result.blockingRunId).toBe(execution.id);
+      expect(result.blockingStoryCode).toBe(story.code);
+      expect(result.nextCommand).toBe(`execution:show --project-id ${project.id}`);
     } finally {
       context.connection.close();
       rmSync(root, { recursive: true, force: true });
@@ -3065,6 +3406,99 @@ export default defineConfig({
     }
   });
 
+  it("includes persisted story and acceptance coverage when reviewing implementation plans", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const scriptPath = join(root, "planning-review-implementation-plan-coverage.mjs");
+    writeFileSync(
+      scriptPath,
+      [
+        'import { readFileSync } from "node:fs";',
+        "const payload = JSON.parse(readFileSync(process.argv[2], 'utf8'));",
+        "if (payload.interactionType === 'planning_review') {",
+        "  const context = Array.isArray(payload.artifact?.context) ? payload.artifact.context : [];",
+        "  const hasStory = context.some((entry) => typeof entry === 'string' && entry.startsWith('Story '));",
+        "  const hasAcceptance = context.some((entry) => typeof entry === 'string' && entry.startsWith('Acceptance criterion '));",
+        "  const hasWaveAssignment = context.some((entry) => typeof entry === 'string' && /^W\\d+ -> Story /.test(entry));",
+        "  process.stdout.write(JSON.stringify({ output: hasStory && hasAcceptance && hasWaveAssignment ? {",
+        "    status: 'ready',",
+        "    readiness: 'ready',",
+        "    summary: 'Implementation plan has persisted delivery coverage.'",
+        "  } : {",
+        "    status: 'needs_evidence',",
+        "    readiness: 'needs_evidence',",
+        "    summary: 'Coverage details are missing from the implementation-plan artifact.',",
+        "    findings: [{ type: 'question', title: 'Missing delivery coverage', detail: 'Story, acceptance, or wave coverage was not normalized.', evidence: 'The artifact context did not contain the expected persisted coverage lines.' }],",
+        "    missingInformation: ['Persisted story and acceptance coverage'],",
+        "    recommendedNextEvidence: ['Include story titles, acceptance criteria, and wave assignments in the normalized implementation-plan artifact'],",
+        "    assumptionsDetected: []",
+        "  } }));",
+        "} else {",
+        "  process.stdout.write(JSON.stringify({ markdownArtifacts: [], structuredArtifacts: [] }));",
+        "}"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const setupContext = createAppContext(dbPath);
+
+    try {
+      const item = createWorkspaceItem(setupContext, {
+        title: "Implementation Plan Coverage",
+        description: "Review implementation plans against persisted story coverage"
+      });
+      await setupContext.workflowService.startStage({
+        stageKey: "brainstorm",
+        itemId: item.id
+      });
+      const concept = setupContext.repositories.conceptRepository.getLatestByItemId(item.id);
+      setupContext.workflowService.approveConcept(concept!.id);
+      setupContext.workflowService.importProjects(item.id);
+      const project = setupContext.repositories.projectRepository.listByItemId(item.id)[0]!;
+
+      await setupContext.workflowService.startStage({
+        stageKey: "requirements",
+        itemId: item.id,
+        projectId: project.id
+      });
+      setupContext.workflowService.approveStories(project.id);
+      await setupContext.workflowService.startStage({
+        stageKey: "architecture",
+        itemId: item.id,
+        projectId: project.id
+      });
+      setupContext.workflowService.approveArchitecture(project.id);
+      await setupContext.workflowService.startStage({
+        stageKey: "planning",
+        itemId: item.id,
+        projectId: project.id
+      });
+
+      const implementationPlan = setupContext.repositories.implementationPlanRepository.getLatestByProjectId(project.id)!;
+      setupContext.connection.close();
+
+      const reviewContext = createAppContext(dbPath, { adapterScriptPath: scriptPath });
+      try {
+        const review = await reviewContext.workflowService.startPlanningReview({
+          sourceType: "implementation_plan",
+          sourceId: implementationPlan.id,
+          step: "plan_writing",
+          reviewMode: "readiness",
+          interactionMode: "interactive"
+        });
+
+        expect(review.run.status).toBe("ready");
+        expect(review.run.readiness).toBe("ready");
+        expect(review.questions).toHaveLength(0);
+        expect(review.findings).toHaveLength(0);
+      } finally {
+        reviewContext.connection.close();
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30000);
+
   it("enforces auto-gate planning review runs on approval transitions", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
     const dbPath = join(root, "app.sqlite");
@@ -3353,7 +3787,7 @@ export default defineConfig({
       context.connection.close();
       rmSync(root, { recursive: true, force: true });
     }
-  });
+  }, 30000);
 
   it("links input artifacts for downstream runs", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));

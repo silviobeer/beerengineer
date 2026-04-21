@@ -55,6 +55,46 @@ export class WorkflowOutputImporters {
     return this.readStructuredArtifact(artifact, projectsOutputSchema);
   }
 
+  public validateStructuredOutputs(input: {
+    stageKey: StageKey;
+    structuredArtifacts: Array<{ kind: string; content: unknown }>;
+  }): { status: "ok" } | { status: "review_required"; reviewReason: string } {
+    const schemaByKind: Record<string, { safeParse(value: unknown): { success: boolean; error?: { issues: Array<{ message: string; path: (string | number)[] }> } } }> = {
+      projects: projectsOutputSchema,
+      stories: storiesOutputSchema,
+      "architecture-plan-data": architecturePlanOutputSchema,
+      "implementation-plan-data": implementationPlanOutputSchema
+    };
+
+    const issues: string[] = [];
+    for (const artifact of input.structuredArtifacts) {
+      const schema = schemaByKind[artifact.kind];
+      if (!schema) {
+        continue;
+      }
+      const parsed = schema.safeParse(artifact.content);
+      if (!parsed.success) {
+        const detail = parsed.error
+          ? parsed.error.issues
+              .map((issue) => {
+                const pathLabel = issue.path.length > 0 ? issue.path.join(".") : "<root>";
+                return `${pathLabel}: ${issue.message}`;
+              })
+              .join("; ")
+          : "schema validation failed";
+        issues.push(`${artifact.kind} (${detail})`);
+      }
+    }
+
+    if (issues.length === 0) {
+      return { status: "ok" };
+    }
+    return {
+      status: "review_required",
+      reviewReason: `Failed to import ${input.stageKey} output: structured output did not match contract: ${issues.join(" | ")}`
+    };
+  }
+
   private importBrainstormOutputs(input: {
     itemId: string;
     artifactsByKind: Map<string, ArtifactRecord>;
@@ -392,78 +432,81 @@ export class WorkflowOutputImporters {
         });
       });
 
-      if (previous) {
-        const previousWaves = this.deps.waveRepository.listByImplementationPlanId(previous.id);
-        const previousWaveIds = previousWaves.map((wave) => wave.id);
-        const previousWaveStories = this.deps.waveStoryRepository.listByWaveIds(previousWaveIds);
-        const previousStoryIds = previousWaveStories.map((waveStory) => waveStory.storyId);
-        this.deps.waveStoryDependencyRepository.deleteByStoryIds(previousStoryIds);
-        this.deps.waveStoryRepository.deleteByWaveIds(previousWaveIds);
-        this.deps.waveRepository.deleteByImplementationPlanId(previous.id);
-        this.deps.implementationPlanRepository.delete(previous.id);
-      }
+      this.deps.runInTransaction(() => {
+        if (previous) {
+          const previousWaves = this.deps.waveRepository.listByImplementationPlanId(previous.id);
+          const previousWaveIds = previousWaves.map((wave) => wave.id);
+          const previousWaveStories = this.deps.waveStoryRepository.listByWaveIds(previousWaveIds);
+          const previousStoryIds = previousWaveStories.map((waveStory) => waveStory.storyId);
+          this.deps.waveExecutionRepository.cleanupSubtreeByWaveIds(previousWaveIds);
+          this.deps.waveStoryDependencyRepository.deleteByStoryIds(previousStoryIds);
+          this.deps.waveStoryRepository.deleteByWaveIds(previousWaveIds);
+          this.deps.waveRepository.deleteByImplementationPlanId(previous.id);
+          this.deps.implementationPlanRepository.delete(previous.id);
+        }
 
-      const createdPlan = this.deps.implementationPlanRepository.create({
-        projectId,
-        version: nextVersion,
-        summary: parsed.summary,
-        status: "draft",
-        markdownArtifactId: markdownArtifact.id,
-        structuredArtifactId: jsonArtifact.id
-      });
+        const createdPlan = this.deps.implementationPlanRepository.create({
+          projectId,
+          version: nextVersion,
+          summary: parsed.summary,
+          status: "draft",
+          markdownArtifactId: markdownArtifact.id,
+          structuredArtifactId: jsonArtifact.id
+        });
 
-      const waves = this.deps.waveRepository.createMany(
-        parsed.waves.map((wave, index) => ({
-          implementationPlanId: createdPlan.id,
-          code: wave.waveCode,
-          goal: wave.goal,
-          position: index
-        }))
-      );
-
-      const waveByCode = new Map(waves.map((wave) => [wave.code, wave]));
-      const waveStories = this.deps.waveStoryRepository.createMany(
-        parsed.waves.flatMap((wave) =>
-          wave.stories.map((plannedStory, index) => ({
-            waveId: this.requireMappedValue(waveByCode, wave.waveCode, "WAVE_IMPORT_MAPPING_MISSING", `Wave ${wave.waveCode} was not created`).id,
-            storyId: this.requireMappedValue(
-              storyByCode,
-              plannedStory.storyCode,
-              "STORY_IMPORT_MAPPING_MISSING",
-              `Story ${plannedStory.storyCode} was not found during planning import`
-            ).id,
-            parallelGroup: plannedStory.parallelGroup ?? null,
+        const waves = this.deps.waveRepository.createMany(
+          parsed.waves.map((wave, index) => ({
+            implementationPlanId: createdPlan.id,
+            code: wave.waveCode,
+            goal: wave.goal,
             position: index
           }))
-        )
-      );
-      if (waveStories.length !== stories.length) {
-        throw new AppError(
-          "PLANNING_IMPORT_MISMATCH",
-          "Implementation plan import created a different number of wave stories than planned"
         );
-      }
 
-      this.deps.waveStoryDependencyRepository.createMany(
-        parsed.waves.flatMap((wave) =>
-          wave.stories.flatMap((plannedStory) =>
-            plannedStory.dependsOnStoryCodes.map((dependencyCode) => ({
-              blockingStoryId: this.requireMappedValue(
-                storyByCode,
-                dependencyCode,
-                "PLANNING_DEPENDENCY_MAPPING_MISSING",
-                `Dependency story ${dependencyCode} was not found during planning import`
-              ).id,
-              dependentStoryId: this.requireMappedValue(
+        const waveByCode = new Map(waves.map((wave) => [wave.code, wave]));
+        const waveStories = this.deps.waveStoryRepository.createMany(
+          parsed.waves.flatMap((wave) =>
+            wave.stories.map((plannedStory, index) => ({
+              waveId: this.requireMappedValue(waveByCode, wave.waveCode, "WAVE_IMPORT_MAPPING_MISSING", `Wave ${wave.waveCode} was not created`).id,
+              storyId: this.requireMappedValue(
                 storyByCode,
                 plannedStory.storyCode,
-                "PLANNING_DEPENDENT_MAPPING_MISSING",
-                `Dependent story ${plannedStory.storyCode} was not found during planning import`
-              ).id
+                "STORY_IMPORT_MAPPING_MISSING",
+                `Story ${plannedStory.storyCode} was not found during planning import`
+              ).id,
+              parallelGroup: plannedStory.parallelGroup ?? null,
+              position: index
             }))
           )
-        )
-      );
+        );
+        if (waveStories.length !== stories.length) {
+          throw new AppError(
+            "PLANNING_IMPORT_MISMATCH",
+            "Implementation plan import created a different number of wave stories than planned"
+          );
+        }
+
+        this.deps.waveStoryDependencyRepository.createMany(
+          parsed.waves.flatMap((wave) =>
+            wave.stories.flatMap((plannedStory) =>
+              plannedStory.dependsOnStoryCodes.map((dependencyCode) => ({
+                blockingStoryId: this.requireMappedValue(
+                  storyByCode,
+                  dependencyCode,
+                  "PLANNING_DEPENDENCY_MAPPING_MISSING",
+                  `Dependency story ${dependencyCode} was not found during planning import`
+                ).id,
+                dependentStoryId: this.requireMappedValue(
+                  storyByCode,
+                  plannedStory.storyCode,
+                  "PLANNING_DEPENDENT_MAPPING_MISSING",
+                  `Dependent story ${plannedStory.storyCode} was not found during planning import`
+                ).id
+              }))
+            )
+          )
+        );
+      });
 
       return { status: "completed", reviewReason: null };
     } catch (error) {

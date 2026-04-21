@@ -492,21 +492,43 @@ export class ExecutionReadinessService {
         workspaceRoot: targetWorkspaceRoot,
         workspaceSettings: this.workspaceSettings
       });
+      const baselineFindings = this.inspectWorktreeBaselineDrift(targetWorkspaceRoot, [
+        "apps/ui/package.json",
+        "apps/ui/tsconfig.json",
+        "apps/ui/node_modules",
+        "apps/ui/node_modules/.bin/next",
+        "apps/ui/node_modules/.bin/tsc"
+      ]);
+      const combinedFindings = [...baselineFindings, ...report.findings];
+      const effectiveStatus = this.deriveCombinedStatus(combinedFindings);
       const firstIteration = 1;
-      this.persistFindings(run.id, firstIteration, report.findings);
+      this.persistFindings(run.id, firstIteration, combinedFindings);
 
-      let latestReport = report;
-      if (report.status === "auto_fixable" && input.allowDeterministicRemediation !== false) {
+      let latestReport = { ...report, findings: combinedFindings, status: effectiveStatus };
+      if (effectiveStatus === "auto_fixable" && input.allowDeterministicRemediation !== false) {
         const plannedActions = this.core.planDeterministicActions(report);
         for (const actionPlan of plannedActions) {
           this.runDeterministicAction(run.id, firstIteration, actionPlan);
         }
 
         this.repositories.findingRepository.markByIterationResolved(run.id, firstIteration);
-        latestReport = this.core.inspect({
+        const rerunReport = this.core.inspect({
           workspaceRoot: targetWorkspaceRoot,
           workspaceSettings: this.workspaceSettings
         });
+        const rerunBaselineFindings = this.inspectWorktreeBaselineDrift(targetWorkspaceRoot, [
+          "apps/ui/package.json",
+          "apps/ui/tsconfig.json",
+          "apps/ui/node_modules",
+          "apps/ui/node_modules/.bin/next",
+          "apps/ui/node_modules/.bin/tsc"
+        ]);
+        const rerunCombinedFindings = [...rerunBaselineFindings, ...rerunReport.findings];
+        latestReport = {
+          ...rerunReport,
+          findings: rerunCombinedFindings,
+          status: this.deriveCombinedStatus(rerunCombinedFindings)
+        };
         this.persistFindings(run.id, firstIteration + 1, latestReport.findings);
       }
 
@@ -673,5 +695,63 @@ export class ExecutionReadinessService {
   private isReusableRunFresh(run: ExecutionReadinessRun): boolean {
     const completedAt = run.completedAt ?? run.updatedAt;
     return Date.now() - completedAt <= executionReadinessReuseMaxAgeMs;
+  }
+
+  private deriveCombinedStatus(findings: CoreReadinessFinding[]): ExecutionReadinessRunStatus {
+    if (findings.length === 0) {
+      return "ready";
+    }
+    return findings.every((finding) => finding.isAutoFixable) ? "auto_fixable" : "blocked";
+  }
+
+  private inspectWorktreeBaselineDrift(worktreeRoot: string, relativePaths: string[]): CoreReadinessFinding[] {
+    if (worktreeRoot === this.workspaceRoot) {
+      return [];
+    }
+    const dirtyPaths = this.listDirtyWorkspacePaths(relativePaths);
+    if (dirtyPaths.length === 0) {
+      return [];
+    }
+    const mismatchedPaths = dirtyPaths.filter((relativePath) => {
+      const baselineState = this.describePathState(resolve(this.workspaceRoot, relativePath));
+      const worktreeState = this.describePathState(resolve(worktreeRoot, relativePath));
+      return baselineState !== worktreeState;
+    });
+    if (mismatchedPaths.length === 0) {
+      return [];
+    }
+    return [
+      {
+        code: "worktree_baseline_uncommitted",
+        doctorCategory: "executionReadiness",
+        severity: "error",
+        scopeType: "workspace",
+        scopePath: worktreeRoot,
+        summary: "The story worktree is missing uncommitted baseline setup from the main workspace.",
+        detail: `Story worktrees are created from committed HEAD. The main workspace still has uncommitted setup changes under: ${mismatchedPaths.join(", ")}.`,
+        detectedBy: "core.git.worktree_baseline",
+        classification: "manual_blocker",
+        recommendedAction: "Commit the required baseline workspace setup before execution so story worktrees inherit it.",
+        isAutoFixable: false,
+        status: "manual"
+      }
+    ];
+  }
+
+  private listDirtyWorkspacePaths(relativePaths: string[]): string[] {
+    const result = spawnSync("git", ["status", "--porcelain", "--", ...relativePaths], {
+      cwd: this.workspaceRoot,
+      encoding: "utf8",
+      timeout: 30000,
+      maxBuffer: 1024 * 1024
+    });
+    if (result.error || result.status !== 0) {
+      return [];
+    }
+    return (result.stdout ?? "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 3)
+      .map((line) => line.slice(3).trim());
   }
 }

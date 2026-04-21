@@ -164,7 +164,7 @@ export class PlanningReviewService {
       step: input.step,
       clarificationAnswers: input.clarificationAnswers ?? []
     });
-    const capability = this.resolveCapabilityPlan(input.reviewMode);
+    const capability = this.resolveCapabilityPlan(input.reviewMode, input.automationLevel ?? "manual");
     let run: ReviewRun | undefined;
 
     try {
@@ -644,20 +644,78 @@ export class PlanningReviewService {
       throw new AppError("PROJECT_NOT_FOUND", `Project ${plan.projectId} not found`);
     }
     const parsed = implementationPlanOutputSchema.parse(this.readArtifactJson(plan.structuredArtifactId));
+    const upstream = this.loadUpstreamBrainstormDraftForItem(project.itemId);
+    const stories = this.options.deps.userStoryRepository.listByProjectId(project.id);
+    const waves = this.options.deps.waveRepository.listByImplementationPlanId(plan.id);
+    const waveStories = this.options.deps.waveStoryRepository.listByWaveIds(waves.map((wave) => wave.id));
+    const storyById = new Map(stories.map((story) => [story.id, story]));
+    const waveById = new Map(waves.map((wave) => [wave.id, wave]));
+    const acceptanceCriteriaByStoryId = stories.reduce(
+      (map, story) => map.set(story.id, this.options.deps.acceptanceCriterionRepository.listByStoryId(story.id)),
+      new Map<string, ReturnType<WorkflowDeps["acceptanceCriterionRepository"]["listByStoryId"]>>()
+    );
+    const waveStoryAssignments = waveStories
+      .map((entry) => {
+        const wave = waveById.get(entry.waveId);
+        const story = storyById.get(entry.storyId);
+        if (!wave || !story) {
+          return null;
+        }
+        return `${wave.code} -> Story ${story.code}: ${story.title}`;
+      })
+      .filter((entry): entry is string => entry !== null);
+    const storyLines = stories.map(
+      (story) => `Story ${story.code}: ${story.title} (actor=${story.actor}, goal=${story.goal}, benefit=${story.benefit})`
+    );
+    const acceptanceLines = stories.flatMap((story) =>
+      (acceptanceCriteriaByStoryId.get(story.id) ?? []).map(
+        (criterion) => `Acceptance criterion ${criterion.code} for ${story.code}: ${criterion.text}`
+      )
+    );
+    const dependencyLines = stories.flatMap((story) => {
+      const dependencies = this.options.deps.waveStoryDependencyRepository.listByDependentStoryId(story.id);
+      if (dependencies.length === 0) {
+        return [];
+      }
+      return dependencies
+        .map((dependency) => {
+          const blockingStory = storyById.get(dependency.blockingStoryId);
+          if (!blockingStory) {
+            return null;
+          }
+          return `Story ${story.code} depends on Story ${blockingStory.code}`;
+        })
+        .filter((entry): entry is string => entry !== null);
+    });
     return {
-      problem: project.summary,
-      goal: parsed.summary,
-      nonGoals: [],
+      problem: upstream?.problem ?? project.summary,
+      goal: upstream?.coreOutcome ?? project.goal,
+      nonGoals: upstream?.nonGoals ?? [],
       context: normalizeEntries([
         `Project ${project.code}: ${project.title}`,
-        ...parsed.waves.map((wave) => `${wave.waveCode}: ${wave.goal}`)
+        `Implementation summary: ${parsed.summary}`,
+        ...(upstream?.targetUsers.map((user) => `Target user: ${user}`) ?? []),
+        ...(upstream?.useCases.map((useCase) => `Use case: ${useCase}`) ?? []),
+        ...parsed.waves.map((wave) => `${wave.waveCode}: ${wave.goal}`),
+        ...waveStoryAssignments,
+        ...storyLines,
+        ...acceptanceLines,
+        ...dependencyLines
       ]),
-      constraints: [],
-      proposal: parsed.summary,
+      constraints: normalizeEntries([
+        ...(upstream?.constraints ?? []),
+        ...(upstream?.designConstraints ?? []).map((constraint) => `Design constraint: ${constraint}`),
+        ...(upstream?.requiredDeliverables ?? []).map((deliverable) => `Required deliverable: ${deliverable}`),
+        ...(upstream?.referenceArtifacts ?? []).map((artifact) => `Reference artifact: ${artifact}`)
+      ]),
+      proposal: normalizeEntries([
+        parsed.summary,
+        ...parsed.waves.map((wave) => `${wave.waveCode}: ${wave.goal}`)
+      ]).join("; "),
       alternatives: [],
-      assumptions: parsed.assumptions,
-      risks: parsed.risks,
-      openQuestions: [],
+      assumptions: normalizeEntries([...(upstream?.assumptions ?? []), ...parsed.assumptions]),
+      risks: normalizeEntries([...(upstream?.risks ?? []), ...parsed.risks]),
+      openQuestions: upstream?.openQuestions ?? [],
       testPlan: parsed.testPlan ?? [],
       rolloutPlan: parsed.rolloutPlan ?? [],
       clarificationAnswers
@@ -761,8 +819,18 @@ export class PlanningReviewService {
     return JSON.parse(readFileSync(absolutePath, "utf8")) as unknown;
   }
 
-  private resolveCapabilityPlan(reviewMode: PlanningReviewMode): ReviewCapabilityPlan<PlanningReviewProviderRole> {
+  private resolveCapabilityPlan(
+    reviewMode: PlanningReviewMode,
+    automationLevel: PlanningReviewAutomationLevel
+  ): ReviewCapabilityPlan<PlanningReviewProviderRole> {
     const primaryRoles = this.selectRolesForMode(reviewMode);
+    if (automationLevel === "auto_comment") {
+      return this.executionPlanner.planSingleProviderMultiRoleReview({
+        roles: primaryRoles,
+        preferredAdapterKeys: ["codex", "claude"],
+        unavailableCode: "PLANNING_REVIEW_PROVIDER_UNAVAILABLE"
+      });
+    }
     return this.executionPlanner.planDualRoleReview({
       roles: primaryRoles,
       preferCodexFor: ["implementation_reviewer"],
@@ -791,6 +859,21 @@ export class PlanningReviewService {
     reviewMode: PlanningReviewMode;
     interactionMode: PlanningReviewInteractionMode;
   }): string {
+    if (input.step === "plan_writing") {
+      return [
+        "You are assisting a BeerEngineer implementation-plan review run.",
+        `Role: ${input.role}`,
+        `Step: ${input.step}`,
+        `Review mode: ${input.reviewMode}`,
+        `Interaction mode: ${input.interactionMode}`,
+        "Return only the structured review output.",
+        "Ground every finding in the provided normalized artifact.",
+        "The normalized artifact for implementation plans may already include persisted stories, acceptance criteria, wave assignments, and story dependencies inside `context`.",
+        "Treat entries prefixed with `Story`, `Acceptance criterion`, and `W## -> Story` as authoritative coverage evidence. Do not ask for a separate story breakdown when those entries are present.",
+        "Focus on implementation-plan quality: wave ordering, dependency coherence, missing verification or rollout coverage, unresolved risks, and mismatches between upstream scope and the planned slices.",
+        "Raise `blocker` only for concrete release-blocking gaps. Use `major_concern` for important but non-blocking plan weaknesses. Use `question` only when the missing information is truly absent from the normalized artifact."
+      ].join("\n");
+    }
     return [
       "You are assisting a BeerEngineer planning review run.",
       `Role: ${input.role}`,

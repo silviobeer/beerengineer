@@ -691,21 +691,48 @@ export class VerificationReadinessService {
         story: input.story,
         workspaceKey: this.workspaceKey
       });
-      this.persistFindings(run.id, 1, report.findings);
+      const firstIteration = 1;
+      const baselineFindings = this.inspectWorktreeBaselineDrift(targetWorkspaceRoot, [
+        "apps/ui/package.json",
+        "apps/ui/playwright.config.ts",
+        "apps/ui/playwright.config.js",
+        "apps/ui/playwright.config.mjs",
+        "apps/ui/tests",
+        "apps/ui/tests/e2e",
+        "apps/ui/e2e"
+      ]);
+      const combinedFindings = [...baselineFindings, ...report.findings];
+      const effectiveStatus = this.deriveCombinedStatus(combinedFindings);
+      this.persistFindings(run.id, firstIteration, combinedFindings);
 
-      let latestReport = report;
-      if (report.status === "auto_fixable" && input.allowDeterministicRemediation !== false) {
+      let latestReport = { ...report, findings: combinedFindings, status: effectiveStatus };
+      if (effectiveStatus === "auto_fixable" && input.allowDeterministicRemediation !== false) {
         for (const actionPlan of this.core.planDeterministicActions(report)) {
-          this.runDeterministicAction(run.id, 1, actionPlan);
+          this.runDeterministicAction(run.id, firstIteration, actionPlan);
         }
-        this.repositories.findingRepository.markByIterationResolved(run.id, 1);
-        latestReport = this.core.inspect({
+        this.repositories.findingRepository.markByIterationResolved(run.id, firstIteration);
+        const rerunReport = this.core.inspect({
           workspaceRoot: targetWorkspaceRoot,
           workspaceSettings: this.workspaceSettings,
           story: input.story,
           workspaceKey: this.workspaceKey
         });
-        this.persistFindings(run.id, 2, latestReport.findings);
+        const rerunBaselineFindings = this.inspectWorktreeBaselineDrift(targetWorkspaceRoot, [
+          "apps/ui/package.json",
+          "apps/ui/playwright.config.ts",
+          "apps/ui/playwright.config.js",
+          "apps/ui/playwright.config.mjs",
+          "apps/ui/tests",
+          "apps/ui/tests/e2e",
+          "apps/ui/e2e"
+        ]);
+        const rerunCombinedFindings = [...rerunBaselineFindings, ...rerunReport.findings];
+        latestReport = {
+          ...rerunReport,
+          findings: rerunCombinedFindings,
+          status: this.deriveCombinedStatus(rerunCombinedFindings)
+        };
+        this.persistFindings(run.id, firstIteration + 1, latestReport.findings);
       }
 
       this.repositories.runRepository.update(run.id, {
@@ -871,5 +898,63 @@ export class VerificationReadinessService {
   private isReusableRunFresh(run: VerificationReadinessRun): boolean {
     const completedAt = run.completedAt ?? run.updatedAt;
     return Date.now() - completedAt <= verificationReadinessReuseMaxAgeMs;
+  }
+
+  private deriveCombinedStatus(findings: CoreVerificationFinding[]): VerificationReadinessRunStatus {
+    if (findings.length === 0) {
+      return "ready";
+    }
+    return findings.every((finding) => finding.isAutoFixable) ? "auto_fixable" : "blocked";
+  }
+
+  private inspectWorktreeBaselineDrift(worktreeRoot: string, relativePaths: string[]): CoreVerificationFinding[] {
+    if (worktreeRoot === this.workspaceRoot) {
+      return [];
+    }
+    const dirtyPaths = this.listDirtyWorkspacePaths(relativePaths);
+    if (dirtyPaths.length === 0) {
+      return [];
+    }
+    const mismatchedPaths = dirtyPaths.filter((relativePath) => {
+      const baselineState = this.describePathState(resolve(this.workspaceRoot, relativePath));
+      const worktreeState = this.describePathState(resolve(worktreeRoot, relativePath));
+      return baselineState !== worktreeState;
+    });
+    if (mismatchedPaths.length === 0) {
+      return [];
+    }
+    return [
+      {
+        code: "worktree_baseline_uncommitted",
+        doctorCategory: "browserVerification",
+        severity: "error",
+        scopeType: "workspace",
+        scopePath: worktreeRoot,
+        summary: "The story worktree is missing uncommitted browser-verification baseline files from the main workspace.",
+        detail: `Story worktrees are created from committed HEAD. The main workspace still has uncommitted verification setup under: ${mismatchedPaths.join(", ")}.`,
+        detectedBy: "verification.git.worktree_baseline",
+        classification: "manual_blocker",
+        recommendedAction: "Commit the required browser-verification baseline before execution so story worktrees inherit it.",
+        isAutoFixable: false,
+        status: "manual"
+      }
+    ];
+  }
+
+  private listDirtyWorkspacePaths(relativePaths: string[]): string[] {
+    const result = spawnSync("git", ["status", "--porcelain", "--", ...relativePaths], {
+      cwd: this.workspaceRoot,
+      encoding: "utf8",
+      timeout: 30000,
+      maxBuffer: 1024 * 1024
+    });
+    if (result.error || result.status !== 0) {
+      return [];
+    }
+    return (result.stdout ?? "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 3)
+      .map((line) => line.slice(3).trim());
   }
 }
