@@ -23,6 +23,9 @@ export type BrainstormMessageStructure = BrainstormExtraction & {
   coreOutcome: string | null;
   recommendedDirection: string | null;
   scopeNotes: string | null;
+  smallestUsefulOutcome: string | null;
+  projectShapeDecision: "single_project" | "split_projects" | null;
+  decisionRationale: string | null;
 };
 
 const LIST_FIELD_LABELS: Array<{ field: BrainstormListExtractionField; labels: string[] }> = [
@@ -43,6 +46,10 @@ const SCALAR_FIELD_LABELS: Array<{ field: BrainstormScalarExtractionField; label
   { field: "scopeNotes", labels: ["scope notes", "notes"] }
 ];
 
+const PROJECT_SHAPE_DECISION_LABELS = ["project shape decision", "project shape"];
+const SMALLEST_OUTCOME_LABELS = ["smallest useful user outcome", "smallest useful outcome", "smallest useful slice"];
+const DECISION_RATIONALE_LABELS = ["rationale", "decision rationale"];
+
 function emptyExtraction(): BrainstormMessageStructure {
   return {
     problem: null,
@@ -56,14 +63,23 @@ function emptyExtraction(): BrainstormMessageStructure {
     openQuestions: [],
     candidateDirections: [],
     recommendedDirection: null,
-    scopeNotes: null
+    scopeNotes: null,
+    smallestUsefulOutcome: null,
+    projectShapeDecision: null,
+    decisionRationale: null
   };
 }
 
-function splitInlineEntries(value: string): string[] {
+function splitInlineEntries(value: string, field?: BrainstormListExtractionField): string[] {
   const normalized = value.trim();
   if (!normalized) {
     return [];
+  }
+  if (field === "targetUsers") {
+    return normalized
+      .split(/\s*;\s*|\s*,\s*|\s+\/\s+/g)
+      .map((entry) => entry.replace(/^and\s+/i, "").replace(/[.,;:]+$/, "").trim())
+      .filter((entry) => entry.length > 0);
   }
   return normalized
     .split(/\s*;\s*|\s+\/\s+/g)
@@ -113,9 +129,45 @@ function resolveScalarFieldFromLabel(label: string): BrainstormScalarExtractionF
   return null;
 }
 
+function isProjectShapeDecisionLabel(label: string): boolean {
+  const normalized = label.trim().toLowerCase().replace(/\s+/g, " ");
+  return PROJECT_SHAPE_DECISION_LABELS.includes(normalized);
+}
+
+function isSmallestOutcomeLabel(label: string): boolean {
+  const normalized = label.trim().toLowerCase().replace(/\s+/g, " ");
+  return SMALLEST_OUTCOME_LABELS.includes(normalized);
+}
+
+function isDecisionRationaleLabel(label: string): boolean {
+  const normalized = label.trim().toLowerCase().replace(/\s+/g, " ");
+  return DECISION_RATIONALE_LABELS.includes(normalized);
+}
+
 const LABEL_LINE = /^([a-z][a-z\s-]{1,30}):\s*(.*)$/i;
 const BULLET_LINE = /^\s*[-*•]\s+(.+)$/;
 const HEADING_LINE = /^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/;
+
+function normalizeProjectShapeDecision(value: string): "single_project" | "split_projects" | null {
+  const normalized = value.trim().toLowerCase().replace(/\s+/g, " ");
+  if (!normalized) {
+    return null;
+  }
+  if (/\bsingle[_\s-]*project\b/.test(normalized) || /\bone focused project\b/.test(normalized)) {
+    return "single_project";
+  }
+  if (/\bsplit[_\s-]*projects?\b/.test(normalized) || /\bmultiple projects?\b/.test(normalized)) {
+    return "split_projects";
+  }
+  return null;
+}
+
+function splitCompoundLabelLines(message: string): string[] {
+  return message
+    .replace(/\.\s+(?=[A-Z][A-Za-z\s-]{1,40}:)/g, ".\n")
+    .replace(/;\s+(?=[A-Z][A-Za-z\s-]{1,40}:)/g, ";\n")
+    .split(/\r?\n/);
+}
 
 function normalizeHeading(value: string): string {
   return value
@@ -224,7 +276,7 @@ export function extractBrainstormMessageStructure(message: string): BrainstormMe
     return result;
   }
 
-  const lines = message.split(/\r?\n/);
+  const lines = splitCompoundLabelLines(message);
   let activeListField: BrainstormListExtractionField | null = null;
   let activeScalarField: BrainstormScalarExtractionField | null = null;
   let activeFromHeading = false;
@@ -272,6 +324,39 @@ export function extractBrainstormMessageStructure(message: string): BrainstormMe
         continue;
       }
 
+      if (isSmallestOutcomeLabel(labelMatch[1]!)) {
+        activeScalarField = null;
+        activeListField = null;
+        activeFromHeading = false;
+        const inline = normalizeWhitespace(labelMatch[2]!);
+        if (inline) {
+          result.smallestUsefulOutcome = inline;
+        }
+        continue;
+      }
+
+      if (isProjectShapeDecisionLabel(labelMatch[1]!)) {
+        activeScalarField = null;
+        activeListField = null;
+        activeFromHeading = false;
+        const inline = normalizeWhitespace(labelMatch[2]!);
+        if (inline) {
+          result.projectShapeDecision = normalizeProjectShapeDecision(inline);
+        }
+        continue;
+      }
+
+      if (isDecisionRationaleLabel(labelMatch[1]!)) {
+        activeScalarField = null;
+        activeListField = null;
+        activeFromHeading = false;
+        const inline = normalizeWhitespace(labelMatch[2]!);
+        if (inline) {
+          result.decisionRationale = inline;
+        }
+        continue;
+      }
+
       const listField = resolveListFieldFromLabel(labelMatch[1]!);
       if (!listField) {
         activeListField = null;
@@ -283,7 +368,7 @@ export function extractBrainstormMessageStructure(message: string): BrainstormMe
       activeFromHeading = false;
       const inline = labelMatch[2]!.trim();
       if (inline) {
-        result[listField].push(...splitInlineEntries(stripMarkdownDecorations(inline)));
+        result[listField].push(...splitInlineEntries(stripMarkdownDecorations(inline), listField));
       }
       continue;
     }
@@ -323,6 +408,8 @@ export function extractBrainstormMessageStructure(message: string): BrainstormMe
   result.coreOutcome = result.coreOutcome ? normalizeWhitespace(result.coreOutcome) : null;
   result.recommendedDirection = result.recommendedDirection ? normalizeWhitespace(result.recommendedDirection) : null;
   result.scopeNotes = result.scopeNotes ? result.scopeNotes.split("\n").map((entry) => normalizeWhitespace(entry)).filter(Boolean).join("\n") : null;
+  result.smallestUsefulOutcome = result.smallestUsefulOutcome ? normalizeWhitespace(result.smallestUsefulOutcome) : null;
+  result.decisionRationale = result.decisionRationale ? normalizeWhitespace(result.decisionRationale) : null;
   return result;
 }
 
@@ -346,6 +433,15 @@ export function mergeBrainstormMessageStructures(
     }
     if (value.scopeNotes) {
       result.scopeNotes = value.scopeNotes;
+    }
+    if (value.smallestUsefulOutcome) {
+      result.smallestUsefulOutcome = value.smallestUsefulOutcome;
+    }
+    if (value.projectShapeDecision) {
+      result.projectShapeDecision = value.projectShapeDecision;
+    }
+    if (value.decisionRationale) {
+      result.decisionRationale = value.decisionRationale;
     }
     for (const field of [
       "targetUsers",

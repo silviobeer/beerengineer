@@ -1527,6 +1527,65 @@ describe("workflow service", () => {
     }
   });
 
+  it("keeps brainstorm review ownership in the stage loop when compact follow-up answers resolve open questions", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const item = createWorkspaceItem(context, {
+        title: "Compact Brainstorm Follow-up",
+        description: "Verify stage-owned brainstorm review feedback"
+      });
+      const started = context.workflowService.startBrainstormSession(item.id);
+
+      await context.workflowService.chatBrainstorm(
+        started.sessionId,
+        [
+          "Problem: Operators need a workspace-scoped UI shell",
+          "Core outcome: Deliver one operational UI shell for the workflow engine",
+          "Use cases:",
+          "- board",
+          "- overlay",
+          "- inbox"
+        ].join("\n")
+      );
+
+      const chatted = await context.workflowService.chatBrainstorm(
+        started.sessionId,
+        [
+          "Target users: product engineers, delivery leads, and reviewers.",
+          "Smallest useful user outcome: one focused UI V1 with board, overlay, and inbox.",
+          "Project shape decision: single_project.",
+          "Rationale: keep one coherent operational shell in the first release.",
+          "Recommended direction: build one UI app on shared core workflow services."
+        ].join(" ")
+      ) as {
+        status: string;
+        draft: { targetUsers: string[]; openQuestions: string[]; recommendedDirection: string | null };
+        reviewLoopState: { owner: string; status: string; reviewFeedback: Array<{ stageKey: string }> };
+      };
+
+      expect(chatted.status).toBe("ready_for_concept");
+      expect(chatted.draft.targetUsers).toEqual(["product engineers", "delivery leads", "reviewers"]);
+      expect(chatted.draft.openQuestions).toEqual([]);
+      expect(chatted.draft.recommendedDirection).toBe("build one UI app on shared core workflow services.");
+      expect(chatted.reviewLoopState.owner).toBe("stage_llm");
+      expect(chatted.reviewLoopState.status).toBe("revising");
+      expect(chatted.reviewLoopState.reviewFeedback[0]?.stageKey).toBe("brainstorm");
+
+      const shown = context.workflowService.showBrainstormBySessionId(started.sessionId) as {
+        messages: Array<{ role: string; structuredPayloadJson: string | null }>;
+      };
+      const lastAssistant = [...shown.messages].reverse().find((message) => message.role === "assistant");
+      expect(lastAssistant?.structuredPayloadJson ?? "").toContain("\"reviewLoopState\"");
+      expect(lastAssistant?.structuredPayloadJson ?? "").toContain("\"reviewFeedback\"");
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("asks for an explicit project-shape decision before concept promotion when the scope spans multiple tracks", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
     const dbPath = join(root, "app.sqlite");

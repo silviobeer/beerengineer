@@ -24,6 +24,7 @@ import {
   type BrainstormMessageStructure
 } from "./brainstorm-message-parser.js";
 import { deriveGenericUpstreamContext } from "./upstream-context.js";
+import type { StageOwnedReviewFeedback } from "./stage-owned-review-feedback.js";
 
 export type BrainstormDraftView = {
   id: string;
@@ -93,6 +94,14 @@ type BrainstormReviewSummary = {
       | "scopeNotes";
     values: string[];
   }>;
+};
+
+type BrainstormLoopState = {
+  owner: "stage_llm";
+  status: "clean" | "revising" | "needs_user_input";
+  question: string | null;
+  followUpHint: string | null;
+  reviewFeedback: StageOwnedReviewFeedback[];
 };
 
 type BrainstormServiceOptions = {
@@ -426,14 +435,14 @@ export class BrainstormService {
         draft: provisionalDraft,
         messageStructure,
         agentDecision: {
-          projectShapeDecision: agentOutput.projectShapeDecision ?? null,
-          decisionRationale: agentOutput.decisionRationale ?? null,
+          projectShapeDecision: agentOutput.projectShapeDecision ?? messageStructure.projectShapeDecision ?? null,
+          decisionRationale: agentOutput.decisionRationale ?? messageStructure.decisionRationale ?? null,
           projectSeeds: agentOutput.projectSeeds ?? []
         },
         autoApplied
       });
       const reviewFollowUp = this.buildBrainstormReviewFollowUp(review);
-      const needsStructuredFollowUp = agentOutput.needsStructuredFollowUp || review.status === "needs_follow_up";
+      const needsStructuredFollowUp = this.shouldKeepBrainstormFollowUp(agentOutput.needsStructuredFollowUp, review);
       const finalDraftStatus = needsStructuredFollowUp
         ? (Boolean(provisionalDraft.problem && provisionalDraft.coreOutcome) ? "drafting" : "needs_input")
         : provisionalDraft.status;
@@ -443,6 +452,7 @@ export class BrainstormService {
         lastUpdatedFromMessageId: userMessage.id
       });
       const followUpHint = reviewFollowUp ?? agentOutput.followUpHint ?? null;
+      const reviewLoopState = this.buildBrainstormLoopState(review, followUpHint);
       const assistantMessageContent = review.status === "needs_follow_up"
         ? this.buildBrainstormAssistantMessageWithReviewFollowUp(agentOutput.assistantMessage, reviewFollowUp)
         : agentOutput.assistantMessage;
@@ -455,7 +465,9 @@ export class BrainstormService {
             draftRevision: nextDraft.revision,
             needsStructuredFollowUp,
             followUpHint,
-            brainstormReview: review
+            brainstormReview: review,
+            reviewFeedback: reviewLoopState.reviewFeedback,
+            reviewLoopState
           },
           null,
           2
@@ -487,7 +499,9 @@ export class BrainstormService {
         draft: this.mapBrainstormDraft(nextDraft),
         needsStructuredFollowUp,
         followUpHint,
-        review
+        review,
+        reviewFeedback: reviewLoopState.reviewFeedback,
+        reviewLoopState
       };
     });
   }
@@ -734,9 +748,69 @@ export class BrainstormService {
       const existingEntries = adapterValue !== undefined
         ? (JSON.parse(adapterValue) as string[])
         : (JSON.parse(previousValue) as string[]);
-      result[jsonKey] = JSON.stringify(this.normalizeBrainstormEntries([...existingEntries, ...entries]));
+      const sanitizedEntries = this.sanitizeExistingStructuredEntries(field, existingEntries);
+      result[jsonKey] = JSON.stringify(this.normalizeBrainstormEntries([...sanitizedEntries, ...entries]));
     }
+    this.applyOpenQuestionResolution(result, adapterUpdate, previousDraft, messageStructure);
     return result;
+  }
+
+  private sanitizeExistingStructuredEntries(
+    field: BrainstormListExtractionField,
+    existingEntries: string[]
+  ): string[] {
+    return this.normalizeBrainstormEntries(existingEntries.filter((entry) => {
+      if (!entry.includes(":")) {
+        return true;
+      }
+      const extracted = extractBrainstormMessageStructure(entry);
+      const otherListFields = (
+        [
+          "targetUsers",
+          "useCases",
+          "constraints",
+          "nonGoals",
+          "risks",
+          "assumptions",
+          "openQuestions",
+          "candidateDirections"
+        ] as BrainstormListExtractionField[]
+      ).filter((candidate) => candidate !== field && extracted[candidate].length > 0);
+      const hasOtherSignals = Boolean(
+        extracted.problem
+        || extracted.coreOutcome
+        || extracted.recommendedDirection
+        || extracted.scopeNotes
+        || extracted.smallestUsefulOutcome
+        || extracted.projectShapeDecision
+        || extracted.decisionRationale
+        || otherListFields.length > 0
+      );
+      return !hasOtherSignals;
+    }));
+  }
+
+  private applyOpenQuestionResolution(
+    result: Partial<BrainstormDraft>,
+    adapterUpdate: Partial<BrainstormDraft>,
+    previousDraft: BrainstormDraft,
+    messageStructure: BrainstormMessageStructure
+  ): void {
+    if (!messageStructure.smallestUsefulOutcome) {
+      return;
+    }
+    const adapterValue = adapterUpdate.openQuestionsJson;
+    const previousValue = previousDraft.openQuestionsJson;
+    const existingEntries = adapterValue !== undefined
+      ? (JSON.parse(adapterValue) as string[])
+      : (JSON.parse(previousValue) as string[]);
+    const remaining = existingEntries.filter(
+      (entry) => !/smallest useful (user )?outcome|smallest useful slice/i.test(entry)
+    );
+    result.openQuestionsJson = JSON.stringify(this.normalizeBrainstormEntries(remaining));
+    if (adapterUpdate.scopeNotes === undefined && !previousDraft.scopeNotes?.includes(messageStructure.smallestUsefulOutcome)) {
+      result.scopeNotes = [previousDraft.scopeNotes, messageStructure.smallestUsefulOutcome].filter(Boolean).join("\n");
+    }
   }
 
   private applyScalarBackfill(
@@ -755,6 +829,9 @@ export class BrainstormService {
     }
     if (messageStructure.scopeNotes && adapterUpdate.scopeNotes === undefined) {
       result.scopeNotes = messageStructure.scopeNotes;
+    }
+    if (messageStructure.smallestUsefulOutcome && adapterUpdate.scopeNotes === undefined) {
+      result.scopeNotes = [result.scopeNotes, messageStructure.smallestUsefulOutcome].filter(Boolean).join("\n");
     }
   }
 
@@ -942,6 +1019,81 @@ export class BrainstormService {
       return `${finding.field}: ${finding.detail.match(/includes "(.+?)"/)?.[1] ?? finding.field}`;
     });
     return `Brainstorm review still misses chat-derived context. Capture: ${findings.join("; ")}.`;
+  }
+
+  private shouldKeepBrainstormFollowUp(
+    agentRequestedFollowUp: boolean,
+    review: BrainstormReviewSummary
+  ): boolean {
+    if (review.status === "needs_follow_up") {
+      return true;
+    }
+    if (!agentRequestedFollowUp) {
+      return false;
+    }
+    if (review.autoApplied.length > 0) {
+      return false;
+    }
+    return review.projectShape.recommendation === "undecided" || review.findings.length > 0;
+  }
+
+  private buildBrainstormLoopState(
+    review: BrainstormReviewSummary,
+    followUpHint: string | null
+  ): BrainstormLoopState {
+    const reviewFeedback = [this.buildBrainstormReviewFeedback(review)];
+    if (review.status === "needs_follow_up") {
+      return {
+        owner: "stage_llm",
+        status: "needs_user_input",
+        question: reviewFeedback[0].openQuestions[0]?.question ?? followUpHint,
+        followUpHint,
+        reviewFeedback
+      };
+    }
+    if (review.status === "auto_backfilled") {
+      return {
+        owner: "stage_llm",
+        status: "revising",
+        question: null,
+        followUpHint,
+        reviewFeedback
+      };
+    }
+    return {
+      owner: "stage_llm",
+      status: "clean",
+      question: null,
+      followUpHint,
+      reviewFeedback
+    };
+  }
+
+  private buildBrainstormReviewFeedback(review: BrainstormReviewSummary): StageOwnedReviewFeedback {
+    return {
+      reviewRunId: `brainstorm-review:${review.projectShape.recommendation}:${review.status}`,
+      stageKey: "brainstorm",
+      status: review.status,
+      readiness: review.status === "needs_follow_up" ? "needs_evidence" : "ready",
+      summary: review.summary,
+      recommendedAction:
+        review.status === "needs_follow_up"
+          ? this.buildBrainstormReviewFollowUp(review) ?? "Capture the missing brainstorm decisions and rerun the stage."
+          : "Proceed with the current brainstorm draft.",
+      findings: review.findings.map((finding) => ({
+        type: finding.field,
+        title: finding.summary,
+        detail: finding.detail,
+        evidence: null
+      })),
+      openQuestions: review.findings
+        .filter((finding) => finding.field === "projectShape" || finding.field === "recommendedDirection" || finding.field === "targetUsers")
+        .map((finding) => ({
+          question: finding.summary,
+          reason: finding.detail,
+          impact: "Without this clarification, the brainstorm should stay in the stage-owned dialog."
+        }))
+    };
   }
 
   private buildBrainstormAssistantMessageWithReviewFollowUp(baseMessage: string, reviewFollowUp: string | null): string {

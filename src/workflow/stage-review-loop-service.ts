@@ -1,12 +1,12 @@
-import type { AdapterRunRequest } from "../adapters/types.js";
 import type { StageKey } from "../domain/types.js";
 import { AppError } from "../shared/errors.js";
 import type { ReviewCoreService } from "../review/review-core-service.js";
 import type { WorkflowDeps } from "./workflow-deps.js";
+import type { StageOwnedReviewFeedback } from "./stage-owned-review-feedback.js";
 
 const MAX_STAGE_REVISIONS = 3;
 
-export type StageReviewFeedback = NonNullable<NonNullable<AdapterRunRequest["context"]>["reviewFeedback"]>[number];
+export type StageReviewFeedback = StageOwnedReviewFeedback;
 
 export type StageLoopInput = {
   stageKey: StageKey;

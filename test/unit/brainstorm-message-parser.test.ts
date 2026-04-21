@@ -162,4 +162,22 @@ describe("extractLabeledBrainstormLists", () => {
     expect(result.constraints).toContain("do not hardcode workflow logic inside visual components");
     expect(result.constraints).toContain("implementation must include a UI showcase");
   });
+
+  it("extracts compact multi-label follow-up messages and project-shape decisions", () => {
+    const result = extractBrainstormMessageStructure(
+      [
+        "Target users: product engineers, delivery leads, and reviewers.",
+        "Smallest useful user outcome: one focused UI V1 with board, overlay, and inbox.",
+        "Project shape decision: single_project.",
+        "Rationale: keep one coherent operational shell in the first release.",
+        "Recommended direction: build one UI app on shared core workflow services."
+      ].join(" ")
+    );
+
+    expect(result.targetUsers).toEqual(["product engineers", "delivery leads", "reviewers"]);
+    expect(result.smallestUsefulOutcome).toBe("one focused UI V1 with board, overlay, and inbox.");
+    expect(result.projectShapeDecision).toBe("single_project");
+    expect(result.decisionRationale).toBe("keep one coherent operational shell in the first release.");
+    expect(result.recommendedDirection).toBe("build one UI app on shared core workflow services.");
+  });
 });
