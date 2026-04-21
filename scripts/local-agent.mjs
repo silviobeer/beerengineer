@@ -216,10 +216,42 @@ function deriveRequirementsActors(upstream) {
   return ["workspace operator", "delivery lead", "reviewer"];
 }
 
+function singularizeActorLabel(actor) {
+  const normalized = normalizeEntry(actor)
+    .replace(/^(a|an|the)\s+/i, "")
+    .replace(/[.,;:]+$/, "");
+  if (!normalized) {
+    return "operator";
+  }
+
+  const lower = normalized.toLowerCase();
+  const directMap = new Map([
+    ["product engineers", "product engineer"],
+    ["delivery leads", "delivery lead"],
+    ["reviewers", "reviewer"],
+    ["workspace operators", "workspace operator"],
+    ["operators", "operator"],
+    ["engineers", "engineer"]
+  ]);
+  if (directMap.has(lower)) {
+    return directMap.get(lower);
+  }
+  if (lower.endsWith("ies")) {
+    return `${lower.slice(0, -3)}y`;
+  }
+  if (lower.endsWith("s") && !lower.endsWith("ss")) {
+    return lower.slice(0, -1);
+  }
+  return lower;
+}
+
 function selectPrimaryActor(actors, preferredKeywords) {
-  const normalizedActors = actors.map((actor) => ({ original: actor, normalized: actor.toLowerCase() }));
+  const normalizedActors = actors.map((actor) => ({
+    original: actor,
+    normalized: singularizeActorLabel(actor)
+  }));
   const match = normalizedActors.find((actor) => preferredKeywords.some((keyword) => actor.normalized.includes(keyword)));
-  return match ? match.original : actors[0] ?? "operator";
+  return match ? match.normalized : singularizeActorLabel(actors[0] ?? "operator");
 }
 
 function dedupeByTitle(stories) {

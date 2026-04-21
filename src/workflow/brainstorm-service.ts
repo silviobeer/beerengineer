@@ -555,7 +555,7 @@ export class BrainstormService {
         itemId: item.id,
         version: (previousConcept?.version ?? 0) + 1,
         title: `${item.title} Concept`,
-        summary: projectsPayload.projects.map((project) => project.title).join(", "),
+        summary: this.buildConceptSummary(item.title, draftView, projectsPayload.projects),
         status: "draft",
         markdownArtifactId: conceptArtifactRecord.id,
         structuredArtifactId: projectsArtifactRecord.id
@@ -1184,6 +1184,7 @@ export class BrainstormService {
     item: { code: string; title: string; description: string },
     draft: BrainstormDraftView
   ): string {
+    const scopeNotes = this.summarizeScopeNotes(draft.scopeNotes);
     return [
       `# ${item.title} Concept`,
       "",
@@ -1218,7 +1219,7 @@ export class BrainstormService {
       draft.assumptions.length > 0 ? draft.assumptions.map((entry) => `- ${entry}`).join("\n") : "- None captured",
       "",
       "## Scope Notes",
-      draft.scopeNotes ?? "No additional scope notes captured.",
+      scopeNotes ?? "No additional scope notes captured.",
       ""
     ].join("\n");
   }
@@ -1262,7 +1263,9 @@ export class BrainstormService {
 
     return {
       projects: candidateSeeds.map((seed, index) => ({
-        title: this.buildBrainstormProjectTitle(item.title, seed, index),
+        title: candidateSeeds.length === 1
+          ? this.buildSingleProjectTitle(item.title, draft, seed)
+          : this.buildBrainstormProjectTitle(item.title, seed, index),
         summary: index === 0 ? draft.problem ?? seed : seed,
         goal: candidateSeeds.length === 1 ? defaultGoal : `${defaultGoal.replace(/[.]$/, "")}: ${seed}`,
         targetUsers: [...draft.targetUsers],
@@ -1498,7 +1501,7 @@ export class BrainstormService {
   }
 
   private buildBrainstormProjectTitle(itemTitle: string, seed: string, index: number): string {
-    const cleaned = seed
+    const cleaned = this.cleanTitleSeed(seed)
       .replace(/^(build|create|support|enable|deliver)\s+/i, "")
       .replace(/[.?!].*$/, "")
       .trim();
@@ -1508,6 +1511,81 @@ export class BrainstormService {
     const words = cleaned.split(/\s+/).slice(0, 6);
     const title = words.map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
     return title.toLowerCase().startsWith(itemTitle.toLowerCase()) ? title : `${itemTitle} ${title}`;
+  }
+
+  private buildSingleProjectTitle(itemTitle: string, draft: BrainstormDraftView, seed: string): string {
+    const normalizedItemTitle = itemTitle.trim();
+    const cleanedSeed = this.cleanTitleSeed(seed);
+    if (!cleanedSeed) {
+      return normalizedItemTitle;
+    }
+
+    const lowSignalSeed = /^(one|single)\s+/i.test(cleanedSeed)
+      || /\b(apps\/ui|shared core workflow services?|next\.js|mvp|v1|first release)\b/i.test(cleanedSeed);
+    if (lowSignalSeed) {
+      return normalizedItemTitle;
+    }
+
+    const outcomeTitle = draft.coreOutcome ? this.cleanTitleSeed(draft.coreOutcome) : "";
+    if (outcomeTitle && outcomeTitle.toLowerCase().includes(normalizedItemTitle.toLowerCase())) {
+      return normalizedItemTitle;
+    }
+
+    return this.buildBrainstormProjectTitle(normalizedItemTitle, cleanedSeed, 0);
+  }
+
+  private buildConceptSummary(
+    itemTitle: string,
+    draft: BrainstormDraftView,
+    projects: Array<{ title: string; goal: string }>
+  ): string {
+    if (draft.coreOutcome) {
+      return draft.coreOutcome;
+    }
+    if (projects.length === 1) {
+      return projects[0]!.goal;
+    }
+    return projects.map((project) => project.title).join(", ");
+  }
+
+  private cleanTitleSeed(value: string): string {
+    return value
+      .replace(/\b(one focused|single integrated|single)\b/gi, " ")
+      .replace(/\b(ui v\d+|v\d+|first release|mvp)\b/gi, " ")
+      .replace(/\bin\s+apps\/[a-z0-9/_-]+\b/gi, " ")
+      .replace(/\bon shared core workflow services?\b/gi, " ")
+      .replace(/\busing shared core workflow services?\b/gi, " ")
+      .replace(/\bon core services?\b/gi, " ")
+      .replace(/\bwith shared core workflow services?\b/gi, " ")
+      .replace(/\bbuild\b/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  private summarizeScopeNotes(scopeNotes: string | null): string | null {
+    if (!scopeNotes) {
+      return null;
+    }
+
+    const lines = this.normalizeBrainstormEntries(
+      scopeNotes
+        .split(/\r?\n/)
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+        .filter((entry) => !/^#{1,6}\s+/.test(entry))
+        .map((entry) => entry.replace(/^[-*•]\s*/, ""))
+        .map((entry) => entry.replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1"))
+    );
+
+    if (lines.length === 0) {
+      return null;
+    }
+
+    const summarized = lines.slice(0, 5).map((entry) => `- ${entry}`);
+    if (lines.length > 5) {
+      summarized.push("- Additional scope notes are preserved in the brainstorm artifacts.");
+    }
+    return summarized.join("\n");
   }
 
   private persistManualArtifact(input: {

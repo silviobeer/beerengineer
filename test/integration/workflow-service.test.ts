@@ -1108,7 +1108,7 @@ describe("workflow service", () => {
         sessionId: started.sessionId,
         problem: "Operators need a real UI shell instead of terminal output.",
         coreOutcome: "Ship a workspace-first board, overlay, inbox, and chat shell backed by shared core services.",
-        targetUsers: ["workspace operator", "delivery lead", "reviewer"],
+        targetUsers: ["product engineers", "delivery leads", "reviewers"],
         useCases: [
           "switch the active workspace globally",
           "view items on a real workflow board grouped by domain columns",
@@ -1150,9 +1150,11 @@ describe("workflow service", () => {
       });
       await context.workflowService.promoteBrainstorm(started.sessionId);
       const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      expect(concept?.summary).toBe("Ship a workspace-first board, overlay, inbox, and chat shell backed by shared core services.");
       context.workflowService.approveConcept(concept!.id);
       context.workflowService.importProjects(item.id);
       const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
+      expect(project.title).toBe("UI Shell");
 
       const result = await context.workflowService.startStage({
         stageKey: "requirements",
@@ -1170,6 +1172,9 @@ describe("workflow service", () => {
       expect(titles).toContain("Inspect workflow runs and artifacts");
       expect(titles).toContain("Build the shell on shared core services");
       expect(titles).toContain("Maintain a reusable UI component system");
+      expect(stories.every((story) => !story.description.includes("As a product engineers"))).toBe(true);
+      expect(stories.every((story) => !story.description.includes("As a delivery leads"))).toBe(true);
+      expect(stories.every((story) => !story.description.includes("As a reviewers"))).toBe(true);
 
       const run = context.repositories.stageRunRepository.getById(result.runId);
       expect(run?.status).toBe("completed");
@@ -1183,6 +1188,15 @@ describe("workflow service", () => {
         join(context.effectiveConfig.workspaceRoot, ".beerengineer", "workspaces", context.workspace.key, "artifacts", storiesArtifact!.path),
         "utf8"
       );
+      const conceptArtifact = context.repositories.artifactRepository.getLatestByKind({
+        itemId: item.id,
+        projectId: null,
+        kind: "concept"
+      });
+      const conceptMarkdown = readFileSync(
+        join(context.effectiveConfig.workspaceRoot, ".beerengineer", "workspaces", context.workspace.key, "artifacts", conceptArtifact!.path),
+        "utf8"
+      );
       expect(storiesMarkdown).toContain("## Source Coverage");
       expect(storiesMarkdown).toContain("## Design Constraints");
       expect(storiesMarkdown).toContain("## Required Deliverables");
@@ -1191,6 +1205,10 @@ describe("workflow service", () => {
       expect(storiesMarkdown).toContain("implementation must include a UI showcase");
       expect(storiesMarkdown).toContain("component inventory");
       expect(storiesMarkdown).toContain("Board Mockup");
+      expect(conceptMarkdown).toContain("## Scope Notes");
+      expect(conceptMarkdown).toContain("- Primary visual reference:");
+      expect(conceptMarkdown).toContain("- Board Mockup");
+      expect(conceptMarkdown).toContain("- Required deliverables include a showcase route and maintained component inventory.");
     } finally {
       context.connection.close();
       rmSync(root, { recursive: true, force: true });
