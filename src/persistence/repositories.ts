@@ -3057,6 +3057,22 @@ export class StoryReviewRemediationAgentSessionRepository {
     return row;
   }
 
+  public update(
+    id: string,
+    updates: Partial<
+      Omit<StoryReviewRemediationAgentSession, "id" | "storyReviewRemediationRunId" | "createdAt" | "updatedAt">
+    >
+  ): void {
+    this.db
+      .update(storyReviewRemediationAgentSessions)
+      .set({
+        ...updates,
+        updatedAt: now()
+      })
+      .where(eq(storyReviewRemediationAgentSessions.id, id))
+      .run();
+  }
+
   public listByRunId(storyReviewRemediationRunId: string): StoryReviewRemediationAgentSession[] {
     return this.db
       .select()

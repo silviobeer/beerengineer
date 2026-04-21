@@ -530,6 +530,15 @@ export class VerificationService {
       selectedFindings.forEach((finding) => this.options.deps.storyReviewFindingRepository.updateStatus(finding.id, "in_progress"));
       return createdRun;
     });
+    const agentSession = this.options.deps.storyReviewRemediationAgentSessionRepository.create({
+      storyReviewRemediationRunId: remediationRun.id,
+      adapterKey: runtime.adapterKey,
+      status: "running",
+      commandJson: JSON.stringify(["remediation", storyReviewRun.id]),
+      stdout: "",
+      stderr: "",
+      exitCode: 0
+    });
 
     try {
       const result = await this.options.executeWaveStory({
@@ -545,11 +554,8 @@ export class VerificationService {
         workerRoleOverride: "story-review-remediator",
         gitMetadata
       });
-      this.options.deps.storyReviewRemediationAgentSessionRepository.create({
-        storyReviewRemediationRunId: remediationRun.id,
-        adapterKey: runtime.adapterKey,
+      this.options.deps.storyReviewRemediationAgentSessionRepository.update(agentSession.id, {
         status: result.status === "failed" ? "failed" : "completed",
-        commandJson: JSON.stringify(["remediation", storyReviewRun.id]),
         stdout: JSON.stringify(result),
         stderr: "",
         exitCode: result.status === "failed" ? 1 : 0
@@ -610,11 +616,8 @@ export class VerificationService {
         status: remediationStatus
       };
     } catch (error) {
-      this.options.deps.storyReviewRemediationAgentSessionRepository.create({
-        storyReviewRemediationRunId: remediationRun.id,
-        adapterKey: runtime.adapterKey,
+      this.options.deps.storyReviewRemediationAgentSessionRepository.update(agentSession.id, {
         status: "failed",
-        commandJson: JSON.stringify(["remediation", storyReviewRun.id]),
         stdout: "",
         stderr: error instanceof Error ? error.message : String(error),
         exitCode: 1
