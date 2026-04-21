@@ -17,6 +17,14 @@ function normalizeEntries(values) {
   return result;
 }
 
+function normalizePersonEntry(value) {
+  return `${value}`
+    .replace(/\s+/g, " ")
+    .replace(/^and\s+/i, "")
+    .replace(/[.,;:]+$/, "")
+    .trim();
+}
+
 function splitEntries(value) {
   return normalizeEntries(`${value}`.split(/\n|;/g));
 }
@@ -34,7 +42,7 @@ function applyBrainstormLabel(result, label, value) {
     return true;
   }
   if (label === "user" || label === "users" || label === "target user" || label === "target users" || label === "actor") {
-    result.targetUsers.push(...splitEntries(value));
+    result.targetUsers.push(...splitEntries(value).map((entry) => normalizePersonEntry(entry)).filter(Boolean));
     return true;
   }
   if (label === "use case" || label === "use cases") {
@@ -209,11 +217,43 @@ function containsAny(value, keywords) {
 }
 
 function deriveRequirementsActors(upstream) {
-  const explicit = mergeFragmentedEntries(upstream.targetUsers ?? []);
+  const explicit = mergeFragmentedEntries(upstream.targetUsers ?? []).map((entry) => normalizePersonEntry(entry));
   if (explicit.length > 0) {
-    return explicit;
+    return normalizeEntries(explicit);
   }
   return ["workspace operator", "delivery lead", "reviewer"];
+}
+
+function summarizeScopeNotes(scopeNotes) {
+  if (!scopeNotes) {
+    return null;
+  }
+  const lines = normalizeEntries(
+    `${scopeNotes}`
+      .split(/\r?\n/)
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .filter((entry) => !/^#{1,6}\s+/.test(entry))
+      .map((entry) => entry.replace(/^[-*•]\s*/, ""))
+      .map((entry) => entry.replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1"))
+  );
+  if (lines.length === 0) {
+    return null;
+  }
+  return lines.slice(0, 6).join(" | ");
+}
+
+function summarizeProjectOutcome(project, context) {
+  const upstream = normalizeUpstreamSource(context?.upstreamSource);
+  const useCaseLead = upstream.useCases.slice(0, 3).join(", ");
+  const coreOutcome = upstream.coreOutcome ? upstream.coreOutcome.replace(/[:\s]+$/, "") : null;
+  if (coreOutcome && !/[.:]$/.test(coreOutcome)) {
+    return coreOutcome;
+  }
+  if (useCaseLead) {
+    return `Deliver the first workspace shell slice covering ${useCaseLead}.`;
+  }
+  return `Deliver the first usable slice for ${project.title}.`;
 }
 
 function singularizeActorLabel(actor) {
@@ -836,11 +876,48 @@ ${sourceCoverage || "- No structured upstream coverage entries were available."}
 }
 
 function architecture(project, context) {
+  const upstream = normalizeUpstreamSource(context?.upstreamSource);
+  const scopeNotesSummary = summarizeScopeNotes(upstream.scopeNotes);
+  const designConstraints = deriveGenericPlanningContext(context?.upstreamSource ?? {}).designConstraints;
+  const requirements = context?.stories ?? [];
   const reviewFeedback = context?.reviewFeedback ?? [];
   const latestFeedback = reviewFeedback.length > 0 ? reviewFeedback[reviewFeedback.length - 1] : null;
   const revisionNotes = latestFeedback
     ? latestFeedback.findings.map((finding) => `${finding.title}: ${finding.detail}`)
     : [];
+  const hasUiShellScope =
+    upstream.useCases.some((entry) => containsAny(entry, ["board", "overlay", "inbox", "chat", "runs", "artifacts"]))
+    || requirements.some((story) => containsAny(`${story.title} ${story.goal}`, ["board", "overlay", "inbox", "conversation", "runs", "artifacts"]));
+  const architectureSummary = hasUiShellScope
+    ? `Workspace-scoped UI shell architecture for ${project.title} built around board, overlay, inbox, conversations, and shared workflow read models.`
+    : `Modular architecture for ${project.title}.`;
+  const decisions = hasUiShellScope
+    ? [
+        "Expose a workspace-scoped board read model as the primary UI surface.",
+        "Serve selected item detail through an overlay-focused item detail view model with timeline, next actions, and chat preview.",
+        "Model inbox, runs, artifacts, and conversations as structured application-service read models instead of CLI text parsing.",
+        "Keep reusable shell and primitive components data-driven and separate from workflow decision logic.",
+        ...(latestFeedback ? ["Address the latest planning-review feedback inside the architecture artifact"] : [])
+      ]
+    : [
+        "Keep workflow logic in the domain layer",
+        "Store stage runs and artifacts separately",
+        ...(latestFeedback ? ["Address the latest planning-review feedback inside the architecture artifact"] : [])
+      ];
+  const risks = hasUiShellScope
+    ? [
+        "UI read models may drift from workflow state if board, inbox, and conversation views are assembled independently.",
+        "Component surfaces may grow page-specific behavior unless view-model boundaries stay explicit.",
+        "Workspace switching and selected-item overlay state can leak stale context if shell state is not centralized."
+      ]
+    : ["Prompt or skill files may drift without snapshots"];
+  const nextSteps = hasUiShellScope
+    ? [
+        "Implement the board-first shell and overlay slice first.",
+        "Introduce structured inbox and conversation services before runs and artifacts expansion.",
+        "Keep showcase and component inventory updated alongside reusable shell components."
+      ]
+    : ["Continue into implementation waves after approval"];
   return {
     markdownArtifacts: [
       {
@@ -848,7 +925,24 @@ function architecture(project, context) {
         content: `# Architecture Plan for ${project.code} ${project.title}
 
 ## Summary
-Modular engine-first implementation with reproducible stage runs.
+${architectureSummary}
+
+## Architecture Focus
+- Primary outcome: ${summarizeProjectOutcome(project, context)}
+- Structured upstream scope: ${upstream.useCases.slice(0, 5).join("; ") || "No structured use cases captured."}
+- Shell reference: ${scopeNotesSummary ?? "No condensed scope notes captured."}
+
+## Key Decisions
+${decisions.map((decision) => `- ${decision}`).join("\n")}
+
+## Constraints
+${(upstream.constraints.slice(0, 6).length > 0 ? upstream.constraints.slice(0, 6) : ["No explicit architecture-shaping constraints captured."]).map((entry) => `- ${entry}`).join("\n")}
+
+## Design Constraints
+${(designConstraints.length > 0 ? designConstraints : ["No explicit design constraints captured."]).map((entry) => `- ${entry}`).join("\n")}
+
+## Next Steps
+${nextSteps.map((step) => `- ${step}`).join("\n")}
 
 ${revisionNotes.length > 0 ? `## Revision Notes\n${revisionNotes.map((note) => `- ${note}`).join("\n")}` : ""}`
       }
@@ -857,14 +951,10 @@ ${revisionNotes.length > 0 ? `## Revision Notes\n${revisionNotes.map((note) => `
       {
         kind: "architecture-plan-data",
         content: {
-          summary: `Modular architecture for ${project.title}`,
-          decisions: [
-            "Keep workflow logic in the domain layer",
-            "Store stage runs and artifacts separately",
-            ...(latestFeedback ? ["Address the latest planning-review feedback inside the architecture artifact"] : [])
-          ],
-          risks: ["Prompt or skill files may drift without snapshots"],
-          nextSteps: ["Continue into implementation waves after approval"]
+          summary: architectureSummary,
+          decisions,
+          risks,
+          nextSteps
         }
       }
     ]

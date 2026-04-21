@@ -23,3 +23,15 @@ Aktuelle Tech Debt:
   eigenem Review-/Backfill-Mechanismus.
   Das ist bewusst vorerst akzeptiert, aber noch keine vollstaendige
   Vereinheitlichung des Review-Prozesses von `brainstorm` bis `planning`.
+
+- `architecture` ist fuer CLI-getriebenen UI-Bau noch nicht stark genug
+  Der stage-owned Review-Loop funktioniert inzwischen sauber, aber die
+  Architektur-Artefakte bleiben fuer UI-lastige Projekte noch zu schematisch.
+  Konkret fehlt dem aktuellen Output noch genug Entscheidungsstaerke bei:
+  - UI-facing View-Model-Grenzen fuer Board, Overlay, Inbox und Conversation
+  - gemeinsamer Source-of-Truth fuer Shell-, Item- und Attention-Zustand
+  - explizitem Capability-Modell fuer UI-Aktionen
+  - sauberer Trennung zwischen Kern-V1, spaeteren Deliverables und reinem Kontext
+  Das ist kein Flow-Blocker mehr, aber noch ein Qualitaetsmangel fuer den
+  eigentlichen Anspruch, ein UI hauptsaechlich aus den CLI-Artefakten bauen zu
+  koennen.

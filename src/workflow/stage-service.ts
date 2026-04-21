@@ -490,6 +490,23 @@ export class StageService {
     const concept = this.options.deps.conceptRepository.getLatestByItemId(itemId);
     const conceptSummary = concept?.summary ?? null;
     const architectureSummary = this.options.deps.architecturePlanRepository.getLatestByProjectId(projectId)?.summary ?? null;
+    const summarizeScopeNotes = (scopeNotes: string | null): string | null => {
+      if (!scopeNotes) {
+        return null;
+      }
+      const lines = Array.from(
+        new Set(
+          scopeNotes
+            .split(/\r?\n/)
+            .map((entry) => entry.trim())
+            .filter(Boolean)
+            .filter((entry) => !/^#{1,6}\s+/.test(entry))
+            .map((entry) => entry.replace(/^[-*•]\s*/, ""))
+            .map((entry) => entry.replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1"))
+        )
+      );
+      return lines.length > 0 ? lines.slice(0, 8).join("\n") : null;
+    };
 
     const loadUpstreamSource = () => {
       const session = this.options.deps.brainstormSessionRepository.getLatestByItemId(itemId);
@@ -514,7 +531,7 @@ export class StageService {
         openQuestions: JSON.parse(draft.openQuestionsJson) as string[],
         candidateDirections: JSON.parse(draft.candidateDirectionsJson) as string[],
         recommendedDirection: draft.recommendedDirection,
-        scopeNotes: draft.scopeNotes,
+        scopeNotes: summarizeScopeNotes(draft.scopeNotes),
         designConstraints: genericContext.designConstraints,
         requiredDeliverables: genericContext.requiredDeliverables,
         referenceArtifacts: genericContext.referenceArtifacts

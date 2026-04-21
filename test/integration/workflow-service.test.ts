@@ -328,7 +328,7 @@ describe("workflow service", () => {
         project: { id: string } | null;
         context: {
           stageKey: string;
-          upstreamSource: { targetUsers: string[]; useCases: string[]; constraints: string[] } | null;
+          upstreamSource: { targetUsers: string[]; useCases: string[]; constraints: string[]; scopeNotes: string | null } | null;
           stories: unknown[];
         } | null;
       };
@@ -339,6 +339,7 @@ describe("workflow service", () => {
       expect(snapshot.context?.upstreamSource?.targetUsers).toContain("support operator");
       expect(snapshot.context?.upstreamSource?.useCases.length).toBeGreaterThanOrEqual(2);
       expect(snapshot.context?.upstreamSource?.constraints).toContain("must run offline");
+      expect(snapshot.context?.upstreamSource?.scopeNotes ?? null).toBeNull();
     } finally {
       context.connection.close();
       rmSync(root, { recursive: true, force: true });
@@ -1155,6 +1156,7 @@ describe("workflow service", () => {
       context.workflowService.importProjects(item.id);
       const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
       expect(project.title).toBe("UI Shell");
+      expect(project.goal).toBe("Ship a workspace-first board, overlay, inbox, and chat shell backed by shared core services.");
 
       const result = await context.workflowService.startStage({
         stageKey: "requirements",
@@ -1209,6 +1211,26 @@ describe("workflow service", () => {
       expect(conceptMarkdown).toContain("- Primary visual reference:");
       expect(conceptMarkdown).toContain("- Board Mockup");
       expect(conceptMarkdown).toContain("- Required deliverables include a showcase route and maintained component inventory.");
+
+      context.workflowService.approveStories(project.id);
+      const architecture = await context.workflowService.startStage({
+        stageKey: "architecture",
+        itemId: item.id,
+        projectId: project.id
+      });
+      expect(architecture.status).toBe("completed");
+      const architectureArtifact = context.repositories.artifactRepository.getLatestByKind({
+        itemId: item.id,
+        projectId: project.id,
+        kind: "architecture-plan"
+      });
+      const architectureMarkdown = readFileSync(
+        join(context.effectiveConfig.workspaceRoot, ".beerengineer", "workspaces", context.workspace.key, "artifacts", architectureArtifact!.path),
+        "utf8"
+      );
+      expect(architectureMarkdown).toContain("Workspace-scoped UI shell architecture");
+      expect(architectureMarkdown).toContain("board, overlay, inbox, conversations");
+      expect(architectureMarkdown).toContain("shared workflow read models");
     } finally {
       context.connection.close();
       rmSync(root, { recursive: true, force: true });
@@ -1598,6 +1620,14 @@ describe("workflow service", () => {
       const lastAssistant = [...shown.messages].reverse().find((message) => message.role === "assistant");
       expect(lastAssistant?.structuredPayloadJson ?? "").toContain("\"reviewLoopState\"");
       expect(lastAssistant?.structuredPayloadJson ?? "").toContain("\"reviewFeedback\"");
+
+      await context.workflowService.promoteBrainstorm(started.sessionId);
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      expect(concept?.summary).toBe("Deliver one operational UI shell for the workflow engine");
+      context.workflowService.approveConcept(concept!.id);
+      context.workflowService.importProjects(item.id);
+      const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
+      expect(project.goal).toBe("Deliver one operational UI shell for the workflow engine");
     } finally {
       context.connection.close();
       rmSync(root, { recursive: true, force: true });

@@ -29,3 +29,23 @@ Dabei bleibt der offene Zustand immer beim Stage-LLM:
 `brainstorm` folgt derselben Produktsemantik, laeuft technisch aber noch ueber
 einen eigenen dialogischen Service und nicht ueber denselben generischen
 Loop-Kern. Das ist derzeit bekannte Tech Debt.
+
+## Bekannte Qualitaetsgrenze
+
+Fuer `requirements`, `architecture` und `planning` ist der operative
+Review-/Revisions-Loop inzwischen vereinheitlicht und stage-owned.
+
+Bekannte Restschuld bleibt aber die Qualitaet der erzeugten
+`architecture`-Artefakte bei UI-lastigen Vorhaben:
+
+- der Loop haelt den Ball korrekt beim Stage-LLM
+- die Artefakte werden sauber reviewed und revidiert
+- aber der Architektur-Output ist noch nicht durchgaengig stark genug, um
+  einen UI-Bau allein aus den CLI-Artefakten zu tragen
+
+Insbesondere fehlen noch robustere Entscheidungen zu:
+
+- UI-facing Read-/View-Model-Grenzen
+- gemeinsamer Shell- und Attention-State-Struktur
+- Action-Capabilities fuer die UI
+- Priorisierung von Kern-V1 gegen spaetere Deliverables und Kontextmaterial

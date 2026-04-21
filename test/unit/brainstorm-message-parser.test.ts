@@ -180,4 +180,12 @@ describe("extractLabeledBrainstormLists", () => {
     expect(result.decisionRationale).toBe("keep one coherent operational shell in the first release.");
     expect(result.recommendedDirection).toBe("build one UI app on shared core workflow services.");
   });
+
+  it("normalizes trailing punctuation in target-user follow-up answers", () => {
+    const result = extractBrainstormMessageStructure(
+      "Target users: product engineers, delivery leads, reviewers. Users: reviewers"
+    );
+
+    expect(result.targetUsers).toEqual(["product engineers", "delivery leads", "reviewers"]);
+  });
 });

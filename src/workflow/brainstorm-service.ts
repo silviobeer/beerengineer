@@ -616,7 +616,7 @@ export class BrainstormService {
       revision: draft.revision,
       status: draft.status,
       problem: draft.problem,
-      targetUsers: JSON.parse(draft.targetUsersJson) as string[],
+      targetUsers: this.normalizeTargetUserEntries(JSON.parse(draft.targetUsersJson) as string[]),
       coreOutcome: draft.coreOutcome,
       useCases: JSON.parse(draft.useCasesJson) as string[],
       constraints: JSON.parse(draft.constraintsJson) as string[],
@@ -680,7 +680,9 @@ export class BrainstormService {
       if (value === undefined) {
         return;
       }
-      result[key] = JSON.stringify(this.normalizeBrainstormEntries(value));
+      result[key] = JSON.stringify(
+        key === "targetUsersJson" ? this.normalizeTargetUserEntries(value) : this.normalizeBrainstormEntries(value)
+      );
     };
 
     if (patch.problem !== undefined) {
@@ -749,7 +751,11 @@ export class BrainstormService {
         ? (JSON.parse(adapterValue) as string[])
         : (JSON.parse(previousValue) as string[]);
       const sanitizedEntries = this.sanitizeExistingStructuredEntries(field, existingEntries);
-      result[jsonKey] = JSON.stringify(this.normalizeBrainstormEntries([...sanitizedEntries, ...entries]));
+      result[jsonKey] = JSON.stringify(
+        field === "targetUsers"
+          ? this.normalizeTargetUserEntries([...sanitizedEntries, ...entries])
+          : this.normalizeBrainstormEntries([...sanitizedEntries, ...entries])
+      );
     }
     this.applyOpenQuestionResolution(result, adapterUpdate, previousDraft, messageStructure);
     return result;
@@ -1121,6 +1127,12 @@ export class BrainstormService {
     return result;
   }
 
+  private normalizeTargetUserEntries(values: string[]): string[] {
+    return this.normalizeBrainstormEntries(
+      values.map((value) => value.replace(/^and\s+/i, "").replace(/[.,;:]+$/, "").trim())
+    );
+  }
+
   private computeBrainstormDraftStatus(draft: BrainstormDraft): BrainstormDraftStatus {
     const view = this.mapBrainstormDraft(draft);
     const hasCore = Boolean(view.problem && view.coreOutcome);
@@ -1250,7 +1262,7 @@ export class BrainstormService {
       projectSeeds: latestReview?.projectShape.suggestedSeeds ?? []
     });
     const candidateSeeds = this.selectBrainstormProjectSeeds(draft, item.title, projectShape);
-    const defaultGoal = draft.coreOutcome ?? `Deliver the first usable slice for ${item.title}.`;
+    const defaultGoal = this.buildProjectGoal(item.title, draft);
     const genericContext = deriveGenericUpstreamContext({
       constraints: draft.constraints,
       nonGoals: draft.nonGoals,
@@ -1266,9 +1278,9 @@ export class BrainstormService {
         title: candidateSeeds.length === 1
           ? this.buildSingleProjectTitle(item.title, draft, seed)
           : this.buildBrainstormProjectTitle(item.title, seed, index),
-        summary: index === 0 ? draft.problem ?? seed : seed,
+        summary: index === 0 ? this.buildProjectSummary(item.title, draft, seed) : seed,
         goal: candidateSeeds.length === 1 ? defaultGoal : `${defaultGoal.replace(/[.]$/, "")}: ${seed}`,
-        targetUsers: [...draft.targetUsers],
+        targetUsers: this.normalizeTargetUserEntries([...draft.targetUsers]),
         useCases: [...draft.useCases],
         constraints: [...draft.constraints],
         nonGoals: [...draft.nonGoals],
@@ -1539,13 +1551,41 @@ export class BrainstormService {
     draft: BrainstormDraftView,
     projects: Array<{ title: string; goal: string }>
   ): string {
-    if (draft.coreOutcome) {
-      return draft.coreOutcome;
+    const normalizedOutcome = this.normalizeSentenceSummary(draft.coreOutcome);
+    if (normalizedOutcome) {
+      return normalizedOutcome;
     }
     if (projects.length === 1) {
-      return projects[0]!.goal;
+      return this.normalizeSentenceSummary(projects[0]!.goal) ?? projects[0]!.goal;
     }
     return projects.map((project) => project.title).join(", ");
+  }
+
+  private buildProjectSummary(itemTitle: string, draft: BrainstormDraftView, seed: string): string {
+    return this.normalizeSentenceSummary(draft.problem)
+      ?? this.normalizeSentenceSummary(draft.coreOutcome)
+      ?? this.normalizeSentenceSummary(seed)
+      ?? `Deliver the first usable slice for ${itemTitle}.`;
+  }
+
+  private buildProjectGoal(itemTitle: string, draft: BrainstormDraftView): string {
+    const normalizedOutcome = this.normalizeSentenceSummary(draft.coreOutcome);
+    if (normalizedOutcome) {
+      return normalizedOutcome;
+    }
+    const useCaseSummary = this.normalizeBrainstormEntries(draft.useCases).slice(0, 3).join(", ");
+    if (useCaseSummary) {
+      return `Deliver the first usable slice for ${itemTitle} covering ${useCaseSummary}.`;
+    }
+    return `Deliver the first usable slice for ${itemTitle}.`;
+  }
+
+  private normalizeSentenceSummary(value: string | null | undefined): string | null {
+    const normalized = value?.replace(/\s+/g, " ").trim() ?? "";
+    if (!normalized) {
+      return null;
+    }
+    return normalized.replace(/[:;]+$/, "");
   }
 
   private cleanTitleSeed(value: string): string {
