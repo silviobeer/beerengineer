@@ -2576,6 +2576,8 @@ describe("workflow service", () => {
         .filter((run) => run.stageKey === "planning");
       expect(planningRuns).toHaveLength(2);
       expect(planningRuns[1]?.inputSnapshotJson ?? "").toContain("reviewFeedback");
+      expect(planningRuns[1]?.systemPromptSnapshot ?? "").toContain("Revision Context");
+      expect(planningRuns[1]?.systemPromptSnapshot ?? "").toContain("Latest review summary");
 
       const implementationPlan = context.repositories.implementationPlanRepository.getLatestByProjectId(project.id);
       const planArtifact = context.repositories.artifactRepository.getById(implementationPlan!.structuredArtifactId);

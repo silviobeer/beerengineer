@@ -96,6 +96,7 @@ export class StageService {
       ? this.buildProjectStageContext(input.stageKey, project.id, item.id, input.userClarifications ?? [], input.reviewFeedback ?? [])
       : null;
     const inputSnapshot = this.buildStageInputSnapshot(item, project, adapterContext);
+    const stagePrompt = this.buildRevisionAwarePrompt(resolved.promptContent, input.stageKey, input.reviewFeedback ?? []);
 
     const run = this.options.deps.runInTransaction(() => {
       const createdRun = this.options.deps.stageRunRepository.create({
@@ -104,7 +105,7 @@ export class StageService {
         stageKey: input.stageKey,
         status: "pending",
         inputSnapshotJson: inputSnapshot,
-        systemPromptSnapshot: resolved.promptContent,
+        systemPromptSnapshot: stagePrompt,
         skillsSnapshotJson: JSON.stringify(resolved.skills, null, 2),
         outputSummaryJson: null,
         errorMessage: null
@@ -122,7 +123,7 @@ export class StageService {
       const result = await runtime.adapter.run({
         runtime: this.options.buildAdapterRuntimeContext(runtime),
         stageKey: input.stageKey,
-        prompt: this.buildRevisionAwarePrompt(resolved.promptContent, input.stageKey, input.reviewFeedback ?? []),
+        prompt: stagePrompt,
         skills: resolved.skills,
         item: {
           id: item.id,
