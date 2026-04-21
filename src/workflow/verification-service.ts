@@ -1278,6 +1278,15 @@ export class VerificationService {
       storyRunContext: input.storyRunContext
     });
     const testPreparation = this.buildTestPreparationPayload(input.testPreparationRun, input.parsedTestPreparation);
+    const agentSession = this.options.deps.storyReviewAgentSessionRepository.create({
+      storyReviewRunId: reviewRun.id,
+      adapterKey: runtime.adapterKey,
+      status: "running",
+      commandJson: JSON.stringify([]),
+      stdout: "",
+      stderr: "",
+      exitCode: 0
+    });
     try {
       const result = await runtime.adapter.runStoryReview({
         runtime: this.options.buildAdapterRuntimeContext({
@@ -1302,7 +1311,7 @@ export class VerificationService {
       });
 
       const parsed = storyReviewOutputSchema.parse(result.output);
-      this.options.deps.storyReviewAgentSessionRepository.create({
+      this.options.deps.storyReviewAgentSessionRepository.update(agentSession.id, {
         storyReviewRunId: reviewRun.id,
         adapterKey: runtime.adapterKey,
         status: result.exitCode === 0 ? "completed" : "failed",
@@ -1368,7 +1377,7 @@ export class VerificationService {
         errorMessage: null
       };
     } catch (error) {
-      this.options.deps.storyReviewAgentSessionRepository.create({
+      this.options.deps.storyReviewAgentSessionRepository.update(agentSession.id, {
         storyReviewRunId: reviewRun.id,
         adapterKey: runtime.adapterKey,
         status: "failed",
@@ -1668,9 +1677,6 @@ export class VerificationService {
       return "failed";
     }
     if (output.overallStatus === "failed") {
-      return "failed";
-    }
-    if (output.findings.some((finding) => finding.severity === "critical" || finding.severity === "high")) {
       return "failed";
     }
     if (output.overallStatus === "review_required") {

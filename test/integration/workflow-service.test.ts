@@ -5497,6 +5497,73 @@ export default defineConfig({
     15_000
   );
 
+  it("keeps story review remediable when the reviewer returns review_required with high-severity findings", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const originalScript = readFileSync(localAgentScriptPath, "utf8");
+    const adapterScriptPath = join(root, "local-agent-story-review-high-review-required.mjs");
+    const dbPath = join(root, "app.sqlite");
+
+    try {
+      const reviewScript = replaceRequired(
+        originalScript,
+        "function storyReview(payload) {\n  const findings = [];",
+        `function storyReview(payload) {\n  const findings = [{
+    severity: "high",
+    category: "reliability",
+    title: "High-severity review follow-up",
+    description: "The reviewer found a serious issue that still expects remediation rather than hard failure.",
+    evidence: "Injected by the high-severity remediation fixture.",
+    filePath: "src/workflow/workflow-service.ts",
+    line: 1,
+    suggestedFix: "Fix the issue in the remediation loop."
+  }];`
+      );
+      const reviewRequiredScript = replaceRequired(
+        reviewScript,
+        "  const overallStatus = findings.some((finding) => finding.severity === \"critical\" || finding.severity === \"high\")\n    ? \"failed\"\n    : findings.length > 0\n      ? \"review_required\"\n      : \"passed\";",
+        "  const overallStatus = \"review_required\";"
+      );
+      writeFileSync(adapterScriptPath, reviewRequiredScript);
+      const context = createAppContext(dbPath, { adapterScriptPath });
+
+      const item = createWorkspaceItem(context, {
+        title: "Story Review High Severity Remediation",
+        description: "Keep high-severity review findings in the remediation loop"
+      });
+      await context.workflowService.startStage({ stageKey: "brainstorm", itemId: item.id });
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      context.workflowService.approveConcept(concept!.id);
+      context.workflowService.importProjects(item.id);
+      const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
+      await context.workflowService.startStage({ stageKey: "requirements", itemId: item.id, projectId: project.id });
+      context.workflowService.approveStories(project.id);
+      await context.workflowService.startStage({ stageKey: "architecture", itemId: item.id, projectId: project.id });
+      context.workflowService.approveArchitecture(project.id);
+      await context.workflowService.startStage({ stageKey: "planning", itemId: item.id, projectId: project.id });
+      context.workflowService.approvePlanning(project.id);
+
+      const first = await context.workflowService.startExecution(project.id);
+      expect(first.executions[0]?.status).toBe("review_required");
+      expect(first.executions[0]?.phase).toBe("story_review");
+
+      const shown = context.workflowService.showExecution(project.id) as {
+        waves: Array<{
+          waveExecution: { status: string } | null;
+          stories: Array<{
+            latestExecution: { status: string } | null;
+            latestStoryReviewRun: { status: string } | null;
+          }>;
+        }>;
+      };
+      expect(shown.waves[0]?.waveExecution?.status).toBe("review_required");
+      expect(shown.waves[0]?.stories[0]?.latestExecution?.status).toBe("review_required");
+      expect(shown.waves[0]?.stories[0]?.latestStoryReviewRun?.status).toBe("review_required");
+      context.connection.close();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("marks execution failed when story review returns failed", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
     const originalScript = readFileSync(localAgentScriptPath, "utf8");

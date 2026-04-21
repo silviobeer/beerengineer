@@ -2881,6 +2881,41 @@ export class StoryReviewAgentSessionRepository {
     return row;
   }
 
+  public update(
+    id: string,
+    patch: Partial<Omit<StoryReviewAgentSession, "id" | "createdAt" | "updatedAt">>
+  ): StoryReviewAgentSession | null {
+    const existing = this.db
+      .select()
+      .from(storyReviewAgentSessions)
+      .where(eq(storyReviewAgentSessions.id, id))
+      .get() as StoryReviewAgentSession | undefined;
+    if (!existing) {
+      return null;
+    }
+
+    const row: StoryReviewAgentSession = {
+      ...existing,
+      ...patch,
+      updatedAt: now()
+    };
+    this.db
+      .update(storyReviewAgentSessions)
+      .set({
+        storyReviewRunId: row.storyReviewRunId,
+        adapterKey: row.adapterKey,
+        status: row.status,
+        commandJson: row.commandJson,
+        stdout: row.stdout,
+        stderr: row.stderr,
+        exitCode: row.exitCode,
+        updatedAt: row.updatedAt
+      })
+      .where(eq(storyReviewAgentSessions.id, id))
+      .run();
+    return row;
+  }
+
   public listByStoryReviewRunId(storyReviewRunId: string): StoryReviewAgentSession[] {
     return this.db
       .select()
