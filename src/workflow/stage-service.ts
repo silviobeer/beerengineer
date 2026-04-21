@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { buildItemWorkflowSnapshot } from "../domain/aggregate-status.js";
 import { assertCanMoveItem } from "../domain/workflow-rules.js";
 import type { PlanningReviewSourceType, StageKey } from "../domain/types.js";
-import type { AdapterRuntimeContext } from "../adapters/types.js";
+import type { AdapterRunRequest, AdapterRuntimeContext } from "../adapters/types.js";
 import type { ArtifactRecord } from "../persistence/repositories.js";
 import { AppError } from "../shared/errors.js";
 import { formatProjectCode } from "../shared/codes.js";
@@ -16,6 +16,7 @@ import type { WorkflowDeps } from "./workflow-deps.js";
 import type { WorkflowEntityLoaders } from "./entity-loaders.js";
 import { WorkflowOutputImporters } from "./output-importers.js";
 import { deriveGenericUpstreamContext } from "./upstream-context.js";
+import { StageReviewLoopService, type StageReviewFeedback, type StageLoopInput, type StageLoopResult } from "./stage-review-loop-service.js";
 
 const STAGE_CONTEXT_MARKDOWN_LIMIT = 12000;
 
@@ -30,6 +31,8 @@ function capMarkdown(value: string | null): string | null {
 }
 
 export class StageService {
+  private readonly stageReviewLoopService: StageReviewLoopService;
+
   public constructor(
     private readonly options: {
       deps: WorkflowDeps;
@@ -63,20 +66,35 @@ export class StageService {
         automationLevel: "auto_comment";
       }): Promise<unknown>;
     }
-  ) {}
+  ) {
+    this.stageReviewLoopService = new StageReviewLoopService({
+      deps: this.options.deps,
+      reviewCoreService: this.options.reviewCoreService,
+      triggerPlanningReview: this.options.triggerPlanningReview,
+      executeAttempt: (input) => this.executeStageAttempt(input)
+    });
+  }
 
   public async startStage(input: {
     stageKey: StageKey;
     itemId: string;
     projectId?: string;
-  }): Promise<{ runId: string; status: string; planningReview?: unknown }> {
+    userClarifications?: string[];
+    reviewFeedback?: StageReviewFeedback[];
+  }): Promise<StageLoopResult> {
+    return this.stageReviewLoopService.run(input);
+  }
+
+  private async executeStageAttempt(input: StageLoopInput): Promise<StageLoopResult> {
     const item = this.options.loaders.requireItem(input.itemId);
     const project = input.projectId ? this.options.loaders.requireProject(input.projectId) : null;
     const profile = runProfiles[input.stageKey];
     const resolved = this.options.promptResolver.resolve(profile);
     const runtime = this.options.resolveStageRuntime(input.stageKey);
     const inputArtifactIds = this.resolveInputArtifactIds(input.stageKey, item.id, project?.id ?? null);
-    const adapterContext = project ? this.buildProjectStageContext(input.stageKey, project.id, item.id) : null;
+    const adapterContext = project
+      ? this.buildProjectStageContext(input.stageKey, project.id, item.id, input.userClarifications ?? [], input.reviewFeedback ?? [])
+      : null;
     const inputSnapshot = this.buildStageInputSnapshot(item, project, adapterContext);
 
     const run = this.options.deps.runInTransaction(() => {
@@ -104,7 +122,7 @@ export class StageService {
       const result = await runtime.adapter.run({
         runtime: this.options.buildAdapterRuntimeContext(runtime),
         stageKey: input.stageKey,
-        prompt: resolved.promptContent,
+        prompt: this.buildRevisionAwarePrompt(resolved.promptContent, input.stageKey, input.reviewFeedback ?? []),
         skills: resolved.skills,
         item: {
           id: item.id,
@@ -134,6 +152,29 @@ export class StageService {
           stderr: result.stderr,
           exitCode: result.exitCode
         });
+
+        if (result.needsUserInput) {
+          this.transitionRun(run.id, "running", "needs_user_input", {
+            outputSummaryJson: JSON.stringify(
+              {
+                stageKey: input.stageKey,
+                finalStatus: "needs_user_input",
+                question: result.userInputQuestion ?? null,
+                followUpHint: result.followUpHint ?? null
+              },
+              null,
+              2
+            ),
+            errorMessage: result.userInputQuestion ?? result.followUpHint ?? "Stage requires user input"
+          });
+          this.options.deps.itemRepository.updatePhaseStatus(item.id, "review_required");
+          return {
+            runId: run.id,
+            status: "needs_user_input",
+            question: result.userInputQuestion ?? null,
+            followUpHint: result.followUpHint ?? null
+          };
+        }
 
         const outputArtifacts = this.persistArtifacts({
           workspaceKey: this.options.deps.workspace.key,
@@ -171,41 +212,6 @@ export class StageService {
         );
         return { runId: run.id, status: importOutcome.status };
       });
-
-      if (completedRun.status === "completed" && this.options.triggerPlanningReview && project) {
-        if (input.stageKey === "architecture") {
-          const latest = this.options.deps.architecturePlanRepository.getLatestByProjectId(project.id);
-          if (latest) {
-            return {
-              ...completedRun,
-              planningReview: await this.options.triggerPlanningReview({
-                sourceType: "architecture_plan",
-                sourceId: latest.id,
-                step: "architecture",
-                reviewMode: "readiness",
-                interactionMode: "interactive",
-                automationLevel: "auto_comment"
-              })
-            };
-          }
-        }
-        if (input.stageKey === "planning") {
-          const latest = this.options.deps.implementationPlanRepository.getLatestByProjectId(project.id);
-          if (latest) {
-            return {
-              ...completedRun,
-              planningReview: await this.options.triggerPlanningReview({
-                sourceType: "implementation_plan",
-                sourceId: latest.id,
-                step: "plan_writing",
-                reviewMode: "readiness",
-                interactionMode: "interactive",
-                automationLevel: "auto_comment"
-              })
-            };
-          }
-        }
-      }
 
       return completedRun;
     } catch (error) {
@@ -353,15 +359,43 @@ export class StageService {
     if (!run) {
       throw new AppError("RUN_NOT_FOUND", `Stage run ${runId} not found`);
     }
-    if (run.status !== "review_required" && run.status !== "failed") {
+    if (run.status !== "review_required" && run.status !== "failed" && run.status !== "needs_user_input") {
       throw new AppError("RUN_NOT_RETRYABLE", `Stage run ${runId} is not retryable`);
     }
     const next = await this.startStage({
       stageKey: run.stageKey,
       itemId: run.itemId,
-      ...(run.projectId ? { projectId: run.projectId } : {})
+      ...(run.projectId ? { projectId: run.projectId } : {}),
+      reviewFeedback: []
     });
     return { ...next, retriedFromRunId: runId };
+  }
+
+  public async answerRunQuestion(runId: string, answer: string): Promise<{
+    runId: string;
+    status: string;
+    answeredRunId: string;
+    question?: string | null;
+    followUpHint?: string | null;
+  }> {
+    const run = this.options.deps.stageRunRepository.getById(runId);
+    if (!run) {
+      throw new AppError("RUN_NOT_FOUND", `Stage run ${runId} not found`);
+    }
+    if (run.status !== "needs_user_input") {
+      throw new AppError("RUN_NOT_AWAITING_USER_INPUT", `Stage run ${runId} is not waiting for user input`);
+    }
+    const parsedSnapshot = JSON.parse(run.inputSnapshotJson) as {
+      context?: { userClarifications?: string[]; reviewFeedback?: StageReviewFeedback[] } | null;
+    };
+    const next = await this.startStage({
+      stageKey: run.stageKey,
+      itemId: run.itemId,
+      ...(run.projectId ? { projectId: run.projectId } : {}),
+      userClarifications: [...(parsedSnapshot.context?.userClarifications ?? []), answer],
+      reviewFeedback: parsedSnapshot.context?.reviewFeedback ?? []
+    });
+    return { ...next, answeredRunId: runId };
   }
 
   public buildSnapshot(itemId: string) {
@@ -445,7 +479,13 @@ export class StageService {
     );
   }
 
-  private buildProjectStageContext(stageKey: StageKey, projectId: string, itemId: string) {
+  private buildProjectStageContext(
+    stageKey: StageKey,
+    projectId: string,
+    itemId: string,
+    userClarifications: string[],
+    reviewFeedback: StageReviewFeedback[]
+  ) {
     const concept = this.options.deps.conceptRepository.getLatestByItemId(itemId);
     const conceptSummary = concept?.summary ?? null;
     const architectureSummary = this.options.deps.architecturePlanRepository.getLatestByProjectId(projectId)?.summary ?? null;
@@ -507,6 +547,8 @@ export class StageService {
           conceptMarkdown,
           architectureSummary,
           upstreamSource,
+          userClarifications,
+          reviewFeedback,
           stories: []
         };
       }
@@ -517,6 +559,8 @@ export class StageService {
           conceptMarkdown: null,
           architectureSummary,
           upstreamSource: null,
+          userClarifications,
+          reviewFeedback,
           stories: loadStories()
         };
       case "planning":
@@ -526,6 +570,8 @@ export class StageService {
           conceptMarkdown: null,
           architectureSummary,
           upstreamSource: null,
+          userClarifications,
+          reviewFeedback,
           stories: loadStories()
         };
       default:
@@ -535,9 +581,35 @@ export class StageService {
           conceptMarkdown: null,
           architectureSummary,
           upstreamSource: null,
+          userClarifications,
+          reviewFeedback,
           stories: loadStories()
         };
     }
+  }
+
+  private buildRevisionAwarePrompt(basePrompt: string, stageKey: StageKey, reviewFeedback: StageReviewFeedback[]): string {
+    if (reviewFeedback.length === 0) {
+      return basePrompt;
+    }
+    const latest = reviewFeedback[reviewFeedback.length - 1];
+    const findingsBlock = latest.findings
+      .map((finding) => `- [${finding.type}] ${finding.title}: ${finding.detail}`)
+      .join("\n");
+    const questionsBlock = latest.openQuestions.map((question) => `- ${question.question}`).join("\n");
+    return [
+      basePrompt,
+      "",
+      "Revision Context",
+      `This is revision ${reviewFeedback.length} for the ${stageKey} stage after review feedback.`,
+      `Latest review summary: ${latest.summary}`,
+      latest.recommendedAction ? `Latest recommended action: ${latest.recommendedAction}` : "Latest recommended action: revise the artifact.",
+      findingsBlock ? `Findings to address:\n${findingsBlock}` : "Findings to address: none listed.",
+      questionsBlock ? `Open questions raised by review:\n${questionsBlock}` : "Open questions raised by review: none.",
+      reviewFeedback.length >= 3
+        ? "If you still can not revise safely with the available context, return `needsUserInput=true` and ask the user the minimum blocking clarification."
+        : "Revise the artifact directly when the missing details can be inferred safely from the existing context."
+    ].join("\n");
   }
 
   private readArtifactContentSafe(artifactId: string): string | null {
@@ -587,7 +659,7 @@ export class StageService {
   private transitionRun(
     runId: string,
     current: "pending" | "running",
-    next: "running" | "completed" | "failed" | "review_required",
+    next: "running" | "needs_user_input" | "completed" | "failed" | "review_required",
     options?: { outputSummaryJson?: string | null; errorMessage?: string | null }
   ): void {
     assertStageRunTransitionAllowed(current, next);

@@ -658,8 +658,8 @@ export class PlanningReviewService {
       assumptions: parsed.assumptions,
       risks: parsed.risks,
       openQuestions: [],
-      testPlan: [],
-      rolloutPlan: [],
+      testPlan: parsed.testPlan ?? [],
+      rolloutPlan: parsed.rolloutPlan ?? [],
       clarificationAnswers
     };
   }

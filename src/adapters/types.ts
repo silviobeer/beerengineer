@@ -233,7 +233,30 @@ export type AdapterRunRequest = {
       candidateDirections: string[];
       recommendedDirection: string | null;
       scopeNotes: string | null;
+      designConstraints?: string[];
+      requiredDeliverables?: string[];
+      referenceArtifacts?: string[];
     } | null;
+    userClarifications?: string[];
+    reviewFeedback?: Array<{
+      reviewRunId: string;
+      stageKey: StageKey;
+      status: string;
+      readiness: string | null;
+      summary: string;
+      recommendedAction: string | null;
+      findings: Array<{
+        type: string;
+        title: string;
+        detail: string;
+        evidence: string | null;
+      }>;
+      openQuestions: Array<{
+        question: string;
+        reason: string | null;
+        impact: string | null;
+      }>;
+    }>;
     stories?: Array<{
       code: string;
       title: string;
@@ -250,6 +273,9 @@ export type AdapterRunRequest = {
 export type AdapterRunResult = {
   markdownArtifacts: Array<{ kind: string; content: string }>;
   structuredArtifacts: Array<{ kind: string; content: unknown }>;
+  needsUserInput?: boolean;
+  userInputQuestion?: string | null;
+  followUpHint?: string | null;
   stdout: string;
   stderr: string;
   exitCode: number;

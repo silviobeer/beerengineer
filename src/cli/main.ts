@@ -1235,6 +1235,17 @@ program
   );
 
 program
+  .command("requirements:answer")
+  .requiredOption("--run-id <runId>")
+  .requiredOption("--answer <answer>")
+  .action(
+    withContext<{ runId: string; answer: string }>(async ({ workflowService }, options) => {
+      const result = await workflowService.answerStageQuestion(options.runId, options.answer);
+      console.log(JSON.stringify(result, null, 2));
+    })
+  );
+
+program
   .command("stories:approve")
   .requiredOption("--project-id <projectId>")
   .option("--autorun", "Continue automatically after approval")

@@ -57,7 +57,9 @@ export const implementationPlanOutputSchema = z.object({
     })
   ).min(1),
   risks: z.array(z.string().min(1)),
-  assumptions: z.array(z.string().min(1))
+  assumptions: z.array(z.string().min(1)),
+  testPlan: z.array(z.string().min(1)).default([]),
+  rolloutPlan: z.array(z.string().min(1)).default([])
 });
 
 export const storyExecutionOutputSchema = z.object({

@@ -3,7 +3,8 @@ import type { StageRunStatus } from "../domain/types.js";
 
 const allowedTransitions = new Map<StageRunStatus, StageRunStatus[]>([
   ["pending", ["running", "failed"]],
-  ["running", ["completed", "failed", "review_required"]],
+  ["running", ["needs_user_input", "completed", "failed", "review_required"]],
+  ["needs_user_input", []],
   ["completed", []],
   ["failed", []],
   ["review_required", []]

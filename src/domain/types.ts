@@ -27,6 +27,7 @@ export type StageKey = (typeof stageKeys)[number];
 export const stageRunStatuses = [
   "pending",
   "running",
+  "needs_user_input",
   "completed",
   "failed",
   "review_required"

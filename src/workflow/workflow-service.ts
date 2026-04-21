@@ -443,7 +443,15 @@ export class WorkflowService {
     stageKey: StageKey;
     itemId: string;
     projectId?: string;
-  }): Promise<{ runId: string; status: string; planningReview?: unknown }> {
+    userClarifications?: string[];
+    reviewFeedback?: import("./stage-review-loop-service.js").StageReviewFeedback[];
+  }): Promise<{
+    runId: string;
+    status: string;
+    question?: string | null;
+    followUpHint?: string | null;
+    planningReview?: unknown;
+  }> {
     return this.stageService.startStage(input);
   }
 
@@ -485,6 +493,10 @@ export class WorkflowService {
 
   public async retryRun(runId: string): Promise<{ runId: string; status: string; retriedFromRunId: string }> {
     return this.stageService.retryRun(runId);
+  }
+
+  public async answerStageQuestion(runId: string, answer: string) {
+    return this.stageService.answerRunQuestion(runId, answer);
   }
 
   public showItem(itemId: string) {

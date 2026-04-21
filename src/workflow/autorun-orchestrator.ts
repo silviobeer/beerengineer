@@ -215,6 +215,13 @@ export class AutorunOrchestrator {
     });
 
     if (!input.hasStageOutput) {
+      if (latestRun?.status === "needs_user_input") {
+        return {
+          kind: "stop",
+          finalStatus: "stopped",
+          stopReason: `${input.stageKey}_needs_user_input`
+        };
+      }
       if (latestRun?.status === "review_required") {
         return {
           kind: "stop",

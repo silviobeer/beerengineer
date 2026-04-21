@@ -303,6 +303,7 @@ export class WorkflowOutputImporters {
       if (previous?.structuredArtifactId === jsonArtifact.id) {
         return { status: "completed", reviewReason: null };
       }
+      const nextVersion = (previous?.version ?? 0) + 1;
 
       const stories = this.deps.userStoryRepository.listByProjectId(projectId);
       const storyByCode = new Map(stories.map((story) => [story.code, story]));
@@ -391,9 +392,20 @@ export class WorkflowOutputImporters {
         });
       });
 
+      if (previous) {
+        const previousWaves = this.deps.waveRepository.listByImplementationPlanId(previous.id);
+        const previousWaveIds = previousWaves.map((wave) => wave.id);
+        const previousWaveStories = this.deps.waveStoryRepository.listByWaveIds(previousWaveIds);
+        const previousStoryIds = previousWaveStories.map((waveStory) => waveStory.storyId);
+        this.deps.waveStoryDependencyRepository.deleteByStoryIds(previousStoryIds);
+        this.deps.waveStoryRepository.deleteByWaveIds(previousWaveIds);
+        this.deps.waveRepository.deleteByImplementationPlanId(previous.id);
+        this.deps.implementationPlanRepository.delete(previous.id);
+      }
+
       const createdPlan = this.deps.implementationPlanRepository.create({
         projectId,
-        version: (previous?.version ?? 0) + 1,
+        version: nextVersion,
         summary: parsed.summary,
         status: "draft",
         markdownArtifactId: markdownArtifact.id,

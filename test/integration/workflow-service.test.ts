@@ -1197,6 +1197,129 @@ describe("workflow service", () => {
     }
   });
 
+  it("stops requirements with needs_user_input when the scope is broad but the first slice is not clarified", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const item = createWorkspaceItem(context, {
+        title: "UI Shell",
+        description: "Build a broad operational UI shell"
+      });
+      const started = context.workflowService.startBrainstormSession(item.id);
+      context.workflowService.updateBrainstormDraft({
+        sessionId: started.sessionId,
+        problem: "Operators need a shared UI surface for the workflow engine.",
+        coreOutcome: "Ship an operational shell that covers planning and delivery work.",
+        targetUsers: ["workspace operator", "delivery lead", "reviewer"],
+        useCases: [
+          "switch the active workspace globally",
+          "view items on a real workflow board grouped by domain columns",
+          "open an item overlay with status, timeline, next actions, and chat preview",
+          "work an inbox of waiting sessions, blocked reviews, and failed runs",
+          "continue brainstorm, review, and planning conversations in the UI",
+          "inspect workflow runs and generated artifacts",
+          "browse a reusable showcase for shell components"
+        ],
+        constraints: [
+          "support board, inbox, runs, and chat inside one shell",
+          "reuse shared core services instead of CLI parsing",
+          "maintain a reusable component inventory"
+        ],
+        nonGoals: ["do not rebuild workflow engine rules inside the UI"],
+        risks: ["scope may sprawl across multiple deliverables"],
+        candidateDirections: ["single integrated shell"],
+        recommendedDirection: "build a single integrated shell"
+      });
+      await context.workflowService.promoteBrainstorm(started.sessionId);
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      context.workflowService.approveConcept(concept!.id);
+      context.workflowService.importProjects(item.id);
+      const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
+
+      const result = await context.workflowService.startStage({
+        stageKey: "requirements",
+        itemId: item.id,
+        projectId: project.id
+      });
+
+      expect(result.status).toBe("needs_user_input");
+      expect(result.question ?? "").toContain("smallest useful user outcome");
+      const run = context.repositories.stageRunRepository.getById(result.runId);
+      expect(run?.status).toBe("needs_user_input");
+      expect(context.repositories.userStoryRepository.hasAnyByProjectId(project.id)).toBe(false);
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("restarts requirements with user clarification after a needs_user_input stop", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const item = createWorkspaceItem(context, {
+        title: "UI Shell",
+        description: "Build a broad operational UI shell"
+      });
+      const started = context.workflowService.startBrainstormSession(item.id);
+      context.workflowService.updateBrainstormDraft({
+        sessionId: started.sessionId,
+        problem: "Operators need a shared UI surface for the workflow engine.",
+        coreOutcome: "Ship an operational shell that covers planning and delivery work.",
+        targetUsers: ["workspace operator", "delivery lead", "reviewer"],
+        useCases: [
+          "switch the active workspace globally",
+          "view items on a real workflow board grouped by domain columns",
+          "open an item overlay with status, timeline, next actions, and chat preview",
+          "work an inbox of waiting sessions, blocked reviews, and failed runs",
+          "continue brainstorm, review, and planning conversations in the UI",
+          "inspect workflow runs and generated artifacts",
+          "browse a reusable showcase for shell components"
+        ],
+        constraints: [
+          "support board, inbox, runs, and chat inside one shell",
+          "reuse shared core services instead of CLI parsing",
+          "maintain a reusable component inventory"
+        ],
+        nonGoals: ["do not rebuild workflow engine rules inside the UI"],
+        risks: ["scope may sprawl across multiple deliverables"],
+        candidateDirections: ["single integrated shell"],
+        recommendedDirection: "build a single integrated shell"
+      });
+      await context.workflowService.promoteBrainstorm(started.sessionId);
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      context.workflowService.approveConcept(concept!.id);
+      context.workflowService.importProjects(item.id);
+      const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
+
+      const first = await context.workflowService.startStage({
+        stageKey: "requirements",
+        itemId: item.id,
+        projectId: project.id
+      });
+      expect(first.status).toBe("needs_user_input");
+
+      const answered = await context.workflowService.answerStageQuestion(
+        first.runId,
+        "The smallest useful V1 outcome is a workspace board with overlay and inbox for operators; runs, artifacts, and showcase can follow after that first slice."
+      );
+
+      expect(answered.status).toBe("completed");
+      expect(answered.answeredRunId).toBe(first.runId);
+      expect(context.repositories.userStoryRepository.hasAnyByProjectId(project.id)).toBe(true);
+      const latestRun = context.repositories.stageRunRepository.getById(answered.runId);
+      expect(latestRun?.status).toBe("completed");
+      expect(latestRun?.inputSnapshotJson ?? "").toContain("smallest useful V1 outcome");
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("extracts labeled lists from bulleted chat messages when the adapter leaves fields empty", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
     const dbPath = join(root, "app.sqlite");
@@ -2389,16 +2512,84 @@ describe("workflow service", () => {
       expect(implementationPlan?.summary).toContain("implementation plan");
 
       const waves = context.repositories.waveRepository.listByImplementationPlanId(implementationPlan!.id);
-      expect(waves.map((wave) => wave.code)).toEqual(["W01", "W02"]);
+      const stories = context.repositories.userStoryRepository.listByProjectId(project.id);
+      expect(waves.map((wave) => wave.code)).toEqual(stories.map((_, index) => `W${String(index + 1).padStart(2, "0")}`));
 
-      const firstWaveStories = context.repositories.waveStoryRepository.listByWaveId(waves[0]!.id);
-      const secondWaveStories = context.repositories.waveStoryRepository.listByWaveId(waves[1]!.id);
-      expect(firstWaveStories).toHaveLength(1);
-      expect(secondWaveStories).toHaveLength(1);
+      const waveStories = waves.map((wave) => context.repositories.waveStoryRepository.listByWaveId(wave.id));
+      expect(waveStories.every((entries) => entries.length === 1)).toBe(true);
 
-      const dependencies = context.repositories.waveStoryDependencyRepository.listByDependentStoryId(secondWaveStories[0]!.storyId);
-      expect(dependencies).toHaveLength(1);
-      expect(dependencies[0]?.blockingStoryId).toBe(firstWaveStories[0]?.storyId);
+      if (waveStories.length > 1) {
+        const firstWaveStories = waveStories[0]!;
+        const secondWaveStories = waveStories[1]!;
+        const dependencies = context.repositories.waveStoryDependencyRepository.listByDependentStoryId(secondWaveStories[0]!.storyId);
+        expect(dependencies).toHaveLength(1);
+        expect(dependencies[0]?.blockingStoryId).toBe(firstWaveStories[0]?.storyId);
+      }
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps planning review feedback inside the stage loop until the plan is revised", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const item = createWorkspaceItem(context, {
+        title: "Planning Revision Loop",
+        description: "Keep planning review feedback inside the planning stage loop"
+      });
+      await context.workflowService.startStage({
+        stageKey: "brainstorm",
+        itemId: item.id
+      });
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      context.workflowService.approveConcept(concept!.id);
+      context.workflowService.importProjects(item.id);
+      const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
+
+      await context.workflowService.startStage({
+        stageKey: "requirements",
+        itemId: item.id,
+        projectId: project.id,
+        userClarifications: ["The first slice only needs the smallest workflow shell outcome."]
+      });
+      context.workflowService.approveStories(project.id);
+      await context.workflowService.startStage({
+        stageKey: "architecture",
+        itemId: item.id,
+        projectId: project.id
+      });
+      context.workflowService.approveArchitecture(project.id);
+
+      const result = await context.workflowService.startStage({
+        stageKey: "planning",
+        itemId: item.id,
+        projectId: project.id
+      });
+
+      expect(result.status).toBe("completed");
+      const planningRuns = context.repositories.stageRunRepository
+        .listByProjectId(project.id)
+        .filter((run) => run.stageKey === "planning");
+      expect(planningRuns).toHaveLength(2);
+      expect(planningRuns[1]?.inputSnapshotJson ?? "").toContain("reviewFeedback");
+
+      const implementationPlan = context.repositories.implementationPlanRepository.getLatestByProjectId(project.id);
+      const planArtifact = context.repositories.artifactRepository.getById(implementationPlan!.structuredArtifactId);
+      const planPayload = JSON.parse(
+        readFileSync(
+          join(context.effectiveConfig.workspaceRoot, ".beerengineer", "workspaces", context.workspace.key, "artifacts", planArtifact!.path),
+          "utf8"
+        )
+      ) as {
+        testPlan: string[];
+        rolloutPlan: string[];
+      };
+      expect(planPayload.testPlan.length).toBeGreaterThan(0);
+      expect(planPayload.rolloutPlan.length).toBeGreaterThan(0);
     } finally {
       context.connection.close();
       rmSync(root, { recursive: true, force: true });

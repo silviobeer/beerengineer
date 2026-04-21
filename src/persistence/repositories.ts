@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, lt, notInArray, not } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt, notInArray, not, or } from "drizzle-orm";
 
 import type {
   AcceptanceCriterion,
@@ -1481,6 +1481,10 @@ export class ImplementationPlanRepository {
       .where(eq(implementationPlans.id, id))
       .run();
   }
+
+  public delete(id: string): void {
+    this.db.delete(implementationPlans).where(eq(implementationPlans.id, id)).run();
+  }
 }
 
 export class WaveRepository {
@@ -1509,6 +1513,10 @@ export class WaveRepository {
     }));
     this.db.insert(waves).values(rows).run();
     return rows as Wave[];
+  }
+
+  public deleteByImplementationPlanId(implementationPlanId: string): void {
+    this.db.delete(waves).where(eq(waves.implementationPlanId, implementationPlanId)).run();
   }
 }
 
@@ -1562,6 +1570,13 @@ export class WaveStoryRepository {
     this.db.insert(waveStories).values(rows).run();
     return rows as WaveStory[];
   }
+
+  public deleteByWaveIds(waveIds: string[]): void {
+    if (waveIds.length === 0) {
+      return;
+    }
+    this.db.delete(waveStories).where(inArray(waveStories.waveId, waveIds)).run();
+  }
 }
 
 export class WaveStoryDependencyRepository {
@@ -1581,6 +1596,16 @@ export class WaveStoryDependencyRepository {
     }
     this.db.insert(waveStoryDependencies).values(input).run();
     return input;
+  }
+
+  public deleteByStoryIds(storyIds: string[]): void {
+    if (storyIds.length === 0) {
+      return;
+    }
+    this.db
+      .delete(waveStoryDependencies)
+      .where(or(inArray(waveStoryDependencies.blockingStoryId, storyIds), inArray(waveStoryDependencies.dependentStoryId, storyIds)))
+      .run();
   }
 }
 
@@ -3121,7 +3146,10 @@ export class StageRunRepository {
         outputSummaryJson: options?.outputSummaryJson,
         errorMessage: options?.errorMessage ?? null,
         updatedAt: now(),
-        completedAt: status === "completed" || status === "failed" || status === "review_required" ? now() : null
+        completedAt:
+          status === "completed" || status === "failed" || status === "review_required" || status === "needs_user_input"
+            ? now()
+            : null
       })
       .where(eq(stageRuns.id, id))
       .run();

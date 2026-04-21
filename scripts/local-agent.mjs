@@ -693,6 +693,45 @@ ${item.description || "A locally orchestrated MVP item."}
 }
 
 function requirements(project, context) {
+  const clarificationText = mergeFragmentedEntries(context?.userClarifications ?? []);
+  const clarificationBlob = clarificationText.join(" ").toLowerCase();
+  const normalizedUpstream = normalizeUpstreamSource(context?.upstreamSource);
+  const focusSignalText = [
+    normalizedUpstream.coreOutcome,
+    normalizedUpstream.recommendedDirection,
+    ...normalizedUpstream.constraints
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  const broadScope =
+    normalizedUpstream.useCases.length >= 6
+    || normalizedUpstream.constraints.length + normalizedUpstream.nonGoals.length + normalizedUpstream.risks.length >= 6;
+  const hasOutcomeClarification =
+    clarificationBlob.includes("smallest useful")
+    || clarificationBlob.includes("first useful")
+    || clarificationBlob.includes("first slice")
+    || clarificationBlob.includes("v1")
+    || clarificationBlob.includes("first release")
+    || clarificationBlob.includes("board")
+    || clarificationBlob.includes("overlay")
+    || clarificationBlob.includes("inbox")
+    || focusSignalText.includes("board-first")
+    || focusSignalText.includes("primary operational view")
+    || focusSignalText.includes("primary surface");
+
+  if (broadScope && !hasOutcomeClarification) {
+    return {
+      markdownArtifacts: [],
+      structuredArtifacts: [],
+      needsUserInput: true,
+      userInputQuestion:
+        "What is the smallest useful user outcome for this project slice, and which capabilities must be in scope for that first release?",
+      followUpHint:
+        "Answer with the primary user outcome plus the must-have capabilities for the first release. Example: board + overlay + inbox, while runs/artifacts and showcase follow later."
+    };
+  }
+
   const { upstream, genericContext, stories, scopeSummary } = buildRequirementsStories(project, context);
   const storyLabels = stories.map((story, index) => ({
     label: `Story ${index + 1}: ${story.title}`,
@@ -764,7 +803,12 @@ ${sourceCoverage || "- No structured upstream coverage entries were available."}
   };
 }
 
-function architecture(project) {
+function architecture(project, context) {
+  const reviewFeedback = context?.reviewFeedback ?? [];
+  const latestFeedback = reviewFeedback.length > 0 ? reviewFeedback[reviewFeedback.length - 1] : null;
+  const revisionNotes = latestFeedback
+    ? latestFeedback.findings.map((finding) => `${finding.title}: ${finding.detail}`)
+    : [];
   return {
     markdownArtifacts: [
       {
@@ -772,7 +816,9 @@ function architecture(project) {
         content: `# Architecture Plan for ${project.code} ${project.title}
 
 ## Summary
-Modular engine-first implementation with reproducible stage runs.`
+Modular engine-first implementation with reproducible stage runs.
+
+${revisionNotes.length > 0 ? `## Revision Notes\n${revisionNotes.map((note) => `- ${note}`).join("\n")}` : ""}`
       }
     ],
     structuredArtifacts: [
@@ -782,7 +828,8 @@ Modular engine-first implementation with reproducible stage runs.`
           summary: `Modular architecture for ${project.title}`,
           decisions: [
             "Keep workflow logic in the domain layer",
-            "Store stage runs and artifacts separately"
+            "Store stage runs and artifacts separately",
+            ...(latestFeedback ? ["Address the latest planning-review feedback inside the architecture artifact"] : [])
           ],
           risks: ["Prompt or skill files may drift without snapshots"],
           nextSteps: ["Continue into implementation waves after approval"]
@@ -793,6 +840,9 @@ Modular engine-first implementation with reproducible stage runs.`
 }
 
 function planning(project, context) {
+  const reviewFeedback = context?.reviewFeedback ?? [];
+  const latestFeedback = reviewFeedback.length > 0 ? reviewFeedback[reviewFeedback.length - 1] : null;
+  const feedbackText = JSON.stringify(latestFeedback ?? {}).toLowerCase();
   const stories = context?.stories ?? [
     { code: `${project.code}-US01`, title: `Create ${project.title} workflow record` },
     { code: `${project.code}-US02`, title: `Approve ${project.title} stories` }
@@ -830,7 +880,21 @@ ${waves.map((wave) => `- ${wave.waveCode}: ${wave.goal}`).join("\n")}`
           summary: `Incremental implementation plan for ${project.title}`,
           waves,
           risks: ["Later implementation may refine story-level sequencing inside each wave"],
-          assumptions: ["The approved architecture remains the governing structure for execution"]
+          assumptions: ["The approved architecture remains the governing structure for execution"],
+          testPlan:
+            latestFeedback && feedbackText.includes("test plan")
+              ? [
+                  "Verify each wave through targeted story-level tests before execution advances.",
+                  "Run a focused workflow regression pass before project QA."
+                ]
+              : [],
+          rolloutPlan:
+            latestFeedback && feedbackText.includes("rollout")
+              ? [
+                  "Release the first wave behind a controlled rollout gate.",
+                  "Keep a rollback path that restores the previous shell behavior if the new slice fails."
+                ]
+              : []
         }
       }
     ]
@@ -1395,7 +1459,7 @@ if (payload.interactionType === "brainstorm_chat") {
 } else if (payload.stageKey === "requirements") {
   result = requirements(payload.project, payload.context);
 } else if (payload.stageKey === "architecture") {
-  result = architecture(payload.project);
+  result = architecture(payload.project, payload.context);
 } else if (payload.stageKey === "planning") {
   result = planning(payload.project, payload.context);
 } else if (payload.workerRole === "test-writer") {

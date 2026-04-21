@@ -120,6 +120,9 @@ export abstract class HostedCliAdapterBase {
     return {
       markdownArtifacts: parsed.markdownArtifacts,
       structuredArtifacts: parsed.structuredArtifacts,
+      needsUserInput: parsed.needsUserInput ?? false,
+      userInputQuestion: parsed.userInputQuestion ?? null,
+      followUpHint: parsed.followUpHint ?? null,
       stdout: executed.stdout,
       stderr: executed.stderr,
       exitCode: executed.exitCode,
@@ -222,7 +225,8 @@ export abstract class HostedCliAdapterBase {
       kind === "stage_run"
         ? [
             "The final JSON object must use this exact top-level shape:",
-            '{ "markdownArtifacts": Array<{ "kind": string, "content": string }>, "structuredArtifacts": Array<{ "kind": string, "content": unknown }> }'
+            '{ "markdownArtifacts": Array<{ "kind": string, "content": string }>, "structuredArtifacts": Array<{ "kind": string, "content": unknown }>, "needsUserInput"?: boolean, "userInputQuestion"?: string|null, "followUpHint"?: string|null }',
+            "When the stage can not proceed safely without a user clarification, return empty artifact arrays, set `needsUserInput` to true, and provide `userInputQuestion`."
           ].join("\n")
         : [
             "The final JSON object must use this exact top-level shape:",
