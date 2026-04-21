@@ -279,6 +279,7 @@ export function extractBrainstormMessageStructure(message: string): BrainstormMe
   const lines = splitCompoundLabelLines(message);
   let activeListField: BrainstormListExtractionField | null = null;
   let activeScalarField: BrainstormScalarExtractionField | null = null;
+  let activeMetaField: "smallestUsefulOutcome" | "projectShapeDecision" | "decisionRationale" | null = null;
   let activeFromHeading = false;
 
   for (const rawLine of lines) {
@@ -287,6 +288,7 @@ export function extractBrainstormMessageStructure(message: string): BrainstormMe
       if (!activeFromHeading) {
         activeListField = null;
         activeScalarField = null;
+        activeMetaField = null;
       }
       continue;
     }
@@ -296,6 +298,7 @@ export function extractBrainstormMessageStructure(message: string): BrainstormMe
       const resolved = resolveHeadingFields(headingMatch[1]!);
       activeListField = resolved.listField;
       activeScalarField = resolved.scalarField;
+      activeMetaField = null;
       activeFromHeading = true;
       continue;
     }
@@ -309,6 +312,18 @@ export function extractBrainstormMessageStructure(message: string): BrainstormMe
       result.scopeNotes = [result.scopeNotes, stripMarkdownDecorations(bulletMatch[1]!)].filter(Boolean).join("\n");
       continue;
     }
+    if (bulletMatch && activeMetaField === "smallestUsefulOutcome") {
+      result.smallestUsefulOutcome = normalizeWhitespace(stripMarkdownDecorations(bulletMatch[1]!));
+      continue;
+    }
+    if (bulletMatch && activeMetaField === "decisionRationale") {
+      result.decisionRationale = normalizeWhitespace(stripMarkdownDecorations(bulletMatch[1]!));
+      continue;
+    }
+    if (bulletMatch && activeMetaField === "projectShapeDecision") {
+      result.projectShapeDecision = normalizeProjectShapeDecision(stripMarkdownDecorations(bulletMatch[1]!));
+      continue;
+    }
 
     const labelMatch = line.match(LABEL_LINE);
     if (labelMatch) {
@@ -316,6 +331,7 @@ export function extractBrainstormMessageStructure(message: string): BrainstormMe
       if (scalarField) {
         activeScalarField = scalarField;
         activeListField = null;
+        activeMetaField = null;
         activeFromHeading = false;
         const inline = normalizeWhitespace(labelMatch[2]!);
         if (inline) {
@@ -327,6 +343,7 @@ export function extractBrainstormMessageStructure(message: string): BrainstormMe
       if (isSmallestOutcomeLabel(labelMatch[1]!)) {
         activeScalarField = null;
         activeListField = null;
+        activeMetaField = "smallestUsefulOutcome";
         activeFromHeading = false;
         const inline = normalizeWhitespace(labelMatch[2]!);
         if (inline) {
@@ -338,6 +355,7 @@ export function extractBrainstormMessageStructure(message: string): BrainstormMe
       if (isProjectShapeDecisionLabel(labelMatch[1]!)) {
         activeScalarField = null;
         activeListField = null;
+        activeMetaField = "projectShapeDecision";
         activeFromHeading = false;
         const inline = normalizeWhitespace(labelMatch[2]!);
         if (inline) {
@@ -349,6 +367,7 @@ export function extractBrainstormMessageStructure(message: string): BrainstormMe
       if (isDecisionRationaleLabel(labelMatch[1]!)) {
         activeScalarField = null;
         activeListField = null;
+        activeMetaField = "decisionRationale";
         activeFromHeading = false;
         const inline = normalizeWhitespace(labelMatch[2]!);
         if (inline) {
@@ -365,6 +384,7 @@ export function extractBrainstormMessageStructure(message: string): BrainstormMe
       }
       activeListField = listField;
       activeScalarField = null;
+      activeMetaField = null;
       activeFromHeading = false;
       const inline = labelMatch[2]!.trim();
       if (inline) {
@@ -382,6 +402,18 @@ export function extractBrainstormMessageStructure(message: string): BrainstormMe
       result.scopeNotes = [result.scopeNotes, normalizedLine].filter(Boolean).join("\n");
       continue;
     }
+    if (activeMetaField === "smallestUsefulOutcome" && !result.smallestUsefulOutcome) {
+      result.smallestUsefulOutcome = normalizeWhitespace(normalizedLine);
+      continue;
+    }
+    if (activeMetaField === "decisionRationale" && !result.decisionRationale) {
+      result.decisionRationale = normalizeWhitespace(normalizedLine);
+      continue;
+    }
+    if (activeMetaField === "projectShapeDecision" && !result.projectShapeDecision) {
+      result.projectShapeDecision = normalizeProjectShapeDecision(normalizedLine);
+      continue;
+    }
     if (activeScalarField && !result[activeScalarField]) {
       result[activeScalarField] = normalizeWhitespace(normalizedLine);
       continue;
@@ -389,6 +421,7 @@ export function extractBrainstormMessageStructure(message: string): BrainstormMe
 
     activeListField = null;
     activeScalarField = null;
+    activeMetaField = null;
     activeFromHeading = false;
   }
 
