@@ -6,7 +6,8 @@ const appDirectory = dirname(fileURLToPath(import.meta.url));
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
-  outputFileTracingRoot: appDirectory
+  outputFileTracingRoot: appDirectory,
+  serverExternalPackages: ["better-sqlite3"]
 };
 
 export default nextConfig;

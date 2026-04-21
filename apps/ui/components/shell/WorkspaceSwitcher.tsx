@@ -9,9 +9,10 @@ type WorkspaceSwitcherProps = {
   workspace: WorkspaceSummary;
   workspaces?: WorkspaceSummary[];
   onWorkspaceChange?: (workspaceKey: string) => void;
+  hrefBase?: string;
 };
 
-export function WorkspaceSwitcher({ workspace, workspaces, onWorkspaceChange }: WorkspaceSwitcherProps) {
+export function WorkspaceSwitcher({ workspace, workspaces, onWorkspaceChange, hrefBase = "/" }: WorkspaceSwitcherProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -24,7 +25,7 @@ export function WorkspaceSwitcher({ workspace, workspaces, onWorkspaceChange }: 
     0,
     options.findIndex((option) => option.key === workspace.key)
   );
-  const canSwitch = Boolean(onWorkspaceChange && options.length > 1);
+  const canSwitch = Boolean((onWorkspaceChange || hrefBase) && options.length > 1);
 
   useEffect(() => {
     setActiveIndex(selectedIndex);
@@ -62,7 +63,14 @@ export function WorkspaceSwitcher({ workspace, workspaces, onWorkspaceChange }: 
     if (!option) {
       return;
     }
-    onWorkspaceChange?.(option.key);
+    if (onWorkspaceChange) {
+      onWorkspaceChange(option.key);
+    } else if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.pathname = hrefBase;
+      url.searchParams.set("workspace", option.key);
+      window.location.assign(url.toString());
+    }
     setActiveIndex(index);
     setIsOpen(false);
   };

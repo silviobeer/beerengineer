@@ -1,20 +1,31 @@
-"use client";
-
-import { useState } from "react";
 import { BoardView } from "@/components/board/BoardView";
 import { ItemOverlay } from "@/components/overlay/ItemOverlay";
+import { EmptyState } from "@/components/primitives/EmptyState";
+import { ErrorState } from "@/components/primitives/ErrorState";
 import { AppShell } from "@/components/shell/AppShell";
-import { defaultWorkspaceKey, getWorkspaceBoardState } from "@/lib/mock-data";
+import { getLiveBoardState } from "@/lib/live-board";
 
-export default function BoardPage() {
-  const [activeWorkspaceKey, setActiveWorkspaceKey] = useState(defaultWorkspaceKey);
-  const { shell, board, overlay } = getWorkspaceBoardState(activeWorkspaceKey);
+export default async function BoardPage({
+  searchParams
+}: {
+  searchParams?: Promise<{ workspace?: string }>;
+}) {
+  const params = searchParams ? await searchParams : undefined;
+  const state = getLiveBoardState(params?.workspace ?? null);
 
   return (
-    <AppShell shell={shell} activeHref="/" onWorkspaceChange={setActiveWorkspaceKey}>
+    <AppShell shell={state.shell} activeHref="/" workspaceHrefBase="/">
       <div className="canvas">
-        <BoardView board={board} />
-        <ItemOverlay overlay={overlay} />
+        {state.kind === "ready" ? (
+          <>
+            <BoardView board={state.board} />
+            <ItemOverlay overlay={state.overlay} />
+          </>
+        ) : state.kind === "empty" ? (
+          <EmptyState title={state.title} detail={state.detail} />
+        ) : (
+          <ErrorState title={state.title} detail={state.detail} />
+        )}
       </div>
     </AppShell>
   );

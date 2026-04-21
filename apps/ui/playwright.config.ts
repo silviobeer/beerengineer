@@ -1,10 +1,14 @@
+import { resolve } from "node:path";
 import { defineConfig, devices } from "@playwright/test";
-import { resolveWorkspaceBrowserUrl } from "../../src/shared/workspace-browser-url.js";
 
-const browserUrl = resolveWorkspaceBrowserUrl("default");
+const browserUrl = {
+  baseUrl: "http://127.0.0.1:3100"
+};
+const fixtureDbPath = resolve(__dirname, ".tmp", "board-e2e.sqlite");
 
 export default defineConfig({
   testDir: "./tests/e2e",
+  globalSetup: "./tests/e2e/global-setup.ts",
   fullyParallel: true,
   retries: process.env.CI ? 2 : 0,
   reporter: [["list"]],
@@ -14,8 +18,13 @@ export default defineConfig({
   },
   webServer: {
     command: "npm run dev:e2e",
+    env: {
+      ...process.env,
+      BEERENGINEER_UI_DB_PATH: fixtureDbPath,
+      BEERENGINEER_UI_FAIL_WORKSPACE_KEY: "broken"
+    },
     url: browserUrl.baseUrl,
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: false,
     timeout: 120000
   },
   projects: [
