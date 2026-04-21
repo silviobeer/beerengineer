@@ -53,6 +53,8 @@ export type AutorunHost = {
   getLatestImplementationPlanByProjectId(projectId: string): { status: string } | null;
   getLatestQaRunByProjectId(projectId: string): { status: string } | null;
   getLatestDocumentationRunByProjectId(projectId: string): { status: string; staleAt: number | null } | null;
+  getLatestExecutionReadinessByProjectId(projectId: string): { status: string } | null;
+  getLatestVerificationReadinessByProjectId(projectId: string): { status: string } | null;
   showExecution(projectId: string): {
     waves: Array<{
       waveExecution: { status: string } | null;

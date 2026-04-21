@@ -71,6 +71,36 @@ export type WaveExecutionStatus = (typeof waveExecutionStatuses)[number];
 export const waveStoryExecutionStatuses = ["pending", "running", "review_required", "completed", "failed"] as const;
 export type WaveStoryExecutionStatus = (typeof waveStoryExecutionStatuses)[number];
 
+export const executionReadinessRunStatuses = ["running", "ready", "auto_fixable", "blocked", "failed"] as const;
+export type ExecutionReadinessRunStatus = (typeof executionReadinessRunStatuses)[number];
+export const verificationReadinessRunStatuses = executionReadinessRunStatuses;
+export type VerificationReadinessRunStatus = ExecutionReadinessRunStatus;
+
+export const executionReadinessFindingStatuses = ["open", "auto_fixable", "manual", "resolved"] as const;
+export type ExecutionReadinessFindingStatus = (typeof executionReadinessFindingStatuses)[number];
+export const verificationReadinessFindingStatuses = executionReadinessFindingStatuses;
+export type VerificationReadinessFindingStatus = ExecutionReadinessFindingStatus;
+
+export const executionReadinessActionStatuses = ["pending", "running", "completed", "failed", "skipped"] as const;
+export type ExecutionReadinessActionStatus = (typeof executionReadinessActionStatuses)[number];
+export const verificationReadinessActionStatuses = executionReadinessActionStatuses;
+export type VerificationReadinessActionStatus = ExecutionReadinessActionStatus;
+
+export const executionReadinessFindingSeverities = ["info", "warning", "error"] as const;
+export type ExecutionReadinessFindingSeverity = (typeof executionReadinessFindingSeverities)[number];
+export const verificationReadinessFindingSeverities = executionReadinessFindingSeverities;
+export type VerificationReadinessFindingSeverity = ExecutionReadinessFindingSeverity;
+
+export const executionReadinessFindingClassifications = ["auto_fixable", "llm_fixable", "manual_blocker"] as const;
+export type ExecutionReadinessFindingClassification = (typeof executionReadinessFindingClassifications)[number];
+export const verificationReadinessFindingClassifications = executionReadinessFindingClassifications;
+export type VerificationReadinessFindingClassification = ExecutionReadinessFindingClassification;
+
+export const executionReadinessActionInitiators = ["engine_rule", "llm_remediator", "manual"] as const;
+export type ExecutionReadinessActionInitiator = (typeof executionReadinessActionInitiators)[number];
+export const verificationReadinessActionInitiators = executionReadinessActionInitiators;
+export type VerificationReadinessActionInitiator = ExecutionReadinessActionInitiator;
+
 export const waveStoryTestRunStatuses = ["pending", "running", "review_required", "completed", "failed"] as const;
 export type WaveStoryTestRunStatus = (typeof waveStoryTestRunStatuses)[number];
 
@@ -580,6 +610,112 @@ export type ProjectExecutionContext = {
   executionNotes: string[];
   createdAt: number;
   updatedAt: number;
+};
+
+export type ExecutionReadinessRun = {
+  id: string;
+  projectId: string;
+  waveId: string | null;
+  storyId: string | null;
+  status: ExecutionReadinessRunStatus;
+  profileKey: string;
+  workspaceRoot: string;
+  inputSnapshotJson: string;
+  summaryJson: string | null;
+  errorMessage: string | null;
+  startedAt: number;
+  updatedAt: number;
+  completedAt: number | null;
+};
+
+export type ExecutionReadinessFinding = {
+  id: string;
+  runId: string;
+  checkIteration: number;
+  code: string;
+  severity: ExecutionReadinessFindingSeverity;
+  scopeType: string;
+  scopePath: string | null;
+  summary: string;
+  detail: string;
+  detectedBy: string;
+  classification: ExecutionReadinessFindingClassification;
+  recommendedAction: string | null;
+  isAutoFixable: boolean;
+  status: ExecutionReadinessFindingStatus;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type ExecutionReadinessAction = {
+  id: string;
+  runId: string;
+  checkIteration: number;
+  actionType: string;
+  initiator: ExecutionReadinessActionInitiator;
+  commandJson: string | null;
+  cwd: string | null;
+  status: ExecutionReadinessActionStatus;
+  stdout: string | null;
+  stderr: string | null;
+  exitCode: number | null;
+  createdAt: number;
+  updatedAt: number;
+  startedAt: number | null;
+  completedAt: number | null;
+};
+
+export type VerificationReadinessRun = {
+  id: string;
+  projectId: string;
+  waveId: string | null;
+  storyId: string | null;
+  status: VerificationReadinessRunStatus;
+  profileKey: string;
+  workspaceRoot: string;
+  inputSnapshotJson: string;
+  summaryJson: string | null;
+  errorMessage: string | null;
+  startedAt: number;
+  updatedAt: number;
+  completedAt: number | null;
+};
+
+export type VerificationReadinessFinding = {
+  id: string;
+  runId: string;
+  checkIteration: number;
+  code: string;
+  severity: VerificationReadinessFindingSeverity;
+  scopeType: string;
+  scopePath: string | null;
+  summary: string;
+  detail: string;
+  detectedBy: string;
+  classification: VerificationReadinessFindingClassification;
+  recommendedAction: string | null;
+  isAutoFixable: boolean;
+  status: VerificationReadinessFindingStatus;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type VerificationReadinessAction = {
+  id: string;
+  runId: string;
+  checkIteration: number;
+  actionType: string;
+  initiator: VerificationReadinessActionInitiator;
+  commandJson: string | null;
+  cwd: string | null;
+  status: VerificationReadinessActionStatus;
+  stdout: string | null;
+  stderr: string | null;
+  exitCode: number | null;
+  createdAt: number;
+  updatedAt: number;
+  startedAt: number | null;
+  completedAt: number | null;
 };
 
 export type WaveExecution = {

@@ -11,9 +11,9 @@ Maintained inventory for the `apps/ui` shell and setup surfaces. Status values:
 
 | Component | Purpose | Main props / view model | Status |
 | --- | --- | --- | --- |
-| `AppShell` | Top-level page frame with persistent chrome and content slot. | `shell`, `activeHref`, `children` | `implemented` |
-| `TopControlBar` | Brand, workspace switcher, title context, and top-level actions. | `shell` | `implemented` |
-| `WorkspaceSwitcher` | Global active workspace summary. | `workspace` | `implemented` |
+| `AppShell` | Top-level page frame with persistent chrome and content slot. | `shell`, `activeHref`, `children`, `onWorkspaceChange?` | `implemented` |
+| `TopControlBar` | Brand, workspace switcher, title context, and top-level actions. | `shell`, `onWorkspaceChange?` | `implemented` |
+| `WorkspaceSwitcher` | Global workspace selector with a11y-aware switching and dismissal behavior. | `workspace`, `workspaces?`, `onWorkspaceChange?` | `implemented` |
 | `PrimaryNav` | Primary navigation across board, inbox, runs, artifacts, settings, setup, showcase. | `items`, `activeHref` | `implemented` |
 | `GlobalSignals` | Compact global status strip. | `signals` | `implemented` |
 

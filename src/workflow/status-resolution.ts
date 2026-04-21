@@ -1,4 +1,5 @@
 export type CompactExecutionStoryEntry = {
+  latestVerificationReadiness: { status: string; updatedAt?: number | null } | null;
   latestTestRun: { status: string } | null;
   latestExecution: { status: string } | null;
   latestAppVerificationRun: { status: string } | null;
@@ -51,6 +52,9 @@ export function resolveCompactExecutionStoryStatus(
   if (storyEntry.latestTestRun?.status === "running") {
     return "running";
   }
+  if (storyEntry.latestVerificationReadiness && storyEntry.latestVerificationReadiness.status !== "ready") {
+    return "blocked";
+  }
   if (storyEntry.blockers.length > 0) {
     return "blocked";
   }
@@ -71,6 +75,9 @@ export function resolveCompactExecutionStoryPhase(
   }
   if (storyEntry.latestTestRun) {
     return "test_preparation";
+  }
+  if (storyEntry.latestVerificationReadiness?.status !== "ready") {
+    return "blocked";
   }
   if (storyEntry.blockers.length > 0) {
     return "blocked";

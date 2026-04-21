@@ -989,5 +989,139 @@ export const baseMigrations: readonly SqlMigration[] = [
   {
     id: "0017_workspace_runtime_profiles",
     statements: [`ALTER TABLE workspace_settings ADD COLUMN runtime_profile_json TEXT`]
+  },
+  {
+    id: "0018_execution_readiness",
+    statements: [
+      `CREATE TABLE IF NOT EXISTS execution_readiness_runs (
+        id TEXT PRIMARY KEY NOT NULL,
+        project_id TEXT NOT NULL,
+        wave_id TEXT,
+        story_id TEXT,
+        status TEXT NOT NULL,
+        profile_key TEXT NOT NULL,
+        workspace_root TEXT NOT NULL,
+        input_snapshot_json TEXT NOT NULL,
+        summary_json TEXT,
+        error_message TEXT,
+        started_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        FOREIGN KEY (project_id) REFERENCES projects(id),
+        FOREIGN KEY (wave_id) REFERENCES waves(id),
+        FOREIGN KEY (story_id) REFERENCES user_stories(id)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_execution_readiness_runs_project_started_at
+        ON execution_readiness_runs(project_id, started_at)`,
+      `CREATE TABLE IF NOT EXISTS execution_readiness_findings (
+        id TEXT PRIMARY KEY NOT NULL,
+        run_id TEXT NOT NULL,
+        check_iteration INTEGER NOT NULL,
+        code TEXT NOT NULL,
+        severity TEXT NOT NULL,
+        scope_type TEXT NOT NULL,
+        scope_path TEXT,
+        summary TEXT NOT NULL,
+        detail TEXT NOT NULL,
+        detected_by TEXT NOT NULL,
+        classification TEXT NOT NULL,
+        recommended_action TEXT,
+        is_auto_fixable INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (run_id) REFERENCES execution_readiness_runs(id)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_execution_readiness_findings_run_iteration
+        ON execution_readiness_findings(run_id, check_iteration, created_at)`,
+      `CREATE TABLE IF NOT EXISTS execution_readiness_actions (
+        id TEXT PRIMARY KEY NOT NULL,
+        run_id TEXT NOT NULL,
+        check_iteration INTEGER NOT NULL,
+        action_type TEXT NOT NULL,
+        initiator TEXT NOT NULL,
+        command_json TEXT,
+        cwd TEXT,
+        status TEXT NOT NULL,
+        stdout TEXT,
+        stderr TEXT,
+        exit_code INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        started_at INTEGER,
+        completed_at INTEGER,
+        FOREIGN KEY (run_id) REFERENCES execution_readiness_runs(id)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_execution_readiness_actions_run_iteration
+        ON execution_readiness_actions(run_id, check_iteration, created_at)`
+    ]
+  },
+  {
+    id: "0019_verification_readiness",
+    statements: [
+      `CREATE TABLE IF NOT EXISTS verification_readiness_runs (
+        id TEXT PRIMARY KEY NOT NULL,
+        project_id TEXT NOT NULL,
+        wave_id TEXT,
+        story_id TEXT,
+        status TEXT NOT NULL,
+        profile_key TEXT NOT NULL,
+        workspace_root TEXT NOT NULL,
+        input_snapshot_json TEXT NOT NULL,
+        summary_json TEXT,
+        error_message TEXT,
+        started_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        FOREIGN KEY (project_id) REFERENCES projects(id),
+        FOREIGN KEY (wave_id) REFERENCES waves(id),
+        FOREIGN KEY (story_id) REFERENCES user_stories(id)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_verification_readiness_runs_project_started_at
+        ON verification_readiness_runs(project_id, started_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_verification_readiness_runs_story_started_at
+        ON verification_readiness_runs(story_id, started_at)`,
+      `CREATE TABLE IF NOT EXISTS verification_readiness_findings (
+        id TEXT PRIMARY KEY NOT NULL,
+        run_id TEXT NOT NULL,
+        check_iteration INTEGER NOT NULL,
+        code TEXT NOT NULL,
+        severity TEXT NOT NULL,
+        scope_type TEXT NOT NULL,
+        scope_path TEXT,
+        summary TEXT NOT NULL,
+        detail TEXT NOT NULL,
+        detected_by TEXT NOT NULL,
+        classification TEXT NOT NULL,
+        recommended_action TEXT,
+        is_auto_fixable INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        FOREIGN KEY (run_id) REFERENCES verification_readiness_runs(id)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_verification_readiness_findings_run_iteration
+        ON verification_readiness_findings(run_id, check_iteration, created_at)`,
+      `CREATE TABLE IF NOT EXISTS verification_readiness_actions (
+        id TEXT PRIMARY KEY NOT NULL,
+        run_id TEXT NOT NULL,
+        check_iteration INTEGER NOT NULL,
+        action_type TEXT NOT NULL,
+        initiator TEXT NOT NULL,
+        command_json TEXT,
+        cwd TEXT,
+        status TEXT NOT NULL,
+        stdout TEXT,
+        stderr TEXT,
+        exit_code INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        started_at INTEGER,
+        completed_at INTEGER,
+        FOREIGN KEY (run_id) REFERENCES verification_readiness_runs(id)
+      )`,
+      `CREATE INDEX IF NOT EXISTS idx_verification_readiness_actions_run_iteration
+        ON verification_readiness_actions(run_id, check_iteration, created_at)`
+    ]
   }
 ];

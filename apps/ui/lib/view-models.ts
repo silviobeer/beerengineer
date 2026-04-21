@@ -13,6 +13,7 @@ export type GlobalSignal = {
 };
 
 export type WorkspaceSummary = {
+  key: string;
   name: string;
   descriptor: string;
 };
@@ -21,6 +22,7 @@ export type ShellViewModel = {
   title: string;
   subtitle: string;
   activeWorkspace: WorkspaceSummary;
+  availableWorkspaces?: WorkspaceSummary[];
   navItems: NavItem[];
   globalSignals: GlobalSignal[];
   actions: Array<{ label: string; href: string; primary?: boolean }>;
@@ -47,7 +49,6 @@ export type BoardCardViewModel = {
 export type BoardColumnViewModel = {
   key: string;
   title: string;
-  count: number;
   cards: BoardCardViewModel[];
 };
 

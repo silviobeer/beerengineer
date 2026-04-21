@@ -1598,6 +1598,66 @@ program
   );
 
 program
+  .command("execution:readiness:start")
+  .requiredOption("--project-id <projectId>")
+  .option("--story-code <storyCode>")
+  .action(
+    withContext<{ projectId: string; storyCode?: string }>(({ workflowService }, options) => {
+      const result = workflowService.runExecutionReadiness(options.projectId, options.storyCode);
+      console.log(JSON.stringify(result, null, 2));
+    })
+  );
+
+program
+  .command("execution:readiness:show")
+  .option("--project-id <projectId>")
+  .option("--run-id <runId>")
+  .action(
+    withContext<{ projectId?: string; runId?: string }>(({ workflowService }, options) => {
+      if (options.runId) {
+        const result = workflowService.showExecutionReadiness(options.runId);
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+      if (!options.projectId) {
+        throw new AppError("EXECUTION_READINESS_SCOPE_REQUIRED", "Either --run-id or --project-id is required");
+      }
+      const result = workflowService.showLatestExecutionReadiness(options.projectId);
+      console.log(JSON.stringify(result, null, 2));
+    })
+  );
+
+program
+  .command("verification:readiness:start")
+  .requiredOption("--project-id <projectId>")
+  .requiredOption("--story-code <storyCode>")
+  .action(
+    withContext<{ projectId: string; storyCode: string }>(({ workflowService }, options) => {
+      const result = workflowService.runVerificationReadiness(options.projectId, options.storyCode);
+      console.log(JSON.stringify(result, null, 2));
+    })
+  );
+
+program
+  .command("verification:readiness:show")
+  .option("--project-id <projectId>")
+  .option("--run-id <runId>")
+  .action(
+    withContext<{ projectId?: string; runId?: string }>(({ workflowService }, options) => {
+      if (options.runId) {
+        const result = workflowService.showVerificationReadiness(options.runId);
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+      if (!options.projectId) {
+        throw new AppError("VERIFICATION_READINESS_SCOPE_REQUIRED", "Either --run-id or --project-id is required");
+      }
+      const result = workflowService.showLatestVerificationReadiness(options.projectId);
+      console.log(JSON.stringify(result, null, 2));
+    })
+  );
+
+program
   .command("execution:start")
   .requiredOption("--project-id <projectId>")
   .action(
@@ -1701,7 +1761,14 @@ program
       const result = await context.workflowService.retryWaveStoryExecution(options.waveStoryExecutionId);
       if (options.autorun) {
         const initialStep =
-          result.phase === "test_preparation"
+          result.phase === "readiness"
+            ? {
+                action: "execution:retry",
+                scopeType: "project" as const,
+                scopeId: result.projectId,
+                status: String(result.status)
+              }
+            : result.phase === "test_preparation"
             ? {
                 action: "execution:retry",
                 scopeType: "project" as const,
@@ -1711,7 +1778,7 @@ program
             : {
                 action: "execution:retry",
                 scopeType: "execution" as const,
-                scopeId: result.waveStoryExecutionId,
+                scopeId: result.waveStoryExecutionId ?? story.id,
                 status: String(result.status)
               };
         await printAutorunForProject(context, {

@@ -9,6 +9,12 @@ import type {
   ConceptRepository,
   DocumentationAgentSessionRepository,
   DocumentationRunRepository,
+  ExecutionReadinessActionRepository,
+  ExecutionReadinessFindingRepository,
+  ExecutionReadinessRunRepository,
+  VerificationReadinessActionRepository,
+  VerificationReadinessFindingRepository,
+  VerificationReadinessRunRepository,
   ExecutionAgentSessionRepository,
   ImplementationPlanRepository,
   InteractiveReviewEntryRepository,
@@ -73,6 +79,12 @@ export type WorkflowDeps = {
   waveStoryRepository: WaveStoryRepository;
   waveStoryDependencyRepository: WaveStoryDependencyRepository;
   projectExecutionContextRepository: ProjectExecutionContextRepository;
+  executionReadinessRunRepository: ExecutionReadinessRunRepository;
+  executionReadinessFindingRepository: ExecutionReadinessFindingRepository;
+  executionReadinessActionRepository: ExecutionReadinessActionRepository;
+  verificationReadinessRunRepository: VerificationReadinessRunRepository;
+  verificationReadinessFindingRepository: VerificationReadinessFindingRepository;
+  verificationReadinessActionRepository: VerificationReadinessActionRepository;
   waveExecutionRepository: WaveExecutionRepository;
   waveStoryTestRunRepository: WaveStoryTestRunRepository;
   testAgentSessionRepository: TestAgentSessionRepository;

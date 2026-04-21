@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 
 import { createAppContext } from "../../src/app-context.js";
 import type { AppError } from "../../src/shared/errors.js";
+import { resolveWorkspaceBrowserUrl } from "../../src/shared/workspace-browser-url.js";
 import type {
   PlanningReviewAutomationLevel,
   PlanningReviewGateEligibility,
@@ -19,6 +20,7 @@ import type {
 } from "../../src/domain/types.js";
 
 const localAgentScriptPath = fileURLToPath(new URL("../../scripts/local-agent.mjs", import.meta.url));
+const defaultBrowserUrl = resolveWorkspaceBrowserUrl("default");
 const asRunnableConnection = (connection: unknown) => connection as {
   prepare(sql: string): { run(...args: unknown[]): unknown };
 };
@@ -42,7 +44,172 @@ describe("workflow service", () => {
     return workspaceRoot;
   }
 
-  async function prepareProjectThroughCompletedExecution(
+  function commitAllWorkspaceChanges(workspaceRoot: string, message: string) {
+    execFileSync("git", ["add", "."], { cwd: workspaceRoot });
+    execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", message], {
+      cwd: workspaceRoot
+    });
+  }
+
+  function createNodeNextWorkspace(
+    workspaceRoot: string,
+    input: {
+      withToolchain: boolean;
+      withPlaywrightSetup?: boolean;
+      withPlaywrightBinary?: boolean;
+      withPlaywrightWebServer?: boolean;
+      baseUrl?: string;
+    }
+  ) {
+    const appRoot = join(workspaceRoot, "apps", "ui");
+    mkdirSync(appRoot, { recursive: true });
+    writeFileSync(
+      join(appRoot, "package.json"),
+      JSON.stringify(
+        {
+          name: "temp-ui",
+          private: true,
+          scripts: {
+            build: "next build",
+            "dev:e2e": "next dev --hostname 127.0.0.1 --port 3100",
+            "test:e2e": "playwright test"
+          },
+          devDependencies: input.withPlaywrightSetup
+            ? {
+                "@playwright/test": "^1.55.0"
+              }
+            : {}
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    writeFileSync(
+      join(appRoot, "tsconfig.json"),
+      JSON.stringify(
+        {
+          compilerOptions: {
+            target: "ES2022",
+            module: "NodeNext",
+            moduleResolution: "NodeNext"
+          },
+          include: ["src/**/*.ts", "*.ts"]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    writeFileSync(join(appRoot, "next-env.d.ts"), "/// <reference types=\"next\" />\n", "utf8");
+    mkdirSync(join(appRoot, "src"), { recursive: true });
+    writeFileSync(join(appRoot, "src", "index.ts"), "export const ok = true;\n", "utf8");
+
+    if (input.withPlaywrightSetup) {
+      mkdirSync(join(appRoot, "tests", "e2e"), { recursive: true });
+      writeFileSync(
+        join(appRoot, "tests", "e2e", "smoke.spec.ts"),
+        "import { test, expect } from '@playwright/test';\ntest('smoke', async ({ page }) => { await page.goto('/'); await expect(page).toHaveURL(/.*/); });\n",
+        "utf8"
+      );
+      writeFileSync(
+        join(appRoot, "playwright.config.ts"),
+        `import { defineConfig } from "@playwright/test";
+
+export default defineConfig({
+  testDir: "./tests/e2e",
+  use: {
+    baseURL: ${JSON.stringify(input.baseUrl ?? defaultBrowserUrl.baseUrl)}
+  },
+  ${input.withPlaywrightWebServer === false ? "" : `webServer: {
+    command: "npm run dev:e2e",
+    url: ${JSON.stringify(input.baseUrl ?? defaultBrowserUrl.baseUrl)}
+  },`}
+});
+`,
+        "utf8"
+      );
+    }
+
+    if (input.withToolchain) {
+      const binDir = join(appRoot, "node_modules", ".bin");
+      mkdirSync(binDir, { recursive: true });
+      for (const binary of ["next", "tsc"]) {
+        const binaryPath = join(binDir, binary);
+        writeFileSync(binaryPath, "#!/usr/bin/env bash\nexit 0\n", "utf8");
+        chmodSync(binaryPath, 0o755);
+      }
+      if (input.withPlaywrightBinary) {
+        const binaryPath = join(binDir, "playwright");
+        writeFileSync(binaryPath, "#!/usr/bin/env bash\nexit 0\n", "utf8");
+        chmodSync(binaryPath, 0o755);
+      }
+    }
+  }
+
+  function writeFakeNpmScript(
+    root: string,
+    behavior: "success" | "install-fixes-toolchain" | "install-fixes-verification" | "build-fails" | "typecheck-fails"
+  ): string {
+    const binDir = join(root, "bin");
+    mkdirSync(binDir, { recursive: true });
+    const scriptPath = join(binDir, "npm");
+    const script = `#!/usr/bin/env node
+const { mkdirSync, writeFileSync } = require("node:fs");
+const { join, resolve } = require("node:path");
+
+const args = process.argv.slice(2);
+const prefixIndex = args.indexOf("--prefix");
+const prefixPath = prefixIndex >= 0 ? resolve(process.cwd(), args[prefixIndex + 1]) : process.cwd();
+const mode = ${JSON.stringify(behavior)};
+
+  if ((mode === "install-fixes-toolchain" || mode === "install-fixes-verification") && args.includes("install")) {
+  const binDir = join(prefixPath, "node_modules", ".bin");
+  mkdirSync(binDir, { recursive: true });
+  for (const binary of ["next", "tsc"]) {
+    writeFileSync(join(binDir, binary), "#!/usr/bin/env bash\\nexit 0\\n", "utf8");
+  }
+  if (mode === "install-fixes-verification") {
+    writeFileSync(join(binDir, "playwright"), "#!/usr/bin/env bash\\nexit 0\\n", "utf8");
+    require("node:fs").chmodSync(join(binDir, "playwright"), 0o755);
+  }
+  process.exit(0);
+}
+
+if (args.includes("run") && args.includes("build")) {
+  if (mode === "build-fails") {
+    process.stderr.write("build exploded\\n");
+    process.exit(1);
+  }
+  process.exit(0);
+}
+
+if (args.includes("exec") && args.includes("tsc")) {
+  if (mode === "typecheck-fails") {
+    process.stderr.write("typecheck exploded\\n");
+    process.exit(1);
+  }
+  process.exit(0);
+}
+
+process.exit(0);
+`;
+    writeFileSync(scriptPath, script, "utf8");
+    chmodSync(scriptPath, 0o755);
+    return binDir;
+  }
+
+  async function withPatchedPath<T>(binDir: string, fn: () => Promise<T>): Promise<T> {
+    const previousPath = process.env.PATH ?? "";
+    process.env.PATH = `${binDir}:${previousPath}`;
+    try {
+      return await fn();
+    } finally {
+      process.env.PATH = previousPath;
+    }
+  }
+
+  async function prepareProjectThroughPlanning(
     context: ReturnType<typeof createAppContext>,
     input: { title: string; description: string }
   ) {
@@ -58,6 +225,24 @@ describe("workflow service", () => {
     context.workflowService.approveArchitecture(project.id);
     await context.workflowService.startStage({ stageKey: "planning", itemId: item.id, projectId: project.id });
     context.workflowService.approvePlanning(project.id);
+    return { item, project };
+  }
+
+  function markFirstStoryAsUi(context: ReturnType<typeof createAppContext>, projectId: string) {
+    const story = context.repositories.userStoryRepository.listByProjectId(projectId)[0]!;
+    context.repositories.userStoryRepository.update(story.id, {
+      title: "UI Screen Verification",
+      description: "Implement the dashboard screen route and component flow.",
+      goal: "render the UI route with component-level browser verification"
+    });
+    return context.repositories.userStoryRepository.getById(story.id)!;
+  }
+
+  async function prepareProjectThroughCompletedExecution(
+    context: ReturnType<typeof createAppContext>,
+    input: { title: string; description: string }
+  ) {
+    const { item, project } = await prepareProjectThroughPlanning(context, input);
     await context.workflowService.startExecution(project.id);
     await context.workflowService.tickExecution(project.id);
 
@@ -258,6 +443,471 @@ describe("workflow service", () => {
     });
     context.workspaceSettings.executionDefaultsJson = serialized;
   }
+
+  it("persists a ready execution readiness run for a runnable node-next workspace", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-readiness-ready-"));
+    const dbPath = join(root, "app.sqlite");
+    const workspaceRoot = createGitWorkspace(root);
+    createNodeNextWorkspace(workspaceRoot, { withToolchain: true });
+    commitAllWorkspaceChanges(workspaceRoot, "add node next workspace");
+    const context = createAppContext(dbPath, { workspaceRoot, adapterScriptPath: localAgentScriptPath });
+
+    try {
+      const { project } = await prepareProjectThroughPlanning(context, {
+        title: "Readiness Ready",
+        description: "Keep execution gated behind a runnable workspace"
+      });
+
+      const readiness = context.workflowService.runExecutionReadiness(project.id);
+      expect(readiness.run.status).toBe("ready");
+      expect(readiness.latestFindings).toHaveLength(0);
+      expect(readiness.actions).toHaveLength(0);
+      expect(context.workflowService.showLatestExecutionReadiness(project.id)?.run.id).toBe(readiness.run.id);
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks execution before test preparation when the story worktree is not runnable", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-readiness-blocked-"));
+    const dbPath = join(root, "app.sqlite");
+    const workspaceRoot = createGitWorkspace(root);
+    createNodeNextWorkspace(workspaceRoot, { withToolchain: false });
+    commitAllWorkspaceChanges(workspaceRoot, "add node next workspace");
+    const context = createAppContext(dbPath, { workspaceRoot, adapterScriptPath: localAgentScriptPath });
+
+    try {
+      const { project } = await prepareProjectThroughPlanning(context, {
+        title: "Readiness Blocked",
+        description: "Do not enter execution when the worktree lacks runtime dependencies"
+      });
+
+      const execution = await context.workflowService.startExecution(project.id);
+      expect(execution.blockedByReadiness).toBe(true);
+      expect(execution.reason).toBe("execution_readiness_failed");
+      expect(execution.scheduledCount).toBe(0);
+      expect(execution.executions[0]?.phase).toBe("readiness");
+      if (execution.executions[0]?.phase !== "readiness") {
+        throw new Error("expected readiness execution result");
+      }
+      expect(execution.executions[0].readiness.latestFindings.some((finding) => finding.code === "next_binary_missing")).toBe(true);
+
+      const shown = context.workflowService.showExecution(project.id);
+      expect(shown.waves[0]?.stories[0]?.latestTestRun).toBeNull();
+      expect(shown.waves[0]?.stories[0]?.latestExecution).toBeNull();
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("persists failed readiness findings when the canonical build command fails", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-readiness-build-fail-"));
+    const dbPath = join(root, "app.sqlite");
+    const workspaceRoot = createGitWorkspace(root);
+    createNodeNextWorkspace(workspaceRoot, { withToolchain: true });
+    commitAllWorkspaceChanges(workspaceRoot, "add node next workspace");
+    const fakeNpmBin = writeFakeNpmScript(root, "build-fails");
+    const context = createAppContext(dbPath, { workspaceRoot, adapterScriptPath: localAgentScriptPath });
+
+    try {
+      const { project } = await prepareProjectThroughPlanning(context, {
+        title: "Readiness Build Failure",
+        description: "Persist a manual blocker when the canonical build command fails"
+      });
+
+      await withPatchedPath(fakeNpmBin, async () => {
+        const readiness = context.workflowService.runExecutionReadiness(project.id);
+        expect(readiness.run.status).toBe("blocked");
+        expect(readiness.latestFindings.some((finding) => finding.code === "build_command_failed")).toBe(true);
+        expect(readiness.latestFindings.every((finding) => finding.isAutoFixable === false)).toBe(true);
+      });
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("persists failed readiness findings when the canonical typecheck command fails", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-readiness-typecheck-fail-"));
+    const dbPath = join(root, "app.sqlite");
+    const workspaceRoot = createGitWorkspace(root);
+    createNodeNextWorkspace(workspaceRoot, { withToolchain: true });
+    commitAllWorkspaceChanges(workspaceRoot, "add node next workspace");
+    const fakeNpmBin = writeFakeNpmScript(root, "typecheck-fails");
+    const context = createAppContext(dbPath, { workspaceRoot, adapterScriptPath: localAgentScriptPath });
+
+    try {
+      const { project } = await prepareProjectThroughPlanning(context, {
+        title: "Readiness Typecheck Failure",
+        description: "Persist a manual blocker when the canonical typecheck command fails"
+      });
+
+      await withPatchedPath(fakeNpmBin, async () => {
+        const readiness = context.workflowService.runExecutionReadiness(project.id);
+        expect(readiness.run.status).toBe("blocked");
+        expect(readiness.latestFindings.some((finding) => finding.code === "typecheck_failed")).toBe(true);
+      });
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("re-inspects after deterministic remediation and reuses identical readiness runs", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-readiness-autofix-"));
+    const dbPath = join(root, "app.sqlite");
+    const workspaceRoot = createGitWorkspace(root);
+    createNodeNextWorkspace(workspaceRoot, { withToolchain: false });
+    commitAllWorkspaceChanges(workspaceRoot, "add node next workspace");
+    const fakeNpmBin = writeFakeNpmScript(root, "install-fixes-toolchain");
+    const context = createAppContext(dbPath, { workspaceRoot, adapterScriptPath: localAgentScriptPath });
+
+    try {
+      const { project } = await prepareProjectThroughPlanning(context, {
+        title: "Readiness Autofix",
+        description: "Run deterministic remediation and reuse unchanged readiness runs"
+      });
+
+      await withPatchedPath(fakeNpmBin, async () => {
+        const first = context.workflowService.runExecutionReadiness(project.id);
+        expect(first.run.status).toBe("ready");
+        expect(first.actions).toHaveLength(1);
+        expect(first.actions[0]?.status).toBe("completed");
+        expect(first.findings.some((finding) => finding.code === "node_modules_missing")).toBe(true);
+        expect(first.latestFindings).toHaveLength(0);
+
+        const second = context.workflowService.runExecutionReadiness(project.id);
+        expect(second.run.id).not.toBe(first.run.id);
+        const third = context.workflowService.runExecutionReadiness(project.id);
+        expect(third.run.id).toBe(second.run.id);
+      });
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks a UI story before execution when Playwright config is missing", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-verification-config-missing-"));
+    const dbPath = join(root, "app.sqlite");
+    const workspaceRoot = createGitWorkspace(root);
+    const browserUrl = resolveWorkspaceBrowserUrl("default");
+    createNodeNextWorkspace(workspaceRoot, { withToolchain: true, baseUrl: browserUrl.baseUrl });
+    commitAllWorkspaceChanges(workspaceRoot, "add UI workspace without playwright config");
+    const context = createAppContext(dbPath, { workspaceRoot, adapterScriptPath: localAgentScriptPath });
+
+    try {
+      const { project } = await prepareProjectThroughPlanning(context, {
+        title: "UI Verification Config Gap",
+        description: "Block screen implementation until browser verification is configured"
+      });
+      const uiStory = markFirstStoryAsUi(context, project.id);
+
+      const execution = await context.workflowService.startExecution(project.id);
+      expect(execution.blockedByReadiness).toBe(true);
+      expect(execution.reason).toBe("story_verification_readiness_failed");
+      expect(execution.scheduledCount).toBe(0);
+      expect(execution.executions[0]?.phase).toBe("verification_readiness");
+      if (execution.executions[0]?.phase !== "verification_readiness") {
+        throw new Error("expected verification readiness execution result");
+      }
+      expect(execution.executions[0].storyCode).toBe(uiStory.code);
+      expect(
+        execution.executions[0].verificationReadiness.latestFindings.some((finding) => finding.code === "playwright_config_missing")
+      ).toBe(true);
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks a UI story before execution when the UI server contract is missing", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-verification-server-missing-"));
+    const dbPath = join(root, "app.sqlite");
+    const workspaceRoot = createGitWorkspace(root);
+    const context = createAppContext(dbPath, { workspaceRoot, adapterScriptPath: localAgentScriptPath });
+    const browserUrl = resolveWorkspaceBrowserUrl(context.workspace.key);
+    createNodeNextWorkspace(workspaceRoot, {
+      withToolchain: true,
+      withPlaywrightSetup: true,
+      withPlaywrightBinary: true,
+      withPlaywrightWebServer: false,
+      baseUrl: browserUrl.baseUrl
+    });
+    commitAllWorkspaceChanges(workspaceRoot, "add UI workspace without server contract");
+
+    try {
+      context.repositories.workspaceSettingsRepository.update(context.workspace.id, {
+        appTestConfigJson: JSON.stringify(
+          {
+            baseUrl: browserUrl.baseUrl,
+            runnerPreference: ["playwright"],
+            readiness: null
+          },
+          null,
+          2
+        )
+      });
+      context.workspaceSettings.appTestConfigJson = context.repositories.workspaceSettingsRepository.getByWorkspaceId(context.workspace.id)!.appTestConfigJson;
+
+      const { project } = await prepareProjectThroughPlanning(context, {
+        title: "UI Verification Server Contract",
+        description: "Block route work until the browser server contract exists"
+      });
+      markFirstStoryAsUi(context, project.id);
+
+      const execution = await context.workflowService.startExecution(project.id);
+      expect(execution.reason).toBe("story_verification_readiness_failed");
+      expect(execution.executions[0]?.phase).toBe("verification_readiness");
+      if (execution.executions[0]?.phase !== "verification_readiness") {
+        throw new Error("expected verification readiness execution result");
+      }
+      expect(
+        execution.executions[0].verificationReadiness.latestFindings.some((finding) => finding.code === "ui_server_contract_missing")
+      ).toBe(true);
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks a UI story when appTestConfigJson is invalid for browser verification", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-verification-invalid-config-"));
+    const dbPath = join(root, "app.sqlite");
+    const workspaceRoot = createGitWorkspace(root);
+    const context = createAppContext(dbPath, { workspaceRoot, adapterScriptPath: localAgentScriptPath });
+    const browserUrl = resolveWorkspaceBrowserUrl(context.workspace.key);
+    createNodeNextWorkspace(workspaceRoot, {
+      withToolchain: true,
+      withPlaywrightSetup: true,
+      withPlaywrightBinary: true,
+      baseUrl: browserUrl.baseUrl
+    });
+    commitAllWorkspaceChanges(workspaceRoot, "add UI workspace with invalid app test config");
+
+    try {
+      context.repositories.workspaceSettingsRepository.update(context.workspace.id, {
+        appTestConfigJson: "{invalid json"
+      });
+      context.workspaceSettings.appTestConfigJson = "{invalid json";
+
+      const { project } = await prepareProjectThroughPlanning(context, {
+        title: "UI Verification Invalid Config",
+        description: "Block the UI story when the central app test contract is invalid"
+      });
+      const uiStory = markFirstStoryAsUi(context, project.id);
+
+      const readiness = context.workflowService.runVerificationReadiness(project.id, uiStory.code);
+      expect(readiness.run.status).toBe("blocked");
+      expect(readiness.latestFindings.some((finding) => finding.code === "app_test_config_invalid")).toBe(true);
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps agent_browser -> playwright fallback available when Playwright is runnable", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-verification-fallback-"));
+    const dbPath = join(root, "app.sqlite");
+    const workspaceRoot = createGitWorkspace(root);
+    const context = createAppContext(dbPath, { workspaceRoot, adapterScriptPath: localAgentScriptPath });
+    const browserUrl = resolveWorkspaceBrowserUrl(context.workspace.key);
+    createNodeNextWorkspace(workspaceRoot, {
+      withToolchain: true,
+      withPlaywrightSetup: true,
+      withPlaywrightBinary: true,
+      baseUrl: browserUrl.baseUrl
+    });
+    commitAllWorkspaceChanges(workspaceRoot, "add runnable UI verification workspace");
+
+    try {
+      context.repositories.workspaceSettingsRepository.update(context.workspace.id, {
+        appTestConfigJson: JSON.stringify(
+          {
+            baseUrl: browserUrl.baseUrl,
+            runnerPreference: ["agent_browser", "playwright"],
+            readiness: {
+              command: browserUrl.readinessCommand
+            }
+          },
+          null,
+          2
+        )
+      });
+      context.workspaceSettings.appTestConfigJson = context.repositories.workspaceSettingsRepository.getByWorkspaceId(context.workspace.id)!.appTestConfigJson;
+
+      const { project } = await prepareProjectThroughPlanning(context, {
+        title: "UI Verification Fallback",
+        description: "Keep playwright available when agent browser is missing"
+      });
+      const uiStory = markFirstStoryAsUi(context, project.id);
+
+      const readiness = context.workflowService.runVerificationReadiness(project.id, uiStory.code);
+      expect(readiness.run.status).toBe("ready");
+      expect(readiness.latestFindings).toHaveLength(0);
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not block verification readiness when Playwright config resolves the URL dynamically", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-verification-dynamic-url-"));
+    const dbPath = join(root, "app.sqlite");
+    const workspaceRoot = createGitWorkspace(root);
+    const context = createAppContext(dbPath, { workspaceRoot, adapterScriptPath: localAgentScriptPath });
+    const browserUrl = resolveWorkspaceBrowserUrl(context.workspace.key);
+    createNodeNextWorkspace(workspaceRoot, {
+      withToolchain: true,
+      withPlaywrightSetup: true,
+      withPlaywrightBinary: true,
+      baseUrl: browserUrl.baseUrl
+    });
+    writeFileSync(
+      join(workspaceRoot, "apps", "ui", "playwright.config.ts"),
+      `import { defineConfig } from "@playwright/test";
+const host = "127.0.0.1";
+const port = ${browserUrl.port};
+export default defineConfig({
+  testDir: "./tests/e2e",
+  use: { baseURL: \`http://\${host}:\${port}\` },
+  webServer: {
+    command: "npm run dev:e2e",
+    url: \`http://\${host}:\${port}\`
+  }
+});
+`,
+      "utf8"
+    );
+    commitAllWorkspaceChanges(workspaceRoot, "add dynamic playwright config");
+
+    try {
+      context.repositories.workspaceSettingsRepository.update(context.workspace.id, {
+        appTestConfigJson: JSON.stringify(
+          {
+            baseUrl: browserUrl.baseUrl,
+            runnerPreference: ["playwright"],
+            readiness: {
+              command: browserUrl.readinessCommand
+            }
+          },
+          null,
+          2
+        )
+      });
+      context.workspaceSettings.appTestConfigJson = context.repositories.workspaceSettingsRepository.getByWorkspaceId(context.workspace.id)!.appTestConfigJson;
+
+      const { project } = await prepareProjectThroughPlanning(context, {
+        title: "UI Verification Dynamic Base URL",
+        description: "Allow dynamic Playwright config when it still mirrors the central contract"
+      });
+      const uiStory = markFirstStoryAsUi(context, project.id);
+
+      const readiness = context.workflowService.runVerificationReadiness(project.id, uiStory.code);
+      expect(readiness.run.status).toBe("ready");
+      expect(readiness.latestFindings.some((finding) => finding.code === "playwright_baseurl_mismatch")).toBe(false);
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("re-inspects after deterministic verification remediation when Playwright is installable", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-verification-autofix-"));
+    const dbPath = join(root, "app.sqlite");
+    const workspaceRoot = createGitWorkspace(root);
+    const context = createAppContext(dbPath, { workspaceRoot, adapterScriptPath: localAgentScriptPath });
+    const browserUrl = resolveWorkspaceBrowserUrl(context.workspace.key);
+    createNodeNextWorkspace(workspaceRoot, {
+      withToolchain: true,
+      withPlaywrightSetup: true,
+      withPlaywrightBinary: false,
+      baseUrl: browserUrl.baseUrl
+    });
+    commitAllWorkspaceChanges(workspaceRoot, "add UI workspace missing playwright cli");
+    const fakeNpmBin = writeFakeNpmScript(root, "install-fixes-verification");
+
+    try {
+      context.repositories.workspaceSettingsRepository.update(context.workspace.id, {
+        appTestConfigJson: JSON.stringify(
+          {
+            baseUrl: browserUrl.baseUrl,
+            runnerPreference: ["playwright"],
+            readiness: {
+              command: browserUrl.readinessCommand
+            }
+          },
+          null,
+          2
+        )
+      });
+      context.workspaceSettings.appTestConfigJson = context.repositories.workspaceSettingsRepository.getByWorkspaceId(context.workspace.id)!.appTestConfigJson;
+
+      const { project } = await prepareProjectThroughPlanning(context, {
+        title: "UI Verification Autofix",
+        description: "Install the runnable playwright cli before UI execution starts"
+      });
+      const uiStory = markFirstStoryAsUi(context, project.id);
+
+      await withPatchedPath(fakeNpmBin, async () => {
+        const readiness = context.workflowService.runVerificationReadiness(project.id, uiStory.code);
+        expect(readiness.run.status).toBe("ready");
+        expect(readiness.actions).toHaveLength(1);
+        expect(readiness.actions[0]?.status).toBe("completed");
+        expect(readiness.findings.some((finding) => finding.code === "playwright_cli_missing")).toBe(true);
+        expect(readiness.latestFindings).toHaveLength(0);
+      });
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps non-dedicated port 3000 blocked for UI verification", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-verification-port-blocked-"));
+    const dbPath = join(root, "app.sqlite");
+    const workspaceRoot = createGitWorkspace(root);
+    createNodeNextWorkspace(workspaceRoot, {
+      withToolchain: true,
+      withPlaywrightSetup: true,
+      withPlaywrightBinary: true,
+      baseUrl: "http://127.0.0.1:3000"
+    });
+    commitAllWorkspaceChanges(workspaceRoot, "add UI workspace on shared port");
+    const context = createAppContext(dbPath, { workspaceRoot, adapterScriptPath: localAgentScriptPath });
+
+    try {
+      context.repositories.workspaceSettingsRepository.update(context.workspace.id, {
+        appTestConfigJson: JSON.stringify(
+          {
+            baseUrl: "http://127.0.0.1:3000",
+            runnerPreference: ["playwright"],
+            readiness: {
+              command: "npm --prefix apps/ui run dev:e2e"
+            }
+          },
+          null,
+          2
+        )
+      });
+      context.workspaceSettings.appTestConfigJson = context.repositories.workspaceSettingsRepository.getByWorkspaceId(context.workspace.id)!.appTestConfigJson;
+
+      const { project } = await prepareProjectThroughPlanning(context, {
+        title: "UI Verification Shared Port",
+        description: "Reject shared port 3000 for browser verification"
+      });
+      const uiStory = markFirstStoryAsUi(context, project.id);
+
+      const readiness = context.workflowService.runVerificationReadiness(project.id, uiStory.code);
+      expect(readiness.run.status).toBe("blocked");
+      expect(readiness.latestFindings.some((finding) => finding.code === "app_test_baseurl_uses_shared_port_3000")).toBe(true);
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 
   it("starts a brainstorm run and stores prompt snapshots", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
@@ -2850,7 +3500,10 @@ describe("workflow service", () => {
   it("shows a compact execution summary and story-specific execution logs", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
     const dbPath = join(root, "app.sqlite");
-    const context = createAppContext(dbPath);
+    const workspaceRoot = createGitWorkspace(root);
+    createNodeNextWorkspace(workspaceRoot, { withToolchain: true });
+    commitAllWorkspaceChanges(workspaceRoot, "add runnable workspace");
+    const context = createAppContext(dbPath, { workspaceRoot, adapterScriptPath: localAgentScriptPath });
 
     try {
       const { project } = await prepareProjectThroughCompletedExecution(context, {
@@ -2870,7 +3523,7 @@ describe("workflow service", () => {
       };
       expect(compact.overallStatus).toBe("completed");
       expect(compact.activeWaveCode).toBeNull();
-      expect(compact.waves.map((wave) => wave.status)).toEqual(["completed", "completed"]);
+      expect(compact.waves.every((wave) => wave.status === "completed")).toBe(true);
       expect(compact.waves[0]?.completedStoryCount).toBe(1);
       expect(compact.waves[0]?.stories[0]).toMatchObject({
         storyCode: "ITEM-0001-P01-US01",
@@ -2895,6 +3548,47 @@ describe("workflow service", () => {
       expect(logs.latestExecution?.verificationRuns.map((run) => run.mode)).toEqual(["basic", "ralph"]);
       expect(logs.latestStoryReview?.sessions[0]?.adapterKey).toBe("local-cli");
       expect(logs.latestStoryReview?.sessions[0]?.stdout).toContain("\"overallStatus\":\"passed\"");
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps compact execution status completed when stale verification readiness is blocked after story review", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-compact-stale-readiness-"));
+    const dbPath = join(root, "app.sqlite");
+    const workspaceRoot = createGitWorkspace(root);
+    createNodeNextWorkspace(workspaceRoot, { withToolchain: true });
+    commitAllWorkspaceChanges(workspaceRoot, "add runnable workspace");
+    const context = createAppContext(dbPath, { workspaceRoot, adapterScriptPath: localAgentScriptPath });
+
+    try {
+      const { project } = await prepareProjectThroughCompletedExecution(context, {
+        title: "Compact Status Precedence",
+        description: "Do not regress completed stories to blocked because of stale readiness records"
+      });
+      const story = context.repositories.userStoryRepository.listByProjectId(project.id)[0]!;
+      const wave = context.repositories.waveRepository.listByImplementationPlanId(
+        context.repositories.implementationPlanRepository.getLatestByProjectId(project.id)!.id
+      )[0]!;
+
+      context.repositories.verificationReadinessRunRepository.create({
+        projectId: project.id,
+        waveId: wave.id,
+        storyId: story.id,
+        status: "blocked",
+        profileKey: "node-next-browser-verification",
+        workspaceRoot: context.effectiveConfig.workspaceRoot,
+        inputSnapshotJson: "{}",
+        summaryJson: null,
+        errorMessage: "stale blocked readiness"
+      });
+
+      const compact = context.workflowService.showExecutionCompact(project.id);
+      expect(compact.waves[0]?.stories[0]).toMatchObject({
+        status: "completed",
+        lastPhase: "story_review"
+      });
     } finally {
       context.connection.close();
       rmSync(root, { recursive: true, force: true });
@@ -3556,13 +4250,22 @@ describe("workflow service", () => {
   it("falls back to playwright when agent_browser baseUrl is unreachable", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
     const dbPath = join(root, "app.sqlite");
-    const context = createAppContext(dbPath);
+    const workspaceRoot = createGitWorkspace(root);
+    const context = createAppContext(dbPath, { workspaceRoot });
+    const browserUrl = resolveWorkspaceBrowserUrl(context.workspace.key);
+    createNodeNextWorkspace(workspaceRoot, {
+      withToolchain: true,
+      withPlaywrightSetup: true,
+      withPlaywrightBinary: true,
+      baseUrl: browserUrl.baseUrl
+    });
+    commitAllWorkspaceChanges(workspaceRoot, "add runnable browser verification workspace");
 
     try {
       context.repositories.workspaceSettingsRepository.update(context.workspace.id, {
         appTestConfigJson: JSON.stringify(
           {
-            baseUrl: "http://127.0.0.1:3000",
+            baseUrl: browserUrl.baseUrl,
             runnerPreference: ["agent_browser", "playwright"]
           },
           null,
@@ -3613,6 +4316,7 @@ describe("workflow service", () => {
     const originalScript = readFileSync(localAgentScriptPath, "utf8");
     const adapterScriptPath = join(root, "local-agent-app-runtime-endpoint.mjs");
     const dbPath = join(root, "app.sqlite");
+    const workspaceRoot = createGitWorkspace(root);
 
     try {
       const runtimeEndpointScript = replaceRequired(
@@ -3621,12 +4325,20 @@ describe("workflow service", () => {
         '  const resolvedStartUrl = "http://127.0.0.1:4173/runtime-check";'
       );
       writeFileSync(adapterScriptPath, runtimeEndpointScript);
-      const context = createAppContext(dbPath, { adapterScriptPath });
+      const context = createAppContext(dbPath, { adapterScriptPath, workspaceRoot });
+      const browserUrl = resolveWorkspaceBrowserUrl(context.workspace.key);
+      createNodeNextWorkspace(workspaceRoot, {
+        withToolchain: true,
+        withPlaywrightSetup: true,
+        withPlaywrightBinary: true,
+        baseUrl: browserUrl.baseUrl
+      });
+      commitAllWorkspaceChanges(workspaceRoot, "add runnable browser verification workspace");
 
       context.repositories.workspaceSettingsRepository.update(context.workspace.id, {
         appTestConfigJson: JSON.stringify(
           {
-            baseUrl: "http://127.0.0.1:3000",
+            baseUrl: browserUrl.baseUrl,
             runnerPreference: ["agent_browser", "playwright"]
           },
           null,
@@ -3666,7 +4378,7 @@ describe("workflow service", () => {
         resolvedStartUrl?: string;
       };
       expect(preparedSession.runner).toBe("playwright");
-      expect(preparedSession.baseUrl).toBe("http://127.0.0.1:3000");
+      expect(preparedSession.baseUrl).toBe(browserUrl.baseUrl);
       expect(preparedSession.resolvedBaseUrl).toBe("http://127.0.0.1:4173");
       expect(preparedSession.endpointSource).toBe("derived_runtime");
       expect(preparedSession.resolvedStartUrl).toBe("http://127.0.0.1:4173/runtime-check");
@@ -3997,13 +4709,20 @@ describe("workflow service", () => {
     }
   });
 
-  it("does not block execution when story review returns passed with only advisory findings", async () => {
+  it("requires remediation when story review returns passed with only advisory findings", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
     const originalScript = readFileSync(localAgentScriptPath, "utf8");
     const adapterScriptPath = join(root, "local-agent-story-review-advisory.mjs");
     const dbPath = join(root, "app.sqlite");
+    const workspaceRoot = createGitWorkspace(root);
 
     try {
+      createNodeNextWorkspace(workspaceRoot, {
+        withToolchain: true,
+        withPlaywrightSetup: true,
+        withPlaywrightBinary: true
+      });
+      commitAllWorkspaceChanges(workspaceRoot, "add runnable node workspace");
       const reviewScript = replaceRequired(
         originalScript,
         "function storyReview(payload) {\n  const findings = [];",
@@ -4024,11 +4743,11 @@ describe("workflow service", () => {
         "  const overallStatus = \"passed\";"
       );
       writeFileSync(adapterScriptPath, advisoryScript);
-      const context = createAppContext(dbPath, { adapterScriptPath });
+      const context = createAppContext(dbPath, { adapterScriptPath, workspaceRoot });
 
       const item = createWorkspaceItem(context, {
         title: "Story Review Advisory",
-        description: "Advisory findings should not block execution"
+        description: "Advisory findings should trigger the remediation loop"
       });
       await context.workflowService.startStage({ stageKey: "brainstorm", itemId: item.id });
       const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
@@ -4043,7 +4762,7 @@ describe("workflow service", () => {
       context.workflowService.approvePlanning(project.id);
 
       const first = await context.workflowService.startExecution(project.id);
-      expect(first.executions[0]?.status).toBe("completed");
+      expect(first.executions[0]?.status).toBe("review_required");
       expect(first.executions[0]?.phase).toBe("story_review");
 
       const shown = context.workflowService.showExecution(project.id) as {
@@ -4055,10 +4774,7 @@ describe("workflow service", () => {
           }>;
         }>;
       };
-      expect(shown.waves[0]?.waveExecution?.status).toBe("completed");
-      expect(shown.waves[0]?.stories[0]?.latestExecution?.status).toBe("completed");
-      expect(shown.waves[0]?.stories[0]?.latestStoryReviewRun?.status).toBe("passed");
-      expect(shown.waves[0]?.stories[0]?.latestStoryReviewRun?.summaryJson).toContain("\"overallStatus\": \"passed\"");
+      expect(shown.waves[0]?.waveExecution?.status).toBe("review_required");
       context.connection.close();
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -4073,6 +4789,12 @@ describe("workflow service", () => {
     const workspaceRoot = createGitWorkspace(root);
 
     try {
+      createNodeNextWorkspace(workspaceRoot, {
+        withToolchain: true,
+        withPlaywrightSetup: true,
+        withPlaywrightBinary: true
+      });
+      commitAllWorkspaceChanges(workspaceRoot, "add runnable node workspace");
       const remediationScript = replaceRequired(
         originalScript,
         "function storyReview(payload) {\n  const findings = [];",
@@ -4241,7 +4963,47 @@ describe("workflow service", () => {
     }
   });
 
-  it("autorun triggers story-review remediation automatically", async () => {
+  it("autorun stops when execution readiness remains blocked", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-readiness-stop-"));
+    const dbPath = join(root, "app.sqlite");
+    const workspaceRoot = createGitWorkspace(root);
+    createNodeNextWorkspace(workspaceRoot, { withToolchain: true });
+    commitAllWorkspaceChanges(workspaceRoot, "add node next workspace");
+    const fakeNpmBin = writeFakeNpmScript(root, "build-fails");
+    const context = createAppContext(dbPath, { workspaceRoot, adapterScriptPath: localAgentScriptPath });
+
+    try {
+      const item = createWorkspaceItem(context, {
+        title: "Autorun Readiness Stop",
+        description: "Stop autorun when execution readiness is technically blocked"
+      });
+      await context.workflowService.startStage({ stageKey: "brainstorm", itemId: item.id });
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      context.workflowService.approveConcept(concept!.id);
+
+      const result = await withPatchedPath(fakeNpmBin, async () =>
+        context.workflowService.autorunForItem({
+          itemId: item.id,
+          trigger: "concept:approve",
+          initialSteps: [{ action: "concept:approve", scopeType: "item", scopeId: item.id, status: "approved" }]
+        })
+      );
+
+      expect(result.finalStatus).toBe("stopped");
+      expect(result.stopReason).toBe("execution_readiness_blocked");
+      expect(result.steps.at(-1)?.action).toBe("execution:start");
+      const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
+      const readiness = context.workflowService.showLatestExecutionReadiness(project.id);
+      expect(readiness?.run.status).toBe("blocked");
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it(
+    "autorun triggers story-review remediation automatically",
+    async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
     const originalScript = readFileSync(localAgentScriptPath, "utf8");
     const adapterScriptPath = join(root, "local-agent-autorun-story-review-remediation.mjs");
@@ -4249,6 +5011,12 @@ describe("workflow service", () => {
     const workspaceRoot = createGitWorkspace(root);
 
     try {
+      createNodeNextWorkspace(workspaceRoot, {
+        withToolchain: true,
+        withPlaywrightSetup: true,
+        withPlaywrightBinary: true
+      });
+      commitAllWorkspaceChanges(workspaceRoot, "add runnable node workspace");
       const remediationScript = replaceRequired(
         originalScript,
         "function storyReview(payload) {\n  const findings = [];",
@@ -4291,7 +5059,9 @@ describe("workflow service", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
-  });
+    },
+    15_000
+  );
 
   it("marks execution failed when story review returns failed", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
@@ -4349,6 +5119,90 @@ describe("workflow service", () => {
       expect(shown.waves[0]?.waveExecution?.status).toBe("failed");
       expect(shown.waves[0]?.stories[0]?.latestExecution?.status).toBe("failed");
       expect(shown.waves[0]?.stories[0]?.latestStoryReviewRun?.status).toBe("failed");
+      context.connection.close();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("runs story review against the story worktree instead of the main workspace root", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-story-review-worktree-"));
+    const originalScript = readFileSync(localAgentScriptPath, "utf8");
+    const adapterScriptPath = join(root, "local-agent-story-review-worktree.mjs");
+    const dbPath = join(root, "app.sqlite");
+    const workspaceRoot = createGitWorkspace(root);
+
+    try {
+      createNodeNextWorkspace(workspaceRoot, {
+        withToolchain: true,
+        withPlaywrightSetup: true,
+        withPlaywrightBinary: true
+      });
+      commitAllWorkspaceChanges(workspaceRoot, "add runnable node workspace");
+      const worktreeAwareScript = replaceRequired(
+        originalScript,
+        "function storyReview(payload) {\n  const findings = [];",
+        `function storyReview(payload) {\n  const findings = [];
+  const runtimeWorkspaceRoot = payload.runtime?.workspaceRoot ?? "";
+  if (!runtimeWorkspaceRoot.includes("/.beerengineer/workspaces/default/worktrees/")) {
+    findings.push({
+      severity: "high",
+      category: "reliability",
+      title: "Story review inspected the wrong workspace root",
+      description: "The story review worker did not receive the story worktree runtime path.",
+      evidence: runtimeWorkspaceRoot || "<missing>",
+      filePath: null,
+      line: null,
+      suggestedFix: "Use the story worktree as runtime.workspaceRoot for story review."
+    });
+  }`
+      );
+      writeFileSync(adapterScriptPath, worktreeAwareScript);
+      const context = createAppContext(dbPath, { adapterScriptPath, workspaceRoot });
+
+      const item = createWorkspaceItem(context, {
+        title: "Story Review Worktree Runtime",
+        description: "Ensure story review inspects the story worktree instead of the main workspace root"
+      });
+      await context.workflowService.startStage({ stageKey: "brainstorm", itemId: item.id });
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      context.workflowService.approveConcept(concept!.id);
+      context.workflowService.importProjects(item.id);
+      const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
+      await context.workflowService.startStage({ stageKey: "requirements", itemId: item.id, projectId: project.id });
+      context.workflowService.approveStories(project.id);
+      const firstStory = context.repositories.userStoryRepository.listByProjectId(project.id)[0]!;
+      context.repositories.userStoryRepository.update(firstStory.id, {
+        title: "Persist workflow aggregate",
+        description: "Implement the repository-backed aggregate write path.",
+        goal: "store a deterministic aggregate transition",
+        benefit: "the backend flow stays consistent"
+      });
+      for (const criterion of context.repositories.acceptanceCriterionRepository.listByStoryId(firstStory.id)) {
+        asRunnableConnection(context.connection)
+          .prepare("UPDATE acceptance_criteria SET text = ? WHERE id = ?")
+          .run(`Persist backend aggregate invariant ${criterion.code} without browser-specific behavior.`, criterion.id);
+      }
+      await context.workflowService.startStage({ stageKey: "architecture", itemId: item.id, projectId: project.id });
+      context.workflowService.approveArchitecture(project.id);
+      await context.workflowService.startStage({ stageKey: "planning", itemId: item.id, projectId: project.id });
+      context.workflowService.approvePlanning(project.id);
+
+      const first = await context.workflowService.startExecution(project.id);
+      expect(first.executions[0]?.status).toBe("completed");
+      expect(first.executions[0]?.phase).toBe("story_review");
+
+      const shown = context.workflowService.showExecution(project.id) as {
+        waves: Array<{
+          stories: Array<{
+            latestExecution: { status: string } | null;
+            latestStoryReviewRun: { status: string; summaryJson: string | null } | null;
+          }>;
+        }>;
+      };
+      expect(shown.waves[0]?.stories[0]?.latestExecution?.status).toBe("completed");
+      expect(shown.waves[0]?.stories[0]?.latestStoryReviewRun?.status).toBe("passed");
+      expect(shown.waves[0]?.stories[0]?.latestStoryReviewRun?.summaryJson).toContain("\"overallStatus\": \"passed\"");
       context.connection.close();
     } finally {
       rmSync(root, { recursive: true, force: true });

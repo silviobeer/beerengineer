@@ -124,6 +124,11 @@ Die ersten expliziten Startpunkte fuer `autorun` sind:
 - spaeter QA
 - spaeter Documentation
 
+Wenn `execution:start` an der Execution-Readiness-Gate mit
+`reason = execution_readiness_failed` stoppt, endet `autorun` an dieser Stelle
+mit einem expliziten technischen Stop-Grund und darf nicht in
+`test_preparation`, `implementation`, QA oder Documentation weiterlaufen.
+
 ### Nach Retry-Punkten
 
 `retry + autorun` soll ab dem konkreten Retry-Objekt weiterlaufen und danach

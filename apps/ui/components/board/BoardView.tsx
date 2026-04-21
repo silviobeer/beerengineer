@@ -5,7 +5,7 @@ import { BoardFilterBar } from "@/components/board/BoardFilterBar";
 
 export function BoardView({ board }: { board: BoardViewModel }) {
   return (
-    <section className="board-surface">
+    <div className="board-surface">
       <div className="board-head">
         <div>
           <MonoLabel>Workspace board</MonoLabel>
@@ -19,6 +19,6 @@ export function BoardView({ board }: { board: BoardViewModel }) {
           <BoardColumn key={column.key} column={column} />
         ))}
       </div>
-    </section>
+    </div>
   );
 }

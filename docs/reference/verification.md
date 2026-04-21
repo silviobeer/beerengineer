@@ -111,9 +111,10 @@ Verifiziert mit:
 
 Umgesetzt:
 
+- persistierte Pre-Execution-Readiness-Gate mit `ExecutionReadinessRun`, `ExecutionReadinessFinding` und `ExecutionReadinessAction`
 - deterministischer Execution-Loop fuer den neuesten freigegebenen `ImplementationPlan`
 - persistierte Runtime-Entities fuer Kontext, Wave-Execution, Story-Execution, Agent-Session und Verifikation
-- CLI-Kommandos `execution:start`, `execution:tick`, `execution:show` und `execution:retry`
+- CLI-Kommandos `execution:readiness:start`, `execution:readiness:show`, `execution:start`, `execution:tick`, `execution:show` und `execution:retry`
 - gespeicherte Business- und Repo-Context-Snapshots pro `WaveStoryExecution`
 - engine-seitige Worker-Rollenwahl statt LLM-gesteuerter Orchestrierung
 - lokaler Demo-Adapter fuer bounded Story-Ausfuehrung
@@ -133,10 +134,17 @@ Aktueller Stand:
 
 Live verifiziert:
 
+- `execution:start` blockiert jetzt vor `test_preparation`, wenn Workspace oder Story-Worktree nicht lauffaehig sind
+- deterministic readiness remediation versucht aktuell sichere UI-Dependency-Reparaturen ueber `npm --prefix apps/ui install`
 - beide Waves einer freigegebenen Planung wurden sequentiell auf `completed` gebracht
 - pro `WaveStoryExecution` wurden Business- und Repo-Snapshots gespeichert
 - pro Story wurde ein `ExecutionAgentSession`-Record angelegt
 - pro Story wurde ein `VerificationRun` mit Status `passed` gespeichert
+
+Noch nicht enthalten:
+
+- bounded LLM-Remediation fuer nichttriviale Readiness-Probleme wie Build-/Config-Fehler
+- optionaler LLM-Remediator ist insgesamt noch nicht implementiert; produktiv aktiv ist derzeit nur die deterministische Readiness-Remediation
 
 ## TDD Slice
 
@@ -186,6 +194,23 @@ Aktueller Stand:
 
 - 12 Testdateien
 - 33 gruene Tests
+
+## UI Browser Setup
+
+Umgesetzt:
+
+- `apps/ui` besitzt jetzt eine eigene Playwright-Konfiguration
+- E2E-Skripte leben direkt in `apps/ui/package.json`
+- die UI-E2E-Tests starten ihren Next-Webserver reproduzierbar selbst
+- die projektlokale Browser-Konfiguration spiegelt jetzt denselben zentralen
+  Workspace-Contract wie die Engine
+- fuer den `default`-Workspace ist das bewusst `127.0.0.1:3100`, damit lokale
+  Entwicklungsserver auf `3000` nicht den Setup-Nachweis stoeren
+
+Verifiziert mit:
+
+- `npm --prefix apps/ui run build`
+- `npm --prefix apps/ui run test:e2e`
 
 Live zu verifizieren:
 

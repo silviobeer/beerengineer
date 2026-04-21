@@ -16,6 +16,12 @@ import {
   ConceptRepository,
   DocumentationAgentSessionRepository,
   DocumentationRunRepository,
+  ExecutionReadinessActionRepository,
+  ExecutionReadinessFindingRepository,
+  ExecutionReadinessRunRepository,
+  VerificationReadinessActionRepository,
+  VerificationReadinessFindingRepository,
+  VerificationReadinessRunRepository,
   ExecutionAgentSessionRepository,
   ImplementationPlanRepository,
   InteractiveReviewEntryRepository,
@@ -126,6 +132,12 @@ export type AppContext = {
     waveStoryRepository: WaveStoryRepository;
     waveStoryDependencyRepository: WaveStoryDependencyRepository;
     projectExecutionContextRepository: ProjectExecutionContextRepository;
+    executionReadinessRunRepository: ExecutionReadinessRunRepository;
+    executionReadinessFindingRepository: ExecutionReadinessFindingRepository;
+    executionReadinessActionRepository: ExecutionReadinessActionRepository;
+    verificationReadinessRunRepository: VerificationReadinessRunRepository;
+    verificationReadinessFindingRepository: VerificationReadinessFindingRepository;
+    verificationReadinessActionRepository: VerificationReadinessActionRepository;
     waveExecutionRepository: WaveExecutionRepository;
     waveStoryTestRunRepository: WaveStoryTestRunRepository;
     testAgentSessionRepository: TestAgentSessionRepository;
@@ -229,6 +241,12 @@ export function createAppContext(
   const waveStoryRepository = new WaveStoryRepository(db);
   const waveStoryDependencyRepository = new WaveStoryDependencyRepository(db);
   const projectExecutionContextRepository = new ProjectExecutionContextRepository(db);
+  const executionReadinessRunRepository = new ExecutionReadinessRunRepository(db);
+  const executionReadinessFindingRepository = new ExecutionReadinessFindingRepository(db);
+  const executionReadinessActionRepository = new ExecutionReadinessActionRepository(db);
+  const verificationReadinessRunRepository = new VerificationReadinessRunRepository(db);
+  const verificationReadinessFindingRepository = new VerificationReadinessFindingRepository(db);
+  const verificationReadinessActionRepository = new VerificationReadinessActionRepository(db);
   const waveExecutionRepository = new WaveExecutionRepository(db);
   const waveStoryTestRunRepository = new WaveStoryTestRunRepository(db);
   const testAgentSessionRepository = new TestAgentSessionRepository(db);
@@ -355,6 +373,12 @@ export function createAppContext(
       waveStoryRepository,
       waveStoryDependencyRepository,
       projectExecutionContextRepository,
+      executionReadinessRunRepository,
+      executionReadinessFindingRepository,
+      executionReadinessActionRepository,
+      verificationReadinessRunRepository,
+      verificationReadinessFindingRepository,
+      verificationReadinessActionRepository,
       waveExecutionRepository,
       waveStoryTestRunRepository,
       testAgentSessionRepository,
@@ -414,6 +438,12 @@ export function createAppContext(
       waveStoryRepository,
       waveStoryDependencyRepository,
       projectExecutionContextRepository,
+      executionReadinessRunRepository,
+      executionReadinessFindingRepository,
+      executionReadinessActionRepository,
+      verificationReadinessRunRepository,
+      verificationReadinessFindingRepository,
+      verificationReadinessActionRepository,
       waveExecutionRepository,
       waveStoryTestRunRepository,
       testAgentSessionRepository,

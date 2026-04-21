@@ -1,14 +1,20 @@
+"use client";
+
+import { useState } from "react";
 import { BoardView } from "@/components/board/BoardView";
 import { ItemOverlay } from "@/components/overlay/ItemOverlay";
 import { AppShell } from "@/components/shell/AppShell";
-import { boardViewModel, overlayViewModel, shellViewModel } from "@/lib/mock-data";
+import { defaultWorkspaceKey, getWorkspaceBoardState } from "@/lib/mock-data";
 
 export default function BoardPage() {
+  const [activeWorkspaceKey, setActiveWorkspaceKey] = useState(defaultWorkspaceKey);
+  const { shell, board, overlay } = getWorkspaceBoardState(activeWorkspaceKey);
+
   return (
-    <AppShell shell={shellViewModel} activeHref="/">
+    <AppShell shell={shell} activeHref="/" onWorkspaceChange={setActiveWorkspaceKey}>
       <div className="canvas">
-        <BoardView board={boardViewModel} />
-        <ItemOverlay overlay={overlayViewModel} />
+        <BoardView board={board} />
+        <ItemOverlay overlay={overlay} />
       </div>
     </AppShell>
   );

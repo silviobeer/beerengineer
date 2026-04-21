@@ -6,6 +6,8 @@ import type { StoryExecutionOutput, TestPreparationOutput } from "../schemas/out
 import { AppError } from "../shared/errors.js";
 import type { AgentAdapter } from "../adapters/types.js";
 import type { ExecutionWorkerRole, GitBranchMetadata } from "../domain/types.js";
+import { ExecutionReadinessService } from "../services/execution-readiness-service.js";
+import { VerificationReadinessService } from "../services/verification-readiness-service.js";
 import type {
   AcceptanceCriterionRepository,
   AppVerificationRunRepository,
@@ -30,6 +32,26 @@ import type { BuildAdapterRuntimeContext, ResolvedWorkerProfile, ResolvedWorkerR
 import { resolveCompactExecutionStoryPhase, resolveCompactExecutionStoryStatus } from "./status-resolution.js";
 
 type RetryWaveStoryExecutionResult =
+  | {
+      phase: "readiness";
+      projectId: string;
+      waveStoryExecutionId: string | null;
+      waveStoryId: string;
+      storyCode: string;
+      status: "blocked";
+      reason: "execution_readiness_failed";
+      readiness: NonNullable<ReturnType<ExecutionService["showLatestExecutionReadiness"]>>;
+    }
+  | {
+      phase: "verification_readiness";
+      projectId: string;
+      waveStoryExecutionId: string | null;
+      waveStoryId: string;
+      storyCode: string;
+      status: "blocked";
+      reason: "story_verification_readiness_failed";
+      verificationReadiness: NonNullable<ReturnType<ExecutionService["showLatestVerificationReadiness"]>>;
+    }
   | {
       phase: "test_preparation";
       waveStoryTestRunId: string;
@@ -59,6 +81,7 @@ export type ExecutionViewStory = {
   latestBasicVerification: ReturnType<VerificationRunRepository["getLatestByWaveStoryExecutionIdAndMode"]>;
   latestRalphVerification: ReturnType<VerificationRunRepository["getLatestByWaveStoryExecutionIdAndMode"]>;
   latestAppVerificationRun: ReturnType<AppVerificationRunRepository["getLatestByWaveStoryExecutionId"]>;
+  latestVerificationReadiness: ReturnType<WorkflowDeps["verificationReadinessRunRepository"]["getLatestByStoryId"]>;
   latestStoryReviewRun: ReturnType<StoryReviewRunRepository["getLatestByWaveStoryExecutionId"]>;
   latestStoryReviewFindings: ReturnType<WorkflowDeps["storyReviewFindingRepository"]["listByStoryReviewRunId"]>;
   latestStoryReviewRemediationRun: ReturnType<WorkflowDeps["storyReviewRemediationRunRepository"]["listByStoryId"]>[number] | null;
@@ -83,6 +106,18 @@ export type ExecutionView = {
   projectExecutionContext: ReturnType<ProjectExecutionContextRepository["getByProjectId"]>;
   activeWave: ExecutionViewWave["wave"] | null;
   waves: ExecutionViewWave[];
+};
+
+type ExecutionAdvanceResult = {
+  projectId: string;
+  implementationPlanId: string;
+  activeWaveCode: string | null;
+  scheduledCount: number;
+  completed: boolean;
+  blockedByFailure?: boolean;
+  blockedByReadiness?: boolean;
+  reason?: "execution_readiness_failed" | "story_verification_readiness_failed";
+  executions: RetryWaveStoryExecutionResult[];
 };
 
 type ExecutionServiceOptions = {
@@ -138,6 +173,63 @@ export class ExecutionService {
     return this.advanceExecution(projectId);
   }
 
+  public runExecutionReadiness(projectId: string, storyCode?: string) {
+    const project = this.options.loaders.requireProject(projectId);
+    const implementationPlan = this.options.loaders.requireImplementationPlanForProject(projectId);
+    const wave = this.resolveActiveWave(this.options.deps.waveRepository.listByImplementationPlanId(implementationPlan.id));
+    const story = storyCode
+      ? this.options.deps.userStoryRepository.listByProjectId(project.id).find((candidate) => candidate.code === storyCode) ?? null
+      : null;
+    if (storyCode && !story) {
+      throw new AppError("STORY_NOT_FOUND", `Story ${storyCode} not found in project ${project.code}`);
+    }
+    const gitMetadata = story
+      ? this.options.ensureStoryWorktree(story.code, this.options.ensureStoryBranch(project.code, story.code))
+      : null;
+    return this.createExecutionReadinessService().runForProject({
+      project,
+      wave,
+      story,
+      workspaceRoot: gitMetadata?.worktreePath ?? gitMetadata?.workspaceRoot,
+      allowDeterministicRemediation: true
+    });
+  }
+
+  public showLatestExecutionReadiness(projectId: string) {
+    return this.createExecutionReadinessService().showLatestByProjectId(projectId);
+  }
+
+  public showExecutionReadiness(runId: string) {
+    return this.createExecutionReadinessService().show(runId);
+  }
+
+  public runVerificationReadiness(projectId: string, storyCode: string) {
+    const project = this.options.loaders.requireProject(projectId);
+    const implementationPlan = this.options.loaders.requireImplementationPlanForProject(projectId);
+    const wave = this.resolveActiveWave(this.options.deps.waveRepository.listByImplementationPlanId(implementationPlan.id));
+    const story =
+      this.options.deps.userStoryRepository.listByProjectId(project.id).find((candidate) => candidate.code === storyCode) ?? null;
+    if (!story) {
+      throw new AppError("STORY_NOT_FOUND", `Story ${storyCode} not found in project ${project.code}`);
+    }
+    const gitMetadata = this.options.ensureStoryWorktree(story.code, this.options.ensureStoryBranch(project.code, story.code));
+    return this.createVerificationReadinessService().runForProject({
+      project,
+      wave,
+      story,
+      workspaceRoot: gitMetadata.worktreePath ?? gitMetadata.workspaceRoot,
+      allowDeterministicRemediation: true
+    });
+  }
+
+  public showLatestVerificationReadiness(projectId: string) {
+    return this.createVerificationReadinessService().showLatestByProjectId(projectId);
+  }
+
+  public showVerificationReadiness(runId: string) {
+    return this.createVerificationReadinessService().show(runId);
+  }
+
   public async retryWaveStoryExecution(waveStoryExecutionId: string): Promise<RetryWaveStoryExecutionResult> {
     const previous = this.options.deps.waveStoryExecutionRepository.getById(waveStoryExecutionId);
     if (!previous) {
@@ -160,11 +252,51 @@ export class ExecutionService {
     const project = this.options.loaders.requireProject(story.projectId);
     const plan = this.options.loaders.requireImplementationPlanForProject(project.id);
     const wave = this.options.loaders.requireWave(waveExecution.waveId);
-    const projectExecutionContext = this.ensureProjectExecutionContext(project, plan);
     const gitMetadata = this.options.ensureStoryWorktree(
       story.code,
       this.options.ensureStoryBranch(project.code, story.code)
     );
+    const readiness = this.createExecutionReadinessService().runForProject({
+      project,
+      wave,
+      story,
+      workspaceRoot: gitMetadata.worktreePath ?? gitMetadata.workspaceRoot,
+      allowDeterministicRemediation: true
+    });
+    if (readiness.run.status !== "ready") {
+      return {
+        phase: "readiness",
+        projectId: project.id,
+        waveStoryExecutionId: previous.id,
+        waveStoryId: previous.waveStoryId,
+        storyCode: story.code,
+        status: "blocked",
+        reason: "execution_readiness_failed",
+        readiness
+      };
+    }
+    if (this.shouldStoryRequireVerificationReadiness(story)) {
+      const verificationReadiness = this.createVerificationReadinessService().runForProject({
+        project,
+        wave,
+        story,
+        workspaceRoot: gitMetadata.worktreePath ?? gitMetadata.workspaceRoot,
+        allowDeterministicRemediation: true
+      });
+      if (verificationReadiness.run.status !== "ready") {
+        return {
+          phase: "verification_readiness",
+          projectId: project.id,
+          waveStoryExecutionId: previous.id,
+          waveStoryId: previous.waveStoryId,
+          storyCode: story.code,
+          status: "blocked",
+          reason: "story_verification_readiness_failed",
+          verificationReadiness
+        };
+      }
+    }
+    const projectExecutionContext = this.ensureProjectExecutionContext(project, plan);
     const testRun = await this.ensureWaveStoryTestPreparation({
       project,
       implementationPlan: plan,
@@ -215,6 +347,7 @@ export class ExecutionService {
         const latestBasicVerification = this.findLatestVerificationRun(verificationRuns, "basic");
         const latestRalphVerification = this.findLatestVerificationRun(verificationRuns, "ralph");
         const latestAppVerificationRun = appVerificationRuns.at(-1) ?? null;
+        const latestVerificationReadiness = this.options.deps.verificationReadinessRunRepository.getLatestByStoryId(story.id);
         const latestStoryReviewRun = latestExecution
           ? this.options.deps.storyReviewRunRepository.getLatestByWaveStoryExecutionId(latestExecution.id)
           : null;
@@ -242,6 +375,7 @@ export class ExecutionService {
           latestBasicVerification,
           latestRalphVerification,
           latestAppVerificationRun,
+          latestVerificationReadiness,
           latestStoryReviewRun,
           latestStoryReviewFindings: latestStoryReviewRun
             ? this.options.deps.storyReviewFindingRepository.listByStoryReviewRunId(latestStoryReviewRun.id)
@@ -283,6 +417,7 @@ export class ExecutionService {
     const waves = execution.waves.map((waveEntry) => {
       const stories = waveEntry.stories.map((storyEntry) => {
         const lastUpdatedAt = [
+          storyEntry.latestVerificationReadiness?.updatedAt ?? 0,
           storyEntry.latestTestRun?.updatedAt ?? 0,
           storyEntry.latestExecution?.updatedAt ?? 0,
           storyEntry.latestAppVerificationRun?.updatedAt ?? 0,
@@ -295,9 +430,17 @@ export class ExecutionService {
           status: resolveCompactExecutionStoryStatus(storyEntry),
           lastPhase: resolveCompactExecutionStoryPhase(storyEntry),
           blockers: storyEntry.blockers,
+          latestVerificationReadiness: storyEntry.latestVerificationReadiness
+            ? {
+                id: storyEntry.latestVerificationReadiness.id,
+                status: storyEntry.latestVerificationReadiness.status,
+                updatedAt: storyEntry.latestVerificationReadiness.updatedAt
+              }
+            : null,
           lastError:
             storyEntry.latestStoryReviewRun?.errorMessage ??
             storyEntry.latestAppVerificationRun?.failureSummary ??
+            storyEntry.latestVerificationReadiness?.errorMessage ??
             storyEntry.latestExecution?.errorMessage ??
             storyEntry.latestTestRun?.errorMessage ??
             null,
@@ -842,25 +985,41 @@ export class ExecutionService {
     };
   }
 
-  private async advanceExecution(projectId: string): Promise<{
-    projectId: string;
-    implementationPlanId: string;
-    activeWaveCode: string | null;
-    scheduledCount: number;
-    completed: boolean;
-    blockedByFailure?: boolean;
-    executions: RetryWaveStoryExecutionResult[];
-  }> {
+  private createExecutionReadinessService() {
+    return new ExecutionReadinessService(
+      {
+        runRepository: this.options.deps.executionReadinessRunRepository,
+        findingRepository: this.options.deps.executionReadinessFindingRepository,
+        actionRepository: this.options.deps.executionReadinessActionRepository
+      },
+      this.options.deps.workspaceRoot,
+      this.options.deps.workspaceSettings
+    );
+  }
+
+  private createVerificationReadinessService() {
+    return new VerificationReadinessService(
+      {
+        runRepository: this.options.deps.verificationReadinessRunRepository,
+        findingRepository: this.options.deps.verificationReadinessFindingRepository,
+        actionRepository: this.options.deps.verificationReadinessActionRepository
+      },
+      this.options.deps.workspaceRoot,
+      this.options.deps.workspaceSettings,
+      this.options.deps.workspace.key
+    );
+  }
+
+  private async advanceExecution(projectId: string): Promise<ExecutionAdvanceResult> {
     const project = this.options.loaders.requireProject(projectId);
-    this.options.pruneGitWorktrees?.();
-    this.options.ensureProjectBranch(project.code);
     const implementationPlan = this.options.loaders.requireImplementationPlanForProject(projectId);
     const waves = this.options.deps.waveRepository.listByImplementationPlanId(implementationPlan.id);
     if (waves.length === 0) {
       throw new AppError("WAVES_NOT_FOUND", "Implementation plan has no waves");
     }
-
     const activeWave = this.resolveActiveWave(waves);
+    this.options.pruneGitWorktrees?.();
+    this.options.ensureProjectBranch(project.code);
     if (!activeWave) {
       return {
         projectId,
@@ -939,13 +1098,55 @@ export class ExecutionService {
       };
     }
 
-    const executions = [];
+    const executions: RetryWaveStoryExecutionResult[] = [];
     for (const waveStory of executableStories) {
       const story = this.options.loaders.requireStory(waveStory.storyId);
       const gitMetadata = this.options.ensureStoryWorktree(
         story.code,
         this.options.ensureStoryBranch(project.code, story.code)
       );
+      const readiness = this.createExecutionReadinessService().runForProject({
+        project,
+        wave: activeWave,
+        story,
+        workspaceRoot: gitMetadata.worktreePath ?? gitMetadata.workspaceRoot,
+        allowDeterministicRemediation: true
+      });
+      if (readiness.run.status !== "ready") {
+        executions.push({
+          phase: "readiness" as const,
+          projectId: project.id,
+          waveStoryExecutionId: null,
+          waveStoryId: waveStory.id,
+          storyCode: story.code,
+          status: "blocked" as const,
+          reason: "execution_readiness_failed" as const,
+          readiness
+        });
+        continue;
+      }
+      if (this.shouldStoryRequireVerificationReadiness(story)) {
+        const verificationReadiness = this.createVerificationReadinessService().runForProject({
+          project,
+          wave: activeWave,
+          story,
+          workspaceRoot: gitMetadata.worktreePath ?? gitMetadata.workspaceRoot,
+          allowDeterministicRemediation: true
+        });
+        if (verificationReadiness.run.status !== "ready") {
+          executions.push({
+            phase: "verification_readiness",
+            projectId: project.id,
+            waveStoryExecutionId: null,
+            waveStoryId: waveStory.id,
+            storyCode: story.code,
+            status: "blocked",
+            reason: "story_verification_readiness_failed",
+            verificationReadiness
+          });
+          continue;
+        }
+      }
       const testRun = await this.ensureWaveStoryTestPreparation({
         project,
         implementationPlan,
@@ -975,13 +1176,20 @@ export class ExecutionService {
     }
 
     this.refreshWaveExecutionStatus(waveExecution.id);
+    const readinessExecution = executions.find(
+      (execution) => execution.phase === "readiness" || execution.phase === "verification_readiness"
+    );
     return {
       projectId,
       implementationPlanId: implementationPlan.id,
       activeWaveCode: activeWave.code,
-      scheduledCount: executions.length,
+      scheduledCount: executions.filter(
+        (execution) => execution.phase !== "readiness" && execution.phase !== "verification_readiness"
+      ).length,
       completed: false,
       blockedByFailure: false,
+      blockedByReadiness: readinessExecution !== undefined,
+      reason: readinessExecution?.reason,
       executions
     };
   }
@@ -1433,6 +1641,41 @@ export class ExecutionService {
       return "backend-implementer";
     }
     return "implementer";
+  }
+
+  private shouldStoryRequireVerificationReadiness(story: ReturnType<WorkflowEntityLoaders["requireStory"]>): boolean {
+    const acceptanceCriteria = this.options.deps.acceptanceCriterionRepository.listByStoryId(story.id);
+    const combinedText = `${story.title} ${story.description} ${story.goal} ${story.benefit} ${acceptanceCriteria.map((criterion) => criterion.text).join(" ")}`.toLowerCase();
+    const uiSignals = [
+      "screen",
+      "page",
+      "route",
+      "component",
+      "browser",
+      "frontend",
+      "layout",
+      "form",
+      "dashboard",
+      "view"
+    ];
+    if (uiSignals.some((signal) => combinedText.includes(signal))) {
+      return true;
+    }
+    const appTestConfig = this.parseWorkspaceAppTestConfig();
+    return Boolean(appTestConfig?.routes?.[story.code]);
+  }
+
+  private parseWorkspaceAppTestConfig(): { routes?: Record<string, string> } | null {
+    const raw = this.options.deps.workspaceSettings.appTestConfigJson;
+    if (!raw) {
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(raw) as { routes?: Record<string, string> };
+      return typeof parsed === "object" && parsed !== null ? parsed : null;
+    } catch {
+      return null;
+    }
   }
 
   private resolveTestPreparationStatus(

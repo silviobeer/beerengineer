@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { createDatabase } from "../../src/persistence/database.js";
 import { applyMigrations } from "../../src/persistence/migrator.js";
 import { baseMigrations } from "../../src/persistence/migration-registry.js";
+import { resolveWorkspaceBrowserUrl } from "../../src/shared/workspace-browser-url.js";
 import {
   AcceptanceCriterionRepository,
   AppVerificationRunRepository,
@@ -44,6 +45,8 @@ import {
   WaveStoryExecutionRepository,
   WaveStoryRepository
 } from "../../src/persistence/repositories.js";
+
+const defaultBrowserUrl = resolveWorkspaceBrowserUrl("default");
 import { createTestDatabase } from "../helpers/database.js";
 
 describe("repositories", () => {
@@ -357,7 +360,7 @@ describe("repositories", () => {
         status: "in_progress",
         runner: "agent_browser",
         attempt: 1,
-        projectAppTestContextJson: "{\"baseUrl\":\"http://127.0.0.1:3000\"}",
+        projectAppTestContextJson: JSON.stringify({ baseUrl: defaultBrowserUrl.baseUrl }),
         storyContextJson: "{\"storyCode\":\"ITEM-0001-P01-US01\"}",
         preparedSessionJson: "{\"ready\":true}",
         resultJson: null,
@@ -366,7 +369,7 @@ describe("repositories", () => {
       });
       appVerificationRunRepository.updateStatus(appVerificationRun.id, "passed", {
         runner: "playwright",
-        projectAppTestContextJson: "{\"baseUrl\":\"http://127.0.0.1:3000\"}",
+        projectAppTestContextJson: JSON.stringify({ baseUrl: defaultBrowserUrl.baseUrl }),
         storyContextJson: "{\"storyCode\":\"ITEM-0001-P01-US01\"}",
         preparedSessionJson: "{\"ready\":true}",
         resultJson: "{\"overallStatus\":\"passed\"}",

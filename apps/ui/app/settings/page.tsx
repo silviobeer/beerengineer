@@ -1,7 +1,7 @@
 import { AppShell } from "@/components/shell/AppShell";
 import { Panel } from "@/components/primitives/Panel";
 import { SectionTitle } from "@/components/primitives/SectionTitle";
-import { shellViewModel } from "@/lib/mock-data";
+import { shellViewModel } from "@/lib/mock-legacy-data";
 
 export default function SettingsPage() {
   return (

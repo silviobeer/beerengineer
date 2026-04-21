@@ -1,6 +1,6 @@
 import { SetupOverview } from "@/components/setup/SetupOverview";
 import { AppShell } from "@/components/shell/AppShell";
-import { conversationMessages, setupViewModel, shellViewModel } from "@/lib/mock-data";
+import { conversationMessages, setupViewModel, shellViewModel } from "@/lib/mock-legacy-data";
 
 export default function SetupPage() {
   return (

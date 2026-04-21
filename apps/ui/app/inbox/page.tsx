@@ -1,6 +1,6 @@
 import { InboxView } from "@/components/inbox/InboxView";
 import { AppShell } from "@/components/shell/AppShell";
-import { inboxViewModel, shellViewModel } from "@/lib/mock-data";
+import { inboxViewModel, shellViewModel } from "@/lib/mock-legacy-data";
 
 export default function InboxPage() {
   return (

@@ -206,6 +206,112 @@ export const projectExecutionContexts = sqliteTable("project_execution_contexts"
   updatedAt: integer("updated_at").notNull()
 });
 
+export const executionReadinessRuns = sqliteTable("execution_readiness_runs", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull().references(() => projects.id),
+  waveId: text("wave_id").references(() => waves.id),
+  storyId: text("story_id").references(() => userStories.id),
+  status: text("status").notNull(),
+  profileKey: text("profile_key").notNull(),
+  workspaceRoot: text("workspace_root").notNull(),
+  inputSnapshotJson: text("input_snapshot_json").notNull(),
+  summaryJson: text("summary_json"),
+  errorMessage: text("error_message"),
+  startedAt: integer("started_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+  completedAt: integer("completed_at")
+});
+
+export const executionReadinessFindings = sqliteTable("execution_readiness_findings", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull().references(() => executionReadinessRuns.id),
+  checkIteration: integer("check_iteration").notNull(),
+  code: text("code").notNull(),
+  severity: text("severity").notNull(),
+  scopeType: text("scope_type").notNull(),
+  scopePath: text("scope_path"),
+  summary: text("summary").notNull(),
+  detail: text("detail").notNull(),
+  detectedBy: text("detected_by").notNull(),
+  classification: text("classification").notNull(),
+  recommendedAction: text("recommended_action"),
+  isAutoFixable: integer("is_auto_fixable").notNull(),
+  status: text("status").notNull(),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull()
+});
+
+export const executionReadinessActions = sqliteTable("execution_readiness_actions", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull().references(() => executionReadinessRuns.id),
+  checkIteration: integer("check_iteration").notNull(),
+  actionType: text("action_type").notNull(),
+  initiator: text("initiator").notNull(),
+  commandJson: text("command_json"),
+  cwd: text("cwd"),
+  status: text("status").notNull(),
+  stdout: text("stdout"),
+  stderr: text("stderr"),
+  exitCode: integer("exit_code"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+  startedAt: integer("started_at"),
+  completedAt: integer("completed_at")
+});
+
+export const verificationReadinessRuns = sqliteTable("verification_readiness_runs", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull().references(() => projects.id),
+  waveId: text("wave_id").references(() => waves.id),
+  storyId: text("story_id").references(() => userStories.id),
+  status: text("status").notNull(),
+  profileKey: text("profile_key").notNull(),
+  workspaceRoot: text("workspace_root").notNull(),
+  inputSnapshotJson: text("input_snapshot_json").notNull(),
+  summaryJson: text("summary_json"),
+  errorMessage: text("error_message"),
+  startedAt: integer("started_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+  completedAt: integer("completed_at")
+});
+
+export const verificationReadinessFindings = sqliteTable("verification_readiness_findings", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull().references(() => verificationReadinessRuns.id),
+  checkIteration: integer("check_iteration").notNull(),
+  code: text("code").notNull(),
+  severity: text("severity").notNull(),
+  scopeType: text("scope_type").notNull(),
+  scopePath: text("scope_path"),
+  summary: text("summary").notNull(),
+  detail: text("detail").notNull(),
+  detectedBy: text("detected_by").notNull(),
+  classification: text("classification").notNull(),
+  recommendedAction: text("recommended_action"),
+  isAutoFixable: integer("is_auto_fixable").notNull(),
+  status: text("status").notNull(),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull()
+});
+
+export const verificationReadinessActions = sqliteTable("verification_readiness_actions", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull().references(() => verificationReadinessRuns.id),
+  checkIteration: integer("check_iteration").notNull(),
+  actionType: text("action_type").notNull(),
+  initiator: text("initiator").notNull(),
+  commandJson: text("command_json"),
+  cwd: text("cwd"),
+  status: text("status").notNull(),
+  stdout: text("stdout"),
+  stderr: text("stderr"),
+  exitCode: integer("exit_code"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+  startedAt: integer("started_at"),
+  completedAt: integer("completed_at")
+});
+
 export const waveExecutions = sqliteTable("wave_executions", {
   id: text("id").primaryKey(),
   waveId: text("wave_id").notNull().references(() => waves.id),

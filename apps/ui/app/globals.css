@@ -112,6 +112,60 @@ select {
   padding: 14px;
 }
 
+.workspace-switcher {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.workspace-switcher-button,
+.workspace-option {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.workspace-switcher-button {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.workspace-switcher-options {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 14px;
+  right: 14px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fffdfa;
+  box-shadow: var(--shadow);
+}
+
+.workspace-option {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.workspace-option.active,
+.workspace-option[aria-selected="true"] {
+  background: rgba(0, 90, 101, 0.08);
+}
+
 .workspace-switcher span,
 .title-block p,
 .board-head p,

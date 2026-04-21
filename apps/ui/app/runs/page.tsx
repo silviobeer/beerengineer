@@ -2,7 +2,7 @@ import { AppShell } from "@/components/shell/AppShell";
 import { EmptyState } from "@/components/primitives/EmptyState";
 import { Panel } from "@/components/primitives/Panel";
 import { SectionTitle } from "@/components/primitives/SectionTitle";
-import { shellViewModel } from "@/lib/mock-data";
+import { shellViewModel } from "@/lib/mock-legacy-data";
 
 export default function RunsPage() {
   return (

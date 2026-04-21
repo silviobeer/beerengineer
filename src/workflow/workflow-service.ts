@@ -236,6 +236,10 @@ export class WorkflowService {
       getLatestQaRunByProjectId: (projectId) => this.deps.qaRunRepository.getLatestByProjectId(projectId),
       getLatestDocumentationRunByProjectId: (projectId) =>
         this.deps.documentationRunRepository.getLatestByProjectId(projectId),
+      getLatestExecutionReadinessByProjectId: (projectId) =>
+        this.deps.executionReadinessRunRepository.getLatestByProjectId(projectId),
+      getLatestVerificationReadinessByProjectId: (projectId) =>
+        this.deps.verificationReadinessRunRepository.getLatestByProjectId(projectId),
       showExecution: (projectId) => this.showExecution(projectId),
       importProjects: (itemId) => this.stageService.importProjects(itemId),
       startStage: (input) => this.stageService.startStage(input),
@@ -753,6 +757,34 @@ export class WorkflowService {
 
   public async retryWaveStoryExecution(waveStoryExecutionId: string) {
     return this.executionService.retryWaveStoryExecution(waveStoryExecutionId);
+  }
+
+  public runExecutionReadiness(projectId: string, storyCode?: string) {
+    return this.executionService.runExecutionReadiness(projectId, storyCode);
+  }
+
+  public showExecutionReadiness(runId: string) {
+    return this.executionService.showExecutionReadiness(runId);
+  }
+
+  public showLatestExecutionReadiness(projectId: string) {
+    return this.executionService.showLatestExecutionReadiness(projectId);
+  }
+
+  public runVerificationReadiness(projectId: string, storyCode: string) {
+    return this.executionService.runVerificationReadiness(projectId, storyCode);
+  }
+
+  public showVerificationReadiness(runId: string) {
+    return this.executionService.showVerificationReadiness(runId);
+  }
+
+  public showLatestVerificationReadiness(projectId: string) {
+    return this.executionService.showLatestVerificationReadiness(projectId);
+  }
+
+  public async drainPendingImplementationReviewTriggers(): Promise<void> {
+    return this.verificationService.drainPendingImplementationReviewTriggers();
   }
 
   public async startAppVerification(waveStoryExecutionId: string) {

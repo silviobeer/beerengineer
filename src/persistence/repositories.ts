@@ -13,6 +13,14 @@ import type {
   DocumentationAgentSession,
   DocumentationRun,
   DocumentationRunStatus,
+  ExecutionReadinessAction,
+  ExecutionReadinessFinding,
+  ExecutionReadinessFindingStatus,
+  ExecutionReadinessRun,
+  VerificationReadinessAction,
+  VerificationReadinessFinding,
+  VerificationReadinessFindingStatus,
+  VerificationReadinessRun,
   ExecutionAgentSession,
   GitBranchMetadata,
   InteractiveReviewEntry,
@@ -95,7 +103,13 @@ import {
   concepts,
   documentationAgentSessions,
   documentationRuns,
+  executionReadinessActions,
+  executionReadinessFindings,
+  executionReadinessRuns,
   executionAgentSessions,
+  verificationReadinessActions,
+  verificationReadinessFindings,
+  verificationReadinessRuns,
   appVerificationRuns,
   implementationPlans,
   interactiveReviewEntries,
@@ -179,6 +193,20 @@ function valueOrCurrent<TValue>(value: TValue | undefined, current: TValue): TVa
   return value;
 }
 
+function mapExecutionReadinessFindingRow(row: ExecutionReadinessFindingRow): ExecutionReadinessFinding {
+  return {
+    ...row,
+    isAutoFixable: row.isAutoFixable !== 0
+  };
+}
+
+function mapVerificationReadinessFindingRow(row: VerificationReadinessFindingRow): VerificationReadinessFinding {
+  return {
+    ...row,
+    isAutoFixable: row.isAutoFixable !== 0
+  };
+}
+
 type OptionalQueryRow<TValue> = TValue | undefined;
 
 type WorkspaceCreateInput = Omit<Workspace, "id" | "createdAt" | "updatedAt">;
@@ -218,6 +246,12 @@ type ImplementationPlanCreateInput = Omit<ImplementationPlan, "id" | "createdAt"
 type WaveCreateInput = Omit<Wave, "id" | "createdAt" | "updatedAt">;
 type WaveStoryCreateInput = Omit<WaveStory, "id" | "createdAt" | "updatedAt">;
 type ProjectExecutionContextUpsertInput = Omit<ProjectExecutionContext, "id" | "createdAt" | "updatedAt">;
+type ExecutionReadinessRunCreateInput = Omit<ExecutionReadinessRun, "id" | "startedAt" | "updatedAt" | "completedAt">;
+type ExecutionReadinessFindingCreateInput = Omit<ExecutionReadinessFinding, "id" | "createdAt" | "updatedAt">;
+type ExecutionReadinessActionCreateInput = Omit<ExecutionReadinessAction, "id" | "createdAt" | "updatedAt">;
+type VerificationReadinessRunCreateInput = Omit<VerificationReadinessRun, "id" | "startedAt" | "updatedAt" | "completedAt">;
+type VerificationReadinessFindingCreateInput = Omit<VerificationReadinessFinding, "id" | "createdAt" | "updatedAt">;
+type VerificationReadinessActionCreateInput = Omit<VerificationReadinessAction, "id" | "createdAt" | "updatedAt">;
 
 type WaveExecutionCreateInput = Omit<WaveExecution, "id" | "createdAt" | "updatedAt" | "completedAt">;
 
@@ -239,6 +273,13 @@ type DocumentationAgentSessionCreateInput = Omit<DocumentationAgentSession, "id"
 type ArtifactCreateInput = Omit<ArtifactRecord, "id" | "createdAt">;
 type StageRunCreateInput = Omit<StageRunRecord, "id" | "createdAt" | "updatedAt" | "completedAt">;
 type AgentSessionCreateInput = Omit<AgentSessionRecord, "id" | "createdAt" | "updatedAt">;
+
+type ExecutionReadinessFindingRow = Omit<ExecutionReadinessFinding, "isAutoFixable"> & {
+  isAutoFixable: number;
+};
+type VerificationReadinessFindingRow = Omit<VerificationReadinessFinding, "isAutoFixable"> & {
+  isAutoFixable: number;
+};
 
 type LatestItemCodeRow = {
   code: string | null;
@@ -1687,6 +1728,362 @@ export class ProjectExecutionContextRepository {
     };
     this.db.insert(projectExecutionContexts).values(row).run();
     return mapProjectExecutionContext(row);
+  }
+}
+
+export class ExecutionReadinessRunRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public getById(id: string): ExecutionReadinessRun | null {
+    return (
+      this.db.select().from(executionReadinessRuns).where(eq(executionReadinessRuns.id, id)).get() as
+        | ExecutionReadinessRun
+        | undefined
+    ) ?? null;
+  }
+
+  public getLatestByProjectId(projectId: string): ExecutionReadinessRun | null {
+    return (
+      this.db
+        .select()
+        .from(executionReadinessRuns)
+        .where(eq(executionReadinessRuns.projectId, projectId))
+        .orderBy(desc(executionReadinessRuns.startedAt), desc(executionReadinessRuns.id))
+        .limit(1)
+        .get() as ExecutionReadinessRun | undefined
+    ) ?? null;
+  }
+
+  public findLatestReusable(input: {
+    projectId: string;
+    waveId: string | null;
+    storyId: string | null;
+    workspaceRoot: string;
+    inputSnapshotJson: string;
+  }): ExecutionReadinessRun | null {
+    return (
+      this.db
+        .select()
+        .from(executionReadinessRuns)
+        .where(
+          and(
+            eq(executionReadinessRuns.projectId, input.projectId),
+            input.waveId === null ? isNull(executionReadinessRuns.waveId) : eq(executionReadinessRuns.waveId, input.waveId),
+            input.storyId === null ? isNull(executionReadinessRuns.storyId) : eq(executionReadinessRuns.storyId, input.storyId),
+            eq(executionReadinessRuns.workspaceRoot, input.workspaceRoot),
+            eq(executionReadinessRuns.inputSnapshotJson, input.inputSnapshotJson),
+            not(eq(executionReadinessRuns.status, "running"))
+          )
+        )
+        .orderBy(desc(executionReadinessRuns.startedAt), desc(executionReadinessRuns.id))
+        .limit(1)
+        .get() as ExecutionReadinessRun | undefined
+    ) ?? null;
+  }
+
+  public create(input: ExecutionReadinessRunCreateInput): ExecutionReadinessRun {
+    const timestamp = now();
+    const row: ExecutionReadinessRun = {
+      ...input,
+      id: createId("execution_readiness_run"),
+      startedAt: timestamp,
+      updatedAt: timestamp,
+      completedAt: null
+    };
+    this.db.insert(executionReadinessRuns).values(row).run();
+    return row;
+  }
+
+  public update(
+    id: string,
+    input: Partial<Pick<ExecutionReadinessRun, "status" | "summaryJson" | "errorMessage" | "completedAt">>
+  ): void {
+    this.db
+      .update(executionReadinessRuns)
+      .set({
+        ...definedField("status", input.status),
+        ...definedField("summaryJson", input.summaryJson),
+        ...definedField("errorMessage", input.errorMessage),
+        ...definedField("completedAt", input.completedAt),
+        updatedAt: now()
+      })
+      .where(eq(executionReadinessRuns.id, id))
+      .run();
+  }
+}
+
+export class ExecutionReadinessFindingRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public createMany(input: ExecutionReadinessFindingCreateInput[]): ExecutionReadinessFinding[] {
+    const timestamp = now();
+    const rows = input.map((entry) => ({
+      ...entry,
+      id: createId("execution_readiness_finding"),
+      createdAt: timestamp,
+      updatedAt: timestamp
+    }));
+    if (rows.length > 0) {
+      this.db
+        .insert(executionReadinessFindings)
+        .values(rows.map((row) => ({ ...row, isAutoFixable: row.isAutoFixable ? 1 : 0 })))
+        .run();
+    }
+    return rows;
+  }
+
+  public listByRunId(runId: string): ExecutionReadinessFinding[] {
+    return (this.db
+      .select()
+      .from(executionReadinessFindings)
+      .where(eq(executionReadinessFindings.runId, runId))
+      .orderBy(executionReadinessFindings.checkIteration, executionReadinessFindings.createdAt, executionReadinessFindings.id)
+      .all() as ExecutionReadinessFindingRow[]).map(mapExecutionReadinessFindingRow);
+  }
+
+  public listLatestByRunId(runId: string): ExecutionReadinessFinding[] {
+    return this.listByRunId(runId).filter((finding) => finding.status !== "resolved");
+  }
+
+  public markByIterationResolved(runId: string, checkIteration: number): void {
+    this.db
+      .update(executionReadinessFindings)
+      .set({
+        status: "resolved" satisfies ExecutionReadinessFindingStatus,
+        updatedAt: now()
+      })
+      .where(and(eq(executionReadinessFindings.runId, runId), eq(executionReadinessFindings.checkIteration, checkIteration)))
+      .run();
+  }
+}
+
+export class ExecutionReadinessActionRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public create(input: ExecutionReadinessActionCreateInput): ExecutionReadinessAction {
+    const timestamp = now();
+    const row: ExecutionReadinessAction = {
+      ...input,
+      id: createId("execution_readiness_action"),
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+    this.db.insert(executionReadinessActions).values(row).run();
+    return row;
+  }
+
+  public listByRunId(runId: string): ExecutionReadinessAction[] {
+    return this.db
+      .select()
+      .from(executionReadinessActions)
+      .where(eq(executionReadinessActions.runId, runId))
+      .orderBy(executionReadinessActions.checkIteration, executionReadinessActions.createdAt, executionReadinessActions.id)
+      .all() as ExecutionReadinessAction[];
+  }
+
+  public update(
+    id: string,
+    input: Partial<
+      Pick<ExecutionReadinessAction, "status" | "stdout" | "stderr" | "exitCode" | "startedAt" | "completedAt">
+    >
+  ): void {
+    this.db
+      .update(executionReadinessActions)
+      .set({
+        ...definedField("status", input.status),
+        ...definedField("stdout", input.stdout),
+        ...definedField("stderr", input.stderr),
+        ...definedField("exitCode", input.exitCode),
+        ...definedField("startedAt", input.startedAt),
+        ...definedField("completedAt", input.completedAt),
+        updatedAt: now()
+      })
+      .where(eq(executionReadinessActions.id, id))
+      .run();
+  }
+}
+
+export class VerificationReadinessRunRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public getById(id: string): VerificationReadinessRun | null {
+    return (this.db.select().from(verificationReadinessRuns).where(eq(verificationReadinessRuns.id, id)).get() as
+      | VerificationReadinessRun
+      | undefined) ?? null;
+  }
+
+  public getLatestByProjectId(projectId: string): VerificationReadinessRun | null {
+    return (this.db
+      .select()
+      .from(verificationReadinessRuns)
+      .where(eq(verificationReadinessRuns.projectId, projectId))
+      .orderBy(desc(verificationReadinessRuns.startedAt), desc(verificationReadinessRuns.id))
+      .limit(1)
+      .get() as VerificationReadinessRun | undefined) ?? null;
+  }
+
+  public getLatestByStoryId(storyId: string): VerificationReadinessRun | null {
+    return (this.db
+      .select()
+      .from(verificationReadinessRuns)
+      .where(eq(verificationReadinessRuns.storyId, storyId))
+      .orderBy(desc(verificationReadinessRuns.startedAt), desc(verificationReadinessRuns.id))
+      .limit(1)
+      .get() as VerificationReadinessRun | undefined) ?? null;
+  }
+
+  public findLatestReusable(input: {
+    projectId: string;
+    waveId: string | null;
+    storyId: string | null;
+    workspaceRoot: string;
+    inputSnapshotJson: string;
+  }): VerificationReadinessRun | null {
+    return (this.db
+      .select()
+      .from(verificationReadinessRuns)
+      .where(
+        and(
+          eq(verificationReadinessRuns.projectId, input.projectId),
+          input.waveId === null ? isNull(verificationReadinessRuns.waveId) : eq(verificationReadinessRuns.waveId, input.waveId),
+          input.storyId === null ? isNull(verificationReadinessRuns.storyId) : eq(verificationReadinessRuns.storyId, input.storyId),
+          eq(verificationReadinessRuns.workspaceRoot, input.workspaceRoot),
+          eq(verificationReadinessRuns.inputSnapshotJson, input.inputSnapshotJson),
+          not(eq(verificationReadinessRuns.status, "running"))
+        )
+      )
+      .orderBy(desc(verificationReadinessRuns.startedAt), desc(verificationReadinessRuns.id))
+      .limit(1)
+      .get() as VerificationReadinessRun | undefined) ?? null;
+  }
+
+  public create(input: VerificationReadinessRunCreateInput): VerificationReadinessRun {
+    const timestamp = now();
+    const row: VerificationReadinessRun = {
+      ...input,
+      id: createId("verification_readiness_run"),
+      startedAt: timestamp,
+      updatedAt: timestamp,
+      completedAt: null
+    };
+    this.db.insert(verificationReadinessRuns).values(row).run();
+    return row;
+  }
+
+  public update(
+    id: string,
+    input: Partial<Pick<VerificationReadinessRun, "status" | "summaryJson" | "errorMessage" | "completedAt">>
+  ): void {
+    this.db
+      .update(verificationReadinessRuns)
+      .set({
+        ...definedField("status", input.status),
+        ...definedField("summaryJson", input.summaryJson),
+        ...definedField("errorMessage", input.errorMessage),
+        ...definedField("completedAt", input.completedAt),
+        updatedAt: now()
+      })
+      .where(eq(verificationReadinessRuns.id, id))
+      .run();
+  }
+}
+
+export class VerificationReadinessFindingRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public createMany(input: VerificationReadinessFindingCreateInput[]): VerificationReadinessFinding[] {
+    const timestamp = now();
+    const rows = input.map((entry) => ({
+      ...entry,
+      id: createId("verification_readiness_finding"),
+      createdAt: timestamp,
+      updatedAt: timestamp
+    }));
+    if (rows.length > 0) {
+      this.db
+        .insert(verificationReadinessFindings)
+        .values(rows.map((row) => ({ ...row, isAutoFixable: row.isAutoFixable ? 1 : 0 })))
+        .run();
+    }
+    return rows;
+  }
+
+  public listByRunId(runId: string): VerificationReadinessFinding[] {
+    return (this.db
+      .select()
+      .from(verificationReadinessFindings)
+      .where(eq(verificationReadinessFindings.runId, runId))
+      .orderBy(
+        verificationReadinessFindings.checkIteration,
+        verificationReadinessFindings.createdAt,
+        verificationReadinessFindings.id
+      )
+      .all() as VerificationReadinessFindingRow[]).map(mapVerificationReadinessFindingRow);
+  }
+
+  public listLatestByRunId(runId: string): VerificationReadinessFinding[] {
+    return this.listByRunId(runId).filter((finding) => finding.status !== "resolved");
+  }
+
+  public markByIterationResolved(runId: string, checkIteration: number): void {
+    this.db
+      .update(verificationReadinessFindings)
+      .set({
+        status: "resolved" satisfies VerificationReadinessFindingStatus,
+        updatedAt: now()
+      })
+      .where(and(eq(verificationReadinessFindings.runId, runId), eq(verificationReadinessFindings.checkIteration, checkIteration)))
+      .run();
+  }
+}
+
+export class VerificationReadinessActionRepository {
+  public constructor(private readonly db: DatabaseClient) {}
+
+  public create(input: VerificationReadinessActionCreateInput): VerificationReadinessAction {
+    const timestamp = now();
+    const row: VerificationReadinessAction = {
+      ...input,
+      id: createId("verification_readiness_action"),
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+    this.db.insert(verificationReadinessActions).values(row).run();
+    return row;
+  }
+
+  public listByRunId(runId: string): VerificationReadinessAction[] {
+    return this.db
+      .select()
+      .from(verificationReadinessActions)
+      .where(eq(verificationReadinessActions.runId, runId))
+      .orderBy(
+        verificationReadinessActions.checkIteration,
+        verificationReadinessActions.createdAt,
+        verificationReadinessActions.id
+      )
+      .all() as VerificationReadinessAction[];
+  }
+
+  public update(
+    id: string,
+    input: Partial<
+      Pick<VerificationReadinessAction, "status" | "stdout" | "stderr" | "exitCode" | "startedAt" | "completedAt">
+    >
+  ): void {
+    this.db
+      .update(verificationReadinessActions)
+      .set({
+        ...definedField("status", input.status),
+        ...definedField("stdout", input.stdout),
+        ...definedField("stderr", input.stderr),
+        ...definedField("exitCode", input.exitCode),
+        ...definedField("startedAt", input.startedAt),
+        ...definedField("completedAt", input.completedAt),
+        updatedAt: now()
+      })
+      .where(eq(verificationReadinessActions.id, id))
+      .run();
   }
 }
 

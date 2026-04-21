@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "dev:e2e": "next dev --hostname 127.0.0.1 --port 3100",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "next": "^15.3.2",
@@ -13,6 +15,7 @@
     "react-dom": "^19.1.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.55.0",
     "@types/react": "^19.1.2",
     "@types/react-dom": "^19.1.2",
     "typescript": "^5.9.3"

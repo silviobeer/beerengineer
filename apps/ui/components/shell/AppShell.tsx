@@ -1,3 +1,5 @@
+"use client";
+
 import type { ReactNode } from "react";
 import type { ShellViewModel } from "@/lib/view-models";
 import { GlobalSignals } from "@/components/shell/GlobalSignals";
@@ -8,13 +10,14 @@ type AppShellProps = {
   shell: ShellViewModel;
   activeHref: string;
   children: ReactNode;
+  onWorkspaceChange?: (workspaceKey: string) => void;
 };
 
-export function AppShell({ shell, activeHref, children }: AppShellProps) {
+export function AppShell({ shell, activeHref, children, onWorkspaceChange }: AppShellProps) {
   return (
     <div className="page-shell">
       <header className="shell-header">
-        <TopControlBar shell={shell} />
+        <TopControlBar shell={shell} onWorkspaceChange={onWorkspaceChange} />
         <div className="header-nav">
           <PrimaryNav items={shell.navItems} activeHref={activeHref} />
           <GlobalSignals signals={shell.globalSignals} />

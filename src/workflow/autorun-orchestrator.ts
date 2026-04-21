@@ -265,6 +265,13 @@ export class AutorunOrchestrator {
 
   private resolveExecutionDecision(projectId: string): AutorunDecision | null {
     const execution = this.host.showExecution(projectId);
+    const latestReadiness = this.host.getLatestExecutionReadinessByProjectId(projectId);
+    const latestVerificationReadiness = this.host.getLatestVerificationReadinessByProjectId(projectId);
+    const hasAnyExecutionProgress = execution.waves.some((wave) =>
+      wave.stories.some(
+        (story) => story.latestTestRun !== null || story.latestExecution !== null || story.latestStoryReviewRun !== null
+      )
+    );
 
     let hasIncompleteWave = false;
     let hasStartedExecution = false;
@@ -279,6 +286,12 @@ export class AutorunOrchestrator {
     }
 
     if (hasIncompleteWave || !hasStartedExecution) {
+      if (!hasAnyExecutionProgress && latestReadiness && latestReadiness.status !== "ready") {
+        return this.stop("stopped", "execution_readiness_blocked");
+      }
+      if (!hasAnyExecutionProgress && latestVerificationReadiness && latestVerificationReadiness.status !== "ready") {
+        return this.stop("stopped", "verification_readiness_blocked");
+      }
       const action = hasStartedExecution ? "execution:tick" : "execution:start";
       const execute = () => (hasStartedExecution ? this.host.tickExecution(projectId) : this.host.startExecution(projectId));
       return {

@@ -17,17 +17,20 @@ import {
   inboxViewModel,
   overlayViewModel,
   shellViewModel
-} from "@/lib/mock-data";
+} from "@/lib/mock-legacy-data";
 import { AppShell } from "@/components/shell/AppShell";
+import { defaultWorkspaceKey, getWorkspaceBoardState } from "@/lib/mock-data";
 
 export default function ShowcasePage() {
+  const workspaceShell = getWorkspaceBoardState(defaultWorkspaceKey).shell;
+
   return (
     <AppShell shell={shellViewModel} activeHref="/showcase">
       <div className="showcase-page">
         <Panel className="padded">
           <SectionTitle title="Shell components" description="Persistent chrome and top-level signals." />
           <div className="showcase-grid three">
-            <WorkspaceSwitcher workspace={shellViewModel.activeWorkspace} />
+            <WorkspaceSwitcher workspace={workspaceShell.activeWorkspace} workspaces={workspaceShell.availableWorkspaces} />
             <PrimaryNav items={shellViewModel.navItems} activeHref="/" />
             <GlobalSignals signals={shellViewModel.globalSignals} />
           </div>

@@ -40,6 +40,10 @@ npm run cli -- architecture:approve --project-id <projectId> --autorun
 npm run cli -- planning:start --item-id <itemId> --project-id <projectId>
 npm run cli -- planning:approve --project-id <projectId>
 npm run cli -- planning:approve --project-id <projectId> --autorun
+npm run cli -- execution:readiness:start --project-id <projectId>
+npm run cli -- execution:readiness:start --project-id <projectId> --story-code <storyCode>
+npm run cli -- execution:readiness:show --project-id <projectId>
+npm run cli -- execution:readiness:show --run-id <runId>
 npm run cli -- execution:start --project-id <projectId>
 npm run cli -- execution:tick --project-id <projectId>
 npm run cli -- execution:show --project-id <projectId>
@@ -380,6 +384,7 @@ Wichtig:
 Die neuen Setup-Kommandos verhalten sich bewusst unterschiedlich:
 
 - `workspace:doctor` ist read-only und liefert einen strukturierten Gap-Report fuer Harness, Workspace-Root, Git, Laufzeit-Tools und Integrationen
+- `workspace:doctor` zeigt jetzt zusaetzlich execution-nahe Kategorien fuer `executionReadiness`, `dependencyTooling`, `appBuild`, `typecheck` und `e2eReadiness`
 - fuer Sonar unterscheidet `workspace:doctor` jetzt zwischen `sonar` fuer Login/Integration und `sonar-scanner` fuer projektbezogene Analysen
 - `workspace:doctor` zeigt zusaetzlich explizit, ob ein Live-Sonar-Scan auf dem aktuell erkannten Branch-/PR-Kontext sofort moeglich waere oder nur Preview/Fallback verfuegbar ist
 - fuer Browser- und Repo-Setup benennt `workspace:doctor` jetzt auch explizit `agent-browser`, `npx playwright`, GitHub CLI `gh` und CodeRabbit CLI `cr`/`coderabbit`
@@ -456,6 +461,9 @@ Die Planning-Stage ordnet jede Story genau einer Wave zu und speichert explizite
 Beim `execution:start`- und `execution:tick`-Pfad werden heute zusaetzlich diese Runtime-Ebenen genutzt:
 
 - `ProjectExecutionContext`
+- `ExecutionReadinessRun`
+- `ExecutionReadinessFinding`
+- `ExecutionReadinessAction`
 - `WaveExecution`
 - `WaveStoryTestRun`
 - `TestAgentSession`
@@ -473,6 +481,9 @@ Beim `execution:start`- und `execution:tick`-Pfad werden heute zusaetzlich diese
 
 Die Engine entscheidet dabei deterministisch:
 
+- ob ein Project oder Story-Worktree vor Ausfuehrung wirklich lauffaehig ist
+- ob ein Finding sicher automatisch behebbar ist
+- ob Execution frueh mit einem strukturierten `blocked`-Ergebnis stoppen muss
 - welche Wave aktiv ist
 - welche Stories ausfuehrbar sind
 - dass jede Story zuerst einen `test-writer`-Lauf durchlaeuft
@@ -484,7 +495,14 @@ Der Worker selbst bekommt nur den bounded Story-Kontext plus gespeicherte Busine
 
 Im aktuellen Execution-Schnitt gilt:
 
+- `execution:readiness:start` fuehrt die persistierte Pre-Execution-Readiness-Gate fuer ein Project aus und versucht aktuell nur allowlist-basierte deterministic remediation
+- `execution:readiness:start --story-code <storyCode>` prueft denselben Gate-Pfad gezielt gegen den realen Story-Worktree statt nur gegen den Basis-Workspace
+- `execution:readiness:show` zeigt den neuesten oder einen expliziten Readiness-Run mit Findings und ausgefuehrten Actions
 - `execution:start` und `execution:tick` erzwingen `test_preparation -> implementation -> verification_basic -> verification_ralph -> story_review`
+- `execution:start` blockiert jetzt vor jeder Story-Ausfuehrung hinter einer Readiness-Gate; ohne gruenen Readiness-Status startet weder `test_preparation` noch `implementation`
+- die Readiness-Gate prueft aktuell das Profil `node-next-playwright` mit Fokus auf `apps/ui`, `node_modules`, `next`, `tsc`, Build und Typecheck
+- fuer fehlende UI-Dependencies versucht die Gate aktuell deterministisch `npm --prefix apps/ui install`
+- wenn Readiness nicht hergestellt werden kann, liefert `execution:start` bzw. `execution:retry` `reason = execution_readiness_failed` plus den persistierten Readiness-Report
 - `execution:show` zeigt den neuesten `WaveStoryTestRun` und die zugehoerigen `TestAgentSession`-Records pro Story
 - `execution:show` zeigt zusaetzlich die neuesten `basic`- und `ralph`-Verification-Runs pro Story
 - `execution:show` zeigt ausserdem den neuesten `StoryReviewRun`, dessen `StoryReviewFinding`-Records und die `StoryReviewAgentSession` pro Story
@@ -498,6 +516,38 @@ Im aktuellen Execution-Schnitt gilt:
 - nach bestandenem Story Review merged die Engine den Story-Branch automatisch in den Projekt-Branch und bereinigt Story-Worktree plus `story/*`-Branch
 - nach erfolgreicher Story-Review-Remediation merged die Engine zuerst `fix/* -> story/*`, dann `story/* -> proj/*`, und bereinigt die beteiligten Worktrees/Branches
 - nach erfolgreicher Documentation merged die Engine den Projekt-Branch automatisch nach `main`
+
+Beispiel fuer einen fruehen Readiness-Blocker:
+
+```json
+{
+  "blockedByReadiness": true,
+  "reason": "execution_readiness_failed",
+  "executions": [
+    {
+      "phase": "readiness",
+      "storyCode": "ITEM-0001-P01-US01",
+      "readiness": {
+        "run": {
+          "status": "blocked",
+          "profileKey": "node-next-playwright"
+        },
+        "latestFindings": [
+          {
+            "code": "next_binary_missing",
+            "summary": "The Next.js binary is not available in apps/ui."
+          }
+        ]
+      }
+    }
+  ]
+}
+```
+
+Wichtig:
+
+- der aktuell implementierte Remediation-Pfad ist deterministisch und auf sichere Allowlist-Aktionen beschraenkt
+- bounded LLM-Remediation fuer nichttriviale Readiness-Fehler ist noch nicht Teil des produktiven CLI-Pfads
 
 ## Workspace Prune
 

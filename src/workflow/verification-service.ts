@@ -13,6 +13,7 @@ import type {
   TestPreparationOutput
 } from "../schemas/output-contracts.js";
 import { AppError } from "../shared/errors.js";
+import { resolveWorkspaceBrowserUrl } from "../shared/workspace-browser-url.js";
 import type {
   AppVerificationRunner,
   AppVerificationRunStatus,
@@ -160,19 +161,39 @@ type VerificationServiceOptions = {
 export class VerificationService {
   public constructor(private readonly options: VerificationServiceOptions) {}
 
+  private readonly pendingImplementationReviewTriggers = new Set<Promise<unknown>>();
+
+  public async drainPendingImplementationReviewTriggers(): Promise<void> {
+    if (this.pendingImplementationReviewTriggers.size === 0) {
+      return;
+    }
+    await Promise.allSettled([...this.pendingImplementationReviewTriggers]);
+  }
+
   private triggerImplementationReviewAsync(input: { waveStoryExecutionId: string }): void {
-    void this.options
-      .triggerImplementationReview?.({
+    const trigger = this.options.triggerImplementationReview;
+    if (!trigger) {
+      return;
+    }
+    const promise = trigger({
+      waveStoryExecutionId: input.waveStoryExecutionId,
+      automationLevel: "auto_comment"
+    }).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      // Host closed the database before this fire-and-forget trigger finished — harmless during shutdown.
+      if (/database connection is not open/i.test(message)) {
+        return;
+      }
+      console.warn("triggerImplementationReview failed", {
         waveStoryExecutionId: input.waveStoryExecutionId,
-        automationLevel: "auto_comment"
-      })
-      .catch((error) => {
-        console.warn("triggerImplementationReview failed", {
-          waveStoryExecutionId: input.waveStoryExecutionId,
-          error: error instanceof Error ? error.message : String(error)
-        });
-        // Keep story execution lifecycle non-blocking even if implementation review follow-up fails.
+        error: message
       });
+      // Keep story execution lifecycle non-blocking even if implementation review follow-up fails.
+    });
+    this.pendingImplementationReviewTriggers.add(promise);
+    void promise.finally(() => {
+      this.pendingImplementationReviewTriggers.delete(promise);
+    });
   }
 
   public async startStoryReview(waveStoryExecutionId: string) {
@@ -723,10 +744,13 @@ export class VerificationService {
   }
 
   private getDefaultAppTestConfig() {
+    const workspaceBrowserUrl = resolveWorkspaceBrowserUrl(this.options.deps.workspace.key);
     return {
-      baseUrl: "http://127.0.0.1:3000",
+      baseUrl: workspaceBrowserUrl.baseUrl,
       runnerPreference: ["agent_browser", "playwright"] as AppVerificationRunner[],
-      readiness: null,
+      readiness: {
+        command: workspaceBrowserUrl.readinessCommand
+      },
       auth: {
         strategy: "existing_session" as const,
         defaultRole: "user"
@@ -1220,6 +1244,7 @@ export class VerificationService {
   }): Promise<{ status: StoryReviewRunStatus; errorMessage: string | null }> {
     const resolvedWorkerProfile = this.options.resolveWorkerProfile("storyReview");
     const runtime = this.options.resolveWorkerRuntime("storyReview");
+    const gitMetadata = this.resolveExecutionGitMetadata(input.execution);
     const reviewRun = this.options.deps.storyReviewRunRepository.create({
       waveStoryExecutionId: input.execution.id,
       status: "running",
@@ -1255,7 +1280,10 @@ export class VerificationService {
     const testPreparation = this.buildTestPreparationPayload(input.testPreparationRun, input.parsedTestPreparation);
     try {
       const result = await runtime.adapter.runStoryReview({
-        runtime: this.options.buildAdapterRuntimeContext(runtime),
+        runtime: this.options.buildAdapterRuntimeContext({
+          ...runtime,
+          workspaceRoot: gitMetadata?.worktreePath ?? undefined
+        }),
         workerRole: "story-reviewer",
         prompt: resolvedWorkerProfile.promptContent,
         skills: resolvedWorkerProfile.skills,
@@ -1581,7 +1609,20 @@ export class VerificationService {
   }
 
   private resolveRalphVerificationStatus(output: RalphVerificationOutput, exitCode: number): VerificationRunStatus {
-    return this.resolveExternalVerificationStatus(output.overallStatus, exitCode);
+    const base = this.resolveExternalVerificationStatus(output.overallStatus, exitCode);
+    if (base === "failed") {
+      return "failed";
+    }
+    if (output.acceptanceCriteriaResults.some((result) => result.status === "failed") || output.blockers.length > 0) {
+      return "failed";
+    }
+    if (base === "review_required") {
+      return "review_required";
+    }
+    if (output.acceptanceCriteriaResults.some((result) => result.status === "review_required")) {
+      return "review_required";
+    }
+    return "passed";
   }
 
   private normalizeAppVerificationOutput(output: AppVerificationOutput, exitCode: number): AppVerificationOutput {
@@ -1606,7 +1647,20 @@ export class VerificationService {
     output: AppVerificationOutput,
     exitCode: number
   ): "passed" | "review_required" | "failed" {
-    return this.resolveExternalVerificationStatus(output.overallStatus, exitCode);
+    const base = this.resolveExternalVerificationStatus(output.overallStatus, exitCode);
+    if (base === "failed") {
+      return "failed";
+    }
+    if (output.checks.some((check) => check.status === "failed")) {
+      return "failed";
+    }
+    if (base === "review_required") {
+      return "review_required";
+    }
+    if (output.checks.some((check) => check.status === "review_required")) {
+      return "review_required";
+    }
+    return "passed";
   }
 
   private resolveStoryReviewStatus(output: StoryReviewOutput, exitCode: number): StoryReviewRunStatus {
@@ -1620,6 +1674,9 @@ export class VerificationService {
       return "failed";
     }
     if (output.overallStatus === "review_required") {
+      return "review_required";
+    }
+    if (output.findings.length > 0) {
       return "review_required";
     }
     return "passed";

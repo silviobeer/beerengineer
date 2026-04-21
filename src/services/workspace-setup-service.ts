@@ -7,6 +7,8 @@ import type { WorkspaceSetupContext } from "../app-context.js";
 import type { WorkspaceAssistMessage, WorkspaceAssistSession, WorkspaceCoderabbitSettings, WorkspaceSonarSettings } from "../domain/types.js";
 import { workspaceSetupAssistOutputSchema, type WorkspaceSetupAssistPlan } from "../schemas/output-contracts.js";
 import { AppError } from "../shared/errors.js";
+import { ExecutionReadinessCoreService } from "./execution-readiness-service.js";
+import { VerificationReadinessCoreService } from "./verification-readiness-service.js";
 import { detectCoderabbitCliState } from "../shared/coderabbit-cli.js";
 import { parseGitRemoteRepository } from "../shared/git-remote.js";
 import type { HarnessMcpTarget } from "../shared/workspace-mcp.js";
@@ -46,6 +48,15 @@ type DoctorChecks = {
     filesystem: DoctorCheck[];
     git: DoctorCheck[];
     runtime: DoctorCheck[];
+    executionReadiness: DoctorCheck[];
+    dependencyTooling: DoctorCheck[];
+    appBuild: DoctorCheck[];
+    typecheck: DoctorCheck[];
+    e2eReadiness: DoctorCheck[];
+    browserVerification: DoctorCheck[];
+    agentBrowser: DoctorCheck[];
+    playwrightSetup: DoctorCheck[];
+    uiServerContract: DoctorCheck[];
     quality: DoctorCheck[];
     integrations: DoctorCheck[];
 };
@@ -142,6 +153,7 @@ type WorkspaceSetupServiceInput = {
     } & Record<string, unknown>;
     workspaceSettings?: {
         runtimeProfileJson?: string | null;
+        appTestConfigJson?: string | null;
     };
     workspaceRoot: string | null;
     rootPathSource: WorkspaceSetupContext["rootPathSource"];
@@ -163,6 +175,15 @@ export class WorkspaceSetupService {
             filesystem: [],
             git: [],
             runtime: [],
+            executionReadiness: [],
+            dependencyTooling: [],
+            appBuild: [],
+            typecheck: [],
+            e2eReadiness: [],
+            browserVerification: [],
+            agentBrowser: [],
+            playwrightSetup: [],
+            uiServerContract: [],
             quality: [],
             integrations: []
         };
@@ -175,6 +196,17 @@ export class WorkspaceSetupService {
         checks.filesystem.push(...this.buildFilesystemChecks());
         checks.git.push(...this.buildGitChecks());
         checks.runtime.push(...this.buildRuntimeChecks());
+        const readinessChecks = this.buildExecutionReadinessChecks();
+        checks.executionReadiness.push(...readinessChecks.executionReadiness);
+        checks.dependencyTooling.push(...readinessChecks.dependencyTooling);
+        checks.appBuild.push(...readinessChecks.appBuild);
+        checks.typecheck.push(...readinessChecks.typecheck);
+        checks.e2eReadiness.push(...readinessChecks.e2eReadiness);
+        const verificationChecks = this.buildVerificationReadinessChecks();
+        checks.browserVerification.push(...verificationChecks.browserVerification);
+        checks.agentBrowser.push(...verificationChecks.agentBrowser);
+        checks.playwrightSetup.push(...verificationChecks.playwrightSetup);
+        checks.uiServerContract.push(...verificationChecks.uiServerContract);
         checks.quality.push(...this.buildQualityChecks());
         checks.integrations.push(...this.buildIntegrationChecks());
         for (const check of Object.values(checks).flat()) {
@@ -557,6 +589,15 @@ export class WorkspaceSetupService {
             filesystem: unique(checks.filesystem),
             git: unique(checks.git),
             runtime: unique(checks.runtime),
+            executionReadiness: unique(checks.executionReadiness),
+            dependencyTooling: unique(checks.dependencyTooling),
+            appBuild: unique(checks.appBuild),
+            typecheck: unique(checks.typecheck),
+            e2eReadiness: unique(checks.e2eReadiness),
+            browserVerification: unique(checks.browserVerification),
+            agentBrowser: unique(checks.agentBrowser),
+            playwrightSetup: unique(checks.playwrightSetup),
+            uiServerContract: unique(checks.uiServerContract),
             quality: unique(checks.quality),
             integrations: unique(checks.integrations)
         };
@@ -699,6 +740,122 @@ export class WorkspaceSetupService {
             status: entry.status,
             message: this.formatRuntimeCheckMessage(entry)
         }));
+    }
+    buildExecutionReadinessChecks(): Pick<DoctorChecks, "executionReadiness" | "dependencyTooling" | "appBuild" | "typecheck" | "e2eReadiness"> {
+        if (!this.input.workspaceRoot) {
+            return {
+                executionReadiness: [{ id: "execution-readiness-root", status: "missing", message: "Execution readiness check skipped because the workspace root is not configured." }],
+                dependencyTooling: [],
+                appBuild: [],
+                typecheck: [],
+                e2eReadiness: []
+            };
+        }
+        const report = new ExecutionReadinessCoreService().inspect({
+            workspaceRoot: this.input.workspaceRoot,
+            workspaceSettings: { appTestConfigJson: this.input.workspaceSettings?.appTestConfigJson ?? null }
+        });
+        const groups: Pick<DoctorChecks, "executionReadiness" | "dependencyTooling" | "appBuild" | "typecheck" | "e2eReadiness"> = {
+            executionReadiness: [{
+                    id: "execution-readiness-status",
+                    status: report.status === "ready" ? "ok" : report.status === "auto_fixable" ? "warning" : "blocked",
+                    message: report.status === "ready"
+                        ? `Execution readiness is green for profile ${report.profileKey}.`
+                        : `Execution readiness is ${report.status} for profile ${report.profileKey}.`
+                }],
+            dependencyTooling: [],
+            appBuild: [],
+            typecheck: [],
+            e2eReadiness: []
+        };
+        for (const finding of report.findings) {
+            const entry = {
+                id: `execution-readiness-${finding.code}`,
+                status: finding.isAutoFixable ? "warning" : "blocked",
+                message: finding.summary,
+                details: { recommendedAction: finding.recommendedAction, scopePath: finding.scopePath }
+            } satisfies DoctorCheck;
+            if (finding.doctorCategory === "appBuild") {
+                groups.appBuild.push(entry);
+            }
+            else if (finding.doctorCategory === "typecheck") {
+                groups.typecheck.push(entry);
+            }
+            else if (finding.doctorCategory === "e2eReadiness") {
+                groups.e2eReadiness.push(entry);
+            }
+            else if (finding.doctorCategory === "dependencyTooling") {
+                groups.dependencyTooling.push(entry);
+            }
+            else {
+                groups.executionReadiness.push(entry);
+            }
+        }
+        return groups;
+    }
+    buildVerificationReadinessChecks(): Pick<DoctorChecks, "browserVerification" | "agentBrowser" | "playwrightSetup" | "uiServerContract"> {
+        if (!this.input.workspaceRoot) {
+            return {
+                browserVerification: [{ id: "verification-readiness-root", status: "missing", message: "Verification readiness check skipped because the workspace root is not configured." }],
+                agentBrowser: [],
+                playwrightSetup: [],
+                uiServerContract: []
+            };
+        }
+        const report = new VerificationReadinessCoreService().inspect({
+            workspaceRoot: this.input.workspaceRoot,
+            workspaceSettings: { appTestConfigJson: this.input.workspaceSettings?.appTestConfigJson ?? null },
+            story: {
+                id: "doctor-story",
+                projectId: "doctor-project",
+                code: "default",
+                title: "Doctor UI verification route",
+                description: "Validate the browser verification contract",
+                actor: "workspace operator",
+                goal: "inspect browser verification readiness",
+                benefit: "early visibility",
+                priority: "medium",
+                status: "draft",
+                sourceArtifactId: "doctor-artifact",
+                createdAt: 0,
+                updatedAt: 0
+            },
+            workspaceKey: this.input.workspace.key,
+            skipBinaryProbes: true
+        });
+        const groups: Pick<DoctorChecks, "browserVerification" | "agentBrowser" | "playwrightSetup" | "uiServerContract"> = {
+            browserVerification: [{
+                    id: "verification-readiness-status",
+                    status: report.status === "ready" ? "ok" : report.status === "auto_fixable" ? "warning" : "blocked",
+                    message: report.status === "ready"
+                        ? `Verification readiness is green for profile ${report.profileKey}.`
+                        : `Verification readiness is ${report.status} for profile ${report.profileKey}.`
+                }],
+            agentBrowser: [],
+            playwrightSetup: [],
+            uiServerContract: []
+        };
+        for (const finding of report.findings) {
+            const entry = {
+                id: `verification-readiness-${finding.code}`,
+                status: finding.isAutoFixable ? "warning" : "blocked",
+                message: finding.summary,
+                details: { recommendedAction: finding.recommendedAction, scopePath: finding.scopePath }
+            };
+            if (finding.doctorCategory === "agentBrowser") {
+                groups.agentBrowser.push(entry);
+            }
+            else if (finding.doctorCategory === "playwrightSetup") {
+                groups.playwrightSetup.push(entry);
+            }
+            else if (finding.doctorCategory === "uiServerContract") {
+                groups.uiServerContract.push(entry);
+            }
+            else {
+                groups.browserVerification.push(entry);
+            }
+        }
+        return groups;
     }
     formatRuntimeCheckMessage(entry: { binary: string; status: string; message: string; resolvedAlias?: string | null }) {
         switch (entry.binary) {
@@ -1256,6 +1413,18 @@ export class WorkspaceSetupService {
                 return "Persist CodeRabbit settings with beerengineer coderabbit config set.";
             case "coderabbit-live-review":
                 return "Ensure the workspace is a git repository on a real branch, install CodeRabbit CLI, and persist or infer organization/repository. `cr auth login` is recommended but optional.";
+            case "execution-readiness-status":
+                return "Run execution:readiness:start to persist and inspect the full readiness gate result.";
+            case "execution-readiness-node_modules_missing":
+            case "execution-readiness-next_binary_missing":
+            case "execution-readiness-typescript_binary_missing":
+                return "Run npm --prefix apps/ui install or execution:readiness:start to let BeerEngineer attempt deterministic remediation.";
+            case "execution-readiness-build_command_failed":
+                return "Fix the canonical UI build failure before execution starts.";
+            case "execution-readiness-typecheck_failed":
+                return "Fix the canonical UI typecheck failure before execution starts.";
+            case "execution-readiness-playwright_missing":
+                return "Add Playwright to apps/ui or remove it from app test runner preferences.";
             default:
                 return null;
         }
