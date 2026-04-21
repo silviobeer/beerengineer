@@ -10,6 +10,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "cli": "tsx src/cli/main.ts",
+    "ui:dev": "npm --prefix apps/ui run dev",
+    "ui:build": "npm --prefix apps/ui run build",
+    "ui:start": "npm --prefix apps/ui run start",
     "review": "coderabbit review --config coderabbit.md",
     "review:agent": "coderabbit review --agent --config coderabbit.md",
     "test": "vitest run",

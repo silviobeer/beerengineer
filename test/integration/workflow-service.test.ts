@@ -3163,6 +3163,60 @@ describe("workflow service", () => {
     }
   });
 
+  it("creates real project and story git metadata even when the workspace has uncommitted changes", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const workspaceRoot = createGitWorkspace(root);
+    const context = createAppContext(dbPath, { workspaceRoot });
+
+    try {
+      const item = createWorkspaceItem(context, {
+        title: "Dirty Workspace Execution",
+        description: "Execution should use real git branches and worktrees even when the main workspace is dirty"
+      });
+      await context.workflowService.startStage({ stageKey: "brainstorm", itemId: item.id });
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      context.workflowService.approveConcept(concept!.id);
+      context.workflowService.importProjects(item.id);
+      const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
+      await context.workflowService.startStage({ stageKey: "requirements", itemId: item.id, projectId: project.id });
+      context.workflowService.approveStories(project.id);
+      await context.workflowService.startStage({ stageKey: "architecture", itemId: item.id, projectId: project.id });
+      context.workflowService.approveArchitecture(project.id);
+      await context.workflowService.startStage({ stageKey: "planning", itemId: item.id, projectId: project.id });
+      context.workflowService.approvePlanning(project.id);
+
+      writeFileSync(join(workspaceRoot, "README.md"), "# temp workspace\n\nDirty change before execution.\n", "utf8");
+
+      await context.workflowService.startExecution(project.id);
+      await context.workflowService.tickExecution(project.id);
+
+      const implementationPlan = context.repositories.implementationPlanRepository.getLatestByProjectId(project.id)!;
+      const wave = context.repositories.waveRepository.listByImplementationPlanId(implementationPlan.id)[0]!;
+      const waveStory = context.repositories.waveStoryRepository.listByWaveId(wave.id)[0]!;
+      const execution = context.repositories.waveStoryExecutionRepository.getLatestByWaveStoryId(waveStory.id)!;
+      const gitMetadata = JSON.parse(execution.gitMetadataJson ?? "{}") as {
+        baseRef?: string;
+        branchName?: string;
+        strategy?: "applied" | "simulated";
+        reason?: string | null;
+        workspaceRoot?: string;
+        worktreePath?: string | null;
+      };
+
+      expect(gitMetadata.strategy).toBe("applied");
+      expect(gitMetadata.reason).toBeNull();
+      expect(gitMetadata.workspaceRoot).toBe(workspaceRoot);
+      expect(gitMetadata.baseRef).toBe(`proj/${project.code}`);
+      expect(gitMetadata.branchName).toBe(`story/${project.code}/${context.repositories.userStoryRepository.getById(waveStory.storyId)!.code}`);
+      expect(gitMetadata.worktreePath).toBeTruthy();
+      expect(existsSync(String(gitMetadata.worktreePath))).toBe(true);
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("retries a failed test-preparation wave when execution is started again after fixing the adapter", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
     const originalScript = readFileSync(localAgentScriptPath, "utf8");

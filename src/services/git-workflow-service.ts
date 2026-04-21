@@ -59,7 +59,8 @@ export class GitWorkflowService {
     return this.ensureBranch({
       workspaceRoot: this.workspaceRoot,
       projectCode,
-      branchRole: "project"
+      branchRole: "project",
+      allowDirtyWorkspace: true
     });
   }
 
