@@ -428,6 +428,15 @@ export class AutorunOrchestrator {
         execute: () => this.host.startStoryReviewRemediation(latestStoryReviewRun.id)
       };
     }
+    if (this.host.canAutorunStoryReviewAutoAccept(latestStoryReviewRun.id)) {
+      return {
+        kind: "step",
+        action: "remediation:story-review:auto-accept",
+        scopeType: "remediation",
+        scopeId: latestStoryReviewRun.id,
+        execute: () => this.host.autoAcceptStoryReviewRemediationLimit(latestStoryReviewRun.id)
+      };
+    }
     return this.stop("stopped", this.host.getStoryReviewRemediationStopReason(latestStoryReviewRun.id));
   }
 

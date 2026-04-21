@@ -73,9 +73,11 @@ export type AutorunHost = {
   startExecution(projectId: string): Promise<unknown>;
   tickExecution(projectId: string): Promise<unknown>;
   startStoryReviewRemediation(storyReviewRunId: string): Promise<unknown>;
+  autoAcceptStoryReviewRemediationLimit(storyReviewRunId: string): Promise<unknown>;
   startQa(projectId: string): Promise<unknown>;
   startDocumentation(projectId: string): Promise<unknown>;
   completeItemIfDeliveryFinished(itemId: string): void;
   canAutorunStoryReviewRemediate(storyReviewRunId: string): boolean;
+  canAutorunStoryReviewAutoAccept(storyReviewRunId: string): boolean;
   getStoryReviewRemediationStopReason(storyReviewRunId: string): string;
 };

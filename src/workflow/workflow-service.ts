@@ -249,10 +249,13 @@ export class WorkflowService {
       startExecution: (projectId) => this.startExecution(projectId),
       tickExecution: (projectId) => this.tickExecution(projectId),
       startStoryReviewRemediation: (storyReviewRunId) => this.startStoryReviewRemediation(storyReviewRunId),
+      autoAcceptStoryReviewRemediationLimit: (storyReviewRunId) =>
+        this.autoAcceptStoryReviewRemediationLimit(storyReviewRunId),
       startQa: (projectId) => this.startQa(projectId),
       startDocumentation: (projectId) => this.startDocumentation(projectId),
       completeItemIfDeliveryFinished: (itemId) => this.completeItemIfDeliveryFinished(itemId),
       canAutorunStoryReviewRemediate: (storyReviewRunId) => this.canAutorunStoryReviewRemediate(storyReviewRunId),
+      canAutorunStoryReviewAutoAccept: (storyReviewRunId) => this.canAutorunStoryReviewAutoAccept(storyReviewRunId),
       getStoryReviewRemediationStopReason: (storyReviewRunId) =>
         this.getStoryReviewRemediationStopReason(storyReviewRunId)
     });
@@ -966,6 +969,7 @@ export class WorkflowService {
     if (storyReviewRun.status !== "review_required") {
       return false;
     }
+    const sourceExecution = this.entityLoaders.requireWaveStoryExecution(storyReviewRun.waveStoryExecutionId);
     const findings = this.deps.storyReviewFindingRepository
       .listByStoryReviewRunId(storyReviewRunId)
       .filter((finding) => finding.status === "open");
@@ -976,13 +980,96 @@ export class WorkflowService {
       return false;
     }
     return (
-      this.deps.storyReviewRemediationRunRepository.listByStoryReviewRunId(storyReviewRunId).length <
+      this.deps.storyReviewRemediationRunRepository.listByStoryId(sourceExecution.storyId).length <
       MAX_STORY_REVIEW_REMEDIATION_ATTEMPTS
     );
   }
 
+  private canAutorunStoryReviewAutoAccept(storyReviewRunId: string): boolean {
+    const storyReviewRun = this.entityLoaders.requireStoryReviewRun(storyReviewRunId);
+    if (storyReviewRun.status !== "review_required") {
+      return false;
+    }
+
+    const sourceExecution = this.entityLoaders.requireWaveStoryExecution(storyReviewRun.waveStoryExecutionId);
+    const openFindings = this.deps.storyReviewFindingRepository.listOpenByStoryId(sourceExecution.storyId);
+    if (openFindings.length === 0) {
+      return false;
+    }
+    if (!this.hasOnlyAutoFixableStoryReviewFindings(openFindings)) {
+      return false;
+    }
+
+    return (
+      this.deps.storyReviewRemediationRunRepository.listByStoryId(sourceExecution.storyId).length >=
+      MAX_STORY_REVIEW_REMEDIATION_ATTEMPTS
+    );
+  }
+
+  private async autoAcceptStoryReviewRemediationLimit(storyReviewRunId: string): Promise<{
+    storyReviewRunId: string;
+    waveStoryExecutionId: string;
+    acceptedFindingIds: string[];
+    status: "passed";
+  }> {
+    const storyReviewRun = this.entityLoaders.requireStoryReviewRun(storyReviewRunId);
+    const sourceExecution = this.entityLoaders.requireWaveStoryExecution(storyReviewRun.waveStoryExecutionId);
+    const waveExecution = this.entityLoaders.requireWaveExecution(sourceExecution.waveExecutionId);
+    const remediationAttempts = this.deps.storyReviewRemediationRunRepository.listByStoryId(sourceExecution.storyId).length;
+
+    if (storyReviewRun.status !== "review_required") {
+      throw new AppError(
+        "STORY_REVIEW_AUTO_ACCEPT_NOT_ALLOWED",
+        `Story review ${storyReviewRunId} is not in review_required`
+      );
+    }
+    if (remediationAttempts < MAX_STORY_REVIEW_REMEDIATION_ATTEMPTS) {
+      throw new AppError(
+        "STORY_REVIEW_AUTO_ACCEPT_NOT_ALLOWED",
+        `Story review ${storyReviewRunId} has not reached the remediation limit`
+      );
+    }
+
+    const openFindings = this.deps.storyReviewFindingRepository.listOpenByStoryId(sourceExecution.storyId);
+    if (openFindings.length === 0) {
+      throw new AppError(
+        "STORY_REVIEW_AUTO_ACCEPT_NOT_ALLOWED",
+        `Story review ${storyReviewRunId} has no open findings to accept`
+      );
+    }
+    if (!this.hasOnlyAutoFixableStoryReviewFindings(openFindings)) {
+      throw new AppError(
+        "STORY_REVIEW_AUTO_ACCEPT_NOT_ALLOWED",
+        `Story review ${storyReviewRunId} contains non-auto-fixable findings`
+      );
+    }
+
+    for (const finding of openFindings) {
+      this.deps.storyReviewFindingRepository.updateStatus(finding.id, "accepted");
+    }
+    this.deps.storyReviewRunRepository.updateStatus(storyReviewRun.id, "passed", {
+      summaryJson: storyReviewRun.summaryJson,
+      errorMessage: null
+    });
+    this.deps.waveStoryExecutionRepository.updateStatus(sourceExecution.id, "completed", {
+      outputSummaryJson: sourceExecution.outputSummaryJson,
+      errorMessage: null,
+      gitMetadata: this.parseGitMetadata(sourceExecution.gitMetadataJson)
+    });
+    this.executionService.refreshWaveExecutionStatus(waveExecution.id);
+    this.finalizeAcceptedExecution(sourceExecution.id);
+
+    return {
+      storyReviewRunId,
+      waveStoryExecutionId: sourceExecution.id,
+      acceptedFindingIds: openFindings.map((finding) => finding.id),
+      status: "passed"
+    };
+  }
+
   private getStoryReviewRemediationStopReason(storyReviewRunId: string): string {
     const storyReviewRun = this.entityLoaders.requireStoryReviewRun(storyReviewRunId);
+    const sourceExecution = this.entityLoaders.requireWaveStoryExecution(storyReviewRun.waveStoryExecutionId);
     if (storyReviewRun.status === "failed") {
       return "story_review_failed";
     }
@@ -992,8 +1079,11 @@ export class WorkflowService {
     if (!this.hasOnlyAutoFixableStoryReviewFindings(findings)) {
       return "story_review_review_required";
     }
+    if (this.canAutorunStoryReviewAutoAccept(storyReviewRunId)) {
+      return "story_review_auto_accept_pending";
+    }
     if (
-      this.deps.storyReviewRemediationRunRepository.listByStoryReviewRunId(storyReviewRunId).length >=
+      this.deps.storyReviewRemediationRunRepository.listByStoryId(sourceExecution.storyId).length >=
       MAX_STORY_REVIEW_REMEDIATION_ATTEMPTS
     ) {
       return "story_review_remediation_limit_reached";

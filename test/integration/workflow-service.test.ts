@@ -4478,7 +4478,7 @@ export default defineConfig({
     }
   });
 
-  it("marks execution failed when Ralph returns failed", async () => {
+  it("marks execution review_required when Ralph returns failed findings", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
     const originalScript = readFileSync(localAgentScriptPath, "utf8");
     const adapterScriptPath = join(root, "local-agent-failed.mjs");
@@ -4506,7 +4506,7 @@ export default defineConfig({
       context.workflowService.approvePlanning(project.id);
 
       const first = await context.workflowService.startExecution(project.id);
-      expect(first.executions[0]?.status).toBe("failed");
+      expect(first.executions[0]?.status).toBe("review_required");
 
       const shown = context.workflowService.showExecution(project.id) as {
         waves: Array<{
@@ -4518,15 +4518,67 @@ export default defineConfig({
           }>;
         }>;
       };
-      expect(shown.waves[0]?.waveExecution?.status).toBe("failed");
-      expect(shown.waves[0]?.stories[0]?.latestExecution?.status).toBe("failed");
-      expect(shown.waves[0]?.stories[0]?.latestRalphVerification?.status).toBe("failed");
+      expect(shown.waves[0]?.waveExecution?.status).toBe("review_required");
+      expect(shown.waves[0]?.stories[0]?.latestExecution?.status).toBe("review_required");
+      expect(shown.waves[0]?.stories[0]?.latestRalphVerification?.status).toBe("review_required");
       expect(shown.waves[0]?.stories[0]?.latestStoryReviewRun).toBeNull();
       context.connection.close();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
-  });
+  }, 10000);
+
+  it("marks execution review_required when implementation tests fail but the worker completes", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const originalScript = readFileSync(localAgentScriptPath, "utf8");
+    const adapterScriptPath = join(root, "local-agent-basic-review-required.mjs");
+    const dbPath = join(root, "app.sqlite");
+
+    try {
+      const reviewScript = replaceRequired(
+        originalScript,
+        ["      testsRun: [", "        {", "          command: `npm test -- ${payload.testPreparation.testFiles[0].path}`,", '          status: "passed"', "        }", "      ],"].join("\n"),
+        ["      testsRun: [", "        {", "          command: `npm test -- ${payload.testPreparation.testFiles[0].path}`,", '          status: "failed"', "        }", "      ],"].join("\n")
+      );
+      writeFileSync(adapterScriptPath, reviewScript);
+      const context = createAppContext(dbPath, { adapterScriptPath });
+
+      const item = createWorkspaceItem(context, {
+        title: "Basic Verification Review Required",
+        description: "Implementation verification findings should be remediable"
+      });
+      await context.workflowService.startStage({ stageKey: "brainstorm", itemId: item.id });
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      context.workflowService.approveConcept(concept!.id);
+      context.workflowService.importProjects(item.id);
+      const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
+      await context.workflowService.startStage({ stageKey: "requirements", itemId: item.id, projectId: project.id });
+      context.workflowService.approveStories(project.id);
+      await context.workflowService.startStage({ stageKey: "architecture", itemId: item.id, projectId: project.id });
+      context.workflowService.approveArchitecture(project.id);
+      await context.workflowService.startStage({ stageKey: "planning", itemId: item.id, projectId: project.id });
+      context.workflowService.approvePlanning(project.id);
+
+      const first = await context.workflowService.startExecution(project.id);
+      expect(first.executions[0]?.status).toBe("review_required");
+
+      const shown = context.workflowService.showExecution(project.id) as {
+        waves: Array<{
+          waveExecution: { status: string } | null;
+          stories: Array<{
+            latestBasicVerification: { status: string } | null;
+            latestExecution: { status: string } | null;
+          }>;
+        }>;
+      };
+      expect(shown.waves[0]?.waveExecution?.status).toBe("review_required");
+      expect(shown.waves[0]?.stories[0]?.latestExecution?.status).toBe("review_required");
+      expect(shown.waves[0]?.stories[0]?.latestBasicVerification?.status).toBe("review_required");
+      context.connection.close();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 10000);
 
   it("accepts Ralph verifier output with blank notes by normalizing them", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
@@ -5473,17 +5525,23 @@ export default defineConfig({
         description: "Automatically remediate story review findings"
       });
       await context.workflowService.startStage({ stageKey: "brainstorm", itemId: item.id });
-      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
-      context.workflowService.approveConcept(concept!.id);
+      context.workflowService.approveConcept(context.repositories.conceptRepository.getLatestByItemId(item.id)!.id);
+      context.workflowService.importProjects(item.id);
+      const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
+      await context.workflowService.startStage({ stageKey: "requirements", itemId: item.id, projectId: project.id });
+      context.workflowService.approveStories(project.id);
+      await context.workflowService.startStage({ stageKey: "architecture", itemId: item.id, projectId: project.id });
+      context.workflowService.approveArchitecture(project.id);
+      await context.workflowService.startStage({ stageKey: "planning", itemId: item.id, projectId: project.id });
+      context.workflowService.approvePlanning(project.id);
 
-      const result = await context.workflowService.autorunForItem({
-        itemId: item.id,
-        trigger: "concept:approve",
-        initialSteps: [{ action: "concept:approve", scopeType: "item", scopeId: item.id, status: "approved" }]
+      const result = await context.workflowService.autorunForProject({
+        projectId: project.id,
+        trigger: "planning:approve",
+        initialSteps: [{ action: "planning:approve", scopeType: "project", scopeId: project.id, status: "approved" }]
       });
 
       expect(result.finalStatus).toBe("completed");
-      const project = context.repositories.projectRepository.listByItemId(item.id)[0]!;
       const firstStory = context.repositories.userStoryRepository.listByProjectId(project.id)[0]!;
       const remediationRuns = context.repositories.storyReviewRemediationRunRepository.listByStoryId(firstStory.id);
       expect(remediationRuns.length).toBeGreaterThan(0);
@@ -5493,6 +5551,256 @@ export default defineConfig({
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+    },
+    60_000
+  );
+
+  it(
+    "auto-accepts auto-fixable story-review findings after the remediation loop limit",
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+      const dbPath = join(root, "app.sqlite");
+
+      try {
+        const context = createAppContext(dbPath);
+        const item = createWorkspaceItem(context, {
+          title: "Autorun Story Review Auto Accept",
+          description: "Allow the workflow to continue after bounded remediation loops"
+        });
+        const conceptMarkdownArtifact = context.repositories.artifactRepository.create({
+          stageRunId: null,
+          itemId: item.id,
+          projectId: null,
+          kind: "concept_markdown",
+          format: "md",
+          path: "artifacts/concept.md",
+          sha256: "concept-md",
+          sizeBytes: 1
+        });
+        const conceptStructuredArtifact = context.repositories.artifactRepository.create({
+          stageRunId: null,
+          itemId: item.id,
+          projectId: null,
+          kind: "concept_structured",
+          format: "json",
+          path: "artifacts/concept.json",
+          sha256: "concept-json",
+          sizeBytes: 1
+        });
+        const concept = context.repositories.conceptRepository.create({
+          itemId: item.id,
+          version: 1,
+          title: "Auto Accept Concept",
+          summary: "Seeded concept for the auto-accept story review test.",
+          status: "approved",
+          markdownArtifactId: conceptMarkdownArtifact.id,
+          structuredArtifactId: conceptStructuredArtifact.id
+        });
+        const project = context.repositories.projectRepository.createMany([
+          {
+            itemId: item.id,
+            code: `${item.code}-P01`,
+            conceptId: concept.id,
+            title: "Auto Accept Project",
+            summary: "Seeded project",
+            goal: "Verify story review auto-accept after bounded loops",
+            status: "approved",
+            position: 1
+          }
+        ])[0]!;
+        const storyArtifact = context.repositories.artifactRepository.create({
+          stageRunId: null,
+          itemId: item.id,
+          projectId: project.id,
+          kind: "stories_structured",
+          format: "json",
+          path: "artifacts/stories.json",
+          sha256: "stories-json",
+          sizeBytes: 1
+        });
+        const story = context.repositories.userStoryRepository.createMany([
+          {
+            projectId: project.id,
+            code: `${project.code}-US01`,
+            title: "Auto Accept Story",
+            description: "Seeded story",
+            actor: "Operator",
+            goal: "Verify automatic story-review acceptance after loop limit",
+            benefit: "The loop continues without manual intervention",
+            priority: "high",
+            status: "approved",
+            sourceArtifactId: storyArtifact.id
+          }
+        ])[0]!;
+        context.repositories.acceptanceCriterionRepository.createMany([
+          {
+            storyId: story.id,
+            code: `${story.code}-AC01`,
+            text: "The engine accepts bounded story-review debt after the loop limit.",
+            position: 1
+          }
+        ]);
+        const planMarkdownArtifact = context.repositories.artifactRepository.create({
+          stageRunId: null,
+          itemId: item.id,
+          projectId: project.id,
+          kind: "implementation_plan_markdown",
+          format: "md",
+          path: "artifacts/implementation-plan.md",
+          sha256: "plan-md",
+          sizeBytes: 1
+        });
+        const planStructuredArtifact = context.repositories.artifactRepository.create({
+          stageRunId: null,
+          itemId: item.id,
+          projectId: project.id,
+          kind: "implementation_plan_structured",
+          format: "json",
+          path: "artifacts/implementation-plan.json",
+          sha256: "plan-json",
+          sizeBytes: 1
+        });
+        const implementationPlan = context.repositories.implementationPlanRepository.create({
+          projectId: project.id,
+          version: 1,
+          summary: "Seeded plan",
+          status: "approved",
+          markdownArtifactId: planMarkdownArtifact.id,
+          structuredArtifactId: planStructuredArtifact.id
+        });
+        const wave = context.repositories.waveRepository.createMany([
+          {
+            implementationPlanId: implementationPlan.id,
+            code: "W01",
+            goal: "Seeded wave",
+            position: 1
+          }
+        ])[0]!;
+        const waveStory = context.repositories.waveStoryRepository.createMany([
+          {
+            waveId: wave.id,
+            storyId: story.id,
+            parallelGroup: null,
+            position: 1
+          }
+        ])[0]!;
+        const waveExecution = context.repositories.waveExecutionRepository.create({
+          waveId: wave.id,
+          status: "review_required",
+          attempt: 1
+        });
+        const testRun = context.repositories.waveStoryTestRunRepository.create({
+          waveExecutionId: waveExecution.id,
+          waveStoryId: waveStory.id,
+          storyId: story.id,
+          status: "completed",
+          attempt: 1,
+          workerRole: "test-writer",
+          systemPromptSnapshot: "test preparation prompt",
+          skillsSnapshotJson: "[]",
+          businessContextSnapshotJson: "{}",
+          repoContextSnapshotJson: "{}",
+          outputSummaryJson: "{\"summary\":\"prepared\"}",
+          errorMessage: null
+        });
+        const execution = context.repositories.waveStoryExecutionRepository.create({
+          waveExecutionId: waveExecution.id,
+          testPreparationRunId: testRun.id,
+          waveStoryId: waveStory.id,
+          storyId: story.id,
+          status: "review_required",
+          attempt: 1,
+          workerRole: "frontend-implementer",
+          systemPromptSnapshot: "execution prompt",
+          skillsSnapshotJson: "[]",
+          businessContextSnapshotJson: "{}",
+          repoContextSnapshotJson: "{}",
+          gitBranchName: null,
+          gitBaseRef: null,
+          gitMetadataJson: null,
+          outputSummaryJson: "{\"summary\":\"needs review\"}",
+          errorMessage: null
+        });
+        const latestStoryReviewRun = context.repositories.storyReviewRunRepository.create({
+          waveStoryExecutionId: execution.id,
+          status: "review_required",
+          inputSnapshotJson: "{}",
+          systemPromptSnapshot: "story review prompt",
+          skillsSnapshotJson: "[]",
+          summaryJson: "{\"overallStatus\":\"review_required\"}",
+          errorMessage: null
+        });
+        const latestFindings = context.repositories.storyReviewFindingRepository.createMany([
+          {
+            storyReviewRunId: latestStoryReviewRun.id,
+            severity: "medium",
+            category: "maintainability",
+            title: "Persistent autorun remediation target",
+            description: "The remediation loop intentionally keeps finding the same bounded issue.",
+            evidence: "Injected by the autorun auto-accept fixture.",
+            filePath: "src/workflow/workflow-service.ts",
+            line: 1,
+            suggestedFix: "Allow the bounded debt through after the configured loop limit.",
+            status: "open"
+          }
+        ]);
+
+        for (let attempt = 1; attempt <= 4; attempt += 1) {
+          const remediationRun = context.repositories.storyReviewRemediationRunRepository.create({
+            storyReviewRunId: latestStoryReviewRun.id,
+            waveStoryExecutionId: execution.id,
+            remediationWaveStoryExecutionId: null,
+            storyId: story.id,
+            status: "review_required",
+            attempt,
+            workerRole: "story-review-remediator",
+            inputSnapshotJson: JSON.stringify({ attempt }),
+            systemPromptSnapshot: "fixture",
+            skillsSnapshotJson: "[]",
+            gitBranchName: null,
+            gitBaseRef: null,
+            gitMetadataJson: null,
+            outputSummaryJson: JSON.stringify({ attempt }, null, 2),
+            errorMessage: null
+          });
+          context.repositories.storyReviewRemediationFindingRepository.createMany(
+            latestFindings.map((finding) => ({
+              storyReviewRemediationRunId: remediationRun.id,
+              storyReviewFindingId: finding.id,
+              resolutionStatus: "still_open"
+            }))
+          );
+        }
+
+        const workflowServiceWithInternals = context.workflowService as unknown as {
+          canAutorunStoryReviewAutoAccept(storyReviewRunId: string): boolean;
+          autoAcceptStoryReviewRemediationLimit(storyReviewRunId: string): Promise<{
+            storyReviewRunId: string;
+            waveStoryExecutionId: string;
+            acceptedFindingIds: string[];
+            status: "passed";
+          }>;
+        };
+
+        expect(workflowServiceWithInternals.canAutorunStoryReviewAutoAccept(latestStoryReviewRun.id)).toBe(true);
+        const result = await workflowServiceWithInternals.autoAcceptStoryReviewRemediationLimit(latestStoryReviewRun.id);
+
+        expect(result.status).toBe("passed");
+        const remediationRuns = context.repositories.storyReviewRemediationRunRepository.listByStoryId(story.id);
+        expect(remediationRuns).toHaveLength(4);
+
+        const acceptedExecution = context.repositories.waveStoryExecutionRepository.getLatestByWaveStoryId(waveStory.id);
+        expect(acceptedExecution?.status).toBe("completed");
+        const acceptedStoryReviewRun = context.repositories.storyReviewRunRepository.getLatestByWaveStoryExecutionId(execution.id);
+        expect(acceptedStoryReviewRun?.status).toBe("passed");
+
+        const allLatestFindings = context.repositories.storyReviewFindingRepository.listByStoryReviewRunId(acceptedStoryReviewRun!.id);
+        expect(allLatestFindings.every((finding) => finding.status === "accepted")).toBe(true);
+
+        context.connection.close();
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
     },
     15_000
   );

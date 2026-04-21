@@ -496,11 +496,11 @@ export class VerificationService {
       this.options.ensureStoryRemediationBranch(project.code, story.code, storyReviewRun.id)
     );
     const remediationRun = this.options.deps.runInTransaction(() => {
-      const priorAttempts = this.options.deps.storyReviewRemediationRunRepository.listByStoryReviewRunId(storyReviewRun.id);
+      const priorAttempts = this.options.deps.storyReviewRemediationRunRepository.listByStoryId(story.id);
       if (priorAttempts.length >= MAX_STORY_REVIEW_REMEDIATION_ATTEMPTS) {
         throw new AppError(
           "STORY_REVIEW_REMEDIATION_LIMIT_REACHED",
-          `Story review run ${storyReviewRunId} reached remediation limit`
+          `Story ${story.code} reached the story review remediation limit`
         );
       }
       const createdRun = this.options.deps.storyReviewRemediationRunRepository.create({
@@ -635,7 +635,7 @@ export class VerificationService {
 
   public async retryStoryReviewRemediation(storyReviewRemediationRunId: string) {
     const remediationRun = this.options.loaders.requireStoryReviewRemediationRun(storyReviewRemediationRunId);
-    const priorAttempts = this.options.deps.storyReviewRemediationRunRepository.listByStoryReviewRunId(remediationRun.storyReviewRunId);
+    const priorAttempts = this.options.deps.storyReviewRemediationRunRepository.listByStoryId(remediationRun.storyId);
     if (priorAttempts.length >= MAX_STORY_REVIEW_REMEDIATION_ATTEMPTS) {
       throw new AppError(
         "STORY_REVIEW_REMEDIATION_LIMIT_REACHED",
@@ -1579,8 +1579,11 @@ export class VerificationService {
   }
 
   private resolveVerificationStatus(output: StoryExecutionOutput, exitCode: number): VerificationRunStatus {
-    if (exitCode !== 0 || output.testsRun.some((testRun) => testRun.status === "failed")) {
+    if (exitCode !== 0) {
       return "failed";
+    }
+    if (output.testsRun.some((testRun) => testRun.status === "failed")) {
+      return "review_required";
     }
     if (output.blockers.length > 0) {
       return "review_required";
@@ -1626,7 +1629,7 @@ export class VerificationService {
       return "failed";
     }
     if (output.acceptanceCriteriaResults.some((result) => result.status === "failed") || output.blockers.length > 0) {
-      return "failed";
+      return "review_required";
     }
     if (base === "review_required") {
       return "review_required";
@@ -1664,7 +1667,7 @@ export class VerificationService {
       return "failed";
     }
     if (output.checks.some((check) => check.status === "failed")) {
-      return "failed";
+      return "review_required";
     }
     if (base === "review_required") {
       return "review_required";
