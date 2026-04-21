@@ -747,6 +747,15 @@ export class ExecutionService {
       outputSummaryJson: null,
       errorMessage: null
     });
+    const executionSession = this.options.deps.executionAgentSessionRepository.create({
+      waveStoryExecutionId: execution.id,
+      adapterKey: runtime.adapterKey,
+      status: "running",
+      commandJson: JSON.stringify([]),
+      stdout: "",
+      stderr: "",
+      exitCode: 0
+    });
 
     try {
       const result = await runtime.adapter.runStoryExecution(
@@ -763,7 +772,7 @@ export class ExecutionService {
       );
 
       const parsed = storyExecutionOutputSchema.parse(result.output);
-      this.recordExecutionAgentSession(execution.id, runtime.adapterKey, result);
+      this.recordExecutionAgentSession(executionSession.id, result);
       this.options.deps.waveStoryExecutionRepository.updateStatus(execution.id, "running", {
         outputSummaryJson: JSON.stringify(parsed, null, 2),
         gitMetadata: input.gitMetadata ?? null
@@ -798,7 +807,7 @@ export class ExecutionService {
       return this.failWaveStoryExecution({
         input,
         executionId: execution.id,
-        adapterKey: runtime.adapterKey,
+        executionSessionId: executionSession.id,
         error
       });
     }
@@ -861,18 +870,48 @@ export class ExecutionService {
   }
 
   private recordExecutionAgentSession(
-    executionId: string,
-    adapterKey: string,
+    sessionId: string,
     result: Awaited<ReturnType<AgentAdapter["runStoryExecution"]>>
   ) {
-    this.options.deps.executionAgentSessionRepository.create({
-      waveStoryExecutionId: executionId,
-      adapterKey,
+    this.options.deps.executionAgentSessionRepository.update(sessionId, {
       status: result.exitCode === 0 ? "completed" : "failed",
       commandJson: JSON.stringify(result.command),
       stdout: result.stdout,
       stderr: result.stderr,
       exitCode: result.exitCode
+    });
+  }
+
+  private recordTestAgentSession(
+    sessionId: string,
+    result: Awaited<ReturnType<AgentAdapter["runStoryTestPreparation"]>>
+  ) {
+    this.options.deps.testAgentSessionRepository.update(sessionId, {
+      status: result.exitCode === 0 ? "completed" : "failed",
+      commandJson: JSON.stringify(result.command),
+      stdout: result.stdout,
+      stderr: result.stderr,
+      exitCode: result.exitCode
+    });
+  }
+
+  private failTestAgentSession(sessionId: string, errorMessage: string) {
+    this.options.deps.testAgentSessionRepository.update(sessionId, {
+      status: "failed",
+      commandJson: JSON.stringify([]),
+      stdout: "",
+      stderr: errorMessage,
+      exitCode: 1
+    });
+  }
+
+  private failExecutionAgentSession(sessionId: string, errorMessage: string) {
+    this.options.deps.executionAgentSessionRepository.update(sessionId, {
+      status: "failed",
+      commandJson: JSON.stringify([]),
+      stdout: "",
+      stderr: errorMessage,
+      exitCode: 1
     });
   }
 
@@ -940,19 +979,11 @@ export class ExecutionService {
   private failWaveStoryExecution(input: {
     input: Parameters<ExecutionService["executeWaveStory"]>[0];
     executionId: string;
-    adapterKey: string;
+    executionSessionId: string;
     error: unknown;
   }) {
     const errorMessage = input.error instanceof Error ? input.error.message : String(input.error);
-    this.options.deps.executionAgentSessionRepository.create({
-      waveStoryExecutionId: input.executionId,
-      adapterKey: input.adapterKey,
-      status: "failed",
-      commandJson: JSON.stringify([]),
-      stdout: "",
-      stderr: errorMessage,
-      exitCode: 1
-    });
+    this.failExecutionAgentSession(input.executionSessionId, errorMessage);
     this.options.deps.verificationRunRepository.create({
       waveExecutionId: input.input.waveExecution.id,
       waveStoryExecutionId: input.executionId,
@@ -1321,6 +1352,15 @@ export class ExecutionService {
       outputSummaryJson: null,
       errorMessage: null
     });
+    const testSession = this.options.deps.testAgentSessionRepository.create({
+      waveStoryTestRunId: testRun.id,
+      adapterKey: runtime.adapterKey,
+      status: "running",
+      commandJson: JSON.stringify([]),
+      stdout: "",
+      stderr: "",
+      exitCode: 0
+    });
 
     try {
       const result = await runtime.adapter.runStoryTestPreparation({
@@ -1359,15 +1399,7 @@ export class ExecutionService {
       });
 
       const parsed = testPreparationOutputSchema.parse(result.output);
-      this.options.deps.testAgentSessionRepository.create({
-        waveStoryTestRunId: testRun.id,
-        adapterKey: runtime.adapterKey,
-        status: result.exitCode === 0 ? "completed" : "failed",
-        commandJson: JSON.stringify(result.command),
-        stdout: result.stdout,
-        stderr: result.stderr,
-        exitCode: result.exitCode
-      });
+      this.recordTestAgentSession(testSession.id, result);
 
       const status = this.resolveTestPreparationStatus(parsed, result.exitCode);
       this.options.deps.waveStoryTestRunRepository.updateStatus(testRun.id, status, {
@@ -1383,15 +1415,7 @@ export class ExecutionService {
         status
       };
     } catch (error) {
-      this.options.deps.testAgentSessionRepository.create({
-        waveStoryTestRunId: testRun.id,
-        adapterKey: runtime.adapterKey,
-        status: "failed",
-        commandJson: JSON.stringify([]),
-        stdout: "",
-        stderr: error instanceof Error ? error.message : String(error),
-        exitCode: 1
-      });
+      this.failTestAgentSession(testSession.id, error instanceof Error ? error.message : String(error));
       this.options.deps.waveStoryTestRunRepository.updateStatus(testRun.id, "failed", {
         errorMessage: error instanceof Error ? error.message : String(error)
       });

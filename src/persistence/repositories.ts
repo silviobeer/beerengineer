@@ -2507,6 +2507,24 @@ export class TestAgentSessionRepository {
       .orderBy(testAgentSessions.createdAt)
       .all() as TestAgentSession[];
   }
+
+  public update(
+    id: string,
+    input: Partial<Pick<TestAgentSession, "status" | "commandJson" | "stdout" | "stderr" | "exitCode">>
+  ): void {
+    this.db
+      .update(testAgentSessions)
+      .set({
+        ...definedField("status", input.status),
+        ...definedField("commandJson", input.commandJson),
+        ...definedField("stdout", input.stdout),
+        ...definedField("stderr", input.stderr),
+        ...definedField("exitCode", input.exitCode),
+        updatedAt: now()
+      })
+      .where(eq(testAgentSessions.id, id))
+      .run();
+  }
 }
 
 export class ExecutionAgentSessionRepository {
@@ -2531,6 +2549,24 @@ export class ExecutionAgentSessionRepository {
       .where(eq(executionAgentSessions.waveStoryExecutionId, waveStoryExecutionId))
       .orderBy(executionAgentSessions.createdAt)
       .all() as ExecutionAgentSession[];
+  }
+
+  public update(
+    id: string,
+    input: Partial<Pick<ExecutionAgentSession, "status" | "commandJson" | "stdout" | "stderr" | "exitCode">>
+  ): void {
+    this.db
+      .update(executionAgentSessions)
+      .set({
+        ...definedField("status", input.status),
+        ...definedField("commandJson", input.commandJson),
+        ...definedField("stdout", input.stdout),
+        ...definedField("stderr", input.stderr),
+        ...definedField("exitCode", input.exitCode),
+        updatedAt: now()
+      })
+      .where(eq(executionAgentSessions.id, id))
+      .run();
   }
 }
 
