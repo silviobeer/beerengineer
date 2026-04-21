@@ -1313,6 +1313,7 @@ describe("workflow service", () => {
         review: {
           status: string;
           findings: unknown[];
+          projectShape: { recommendation: string; suggestedSeeds: string[] };
           autoApplied: Array<{ field: string; values: string[] }>;
         };
       };
@@ -1325,6 +1326,8 @@ describe("workflow service", () => {
       expect(chatted.draft.recommendedDirection).toBe("static shell first");
       expect(chatted.draft.openQuestions).toContain("What is the smallest useful slice?");
       expect(chatted.review.status).toBe("auto_backfilled");
+      expect(chatted.review.projectShape.recommendation).toBe("single_project");
+      expect(chatted.review.projectShape.suggestedSeeds).toEqual(["static shell first"]);
       expect(chatted.review.autoApplied.some((entry: { field: string }) => entry.field === "targetUsers")).toBe(true);
       expect(chatted.review.findings).toEqual([]);
 
@@ -1395,6 +1398,204 @@ describe("workflow service", () => {
       expect(shown.latestReview.status).toBe("needs_follow_up");
       const lastAssistant = [...shown.messages].reverse().find((message) => message.role === "assistant");
       expect(lastAssistant?.content ?? "").toContain("Brainstorm review still misses chat-derived context");
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("asks for an explicit project-shape decision before concept promotion when the scope spans multiple tracks", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const item = createWorkspaceItem(context, {
+        title: "UI Program Shape",
+        description: "Decide whether to keep one project or split"
+      });
+      const started = context.workflowService.startBrainstormSession(item.id);
+
+      const chatted = await context.workflowService.chatBrainstorm(
+        started.sessionId,
+        [
+          "Problem: Operators need a real workflow UI",
+          "Target users:",
+          "- workflow operator",
+          "- delivery lead",
+          "Use cases:",
+          "- operate a workspace board",
+          "- inspect an overlay panel",
+          "- work a waiting inbox",
+          "- inspect runs and artifacts",
+          "- maintain a reusable component showcase",
+          "Candidate directions:",
+          "- build one focused UI shell MVP",
+          "- split read-model services into a separate track"
+        ].join("\n")
+      ) as {
+        status: string;
+        needsStructuredFollowUp: boolean;
+        followUpHint: string | null;
+        review: {
+          status: string;
+          findings: Array<{ field: string }>;
+          projectShape: { recommendation: string; suggestedSeeds: string[] };
+        };
+      };
+
+      expect(chatted.status).toBe("ready_for_concept");
+      expect(chatted.needsStructuredFollowUp).toBe(false);
+      expect(chatted.review.status).toBe("auto_backfilled");
+      expect(chatted.review.projectShape.recommendation).toBe("split_projects");
+      expect(chatted.review.projectShape.suggestedSeeds).toEqual([
+        "build one focused UI shell MVP",
+        "split read-model services into a separate track"
+      ]);
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("promotes multiple projects only when the brainstorm model made an explicit split decision", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const adapterScriptPath = join(root, "local-agent-split-brainstorm.mjs");
+    writeFileSync(
+      adapterScriptPath,
+      [
+        "import { readFileSync } from \"node:fs\";",
+        "import { execFileSync } from \"node:child_process\";",
+        "const payload = JSON.parse(readFileSync(process.argv[2], \"utf8\"));",
+        `const fallbackScriptPath = ${JSON.stringify(localAgentScriptPath)};`,
+        "if (payload.interactionType === \"brainstorm_chat\") {",
+        "  process.stdout.write(JSON.stringify({ output: {",
+        "    assistantMessage: \"Captured split decision.\",",
+        "    draftPatch: {",
+        "      problem: \"Operators need a real workflow UI\",",
+        "      coreOutcome: \"Deliver the first BeerEngineer UI surfaces\",",
+        "      targetUsers: [\"workflow operator\", \"delivery lead\"],",
+        "      useCases: [\"board\", \"overlay\", \"inbox\", \"component showcase\"],",
+        "      candidateDirections: [\"UI shell surfaces\", \"shared workflow read models\"]",
+        "    },",
+        "    projectShapeDecision: \"split_projects\",",
+        "    decisionRationale: \"The chat explicitly separates a product surface track from a platform read-model track.\",",
+        "    projectSeeds: [\"UI shell surfaces\", \"shared workflow read models\"],",
+        "    needsStructuredFollowUp: false,",
+        "    followUpHint: null",
+        "  } }));",
+        "} else {",
+        "  const output = execFileSync(process.execPath, [fallbackScriptPath, process.argv[2]], { encoding: \"utf8\" });",
+        "  process.stdout.write(output);",
+        "}"
+      ].join("\n"),
+        "utf8"
+      );
+    const context = createAppContext(dbPath, { adapterScriptPath });
+
+    try {
+      const item = createWorkspaceItem(context, {
+        title: "Split Decision",
+        description: "Let the brainstorm model decide split vs single"
+      });
+      const started = context.workflowService.startBrainstormSession(item.id);
+
+      const chatted = await context.workflowService.chatBrainstorm(started.sessionId, "Please split this into a UI shell track and a workflow read-model track.") as {
+        review: { projectShape: { recommendation: string; suggestedSeeds: string[] } };
+      };
+      expect(chatted.review.projectShape.recommendation).toBe("split_projects");
+      expect(chatted.review.projectShape.suggestedSeeds).toEqual(["UI shell surfaces", "shared workflow read models"]);
+
+      const promoted = await context.workflowService.promoteBrainstorm(started.sessionId);
+      expect(promoted.status).toBe("promoted");
+
+      const concept = context.repositories.conceptRepository.getLatestByItemId(item.id);
+      expect(concept).not.toBeNull();
+      const projectsArtifact = context.repositories.artifactRepository.getLatestByKind({ itemId: item.id, kind: "projects" });
+      const projectsPayload = JSON.parse(
+        readFileSync(
+          join(context.effectiveConfig.workspaceRoot, ".beerengineer", "workspaces", context.workspace.key, "artifacts", projectsArtifact!.path),
+          "utf8"
+        )
+      ) as { projects: Array<{ title: string; goal: string }> };
+
+      expect(projectsPayload.projects).toHaveLength(2);
+      expect(projectsPayload.projects.map((project) => project.title).join(" ")).toContain("UI");
+      expect(projectsPayload.projects.map((project) => project.title).join(" ")).toContain("Workflow");
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts an explicit single-project decision from the brainstorm dialog before concept promotion", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const item = createWorkspaceItem(context, {
+        title: "UI Shell",
+        description: "Decide the project shape in dialog before promotion"
+      });
+      const started = context.workflowService.startBrainstormSession(item.id);
+
+      await context.workflowService.chatBrainstorm(
+        started.sessionId,
+        [
+          "Problem: Operators need a real workflow UI shell",
+          "Use cases:",
+          "- operate a workspace board",
+          "- inspect an overlay panel",
+          "- work a waiting inbox",
+          "- inspect runs and artifacts"
+        ].join("\n")
+      );
+
+      const clarified = await context.workflowService.chatBrainstorm(
+        started.sessionId,
+        [
+          "Target users:",
+          "- product engineer",
+          "- delivery lead",
+          "- reviewer",
+          "",
+          "Recommended direction:",
+          "- build one focused UI V1 shell on shared workflow services",
+          "",
+          "Project shape decision:",
+          "- keep this as one focused UI V1 project, not multiple projects",
+          "",
+          "Rationale:",
+          "- board, overlay, inbox, and conversation surfaces only become valuable together as one coherent product slice"
+        ].join("\n")
+      ) as {
+        status: string;
+        needsStructuredFollowUp: boolean;
+        review: {
+          status: string;
+          projectShape: { recommendation: string; suggestedSeeds: string[] };
+        };
+      };
+
+      expect(clarified.needsStructuredFollowUp).toBe(false);
+      expect(clarified.status).toBe("ready_for_concept");
+      expect(clarified.review.status).toBe("auto_backfilled");
+      expect(clarified.review.projectShape.recommendation).toBe("single_project");
+      expect(clarified.review.projectShape.suggestedSeeds).toHaveLength(1);
+
+      const promoted = await context.workflowService.promoteBrainstorm(started.sessionId);
+      expect(promoted.status).toBe("promoted");
+
+      const projectsArtifact = context.repositories.artifactRepository.getLatestByKind({ itemId: item.id, kind: "projects" });
+      const projectsPayload = JSON.parse(
+        readFileSync(
+          join(context.effectiveConfig.workspaceRoot, ".beerengineer", "workspaces", context.workspace.key, "artifacts", projectsArtifact!.path),
+          "utf8"
+        )
+      ) as { projects: Array<{ title: string }> };
+      expect(projectsPayload.projects).toHaveLength(1);
     } finally {
       context.connection.close();
       rmSync(root, { recursive: true, force: true });

@@ -258,7 +258,7 @@ export abstract class HostedCliAdapterBase {
     if ("interactionType" in request && request.interactionType === "brainstorm_chat") {
       return [
         "Inside `output`, return exactly these fields:",
-        '{ "assistantMessage": string, "draftPatch": { "problem"?: string|null, "coreOutcome"?: string|null, "targetUsers"?: string[], "useCases"?: string[], "constraints"?: string[], "nonGoals"?: string[], "risks"?: string[], "openQuestions"?: string[], "candidateDirections"?: string[], "recommendedDirection"?: string|null, "scopeNotes"?: string|null, "assumptions"?: string[] }, "needsStructuredFollowUp": boolean, "followUpHint": string|null }',
+        '{ "assistantMessage": string, "draftPatch": { "problem"?: string|null, "coreOutcome"?: string|null, "targetUsers"?: string[], "useCases"?: string[], "constraints"?: string[], "nonGoals"?: string[], "risks"?: string[], "openQuestions"?: string[], "candidateDirections"?: string[], "recommendedDirection"?: string|null, "scopeNotes"?: string|null, "assumptions"?: string[] }, "projectShapeDecision"?: "single_project"|"split_projects"|null, "decisionRationale"?: string|null, "projectSeeds"?: string[], "needsStructuredFollowUp": boolean, "followUpHint": string|null }',
         "Keep `draftPatch` narrow and only include keys you are actually changing."
       ].join("\n");
     }

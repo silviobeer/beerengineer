@@ -60,15 +60,23 @@ type BrainstormReviewFinding = {
     | "assumptions"
     | "openQuestions"
     | "candidateDirections"
-    | "recommendedDirection";
+    | "recommendedDirection"
+    | "projectShape";
   summary: string;
   detail: string;
+};
+
+type BrainstormProjectShapeAssessment = {
+  recommendation: "single_project" | "split_projects" | "undecided";
+  rationale: string;
+  suggestedSeeds: string[];
 };
 
 type BrainstormReviewSummary = {
   status: "clean" | "auto_backfilled" | "needs_follow_up";
   summary: string;
   findings: BrainstormReviewFinding[];
+  projectShape: BrainstormProjectShapeAssessment;
   autoApplied: Array<{
     field:
       | "problem"
@@ -405,21 +413,35 @@ export class BrainstormService {
         messageStructure
       );
       const autoApplied = this.summarizeAutoAppliedDraftUpdates(previousDraft, draftUpdate);
-      const nextDraft = this.options.deps.brainstormDraftRepository.createRevision(previousDraft, {
+      const provisionalDraft = {
+        ...previousDraft,
         ...draftUpdate,
         status: this.computeBrainstormDraftStatus({
           ...previousDraft,
           ...draftUpdate
         } as BrainstormDraft),
         lastUpdatedFromMessageId: userMessage.id
-      });
+      } as BrainstormDraft;
       const review = this.reviewBrainstormDraft({
-        draft: nextDraft,
+        draft: provisionalDraft,
         messageStructure,
+        agentDecision: {
+          projectShapeDecision: agentOutput.projectShapeDecision ?? null,
+          decisionRationale: agentOutput.decisionRationale ?? null,
+          projectSeeds: agentOutput.projectSeeds ?? []
+        },
         autoApplied
       });
       const reviewFollowUp = this.buildBrainstormReviewFollowUp(review);
       const needsStructuredFollowUp = agentOutput.needsStructuredFollowUp || review.status === "needs_follow_up";
+      const finalDraftStatus = needsStructuredFollowUp
+        ? (Boolean(provisionalDraft.problem && provisionalDraft.coreOutcome) ? "drafting" : "needs_input")
+        : provisionalDraft.status;
+      const nextDraft = this.options.deps.brainstormDraftRepository.createRevision(previousDraft, {
+        ...draftUpdate,
+        status: finalDraftStatus,
+        lastUpdatedFromMessageId: userMessage.id
+      });
       const followUpHint = reviewFollowUp ?? agentOutput.followUpHint ?? null;
       const assistantMessageContent = review.status === "needs_follow_up"
         ? this.buildBrainstormAssistantMessageWithReviewFollowUp(agentOutput.assistantMessage, reviewFollowUp)
@@ -447,7 +469,7 @@ export class BrainstormService {
           2
         )
       });
-      const nextStatus = this.computeBrainstormSessionStatus(nextDraft);
+      const nextStatus = needsStructuredFollowUp ? "waiting_for_user" : this.computeBrainstormSessionStatus(nextDraft);
       const nextMode = this.computeBrainstormSessionMode(nextDraft);
       this.options.deps.brainstormSessionRepository.update(session.id, {
         status: nextStatus,
@@ -477,10 +499,30 @@ export class BrainstormService {
     const draft = this.options.loaders.requireLatestBrainstormDraft(session.id);
     const draftView = this.mapBrainstormDraft(draft);
     const previousConcept = this.options.deps.conceptRepository.getLatestByItemId(item.id);
+    const latestReview = this.extractLatestBrainstormReview(this.options.deps.brainstormMessageRepository.listBySessionId(session.id));
+    const promotionProjectShape = this.resolvePromotionProjectShapeDecision(draftView, latestReview);
+    if (latestReview?.status === "needs_follow_up") {
+      throw new AppError(
+        "BRAINSTORM_REQUIRES_FOLLOW_UP",
+        latestReview.summary
+      );
+    }
+    if (promotionProjectShape.recommendation === "undecided") {
+      throw new AppError(
+        "BRAINSTORM_PROJECT_SHAPE_UNDECIDED",
+        "The brainstorm must explicitly decide whether this becomes one project or multiple projects before concept promotion."
+      );
+    }
 
     const result = this.options.deps.runInTransaction(() => {
       const conceptMarkdown = this.renderConceptFromBrainstormDraft(item, draftView);
-      const projectsPayload = this.buildProjectsFromBrainstormDraft(item, draftView);
+      const projectsPayload = this.buildProjectsFromBrainstormDraft(item, draftView, {
+        status: latestReview?.status ?? "clean",
+        summary: latestReview?.summary ?? "Promotion project-shape decision derived from the current draft.",
+        findings: latestReview?.findings ?? [],
+        projectShape: promotionProjectShape,
+        autoApplied: latestReview?.autoApplied ?? []
+      });
       const conceptArtifactRecord = this.persistManualArtifact({
         item,
         sessionScopedId: session.id,
@@ -588,7 +630,14 @@ export class BrainstormService {
       "- When the user message contains lists of target users, use cases, constraints, non-goals, risks, or assumptions — whether inline (e.g. \"users: a; b\") or bulleted across multiple lines — route EACH entry into the matching draftPatch array (targetUsers, useCases, constraints, nonGoals, risks, assumptions).",
       "- Never copy list content into scopeNotes. scopeNotes is reserved for free-form context that does not fit any of the structured fields.",
       "- Recognize common label synonyms: users/actors → targetUsers; scenarios → useCases; out of scope → nonGoals.",
-      "- If the user message is mostly a labeled plan (multiple labeled sections), extract every section even if it enlarges the patch."
+      "- If the user message is mostly a labeled plan (multiple labeled sections), extract every section even if it enlarges the patch.",
+      "",
+      "Project shaping rules (mandatory):",
+      "- Explicitly decide whether the brainstorm should stay one focused project or split into multiple projects.",
+      "- Return `projectShapeDecision` as `single_project` or `split_projects` when the current chat gives enough evidence.",
+      "- Return `decisionRationale` with a short justification for that decision.",
+      "- Return `projectSeeds` as the proposed project titles/seeds when you choose `split_projects`, or as a single focused seed when you choose `single_project`.",
+      "- If the chat does not provide enough evidence to make that decision safely, set `needsStructuredFollowUp=true` and ask the user to clarify project shape."
     ].join("\n");
   }
 
@@ -774,10 +823,12 @@ export class BrainstormService {
   private reviewBrainstormDraft(input: {
     draft: BrainstormDraft;
     messageStructure: BrainstormMessageStructure;
+    agentDecision: Pick<InteractiveBrainstormAgentOutput, "projectShapeDecision" | "decisionRationale" | "projectSeeds">;
     autoApplied: BrainstormReviewSummary["autoApplied"];
   }): BrainstormReviewSummary {
     const view = this.mapBrainstormDraft(input.draft);
     const findings: BrainstormReviewFinding[] = [];
+    const projectShape = this.assessBrainstormProjectShape(view, input.agentDecision);
 
     const checkScalar = (
       field: BrainstormReviewFinding["field"],
@@ -829,12 +880,14 @@ export class BrainstormService {
     checkList("assumptions", input.messageStructure.assumptions, view.assumptions, "assumptions");
     checkList("openQuestions", input.messageStructure.openQuestions, view.openQuestions, "open questions");
     checkList("candidateDirections", input.messageStructure.candidateDirections, view.candidateDirections, "candidate directions");
+    this.appendDecisionFindings(view, projectShape, findings);
 
     if (findings.length > 0) {
       return {
         status: "needs_follow_up",
         summary: `Brainstorm review found ${findings.length} missing chat-derived draft entr${findings.length === 1 ? "y" : "ies"}.`,
         findings,
+        projectShape,
         autoApplied: input.autoApplied
       };
     }
@@ -843,6 +896,7 @@ export class BrainstormService {
         status: "auto_backfilled",
         summary: `Brainstorm review backfilled ${input.autoApplied.length} draft field${input.autoApplied.length === 1 ? "" : "s"} from the chat history.`,
         findings: [],
+        projectShape,
         autoApplied: input.autoApplied
       };
     }
@@ -850,6 +904,7 @@ export class BrainstormService {
       status: "clean",
       summary: "Brainstorm review found no missing chat-derived draft context.",
       findings: [],
+      projectShape,
       autoApplied: []
     };
   }
@@ -876,7 +931,12 @@ export class BrainstormService {
       return null;
     }
     const findings = review.findings.slice(0, 3).map((finding) => {
-      if (finding.field === "problem" || finding.field === "coreOutcome" || finding.field === "recommendedDirection") {
+      if (
+        finding.field === "problem" ||
+        finding.field === "coreOutcome" ||
+        finding.field === "recommendedDirection" ||
+        finding.field === "projectShape"
+      ) {
         return finding.field;
       }
       return `${finding.field}: ${finding.detail.match(/includes "(.+?)"/)?.[1] ?? finding.field}`;
@@ -1013,7 +1073,8 @@ export class BrainstormService {
 
   private buildProjectsFromBrainstormDraft(
     item: { title: string },
-    draft: BrainstormDraftView
+    draft: BrainstormDraftView,
+    latestReview: BrainstormReviewSummary | null
   ): {
     projects: Array<{
       title: string;
@@ -1030,7 +1091,12 @@ export class BrainstormService {
       referenceArtifacts: string[];
     }>;
   } {
-    const candidateSeeds = this.selectBrainstormProjectSeeds(draft, item.title);
+    const projectShape = this.assessBrainstormProjectShape(draft, {
+      projectShapeDecision: latestReview?.projectShape.recommendation === "undecided" ? null : latestReview?.projectShape.recommendation ?? null,
+      decisionRationale: latestReview?.projectShape.rationale ?? null,
+      projectSeeds: latestReview?.projectShape.suggestedSeeds ?? []
+    });
+    const candidateSeeds = this.selectBrainstormProjectSeeds(draft, item.title, projectShape);
     const defaultGoal = draft.coreOutcome ?? `Deliver the first usable slice for ${item.title}.`;
     const genericContext = deriveGenericUpstreamContext({
       constraints: draft.constraints,
@@ -1060,7 +1126,42 @@ export class BrainstormService {
     };
   }
 
-  private selectBrainstormProjectSeeds(draft: BrainstormDraftView, itemTitle: string): string[] {
+  private resolvePromotionProjectShapeDecision(
+    draft: BrainstormDraftView,
+    latestReview: BrainstormReviewSummary | null
+  ): BrainstormProjectShapeAssessment {
+    if (latestReview && latestReview.projectShape.recommendation !== "undecided") {
+      return latestReview.projectShape;
+    }
+    if (draft.recommendedDirection) {
+      return {
+        recommendation: "single_project",
+        rationale: "The draft has an explicit recommended direction.",
+        suggestedSeeds: [draft.recommendedDirection]
+      };
+    }
+    if (draft.candidateDirections.length === 1) {
+      return {
+        recommendation: "single_project",
+        rationale: "The draft has exactly one candidate direction.",
+        suggestedSeeds: [...draft.candidateDirections]
+      };
+    }
+    return {
+      recommendation: "undecided",
+      rationale: "The draft does not contain a single explicit direction or an approved split decision.",
+      suggestedSeeds: this.deriveImplicitProjectTracks(draft).map((track) => track.seed).slice(0, 3)
+    };
+  }
+
+  private selectBrainstormProjectSeeds(
+    draft: BrainstormDraftView,
+    itemTitle: string,
+    projectShape: BrainstormProjectShapeAssessment
+  ): string[] {
+    if (projectShape.recommendation === "split_projects" && projectShape.suggestedSeeds.length > 1) {
+      return projectShape.suggestedSeeds;
+    }
     if (draft.recommendedDirection) {
       return [draft.recommendedDirection];
     }
@@ -1080,6 +1181,155 @@ export class BrainstormService {
     }
 
     return [draft.coreOutcome ?? draft.problem ?? itemTitle];
+  }
+
+  private appendDecisionFindings(
+    view: BrainstormDraftView,
+    projectShape: BrainstormProjectShapeAssessment,
+    findings: BrainstormReviewFinding[]
+  ): void {
+    if (this.needsTargetUserClarification(view)) {
+      findings.push({
+        severity: "major",
+        field: "targetUsers",
+        summary: "Missing target users for a detailed brainstorm draft",
+        detail: "The draft already contains rich use cases and constraints, but it still does not name the primary target users or actors."
+      });
+    }
+
+    if (this.needsDirectionClarification(view, projectShape)) {
+      findings.push({
+        severity: "major",
+        field: "recommendedDirection",
+        summary: "Missing focused implementation direction",
+        detail: "The draft contains enough scope to continue, but it still does not capture a clear recommended implementation direction."
+      });
+    }
+
+    if (projectShape.recommendation === "undecided") {
+      findings.push({
+        severity: "major",
+        field: "projectShape",
+        summary: "Project shape needs an explicit decision",
+        detail: `The brainstorm needs an explicit decision on whether this should stay one focused MVP project or split into multiple projects. Suggested seeds: ${projectShape.suggestedSeeds.join("; ")}.`
+      });
+    } else if (projectShape.recommendation === "split_projects" && projectShape.suggestedSeeds.length < 2) {
+      findings.push({
+        severity: "major",
+        field: "projectShape",
+        summary: "Split-project decision lacks concrete project seeds",
+        detail: "The brainstorm decided to split into multiple projects, but it does not yet name at least two concrete project seeds."
+      });
+    } else if (projectShape.recommendation === "single_project" && projectShape.suggestedSeeds.length > 1) {
+      findings.push({
+        severity: "major",
+        field: "projectShape",
+        summary: "Single-project decision is inconsistent with multiple project seeds",
+        detail: "The brainstorm decided to stay as one project, but it still returns multiple project seeds. Reduce it to one focused seed or switch the decision to split_projects."
+      });
+    }
+  }
+
+  private needsTargetUserClarification(view: BrainstormDraftView): boolean {
+    if (view.targetUsers.length > 0) {
+      return false;
+    }
+    return view.useCases.length >= 3 || view.constraints.length >= 3 || view.assumptions.length >= 2;
+  }
+
+  private needsDirectionClarification(
+    view: BrainstormDraftView,
+    projectShape: BrainstormProjectShapeAssessment
+  ): boolean {
+    if (projectShape.recommendation === "split_projects") {
+      return false;
+    }
+    if (view.recommendedDirection) {
+      return false;
+    }
+    if (view.candidateDirections.length > 1) {
+      return true;
+    }
+    return view.useCases.length >= 5 && view.targetUsers.length > 0;
+  }
+
+  private assessBrainstormProjectShape(
+    view: BrainstormDraftView,
+    agentDecision: Pick<InteractiveBrainstormAgentOutput, "projectShapeDecision" | "decisionRationale" | "projectSeeds">
+  ): BrainstormProjectShapeAssessment {
+    const heuristicSeeds = this.deriveImplicitProjectTracks(view).map((track) => track.seed).slice(0, 3);
+    if (agentDecision.projectShapeDecision) {
+      return {
+        recommendation: agentDecision.projectShapeDecision,
+        rationale:
+          agentDecision.decisionRationale
+          ?? (agentDecision.projectShapeDecision === "split_projects"
+            ? "The brainstorm model decided to split this work into multiple projects."
+            : "The brainstorm model decided to keep this as one focused project."),
+        suggestedSeeds: agentDecision.projectSeeds.length > 0
+          ? agentDecision.projectSeeds
+          : this.defaultProjectSeedsForDecision(view, agentDecision.projectShapeDecision, heuristicSeeds)
+      };
+    }
+
+    return {
+      recommendation: "undecided",
+      rationale: "The brainstorm draft has enough scope to continue, but it does not yet contain an explicit project-shape decision from the model.",
+      suggestedSeeds: heuristicSeeds.length > 0 ? heuristicSeeds : [view.coreOutcome ?? view.problem ?? "Focused project"]
+    };
+  }
+
+  private defaultProjectSeedsForDecision(
+    view: BrainstormDraftView,
+    decision: "single_project" | "split_projects",
+    heuristicSeeds: string[]
+  ): string[] {
+    if (decision === "single_project") {
+      return [view.recommendedDirection ?? view.candidateDirections[0] ?? view.coreOutcome ?? view.problem ?? "Focused project"];
+    }
+    return heuristicSeeds.length > 0
+      ? heuristicSeeds
+      : this.normalizeBrainstormEntries(view.candidateDirections).slice(0, 3);
+  }
+
+  private deriveImplicitProjectTracks(view: BrainstormDraftView): Array<{ key: string; seed: string; matches: string[] }> {
+    const scopeLines = (view.scopeNotes ?? "")
+      .split(/\r?\n/)
+      .map((entry) => entry.replace(/^[-*]\s*/, "").trim())
+      .filter(Boolean);
+    const corpus = this.normalizeBrainstormEntries([
+      ...view.useCases,
+      ...view.constraints,
+      ...view.nonGoals,
+      ...view.assumptions,
+      ...scopeLines
+    ]);
+
+    const trackDefinitions: Array<{ key: string; seed: string; pattern: RegExp }> = [
+      {
+        key: "surface",
+        seed: "workspace shell, board, inbox, and conversation surfaces",
+        pattern: /\b(board|overlay|inbox|chat|conversation|runs?|artifacts?|settings?|workspace|shell|panel|view)\b/i
+      },
+      {
+        key: "platform",
+        seed: "shared workflow read models and action services",
+        pattern: /\b(core|service|services|api|http|handler|read model|read models|query|queries|aggregation|aggregate|workflow logic|capabilit)\b/i
+      },
+      {
+        key: "components",
+        seed: "reusable UI components, showcase, and inventory",
+        pattern: /\b(component|components|showcase|inventory|primitive|primitives|design system|tokens?|typography)\b/i
+      }
+    ];
+
+    return trackDefinitions
+      .map((definition) => ({
+        key: definition.key,
+        seed: definition.seed,
+        matches: corpus.filter((entry) => definition.pattern.test(entry))
+      }))
+      .filter((track) => track.matches.length >= 2);
   }
 
   private resolveBrainstormNextQuestion(view: BrainstormDraftView): string {

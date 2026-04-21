@@ -21,6 +21,77 @@ function splitEntries(value) {
   return normalizeEntries(`${value}`.split(/\n|;/g));
 }
 
+function applyBrainstormLabel(result, label, value) {
+  if (!value) {
+    return false;
+  }
+  if (label === "problem") {
+    result.problem = value;
+    return true;
+  }
+  if (label === "outcome" || label === "core outcome" || label === "goal") {
+    result.coreOutcome = value;
+    return true;
+  }
+  if (label === "user" || label === "users" || label === "target user" || label === "target users" || label === "actor") {
+    result.targetUsers.push(...splitEntries(value));
+    return true;
+  }
+  if (label === "use case" || label === "use cases") {
+    result.useCases.push(...splitEntries(value));
+    return true;
+  }
+  if (label === "constraint" || label === "constraints") {
+    result.constraints.push(...splitEntries(value));
+    return true;
+  }
+  if (label === "non-goal" || label === "non-goals") {
+    result.nonGoals.push(...splitEntries(value));
+    return true;
+  }
+  if (label === "risk" || label === "risks") {
+    result.risks.push(...splitEntries(value));
+    return true;
+  }
+  if (label === "question" || label === "questions" || label === "open question" || label === "open questions") {
+    result.openQuestions.push(...splitEntries(value));
+    return true;
+  }
+  if (label === "direction" || label === "directions" || label === "candidate direction" || label === "candidate directions") {
+    result.candidateDirections.push(...splitEntries(value));
+    return true;
+  }
+  if (label === "recommended direction" || label === "recommendation") {
+    result.recommendedDirection = value;
+    return true;
+  }
+  if (label === "assumption" || label === "assumptions") {
+    result.assumptions.push(...splitEntries(value));
+    return true;
+  }
+  if (label === "scope notes" || label === "scope") {
+    result.scopeNotes = value;
+    return true;
+  }
+  if (label === "project shape decision" || label === "project shape") {
+    const normalized = value.toLowerCase();
+    if (/\b(not multiple|single|one focused|one project|keep this as one)\b/.test(normalized)) {
+      result.projectShapeDecision = "single_project";
+    } else if (/\b(split|multiple|separate projects?)\b/.test(normalized)) {
+      result.projectShapeDecision = "split_projects";
+    }
+    result.projectShapeDecisionText = value;
+    return true;
+  }
+  if (label === "rationale" || label === "decision rationale") {
+    result.decisionRationale = result.decisionRationale
+      ? normalizeEntries([result.decisionRationale, value]).join(" ")
+      : value;
+    return true;
+  }
+  return false;
+}
+
 function parseLabeledBrainstormMessage(message) {
   const result = {
     targetUsers: [],
@@ -31,6 +102,9 @@ function parseLabeledBrainstormMessage(message) {
     openQuestions: [],
     candidateDirections: [],
     assumptions: [],
+    projectShapeDecision: null,
+    projectShapeDecisionText: null,
+    decisionRationale: null,
     unlabeled: []
   };
   const lines = `${message}`
@@ -38,63 +112,24 @@ function parseLabeledBrainstormMessage(message) {
     .map((line) => line.replace(/^\s*[-*]\s*/, "").trim())
     .filter(Boolean);
 
+  let activeLabel = null;
   for (const line of lines) {
-    const match = line.match(/^([a-z ]+):\s*(.+)$/i);
-    if (!match) {
+    const match = line.match(/^([a-z ]+):\s*(.*)$/i);
+    if (match) {
+      const label = match[1].trim().toLowerCase();
+      const value = match[2].trim();
+      if (!value) {
+        activeLabel = label;
+        continue;
+      }
+      activeLabel = null;
+      if (applyBrainstormLabel(result, label, value)) {
+        continue;
+      }
       result.unlabeled.push(line);
       continue;
     }
-    const label = match[1].trim().toLowerCase();
-    const value = match[2].trim();
-    if (!value) {
-      continue;
-    }
-    if (label === "problem") {
-      result.problem = value;
-      continue;
-    }
-    if (label === "outcome" || label === "core outcome" || label === "goal") {
-      result.coreOutcome = value;
-      continue;
-    }
-    if (label === "user" || label === "users" || label === "target user" || label === "target users" || label === "actor") {
-      result.targetUsers.push(...splitEntries(value));
-      continue;
-    }
-    if (label === "use case" || label === "use cases") {
-      result.useCases.push(...splitEntries(value));
-      continue;
-    }
-    if (label === "constraint" || label === "constraints") {
-      result.constraints.push(...splitEntries(value));
-      continue;
-    }
-    if (label === "non-goal" || label === "non-goals") {
-      result.nonGoals.push(...splitEntries(value));
-      continue;
-    }
-    if (label === "risk" || label === "risks") {
-      result.risks.push(...splitEntries(value));
-      continue;
-    }
-    if (label === "question" || label === "questions" || label === "open question" || label === "open questions") {
-      result.openQuestions.push(...splitEntries(value));
-      continue;
-    }
-    if (label === "direction" || label === "directions" || label === "candidate direction" || label === "candidate directions") {
-      result.candidateDirections.push(...splitEntries(value));
-      continue;
-    }
-    if (label === "recommended direction" || label === "recommendation") {
-      result.recommendedDirection = value;
-      continue;
-    }
-    if (label === "assumption" || label === "assumptions") {
-      result.assumptions.push(...splitEntries(value));
-      continue;
-    }
-    if (label === "scope notes" || label === "scope") {
-      result.scopeNotes = value;
+    if (activeLabel && applyBrainstormLabel(result, activeLabel, line)) {
       continue;
     }
     result.unlabeled.push(line);
@@ -456,16 +491,52 @@ function brainstormChat(payload) {
     draftPatch.scopeNotes = normalizeEntries([...previousNotes, ...parsed.unlabeled]).join("\n");
   }
 
-  const needsStructuredFollowUp = Object.keys(draftPatch).length === 0;
+  let projectShapeDecision = null;
+  let decisionRationale = null;
+  let projectSeeds = [];
+  if (parsed.projectShapeDecision) {
+    projectShapeDecision = parsed.projectShapeDecision;
+    decisionRationale = parsed.decisionRationale
+      ?? (projectShapeDecision === "split_projects"
+        ? "The message explicitly chooses to split the brainstorm into multiple projects."
+        : "The message explicitly keeps the brainstorm as one focused project.");
+    if (projectShapeDecision === "split_projects") {
+      projectSeeds = normalizeEntries(
+        parsed.candidateDirections.length > 0
+          ? parsed.candidateDirections
+          : [parsed.projectShapeDecisionText ?? "Split project track"]
+      ).slice(0, 3);
+    } else {
+      projectSeeds = [
+        parsed.recommendedDirection
+        ?? parsed.projectShapeDecisionText
+        ?? payload.draft.recommendedDirection
+        ?? payload.item.title
+      ];
+    }
+  } else if (parsed.recommendedDirection) {
+    projectShapeDecision = "single_project";
+    decisionRationale = "The message includes an explicit recommended direction, so the brainstorm stays focused on one project.";
+    projectSeeds = [parsed.recommendedDirection];
+  } else if (parsed.candidateDirections.length > 1) {
+    projectShapeDecision = "split_projects";
+    decisionRationale = "The message presents multiple candidate directions as separate delivery tracks.";
+    projectSeeds = normalizeEntries(parsed.candidateDirections).slice(0, 3);
+  }
+
+  const needsStructuredFollowUp = Object.keys(draftPatch).length === 0 || projectShapeDecision === null;
   return {
     output: {
       assistantMessage: needsStructuredFollowUp
-        ? "I could not safely extract a structured brainstorm change. Use labeled fields or `brainstorm:draft:update` for precise edits."
+        ? "I need one more structured clarification before this brainstorm is concept-ready. Use labeled fields or `brainstorm:draft:update` for precise edits."
         : `Captured brainstorm updates for ${payload.item.code}. Review the draft and continue refining or promote when ready.`,
       draftPatch,
+      projectShapeDecision,
+      decisionRationale,
+      projectSeeds,
       needsStructuredFollowUp,
       followUpHint: needsStructuredFollowUp
-        ? "Use labels like `problem:`, `users:`, `use cases:` or switch to `brainstorm:draft:update`."
+        ? "Use labels like `problem:`, `users:`, `use cases:`, and clarify whether this should stay one project or split into multiple projects."
         : null
     }
   };

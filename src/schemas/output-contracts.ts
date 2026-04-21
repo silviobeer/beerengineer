@@ -254,6 +254,9 @@ export const interactiveBrainstormDraftPatchSchema = z.object({
 export const interactiveBrainstormAgentOutputSchema = z.object({
   assistantMessage: z.string().min(1),
   draftPatch: interactiveBrainstormDraftPatchSchema,
+  projectShapeDecision: z.enum(["single_project", "split_projects"]).nullable().optional(),
+  decisionRationale: z.string().min(1).nullable().optional(),
+  projectSeeds: z.array(z.string().min(1)).default([]),
   needsStructuredFollowUp: z.boolean().default(false),
   followUpHint: z.string().min(1).nullable().optional()
 });
