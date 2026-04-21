@@ -40,7 +40,9 @@ export class ReviewExecutionPlanner {
     const nonLocalProviders = configuredProviders.filter(([_, config]) => config.adapterKey !== "local-cli");
     const preferredAutonomousProvider = this.runtimeResolver.resolveDefault("autonomous");
     const preferDeterministicLocal = preferredAutonomousProvider.adapterKey === "local-cli" && localProvider !== null;
-    const providerByAdapterKey = new Map(nonLocalProviders.map(([providerKey, config]) => [config.adapterKey, providerKey]));
+    const providerByAdapterKey = new Map<string, string>(
+      nonLocalProviders.map(([providerKey, config]) => [config.adapterKey, providerKey])
+    );
     const codexProvider = providerByAdapterKey.get("codex");
     const claudeProvider = providerByAdapterKey.get("claude");
 
@@ -144,7 +146,9 @@ export class ReviewExecutionPlanner {
     );
     const localProvider = configuredProviders.find(([_, config]) => config.adapterKey === "local-cli")?.[0] ?? null;
     const nonLocalProviders = configuredProviders.filter(([_, config]) => config.adapterKey !== "local-cli");
-    const providerByAdapterKey = new Map(nonLocalProviders.map(([providerKey, config]) => [config.adapterKey, providerKey]));
+    const providerByAdapterKey = new Map<string, string>(
+      nonLocalProviders.map(([providerKey, config]) => [config.adapterKey, providerKey])
+    );
     const preferredAutonomousProvider = this.runtimeResolver.resolveDefault("autonomous");
 
     const preferredProvider =
