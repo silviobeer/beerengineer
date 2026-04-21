@@ -1,0 +1,17 @@
+[
+  {
+    "id": "P01",
+    "name": "Playwright run — Core",
+    "description": "Kern-Funktionalitaet",
+    "concept": {
+      "summary": "Playwright run: automated driver / automated driver",
+      "problem": "automated driver",
+      "users": [
+        "automated driver"
+      ],
+      "constraints": [
+        "automated driver"
+      ]
+    }
+  }
+]

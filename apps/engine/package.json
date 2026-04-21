@@ -1,0 +1,22 @@
+{
+  "name": "@beerengineer2/engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/api/server.ts",
+    "start:api": "tsx src/api/server.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --import tsx test/**/*.test.ts"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.6.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.8.3"
+  }
+}

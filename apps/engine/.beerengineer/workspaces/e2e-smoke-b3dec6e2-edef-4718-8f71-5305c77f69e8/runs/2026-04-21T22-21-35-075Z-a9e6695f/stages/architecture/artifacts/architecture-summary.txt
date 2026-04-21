@@ -1,0 +1,5 @@
+Workspace: e2e-smoke-b3dec6e2-edef-4718-8f71-5305c77f69e8
+Run: 2026-04-21T22-21-35-075Z-a9e6695f
+Stage: architecture
+Review loops: 1
+Components: 3

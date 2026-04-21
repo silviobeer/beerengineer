@@ -1,0 +1,66 @@
+{
+  "project": {
+    "id": "P01",
+    "name": "E2E smoke — Core"
+  },
+  "story": {
+    "id": "US-02",
+    "title": "Nutzer sieht eine Uebersicht ueber bestehende Eintraege"
+  },
+  "acceptanceCriteria": [
+    {
+      "id": "AC-01",
+      "text": "Liste zeigt alle relevanten Eintraege",
+      "category": "functional",
+      "priority": "must"
+    },
+    {
+      "id": "AC-02",
+      "text": "Filter beruecksichtigt: auto driver answer 5",
+      "category": "functional",
+      "priority": "must"
+    },
+    {
+      "id": "AC-03",
+      "text": "Status jedes Eintrags ist sichtbar",
+      "category": "state",
+      "priority": "must"
+    }
+  ],
+  "testPlan": {
+    "summary": "Testplan fuer US-02 auf Basis der strukturierten Acceptance Criteria.",
+    "testCases": [
+      {
+        "id": "TC-1",
+        "name": "US-02 prueft AC-01",
+        "mapsToAcId": "AC-01",
+        "type": "integration",
+        "description": "Liste zeigt alle relevanten Eintraege"
+      },
+      {
+        "id": "TC-2",
+        "name": "US-02 prueft AC-02",
+        "mapsToAcId": "AC-02",
+        "type": "unit",
+        "description": "Filter beruecksichtigt: auto driver answer 5"
+      },
+      {
+        "id": "TC-3",
+        "name": "US-02 prueft AC-03",
+        "mapsToAcId": "AC-03",
+        "type": "unit",
+        "description": "Status jedes Eintrags ist sichtbar"
+      }
+    ],
+    "fixtures": [
+      "Seed-Daten fuer Story-Kontext"
+    ],
+    "edgeCases": [
+      "Leere Eingaben",
+      "Ungueltige Statuswerte"
+    ],
+    "assumptions": [
+      "Bitte schaerfe die Zuordnung Testfall -> AC und ergaenze relevante Edge Cases."
+    ]
+  }
+}

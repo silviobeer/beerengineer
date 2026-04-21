@@ -1,0 +1,88 @@
+{
+  "concept": {
+    "summary": "Playwright run: automated driver / automated driver",
+    "problem": "automated driver",
+    "users": [
+      "automated driver"
+    ],
+    "constraints": [
+      "automated driver"
+    ]
+  },
+  "prd": {
+    "stories": [
+      {
+        "id": "US-01",
+        "title": "Nutzer sieht den Kern-Workflow als gefuehrte Eingabemaske",
+        "acceptanceCriteria": [
+          {
+            "id": "AC-01",
+            "text": "Formular vorhanden",
+            "category": "ui",
+            "priority": "must"
+          },
+          {
+            "id": "AC-02",
+            "text": "Pflichtfelder validiert",
+            "category": "validation",
+            "priority": "must"
+          },
+          {
+            "id": "AC-03",
+            "text": "Fehler klar sichtbar",
+            "category": "error",
+            "priority": "must"
+          }
+        ]
+      },
+      {
+        "id": "US-02",
+        "title": "Nutzer sieht eine Uebersicht ueber bestehende Eintraege",
+        "acceptanceCriteria": [
+          {
+            "id": "AC-01",
+            "text": "Liste zeigt alle relevanten Eintraege",
+            "category": "functional",
+            "priority": "must"
+          },
+          {
+            "id": "AC-02",
+            "text": "Filter beruecksichtigt: automated driver",
+            "category": "functional",
+            "priority": "must"
+          },
+          {
+            "id": "AC-03",
+            "text": "Status jedes Eintrags ist sichtbar",
+            "category": "state",
+            "priority": "must"
+          }
+        ]
+      },
+      {
+        "id": "US-03",
+        "title": "Nutzer kann einen Eintrag anlegen und speichern",
+        "acceptanceCriteria": [
+          {
+            "id": "AC-01",
+            "text": "Speichern ist moeglich",
+            "category": "functional",
+            "priority": "must"
+          },
+          {
+            "id": "AC-02",
+            "text": "Speichern respektiert: automated driver",
+            "category": "validation",
+            "priority": "must"
+          },
+          {
+            "id": "AC-03",
+            "text": "Bestaetigung nach erfolgreichem Speichern",
+            "category": "ui",
+            "priority": "must"
+          }
+        ]
+      }
+    ]
+  }
+}

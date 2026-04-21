@@ -1,0 +1,221 @@
+{
+  "id": "2026-04-21T22-21-42-156Z",
+  "workspaceId": "e2e-smoke-b3dec6e2-edef-4718-8f71-5305c77f69e8",
+  "runId": "2026-04-21T22-21-35-075Z-a9e6695f",
+  "workspaceDir": "/home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/e2e-smoke-b3dec6e2-edef-4718-8f71-5305c77f69e8",
+  "runDir": "/home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/e2e-smoke-b3dec6e2-edef-4718-8f71-5305c77f69e8/runs/2026-04-21T22-21-35-075Z-a9e6695f",
+  "stage": "execution/waves/2/stories/US-02/test-writer",
+  "stageDir": "/home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/e2e-smoke-b3dec6e2-edef-4718-8f71-5305c77f69e8/runs/2026-04-21T22-21-35-075Z-a9e6695f/stages/execution/waves/2/stories/us-02/test-writer",
+  "stageArtifactsDir": "/home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/e2e-smoke-b3dec6e2-edef-4718-8f71-5305c77f69e8/runs/2026-04-21T22-21-35-075Z-a9e6695f/stages/execution/waves/2/stories/us-02/test-writer/artifacts",
+  "status": "approved",
+  "iteration": 0,
+  "reviewIteration": 2,
+  "state": {
+    "projectId": "P01",
+    "wave": {
+      "id": "W2",
+      "number": 2,
+      "goal": "Uebersicht und Bearbeitung fertigstellen",
+      "stories": [
+        {
+          "id": "US-02",
+          "title": "Nutzer sieht eine Uebersicht ueber bestehende Eintraege"
+        },
+        {
+          "id": "US-03",
+          "title": "Nutzer kann einen Eintrag anlegen und speichern"
+        }
+      ],
+      "parallel": true,
+      "dependencies": [
+        "W1"
+      ],
+      "exitCriteria": [
+        "Listen und Bearbeitung funktionieren"
+      ]
+    },
+    "story": {
+      "id": "US-02",
+      "title": "Nutzer sieht eine Uebersicht ueber bestehende Eintraege"
+    },
+    "acceptanceCriteria": [
+      {
+        "id": "AC-01",
+        "text": "Liste zeigt alle relevanten Eintraege",
+        "category": "functional",
+        "priority": "must"
+      },
+      {
+        "id": "AC-02",
+        "text": "Filter beruecksichtigt: auto driver answer 5",
+        "category": "functional",
+        "priority": "must"
+      },
+      {
+        "id": "AC-03",
+        "text": "Status jedes Eintrags ist sichtbar",
+        "category": "state",
+        "priority": "must"
+      }
+    ],
+    "revisionCount": 1,
+    "lastReviewFeedback": "Bitte schaerfe die Zuordnung Testfall -> AC und ergaenze relevante Edge Cases."
+  },
+  "logs": [
+    {
+      "at": "2026-04-21T22:21:42.158Z",
+      "type": "status_changed",
+      "message": "Status -> chat_in_progress"
+    },
+    {
+      "at": "2026-04-21T22:21:42.158Z",
+      "type": "status_changed",
+      "message": "Status -> artifact_ready"
+    },
+    {
+      "at": "2026-04-21T22:21:42.158Z",
+      "type": "artifact_created",
+      "message": "Artefakt erzeugt."
+    },
+    {
+      "at": "2026-04-21T22:21:42.158Z",
+      "type": "file_written",
+      "message": "Test Plan JSON: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/e2e-smoke-b3dec6e2-edef-4718-8f71-5305c77f69e8/runs/2026-04-21T22-21-35-075Z-a9e6695f/stages/execution/waves/2/stories/us-02/test-writer/artifacts/test-plan.json"
+    },
+    {
+      "at": "2026-04-21T22:21:42.158Z",
+      "type": "file_written",
+      "message": "Test Plan Markdown: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/e2e-smoke-b3dec6e2-edef-4718-8f71-5305c77f69e8/runs/2026-04-21T22-21-35-075Z-a9e6695f/stages/execution/waves/2/stories/us-02/test-writer/artifacts/test-plan.md"
+    },
+    {
+      "at": "2026-04-21T22:21:42.158Z",
+      "type": "status_changed",
+      "message": "Status -> in_review"
+    },
+    {
+      "at": "2026-04-21T22:21:42.159Z",
+      "type": "review_revise",
+      "message": "Bitte schaerfe die Zuordnung Testfall -> AC und ergaenze relevante Edge Cases."
+    },
+    {
+      "at": "2026-04-21T22:21:42.159Z",
+      "type": "status_changed",
+      "message": "Status -> revision_requested"
+    },
+    {
+      "at": "2026-04-21T22:21:42.160Z",
+      "type": "status_changed",
+      "message": "Status -> artifact_ready"
+    },
+    {
+      "at": "2026-04-21T22:21:42.160Z",
+      "type": "artifact_created",
+      "message": "Artefakt erzeugt."
+    },
+    {
+      "at": "2026-04-21T22:21:42.161Z",
+      "type": "file_written",
+      "message": "Test Plan JSON: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/e2e-smoke-b3dec6e2-edef-4718-8f71-5305c77f69e8/runs/2026-04-21T22-21-35-075Z-a9e6695f/stages/execution/waves/2/stories/us-02/test-writer/artifacts/test-plan.json"
+    },
+    {
+      "at": "2026-04-21T22:21:42.161Z",
+      "type": "file_written",
+      "message": "Test Plan Markdown: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/e2e-smoke-b3dec6e2-edef-4718-8f71-5305c77f69e8/runs/2026-04-21T22-21-35-075Z-a9e6695f/stages/execution/waves/2/stories/us-02/test-writer/artifacts/test-plan.md"
+    },
+    {
+      "at": "2026-04-21T22:21:42.161Z",
+      "type": "status_changed",
+      "message": "Status -> in_review"
+    },
+    {
+      "at": "2026-04-21T22:21:42.163Z",
+      "type": "review_pass",
+      "message": "Review bestanden."
+    },
+    {
+      "at": "2026-04-21T22:21:42.163Z",
+      "type": "status_changed",
+      "message": "Status -> approved"
+    }
+  ],
+  "files": [
+    {
+      "kind": "json",
+      "label": "Test Plan JSON",
+      "path": "/home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/e2e-smoke-b3dec6e2-edef-4718-8f71-5305c77f69e8/runs/2026-04-21T22-21-35-075Z-a9e6695f/stages/execution/waves/2/stories/us-02/test-writer/artifacts/test-plan.json"
+    },
+    {
+      "kind": "md",
+      "label": "Test Plan Markdown",
+      "path": "/home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/e2e-smoke-b3dec6e2-edef-4718-8f71-5305c77f69e8/runs/2026-04-21T22-21-35-075Z-a9e6695f/stages/execution/waves/2/stories/us-02/test-writer/artifacts/test-plan.md"
+    }
+  ],
+  "createdAt": "2026-04-21T22:21:42.156Z",
+  "updatedAt": "2026-04-21T22:21:42.163Z",
+  "artifact": {
+    "project": {
+      "id": "P01",
+      "name": "E2E smoke — Core"
+    },
+    "story": {
+      "id": "US-02",
+      "title": "Nutzer sieht eine Uebersicht ueber bestehende Eintraege"
+    },
+    "acceptanceCriteria": [
+      {
+        "id": "AC-01",
+        "text": "Liste zeigt alle relevanten Eintraege",
+        "category": "functional",
+        "priority": "must"
+      },
+      {
+        "id": "AC-02",
+        "text": "Filter beruecksichtigt: auto driver answer 5",
+        "category": "functional",
+        "priority": "must"
+      },
+      {
+        "id": "AC-03",
+        "text": "Status jedes Eintrags ist sichtbar",
+        "category": "state",
+        "priority": "must"
+      }
+    ],
+    "testPlan": {
+      "summary": "Testplan fuer US-02 auf Basis der strukturierten Acceptance Criteria.",
+      "testCases": [
+        {
+          "id": "TC-1",
+          "name": "US-02 prueft AC-01",
+          "mapsToAcId": "AC-01",
+          "type": "integration",
+          "description": "Liste zeigt alle relevanten Eintraege"
+        },
+        {
+          "id": "TC-2",
+          "name": "US-02 prueft AC-02",
+          "mapsToAcId": "AC-02",
+          "type": "unit",
+          "description": "Filter beruecksichtigt: auto driver answer 5"
+        },
+        {
+          "id": "TC-3",
+          "name": "US-02 prueft AC-03",
+          "mapsToAcId": "AC-03",
+          "type": "unit",
+          "description": "Status jedes Eintrags ist sichtbar"
+        }
+      ],
+      "fixtures": [
+        "Seed-Daten fuer Story-Kontext"
+      ],
+      "edgeCases": [
+        "Leere Eingaben",
+        "Ungueltige Statuswerte"
+      ],
+      "assumptions": [
+        "Bitte schaerfe die Zuordnung Testfall -> AC und ergaenze relevante Edge Cases."
+      ]
+    }
+  }
+}

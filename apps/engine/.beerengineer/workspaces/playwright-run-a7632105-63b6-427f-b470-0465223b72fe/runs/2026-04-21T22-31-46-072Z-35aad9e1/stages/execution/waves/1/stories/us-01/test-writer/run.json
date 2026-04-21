@@ -1,0 +1,215 @@
+{
+  "id": "2026-04-21T22-31-49-181Z",
+  "workspaceId": "playwright-run-a7632105-63b6-427f-b470-0465223b72fe",
+  "runId": "2026-04-21T22-31-46-072Z-35aad9e1",
+  "workspaceDir": "/home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/playwright-run-a7632105-63b6-427f-b470-0465223b72fe",
+  "runDir": "/home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/playwright-run-a7632105-63b6-427f-b470-0465223b72fe/runs/2026-04-21T22-31-46-072Z-35aad9e1",
+  "stage": "execution/waves/1/stories/US-01/test-writer",
+  "stageDir": "/home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/playwright-run-a7632105-63b6-427f-b470-0465223b72fe/runs/2026-04-21T22-31-46-072Z-35aad9e1/stages/execution/waves/1/stories/us-01/test-writer",
+  "stageArtifactsDir": "/home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/playwright-run-a7632105-63b6-427f-b470-0465223b72fe/runs/2026-04-21T22-31-46-072Z-35aad9e1/stages/execution/waves/1/stories/us-01/test-writer/artifacts",
+  "status": "approved",
+  "iteration": 0,
+  "reviewIteration": 2,
+  "state": {
+    "projectId": "P01",
+    "wave": {
+      "id": "W1",
+      "number": 1,
+      "goal": "Kern-Workflow liefern",
+      "stories": [
+        {
+          "id": "US-01",
+          "title": "Nutzer sieht den Kern-Workflow als gefuehrte Eingabemaske"
+        }
+      ],
+      "parallel": false,
+      "dependencies": [],
+      "exitCriteria": [
+        "Kern-Workflow funktioniert"
+      ]
+    },
+    "story": {
+      "id": "US-01",
+      "title": "Nutzer sieht den Kern-Workflow als gefuehrte Eingabemaske"
+    },
+    "acceptanceCriteria": [
+      {
+        "id": "AC-01",
+        "text": "Formular vorhanden",
+        "category": "ui",
+        "priority": "must"
+      },
+      {
+        "id": "AC-02",
+        "text": "Pflichtfelder validiert",
+        "category": "validation",
+        "priority": "must"
+      },
+      {
+        "id": "AC-03",
+        "text": "Fehler klar sichtbar",
+        "category": "error",
+        "priority": "must"
+      }
+    ],
+    "revisionCount": 1,
+    "lastReviewFeedback": "Bitte schaerfe die Zuordnung Testfall -> AC und ergaenze relevante Edge Cases."
+  },
+  "logs": [
+    {
+      "at": "2026-04-21T22:31:49.182Z",
+      "type": "status_changed",
+      "message": "Status -> chat_in_progress"
+    },
+    {
+      "at": "2026-04-21T22:31:49.182Z",
+      "type": "status_changed",
+      "message": "Status -> artifact_ready"
+    },
+    {
+      "at": "2026-04-21T22:31:49.182Z",
+      "type": "artifact_created",
+      "message": "Artefakt erzeugt."
+    },
+    {
+      "at": "2026-04-21T22:31:49.183Z",
+      "type": "file_written",
+      "message": "Test Plan JSON: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/playwright-run-a7632105-63b6-427f-b470-0465223b72fe/runs/2026-04-21T22-31-46-072Z-35aad9e1/stages/execution/waves/1/stories/us-01/test-writer/artifacts/test-plan.json"
+    },
+    {
+      "at": "2026-04-21T22:31:49.183Z",
+      "type": "file_written",
+      "message": "Test Plan Markdown: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/playwright-run-a7632105-63b6-427f-b470-0465223b72fe/runs/2026-04-21T22-31-46-072Z-35aad9e1/stages/execution/waves/1/stories/us-01/test-writer/artifacts/test-plan.md"
+    },
+    {
+      "at": "2026-04-21T22:31:49.183Z",
+      "type": "status_changed",
+      "message": "Status -> in_review"
+    },
+    {
+      "at": "2026-04-21T22:31:49.184Z",
+      "type": "review_revise",
+      "message": "Bitte schaerfe die Zuordnung Testfall -> AC und ergaenze relevante Edge Cases."
+    },
+    {
+      "at": "2026-04-21T22:31:49.184Z",
+      "type": "status_changed",
+      "message": "Status -> revision_requested"
+    },
+    {
+      "at": "2026-04-21T22:31:49.185Z",
+      "type": "status_changed",
+      "message": "Status -> artifact_ready"
+    },
+    {
+      "at": "2026-04-21T22:31:49.185Z",
+      "type": "artifact_created",
+      "message": "Artefakt erzeugt."
+    },
+    {
+      "at": "2026-04-21T22:31:49.185Z",
+      "type": "file_written",
+      "message": "Test Plan JSON: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/playwright-run-a7632105-63b6-427f-b470-0465223b72fe/runs/2026-04-21T22-31-46-072Z-35aad9e1/stages/execution/waves/1/stories/us-01/test-writer/artifacts/test-plan.json"
+    },
+    {
+      "at": "2026-04-21T22:31:49.185Z",
+      "type": "file_written",
+      "message": "Test Plan Markdown: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/playwright-run-a7632105-63b6-427f-b470-0465223b72fe/runs/2026-04-21T22-31-46-072Z-35aad9e1/stages/execution/waves/1/stories/us-01/test-writer/artifacts/test-plan.md"
+    },
+    {
+      "at": "2026-04-21T22:31:49.185Z",
+      "type": "status_changed",
+      "message": "Status -> in_review"
+    },
+    {
+      "at": "2026-04-21T22:31:49.186Z",
+      "type": "review_pass",
+      "message": "Review bestanden."
+    },
+    {
+      "at": "2026-04-21T22:31:49.186Z",
+      "type": "status_changed",
+      "message": "Status -> approved"
+    }
+  ],
+  "files": [
+    {
+      "kind": "json",
+      "label": "Test Plan JSON",
+      "path": "/home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/playwright-run-a7632105-63b6-427f-b470-0465223b72fe/runs/2026-04-21T22-31-46-072Z-35aad9e1/stages/execution/waves/1/stories/us-01/test-writer/artifacts/test-plan.json"
+    },
+    {
+      "kind": "md",
+      "label": "Test Plan Markdown",
+      "path": "/home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/playwright-run-a7632105-63b6-427f-b470-0465223b72fe/runs/2026-04-21T22-31-46-072Z-35aad9e1/stages/execution/waves/1/stories/us-01/test-writer/artifacts/test-plan.md"
+    }
+  ],
+  "createdAt": "2026-04-21T22:31:49.181Z",
+  "updatedAt": "2026-04-21T22:31:49.186Z",
+  "artifact": {
+    "project": {
+      "id": "P01",
+      "name": "Playwright run — Core"
+    },
+    "story": {
+      "id": "US-01",
+      "title": "Nutzer sieht den Kern-Workflow als gefuehrte Eingabemaske"
+    },
+    "acceptanceCriteria": [
+      {
+        "id": "AC-01",
+        "text": "Formular vorhanden",
+        "category": "ui",
+        "priority": "must"
+      },
+      {
+        "id": "AC-02",
+        "text": "Pflichtfelder validiert",
+        "category": "validation",
+        "priority": "must"
+      },
+      {
+        "id": "AC-03",
+        "text": "Fehler klar sichtbar",
+        "category": "error",
+        "priority": "must"
+      }
+    ],
+    "testPlan": {
+      "summary": "Testplan fuer US-01 auf Basis der strukturierten Acceptance Criteria.",
+      "testCases": [
+        {
+          "id": "TC-1",
+          "name": "US-01 prueft AC-01",
+          "mapsToAcId": "AC-01",
+          "type": "integration",
+          "description": "Formular vorhanden"
+        },
+        {
+          "id": "TC-2",
+          "name": "US-01 prueft AC-02",
+          "mapsToAcId": "AC-02",
+          "type": "unit",
+          "description": "Pflichtfelder validiert"
+        },
+        {
+          "id": "TC-3",
+          "name": "US-01 prueft AC-03",
+          "mapsToAcId": "AC-03",
+          "type": "unit",
+          "description": "Fehler klar sichtbar"
+        }
+      ],
+      "fixtures": [
+        "Seed-Daten fuer Story-Kontext"
+      ],
+      "edgeCases": [
+        "Leere Eingaben",
+        "Ungueltige Statuswerte"
+      ],
+      "assumptions": [
+        "Bitte schaerfe die Zuordnung Testfall -> AC und ergaenze relevante Edge Cases."
+      ]
+    }
+  }
+}

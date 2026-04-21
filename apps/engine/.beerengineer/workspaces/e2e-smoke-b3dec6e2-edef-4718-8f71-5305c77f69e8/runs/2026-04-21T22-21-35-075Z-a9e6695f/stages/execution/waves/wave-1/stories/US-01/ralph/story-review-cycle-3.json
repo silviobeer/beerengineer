@@ -1,0 +1,61 @@
+{
+  "story": {
+    "id": "US-01",
+    "title": "Nutzer sieht den Kern-Workflow als gefuehrte Eingabemaske"
+  },
+  "reviewCycle": 3,
+  "reviewers": [
+    {
+      "source": "coderabbit",
+      "status": "revise",
+      "findings": [
+        {
+          "severity": "low",
+          "message": "[US-01] Naming im Hilfsmodul ist noch leicht inkonsistent."
+        }
+      ]
+    },
+    {
+      "source": "sonarqube",
+      "status": "revise",
+      "findings": [
+        {
+          "severity": "low",
+          "message": "[US-01] Kleiner Cleanup im Logging-Modul bleibt offen."
+        }
+      ]
+    }
+  ],
+  "gate": {
+    "status": "pass",
+    "failedBecause": [],
+    "sonar": {
+      "passed": true,
+      "conditions": [
+        {
+          "metric": "reliability",
+          "status": "ok",
+          "actual": "A",
+          "threshold": "A"
+        },
+        {
+          "metric": "security",
+          "status": "ok",
+          "actual": "A",
+          "threshold": "A"
+        },
+        {
+          "metric": "maintainability",
+          "status": "ok",
+          "actual": "A",
+          "threshold": "A"
+        }
+      ]
+    }
+  },
+  "outcome": "pass",
+  "feedbackSummary": [
+    "[coderabbit] [US-01] Naming im Hilfsmodul ist noch leicht inkonsistent.",
+    "[sonarqube] [US-01] Kleiner Cleanup im Logging-Modul bleibt offen."
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "project": {
+    "id": "P01",
+    "name": "UI console test — Core",
+    "description": "Kern-Funktionalitaet",
+    "concept": {
+      "summary": "UI console test: ok / ok",
+      "problem": "ok",
+      "users": [
+        "ok"
+      ],
+      "constraints": [
+        "ok"
+      ]
+    }
+  },
+  "candidateBranch": {
+    "name": "pr/2026-04-21t22-29-21-937z-ae3abe38-p01",
+    "base": "main",
+    "status": "open"
+  },
+  "readyForUserTest": true,
+  "readyForMerge": true,
+  "includes": [
+    {
+      "projectId": "P01",
+      "runId": "2026-04-21T22-29-21-937Z-ae3abe38",
+      "sourceBranch": "proj/p01"
+    }
+  ],
+  "mergeChecklist": [
+    "Execution passed for all required stories.",
+    "Project review status: updated docs prepared.",
+    "QA review completed or explicitly accepted by the user.",
+    "Candidate branch is ready for manual user testing before merge to main."
+  ],
+  "summary": "pr/2026-04-21t22-29-21-937z-ae3abe38-p01 remains open for further testing before merge.",
+  "decision": "test"
+}

@@ -1,0 +1,39 @@
+{
+  "project": {
+    "id": "P01",
+    "name": "Playwright run — Core",
+    "description": "Kern-Funktionalitaet",
+    "concept": {
+      "summary": "Playwright run: automated driver / automated driver",
+      "problem": "automated driver",
+      "users": [
+        "automated driver"
+      ],
+      "constraints": [
+        "automated driver"
+      ]
+    }
+  },
+  "candidateBranch": {
+    "name": "pr/2026-04-21t22-28-23-212z-ab23b1a6-p01",
+    "base": "main",
+    "status": "open"
+  },
+  "readyForUserTest": true,
+  "readyForMerge": true,
+  "includes": [
+    {
+      "projectId": "P01",
+      "runId": "2026-04-21T22-28-23-212Z-ab23b1a6",
+      "sourceBranch": "proj/p01"
+    }
+  ],
+  "mergeChecklist": [
+    "Execution passed for all required stories.",
+    "Project review status: updated docs prepared.",
+    "QA review completed or explicitly accepted by the user.",
+    "Candidate branch is ready for manual user testing before merge to main."
+  ],
+  "summary": "pr/2026-04-21t22-28-23-212z-ab23b1a6-p01 remains open for further testing before merge.",
+  "decision": "test"
+}

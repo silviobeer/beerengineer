@@ -1,0 +1,39 @@
+{
+  "project": {
+    "id": "P01",
+    "name": "E2E smoke — Core",
+    "description": "Kern-Funktionalitaet",
+    "concept": {
+      "summary": "E2E smoke: auto driver answer 1 / auto driver answer 2",
+      "problem": "auto driver answer 1",
+      "users": [
+        "auto driver answer 2"
+      ],
+      "constraints": [
+        "auto driver answer 3"
+      ]
+    }
+  },
+  "candidateBranch": {
+    "name": "pr/2026-04-21t22-21-35-075z-a9e6695f-p01",
+    "base": "main",
+    "status": "open"
+  },
+  "readyForUserTest": true,
+  "readyForMerge": true,
+  "includes": [
+    {
+      "projectId": "P01",
+      "runId": "2026-04-21T22-21-35-075Z-a9e6695f",
+      "sourceBranch": "proj/p01"
+    }
+  ],
+  "mergeChecklist": [
+    "Execution passed for all required stories.",
+    "Project review status: generated docs prepared.",
+    "QA review completed or explicitly accepted by the user.",
+    "Candidate branch is ready for manual user testing before merge to main."
+  ],
+  "summary": "pr/2026-04-21t22-21-35-075z-a9e6695f-p01 remains open for further testing before merge.",
+  "decision": "test"
+}

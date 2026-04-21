@@ -1,0 +1,29 @@
+{"at":"2026-04-21T22:32:01.182Z","type":"status_changed","message":"Status -> chat_in_progress"}
+{"at":"2026-04-21T22:32:01.182Z","type":"status_changed","message":"Status -> waiting_for_user"}
+{"at":"2026-04-21T22:32:01.182Z","type":"stage_message","message":"Welche Funktion ist fuer den ersten Release am wichtigsten?"}
+{"at":"2026-04-21T22:32:01.681Z","type":"user_message","message":"ok"}
+{"at":"2026-04-21T22:32:01.681Z","type":"status_changed","message":"Status -> chat_in_progress"}
+{"at":"2026-04-21T22:32:01.681Z","type":"status_changed","message":"Status -> waiting_for_user"}
+{"at":"2026-04-21T22:32:01.681Z","type":"stage_message","message":"Welche Aktion muss fuer den Nutzer am schnellsten moeglich sein?"}
+{"at":"2026-04-21T22:32:02.189Z","type":"user_message","message":"ok"}
+{"at":"2026-04-21T22:32:02.189Z","type":"status_changed","message":"Status -> chat_in_progress"}
+{"at":"2026-04-21T22:32:02.189Z","type":"status_changed","message":"Status -> artifact_ready"}
+{"at":"2026-04-21T22:32:02.189Z","type":"artifact_created","message":"Artefakt erzeugt."}
+{"at":"2026-04-21T22:32:02.190Z","type":"file_written","message":"PRD JSON: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-console-test-89078dd1-7080-4667-9b6a-c0fa2d3faf0e/runs/2026-04-21T22-31-56-912Z-5dbf80c1/stages/requirements/artifacts/prd.json"}
+{"at":"2026-04-21T22:32:02.190Z","type":"file_written","message":"PRD Markdown: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-console-test-89078dd1-7080-4667-9b6a-c0fa2d3faf0e/runs/2026-04-21T22-31-56-912Z-5dbf80c1/stages/requirements/artifacts/prd.md"}
+{"at":"2026-04-21T22:32:02.190Z","type":"file_written","message":"requirements Summary: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-console-test-89078dd1-7080-4667-9b6a-c0fa2d3faf0e/runs/2026-04-21T22-31-56-912Z-5dbf80c1/stages/requirements/artifacts/requirements-summary.txt"}
+{"at":"2026-04-21T22:32:02.190Z","type":"status_changed","message":"Status -> in_review"}
+{"at":"2026-04-21T22:32:02.194Z","type":"review_revise","message":"Story US-02 ist noch zu vage. Bitte praezisiere Scope und Acceptance Criteria anhand des Konzepts."}
+{"at":"2026-04-21T22:32:02.194Z","type":"status_changed","message":"Status -> revision_requested"}
+{"at":"2026-04-21T22:32:02.195Z","type":"status_changed","message":"Status -> waiting_for_user"}
+{"at":"2026-04-21T22:32:02.195Z","type":"stage_message","message":"Welche Story oder welches AC soll ich auf Basis des Feedbacks noch schaerfen?"}
+{"at":"2026-04-21T22:32:02.697Z","type":"user_message","message":"ok"}
+{"at":"2026-04-21T22:32:02.697Z","type":"status_changed","message":"Status -> chat_in_progress"}
+{"at":"2026-04-21T22:32:02.697Z","type":"status_changed","message":"Status -> artifact_ready"}
+{"at":"2026-04-21T22:32:02.697Z","type":"artifact_created","message":"Artefakt erzeugt."}
+{"at":"2026-04-21T22:32:02.700Z","type":"file_written","message":"PRD JSON: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-console-test-89078dd1-7080-4667-9b6a-c0fa2d3faf0e/runs/2026-04-21T22-31-56-912Z-5dbf80c1/stages/requirements/artifacts/prd.json"}
+{"at":"2026-04-21T22:32:02.700Z","type":"file_written","message":"PRD Markdown: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-console-test-89078dd1-7080-4667-9b6a-c0fa2d3faf0e/runs/2026-04-21T22-31-56-912Z-5dbf80c1/stages/requirements/artifacts/prd.md"}
+{"at":"2026-04-21T22:32:02.700Z","type":"file_written","message":"requirements Summary: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-console-test-89078dd1-7080-4667-9b6a-c0fa2d3faf0e/runs/2026-04-21T22-31-56-912Z-5dbf80c1/stages/requirements/artifacts/requirements-summary.txt"}
+{"at":"2026-04-21T22:32:02.700Z","type":"status_changed","message":"Status -> in_review"}
+{"at":"2026-04-21T22:32:02.701Z","type":"review_pass","message":"Review bestanden."}
+{"at":"2026-04-21T22:32:02.701Z","type":"status_changed","message":"Status -> approved"}

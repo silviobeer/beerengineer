@@ -1,0 +1,15 @@
+{
+  "waveId": "W1",
+  "storiesMerged": [
+    {
+      "storyId": "US-01",
+      "branch": "story/p01-us-01",
+      "commitCount": 4,
+      "filesIntegrated": [
+        "src/us-01/handler.ts",
+        "src/us-01/service.ts"
+      ]
+    }
+  ],
+  "storiesBlocked": []
+}

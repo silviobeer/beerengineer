@@ -1,0 +1,98 @@
+{
+  "id": "2026-04-21T22-25-34-516Z",
+  "workspaceId": "ui-milestone-run-363d1e9a-69ea-471a-88f9-8a9bf9c08f2a",
+  "runId": "2026-04-21T22-25-11-763Z-2ecad873",
+  "workspaceDir": "/home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-milestone-run-363d1e9a-69ea-471a-88f9-8a9bf9c08f2a",
+  "runDir": "/home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-milestone-run-363d1e9a-69ea-471a-88f9-8a9bf9c08f2a/runs/2026-04-21T22-25-11-763Z-2ecad873",
+  "stage": "qa",
+  "stageDir": "/home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-milestone-run-363d1e9a-69ea-471a-88f9-8a9bf9c08f2a/runs/2026-04-21T22-25-11-763Z-2ecad873/stages/qa",
+  "stageArtifactsDir": "/home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-milestone-run-363d1e9a-69ea-471a-88f9-8a9bf9c08f2a/runs/2026-04-21T22-25-11-763Z-2ecad873/stages/qa/artifacts",
+  "status": "approved",
+  "iteration": 1,
+  "reviewIteration": 1,
+  "state": {
+    "loop": 2,
+    "findings": []
+  },
+  "logs": [
+    {
+      "at": "2026-04-21T22:25:34.517Z",
+      "type": "status_changed",
+      "message": "Status -> chat_in_progress"
+    },
+    {
+      "at": "2026-04-21T22:25:35.217Z",
+      "type": "status_changed",
+      "message": "Status -> waiting_for_user"
+    },
+    {
+      "at": "2026-04-21T22:25:35.217Z",
+      "type": "stage_message",
+      "message": "Reviewer-Findings: [qa-llm/medium] Fehlende Loading-States in Listen-View; [qa-llm/low] Inkonsistente Button-Labels. Fixen oder Akzeptieren? [fix/accept]"
+    },
+    {
+      "at": "2026-04-21T22:25:35.438Z",
+      "type": "user_message",
+      "message": "ui driver 14"
+    },
+    {
+      "at": "2026-04-21T22:25:35.438Z",
+      "type": "status_changed",
+      "message": "Status -> chat_in_progress"
+    },
+    {
+      "at": "2026-04-21T22:25:35.939Z",
+      "type": "status_changed",
+      "message": "Status -> artifact_ready"
+    },
+    {
+      "at": "2026-04-21T22:25:35.939Z",
+      "type": "artifact_created",
+      "message": "Artefakt erzeugt."
+    },
+    {
+      "at": "2026-04-21T22:25:35.940Z",
+      "type": "file_written",
+      "message": "QA Report JSON: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-milestone-run-363d1e9a-69ea-471a-88f9-8a9bf9c08f2a/runs/2026-04-21T22-25-11-763Z-2ecad873/stages/qa/artifacts/qa-report.json"
+    },
+    {
+      "at": "2026-04-21T22:25:35.940Z",
+      "type": "file_written",
+      "message": "qa Summary: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-milestone-run-363d1e9a-69ea-471a-88f9-8a9bf9c08f2a/runs/2026-04-21T22-25-11-763Z-2ecad873/stages/qa/artifacts/qa-summary.txt"
+    },
+    {
+      "at": "2026-04-21T22:25:35.940Z",
+      "type": "status_changed",
+      "message": "Status -> in_review"
+    },
+    {
+      "at": "2026-04-21T22:25:35.941Z",
+      "type": "review_pass",
+      "message": "Review bestanden."
+    },
+    {
+      "at": "2026-04-21T22:25:35.941Z",
+      "type": "status_changed",
+      "message": "Status -> approved"
+    }
+  ],
+  "files": [
+    {
+      "kind": "json",
+      "label": "QA Report JSON",
+      "path": "/home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-milestone-run-363d1e9a-69ea-471a-88f9-8a9bf9c08f2a/runs/2026-04-21T22-25-11-763Z-2ecad873/stages/qa/artifacts/qa-report.json"
+    },
+    {
+      "kind": "txt",
+      "label": "qa Summary",
+      "path": "/home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-milestone-run-363d1e9a-69ea-471a-88f9-8a9bf9c08f2a/runs/2026-04-21T22-25-11-763Z-2ecad873/stages/qa/artifacts/qa-summary.txt"
+    }
+  ],
+  "createdAt": "2026-04-21T22:25:34.516Z",
+  "updatedAt": "2026-04-21T22:25:35.941Z",
+  "artifact": {
+    "accepted": false,
+    "loops": 2,
+    "findings": []
+  }
+}

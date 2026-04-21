@@ -1,0 +1,66 @@
+{
+  "project": {
+    "id": "P01",
+    "name": "UI console test — Core"
+  },
+  "story": {
+    "id": "US-01",
+    "title": "Nutzer sieht den Kern-Workflow als gefuehrte Eingabemaske"
+  },
+  "acceptanceCriteria": [
+    {
+      "id": "AC-01",
+      "text": "Formular vorhanden",
+      "category": "ui",
+      "priority": "must"
+    },
+    {
+      "id": "AC-02",
+      "text": "Pflichtfelder validiert",
+      "category": "validation",
+      "priority": "must"
+    },
+    {
+      "id": "AC-03",
+      "text": "Fehler klar sichtbar",
+      "category": "error",
+      "priority": "must"
+    }
+  ],
+  "testPlan": {
+    "summary": "Testplan fuer US-01 auf Basis der strukturierten Acceptance Criteria.",
+    "testCases": [
+      {
+        "id": "TC-1",
+        "name": "US-01 prueft AC-01",
+        "mapsToAcId": "AC-01",
+        "type": "integration",
+        "description": "Formular vorhanden"
+      },
+      {
+        "id": "TC-2",
+        "name": "US-01 prueft AC-02",
+        "mapsToAcId": "AC-02",
+        "type": "unit",
+        "description": "Pflichtfelder validiert"
+      },
+      {
+        "id": "TC-3",
+        "name": "US-01 prueft AC-03",
+        "mapsToAcId": "AC-03",
+        "type": "unit",
+        "description": "Fehler klar sichtbar"
+      }
+    ],
+    "fixtures": [
+      "Seed-Daten fuer Story-Kontext"
+    ],
+    "edgeCases": [
+      "Leere Eingaben",
+      "Ungueltige Statuswerte"
+    ],
+    "assumptions": [
+      "Bitte schaerfe die Zuordnung Testfall -> AC und ergaenze relevante Edge Cases."
+    ]
+  }
+}

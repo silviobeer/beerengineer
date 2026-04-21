@@ -1,0 +1,64 @@
+{
+  "story": {
+    "id": "US-01",
+    "title": "Nutzer sieht den Kern-Workflow als gefuehrte Eingabemaske"
+  },
+  "reviewCycle": 2,
+  "reviewers": [
+    {
+      "source": "coderabbit",
+      "status": "revise",
+      "findings": [
+        {
+          "severity": "medium",
+          "message": "[US-01] Fehlender Guard fuer leeren Fehlerzustand in der UI."
+        }
+      ]
+    },
+    {
+      "source": "sonarqube",
+      "status": "revise",
+      "findings": [
+        {
+          "severity": "medium",
+          "message": "[US-01] Fehlende Failure-Path-Absicherung im Integrationspfad."
+        }
+      ]
+    }
+  ],
+  "gate": {
+    "status": "fail",
+    "failedBecause": [
+      "SonarQube quality gate failed: reliability B/A."
+    ],
+    "sonar": {
+      "passed": false,
+      "conditions": [
+        {
+          "metric": "reliability",
+          "status": "error",
+          "actual": "B",
+          "threshold": "A"
+        },
+        {
+          "metric": "security",
+          "status": "ok",
+          "actual": "A",
+          "threshold": "A"
+        },
+        {
+          "metric": "maintainability",
+          "status": "ok",
+          "actual": "A",
+          "threshold": "A"
+        }
+      ]
+    }
+  },
+  "outcome": "revise",
+  "feedbackSummary": [
+    "[gate] SonarQube quality gate failed: reliability B/A.",
+    "[coderabbit] [US-01] Fehlender Guard fuer leeren Fehlerzustand in der UI.",
+    "[sonarqube] [US-01] Fehlende Failure-Path-Absicherung im Integrationspfad."
+  ]
+}

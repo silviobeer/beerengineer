@@ -1,0 +1,15 @@
+{"at":"2026-04-21T22:30:09.558Z","type":"status_changed","message":"Status -> chat_in_progress"}
+{"at":"2026-04-21T22:30:09.558Z","type":"status_changed","message":"Status -> artifact_ready"}
+{"at":"2026-04-21T22:30:09.558Z","type":"artifact_created","message":"Artefakt erzeugt."}
+{"at":"2026-04-21T22:30:09.560Z","type":"file_written","message":"Test Plan JSON: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-console-test-c3a2ebbc-fb6b-40a2-ae8e-4ee2527bbbb1/runs/2026-04-21T22-30-03-612Z-abb2ff43/stages/execution/waves/1/stories/us-01/test-writer/artifacts/test-plan.json"}
+{"at":"2026-04-21T22:30:09.560Z","type":"file_written","message":"Test Plan Markdown: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-console-test-c3a2ebbc-fb6b-40a2-ae8e-4ee2527bbbb1/runs/2026-04-21T22-30-03-612Z-abb2ff43/stages/execution/waves/1/stories/us-01/test-writer/artifacts/test-plan.md"}
+{"at":"2026-04-21T22:30:09.560Z","type":"status_changed","message":"Status -> in_review"}
+{"at":"2026-04-21T22:30:09.561Z","type":"review_revise","message":"Bitte schaerfe die Zuordnung Testfall -> AC und ergaenze relevante Edge Cases."}
+{"at":"2026-04-21T22:30:09.561Z","type":"status_changed","message":"Status -> revision_requested"}
+{"at":"2026-04-21T22:30:09.562Z","type":"status_changed","message":"Status -> artifact_ready"}
+{"at":"2026-04-21T22:30:09.562Z","type":"artifact_created","message":"Artefakt erzeugt."}
+{"at":"2026-04-21T22:30:09.563Z","type":"file_written","message":"Test Plan JSON: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-console-test-c3a2ebbc-fb6b-40a2-ae8e-4ee2527bbbb1/runs/2026-04-21T22-30-03-612Z-abb2ff43/stages/execution/waves/1/stories/us-01/test-writer/artifacts/test-plan.json"}
+{"at":"2026-04-21T22:30:09.563Z","type":"file_written","message":"Test Plan Markdown: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-console-test-c3a2ebbc-fb6b-40a2-ae8e-4ee2527bbbb1/runs/2026-04-21T22-30-03-612Z-abb2ff43/stages/execution/waves/1/stories/us-01/test-writer/artifacts/test-plan.md"}
+{"at":"2026-04-21T22:30:09.563Z","type":"status_changed","message":"Status -> in_review"}
+{"at":"2026-04-21T22:30:09.564Z","type":"review_pass","message":"Review bestanden."}
+{"at":"2026-04-21T22:30:09.564Z","type":"status_changed","message":"Status -> approved"}

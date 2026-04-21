@@ -1,0 +1,17 @@
+{
+  "waveId": "W2",
+  "storiesMerged": [
+    {
+      "storyId": "US-03",
+      "branch": "story/p01-us-03",
+      "commitCount": 4,
+      "filesIntegrated": [
+        "src/us-03/handler.ts",
+        "src/us-03/service.ts"
+      ]
+    }
+  ],
+  "storiesBlocked": [
+    "US-02"
+  ]
+}

@@ -1,0 +1,76 @@
+{
+  "story": {
+    "id": "US-03",
+    "title": "Nutzer kann einen Eintrag anlegen und speichern"
+  },
+  "reviewCycle": 1,
+  "reviewers": [
+    {
+      "source": "coderabbit",
+      "status": "revise",
+      "findings": [
+        {
+          "severity": "high",
+          "message": "[US-03] Doppelte Validierungslogik zwischen Route und Service."
+        },
+        {
+          "severity": "medium",
+          "message": "[US-03] Fehlender Guard fuer leeren Fehlerzustand in der UI."
+        }
+      ]
+    },
+    {
+      "source": "sonarqube",
+      "status": "revise",
+      "findings": [
+        {
+          "severity": "medium",
+          "message": "[US-03] Komplexitaet der Service-Methode liegt ueber dem Zielwert."
+        },
+        {
+          "severity": "low",
+          "message": "[US-03] Unused import in handler.ts."
+        }
+      ]
+    }
+  ],
+  "gate": {
+    "status": "fail",
+    "failedBecause": [
+      "CodeRabbit still reports critical or high-severity review issues.",
+      "SonarQube quality gate failed: maintainability B/A."
+    ],
+    "sonar": {
+      "passed": false,
+      "conditions": [
+        {
+          "metric": "reliability",
+          "status": "ok",
+          "actual": "A",
+          "threshold": "A"
+        },
+        {
+          "metric": "security",
+          "status": "ok",
+          "actual": "A",
+          "threshold": "A"
+        },
+        {
+          "metric": "maintainability",
+          "status": "error",
+          "actual": "B",
+          "threshold": "A"
+        }
+      ]
+    }
+  },
+  "outcome": "revise",
+  "feedbackSummary": [
+    "[gate] CodeRabbit still reports critical or high-severity review issues.",
+    "[gate] SonarQube quality gate failed: maintainability B/A.",
+    "[coderabbit] [US-03] Doppelte Validierungslogik zwischen Route und Service.",
+    "[coderabbit] [US-03] Fehlender Guard fuer leeren Fehlerzustand in der UI.",
+    "[sonarqube] [US-03] Komplexitaet der Service-Methode liegt ueber dem Zielwert.",
+    "[sonarqube] [US-03] Unused import in handler.ts."
+  ]
+}

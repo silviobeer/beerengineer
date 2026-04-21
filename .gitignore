@@ -1,0 +1,13 @@
+node_modules/
+.data/
+.tmp/
+.next/
+apps/*/.next/
+apps/*/node_modules/
+apps/*/.tmp/
+apps/ui/tests/.tmp/
+apps/ui/test-results/
+apps/ui/playwright-report/
+apps/engine/dist/
+*.tsbuildinfo
+.DS_Store

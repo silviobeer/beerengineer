@@ -1,0 +1,221 @@
+{
+  "id": "2026-04-21T22-25-32-026Z",
+  "workspaceId": "ui-milestone-run-363d1e9a-69ea-471a-88f9-8a9bf9c08f2a",
+  "runId": "2026-04-21T22-25-11-763Z-2ecad873",
+  "workspaceDir": "/home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-milestone-run-363d1e9a-69ea-471a-88f9-8a9bf9c08f2a",
+  "runDir": "/home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-milestone-run-363d1e9a-69ea-471a-88f9-8a9bf9c08f2a/runs/2026-04-21T22-25-11-763Z-2ecad873",
+  "stage": "execution/waves/2/stories/US-03/test-writer",
+  "stageDir": "/home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-milestone-run-363d1e9a-69ea-471a-88f9-8a9bf9c08f2a/runs/2026-04-21T22-25-11-763Z-2ecad873/stages/execution/waves/2/stories/us-03/test-writer",
+  "stageArtifactsDir": "/home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-milestone-run-363d1e9a-69ea-471a-88f9-8a9bf9c08f2a/runs/2026-04-21T22-25-11-763Z-2ecad873/stages/execution/waves/2/stories/us-03/test-writer/artifacts",
+  "status": "approved",
+  "iteration": 0,
+  "reviewIteration": 2,
+  "state": {
+    "projectId": "P01",
+    "wave": {
+      "id": "W2",
+      "number": 2,
+      "goal": "Uebersicht und Bearbeitung fertigstellen",
+      "stories": [
+        {
+          "id": "US-02",
+          "title": "Nutzer sieht eine Uebersicht ueber bestehende Eintraege"
+        },
+        {
+          "id": "US-03",
+          "title": "Nutzer kann einen Eintrag anlegen und speichern"
+        }
+      ],
+      "parallel": true,
+      "dependencies": [
+        "W1"
+      ],
+      "exitCriteria": [
+        "Listen und Bearbeitung funktionieren"
+      ]
+    },
+    "story": {
+      "id": "US-03",
+      "title": "Nutzer kann einen Eintrag anlegen und speichern"
+    },
+    "acceptanceCriteria": [
+      {
+        "id": "AC-01",
+        "text": "Speichern ist moeglich",
+        "category": "functional",
+        "priority": "must"
+      },
+      {
+        "id": "AC-02",
+        "text": "Speichern respektiert: ui driver 6",
+        "category": "validation",
+        "priority": "must"
+      },
+      {
+        "id": "AC-03",
+        "text": "Bestaetigung nach erfolgreichem Speichern",
+        "category": "ui",
+        "priority": "must"
+      }
+    ],
+    "revisionCount": 1,
+    "lastReviewFeedback": "Bitte schaerfe die Zuordnung Testfall -> AC und ergaenze relevante Edge Cases."
+  },
+  "logs": [
+    {
+      "at": "2026-04-21T22:25:32.027Z",
+      "type": "status_changed",
+      "message": "Status -> chat_in_progress"
+    },
+    {
+      "at": "2026-04-21T22:25:32.027Z",
+      "type": "status_changed",
+      "message": "Status -> artifact_ready"
+    },
+    {
+      "at": "2026-04-21T22:25:32.027Z",
+      "type": "artifact_created",
+      "message": "Artefakt erzeugt."
+    },
+    {
+      "at": "2026-04-21T22:25:32.028Z",
+      "type": "file_written",
+      "message": "Test Plan JSON: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-milestone-run-363d1e9a-69ea-471a-88f9-8a9bf9c08f2a/runs/2026-04-21T22-25-11-763Z-2ecad873/stages/execution/waves/2/stories/us-03/test-writer/artifacts/test-plan.json"
+    },
+    {
+      "at": "2026-04-21T22:25:32.028Z",
+      "type": "file_written",
+      "message": "Test Plan Markdown: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-milestone-run-363d1e9a-69ea-471a-88f9-8a9bf9c08f2a/runs/2026-04-21T22-25-11-763Z-2ecad873/stages/execution/waves/2/stories/us-03/test-writer/artifacts/test-plan.md"
+    },
+    {
+      "at": "2026-04-21T22:25:32.028Z",
+      "type": "status_changed",
+      "message": "Status -> in_review"
+    },
+    {
+      "at": "2026-04-21T22:25:32.029Z",
+      "type": "review_revise",
+      "message": "Bitte schaerfe die Zuordnung Testfall -> AC und ergaenze relevante Edge Cases."
+    },
+    {
+      "at": "2026-04-21T22:25:32.029Z",
+      "type": "status_changed",
+      "message": "Status -> revision_requested"
+    },
+    {
+      "at": "2026-04-21T22:25:32.029Z",
+      "type": "status_changed",
+      "message": "Status -> artifact_ready"
+    },
+    {
+      "at": "2026-04-21T22:25:32.029Z",
+      "type": "artifact_created",
+      "message": "Artefakt erzeugt."
+    },
+    {
+      "at": "2026-04-21T22:25:32.030Z",
+      "type": "file_written",
+      "message": "Test Plan JSON: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-milestone-run-363d1e9a-69ea-471a-88f9-8a9bf9c08f2a/runs/2026-04-21T22-25-11-763Z-2ecad873/stages/execution/waves/2/stories/us-03/test-writer/artifacts/test-plan.json"
+    },
+    {
+      "at": "2026-04-21T22:25:32.030Z",
+      "type": "file_written",
+      "message": "Test Plan Markdown: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-milestone-run-363d1e9a-69ea-471a-88f9-8a9bf9c08f2a/runs/2026-04-21T22-25-11-763Z-2ecad873/stages/execution/waves/2/stories/us-03/test-writer/artifacts/test-plan.md"
+    },
+    {
+      "at": "2026-04-21T22:25:32.030Z",
+      "type": "status_changed",
+      "message": "Status -> in_review"
+    },
+    {
+      "at": "2026-04-21T22:25:32.031Z",
+      "type": "review_pass",
+      "message": "Review bestanden."
+    },
+    {
+      "at": "2026-04-21T22:25:32.031Z",
+      "type": "status_changed",
+      "message": "Status -> approved"
+    }
+  ],
+  "files": [
+    {
+      "kind": "json",
+      "label": "Test Plan JSON",
+      "path": "/home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-milestone-run-363d1e9a-69ea-471a-88f9-8a9bf9c08f2a/runs/2026-04-21T22-25-11-763Z-2ecad873/stages/execution/waves/2/stories/us-03/test-writer/artifacts/test-plan.json"
+    },
+    {
+      "kind": "md",
+      "label": "Test Plan Markdown",
+      "path": "/home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-milestone-run-363d1e9a-69ea-471a-88f9-8a9bf9c08f2a/runs/2026-04-21T22-25-11-763Z-2ecad873/stages/execution/waves/2/stories/us-03/test-writer/artifacts/test-plan.md"
+    }
+  ],
+  "createdAt": "2026-04-21T22:25:32.026Z",
+  "updatedAt": "2026-04-21T22:25:32.031Z",
+  "artifact": {
+    "project": {
+      "id": "P01",
+      "name": "UI milestone run — Core"
+    },
+    "story": {
+      "id": "US-03",
+      "title": "Nutzer kann einen Eintrag anlegen und speichern"
+    },
+    "acceptanceCriteria": [
+      {
+        "id": "AC-01",
+        "text": "Speichern ist moeglich",
+        "category": "functional",
+        "priority": "must"
+      },
+      {
+        "id": "AC-02",
+        "text": "Speichern respektiert: ui driver 6",
+        "category": "validation",
+        "priority": "must"
+      },
+      {
+        "id": "AC-03",
+        "text": "Bestaetigung nach erfolgreichem Speichern",
+        "category": "ui",
+        "priority": "must"
+      }
+    ],
+    "testPlan": {
+      "summary": "Testplan fuer US-03 auf Basis der strukturierten Acceptance Criteria.",
+      "testCases": [
+        {
+          "id": "TC-1",
+          "name": "US-03 prueft AC-01",
+          "mapsToAcId": "AC-01",
+          "type": "integration",
+          "description": "Speichern ist moeglich"
+        },
+        {
+          "id": "TC-2",
+          "name": "US-03 prueft AC-02",
+          "mapsToAcId": "AC-02",
+          "type": "unit",
+          "description": "Speichern respektiert: ui driver 6"
+        },
+        {
+          "id": "TC-3",
+          "name": "US-03 prueft AC-03",
+          "mapsToAcId": "AC-03",
+          "type": "unit",
+          "description": "Bestaetigung nach erfolgreichem Speichern"
+        }
+      ],
+      "fixtures": [
+        "Seed-Daten fuer Story-Kontext"
+      ],
+      "edgeCases": [
+        "Leere Eingaben",
+        "Ungueltige Statuswerte"
+      ],
+      "assumptions": [
+        "Bitte schaerfe die Zuordnung Testfall -> AC und ergaenze relevante Edge Cases."
+      ]
+    }
+  }
+}

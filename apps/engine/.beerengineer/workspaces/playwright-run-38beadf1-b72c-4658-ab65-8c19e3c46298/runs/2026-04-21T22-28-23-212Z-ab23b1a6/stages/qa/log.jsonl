@@ -1,0 +1,12 @@
+{"at":"2026-04-21T22:28:31.310Z","type":"status_changed","message":"Status -> chat_in_progress"}
+{"at":"2026-04-21T22:28:32.011Z","type":"status_changed","message":"Status -> waiting_for_user"}
+{"at":"2026-04-21T22:28:32.011Z","type":"stage_message","message":"Reviewer-Findings: [qa-llm/medium] Fehlende Loading-States in Listen-View; [qa-llm/low] Inkonsistente Button-Labels. Fixen oder Akzeptieren? [fix/accept]"}
+{"at":"2026-04-21T22:28:32.390Z","type":"user_message","message":"automated driver"}
+{"at":"2026-04-21T22:28:32.390Z","type":"status_changed","message":"Status -> chat_in_progress"}
+{"at":"2026-04-21T22:28:32.891Z","type":"status_changed","message":"Status -> artifact_ready"}
+{"at":"2026-04-21T22:28:32.891Z","type":"artifact_created","message":"Artefakt erzeugt."}
+{"at":"2026-04-21T22:28:32.892Z","type":"file_written","message":"QA Report JSON: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/playwright-run-38beadf1-b72c-4658-ab65-8c19e3c46298/runs/2026-04-21T22-28-23-212Z-ab23b1a6/stages/qa/artifacts/qa-report.json"}
+{"at":"2026-04-21T22:28:32.892Z","type":"file_written","message":"qa Summary: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/playwright-run-38beadf1-b72c-4658-ab65-8c19e3c46298/runs/2026-04-21T22-28-23-212Z-ab23b1a6/stages/qa/artifacts/qa-summary.txt"}
+{"at":"2026-04-21T22:28:32.892Z","type":"status_changed","message":"Status -> in_review"}
+{"at":"2026-04-21T22:28:32.894Z","type":"review_pass","message":"Review bestanden."}
+{"at":"2026-04-21T22:28:32.894Z","type":"status_changed","message":"Status -> approved"}

@@ -1,0 +1,12 @@
+{"at":"2026-04-21T22:32:09.287Z","type":"status_changed","message":"Status -> chat_in_progress"}
+{"at":"2026-04-21T22:32:09.287Z","type":"status_changed","message":"Status -> artifact_ready"}
+{"at":"2026-04-21T22:32:09.287Z","type":"artifact_created","message":"Artefakt erzeugt."}
+{"at":"2026-04-21T22:32:09.289Z","type":"file_written","message":"Documentation JSON: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-console-test-89078dd1-7080-4667-9b6a-c0fa2d3faf0e/runs/2026-04-21T22-31-56-912Z-5dbf80c1/stages/documentation/artifacts/documentation.json"}
+{"at":"2026-04-21T22:32:09.289Z","type":"file_written","message":"Technical Doc Markdown: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-console-test-89078dd1-7080-4667-9b6a-c0fa2d3faf0e/runs/2026-04-21T22-31-56-912Z-5dbf80c1/stages/documentation/artifacts/technical-doc.md"}
+{"at":"2026-04-21T22:32:09.289Z","type":"file_written","message":"Features Doc Markdown: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-console-test-89078dd1-7080-4667-9b6a-c0fa2d3faf0e/runs/2026-04-21T22-31-56-912Z-5dbf80c1/stages/documentation/artifacts/features-doc.md"}
+{"at":"2026-04-21T22:32:09.289Z","type":"file_written","message":"Compact README Markdown: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-console-test-89078dd1-7080-4667-9b6a-c0fa2d3faf0e/runs/2026-04-21T22-31-56-912Z-5dbf80c1/stages/documentation/artifacts/README.compact.md"}
+{"at":"2026-04-21T22:32:09.289Z","type":"file_written","message":"Known Issues Markdown: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-console-test-89078dd1-7080-4667-9b6a-c0fa2d3faf0e/runs/2026-04-21T22-31-56-912Z-5dbf80c1/stages/documentation/artifacts/known-issues.md"}
+{"at":"2026-04-21T22:32:09.289Z","type":"file_written","message":"documentation Summary: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-console-test-89078dd1-7080-4667-9b6a-c0fa2d3faf0e/runs/2026-04-21T22-31-56-912Z-5dbf80c1/stages/documentation/artifacts/documentation-summary.txt"}
+{"at":"2026-04-21T22:32:09.289Z","type":"status_changed","message":"Status -> in_review"}
+{"at":"2026-04-21T22:32:09.290Z","type":"review_pass","message":"Review bestanden."}
+{"at":"2026-04-21T22:32:09.290Z","type":"status_changed","message":"Status -> approved"}

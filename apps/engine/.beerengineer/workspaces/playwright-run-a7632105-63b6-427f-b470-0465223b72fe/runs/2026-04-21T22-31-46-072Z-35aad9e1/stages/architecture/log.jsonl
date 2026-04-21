@@ -1,0 +1,17 @@
+{"at":"2026-04-21T22:31:49.170Z","type":"status_changed","message":"Status -> chat_in_progress"}
+{"at":"2026-04-21T22:31:49.170Z","type":"status_changed","message":"Status -> artifact_ready"}
+{"at":"2026-04-21T22:31:49.170Z","type":"artifact_created","message":"Artefakt erzeugt."}
+{"at":"2026-04-21T22:31:49.170Z","type":"file_written","message":"Architecture JSON: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/playwright-run-a7632105-63b6-427f-b470-0465223b72fe/runs/2026-04-21T22-31-46-072Z-35aad9e1/stages/architecture/artifacts/architecture.json"}
+{"at":"2026-04-21T22:31:49.170Z","type":"file_written","message":"Architecture Markdown: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/playwright-run-a7632105-63b6-427f-b470-0465223b72fe/runs/2026-04-21T22-31-46-072Z-35aad9e1/stages/architecture/artifacts/architecture.md"}
+{"at":"2026-04-21T22:31:49.170Z","type":"file_written","message":"architecture Summary: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/playwright-run-a7632105-63b6-427f-b470-0465223b72fe/runs/2026-04-21T22-31-46-072Z-35aad9e1/stages/architecture/artifacts/architecture-summary.txt"}
+{"at":"2026-04-21T22:31:49.170Z","type":"status_changed","message":"Status -> in_review"}
+{"at":"2026-04-21T22:31:49.171Z","type":"review_revise","message":"Bitte schaerfe Systemgrenzen, Kernkomponenten und Risiken fuer dieses Projekt."}
+{"at":"2026-04-21T22:31:49.171Z","type":"status_changed","message":"Status -> revision_requested"}
+{"at":"2026-04-21T22:31:49.172Z","type":"status_changed","message":"Status -> artifact_ready"}
+{"at":"2026-04-21T22:31:49.172Z","type":"artifact_created","message":"Artefakt erzeugt."}
+{"at":"2026-04-21T22:31:49.173Z","type":"file_written","message":"Architecture JSON: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/playwright-run-a7632105-63b6-427f-b470-0465223b72fe/runs/2026-04-21T22-31-46-072Z-35aad9e1/stages/architecture/artifacts/architecture.json"}
+{"at":"2026-04-21T22:31:49.173Z","type":"file_written","message":"Architecture Markdown: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/playwright-run-a7632105-63b6-427f-b470-0465223b72fe/runs/2026-04-21T22-31-46-072Z-35aad9e1/stages/architecture/artifacts/architecture.md"}
+{"at":"2026-04-21T22:31:49.173Z","type":"file_written","message":"architecture Summary: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/playwright-run-a7632105-63b6-427f-b470-0465223b72fe/runs/2026-04-21T22-31-46-072Z-35aad9e1/stages/architecture/artifacts/architecture-summary.txt"}
+{"at":"2026-04-21T22:31:49.173Z","type":"status_changed","message":"Status -> in_review"}
+{"at":"2026-04-21T22:31:49.173Z","type":"review_pass","message":"Review bestanden."}
+{"at":"2026-04-21T22:31:49.173Z","type":"status_changed","message":"Status -> approved"}

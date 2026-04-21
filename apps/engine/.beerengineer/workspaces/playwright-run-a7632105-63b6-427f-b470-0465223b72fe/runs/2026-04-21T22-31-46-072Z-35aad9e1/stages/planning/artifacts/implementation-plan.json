@@ -1,0 +1,64 @@
+{
+  "project": {
+    "id": "P01",
+    "name": "Playwright run — Core"
+  },
+  "conceptSummary": "Playwright run: automated driver / automated driver",
+  "architectureSummary": "Projektweite Kernarchitektur fuer UI, API und Datenhaltung.",
+  "plan": {
+    "summary": "Umsetzungsplan mit einer Basis-Welle und einer Ausbau-Welle.",
+    "assumptions": [
+      "PRD und Architektur sind ausreichend stabil"
+    ],
+    "sequencingNotes": [
+      "Zuerst Kernfluss, dann Uebersichten und Ausbau"
+    ],
+    "dependencies": [
+      "API-Grundlage vor Listenansicht",
+      "Persistenz vor Bearbeitungsfunktionen"
+    ],
+    "risks": [
+      "Bitte schaerfe Wave-Ziele, Dependencies und Exit Criteria fuer den Implementierungsplan."
+    ],
+    "waves": [
+      {
+        "id": "W1",
+        "number": 1,
+        "goal": "Kern-Workflow liefern",
+        "stories": [
+          {
+            "id": "US-01",
+            "title": "Nutzer sieht den Kern-Workflow als gefuehrte Eingabemaske"
+          }
+        ],
+        "parallel": false,
+        "dependencies": [],
+        "exitCriteria": [
+          "Kern-Workflow funktioniert"
+        ]
+      },
+      {
+        "id": "W2",
+        "number": 2,
+        "goal": "Uebersicht und Bearbeitung fertigstellen",
+        "stories": [
+          {
+            "id": "US-02",
+            "title": "Nutzer sieht eine Uebersicht ueber bestehende Eintraege"
+          },
+          {
+            "id": "US-03",
+            "title": "Nutzer kann einen Eintrag anlegen und speichern"
+          }
+        ],
+        "parallel": true,
+        "dependencies": [
+          "W1"
+        ],
+        "exitCriteria": [
+          "Listen und Bearbeitung funktionieren"
+        ]
+      }
+    ]
+  }
+}

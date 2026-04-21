@@ -1,0 +1,17 @@
+[
+  {
+    "id": "P01",
+    "name": "UI console test — Core",
+    "description": "Kern-Funktionalitaet",
+    "concept": {
+      "summary": "UI console test: ok / ok",
+      "problem": "ok",
+      "users": [
+        "ok"
+      ],
+      "constraints": [
+        "ok"
+      ]
+    }
+  }
+]

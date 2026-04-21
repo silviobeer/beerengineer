@@ -1,0 +1,9 @@
+Workspace: playwright-run-a7632105-63b6-427f-b470-0465223b72fe
+Run: 2026-04-21T22-31-46-072Z-35aad9e1
+Stage: documentation
+Review loops: 0
+Mode: update
+Technical doc: docs/technical-doc.md
+Features doc: docs/features-doc.md
+Compact README: docs/README.compact.md
+Known issues: 1

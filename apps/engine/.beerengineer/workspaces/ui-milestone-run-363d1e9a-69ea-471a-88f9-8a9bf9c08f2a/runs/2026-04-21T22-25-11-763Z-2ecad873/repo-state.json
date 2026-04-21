@@ -1,0 +1,147 @@
+{
+  "branches": [
+    {
+      "name": "main",
+      "base": "",
+      "commits": [],
+      "status": "open"
+    },
+    {
+      "name": "proj/p01",
+      "base": "main",
+      "commits": [
+        {
+          "hash": "projp01s1mk5c8",
+          "message": "Merge story/p01-us-01 into proj/p01",
+          "filesChanged": [
+            "src/us-01/handler.ts",
+            "src/us-01/service.ts"
+          ]
+        },
+        {
+          "hash": "projp01s1n16ym",
+          "message": "Merge story/p01-us-02 into proj/p01",
+          "filesChanged": [
+            "src/us-02/handler.ts",
+            "src/us-02/service.ts"
+          ]
+        }
+      ],
+      "status": "open"
+    },
+    {
+      "name": "story/p01-us-01",
+      "base": "proj/p01",
+      "commits": [
+        {
+          "hash": "storyp01rclxm4",
+          "message": "Implement US-01",
+          "filesChanged": [
+            "src/us-01/handler.ts",
+            "src/us-01/service.ts"
+          ]
+        },
+        {
+          "hash": "storyp01izm22z",
+          "message": "Implement US-01",
+          "filesChanged": [
+            "src/us-01/handler.ts",
+            "src/us-01/service.ts"
+          ]
+        },
+        {
+          "hash": "storyp011i3hef",
+          "message": "Apply review feedback for US-01",
+          "filesChanged": [
+            "src/us-01/handler.ts",
+            "src/us-01/service.ts"
+          ]
+        },
+        {
+          "hash": "storyp011y004k",
+          "message": "Apply review feedback for US-01",
+          "filesChanged": [
+            "src/us-01/handler.ts",
+            "src/us-01/service.ts"
+          ]
+        }
+      ],
+      "status": "merged",
+      "mergedAt": "2026-04-21T22:25:32.024Z"
+    },
+    {
+      "name": "story/p01-us-02",
+      "base": "proj/p01",
+      "commits": [
+        {
+          "hash": "storyp011ga601",
+          "message": "Implement US-02",
+          "filesChanged": [
+            "src/us-02/handler.ts",
+            "src/us-02/service.ts"
+          ]
+        },
+        {
+          "hash": "storyp0117x64i",
+          "message": "Implement US-02",
+          "filesChanged": [
+            "src/us-02/handler.ts",
+            "src/us-02/service.ts"
+          ]
+        },
+        {
+          "hash": "storyp011dvtig",
+          "message": "Apply review feedback for US-02",
+          "filesChanged": [
+            "src/us-02/handler.ts",
+            "src/us-02/service.ts"
+          ]
+        },
+        {
+          "hash": "storyp011tsc8l",
+          "message": "Apply review feedback for US-02",
+          "filesChanged": [
+            "src/us-02/handler.ts",
+            "src/us-02/service.ts"
+          ]
+        }
+      ],
+      "status": "merged",
+      "mergedAt": "2026-04-21T22:25:34.507Z"
+    },
+    {
+      "name": "pr/2026-04-21t22-25-11-763z-2ecad873-p01",
+      "base": "main",
+      "commits": [
+        {
+          "hash": "projp01s1mk5c8",
+          "message": "Merge story/p01-us-01 into proj/p01",
+          "filesChanged": [
+            "src/us-01/handler.ts",
+            "src/us-01/service.ts"
+          ]
+        },
+        {
+          "hash": "projp01s1n16ym",
+          "message": "Merge story/p01-us-02 into proj/p01",
+          "filesChanged": [
+            "src/us-02/handler.ts",
+            "src/us-02/service.ts"
+          ]
+        },
+        {
+          "hash": "pr202604obzb85",
+          "message": "Prepare pr/2026-04-21t22-25-11-763z-2ecad873-p01 from proj/p01",
+          "filesChanged": [
+            "docs/technical-doc.md",
+            "docs/features-doc.md",
+            "docs/README.compact.md",
+            "docs/known-issues.md"
+          ]
+        }
+      ],
+      "status": "open"
+    }
+  ],
+  "mergedRuns": []
+}

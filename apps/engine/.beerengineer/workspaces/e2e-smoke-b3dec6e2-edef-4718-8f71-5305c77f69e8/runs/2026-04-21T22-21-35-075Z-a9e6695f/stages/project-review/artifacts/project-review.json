@@ -1,0 +1,23 @@
+{
+  "project": {
+    "id": "P01",
+    "name": "E2E smoke — Core"
+  },
+  "scope": "project-wide-code-review",
+  "overallStatus": "pass_with_risks",
+  "summary": "Revision addressed the main project-wide concern. Residual cleanup risk remains: Address the project-wide technical coherence issues, then resubmit with only residual low-risk cleanup items if any remain.",
+  "findings": [
+    {
+      "id": "PR-MAINT-01",
+      "source": "project-review-llm",
+      "severity": "low",
+      "category": "maintainability",
+      "message": "Shared helper logic appears duplicated in multiple modules.",
+      "evidence": "Project-wide review found repeated support logic that should live behind one reusable helper boundary.",
+      "recommendation": "Extract the repeated helper code into a shared module and remove dead copies."
+    }
+  ],
+  "recommendations": [
+    "Track the remaining cleanup item as post-implementation maintenance work."
+  ]
+}

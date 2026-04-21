@@ -1,0 +1,17 @@
+{"at":"2026-04-21T22:30:14.538Z","type":"status_changed","message":"Status -> chat_in_progress"}
+{"at":"2026-04-21T22:30:14.538Z","type":"status_changed","message":"Status -> artifact_ready"}
+{"at":"2026-04-21T22:30:14.538Z","type":"artifact_created","message":"Artefakt erzeugt."}
+{"at":"2026-04-21T22:30:14.540Z","type":"file_written","message":"Project Review JSON: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-console-test-c3a2ebbc-fb6b-40a2-ae8e-4ee2527bbbb1/runs/2026-04-21T22-30-03-612Z-abb2ff43/stages/project-review/artifacts/project-review.json"}
+{"at":"2026-04-21T22:30:14.540Z","type":"file_written","message":"Project Review Markdown: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-console-test-c3a2ebbc-fb6b-40a2-ae8e-4ee2527bbbb1/runs/2026-04-21T22-30-03-612Z-abb2ff43/stages/project-review/artifacts/project-review.md"}
+{"at":"2026-04-21T22:30:14.540Z","type":"file_written","message":"project-review Summary: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-console-test-c3a2ebbc-fb6b-40a2-ae8e-4ee2527bbbb1/runs/2026-04-21T22-30-03-612Z-abb2ff43/stages/project-review/artifacts/project-review-summary.txt"}
+{"at":"2026-04-21T22:30:14.540Z","type":"status_changed","message":"Status -> in_review"}
+{"at":"2026-04-21T22:30:14.542Z","type":"review_revise","message":"Address the project-wide technical coherence issues, then resubmit with only residual low-risk cleanup items if any remain."}
+{"at":"2026-04-21T22:30:14.542Z","type":"status_changed","message":"Status -> revision_requested"}
+{"at":"2026-04-21T22:30:14.543Z","type":"status_changed","message":"Status -> artifact_ready"}
+{"at":"2026-04-21T22:30:14.543Z","type":"artifact_created","message":"Artefakt erzeugt."}
+{"at":"2026-04-21T22:30:14.544Z","type":"file_written","message":"Project Review JSON: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-console-test-c3a2ebbc-fb6b-40a2-ae8e-4ee2527bbbb1/runs/2026-04-21T22-30-03-612Z-abb2ff43/stages/project-review/artifacts/project-review.json"}
+{"at":"2026-04-21T22:30:14.544Z","type":"file_written","message":"Project Review Markdown: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-console-test-c3a2ebbc-fb6b-40a2-ae8e-4ee2527bbbb1/runs/2026-04-21T22-30-03-612Z-abb2ff43/stages/project-review/artifacts/project-review.md"}
+{"at":"2026-04-21T22:30:14.544Z","type":"file_written","message":"project-review Summary: /home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/ui-console-test-c3a2ebbc-fb6b-40a2-ae8e-4ee2527bbbb1/runs/2026-04-21T22-30-03-612Z-abb2ff43/stages/project-review/artifacts/project-review-summary.txt"}
+{"at":"2026-04-21T22:30:14.544Z","type":"status_changed","message":"Status -> in_review"}
+{"at":"2026-04-21T22:30:14.546Z","type":"review_pass","message":"Review bestanden."}
+{"at":"2026-04-21T22:30:14.546Z","type":"status_changed","message":"Status -> approved"}

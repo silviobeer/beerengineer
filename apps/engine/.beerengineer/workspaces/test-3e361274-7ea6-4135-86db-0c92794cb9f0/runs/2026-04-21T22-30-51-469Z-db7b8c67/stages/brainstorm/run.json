@@ -1,0 +1,43 @@
+{
+  "id": "2026-04-21T22-30-51-470Z",
+  "workspaceId": "test-3e361274-7ea6-4135-86db-0c92794cb9f0",
+  "runId": "2026-04-21T22-30-51-469Z-db7b8c67",
+  "workspaceDir": "/home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/test-3e361274-7ea6-4135-86db-0c92794cb9f0",
+  "runDir": "/home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/test-3e361274-7ea6-4135-86db-0c92794cb9f0/runs/2026-04-21T22-30-51-469Z-db7b8c67",
+  "stage": "brainstorm",
+  "stageDir": "/home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/test-3e361274-7ea6-4135-86db-0c92794cb9f0/runs/2026-04-21T22-30-51-469Z-db7b8c67/stages/brainstorm",
+  "stageArtifactsDir": "/home/silvio/projects/beerengineer2/apps/engine/.beerengineer/workspaces/test-3e361274-7ea6-4135-86db-0c92794cb9f0/runs/2026-04-21T22-30-51-469Z-db7b8c67/stages/brainstorm/artifacts",
+  "status": "waiting_for_user",
+  "iteration": 0,
+  "reviewIteration": 0,
+  "state": {
+    "item": {
+      "id": "3e361274-7ea6-4135-86db-0c92794cb9f0",
+      "title": "test",
+      "description": "x"
+    },
+    "questionsAsked": 0,
+    "targetQuestions": 3,
+    "history": []
+  },
+  "logs": [
+    {
+      "at": "2026-04-21T22:30:51.474Z",
+      "type": "status_changed",
+      "message": "Status -> chat_in_progress"
+    },
+    {
+      "at": "2026-04-21T22:30:51.474Z",
+      "type": "status_changed",
+      "message": "Status -> waiting_for_user"
+    },
+    {
+      "at": "2026-04-21T22:30:51.474Z",
+      "type": "stage_message",
+      "message": "Welches Problem soll das Produkt loesen?"
+    }
+  ],
+  "files": [],
+  "createdAt": "2026-04-21T22:30:51.470Z",
+  "updatedAt": "2026-04-21T22:30:51.474Z"
+}
