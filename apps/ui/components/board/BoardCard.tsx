@@ -1,7 +1,6 @@
 import type { BoardCardViewModel } from "@/lib/view-models";
 import { AttentionIndicator } from "@/components/board/AttentionIndicator";
 import { BoardCardModeIcon } from "@/components/board/BoardCardModeIcon";
-import { CardMetaRow } from "@/components/board/CardMetaRow";
 
 export function BoardCard({ card }: { card: BoardCardViewModel }) {
   return (
@@ -12,10 +11,14 @@ export function BoardCard({ card }: { card: BoardCardViewModel }) {
       </div>
       <h4>{card.title}</h4>
       <p>{card.summary}</p>
-      <div className="board-card-signals">
+      <div className="item-signals">
         <AttentionIndicator attention={card.attention} />
+        {card.meta.map((entry) => (
+          <span key={`${entry.label}-${entry.value}`} className="item-meta">
+            {entry.value} {entry.label}
+          </span>
+        ))}
       </div>
-      <CardMetaRow meta={card.meta} />
     </article>
   );
 }

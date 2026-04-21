@@ -1,11 +1,11 @@
 import type { ProgressRowViewModel } from "@/lib/view-models";
 
 export function ItemProgressRow({ row }: { row: ProgressRowViewModel }) {
+  const note = row.status ? `${row.status} · ${row.note}` : row.note;
   return (
     <div className="detail-row">
       <strong>{row.stage}</strong>
-      <span>{row.status}</span>
-      <p>{row.note}</p>
+      <p>{note}</p>
     </div>
   );
 }
