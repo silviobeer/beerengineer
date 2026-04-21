@@ -15,10 +15,13 @@ import type { ArtifactRecord } from "../persistence/repositories.js";
 import type { WorkflowDeps } from "./workflow-deps.js";
 import type { WorkflowEntityLoaders } from "./entity-loaders.js";
 import {
+  extractBrainstormMessageStructure,
   extractLabeledBrainstormLists,
   hasAnyExtraction,
+  mergeBrainstormMessageStructures,
   type BrainstormExtraction,
-  type BrainstormExtractionField
+  type BrainstormListExtractionField,
+  type BrainstormMessageStructure
 } from "./brainstorm-message-parser.js";
 
 export type BrainstormDraftView = {
@@ -41,6 +44,46 @@ export type BrainstormDraftView = {
   assumptions: string[];
   lastUpdatedAt: number;
   lastUpdatedFromMessageId: string | null;
+};
+
+type BrainstormReviewFinding = {
+  severity: "major";
+  field:
+    | "problem"
+    | "coreOutcome"
+    | "targetUsers"
+    | "useCases"
+    | "constraints"
+    | "nonGoals"
+    | "risks"
+    | "assumptions"
+    | "openQuestions"
+    | "candidateDirections"
+    | "recommendedDirection";
+  summary: string;
+  detail: string;
+};
+
+type BrainstormReviewSummary = {
+  status: "clean" | "auto_backfilled" | "needs_follow_up";
+  summary: string;
+  findings: BrainstormReviewFinding[];
+  autoApplied: Array<{
+    field:
+      | "problem"
+      | "coreOutcome"
+      | "targetUsers"
+      | "useCases"
+      | "constraints"
+      | "nonGoals"
+      | "risks"
+      | "assumptions"
+      | "openQuestions"
+      | "candidateDirections"
+      | "recommendedDirection"
+      | "scopeNotes";
+    values: string[];
+  }>;
 };
 
 type BrainstormServiceOptions = {
@@ -153,7 +196,8 @@ export class BrainstormService {
       session,
       item,
       draft: this.mapBrainstormDraft(draft),
-      messages
+      messages,
+      latestReview: this.extractLatestBrainstormReview(messages)
     };
   }
 
@@ -348,11 +392,18 @@ export class BrainstormService {
       });
       const adapterDraftUpdate = this.mapInteractiveBrainstormDraftPatch(agentOutput.draftPatch);
       const extraction = extractLabeledBrainstormLists(message);
+      const messageStructure = mergeBrainstormMessageStructures(
+        [...messages, { role: "user", content: message }]
+          .filter((entry) => entry.role === "user")
+          .map((entry) => extractBrainstormMessageStructure(entry.content))
+      );
       const draftUpdate = this.augmentDraftUpdateWithMessageExtraction(
         adapterDraftUpdate,
         previousDraft,
-        extraction
+        extraction,
+        messageStructure
       );
+      const autoApplied = this.summarizeAutoAppliedDraftUpdates(previousDraft, draftUpdate);
       const nextDraft = this.options.deps.brainstormDraftRepository.createRevision(previousDraft, {
         ...draftUpdate,
         status: this.computeBrainstormDraftStatus({
@@ -361,15 +412,27 @@ export class BrainstormService {
         } as BrainstormDraft),
         lastUpdatedFromMessageId: userMessage.id
       });
+      const review = this.reviewBrainstormDraft({
+        draft: nextDraft,
+        messageStructure,
+        autoApplied
+      });
+      const reviewFollowUp = this.buildBrainstormReviewFollowUp(review);
+      const needsStructuredFollowUp = agentOutput.needsStructuredFollowUp || review.status === "needs_follow_up";
+      const followUpHint = reviewFollowUp ?? agentOutput.followUpHint ?? null;
+      const assistantMessageContent = review.status === "needs_follow_up"
+        ? this.buildBrainstormAssistantMessageWithReviewFollowUp(agentOutput.assistantMessage, reviewFollowUp)
+        : agentOutput.assistantMessage;
       const assistantMessage = this.options.deps.brainstormMessageRepository.create({
         sessionId: session.id,
         role: "assistant",
-        content: agentOutput.assistantMessage,
+        content: assistantMessageContent,
         structuredPayloadJson: JSON.stringify(
           {
             draftRevision: nextDraft.revision,
-            needsStructuredFollowUp: agentOutput.needsStructuredFollowUp,
-            followUpHint: agentOutput.followUpHint ?? null
+            needsStructuredFollowUp,
+            followUpHint,
+            brainstormReview: review
           },
           null,
           2
@@ -399,8 +462,9 @@ export class BrainstormService {
         status: nextStatus,
         mode: nextMode,
         draft: this.mapBrainstormDraft(nextDraft),
-        needsStructuredFollowUp: agentOutput.needsStructuredFollowUp,
-        followUpHint: agentOutput.followUpHint ?? null
+        needsStructuredFollowUp,
+        followUpHint,
+        review
       };
     });
   }
@@ -581,24 +645,35 @@ export class BrainstormService {
   private augmentDraftUpdateWithMessageExtraction(
     adapterUpdate: Partial<BrainstormDraft>,
     previousDraft: BrainstormDraft,
-    extraction: BrainstormExtraction
+    extraction: BrainstormExtraction,
+    messageStructure: BrainstormMessageStructure
   ): Partial<BrainstormDraft> {
-    if (!hasAnyExtraction(extraction)) {
+    if (!hasAnyExtraction(extraction) && !hasAnyExtraction(messageStructure)) {
       return adapterUpdate;
     }
     const fieldMap: Record<
-      BrainstormExtractionField,
-      "targetUsersJson" | "useCasesJson" | "constraintsJson" | "nonGoalsJson" | "risksJson" | "assumptionsJson"
+      BrainstormListExtractionField,
+      | "targetUsersJson"
+      | "useCasesJson"
+      | "constraintsJson"
+      | "nonGoalsJson"
+      | "risksJson"
+      | "assumptionsJson"
+      | "openQuestionsJson"
+      | "candidateDirectionsJson"
     > = {
       targetUsers: "targetUsersJson",
       useCases: "useCasesJson",
       constraints: "constraintsJson",
       nonGoals: "nonGoalsJson",
       risks: "risksJson",
-      assumptions: "assumptionsJson"
+      assumptions: "assumptionsJson",
+      openQuestions: "openQuestionsJson",
+      candidateDirections: "candidateDirectionsJson"
     };
     const result: Partial<BrainstormDraft> = { ...adapterUpdate };
-    for (const field of Object.keys(extraction) as BrainstormExtractionField[]) {
+    this.applyScalarBackfill(result, adapterUpdate, messageStructure);
+    for (const field of Object.keys(extraction) as BrainstormListExtractionField[]) {
       const entries = extraction[field];
       if (entries.length === 0) {
         continue;
@@ -609,12 +684,213 @@ export class BrainstormService {
       const existingEntries = adapterValue !== undefined
         ? (JSON.parse(adapterValue) as string[])
         : (JSON.parse(previousValue) as string[]);
-      if (existingEntries.length > 0) {
-        continue;
-      }
-      result[jsonKey] = JSON.stringify(this.normalizeBrainstormEntries(entries));
+      result[jsonKey] = JSON.stringify(this.normalizeBrainstormEntries([...existingEntries, ...entries]));
     }
     return result;
+  }
+
+  private applyScalarBackfill(
+    result: Partial<BrainstormDraft>,
+    adapterUpdate: Partial<BrainstormDraft>,
+    messageStructure: BrainstormMessageStructure
+  ): void {
+    if (messageStructure.problem && adapterUpdate.problem === undefined) {
+      result.problem = messageStructure.problem;
+    }
+    if (messageStructure.coreOutcome && adapterUpdate.coreOutcome === undefined) {
+      result.coreOutcome = messageStructure.coreOutcome;
+    }
+    if (messageStructure.recommendedDirection && adapterUpdate.recommendedDirection === undefined) {
+      result.recommendedDirection = messageStructure.recommendedDirection;
+    }
+    if (messageStructure.scopeNotes && adapterUpdate.scopeNotes === undefined) {
+      result.scopeNotes = messageStructure.scopeNotes;
+    }
+  }
+
+  private summarizeAutoAppliedDraftUpdates(
+    previousDraft: BrainstormDraft,
+    draftUpdate: Partial<BrainstormDraft>
+  ): BrainstormReviewSummary["autoApplied"] {
+    const applied: BrainstormReviewSummary["autoApplied"] = [];
+
+    const pushScalar = (
+      field: "problem" | "coreOutcome" | "recommendedDirection" | "scopeNotes",
+      value: string | null | undefined
+    ) => {
+      if (value === undefined || value === null) {
+        return;
+      }
+      if (previousDraft[field] === value) {
+        return;
+      }
+      applied.push({ field, values: [value] });
+    };
+
+    pushScalar("problem", draftUpdate.problem);
+    pushScalar("coreOutcome", draftUpdate.coreOutcome);
+    pushScalar("recommendedDirection", draftUpdate.recommendedDirection);
+    pushScalar("scopeNotes", draftUpdate.scopeNotes);
+
+    const listFieldMap: Array<{
+      field: BrainstormReviewSummary["autoApplied"][number]["field"];
+      key:
+        | "targetUsersJson"
+        | "useCasesJson"
+        | "constraintsJson"
+        | "nonGoalsJson"
+        | "risksJson"
+        | "assumptionsJson"
+        | "openQuestionsJson"
+        | "candidateDirectionsJson";
+    }> = [
+      { field: "targetUsers", key: "targetUsersJson" },
+      { field: "useCases", key: "useCasesJson" },
+      { field: "constraints", key: "constraintsJson" },
+      { field: "nonGoals", key: "nonGoalsJson" },
+      { field: "risks", key: "risksJson" },
+      { field: "assumptions", key: "assumptionsJson" },
+      { field: "openQuestions", key: "openQuestionsJson" },
+      { field: "candidateDirections", key: "candidateDirectionsJson" }
+    ];
+
+    for (const entry of listFieldMap) {
+      const nextValue = draftUpdate[entry.key];
+      if (nextValue === undefined) {
+        continue;
+      }
+      const previousValues = JSON.parse(previousDraft[entry.key]) as string[];
+      const nextValues = JSON.parse(nextValue) as string[];
+      const added = nextValues.filter((value) => !previousValues.some((previous) => previous.toLowerCase() === value.toLowerCase()));
+      if (added.length > 0) {
+        applied.push({ field: entry.field, values: added });
+      }
+    }
+
+    return applied;
+  }
+
+  private reviewBrainstormDraft(input: {
+    draft: BrainstormDraft;
+    messageStructure: BrainstormMessageStructure;
+    autoApplied: BrainstormReviewSummary["autoApplied"];
+  }): BrainstormReviewSummary {
+    const view = this.mapBrainstormDraft(input.draft);
+    const findings: BrainstormReviewFinding[] = [];
+
+    const checkScalar = (
+      field: BrainstormReviewFinding["field"],
+      sourceValue: string | null,
+      draftValue: string | null,
+      label: string
+    ) => {
+      if (!sourceValue) {
+        return;
+      }
+      if (draftValue && draftValue.trim().length > 0) {
+        return;
+      }
+      findings.push({
+        severity: "major",
+        field,
+        summary: `Missing ${label} from brainstorm draft`,
+        detail: `The chat history includes ${label}, but the current draft still does not capture it.`
+      });
+    };
+
+    const checkList = (
+      field: BrainstormReviewFinding["field"],
+      sourceValues: string[],
+      draftValues: string[],
+      label: string
+    ) => {
+      for (const sourceValue of sourceValues) {
+        const covered = draftValues.some((draftValue) => draftValue.toLowerCase() === sourceValue.toLowerCase());
+        if (!covered) {
+          findings.push({
+            severity: "major",
+            field,
+            summary: `Missing ${label} entry from brainstorm draft`,
+            detail: `The chat history includes "${sourceValue}", but the current draft does not capture it under ${label}.`
+          });
+        }
+      }
+    };
+
+    checkScalar("problem", input.messageStructure.problem, view.problem, "problem");
+    checkScalar("coreOutcome", input.messageStructure.coreOutcome, view.coreOutcome, "core outcome");
+    checkScalar("recommendedDirection", input.messageStructure.recommendedDirection, view.recommendedDirection, "recommended direction");
+    checkList("targetUsers", input.messageStructure.targetUsers, view.targetUsers, "target users");
+    checkList("useCases", input.messageStructure.useCases, view.useCases, "use cases");
+    checkList("constraints", input.messageStructure.constraints, view.constraints, "constraints");
+    checkList("nonGoals", input.messageStructure.nonGoals, view.nonGoals, "non-goals");
+    checkList("risks", input.messageStructure.risks, view.risks, "risks");
+    checkList("assumptions", input.messageStructure.assumptions, view.assumptions, "assumptions");
+    checkList("openQuestions", input.messageStructure.openQuestions, view.openQuestions, "open questions");
+    checkList("candidateDirections", input.messageStructure.candidateDirections, view.candidateDirections, "candidate directions");
+
+    if (findings.length > 0) {
+      return {
+        status: "needs_follow_up",
+        summary: `Brainstorm review found ${findings.length} missing chat-derived draft entr${findings.length === 1 ? "y" : "ies"}.`,
+        findings,
+        autoApplied: input.autoApplied
+      };
+    }
+    if (input.autoApplied.length > 0) {
+      return {
+        status: "auto_backfilled",
+        summary: `Brainstorm review backfilled ${input.autoApplied.length} draft field${input.autoApplied.length === 1 ? "" : "s"} from the chat history.`,
+        findings: [],
+        autoApplied: input.autoApplied
+      };
+    }
+    return {
+      status: "clean",
+      summary: "Brainstorm review found no missing chat-derived draft context.",
+      findings: [],
+      autoApplied: []
+    };
+  }
+
+  private extractLatestBrainstormReview(messages: Array<{ role: string; structuredPayloadJson: string | null }>): BrainstormReviewSummary | null {
+    for (const message of [...messages].reverse()) {
+      if (message.role !== "assistant" || !message.structuredPayloadJson) {
+        continue;
+      }
+      try {
+        const parsed = JSON.parse(message.structuredPayloadJson) as { brainstormReview?: BrainstormReviewSummary };
+        if (parsed.brainstormReview) {
+          return parsed.brainstormReview;
+        }
+      } catch {
+        continue;
+      }
+    }
+    return null;
+  }
+
+  private buildBrainstormReviewFollowUp(review: BrainstormReviewSummary): string | null {
+    if (review.status !== "needs_follow_up" || review.findings.length === 0) {
+      return null;
+    }
+    const findings = review.findings.slice(0, 3).map((finding) => {
+      if (finding.field === "problem" || finding.field === "coreOutcome" || finding.field === "recommendedDirection") {
+        return finding.field;
+      }
+      return `${finding.field}: ${finding.detail.match(/includes "(.+?)"/)?.[1] ?? finding.field}`;
+    });
+    return `Brainstorm review still misses chat-derived context. Capture: ${findings.join("; ")}.`;
+  }
+
+  private buildBrainstormAssistantMessageWithReviewFollowUp(baseMessage: string, reviewFollowUp: string | null): string {
+    if (!reviewFollowUp) {
+      return baseMessage;
+    }
+    if (baseMessage.includes(reviewFollowUp)) {
+      return baseMessage;
+    }
+    return `${baseMessage}\n\n${reviewFollowUp}`;
   }
 
   private normalizeBrainstormEntries(values: string[]): string[] {

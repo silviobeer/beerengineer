@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  extractBrainstormMessageStructure,
   extractLabeledBrainstormLists,
-  hasAnyExtraction
+  hasAnyExtraction,
+  mergeBrainstormMessageStructures
 } from "../../src/workflow/brainstorm-message-parser.js";
 
 describe("extractLabeledBrainstormLists", () => {
@@ -56,6 +58,29 @@ describe("extractLabeledBrainstormLists", () => {
     expect(result.assumptions).toEqual(["local-only workflow"]);
   });
 
+  it("extracts scalar brainstorm fields and extra list sections", () => {
+    const result = extractBrainstormMessageStructure(
+      [
+        "Problem: Operators lack a real control panel",
+        "Core outcome: Ship a workspace-first board and inbox shell",
+        "Open questions:",
+        "- What is the smallest useful slice?",
+        "Candidate directions:",
+        "- static shell first",
+        "- board read models second",
+        "Recommended direction: static shell first",
+        "Scope notes:",
+        "- showcase and component inventory are mandatory"
+      ].join("\n")
+    );
+    expect(result.problem).toBe("Operators lack a real control panel");
+    expect(result.coreOutcome).toBe("Ship a workspace-first board and inbox shell");
+    expect(result.openQuestions).toEqual(["What is the smallest useful slice?"]);
+    expect(result.candidateDirections).toEqual(["static shell first", "board read models second"]);
+    expect(result.recommendedDirection).toBe("static shell first");
+    expect(result.scopeNotes).toBe("showcase and component inventory are mandatory");
+  });
+
   it("dedupes and trims whitespace", () => {
     const result = extractLabeledBrainstormLists(
       ["users: Alice;  Alice  ; bob", "Users:", "- alice", "- charlie"].join("\n")
@@ -73,5 +98,31 @@ describe("extractLabeledBrainstormLists", () => {
       ["Use cases:", "- inspect sessions", "", "- stray bullet after blank line"].join("\n")
     );
     expect(result.useCases).toEqual(["inspect sessions"]);
+  });
+
+  it("merges multiple structured chat messages with latest scalar values and unioned lists", () => {
+    const merged = mergeBrainstormMessageStructures([
+      extractBrainstormMessageStructure(
+        [
+          "Problem: Operators rely on CLI output",
+          "Users: workflow operator",
+          "Use cases: review overlay"
+        ].join("\n")
+      ),
+      extractBrainstormMessageStructure(
+        [
+          "Core outcome: Ship a board-first UI shell",
+          "Users: reviewer",
+          "Use cases: browse inbox",
+          "Recommended direction: shell first"
+        ].join("\n")
+      )
+    ]);
+
+    expect(merged.problem).toBe("Operators rely on CLI output");
+    expect(merged.coreOutcome).toBe("Ship a board-first UI shell");
+    expect(merged.recommendedDirection).toBe("shell first");
+    expect(merged.targetUsers).toEqual(["workflow operator", "reviewer"]);
+    expect(merged.useCases).toEqual(["review overlay", "browse inbox"]);
   });
 });

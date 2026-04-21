@@ -39,6 +39,9 @@ Aktueller Implementierungsstand:
   Planning-Review-Run im generischen Review-Core fuer `requirements_engineering`
 - dieser Review-Lauf ist in V1 eine zusaetzliche Entscheidungs- und
   Readiness-Sicht, aber kein hartes Gate
+- `brainstorm:chat` fuehrt vor `promote` bereits einen formalen,
+  engine-seitigen Brainstorm-Review aus, der den gesamten User-Chatverlauf
+  gegen den aktuellen `BrainstormDraft` spiegelt
 
 ## Grundprinzip
 
@@ -55,6 +58,16 @@ Das bedeutet:
 - die UI zeigt immer den aktuellen Draft als belastbaren Arbeitsstand
 - der spaetere Concept-Step arbeitet aus dem Draft heraus, nicht aus rohen
   Chatnachrichten
+
+Zusatz zum aktuellen Laufzeitverhalten:
+
+- der Chat ist nicht nur Eingabekanal, sondern auch Review-Quelle
+- klar gelabelte planartige Inhalte aus User-Nachrichten werden serverseitig
+  extrahiert
+- sichere additive Inhalte duerfen direkt in den Draft zurueckgeschrieben
+  werden
+- verbleibende Luecken werden als formaler Brainstorm-Review im
+  Assistant-Message-Payload und im API-Response sichtbar
 
 ## Produktcharakter des Steps
 
@@ -192,6 +205,15 @@ Beispielhafte Felder:
 - erkannte offene Fragen
 - vorgeschlagene Draft-Updates
 
+`structuredPayloadJson` der Assistant-Nachricht kann zusaetzlich enthalten:
+
+- `needsStructuredFollowUp`
+- `followUpHint`
+- `brainstormReview`
+
+`brainstormReview` ist der persistierte, formale Review-Snapshot des
+Chat-Schritts.
+
 ### `BrainstormDraft`
 
 Strukturierter Arbeitsstand fuer das Item.
@@ -217,6 +239,80 @@ Beispielhafte Felder:
 - `assumptions`
 - `lastUpdatedAt`
 - `lastUpdatedFromMessageId`
+
+## Formales Brainstorm-Review
+
+Jeder `brainstorm:chat`-Schritt hat zwei Ebenen:
+
+1. den modellgetriebenen Draft-Patch
+2. den deterministischen Engine-Review gegen den gesamten User-Chatverlauf
+
+Der Engine-Review beantwortet nach jedem Chat-Schritt diese Frage:
+
+"Ist relevanter, bereits im Chat genannter Kontext noch nicht im Draft
+enthalten?"
+
+### Ziele
+
+- fruehen Kontextverlust zwischen Chat und Draft verhindern
+- providerbedingte Schwankungen bei der Strukturierung abfedern
+- sichere additive Rueckfuehrung in den Draft erlauben
+- verbleibende Luecken sofort sichtbar machen statt erst bei `promote`
+
+### Review-Eingaben
+
+Der Brainstorm-Review arbeitet auf:
+
+- gesamtem persistierten User-Chatverlauf der Session
+- aktuellem `BrainstormDraft`
+- serverseitig extrahierten planartigen Strukturen aus den User-Nachrichten
+
+Typisch extrahierbare Felder:
+
+- `problem`
+- `coreOutcome`
+- `targetUsers`
+- `useCases`
+- `constraints`
+- `nonGoals`
+- `risks`
+- `assumptions`
+- `openQuestions`
+- `candidateDirections`
+- `recommendedDirection`
+- `scopeNotes`
+
+### Review-Ergebnisse
+
+Der formale Review liefert einen strukturierten Block:
+
+- `status`
+  - `clean`
+  - `auto_backfilled`
+  - `needs_follow_up`
+- `summary`
+- `findings`
+- `autoApplied`
+
+`autoApplied` dokumentiert, welche Draft-Felder serverseitig sicher und additiv
+nachgezogen wurden.
+
+`findings` dokumentiert verbleibende Luecken zwischen Chat und Draft.
+
+### Sichtbares Verhalten
+
+Wenn der Review noch fehlenden Chat-Kontext erkennt:
+
+- `needsStructuredFollowUp` wird im Chat-Response gesetzt
+- `followUpHint` beschreibt die fehlenden Punkte kompakt
+- die Assistant-Antwort spiegelt den Hinweis direkt im Freitext
+
+Wenn der Review sichere Inhalte nachzieht:
+
+- der Draft wird additiv aktualisiert
+- der Review meldet `auto_backfilled`
+- die Session bleibt voll nachvollziehbar, weil der Review im
+  Assistant-Message-Payload persistiert wird
 
 Im aktuellen Implementierungsstand kann ein `BrainstormDraft` auch direkt als
 `planning review`-Quelle verwendet werden:

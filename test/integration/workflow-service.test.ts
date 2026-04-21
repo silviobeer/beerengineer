@@ -1130,6 +1130,150 @@ describe("workflow service", () => {
     }
   });
 
+  it("reviews the brainstorm chat history and backfills missing structured fields across messages", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const item = createWorkspaceItem(context, {
+        title: "UI Shell Brainstorm Review",
+        description: "Check brainstorm backfill from chat history"
+      });
+      const started = context.workflowService.startBrainstormSession(item.id);
+
+      await context.workflowService.chatBrainstorm(
+        started.sessionId,
+        [
+          "Problem: Operators lack a workspace-scoped UI shell",
+          "Core outcome: Deliver a board-first UI shell with overlay and inbox",
+          "Target users:",
+          "- workflow operator",
+          "",
+          "Use cases:",
+          "- board",
+          "- overlay"
+        ].join("\n")
+      );
+
+      const chatted = await context.workflowService.chatBrainstorm(
+        started.sessionId,
+        [
+          "Target users:",
+          "- reviewer",
+          "",
+          "Use cases:",
+          "- inbox",
+          "- runs and artifacts",
+          "",
+          "Candidate directions:",
+          "- static shell first",
+          "- board read models second",
+          "Recommended direction: static shell first",
+          "Open questions:",
+          "- What is the smallest useful slice?"
+        ].join("\n")
+      ) as {
+        draft: {
+          problem: string | null;
+          coreOutcome: string | null;
+          targetUsers: string[];
+          useCases: string[];
+          openQuestions: string[];
+          candidateDirections: string[];
+          recommendedDirection: string | null;
+        };
+        review: {
+          status: string;
+          findings: unknown[];
+          autoApplied: Array<{ field: string; values: string[] }>;
+        };
+      };
+
+      expect(chatted.draft.problem).toBe("Operators lack a workspace-scoped UI shell");
+      expect(chatted.draft.coreOutcome).toBe("Deliver a board-first UI shell with overlay and inbox");
+      expect(chatted.draft.targetUsers).toEqual(["workflow operator", "reviewer"]);
+      expect(chatted.draft.useCases).toEqual(["board", "overlay", "inbox", "runs and artifacts"]);
+      expect(chatted.draft.candidateDirections).toEqual(["static shell first", "board read models second"]);
+      expect(chatted.draft.recommendedDirection).toBe("static shell first");
+      expect(chatted.draft.openQuestions).toContain("What is the smallest useful slice?");
+      expect(chatted.review.status).toBe("auto_backfilled");
+      expect(chatted.review.autoApplied.some((entry: { field: string }) => entry.field === "targetUsers")).toBe(true);
+      expect(chatted.review.findings).toEqual([]);
+
+      const shown = context.workflowService.showBrainstormBySessionId(started.sessionId) as {
+        latestReview: { status: string; summary: string };
+      };
+      expect(shown.latestReview.status).toBe("auto_backfilled");
+      expect(shown.latestReview.summary).toContain("backfilled");
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("surfaces brainstorm review follow-up hints when chat-derived context is still missing from the draft", async () => {
+    const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
+    const dbPath = join(root, "app.sqlite");
+    const context = createAppContext(dbPath);
+
+    try {
+      const item = createWorkspaceItem(context, {
+        title: "Brainstorm Review Follow-up",
+        description: "Show deterministic follow-up hints"
+      });
+      const started = context.workflowService.startBrainstormSession(item.id);
+
+      await context.workflowService.chatBrainstorm(
+        started.sessionId,
+        [
+          "Target users:",
+          "- workflow operator",
+          "- reviewer",
+          "",
+          "Use cases:",
+          "- board",
+          "- overlay"
+        ].join("\n")
+      );
+
+      context.workflowService.updateBrainstormDraft({
+        sessionId: started.sessionId,
+        targetUsers: [],
+        useCases: []
+      });
+
+      const chatted = await context.workflowService.chatBrainstorm(
+        started.sessionId,
+        "I think the direction still makes sense."
+      ) as {
+        needsStructuredFollowUp: boolean;
+        followUpHint: string | null;
+        review: {
+          status: string;
+          findings: Array<{ field: string; detail: string }>;
+        };
+      };
+
+      expect(chatted.review.status).toBe("needs_follow_up");
+      expect(chatted.needsStructuredFollowUp).toBe(true);
+      expect(chatted.followUpHint).toContain("Brainstorm review still misses chat-derived context");
+      expect(chatted.review.findings.some((finding) => finding.field === "targetUsers")).toBe(true);
+      expect(chatted.review.findings.some((finding) => finding.field === "useCases")).toBe(true);
+
+      const shown = context.workflowService.showBrainstormBySessionId(started.sessionId) as {
+        messages: Array<{ role: string; content: string; structuredPayloadJson: string | null }>;
+        latestReview: { status: string };
+      };
+      expect(shown.latestReview.status).toBe("needs_follow_up");
+      const lastAssistant = [...shown.messages].reverse().find((message) => message.role === "assistant");
+      expect(lastAssistant?.content ?? "").toContain("Brainstorm review still misses chat-derived context");
+    } finally {
+      context.connection.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("shows the latest brainstorm session by item without reopening a resolved session", async () => {
     const root = mkdtempSync(join(tmpdir(), "beerengineer-run-"));
     const dbPath = join(root, "app.sqlite");

@@ -248,6 +248,8 @@ Human-in-the-loop-Pfad:
 
 - `brainstorm:show` liefert fuer ein Item die neueste persistente Session zurueck und initialisiert nur dann eine neue Session, wenn fuer das Item noch keine interaktive Brainstorm-Session existiert.
 - `brainstorm:chat` speichert User- und Assistant-Nachrichten, ruft den konfigurierten Interactive-Chat-Adapter auf und validiert dessen strukturierte Draft-Patches strikt gegen das Engine-Schema.
+- `brainstorm:chat` fuehrt danach zusaetzlich einen engine-seitigen Brainstorm-Review auf dem gesamten User-Chatverlauf gegen den aktuellen `BrainstormDraft` aus.
+- dieser Brainstorm-Review arbeitet deterministisch und provider-unabhaengig: klar gelabelte Inhalte aus dem Chat werden serverseitig in strukturierte Draft-Felder extrahiert, fehlende sichere Inhalte additiv nachgezogen und verbleibende Luecken als formale Review-Findings markiert.
 - `brainstorm:draft` gibt den neuesten versionierten Draft fuer eine Session direkt aus.
 - `brainstorm:draft:update` erlaubt gezielte feldweise Aenderungen am Draft, inklusive wiederholbarer Listenfelder wie `--target-user`, `--use-case`, `--candidate-direction` und optionalem Leeren ueber `--clear-*`.
 - `brainstorm:promote` erzeugt aus dem Draft die manuellen Artefakte `concept` und `projects`, legt einen `Concept`-Record an und schliesst die Brainstorm-Session formal ab.
@@ -260,6 +262,14 @@ Wichtig:
 
 - `brainstorm:start` bleibt absichtlich der bestehende nicht-interaktive Stage-Run.
 - `brainstorm:chat` ist jetzt provider-agnostisch: Codex, Claude oder ein anderer Adapter muessen denselben strukturierten Draft-Patch-Vertrag liefern.
+- `brainstorm:show` liefert neben Session, Draft und Messages auch den neuesten formalen `latestReview`-Block aus dem Chat-Pfad, sofern bereits ein Brainstorm-Review persistiert wurde.
+- die `brainstorm:chat`-Response kann jetzt zusaetzlich einen `review`-Block enthalten:
+  - `status`: `clean` | `auto_backfilled` | `needs_follow_up`
+  - `summary`
+  - `findings`
+  - `autoApplied`
+- wenn der formale Brainstorm-Review noch chat-abgeleiteten Kontext im Draft vermisst, setzt `brainstorm:chat` `needsStructuredFollowUp=true`, fuellt `followUpHint` aus und haengt den Hinweis direkt an die Assistant-Antwort an.
+- wenn der Chat klar gelabelte Felder wie `problem:`, `core outcome:`, `users:`, `use cases:`, `constraints:`, `non-goals:`, `risks:`, `assumptions:`, `open questions:`, `candidate directions:` oder `recommended direction:` enthaelt, darf die Engine diese Inhalte serverseitig additiv in den Draft uebernehmen, auch wenn der Adapter sie nicht sauber strukturiert gepatcht hat.
 - `review:chat` ist ebenfalls provider-agnostisch und akzeptiert nur schema-valide Entry-Updates fuer Stories.
 - Fuer praezise maschinenlesbare Aenderungen ist `brainstorm:draft:update` der verlässlichere Pfad.
 - `brainstorm:promote` ist der formale Uebergang von `brainstorm` nach `concept`.
