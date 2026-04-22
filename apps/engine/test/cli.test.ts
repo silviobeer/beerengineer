@@ -233,8 +233,12 @@ test("workspace add/register/open/remove work end-to-end through the CLI", () =>
     )
     assert.equal(add.status, 0, `${add.stdout ?? ""}\n${add.stderr ?? ""}`)
     assert.match(add.stdout ?? "", /Registered as "demo-app" \(key: demo-app\)\./)
+    assert.match(add.stdout ?? "", /SonarCloud config generation skipped until a GitHub origin remote is configured/)
+    assert.match(add.stdout ?? "", /SONAR_TOKEN is not configured yet; CI and local scans will remain incomplete/)
+    assert.match(add.stdout ?? "", /Optional: install the CLI with npm i -g @coderabbit\/cli/)
+    assert.match(add.stdout ?? "", /BeerEngineer will skip CodeRabbit review for the workspace/)
     assert.ok(existsSync(join(workspacePath, ".beerengineer", "workspace.json")))
-    assert.ok(existsSync(join(workspacePath, "sonar-project.properties")))
+    assert.equal(existsSync(join(workspacePath, "sonar-project.properties")), false)
 
     const open = spawnSync(process.execPath, [binPath, "workspace", "open", "demo-app"], {
       cwd: engineRoot,
@@ -252,7 +256,7 @@ test("workspace add/register/open/remove work end-to-end through the CLI", () =>
     assert.equal(get.status, 0, `${get.stdout ?? ""}\n${get.stderr ?? ""}`)
     const workspace = JSON.parse(get.stdout) as { key: string; sonarEnabled: boolean; harnessProfile: { mode: string } }
     assert.equal(workspace.key, "demo-app")
-    assert.equal(workspace.sonarEnabled, true)
+    assert.equal(workspace.sonarEnabled, false)
     assert.equal(workspace.harnessProfile.mode, "fast")
 
     const remove = spawnSync(process.execPath, [binPath, "workspace", "remove", "demo-app"], {
