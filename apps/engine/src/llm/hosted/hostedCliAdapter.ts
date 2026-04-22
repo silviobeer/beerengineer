@@ -39,7 +39,7 @@ export async function runHostedCli(
   })
 
   try {
-    const result = await spawnCommand(command, request.prompt)
+    const result = await spawnCommand(command, request.prompt, request.runtime.workspaceRoot)
     const outputText = await resolveOutputText(result.stdout, responsePath)
     if (result.exitCode !== 0) {
       throw new Error(
@@ -68,24 +68,32 @@ async function resolveOutputText(stdout: string, responsePath: string): Promise<
   return stdout
 }
 
-function spawnCommand(command: string[], stdinText: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+function spawnCommand(command: string[], stdinText: string, cwd: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   return new Promise((resolve, reject) => {
     const child = spawn(command[0], command.slice(1), {
-      cwd: process.cwd(),
+      cwd,
       env: process.env,
       stdio: ["pipe", "pipe", "pipe"],
     })
     const stdoutChunks: Buffer[] = []
     const stderrChunks: Buffer[] = []
-    child.on("error", reject)
+    let settled = false
+    const settle = (fn: () => void) => {
+      if (settled) return
+      settled = true
+      fn()
+    }
+    child.once("error", err => settle(() => reject(err)))
     child.stdout.on("data", chunk => stdoutChunks.push(chunk as Buffer))
     child.stderr.on("data", chunk => stderrChunks.push(chunk as Buffer))
-    child.on("close", code => {
-      resolve({
-        stdout: Buffer.concat(stdoutChunks).toString("utf8"),
-        stderr: Buffer.concat(stderrChunks).toString("utf8"),
-        exitCode: code ?? 1,
-      })
+    child.once("close", code => {
+      settle(() =>
+        resolve({
+          stdout: Buffer.concat(stdoutChunks).toString("utf8"),
+          stderr: Buffer.concat(stderrChunks).toString("utf8"),
+          exitCode: code ?? 1,
+        }),
+      )
     })
     child.stdin.write(stdinText)
     child.stdin.end()
@@ -94,14 +102,56 @@ function spawnCommand(command: string[], stdinText: string): Promise<{ stdout: s
 
 function parseJsonObject(text: string): Record<string, unknown> {
   const trimmed = text.trim()
+  const candidates: string[] = []
+  candidates.push(trimmed)
   const fence = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)
-  const candidate = fence?.[1]?.trim() ?? trimmed
-  const first = candidate.indexOf("{")
-  const last = candidate.lastIndexOf("}")
-  if (first < 0 || last < first) {
-    throw new Error(`Provider output did not contain a JSON object: ${candidate.slice(0, 200)}`)
+  if (fence?.[1]) candidates.push(fence[1].trim())
+  const outermost = extractOutermostJsonObject(trimmed)
+  if (outermost) candidates.push(outermost)
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate) as unknown
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>
+      }
+    } catch {
+      // Try the next candidate.
+    }
   }
-  return JSON.parse(candidate.slice(first, last + 1)) as Record<string, unknown>
+  throw new Error(`Provider output did not contain a JSON object: ${trimmed.slice(0, 200)}`)
+}
+
+// Scan for the outermost balanced {...} block, ignoring braces inside strings.
+// Robust against markdown prose before/after and embedded example objects.
+function extractOutermostJsonObject(text: string): string | null {
+  let depth = 0
+  let start = -1
+  let inString = false
+  let escape = false
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    if (inString) {
+      if (escape) escape = false
+      else if (ch === "\\") escape = true
+      else if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') {
+      inString = true
+      continue
+    }
+    if (ch === "{") {
+      if (depth === 0) start = i
+      depth++
+    } else if (ch === "}") {
+      depth--
+      if (depth === 0 && start >= 0) {
+        return text.slice(start, i + 1)
+      }
+    }
+  }
+  return null
 }
 
 export class HostedStageAdapter<S, A> implements StageAgentAdapter<S, A> {

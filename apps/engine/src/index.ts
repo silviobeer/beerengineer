@@ -20,7 +20,14 @@ import { initDatabase } from "./db/connection.js"
 import { Repos } from "./db/repositories.js"
 import { runWorkflowWithSync } from "./core/runOrchestrator.js"
 import type { ItemRow } from "./db/repositories.js"
-import { KNOWN_GROUP_IDS, readConfigFile, resolveConfigPath, resolveMergedConfig, resolveOverrides } from "./setup/config.js"
+import {
+  KNOWN_GROUP_IDS,
+  readConfigFile,
+  resolveConfigPath,
+  resolveMergedConfig,
+  resolveOverrides,
+  validateHarnessProfileShape,
+} from "./setup/config.js"
 import { generateSetupReport, runDoctorCommand, runSetupCommand } from "./setup/doctor.js"
 import type { AppConfig } from "./setup/types.js"
 import type { HarnessProfile, RegisterWorkspaceInput } from "./types/workspace.js"
@@ -241,7 +248,13 @@ function loadEffectiveConfig(): AppConfig | null {
 
 function parseHarnessProfile(input: { profile?: string; profileJson?: string }, config: AppConfig): HarnessProfile {
   if (input.profileJson) {
-    return JSON.parse(input.profileJson) as HarnessProfile
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(input.profileJson)
+    } catch (err) {
+      throw new Error(`--profile-json is not valid JSON: ${(err as Error).message}`)
+    }
+    return validateHarnessProfileShape(parsed)
   }
   switch (input.profile) {
     case undefined:
@@ -354,6 +367,7 @@ async function runWorkspaceAddCommand(cmd: Extract<Command, { kind: "workspace-a
       return 1
     }
     for (const action of result.actions) console.log(`  ${action}`)
+    for (const warning of result.warnings) console.log(`  ! ${warning}`)
     console.log(`\n  Registered as "${result.workspace.name}" (key: ${result.workspace.key}).`)
     if (result.sonarProjectUrl) {
       console.log("\n  Next steps")
@@ -413,15 +427,29 @@ async function runWorkspaceRemoveCommand(key: string | undefined, purge = false,
     console.error("  Missing key: beerengineer workspace remove <key>")
     return 2
   }
+  // Only load config when purge is requested. Non-purge removal doesn't touch
+  // the filesystem so it should keep working even if the config is missing.
+  const config = purge ? loadEffectiveConfig() : null
+  if (purge && !config) {
+    console.error("  App config is missing or invalid. Run `beerengineer setup` first.")
+    return 1
+  }
   const db = initDatabase()
   try {
-    const result = await removeWorkspace(new Repos(db), key, { purge })
+    const result = await removeWorkspace(new Repos(db), key, {
+      purge,
+      allowedRoots: config?.allowedRoots,
+    })
     if (json) {
       process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
       return result.ok ? 0 : 1
     }
     if (!result.ok) return 1
-    console.log(`  Removed workspace ${key}${purge && result.purgedPath ? ` and purged ${result.purgedPath}` : ""}`)
+    if (result.purgeSkipped) {
+      console.log(`  Removed workspace ${key} (purge skipped: ${result.purgeSkipped.reason} for ${result.purgeSkipped.path})`)
+    } else {
+      console.log(`  Removed workspace ${key}${purge && result.purgedPath ? ` and purged ${result.purgedPath}` : ""}`)
+    }
     return 0
   } finally {
     db.close()

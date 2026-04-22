@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
 import { URL } from "node:url"
+import { randomBytes } from "node:crypto"
 import {
   backfillWorkspaceConfigs,
   getRegisteredWorkspace,
@@ -18,12 +19,29 @@ import { createItemActionsService, isItemAction, type ItemActionEvent } from "..
 import { isResumeInFlight, loadResumeReadiness, performResume } from "../core/resume.js"
 import { LOG_TAIL_INTERVAL_MS } from "../core/constants.js"
 import { generateSetupReport } from "../setup/doctor.js"
-import { KNOWN_GROUP_IDS, readConfigFile, resolveConfigPath, resolveMergedConfig, resolveOverrides } from "../setup/config.js"
-import type { AppConfig } from "../setup/types.js"
+import {
+  KNOWN_GROUP_IDS,
+  readConfigFile,
+  resolveConfigPath,
+  resolveMergedConfig,
+  resolveOverrides,
+  validateHarnessProfileShape,
+} from "../setup/config.js"
+import type { AppConfig, SetupReport } from "../setup/types.js"
 import type { HarnessProfile, RegisterWorkspaceInput } from "../types/workspace.js"
 
 const PORT = Number(process.env.PORT ?? 4100)
 const HOST = process.env.HOST ?? "127.0.0.1"
+
+// CSRF token: the local engine binds to 127.0.0.1 with permissive CORS so the
+// paired UI on a different port can talk to it. Without a token, any browser
+// tab a user visits could issue mutating requests (POST /workspaces, DELETE
+// /workspaces/:key?purge=1, …) from its own origin. We require this token on
+// all mutating methods. The token is printed once to stderr on startup and
+// read by the UI via BEERENGINEER_API_TOKEN.
+const API_TOKEN = process.env.BEERENGINEER_API_TOKEN ?? randomBytes(24).toString("hex")
+const API_TOKEN_WAS_PROVIDED = Boolean(process.env.BEERENGINEER_API_TOKEN)
+const ALLOWED_ORIGIN = process.env.BEERENGINEER_UI_ORIGIN ?? "http://127.0.0.1:3100"
 
 const db = initDatabase()
 const repos = new Repos(db)
@@ -67,10 +85,26 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
   }
 }
 
-function setCors(res: ServerResponse): void {
-  res.setHeader("access-control-allow-origin", "*")
+function setCors(res: ServerResponse, req: IncomingMessage): void {
+  // Echo only the approved UI origin. `*` combined with a DELETE route that
+  // does rm -rf would let any page on the user's browser delete workspaces.
+  const origin = req.headers.origin
+  if (origin === ALLOWED_ORIGIN) {
+    res.setHeader("access-control-allow-origin", origin)
+    res.setHeader("vary", "origin")
+    res.setHeader("access-control-allow-credentials", "true")
+  }
   res.setHeader("access-control-allow-methods", "GET,POST,DELETE,OPTIONS")
-  res.setHeader("access-control-allow-headers", "content-type")
+  res.setHeader("access-control-allow-headers", "content-type, x-beerengineer-token")
+}
+
+const MUTATING_METHODS = new Set(["POST", "DELETE", "PUT", "PATCH"])
+
+function requireCsrfToken(req: IncomingMessage): boolean {
+  if (!MUTATING_METHODS.has(req.method ?? "")) return true
+  const header = req.headers["x-beerengineer-token"]
+  const value = Array.isArray(header) ? header[0] : header
+  return typeof value === "string" && value === API_TOKEN
 }
 
 function parseLogData(dataJson: string | null): unknown {
@@ -246,7 +280,24 @@ async function handleSetupStatus(url: URL, res: ServerResponse): Promise<void> {
 
 function parseWorkspaceProfile(input: unknown, config: AppConfig): HarnessProfile {
   if (!input) return config.llm.defaultHarnessProfile
-  return input as HarnessProfile
+  return validateHarnessProfileShape(input)
+}
+
+// generateSetupReport({ allLlmGroups: true }) shells out to probe each LLM CLI
+// (version + auth) on every call. registerWorkspace needs that report to
+// validate harness availability, but running every POST /workspaces through
+// those child processes makes the API needlessly slow. 30 s is short enough
+// that a user who just installed a missing CLI can retry without restarting.
+const SETUP_REPORT_TTL_MS = 30_000
+let cachedSetupReport: { report: SetupReport; at: number } | null = null
+
+async function getCachedSetupReport(): Promise<SetupReport> {
+  if (cachedSetupReport && Date.now() - cachedSetupReport.at < SETUP_REPORT_TTL_MS) {
+    return cachedSetupReport.report
+  }
+  const report = await generateSetupReport({ allLlmGroups: true })
+  cachedSetupReport = { report, at: Date.now() }
+  return report
 }
 
 async function handleWorkspacePreview(url: URL, res: ServerResponse): Promise<void> {
@@ -271,16 +322,22 @@ async function handleWorkspaceAdd(req: IncomingMessage, res: ServerResponse): Pr
     git?: RegisterWorkspaceInput["git"]
   }
   if (!body.path) return json(res, 400, { error: "path_required" })
+  let harnessProfile: HarnessProfile
+  try {
+    harnessProfile = parseWorkspaceProfile(body.harnessProfile, config)
+  } catch (err) {
+    return json(res, 400, { error: "invalid_harness_profile", detail: (err as Error).message })
+  }
   const input: RegisterWorkspaceInput = {
     path: body.path,
     create: body.create,
     name: body.name,
     key: body.key,
-    harnessProfile: parseWorkspaceProfile(body.harnessProfile, config),
+    harnessProfile,
     sonar: body.sonar,
     git: body.git,
   }
-  const appReport = await generateSetupReport({ allLlmGroups: true })
+  const appReport = await getCachedSetupReport()
   const result = await registerWorkspace(input, { repos, config, appReport })
   if (!result.ok) return json(res, 409, result)
   json(res, 200, result)
@@ -298,7 +355,12 @@ function handleWorkspaceGet(res: ServerResponse, key: string): void {
 
 async function handleWorkspaceRemove(url: URL, res: ServerResponse, key: string): Promise<void> {
   const purge = url.searchParams.get("purge") === "1" || url.searchParams.get("purge") === "true"
-  const result = await removeWorkspace(repos, key, { purge })
+  const config = purge ? loadEffectiveConfig() : null
+  if (purge && !config) return json(res, 409, { error: "config_unavailable" })
+  const result = await removeWorkspace(repos, key, {
+    purge,
+    allowedRoots: config?.allowedRoots,
+  })
   if (!result.ok) return json(res, 404, { error: "workspace_not_found" })
   json(res, 200, result)
 }
@@ -579,11 +641,14 @@ seedIfEmpty()
 
 const server = createServer(async (req, res) => {
   if (!req.url || !req.method) return json(res, 400, { error: "bad request" })
-  setCors(res)
+  setCors(res, req)
   if (req.method === "OPTIONS") {
     res.writeHead(204)
     res.end()
     return
+  }
+  if (!requireCsrfToken(req)) {
+    return json(res, 403, { error: "csrf_token_required" })
   }
 
   const url = new URL(req.url, `http://${HOST}:${PORT}`)
@@ -650,4 +715,10 @@ const server = createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`beerengineer2 engine listening on http://${HOST}:${PORT}`)
+  if (!API_TOKEN_WAS_PROVIDED) {
+    // Written to stderr so stdout consumers (e.g. JSON emitters) stay clean.
+    // The UI should export BEERENGINEER_API_TOKEN before it boots so it knows
+    // the value without having to parse this line.
+    console.error(`[engine] BEERENGINEER_API_TOKEN=${API_TOKEN}`)
+  }
 })

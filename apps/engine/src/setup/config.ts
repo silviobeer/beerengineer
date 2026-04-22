@@ -6,7 +6,11 @@ import type { AppConfig, ConfigFileState, LlmProvider, SetupOverrides } from "./
 import type { HarnessProfile } from "../types/workspace.js"
 
 export const CONFIG_SCHEMA_VERSION = 1
-export const REQUIRED_MIGRATION_LEVEL = 2
+// Hold at 1 until we introduce a real from→to migrate runner. The idempotent
+// ALTER TABLE helpers in db/connection.ts bring any DB up to current shape on
+// every open, so bumping this number without a discrete step-2 runner would be
+// a concept leak — `user_version` would claim "level 2" purely by side effect.
+export const REQUIRED_MIGRATION_LEVEL = 1
 export const KNOWN_GROUP_IDS = [
   "core",
   "vcs.github",
@@ -74,7 +78,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object"
 }
 
-function validateHarnessProfileShape(input: unknown): HarnessProfile {
+export function validateHarnessProfileShape(input: unknown): HarnessProfile {
   if (!isObject(input) || typeof input.mode !== "string") {
     throw new Error("llm.defaultHarnessProfile must be an object with a mode")
   }
@@ -84,7 +88,9 @@ function validateHarnessProfileShape(input: unknown): HarnessProfile {
     input.mode === "claude-first" ||
     input.mode === "codex-only" ||
     input.mode === "claude-only" ||
-    input.mode === "fast"
+    input.mode === "fast" ||
+    input.mode === "opencode-china" ||
+    input.mode === "opencode-euro"
   ) {
     return { mode: input.mode }
   }

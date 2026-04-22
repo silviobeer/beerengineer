@@ -318,9 +318,10 @@ test("help output explains that user prompts are limited to intake and blockers"
 })
 
 // Integration smoke test: drives the real workflow through stdio with scripted
-// answers. Gate behind BE2_RUN_SLOW_TESTS because it's sensitive to workflow
-// prompt changes and has a 15s hard timeout.
-test("beerengineer item action start_brainstorm runs to completion through the terminal CLI", { skip: process.env.BE2_RUN_SLOW_TESTS !== "1" ? "set BE2_RUN_SLOW_TESTS=1 to run" : false }, () => {
+// answers. Kept in the main suite because it's the regression catch for the
+// lookupTransition wiring between index.ts and itemActions.ts — skipping it
+// previously let a broken start_brainstorm CLI ship unnoticed.
+test("beerengineer item action start_brainstorm runs to completion through the terminal CLI", () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-cli-"))
   const testDir = dirname(fileURLToPath(import.meta.url))
   const engineRoot = resolve(testDir, "..")

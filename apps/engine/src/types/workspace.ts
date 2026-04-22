@@ -34,6 +34,8 @@ export type HarnessProfile =
   | { mode: "codex-only" }
   | { mode: "claude-only" }
   | { mode: "fast" }
+  | { mode: "opencode-china" }
+  | { mode: "opencode-euro" }
   | {
       mode: "opencode"
       roles: {

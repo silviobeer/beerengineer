@@ -12,7 +12,7 @@ export default async function RunsPage() {
   const runs = await listRuns().catch(() => [])
 
   return (
-    <AppShell shell={shellViewModel} activeHref="/runs">
+    <AppShell shell={shellViewModel} activeHref="/runs" workspaceHrefBase="/runs">
       <Panel className="padded stack-panel">
         <SectionTitle
           title="Runs"

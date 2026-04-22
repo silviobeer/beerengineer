@@ -6,7 +6,7 @@ import { shellViewModel } from "@/lib/mock-legacy-data";
 
 export default function ArtifactsPage() {
   return (
-    <AppShell shell={shellViewModel} activeHref="/artifacts">
+    <AppShell shell={shellViewModel} activeHref="/artifacts" workspaceHrefBase="/artifacts">
       <Panel className="padded stack-panel">
         <SectionTitle
           title="Artifacts"

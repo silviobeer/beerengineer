@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { performItemAction, type ItemAction, type ItemActionResponse } from "@/lib/api";
-import { MonoLabel } from "@/components/primitives/MonoLabel";
+import { DetailBlock } from "@/components/primitives/DetailBlock";
 
 type Column = NonNullable<Parameters<typeof validActionsFor>[0]>;
 type Phase = NonNullable<Parameters<typeof validActionsFor>[1]>;
@@ -87,9 +87,6 @@ export function ItemBoardActions({ itemId, column, phase }: Props) {
       return;
     }
 
-    // Optimistic: force a router refresh so the server component re-renders
-    // the board with the updated persisted state. Phase 4 will layer live SSE
-    // on top of this so refresh is not needed for remote changes.
     setBusy(null);
     setToast({ kind: "info", msg: `Action ${descriptor.action} applied.` });
     startTransition(() => {
@@ -98,9 +95,7 @@ export function ItemBoardActions({ itemId, column, phase }: Props) {
   };
 
   return (
-    <div className="detail-block">
-      <MonoLabel>Board actions</MonoLabel>
-      <h3>Workflow controls</h3>
+    <DetailBlock kicker="Board actions" title="Workflow controls">
       <div className="detail-actions">
         {actions.map(descriptor => (
           <button
@@ -120,6 +115,6 @@ export function ItemBoardActions({ itemId, column, phase }: Props) {
           {toast.msg}
         </p>
       ) : null}
-    </div>
+    </DetailBlock>
   );
 }

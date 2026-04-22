@@ -38,23 +38,65 @@ export function createCliIO(repos?: Repos, opts: CliIOOptions = {}): WorkflowIO 
 
   const detachPersistence = repos ? withPromptPersistence(bus, repos) : () => {}
 
-  const rl = opts.externalPromptResolver
+  const interactivePrompting = Boolean(process.stdin.isTTY && process.stdout.isTTY)
+  const rl = opts.externalPromptResolver || !interactivePrompting
     ? null
     : readline.createInterface({ input: process.stdin, output: process.stdout })
 
-  if (rl) {
-    // Subscribe: when a prompt_requested arrives, ask readline and emit the
-    // answer back through the bus so every subscriber reacts to it.
-    bus.subscribe(event => {
-      if (event.type !== "prompt_requested") return
-      rl.question(event.prompt, answer => {
-        bus.emit({
-          type: "prompt_answered",
-          runId: event.runId,
-          promptId: event.promptId,
-          answer,
-        })
+  let stdinLineReader: readline.Interface | null = null
+  let stdinEnded = false
+  const queuedAnswers: string[] = []
+  const pendingAnswers: Array<(answer: string) => void> = []
+
+  const detachPromptResolver = opts.externalPromptResolver
+    ? () => {}
+    : bus.subscribe(event => {
+        if (event.type !== "prompt_requested") return
+
+        const resolveAnswer = (answer: string) => {
+          bus.emit({
+            type: "prompt_answered",
+            runId: event.runId,
+            promptId: event.promptId,
+            answer,
+          })
+        }
+
+        if (rl) {
+          // Interactive TTY prompts go straight through readline.
+          rl.question(event.prompt, resolveAnswer)
+          return
+        }
+
+        // Non-interactive stdin is treated as a queued stream of newline-
+        // delimited answers so the CLI can be tested and scripted via pipes.
+        if (queuedAnswers.length > 0) {
+          resolveAnswer(queuedAnswers.shift() ?? "")
+          return
+        }
+        if (stdinEnded) {
+          resolveAnswer("")
+          return
+        }
+        pendingAnswers.push(resolveAnswer)
       })
+
+  if (!opts.externalPromptResolver && !interactivePrompting) {
+    stdinLineReader = readline.createInterface({
+      input: process.stdin,
+      crlfDelay: Infinity,
+      terminal: false,
+    })
+    stdinLineReader.on("line", line => {
+      const pending = pendingAnswers.shift()
+      if (pending) pending(line)
+      else queuedAnswers.push(line)
+    })
+    stdinLineReader.on("close", () => {
+      stdinEnded = true
+      while (pendingAnswers.length > 0) {
+        pendingAnswers.shift()?.("")
+      }
     })
   }
 
@@ -64,8 +106,10 @@ export function createCliIO(repos?: Repos, opts: CliIOOptions = {}): WorkflowIO 
     ...io,
     bus,
     close() {
+      detachPromptResolver()
       detachRenderer()
       detachPersistence()
+      stdinLineReader?.close()
       rl?.close()
       originalClose?.()
     },

@@ -1,4 +1,7 @@
-import type { HarnessRole } from "../../types/workspace.js"
+import { readFileSync } from "node:fs"
+import { dirname, resolve } from "node:path"
+import { fileURLToPath } from "node:url"
+import type { HarnessRole, KnownHarness } from "../../types/workspace.js"
 
 export type ProviderModels = {
   provider: string
@@ -9,54 +12,46 @@ export type ProviderModels = {
   }>
 }
 
-export const PROVIDER_MODELS: ProviderModels[] = [
-  {
-    provider: "anthropic",
-    models: [
-      { id: "claude-opus-4-7", default: { role: "coder" } },
-      { id: "claude-sonnet-4-6", default: { role: "reviewer" } },
-      { id: "claude-haiku-4-5" },
-    ],
-  },
-  {
-    provider: "openai",
-    models: [
-      { id: "gpt-5-4", default: { role: "coder" } },
-      { id: "gpt-4o", default: { role: "reviewer" } },
-      { id: "o3" },
-    ],
-  },
-  {
-    provider: "openrouter",
-    models: [],
-  },
-]
+export type HarnessPresetRole = {
+  harness: KnownHarness
+  provider: string
+  model: string
+}
 
-export const DEFAULT_HARNESS_MODELS = {
-  "codex-first": {
-    coder: { harness: "codex", provider: "openai", model: "gpt-5-4" },
-    reviewer: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6" },
-  },
-  "claude-first": {
-    coder: { harness: "claude", provider: "anthropic", model: "claude-opus-4-7" },
-    reviewer: { harness: "codex", provider: "openai", model: "gpt-4o" },
-  },
-  "codex-only": {
-    coder: { harness: "codex", provider: "openai", model: "gpt-5-4" },
-    reviewer: { harness: "codex", provider: "openai", model: "gpt-4o" },
-  },
-  "claude-only": {
-    coder: { harness: "claude", provider: "anthropic", model: "claude-opus-4-7" },
-    reviewer: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6" },
-  },
-  fast: {
-    coder: { harness: "codex", provider: "openai", model: "gpt-4o" },
-    reviewer: { harness: "claude", provider: "anthropic", model: "claude-haiku-4-5" },
-  },
-} as const
+export type HarnessPreset = {
+  coder: HarnessPresetRole
+  reviewer: HarnessPresetRole
+}
+
+type PresetsFile = {
+  schemaVersion: 1
+  default: string
+  providers: Array<{ name: string; models: ProviderModels["models"] }>
+  presets: Record<string, HarnessPreset>
+}
+
+const here = dirname(fileURLToPath(import.meta.url))
+const PRESETS_FILE = JSON.parse(readFileSync(resolve(here, "presets.json"), "utf8")) as PresetsFile
+
+export const PROVIDER_MODELS: ProviderModels[] = PRESETS_FILE.providers.map(entry => ({
+  provider: entry.name,
+  models: entry.models,
+}))
+
+export const DEFAULT_HARNESS_MODELS: Record<string, HarnessPreset> = PRESETS_FILE.presets
+export const DEFAULT_PRESET_MODE: string = PRESETS_FILE.default
+export const KNOWN_PRESET_MODES: string[] = Object.keys(PRESETS_FILE.presets)
 
 export function isKnownModel(provider: string, model: string): boolean {
   const known = PROVIDER_MODELS.find(entry => entry.provider === provider)
   if (!known) return false
   return known.models.some(candidate => candidate.id === model || candidate.aliases?.includes(model))
+}
+
+export function isKnownPresetMode(mode: string): boolean {
+  return Object.hasOwn(PRESETS_FILE.presets, mode)
+}
+
+export function getPreset(mode: string): HarnessPreset | undefined {
+  return PRESETS_FILE.presets[mode]
 }

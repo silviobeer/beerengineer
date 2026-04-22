@@ -1,10 +1,11 @@
+import Link from "next/link";
 import type { ActionViewModel } from "@/lib/view-models";
 import { ArrowRightIcon, CheckIcon, InboxIcon } from "@/components/board/BoardIcons";
-import { MonoLabel } from "@/components/primitives/MonoLabel";
+import { DetailBlock } from "@/components/primitives/DetailBlock";
 
 function iconForAction(label: string) {
   const lower = label.toLowerCase();
-  if (lower.includes("chat") || lower.includes("message") || lower.includes("reply")) {
+  if (lower.includes("chat") || lower.includes("message") || lower.includes("reply") || lower.includes("prompt")) {
     return <InboxIcon />;
   }
   if (lower.includes("approve") || lower.includes("accept") || lower.includes("confirm") || lower.includes("done")) {
@@ -15,21 +16,31 @@ function iconForAction(label: string) {
 
 export function ItemActionList({ actions }: { actions: ActionViewModel[] }) {
   return (
-    <div className="detail-block">
-      <MonoLabel>Actions</MonoLabel>
-      <h3>Next actions</h3>
+    <DetailBlock kicker="Actions" title="Next actions">
       <div className="detail-actions">
-        {actions.map((action) => (
-          <span
-            key={action.label}
-            className={action.primary ? "detail-action primary" : "detail-action"}
-            title={action.detail}
-          >
-            {iconForAction(action.label)}
-            {action.label}
-          </span>
-        ))}
+        {actions.map((action) => {
+          const className = action.primary ? "detail-action primary" : "detail-action";
+          if (action.href) {
+            return (
+              <Link key={action.label} href={action.href} className={className} title={action.detail}>
+                {iconForAction(action.label)}
+                {action.label}
+              </Link>
+            );
+          }
+          return (
+            <span
+              key={action.label}
+              className={className}
+              title={action.detail}
+              aria-disabled="true"
+            >
+              {iconForAction(action.label)}
+              {action.label}
+            </span>
+          );
+        })}
       </div>
-    </div>
+    </DetailBlock>
   );
 }

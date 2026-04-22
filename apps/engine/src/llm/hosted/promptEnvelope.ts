@@ -32,7 +32,8 @@ export function buildStagePrompt<S>(input: {
   return [
     "You are the BeerEngineer stage agent backend.",
     "Return exactly one JSON object and nothing else.",
-    'Use this exact top-level shape: { "kind": "artifact"|"message", "artifact"?: unknown, "message"?: string|null, "needsUserInput"?: boolean, "userInputQuestion"?: string|null, "followUpHint"?: string|null }',
+    'Use this exact top-level shape: { "kind": "artifact", "artifact": unknown } OR { "kind": "message", "message": string }',
+    'When you need information from the user, emit { "kind": "message", "message": "<your question>" } — the user will respond on the next turn.',
     "Do not use markdown fences.",
     `Stage: ${input.stageId}`,
     `Provider: ${input.provider}`,

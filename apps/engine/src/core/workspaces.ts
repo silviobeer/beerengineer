@@ -260,6 +260,31 @@ function normalizeRuntimePolicy(raw: unknown): WorkspaceRuntimePolicy | null {
   }
 }
 
+function isValidHarnessProfile(raw: unknown): raw is HarnessProfile {
+  if (!raw || typeof raw !== "object") return false
+  const mode = (raw as { mode?: unknown }).mode
+  switch (mode) {
+    case "codex-first":
+    case "claude-first":
+    case "codex-only":
+    case "claude-only":
+    case "fast":
+    case "opencode-china":
+    case "opencode-euro":
+      return true
+    case "opencode":
+    case "self": {
+      const roles = (raw as { roles?: unknown }).roles
+      if (!roles || typeof roles !== "object") return false
+      const coder = (roles as Record<string, unknown>).coder
+      const reviewer = (roles as Record<string, unknown>).reviewer
+      return !!coder && typeof coder === "object" && !!reviewer && typeof reviewer === "object"
+    }
+    default:
+      return false
+  }
+}
+
 export async function readWorkspaceConfig(root: string): Promise<WorkspaceConfigFile | null> {
   try {
     const raw = JSON.parse(await readFile(workspaceConfigPath(root), "utf8")) as {
@@ -274,14 +299,17 @@ export async function readWorkspaceConfig(root: string): Promise<WorkspaceConfig
     if ((raw.schemaVersion !== 1 && raw.schemaVersion !== WORKSPACE_SCHEMA_VERSION) || typeof raw.key !== "string" || typeof raw.name !== "string") {
       return null
     }
+    if (!isValidHarnessProfile(raw.harnessProfile)) {
+      return null
+    }
     const runtimePolicy = normalizeRuntimePolicy(raw.runtimePolicy) ?? defaultWorkspaceRuntimePolicy()
     return {
       schemaVersion: WORKSPACE_SCHEMA_VERSION,
       key: raw.key,
       name: raw.name,
-      harnessProfile: raw.harnessProfile as HarnessProfile,
+      harnessProfile: raw.harnessProfile,
       runtimePolicy,
-      sonar: raw.sonar as SonarConfig,
+      sonar: (raw.sonar && typeof raw.sonar === "object" ? raw.sonar : { enabled: false }) as SonarConfig,
       createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
     }
   } catch {
@@ -349,6 +377,8 @@ function harnessesForProfile(profile: HarnessProfile): KnownHarness[] {
     case "claude-only":
       return ["claude"]
     case "opencode":
+    case "opencode-china":
+    case "opencode-euro":
       return ["opencode"]
     case "self":
       return [profile.roles.coder.harness, profile.roles.reviewer.harness]
@@ -647,13 +677,17 @@ export async function promptForWorkspaceAddDefaults(config: AppConfig): Promise<
     console.log("    3) codex-only")
     console.log("    4) claude-only")
     console.log("    5) fast")
-    const choice = await promptLine(rl, "Pick [1-5] or [d]efault", "d")
+    console.log("    6) opencode-china  (qwen + deepseek via OpenRouter)")
+    console.log("    7) opencode-euro   (mistral via OpenRouter)")
+    const choice = await promptLine(rl, "Pick [1-7] or [d]efault", "d")
     const profileMap: Record<string, HarnessProfile> = {
       "1": { mode: "codex-first" },
       "2": { mode: "claude-first" },
       "3": { mode: "codex-only" },
       "4": { mode: "claude-only" },
       "5": { mode: "fast" },
+      "6": { mode: "opencode-china" },
+      "7": { mode: "opencode-euro" },
       d: config.llm.defaultHarnessProfile,
     }
     const profile = profileMap[choice.toLowerCase()] ?? config.llm.defaultHarnessProfile

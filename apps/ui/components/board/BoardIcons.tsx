@@ -96,11 +96,19 @@ export function ModeIcon({ mode }: { mode: ItemMode }) {
 export function AttentionIcon({ attention }: { attention: AttentionState }) {
   switch (attention) {
     case "waiting":
+    case "awaiting_answer":
       return <InboxIcon />;
     case "review":
+    case "review_required":
       return <ShieldCheckIcon />;
     case "failed":
       return <AlertTriangleIcon />;
+    case "blocked":
+      return <AlertTriangleIcon />;
+    case "merge_ready":
+      return <CheckIcon />;
+    case "ready_to_test":
+      return <ArrowRightIcon />;
     case "done":
       return <CheckIcon />;
     default:

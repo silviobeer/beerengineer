@@ -56,11 +56,11 @@ export default function ShowcasePage() {
             <div className="showcase-overlay">
               <ItemOverlay overlay={overlayViewModel} />
             </div>
-            <div className="panel padded">
+            <Panel className="padded">
               {inboxViewModel.rows.map((row) => (
                 <InboxRow key={row.title} row={row} />
               ))}
-            </div>
+            </Panel>
           </div>
         </Panel>
 

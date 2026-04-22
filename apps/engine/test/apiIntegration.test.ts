@@ -20,12 +20,25 @@ async function waitForHealth(base: string, timeoutMs = 5000): Promise<void> {
   throw new Error(`server at ${base} did not become healthy in time`)
 }
 
+const TEST_API_TOKEN = "test-token"
+
+function authHeaders(extra?: Record<string, string>): Record<string, string> {
+  return { "x-beerengineer-token": TEST_API_TOKEN, ...(extra ?? {}) }
+}
+
 function startServer(env: NodeJS.ProcessEnv): { proc: ChildProcess; base: string; port: number } {
   const port = 4200 + Math.floor(Math.random() * 500)
   const host = "127.0.0.1"
   const serverPath = resolve(new URL(".", import.meta.url).pathname, "..", "src", "api", "server.ts")
   const proc = spawn(process.execPath, ["--import", "tsx", serverPath], {
-    env: { ...process.env, ...env, PORT: String(port), HOST: host, BEERENGINEER_SEED: "0" },
+    env: {
+      ...process.env,
+      ...env,
+      PORT: String(port),
+      HOST: host,
+      BEERENGINEER_SEED: "0",
+      BEERENGINEER_API_TOKEN: TEST_API_TOKEN,
+    },
     stdio: ["ignore", "pipe", "pipe"]
   })
   proc.stderr?.on("data", () => {})
@@ -117,7 +130,7 @@ test("POST /items/:id/actions returns 404 on unknown item", async () => {
     await waitForHealth(base)
     const res = await fetch(`${base}/items/no-such/actions`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: authHeaders({ "content-type": "application/json" }),
       body: JSON.stringify({ action: "start_brainstorm" })
     })
     assert.equal(res.status, 404)
@@ -166,7 +179,6 @@ test("workspace HTTP endpoints preview, add, get, open, list, remove, and backfi
   const allowedRoot = join(dir, "projects")
   const workspacePath = join(allowedRoot, "api-demo")
   const legacyPath = join(allowedRoot, "legacy")
-  rmSync(dir, { recursive: true, force: true })
   const { mkdirSync, writeFileSync, existsSync, readFileSync } = await import("node:fs")
   mkdirSync(allowedRoot, { recursive: true })
   mkdirSync(legacyPath, { recursive: true })
@@ -215,7 +227,7 @@ test("workspace HTTP endpoints preview, add, get, open, list, remove, and backfi
 
     const addRes = await fetch(`${base}/workspaces`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: authHeaders({ "content-type": "application/json" }),
       body: JSON.stringify({
         path: workspacePath,
         harnessProfile: { mode: "fast" },
@@ -238,12 +250,12 @@ test("workspace HTTP endpoints preview, add, get, open, list, remove, and backfi
     assert.equal(gotten.key, "api-demo")
     assert.equal(gotten.harnessProfile.mode, "fast")
 
-    const openRes = await fetch(`${base}/workspaces/api-demo/open`, { method: "POST" })
+    const openRes = await fetch(`${base}/workspaces/api-demo/open`, { method: "POST", headers: authHeaders() })
     assert.equal(openRes.status, 200)
     const opened = await openRes.json() as { rootPath: string }
     assert.equal(opened.rootPath, workspacePath)
 
-    const backfillRes = await fetch(`${base}/workspaces/backfill`, { method: "POST" })
+    const backfillRes = await fetch(`${base}/workspaces/backfill`, { method: "POST", headers: authHeaders() })
     assert.equal(backfillRes.status, 200)
     const backfill = await backfillRes.json() as { written: string[] }
     assert.ok(backfill.written.includes("legacy"))
@@ -251,8 +263,159 @@ test("workspace HTTP endpoints preview, add, get, open, list, remove, and backfi
     const legacyConfig = JSON.parse(readFileSync(join(legacyPath, ".beerengineer", "workspace.json"), "utf8")) as { key: string }
     assert.equal(legacyConfig.key, "legacy")
 
-    const deleteRes = await fetch(`${base}/workspaces/api-demo`, { method: "DELETE" })
+    const deleteRes = await fetch(`${base}/workspaces/api-demo`, { method: "DELETE", headers: authHeaders() })
     assert.equal(deleteRes.status, 200)
+  } finally {
+    await stopServer(proc)
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("workspace HTTP add rejects malformed harnessProfile with 400", async () => {
+  const dbPath = tmpDbPath()
+  initDatabase(dbPath).close()
+  const dir = mkdtempSync(join(tmpdir(), "be2-workspace-api-bad-"))
+  const configPath = join(dir, "config.json")
+  const allowedRoot = join(dir, "projects")
+  const { mkdirSync, writeFileSync } = await import("node:fs")
+  mkdirSync(allowedRoot, { recursive: true })
+  writeFileSync(configPath, JSON.stringify({
+    schemaVersion: 1,
+    dataDir: join(dir, "data"),
+    allowedRoots: [allowedRoot],
+    enginePort: 4100,
+    llm: {
+      provider: "anthropic",
+      model: "claude-opus-4-7",
+      apiKeyRef: "ANTHROPIC_API_KEY",
+      defaultHarnessProfile: { mode: "claude-first" },
+    },
+    vcs: { github: { enabled: false } },
+    browser: { enabled: false },
+  }))
+  const { proc, base } = startServer({
+    BEERENGINEER_UI_DB_PATH: dbPath,
+    BEERENGINEER_CONFIG_PATH: configPath,
+    BEERENGINEER_DATA_DIR: join(dir, "data"),
+  })
+  try {
+    await waitForHealth(base)
+    const res = await fetch(`${base}/workspaces`, {
+      method: "POST",
+      headers: authHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({
+        path: join(allowedRoot, "bad"),
+        harnessProfile: { mode: "does-not-exist" },
+      }),
+    })
+    assert.equal(res.status, 400)
+    const body = await res.json() as { error: string }
+    assert.equal(body.error, "invalid_harness_profile")
+  } finally {
+    await stopServer(proc)
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("mutating requests without the CSRF token are rejected with 403", async () => {
+  const dbPath = tmpDbPath()
+  initDatabase(dbPath).close()
+  const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
+  try {
+    await waitForHealth(base)
+    const res = await fetch(`${base}/workspaces`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: "/tmp/x", harnessProfile: { mode: "fast" } }),
+    })
+    assert.equal(res.status, 403)
+    const body = await res.json() as { error: string }
+    assert.equal(body.error, "csrf_token_required")
+  } finally {
+    await stopServer(proc)
+  }
+})
+
+test("OPTIONS preflight reflects only the approved UI origin (no wildcard)", async () => {
+  const dbPath = tmpDbPath()
+  initDatabase(dbPath).close()
+  const { proc, base } = startServer({
+    BEERENGINEER_UI_DB_PATH: dbPath,
+    BEERENGINEER_UI_ORIGIN: "http://127.0.0.1:3100",
+  })
+  try {
+    await waitForHealth(base)
+    // Spoofed origin is ignored.
+    const spoofed = await fetch(`${base}/workspaces`, {
+      method: "OPTIONS",
+      headers: { origin: "http://evil.example", "access-control-request-method": "DELETE" },
+    })
+    assert.notEqual(spoofed.headers.get("access-control-allow-origin"), "*")
+    assert.notEqual(spoofed.headers.get("access-control-allow-origin"), "http://evil.example")
+    // Approved UI origin is echoed.
+    const approved = await fetch(`${base}/workspaces`, {
+      method: "OPTIONS",
+      headers: { origin: "http://127.0.0.1:3100", "access-control-request-method": "DELETE" },
+    })
+    assert.equal(approved.headers.get("access-control-allow-origin"), "http://127.0.0.1:3100")
+  } finally {
+    await stopServer(proc)
+  }
+})
+
+test("DELETE purge refuses when stored root_path is outside allowedRoots", async () => {
+  const dbPath = tmpDbPath()
+  const dir = mkdtempSync(join(tmpdir(), "be2-purge-escape-"))
+  const { mkdirSync, writeFileSync, existsSync } = await import("node:fs")
+  const allowedRoot = join(dir, "projects")
+  const outsidePath = join(dir, "outside")
+  mkdirSync(allowedRoot, { recursive: true })
+  mkdirSync(outsidePath, { recursive: true })
+  writeFileSync(join(outsidePath, "keep-me.txt"), "do not delete", "utf8")
+
+  const configPath = join(dir, "config.json")
+  writeFileSync(configPath, JSON.stringify({
+    schemaVersion: 1,
+    dataDir: join(dir, "data"),
+    allowedRoots: [allowedRoot],
+    enginePort: 4100,
+    llm: {
+      provider: "anthropic",
+      model: "claude-opus-4-7",
+      apiKeyRef: "ANTHROPIC_API_KEY",
+      defaultHarnessProfile: { mode: "claude-first" },
+    },
+    vcs: { github: { enabled: false } },
+    browser: { enabled: false },
+  }))
+
+  // Seed a workspace row whose root_path is outside allowedRoots, simulating a
+  // moved directory or a tampered DB.
+  const seeded = initDatabase(dbPath)
+  new Repos(seeded).upsertWorkspace({
+    key: "escape",
+    name: "Escape",
+    rootPath: outsidePath,
+    harnessProfileJson: JSON.stringify({ mode: "fast" }),
+  })
+  seeded.close()
+
+  const { proc, base } = startServer({
+    BEERENGINEER_UI_DB_PATH: dbPath,
+    BEERENGINEER_CONFIG_PATH: configPath,
+    BEERENGINEER_DATA_DIR: join(dir, "data"),
+  })
+  try {
+    await waitForHealth(base)
+    const res = await fetch(`${base}/workspaces/escape?purge=1`, {
+      method: "DELETE",
+      headers: authHeaders(),
+    })
+    assert.equal(res.status, 200)
+    const body = await res.json() as { purgedPath: string | null; purgeSkipped?: { reason: string } }
+    assert.equal(body.purgedPath, null)
+    assert.equal(body.purgeSkipped?.reason, "path_outside_allowed_roots")
+    assert.ok(existsSync(join(outsidePath, "keep-me.txt")), "outside path must not be rm -rf'd")
   } finally {
     await stopServer(proc)
     rmSync(dir, { recursive: true, force: true })
@@ -273,7 +436,7 @@ test("POST /items/:id/actions returns 409 on invalid transition", async () => {
     await waitForHealth(base)
     const res = await fetch(`${base}/items/${item.id}/actions`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: authHeaders({ "content-type": "application/json" }),
       body: JSON.stringify({ action: "start_brainstorm" })
     })
     assert.equal(res.status, 409)
@@ -300,7 +463,7 @@ test("POST /items/:id/actions promotes brainstorm to requirements and persists c
     await waitForHealth(base)
     const res = await fetch(`${base}/items/${item.id}/actions`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: authHeaders({ "content-type": "application/json" }),
       body: JSON.stringify({ action: "promote_to_requirements" })
     })
     assert.equal(res.status, 200)
@@ -334,7 +497,7 @@ test("POST /runs/:id/input accepts answers for cli-owned runs", async () => {
     await waitForHealth(base)
     const res = await fetch(`${base}/runs/${run.id}/input`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: authHeaders({ "content-type": "application/json" }),
       body: JSON.stringify({ promptId: prompt.id, answer: "anything" })
     })
     assert.equal(res.status, 200)
@@ -392,7 +555,7 @@ test("GET /events streams item_column_changed for board-visible actions", async 
 
     const res = await fetch(`${base}/items/${item.id}/actions`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: authHeaders({ "content-type": "application/json" }),
       body: JSON.stringify({ action: "promote_to_requirements" })
     })
     assert.equal(res.status, 200)
@@ -448,7 +611,7 @@ test("GET /events?workspace=<key> filters out events from other workspaces", asy
     await new Promise(r => setTimeout(r, 150))
     const res = await fetch(`${base}/items/${item2.id}/actions`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: authHeaders({ "content-type": "application/json" }),
       body: JSON.stringify({ action: "promote_to_requirements" })
     })
     assert.equal(res.status, 200)

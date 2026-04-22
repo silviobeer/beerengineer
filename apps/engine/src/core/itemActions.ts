@@ -30,6 +30,8 @@ export type ItemActionEvent =
   | { type: "run_started"; runId: string; itemId: string; startedAt: number }
   | { type: "stage_started"; runId: string; itemId: string; stage: string }
 
+export type { Transition }
+
 export type ResumePayload = {
   summary: string
   branch?: string
@@ -83,7 +85,7 @@ const MATRIX: Record<ItemAction, Record<string, Transition>> = {
   }
 }
 
-function lookupTransition(action: ItemAction, column: ColumnKey, phase: PhaseKey): Transition {
+export function lookupTransition(action: ItemAction, column: ColumnKey, phase: PhaseKey): Transition {
   const table = MATRIX[action]
   return table[`${column}/${phase}`] ?? table[`${column}/*`] ?? { kind: "reject" }
 }

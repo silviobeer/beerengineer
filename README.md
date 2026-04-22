@@ -1,6 +1,6 @@
 # BeerEngineer2 — Prototyp-Dokumentation
 
-Interaktiver CLI-Prototyp der BeerEngineer-Engine — jetzt mit Live-Board-UI.
+CLI-Prototyp der BeerEngineer-Engine — jetzt mit Live-Board-UI.
 Simuliert den vollständigen Workflow von der Idee bis zum Delivery-Report —
 ohne echte LLMs, mit demselben Kontrollfluss.
 
@@ -10,13 +10,14 @@ Aktuell ist das fuer `brainstorm`, `requirements`, `architecture`, `planning` un
 
 ```bash
 npm install                                          # workspace install
-npm run start --workspace=@beerengineer2/engine      # CLI-Lauf (interaktiv)
+npm run start --workspace=@beerengineer2/engine      # CLI-Lauf
 npm exec --workspace=@beerengineer2/engine beerengineer -- --help
-npm exec --workspace=@beerengineer2/engine beerengineer -- --doctor
+npm exec --workspace=@beerengineer2/engine beerengineer -- doctor
+npm exec --workspace=@beerengineer2/engine beerengineer -- setup --no-interactive
 npm exec --workspace=@beerengineer2/engine beerengineer -- start ui
 npm exec --workspace=@beerengineer2/engine beerengineer -- item action --item ITEM-0001 --action promote_to_requirements
 npm run start:api                                    # HTTP+SSE API auf :4100
-npm run dev:ui                                       # Next.js UI auf :3000
+npm run dev:ui                                       # Next.js UI lokal
 npm test --workspace=@beerengineer2/engine           # Engine-Unit-Tests
 ```
 
@@ -29,15 +30,22 @@ Im Repo nutzt du es am einfachsten ueber `npm exec --workspace=@beerengineer2/en
 beerengineer --help | -h
   Gibt die Usage auf stdout aus.
 
-beerengineer --doctor
-  Prueft Node.js, oeffnet/initialisiert die SQLite-DB, verifiziert die Kern-Tabellen
-  (`workspaces`, `items`, `projects`, `runs`, `external_remediations`,
-  `stage_runs`, `stage_logs`, `artifact_files`, `pending_prompts`) und
-  bestaetigt, dass der UI-Workspace unter `apps/ui` vorhanden ist.
-  Exit-Code 0 bei Erfolg, sonst non-zero.
+beerengineer doctor [--json] [--group <id>]
+  Read-only Machine-Diagnose: prueft Node.js, Config-File, Data-Dir, DB,
+  Migrations-Level (`user_version`) und die aktiven Toolchain-/Auth-Gruppen
+  (`core`, `vcs.github`, `llm.anthropic|openai|opencode`, `browser-agent`,
+  `review`). Mit `--group` wird nur eine Gruppe gemeldet. `--json` gibt den
+  `SetupReport` (reportVersion 1) aus. Exit-Code 1 bei `overall=blocked`,
+  2 bei unbekannter Gruppe, 0 sonst. `--doctor` bleibt als Alias erhalten.
+
+beerengineer setup [--group <id>] [--no-interactive]
+  Provisioniert einen fehlenden Default-Config-File, das Data-Verzeichnis und
+  die SQLite-DB und startet die Diagnose erneut. Verweigert das Ueberschreiben
+  eines bestehenden, aber ungueltigen Config-Files — dann muss der Nutzer die
+  Datei manuell reparieren oder entfernen. Details: `docs/app-setup.md`.
 
 beerengineer start ui
-  Startet `npm run dev` im aufgeloesten UI-Workspace mit inherited stdio und
+  Startet die UI auf `http://127.0.0.1:3100`, oeffnet den Browser und
   leitet `SIGINT`/`SIGTERM` an den Kindprozess weiter.
 
 beerengineer item action --item <id|code> --action <name>
@@ -57,7 +65,11 @@ beerengineer item action --item <id|code> --action <name>
   non-interactive mode gestartet wird.
 
 beerengineer
-  Ohne Argumente startet der bisherige interaktive CLI-Workflow unveraendert.
+  Ohne Argumente startet der Default-Workflow.
+  Benutzer-Interaktion ist auf Intake und Blocker/Resume-Faelle begrenzt.
+  Innerhalb der Stages koennen weiterhin verschiedene LLM-/Reviewer-Schritte
+  laufen, aber ab `architecture` bis `documentation` gibt es keinen User-Chat,
+  solange der Run nicht blockiert.
 
 beerengineer --json
 beerengineer run --json
@@ -426,6 +438,7 @@ neuesten Runs fuer das Item.
 | `POST` | `/items/:id/actions` | Fuehrt eine Item-Aktion aus; `200` mit `{ itemId, column, phaseStatus, runId?, remediationId? }`, `409` bei ungueltigem Uebergang, `422 remediation_required` fuer Resume ohne Summary |
 | `GET`  | `/events[?workspace=key]` | Workspace-gefilterter Board-SSE-Stream fuer `run_started`, `stage_*`, `item_column_changed`, `run_finished`, `project_created` plus Recovery/Resume-Invalidierungen |
 | `GET`  | `/board[?workspace=key]` | Board-DTO (Spalten + Karten) |
+| `GET`  | `/setup/status[?group=<id>]` | Selber JSON-Kontrakt wie `doctor --json` (`SetupReport`, `reportVersion: 1`). Unbekannte `group`-Werte → `400 { error: "unknown_group" }`. |
 | `GET`  | `/health` | `{ ok: true }` |
 
 ### Konfigurations-Variablen
@@ -433,9 +446,13 @@ neuesten Runs fuer das Item.
 | Variable | Wirkung |
 |---|---|
 | `BEERENGINEER_UI_DB_PATH` | Pfad zur SQLite-Datei. Default: `~/.local/share/beerengineer/beerengineer.sqlite`. **Engine und UI muessen denselben Pfad sehen**, sonst sieht die UI keine Engine-Daten. |
+| `BEERENGINEER_CONFIG_PATH` | Pfad zum App-Config-File. Default OS-spezifisch via `env-paths` (z.B. `~/.config/beerengineer/config.json`). Siehe `docs/app-setup.md`. |
+| `BEERENGINEER_DATA_DIR` | Data-Verzeichnis, in dem `setup` die SQLite-DB anlegt. Default via `env-paths`. |
+| `BEERENGINEER_ALLOWED_ROOTS` / `BEERENGINEER_ENGINE_PORT` / `BEERENGINEER_LLM_PROVIDER` / `BEERENGINEER_LLM_MODEL` / `BEERENGINEER_LLM_API_KEY_REF` / `BEERENGINEER_GITHUB_ENABLED` / `BEERENGINEER_BROWSER_ENABLED` | Feld-weise Overrides fuer den App-Config. Vollstaendige Liste und Semantik in `docs/app-setup.md`. |
 | `NEXT_PUBLIC_ENGINE_BASE_URL` | UI → Engine HTTP-Base. Default `http://127.0.0.1:4100`. |
 | `PORT` / `HOST` | Bind-Adresse des Engine-Servers. Default `127.0.0.1:4100`. |
 | `BEERENGINEER_SEED` | `0` deaktiviert das Demo-Seed. Wird unter `NODE_ENV=test` per Default deaktiviert; sonst aktiv, sobald die DB leer ist. |
+| `BE2_RUN_SLOW_TESTS` | `1` aktiviert den langsamen CLI-Smoke-Test (`start_brainstorm runs to completion`). Per Default skipped. |
 
 ### Test-Pyramide
 
@@ -1069,7 +1086,26 @@ Die Runtime zeigt diese Fragen dem Nutzer an und fuehrt die Antworten wieder in 
 
 Zentrale Provider-Auswahl pro LLM-Rolle.
 
-Aktuell ist nur `fake` implementiert. `codex` und `claude-code` sind bewusst als spaetere Adapter vorgesehen.
+Implementiert sind `fake` (deterministischer Stub) sowie die hosted-CLI-Adapter `claude-code` und `codex`. Der `opencode`-Adapter ist als Platzhalter vorgesehen und wirft beim Auflösen.
+
+`resolveHarness({ harnessProfile, role, stage, ... })` wählt Provider und Modell anhand des Workspace-Harness-Profils:
+
+- `claude-only` / `claude-first` → Claude Code
+- `codex-only` / `codex-first` → Codex CLI
+- `fast` → Claude Code mit `claude-haiku-4-5`
+- `self` → rollenspezifisch (coder / reviewer)
+
+Die `WorkspaceRuntimePolicy` steuert die Sandbox-Modi pro Rolle:
+
+| Policy-Feld | Werte | Claude Code | Codex |
+|---|---|---|---|
+| `stageAuthoring` | `safe-readonly`, `safe-workspace-write` | `--permission-mode plan` bzw. `acceptEdits` | `--sandbox read-only` bzw. `workspace-write` |
+| `reviewer` | `safe-readonly` | `--permission-mode plan` | `--sandbox read-only` |
+| `coderExecution` | `safe-workspace-write`, `unsafe-autonomous-write` | `acceptEdits` bzw. `bypassPermissions` + `--dangerously-skip-permissions` | `workspace-write` bzw. `--full-auto --dangerously-bypass-approvals-and-sandbox` |
+
+Default-Policy: `stageAuthoring=safe-readonly`, `reviewer=safe-readonly`, `coderExecution=safe-workspace-write`.
+
+Fehlt die Workspace-Config (`.beerengineer/workspace.json`), fällt der Orchestrator zurück auf die `fake`-Adapter und loggt einen Hinweis auf dem Event-Bus — statt den Run zu abzubrechen.
 
 ### `src/sim/llm.ts`
 

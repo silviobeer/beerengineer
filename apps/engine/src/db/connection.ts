@@ -33,13 +33,15 @@ export function applySchema(db: Db): void {
 }
 
 // The idempotent ALTER TABLE migrations above bring any fresh or pre-1 DB to
-// level 1. Only stamp user_version when we know the schema is current; leave
-// higher levels untouched so a newer binary doesn't appear to downgrade.
+// current shape. Only stamp user_version when we're at or below the level we
+// know how to produce; leave higher levels untouched so a newer binary opening
+// an older DB doesn't appear to downgrade.
 // TODO: when introducing level 2+, switch to a real migrate(from, to) runner
-// keyed off the current user_version.
+// keyed off the current user_version rather than unconditionally running every
+// idempotent helper.
 function stampMigrationLevel(db: Db): void {
   const current = (db.pragma("user_version", { simple: true }) as number) ?? 0
-  if (current <= REQUIRED_MIGRATION_LEVEL) {
+  if (current < REQUIRED_MIGRATION_LEVEL) {
     db.pragma(`user_version = ${REQUIRED_MIGRATION_LEVEL}`)
   }
 }

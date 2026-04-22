@@ -1,5 +1,4 @@
 import { readFile, writeFile } from "node:fs/promises"
-import { join } from "node:path"
 import { spawnSync } from "node:child_process"
 import type { StoryExecutionContext } from "../../../types.js"
 import type { HostedCliRequest } from "../promptEnvelope.js"

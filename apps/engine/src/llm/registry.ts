@@ -62,6 +62,7 @@ export type StageId =
   | "project-review"
   | "test-writer"
   | "qa"
+  | "execution"
 
 type AdapterFactoryInput = {
   workspaceRoot: string
@@ -105,7 +106,9 @@ export function resolveHarness(input: AdapterFactoryInput): ResolvedHarness {
         workspaceRoot: input.workspaceRoot,
       }
     case "opencode":
-      throw new Error('Harness profile mode "opencode" is not implemented yet')
+    case "opencode-china":
+    case "opencode-euro":
+      throw new Error(`Harness profile mode "${input.harnessProfile.mode}" is not implemented yet`)
     case "self": {
       const selected = input.harnessProfile.roles[role]
       const provider = toProviderId(selected.harness)

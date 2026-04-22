@@ -1,0 +1,330 @@
+# BeerEngineer2 — setup, the plain-English version
+
+This is the short, skimmable version of the setup plans. If you want the
+architectural rationale, go read `app-setup-plan.md` and
+`workspace-setup-plan.md`. If you just want to get it running, stay here.
+
+## What BeerEngineer2 is, in one paragraph
+
+BeerEngineer2 is a local tool that helps AI coding assistants (Claude Code,
+Codex, OpenCode) build software for you in a structured way — brainstorm,
+specs, implementation, review — and gives you a web UI to watch it happen
+and answer when it asks. It runs entirely on your machine: a CLI, a local
+engine process, a local web UI, a SQLite database on disk. No cloud
+service. No login.
+
+## A few words you'll see constantly
+
+- **Engine** — the long-running local process that orchestrates runs, spawns
+  the AI harnesses, writes files, streams events. Think of it as the tool's
+  brain.
+- **UI** — a Next.js web app on `localhost` that shows the board, runs,
+  inbox, setup, and settings. It talks to the engine over HTTP.
+- **Workspace** — any folder on your machine that you've registered with
+  BeerEngineer as a project to work on. Could be a Next.js app, a Python
+  project, a Rust thing — BeerEngineer doesn't care.
+- **Harness** — one of the AI CLIs that do the actual code work: `claude`
+  (Claude Code), `codex` (OpenAI's Codex), or `opencode`.
+- **CLI** — the `beerengineer` command you type in a terminal.
+
+## What you need on your machine before you start
+
+BeerEngineer2 is a *driver* for other tools. Most of what you install is the
+stuff BeerEngineer then uses. You don't need all of it — the setup check
+will tell you what's missing.
+
+**Non-negotiable:**
+
+- Node.js ≥ 22 (get it from https://nodejs.org/ or use `nvm`)
+- Git
+- GitHub CLI (`gh`) — and you have to be logged in: `gh auth login`
+
+**At least one AI harness (two recommended):**
+
+- `claude` — Claude Code — `npm i -g @anthropic-ai/claude-code`
+- `codex` — OpenAI Codex — `npm i -g @openai/codex`
+- `opencode` — open-source alternative — `curl -fsSL https://opencode.ai/install | bash`
+
+Each one needs its own auth (API key or login flow). Check each tool's docs.
+
+**At least one browser agent (for tests and previews):**
+
+- `playwright` — inside a workspace: `npm init playwright@latest`
+- `agent-browser` — https://github.com/vercel-labs/agent-browser
+
+**Nice to have (optional, strongly recommended):**
+
+- `coderabbit` (CLI for CodeRabbit code review)
+- `sonar-scanner` (official SonarQube/SonarCloud scanner)
+- `sonarqube-cli` (community wrapper)
+
+Don't try to install everything at once. Get the required stuff working,
+add the nice-to-haves later when you run into them.
+
+---
+
+## Step 1 — Install BeerEngineer2 itself
+
+You have the BeerEngineer2 source at `~/projects/beerengineer2/`. Install it
+as a global command so your terminal can find `beerengineer`:
+
+```
+cd ~/projects/beerengineer2
+npm i -g ./apps/engine
+```
+
+Check it's installed:
+
+```
+beerengineer --help
+```
+
+You should see a help message. If you get "command not found", your global
+npm bin directory isn't on your `PATH` — fix that before continuing.
+
+**If you're using BeerEngineer2 to work on BeerEngineer2 itself: use Tier 3
+from day one.**
+
+Don't do the simple global install above and then switch later. Set up a
+separate worktree now:
+
+```
+cd ~/projects/beerengineer2
+git worktree add ~/.beerengineer-tool main
+
+cd ~/.beerengineer-tool/apps/engine
+npm i
+npm i -g .
+```
+
+That gives you:
+
+- `~/projects/beerengineer2/` — your editable checkout, where feature work happens
+- `~/.beerengineer-tool/` — the pinned tool checkout that the global `beerengineer` command runs from
+
+This is the recommended self-hosting path because it prevents half-finished
+local edits from leaking into the tool you're actively using.
+
+## Step 2 — First-time app setup
+
+BeerEngineer has two commands that work together:
+
+- **`beerengineer doctor`** — a pure health check. "Is everything installed?"
+- **`beerengineer setup`** — the friendly walkthrough. Runs `doctor`
+  internally, prints what's missing with install hints, and lets you
+  re-check after you install stuff.
+
+Run:
+
+```
+beerengineer setup
+```
+
+You'll see something like this:
+
+```
+BeerEngineer — setup check
+
+core                      required    ✓
+  ✓ git, node, data dir, config
+
+vcs                       required    ✓
+  ✓ gh (authed as silvio)
+
+harness                   required    !  (1 of 2 ideal)
+  ✓ claude
+  ·  codex       not installed
+     install: npm i -g @openai/codex
+
+browser-agent             required    ✓
+  ✓ playwright
+
+review                    recommended !
+  !  coderabbit   not installed
+  !  sonar-scanner not installed
+
+3 checks failed. Install them in another terminal, then:
+  [r] retry failed   [a] retry all   [s] skip & continue   [q] quit
+
+>
+```
+
+**What to do:**
+
+1. Open a second terminal.
+2. Install whatever's missing using the printed hints.
+3. Back in the BeerEngineer terminal, press `r`.
+4. Repeat until the required groups go green.
+
+**Rules of thumb:**
+
+- `✓ required` on every required group = you're good to go.
+- Recommended groups don't block you. You can press `s` to skip them.
+- If a tool is installed but not logged in (`gh`, `claude`, etc.), it's
+  marked "misconfigured". Installing isn't enough — you also need to auth
+  it. The hint will tell you how.
+
+Once all required groups are green:
+
+```
+OK: all required groups satisfied.
+Next:  beerengineer workspace add
+```
+
+## Step 3 — Register your first workspace
+
+A workspace is just a folder. BeerEngineer doesn't care if it exists yet or
+not — if it doesn't, BeerEngineer can create it for you.
+
+**Greenfield (new project):**
+
+```
+beerengineer workspace add
+Path: ~/projects/my-new-app
+```
+
+You'll get an interactive flow:
+
+1. Preview — shows what BeerEngineer thinks about the path.
+2. Name + key — defaults to the folder name, usually fine.
+3. Harness profile — pick one:
+   - `claude-first` — Claude does the work, Codex reviews *(recommended default)*
+   - `codex-first` — Codex does the work, Claude reviews
+   - `claude-only` / `codex-only` — single harness
+   - `opencode` / `self` — power users, pick models per role
+4. Sonar? — yes/no; if yes, enter project key + organization
+5. Git? — `git init` + initial commit for you
+
+Hit `y` at the end, and BeerEngineer creates:
+
+```
+~/projects/my-new-app/
+  .beerengineer/workspace.json       ← your config, committed to git
+  .gitignore                          ← pre-populated
+  sonar-project.properties            ← only if you enabled sonar
+```
+
+**Brownfield (existing project):**
+
+Same command, just point it at an existing folder:
+
+```
+beerengineer workspace add
+Path: ~/projects/existing-thing
+```
+
+BeerEngineer won't overwrite your files. It adds `.beerengineer/workspace.json`
+(and optionally `sonar-project.properties`) and registers the folder. If
+it's not a git repo yet, it'll offer to run `git init` — you can say no,
+BeerEngineer still registers it.
+
+## Step 4 — Do a thing
+
+After registering at least one workspace, open the UI:
+
+```
+npm run dev:ui --prefix ~/projects/beerengineer2
+```
+
+Or if you set it up to run under the `beerengineer` binary later, a single
+command will start both the engine and the UI. For now, two terminals:
+
+```
+# Terminal 1 — engine
+npm run dev:engine --prefix ~/projects/beerengineer2
+
+# Terminal 2 — UI
+npm run dev:ui --prefix ~/projects/beerengineer2
+```
+
+Open `http://127.0.0.1:3100` in your browser. You should see your registered
+workspace. Click into it, create an item ("idea"), and let BeerEngineer walk
+you through brainstorm → requirements → implementation.
+
+---
+
+## Self-hosting BeerEngineer2: recommended path = Tier 3 worktree
+
+If you want BeerEngineer to edit its own source code, you need one more
+layer of setup, because a running Node process can't pick up edits to its
+own files on the fly. The trick: have **two copies** of BeerEngineer2 on
+disk — one that runs, one that gets edited.
+
+This is the recommended path, not the advanced optional path. Use it if
+BeerEngineer2 is going to be one of your regular workspaces.
+
+The clean way uses `git worktree`:
+
+```
+# One-time:
+cd ~/projects/beerengineer2
+git worktree add ~/.beerengineer-tool main
+
+cd ~/.beerengineer-tool/apps/engine
+npm i
+npm i -g .
+
+beerengineer workspace add --path ~/projects/beerengineer2
+```
+
+Now:
+
+- `~/projects/beerengineer2/` is where you edit. Work on feature branches.
+- `~/.beerengineer-tool/` is what the tool runs from. Stays on `main`.
+- `beerengineer` (the global command) runs from the worktree, edits land
+  in `~/projects/beerengineer2/`. No conflict.
+
+When a feature is good and you want the running tool to upgrade to it:
+
+```
+cd ~/projects/beerengineer2
+git checkout main
+git merge feat/my-feature
+
+git -C ~/.beerengineer-tool pull
+npm i -g ~/.beerengineer-tool/apps/engine
+```
+
+That's the whole dance. You only do it when you've decided a change is
+proven enough to use daily.
+
+---
+
+## When things go wrong
+
+**`beerengineer: command not found`**
+Your npm global bin isn't on `PATH`. Run `npm config get prefix` — add
+`<prefix>/bin` to your shell's `PATH`.
+
+**`doctor` says a tool is installed but "misconfigured"**
+It's installed but not authed. Run the tool's own auth command
+(`gh auth login`, `claude auth login`, etc.). Then press `r` to re-check.
+
+**Dev server on `127.0.0.1:3100` is stuck / returns 000**
+The engine process probably hung. `pkill -f "next-server"` and `pkill -f
+"tsx.*server.ts"`, then restart. If self-hosting, this is when Tier 3
+(worktree) earns its keep.
+
+**SQLite errors after upgrading Node**
+`better-sqlite3` is a native module; it needs to be recompiled for your
+new Node version. `npm i -g ~/.beerengineer-tool/apps/engine` (or your
+install path) rebuilds it.
+
+**"path outside allowed roots" when registering a workspace**
+By default BeerEngineer only accepts workspaces under `~/projects/`. Edit
+`~/.config/beerengineer/config.json`, add your path to `allowedRoots`,
+try again.
+
+---
+
+## TL;DR
+
+1. Install prerequisites (Node, git, gh + login, at least one AI harness + login, at least one browser agent).
+2. `npm i -g ~/projects/beerengineer2/apps/engine`
+3. `beerengineer setup` — keep pressing `r` until required groups are green.
+4. `beerengineer workspace add` — or `beerengineer workspace add --path ~/projects/my-app`.
+5. Open the UI on `http://127.0.0.1:3100`, pick your workspace, create an idea, let it run.
+6. If you're dogfooding BeerEngineer2, skip step 2 and do Tier 3 instead:
+   `git worktree add ~/.beerengineer-tool main`, then install from that worktree.
+
+That's it. The rest is conversations with the AI and watching it work.

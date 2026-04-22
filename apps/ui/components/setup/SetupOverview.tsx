@@ -6,6 +6,7 @@ import { SetupAssistComposer } from "@/components/setup/SetupAssistComposer";
 import { WorkspaceInitForm } from "@/components/setup/WorkspaceInitForm";
 import { WorkspaceRootForm } from "@/components/setup/WorkspaceRootForm";
 import { MonoLabel } from "@/components/primitives/MonoLabel";
+import { Panel } from "@/components/primitives/Panel";
 import { StatusChip } from "@/components/primitives/StatusChip";
 import type { ChatMessageViewModel } from "@/lib/view-models";
 
@@ -21,7 +22,7 @@ export function SetupOverview({ setup, messages }: { setup: SetupViewModel; mess
           </div>
           <StatusChip label={setup.overallStatus} tone="gold" />
         </div>
-        <div className="panel padded">
+        <Panel className="padded">
           <div className="setup-actions">
             <div>
               <h3>Suggested actions</h3>
@@ -40,10 +41,10 @@ export function SetupOverview({ setup, messages }: { setup: SetupViewModel; mess
               </ul>
             </div>
           </div>
-        </div>
+        </Panel>
         <div className="setup-categories">
           {setup.categories.map((category) => (
-            <div key={category.title} className="panel padded">
+            <Panel key={category.title} className="padded">
               <h3>{category.title}</h3>
               <p>{category.summary}</p>
               <div className="setup-checks">
@@ -57,7 +58,7 @@ export function SetupOverview({ setup, messages }: { setup: SetupViewModel; mess
                   </div>
                 ))}
               </div>
-            </div>
+            </Panel>
           ))}
         </div>
       </section>

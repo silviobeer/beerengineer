@@ -1,6 +1,6 @@
-# UI console test — Core Features Documentation
+# CLI Workflow — Core Features Documentation
 
-Feature and scope summary for UI console test — Core, derived from the PRD and execution results.
+Feature and scope summary for CLI Workflow — Core, derived from the PRD and execution results.
 
 ## Implemented Features
 US-01: User sees the core workflow as a guided input form; US-02: User sees an overview of existing entries; US-03: User can create and save an entry

@@ -349,28 +349,29 @@ export function prepareRun(
     const workspaceRow = repos.getWorkspace(workspaceId)
     let llm: WorkflowLlmOptions | undefined
     if (workspaceRow?.root_path) {
+      // When the workspace config is missing or invalid, fall through to the
+      // fake-adapter path instead of throwing — legacy rows that predate the
+      // v2 schema need to keep working until they're backfilled.
       const workspaceConfig = await readWorkspaceConfig(workspaceRow.root_path)
-      if (!workspaceConfig) {
-        throw new Error(`workspace config is missing or invalid for ${workspaceRow.root_path}`)
-      }
-      llm = {
-        stage: {
+      if (workspaceConfig) {
+        const stageConfig = {
           workspaceRoot: workspaceRow.root_path,
           harnessProfile: workspaceConfig.harnessProfile,
           runtimePolicy: workspaceConfig.runtimePolicy,
-        },
-        execution: {
-          stage: {
-            workspaceRoot: workspaceRow.root_path,
-            harnessProfile: workspaceConfig.harnessProfile,
-            runtimePolicy: workspaceConfig.runtimePolicy,
+        }
+        llm = {
+          stage: stageConfig,
+          execution: {
+            stage: stageConfig,
+            executionCoder: stageConfig,
           },
-          executionCoder: {
-            workspaceRoot: workspaceRow.root_path,
-            harnessProfile: workspaceConfig.harnessProfile,
-            runtimePolicy: workspaceConfig.runtimePolicy,
-          },
-        },
+        }
+      } else {
+        bus.emit({
+          type: "log",
+          runId: runRow.id,
+          message: `workspace config missing or invalid for ${workspaceRow.root_path}; falling back to fake LLM adapters`,
+        })
       }
     }
     const detachDbSync = attachDbSync(bus, repos, { runId: runRow.id, itemId: itemRow.id }, { writtenLogIds })

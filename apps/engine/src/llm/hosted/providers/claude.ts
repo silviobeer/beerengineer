@@ -2,8 +2,11 @@ import type { RuntimePolicy } from "../../registry.js"
 
 function permissionMode(policy: RuntimePolicy): string | null {
   switch (policy.mode) {
+    // Claude Code has no pure read-only permission mode. "plan" refuses file
+    // writes and tool calls that mutate the workspace, which is the closest
+    // match for reviewer roles.
     case "safe-readonly":
-      return "default"
+      return "plan"
     case "safe-workspace-write":
       return "acceptEdits"
     case "unsafe-autonomous-write":

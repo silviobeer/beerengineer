@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "default": "claude-first",
+  "providers": [
+    {
+      "name": "anthropic",
+      "models": [
+        { "id": "claude-opus-4-7", "default": { "role": "coder" } },
+        { "id": "claude-sonnet-4-6", "default": { "role": "reviewer" } },
+        { "id": "claude-haiku-4-5" }
+      ]
+    },
+    {
+      "name": "openai",
+      "models": [
+        { "id": "gpt-5-4", "default": { "role": "coder" } },
+        { "id": "gpt-4o", "default": { "role": "reviewer" } },
+        { "id": "o3" }
+      ]
+    },
+    {
+      "name": "openrouter",
+      "models": [
+        { "id": "qwen/qwen3.5-coder" },
+        { "id": "deepseek/deepseek-v3.2" },
+        { "id": "mistralai/codestral-2501" },
+        { "id": "mistralai/mistral-large-2411" }
+      ]
+    }
+  ],
+  "presets": {
+    "codex-first": {
+      "coder": { "harness": "codex", "provider": "openai", "model": "gpt-5-4" },
+      "reviewer": { "harness": "claude", "provider": "anthropic", "model": "claude-sonnet-4-6" }
+    },
+    "claude-first": {
+      "coder": { "harness": "claude", "provider": "anthropic", "model": "claude-opus-4-7" },
+      "reviewer": { "harness": "codex", "provider": "openai", "model": "gpt-5-4" }
+    },
+    "codex-only": {
+      "coder": { "harness": "codex", "provider": "openai", "model": "gpt-5-4" },
+      "reviewer": { "harness": "codex", "provider": "openai", "model": "gpt-4o" }
+    },
+    "claude-only": {
+      "coder": { "harness": "claude", "provider": "anthropic", "model": "claude-opus-4-7" },
+      "reviewer": { "harness": "claude", "provider": "anthropic", "model": "claude-sonnet-4-6" }
+    },
+    "fast": {
+      "coder": { "harness": "codex", "provider": "openai", "model": "gpt-4o" },
+      "reviewer": { "harness": "claude", "provider": "anthropic", "model": "claude-haiku-4-5" }
+    },
+    "opencode-china": {
+      "coder": { "harness": "opencode", "provider": "openrouter", "model": "qwen/qwen3.5-coder" },
+      "reviewer": { "harness": "opencode", "provider": "openrouter", "model": "deepseek/deepseek-v3.2" }
+    },
+    "opencode-euro": {
+      "coder": { "harness": "opencode", "provider": "openrouter", "model": "mistralai/codestral-2501" },
+      "reviewer": { "harness": "opencode", "provider": "openrouter", "model": "mistralai/mistral-large-2411" }
+    }
+  }
+}

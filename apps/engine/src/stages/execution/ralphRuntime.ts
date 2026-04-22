@@ -383,7 +383,7 @@ export async function runRalphStory(
             harnessProfile: llm.harnessProfile,
             runtimePolicy: llm.runtimePolicy,
             role: "coder",
-            stage: "test-writer",
+            stage: "execution",
           })
           const coderResult = await runCoderHarness({
             harness,

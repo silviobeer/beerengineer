@@ -77,11 +77,18 @@ export async function startRun(input: {
 }
 
 export async function answerPrompt(runId: string, promptId: string, answer: string): Promise<void> {
-  await fetch(`${ENGINE_BASE_URL}/runs/${runId}/input`, {
+  const res = await fetch(`${ENGINE_BASE_URL}/runs/${runId}/input`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ promptId, answer })
   })
+  if (res.ok) return
+  const body = await res.json().catch(() => ({}))
+  const message =
+    typeof (body as { error?: unknown }).error === "string"
+      ? (body as { error: string }).error
+      : `http_${res.status}`
+  throw new Error(message)
 }
 
 export async function getOpenPrompt(runId: string): Promise<PendingPromptRow | null> {

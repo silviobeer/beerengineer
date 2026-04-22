@@ -2,22 +2,20 @@ import type { ChatMessageViewModel } from "@/lib/view-models";
 import { ConversationActionBar } from "@/components/conversation/ConversationActionBar";
 import { ConversationComposer } from "@/components/conversation/ConversationComposer";
 import { ConversationMessageList } from "@/components/conversation/ConversationMessageList";
+import { DetailBlock } from "@/components/primitives/DetailBlock";
 
 export function ConversationView({ messages }: { messages: ChatMessageViewModel[] }) {
   return (
     <section className="stack-panel">
-      <div className="detail-block">
-        <h3>Assist conversation</h3>
+      <DetailBlock title="Assist conversation">
         <ConversationMessageList messages={messages} />
-      </div>
-      <div className="detail-block">
-        <h3>Resolution controls</h3>
+      </DetailBlock>
+      <DetailBlock title="Resolution controls">
         <ConversationActionBar />
-      </div>
-      <div className="detail-block">
-        <h3>Composer</h3>
+      </DetailBlock>
+      <DetailBlock title="Composer">
         <ConversationComposer />
-      </div>
+      </DetailBlock>
     </section>
   );
 }

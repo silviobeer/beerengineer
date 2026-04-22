@@ -9,10 +9,10 @@ import { getLiveBoardState } from "@/lib/live-board";
 export default async function BoardPage({
   searchParams
 }: {
-  searchParams?: Promise<{ workspace?: string }>;
+  searchParams?: Promise<{ workspace?: string; item?: string }>;
 }) {
   const params = searchParams ? await searchParams : undefined;
-  const state = getLiveBoardState(params?.workspace ?? null);
+  const state = getLiveBoardState(params?.workspace ?? null, params?.item ?? null);
 
   return (
     <AppShell shell={state.shell} activeHref="/" workspaceHrefBase="/">

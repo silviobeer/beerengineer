@@ -21,28 +21,45 @@ const RELEVANT: BoardEventType[] = [
   "project_created"
 ];
 
+const WINDOW_MS = 400;
+
 /**
  * Subscribes to the engine's workspace-scoped `/events` SSE stream and calls
- * `router.refresh()` with debounce on relevant events so the server-rendered
- * board reconciles. The last-write-wins behavior is implicit: refresh always
- * fetches the newest snapshot, so duplicate events during reconnect do not
- * produce stale or out-of-order columns.
+ * `router.refresh()` on relevant events. Leading+trailing throttle: fires
+ * immediately on the first event, and guarantees a final refresh after a
+ * burst so late events inside the window are not silently dropped.
  */
 export function BoardLiveSubscriber({ workspaceKey }: { workspaceKey?: string | null }) {
   const router = useRouter();
   const lastRefresh = useRef(0);
+  const trailingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     let disposed = false;
     let source: EventSource | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
+    const fireRefresh = () => {
+      lastRefresh.current = Date.now();
+      router.refresh();
+    };
+
     const scheduleRefresh = () => {
       const now = Date.now();
-      // Coalesce bursts of events into at most one refresh per 400ms.
-      if (now - lastRefresh.current < 400) return;
-      lastRefresh.current = now;
-      router.refresh();
+      const sinceLast = now - lastRefresh.current;
+      if (sinceLast >= WINDOW_MS) {
+        if (trailingTimer.current) {
+          clearTimeout(trailingTimer.current);
+          trailingTimer.current = null;
+        }
+        fireRefresh();
+        return;
+      }
+      if (trailingTimer.current) return;
+      trailingTimer.current = setTimeout(() => {
+        trailingTimer.current = null;
+        if (!disposed) fireRefresh();
+      }, WINDOW_MS - sinceLast);
     };
 
     const connect = () => {
@@ -69,6 +86,10 @@ export function BoardLiveSubscriber({ workspaceKey }: { workspaceKey?: string | 
     return () => {
       disposed = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (trailingTimer.current) {
+        clearTimeout(trailingTimer.current);
+        trailingTimer.current = null;
+      }
       source?.close();
     };
   }, [router, workspaceKey]);

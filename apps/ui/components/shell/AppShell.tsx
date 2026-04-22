@@ -24,7 +24,7 @@ export function AppShell({ shell, activeHref, children, workspaceHrefBase = "/" 
             hrefBase={workspaceHrefBase}
           />
           <PrimaryNav items={shell.navItems} activeHref={activeHref} />
-          <GlobalSignals signals={shell.globalSignals} />
+          <GlobalSignals signals={shell.globalSignals} entries={shell.signalEntries} />
         </div>
       </header>
       <main className="shell-main">{children}</main>

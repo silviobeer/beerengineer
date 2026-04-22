@@ -11,8 +11,10 @@ npm exec --workspace=@beerengineer2/engine beerengineer -- setup --no-interactiv
 ```
 
 - `doctor` is read-only. It reports config, data-dir, DB, toolchain, and auth status.
-- `setup` provisions the default config, data directory, and SQLite database, then reruns diagnostics.
-- `GET /setup/status` returns the same JSON contract as `doctor --json`.
+- `setup` provisions the default config, data directory, and SQLite database, then reruns diagnostics. It refuses to overwrite a config file that exists but fails validation — fix or remove it by hand, then retry.
+- `GET /setup/status` returns the same JSON contract as `doctor --json`. Passing `?group=` with an unknown id responds `400 { "error": "unknown_group" }`; the CLI equivalent exits with code 2.
+
+Known group ids: `core`, `vcs.github`, `llm.anthropic`, `llm.openai`, `llm.opencode`, `browser-agent`, `review`.
 
 ## Config
 
@@ -59,3 +61,18 @@ Supported env overrides:
 - `overall = blocked` means at least one required group is unsatisfied and `doctor` exits non-zero.
 - `overall = warning` means required groups pass and only recommended tooling is missing.
 - `overall = ok` means all active required groups pass and recommended tooling hit its ideal target.
+
+## Schema migrations
+
+`applySchema` stamps `PRAGMA user_version = REQUIRED_MIGRATION_LEVEL` only when the
+current value is ≤ the required level. A newer binary opening an older DB runs the
+idempotent `ALTER TABLE` migrations and bumps the version; a newer DB opened by an
+older binary is left untouched. When introducing level 2+, add a real
+`migrate(from, to)` runner keyed off `user_version` instead of stamping the constant.
+
+## Tests
+
+- Fast unit tests run by default: `npm test --workspace=@beerengineer2/engine`.
+- The end-to-end CLI smoke test (`start_brainstorm runs to completion`) is gated behind
+  `BE2_RUN_SLOW_TESTS=1` because it drives scripted stdin through the real workflow and
+  is sensitive to prompt-count changes.

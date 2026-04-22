@@ -4,9 +4,6 @@ export type HostedStageOutputEnvelope<A> = {
   kind: "artifact" | "message"
   artifact?: A
   message?: string | null
-  needsUserInput?: boolean
-  userInputQuestion?: string | null
-  followUpHint?: string | null
 }
 
 export type HostedReviewOutputEnvelope =
