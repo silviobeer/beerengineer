@@ -11,7 +11,9 @@ import { Repos } from "../src/db/repositories.js"
 import { parseArgs, resolveItemReference, resolveUiWorkspacePath, runDoctor } from "../src/index.js"
 
 test("parseArgs recognizes help, doctor, start ui, workflow, item action, and unknown commands", () => {
-  assert.deepEqual(parseArgs([]), { kind: "workflow" })
+  assert.deepEqual(parseArgs([]), { kind: "workflow", json: false })
+  assert.deepEqual(parseArgs(["--json"]), { kind: "workflow", json: true })
+  assert.deepEqual(parseArgs(["run", "--json"]), { kind: "workflow", json: true })
   assert.deepEqual(parseArgs(["--help"]), { kind: "help" })
   assert.deepEqual(parseArgs(["-h"]), { kind: "help" })
   assert.deepEqual(parseArgs(["--doctor"]), { kind: "doctor" })

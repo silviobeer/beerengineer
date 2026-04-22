@@ -1,7 +1,7 @@
 import { runStage } from "../../core/stageRuntime.js"
 import { printStageCompletion, stageSummary, summaryArtifactFile } from "../../core/stageHelpers.js"
+import { stagePresent } from "../../core/stagePresentation.js"
 import { createProjectReviewReview, createProjectReviewStage, defaultStageConfig } from "../../llm/registry.js"
-import { print } from "../../print.js"
 import { renderProjectReviewMarkdown } from "../../render/projectReview.js"
 import type { ProjectReviewArtifact, ProjectReviewFinding, WithExecution } from "../../types.js"
 import type { ProjectReviewState } from "./types.js"
@@ -16,7 +16,7 @@ function findingsBySeverity(artifact: ProjectReviewArtifact): SeverityCounts {
 }
 
 export async function projectReview(ctx: WithExecution): Promise<ProjectReviewArtifact> {
-  print.header(`project-review — ${ctx.project.name}`)
+  stagePresent.header(`project-review — ${ctx.project.name}`)
 
   const { result } = await runStage({
     stageId: "project-review",
@@ -35,7 +35,6 @@ export async function projectReview(ctx: WithExecution): Promise<ProjectReviewAr
     stageAgent: createProjectReviewStage(defaultStageConfig.stageAgent.provider, ctx.project),
     reviewer: createProjectReviewReview(defaultStageConfig.reviewer.provider),
     askUser: async () => "",
-    showMessage: print.llm,
     async persistArtifacts(run, artifact) {
       return [
         {
@@ -61,13 +60,13 @@ export async function projectReview(ctx: WithExecution): Promise<ProjectReviewAr
     },
     async onApproved(artifact, run) {
       const severityCounts = findingsBySeverity(artifact)
-      print.ok(`Project review approved with status "${artifact.overallStatus}".`)
-      print.llm("Project-Review", artifact.summary)
+      stagePresent.ok(`Project review approved with status "${artifact.overallStatus}".`)
+      stagePresent.chat("Project-Review", artifact.summary)
       for (const finding of artifact.findings) {
-        print.finding(finding.source, finding.severity, `${finding.category}: ${finding.message}`)
+        stagePresent.finding(finding.source, finding.severity, `${finding.category}: ${finding.message}`)
       }
       if (artifact.findings.length > 0) {
-        print.dim(
+        stagePresent.dim(
           `Residual findings by severity: critical=${severityCounts.critical ?? 0}, high=${severityCounts.high ?? 0}, medium=${severityCounts.medium ?? 0}, low=${severityCounts.low ?? 0}`,
         )
       }

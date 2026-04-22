@@ -81,7 +81,6 @@ export type StageDefinition<TState, TArtifact, TResult> = {
   stageAgent: StageAgentAdapter<TState, TArtifact>
   reviewer: ReviewAgentAdapter<TState, TArtifact>
   askUser(prompt: string): Promise<string>
-  showMessage(role: string, text: string): void
   onApproved(artifact: TArtifact, run: StageRun<TState, TArtifact>): Promise<TResult>
   persistArtifacts(run: StageRun<TState, TArtifact>, artifact: TArtifact): Promise<StageArtifactContent[]>
   maxReviews: number
@@ -89,6 +88,24 @@ export type StageDefinition<TState, TArtifact, TResult> = {
 
 function nowIso(): string {
   return new Date().toISOString()
+}
+
+function emitChatMessage<TState, TArtifact>(
+  run: StageRun<TState, TArtifact>,
+  role: string,
+  source: "stage-agent" | "reviewer" | "system",
+  text: string,
+  requiresResponse = false,
+): void {
+  emitEvent({
+    type: "chat_message",
+    runId: run.runId,
+    stageRunId: getActiveRun()?.stageRunId ?? null,
+    role,
+    source,
+    text,
+    requiresResponse,
+  })
 }
 
 export async function writeArtifactFiles(
@@ -259,7 +276,7 @@ async function runStageBody<TState, TArtifact, TResult>(
       setStatus(run, "waiting_for_user")
       pushLog(run, { type: "stage_message", message: response.message })
       await persistRun(run)
-      definition.showMessage(definition.stageAgentLabel, response.message)
+      emitChatMessage(run, definition.stageAgentLabel, "stage-agent", response.message, true)
 
       const userMessage = await definition.askUser("  you > ")
       pushLog(run, { type: "user_message", message: userMessage })
@@ -329,7 +346,7 @@ async function runStageBody<TState, TArtifact, TResult>(
 
     setStatus(run, "revision_requested")
     await persistRun(run)
-    definition.showMessage(definition.reviewerLabel, review.feedback)
+    emitChatMessage(run, definition.reviewerLabel, "reviewer", review.feedback)
     response = await definition.stageAgent.step({
       kind: "review-feedback",
       state: run.state,

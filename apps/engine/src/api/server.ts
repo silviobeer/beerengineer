@@ -1,13 +1,13 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
 import { URL } from "node:url"
 import { initDatabase } from "../db/connection.js"
-import { Repos, type ItemRow } from "../db/repositories.js"
+import { Repos, type ItemRow, type StageLogRow } from "../db/repositories.js"
 import { getBoard, getRunTree } from "./board.js"
-import { type WorkflowEvent } from "../core/io.js"
 import { createApiIOSession } from "../core/ioApi.js"
 import { prepareRun } from "../core/runOrchestrator.js"
 import { createItemActionsService, isItemAction, type ItemActionEvent } from "../core/itemActions.js"
 import { isResumeInFlight, loadResumeReadiness, performResume } from "../core/resume.js"
+import { LOG_TAIL_INTERVAL_MS } from "../core/constants.js"
 
 const PORT = Number(process.env.PORT ?? 4100)
 const HOST = process.env.HOST ?? "127.0.0.1"
@@ -18,26 +18,16 @@ const repos = new Repos(db)
 type SessionEntry = ReturnType<typeof createApiIOSession>
 const sessions = new Map<string, SessionEntry>()
 
-const sessionItemIds = new Map<string, string>() // runId -> itemId
-function trackSessionItem(runId: string, itemId: string): void {
-  sessionItemIds.set(runId, itemId)
-}
-
 const itemActions = createItemActionsService(repos, {
-  onSessionStart: ({ session, runId, itemId }) => {
-    trackSessionItem(runId, itemId)
-    subscribeSessionToBoardStream(session, itemId)
+  onSessionStart: ({ session, runId }) => {
+    sessions.set(runId, session)
   }
 })
-// Item-action-started runs get their IO session stored on the service; merge
-// that view with the one `POST /runs` uses so SSE and prompt input keep working
-// regardless of which surface started the run.
+
+// Merge the two origin maps so callers don't care which surface started the
+// run.
 function resolveSession(runId: string): SessionEntry | undefined {
   return sessions.get(runId) ?? itemActions.sessions.get(runId)
-}
-
-function resolveItemIdForRun(runId: string): string | undefined {
-  return sessionItemIds.get(runId) ?? repos.getRun(runId)?.item_id
 }
 
 function json(res: ServerResponse, status: number, body: unknown): void {
@@ -61,6 +51,19 @@ function setCors(res: ServerResponse): void {
   res.setHeader("access-control-allow-origin", "*")
   res.setHeader("access-control-allow-methods", "GET,POST,OPTIONS")
   res.setHeader("access-control-allow-headers", "content-type")
+}
+
+function parseLogData(dataJson: string | null): unknown {
+  if (!dataJson) return undefined
+  try {
+    return JSON.parse(dataJson)
+  } catch {
+    return undefined
+  }
+}
+
+function writeSse(res: ServerResponse, event: string, data: unknown): void {
+  res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
 }
 
 async function handleItemAction(
@@ -99,20 +102,29 @@ async function handleItemAction(
   json(res, 200, payload)
 }
 
-const boardEventsEmitter = (() => {
-  // Re-broadcast item-action service events as the shape defined in the
-  // plan's event schema. The orchestrator-driven events (run_started,
-  // stage_started, …) are emitted through the run sessions; `/events`
-  // subscribes to both the itemActions emitter and every active session.
-  return itemActions
-})()
+// ---------------------------------------------------------------------------
+// Board stream (/events) — single delivery model: tail stage_logs
+// ---------------------------------------------------------------------------
+//
+// The board stream rebroadcasts a small set of run lifecycle + project events
+// to any UI tab listening on `/events[?workspace=<key>]`. All of them land
+// in `stage_logs` when the run's dbSync subscriber persists them, so we poll
+// `stage_logs` as the shared bus and fan out to SSE clients. `item_column_
+// changed` is a pure item-level event that doesn't touch `stage_logs`, so
+// the `itemActions` service (which emits it) is the only origin for that
+// event — keeping the two origins **non-overlapping** and dedup-free by
+// construction.
 
 type BoardSseClient = { res: ServerResponse; id: string; workspaceId: string | null }
 const boardSseClients = new Set<BoardSseClient>()
 
-function writeSse(res: ServerResponse, event: string, data: unknown): void {
-  res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
-}
+const boardRelevantLogEvents = new Set([
+  "run_started",
+  "stage_started",
+  "stage_completed",
+  "run_finished",
+  "project_created",
+])
 
 function resolveBoardEventWorkspaceId(data: unknown): string | null {
   const payload = data as { itemId?: string; runId?: string } | null
@@ -135,33 +147,45 @@ function broadcastBoardEvent(event: string, data: unknown): void {
   }
 }
 
-boardEventsEmitter.on("event", (ev: ItemActionEvent) => {
-  broadcastBoardEvent(ev.type, ev)
-})
+// `boardLogCursor` is a module-level high-water mark for the workspace log
+// tail. On server restart it resets to 0 and replays all historical
+// lifecycle logs to every connecting client — acceptable for now (SSE
+// clients filter on `streamId` to dedup), but worth revisiting if the log
+// grows unbounded.
+let boardLogCursor = 0
+let boardLogPollerStarted = false
 
-// Orchestrator events flow through sessions. Subscribe to every session we
-// create so run/stage events also appear on the board stream.
-function subscribeSessionToBoardStream(session: SessionEntry, itemId: string): void {
-  session.emitter.on("event", (ev: WorkflowEvent) => {
-    switch (ev.type) {
-      case "run_started":
-        broadcastBoardEvent("run_started", { runId: ev.runId, itemId: ev.itemId, startedAt: ev.at ?? Date.now() })
-        break
-      case "stage_started":
-        broadcastBoardEvent("stage_started", { runId: ev.runId, itemId, stage: ev.stageKey })
-        break
-      case "stage_completed":
-        broadcastBoardEvent("stage_completed", { runId: ev.runId, itemId, stage: ev.stageKey, status: ev.status })
-        break
-      case "run_finished":
-        broadcastBoardEvent("run_finished", { runId: ev.runId, itemId, status: ev.status })
-        break
-      case "project_created":
-        broadcastBoardEvent("project_created", { itemId: ev.itemId, projectRef: ev.projectId })
-        break
+function ensureBoardLogPoller(): void {
+  if (boardLogPollerStarted) return
+  boardLogPollerStarted = true
+  setInterval(() => {
+    const logs = repos.listLogsForWorkspace(null, boardLogCursor)
+    for (const log of logs) {
+      boardLogCursor = Math.max(boardLogCursor, log.created_at + 1)
+      if (!boardRelevantLogEvents.has(log.event_type)) continue
+      broadcastBoardEvent(log.event_type, {
+        runId: log.run_id,
+        itemId: log.item_id,
+        streamId: log.id,
+        at: log.created_at,
+        message: log.message,
+        stageRunId: log.stage_run_id,
+        data: parseLogData(log.data_json),
+      })
     }
-  })
+  }, LOG_TAIL_INTERVAL_MS).unref?.()
 }
+
+// `itemActions` emits `item_column_changed` and a couple of other
+// service-level events. Lifecycle events (run_started, stage_started, …)
+// are **intentionally ignored** here because the log poller already covers
+// them — having two origins was the deduplication bug before this refactor.
+itemActions.on("event", (ev: ItemActionEvent) => {
+  if (ev.type === "item_column_changed") {
+    broadcastBoardEvent("item_column_changed", ev)
+  }
+})
+ensureBoardLogPoller()
 
 async function handleStartRun(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const body = (await readJson(req)) as { title?: string; description?: string; workspaceKey?: string }
@@ -175,8 +199,6 @@ async function handleStartRun(req: IncomingMessage, res: ServerResponse): Promis
     { workspaceKey: body.workspaceKey }
   )
   sessions.set(prepared.runId, session)
-  trackSessionItem(prepared.runId, prepared.itemId)
-  subscribeSessionToBoardStream(session, prepared.itemId)
 
   prepared
     .start()
@@ -257,8 +279,6 @@ async function handleResumeRun(req: IncomingMessage, res: ServerResponse, runId:
   // Reuse the API IO session machinery so SSE clients see the resumed run.
   const session = createApiIOSession(repos)
   sessions.set(runId, session)
-  trackSessionItem(runId, readiness.run.item_id)
-  subscribeSessionToBoardStream(session, readiness.run.item_id)
 
   performResume({ repos, io: session.io, runId, remediation })
     .catch(err => console.error("[resume]", err))
@@ -294,20 +314,106 @@ async function handleRunInput(req: IncomingMessage, res: ServerResponse, runId: 
 
   const run = repos.getRun(runId)
   if (!run) return json(res, 404, { error: "run not found" })
-  if (run.owner === "cli") {
-    return json(res, 409, { error: "cli_owned", detail: "CLI-owned runs answer prompts via the terminal" })
-  }
-
-  const session = resolveSession(runId)
-  if (!session) return json(res, 404, { error: "no active session" })
 
   const promptId = body.promptId ?? repos.getOpenPrompt(runId)?.id
   if (!promptId) return json(res, 404, { error: "no open prompt" })
 
-  const ok = session.answerPrompt(promptId, body.answer)
-  if (!ok) return json(res, 404, { error: "prompt not pending" })
+  // Preferred path: the run has an in-memory session in *this* process.
+  // `session.answerPrompt` emits `prompt_answered` on that session's bus,
+  // and `attachDbSync` + `withPromptPersistence` react by writing the
+  // stage_log row and marking the pending_prompts row answered.
+  const session = resolveSession(runId)
+  if (session) {
+    const ok = session.answerPrompt(promptId, body.answer)
+    if (ok) return json(res, 200, { runId, promptId, answer: body.answer })
+  }
+
+  // Cross-process path: the run is owned by another process (typically the
+  // CLI). We update `pending_prompts` and also write a `prompt_answered`
+  // stage_log row — the CLI's `attachCrossProcessBridge` tails that log and
+  // re-emits the event onto its local bus, resolving the pending `ask()`.
+  const answered = repos.answerPendingPrompt(promptId, body.answer)
+  if (!answered) return json(res, 404, { error: "prompt not pending" })
+
+  repos.appendLog({
+    runId,
+    eventType: "prompt_answered",
+    message: body.answer,
+    data: { promptId, source: "api" },
+  })
 
   json(res, 200, { runId, promptId, answer: body.answer })
+}
+
+// ---------------------------------------------------------------------------
+// Run stream (/runs/:id/events) — single delivery model: tail stage_logs
+// ---------------------------------------------------------------------------
+//
+// The previous implementation had two parallel delivery paths (in-memory
+// session emitter + DB log poll) that had to be deduped by streamId. Now
+// the DB log poll is the *only* source; in-memory events emitted by the
+// run's bus land in `stage_logs` via `attachDbSync` and are picked up by the
+// same poller that serves CLI-owned runs. One cursor, one dedup key (`log.id`).
+function handleEvents(req: IncomingMessage, res: ServerResponse, runId: string): void {
+  res.writeHead(200, {
+    "content-type": "text/event-stream",
+    "cache-control": "no-cache",
+    connection: "keep-alive"
+  })
+  res.write(`event: hello\ndata: ${JSON.stringify({ runId, at: Date.now() })}\n\n`)
+
+  const seenStreamIds = new Set<string>()
+  let logCursor = 0
+  let closed = false
+
+  const writePersistedLog = (log: StageLogRow) => {
+    if (closed || seenStreamIds.has(log.id)) return
+    seenStreamIds.add(log.id)
+    logCursor = Math.max(logCursor, log.created_at + 1)
+    writeSse(res, log.event_type, {
+      streamId: log.id,
+      at: log.created_at,
+      message: log.message,
+      stageRunId: log.stage_run_id,
+      data: parseLogData(log.data_json),
+    })
+    if (log.event_type === "run_finished") closeStream()
+  }
+
+  const pollOnce = () => {
+    if (closed) return
+    for (const log of repos.listLogsForRun(runId, logCursor)) {
+      writePersistedLog(log)
+    }
+    // If the run ended without ever writing a `run_finished` log (edge case
+    // for legacy or interrupted runs), close the stream once the DB shows
+    // the run as non-running and the cursor has caught up.
+    const run = repos.getRun(runId)
+    if (run && run.status !== "running" && !closed) {
+      const hasFinishedLog = repos
+        .listLogsForRun(runId, 0)
+        .some(log => log.event_type === "run_finished")
+      if (!hasFinishedLog) closeStream()
+    }
+  }
+
+  const pollTimer = setInterval(pollOnce, LOG_TAIL_INTERVAL_MS)
+  pollTimer.unref?.()
+
+  const closeStream = () => {
+    if (closed) return
+    closed = true
+    clearInterval(pollTimer)
+    res.end()
+  }
+
+  // Initial replay: everything already in the log.
+  pollOnce()
+
+  req.on("close", () => {
+    closed = true
+    clearInterval(pollTimer)
+  })
 }
 
 function handleBoardEvents(req: IncomingMessage, res: ServerResponse): void {
@@ -340,73 +446,6 @@ function handleBoardEvents(req: IncomingMessage, res: ServerResponse): void {
     clearInterval(keepAlive)
     boardSseClients.delete(client)
   })
-}
-
-function handleEvents(req: IncomingMessage, res: ServerResponse, runId: string): void {
-  res.writeHead(200, {
-    "content-type": "text/event-stream",
-    "cache-control": "no-cache",
-    connection: "keep-alive"
-  })
-  res.write(`event: hello\ndata: ${JSON.stringify({ runId, at: Date.now() })}\n\n`)
-
-  const seenStreamIds = new Set<string>()
-  const replayPersistedLogs = () => {
-    for (const log of repos.listLogsForRun(runId)) {
-      seenStreamIds.add(log.id)
-      res.write(
-        `event: ${log.event_type}\ndata: ${JSON.stringify({
-          streamId: log.id,
-          at: log.created_at,
-          message: log.message,
-          stageRunId: log.stage_run_id,
-          data: log.data_json ? JSON.parse(log.data_json) : undefined
-        })}\n\n`
-      )
-    }
-  }
-
-  const session = resolveSession(runId)
-  if (session) {
-    const pending: WorkflowEvent[] = []
-    let replayComplete = false
-
-    const writeEvent = (event: WorkflowEvent) => {
-      if (event.streamId) {
-        if (seenStreamIds.has(event.streamId)) return
-        seenStreamIds.add(event.streamId)
-      }
-      res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
-      if (event.type === "run_finished") {
-        res.end()
-      }
-    }
-
-    const listener = (event: WorkflowEvent) => {
-      if (!replayComplete) {
-        pending.push(event)
-        return
-      }
-      writeEvent(event)
-    }
-    session.emitter.on("event", listener)
-
-    // Subscribe first, then replay and flush buffered live events. The stream
-    // may briefly buffer duplicates, but streamId dedup keeps the sequence
-    // complete across the replay/live handoff.
-    replayPersistedLogs()
-    replayComplete = true
-    pending.forEach(writeEvent)
-
-    req.on("close", () => {
-      session.emitter.off("event", listener)
-    })
-  } else {
-    // No active session — replay persisted history for completed/cleaned-up runs
-    // and then close the stream.
-    replayPersistedLogs()
-    res.end()
-  }
 }
 
 /**

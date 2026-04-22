@@ -8,8 +8,8 @@ export function BoardView({ board }: { board: BoardViewModel }) {
     <div className="board-surface">
       <div className="board-head">
         <div>
-          <MonoLabel>Workspace board</MonoLabel>
-          <h2>{board.heading}</h2>
+          <MonoLabel>Live board</MonoLabel>
+          <h1>{board.heading}</h1>
           <p>{board.description}</p>
         </div>
       </div>

@@ -20,7 +20,7 @@ import type {
   WithDocumentation,
   WorkflowContext,
 } from "./types.js"
-import { print } from "./print.js"
+import { stagePresent } from "./core/stagePresentation.js"
 import { ask } from "./sim/human.js"
 import { emitEvent, getActiveRun, withStageLifecycle } from "./core/runContext.js"
 import { brainstorm } from "./stages/brainstorm/index.js"
@@ -178,8 +178,8 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
     await runProject({ ...context, project }, resumePlan ?? undefined)
   }
 
-  print.header("DONE")
-  print.ok(`Item "${item.title}" is done ✓`)
+  stagePresent.header("DONE")
+  stagePresent.ok(`Item "${item.title}" is done ✓`)
 }
 
 async function runProject(initialCtx: ProjectContext, resume?: ProjectResumePlan): Promise<void> {
@@ -236,16 +236,16 @@ async function runProject(initialCtx: ProjectContext, resume?: ProjectResumePlan
 
 async function handoffCandidate(ctx: WithDocumentation): Promise<void> {
   const handoff = await createCandidateBranch(ctx, ctx.project, ctx.documentation)
-  print.header(`handoff — ${ctx.project.name}`)
-  print.ok(handoff.summary)
-  print.dim(`→ Candidate: ${handoff.candidateBranch.name}`)
-  print.dim(`→ Base: ${handoff.candidateBranch.base}`)
-  handoff.mergeChecklist.forEach(item => print.dim(`→ ${item}`))
+  stagePresent.header(`handoff — ${ctx.project.name}`)
+  stagePresent.ok(handoff.summary)
+  stagePresent.dim(`→ Candidate: ${handoff.candidateBranch.name}`)
+  stagePresent.dim(`→ Base: ${handoff.candidateBranch.base}`)
+  handoff.mergeChecklist.forEach(item => stagePresent.dim(`→ ${item}`))
 
   const decisionRaw = await ask("  Test, merge or reject candidate? [test/merge/reject] > ")
   const decision = normalizeDecision(decisionRaw)
   const updated = await finalizeCandidateDecision(ctx, handoff, decision)
-  print.ok(updated.summary)
+  stagePresent.ok(updated.summary)
 }
 
 function normalizeDecision(input: string): "test" | "merge" | "reject" {

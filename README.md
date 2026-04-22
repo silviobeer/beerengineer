@@ -31,9 +31,10 @@ beerengineer --help | -h
 
 beerengineer --doctor
   Prueft Node.js, oeffnet/initialisiert die SQLite-DB, verifiziert die Kern-Tabellen
-  (`workspaces`, `items`, `projects`, `runs`, `stage_runs`, `stage_logs`,
-  `artifact_files`, `pending_prompts`) und bestaetigt, dass der UI-Workspace
-  unter `apps/ui` vorhanden ist. Exit-Code 0 bei Erfolg, sonst non-zero.
+  (`workspaces`, `items`, `projects`, `runs`, `external_remediations`,
+  `stage_runs`, `stage_logs`, `artifact_files`, `pending_prompts`) und
+  bestaetigt, dass der UI-Workspace unter `apps/ui` vorhanden ist.
+  Exit-Code 0 bei Erfolg, sonst non-zero.
 
 beerengineer start ui
   Startet `npm run dev` im aufgeloesten UI-Workspace mit inherited stdio und
@@ -46,9 +47,54 @@ beerengineer item action --item <id|code> --action <name>
   `--item` akzeptiert entweder die persistierte Item-UUID oder einen
   per-Workspace-Code wie `ITEM-0001`. Mehrdeutige Codes werden abgelehnt;
   in dem Fall muss die UUID verwendet werden.
+  Fuer `resume_run` unterstuetzt die CLI ausserdem:
+  `--remediation-summary <text>` (required),
+  `--branch <name>`,
+  `--commit <sha>`,
+  `--notes <text>`,
+  `--yes` (skippt den TTY-Prompt).
+  Exit-Code `75`, wenn ein Resume ohne erforderliche Remediation-Daten in
+  non-interactive mode gestartet wird.
 
 beerengineer
   Ohne Argumente startet der bisherige interaktive CLI-Workflow unveraendert.
+
+beerengineer --json
+beerengineer run --json
+  Harness-Modus fuer Agenten (z.B. Codex). Stdout traegt pro Zeile ein
+  `WorkflowEvent` als JSON (`chat_message`, `presentation`, `prompt_requested`,
+  `stage_started`, `stage_completed`, `run_finished`, …). Der Harness liest
+  `prompt_requested`-Events und antwortet mit einer JSON-Zeile
+  `{"type":"prompt_answered","promptId":"<id>","answer":"<text>"}` auf stdin.
+  Human-Output ist in diesem Modus deaktiviert — Fehler gehen auf stderr.
+  Der Run endet mit einer `{"type":"cli_finished","runId":"…"}`-Zeile.
+```
+
+### Harness-Modus (NDJSON)
+
+`beerengineer --json` macht die CLI zu einer stabilen Machine-Schnittstelle:
+
+- **stdout** — eine Zeile pro `WorkflowEvent`. Das Event-Vokabular ist identisch
+  zum SSE-Stream der HTTP-API, d.h. Harness und UI konsumieren denselben Bus.
+- **stdin** — eine Zeile pro Antwort. Nur `prompt_answered` wird ausgewertet:
+  `{"type":"prompt_answered","promptId":"…","answer":"…"}`. Alles andere wird
+  ignoriert.
+- **stderr** — diagnostische Meldungen (Parse-Errors, Warnungen) — nie auf stdout.
+
+Beispiel-Session (Pseudocode):
+
+```
+> beerengineer --json
+< {"type":"prompt_requested","promptId":"p-…","prompt":"Idea (title)","runId":"…"}
+> {"type":"prompt_answered","promptId":"p-…","answer":"Minimal CLI"}
+< {"type":"prompt_requested","promptId":"p-…","prompt":"Idea (description)","runId":"…"}
+> {"type":"prompt_answered","promptId":"p-…","answer":"…"}
+< {"type":"run_started","runId":"…","itemId":"…","title":"Minimal CLI"}
+< {"type":"chat_message","role":"LLM-1 (Brainstorm)","source":"stage-agent","text":"…"}
+< {"type":"stage_started","runId":"…","stageRunId":"…","stageKey":"brainstorm"}
+< …
+< {"type":"run_finished","runId":"…","status":"completed"}
+< {"type":"cli_finished","runId":"…"}
 ```
 
 ---
@@ -70,24 +116,54 @@ beerengineer2/
 ### Die zentrale Architektur-Entscheidung
 
 **Die Engine ist UI-agnostisch.** Sie kennt keine HTTP-Routen, keine React-Komponenten,
-keine Browser. Sie weiss nur, dass es **eine `WorkflowIO`** gibt mit zwei Methoden:
+keine Browser — und inzwischen auch keine Terminal-Formatierung mehr. Stages
+**emittieren**, sie **drucken nicht**. Es gibt **einen Bus** (`core/bus.ts`),
+auf den Renderer als Subscriber andocken.
 
 ```ts
-type WorkflowIO = {
-  ask(prompt: string): Promise<string>      // Frage an den Operator
-  emit(event: WorkflowEvent): void          // strukturiertes Event publizieren
+type EventBus = {
+  emit(event: WorkflowEvent): void
+  subscribe(listener: (event: WorkflowEvent) => void): () => void
+  request(prompt: string): Promise<string>   // Prompt-Roundtrip ueber Bus
+  answer(promptId: string, answer: string): boolean
+  close(): void
 }
 ```
 
-Der Entrypoint (CLI **oder** API) entscheidet, **welche Implementierung** dieser
-Schnittstelle aktiv ist. Damit ist der gleiche Code auf zwei Wegen nutzbar:
+Fuer Rueckwaertskompatibilitaet wird der Bus per `busToWorkflowIO(bus)` auf die
+alte `WorkflowIO`-Form adaptiert (`ask` = `bus.request`, `emit` = `bus.emit`).
+Prompts sind **Events auf dem Bus** — `prompt_requested` wird emittiert, der
+Resolver antwortet mit `prompt_answered`, und der Bus schaltet den wartenden
+`ask`-Promise frei. Kein separates Prompter-Interface mehr.
 
-- **CLI-Adapter** (`core/ioCli.ts`) → `ask` liest von stdin, `emit` schreibt in die
-  Konsole.
-- **API-Adapter** (`core/ioApi.ts`) → `ask` schreibt einen Eintrag in `pending_prompts`
-  und liefert einen `Promise`, den die UI per `POST /runs/:id/input` aufloest;
-  `emit` schiebt das Event in einen `EventEmitter`, der jeden offenen SSE-Stream
-  bedient.
+**Drei Renderer-Familien subscriben an den Bus:**
+
+| Renderer                                  | Wann aktiv                    | Wohin                                  |
+|-------------------------------------------|-------------------------------|----------------------------------------|
+| `core/renderers/humanCli.ts`              | `beerengineer` (interaktiv)   | Formatierte Zeilen auf `process.stdout` |
+| `core/renderers/ndjson.ts`                | `beerengineer --json`         | Eine JSON-Zeile pro Event auf stdout; liest `prompt_answered` von stdin |
+| `ApiIOSession.emitter` (Bridge → SSE)     | HTTP-API                      | SSE-Stream auf `/runs/:id/events`      |
+
+**`core/promptPersistence.ts`** ist ein einziger Bus-Subscriber, der
+`pending_prompts`-Rows auf `prompt_requested` anlegt und auf `prompt_answered`
+als beantwortet markiert — die frueher doppelt in `ioCli` und `ioApi`
+vorhandene Logik ist zusammengelegt.
+
+**`core/stagePresentation.ts`** stellt das Vokabular bereit, mit dem Stages
+UX-Output emittieren (`stagePresent.header/step/ok/warn/dim/finding/chat`).
+Jeder Call wird zu einem `presentation`- oder `chat_message`-Event auf dem
+Bus — kein Stage importiert mehr `print.ts` (die Datei wurde entfernt).
+
+Der Entrypoint (CLI **oder** API) entscheidet, **welche Renderer** aktiv sind.
+Der gleiche Code ist auf drei Wegen nutzbar:
+
+- **CLI-Adapter** (`core/ioCli.ts`) → baut einen Bus, haengt den humanCli-Renderer
+  und die Prompt-Persistenz an, nutzt `readline` fuer `prompt_answered`.
+- **`--json`-Modus** → identischer Bus, aber `ndjson`-Renderer statt humanCli.
+  Prompt-Answers kommen als JSON-Zeilen auf stdin.
+- **API-Adapter** (`core/ioApi.ts`) → Bus mit Prompt-Persistenz, Bridge zum
+  `EventEmitter` den die SSE-Handler abonnieren; `session.answerPrompt(id, answer)`
+  emittiert `prompt_answered` auf den Bus.
 
 **IO ist scoped, nicht global.** `runWithWorkflowIO(io, fn)` aus `core/io.ts` setzt
 die aktive IO via `AsyncLocalStorage` — jeder parallele Run im selben Node-Prozess
@@ -95,12 +171,47 @@ hat seine eigene IO, ohne dass sich Prompts, Events oder Antworten kreuzen. Gena
 fuer `runWithActiveRun({ runId, itemId }, fn)` aus `core/runContext.ts`, das den
 aktuellen Run-Kontext fuer `withStageLifecycle` und `session.ask()` traegt.
 
-**Komposition via Wrapper.** `withDbSync(inner, repos, ctx)` aus
-`core/runOrchestrator.ts` nimmt eine `WorkflowIO` und liefert eine **neue** IO, die
-jedes `emit` zuerst persistiert (`stage_logs` + Folge-Tabellen, `streamId` + `at`
-werden auf das weitergereichte Event geschrieben) und dann an den inneren `emit`
-durchreicht. Kein Monkey-Patching, kein Mutieren — Layering ist explizit:
-`runWithWorkflowIO(withDbSync(apiIO), …)`.
+**Komposition via Bus-Subscriber — nicht via Wrapper.** Das Persistenz-Layer
+ist kein wrapping-IO mehr, sondern ein ganz normaler Bus-Subscriber:
+`attachDbSync(bus, repos, ctx)` aus `core/runOrchestrator.ts` abonniert den Bus
+und schreibt jedes Event in die passende Tabelle (`runs`, `stage_runs`,
+`stage_logs`, `artifact_files`, `items.current_column`, `projects`). Der Bus
+ist die einzige Vermittlungsstelle — es gibt keine zweite "enrichment"-Schicht
+die Events mutiert, und damit auch kein `streamId`/`at`-Kopie mehr auf
+In-Memory-Events. SSE-Clients dedupen live vs. replay direkt ueber
+`stage_logs.id` (siehe unten).
+
+**Cross-Process-Transport: `stage_logs` ist der geteilte Bus.** Damit die UI
+einen CLI-gestarteten Run live sehen und dessen Prompts beantworten kann,
+braucht es *einen* Transport, den alle Prozesse teilen — und das ist die
+`stage_logs`-Tabelle selbst. Der API-Server liest sie per Poll-Tail, die
+`/runs/:id/events`-SSE-Route streamt daraus, und das CLI hat einen
+`attachCrossProcessBridge(bus, repos, runId, …)`-Subscriber, der Rows die
+nicht von ihm selbst geschrieben wurden als Events auf den lokalen Bus
+zurueckspielt. Konkret:
+
+- CLI startet einen Run. `attachDbSync` schreibt jedes Event in `stage_logs`,
+  merkt sich die Row-IDs (`writtenLogIds`).
+- Stage emittiert `prompt_requested` → landet in `stage_logs` + `pending_prompts`.
+- UI liest `GET /runs/:id/prompts`, POSTet `/runs/:id/input` mit der Antwort.
+- API-Handler markiert `pending_prompts.answer` **und** schreibt eine neue
+  `prompt_answered`-Row in `stage_logs` (das ist der cross-process Push).
+- CLI's Bridge pollt alle 250 ms (`core/constants.ts → LOG_TAIL_INTERVAL_MS`),
+  sieht die neue Row, erkennt dass sie **nicht** in `writtenLogIds` liegt
+  (also fremd geschrieben), emittiert ein `prompt_answered` auf den lokalen
+  Bus → der wartende `ask()` wird aufgeloest, der Run laeuft weiter.
+
+Das ist das gleiche Tail-Muster, das auch die SSE-Endpoints benutzen — eine
+einzige Tail-Strategie, ein einziger Dedup-Schluessel (`log.id`).
+
+**Wo welcher Subscriber angebracht wird:**
+
+| Subscriber                      | Angebracht in                               | Reason                                  |
+|---------------------------------|---------------------------------------------|-----------------------------------------|
+| `withPromptPersistence`         | `createCliIO` / `createApiIOSession`        | Transport-Level — "wer Prompts emittiert, muss sie auch in `pending_prompts` spiegeln" |
+| `attachDbSync`                  | `prepareRun` / `performResume`              | Run-scoped — braucht `runId` und `itemId` |
+| `attachCrossProcessBridge`      | `prepareRun` / `performResume`              | Run-scoped, filtert via `writtenLogIds` |
+| Renderer (humanCli / ndjson / SSE-Bridge) | `createCliIO` / `createApiIOSession` | Transport-Level — wohin die Events ausgegeben werden |
 
 ### CLI ↔ UI — End-to-End
 
@@ -124,15 +235,23 @@ durchreicht. Kein Monkey-Patching, kein Mutieren — Layering ist explizit:
         │   │            ENGINE HTTP+SSE-Server (Port 4100)               │
         │   │                                                             │
         │   │   POST /runs              → prepareRun() → start (async)    │
-        │   │   POST /runs/:id/input    → ApiIOSession.answerPrompt()     │
+        │   │   POST /runs/:id/input    → session.answerPrompt()          │
+        │   │                             ODER (bei CLI-owned runs):      │
+        │   │                             pending_prompts.answer +        │
+        │   │                             stage_logs prompt_answered      │
         │   │   GET  /runs[/:id[/...]]  → DB-Lesepfade                    │
-        │   │   GET  /runs/:id/events   → SSE: Replay + live forward      │
+        │   │   GET  /runs/:id/events   → tail(stage_logs, runId)         │
         │   │   GET  /board             → projizierter Board-DTO          │
+        │   │   GET  /events            → tail(stage_logs, workspace)     │
         │   └────────────┬─────────────────────────────────┬──────────────┘
-        │                │ runWithWorkflowIO(                              │
-        │                │   withDbSync(apiIO, repos, ctx),                │
+        │                │ runWithWorkflowIO(apiIO,                        │
         │                │   () => runWithActiveRun({runId,itemId},        │
         │                │     () => runWorkflow(item)))                   │
+        │                │                                                 │
+        │                │ Bus-Subscriber an apiIO.bus:                    │
+        │                │   • attachDbSync(bus, repos, ctx)               │
+        │                │   • attachCrossProcessBridge(bus, repos, runId) │
+        │                │   • emitter.bridge → SSE                        │
         │                ▼                                 │
         │   ┌─────────────────────────────────────────────┴──────────────┐
         │   │                 WORKFLOW-ENGINE (UI-agnostic)               │
@@ -148,20 +267,23 @@ durchreicht. Kein Monkey-Patching, kein Mutieren — Layering ist explizit:
         │                                 │ io.emit / io.ask
         │                                 ▼
         │   ┌──────────────────────────────────────────────────────────────┐
-        │   │   withDbSync(inner, repos, ctx)  — Wrapper-IO                │
-        │   │                                                              │
-        │   │   1. persist event   → INSERT/UPDATE Tabelle (s. unten)     │
-        │   │   2. stamp meta      → streamId + at (aus stage_logs)       │
-        │   │   3. forward to inner.emit → EventEmitter → SSE clients     │
+        │   │   attachDbSync(bus, repos, ctx)  — Bus-Subscriber            │
         │   │                                                              │
         │   │   stage_started      → stage_runs (idempotent auf id)       │
         │   │   stage_completed    → stage_runs.status / errored          │
         │   │   prompt_requested   → stage_logs                            │
-        │   │   prompt_answered    → stage_logs                            │
+        │   │   prompt_answered    → stage_logs (cross-process push)       │
         │   │   artifact_written   → artifact_files + stage_logs           │
+        │   │   chat_message       → stage_logs (shared conversation)      │
+        │   │   presentation      → stage_logs (UX replay-able)            │
         │   │   project_created    → projects (idempotent auf code)        │
         │   │   item_column_changed→ items.current_column                  │
         │   │   run_started/finished → runs.status                         │
+        │   │                                                              │
+        │   │   Jede geschriebene stage_logs.id wird in writtenLogIds     │
+        │   │   getrackt — damit der crossProcessBridge die eigene        │
+        │   │   Schreibseite von fremden Rows unterscheidet und keine     │
+        │   │   Feedback-Loop entsteht.                                    │
         │   └──────────────────────────┬───────────────────────────────────┘
         │                              │
         │                              ▼
@@ -171,7 +293,8 @@ durchreicht. Kein Monkey-Patching, kein Mutieren — Layering ist explizit:
             │   workspaces · items · projects                              │
             │      ↑ liest die UI direkt via better-sqlite3                │
             │                                                              │
-            │   runs · stage_runs · stage_logs · artifact_files            │
+            │   runs · external_remediations                               │
+            │   stage_runs · stage_logs · artifact_files                   │
             │   pending_prompts                                            │
             │      ↑ schreibt der DB-Sync; liest die HTTP-API              │
             └──────────────────────────────────────────────────────────────┘
@@ -185,14 +308,19 @@ durchreicht. Kein Monkey-Patching, kein Mutieren — Layering ist explizit:
 | **HTTP REST** | UI → Engine | `fetch` über `NEXT_PUBLIC_ENGINE_BASE_URL` (Default `http://127.0.0.1:4100`) | Run starten, Antwort auf Prompt schicken, Snapshots/Tree abfragen. |
 | **SSE (Server-Sent Events)** | Engine → UI | `EventSource` auf `/runs/:id/events` und `/events?workspace=<key>` | Run-Konsole: Live-Stream eines Runs inkl. History-Replay. Board: workspace-gefilterte Live-Invalidierung fuer Item-/Run-Aenderungen. |
 
-Die **SQLite-Datei ist die geteilte Source of Truth**. Engine schreibt, UI liest.
-HTTP+SSE liegt nur auf den Schreibseiten (Run-Steuerung) und auf dem Live-Pfad
-(neue Events sofort sehen, ohne neu zu laden).
+Die **SQLite-Datei ist die geteilte Source of Truth** — und genauer: die
+`stage_logs`-Tabelle ist der geteilte Event-Bus zwischen Prozessen. Jedes
+Event, egal wer es emittiert (CLI, API, Resume-Handler), landet dort, und
+alle Konsumenten (SSE-Endpoints, crossProcessBridge, Board-Tail) pollen sie
+mit derselben `LOG_TAIL_INTERVAL_MS`-Kadenz.  Deduplikation laeuft ueber
+`stage_logs.id`.
 
 ### Workflow-Event-Modell
 
 ```ts
-// Jedes Event traegt optional persistence-meta nach dem Wrapper:
+// `streamId` + `at` werden **nur auf dem Read-Pfad** angebracht:
+// SSE-Handler lesen `stage_logs` und befuellen sie aus `row.id` / `row.created_at`.
+// In-Memory-Events auf dem Bus tragen diese Felder nicht mehr.
 type WorkflowEventMeta = { streamId?: string; at?: number }
 
 type WorkflowEvent =
@@ -204,30 +332,46 @@ type WorkflowEvent =
   | { type: "prompt_answered";    runId; promptId; answer }
   | { type: "artifact_written";   runId; stageRunId?; label; kind; path }
   | { type: "log";                runId; message; level? }
+  | { type: "chat_message";       runId; stageRunId?; role; source; text; requiresResponse? }
+  | { type: "presentation";       runId?; stageRunId?; kind; text; meta? }
   | { type: "item_column_changed";runId; itemId; column; phaseStatus }
   | { type: "project_created";    runId; itemId; projectId; code; name; summary; position }
+  | { type: "run_blocked";        runId; scope; cause; summary; branch? }
+  | { type: "run_failed";         runId; scope; cause; summary }
+  | { type: "external_remediation_recorded"; runId; remediationId; scope; summary; branch? }
+  | { type: "run_resumed";        runId; remediationId; scope }
   // & WorkflowEventMeta (intersection elided for readability)
 ```
 
-Der **Lebenszyklus eines Events** ist dreistufig:
+`chat_message` ersetzt den frueheren direkten `print.llm(role, text)`-Aufruf aus
+Stages und traegt `source: "stage-agent" | "reviewer" | "system"` — d.h. der
+humanCli-Renderer und die UI wissen strukturell, von wem die Zeile kommt.
+`presentation` fasst die frueheren `print.header/step/ok/warn/dim/finding`-Calls
+zusammen. Beide Events werden **ebenfalls in `stage_logs` persistiert**, damit
+refresh/reconnect die Konversations-History sehen — was einer der Gruende ist,
+warum UI und CLI denselben Run-Verlauf anzeigen koennen.
 
-1. **Emit:** Engine ruft `io.emit(event)` (oder `withStageLifecycle` tut es im
-   Stage-Wrapper). Beim API-Path ist `io` die `withDbSync`-Wrapper-IO.
-2. **Persist + Enrich:** `withDbSync` schreibt in die DB, klont das Event und
-   stempelt `streamId` (= `stage_logs.id`) und `at` (= `created_at`) drauf.
-   Das Original-Event wird **nicht** mutiert.
-3. **Forward:** Das angereicherte Event geht an `inner.emit`, also an den
-   `EventEmitter` der `ApiIOSession`, und von dort in jeden offenen SSE-Stream.
+Der **Lebenszyklus eines Events** ist jetzt flach:
 
-Der **SSE-Endpoint** subscribet zuerst, **dann** liest er die History aus
-`stage_logs` und flusht zuletzt die in der Zwischenzeit empfangenen Live-Events.
-Dedup laeuft ueber `streamId` — selbst wenn ein Event in der Replay-Phase auch
-schon live empfangen wurde, sieht der Client es nur einmal. Spaete Reconnects
-verlieren keine History.
+1. **Emit:** Eine Stage (oder der Orchestrator) ruft `bus.emit(event)` — ueber
+   `stagePresent.*`, `emitEvent()`, oder direkt. In `runWithWorkflowIO(io, …)`
+   ist `io.emit` einfach `bus.emit`.
+2. **Fan-out:** Jeder Subscriber sieht das Event genau einmal, in
+   Registrierungs-Reihenfolge: `attachDbSync` persistiert,
+   `withPromptPersistence` mirrored Prompts, Renderer rendern, der SSE-Bridge
+   fuettert SSE-Clients. Kein Wrapper-Chain, keine Event-Mutation.
 
-**Idempotenz:** `withDbSync` haelt eine in-memory `Set<stageRunId>` und ueberspringt
-einen `stage_started`-Insert, wenn dieselbe Stage-Run-Id schon persistiert wurde.
-Das schuetzt vor Doppel-Emits aus retried Workflow-Pfaden.
+Der **SSE-Endpoint** (`/runs/:id/events`) **tailt `stage_logs` als einzige
+Quelle**. Das ersetzt die frueher zweigleisige Strategie (In-Memory-Emitter +
+DB-Poll mit Dedup). Jetzt gibt es einen Cursor, einen Dedup-Schluessel
+(`log.id`), und die Live-vs-Replay-Unterscheidung kollabiert — es gibt nur
+noch "seit Cursor X". Das gleiche gilt fuer `/events` (Workspace-Board) und
+fuer den CLI `attachCrossProcessBridge`: drei Konsumenten, dieselbe
+Tail-Strategie.
+
+**Idempotenz:** `attachDbSync` haelt eine in-memory `Set<stageRunId>` und
+ueberspringt einen `stage_started`-Insert, wenn dieselbe Stage-Run-Id schon
+persistiert wurde. Das schuetzt vor Doppel-Emits aus retried Workflow-Pfaden.
 
 ### Stage → Board-Spalten-Mapping
 
@@ -246,6 +390,26 @@ implementation | done`). Die Engine hat neun Stages. Die Projektion lebt
 So muss die UI nichts ueber Engine-Status wissen — sie zeichnet nur, was im
 `current_column`-Feld der `items`-Tabelle steht.
 
+### Recovery Und Resume
+
+Blocked oder failed Workflow-Ketten schreiben einen kanonischen
+`recovery.json` auf Disk und eine duenne Projektion auf `runs.recovery_*`.
+Die UI liest fuer Karten und Run-Detail nur die DB-Projektion; die Engine nutzt
+den Filesystem-Checkpoint fuer das echte Resume.
+
+- `run_blocked` steht fuer Reviewer-Blocker, Review-Limits und story-spezifische
+  Ralph-Blocker.
+- `run_failed` steht fuer unhandled exceptions / system errors.
+- Jeder Resume-Versuch schreibt einen Audit-Eintrag nach
+  `external_remediations`.
+- `performResume()` injiziert die Remediation in die naechste Ralph-/Review-Runde
+  und re-entered den Workflow an der gespeicherten Stage-Grenze statt den
+  gesamten Run von vorn zu starten.
+
+Die Run-Detailseite (`/runs/:id`) zeigt Scope, Summary, fruehere Remediations
+und die Resume-CTA. Board-Karten zeigen `Blocked` / `Failed` anhand des
+neuesten Runs fuer das Item.
+
 ### API-Vertrag (kompletter Server)
 
 | Method | Route | Effekt |
@@ -257,8 +421,10 @@ So muss die UI nichts ueber Engine-Status wissen — sie zeichnet nur, was im
 | `GET`  | `/runs/:id/tree` | Run + Stage-Runs + Artefakte |
 | `GET`  | `/runs/:id/events` | SSE: History-Replay + Live-Events |
 | `GET`  | `/runs/:id/prompts` | Aktuell offener Prompt (oder `null`) |
-| `POST` | `/items/:id/actions` | Fuehrt eine Item-Aktion aus; `200` mit `{ itemId, column, phaseStatus, runId? }`, `409` bei ungueltigem Uebergang |
-| `GET`  | `/events[?workspace=key]` | Workspace-gefilterter Board-SSE-Stream fuer `run_started`, `stage_*`, `item_column_changed`, `run_finished`, `project_created` |
+| `POST` | `/runs/:id/resume` | Resume eines blocked/failed Runs mit `{ summary, branch?, commit?, reviewNotes? }`; `200`, `404`, `409` oder `422 remediation_required` |
+| `GET`  | `/runs/:id/recovery` | Recovery-Snapshot fuer Run-Detailseite: Status, Scope, Summary, Remediations, `resumable` |
+| `POST` | `/items/:id/actions` | Fuehrt eine Item-Aktion aus; `200` mit `{ itemId, column, phaseStatus, runId?, remediationId? }`, `409` bei ungueltigem Uebergang, `422 remediation_required` fuer Resume ohne Summary |
+| `GET`  | `/events[?workspace=key]` | Workspace-gefilterter Board-SSE-Stream fuer `run_started`, `stage_*`, `item_column_changed`, `run_finished`, `project_created` plus Recovery/Resume-Invalidierungen |
 | `GET`  | `/board[?workspace=key]` | Board-DTO (Spalten + Karten) |
 | `GET`  | `/health` | `{ ok: true }` |
 
@@ -775,7 +941,6 @@ Spaeter sollen alle Stages in denselben Workspace-Container schreiben.
 ```
 apps/engine/src/
   types.ts                  Shared Types
-  print.ts                  Ausgabe-Helfer
 
   api/
     server.ts               HTTP+SSE-Server (POST /runs, GET /board, …)

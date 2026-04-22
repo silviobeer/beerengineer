@@ -11,7 +11,7 @@ import { emitEvent, getActiveRun } from "../../core/runContext.js"
 import { writeRecoveryRecord } from "../../core/recovery.js"
 import { layout, type WorkflowContext } from "../../core/workspaceLayout.js"
 import type { StageLogEntry } from "../../core/stageRuntime.js"
-import { print } from "../../print.js"
+import { stagePresent } from "../../core/stagePresentation.js"
 import { crReview, llm6bFix, llm6bImplement, sonarReview } from "../../sim/llm.js"
 import type {
   Finding,
@@ -222,12 +222,12 @@ async function runStoryReview(reviewCycle: number, storyId: string): Promise<Sto
 }
 
 function printReviewResult(result: StoryReviewRun): void {
-  result.combinedFindings.forEach(finding => print.finding(finding.source, finding.severity, finding.message))
+  result.combinedFindings.forEach(finding => stagePresent.finding(finding.source, finding.severity, finding.message))
   if (result.failedBecause.length === 0) {
-    print.ok("Story gate open: CodeRabbit and SonarQube are within target.")
+    stagePresent.ok("Story gate open: CodeRabbit and SonarQube are within target.")
     return
   }
-  result.failedBecause.forEach(reason => print.warn(`Gate blocked: ${reason}`))
+  result.failedBecause.forEach(reason => stagePresent.warn(`Gate blocked: ${reason}`))
 }
 
 function checksForIteration(iterationsThisCycle: number, isRemediation: boolean): StoryCheckResult[] {
@@ -364,10 +364,10 @@ export async function runRalphStory(
           : "Implement story against approved test plan"
 
         if (isRemediation) {
-          print.step(`    Ralph addresses review findings for ${storyContext.story.id}...`)
+          stagePresent.step(`    Ralph addresses review findings for ${storyContext.story.id}...`)
           await llm6bFix(nextFeedback ?? "")
         } else {
-          print.step(`    Ralph implements ${storyContext.story.id}...`)
+          stagePresent.step(`    Ralph implements ${storyContext.story.id}...`)
           await llm6bImplement({
             id: storyContext.story.id,
             title: storyContext.story.title,

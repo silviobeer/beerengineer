@@ -2,8 +2,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { runStage } from "../../core/stageRuntime.js"
 import { printStageCompletion, stageSummary, summaryArtifactFile } from "../../core/stageHelpers.js"
+import { stagePresent } from "../../core/stagePresentation.js"
 import { createDocumentationReview, createDocumentationStage, defaultStageConfig } from "../../llm/registry.js"
-import { print } from "../../print.js"
 import { buildDocFiles } from "../../render/documentation.js"
 import type { DocumentationArtifact, WithProjectReview } from "../../types.js"
 import type { DocumentationState } from "./types.js"
@@ -40,7 +40,7 @@ async function writeProjectDocs(artifact: DocumentationArtifact): Promise<void> 
 }
 
 export async function documentation(ctx: WithProjectReview): Promise<DocumentationArtifact> {
-  print.header(`documentation — ${ctx.project.name}`)
+  stagePresent.header(`documentation — ${ctx.project.name}`)
 
   const existingDocs = await loadExistingDocs()
 
@@ -63,7 +63,6 @@ export async function documentation(ctx: WithProjectReview): Promise<Documentati
     stageAgent: createDocumentationStage(defaultStageConfig.stageAgent.provider, ctx.project),
     reviewer: createDocumentationReview(defaultStageConfig.reviewer.provider),
     askUser: async () => "",
-    showMessage: print.llm,
     async persistArtifacts(run, artifact) {
       await writeProjectDocs(artifact)
       return [
@@ -92,11 +91,11 @@ export async function documentation(ctx: WithProjectReview): Promise<Documentati
       ]
     },
     async onApproved(artifact, run) {
-      print.ok(`Documentation ${artifact.mode === "generate" ? "generated" : "updated"} for ${ctx.project.name}.`)
-      print.llm("LLM-9", artifact.compactReadme.summary)
-      print.dim("→ Docs: docs/technical-doc.md")
-      print.dim("→ Docs: docs/features-doc.md")
-      print.dim("→ Docs: docs/README.compact.md")
+      stagePresent.ok(`Documentation ${artifact.mode === "generate" ? "generated" : "updated"} for ${ctx.project.name}.`)
+      stagePresent.chat("LLM-9", artifact.compactReadme.summary)
+      stagePresent.dim("→ Docs: docs/technical-doc.md")
+      stagePresent.dim("→ Docs: docs/features-doc.md")
+      stagePresent.dim("→ Docs: docs/README.compact.md")
       printStageCompletion(run, "documentation")
       return artifact
     },

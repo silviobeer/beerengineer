@@ -1,15 +1,15 @@
 import { runStage } from "../../core/stageRuntime.js"
 import { printStageCompletion, stageSummary, summaryArtifactFile } from "../../core/stageHelpers.js"
+import { stagePresent } from "../../core/stagePresentation.js"
 import { createRequirementsReview, createRequirementsStage, defaultStageConfig } from "../../llm/registry.js"
-import { print } from "../../print.js"
 import { renderPrdMarkdown } from "../../render/prd.js"
 import { ask } from "../../sim/human.js"
 import type { PRD, ProjectContext } from "../../types.js"
 import type { RequirementsState } from "./types.js"
 
 export async function requirements(ctx: ProjectContext): Promise<PRD> {
-  print.header(`requirements — ${ctx.project.name}`)
-  print.dim(`Concept: ${ctx.project.concept.summary}`)
+  stagePresent.header(`requirements — ${ctx.project.name}`)
+  stagePresent.dim(`Concept: ${ctx.project.concept.summary}`)
 
   const { result } = await runStage({
     stageId: "requirements",
@@ -26,7 +26,6 @@ export async function requirements(ctx: ProjectContext): Promise<PRD> {
     stageAgent: createRequirementsStage(defaultStageConfig.stageAgent.provider),
     reviewer: createRequirementsReview(defaultStageConfig.reviewer.provider),
     askUser: ask,
-    showMessage: print.llm,
     async persistArtifacts(run, artifact) {
       return [
         {
@@ -51,10 +50,10 @@ export async function requirements(ctx: ProjectContext): Promise<PRD> {
       ]
     },
     async onApproved(artifact, run) {
-      print.ok("LLM review: PRD is ready for the next step.")
+      stagePresent.ok("LLM review: PRD is ready for the next step.")
       artifact.prd.stories.forEach(story => {
-        print.llm(`Story ${story.id}`, story.title)
-        story.acceptanceCriteria.forEach(ac => print.dim(`  AC ${ac.id}: ${ac.text}`))
+        stagePresent.chat(`Story ${story.id}`, story.title)
+        story.acceptanceCriteria.forEach(ac => stagePresent.dim(`  AC ${ac.id}: ${ac.text}`))
       })
       printStageCompletion(run, "requirements")
       return artifact.prd

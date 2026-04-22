@@ -2,6 +2,8 @@ import { runWorkflow } from "../workflow.js"
 import type { Item } from "../types.js"
 import { runWithWorkflowIO, type WorkflowEvent, type WorkflowIO } from "./io.js"
 import { runWithActiveRun } from "./runContext.js"
+import { createBus, busToWorkflowIO, type EventBus } from "./bus.js"
+import { attachCrossProcessBridge } from "./crossProcessBridge.js"
 import type { Repos } from "../db/repositories.js"
 
 /**
@@ -35,58 +37,72 @@ export function mapStageToColumn(
   }
 }
 
-/**
- * Wrap a WorkflowIO so every emitted event is also persisted to the DB.
- * Returns a *new* IO that delegates to the inner one — no mutation of `inner`,
- * no monkey-patching of `emit`. This makes layering composable: callers can
- * stack `withDbSync(withMetrics(inner))` and the order is explicit.
- *
- * The returned IO also enriches events with `streamId` + `at` derived from
- * the persisted log row, so SSE clients can dedup replay vs live events.
- */
-export function withDbSync(
-  inner: WorkflowIO,
-  repos: Repos,
-  ctx: { runId: string; itemId: string }
-): WorkflowIO {
-  const stageRunIds = new Map<string, string>() // stageKey -> stage_runs.id
-  const persistedStageIds = new Set<string>()    // dedup re-emits of stage_started
+export type AttachDbSyncOptions = {
+  /**
+   * When provided, every `stage_logs.id` this subscriber writes is recorded
+   * into this set. The cross-process bridge uses the set to filter out
+   * locally-written rows when it tails the shared log stream, so we only
+   * re-emit foreign events onto the local bus.
+   */
+  writtenLogIds?: Set<string>
+}
 
-  /** Return a shallow clone of `event` stamped with persistence metadata. */
-  function withPersistedMeta(event: WorkflowEvent, row: { id: string; created_at: number }): WorkflowEvent {
-    return { ...event, streamId: row.id, at: row.created_at } as WorkflowEvent
+/**
+ * Subscribe a DB-sync middleware to the bus. Every emitted `WorkflowEvent`
+ * is persisted to the appropriate table (runs, stage_runs, stage_logs,
+ * artifact_files, items.current_column, projects). Returns the unsubscribe
+ * function.
+ *
+ * The subscriber does **not** transform the event stream — persistence is a
+ * pure side effect. Downstream subscribers (SSE bridge, renderers) see the
+ * original emitted event. SSE clients dedup replay vs. live via `stage_logs.id`,
+ * which is the only streamId that matters now that SSE reads from the log
+ * directly.
+ */
+export function attachDbSync(
+  bus: EventBus,
+  repos: Repos,
+  ctx: { runId: string; itemId: string },
+  opts: AttachDbSyncOptions = {}
+): () => void {
+  const stageRunIds = new Map<string, string>()
+  const persistedStageIds = new Set<string>()
+  const persistedProjectIds = new Map<string, string>()
+
+  const track = (row: { id: string } | undefined): void => {
+    if (!row) return
+    opts.writtenLogIds?.add(row.id)
   }
 
-  /** Apply DB writes for `event`. Returns a possibly-enriched event to forward. */
-  function persist(event: WorkflowEvent): WorkflowEvent {
+  const persist = (event: WorkflowEvent): void => {
     switch (event.type) {
       case "run_started": {
         repos.updateRun(event.runId, { status: "running" })
-        return event
+        return
       }
       case "stage_started": {
-        // Idempotent: a re-emit of the same stageRunId must not throw on the
-        // unique index. We treat the first persisted row as authoritative.
-        if (persistedStageIds.has(event.stageRunId)) {
-          return event
-        }
+        if (persistedStageIds.has(event.stageRunId)) return
+        const persistedProjectId = event.projectId
+          ? persistedProjectIds.get(event.projectId) ?? event.projectId
+          : null
         const stageRun = repos.createStageRun({
           id: event.stageRunId,
           runId: event.runId,
           stageKey: event.stageKey,
-          projectId: event.projectId ?? null
+          projectId: persistedProjectId
         })
         persistedStageIds.add(stageRun.id)
         stageRunIds.set(event.stageKey, stageRun.id)
         repos.updateRun(event.runId, { current_stage: event.stageKey })
         const { column, phaseStatus } = mapStageToColumn(event.stageKey, "running")
         repos.setItemColumn(ctx.itemId, column, phaseStatus)
-        return withPersistedMeta(event, repos.appendLog({
+        track(repos.appendLog({
           runId: event.runId,
           stageRunId: stageRun.id,
           eventType: "stage_started",
           message: `stage ${event.stageKey} started`
         }))
+        return
       }
       case "stage_completed": {
         const stageRunId = event.stageRunId ?? stageRunIds.get(event.stageKey)
@@ -95,29 +111,33 @@ export function withDbSync(
         }
         const { column, phaseStatus } = mapStageToColumn(event.stageKey, event.status)
         repos.setItemColumn(ctx.itemId, column, phaseStatus)
-        return withPersistedMeta(event, repos.appendLog({
+        track(repos.appendLog({
           runId: event.runId,
           stageRunId: stageRunId ?? null,
           eventType: "stage_completed",
           message: `stage ${event.stageKey} ${event.status}`,
           data: event.error ? { error: event.error } : undefined
         }))
+        return
       }
       case "prompt_requested": {
-        return withPersistedMeta(event, repos.appendLog({
+        track(repos.appendLog({
           runId: event.runId,
+          stageRunId: event.stageRunId ?? null,
           eventType: "prompt_requested",
           message: event.prompt,
           data: { promptId: event.promptId }
         }))
+        return
       }
       case "prompt_answered": {
-        return withPersistedMeta(event, repos.appendLog({
+        track(repos.appendLog({
           runId: event.runId,
           eventType: "prompt_answered",
           message: event.answer,
           data: { promptId: event.promptId }
         }))
+        return
       }
       case "artifact_written": {
         repos.recordArtifact({
@@ -127,31 +147,34 @@ export function withDbSync(
           kind: event.kind,
           path: event.path
         })
-        return withPersistedMeta(event, repos.appendLog({
+        track(repos.appendLog({
           runId: event.runId,
           stageRunId: event.stageRunId ?? null,
           eventType: "artifact_written",
           message: event.label,
           data: { path: event.path, kind: event.kind }
         }))
+        return
       }
       case "log": {
-        return withPersistedMeta(event, repos.appendLog({
+        track(repos.appendLog({
           runId: event.runId,
           eventType: "log",
           message: event.message
         }))
+        return
       }
       case "run_finished": {
         repos.updateRun(event.runId, { status: event.status })
         const { column, phaseStatus } = mapStageToColumn("documentation", event.status)
         repos.setItemColumn(ctx.itemId, column, phaseStatus)
-        return withPersistedMeta(event, repos.appendLog({
+        track(repos.appendLog({
           runId: event.runId,
           eventType: "run_finished",
           message: `run ${event.status}`,
           data: event.error ? { error: event.error } : undefined
         }))
+        return
       }
       case "item_column_changed": {
         repos.setItemColumn(
@@ -159,10 +182,10 @@ export function withDbSync(
           event.column as "idea" | "brainstorm" | "requirements" | "implementation" | "done",
           event.phaseStatus as "draft" | "running" | "review_required" | "completed" | "failed"
         )
-        return event
+        return
       }
       case "project_created": {
-        repos.createProject({
+        const project = repos.createProject({
           id: event.projectId,
           itemId: event.itemId,
           code: event.code,
@@ -171,17 +194,19 @@ export function withDbSync(
           status: "draft",
           position: event.position
         })
-        return withPersistedMeta(event, repos.appendLog({
+        persistedProjectIds.set(event.projectId, project.id)
+        track(repos.appendLog({
           runId: event.runId,
           eventType: "project_created",
           message: event.name,
           data: { projectId: event.projectId, code: event.code, position: event.position }
         }))
+        return
       }
       case "run_blocked":
       case "run_failed": {
         const scope = event.scope
-        const scopeRef =
+        const scopeRefVal =
           scope.type === "stage"
             ? scope.stageId
             : scope.type === "story"
@@ -190,88 +215,104 @@ export function withDbSync(
         repos.setRunRecovery(event.runId, {
           status: event.type === "run_blocked" ? "blocked" : "failed",
           scope: scope.type,
-          scopeRef,
+          scopeRef: scopeRefVal,
           summary: event.summary
         })
-        return withPersistedMeta(event, repos.appendLog({
+        track(repos.appendLog({
           runId: event.runId,
           eventType: event.type,
           message: event.summary,
           data: { cause: event.cause, scope, branch: "branch" in event ? event.branch : undefined }
         }))
+        return
       }
       case "external_remediation_recorded": {
-        return withPersistedMeta(event, repos.appendLog({
+        track(repos.appendLog({
           runId: event.runId,
           eventType: "external_remediation_recorded",
           message: event.summary,
           data: { remediationId: event.remediationId, scope: event.scope, branch: event.branch }
         }))
+        return
       }
       case "run_resumed": {
         repos.clearRunRecovery(event.runId)
-        return withPersistedMeta(event, repos.appendLog({
+        track(repos.appendLog({
           runId: event.runId,
           eventType: "run_resumed",
           message: `run resumed from ${event.scope.type} scope`,
           data: { remediationId: event.remediationId, scope: event.scope }
         }))
+        return
+      }
+      case "chat_message": {
+        track(repos.appendLog({
+          runId: event.runId,
+          stageRunId: event.stageRunId ?? null,
+          eventType: "chat_message",
+          message: event.text,
+          data: {
+            role: event.role,
+            source: event.source,
+            requiresResponse: event.requiresResponse ?? false,
+          },
+        }))
+        return
+      }
+      case "presentation": {
+        // `stagePresent.*` callers only emit presentation events when an
+        // active run context is set, so runId is expected. If something
+        // slips through without one (e.g. a test stub), drop silently —
+        // the local bus has already delivered it to subscribers.
+        if (!event.runId) return
+        track(repos.appendLog({
+          runId: event.runId,
+          stageRunId: event.stageRunId ?? null,
+          eventType: "presentation",
+          message: event.text,
+          data: {
+            kind: event.kind,
+            meta: event.meta,
+          },
+        }))
+        return
       }
     }
   }
 
-  return {
-    ask: inner.ask.bind(inner),
-    close: inner.close ? inner.close.bind(inner) : undefined,
-    emit(event: WorkflowEvent): void {
-      let toForward = event
-      try {
-        toForward = persist(event)
-      } catch (err) {
-        // DB sync must never break the workflow. Forward the un-enriched
-        // event so SSE clients still see it, and log for diagnosis.
-        console.error("[db-sync]", (err as Error).message)
-      }
-      inner.emit(toForward)
+  return bus.subscribe(event => {
+    try {
+      persist(event)
+    } catch (err) {
+      // DB sync must never break the workflow. Log and carry on — the local
+      // bus has already delivered to other subscribers.
+      console.error("[db-sync]", (err as Error).message)
     }
-  }
+  })
 }
 
 /**
- * @deprecated Use `withDbSync()` which returns a wrapped IO instead of
- * mutating its argument. Kept for callers that still rely on the old
- * mutate-and-detach contract.
- */
-export function attachDbSync(
-  io: WorkflowIO,
-  repos: Repos,
-  ctx: { runId: string; itemId: string }
-): () => void {
-  const originalEmit = io.emit.bind(io)
-  // The inner the wrapper sees must call the *original* emit, otherwise
-  // io.emit (which we re-point to the wrapper below) would recurse forever.
-  const inner: WorkflowIO = {
-    ask: io.ask.bind(io),
-    close: io.close ? io.close.bind(io) : undefined,
-    emit: originalEmit
-  }
-  const wrapped = withDbSync(inner, repos, ctx)
-  io.emit = wrapped.emit.bind(wrapped)
-  return () => {
-    io.emit = originalEmit
-  }
-}
-
-/**
- * Create the workspace/item/run records synchronously and wire up DB sync on
- * the active IO. Returns both the DB ids and a start() callback that kicks
- * off the workflow. Split like this so HTTP callers can return runId before
- * the workflow finishes.
+ * Create the workspace/item/run records synchronously and wire up the full
+ * shared-transport stack on the active bus. Returns both the DB ids and a
+ * `start()` callback that kicks off the workflow. Split like this so HTTP
+ * callers can return runId before the workflow finishes.
+ *
+ * The bus has three subscribers attached inside `start()`:
+ *   1. `attachDbSync` — the projection onto `runs/stage_runs/stage_logs/…`.
+ *   2. `attachCrossProcessBridge` — tails `stage_logs` for answers/events
+ *       written by *another* process (typically the API server writing an
+ *       answer submitted by the UI) and re-emits them locally so the CLI's
+ *       in-process bus wakes up.
+ *   3. Whatever renderer the caller wired up (humanCli, NDJSON, SSE bridge).
+ *
+ * Prompt persistence (`withPromptPersistence`) is attached earlier by the
+ * IO factory (`createCliIO` / `createApiIOSession`) since it's a transport
+ * obligation, not a per-run concern.
  */
 export function prepareRun(
   item: Item,
   repos: Repos,
-  io: WorkflowIO,
+  io: WorkflowIO & { bus?: EventBus },
   opts: { workspaceKey?: string; workspaceName?: string; owner?: "cli" | "api"; itemId?: string } = {}
 ) {
   const itemRow = opts.itemId
@@ -295,35 +336,82 @@ export function prepareRun(
     owner: opts.owner ?? "api"
   })
 
-  const dbSyncedIo = withDbSync(io, repos, { runId: runRow.id, itemId: itemRow.id })
+  // Every caller now passes a bus-backed io (createCliIO / createApiIOSession
+  // both expose `.bus`). If for some reason a bare io slipped in, synthesize
+  // a local bus so subscribers still attach somewhere — but this should be
+  // considered a bug upstream.
+  const bus = io.bus ?? createBus()
+  const writtenLogIds = new Set<string>()
 
   const start = async (): Promise<void> => {
-    await runWithWorkflowIO(dbSyncedIo, async () =>
-      runWithActiveRun({ runId: runRow.id, itemId: itemRow.id }, async () => {
-        dbSyncedIo.emit({ type: "run_started", runId: runRow.id, itemId: itemRow.id, title: item.title })
-        try {
-          await runWorkflow({ ...item, id: itemRow.id })
-          dbSyncedIo.emit({ type: "run_finished", runId: runRow.id, status: "completed" })
-        } catch (err) {
-          const message = (err as Error).message
-          dbSyncedIo.emit({ type: "run_finished", runId: runRow.id, status: "failed", error: message })
-          throw err
-        }
-      })
-    )
+    const detachDbSync = attachDbSync(bus, repos, { runId: runRow.id, itemId: itemRow.id }, { writtenLogIds })
+    const detachBridge = attachCrossProcessBridge(bus, repos, runRow.id, { writtenLogIds })
+    try {
+      await runWithWorkflowIO(io, async () =>
+        runWithActiveRun({ runId: runRow.id, itemId: itemRow.id }, async () => {
+          bus.emit({ type: "run_started", runId: runRow.id, itemId: itemRow.id, title: item.title })
+          try {
+            await runWorkflow({ ...item, id: itemRow.id })
+            bus.emit({ type: "run_finished", runId: runRow.id, status: "completed" })
+          } catch (err) {
+            const message = (err as Error).message
+            bus.emit({ type: "run_finished", runId: runRow.id, status: "failed", error: message })
+            throw err
+          }
+        })
+      )
+    } finally {
+      detachBridge()
+      detachDbSync()
+    }
   }
 
-  return { runId: runRow.id, itemId: itemRow.id, workspaceId, start, io: dbSyncedIo }
+  return { runId: runRow.id, itemId: itemRow.id, workspaceId, start, io, bus }
 }
 
 /** Convenience for CLI: prepare + start + await. */
 export async function runWorkflowWithSync(
   item: Item,
   repos: Repos,
-  io: WorkflowIO,
+  io: WorkflowIO & { bus?: EventBus },
   opts: { workspaceKey?: string; workspaceName?: string; owner?: "cli" | "api"; itemId?: string } = {}
 ): Promise<string> {
   const { runId, start } = prepareRun(item, repos, io, opts)
   await start()
   return runId
 }
+
+/**
+ * Compatibility shim used by `/resume` and a couple of legacy tests. Attaches
+ * a dbSync subscriber to the io's bus and returns the same io. The signature
+ * mimics the old wrapper so call-sites don't have to change simultaneously.
+ *
+ * @deprecated Prefer `attachDbSync(bus, …)` directly; this exists only to
+ * bridge the transition.
+ */
+export function withDbSync(
+  inner: WorkflowIO & { bus?: EventBus },
+  repos: Repos,
+  ctx: { runId: string; itemId: string }
+): WorkflowIO {
+  const bus = inner.bus
+  if (!bus) {
+    throw new Error(
+      "withDbSync: inner io has no attached bus. Pass a bus-backed io " +
+      "(createCliIO / createApiIOSession) or call attachDbSync(bus, repos, ctx) directly."
+    )
+  }
+  attachDbSync(bus, repos, ctx)
+  return inner
+}
+
+/**
+ * Re-export `busToWorkflowIO` so tests that need a throwaway bus-backed io
+ * can build one without reaching into `bus.ts`.
+ */
+export { busToWorkflowIO }
+
+/**
+ * Explicit type re-export for legacy imports.
+ */
+export type { WorkflowEvent }

@@ -234,8 +234,11 @@ export class Repos {
       .prepare("SELECT * FROM projects WHERE item_id = ? AND code = ?")
       .get(input.itemId, input.code) as ProjectRow | undefined
     if (existing) return existing
+    const existingById = input.id
+      ? this.db.prepare("SELECT * FROM projects WHERE id = ?").get(input.id) as ProjectRow | undefined
+      : undefined
     const row: ProjectRow = {
-      id: input.id ?? randomUUID(),
+      id: existingById && existingById.item_id !== input.itemId ? randomUUID() : input.id ?? randomUUID(),
       item_id: input.itemId,
       code: input.code,
       name: input.name,
@@ -449,8 +452,31 @@ export class Repos {
 
   listLogsForRun(runId: string, sinceCreatedAt = 0): StageLogRow[] {
     return this.db
-      .prepare("SELECT * FROM stage_logs WHERE run_id = ? AND created_at >= ? ORDER BY created_at ASC, id ASC")
+      .prepare("SELECT * FROM stage_logs WHERE run_id = ? AND created_at >= ? ORDER BY created_at ASC, rowid ASC")
       .all(runId, sinceCreatedAt) as StageLogRow[]
+  }
+
+  listLogsForWorkspace(workspaceId: string | null, sinceCreatedAt = 0): Array<StageLogRow & { item_id: string }> {
+    if (workspaceId) {
+      return this.db
+        .prepare(
+          `SELECT l.*, r.item_id
+            FROM stage_logs l
+             JOIN runs r ON r.id = l.run_id
+            WHERE r.workspace_id = ? AND l.created_at >= ?
+            ORDER BY l.created_at ASC, l.rowid ASC`
+        )
+        .all(workspaceId, sinceCreatedAt) as Array<StageLogRow & { item_id: string }>
+    }
+    return this.db
+      .prepare(
+        `SELECT l.*, r.item_id
+           FROM stage_logs l
+           JOIN runs r ON r.id = l.run_id
+          WHERE l.created_at >= ?
+          ORDER BY l.created_at ASC, l.rowid ASC`
+      )
+      .all(sinceCreatedAt) as Array<StageLogRow & { item_id: string }>
   }
 
   recordArtifact(input: {
@@ -486,9 +512,9 @@ export class Repos {
       .all(runId) as ArtifactFileRow[]
   }
 
-  createPendingPrompt(input: { runId: string; stageRunId?: string | null; prompt: string }): PendingPromptRow {
+  createPendingPrompt(input: { id?: string; runId: string; stageRunId?: string | null; prompt: string }): PendingPromptRow {
     const row: PendingPromptRow = {
-      id: randomUUID(),
+      id: input.id ?? randomUUID(),
       run_id: input.runId,
       stage_run_id: input.stageRunId ?? null,
       prompt: input.prompt,
@@ -503,6 +529,12 @@ export class Repos {
       )
       .run(row)
     return row
+  }
+
+  getPendingPrompt(id: string): PendingPromptRow | undefined {
+    return this.db
+      .prepare("SELECT * FROM pending_prompts WHERE id = ?")
+      .get(id) as PendingPromptRow | undefined
   }
 
   answerPendingPrompt(id: string, answer: string): PendingPromptRow | undefined {

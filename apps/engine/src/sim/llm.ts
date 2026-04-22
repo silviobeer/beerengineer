@@ -1,16 +1,16 @@
 import type { Finding, StoryReviewArtifact, UserStory } from "../types.js"
-import { print } from "../print.js"
+import { stagePresent } from "../core/stagePresentation.js"
 
 const delay = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
 
 export async function llm6bImplement(story: UserStory): Promise<void> {
   await delay(350)
-  print.dim(`    → ${story.id} implemented. Tests: ${story.acceptanceCriteria.length} passed.`)
+  stagePresent.dim(`    → ${story.id} implemented. Tests: ${story.acceptanceCriteria.length} passed.`)
 }
 
 export async function llm6bFix(feedback: string): Promise<void> {
   await delay(400)
-  print.dim(`    → Fixes applied for: ${feedback.slice(0, 70)}...`)
+  stagePresent.dim(`    → Fixes applied for: ${feedback.slice(0, 70)}...`)
 }
 
 function storyTag(storyId?: string): string {

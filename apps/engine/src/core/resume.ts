@@ -2,11 +2,13 @@ import { readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { runWorkflow } from "../workflow.js"
 import type { StoryImplementationArtifact } from "../types.js"
-import { readRecoveryRecord, scopeRef, type RecoveryRecord } from "./recovery.js"
+import { readRecoveryRecord, type RecoveryRecord } from "./recovery.js"
 import { runWithWorkflowIO, type WorkflowIO } from "./io.js"
 import { runWithActiveRun } from "./runContext.js"
 import { layout, type WorkflowContext } from "./workspaceLayout.js"
-import { withDbSync } from "./runOrchestrator.js"
+import { attachDbSync } from "./runOrchestrator.js"
+import { attachCrossProcessBridge } from "./crossProcessBridge.js"
+import type { EventBus } from "./bus.js"
 import type { ExternalRemediationRow, Repos, RunRow } from "../db/repositories.js"
 
 /** Returned by load(). Centralizes the decision about whether a run can be resumed. */
@@ -150,7 +152,7 @@ async function prepareStoryScopeForResume(
 
 export type PerformResumeInput = {
   repos: Repos
-  io: WorkflowIO
+  io: WorkflowIO & { bus?: EventBus }
   runId: string
   remediation: ExternalRemediationRow
 }
@@ -169,7 +171,13 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
 
   inflightResumes.add(input.runId)
   try {
-    const dbIo = withDbSync(input.io, input.repos, { runId: run.id, itemId: run.item_id })
+    if (!input.io.bus) {
+      throw new Error("performResume: io must be bus-backed (createApiIOSession / createCliIO)")
+    }
+    const bus = input.io.bus
+    const writtenLogIds = new Set<string>()
+    const detachDbSync = attachDbSync(bus, input.repos, { runId: run.id, itemId: run.item_id }, { writtenLogIds })
+    const detachBridge = attachCrossProcessBridge(bus, input.repos, run.id, { writtenLogIds })
 
     const eventScope =
       record.scope.type === "story"
@@ -191,45 +199,47 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
       )
     }
 
-    dbIo.emit({
-      type: "external_remediation_recorded",
-      runId: run.id,
-      remediationId: input.remediation.id,
-      scope: eventScope,
-      summary: input.remediation.summary,
-      branch: input.remediation.branch ?? undefined,
-    })
+    try {
+      bus.emit({
+        type: "external_remediation_recorded",
+        runId: run.id,
+        remediationId: input.remediation.id,
+        scope: eventScope,
+        summary: input.remediation.summary,
+        branch: input.remediation.branch ?? undefined,
+      })
 
-    dbIo.emit({
-      type: "run_resumed",
-      runId: run.id,
-      remediationId: input.remediation.id,
-      scope: eventScope,
-    })
+      bus.emit({
+        type: "run_resumed",
+        runId: run.id,
+        remediationId: input.remediation.id,
+        scope: eventScope,
+      })
 
-    await runWithWorkflowIO(dbIo, async () =>
-      runWithActiveRun({ runId: run.id, itemId: run.item_id }, async () => {
-        input.repos.updateRun(run.id, { status: "running" })
-        try {
-          await runWorkflow(
-            { id: run.item_id, title: run.title, description: "" },
-            { resume: { scope: record.scope, currentStage: run.current_stage } },
-          )
-          dbIo.emit({ type: "run_finished", runId: run.id, status: "completed" })
-        } catch (err) {
-          dbIo.emit({
-            type: "run_finished",
-            runId: run.id,
-            status: "failed",
-            error: (err as Error).message,
-          })
-          throw err
-        }
-      }),
-    )
-
-    // Store scopeRef reference so lints know it's imported intentionally.
-    void scopeRef
+      await runWithWorkflowIO(input.io, async () =>
+        runWithActiveRun({ runId: run.id, itemId: run.item_id }, async () => {
+          input.repos.updateRun(run.id, { status: "running" })
+          try {
+            await runWorkflow(
+              { id: run.item_id, title: run.title, description: "" },
+              { resume: { scope: record.scope, currentStage: run.current_stage } },
+            )
+            bus.emit({ type: "run_finished", runId: run.id, status: "completed" })
+          } catch (err) {
+            bus.emit({
+              type: "run_finished",
+              runId: run.id,
+              status: "failed",
+              error: (err as Error).message,
+            })
+            throw err
+          }
+        }),
+      )
+    } finally {
+      detachBridge()
+      detachDbSync()
+    }
   } finally {
     inflightResumes.delete(input.runId)
   }

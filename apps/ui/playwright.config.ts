@@ -9,7 +9,7 @@ const fixtureDbPath = resolve(__dirname, ".tmp", "board-e2e.sqlite");
 export default defineConfig({
   testDir: "./tests/e2e",
   globalSetup: "./tests/e2e/global-setup.ts",
-  fullyParallel: true,
+  fullyParallel: false,
   retries: process.env.CI ? 2 : 0,
   reporter: [["list"]],
   use: {

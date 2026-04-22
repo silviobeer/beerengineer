@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { runStage } from "../../core/stageRuntime.js"
 import { createTestWriterReview, createTestWriterStage, defaultStageConfig } from "../../llm/registry.js"
-import { print } from "../../print.js"
+import { stagePresent } from "../../core/stagePresentation.js"
 import { renderTestPlanMarkdown } from "../../render/testPlan.js"
 import { runRalphStory, writeWaveSummary, type StoryArtifacts } from "./ralphRuntime.js"
 import { layout } from "../../core/workspaceLayout.js"
@@ -35,7 +35,7 @@ async function readJsonIfExists<T>(path: string): Promise<T | undefined> {
 }
 
 export async function execution(ctx: WithPlan, resume?: ExecutionResumeOptions): Promise<WaveSummary[]> {
-  print.header(`execution — ${ctx.project.name}`)
+  stagePresent.header(`execution — ${ctx.project.name}`)
 
   const storyById = new Map(ctx.prd.stories.map(story => [story.id, story]))
 
@@ -58,7 +58,7 @@ export async function execution(ctx: WithPlan, resume?: ExecutionResumeOptions):
     if (resume?.waveNumber === wave.number) resume = undefined
   }
 
-  print.ok("All waves complete\n")
+  stagePresent.ok("All waves complete\n")
   return summaries
 }
 
@@ -88,7 +88,7 @@ async function executeWave(
   resume?: ExecutionResumeOptions,
 ): Promise<WaveSummary> {
   const tag = wave.parallel ? "(parallel)" : "(sequential)"
-  print.step(`\nWave ${wave.number} ${tag}: ${wave.stories.map(s => s.id).join(", ")}`)
+  stagePresent.step(`\nWave ${wave.number} ${tag}: ${wave.stories.map(s => s.id).join(", ")}`)
 
   const run = (story: Pick<UserStory, "id" | "title">) =>
     implementStory(ctx, wave, resolveStory(story, storyById), {
@@ -100,7 +100,7 @@ async function executeWave(
     : await sequentially(wave.stories, run)
 
   const summary = await writeWaveSummary({ workspaceId: ctx.workspaceId, runId: ctx.runId }, wave, results)
-  print.ok(
+  stagePresent.ok(
     `Wave ${wave.number} complete — merged: ${summary.storiesMerged.length}, blocked: ${summary.storiesBlocked.length}`,
   )
   assertWaveSucceeded(wave, summary)
@@ -115,7 +115,7 @@ async function runParallelStories(
   return settled.map((outcome, index) => {
     if (outcome.status === "fulfilled") return outcome.value
     const story = stories[index]
-    print.warn(`Story ${story.id} crashed: ${(outcome.reason as Error).message}`)
+    stagePresent.warn(`Story ${story.id} crashed: ${(outcome.reason as Error).message}`)
     return {
       storyId: story.id,
       implementation: blockedPlaceholder(story, (outcome.reason as Error).message),
@@ -153,7 +153,7 @@ function resolveStory(
 ): UserStory {
   const full = storyById.get(ref.id)
   if (full) return full
-  print.warn(`Story ${ref.id} is referenced by the plan but missing from the PRD — synthesizing scaffold ACs.`)
+  stagePresent.warn(`Story ${ref.id} is referenced by the plan but missing from the PRD — synthesizing scaffold ACs.`)
   return { id: ref.id, title: ref.title, acceptanceCriteria: [] }
 }
 
@@ -163,13 +163,13 @@ async function implementStory(
   story: UserStory,
   opts: { rerunTestWriter?: boolean } = {},
 ): Promise<StoryResult> {
-  print.step(`  Story ${story.id}: ${story.title}`)
+  stagePresent.step(`  Story ${story.id}: ${story.title}`)
 
   const persistedImplementation = await readJsonIfExists<StoryImplementationArtifact>(
     join(layout.executionRalphDir(ctx, wave.number, story.id), "implementation.json"),
   )
   if (persistedImplementation?.status === "passed") {
-    print.dim(`  Status: ${persistedImplementation.status}`)
+    stagePresent.dim(`  Status: ${persistedImplementation.status}`)
     return { storyId: story.id, implementation: persistedImplementation }
   }
 
@@ -177,10 +177,10 @@ async function implementStory(
   const testPlan = !opts.rerunTestWriter
     ? (await readJsonIfExists<StoryTestPlanArtifact>(testPlanPath)) ?? await writeStoryTestPlan(ctx, wave, story)
     : await writeStoryTestPlan(ctx, wave, story)
-  print.dim(`  Test plan: ${testPlan.testPlan.testCases.map(tc => tc.id).join(", ")}`)
+  stagePresent.dim(`  Test plan: ${testPlan.testPlan.testCases.map(tc => tc.id).join(", ")}`)
   const storyContext = buildStoryExecutionContext(ctx.project, wave, ctx.architecture, testPlan)
   const result: StoryArtifacts = await runRalphStory(storyContext, { workspaceId: ctx.workspaceId, runId: ctx.runId })
-  print.dim(`  Status: ${result.implementation.status}`)
+  stagePresent.dim(`  Status: ${result.implementation.status}`)
   return { storyId: story.id, implementation: result.implementation }
 }
 
@@ -245,7 +245,6 @@ async function writeStoryTestPlan(
     stageAgent: createTestWriterStage(defaultStageConfig.stageAgent.provider, ctx.project),
     reviewer: createTestWriterReview(defaultStageConfig.reviewer.provider),
     askUser: async () => "",
-    showMessage: print.llm,
     async persistArtifacts(_run, artifact) {
       return [
         {

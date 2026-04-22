@@ -139,6 +139,7 @@ test.describe("live run flow", () => {
         prompt: { id: string } | null
       }
       if (prompt.prompt) {
+        await expect(page.locator(".live-run-timeline")).toContainText(/LLM-|reviewer|step|header/i, { timeout: 15_000 })
         await request.post(`${ENGINE_URL}/runs/${runId}/input`, {
           data: { promptId: prompt.prompt.id, answer: "ok" }
         })

@@ -1,13 +1,13 @@
 import { runStage } from "../../core/stageRuntime.js"
 import { printStageCompletion, stageSummary, summaryArtifactFile } from "../../core/stageHelpers.js"
+import { stagePresent } from "../../core/stagePresentation.js"
 import { createArchitectureReview, createArchitectureStage, defaultStageConfig } from "../../llm/registry.js"
-import { print } from "../../print.js"
 import { renderArchitectureMarkdown } from "../../render/architecture.js"
 import type { ArchitectureArtifact, WithPrd } from "../../types.js"
 import type { ArchitectureState } from "./types.js"
 
 export async function architecture(ctx: WithPrd): Promise<ArchitectureArtifact> {
-  print.header(`architecture — ${ctx.project.name}`)
+  stagePresent.header(`architecture — ${ctx.project.name}`)
 
   const { result } = await runStage({
     stageId: "architecture",
@@ -23,7 +23,6 @@ export async function architecture(ctx: WithPrd): Promise<ArchitectureArtifact> 
     stageAgent: createArchitectureStage(defaultStageConfig.stageAgent.provider, ctx.project),
     reviewer: createArchitectureReview(defaultStageConfig.reviewer.provider),
     askUser: async () => "",
-    showMessage: print.llm,
     async persistArtifacts(run, artifact) {
       return [
         {
@@ -45,8 +44,8 @@ export async function architecture(ctx: WithPrd): Promise<ArchitectureArtifact> 
       ]
     },
     async onApproved(artifact, run) {
-      print.ok("Architecture review: plan is ready for the next step.")
-      print.llm("LLM-4", artifact.architecture.summary)
+      stagePresent.ok("Architecture review: plan is ready for the next step.")
+      stagePresent.chat("LLM-4", artifact.architecture.summary)
       printStageCompletion(run, "architecture")
       return artifact
     },

@@ -23,7 +23,7 @@ type Command =
   | { kind: "help" }
   | { kind: "doctor" }
   | { kind: "start-ui" }
-  | { kind: "workflow" }
+  | { kind: "workflow"; json?: boolean }
   | { kind: "item-action"; itemRef: string; action: string; resume?: ResumeFlags }
   | { kind: "unknown"; token: string }
 
@@ -46,7 +46,11 @@ function readFlag(argv: string[], name: string): string | undefined {
 
 export function parseArgs(argv: string[]): Command {
   const [first, second] = argv
-  if (first === undefined) return { kind: "workflow" }
+  const json = argv.includes("--json")
+  if (first === undefined || first === "--json") return { kind: "workflow", json }
+  if (first === "run" && (second === "--json" || argv[2] === "--json" || second === undefined)) {
+    return { kind: "workflow", json }
+  }
   if (first === "--help" || first === "-h" || first === "help") return { kind: "help" }
   if (first === "--doctor" || first === "doctor") return { kind: "doctor" }
   if (first === "start" && second === "ui") return { kind: "start-ui" }
@@ -79,6 +83,8 @@ function printHelp(): void {
     "",
     "  Usage:",
     "    beerengineer                                         Run the interactive workflow (default)",
+    "    beerengineer --json                                  Harness mode: NDJSON events on stdout, prompt answers on stdin",
+    "    beerengineer run --json                              Same as `beerengineer --json`",
     "    beerengineer start ui                                Start the Next.js UI dev server",
     "    beerengineer item action --item <id|code> --action <name>",
     "                                                         Perform an item action",
@@ -197,7 +203,11 @@ export function startUi(): Promise<number> {
   })
 }
 
-async function runInteractiveWorkflow(): Promise<void> {
+async function runInteractiveWorkflow(opts: { json?: boolean } = {}): Promise<void> {
+  if (opts.json) {
+    return runJsonWorkflow()
+  }
+
   console.log("\n  ╔════════════════════════════════════════╗")
   console.log("  ║   BeerEngineer2 — Simulation            ║")
   console.log("  ╚════════════════════════════════════════╝\n")
@@ -223,6 +233,44 @@ async function runInteractiveWorkflow(): Promise<void> {
   } finally {
     io.close?.()
     close()
+    db.close()
+  }
+}
+
+/**
+ * Harness mode. Stdout carries one `WorkflowEvent` JSON object per line.
+ * Stdin is read line-by-line; `{"type":"prompt_answered","promptId":"…","answer":"…"}`
+ * resolves the matching pending prompt. Human formatting is disabled so
+ * stdout stays machine-parseable; errors go to stderr.
+ *
+ * Intake (title/description) is supplied by the harness via a special
+ * bootstrap prompt — the run starts by asking for them as regular events.
+ */
+async function runJsonWorkflow(): Promise<void> {
+  const { attachNdjsonRenderer } = await import("./core/renderers/ndjson.js")
+  const db = initDatabase()
+  const repos = new Repos(db)
+  const io = createCliIO(repos, {
+    renderer: (bus) => attachNdjsonRenderer(bus),
+    externalPromptResolver: true,
+  })
+
+  try {
+    // Intake prompts go through the same bus — harness reads prompt_requested,
+    // replies with prompt_answered for "title" and "description".
+    const title = await io.ask("Idea (title)")
+    const description = await io.ask("Idea (description)")
+
+    const runId = await runWorkflowWithSync(
+      { id: "new", title, description },
+      repos,
+      io,
+      { owner: "cli" }
+    )
+    // Emit a final signpost event so the harness can detect end-of-run.
+    process.stdout.write(`${JSON.stringify({ type: "cli_finished", runId })}\n`)
+  } finally {
+    io.close?.()
     db.close()
   }
 }
@@ -372,9 +420,13 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       process.exit(1)
     case "workflow":
       try {
-        await runInteractiveWorkflow()
+        await runInteractiveWorkflow({ json: cmd.json })
       } catch (err) {
-        console.error("\n  FEHLER:", (err as Error).message)
+        if (cmd.json) {
+          process.stderr.write(`${JSON.stringify({ type: "cli_error", message: (err as Error).message })}\n`)
+        } else {
+          console.error("\n  FEHLER:", (err as Error).message)
+        }
         process.exit(1)
       }
       return

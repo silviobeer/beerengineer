@@ -3,27 +3,35 @@ import assert from "node:assert/strict"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { PassThrough } from "node:stream"
 
 import { initDatabase } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
-import { runWithWorkflowIO, type WorkflowIO, type WorkflowEvent } from "../src/core/io.js"
-import { attachDbSync, mapStageToColumn, prepareRun, withDbSync } from "../src/core/runOrchestrator.js"
+import { runWithWorkflowIO, type WorkflowIO } from "../src/core/io.js"
+import {
+  attachDbSync,
+  busToWorkflowIO,
+  mapStageToColumn,
+  prepareRun,
+} from "../src/core/runOrchestrator.js"
 import { runWithActiveRun } from "../src/core/runContext.js"
 import { createApiIOSession } from "../src/core/ioApi.js"
+import { createCliIO } from "../src/core/ioCli.js"
+import { createBus } from "../src/core/bus.js"
+import { attachNdjsonRenderer } from "../src/core/renderers/ndjson.js"
 import { ask } from "../src/sim/human.js"
 import { createStageRun, writeArtifactFiles } from "../src/core/stageRuntime.js"
-
-function makeIO(events: WorkflowEvent[]): WorkflowIO {
-  return {
-    async ask() { return "" },
-    emit(ev) { events.push(ev) },
-    close() {}
-  }
-}
 
 function tmpDb() {
   const dir = mkdtempSync(join(tmpdir(), "be2-dbsync-"))
   return initDatabase(join(dir, "test.sqlite"))
+}
+
+/** Helper: a bus + the adapter io that tests emit through. */
+function makeBusIO() {
+  const bus = createBus()
+  const io = busToWorkflowIO(bus)
+  return { bus, io }
 }
 
 test("mapStageToColumn projects engine stages to board columns", () => {
@@ -41,15 +49,14 @@ test("attachDbSync persists stage lifecycle into DB", () => {
   const ws = repos.upsertWorkspace({ key: "test", name: "Test" })
   const item = repos.createItem({ workspaceId: ws.id, title: "T", description: "D" })
   const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "T" })
-  const events: WorkflowEvent[] = []
-  const io = makeIO(events)
+  const { bus } = makeBusIO()
 
   try {
-    attachDbSync(io, repos, { runId: run.id, itemId: item.id })
-    io.emit({ type: "run_started", runId: run.id, itemId: item.id, title: "T" })
-    io.emit({ type: "stage_started", runId: run.id, stageRunId: "x", stageKey: "brainstorm" })
-    io.emit({ type: "stage_completed", runId: run.id, stageRunId: "x", stageKey: "brainstorm", status: "completed" })
-    io.emit({ type: "run_finished", runId: run.id, status: "completed" })
+    attachDbSync(bus, repos, { runId: run.id, itemId: item.id })
+    bus.emit({ type: "run_started", runId: run.id, itemId: item.id, title: "T" })
+    bus.emit({ type: "stage_started", runId: run.id, stageRunId: "x", stageKey: "brainstorm" })
+    bus.emit({ type: "stage_completed", runId: run.id, stageRunId: "x", stageKey: "brainstorm", status: "completed" })
+    bus.emit({ type: "run_finished", runId: run.id, status: "completed" })
 
     const stages = repos.listStageRunsForRun(run.id)
     assert.equal(stages.length, 1)
@@ -112,10 +119,10 @@ test("project_created events persist project rows used by later stage runs", () 
   const ws = repos.upsertWorkspace({ key: "test", name: "Test" })
   const item = repos.createItem({ workspaceId: ws.id, title: "T", description: "D" })
   const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "T" })
-  const io = makeIO([])
+  const { bus } = makeBusIO()
 
-  attachDbSync(io, repos, { runId: run.id, itemId: item.id })
-  io.emit({
+  attachDbSync(bus, repos, { runId: run.id, itemId: item.id })
+  bus.emit({
     type: "project_created",
     runId: run.id,
     itemId: item.id,
@@ -125,7 +132,7 @@ test("project_created events persist project rows used by later stage runs", () 
     summary: "Summary",
     position: 0,
   })
-  io.emit({ type: "stage_started", runId: run.id, stageRunId: "stage-1", stageKey: "requirements", projectId: "PRJ-1" })
+  bus.emit({ type: "stage_started", runId: run.id, stageRunId: "stage-1", stageKey: "requirements", projectId: "PRJ-1" })
 
   const projects = db.prepare("SELECT * FROM projects WHERE item_id = ?").all(item.id) as Array<{ id: string; code: string }>
   const stages = repos.listStageRunsForRun(run.id)
@@ -156,19 +163,68 @@ test("project codes are item-scoped, so different items can each have P01", () =
   db.close()
 })
 
-test("API prompt answers and artifact writes are persisted through the db sync layer", async () => {
+test("attachDbSync remaps logical project ids when different items reuse the same project ref", () => {
+  const db = tmpDb()
+  const repos = new Repos(db)
+  const ws = repos.upsertWorkspace({ key: "test", name: "Test" })
+  const itemA = repos.createItem({ workspaceId: ws.id, title: "A", description: "DA" })
+  const itemB = repos.createItem({ workspaceId: ws.id, title: "B", description: "DB" })
+  const runA = repos.createRun({ workspaceId: ws.id, itemId: itemA.id, title: "A" })
+  const runB = repos.createRun({ workspaceId: ws.id, itemId: itemB.id, title: "B" })
+  const { bus: busA } = makeBusIO()
+  const { bus: busB } = makeBusIO()
+  attachDbSync(busA, repos, { runId: runA.id, itemId: itemA.id })
+  attachDbSync(busB, repos, { runId: runB.id, itemId: itemB.id })
+
+  busA.emit({
+    type: "project_created",
+    runId: runA.id,
+    itemId: itemA.id,
+    projectId: "P01",
+    code: "P01",
+    name: "Project A",
+    summary: "A",
+    position: 0,
+  })
+  busB.emit({
+    type: "project_created",
+    runId: runB.id,
+    itemId: itemB.id,
+    projectId: "P01",
+    code: "P01",
+    name: "Project B",
+    summary: "B",
+    position: 0,
+  })
+  busA.emit({ type: "stage_started", runId: runA.id, stageRunId: "stage-a", stageKey: "requirements", projectId: "P01" })
+  busB.emit({ type: "stage_started", runId: runB.id, stageRunId: "stage-b", stageKey: "requirements", projectId: "P01" })
+
+  const projects = db.prepare("SELECT id, item_id, code FROM projects ORDER BY item_id ASC").all() as Array<{ id: string; item_id: string; code: string }>
+  const stagesA = repos.listStageRunsForRun(runA.id)
+  const stagesB = repos.listStageRunsForRun(runB.id)
+
+  assert.equal(projects.length, 2)
+  assert.equal(projects[0]?.code, "P01")
+  assert.equal(projects[1]?.code, "P01")
+  assert.notEqual(projects[0]?.id, projects[1]?.id)
+  assert.equal(stagesA[0]?.project_id, projects.find(project => project.item_id === itemA.id)?.id)
+  assert.equal(stagesB[0]?.project_id, projects.find(project => project.item_id === itemB.id)?.id)
+  db.close()
+})
+
+test("API prompt answers and artifact writes are persisted through the bus subscribers", async () => {
   const db = tmpDb()
   const repos = new Repos(db)
   const ws = repos.upsertWorkspace({ key: "test", name: "Test" })
   const item = repos.createItem({ workspaceId: ws.id, title: "T", description: "D" })
   const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "T" })
   const session = createApiIOSession(repos)
-  const dbSyncedIo = withDbSync(session.io, repos, { runId: run.id, itemId: item.id })
+  attachDbSync(session.bus, repos, { runId: run.id, itemId: item.id })
   repos.createStageRun({ id: "stage-1", runId: run.id, stageKey: "requirements" })
 
-  await runWithWorkflowIO(dbSyncedIo, async () =>
+  await runWithWorkflowIO(session.io, async () =>
     runWithActiveRun({ runId: run.id, itemId: item.id, stageRunId: "stage-1" }, async () => {
-      const promptPromise = dbSyncedIo.ask("question?")
+      const promptPromise = session.io.ask("question?")
       const prompt = repos.getOpenPrompt(run.id)
       assert.ok(prompt)
       assert.equal(session.answerPrompt(prompt.id, "answer!"), true)
@@ -184,7 +240,7 @@ test("API prompt answers and artifact writes are persisted through the db sync l
         { kind: "json", label: "Artifact", fileName: "artifact.json", content: "{}\n" },
       ])
       files.forEach(file =>
-        dbSyncedIo.emit({
+        session.bus.emit({
           type: "artifact_written",
           runId: run.id,
           stageRunId: "stage-1",
@@ -205,44 +261,102 @@ test("API prompt answers and artifact writes are persisted through the db sync l
   assert.ok(eventTypes.includes("artifact_written"))
   assert.equal(artifacts.length, 1)
   assert.equal(artifacts[0].stage_run_id, "stage-1")
+  session.dispose()
   db.close()
 })
 
-test("withDbSync is idempotent on re-emitted stage_started events", () => {
+test("NDJSON prompt answers are persisted through the bus subscribers", async () => {
+  const db = tmpDb()
+  const repos = new Repos(db)
+  const ws = repos.upsertWorkspace({ key: "test", name: "Test" })
+  const item = repos.createItem({ workspaceId: ws.id, title: "T", description: "D" })
+  const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "T", owner: "cli" })
+  const out = new PassThrough()
+  const input = new PassThrough()
+  const io = createCliIO(repos, {
+    renderer: bus => attachNdjsonRenderer(bus, { out, in: input }),
+    externalPromptResolver: true,
+  })
+  attachDbSync(io.bus, repos, { runId: run.id, itemId: item.id })
+
+  try {
+    await runWithWorkflowIO(io, async () =>
+      runWithActiveRun({ runId: run.id, itemId: item.id }, async () => {
+        const promptPromise = io.ask("question?")
+        // Give the bus a tick so prompt_requested reaches subscribers and
+        // pending_prompts is populated before we query for it.
+        await new Promise(r => setTimeout(r, 10))
+        const prompt = repos.getOpenPrompt(run.id)
+        assert.ok(prompt)
+        input.write(`${JSON.stringify({ type: "prompt_answered", promptId: prompt.id, answer: "answer!" })}\n`)
+        await promptPromise
+      })
+    )
+
+    const eventTypes = repos.listLogsForRun(run.id).map(log => log.event_type)
+    assert.ok(eventTypes.includes("prompt_requested"))
+    assert.ok(eventTypes.includes("prompt_answered"))
+  } finally {
+    io.close?.()
+    db.close()
+  }
+})
+
+test("chat_message and presentation are persisted through the bus subscribers", () => {
   const db = tmpDb()
   const repos = new Repos(db)
   const ws = repos.upsertWorkspace({ key: "test", name: "Test" })
   const item = repos.createItem({ workspaceId: ws.id, title: "T", description: "D" })
   const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "T" })
-  const events: WorkflowEvent[] = []
-  const inner = makeIO(events)
-  const io = withDbSync(inner, repos, { runId: run.id, itemId: item.id })
+  repos.createStageRun({ id: "stage-1", runId: run.id, stageKey: "brainstorm" })
+  const { bus } = makeBusIO()
+  attachDbSync(bus, repos, { runId: run.id, itemId: item.id })
 
-  io.emit({ type: "stage_started", runId: run.id, stageRunId: "dup", stageKey: "brainstorm" })
-  io.emit({ type: "stage_started", runId: run.id, stageRunId: "dup", stageKey: "brainstorm" })
+  bus.emit({
+    type: "chat_message",
+    runId: run.id,
+    stageRunId: "stage-1",
+    role: "LLM-1",
+    source: "stage-agent",
+    text: "What problem should the product solve?",
+    requiresResponse: true,
+  })
+  bus.emit({
+    type: "presentation",
+    runId: run.id,
+    stageRunId: "stage-1",
+    kind: "step",
+    text: "Interactive session via LLM adapter",
+  })
+
+  const logs = repos.listLogsForRun(run.id)
+  const chat = logs.find(log => log.event_type === "chat_message")
+  const presentation = logs.find(log => log.event_type === "presentation")
+
+  assert.equal(chat?.message, "What problem should the product solve?")
+  assert.ok(chat?.data_json?.includes("\"role\":\"LLM-1\""))
+  assert.equal(presentation?.message, "Interactive session via LLM adapter")
+  assert.ok(presentation?.data_json?.includes("\"kind\":\"step\""))
+  db.close()
+})
+
+test("attachDbSync is idempotent on re-emitted stage_started events", () => {
+  const db = tmpDb()
+  const repos = new Repos(db)
+  const ws = repos.upsertWorkspace({ key: "test", name: "Test" })
+  const item = repos.createItem({ workspaceId: ws.id, title: "T", description: "D" })
+  const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "T" })
+  const seen: string[] = []
+  const { bus } = makeBusIO()
+  bus.subscribe(ev => seen.push(ev.type))
+  attachDbSync(bus, repos, { runId: run.id, itemId: item.id })
+
+  bus.emit({ type: "stage_started", runId: run.id, stageRunId: "dup", stageKey: "brainstorm" })
+  bus.emit({ type: "stage_started", runId: run.id, stageRunId: "dup", stageKey: "brainstorm" })
 
   const stages = repos.listStageRunsForRun(run.id)
   assert.equal(stages.length, 1, "stage_runs row must not be duplicated")
-  assert.equal(events.length, 2, "both events still forwarded to the inner IO")
-  db.close()
-})
-
-test("withDbSync stamps streamId+at on persisted events without mutating the original", () => {
-  const db = tmpDb()
-  const repos = new Repos(db)
-  const ws = repos.upsertWorkspace({ key: "test", name: "Test" })
-  const item = repos.createItem({ workspaceId: ws.id, title: "T", description: "D" })
-  const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "T" })
-  const captured: WorkflowEvent[] = []
-  const inner: WorkflowIO = { async ask() { return "" }, emit(ev) { captured.push(ev) }, close() {} }
-  const io = withDbSync(inner, repos, { runId: run.id, itemId: item.id })
-
-  const original: WorkflowEvent = { type: "log", runId: run.id, message: "hello" }
-  io.emit(original)
-
-  assert.equal((original as { streamId?: string }).streamId, undefined, "input event must not be mutated")
-  assert.ok(captured[0].streamId, "forwarded event carries the persisted streamId")
-  assert.ok(captured[0].at, "forwarded event carries the persisted timestamp")
+  assert.equal(seen.filter(t => t === "stage_started").length, 2, "every emit reaches subscribers even when persistence dedups")
   db.close()
 })
 
@@ -252,13 +366,14 @@ test("stage_completed updates the exact emitted stageRunId even when stage keys 
   const ws = repos.upsertWorkspace({ key: "test", name: "Test" })
   const item = repos.createItem({ workspaceId: ws.id, title: "T", description: "D" })
   const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "T" })
-  const io = withDbSync(makeIO([]), repos, { runId: run.id, itemId: item.id })
+  const { bus } = makeBusIO()
+  attachDbSync(bus, repos, { runId: run.id, itemId: item.id })
 
   repos.createProject({ id: "project-1", itemId: item.id, code: "P01", name: "Project 1" })
   repos.createProject({ id: "project-2", itemId: item.id, code: "P02", name: "Project 2" })
-  io.emit({ type: "stage_started", runId: run.id, stageRunId: "req-1", stageKey: "requirements", projectId: "project-1" })
-  io.emit({ type: "stage_started", runId: run.id, stageRunId: "req-2", stageKey: "requirements", projectId: "project-2" })
-  io.emit({ type: "stage_completed", runId: run.id, stageRunId: "req-1", stageKey: "requirements", status: "completed" })
+  bus.emit({ type: "stage_started", runId: run.id, stageRunId: "req-1", stageKey: "requirements", projectId: "project-1" })
+  bus.emit({ type: "stage_started", runId: run.id, stageRunId: "req-2", stageKey: "requirements", projectId: "project-2" })
+  bus.emit({ type: "stage_completed", runId: run.id, stageRunId: "req-1", stageKey: "requirements", status: "completed" })
 
   const stage1 = db.prepare("SELECT status FROM stage_runs WHERE id = ?").get("req-1") as { status: string }
   const stage2 = db.prepare("SELECT status FROM stage_runs WHERE id = ?").get("req-2") as { status: string }
@@ -273,10 +388,11 @@ test("prepareRun keeps an existing item's workspace instead of forcing default",
   const defaultWs = repos.upsertWorkspace({ key: "default", name: "Default Workspace" })
   const otherWs = repos.upsertWorkspace({ key: "other", name: "Other Workspace" })
   const item = repos.createItem({ workspaceId: otherWs.id, title: "T", description: "D" })
+  const session = createApiIOSession(repos)
   const prepared = prepareRun(
     { id: item.id, title: item.title, description: item.description },
     repos,
-    makeIO([]),
+    session.io,
     { itemId: item.id }
   )
 
@@ -284,5 +400,6 @@ test("prepareRun keeps an existing item's workspace instead of forcing default",
   assert.ok(run)
   assert.equal(run?.workspace_id, otherWs.id)
   assert.notEqual(run?.workspace_id, defaultWs.id)
+  session.dispose()
   db.close()
 })

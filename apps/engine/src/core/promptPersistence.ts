@@ -1,0 +1,40 @@
+import type { EventBus } from "./bus.js"
+import type { Repos } from "../db/repositories.js"
+
+/**
+ * Subscribe a prompt-persistence middleware to the bus:
+ *  - on `prompt_requested`, upsert a `pending_prompts` row for the event's
+ *    promptId + runId (idempotent: re-emits don't create duplicates).
+ *  - on `prompt_answered`, mark the matching row as answered.
+ *
+ * This replaces the duplicate prompt/answer mirroring that used to live in
+ * both `ioCli` and `ioApi`.
+ *
+ * Returns the unsubscribe function.
+ */
+export function withPromptPersistence(bus: EventBus, repos: Repos): () => void {
+  return bus.subscribe(event => {
+    try {
+      if (event.type === "prompt_requested") {
+        if (!repos.getRun(event.runId)) {
+          return
+        }
+        const existing = repos.getPendingPrompt(event.promptId)
+        if (!existing) {
+          repos.createPendingPrompt({
+            id: event.promptId,
+            runId: event.runId,
+            stageRunId: event.stageRunId ?? null,
+            prompt: event.prompt,
+          })
+        }
+        return
+      }
+      if (event.type === "prompt_answered") {
+        repos.answerPendingPrompt(event.promptId, event.answer)
+      }
+    } catch (err) {
+      process.stderr.write(`[prompt-persistence] ${(err as Error).message}\n`)
+    }
+  })
+}

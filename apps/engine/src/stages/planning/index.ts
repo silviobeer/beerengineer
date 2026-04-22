@@ -1,13 +1,13 @@
 import { runStage } from "../../core/stageRuntime.js"
 import { printStageCompletion, stageSummary, summaryArtifactFile } from "../../core/stageHelpers.js"
+import { stagePresent } from "../../core/stagePresentation.js"
 import { createPlanningReview, createPlanningStage, defaultStageConfig } from "../../llm/registry.js"
-import { print } from "../../print.js"
 import { renderPlanMarkdown } from "../../render/plan.js"
 import type { ImplementationPlanArtifact, WithArchitecture } from "../../types.js"
 import type { PlanningState } from "./types.js"
 
 export async function planning(ctx: WithArchitecture): Promise<ImplementationPlanArtifact> {
-  print.header(`planning — ${ctx.project.name}`)
+  stagePresent.header(`planning — ${ctx.project.name}`)
 
   const { result } = await runStage({
     stageId: "planning",
@@ -24,7 +24,6 @@ export async function planning(ctx: WithArchitecture): Promise<ImplementationPla
     stageAgent: createPlanningStage(defaultStageConfig.stageAgent.provider, ctx.project),
     reviewer: createPlanningReview(defaultStageConfig.reviewer.provider),
     askUser: async () => "",
-    showMessage: print.llm,
     async persistArtifacts(run, artifact) {
       return [
         {
@@ -46,10 +45,10 @@ export async function planning(ctx: WithArchitecture): Promise<ImplementationPla
       ]
     },
     async onApproved(artifact, run) {
-      print.ok("Planning review: implementation plan is ready.")
+      stagePresent.ok("Planning review: implementation plan is ready.")
       artifact.plan.waves.forEach(wave => {
         const tag = wave.parallel ? "(parallel)" : "(sequential)"
-        print.llm(`Wave ${wave.number} ${tag}`, wave.stories.map(story => story.title).join(", "))
+        stagePresent.chat(`Wave ${wave.number} ${tag}`, wave.stories.map(story => story.title).join(", "))
       })
       printStageCompletion(run, "planning")
       return artifact

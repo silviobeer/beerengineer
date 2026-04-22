@@ -46,6 +46,69 @@ function tmpDbPath(): string {
   return join(mkdtempSync(join(tmpdir(), "be2-api-")), "db.sqlite")
 }
 
+async function collectSseEvents(url: string, until: (events: string[]) => boolean): Promise<string[]> {
+  const controller = new AbortController()
+  const events: string[] = []
+  const done = (async () => {
+    const res = await fetch(url, { signal: controller.signal })
+    if (!res.body) return
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buf = ""
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      const parts = buf.split("\n")
+      buf = parts.pop() ?? ""
+      for (const line of parts) {
+        const match = line.match(/^event: (.+)$/)
+        if (match) events.push(match[1])
+      }
+      if (until(events)) {
+        controller.abort()
+        break
+      }
+    }
+  })().catch(() => {})
+  return done.then(() => events)
+}
+
+async function collectSseEventsFor(url: string, durationMs: number): Promise<string[]> {
+  const controller = new AbortController()
+  const events: string[] = []
+  const done = (async () => {
+    const res = await fetch(url, { signal: controller.signal })
+    if (!res.body) return
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buf = ""
+    const stopAt = Date.now() + durationMs
+    while (Date.now() < stopAt) {
+      const timeoutMs = Math.max(1, stopAt - Date.now())
+      const chunk = await Promise.race([
+        reader.read(),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), timeoutMs)),
+      ]).catch(err => {
+        if ((err as Error).message === "timeout") {
+          controller.abort()
+          return { done: true, value: undefined }
+        }
+        throw err
+      })
+      if (!chunk || chunk.done) break
+      buf += decoder.decode(chunk.value, { stream: true })
+      const parts = buf.split("\n")
+      buf = parts.pop() ?? ""
+      for (const line of parts) {
+        const match = line.match(/^event: (.+)$/)
+        if (match) events.push(match[1])
+      }
+    }
+  })().catch(() => {})
+  return done.then(() => events)
+}
+
 test("POST /items/:id/actions returns 404 on unknown item", async () => {
   const dbPath = tmpDbPath()
   initDatabase(dbPath).close()
@@ -125,13 +188,14 @@ test("POST /items/:id/actions promotes brainstorm to requirements and persists c
   }
 })
 
-test("POST /runs/:id/input returns 409 when run owner='cli'", async () => {
+test("POST /runs/:id/input accepts answers for cli-owned runs", async () => {
   const dbPath = tmpDbPath()
   const db = initDatabase(dbPath)
   const repos = new Repos(db)
   const ws = repos.upsertWorkspace({ key: "t", name: "T" })
   const item = repos.createItem({ workspaceId: ws.id, title: "t", description: "" })
   const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "t", owner: "cli" })
+  const prompt = repos.createPendingPrompt({ runId: run.id, prompt: "question?" })
   db.close()
 
   const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
@@ -140,11 +204,16 @@ test("POST /runs/:id/input returns 409 when run owner='cli'", async () => {
     const res = await fetch(`${base}/runs/${run.id}/input`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ answer: "anything" })
+      body: JSON.stringify({ promptId: prompt.id, answer: "anything" })
     })
-    assert.equal(res.status, 409)
-    const body = await res.json() as { error: string }
-    assert.equal(body.error, "cli_owned")
+    assert.equal(res.status, 200)
+
+    const db2 = initDatabase(dbPath)
+    const repos2 = new Repos(db2)
+    const answered = repos2.getPendingPrompt(prompt.id)
+    db2.close()
+    assert.equal(answered?.answer, "anything")
+    assert.ok(answered?.answered_at !== null)
   } finally {
     await stopServer(proc)
   }
@@ -258,6 +327,93 @@ test("GET /events?workspace=<key> filters out events from other workspaces", asy
     await sseDone
 
     assert.ok(!events.includes("item_column_changed"), `did not expect workspace w2 event in ${events.join(",")}`)
+  } finally {
+    await stopServer(proc)
+  }
+})
+
+test("GET /runs/:id/events streams persisted logs for detached cli-owned runs", async () => {
+  const dbPath = tmpDbPath()
+  const db = initDatabase(dbPath)
+  const repos = new Repos(db)
+  const ws = repos.upsertWorkspace({ key: "t", name: "T" })
+  const item = repos.createItem({ workspaceId: ws.id, title: "t", description: "" })
+  const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "t", owner: "cli" })
+  db.close()
+
+  const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
+  try {
+    await waitForHealth(base)
+    const ssePromise = collectSseEvents(`${base}/runs/${run.id}/events`, events => events.includes("stage_started"))
+    await new Promise(r => setTimeout(r, 150))
+
+    const db2 = initDatabase(dbPath)
+    const repos2 = new Repos(db2)
+    repos2.appendLog({ runId: run.id, eventType: "stage_started", message: "stage requirements started" })
+    db2.close()
+
+    const events = await ssePromise
+    assert.ok(events.includes("hello"))
+    assert.ok(events.includes("stage_started"), `expected stage_started in ${events.join(",")}`)
+  } finally {
+    await stopServer(proc)
+  }
+})
+
+test("GET /events streams persisted workspace logs for detached cli-owned runs", async () => {
+  const dbPath = tmpDbPath()
+  const db = initDatabase(dbPath)
+  const repos = new Repos(db)
+  const ws = repos.upsertWorkspace({ key: "t", name: "T" })
+  const item = repos.createItem({ workspaceId: ws.id, title: "t", description: "" })
+  const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "t", owner: "cli" })
+  db.close()
+
+  const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
+  try {
+    await waitForHealth(base)
+    const ssePromise = collectSseEvents(`${base}/events?workspace=t`, events => events.includes("stage_started"))
+    await new Promise(r => setTimeout(r, 150))
+
+    const db2 = initDatabase(dbPath)
+    const repos2 = new Repos(db2)
+    repos2.appendLog({ runId: run.id, eventType: "stage_started", message: "stage requirements started" })
+    db2.close()
+
+    const events = await ssePromise
+    assert.ok(events.includes("hello"))
+    assert.ok(events.includes("stage_started"), `expected stage_started in ${events.join(",")}`)
+  } finally {
+    await stopServer(proc)
+  }
+})
+
+test("GET /events does not rebroadcast the same persisted workspace log on every poll", async () => {
+  const dbPath = tmpDbPath()
+  const db = initDatabase(dbPath)
+  const repos = new Repos(db)
+  const ws = repos.upsertWorkspace({ key: "t", name: "T" })
+  const item = repos.createItem({ workspaceId: ws.id, title: "t", description: "" })
+  const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "t", owner: "cli" })
+  db.close()
+
+  const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
+  try {
+    await waitForHealth(base)
+    const ssePromise = collectSseEventsFor(`${base}/events?workspace=t`, 900)
+    await new Promise(r => setTimeout(r, 150))
+
+    const db2 = initDatabase(dbPath)
+    const repos2 = new Repos(db2)
+    repos2.appendLog({ runId: run.id, eventType: "stage_started", message: "stage requirements started" })
+    db2.close()
+
+    const events = await ssePromise
+    assert.equal(
+      events.filter(event => event === "stage_started").length,
+      1,
+      `expected exactly one stage_started event, got ${events.join(",")}`,
+    )
   } finally {
     await stopServer(proc)
   }

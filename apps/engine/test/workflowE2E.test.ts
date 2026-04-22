@@ -152,9 +152,17 @@ test("runWorkflow runs end-to-end with all review/side loops, producing artifact
     assert.equal(handoff.candidateBranch.status, "open")
     assert.match(handoff.candidateBranch.name, /^pr\//)
 
-    // no emit events since the IO is bare (no active-run context wrapping)
-    // — verifies that runWorkflow tolerates lack of run-context and still completes.
-    assert.equal(events.length, 0)
+    // With the event-bus model, stages emit presentation + chat_message
+    // events even when no run context is active; the bare IO just captures
+    // them. Presence of those events verifies the bus path is wired; the
+    // lack of lifecycle events (run_started/stage_started) verifies
+    // runWorkflow still tolerates no run-context.
+    assert.ok(events.length > 0, "expected stage events to flow through the bus")
+    assert.equal(
+      events.filter(e => e.type === "run_started" || e.type === "stage_started").length,
+      0,
+      "no lifecycle events when run context is not active",
+    )
 
     // workspace.json currentStage is the last stage we ran (handoff)
     const finalWs = JSON.parse(await readFile(layout.workspaceFile(ctx.workspaceId), "utf8"))

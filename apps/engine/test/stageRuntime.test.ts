@@ -72,7 +72,6 @@ function baseDefinition(overrides: {
     stageAgent: overrides.stageAgent,
     reviewer: overrides.reviewer,
     askUser: overrides.askUser ?? (async () => "user-answer"),
-    showMessage: () => {},
     async onApproved(artifact: Art) {
       return (overrides.onApproved ? overrides.onApproved(artifact) : Promise.resolve(artifact.payload))
     },

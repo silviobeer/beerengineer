@@ -13,9 +13,10 @@ import { runWithActiveRun } from "../src/core/runContext.js"
 import { layout } from "../src/core/workspaceLayout.js"
 import { writeRecoveryRecord } from "../src/core/recovery.js"
 import { performResume } from "../src/core/resume.js"
+import { createBus, busToWorkflowIO, type EventBus } from "../src/core/bus.js"
 import type { StoryImplementationArtifact } from "../src/types.js"
 
-function makeWorkflowIO(): { io: WorkflowIO; events: WorkflowEvent[] } {
+function makeWorkflowIO(): { io: WorkflowIO & { bus: EventBus }; events: WorkflowEvent[] } {
   const events: WorkflowEvent[] = []
   const brainstormAnswers = [
     "User needs structured workflow.",
@@ -32,32 +33,33 @@ function makeWorkflowIO(): { io: WorkflowIO; events: WorkflowEvent[] } {
   let requirementsIdx = 0
   let phase: "brainstorm" | "requirements" | "qa" | "handoff" = "brainstorm"
 
-  return {
-    events,
-    io: {
-      async ask(prompt) {
-        if (prompt.startsWith("  Test, merge")) return "test"
-        if (phase === "brainstorm") {
-          const answer = brainstormAnswers[brainstormIdx++] ?? "ok"
-          if (brainstormIdx >= brainstormAnswers.length) phase = "requirements"
-          return answer
-        }
-        if (phase === "requirements") {
-          const answer = requirementsAnswers[requirementsIdx++] ?? "ok"
-          if (requirementsIdx >= requirementsAnswers.length) phase = "qa"
-          return answer
-        }
-        if (phase === "qa") {
-          phase = "handoff"
-          return "accept"
-        }
-        return "test"
-      },
-      emit(event) {
-        events.push(event)
-      },
-    },
-  }
+  const bus = createBus()
+  bus.subscribe(event => events.push(event))
+
+  // Intercept `prompt_requested` and auto-answer via bus.emit(prompt_answered)
+  // using the scripted-phase state machine above.
+  bus.subscribe(event => {
+    if (event.type !== "prompt_requested") return
+    let answer: string
+    if (event.prompt.startsWith("  Test, merge")) {
+      answer = "test"
+    } else if (phase === "brainstorm") {
+      answer = brainstormAnswers[brainstormIdx++] ?? "ok"
+      if (brainstormIdx >= brainstormAnswers.length) phase = "requirements"
+    } else if (phase === "requirements") {
+      answer = requirementsAnswers[requirementsIdx++] ?? "ok"
+      if (requirementsIdx >= requirementsAnswers.length) phase = "qa"
+    } else if (phase === "qa") {
+      phase = "handoff"
+      answer = "accept"
+    } else {
+      answer = "test"
+    }
+    bus.emit({ type: "prompt_answered", runId: event.runId, promptId: event.promptId, answer })
+  })
+
+  const io = busToWorkflowIO(bus)
+  return { events, io }
 }
 
 async function withTmpCwd<T>(fn: () => Promise<T>): Promise<T> {

@@ -1,15 +1,15 @@
 import type { Item, Project, WorkflowContext } from "../../types.js"
 import { runStage } from "../../core/stageRuntime.js"
 import { printStageCompletion, stageSummary, summaryArtifactFile } from "../../core/stageHelpers.js"
+import { stagePresent } from "../../core/stagePresentation.js"
 import { renderConceptMarkdown } from "../../render/concept.js"
-import { print } from "../../print.js"
 import { ask } from "../../sim/human.js"
 import { createBrainstormReview, createBrainstormStage, defaultStageConfig } from "../../llm/registry.js"
 import type { BrainstormState } from "./types.js"
 
 export async function brainstorm(item: Item, context: WorkflowContext): Promise<Project[]> {
-  print.header("brainstorm")
-  print.step("Interactive session via LLM adapter + stage runtime\n")
+  stagePresent.header("brainstorm")
+  stagePresent.step("Interactive session via LLM adapter + stage runtime\n")
 
   const { result } = await runStage({
     stageId: "brainstorm",
@@ -26,7 +26,6 @@ export async function brainstorm(item: Item, context: WorkflowContext): Promise<
     stageAgent: createBrainstormStage(defaultStageConfig.stageAgent.provider),
     reviewer: createBrainstormReview(defaultStageConfig.reviewer.provider),
     askUser: ask,
-    showMessage: print.llm,
     async persistArtifacts(run, artifact) {
       return [
         {
@@ -57,9 +56,9 @@ export async function brainstorm(item: Item, context: WorkflowContext): Promise<
       ]
     },
     async onApproved(artifact, run) {
-      print.ok("LLM review: concept is ready for the next step.")
-      print.step("\nLLM-1 promoted concept to projects...")
-      artifact.projects.forEach(p => print.dim(`→ ${p.id}: ${p.name}`))
+      stagePresent.ok("LLM review: concept is ready for the next step.")
+      stagePresent.step("\nLLM-1 promoted concept to projects...")
+      artifact.projects.forEach(p => stagePresent.dim(`→ ${p.id}: ${p.name}`))
       printStageCompletion(run, "brainstorm")
       return artifact.projects
     },

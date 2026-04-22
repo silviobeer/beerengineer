@@ -10,6 +10,8 @@ export type RecoveryEventScope =
   | { type: "stage"; runId: string; stageId: string }
   | { type: "story"; runId: string; waveNumber: number; storyId: string }
 
+export type PresentationKind = "header" | "step" | "ok" | "warn" | "dim" | "finding"
+
 export type WorkflowEvent =
   | ({ type: "run_started"; runId: string; itemId: string; title: string } & WorkflowEventMeta)
   | ({ type: "run_finished"; runId: string; status: "completed" | "failed"; error?: string } & WorkflowEventMeta)
@@ -19,6 +21,8 @@ export type WorkflowEvent =
   | ({ type: "prompt_answered"; runId: string; promptId: string; answer: string } & WorkflowEventMeta)
   | ({ type: "artifact_written"; runId: string; stageRunId?: string | null; label: string; kind: string; path: string } & WorkflowEventMeta)
   | ({ type: "log"; runId: string; message: string; level?: "info" | "warn" | "error" } & WorkflowEventMeta)
+  | ({ type: "chat_message"; runId: string; stageRunId?: string | null; role: string; source: "stage-agent" | "reviewer" | "system"; text: string; requiresResponse?: boolean } & WorkflowEventMeta)
+  | ({ type: "presentation"; runId?: string; stageRunId?: string | null; kind: PresentationKind; text: string; meta?: { source?: string; severity?: string } } & WorkflowEventMeta)
   | ({ type: "item_column_changed"; runId: string; itemId: string; column: string; phaseStatus: string } & WorkflowEventMeta)
   | ({ type: "project_created"; runId: string; itemId: string; projectId: string; code: string; name: string; summary: string; position: number } & WorkflowEventMeta)
   | ({ type: "run_blocked"; runId: string; scope: RecoveryEventScope; cause: string; summary: string; branch?: string } & WorkflowEventMeta)

@@ -9,6 +9,7 @@ type TimelineEntry = {
   type: string
   at: number
   message: string
+  author?: string
   data?: unknown
 }
 
@@ -47,11 +48,30 @@ export function LiveRunConsole({ runId }: { runId: string }) {
     sourceRef.current = source
 
     const append = (type: string, data: unknown) => {
+      const payload = data as {
+        message?: string
+        text?: string
+        role?: string
+        data?: { role?: string; source?: string; kind?: string }
+      } | null
       const entry: TimelineEntry = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         type,
         at: Date.now(),
-        message: typeof (data as { message?: string })?.message === "string" ? (data as { message: string }).message : type,
+        message:
+          typeof payload?.message === "string"
+            ? payload.message
+            : typeof payload?.text === "string"
+            ? payload.text
+            : type,
+        author:
+          typeof payload?.role === "string"
+            ? payload.role
+            : typeof payload?.data?.role === "string"
+            ? payload.data.role
+            : type === "presentation" && typeof payload?.data?.kind === "string"
+            ? payload.data.kind
+            : undefined,
         data
       }
       setTimeline(prev => [...prev, entry].slice(-200))
@@ -80,6 +100,8 @@ export function LiveRunConsole({ runId }: { runId: string }) {
       "stage_completed",
       "prompt_requested",
       "prompt_answered",
+      "chat_message",
+      "presentation",
       "artifact_written",
       "log",
       "item_column_changed",
@@ -172,6 +194,7 @@ export function LiveRunConsole({ runId }: { runId: string }) {
           {timeline.map(entry => (
             <li key={entry.id} data-kind={entry.type}>
               <span className="mono-label">{entry.type}</span>
+              {entry.author ? <span className="mono-label">{entry.author}</span> : null}
               <span>{entry.message}</span>
             </li>
           ))}

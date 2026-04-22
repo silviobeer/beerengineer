@@ -1,9 +1,9 @@
-import { print } from "../print.js"
+import { stagePresent } from "./stagePresentation.js"
 
 export async function parallelReview<T>(
   label: string,
   reviewers: Array<() => Promise<T>>,
 ): Promise<T[]> {
-  print.step(label)
+  stagePresent.step(label)
   return Promise.all(reviewers.map(reviewer => reviewer()))
 }
