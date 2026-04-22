@@ -2,9 +2,11 @@ node_modules/
 .data/
 .tmp/
 .next/
+.beerengineer/
 apps/*/.next/
 apps/*/node_modules/
 apps/*/.tmp/
+apps/*/.beerengineer/
 apps/ui/tests/.tmp/
 apps/ui/test-results/
 apps/ui/playwright-report/

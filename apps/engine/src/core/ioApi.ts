@@ -1,29 +1,54 @@
 import { EventEmitter } from "node:events"
-import type { WorkflowEvent, WorkflowIO } from "./io.js"
+import { getWorkflowIO, hasWorkflowIO, type WorkflowEvent, type WorkflowIO } from "./io.js"
+import { getActiveRun } from "./runContext.js"
 import type { Repos } from "../db/repositories.js"
 
 export type ApiIOSession = {
-  runId: string
-  setRunId(id: string): void
   readonly io: WorkflowIO
   readonly emitter: EventEmitter
+  /** Resolve the answer for a pending prompt. Returns false if the
+   *  promptId is unknown. */
   answerPrompt(promptId: string, answer: string): boolean
   dispose(): void
 }
 
-export function createApiIOSession(initialRunId: string, repos: Repos): ApiIOSession {
+/**
+ * Create an IO session for the API layer. The session has no notion of a
+ * runId on its own — the runId is read from the AsyncLocalStorage active-run
+ * context at the moment a prompt is asked. The orchestrator wraps every
+ * workflow run in `runWithActiveRun({ runId, ... })`, so any `ask()` issued
+ * inside that scope sees the correct id.
+ */
+export function createApiIOSession(repos: Repos): ApiIOSession {
   const emitter = new EventEmitter()
   const pending = new Map<string, (answer: string) => void>()
-  let currentRunId = initialRunId
+
+  const requireRunId = (): string => {
+    const active = getActiveRun()
+    if (!active) {
+      throw new Error("ApiIOSession used outside of an active run context")
+    }
+    return active.runId
+  }
+
+  /** Route the broadcast event through the *active* workflow IO so any
+   *  composed wrapper (e.g. db-sync) sees it. Falls back to the raw emitter
+   *  when no active workflow context exists (e.g. unit tests). */
+  const broadcast = (event: WorkflowEvent): void => {
+    if (hasWorkflowIO()) {
+      getWorkflowIO().emit(event)
+    } else {
+      emitter.emit("event", event)
+    }
+  }
 
   const io: WorkflowIO = {
     ask(prompt: string): Promise<string> {
-      const promptRow = repos.createPendingPrompt({ runId: currentRunId, prompt })
-      // Route via io.emit so any db-sync wrapper sees this event (and the
-      // wrapper's originalEmit delegates to emitter.emit for SSE fanout).
-      io.emit({
+      const runId = requireRunId()
+      const promptRow = repos.createPendingPrompt({ runId, prompt })
+      broadcast({
         type: "prompt_requested",
-        runId: currentRunId,
+        runId,
         promptId: promptRow.id,
         prompt
       } satisfies WorkflowEvent)
@@ -41,15 +66,6 @@ export function createApiIOSession(initialRunId: string, repos: Repos): ApiIOSes
   }
 
   return {
-    get runId() {
-      return currentRunId
-    },
-    set runId(id: string) {
-      currentRunId = id
-    },
-    setRunId(id) {
-      currentRunId = id
-    },
     io,
     emitter,
     answerPrompt(promptId, answer) {
@@ -58,9 +74,12 @@ export function createApiIOSession(initialRunId: string, repos: Repos): ApiIOSes
       pending.delete(promptId)
       const row = repos.answerPendingPrompt(promptId, answer)
       if (row) {
-        emitter.emit("event", {
+        // No active-run context here (we're in an HTTP handler), so look up
+        // the runId from the prompt row itself, and emit through the broadcast
+        // path so the db-sync wrapper sees it too.
+        broadcast({
           type: "prompt_answered",
-          runId: currentRunId,
+          runId: row.run_id,
           promptId,
           answer
         } satisfies WorkflowEvent)

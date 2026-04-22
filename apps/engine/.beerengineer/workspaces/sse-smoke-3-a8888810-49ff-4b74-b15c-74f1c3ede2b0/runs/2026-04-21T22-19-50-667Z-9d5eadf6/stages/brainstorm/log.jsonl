@@ -1,7 +1,0 @@
-{"at":"2026-04-21T22:19:50.671Z","type":"status_changed","message":"Status -> chat_in_progress"}
-{"at":"2026-04-21T22:19:50.672Z","type":"status_changed","message":"Status -> waiting_for_user"}
-{"at":"2026-04-21T22:19:50.672Z","type":"stage_message","message":"Welches Problem soll das Produkt loesen?"}
-{"at":"2026-04-21T22:20:00.374Z","type":"user_message","message":"ein test"}
-{"at":"2026-04-21T22:20:00.374Z","type":"status_changed","message":"Status -> chat_in_progress"}
-{"at":"2026-04-21T22:20:00.374Z","type":"status_changed","message":"Status -> waiting_for_user"}
-{"at":"2026-04-21T22:20:00.374Z","type":"stage_message","message":"Wer ist die wichtigste Zielgruppe?"}

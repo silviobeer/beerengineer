@@ -1,6 +1,0 @@
-Workspace: ui-console-test-9a2ccc44-b525-4401-aaba-4fe34f91e591
-Run: 2026-04-21T22-29-21-937Z-ae3abe38
-Stage: project-review
-Review loops: 1
-Status: pass_with_risks
-Residual findings: 1

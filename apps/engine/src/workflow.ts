@@ -11,7 +11,7 @@ import type {
 } from "./types.js"
 import { print } from "./print.js"
 import { ask } from "./sim/human.js"
-import { withStageLifecycle } from "./core/runContext.js"
+import { emitEvent, getActiveRun, withStageLifecycle } from "./core/runContext.js"
 import { brainstorm } from "./stages/brainstorm/index.js"
 import { requirements } from "./stages/requirements/index.js"
 import { architecture } from "./stages/architecture/index.js"
@@ -23,12 +23,27 @@ import { documentation } from "./stages/documentation/index.js"
 
 export async function runWorkflow(item: Item): Promise<void> {
   const slug = item.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
+  const activeRun = getActiveRun()
   const context: WorkflowContext = {
     workspaceId: slug ? `${slug}-${item.id.toLowerCase()}` : item.id.toLowerCase(),
-    runId: `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`,
+    runId: activeRun?.runId ?? `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`,
   }
 
   const projects = await withStageLifecycle("brainstorm", {}, () => brainstorm(item, context))
+  if (activeRun) {
+    projects.forEach((project, index) => {
+      emitEvent({
+        type: "project_created",
+        runId: activeRun.runId,
+        itemId: activeRun.itemId,
+        projectId: project.id,
+        code: project.id,
+        name: project.name,
+        summary: project.description,
+        position: index,
+      })
+    })
+  }
 
   for (const project of projects) {
     await runProject({ ...context, project })
@@ -40,14 +55,15 @@ export async function runWorkflow(item: Item): Promise<void> {
 
 async function runProject(initialCtx: ProjectContext): Promise<void> {
   let ctx = initialCtx
-  ctx = { ...ctx, prd: await withStageLifecycle("requirements", {}, () => requirements(ctx)) }
-  ctx = { ...ctx, architecture: await withStageLifecycle("architecture", {}, () => architecture(assertWithPrd(ctx))) }
-  ctx = { ...ctx, plan: await withStageLifecycle("planning", {}, () => planning(assertWithArchitecture(ctx))) }
-  ctx = { ...ctx, executionSummaries: await withStageLifecycle("execution", {}, () => execution(assertWithPlan(ctx))) }
-  ctx = { ...ctx, projectReview: await withStageLifecycle("project-review", {}, () => projectReview(assertWithExecution(ctx))) }
-  await withStageLifecycle("qa", {}, () => qa(ctx))
-  ctx = { ...ctx, documentation: await withStageLifecycle("documentation", {}, () => documentation(assertWithProjectReview(ctx))) }
-  await withStageLifecycle("handoff", {}, () => handoffCandidate(assertWithDocumentation(ctx)))
+  const projectId = ctx.project.id
+  ctx = { ...ctx, prd: await withStageLifecycle("requirements", { projectId }, () => requirements(ctx)) }
+  ctx = { ...ctx, architecture: await withStageLifecycle("architecture", { projectId }, () => architecture(assertWithPrd(ctx))) }
+  ctx = { ...ctx, plan: await withStageLifecycle("planning", { projectId }, () => planning(assertWithArchitecture(ctx))) }
+  ctx = { ...ctx, executionSummaries: await withStageLifecycle("execution", { projectId }, () => execution(assertWithPlan(ctx))) }
+  ctx = { ...ctx, projectReview: await withStageLifecycle("project-review", { projectId }, () => projectReview(assertWithExecution(ctx))) }
+  await withStageLifecycle("qa", { projectId }, () => qa(ctx))
+  ctx = { ...ctx, documentation: await withStageLifecycle("documentation", { projectId }, () => documentation(assertWithProjectReview(ctx))) }
+  await withStageLifecycle("handoff", { projectId }, () => handoffCandidate(assertWithDocumentation(ctx)))
 }
 
 async function handoffCandidate(ctx: WithDocumentation): Promise<void> {

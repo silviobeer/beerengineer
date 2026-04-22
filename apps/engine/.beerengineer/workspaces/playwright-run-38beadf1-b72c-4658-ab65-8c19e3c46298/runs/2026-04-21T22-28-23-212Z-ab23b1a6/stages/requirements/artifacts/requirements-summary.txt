@@ -1,6 +1,0 @@
-Workspace: playwright-run-38beadf1-b72c-4658-ab65-8c19e3c46298
-Run: 2026-04-21T22-28-23-212Z-ab23b1a6
-Stage: requirements
-Review loops: 1
-Clarification turns: 3
-Stories produced: 3

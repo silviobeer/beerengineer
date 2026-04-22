@@ -1,9 +1,0 @@
-Workspace: ui-console-test-9a2ccc44-b525-4401-aaba-4fe34f91e591
-Run: 2026-04-21T22-29-21-937Z-ae3abe38
-Stage: documentation
-Review loops: 0
-Mode: update
-Technical doc: docs/technical-doc.md
-Features doc: docs/features-doc.md
-Compact README: docs/README.compact.md
-Known issues: 1

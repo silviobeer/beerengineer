@@ -1,5 +1,0 @@
-Workspace: ui-console-test-89078dd1-7080-4667-9b6a-c0fa2d3faf0e
-Run: 2026-04-21T22-31-56-912Z-5dbf80c1
-Stage: architecture
-Review loops: 1
-Components: 3

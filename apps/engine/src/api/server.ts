@@ -3,7 +3,7 @@ import { URL } from "node:url"
 import { initDatabase } from "../db/connection.js"
 import { Repos, type ItemRow } from "../db/repositories.js"
 import { getBoard, getRunTree } from "./board.js"
-import { setWorkflowIO, type WorkflowEvent } from "../core/io.js"
+import { type WorkflowEvent } from "../core/io.js"
 import { createApiIOSession } from "../core/ioApi.js"
 import { prepareRun } from "../core/runOrchestrator.js"
 
@@ -43,34 +43,19 @@ async function handleStartRun(req: IncomingMessage, res: ServerResponse): Promis
   const body = (await readJson(req)) as { title?: string; description?: string; workspaceKey?: string }
   if (!body.title) return json(res, 400, { error: "title is required" })
 
-  // One active workflow at a time (global IO). Reject only if a run is
-  // actually still executing — completed/failed sessions may still linger in
-  // the cleanup window but should not block a new start.
-  for (const [, s] of sessions) {
-    const run = repos.getRun(s.runId)
-    if (run && run.status === "running") {
-      return json(res, 409, { error: "a workflow is already running" })
-    }
-  }
-
-  // Build the session without a runId, then bind it after prepareRun() assigns one.
-  const session = createApiIOSession("__pending__", repos)
-  setWorkflowIO(session.io)
-
+  const session = createApiIOSession(repos)
   const prepared = prepareRun(
     { id: "new", title: body.title, description: body.description ?? "" },
     repos,
+    session.io,
     { workspaceKey: body.workspaceKey }
   )
-  session.setRunId(prepared.runId)
   sessions.set(prepared.runId, session)
 
-  // Kick off workflow in the background — response returns immediately with runId.
   prepared
     .start()
     .catch(err => console.error("[workflow]", err))
     .finally(() => {
-      setWorkflowIO(null)
       // keep session briefly so late SSE clients still get final events
       setTimeout(() => {
         session.dispose()
@@ -127,28 +112,50 @@ function handleEvents(req: IncomingMessage, res: ServerResponse, runId: string):
   })
   res.write(`event: hello\ndata: ${JSON.stringify({ runId, at: Date.now() })}\n\n`)
 
-  // replay persisted logs so the client sees history
-  for (const log of repos.listLogsForRun(runId)) {
-    res.write(
-      `event: ${log.event_type}\ndata: ${JSON.stringify({
-        id: log.id,
-        at: log.created_at,
-        message: log.message,
-        stageRunId: log.stage_run_id,
-        data: log.data_json ? JSON.parse(log.data_json) : undefined
-      })}\n\n`
-    )
-  }
-
   const session = sessions.get(runId)
   if (session) {
-    const listener = (event: WorkflowEvent) => {
+    const seenStreamIds = new Set<string>()
+    const pending: WorkflowEvent[] = []
+    let replayComplete = false
+
+    const writeEvent = (event: WorkflowEvent) => {
+      if (event.streamId) {
+        if (seenStreamIds.has(event.streamId)) return
+        seenStreamIds.add(event.streamId)
+      }
       res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
       if (event.type === "run_finished") {
         res.end()
       }
     }
+
+    const listener = (event: WorkflowEvent) => {
+      if (!replayComplete) {
+        pending.push(event)
+        return
+      }
+      writeEvent(event)
+    }
     session.emitter.on("event", listener)
+
+    // Subscribe first, then replay and flush buffered live events. The stream
+    // may briefly buffer duplicates, but streamId dedup keeps the sequence
+    // complete across the replay/live handoff.
+    for (const log of repos.listLogsForRun(runId)) {
+      seenStreamIds.add(log.id)
+      res.write(
+        `event: ${log.event_type}\ndata: ${JSON.stringify({
+          streamId: log.id,
+          at: log.created_at,
+          message: log.message,
+          stageRunId: log.stage_run_id,
+          data: log.data_json ? JSON.parse(log.data_json) : undefined
+        })}\n\n`
+      )
+    }
+    replayComplete = true
+    pending.forEach(writeEvent)
+
     req.on("close", () => {
       session.emitter.off("event", listener)
     })
@@ -158,8 +165,14 @@ function handleEvents(req: IncomingMessage, res: ServerResponse, runId: string):
   }
 }
 
-// Simple seed on first boot so an empty DB still shows UI content.
+/**
+ * Optional dev convenience: when BEERENGINEER_SEED=1 (default for local dev)
+ * insert a demo workspace + cards so a fresh DB renders something. Tests must
+ * leave this off (or pass BEERENGINEER_SEED=0) so they get a clean slate.
+ */
 function seedIfEmpty(): void {
+  if (process.env.BEERENGINEER_SEED === "0") return
+  if (!process.env.BEERENGINEER_SEED && process.env.NODE_ENV === "test") return
   const count = (db.prepare("SELECT COUNT(*) as c FROM workspaces").get() as { c: number }).c
   if (count > 0) return
   const ws = repos.upsertWorkspace({

@@ -1,5 +1,0 @@
-Workspace: ui-console-test-c3a2ebbc-fb6b-40a2-ae8e-4ee2527bbbb1
-Run: 2026-04-21T22-30-03-612Z-abb2ff43
-Stage: planning
-Review loops: 1
-Waves: 2

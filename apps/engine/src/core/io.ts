@@ -1,13 +1,21 @@
+import { AsyncLocalStorage } from "node:async_hooks"
+
+type WorkflowEventMeta = {
+  streamId?: string
+  at?: number
+}
+
 export type WorkflowEvent =
-  | { type: "run_started"; runId: string; itemId: string; title: string }
-  | { type: "run_finished"; runId: string; status: "completed" | "failed"; error?: string }
-  | { type: "stage_started"; runId: string; stageRunId: string; stageKey: string; projectId?: string | null }
-  | { type: "stage_completed"; runId: string; stageRunId: string; stageKey: string; status: "completed" | "failed"; error?: string }
-  | { type: "prompt_requested"; runId: string; promptId: string; prompt: string; stageRunId?: string | null }
-  | { type: "prompt_answered"; runId: string; promptId: string; answer: string }
-  | { type: "artifact_written"; runId: string; stageRunId?: string | null; label: string; kind: string; path: string }
-  | { type: "log"; runId: string; message: string; level?: "info" | "warn" | "error" }
-  | { type: "item_column_changed"; runId: string; itemId: string; column: string; phaseStatus: string }
+  | ({ type: "run_started"; runId: string; itemId: string; title: string } & WorkflowEventMeta)
+  | ({ type: "run_finished"; runId: string; status: "completed" | "failed"; error?: string } & WorkflowEventMeta)
+  | ({ type: "stage_started"; runId: string; stageRunId: string; stageKey: string; projectId?: string | null } & WorkflowEventMeta)
+  | ({ type: "stage_completed"; runId: string; stageRunId: string; stageKey: string; status: "completed" | "failed"; error?: string } & WorkflowEventMeta)
+  | ({ type: "prompt_requested"; runId: string; promptId: string; prompt: string; stageRunId?: string | null } & WorkflowEventMeta)
+  | ({ type: "prompt_answered"; runId: string; promptId: string; answer: string } & WorkflowEventMeta)
+  | ({ type: "artifact_written"; runId: string; stageRunId?: string | null; label: string; kind: string; path: string } & WorkflowEventMeta)
+  | ({ type: "log"; runId: string; message: string; level?: "info" | "warn" | "error" } & WorkflowEventMeta)
+  | ({ type: "item_column_changed"; runId: string; itemId: string; column: string; phaseStatus: string } & WorkflowEventMeta)
+  | ({ type: "project_created"; runId: string; itemId: string; projectId: string; code: string; name: string; summary: string; position: number } & WorkflowEventMeta)
 
 export type WorkflowIO = {
   /** Ask the operator a question and await a textual answer. */
@@ -18,25 +26,20 @@ export type WorkflowIO = {
   close?(): void
 }
 
-/**
- * The engine keeps a single active WorkflowIO so existing stages can
- * continue to call `ask(prompt)` without threading the io through every
- * function signature. The entrypoint (CLI or API) is responsible for
- * setting the IO before invoking `runWorkflow()` and clearing it after.
- */
-let current: WorkflowIO | null = null
+const workflowIOStorage = new AsyncLocalStorage<WorkflowIO>()
 
-export function setWorkflowIO(io: WorkflowIO | null): void {
-  current = io
+export function runWithWorkflowIO<T>(io: WorkflowIO, fn: () => T): T {
+  return workflowIOStorage.run(io, fn)
 }
 
 export function getWorkflowIO(): WorkflowIO {
-  if (!current) {
-    throw new Error("WorkflowIO not set — wrap runWorkflow() with setWorkflowIO()")
+  const io = workflowIOStorage.getStore()
+  if (!io) {
+    throw new Error("WorkflowIO not set — wrap the workflow with runWithWorkflowIO()")
   }
-  return current
+  return io
 }
 
 export function hasWorkflowIO(): boolean {
-  return current !== null
+  return workflowIOStorage.getStore() !== undefined
 }

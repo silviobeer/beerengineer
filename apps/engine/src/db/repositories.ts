@@ -154,14 +154,19 @@ export class Repos {
       .run(column, phaseStatus, now(), itemId)
   }
 
-  createProject(input: { itemId: string; code: string; name: string; summary?: string; position?: number }): ProjectRow {
+  createProject(input: { id?: string; itemId: string; code: string; name: string; summary?: string; status?: string; position?: number }): ProjectRow {
+    // Idempotent on `code`: if a row already exists with the same code, return
+    // it. Fake adapters re-use codes across runs and we don't want db-sync to
+    // log spurious UNIQUE-constraint warnings on every restart.
+    const existing = this.db.prepare("SELECT * FROM projects WHERE code = ?").get(input.code) as ProjectRow | undefined
+    if (existing) return existing
     const row: ProjectRow = {
-      id: randomUUID(),
+      id: input.id ?? randomUUID(),
       item_id: input.itemId,
       code: input.code,
       name: input.name,
       summary: input.summary ?? "",
-      status: "draft",
+      status: input.status ?? "draft",
       position: input.position ?? 0,
       created_at: now(),
       updated_at: now()
@@ -216,9 +221,9 @@ export class Repos {
     return this.db.prepare("SELECT * FROM runs ORDER BY created_at DESC").all() as RunRow[]
   }
 
-  createStageRun(input: { runId: string; stageKey: string; projectId?: string | null }): StageRunRow {
+  createStageRun(input: { id?: string; runId: string; stageKey: string; projectId?: string | null }): StageRunRow {
     const row: StageRunRow = {
-      id: randomUUID(),
+      id: input.id ?? randomUUID(),
       run_id: input.runId,
       project_id: input.projectId ?? null,
       stage_key: input.stageKey,

@@ -1,5 +1,0 @@
-Workspace: ui-milestone-run-363d1e9a-69ea-471a-88f9-8a9bf9c08f2a
-Run: 2026-04-21T22-25-11-763Z-2ecad873
-Stage: planning
-Review loops: 1
-Waves: 2

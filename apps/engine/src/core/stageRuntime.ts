@@ -5,6 +5,7 @@ import type {
   StageAgentAdapter,
   StageAgentResponse,
 } from "./adapters.js"
+import { emitEvent, getActiveRun } from "./runContext.js"
 import { layout, type WorkflowContext } from "./workspaceLayout.js"
 
 export type StageStatus =
@@ -234,6 +235,17 @@ export async function runStage<TState, TArtifact, TResult>(
     run.files = await writeArtifactFiles(run.stageArtifactsDir, artifactContents)
     for (const file of run.files) {
       pushLog(run, { type: "file_written", message: `${file.label}: ${file.path}` })
+      const activeRun = getActiveRun()
+      if (activeRun) {
+        emitEvent({
+          type: "artifact_written",
+          runId: activeRun.runId,
+          stageRunId: activeRun.stageRunId ?? null,
+          label: file.label,
+          kind: file.kind,
+          path: file.path,
+        })
+      }
     }
 
     setStatus(run, "in_review")
