@@ -1,5 +1,6 @@
 import Database from "better-sqlite3"
-import { accessSync, constants, existsSync, mkdirSync, rmSync } from "node:fs"
+import { spawn } from "node:child_process"
+import { accessSync, constants, existsSync, mkdirSync } from "node:fs"
 import { createInterface } from "node:readline/promises"
 import { stdin as input, stdout as output } from "node:process"
 import { resolveConfiguredDbPath, resolveConfigPath, resolveMergedConfig, readConfigFile, REQUIRED_MIGRATION_LEVEL, resolveOverrides, writeConfigFile } from "./config.js"
@@ -15,6 +16,7 @@ type ToolProbe = {
 type DoctorOptions = {
   group?: string
   overrides?: SetupOverrides
+  allLlmGroups?: boolean
 }
 
 type SetupRunOptions = DoctorOptions & {
@@ -44,7 +46,7 @@ function remedyForTool(tool: string): CheckResult["remedy"] | undefined {
         : { hint: "Install GitHub CLI from the official docs.", url: "https://cli.github.com/" },
     claude: { hint: "Install Claude Code globally with npm.", command: "npm i -g @anthropic-ai/claude-code" },
     codex: { hint: "Install Codex globally with npm.", command: "npm i -g @openai/codex" },
-    opencode: { hint: "Install OpenCode via the official installer.", command: "curl -fsSL https://opencode.ai/install | bash" },
+    opencode: { hint: "Install OpenCode per the official install docs.", url: "https://opencode.ai/docs/install" },
     playwright: { hint: "Install Playwright CLI and browser binaries from the official docs.", url: "https://playwright.dev/docs/intro" },
     "agent-browser": { hint: "Install agent-browser per the official repository.", url: "https://github.com/vercel-labs/agent-browser" },
     coderabbit: { hint: "Install CodeRabbit CLI globally with npm.", command: "npm i -g @coderabbit/cli" },
@@ -57,8 +59,7 @@ function remedyForTool(tool: string): CheckResult["remedy"] | undefined {
   return hints[tool]
 }
 
-async function probeCommand(command: string, args: string[] = []): Promise<ToolProbe> {
-  const { spawn } = await import("node:child_process")
+function probeCommand(command: string, args: string[] = []): Promise<ToolProbe> {
   return new Promise(resolve => {
     const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] })
     const stdoutChunks: Buffer[] = []
@@ -335,7 +336,7 @@ export async function generateSetupReport(options: DoctorOptions = {}): Promise<
       label: "Anthropic capability",
       level: "required",
       minOk: 2,
-      active: llmGroup === "llm.anthropic" && Boolean(config),
+      active: Boolean(config) && (options.allLlmGroups === true || llmGroup === "llm.anthropic"),
       run: () => runLlmChecks("anthropic", config as AppConfig),
     },
     {
@@ -343,7 +344,7 @@ export async function generateSetupReport(options: DoctorOptions = {}): Promise<
       label: "OpenAI capability",
       level: "required",
       minOk: 2,
-      active: llmGroup === "llm.openai" && Boolean(config),
+      active: Boolean(config) && (options.allLlmGroups === true || llmGroup === "llm.openai"),
       run: () => runLlmChecks("openai", config as AppConfig),
     },
     {
@@ -351,7 +352,7 @@ export async function generateSetupReport(options: DoctorOptions = {}): Promise<
       label: "OpenCode capability",
       level: "required",
       minOk: 2,
-      active: llmGroup === "llm.opencode" && Boolean(config),
+      active: Boolean(config) && (options.allLlmGroups === true || llmGroup === "llm.opencode"),
       run: () => runLlmChecks("opencode", config as AppConfig),
     },
     {
@@ -432,10 +433,19 @@ function needsInitialization(report: SetupReport): boolean {
   return report.groups.some(group => group.id === "core" && group.checks.some(check => check.status === "uninitialized"))
 }
 
+class InvalidConfigError extends Error {
+  constructor(public readonly path: string, public readonly reason: string) {
+    super(`config at ${path} is invalid: ${reason}`)
+  }
+}
+
 function buildProvisionedConfig(overrides: SetupOverrides = {}): AppConfig {
   const resolved = resolveOverrides(overrides)
   const state = readConfigFile(resolveConfigPath(resolved))
-  return resolveMergedConfig(state.kind === "invalid" ? { kind: "missing", path: state.path } : state, resolved) as AppConfig
+  if (state.kind === "invalid") {
+    throw new InvalidConfigError(state.path, state.error)
+  }
+  return resolveMergedConfig(state, resolved) as AppConfig
 }
 
 function ensureProvisionedState(overrides: SetupOverrides = {}): AppConfig {
@@ -482,7 +492,16 @@ export async function runSetupCommand(options: SetupRunOptions = {}): Promise<nu
   printDoctorReport(report, { installHints: true })
 
   if (needsInitialization(report)) {
-    ensureProvisionedState(options.overrides)
+    try {
+      ensureProvisionedState(options.overrides)
+    } catch (err) {
+      if (err instanceof InvalidConfigError) {
+        console.error(`  Refusing to overwrite invalid config at ${err.path}: ${err.reason}`)
+        console.error("  Fix the file by hand or remove it, then re-run `beerengineer setup`.")
+        return 1
+      }
+      throw err
+    }
     console.log("  App setup initialized config, data dir, and database.")
     report = await generateSetupReport(options)
     printDoctorReport(report, { installHints: true })
@@ -502,15 +521,4 @@ export async function runSetupCommand(options: SetupRunOptions = {}): Promise<nu
     console.log("  Next: beerengineer workspace add <path>")
   }
   return doctorExitCode(report)
-}
-
-export function cleanupProvisionedState(overrides: SetupOverrides = {}): void {
-  const resolved = resolveOverrides(overrides)
-  const state = readConfigFile(resolveConfigPath(resolved))
-  const config = resolveMergedConfig(state.kind === "invalid" ? { kind: "missing", path: state.path } : state, resolved)
-  if (config) {
-    rmSync(resolveConfiguredDbPath(config), { force: true })
-    rmSync(config.dataDir, { recursive: true, force: true })
-  }
-  rmSync(resolveConfigPath(resolved), { force: true })
 }

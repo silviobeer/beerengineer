@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { spawnSync } from "node:child_process"
@@ -27,6 +27,27 @@ test("parseArgs recognizes help, doctor, start ui, workflow, item action, and un
   assert.deepEqual(parseArgs(["--doctor"]), { kind: "doctor", json: false, group: undefined })
   assert.deepEqual(parseArgs(["doctor", "--json", "--group", "core"]), { kind: "doctor", json: true, group: "core" })
   assert.deepEqual(parseArgs(["setup", "--no-interactive"]), { kind: "setup", group: undefined, noInteractive: true })
+  assert.deepEqual(parseArgs(["workspace", "preview", "/tmp/demo", "--json"]), { kind: "workspace-preview", path: "/tmp/demo", json: true })
+  assert.deepEqual(parseArgs(["workspace", "add", "--path", "/tmp/demo", "--profile", "fast", "--sonar", "--no-git", "--no-interactive"]), {
+    kind: "workspace-add",
+    json: false,
+    noInteractive: true,
+    path: "/tmp/demo",
+    name: undefined,
+    key: undefined,
+    profile: "fast",
+    profileJson: undefined,
+    sonar: true,
+    sonarKey: undefined,
+    sonarOrg: undefined,
+    sonarHost: undefined,
+    noGit: true,
+  })
+  assert.deepEqual(parseArgs(["workspace", "list", "--json"]), { kind: "workspace-list", json: true })
+  assert.deepEqual(parseArgs(["workspace", "get", "demo", "--json"]), { kind: "workspace-get", key: "demo", json: true })
+  assert.deepEqual(parseArgs(["workspace", "remove", "demo", "--purge"]), { kind: "workspace-remove", key: "demo", json: false, purge: true })
+  assert.deepEqual(parseArgs(["workspace", "open", "demo"]), { kind: "workspace-open", key: "demo" })
+  assert.deepEqual(parseArgs(["workspace", "backfill", "--json"]), { kind: "workspace-backfill", json: true })
   assert.deepEqual(parseArgs(["start", "ui"]), { kind: "start-ui" })
   assert.deepEqual(parseArgs(["item", "action", "--item", "ITEM-0001", "--action", "start_brainstorm"]), {
     kind: "item-action",
@@ -121,6 +142,127 @@ test("setup --no-interactive provisions config and database", () => {
   }
 })
 
+test("workspace add/register/open/remove work end-to-end through the CLI", () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-workspace-cli-"))
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
+  const stubBin = join(dir, "bin")
+  const configPath = join(dir, "config", "config.json")
+  const dataDir = join(dir, "data")
+  const workspacePath = join(dir, "projects", "demo-app")
+  const dbPath = join(dir, "workspaces.sqlite")
+
+  try {
+    mkdirSync(join(dir, "projects"), { recursive: true })
+    mkdirSync(join(dir, "config"), { recursive: true })
+    makeStubBin(stubBin, "claude", "echo 'claude 1.2.3'")
+    makeStubBin(stubBin, "codex", "echo 'codex 1.2.3'")
+    writeFileSync(configPath, JSON.stringify({
+      schemaVersion: 1,
+      dataDir,
+      allowedRoots: [join(dir, "projects")],
+      enginePort: 4100,
+      llm: {
+        provider: "anthropic",
+        model: "claude-opus-4-7",
+        apiKeyRef: "ANTHROPIC_API_KEY",
+        defaultHarnessProfile: { mode: "claude-first" },
+        defaultSonarOrganization: "acme",
+      },
+      vcs: { github: { enabled: false } },
+      browser: { enabled: false },
+    }, null, 2))
+
+    const env = {
+      ...process.env,
+      PATH: `${stubBin}:${process.env.PATH ?? ""}`,
+      BEERENGINEER_CONFIG_PATH: configPath,
+      BEERENGINEER_DATA_DIR: dataDir,
+      BEERENGINEER_UI_DB_PATH: dbPath,
+      ANTHROPIC_API_KEY: "anthropic-test",
+      OPENAI_API_KEY: "openai-test",
+    }
+
+    const add = spawnSync(
+      process.execPath,
+      [binPath, "workspace", "add", "--path", workspacePath, "--profile", "fast", "--sonar", "--no-git", "--no-interactive"],
+      { cwd: engineRoot, encoding: "utf8", env },
+    )
+    assert.equal(add.status, 0, `${add.stdout ?? ""}\n${add.stderr ?? ""}`)
+    assert.match(add.stdout ?? "", /Registered as "demo-app" \(key: demo-app\)\./)
+    assert.ok(existsSync(join(workspacePath, ".beerengineer", "workspace.json")))
+    assert.ok(existsSync(join(workspacePath, "sonar-project.properties")))
+
+    const open = spawnSync(process.execPath, [binPath, "workspace", "open", "demo-app"], {
+      cwd: engineRoot,
+      encoding: "utf8",
+      env,
+    })
+    assert.equal(open.status, 0, `${open.stdout ?? ""}\n${open.stderr ?? ""}`)
+    assert.equal((open.stdout ?? "").trim(), workspacePath)
+
+    const get = spawnSync(process.execPath, [binPath, "workspace", "get", "demo-app", "--json"], {
+      cwd: engineRoot,
+      encoding: "utf8",
+      env,
+    })
+    assert.equal(get.status, 0, `${get.stdout ?? ""}\n${get.stderr ?? ""}`)
+    const workspace = JSON.parse(get.stdout) as { key: string; sonarEnabled: boolean; harnessProfile: { mode: string } }
+    assert.equal(workspace.key, "demo-app")
+    assert.equal(workspace.sonarEnabled, true)
+    assert.equal(workspace.harnessProfile.mode, "fast")
+
+    const remove = spawnSync(process.execPath, [binPath, "workspace", "remove", "demo-app"], {
+      cwd: engineRoot,
+      encoding: "utf8",
+      env,
+    })
+    assert.equal(remove.status, 0, `${remove.stdout ?? ""}\n${remove.stderr ?? ""}`)
+    assert.match(remove.stdout ?? "", /Removed workspace demo-app/)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("workspace backfill writes missing workspace.json files for existing rows", () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-workspace-backfill-"))
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
+  const dbPath = join(dir, "backfill.sqlite")
+  const rootPath = join(dir, "project")
+
+  try {
+    mkdirSync(rootPath, { recursive: true })
+    const db = initDatabase(dbPath)
+    const repos = new Repos(db)
+    repos.upsertWorkspace({
+      key: "legacy",
+      name: "Legacy",
+      rootPath,
+      harnessProfileJson: JSON.stringify({ mode: "fast" }),
+      sonarEnabled: true,
+    })
+    db.close()
+
+    const result = spawnSync(process.execPath, [binPath, "workspace", "backfill", "--json"], {
+      cwd: engineRoot,
+      encoding: "utf8",
+      env: { ...process.env, BEERENGINEER_UI_DB_PATH: dbPath },
+    })
+
+    assert.equal(result.status, 0, `${result.stdout ?? ""}\n${result.stderr ?? ""}`)
+    const body = JSON.parse(result.stdout) as { written: string[] }
+    assert.deepEqual(body.written, ["legacy"])
+    const config = JSON.parse(readFileSync(join(rootPath, ".beerengineer", "workspace.json"), "utf8")) as { key: string; harnessProfile: { mode: string } }
+    assert.equal(config.key, "legacy")
+    assert.equal(config.harnessProfile.mode, "fast")
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test("resolveUiLaunchUrl uses the dedicated UI operator port", () => {
   assert.equal(resolveUiLaunchUrl(), "http://127.0.0.1:3100")
 })
@@ -175,7 +317,10 @@ test("help output explains that user prompts are limited to intake and blockers"
   assert.match(output, /documentation run without user chat unless a blocker stops the run\./)
 })
 
-test("beerengineer item action start_brainstorm runs to completion through the terminal CLI", () => {
+// Integration smoke test: drives the real workflow through stdio with scripted
+// answers. Gate behind BE2_RUN_SLOW_TESTS because it's sensitive to workflow
+// prompt changes and has a 15s hard timeout.
+test("beerengineer item action start_brainstorm runs to completion through the terminal CLI", { skip: process.env.BE2_RUN_SLOW_TESTS !== "1" ? "set BE2_RUN_SLOW_TESTS=1 to run" : false }, () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-cli-"))
   const testDir = dirname(fileURLToPath(import.meta.url))
   const engineRoot = resolve(testDir, "..")

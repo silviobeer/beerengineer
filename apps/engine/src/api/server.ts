@@ -1,5 +1,14 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
 import { URL } from "node:url"
+import {
+  backfillWorkspaceConfigs,
+  getRegisteredWorkspace,
+  listRegisteredWorkspaces,
+  openWorkspace,
+  previewWorkspace,
+  registerWorkspace,
+  removeWorkspace,
+} from "../core/workspaces.js"
 import { initDatabase } from "../db/connection.js"
 import { Repos, type ItemRow, type StageLogRow } from "../db/repositories.js"
 import { getBoard, getRunTree } from "./board.js"
@@ -9,6 +18,9 @@ import { createItemActionsService, isItemAction, type ItemActionEvent } from "..
 import { isResumeInFlight, loadResumeReadiness, performResume } from "../core/resume.js"
 import { LOG_TAIL_INTERVAL_MS } from "../core/constants.js"
 import { generateSetupReport } from "../setup/doctor.js"
+import { KNOWN_GROUP_IDS, readConfigFile, resolveConfigPath, resolveMergedConfig, resolveOverrides } from "../setup/config.js"
+import type { AppConfig } from "../setup/types.js"
+import type { HarnessProfile, RegisterWorkspaceInput } from "../types/workspace.js"
 
 const PORT = Number(process.env.PORT ?? 4100)
 const HOST = process.env.HOST ?? "127.0.0.1"
@@ -36,6 +48,13 @@ function json(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body))
 }
 
+function loadEffectiveConfig(): AppConfig | null {
+  const overrides = resolveOverrides()
+  const configPath = resolveConfigPath(overrides)
+  const state = readConfigFile(configPath)
+  return resolveMergedConfig(state, overrides) as AppConfig | null
+}
+
 async function readJson(req: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = []
   for await (const chunk of req) chunks.push(chunk as Buffer)
@@ -50,7 +69,7 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
 
 function setCors(res: ServerResponse): void {
   res.setHeader("access-control-allow-origin", "*")
-  res.setHeader("access-control-allow-methods", "GET,POST,OPTIONS")
+  res.setHeader("access-control-allow-methods", "GET,POST,DELETE,OPTIONS")
   res.setHeader("access-control-allow-headers", "content-type")
 }
 
@@ -217,8 +236,82 @@ async function handleStartRun(req: IncomingMessage, res: ServerResponse): Promis
 
 async function handleSetupStatus(url: URL, res: ServerResponse): Promise<void> {
   const group = url.searchParams.get("group") ?? undefined
+  if (group && !(KNOWN_GROUP_IDS as readonly string[]).includes(group)) {
+    json(res, 400, { error: "unknown_group", group })
+    return
+  }
   const report = await generateSetupReport({ group })
   json(res, 200, report)
+}
+
+function parseWorkspaceProfile(input: unknown, config: AppConfig): HarnessProfile {
+  if (!input) return config.llm.defaultHarnessProfile
+  return input as HarnessProfile
+}
+
+async function handleWorkspacePreview(url: URL, res: ServerResponse): Promise<void> {
+  const config = loadEffectiveConfig()
+  if (!config) return json(res, 409, { error: "config_unavailable" })
+  const path = url.searchParams.get("path")
+  if (!path) return json(res, 400, { error: "path_required" })
+  const preview = await previewWorkspace(path, config, repos)
+  json(res, 200, preview)
+}
+
+async function handleWorkspaceAdd(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const config = loadEffectiveConfig()
+  if (!config) return json(res, 409, { error: "config_unavailable" })
+  const body = (await readJson(req)) as {
+    path?: string
+    create?: boolean
+    name?: string
+    key?: string
+    harnessProfile?: HarnessProfile
+    sonar?: RegisterWorkspaceInput["sonar"]
+    git?: RegisterWorkspaceInput["git"]
+  }
+  if (!body.path) return json(res, 400, { error: "path_required" })
+  const input: RegisterWorkspaceInput = {
+    path: body.path,
+    create: body.create,
+    name: body.name,
+    key: body.key,
+    harnessProfile: parseWorkspaceProfile(body.harnessProfile, config),
+    sonar: body.sonar,
+    git: body.git,
+  }
+  const appReport = await generateSetupReport({ allLlmGroups: true })
+  const result = await registerWorkspace(input, { repos, config, appReport })
+  if (!result.ok) return json(res, 409, result)
+  json(res, 200, result)
+}
+
+function handleWorkspaceList(res: ServerResponse): void {
+  json(res, 200, { workspaces: listRegisteredWorkspaces(repos) })
+}
+
+function handleWorkspaceGet(res: ServerResponse, key: string): void {
+  const workspace = getRegisteredWorkspace(repos, key)
+  if (!workspace) return json(res, 404, { error: "workspace_not_found" })
+  json(res, 200, workspace)
+}
+
+async function handleWorkspaceRemove(url: URL, res: ServerResponse, key: string): Promise<void> {
+  const purge = url.searchParams.get("purge") === "1" || url.searchParams.get("purge") === "true"
+  const result = await removeWorkspace(repos, key, { purge })
+  if (!result.ok) return json(res, 404, { error: "workspace_not_found" })
+  json(res, 200, result)
+}
+
+function handleWorkspaceOpen(res: ServerResponse, key: string): void {
+  const rootPath = openWorkspace(repos, key)
+  if (!rootPath) return json(res, 404, { error: "workspace_not_found" })
+  json(res, 200, { key, rootPath })
+}
+
+async function handleWorkspaceBackfill(res: ServerResponse): Promise<void> {
+  const result = await backfillWorkspaceConfigs(repos)
+  json(res, 200, result)
 }
 
 function handleGetBoard(url: URL, res: ServerResponse): void {
@@ -505,8 +598,25 @@ const server = createServer(async (req, res) => {
     if (path === "/board" && req.method === "GET") return handleGetBoard(url, res)
     // GET /setup/status
     if (path === "/setup/status" && req.method === "GET") return handleSetupStatus(url, res)
+    // GET /workspaces/preview?path=...
+    if (path === "/workspaces/preview" && req.method === "GET") return handleWorkspacePreview(url, res)
+    // GET /workspaces
+    if (path === "/workspaces" && req.method === "GET") return handleWorkspaceList(res)
+    // POST /workspaces
+    if (path === "/workspaces" && req.method === "POST") return handleWorkspaceAdd(req, res)
+    // POST /workspaces/backfill
+    if (path === "/workspaces/backfill" && req.method === "POST") return handleWorkspaceBackfill(res)
     // GET /events — workspace-scoped board SSE stream
     if (path === "/events" && req.method === "GET") return handleBoardEvents(req, res)
+
+    // /workspaces/:key + /workspaces/:key/open
+    const workspaceMatch = path.match(/^\/workspaces\/([^/]+)(?:\/(open))?$/)
+    if (workspaceMatch) {
+      const [, key, sub] = workspaceMatch
+      if (!sub && req.method === "GET") return handleWorkspaceGet(res, key)
+      if (!sub && req.method === "DELETE") return handleWorkspaceRemove(url, res, key)
+      if (sub === "open" && req.method === "POST") return handleWorkspaceOpen(res, key)
+    }
 
     // POST /items/:id/actions
     const itemMatch = path.match(/^\/items\/([^/]+)\/actions$/)

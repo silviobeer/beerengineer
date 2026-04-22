@@ -9,6 +9,9 @@ export type WorkspaceRow = {
   name: string
   description: string | null
   root_path: string | null
+  harness_profile_json: string
+  sonar_enabled: number
+  last_opened_at: number | null
   created_at: number
   updated_at: number
 }
@@ -116,27 +119,91 @@ export type PendingPromptRow = {
 export class Repos {
   constructor(private readonly db: Db) {}
 
-  upsertWorkspace(input: { key: string; name: string; description?: string | null }): WorkspaceRow {
+  upsertWorkspace(input: {
+    key: string
+    name: string
+    description?: string | null
+    rootPath?: string | null
+    harnessProfileJson?: string
+    sonarEnabled?: boolean
+    lastOpenedAt?: number | null
+  }): WorkspaceRow {
     const existing = this.db
       .prepare("SELECT * FROM workspaces WHERE key = ?")
       .get(input.key) as WorkspaceRow | undefined
-    if (existing) return existing
+    if (existing) {
+      const next = {
+        ...existing,
+        name: input.name ?? existing.name,
+        description: input.description ?? existing.description,
+        root_path: input.rootPath ?? existing.root_path,
+        harness_profile_json: input.harnessProfileJson ?? existing.harness_profile_json,
+        sonar_enabled: input.sonarEnabled === undefined ? existing.sonar_enabled : input.sonarEnabled ? 1 : 0,
+        last_opened_at: input.lastOpenedAt === undefined ? existing.last_opened_at : input.lastOpenedAt,
+        updated_at: now(),
+      }
+      this.db
+        .prepare(
+          `UPDATE workspaces
+           SET name = @name,
+               description = @description,
+               root_path = @root_path,
+               harness_profile_json = @harness_profile_json,
+               sonar_enabled = @sonar_enabled,
+               last_opened_at = @last_opened_at,
+               updated_at = @updated_at
+           WHERE id = @id`
+        )
+        .run(next)
+      return this.getWorkspaceByKey(input.key) as WorkspaceRow
+    }
     const row: WorkspaceRow = {
       id: randomUUID(),
       key: input.key,
       name: input.name,
       description: input.description ?? null,
-      root_path: null,
+      root_path: input.rootPath ?? null,
+      harness_profile_json: input.harnessProfileJson ?? JSON.stringify({ mode: "claude-first" }),
+      sonar_enabled: input.sonarEnabled ? 1 : 0,
+      last_opened_at: input.lastOpenedAt ?? null,
       created_at: now(),
       updated_at: now()
     }
     this.db
       .prepare(
-        `INSERT INTO workspaces (id, key, name, description, root_path, created_at, updated_at)
-         VALUES (@id, @key, @name, @description, @root_path, @created_at, @updated_at)`
+        `INSERT INTO workspaces (
+           id, key, name, description, root_path, harness_profile_json, sonar_enabled, last_opened_at, created_at, updated_at
+         ) VALUES (
+           @id, @key, @name, @description, @root_path, @harness_profile_json, @sonar_enabled, @last_opened_at, @created_at, @updated_at
+         )`
       )
       .run(row)
     return row
+  }
+
+  listWorkspaces(): WorkspaceRow[] {
+    return this.db.prepare("SELECT * FROM workspaces ORDER BY key ASC").all() as WorkspaceRow[]
+  }
+
+  getWorkspace(id: string): WorkspaceRow | undefined {
+    return this.db.prepare("SELECT * FROM workspaces WHERE id = ?").get(id) as WorkspaceRow | undefined
+  }
+
+  getWorkspaceByKey(key: string): WorkspaceRow | undefined {
+    return this.db.prepare("SELECT * FROM workspaces WHERE key = ?").get(key) as WorkspaceRow | undefined
+  }
+
+  getWorkspaceByRootPath(rootPath: string): WorkspaceRow | undefined {
+    return this.db.prepare("SELECT * FROM workspaces WHERE root_path = ?").get(rootPath) as WorkspaceRow | undefined
+  }
+
+  removeWorkspaceByKey(key: string): boolean {
+    const result = this.db.prepare("DELETE FROM workspaces WHERE key = ?").run(key)
+    return result.changes > 0
+  }
+
+  touchWorkspaceLastOpenedAt(key: string, timestamp = now()): void {
+    this.db.prepare("UPDATE workspaces SET last_opened_at = ?, updated_at = ? WHERE key = ?").run(timestamp, timestamp, key)
   }
 
   /**

@@ -158,6 +158,107 @@ test("GET /setup/status returns the doctor report contract", async () => {
   }
 })
 
+test("workspace HTTP endpoints preview, add, get, open, list, remove, and backfill", async () => {
+  const dbPath = tmpDbPath()
+  initDatabase(dbPath).close()
+  const dir = mkdtempSync(join(tmpdir(), "be2-workspace-api-"))
+  const configPath = join(dir, "config.json")
+  const allowedRoot = join(dir, "projects")
+  const workspacePath = join(allowedRoot, "api-demo")
+  const legacyPath = join(allowedRoot, "legacy")
+  rmSync(dir, { recursive: true, force: true })
+  const { mkdirSync, writeFileSync, existsSync, readFileSync } = await import("node:fs")
+  mkdirSync(allowedRoot, { recursive: true })
+  mkdirSync(legacyPath, { recursive: true })
+  writeFileSync(configPath, JSON.stringify({
+    schemaVersion: 1,
+    dataDir: join(dir, "data"),
+    allowedRoots: [allowedRoot],
+    enginePort: 4100,
+    llm: {
+      provider: "anthropic",
+      model: "claude-opus-4-7",
+      apiKeyRef: "ANTHROPIC_API_KEY",
+      defaultHarnessProfile: { mode: "claude-first" },
+      defaultSonarOrganization: "acme",
+    },
+    vcs: { github: { enabled: false } },
+    browser: { enabled: false },
+  }))
+
+  const seeded = initDatabase(dbPath)
+  const seededRepos = new Repos(seeded)
+  seededRepos.upsertWorkspace({
+    key: "legacy",
+    name: "Legacy",
+    rootPath: legacyPath,
+    harnessProfileJson: JSON.stringify({ mode: "fast" }),
+    sonarEnabled: false,
+  })
+  seeded.close()
+
+  const { proc, base } = startServer({
+    BEERENGINEER_UI_DB_PATH: dbPath,
+    BEERENGINEER_CONFIG_PATH: configPath,
+    BEERENGINEER_DATA_DIR: join(dir, "data"),
+    ANTHROPIC_API_KEY: "anthropic-test",
+    OPENAI_API_KEY: "openai-test",
+  })
+  try {
+    await waitForHealth(base)
+
+    const previewRes = await fetch(`${base}/workspaces/preview?path=${encodeURIComponent(workspacePath)}`)
+    assert.equal(previewRes.status, 200)
+    const preview = await previewRes.json() as { isGreenfield: boolean; isInsideAllowedRoot: boolean }
+    assert.equal(preview.isGreenfield, true)
+    assert.equal(preview.isInsideAllowedRoot, true)
+
+    const addRes = await fetch(`${base}/workspaces`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        path: workspacePath,
+        harnessProfile: { mode: "fast" },
+        sonar: { enabled: true },
+        git: { init: false },
+      }),
+    })
+    assert.equal(addRes.status, 200)
+    const added = await addRes.json() as { workspace: { key: string } }
+    assert.equal(added.workspace.key, "api-demo")
+
+    const listRes = await fetch(`${base}/workspaces`)
+    assert.equal(listRes.status, 200)
+    const list = await listRes.json() as { workspaces: Array<{ key: string }> }
+    assert.ok(list.workspaces.some(ws => ws.key === "api-demo"))
+
+    const getRes = await fetch(`${base}/workspaces/api-demo`)
+    assert.equal(getRes.status, 200)
+    const gotten = await getRes.json() as { key: string; harnessProfile: { mode: string } }
+    assert.equal(gotten.key, "api-demo")
+    assert.equal(gotten.harnessProfile.mode, "fast")
+
+    const openRes = await fetch(`${base}/workspaces/api-demo/open`, { method: "POST" })
+    assert.equal(openRes.status, 200)
+    const opened = await openRes.json() as { rootPath: string }
+    assert.equal(opened.rootPath, workspacePath)
+
+    const backfillRes = await fetch(`${base}/workspaces/backfill`, { method: "POST" })
+    assert.equal(backfillRes.status, 200)
+    const backfill = await backfillRes.json() as { written: string[] }
+    assert.ok(backfill.written.includes("legacy"))
+    assert.ok(existsSync(join(legacyPath, ".beerengineer", "workspace.json")))
+    const legacyConfig = JSON.parse(readFileSync(join(legacyPath, ".beerengineer", "workspace.json"), "utf8")) as { key: string }
+    assert.equal(legacyConfig.key, "legacy")
+
+    const deleteRes = await fetch(`${base}/workspaces/api-demo`, { method: "DELETE" })
+    assert.equal(deleteRes.status, 200)
+  } finally {
+    await stopServer(proc)
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test("POST /items/:id/actions returns 409 on invalid transition", async () => {
   const dbPath = tmpDbPath()
   const db = initDatabase(dbPath)

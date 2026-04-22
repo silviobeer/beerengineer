@@ -8,6 +8,9 @@ CREATE TABLE IF NOT EXISTS workspaces (
   name TEXT NOT NULL,
   description TEXT,
   root_path TEXT,
+  harness_profile_json TEXT NOT NULL DEFAULT '{"mode":"claude-first"}',
+  sonar_enabled INTEGER NOT NULL DEFAULT 0,
+  last_opened_at INTEGER,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );

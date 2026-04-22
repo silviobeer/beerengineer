@@ -46,6 +46,8 @@ export type AppConfig = {
     provider: LlmProvider
     model: string
     apiKeyRef: string
+    defaultHarnessProfile: import("../types/workspace.js").HarnessProfile
+    defaultSonarOrganization?: string
   }
   vcs?: {
     github?: {
@@ -70,6 +72,7 @@ export type SetupOverrides = {
   llmProvider?: LlmProvider
   llmModel?: string
   llmApiKeyRef?: string
+  llmDefaultSonarOrganization?: string
   githubEnabled?: boolean
   browserEnabled?: boolean
 }

@@ -3,9 +3,10 @@ import { homedir } from "node:os"
 import { dirname, resolve } from "node:path"
 import envPaths from "env-paths"
 import type { AppConfig, ConfigFileState, LlmProvider, SetupOverrides } from "./types.js"
+import type { HarnessProfile } from "../types/workspace.js"
 
 export const CONFIG_SCHEMA_VERSION = 1
-export const REQUIRED_MIGRATION_LEVEL = 1
+export const REQUIRED_MIGRATION_LEVEL = 2
 export const KNOWN_GROUP_IDS = [
   "core",
   "vcs.github",
@@ -56,6 +57,7 @@ export function defaultAppConfig(): AppConfig {
       provider: "anthropic",
       model: "claude-opus-4-7",
       apiKeyRef: "ANTHROPIC_API_KEY",
+      defaultHarnessProfile: { mode: "claude-first" },
     },
     vcs: {
       github: {
@@ -66,6 +68,67 @@ export function defaultAppConfig(): AppConfig {
       enabled: false,
     },
   }
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object"
+}
+
+function validateHarnessProfileShape(input: unknown): HarnessProfile {
+  if (!isObject(input) || typeof input.mode !== "string") {
+    throw new Error("llm.defaultHarnessProfile must be an object with a mode")
+  }
+
+  if (
+    input.mode === "codex-first" ||
+    input.mode === "claude-first" ||
+    input.mode === "codex-only" ||
+    input.mode === "claude-only" ||
+    input.mode === "fast"
+  ) {
+    return { mode: input.mode }
+  }
+
+  if (input.mode === "opencode") {
+    const roles = input.roles
+    if (!isObject(roles) || !isObject(roles.coder) || !isObject(roles.reviewer)) {
+      throw new Error("llm.defaultHarnessProfile.roles must define coder and reviewer")
+    }
+    if (typeof roles.coder.provider !== "string" || typeof roles.coder.model !== "string" || typeof roles.reviewer.provider !== "string" || typeof roles.reviewer.model !== "string") {
+      throw new Error("opencode roles must define provider and model")
+    }
+    return {
+      mode: "opencode",
+      roles: {
+        coder: { provider: roles.coder.provider, model: roles.coder.model },
+        reviewer: { provider: roles.reviewer.provider, model: roles.reviewer.model },
+      },
+    }
+  }
+
+  if (input.mode === "self") {
+    const roles = input.roles
+    if (!isObject(roles) || !isObject(roles.coder) || !isObject(roles.reviewer)) {
+      throw new Error("llm.defaultHarnessProfile.roles must define coder and reviewer")
+    }
+    const isHarness = (value: unknown): value is "claude" | "codex" | "opencode" =>
+      value === "claude" || value === "codex" || value === "opencode"
+    if (!isHarness(roles.coder.harness) || !isHarness(roles.reviewer.harness)) {
+      throw new Error("self roles must define a valid harness")
+    }
+    if (typeof roles.coder.provider !== "string" || typeof roles.coder.model !== "string" || typeof roles.reviewer.provider !== "string" || typeof roles.reviewer.model !== "string") {
+      throw new Error("self roles must define provider and model")
+    }
+    return {
+      mode: "self",
+      roles: {
+        coder: { harness: roles.coder.harness, provider: roles.coder.provider, model: roles.coder.model },
+        reviewer: { harness: roles.reviewer.harness, provider: roles.reviewer.provider, model: roles.reviewer.model },
+      },
+    }
+  }
+
+  throw new Error("llm.defaultHarnessProfile.mode is invalid")
 }
 
 function validateConfig(input: unknown): AppConfig {
@@ -91,6 +154,10 @@ function validateConfig(input: unknown): AppConfig {
   if (typeof config.llm.apiKeyRef !== "string" || config.llm.apiKeyRef.length === 0) {
     throw new Error("llm.apiKeyRef must be a non-empty string")
   }
+  const defaultHarnessProfile = validateHarnessProfileShape(config.llm.defaultHarnessProfile)
+  if (config.llm.defaultSonarOrganization !== undefined && typeof config.llm.defaultSonarOrganization !== "string") {
+    throw new Error("llm.defaultSonarOrganization must be a string when set")
+  }
   return {
     schemaVersion: CONFIG_SCHEMA_VERSION,
     dataDir: config.dataDir,
@@ -100,6 +167,8 @@ function validateConfig(input: unknown): AppConfig {
       provider: config.llm.provider,
       model: config.llm.model,
       apiKeyRef: config.llm.apiKeyRef,
+      defaultHarnessProfile,
+      defaultSonarOrganization: config.llm.defaultSonarOrganization,
     },
     vcs: {
       github: {
@@ -133,6 +202,7 @@ function envOverrides(): SetupOverrides {
     llmProvider: parseProvider(process.env.BEERENGINEER_LLM_PROVIDER),
     llmModel: process.env.BEERENGINEER_LLM_MODEL,
     llmApiKeyRef: process.env.BEERENGINEER_LLM_API_KEY_REF,
+    llmDefaultSonarOrganization: process.env.BEERENGINEER_LLM_DEFAULT_SONAR_ORG,
     githubEnabled: coerceBoolean(process.env.BEERENGINEER_GITHUB_ENABLED),
     browserEnabled: coerceBoolean(process.env.BEERENGINEER_BROWSER_ENABLED),
   }
@@ -158,6 +228,8 @@ export function resolveMergedConfig(state: ConfigFileState, overrides: SetupOver
       provider: overrides.llmProvider ?? base.llm.provider,
       model: overrides.llmModel ?? base.llm.model,
       apiKeyRef: overrides.llmApiKeyRef ?? base.llm.apiKeyRef,
+      defaultHarnessProfile: base.llm.defaultHarnessProfile,
+      defaultSonarOrganization: overrides.llmDefaultSonarOrganization ?? base.llm.defaultSonarOrganization,
     },
     vcs: {
       github: {

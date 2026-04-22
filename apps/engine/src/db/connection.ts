@@ -26,9 +26,22 @@ export function applySchema(db: Db): void {
   const schemaPath = fileURLToPath(new URL("./schema.sql", import.meta.url))
   const sql = readFileSync(schemaPath, "utf8")
   db.exec(sql)
+  migrateWorkspacesColumns(db)
   migrateRunsOwnerColumn(db)
   migrateRunsRecoveryColumns(db)
-  db.pragma(`user_version = ${REQUIRED_MIGRATION_LEVEL}`)
+  stampMigrationLevel(db)
+}
+
+// The idempotent ALTER TABLE migrations above bring any fresh or pre-1 DB to
+// level 1. Only stamp user_version when we know the schema is current; leave
+// higher levels untouched so a newer binary doesn't appear to downgrade.
+// TODO: when introducing level 2+, switch to a real migrate(from, to) runner
+// keyed off the current user_version.
+function stampMigrationLevel(db: Db): void {
+  const current = (db.pragma("user_version", { simple: true }) as number) ?? 0
+  if (current <= REQUIRED_MIGRATION_LEVEL) {
+    db.pragma(`user_version = ${REQUIRED_MIGRATION_LEVEL}`)
+  }
 }
 
 export function initDatabase(dbPath?: string | null): Db {
@@ -60,4 +73,18 @@ function migrateRunsRecoveryColumns(db: Db): void {
   if (!has("recovery_scope")) db.exec("ALTER TABLE runs ADD COLUMN recovery_scope TEXT")
   if (!has("recovery_scope_ref")) db.exec("ALTER TABLE runs ADD COLUMN recovery_scope_ref TEXT")
   if (!has("recovery_summary")) db.exec("ALTER TABLE runs ADD COLUMN recovery_summary TEXT")
+}
+
+function migrateWorkspacesColumns(db: Db): void {
+  const cols = db.prepare("PRAGMA table_info(workspaces)").all() as Array<{ name: string }>
+  const has = (name: string) => cols.some(c => c.name === name)
+  if (!has("harness_profile_json")) {
+    db.exec(`ALTER TABLE workspaces ADD COLUMN harness_profile_json TEXT NOT NULL DEFAULT '{"mode":"claude-first"}'`)
+  }
+  if (!has("sonar_enabled")) {
+    db.exec("ALTER TABLE workspaces ADD COLUMN sonar_enabled INTEGER NOT NULL DEFAULT 0")
+  }
+  if (!has("last_opened_at")) {
+    db.exec("ALTER TABLE workspaces ADD COLUMN last_opened_at INTEGER")
+  }
 }
