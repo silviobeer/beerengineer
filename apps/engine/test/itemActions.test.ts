@@ -8,6 +8,7 @@ import { initDatabase } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
 import { createItemActionsService, type ItemAction } from "../src/core/itemActions.js"
 import type { ItemRow } from "../src/db/repositories.js"
+import { layout } from "../src/core/workspaceLayout.js"
 
 /** Stub run starter: creates a real `runs` row (owner=api) but does not fire
  *  the workflow — lets tests assert run-creation without hanging on prompts. */
@@ -66,6 +67,7 @@ const MATRIX_CASES: Array<{
   { action: "resume_run", column: "brainstorm", phase: "running", expect: "resume" },
   { action: "resume_run", column: "requirements", phase: "draft", expect: "resume" },
   { action: "resume_run", column: "implementation", phase: "running", expect: "resume" },
+  { action: "resume_run", column: "implementation", phase: "failed", expect: "resume" },
   { action: "resume_run", column: "implementation", phase: "review_required", expect: "reject" },
   { action: "resume_run", column: "done", phase: "completed", expect: "reject" },
 
@@ -198,5 +200,37 @@ test("start_implementation creates an implementation-entry run without rerunning
   } finally {
     service.dispose()
     db.close()
+  }
+})
+
+test("resume_run requires remediation details when the latest resumable run has recovery state", async () => {
+  const prev = process.cwd()
+  const dir = mkdtempSync(join(tmpdir(), "be2-itemactions-cwd-"))
+  process.chdir(dir)
+  const db = tmpDb()
+  const repos = new Repos(db)
+  const item = makeItem(repos, "implementation", "failed")
+  const service = createItemActionsService(repos, { startRun: stubRunStarter(repos) })
+  try {
+    const run = repos.createRun({ workspaceId: item.workspace_id, itemId: item.id, title: item.title, owner: "api" })
+    repos.updateRun(run.id, { status: "failed" })
+    repos.setRunRecovery(run.id, { status: "blocked", scope: "story", scopeRef: "1/US-01", summary: "blocked" })
+    const ctx = { workspaceId: `t-${item.id.toLowerCase()}`, runId: run.id }
+    await import("node:fs/promises").then(fs =>
+      fs.mkdir(layout.runDir(ctx), { recursive: true }).then(() =>
+        fs.writeFile(layout.runFile(ctx), JSON.stringify({ id: run.id }, null, 2)),
+      ),
+    )
+
+    const result = await service.perform(item.id, "resume_run")
+    assert.equal(result.ok, false)
+    if (!result.ok) {
+      assert.equal(result.status, 422)
+      assert.equal(result.error, "remediation_required")
+    }
+  } finally {
+    service.dispose()
+    db.close()
+    process.chdir(prev)
   }
 })

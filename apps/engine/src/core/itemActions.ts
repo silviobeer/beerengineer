@@ -75,7 +75,8 @@ const MATRIX: Record<ItemAction, Record<string, Transition>> = {
   resume_run: {
     "brainstorm/*": { kind: "resume" },
     "requirements/*": { kind: "resume" },
-    "implementation/running": { kind: "resume" }
+    "implementation/running": { kind: "resume" },
+    "implementation/failed": { kind: "resume" }
   },
   mark_done: {
     "implementation/review_required": { kind: "state", to: { column: "done", phase: "completed" } }
@@ -199,7 +200,7 @@ export function createItemActionsService(repos: Repos, opts: ItemActionsOptions 
   }
 
   const resumeRun = (item: ItemRow): RunRow | undefined => {
-    return repos.latestActiveRunForItem(item.id)
+    return repos.latestActiveRunForItem(item.id) ?? repos.latestRecoverableRunForItem(item.id)
   }
 
   return {
@@ -291,7 +292,7 @@ export function createItemActionsService(repos: Repos, opts: ItemActionsOptions 
         return {
           ok: false,
           status: 409,
-          error: readiness.reason === "failed" ? "not_resumable" : "resume_in_progress",
+          error: readiness.reason === "resume_in_progress" ? "resume_in_progress" : "not_resumable",
           current: { column: item.current_column, phaseStatus: item.phase_status },
           action
         }

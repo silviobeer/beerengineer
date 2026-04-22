@@ -183,6 +183,14 @@ export class Repos {
       .get(itemId) as RunRow | undefined
   }
 
+  latestRecoverableRunForItem(itemId: string): RunRow | undefined {
+    return this.db
+      .prepare(
+        "SELECT * FROM runs WHERE item_id = ? AND recovery_status IS NOT NULL ORDER BY updated_at DESC, created_at DESC LIMIT 1"
+      )
+      .get(itemId) as RunRow | undefined
+  }
+
   createItem(input: {
     workspaceId: string
     code?: string

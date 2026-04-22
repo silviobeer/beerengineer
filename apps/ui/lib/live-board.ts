@@ -296,16 +296,16 @@ export function getLiveBoardState(workspaceKey?: string | null): LiveBoardState 
     // Latest-wins: if an item has multiple runs, the most recent non-null
     // recovery_status wins. The `runs` table predates the recovery columns on
     // some DBs, so we guard the query against missing columns.
-    const recoveryByItem = new Map<string, "blocked" | "failed">()
+    const recoveryByItem = new Map<string, "blocked" | "failed" | null>()
     try {
       const recoveryRows = connection
         .prepare(
           `select item_id, recovery_status
              from runs
-             where workspace_id = ? and recovery_status is not null
-             order by updated_at desc`
+             where workspace_id = ?
+             order by updated_at desc, created_at desc`
         )
-        .all(activeWorkspaceRecord.id) as Array<{ item_id: string; recovery_status: "blocked" | "failed" }>
+        .all(activeWorkspaceRecord.id) as Array<{ item_id: string; recovery_status: "blocked" | "failed" | null }>
       for (const row of recoveryRows) {
         if (!recoveryByItem.has(row.item_id)) recoveryByItem.set(row.item_id, row.recovery_status)
       }

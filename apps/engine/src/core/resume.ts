@@ -13,7 +13,7 @@ import type { ExternalRemediationRow, Repos, RunRow } from "../db/repositories.j
 export type ResumeReadiness =
   | { kind: "not_found" }
   | { kind: "no_recovery"; run: RunRow }
-  | { kind: "not_resumable"; run: RunRow; reason: "failed" | "resume_in_progress"; record?: RecoveryRecord }
+  | { kind: "not_resumable"; run: RunRow; reason: "resume_in_progress"; record?: RecoveryRecord }
   | { kind: "ready"; run: RunRow; record: RecoveryRecord; ctx: WorkflowContext }
 
 const inflightResumes = new Set<string>()
@@ -23,6 +23,19 @@ export function isResumeInFlight(runId: string): boolean {
 }
 
 async function inferWorkspaceDir(run: RunRow): Promise<WorkflowContext | null> {
+  const slug = run.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
+  const direct: WorkflowContext = {
+    workspaceId: slug ? `${slug}-${run.item_id.toLowerCase()}` : run.item_id.toLowerCase(),
+    runId: run.id,
+  }
+  try {
+    const raw = await readFile(layout.runFile(direct), "utf8")
+    const parsed = JSON.parse(raw) as { id?: string }
+    if (parsed.id === run.id) return direct
+  } catch {
+    // Fall back to scanning legacy directories below.
+  }
+
   // The engine derives the filesystem workspaceId from the item title (not the
   // DB workspace row). Probe the persisted run.json under each candidate to
   // find the one that belongs to this runId.
@@ -91,9 +104,6 @@ export async function loadResumeReadiness(
     }
   }
 
-  if (run.recovery_status === "failed") {
-    return { kind: "not_resumable", run, reason: "failed", record }
-  }
   return { kind: "ready", run, record, ctx }
 }
 
@@ -173,6 +183,14 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
         ? { type: "stage" as const, runId: run.id, stageId: record.scope.stageId }
         : { type: "run" as const, runId: run.id }
 
+    if (record.scope.type === "story") {
+      await prepareStoryScopeForResume(
+        ctx,
+        record as RecoveryRecord & { scope: { type: "story"; waveNumber: number; storyId: string } },
+        input.remediation,
+      )
+    }
+
     dbIo.emit({
       type: "external_remediation_recorded",
       runId: run.id,
@@ -181,14 +199,6 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
       summary: input.remediation.summary,
       branch: input.remediation.branch ?? undefined,
     })
-
-    if (record.scope.type === "story") {
-      await prepareStoryScopeForResume(
-        ctx,
-        record as RecoveryRecord & { scope: { type: "story"; waveNumber: number; storyId: string } },
-        input.remediation,
-      )
-    }
 
     dbIo.emit({
       type: "run_resumed",
@@ -201,7 +211,10 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
       runWithActiveRun({ runId: run.id, itemId: run.item_id }, async () => {
         input.repos.updateRun(run.id, { status: "running" })
         try {
-          await runWorkflow({ id: run.item_id, title: run.title, description: "" })
+          await runWorkflow(
+            { id: run.item_id, title: run.title, description: "" },
+            { resume: { scope: record.scope, currentStage: run.current_stage } },
+          )
           dbIo.emit({ type: "run_finished", runId: run.id, status: "completed" })
         } catch (err) {
           dbIo.emit({

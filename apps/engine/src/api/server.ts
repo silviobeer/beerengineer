@@ -282,7 +282,7 @@ function handleGetRecovery(res: ServerResponse, runId: string): void {
       scope: run.recovery_scope,
       scopeRef: run.recovery_scope_ref,
       summary: run.recovery_summary,
-      resumable: run.recovery_status === "blocked" && !isResumeInFlight(runId),
+      resumable: !isResumeInFlight(runId),
       remediations: repos.listExternalRemediations(runId),
     },
   })

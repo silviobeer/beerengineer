@@ -1,8 +1,11 @@
+import { readFile } from "node:fs/promises"
+import { join } from "node:path"
 import { runStage } from "../../core/stageRuntime.js"
 import { createTestWriterReview, createTestWriterStage, defaultStageConfig } from "../../llm/registry.js"
 import { print } from "../../print.js"
 import { renderTestPlanMarkdown } from "../../render/testPlan.js"
 import { runRalphStory, writeWaveSummary, type StoryArtifacts } from "./ralphRuntime.js"
+import { layout } from "../../core/workspaceLayout.js"
 import type { StoryTestPlanArtifact, TestWriterState } from "./types.js"
 import type {
   AcceptanceCriterion,
@@ -17,8 +20,21 @@ import type {
 } from "../../types.js"
 
 type StoryResult = { storyId: string; implementation: StoryImplementationArtifact }
+type ExecutionResumeOptions = {
+  waveNumber?: number
+  storyId?: string
+  rerunTestWriter?: boolean
+}
 
-export async function execution(ctx: WithPlan): Promise<WaveSummary[]> {
+async function readJsonIfExists<T>(path: string): Promise<T | undefined> {
+  try {
+    return JSON.parse(await readFile(path, "utf8")) as T
+  } catch {
+    return undefined
+  }
+}
+
+export async function execution(ctx: WithPlan, resume?: ExecutionResumeOptions): Promise<WaveSummary[]> {
   print.header(`execution — ${ctx.project.name}`)
 
   const storyById = new Map(ctx.prd.stories.map(story => [story.id, story]))
@@ -26,9 +42,20 @@ export async function execution(ctx: WithPlan): Promise<WaveSummary[]> {
   const summaries: WaveSummary[] = []
   const completedWaveIds = new Set<string>()
   for (const wave of ctx.plan.plan.waves) {
+    if (resume?.waveNumber && wave.number < resume.waveNumber) {
+      const persisted = await readJsonIfExists<WaveSummary>(layout.waveSummaryFile(ctx, wave.number))
+      if (!persisted) {
+        throw new Error(`missing_checkpoint:wave:${wave.number}`)
+      }
+      summaries.push(persisted)
+      completedWaveIds.add(wave.id)
+      continue
+    }
+
     assertWaveDependenciesSatisfied(wave, completedWaveIds)
-    summaries.push(await executeWave(ctx, wave, storyById))
+    summaries.push(await executeWave(ctx, wave, storyById, resume))
     completedWaveIds.add(wave.id)
+    if (resume?.waveNumber === wave.number) resume = undefined
   }
 
   print.ok("All waves complete\n")
@@ -58,12 +85,15 @@ async function executeWave(
   ctx: WithArchitecture,
   wave: WaveDefinition,
   storyById: Map<string, UserStory>,
+  resume?: ExecutionResumeOptions,
 ): Promise<WaveSummary> {
   const tag = wave.parallel ? "(parallel)" : "(sequential)"
   print.step(`\nWave ${wave.number} ${tag}: ${wave.stories.map(s => s.id).join(", ")}`)
 
   const run = (story: Pick<UserStory, "id" | "title">) =>
-    implementStory(ctx, wave, resolveStory(story, storyById))
+    implementStory(ctx, wave, resolveStory(story, storyById), {
+      rerunTestWriter: resume?.storyId === story.id ? Boolean(resume.rerunTestWriter) : false,
+    })
 
   const results = wave.parallel
     ? await runParallelStories(wave.stories, run)
@@ -131,9 +161,22 @@ async function implementStory(
   ctx: WithArchitecture,
   wave: WaveDefinition,
   story: UserStory,
+  opts: { rerunTestWriter?: boolean } = {},
 ): Promise<StoryResult> {
   print.step(`  Story ${story.id}: ${story.title}`)
-  const testPlan = await writeStoryTestPlan(ctx, wave, story)
+
+  const persistedImplementation = await readJsonIfExists<StoryImplementationArtifact>(
+    join(layout.executionRalphDir(ctx, wave.number, story.id), "implementation.json"),
+  )
+  if (persistedImplementation?.status === "passed") {
+    print.dim(`  Status: ${persistedImplementation.status}`)
+    return { storyId: story.id, implementation: persistedImplementation }
+  }
+
+  const testPlanPath = join(layout.executionTestWriterDir(ctx, wave.number, story.id), "test-plan.json")
+  const testPlan = !opts.rerunTestWriter
+    ? (await readJsonIfExists<StoryTestPlanArtifact>(testPlanPath)) ?? await writeStoryTestPlan(ctx, wave, story)
+    : await writeStoryTestPlan(ctx, wave, story)
   print.dim(`  Test plan: ${testPlan.testPlan.testCases.map(tc => tc.id).join(", ")}`)
   const storyContext = buildStoryExecutionContext(ctx.project, wave, ctx.architecture, testPlan)
   const result: StoryArtifacts = await runRalphStory(storyContext, { workspaceId: ctx.workspaceId, runId: ctx.runId })

@@ -1,0 +1,137 @@
+import { test } from "node:test"
+import assert from "node:assert/strict"
+import { mkdtempSync, rmSync } from "node:fs"
+import { readFile, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+
+import { initDatabase } from "../src/db/connection.js"
+import { Repos } from "../src/db/repositories.js"
+import { runWorkflow } from "../src/workflow.ts"
+import { runWithWorkflowIO, type WorkflowEvent, type WorkflowIO } from "../src/core/io.js"
+import { runWithActiveRun } from "../src/core/runContext.js"
+import { layout } from "../src/core/workspaceLayout.js"
+import { writeRecoveryRecord } from "../src/core/recovery.js"
+import { performResume } from "../src/core/resume.js"
+import type { StoryImplementationArtifact } from "../src/types.js"
+
+function makeWorkflowIO(): { io: WorkflowIO; events: WorkflowEvent[] } {
+  const events: WorkflowEvent[] = []
+  const brainstormAnswers = [
+    "User needs structured workflow.",
+    "Target audience: solo-operator teams.",
+    "Constraint: single-node, no cloud access.",
+    "Yes, constraints are stable enough.",
+  ]
+  const requirementsAnswers = [
+    "Focus: core workflow as input form.",
+    "Status badges per entry.",
+    "US-02 clearer: filter by status.",
+  ]
+  let brainstormIdx = 0
+  let requirementsIdx = 0
+  let phase: "brainstorm" | "requirements" | "qa" | "handoff" = "brainstorm"
+
+  return {
+    events,
+    io: {
+      async ask(prompt) {
+        if (prompt.startsWith("  Test, merge")) return "test"
+        if (phase === "brainstorm") {
+          const answer = brainstormAnswers[brainstormIdx++] ?? "ok"
+          if (brainstormIdx >= brainstormAnswers.length) phase = "requirements"
+          return answer
+        }
+        if (phase === "requirements") {
+          const answer = requirementsAnswers[requirementsIdx++] ?? "ok"
+          if (requirementsIdx >= requirementsAnswers.length) phase = "qa"
+          return answer
+        }
+        if (phase === "qa") {
+          phase = "handoff"
+          return "accept"
+        }
+        return "test"
+      },
+      emit(event) {
+        events.push(event)
+      },
+    },
+  }
+}
+
+async function withTmpCwd<T>(fn: () => Promise<T>): Promise<T> {
+  const dir = mkdtempSync(join(tmpdir(), "be2-resume-"))
+  const prev = process.cwd()
+  process.chdir(dir)
+  const originalLog = console.log
+  console.log = () => {}
+  try {
+    return await fn()
+  } finally {
+    console.log = originalLog
+    process.chdir(prev)
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+test("performResume resumes a blocked story from execution without rerunning prior stages", async () => {
+  await withTmpCwd(async () => {
+    const db = initDatabase(join(process.cwd(), "test.sqlite"))
+    const repos = new Repos(db)
+    const ws = repos.upsertWorkspace({ key: "t", name: "T" })
+    const item = repos.createItem({ workspaceId: ws.id, title: "Test Workflow", description: "smoke" })
+    const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "api" })
+
+    try {
+      const initial = makeWorkflowIO()
+      await runWithWorkflowIO(initial.io, () =>
+        runWithActiveRun({ runId: run.id, itemId: item.id }, () =>
+          runWorkflow({ id: item.id, title: item.title, description: item.description }),
+        ),
+      )
+
+      const ctx = { workspaceId: `test-workflow-${item.id.toLowerCase()}`, runId: run.id }
+      const implementationPath = join(layout.executionRalphDir(ctx, 2, "US-02"), "implementation.json")
+      const implementation = JSON.parse(await readFile(implementationPath, "utf8")) as StoryImplementationArtifact
+      implementation.status = "blocked"
+      implementation.finalSummary = "Blocked pending external remediation."
+      await writeFile(implementationPath, `${JSON.stringify(implementation, null, 2)}\n`)
+
+      await writeRecoveryRecord(ctx, {
+        status: "blocked",
+        cause: "review_block",
+        scope: { type: "story", runId: run.id, waveNumber: 2, storyId: "US-02" },
+        summary: "Blocked pending external remediation.",
+        branch: implementation.branch?.name,
+        evidencePaths: [implementationPath],
+      })
+      repos.setRunRecovery(run.id, {
+        status: "blocked",
+        scope: "story",
+        scopeRef: "2/US-02",
+        summary: "Blocked pending external remediation.",
+      })
+
+      const remediation = repos.createExternalRemediation({
+        runId: run.id,
+        scope: "story",
+        scopeRef: "2/US-02",
+        summary: "Patched the story branch to address the blocked review findings.",
+        branch: implementation.branch?.name ?? null,
+        source: "api",
+      })
+
+      const resumed = makeWorkflowIO()
+      await performResume({ repos, io: resumed.io, runId: run.id, remediation })
+
+      const resumedStages = resumed.events
+        .filter((event): event is Extract<WorkflowEvent, { type: "stage_started" }> => event.type === "stage_started")
+        .map(event => event.stageKey)
+      assert.deepEqual(resumedStages, ["execution", "project-review", "qa", "documentation", "handoff"])
+      assert.equal(repos.getRun(run.id)?.recovery_status, null)
+    } finally {
+      db.close()
+    }
+  })
+})

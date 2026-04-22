@@ -73,3 +73,23 @@ test("latestActiveRunForItem returns most recent running run", () => {
     db.close()
   }
 })
+
+test("latestRecoverableRunForItem returns most recent run with recovery state", async () => {
+  const db = tmpDb()
+  const repos = new Repos(db)
+  try {
+    const ws = repos.upsertWorkspace({ key: "t", name: "T" })
+    const item = repos.createItem({ workspaceId: ws.id, title: "t", description: "" })
+    const older = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "older" })
+    repos.setRunRecovery(older.id, { status: "blocked", scope: "run", scopeRef: null, summary: "older" })
+    await new Promise(resolve => setTimeout(resolve, 5))
+    const newer = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "newer" })
+    repos.setRunRecovery(newer.id, { status: "failed", scope: "run", scopeRef: null, summary: "newer" })
+
+    const recoverable = repos.latestRecoverableRunForItem(item.id)
+    assert.equal(recoverable?.id, newer.id)
+    assert.equal(recoverable?.recovery_status, "failed")
+  } finally {
+    db.close()
+  }
+})

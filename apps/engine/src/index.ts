@@ -283,8 +283,8 @@ export async function runItemAction(itemRef: string, action: string, resumeFlags
     // perform() so we can fail fast in non-TTY mode with exit 75.
     let resumePayload: { summary: string; branch?: string; commitSha?: string; reviewNotes?: string } | undefined
     if (action === "resume_run") {
-      const active = repos.latestActiveRunForItem(item.id)
-      if (active?.recovery_status === "blocked") {
+      const active = repos.latestActiveRunForItem(item.id) ?? repos.latestRecoverableRunForItem(item.id)
+      if (active?.recovery_status) {
         const isTty = Boolean(process.stdin.isTTY && process.stdout.isTTY) && resumeFlags?.yes !== true
         const collected = await collectRemediationFlags(resumeFlags ?? {}, isTty)
         if (!collected || !collected.summary) {
@@ -302,9 +302,6 @@ export async function runItemAction(itemRef: string, action: string, resumeFlags
           commitSha: collected.commit,
           reviewNotes: collected.notes
         }
-      } else if (active?.recovery_status === "failed") {
-        console.error(`  Run ${active.id} is marked failed and cannot be resumed until reclassified.`)
-        return 2
       }
     }
 

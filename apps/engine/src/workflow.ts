@@ -1,11 +1,22 @@
+import { readFile } from "node:fs/promises"
+import { join } from "node:path"
 import { randomUUID } from "node:crypto"
 import {
   createCandidateBranch,
   finalizeCandidateDecision,
 } from "./core/repoSimulation.js"
+import type { RecoveryScope } from "./core/recovery.js"
+import { layout } from "./core/workspaceLayout.js"
 import type {
+  ArchitectureArtifact,
+  DocumentationArtifact,
   Item,
+  PRD,
   ProjectContext,
+  Project,
+  ProjectReviewArtifact,
+  ImplementationPlanArtifact,
+  WaveSummary,
   WithDocumentation,
   WorkflowContext,
 } from "./types.js"
@@ -21,7 +32,122 @@ import { execution } from "./stages/execution/index.js"
 import { qa } from "./stages/qa/index.js"
 import { documentation } from "./stages/documentation/index.js"
 
-export async function runWorkflow(item: Item): Promise<void> {
+type ExecutionResumeOptions = {
+  waveNumber?: number
+  storyId?: string
+  rerunTestWriter?: boolean
+}
+
+type ProjectResumePlan = {
+  startStage:
+    | "requirements"
+    | "architecture"
+    | "planning"
+    | "execution"
+    | "project-review"
+    | "qa"
+    | "documentation"
+    | "handoff"
+  execution?: ExecutionResumeOptions
+}
+
+const projectStageOrder = [
+  "requirements",
+  "architecture",
+  "planning",
+  "execution",
+  "project-review",
+  "qa",
+  "documentation",
+  "handoff",
+] as const
+
+function shouldRunProjectStage(
+  resume: ProjectResumePlan | undefined,
+  stage: (typeof projectStageOrder)[number],
+): boolean {
+  if (!resume) return true
+  return projectStageOrder.indexOf(stage) >= projectStageOrder.indexOf(resume.startStage)
+}
+
+export type WorkflowResumeInput = {
+  scope: RecoveryScope
+  currentStage?: string | null
+}
+
+async function readJson<T>(path: string): Promise<T> {
+  return JSON.parse(await readFile(path, "utf8")) as T
+}
+
+function normalizeExecutionResume(stageId: string): ExecutionResumeOptions | undefined {
+  const match = /^execution\/waves\/(\d+)\/stories\/([^/]+)\/test-writer$/.exec(stageId)
+  if (!match) return undefined
+  return {
+    waveNumber: Number(match[1]),
+    storyId: match[2],
+    rerunTestWriter: true,
+  }
+}
+
+function normalizeProjectResume(input: WorkflowResumeInput): ProjectResumePlan | null {
+  const scope = input.scope
+  const stageId = scope.type === "stage" ? scope.stageId : scope.type === "run" ? input.currentStage ?? "" : "execution"
+  const topStage = stageId.split("/")[0]
+
+  switch (topStage) {
+    case "brainstorm":
+      return null
+    case "requirements":
+    case "architecture":
+    case "planning":
+    case "project-review":
+    case "qa":
+    case "documentation":
+    case "handoff":
+      return { startStage: topStage }
+    case "execution":
+      return {
+        startStage: "execution",
+        execution:
+          scope.type === "story"
+            ? { waveNumber: scope.waveNumber, storyId: scope.storyId }
+            : normalizeExecutionResume(stageId),
+      }
+    default:
+      return null
+  }
+}
+
+async function loadProjects(context: WorkflowContext): Promise<Project[]> {
+  return readJson<Project[]>(join(layout.stageArtifactsDir(context, "brainstorm"), "projects.json"))
+}
+
+async function loadPrd(context: WorkflowContext): Promise<PRD> {
+  const artifact = await readJson<{ prd: PRD }>(join(layout.stageArtifactsDir(context, "requirements"), "prd.json"))
+  return artifact.prd
+}
+
+async function loadArchitecture(context: WorkflowContext): Promise<ArchitectureArtifact> {
+  return readJson<ArchitectureArtifact>(join(layout.stageArtifactsDir(context, "architecture"), "architecture.json"))
+}
+
+async function loadPlan(context: WorkflowContext): Promise<ImplementationPlanArtifact> {
+  return readJson<ImplementationPlanArtifact>(join(layout.stageArtifactsDir(context, "planning"), "implementation-plan.json"))
+}
+
+async function loadExecutionSummaries(context: WorkflowContext, plan: ImplementationPlanArtifact): Promise<WaveSummary[]> {
+  return Promise.all(plan.plan.waves.map(wave => readJson<WaveSummary>(layout.waveSummaryFile(context, wave.number))))
+}
+
+async function loadProjectReview(context: WorkflowContext): Promise<ProjectReviewArtifact> {
+  return readJson<ProjectReviewArtifact>(join(layout.stageArtifactsDir(context, "project-review"), "project-review.json"))
+}
+
+async function loadDocumentation(context: WorkflowContext): Promise<DocumentationArtifact> {
+  return readJson<DocumentationArtifact>(join(layout.stageArtifactsDir(context, "documentation"), "documentation.json"))
+}
+
+export async function runWorkflow(item: Item, options?: { resume?: WorkflowResumeInput }): Promise<void> {
   const slug = item.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
   const activeRun = getActiveRun()
   const context: WorkflowContext = {
@@ -29,7 +155,10 @@ export async function runWorkflow(item: Item): Promise<void> {
     runId: activeRun?.runId ?? `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`,
   }
 
-  const projects = await withStageLifecycle("brainstorm", {}, () => brainstorm(item, context))
+  const resumePlan = options?.resume ? normalizeProjectResume(options.resume) : null
+  const projects = resumePlan
+    ? await loadProjects(context)
+    : await withStageLifecycle("brainstorm", {}, () => brainstorm(item, context))
   if (activeRun) {
     projects.forEach((project, index) => {
       emitEvent({
@@ -46,23 +175,62 @@ export async function runWorkflow(item: Item): Promise<void> {
   }
 
   for (const project of projects) {
-    await runProject({ ...context, project })
+    await runProject({ ...context, project }, resumePlan ?? undefined)
   }
 
   print.header("DONE")
   print.ok(`Item "${item.title}" is done ✓`)
 }
 
-async function runProject(initialCtx: ProjectContext): Promise<void> {
+async function runProject(initialCtx: ProjectContext, resume?: ProjectResumePlan): Promise<void> {
   let ctx = initialCtx
   const projectId = ctx.project.id
-  ctx = { ...ctx, prd: await withStageLifecycle("requirements", { projectId }, () => requirements(ctx)) }
-  ctx = { ...ctx, architecture: await withStageLifecycle("architecture", { projectId }, () => architecture(assertWithPrd(ctx))) }
-  ctx = { ...ctx, plan: await withStageLifecycle("planning", { projectId }, () => planning(assertWithArchitecture(ctx))) }
-  ctx = { ...ctx, executionSummaries: await withStageLifecycle("execution", { projectId }, () => execution(assertWithPlan(ctx))) }
-  ctx = { ...ctx, projectReview: await withStageLifecycle("project-review", { projectId }, () => projectReview(assertWithExecution(ctx))) }
-  await withStageLifecycle("qa", { projectId }, () => qa(ctx))
-  ctx = { ...ctx, documentation: await withStageLifecycle("documentation", { projectId }, () => documentation(assertWithProjectReview(ctx))) }
+
+  if (shouldRunProjectStage(resume, "requirements")) {
+    ctx = { ...ctx, prd: await withStageLifecycle("requirements", { projectId }, () => requirements(ctx)) }
+  } else {
+    ctx = { ...ctx, prd: await loadPrd(ctx) }
+  }
+
+  if (shouldRunProjectStage(resume, "architecture")) {
+    ctx = { ...ctx, architecture: await withStageLifecycle("architecture", { projectId }, () => architecture(assertWithPrd(ctx))) }
+  } else {
+    ctx = { ...ctx, architecture: await loadArchitecture(ctx) }
+  }
+
+  if (shouldRunProjectStage(resume, "planning")) {
+    ctx = { ...ctx, plan: await withStageLifecycle("planning", { projectId }, () => planning(assertWithArchitecture(ctx))) }
+  } else {
+    ctx = { ...ctx, plan: await loadPlan(ctx) }
+  }
+
+  if (shouldRunProjectStage(resume, "execution")) {
+    ctx = {
+      ...ctx,
+      executionSummaries: await withStageLifecycle("execution", { projectId }, () =>
+        execution(assertWithPlan(ctx), resume?.execution),
+      ),
+    }
+  } else {
+    ctx = { ...ctx, executionSummaries: await loadExecutionSummaries(ctx, assertWithPlan(ctx).plan) }
+  }
+
+  if (shouldRunProjectStage(resume, "project-review")) {
+    ctx = { ...ctx, projectReview: await withStageLifecycle("project-review", { projectId }, () => projectReview(assertWithExecution(ctx))) }
+  } else {
+    ctx = { ...ctx, projectReview: await loadProjectReview(ctx) }
+  }
+
+  if (shouldRunProjectStage(resume, "qa")) {
+    await withStageLifecycle("qa", { projectId }, () => qa(ctx))
+  }
+
+  if (shouldRunProjectStage(resume, "documentation")) {
+    ctx = { ...ctx, documentation: await withStageLifecycle("documentation", { projectId }, () => documentation(assertWithProjectReview(ctx))) }
+  } else {
+    ctx = { ...ctx, documentation: await loadDocumentation(ctx) }
+  }
+
   await withStageLifecycle("handoff", { projectId }, () => handoffCandidate(assertWithDocumentation(ctx)))
 }
 

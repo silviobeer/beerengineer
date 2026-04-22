@@ -31,7 +31,7 @@ function validActionsFor(
     actions.push({ action: "start_implementation", label: "Start implementation", kind: "start-run" });
     actions.push({ action: "resume_run", label: "Resume run", kind: "state" });
   }
-  if (column === "implementation" && phase === "running") {
+  if (column === "implementation" && (phase === "running" || phase === "failed")) {
     actions.push({ action: "resume_run", label: "Resume run", kind: "state" });
   }
   if (column === "implementation" && phase === "review_required") {
@@ -74,6 +74,8 @@ export function ItemBoardActions({ itemId, column, phase }: Props) {
           kind: "error",
           msg: `Cannot ${descriptor.action} from ${response.current.column}/${response.current.phaseStatus}`
         });
+      } else if (response.status === 422 && descriptor.action === "resume_run") {
+        setToast({ kind: "error", msg: "Open the run detail page and provide remediation details to resume." });
       } else {
         setToast({ kind: "error", msg: response.error });
       }
