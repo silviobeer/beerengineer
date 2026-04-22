@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdtempSync, rmSync } from "node:fs"
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { spawnSync } from "node:child_process"
@@ -8,7 +8,15 @@ import { fileURLToPath } from "node:url"
 
 import { initDatabase } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
-import { parseArgs, resolveItemReference, resolveUiWorkspacePath, runDoctor } from "../src/index.js"
+import { main, parseArgs, resolveItemReference, resolveUiLaunchUrl, resolveUiWorkspacePath } from "../src/index.js"
+import { resolveConfiguredDbPath } from "../src/setup/config.js"
+
+function makeStubBin(dir: string, name: string, body: string): void {
+  mkdirSync(dir, { recursive: true })
+  const path = join(dir, name)
+  writeFileSync(path, `#!/usr/bin/env bash\nset -euo pipefail\n${body}\n`, "utf8")
+  chmodSync(path, 0o755)
+}
 
 test("parseArgs recognizes help, doctor, start ui, workflow, item action, and unknown commands", () => {
   assert.deepEqual(parseArgs([]), { kind: "workflow", json: false })
@@ -16,7 +24,9 @@ test("parseArgs recognizes help, doctor, start ui, workflow, item action, and un
   assert.deepEqual(parseArgs(["run", "--json"]), { kind: "workflow", json: true })
   assert.deepEqual(parseArgs(["--help"]), { kind: "help" })
   assert.deepEqual(parseArgs(["-h"]), { kind: "help" })
-  assert.deepEqual(parseArgs(["--doctor"]), { kind: "doctor" })
+  assert.deepEqual(parseArgs(["--doctor"]), { kind: "doctor", json: false, group: undefined })
+  assert.deepEqual(parseArgs(["doctor", "--json", "--group", "core"]), { kind: "doctor", json: true, group: "core" })
+  assert.deepEqual(parseArgs(["setup", "--no-interactive"]), { kind: "setup", group: undefined, noInteractive: true })
   assert.deepEqual(parseArgs(["start", "ui"]), { kind: "start-ui" })
   assert.deepEqual(parseArgs(["item", "action", "--item", "ITEM-0001", "--action", "start_brainstorm"]), {
     kind: "item-action",
@@ -27,25 +37,92 @@ test("parseArgs recognizes help, doctor, start ui, workflow, item action, and un
   assert.deepEqual(parseArgs(["wat"]), { kind: "unknown", token: "wat" })
 })
 
-test("runDoctor succeeds when the database schema and UI workspace are present", async () => {
+test("doctor --json reports blocked status when the app config is uninitialized", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-cli-"))
-  const previousDbPath = process.env.BEERENGINEER_UI_DB_PATH
+  const previousConfigPath = process.env.BEERENGINEER_CONFIG_PATH
+  const previousDataDir = process.env.BEERENGINEER_DATA_DIR
+  const previousPath = process.env.PATH
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
+  const stubBin = join(dir, "bin")
 
   try {
-    const dbPath = join(dir, "doctor.sqlite")
-    process.env.BEERENGINEER_UI_DB_PATH = dbPath
-    const db = initDatabase(dbPath)
-    const repos = new Repos(db)
-    repos.upsertWorkspace({ key: "default", name: "Default Workspace" })
-    db.close()
+    const configPath = join(dir, "config", "config.json")
+    const dataDir = join(dir, "data")
+    makeStubBin(stubBin, "git", "echo 'git version 2.47.0'")
+    process.env.BEERENGINEER_CONFIG_PATH = configPath
+    process.env.BEERENGINEER_DATA_DIR = dataDir
+    process.env.PATH = `${stubBin}:${previousPath ?? ""}`
 
-    assert.equal(resolveUiWorkspacePath().endsWith("/apps/ui"), true)
-    assert.equal(await runDoctor(), 0)
+    const result = spawnSync(process.execPath, [binPath, "doctor", "--json"], {
+      cwd: engineRoot,
+      encoding: "utf8",
+      env: process.env,
+    })
+    assert.equal(result.status, 1)
+
+    const report = JSON.parse(result.stdout) as {
+      overall: string
+      groups: Array<{ id: string; checks: Array<{ id: string; status: string }> }>
+    }
+    assert.equal(report.overall, "blocked")
+    const core = report.groups.find(group => group.id === "core")
+    assert.ok(core)
+    assert.equal(core.checks.find(check => check.id === "core.config")?.status, "uninitialized")
   } finally {
-    if (previousDbPath === undefined) delete process.env.BEERENGINEER_UI_DB_PATH
-    else process.env.BEERENGINEER_UI_DB_PATH = previousDbPath
+    if (previousConfigPath === undefined) delete process.env.BEERENGINEER_CONFIG_PATH
+    else process.env.BEERENGINEER_CONFIG_PATH = previousConfigPath
+    if (previousDataDir === undefined) delete process.env.BEERENGINEER_DATA_DIR
+    else process.env.BEERENGINEER_DATA_DIR = previousDataDir
+    if (previousPath === undefined) delete process.env.PATH
+    else process.env.PATH = previousPath
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test("setup --no-interactive provisions config and database", () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-"))
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
+  const stubBin = join(dir, "bin")
+  const configPath = join(dir, "config", "config.json")
+  const dataDir = join(dir, "data")
+
+  try {
+    makeStubBin(stubBin, "git", "echo 'git version 2.47.0'")
+    makeStubBin(stubBin, "claude", "echo 'claude 1.2.3'")
+    const result = spawnSync(
+      process.execPath,
+      [binPath, "setup", "--no-interactive"],
+      {
+        cwd: engineRoot,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${stubBin}:${process.env.PATH ?? ""}`,
+          BEERENGINEER_CONFIG_PATH: configPath,
+          BEERENGINEER_DATA_DIR: dataDir,
+          ANTHROPIC_API_KEY: "test-key",
+        },
+      }
+    )
+
+    assert.equal(result.status, 0, `${result.stdout ?? ""}\n${result.stderr ?? ""}`)
+    const config = JSON.parse(readFileSync(configPath, "utf8")) as { dataDir: string }
+    assert.equal(config.dataDir, dataDir)
+    const db = initDatabase(resolveConfiguredDbPath(config))
+    db.close()
+    assert.match(result.stdout ?? "", /App setup initialized config, data dir, and database\./)
+    assert.match(result.stdout ?? "", /Next: beerengineer workspace add <path>/)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("resolveUiLaunchUrl uses the dedicated UI operator port", () => {
+  assert.equal(resolveUiLaunchUrl(), "http://127.0.0.1:3100")
 })
 
 test("resolveItemReference rejects ambiguous item codes across workspaces", () => {
@@ -77,4 +154,108 @@ test("beerengineer bin shim runs the TypeScript entrypoint", () => {
 
   assert.equal(result.status, 0)
   assert.match(`${result.stdout ?? ""}${result.stderr ?? ""}`, /BeerEngineer2 CLI/)
+})
+
+test("help output explains that user prompts are limited to intake and blockers", async () => {
+  const stdoutChunks: string[] = []
+  const originalLog = console.log
+  console.log = (...args: unknown[]) => {
+    stdoutChunks.push(args.join(" "))
+  }
+
+  try {
+    await main(["--help"])
+  } finally {
+    console.log = originalLog
+  }
+
+  const output = stdoutChunks.join("\n")
+  assert.match(output, /User prompts are limited to intake and blocked-run recovery\./)
+  assert.match(output, /architecture/)
+  assert.match(output, /documentation run without user chat unless a blocker stops the run\./)
+})
+
+test("beerengineer item action start_brainstorm runs to completion through the terminal CLI", () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-"))
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
+
+  try {
+    const dbPath = join(dir, "workflow.sqlite")
+    const db = initDatabase(dbPath)
+    const repos = new Repos(db)
+    const ws = repos.upsertWorkspace({ key: "default", name: "Default Workspace" })
+    repos.createItem({ workspaceId: ws.id, code: "ITEM-0001", title: "CLI Workflow", description: "smoke" })
+    db.close()
+
+    const result = spawnSync(
+      process.execPath,
+      [binPath, "item", "action", "--item", "ITEM-0001", "--action", "start_brainstorm"],
+      {
+        cwd: engineRoot,
+        encoding: "utf8",
+        env: { ...process.env, BEERENGINEER_UI_DB_PATH: dbPath },
+        input: [
+          "answer 1",
+          "answer 2",
+          "answer 3",
+          "clarify 1",
+          "clarify 2",
+          ...Array.from({ length: 16 }, () => "accept"),
+          ...Array.from({ length: 16 }, () => "merge"),
+        ].join("\n") + "\n",
+        timeout: 15000,
+      }
+    )
+
+    assert.equal(result.status, 0, `${result.stdout ?? ""}\n${result.stderr ?? ""}`)
+    assert.match(result.stdout ?? "", /start_brainstorm applied/)
+    assert.match(result.stdout ?? "", /run-id:/)
+
+    const verifyDb = initDatabase(dbPath)
+    const verifyRepos = new Repos(verifyDb)
+    const runs = verifyRepos.listRuns()
+    assert.equal(runs.length, 1)
+    assert.equal(runs[0].owner, "cli")
+    assert.equal(runs[0].status, "completed")
+    verifyDb.close()
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("beerengineer item action resume_run exits 75 without remediation summary in non-interactive mode", () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-"))
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
+
+  try {
+    const dbPath = join(dir, "resume.sqlite")
+    const db = initDatabase(dbPath)
+    const repos = new Repos(db)
+    const ws = repos.upsertWorkspace({ key: "default", name: "Default Workspace" })
+    const item = repos.createItem({ workspaceId: ws.id, code: "ITEM-0001", title: "Blocked CLI Workflow", description: "smoke" })
+    repos.setItemColumn(item.id, "implementation", "failed")
+    const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "cli" })
+    repos.setRunRecovery(run.id, { status: "blocked", scope: "run", scopeRef: null, summary: "fix needed" })
+    db.close()
+
+    const result = spawnSync(
+      process.execPath,
+      [binPath, "item", "action", "--item", "ITEM-0001", "--action", "resume_run"],
+      {
+        cwd: engineRoot,
+        encoding: "utf8",
+        env: { ...process.env, BEERENGINEER_UI_DB_PATH: dbPath },
+      }
+    )
+
+    assert.equal(result.status, 75, `${result.stdout ?? ""}\n${result.stderr ?? ""}`)
+    assert.match(result.stderr ?? "", /Missing --remediation-summary/)
+    assert.match(result.stderr ?? "", /Run .* is blocked\./)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })

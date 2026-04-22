@@ -8,6 +8,7 @@ import { prepareRun } from "../core/runOrchestrator.js"
 import { createItemActionsService, isItemAction, type ItemActionEvent } from "../core/itemActions.js"
 import { isResumeInFlight, loadResumeReadiness, performResume } from "../core/resume.js"
 import { LOG_TAIL_INTERVAL_MS } from "../core/constants.js"
+import { generateSetupReport } from "../setup/doctor.js"
 
 const PORT = Number(process.env.PORT ?? 4100)
 const HOST = process.env.HOST ?? "127.0.0.1"
@@ -212,6 +213,12 @@ async function handleStartRun(req: IncomingMessage, res: ServerResponse): Promis
     })
 
   json(res, 202, { runId: prepared.runId })
+}
+
+async function handleSetupStatus(url: URL, res: ServerResponse): Promise<void> {
+  const group = url.searchParams.get("group") ?? undefined
+  const report = await generateSetupReport({ group })
+  json(res, 200, report)
 }
 
 function handleGetBoard(url: URL, res: ServerResponse): void {
@@ -496,6 +503,8 @@ const server = createServer(async (req, res) => {
     if (path === "/runs" && req.method === "GET") return handleListRuns(res)
     // GET /board
     if (path === "/board" && req.method === "GET") return handleGetBoard(url, res)
+    // GET /setup/status
+    if (path === "/setup/status" && req.method === "GET") return handleSetupStatus(url, res)
     // GET /events — workspace-scoped board SSE stream
     if (path === "/events" && req.method === "GET") return handleBoardEvents(req, res)
 

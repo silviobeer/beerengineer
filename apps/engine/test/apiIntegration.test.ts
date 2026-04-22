@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdtempSync } from "node:fs"
+import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { spawn, type ChildProcess } from "node:child_process"
@@ -125,6 +125,36 @@ test("POST /items/:id/actions returns 404 on unknown item", async () => {
     assert.equal(body.error, "item_not_found")
   } finally {
     await stopServer(proc)
+  }
+})
+
+test("GET /setup/status returns the doctor report contract", async () => {
+  const dbPath = tmpDbPath()
+  initDatabase(dbPath).close()
+  const dir = mkdtempSync(join(tmpdir(), "be2-setup-"))
+  const configPath = join(dir, "config.json")
+  const dataDir = join(dir, "data")
+  const { proc, base } = startServer({
+    BEERENGINEER_UI_DB_PATH: dbPath,
+    BEERENGINEER_CONFIG_PATH: configPath,
+    BEERENGINEER_DATA_DIR: dataDir,
+  })
+  try {
+    await waitForHealth(base)
+    const res = await fetch(`${base}/setup/status?group=core`)
+    assert.equal(res.status, 200)
+    const body = await res.json() as {
+      reportVersion: number
+      overall: string
+      groups: Array<{ id: string }>
+    }
+    assert.equal(body.reportVersion, 1)
+    assert.equal(body.groups.length, 1)
+    assert.equal(body.groups[0]?.id, "core")
+    assert.equal(body.overall, "blocked")
+  } finally {
+    await stopServer(proc)
+    rmSync(dir, { recursive: true, force: true })
   }
 })
 

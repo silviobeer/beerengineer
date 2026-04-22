@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync } from "node:fs"
 import { dirname, resolve } from "node:path"
 import { homedir } from "node:os"
 import { fileURLToPath } from "node:url"
+import { REQUIRED_MIGRATION_LEVEL } from "../setup/config.js"
 
 export type Db = Database.Database
 
@@ -27,6 +28,7 @@ export function applySchema(db: Db): void {
   db.exec(sql)
   migrateRunsOwnerColumn(db)
   migrateRunsRecoveryColumns(db)
+  db.pragma(`user_version = ${REQUIRED_MIGRATION_LEVEL}`)
 }
 
 export function initDatabase(dbPath?: string | null): Db {

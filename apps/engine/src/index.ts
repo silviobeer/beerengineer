@@ -10,6 +10,8 @@ import { initDatabase, resolveDbPath } from "./db/connection.js"
 import { Repos } from "./db/repositories.js"
 import { runWorkflowWithSync } from "./core/runOrchestrator.js"
 import type { ItemRow } from "./db/repositories.js"
+import { KNOWN_GROUP_IDS } from "./setup/config.js"
+import { generateSetupReport, runDoctorCommand, runSetupCommand } from "./setup/doctor.js"
 
 export type ResumeFlags = {
   summary?: string
@@ -21,7 +23,8 @@ export type ResumeFlags = {
 
 type Command =
   | { kind: "help" }
-  | { kind: "doctor" }
+  | { kind: "doctor"; json?: boolean; group?: string }
+  | { kind: "setup"; group?: string; noInteractive?: boolean }
   | { kind: "start-ui" }
   | { kind: "workflow"; json?: boolean }
   | { kind: "item-action"; itemRef: string; action: string; resume?: ResumeFlags }
@@ -38,21 +41,30 @@ const REQUIRED_TABLES = [
   "pending_prompts",
 ] as const
 
+const UI_DEV_HOST = "127.0.0.1"
+const UI_DEV_PORT = 3100
+
 function readFlag(argv: string[], name: string): string | undefined {
   const idx = argv.indexOf(name)
   if (idx === -1) return undefined
   return argv[idx + 1]
 }
 
+function isKnownGroupId(group: string): group is (typeof KNOWN_GROUP_IDS)[number] {
+  return KNOWN_GROUP_IDS.includes(group as (typeof KNOWN_GROUP_IDS)[number])
+}
+
 export function parseArgs(argv: string[]): Command {
   const [first, second] = argv
   const json = argv.includes("--json")
+  const group = readFlag(argv, "--group")
   if (first === undefined || first === "--json") return { kind: "workflow", json }
   if (first === "run" && (second === "--json" || argv[2] === "--json" || second === undefined)) {
     return { kind: "workflow", json }
   }
   if (first === "--help" || first === "-h" || first === "help") return { kind: "help" }
-  if (first === "--doctor" || first === "doctor") return { kind: "doctor" }
+  if (first === "--doctor" || first === "doctor") return { kind: "doctor", json, group }
+  if (first === "setup") return { kind: "setup", group, noInteractive: argv.includes("--no-interactive") }
   if (first === "start" && second === "ui") return { kind: "start-ui" }
   if (first === "item" && second === "action") {
     const itemRef = readFlag(argv, "--item")
@@ -82,13 +94,14 @@ function printHelp(): void {
     "  BeerEngineer2 CLI",
     "",
     "  Usage:",
-    "    beerengineer                                         Run the interactive workflow (default)",
+    "    beerengineer                                         Run the default workflow",
     "    beerengineer --json                                  Harness mode: NDJSON events on stdout, prompt answers on stdin",
     "    beerengineer run --json                              Same as `beerengineer --json`",
-    "    beerengineer start ui                                Start the Next.js UI dev server",
+    "    beerengineer start ui                                Start the UI on http://127.0.0.1:3100 and open it in the browser",
     "    beerengineer item action --item <id|code> --action <name>",
     "                                                         Perform an item action",
-    "    beerengineer --doctor                                Run environment diagnostics",
+    "    beerengineer doctor [--json] [--group <id>]          Run machine diagnostics",
+    "    beerengineer setup [--group <id>] [--no-interactive] Provision app config/data/DB and retry checks",
     "    beerengineer --help                                  Show this help",
     "",
     "  Item actions:",
@@ -102,8 +115,16 @@ function printHelp(): void {
     "    --notes <text>                 Optional. Extra review notes.",
     "    --yes                          Skip the interactive prompt when on a TTY.",
     "",
+    "  Workflow behavior:",
+    "    User prompts are limited to intake and blocked-run recovery.",
+    "    Stage-internal LLM/reviewer interaction still happens, but architecture",
+    "    through documentation run without user chat unless a blocker stops the run.",
+    "",
     "  Aliases:",
-    "    -h  --help",
+    "    -h  --help  --doctor",
+    "",
+    "  Setup groups:",
+    `    ${KNOWN_GROUP_IDS.join("  ")}`,
     "",
   ]
   console.log(lines.join("\n"))
@@ -111,6 +132,30 @@ function printHelp(): void {
 
 export function resolveUiWorkspacePath(): string {
   return resolve(fileURLToPath(new URL("../../ui", import.meta.url)))
+}
+
+export function resolveUiLaunchUrl(): string {
+  return `http://${UI_DEV_HOST}:${UI_DEV_PORT}`
+}
+
+function openBrowser(url: string): void {
+  const platform = process.platform
+  const command =
+    platform === "darwin"
+      ? { cmd: "open", args: [url] }
+      : platform === "win32"
+      ? { cmd: "cmd", args: ["/c", "start", "", url] }
+      : { cmd: "xdg-open", args: [url] }
+
+  try {
+    const child = spawn(command.cmd, command.args, {
+      stdio: "ignore",
+      detached: true,
+    })
+    child.unref()
+  } catch {
+    // Browser launch is best-effort; the dev server is still the primary action.
+  }
 }
 
 export function resolveItemReference(
@@ -126,50 +171,13 @@ export function resolveItemReference(
   return { kind: "found", item: byCode[0] }
 }
 
-export async function runDoctor(): Promise<number> {
-  const checks: { name: string; ok: boolean; detail: string }[] = []
-
-  const nodeVersion = process.versions.node
-  const [major] = nodeVersion.split(".").map(Number)
-  checks.push({
-    name: "Node.js runtime",
-    ok: major >= 20,
-    detail: `v${nodeVersion}${major >= 20 ? "" : " (>= 20 required)"}`,
-  })
-
-  const dbPath = resolveDbPath()
-  try {
-    const db = initDatabase(dbPath)
-    const tables = db
-      .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
-      .all() as { name: string }[]
-    const missing = REQUIRED_TABLES.filter((t) => !tables.some((r) => r.name === t))
-    db.close()
-    checks.push({
-      name: "SQLite database",
-      ok: missing.length === 0,
-      detail: missing.length === 0 ? `${dbPath} (${tables.length} tables)` : `missing: ${missing.join(", ")}`,
-    })
-  } catch (err) {
-    checks.push({ name: "SQLite database", ok: false, detail: `${dbPath}: ${(err as Error).message}` })
+export async function runDoctor(options: { json?: boolean; group?: string } = {}): Promise<number> {
+  if (options.json) {
+    const report = await generateSetupReport({ group: options.group })
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
+    return report.overall === "blocked" ? 1 : 0
   }
-
-  const uiDir = resolveUiWorkspacePath()
-  checks.push({
-    name: "UI workspace",
-    ok: existsSync(resolve(uiDir, "package.json")),
-    detail: uiDir,
-  })
-
-  console.log("\n  Doctor report:")
-  for (const c of checks) {
-    const mark = c.ok ? "OK " : "FAIL"
-    console.log(`    [${mark}] ${c.name} — ${c.detail}`)
-  }
-
-  const failed = checks.filter((c) => !c.ok).length
-  console.log(`\n  ${failed === 0 ? "All checks passed." : `${failed} check(s) failed.`}\n`)
-  return failed === 0 ? 0 : 1
+  return runDoctorCommand({ group: options.group })
 }
 
 export function startUi(): Promise<number> {
@@ -179,9 +187,15 @@ export function startUi(): Promise<number> {
     return Promise.resolve(1)
   }
 
-  console.log(`  Starting UI dev server in ${uiDir}\n`)
+  const uiUrl = resolveUiLaunchUrl()
+  console.log(`  Starting UI dev server in ${uiDir}`)
+  console.log(`  Opening ${uiUrl}\n`)
   const npm = process.platform === "win32" ? "npm.cmd" : "npm"
-  const child = spawn(npm, ["run", "dev"], { cwd: uiDir, stdio: "inherit" })
+  const child = spawn(npm, ["run", "dev", "--", "--hostname", UI_DEV_HOST, "--port", String(UI_DEV_PORT)], {
+    cwd: uiDir,
+    stdio: "inherit"
+  })
+  openBrowser(uiUrl)
 
   return new Promise((resolvePromise) => {
     const forward = (signal: NodeJS.Signals) => child.kill(signal)
@@ -326,12 +340,35 @@ export async function runItemAction(itemRef: string, action: string, resumeFlags
     }
     const item = resolved.item
 
+    if (action === "start_brainstorm") {
+      if (item.current_column !== "idea" || item.phase_status !== "draft") {
+        console.error(`  Invalid transition: ${action} from ${item.current_column}/${item.phase_status}`)
+        return 1
+      }
+      const io = createCliIO(repos)
+      try {
+        const runId = await runWorkflowWithSync(
+          { id: item.id, title: item.title, description: item.description },
+          repos,
+          io,
+          { owner: "cli", itemId: item.id }
+        )
+        console.log(`  ${action} applied`)
+        console.log(`  run-id: ${runId}`)
+        return 0
+      } finally {
+        io.close?.()
+      }
+    }
+
     // For resume_run, preflight-check whether the active run actually has a
     // recovery record. If it does, collect remediation fields before calling
     // perform() so we can fail fast in non-TTY mode with exit 75.
     let resumePayload: { summary: string; branch?: string; commitSha?: string; reviewNotes?: string } | undefined
+    let resumeRunId: string | undefined
     if (action === "resume_run") {
       const active = repos.latestActiveRunForItem(item.id) ?? repos.latestRecoverableRunForItem(item.id)
+      resumeRunId = active?.id
       if (active?.recovery_status) {
         const isTty = Boolean(process.stdin.isTTY && process.stdout.isTTY) && resumeFlags?.yes !== true
         const collected = await collectRemediationFlags(resumeFlags ?? {}, isTty)
@@ -350,6 +387,59 @@ export async function runItemAction(itemRef: string, action: string, resumeFlags
           commitSha: collected.commit,
           reviewNotes: collected.notes
         }
+      }
+    }
+
+    if (action === "resume_run" && resumePayload && resumeRunId) {
+      const { loadResumeReadiness, performResume } = await import("./core/resume.js")
+      const readiness = await loadResumeReadiness(repos, resumeRunId)
+      if (readiness.kind === "not_found") {
+        console.error(`  Item not found: ${itemRef}`)
+        return 1
+      }
+      if (readiness.kind === "not_resumable") {
+        console.error(`  Not resumable: ${readiness.reason}`)
+        return 2
+      }
+      if (readiness.kind === "no_recovery") {
+        console.error(`  Invalid transition: ${action} from ${item.current_column}/${item.phase_status}`)
+        return 1
+      }
+
+      const scopeRef =
+        readiness.record.scope.type === "stage"
+          ? readiness.record.scope.stageId
+          : readiness.record.scope.type === "story"
+          ? `${readiness.record.scope.waveNumber}/${readiness.record.scope.storyId}`
+          : null
+      const remediation = repos.createExternalRemediation({
+        runId: resumeRunId,
+        scope: readiness.record.scope.type,
+        scopeRef,
+        summary: resumePayload.summary,
+        branch: resumePayload.branch,
+        commitSha: resumePayload.commitSha,
+        reviewNotes: resumePayload.reviewNotes,
+        source: "cli"
+      })
+
+      const io = createCliIO(repos)
+      try {
+        console.log(`  ${action} applied`)
+        console.log(`  run-id: ${resumeRunId}`)
+        console.log(`  remediation-id: ${remediation.id}`)
+        await performResume({ repos, io, runId: resumeRunId, remediation })
+        const refreshed = repos.getRun(resumeRunId)
+        if (refreshed?.recovery_status === "blocked") {
+          printResumeBlockedOutput(resumeRunId, {
+            summary: refreshed.recovery_summary,
+            scope: refreshed.recovery_scope,
+            scopeRef: refreshed.recovery_scope_ref,
+          }, itemRef)
+        }
+        return 0
+      } finally {
+        io.close?.()
       }
     }
 
@@ -409,7 +499,17 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       printHelp()
       return
     case "doctor":
-      process.exit(await runDoctor())
+      if (cmd.group && !isKnownGroupId(cmd.group)) {
+        console.error(`  Unknown setup group: ${cmd.group}`)
+        process.exit(2)
+      }
+      process.exit(await runDoctor({ json: cmd.json, group: cmd.group }))
+    case "setup":
+      if (cmd.group && !isKnownGroupId(cmd.group)) {
+        console.error(`  Unknown setup group: ${cmd.group}`)
+        process.exit(2)
+      }
+      process.exit(await runSetupCommand({ group: cmd.group, noInteractive: cmd.noInteractive }))
     case "start-ui":
       process.exit(await startUi())
     case "item-action":
