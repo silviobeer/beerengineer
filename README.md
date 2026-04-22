@@ -50,8 +50,22 @@ Schnittstelle aktiv ist. Damit ist der gleiche Code auf zwei Wegen nutzbar:
 - **CLI-Adapter** (`core/ioCli.ts`) → `ask` liest von stdin, `emit` schreibt in die
   Konsole.
 - **API-Adapter** (`core/ioApi.ts`) → `ask` schreibt einen Eintrag in `pending_prompts`
-  und stellt einen `Promise` aus, den die UI per `POST /runs/:id/input` aufloest;
-  `emit` schiebt das Event in den SSE-Stream **und** in einen DB-Sync-Subscriber.
+  und liefert einen `Promise`, den die UI per `POST /runs/:id/input` aufloest;
+  `emit` schiebt das Event in einen `EventEmitter`, der jeden offenen SSE-Stream
+  bedient.
+
+**IO ist scoped, nicht global.** `runWithWorkflowIO(io, fn)` aus `core/io.ts` setzt
+die aktive IO via `AsyncLocalStorage` — jeder parallele Run im selben Node-Prozess
+hat seine eigene IO, ohne dass sich Prompts, Events oder Antworten kreuzen. Genauso
+fuer `runWithActiveRun({ runId, itemId }, fn)` aus `core/runContext.ts`, das den
+aktuellen Run-Kontext fuer `withStageLifecycle` und `session.ask()` traegt.
+
+**Komposition via Wrapper.** `withDbSync(inner, repos, ctx)` aus
+`core/runOrchestrator.ts` nimmt eine `WorkflowIO` und liefert eine **neue** IO, die
+jedes `emit` zuerst persistiert (`stage_logs` + Folge-Tabellen, `streamId` + `at`
+werden auf das weitergereichte Event geschrieben) und dann an den inneren `emit`
+durchreicht. Kein Monkey-Patching, kein Mutieren — Layering ist explizit:
+`runWithWorkflowIO(withDbSync(apiIO), …)`.
 
 ### CLI ↔ UI — End-to-End
 
@@ -80,7 +94,10 @@ Schnittstelle aktiv ist. Damit ist der gleiche Code auf zwei Wegen nutzbar:
         │   │   GET  /runs/:id/events   → SSE: Replay + live forward      │
         │   │   GET  /board             → projizierter Board-DTO          │
         │   └────────────┬─────────────────────────────────┬──────────────┘
-        │                │ setWorkflowIO(apiIO)            │
+        │                │ runWithWorkflowIO(                              │
+        │                │   withDbSync(apiIO, repos, ctx),                │
+        │                │   () => runWithActiveRun({runId,itemId},        │
+        │                │     () => runWorkflow(item)))                   │
         │                ▼                                 │
         │   ┌─────────────────────────────────────────────┴──────────────┐
         │   │                 WORKFLOW-ENGINE (UI-agnostic)               │
@@ -96,14 +113,20 @@ Schnittstelle aktiv ist. Damit ist der gleiche Code auf zwei Wegen nutzbar:
         │                                 │ io.emit / io.ask
         │                                 ▼
         │   ┌──────────────────────────────────────────────────────────────┐
-        │   │   attachDbSync(io, repos)  — Event-Subscriber                │
+        │   │   withDbSync(inner, repos, ctx)  — Wrapper-IO                │
         │   │                                                              │
-        │   │   stage_started      → INSERT stage_runs                     │
-        │   │                        UPDATE items.current_column           │
-        │   │   stage_completed    → UPDATE stage_runs.status              │
-        │   │   prompt_requested   → INSERT stage_logs                     │
-        │   │   artifact_written   → INSERT artifact_files                 │
-        │   │   run_finished       → UPDATE runs.status                    │
+        │   │   1. persist event   → INSERT/UPDATE Tabelle (s. unten)     │
+        │   │   2. stamp meta      → streamId + at (aus stage_logs)       │
+        │   │   3. forward to inner.emit → EventEmitter → SSE clients     │
+        │   │                                                              │
+        │   │   stage_started      → stage_runs (idempotent auf id)       │
+        │   │   stage_completed    → stage_runs.status / errored          │
+        │   │   prompt_requested   → stage_logs                            │
+        │   │   prompt_answered    → stage_logs                            │
+        │   │   artifact_written   → artifact_files + stage_logs           │
+        │   │   project_created    → projects (idempotent auf code)        │
+        │   │   item_column_changed→ items.current_column                  │
+        │   │   run_started/finished → runs.status                         │
         │   └──────────────────────────┬───────────────────────────────────┘
         │                              │
         │                              ▼
@@ -134,25 +157,42 @@ HTTP+SSE liegt nur auf den Schreibseiten (Run-Steuerung) und auf dem Live-Pfad
 ### Workflow-Event-Modell
 
 ```ts
+// Jedes Event traegt optional persistence-meta nach dem Wrapper:
+type WorkflowEventMeta = { streamId?: string; at?: number }
+
 type WorkflowEvent =
   | { type: "run_started";        runId; itemId; title }
-  | { type: "run_finished";       runId; status: "completed" | "failed" }
+  | { type: "run_finished";       runId; status: "completed" | "failed"; error? }
   | { type: "stage_started";      runId; stageRunId; stageKey; projectId? }
-  | { type: "stage_completed";    runId; stageRunId; stageKey; status }
-  | { type: "prompt_requested";   runId; promptId; prompt }
+  | { type: "stage_completed";    runId; stageRunId; stageKey; status; error? }
+  | { type: "prompt_requested";   runId; promptId; prompt; stageRunId? }
   | { type: "prompt_answered";    runId; promptId; answer }
-  | { type: "artifact_written";   runId; label; kind; path }
-  | { type: "log";                runId; message }
+  | { type: "artifact_written";   runId; stageRunId?; label; kind; path }
+  | { type: "log";                runId; message; level? }
   | { type: "item_column_changed";runId; itemId; column; phaseStatus }
+  | { type: "project_created";    runId; itemId; projectId; code; name; summary; position }
+  // & WorkflowEventMeta (intersection elided for readability)
 ```
 
-Jedes Event hat **drei Konsumenten**:
+Der **Lebenszyklus eines Events** ist dreistufig:
 
-1. `attachDbSync` persistiert es in `stage_logs` + Folge-Tabellen.
-2. `EventEmitter` der `ApiIOSession` schiebt es in jeden offenen SSE-Stream.
-3. SSE-Replay liest auf `/runs/:id/events` zuerst alle bereits persistierten
-   Events aus `stage_logs`, dann die Live-Folgeevents — Clients koennen also
-   spaet andocken, ohne History zu verlieren.
+1. **Emit:** Engine ruft `io.emit(event)` (oder `withStageLifecycle` tut es im
+   Stage-Wrapper). Beim API-Path ist `io` die `withDbSync`-Wrapper-IO.
+2. **Persist + Enrich:** `withDbSync` schreibt in die DB, klont das Event und
+   stempelt `streamId` (= `stage_logs.id`) und `at` (= `created_at`) drauf.
+   Das Original-Event wird **nicht** mutiert.
+3. **Forward:** Das angereicherte Event geht an `inner.emit`, also an den
+   `EventEmitter` der `ApiIOSession`, und von dort in jeden offenen SSE-Stream.
+
+Der **SSE-Endpoint** subscribet zuerst, **dann** liest er die History aus
+`stage_logs` und flusht zuletzt die in der Zwischenzeit empfangenen Live-Events.
+Dedup laeuft ueber `streamId` — selbst wenn ein Event in der Replay-Phase auch
+schon live empfangen wurde, sieht der Client es nur einmal. Spaete Reconnects
+verlieren keine History.
+
+**Idempotenz:** `withDbSync` haelt eine in-memory `Set<stageRunId>` und ueberspringt
+einen `stage_started`-Insert, wenn dieselbe Stage-Run-Id schon persistiert wurde.
+Das schuetzt vor Doppel-Emits aus retried Workflow-Pfaden.
 
 ### Stage → Board-Spalten-Mapping
 
@@ -185,15 +225,27 @@ So muss die UI nichts ueber Engine-Status wissen — sie zeichnet nur, was im
 | `GET`  | `/board[?workspace=key]` | Board-DTO (Spalten + Karten) |
 | `GET`  | `/health` | `{ ok: true }` |
 
+### Konfigurations-Variablen
+
+| Variable | Wirkung |
+|---|---|
+| `BEERENGINEER_UI_DB_PATH` | Pfad zur SQLite-Datei. Default: `~/.local/share/beerengineer/beerengineer.sqlite`. **Engine und UI muessen denselben Pfad sehen**, sonst sieht die UI keine Engine-Daten. |
+| `NEXT_PUBLIC_ENGINE_BASE_URL` | UI → Engine HTTP-Base. Default `http://127.0.0.1:4100`. |
+| `PORT` / `HOST` | Bind-Adresse des Engine-Servers. Default `127.0.0.1:4100`. |
+| `BEERENGINEER_SEED` | `0` deaktiviert das Demo-Seed. Wird unter `NODE_ENV=test` per Default deaktiviert; sonst aktiv, sobald die DB leer ist. |
+
 ### Test-Pyramide
 
-- **Engine-Unit** (`apps/engine/test/dbSync.test.ts`): `mapStageToColumn`,
-  `attachDbSync`-Lifecycle, Pending-Prompt-Roundtrip — laufen unter `node:test`.
-- **Playwright-Integration** (`apps/ui/tests/e2e/runs-live.spec.ts`): spawnt den
-  Engine-Server, startet einen Run via HTTP, durchlaeuft alle 9 Stages mit
-  automatischen Prompt-Antworten, oeffnet `/runs` und `/runs/:id` im Browser.
-
----
+- **Engine-Unit** (`apps/engine/test/dbSync.test.ts`, 8 Tests): `mapStageToColumn`,
+  `withDbSync`-Lifecycle, Pending-Prompt-Roundtrip, AsyncLocalStorage-Isolation
+  paralleler Runs, `project_created`-Persistierung, end-to-end Prompt + Artifact,
+  Idempotenz von `stage_started`, "no mutation" auf das Original-Event — laufen
+  unter `node:test --import tsx`.
+- **Playwright-Integration** (`apps/ui/tests/e2e/runs-live.spec.ts`, 2 Tests):
+  spawnt den Engine-Server auf einer eigenen Test-DB, startet einen Run via HTTP,
+  durchlaeuft alle 9 Stages mit automatischen Prompt-Antworten, oeffnet `/runs`
+  und `/runs/:id` im Browser und prueft, dass die `LiveRunConsole` den Stage-Verlauf
+  rendert.
 
 ---
 
@@ -699,11 +751,16 @@ apps/engine/src/
                             StageRuns, StageLogs, ArtifactFiles, PendingPrompts
 
   core/
-    io.ts                   WorkflowIO-Abstraktion + setWorkflowIO/getWorkflowIO
+    io.ts                   WorkflowIO-Abstraktion + AsyncLocalStorage
+                            (runWithWorkflowIO / getWorkflowIO / hasWorkflowIO)
     ioCli.ts                CLI-Adapter (readline)
-    ioApi.ts                API-Adapter (DB-Prompt + EventEmitter)
-    runContext.ts           setActiveRun + withStageLifecycle (emit stage_started/completed)
-    runOrchestrator.ts      prepareRun / attachDbSync / mapStageToColumn
+    ioApi.ts                API-Adapter (createApiIOSession): DB-Prompt + EventEmitter,
+                            ask() resolved runId via getActiveRun()
+    runContext.ts           AsyncLocalStorage fuer den aktiven Run
+                            (runWithActiveRun / getActiveRun / withStageLifecycle)
+    runOrchestrator.ts      prepareRun / withDbSync (Wrapper-IO) /
+                            attachDbSync (deprecated mutate-and-detach Shim) /
+                            mapStageToColumn
     parallelReview.ts       Kombiniert mehrere Reviewer parallel
     stageRuntime.ts         formale Stage-Runtime mit Status/Logs/Files
 
