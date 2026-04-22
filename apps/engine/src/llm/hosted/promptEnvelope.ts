@@ -1,5 +1,6 @@
 import type { StageAgentInput } from "../../core/adapters.js"
 import type { RuntimePolicy } from "../registry.js"
+import { loadPrompt, PromptLoadError } from "../prompts/loader.js"
 
 export type HostedProviderId = "claude-code" | "codex" | "opencode"
 
@@ -30,7 +31,7 @@ export function buildStagePrompt<S>(input: {
       : "Revise the stage output using the supplied review feedback."
 
   return [
-    "You are the BeerEngineer stage agent backend.",
+    loadPrompt("system", input.stageId),
     "Return exactly one JSON object and nothing else.",
     'Use this exact top-level shape: { "kind": "artifact", "artifact": unknown } OR { "kind": "message", "message": string }',
     'When you need information from the user, emit { "kind": "message", "message": "<your question>" } — the user will respond on the next turn.',
@@ -51,8 +52,16 @@ export function buildReviewPrompt<S, A>(input: {
   runtimePolicy: RuntimePolicy
   request: { artifact: A; state: S }
 }): string {
+  let reviewerPrompt: string
+  try {
+    reviewerPrompt = loadPrompt("reviewers", input.stageId)
+  } catch (error) {
+    if (!(error instanceof PromptLoadError) || !error.missing) throw error
+    reviewerPrompt = loadPrompt("reviewers", "_default")
+  }
+
   return [
-    "You are the BeerEngineer reviewer backend.",
+    reviewerPrompt,
     "Reviewer runs are read-only.",
     "Return exactly one JSON object and nothing else.",
     'Use one of these exact shapes: { "kind": "pass" } | { "kind": "revise", "feedback": string } | { "kind": "block", "reason": string }',
@@ -74,7 +83,7 @@ export function buildExecutionPrompt(input: {
   payload: unknown
 }): string {
   return [
-    "You are the BeerEngineer execution coder backend.",
+    loadPrompt("workers", "execution"),
     "Modify files directly inside the workspace when required by the task.",
     "Return exactly one JSON object and nothing else.",
     'Use this exact shape: { "summary": string, "testsRun": Array<{ "command": string, "status": "passed"|"failed"|"not_run" }>, "implementationNotes": string[], "blockers": string[] }',
