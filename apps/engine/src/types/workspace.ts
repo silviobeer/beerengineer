@@ -2,6 +2,23 @@ export type HarnessRole = "coder" | "reviewer"
 
 export type KnownHarness = "claude" | "codex" | "opencode"
 
+export type RuntimePolicyMode =
+  | "safe-readonly"
+  | "safe-workspace-write"
+  | "unsafe-autonomous-write"
+
+export type WorkspaceRuntimePolicy = {
+  stageAuthoring: Extract<RuntimePolicyMode, "safe-readonly" | "safe-workspace-write">
+  reviewer: "safe-readonly"
+  coderExecution: Extract<RuntimePolicyMode, "safe-workspace-write" | "unsafe-autonomous-write">
+}
+
+export const DEFAULT_WORKSPACE_RUNTIME_POLICY: WorkspaceRuntimePolicy = {
+  stageAuthoring: "safe-readonly",
+  reviewer: "safe-readonly",
+  coderExecution: "safe-workspace-write",
+}
+
 export type RoleModelRef = {
   provider: string
   model: string
@@ -40,7 +57,7 @@ export type SonarConfig = {
 }
 
 export type WorkspacePreview = {
-  schemaVersion: 1
+  schemaVersion: 2
   path: string
   exists: boolean
   isDirectory: boolean
@@ -72,20 +89,22 @@ export type RegisterWorkspaceInput = {
 }
 
 export type WorkspaceConfigFile = {
-  schemaVersion: 1
+  schemaVersion: 2
   key: string
   name: string
   harnessProfile: HarnessProfile
+  runtimePolicy: WorkspaceRuntimePolicy
   sonar: SonarConfig
   createdAt: number
 }
 
 export type WorkspaceRow = {
-  schemaVersion: 1
+  schemaVersion: 2
   key: string
   name: string
   rootPath: string
-  harnessProfile: HarnessProfile
+  harnessProfile: HarnessProfile | null
+  harnessProfileInvalid?: string
   sonarEnabled: boolean
   createdAt: number
   lastOpenedAt: number | null
@@ -110,6 +129,7 @@ export type RegisterResult =
       workspace: WorkspaceRow
       preview: WorkspacePreview
       actions: string[]
+      warnings: string[]
       sonarProjectUrl?: string
       sonarMcpSnippet?: string
       ghCreateCommand?: string

@@ -31,6 +31,8 @@ import { projectReview } from "./stages/project-review/index.js"
 import { execution } from "./stages/execution/index.js"
 import { qa } from "./stages/qa/index.js"
 import { documentation } from "./stages/documentation/index.js"
+import type { RunLlmConfig } from "./llm/registry.js"
+import type { ExecutionLlmOptions } from "./stages/execution/index.js"
 
 type ExecutionResumeOptions = {
   waveNumber?: number
@@ -73,6 +75,11 @@ function shouldRunProjectStage(
 export type WorkflowResumeInput = {
   scope: RecoveryScope
   currentStage?: string | null
+}
+
+export type WorkflowLlmOptions = {
+  stage?: RunLlmConfig
+  execution?: ExecutionLlmOptions
 }
 
 async function readJson<T>(path: string): Promise<T> {
@@ -147,7 +154,7 @@ async function loadDocumentation(context: WorkflowContext): Promise<Documentatio
   return readJson<DocumentationArtifact>(join(layout.stageArtifactsDir(context, "documentation"), "documentation.json"))
 }
 
-export async function runWorkflow(item: Item, options?: { resume?: WorkflowResumeInput }): Promise<void> {
+export async function runWorkflow(item: Item, options?: { resume?: WorkflowResumeInput; llm?: WorkflowLlmOptions }): Promise<void> {
   const slug = item.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
   const activeRun = getActiveRun()
   const context: WorkflowContext = {
@@ -158,7 +165,7 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
   const resumePlan = options?.resume ? normalizeProjectResume(options.resume) : null
   const projects = resumePlan
     ? await loadProjects(context)
-    : await withStageLifecycle("brainstorm", {}, () => brainstorm(item, context))
+    : await withStageLifecycle("brainstorm", {}, () => brainstorm(item, context, options?.llm?.stage))
   if (activeRun) {
     projects.forEach((project, index) => {
       emitEvent({
@@ -175,31 +182,31 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
   }
 
   for (const project of projects) {
-    await runProject({ ...context, project }, resumePlan ?? undefined)
+    await runProject({ ...context, project }, resumePlan ?? undefined, options?.llm)
   }
 
   stagePresent.header("DONE")
   stagePresent.ok(`Item "${item.title}" is done ✓`)
 }
 
-async function runProject(initialCtx: ProjectContext, resume?: ProjectResumePlan): Promise<void> {
+async function runProject(initialCtx: ProjectContext, resume?: ProjectResumePlan, llm?: WorkflowLlmOptions): Promise<void> {
   let ctx = initialCtx
   const projectId = ctx.project.id
 
   if (shouldRunProjectStage(resume, "requirements")) {
-    ctx = { ...ctx, prd: await withStageLifecycle("requirements", { projectId }, () => requirements(ctx)) }
+    ctx = { ...ctx, prd: await withStageLifecycle("requirements", { projectId }, () => requirements(ctx, llm?.stage)) }
   } else {
     ctx = { ...ctx, prd: await loadPrd(ctx) }
   }
 
   if (shouldRunProjectStage(resume, "architecture")) {
-    ctx = { ...ctx, architecture: await withStageLifecycle("architecture", { projectId }, () => architecture(assertWithPrd(ctx))) }
+    ctx = { ...ctx, architecture: await withStageLifecycle("architecture", { projectId }, () => architecture(assertWithPrd(ctx), llm?.stage)) }
   } else {
     ctx = { ...ctx, architecture: await loadArchitecture(ctx) }
   }
 
   if (shouldRunProjectStage(resume, "planning")) {
-    ctx = { ...ctx, plan: await withStageLifecycle("planning", { projectId }, () => planning(assertWithArchitecture(ctx))) }
+    ctx = { ...ctx, plan: await withStageLifecycle("planning", { projectId }, () => planning(assertWithArchitecture(ctx), llm?.stage)) }
   } else {
     ctx = { ...ctx, plan: await loadPlan(ctx) }
   }
@@ -208,7 +215,7 @@ async function runProject(initialCtx: ProjectContext, resume?: ProjectResumePlan
     ctx = {
       ...ctx,
       executionSummaries: await withStageLifecycle("execution", { projectId }, () =>
-        execution(assertWithPlan(ctx), resume?.execution),
+        execution(assertWithPlan(ctx), resume?.execution, llm?.execution),
       ),
     }
   } else {
@@ -216,17 +223,17 @@ async function runProject(initialCtx: ProjectContext, resume?: ProjectResumePlan
   }
 
   if (shouldRunProjectStage(resume, "project-review")) {
-    ctx = { ...ctx, projectReview: await withStageLifecycle("project-review", { projectId }, () => projectReview(assertWithExecution(ctx))) }
+    ctx = { ...ctx, projectReview: await withStageLifecycle("project-review", { projectId }, () => projectReview(assertWithExecution(ctx), llm?.stage)) }
   } else {
     ctx = { ...ctx, projectReview: await loadProjectReview(ctx) }
   }
 
   if (shouldRunProjectStage(resume, "qa")) {
-    await withStageLifecycle("qa", { projectId }, () => qa(ctx))
+    await withStageLifecycle("qa", { projectId }, () => qa(ctx, llm?.stage))
   }
 
   if (shouldRunProjectStage(resume, "documentation")) {
-    ctx = { ...ctx, documentation: await withStageLifecycle("documentation", { projectId }, () => documentation(assertWithProjectReview(ctx))) }
+    ctx = { ...ctx, documentation: await withStageLifecycle("documentation", { projectId }, () => documentation(assertWithProjectReview(ctx), llm?.stage)) }
   } else {
     ctx = { ...ctx, documentation: await loadDocumentation(ctx) }
   }

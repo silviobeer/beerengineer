@@ -1,12 +1,12 @@
 import { runStage } from "../../core/stageRuntime.js"
 import { printStageCompletion, stageSummary, summaryArtifactFile } from "../../core/stageHelpers.js"
 import { stagePresent } from "../../core/stagePresentation.js"
-import { createPlanningReview, createPlanningStage, defaultStageConfig } from "../../llm/registry.js"
+import { createPlanningReview, createPlanningStage, type RunLlmConfig } from "../../llm/registry.js"
 import { renderPlanMarkdown } from "../../render/plan.js"
 import type { ImplementationPlanArtifact, WithArchitecture } from "../../types.js"
 import type { PlanningState } from "./types.js"
 
-export async function planning(ctx: WithArchitecture): Promise<ImplementationPlanArtifact> {
+export async function planning(ctx: WithArchitecture, llm?: RunLlmConfig): Promise<ImplementationPlanArtifact> {
   stagePresent.header(`planning — ${ctx.project.name}`)
 
   const { result } = await runStage({
@@ -21,8 +21,8 @@ export async function planning(ctx: WithArchitecture): Promise<ImplementationPla
       architectureArtifact: ctx.architecture,
       revisionCount: 0,
     }),
-    stageAgent: createPlanningStage(defaultStageConfig.stageAgent.provider, ctx.project),
-    reviewer: createPlanningReview(defaultStageConfig.reviewer.provider),
+    stageAgent: createPlanningStage(ctx.project, llm),
+    reviewer: createPlanningReview(llm),
     askUser: async () => "",
     async persistArtifacts(run, artifact) {
       return [

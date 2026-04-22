@@ -1,12 +1,12 @@
 import { runStage } from "../../core/stageRuntime.js"
 import { printStageCompletion, stageSummary, summaryArtifactFile } from "../../core/stageHelpers.js"
 import { stagePresent } from "../../core/stagePresentation.js"
-import { createArchitectureReview, createArchitectureStage, defaultStageConfig } from "../../llm/registry.js"
+import { createArchitectureReview, createArchitectureStage, type RunLlmConfig } from "../../llm/registry.js"
 import { renderArchitectureMarkdown } from "../../render/architecture.js"
 import type { ArchitectureArtifact, WithPrd } from "../../types.js"
 import type { ArchitectureState } from "./types.js"
 
-export async function architecture(ctx: WithPrd): Promise<ArchitectureArtifact> {
+export async function architecture(ctx: WithPrd, llm?: RunLlmConfig): Promise<ArchitectureArtifact> {
   stagePresent.header(`architecture — ${ctx.project.name}`)
 
   const { result } = await runStage({
@@ -20,8 +20,8 @@ export async function architecture(ctx: WithPrd): Promise<ArchitectureArtifact> 
       prd: ctx.prd,
       revisionCount: 0,
     }),
-    stageAgent: createArchitectureStage(defaultStageConfig.stageAgent.provider, ctx.project),
-    reviewer: createArchitectureReview(defaultStageConfig.reviewer.provider),
+    stageAgent: createArchitectureStage(ctx.project, llm),
+    reviewer: createArchitectureReview(llm),
     askUser: async () => "",
     async persistArtifacts(run, artifact) {
       return [

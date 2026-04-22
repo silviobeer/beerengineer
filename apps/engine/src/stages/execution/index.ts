@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { runStage } from "../../core/stageRuntime.js"
-import { createTestWriterReview, createTestWriterStage, defaultStageConfig } from "../../llm/registry.js"
+import { createTestWriterReview, createTestWriterStage, type RunLlmConfig } from "../../llm/registry.js"
 import { stagePresent } from "../../core/stagePresentation.js"
 import { renderTestPlanMarkdown } from "../../render/testPlan.js"
 import { runRalphStory, writeWaveSummary, type StoryArtifacts } from "./ralphRuntime.js"
@@ -26,6 +26,11 @@ type ExecutionResumeOptions = {
   rerunTestWriter?: boolean
 }
 
+export type ExecutionLlmOptions = {
+  stage?: RunLlmConfig
+  executionCoder?: RunLlmConfig
+}
+
 async function readJsonIfExists<T>(path: string): Promise<T | undefined> {
   try {
     return JSON.parse(await readFile(path, "utf8")) as T
@@ -34,7 +39,7 @@ async function readJsonIfExists<T>(path: string): Promise<T | undefined> {
   }
 }
 
-export async function execution(ctx: WithPlan, resume?: ExecutionResumeOptions): Promise<WaveSummary[]> {
+export async function execution(ctx: WithPlan, resume?: ExecutionResumeOptions, llm?: ExecutionLlmOptions): Promise<WaveSummary[]> {
   stagePresent.header(`execution — ${ctx.project.name}`)
 
   const storyById = new Map(ctx.prd.stories.map(story => [story.id, story]))
@@ -53,7 +58,7 @@ export async function execution(ctx: WithPlan, resume?: ExecutionResumeOptions):
     }
 
     assertWaveDependenciesSatisfied(wave, completedWaveIds)
-    summaries.push(await executeWave(ctx, wave, storyById, resume))
+    summaries.push(await executeWave(ctx, wave, storyById, resume, llm))
     completedWaveIds.add(wave.id)
     if (resume?.waveNumber === wave.number) resume = undefined
   }
@@ -86,6 +91,7 @@ async function executeWave(
   wave: WaveDefinition,
   storyById: Map<string, UserStory>,
   resume?: ExecutionResumeOptions,
+  llm?: ExecutionLlmOptions,
 ): Promise<WaveSummary> {
   const tag = wave.parallel ? "(parallel)" : "(sequential)"
   stagePresent.step(`\nWave ${wave.number} ${tag}: ${wave.stories.map(s => s.id).join(", ")}`)
@@ -93,7 +99,7 @@ async function executeWave(
   const run = (story: Pick<UserStory, "id" | "title">) =>
     implementStory(ctx, wave, resolveStory(story, storyById), {
       rerunTestWriter: resume?.storyId === story.id ? Boolean(resume.rerunTestWriter) : false,
-    })
+    }, llm)
 
   const results = wave.parallel
     ? await runParallelStories(wave.stories, run)
@@ -162,6 +168,7 @@ async function implementStory(
   wave: WaveDefinition,
   story: UserStory,
   opts: { rerunTestWriter?: boolean } = {},
+  llm?: ExecutionLlmOptions,
 ): Promise<StoryResult> {
   stagePresent.step(`  Story ${story.id}: ${story.title}`)
 
@@ -175,11 +182,11 @@ async function implementStory(
 
   const testPlanPath = join(layout.executionTestWriterDir(ctx, wave.number, story.id), "test-plan.json")
   const testPlan = !opts.rerunTestWriter
-    ? (await readJsonIfExists<StoryTestPlanArtifact>(testPlanPath)) ?? await writeStoryTestPlan(ctx, wave, story)
-    : await writeStoryTestPlan(ctx, wave, story)
+    ? (await readJsonIfExists<StoryTestPlanArtifact>(testPlanPath)) ?? await writeStoryTestPlan(ctx, wave, story, llm?.stage)
+    : await writeStoryTestPlan(ctx, wave, story, llm?.stage)
   stagePresent.dim(`  Test plan: ${testPlan.testPlan.testCases.map(tc => tc.id).join(", ")}`)
   const storyContext = buildStoryExecutionContext(ctx.project, wave, ctx.architecture, testPlan)
-  const result: StoryArtifacts = await runRalphStory(storyContext, { workspaceId: ctx.workspaceId, runId: ctx.runId })
+  const result: StoryArtifacts = await runRalphStory(storyContext, { workspaceId: ctx.workspaceId, runId: ctx.runId }, llm?.executionCoder)
   stagePresent.dim(`  Status: ${result.implementation.status}`)
   return { storyId: story.id, implementation: result.implementation }
 }
@@ -221,6 +228,7 @@ async function writeStoryTestPlan(
   ctx: WithArchitecture,
   wave: WaveDefinition,
   story: UserStory,
+  llm?: RunLlmConfig,
 ): Promise<StoryTestPlanArtifact> {
   const acs: AcceptanceCriterion[] = story.acceptanceCriteria.length > 0
     ? story.acceptanceCriteria
@@ -242,8 +250,8 @@ async function writeStoryTestPlan(
       acceptanceCriteria: acs,
       revisionCount: 0,
     }),
-    stageAgent: createTestWriterStage(defaultStageConfig.stageAgent.provider, ctx.project),
-    reviewer: createTestWriterReview(defaultStageConfig.reviewer.provider),
+    stageAgent: createTestWriterStage(ctx.project, llm),
+    reviewer: createTestWriterReview(llm),
     askUser: async () => "",
     async persistArtifacts(_run, artifact) {
       return [

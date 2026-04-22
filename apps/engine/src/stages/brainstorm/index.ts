@@ -4,10 +4,10 @@ import { printStageCompletion, stageSummary, summaryArtifactFile } from "../../c
 import { stagePresent } from "../../core/stagePresentation.js"
 import { renderConceptMarkdown } from "../../render/concept.js"
 import { ask } from "../../sim/human.js"
-import { createBrainstormReview, createBrainstormStage, defaultStageConfig } from "../../llm/registry.js"
+import { createBrainstormReview, createBrainstormStage, type RunLlmConfig } from "../../llm/registry.js"
 import type { BrainstormState } from "./types.js"
 
-export async function brainstorm(item: Item, context: WorkflowContext): Promise<Project[]> {
+export async function brainstorm(item: Item, context: WorkflowContext, llm?: RunLlmConfig): Promise<Project[]> {
   stagePresent.header("brainstorm")
   stagePresent.step("Interactive session via LLM adapter + stage runtime\n")
 
@@ -23,8 +23,8 @@ export async function brainstorm(item: Item, context: WorkflowContext): Promise<
       targetQuestions: 3,
       history: [],
     }),
-    stageAgent: createBrainstormStage(defaultStageConfig.stageAgent.provider),
-    reviewer: createBrainstormReview(defaultStageConfig.reviewer.provider),
+    stageAgent: createBrainstormStage(undefined, llm),
+    reviewer: createBrainstormReview(llm),
     askUser: ask,
     async persistArtifacts(run, artifact) {
       return [

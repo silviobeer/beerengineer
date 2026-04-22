@@ -3,7 +3,7 @@ import { join } from "node:path"
 import { runStage } from "../../core/stageRuntime.js"
 import { printStageCompletion, stageSummary, summaryArtifactFile } from "../../core/stageHelpers.js"
 import { stagePresent } from "../../core/stagePresentation.js"
-import { createDocumentationReview, createDocumentationStage, defaultStageConfig } from "../../llm/registry.js"
+import { createDocumentationReview, createDocumentationStage, type RunLlmConfig } from "../../llm/registry.js"
 import { buildDocFiles } from "../../render/documentation.js"
 import type { DocumentationArtifact, WithProjectReview } from "../../types.js"
 import type { DocumentationState } from "./types.js"
@@ -39,7 +39,7 @@ async function writeProjectDocs(artifact: DocumentationArtifact): Promise<void> 
   }
 }
 
-export async function documentation(ctx: WithProjectReview): Promise<DocumentationArtifact> {
+export async function documentation(ctx: WithProjectReview, llm?: RunLlmConfig): Promise<DocumentationArtifact> {
   stagePresent.header(`documentation — ${ctx.project.name}`)
 
   const existingDocs = await loadExistingDocs()
@@ -60,8 +60,8 @@ export async function documentation(ctx: WithProjectReview): Promise<Documentati
       revisionCount: 0,
       existingDocs,
     }),
-    stageAgent: createDocumentationStage(defaultStageConfig.stageAgent.provider, ctx.project),
-    reviewer: createDocumentationReview(defaultStageConfig.reviewer.provider),
+    stageAgent: createDocumentationStage(ctx.project, llm),
+    reviewer: createDocumentationReview(llm),
     askUser: async () => "",
     async persistArtifacts(run, artifact) {
       await writeProjectDocs(artifact)

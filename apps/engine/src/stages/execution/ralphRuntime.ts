@@ -12,6 +12,8 @@ import { writeRecoveryRecord } from "../../core/recovery.js"
 import { layout, type WorkflowContext } from "../../core/workspaceLayout.js"
 import type { StageLogEntry } from "../../core/stageRuntime.js"
 import { stagePresent } from "../../core/stagePresentation.js"
+import { executionCoderPolicy, resolveHarness, type RunLlmConfig } from "../../llm/registry.js"
+import { runCoderHarness } from "../../llm/hosted/execution/coderHarness.js"
 import { crReview, llm6bFix, llm6bImplement, sonarReview } from "../../sim/llm.js"
 import type {
   Finding,
@@ -262,6 +264,7 @@ function cycleReviewPath(dir: string, cycle: number): string {
 export async function runRalphStory(
   storyContext: StoryExecutionContext,
   runtimeContext: WorkflowContext,
+  llm?: RunLlmConfig,
 ): Promise<StoryArtifacts> {
   const dir = layout.executionRalphDir(runtimeContext, storyContext.wave.number, storyContext.story.id)
   await mkdir(dir, { recursive: true })
@@ -270,6 +273,7 @@ export async function runRalphStory(
   const reviewPath = join(dir, "story-review.json")
   const logPath = join(dir, "log.jsonl")
   const remediationPath = join(dir, "pending-remediation.json")
+  const baselinePath = join(dir, "coder-baseline.json")
 
   const persistedImplementation = await readJsonIfExists<StoryImplementationArtifact>(implementationPath)
   const persistedReview = await readJsonIfExists<StoryReviewArtifact>(reviewPath)
@@ -365,14 +369,45 @@ export async function runRalphStory(
 
         if (isRemediation) {
           stagePresent.step(`    Ralph addresses review findings for ${storyContext.story.id}...`)
-          await llm6bFix(nextFeedback ?? "")
         } else {
           stagePresent.step(`    Ralph implements ${storyContext.story.id}...`)
+        }
+
+        let coderSummary: string | undefined
+        let changedFilesThisIteration: string[] = []
+        let notes: string[] = isRemediation ? ["Remediation run triggered by story review."] : []
+
+        if (llm) {
+          const harness = resolveHarness({
+            workspaceRoot: llm.workspaceRoot,
+            harnessProfile: llm.harnessProfile,
+            runtimePolicy: llm.runtimePolicy,
+            role: "coder",
+            stage: "test-writer",
+          })
+          const coderResult = await runCoderHarness({
+            harness,
+            runtimePolicy: executionCoderPolicy(llm.runtimePolicy),
+            baselinePath,
+            storyContext,
+            reviewFeedback: isRemediation ? nextFeedback ?? "" : undefined,
+          })
+          coderSummary = coderResult.summary
+          changedFilesThisIteration = coderResult.changedFiles
+          notes = [...notes, ...coderResult.implementationNotes]
+          if (coderResult.blockers.length > 0) {
+            notes.push(...coderResult.blockers.map(blocker => `[blocker] ${blocker}`))
+          }
+          stagePresent.dim(`    → ${coderSummary}`)
+        } else if (isRemediation) {
+          await llm6bFix(nextFeedback ?? "")
+        } else {
           await llm6bImplement({
             id: storyContext.story.id,
             title: storyContext.story.title,
             acceptanceCriteria: storyContext.story.acceptanceCriteria,
           })
+          changedFilesThisIteration = fakeChangedFiles(storyContext.story.id)
         }
 
         const checks = checksForIteration(iterationsThisCycle, isRemediation)
@@ -384,10 +419,10 @@ export async function runRalphStory(
           action,
           checks,
           result: result === "done" && isRemediation ? "review_feedback_applied" : result,
-          notes: isRemediation ? ["Remediation run triggered by story review."] : [],
+          notes,
         })
         implementation.changedFiles = Array.from(
-          new Set([...implementation.changedFiles, ...fakeChangedFiles(storyContext.story.id)]),
+          new Set([...implementation.changedFiles, ...changedFilesThisIteration]),
         )
         implementation.branch = await appendBranchCommit(
           runtimeContext,

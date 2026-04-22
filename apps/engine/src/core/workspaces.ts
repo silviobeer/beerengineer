@@ -1,25 +1,31 @@
 import { spawnSync } from "node:child_process"
-import { access, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
+import { access, mkdir, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises"
 import { constants } from "node:fs"
-import { basename, dirname, resolve } from "node:path"
+import { randomBytes } from "node:crypto"
+import { basename, dirname, relative, resolve, sep } from "node:path"
 import { createInterface } from "node:readline/promises"
 import { stdin as input, stdout as output } from "node:process"
 import type { Repos, WorkspaceRow as DbWorkspaceRow } from "../db/repositories.js"
 import { isKnownModel } from "./harness/models.js"
 import type { AppConfig, SetupReport } from "../setup/types.js"
+import {
+  DEFAULT_WORKSPACE_RUNTIME_POLICY,
+} from "../types/workspace.js"
 import type {
   HarnessProfile,
   KnownHarness,
   RegisterResult,
   RegisterWorkspaceInput,
+  RuntimePolicyMode,
   SonarConfig,
   ValidationResult,
   WorkspaceConfigFile,
+  WorkspaceRuntimePolicy,
   WorkspacePreview,
   WorkspaceRow,
 } from "../types/workspace.js"
 
-const WORKSPACE_SCHEMA_VERSION = 1 as const
+const WORKSPACE_SCHEMA_VERSION = 2 as const
 const SONAR_DEFAULT_HOST = "https://sonarcloud.io"
 const WORKSPACE_CONFIG_DIR = ".beerengineer"
 const WORKSPACE_CONFIG_FILE = "workspace.json"
@@ -30,11 +36,15 @@ function toJson(value: unknown): string {
 }
 
 function slugify(input: string): string {
-  return input
+  const core = input
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "") || "workspace"
+    .replace(/^-+|-+$/g, "")
+  if (core) return core
+  // Empty slug (e.g. `.`, `/`): fall back to a random suffix rather than the
+  // fixed string `workspace`, which would collide across keyless registrations.
+  return `workspace-${randomBytes(3).toString("hex")}`
 }
 
 function workspaceConfigPath(root: string): string {
@@ -73,25 +83,53 @@ async function findWritableParent(path: string): Promise<boolean> {
   }
 }
 
+function isContained(child: string, parent: string): boolean {
+  if (child === parent) return true
+  const rel = relative(parent, child)
+  if (!rel || rel === "") return true
+  if (rel.startsWith("..")) return false
+  // `path.isAbsolute(rel)` is true on Windows when the child is on a different
+  // drive, which also means "not contained".
+  return !rel.startsWith(sep) && !/^[A-Za-z]:/.test(rel)
+}
+
 function isInsideAllowedRoot(path: string, allowedRoots: string[]): boolean {
-  return allowedRoots.some(root => {
-    const absRoot = resolve(root)
-    return path === absRoot || path.startsWith(`${absRoot}/`)
-  })
+  return allowedRoots.some(root => isContained(path, resolve(root)))
+}
+
+async function realpathOrResolve(path: string): Promise<string> {
+  try {
+    return await realpath(path)
+  } catch {
+    return resolve(path)
+  }
+}
+
+// A link-resolved containment check. Used for destructive ops like purge so a
+// symlink planted inside an allowed root can't point rm -rf at a path outside.
+export async function isInsideAllowedRootRealpath(path: string, allowedRoots: string[]): Promise<boolean> {
+  const resolvedChild = await realpathOrResolve(path)
+  for (const root of allowedRoots) {
+    const resolvedRoot = await realpathOrResolve(root)
+    if (isContained(resolvedChild, resolvedRoot)) return true
+  }
+  return false
 }
 
 function runGit(args: string[], cwd: string): { ok: boolean; stdout: string; stderr: string } {
-  const result = spawnSync("git", args, {
-    cwd,
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME ?? "BeerEngineer",
-      GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL ?? "beerengineer@example.invalid",
-      GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME ?? "BeerEngineer",
-      GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL ?? "beerengineer@example.invalid",
-    },
-  })
+  // Only inject the BeerEngineer fallback identity when we're about to create a
+  // commit. Read-only probes inherit the unmodified environment so we don't
+  // leak a fake identity into unrelated tooling that shells out after us.
+  const env = args[0] === "commit"
+    ? {
+        ...process.env,
+        GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME ?? "BeerEngineer",
+        GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL ?? "beerengineer@example.invalid",
+        GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME ?? "BeerEngineer",
+        GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL ?? "beerengineer@example.invalid",
+      }
+    : process.env
+  const result = spawnSync("git", args, { cwd, encoding: "utf8", env })
   return {
     ok: result.status === 0,
     stdout: result.stdout?.trim() ?? "",
@@ -145,13 +183,23 @@ async function buildPathPreview(path: string, allowedRoots: string[]): Promise<O
   }
 }
 
+function safeParseHarnessProfile(raw: string): { profile: HarnessProfile | null; error?: string } {
+  try {
+    return { profile: JSON.parse(raw) as HarnessProfile }
+  } catch (err) {
+    return { profile: null, error: (err as Error).message }
+  }
+}
+
 function previewFromDbRow(row: DbWorkspaceRow): WorkspaceRow {
+  const parsed = safeParseHarnessProfile(row.harness_profile_json)
   return {
     schemaVersion: WORKSPACE_SCHEMA_VERSION,
     key: row.key,
     name: row.name,
     rootPath: row.root_path ?? "",
-    harnessProfile: JSON.parse(row.harness_profile_json) as HarnessProfile,
+    harnessProfile: parsed.profile,
+    harnessProfileInvalid: parsed.error,
     sonarEnabled: row.sonar_enabled === 1,
     createdAt: row.created_at,
     lastOpenedAt: row.last_opened_at,
@@ -172,6 +220,7 @@ function buildWorkspaceConfigFile(input: {
   key: string
   name: string
   harnessProfile: HarnessProfile
+  runtimePolicy?: WorkspaceRuntimePolicy
   sonar: SonarConfig
   createdAt?: number
 }): WorkspaceConfigFile {
@@ -180,18 +229,61 @@ function buildWorkspaceConfigFile(input: {
     key: input.key,
     name: input.name,
     harnessProfile: input.harnessProfile,
+    runtimePolicy: input.runtimePolicy ?? defaultWorkspaceRuntimePolicy(),
     sonar: input.sonar,
     createdAt: input.createdAt ?? Date.now(),
   }
 }
 
+function isRuntimePolicyMode(value: unknown): value is RuntimePolicyMode {
+  return value === "safe-readonly" || value === "safe-workspace-write" || value === "unsafe-autonomous-write"
+}
+
+export function defaultWorkspaceRuntimePolicy(): WorkspaceRuntimePolicy {
+  return { ...DEFAULT_WORKSPACE_RUNTIME_POLICY }
+}
+
+function normalizeRuntimePolicy(raw: unknown): WorkspaceRuntimePolicy | null {
+  if (!raw || typeof raw !== "object") return null
+  const policy = raw as Partial<WorkspaceRuntimePolicy>
+  if (
+    (policy.stageAuthoring !== "safe-readonly" && policy.stageAuthoring !== "safe-workspace-write") ||
+    policy.reviewer !== "safe-readonly" ||
+    (policy.coderExecution !== "safe-workspace-write" && policy.coderExecution !== "unsafe-autonomous-write")
+  ) {
+    return null
+  }
+  return {
+    stageAuthoring: policy.stageAuthoring,
+    reviewer: policy.reviewer,
+    coderExecution: policy.coderExecution,
+  }
+}
+
 export async function readWorkspaceConfig(root: string): Promise<WorkspaceConfigFile | null> {
   try {
-    const raw = JSON.parse(await readFile(workspaceConfigPath(root), "utf8")) as WorkspaceConfigFile
-    if (raw.schemaVersion !== WORKSPACE_SCHEMA_VERSION || typeof raw.key !== "string" || typeof raw.name !== "string") {
+    const raw = JSON.parse(await readFile(workspaceConfigPath(root), "utf8")) as {
+      schemaVersion?: number
+      key?: unknown
+      name?: unknown
+      harnessProfile?: unknown
+      runtimePolicy?: unknown
+      sonar?: unknown
+      createdAt?: unknown
+    }
+    if ((raw.schemaVersion !== 1 && raw.schemaVersion !== WORKSPACE_SCHEMA_VERSION) || typeof raw.key !== "string" || typeof raw.name !== "string") {
       return null
     }
-    return raw
+    const runtimePolicy = normalizeRuntimePolicy(raw.runtimePolicy) ?? defaultWorkspaceRuntimePolicy()
+    return {
+      schemaVersion: WORKSPACE_SCHEMA_VERSION,
+      key: raw.key,
+      name: raw.name,
+      harnessProfile: raw.harnessProfile as HarnessProfile,
+      runtimePolicy,
+      sonar: raw.sonar as SonarConfig,
+      createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
+    }
   } catch {
     return null
   }
@@ -216,12 +308,17 @@ export async function writeSonarProperties(root: string, sonar: SonarConfig, wor
 
 export function generateSonarProjectUrl(name: string, sonar: SonarConfig): string | undefined {
   if (!sonar.enabled || !sonar.organization || !sonar.projectKey) return undefined
+  // The hosted "create project" link is a SonarCloud concept. For self-hosted
+  // SonarQube we can't deep-link into a matching flow, so return undefined and
+  // let the caller surface a generic "visit your sonar instance" hint instead.
+  const host = sonar.hostUrl ?? SONAR_DEFAULT_HOST
+  if (host !== SONAR_DEFAULT_HOST) return undefined
   const params = new URLSearchParams({
     organization: sonar.organization,
     name,
     key: sonar.projectKey,
   })
-  return `https://sonarcloud.io/projects/create?${params.toString()}`
+  return `${SONAR_DEFAULT_HOST}/projects/create?${params.toString()}`
 }
 
 export function generateSonarMcpSnippet(sonar: SonarConfig): string | undefined {
@@ -398,6 +495,7 @@ export async function registerWorkspace(input: RegisterWorkspaceInput, deps: Reg
     key,
     name,
     harnessProfile: input.harnessProfile,
+    runtimePolicy: existingConfig?.runtimePolicy,
     sonar,
     createdAt: existingConfig?.createdAt,
   })
@@ -434,7 +532,8 @@ export async function registerWorkspace(input: RegisterWorkspaceInput, deps: Reg
     ok: true,
     workspace,
     preview: await previewWorkspace(path, deps.config, deps.repos),
-    actions: [...validation.warnings, ...actions],
+    actions,
+    warnings: validation.warnings,
     sonarProjectUrl: generateSonarProjectUrl(name, sonar),
     sonarMcpSnippet: generateSonarMcpSnippet(sonar),
     ghCreateCommand: ghCommand,
@@ -450,15 +549,41 @@ export function getRegisteredWorkspace(repos: Repos, key: string): WorkspaceRow 
   return row ? previewFromDbRow(row) : null
 }
 
-export async function removeWorkspace(repos: Repos, key: string, opts: { purge: boolean }): Promise<{ ok: boolean; workspace?: WorkspaceRow; purgedPath?: string | null }> {
+export type RemoveWorkspaceResult = {
+  ok: boolean
+  workspace?: WorkspaceRow
+  purgedPath?: string | null
+  purgeSkipped?: { reason: string; path: string }
+}
+
+export async function removeWorkspace(
+  repos: Repos,
+  key: string,
+  opts: { purge: boolean; allowedRoots?: string[] },
+): Promise<RemoveWorkspaceResult> {
   const row = repos.getWorkspaceByKey(key)
   if (!row) return { ok: false }
   const workspace = previewFromDbRow(row)
-  if (opts.purge && row.root_path) {
-    await rm(row.root_path, { recursive: true, force: true })
+  let purgeSkipped: RemoveWorkspaceResult["purgeSkipped"]
+  let purgedPath: string | null = null
+  if (opts.purge) {
+    if (!row.root_path) {
+      purgeSkipped = { reason: "missing_root_path", path: "" }
+    } else if (!opts.allowedRoots || opts.allowedRoots.length === 0) {
+      // Refuse to rm -rf if the caller didn't supply an allowlist.
+      purgeSkipped = { reason: "allowed_roots_required", path: row.root_path }
+    } else if (!(await isInsideAllowedRootRealpath(row.root_path, opts.allowedRoots))) {
+      // The stored root_path may have been moved, replaced by a symlink,
+      // or the allowedRoots config may have changed since registration.
+      // In all of those cases we refuse to purge rather than chase the link.
+      purgeSkipped = { reason: "path_outside_allowed_roots", path: row.root_path }
+    } else {
+      await rm(row.root_path, { recursive: true, force: true })
+      purgedPath = row.root_path
+    }
   }
   repos.removeWorkspaceByKey(key)
-  return { ok: true, workspace, purgedPath: opts.purge ? row.root_path : null }
+  return { ok: true, workspace, purgedPath, purgeSkipped }
 }
 
 export function openWorkspace(repos: Repos, key: string): string | null {
@@ -582,11 +707,15 @@ export async function backfillWorkspaceConfigs(repos: Repos): Promise<{
       skipped.push({ key: row.key, reason: "workspace config already exists" })
       continue
     }
-    const harnessProfile = JSON.parse(row.harness_profile_json) as HarnessProfile
+    const parsed = safeParseHarnessProfile(row.harness_profile_json)
+    if (!parsed.profile) {
+      skipped.push({ key: row.key, reason: `harness_profile_json invalid: ${parsed.error ?? "unknown"}` })
+      continue
+    }
     const config = buildWorkspaceConfigFile({
       key: row.key,
       name: row.name,
-      harnessProfile,
+      harnessProfile: parsed.profile,
       sonar: { enabled: row.sonar_enabled === 1 },
       createdAt: row.created_at,
     })

@@ -1,7 +1,7 @@
 import { runStage } from "../../core/stageRuntime.js"
 import { printStageCompletion, stageSummary, summaryArtifactFile } from "../../core/stageHelpers.js"
 import { stagePresent } from "../../core/stagePresentation.js"
-import { createProjectReviewReview, createProjectReviewStage, defaultStageConfig } from "../../llm/registry.js"
+import { createProjectReviewReview, createProjectReviewStage, type RunLlmConfig } from "../../llm/registry.js"
 import { renderProjectReviewMarkdown } from "../../render/projectReview.js"
 import type { ProjectReviewArtifact, ProjectReviewFinding, WithExecution } from "../../types.js"
 import type { ProjectReviewState } from "./types.js"
@@ -15,7 +15,7 @@ function findingsBySeverity(artifact: ProjectReviewArtifact): SeverityCounts {
   }, {})
 }
 
-export async function projectReview(ctx: WithExecution): Promise<ProjectReviewArtifact> {
+export async function projectReview(ctx: WithExecution, llm?: RunLlmConfig): Promise<ProjectReviewArtifact> {
   stagePresent.header(`project-review — ${ctx.project.name}`)
 
   const { result } = await runStage({
@@ -32,8 +32,8 @@ export async function projectReview(ctx: WithExecution): Promise<ProjectReviewAr
       executionSummaries: ctx.executionSummaries,
       revisionCount: 0,
     }),
-    stageAgent: createProjectReviewStage(defaultStageConfig.stageAgent.provider, ctx.project),
-    reviewer: createProjectReviewReview(defaultStageConfig.reviewer.provider),
+    stageAgent: createProjectReviewStage(ctx.project, llm),
+    reviewer: createProjectReviewReview(llm),
     askUser: async () => "",
     async persistArtifacts(run, artifact) {
       return [

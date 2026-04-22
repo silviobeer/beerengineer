@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -138,12 +138,18 @@ test("registerWorkspace writes workspace config and sonar properties", async () 
     if (!result.ok) return
 
     const workspaceJson = JSON.parse(readFileSync(join(path, ".beerengineer", "workspace.json"), "utf8")) as {
+      schemaVersion: number
       key: string
       harnessProfile: { mode: string }
+      runtimePolicy: { stageAuthoring: string; reviewer: string; coderExecution: string }
       sonar: { organization?: string; projectKey?: string }
     }
+    assert.equal(workspaceJson.schemaVersion, 2)
     assert.equal(workspaceJson.key, "demo")
     assert.equal(workspaceJson.harnessProfile.mode, "fast")
+    assert.equal(workspaceJson.runtimePolicy.stageAuthoring, "safe-readonly")
+    assert.equal(workspaceJson.runtimePolicy.reviewer, "safe-readonly")
+    assert.equal(workspaceJson.runtimePolicy.coderExecution, "safe-workspace-write")
     assert.equal(workspaceJson.sonar.organization, "acme")
     assert.equal(workspaceJson.sonar.projectKey, "demo")
 
@@ -156,6 +162,35 @@ test("registerWorkspace writes workspace config and sonar properties", async () 
     assert.equal(JSON.parse(dbWorkspace?.harness_profile_json ?? "{}").mode, "fast")
   } finally {
     db.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("readWorkspaceConfig upgrades schemaVersion 1 files with default runtime policy", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-workspaces-"))
+  try {
+    const root = join(dir, "legacy")
+    mkdirSync(join(root, ".beerengineer"), { recursive: true })
+    writeFileSync(
+      join(root, ".beerengineer", "workspace.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        key: "legacy",
+        name: "Legacy",
+        harnessProfile: { mode: "claude-first" },
+        sonar: { enabled: false },
+        createdAt: 123,
+      }, null, 2),
+    )
+
+    const config = await import("../src/core/workspaces.js").then(mod => mod.readWorkspaceConfig(root))
+    assert.equal(config?.schemaVersion, 2)
+    assert.deepEqual(config?.runtimePolicy, {
+      stageAuthoring: "safe-readonly",
+      reviewer: "safe-readonly",
+      coderExecution: "safe-workspace-write",
+    })
+  } finally {
     rmSync(dir, { recursive: true, force: true })
   }
 })

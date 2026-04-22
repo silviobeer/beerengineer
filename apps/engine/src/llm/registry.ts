@@ -1,5 +1,7 @@
 import type { ProviderId } from "./types.js"
 import type { ReviewAgentAdapter, StageAgentAdapter } from "../core/adapters.js"
+import { emitEvent, getActiveRun } from "../core/runContext.js"
+import type { HarnessProfile, HarnessRole, WorkspaceRuntimePolicy } from "../types/workspace.js"
 
 import { FakeBrainstormReviewAdapter } from "./fake/brainstormReview.js"
 import { FakeBrainstormStageAdapter } from "./fake/brainstormStage.js"
@@ -27,71 +29,251 @@ import type { ProjectReviewArtifact, ProjectReviewState } from "../stages/projec
 import type { QaArtifact, QaState } from "../stages/qa/types.js"
 import type { RequirementsArtifact, RequirementsState } from "../stages/requirements/types.js"
 import type { Project } from "../types/domain.js"
+import { HostedReviewAdapter, HostedStageAdapter } from "./hosted/hostedCliAdapter.js"
+import { buildClaudeCommand } from "./hosted/providers/claude.js"
+import { buildCodexCommand } from "./hosted/providers/codex.js"
+import { buildOpenCodeCommand } from "./hosted/providers/opencode.js"
 
-export type StageLlmConfig = {
-  stageAgent: { provider: ProviderId }
-  reviewer: { provider: ProviderId }
+export type RuntimePolicy =
+  | { mode: "safe-readonly" }
+  | { mode: "safe-workspace-write" }
+  | { mode: "unsafe-autonomous-write" }
+
+export type ResolvedHarness = {
+  harness: ProviderId
+  provider: ProviderId
+  model?: string
+  workspaceRoot: string
 }
 
-export const defaultStageConfig: StageLlmConfig = {
-  stageAgent: { provider: "fake" },
-  reviewer: { provider: "fake" },
+export type RunLlmConfig = {
+  workspaceRoot: string
+  harnessProfile: HarnessProfile
+  runtimePolicy: WorkspaceRuntimePolicy
+  testingOverride?: "fake"
 }
 
-function selectProvider<T>(provider: ProviderId, options: { fake: () => T }): T {
-  switch (provider) {
-    case "fake":
-      return options.fake()
+export type StageId =
+  | "brainstorm"
+  | "requirements"
+  | "architecture"
+  | "planning"
+  | "documentation"
+  | "project-review"
+  | "test-writer"
+  | "qa"
+
+type AdapterFactoryInput = {
+  workspaceRoot: string
+  harnessProfile: HarnessProfile
+  runtimePolicy: WorkspaceRuntimePolicy
+  role: HarnessRole
+  stage: StageId
+  testingOverride?: "fake"
+}
+
+type RealProviderId = Exclude<ProviderId, "fake">
+
+function toProviderId(harness: "claude" | "codex" | "opencode"): RealProviderId {
+  switch (harness) {
+    case "claude":
+      return "claude-code"
     case "codex":
-    case "claude-code":
-      throw new Error(`Provider "${provider}" is not yet implemented`)
+      return "codex"
+    case "opencode":
+      return "opencode"
   }
 }
 
-export const createBrainstormStage = (p: ProviderId): StageAgentAdapter<BrainstormState, BrainstormArtifact> =>
-  selectProvider(p, { fake: () => new FakeBrainstormStageAdapter() })
+export function resolveHarness(input: AdapterFactoryInput): ResolvedHarness {
+  if (input.testingOverride === "fake" || process.env.BEERENGINEER_FORCE_FAKE_LLM === "1") {
+    return { harness: "fake", provider: "fake", workspaceRoot: input.workspaceRoot }
+  }
+  const role = input.role
+  switch (input.harnessProfile.mode) {
+    case "claude-only":
+    case "claude-first":
+      return { harness: "claude-code", provider: "claude-code", workspaceRoot: input.workspaceRoot }
+    case "codex-only":
+    case "codex-first":
+      return { harness: "codex", provider: "codex", workspaceRoot: input.workspaceRoot }
+    case "fast":
+      return {
+        harness: "claude-code",
+        provider: "claude-code",
+        model: "claude-haiku-4-5",
+        workspaceRoot: input.workspaceRoot,
+      }
+    case "opencode":
+      throw new Error('Harness profile mode "opencode" is not implemented yet')
+    case "self": {
+      const selected = input.harnessProfile.roles[role]
+      const provider = toProviderId(selected.harness)
+      if (provider === "opencode") {
+        throw new Error('Harness profile resolves to "opencode", which is not implemented yet')
+      }
+      return {
+        harness: provider,
+        provider,
+        model: selected.model,
+        workspaceRoot: input.workspaceRoot,
+      }
+    }
+  }
+}
 
-export const createBrainstormReview = (p: ProviderId): ReviewAgentAdapter<BrainstormState, BrainstormArtifact> =>
-  selectProvider(p, { fake: () => new FakeBrainstormReviewAdapter() })
+function stageAuthoringPolicy(policy: WorkspaceRuntimePolicy): RuntimePolicy {
+  return { mode: policy.stageAuthoring }
+}
 
-export const createRequirementsStage = (p: ProviderId): StageAgentAdapter<RequirementsState, RequirementsArtifact> =>
-  selectProvider(p, { fake: () => new FakeRequirementsStageAdapter() })
+function reviewerPolicy(policy: WorkspaceRuntimePolicy): RuntimePolicy {
+  return { mode: policy.reviewer }
+}
 
-export const createRequirementsReview = (p: ProviderId): ReviewAgentAdapter<RequirementsState, RequirementsArtifact> =>
-  selectProvider(p, { fake: () => new FakeRequirementsReviewAdapter() })
+function buildCommand(provider: RealProviderId, input: {
+  model?: string
+  workspaceRoot: string
+  policy: RuntimePolicy
+  responsePath: string
+}): string[] {
+  switch (provider) {
+    case "claude-code":
+      return buildClaudeCommand({
+        model: input.model,
+        workspaceRoot: input.workspaceRoot,
+        policy: input.policy,
+      })
+    case "codex":
+      return buildCodexCommand(input)
+    case "opencode":
+      return buildOpenCodeCommand()
+  }
+}
 
-export const createArchitectureStage = (p: ProviderId, project: Project): StageAgentAdapter<ArchitectureState, ArchitectureArtifact> =>
-  selectProvider(p, { fake: () => new FakeArchitectureStageAdapter(project) })
+function logResolution(stage: StageId, role: HarnessRole, harness: ResolvedHarness, policy: RuntimePolicy): void {
+  const run = getActiveRun()
+  if (!run) return
+  emitEvent({
+    type: "log",
+    runId: run.runId,
+    message: `llm.resolve stage=${stage} role=${role} provider=${harness.provider} model=${harness.model ?? "default"} policy=${policy.mode}`,
+  })
+}
 
-export const createArchitectureReview = (p: ProviderId): ReviewAgentAdapter<ArchitectureState, ArchitectureArtifact> =>
-  selectProvider(p, { fake: () => new FakeArchitectureReviewAdapter() })
+function createHostedStageAdapter<S, A>(stage: StageId, llm: RunLlmConfig): StageAgentAdapter<S, A> {
+  const harness = resolveHarness({
+    workspaceRoot: llm.workspaceRoot,
+    harnessProfile: llm.harnessProfile,
+    runtimePolicy: llm.runtimePolicy,
+    role: "coder",
+    stage,
+    testingOverride: llm.testingOverride,
+  })
+  if (harness.provider === "fake") {
+    throw new Error(`Stage ${stage} requested fake provider via hosted path`)
+  }
+  const provider = harness.provider as RealProviderId
+  const policy = stageAuthoringPolicy(llm.runtimePolicy)
+  logResolution(stage, "coder", harness, policy)
+  return new HostedStageAdapter<S, A>({
+    stageId: stage,
+    provider,
+    model: harness.model,
+    workspaceRoot: llm.workspaceRoot,
+    runtimePolicy: policy,
+    buildCommand: input => buildCommand(provider, input),
+  })
+}
 
-export const createPlanningStage = (p: ProviderId, project: Project): StageAgentAdapter<PlanningState, ImplementationPlanArtifact> =>
-  selectProvider(p, { fake: () => new FakePlanningStageAdapter(project) })
+function createHostedReviewAdapter<S, A>(stage: StageId, llm: RunLlmConfig): ReviewAgentAdapter<S, A> {
+  const harness = resolveHarness({
+    workspaceRoot: llm.workspaceRoot,
+    harnessProfile: llm.harnessProfile,
+    runtimePolicy: llm.runtimePolicy,
+    role: "reviewer",
+    stage,
+    testingOverride: llm.testingOverride,
+  })
+  if (harness.provider === "fake") {
+    throw new Error(`Stage ${stage} requested fake provider via hosted path`)
+  }
+  const provider = harness.provider as RealProviderId
+  const policy = reviewerPolicy(llm.runtimePolicy)
+  logResolution(stage, "reviewer", harness, policy)
+  return new HostedReviewAdapter<S, A>({
+    stageId: stage,
+    provider,
+    model: harness.model,
+    workspaceRoot: llm.workspaceRoot,
+    runtimePolicy: policy,
+    buildCommand: input => buildCommand(provider, input),
+  })
+}
 
-export const createPlanningReview = (p: ProviderId): ReviewAgentAdapter<PlanningState, ImplementationPlanArtifact> =>
-  selectProvider(p, { fake: () => new FakePlanningReviewAdapter() })
+export function executionCoderPolicy(policy: WorkspaceRuntimePolicy): RuntimePolicy {
+  return { mode: policy.coderExecution }
+}
 
-export const createDocumentationStage = (p: ProviderId, project: Project): StageAgentAdapter<DocumentationState, DocumentationArtifact> =>
-  selectProvider(p, { fake: () => new FakeDocumentationStageAdapter(project) })
+export function createBrainstormStage(project: Project | undefined, llm?: RunLlmConfig): StageAgentAdapter<BrainstormState, BrainstormArtifact> {
+  return llm ? createHostedStageAdapter("brainstorm", llm) : new FakeBrainstormStageAdapter()
+}
 
-export const createDocumentationReview = (p: ProviderId): ReviewAgentAdapter<DocumentationState, DocumentationArtifact> =>
-  selectProvider(p, { fake: () => new FakeDocumentationReviewAdapter() })
+export function createBrainstormReview(llm?: RunLlmConfig): ReviewAgentAdapter<BrainstormState, BrainstormArtifact> {
+  return llm ? createHostedReviewAdapter("brainstorm", llm) : new FakeBrainstormReviewAdapter()
+}
 
-export const createProjectReviewStage = (p: ProviderId, project: Project): StageAgentAdapter<ProjectReviewState, ProjectReviewArtifact> =>
-  selectProvider(p, { fake: () => new FakeProjectReviewStageAdapter(project) })
+export function createRequirementsStage(llm?: RunLlmConfig): StageAgentAdapter<RequirementsState, RequirementsArtifact> {
+  return llm ? createHostedStageAdapter("requirements", llm) : new FakeRequirementsStageAdapter()
+}
 
-export const createProjectReviewReview = (p: ProviderId): ReviewAgentAdapter<ProjectReviewState, ProjectReviewArtifact> =>
-  selectProvider(p, { fake: () => new FakeProjectReviewReviewAdapter() })
+export function createRequirementsReview(llm?: RunLlmConfig): ReviewAgentAdapter<RequirementsState, RequirementsArtifact> {
+  return llm ? createHostedReviewAdapter("requirements", llm) : new FakeRequirementsReviewAdapter()
+}
 
-export const createTestWriterStage = (p: ProviderId, project: Project): StageAgentAdapter<TestWriterState, StoryTestPlanArtifact> =>
-  selectProvider(p, { fake: () => new FakeTestWriterStageAdapter(project) })
+export function createArchitectureStage(project: Project, llm?: RunLlmConfig): StageAgentAdapter<ArchitectureState, ArchitectureArtifact> {
+  return llm ? createHostedStageAdapter("architecture", llm) : new FakeArchitectureStageAdapter(project)
+}
 
-export const createTestWriterReview = (p: ProviderId): ReviewAgentAdapter<TestWriterState, StoryTestPlanArtifact> =>
-  selectProvider(p, { fake: () => new FakeTestWriterReviewAdapter() })
+export function createArchitectureReview(llm?: RunLlmConfig): ReviewAgentAdapter<ArchitectureState, ArchitectureArtifact> {
+  return llm ? createHostedReviewAdapter("architecture", llm) : new FakeArchitectureReviewAdapter()
+}
 
-export const createQaStage = (p: ProviderId): StageAgentAdapter<QaState, QaArtifact> =>
-  selectProvider(p, { fake: () => new FakeQaStageAdapter() })
+export function createPlanningStage(project: Project, llm?: RunLlmConfig): StageAgentAdapter<PlanningState, ImplementationPlanArtifact> {
+  return llm ? createHostedStageAdapter("planning", llm) : new FakePlanningStageAdapter(project)
+}
 
-export const createQaReview = (p: ProviderId): ReviewAgentAdapter<QaState, QaArtifact> =>
-  selectProvider(p, { fake: () => new FakeQaReviewAdapter() })
+export function createPlanningReview(llm?: RunLlmConfig): ReviewAgentAdapter<PlanningState, ImplementationPlanArtifact> {
+  return llm ? createHostedReviewAdapter("planning", llm) : new FakePlanningReviewAdapter()
+}
+
+export function createDocumentationStage(project: Project, llm?: RunLlmConfig): StageAgentAdapter<DocumentationState, DocumentationArtifact> {
+  return llm ? createHostedStageAdapter("documentation", llm) : new FakeDocumentationStageAdapter(project)
+}
+
+export function createDocumentationReview(llm?: RunLlmConfig): ReviewAgentAdapter<DocumentationState, DocumentationArtifact> {
+  return llm ? createHostedReviewAdapter("documentation", llm) : new FakeDocumentationReviewAdapter()
+}
+
+export function createProjectReviewStage(project: Project, llm?: RunLlmConfig): StageAgentAdapter<ProjectReviewState, ProjectReviewArtifact> {
+  return llm ? createHostedStageAdapter("project-review", llm) : new FakeProjectReviewStageAdapter(project)
+}
+
+export function createProjectReviewReview(llm?: RunLlmConfig): ReviewAgentAdapter<ProjectReviewState, ProjectReviewArtifact> {
+  return llm ? createHostedReviewAdapter("project-review", llm) : new FakeProjectReviewReviewAdapter()
+}
+
+export function createTestWriterStage(project: Project, llm?: RunLlmConfig): StageAgentAdapter<TestWriterState, StoryTestPlanArtifact> {
+  return llm ? createHostedStageAdapter("test-writer", llm) : new FakeTestWriterStageAdapter(project)
+}
+
+export function createTestWriterReview(llm?: RunLlmConfig): ReviewAgentAdapter<TestWriterState, StoryTestPlanArtifact> {
+  return llm ? createHostedReviewAdapter("test-writer", llm) : new FakeTestWriterReviewAdapter()
+}
+
+export function createQaStage(llm?: RunLlmConfig): StageAgentAdapter<QaState, QaArtifact> {
+  return llm ? createHostedStageAdapter("qa", llm) : new FakeQaStageAdapter()
+}
+
+export function createQaReview(llm?: RunLlmConfig): ReviewAgentAdapter<QaState, QaArtifact> {
+  return llm ? createHostedReviewAdapter("qa", llm) : new FakeQaReviewAdapter()
+}

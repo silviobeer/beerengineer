@@ -1,13 +1,13 @@
 import { runStage } from "../../core/stageRuntime.js"
 import { printStageCompletion, stageSummary, summaryArtifactFile } from "../../core/stageHelpers.js"
 import { stagePresent } from "../../core/stagePresentation.js"
-import { createRequirementsReview, createRequirementsStage, defaultStageConfig } from "../../llm/registry.js"
+import { createRequirementsReview, createRequirementsStage, type RunLlmConfig } from "../../llm/registry.js"
 import { renderPrdMarkdown } from "../../render/prd.js"
 import { ask } from "../../sim/human.js"
 import type { PRD, ProjectContext } from "../../types.js"
 import type { RequirementsState } from "./types.js"
 
-export async function requirements(ctx: ProjectContext): Promise<PRD> {
+export async function requirements(ctx: ProjectContext, llm?: RunLlmConfig): Promise<PRD> {
   stagePresent.header(`requirements — ${ctx.project.name}`)
   stagePresent.dim(`Concept: ${ctx.project.concept.summary}`)
 
@@ -23,8 +23,8 @@ export async function requirements(ctx: ProjectContext): Promise<PRD> {
       maxClarifications: 2,
       history: [],
     }),
-    stageAgent: createRequirementsStage(defaultStageConfig.stageAgent.provider),
-    reviewer: createRequirementsReview(defaultStageConfig.reviewer.provider),
+    stageAgent: createRequirementsStage(llm),
+    reviewer: createRequirementsReview(llm),
     askUser: ask,
     async persistArtifacts(run, artifact) {
       return [

@@ -5,6 +5,8 @@ import { runWithActiveRun } from "./runContext.js"
 import { createBus, busToWorkflowIO, type EventBus } from "./bus.js"
 import { attachCrossProcessBridge } from "./crossProcessBridge.js"
 import type { Repos } from "../db/repositories.js"
+import { readWorkspaceConfig } from "./workspaces.js"
+import type { WorkflowLlmOptions } from "../workflow.js"
 
 /**
  * Map a stage key to the UI's board column + phase status. The UI column set is
@@ -344,6 +346,33 @@ export function prepareRun(
   const writtenLogIds = new Set<string>()
 
   const start = async (): Promise<void> => {
+    const workspaceRow = repos.getWorkspace(workspaceId)
+    let llm: WorkflowLlmOptions | undefined
+    if (workspaceRow?.root_path) {
+      const workspaceConfig = await readWorkspaceConfig(workspaceRow.root_path)
+      if (!workspaceConfig) {
+        throw new Error(`workspace config is missing or invalid for ${workspaceRow.root_path}`)
+      }
+      llm = {
+        stage: {
+          workspaceRoot: workspaceRow.root_path,
+          harnessProfile: workspaceConfig.harnessProfile,
+          runtimePolicy: workspaceConfig.runtimePolicy,
+        },
+        execution: {
+          stage: {
+            workspaceRoot: workspaceRow.root_path,
+            harnessProfile: workspaceConfig.harnessProfile,
+            runtimePolicy: workspaceConfig.runtimePolicy,
+          },
+          executionCoder: {
+            workspaceRoot: workspaceRow.root_path,
+            harnessProfile: workspaceConfig.harnessProfile,
+            runtimePolicy: workspaceConfig.runtimePolicy,
+          },
+        },
+      }
+    }
     const detachDbSync = attachDbSync(bus, repos, { runId: runRow.id, itemId: itemRow.id }, { writtenLogIds })
     const detachBridge = attachCrossProcessBridge(bus, repos, runRow.id, { writtenLogIds })
     try {
@@ -351,7 +380,7 @@ export function prepareRun(
         runWithActiveRun({ runId: runRow.id, itemId: itemRow.id }, async () => {
           bus.emit({ type: "run_started", runId: runRow.id, itemId: itemRow.id, title: item.title })
           try {
-            await runWorkflow({ ...item, id: itemRow.id })
+            await runWorkflow({ ...item, id: itemRow.id }, { llm })
             bus.emit({ type: "run_finished", runId: runRow.id, status: "completed" })
           } catch (err) {
             const message = (err as Error).message

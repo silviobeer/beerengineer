@@ -1,12 +1,12 @@
 import { runStage } from "../../core/stageRuntime.js"
 import { printStageCompletion, stageSummary, summaryArtifactFile } from "../../core/stageHelpers.js"
 import { stagePresent } from "../../core/stagePresentation.js"
-import { createQaReview, createQaStage, defaultStageConfig } from "../../llm/registry.js"
+import { createQaReview, createQaStage, type RunLlmConfig } from "../../llm/registry.js"
 import { ask } from "../../sim/human.js"
 import type { ProjectContext } from "../../types.js"
 import type { QaState } from "./types.js"
 
-export async function qa(ctx: ProjectContext): Promise<void> {
+export async function qa(ctx: ProjectContext, llm?: RunLlmConfig): Promise<void> {
   stagePresent.header(`qa — ${ctx.project.name}`)
 
   await runStage({
@@ -16,8 +16,8 @@ export async function qa(ctx: ProjectContext): Promise<void> {
     workspaceId: ctx.workspaceId,
     runId: ctx.runId,
     createInitialState: (): QaState => ({ loop: 0, findings: [] }),
-    stageAgent: createQaStage(defaultStageConfig.stageAgent.provider),
-    reviewer: createQaReview(defaultStageConfig.reviewer.provider),
+    stageAgent: createQaStage(llm),
+    reviewer: createQaReview(llm),
     askUser: prompt => ask(prompt),
     async persistArtifacts(_run, artifact) {
       return [
