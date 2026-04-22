@@ -25,6 +25,8 @@ function promptsRoot(): string {
     return isAbsolute(override) ? override : resolve(process.cwd(), override)
   }
 
+  // Assumes tsx-style execution with source layout src/llm/prompts/loader.ts;
+  // if a build step ever flattens output, override via BEERENGINEER_PROMPTS_DIR.
   const here = dirname(fileURLToPath(import.meta.url))
   return resolve(here, "../../..", "prompts")
 }
