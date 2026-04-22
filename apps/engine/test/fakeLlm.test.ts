@@ -409,6 +409,8 @@ test("documentation stage produces artifact covering the PRD stories", async () 
     executionSummaries: [
       {
         waveId: "W1",
+        waveBranch: "wave/demo__p01__w1",
+        projectBranch: "proj/demo__p01",
         storiesMerged: [{ storyId: "US-01", branch: "story/p01-us-01", commitCount: 1, filesIntegrated: [] }],
         storiesBlocked: [],
       },

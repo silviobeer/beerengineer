@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
+import { ensureWaveBranch, mergeWaveBranchIntoProject } from "../../core/repoSimulation.js"
 import { runStage } from "../../core/stageRuntime.js"
 import { createTestWriterReview, createTestWriterStage, type RunLlmConfig } from "../../llm/registry.js"
 import { stagePresent } from "../../core/stagePresentation.js"
@@ -93,40 +94,24 @@ async function executeWave(
   resume?: ExecutionResumeOptions,
   llm?: ExecutionLlmOptions,
 ): Promise<WaveSummary> {
-  const tag = wave.parallel ? "(parallel)" : "(sequential)"
+  const tag = wave.parallel ? "(planned parallel, executed sequentially)" : "(sequential)"
   stagePresent.step(`\nWave ${wave.number} ${tag}: ${wave.stories.map(s => s.id).join(", ")}`)
+  await ensureWaveBranch(ctx, ctx.project.id, wave.number)
 
   const run = (story: Pick<UserStory, "id" | "title">) =>
     implementStory(ctx, wave, resolveStory(story, storyById), {
       rerunTestWriter: resume?.storyId === story.id ? Boolean(resume.rerunTestWriter) : false,
     }, llm)
 
-  const results = wave.parallel
-    ? await runParallelStories(wave.stories, run)
-    : await sequentially(wave.stories, run)
+  const results = await sequentially(wave.stories, run)
 
-  const summary = await writeWaveSummary({ workspaceId: ctx.workspaceId, runId: ctx.runId }, wave, results)
+  const summary = await writeWaveSummary(ctx, wave, ctx.project.id, results)
   stagePresent.ok(
     `Wave ${wave.number} complete — merged: ${summary.storiesMerged.length}, blocked: ${summary.storiesBlocked.length}`,
   )
   assertWaveSucceeded(wave, summary)
+  await mergeWaveBranchIntoProject(ctx, ctx.project.id, wave.number)
   return summary
-}
-
-async function runParallelStories(
-  stories: WaveDefinition["stories"],
-  run: (story: Pick<UserStory, "id" | "title">) => Promise<StoryResult>,
-): Promise<StoryResult[]> {
-  const settled = await Promise.allSettled(stories.map(run))
-  return settled.map((outcome, index) => {
-    if (outcome.status === "fulfilled") return outcome.value
-    const story = stories[index]
-    stagePresent.warn(`Story ${story.id} crashed: ${(outcome.reason as Error).message}`)
-    return {
-      storyId: story.id,
-      implementation: blockedPlaceholder(story, (outcome.reason as Error).message),
-    }
-  })
 }
 
 function blockedPlaceholder(
@@ -185,21 +170,25 @@ async function implementStory(
     ? (await readJsonIfExists<StoryTestPlanArtifact>(testPlanPath)) ?? await writeStoryTestPlan(ctx, wave, story, llm?.stage)
     : await writeStoryTestPlan(ctx, wave, story, llm?.stage)
   stagePresent.dim(`  Test plan: ${testPlan.testPlan.testCases.map(tc => tc.id).join(", ")}`)
-  const storyContext = buildStoryExecutionContext(ctx.project, wave, ctx.architecture, testPlan)
-  const result: StoryArtifacts = await runRalphStory(storyContext, { workspaceId: ctx.workspaceId, runId: ctx.runId }, llm?.executionCoder)
+  const storyContext = buildStoryExecutionContext(ctx, wave, ctx.architecture, testPlan)
+  const result: StoryArtifacts = await runRalphStory(storyContext, ctx, llm?.executionCoder)
   stagePresent.dim(`  Status: ${result.implementation.status}`)
   return { storyId: story.id, implementation: result.implementation }
 }
 
 function buildStoryExecutionContext(
-  project: WithArchitecture["project"],
+  ctx: WithArchitecture,
   wave: WaveDefinition,
   architecture: ArchitectureArtifact,
   testPlan: StoryTestPlanArtifact,
 ): StoryExecutionContext {
   return {
-    project: { id: project.id, name: project.name },
-    conceptSummary: project.concept.summary,
+    item: {
+      slug: ctx.itemSlug ?? ctx.workspaceId.replace(/-[^-]+$/, ""),
+      baseBranch: ctx.baseBranch ?? "main",
+    },
+    project: { id: ctx.project.id, name: ctx.project.name },
+    conceptSummary: ctx.project.concept.summary,
     story: {
       id: testPlan.story.id,
       title: testPlan.story.title,

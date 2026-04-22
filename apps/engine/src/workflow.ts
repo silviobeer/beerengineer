@@ -1,9 +1,11 @@
 import { readFile } from "node:fs/promises"
+import { spawnSync } from "node:child_process"
 import { join } from "node:path"
 import { randomUUID } from "node:crypto"
 import {
   createCandidateBranch,
   finalizeCandidateDecision,
+  mergeProjectBranchIntoItem,
 } from "./core/repoSimulation.js"
 import type { RecoveryScope } from "./core/recovery.js"
 import { layout } from "./core/workspaceLayout.js"
@@ -86,6 +88,12 @@ async function readJson<T>(path: string): Promise<T> {
   return JSON.parse(await readFile(path, "utf8")) as T
 }
 
+function resolveBaseBranch(): string {
+  const result = spawnSync("git", ["branch", "--show-current"], { encoding: "utf8" })
+  const branch = result.status === 0 ? result.stdout.trim() : ""
+  return branch || "main"
+}
+
 function normalizeExecutionResume(stageId: string): ExecutionResumeOptions | undefined {
   const match = /^execution\/waves\/(\d+)\/stories\/([^/]+)\/test-writer$/.exec(stageId)
   if (!match) return undefined
@@ -160,6 +168,8 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
   const context: WorkflowContext = {
     workspaceId: slug ? `${slug}-${item.id.toLowerCase()}` : item.id.toLowerCase(),
     runId: activeRun?.runId ?? `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`,
+    itemSlug: slug || item.id.toLowerCase(),
+    baseBranch: resolveBaseBranch(),
   }
 
   const resumePlan = options?.resume ? normalizeProjectResume(options.resume) : null
@@ -238,6 +248,7 @@ async function runProject(initialCtx: ProjectContext, resume?: ProjectResumePlan
     ctx = { ...ctx, documentation: await loadDocumentation(ctx) }
   }
 
+  await mergeProjectBranchIntoItem(ctx, ctx.project.id)
   await withStageLifecycle("handoff", { projectId }, () => handoffCandidate(assertWithDocumentation(ctx)))
 }
 
@@ -246,7 +257,8 @@ async function handoffCandidate(ctx: WithDocumentation): Promise<void> {
   stagePresent.header(`handoff — ${ctx.project.name}`)
   stagePresent.ok(handoff.summary)
   stagePresent.dim(`→ Candidate: ${handoff.candidateBranch.name}`)
-  stagePresent.dim(`→ Base: ${handoff.candidateBranch.base}`)
+  stagePresent.dim(`→ Parent: ${handoff.candidateBranch.base}`)
+  stagePresent.dim(`→ Base: ${handoff.mergeTargetBranch}`)
   handoff.mergeChecklist.forEach(item => stagePresent.dim(`→ ${item}`))
 
   const decisionRaw = await ask("  Test, merge or reject candidate? [test/merge/reject] > ")

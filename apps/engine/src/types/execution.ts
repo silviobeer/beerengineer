@@ -28,6 +28,10 @@ export type StoryTestPlanArtifact = {
 }
 
 export type StoryExecutionContext = {
+  item: {
+    slug: string
+    baseBranch: string
+  }
   project: {
     id: string
     name: string
@@ -148,6 +152,8 @@ export type StoryReviewArtifact = {
 
 export type WaveSummary = {
   waveId: string
+  waveBranch: string
+  projectBranch: string
   storiesMerged: Array<{
     storyId: string
     branch: string

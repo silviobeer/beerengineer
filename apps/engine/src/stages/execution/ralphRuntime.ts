@@ -4,8 +4,11 @@ import { join } from "node:path"
 import {
   abandonBranch,
   appendBranchCommit,
+  branchNameProject,
+  branchNameWave,
+  ensureWaveBranch,
   ensureStoryBranch,
-  mergeStoryBranchIntoProject,
+  mergeStoryBranchIntoWave,
 } from "../../core/repoSimulation.js"
 import { emitEvent, getActiveRun } from "../../core/runContext.js"
 import { writeRecoveryRecord } from "../../core/recovery.js"
@@ -224,7 +227,11 @@ async function collectReviewChangedFiles(workspaceRoot: string, baselinePath: st
     ? runGit(["diff", "--name-only", baseline.headSha], workspaceRoot).stdout
     : runGit(["status", "--porcelain"], workspaceRoot).stdout
         .split(/\r?\n/)
-        .map(line => line.slice(3).trim())
+        .map(line => {
+          const path = line.slice(3).trim()
+          const arrow = path.lastIndexOf(" -> ")
+          return arrow >= 0 ? path.slice(arrow + 4).trim() : path
+        })
         .filter(Boolean)
         .join("\n")
   const baselineUntracked = new Set(baseline?.untrackedFiles ?? [])
@@ -473,6 +480,7 @@ export async function runRalphStory(
       implementation.branch = await ensureStoryBranch(
         runtimeContext,
         storyContext.project.id,
+        storyContext.wave.number,
         storyContext.story.id,
       )
       await writeJson(implementationPath, implementation)
@@ -673,21 +681,22 @@ export async function runRalphStory(
 
     if (storyReview.outcome.startsWith("pass")) {
       if (implementation.branch) {
-        const merge = await mergeStoryBranchIntoProject(
+        const merge = await mergeStoryBranchIntoWave(
           runtimeContext,
           storyContext.project.id,
+          storyContext.wave.number,
           implementation.branch.name,
           implementation.changedFiles,
         )
         implementation.branch = merge.storyBranch
-        await appendLog(logPath, logEntry("branch_event", `Merged ${merge.storyBranch.name} → ${merge.projectBranch.name}`, {
+        await appendLog(logPath, logEntry("branch_event", `Merged ${merge.storyBranch.name} → ${merge.waveBranch.name}`, {
           storyId: storyContext.story.id,
           branch: merge.storyBranch.name,
-          target: merge.projectBranch.name,
+          target: merge.waveBranch.name,
         }))
       }
       implementation.status = "passed"
-      implementation.finalSummary = `Story implementation and story review both passed, then ${implementation.branch?.name ?? "story branch"} was merged into ${implementation.branch?.base ?? "project branch"}.`
+      implementation.finalSummary = `Story implementation and story review both passed, then ${implementation.branch?.name ?? "story branch"} was merged into ${implementation.branch?.base ?? "wave branch"}.`
       await writeJson(implementationPath, implementation)
       await appendLog(logPath, logEntry("status_changed", `Story ${storyContext.story.id} passed`, {
         storyId: storyContext.story.id,
@@ -729,10 +738,14 @@ export async function runRalphStory(
 export async function writeWaveSummary(
   runtimeContext: WorkflowContext,
   wave: { id: string; number: number },
+  projectId: string,
   summaries: Array<{ storyId: string; implementation: StoryImplementationArtifact }>,
 ): Promise<WaveSummary> {
+  await ensureWaveBranch(runtimeContext, projectId, wave.number)
   const summary: WaveSummary = {
     waveId: wave.id,
+    waveBranch: branchNameWave(runtimeContext, projectId, wave.number),
+    projectBranch: branchNameProject(runtimeContext, projectId),
     storiesMerged: summaries
       .filter(({ implementation }) => implementation.status === "passed")
       .map(({ storyId, implementation }) => ({

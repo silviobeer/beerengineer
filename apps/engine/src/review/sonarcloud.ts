@@ -30,13 +30,14 @@ async function withBranchLock<T>(key: string, work: () => Promise<T>): Promise<T
   const current = new Promise<void>(resolveLock => {
     release = resolveLock
   })
-  branchLocks.set(key, previous.then(() => current))
+  const chained = previous.then(() => current)
+  branchLocks.set(key, chained)
   await previous
   try {
     return await work()
   } finally {
     release()
-    if (branchLocks.get(key) === current) branchLocks.delete(key)
+    if (branchLocks.get(key) === chained) branchLocks.delete(key)
   }
 }
 
@@ -147,7 +148,7 @@ export async function runSonarCloudReview(input: ReviewScope): Promise<SonarClou
     return {
       status: "skipped",
       reason: "sonarcloud-disabled",
-      passed: true,
+      passed: false,
       conditions: [],
       findings: [],
       rawScanPath,
@@ -162,7 +163,7 @@ export async function runSonarCloudReview(input: ReviewScope): Promise<SonarClou
     return {
       status: "skipped",
       reason: "sonarcloud-free-plan",
-      passed: true,
+      passed: false,
       conditions: [],
       findings: [],
       rawScanPath,
@@ -177,7 +178,7 @@ export async function runSonarCloudReview(input: ReviewScope): Promise<SonarClou
     return {
       status: "skipped",
       reason: "sonar-scanner-missing",
-      passed: true,
+      passed: false,
       conditions: [],
       findings: [],
       rawScanPath,
@@ -192,7 +193,7 @@ export async function runSonarCloudReview(input: ReviewScope): Promise<SonarClou
     return {
       status: "skipped",
       reason: "sonarcloud-config-incomplete",
-      passed: true,
+      passed: false,
       conditions: [],
       findings: [],
       rawScanPath,
@@ -209,7 +210,7 @@ export async function runSonarCloudReview(input: ReviewScope): Promise<SonarClou
     return {
       status: "failed",
       reason: "sonar-token-missing",
-      passed: true,
+      passed: false,
       conditions: [],
       findings: [],
       rawScanPath,
@@ -241,7 +242,7 @@ export async function runSonarCloudReview(input: ReviewScope): Promise<SonarClou
       return {
         status: "failed",
         reason: "sonar-scanner-failed",
-        passed: true,
+        passed: false,
         conditions: [],
         findings: [],
         rawScanPath,
@@ -257,7 +258,7 @@ export async function runSonarCloudReview(input: ReviewScope): Promise<SonarClou
       return {
         status: "failed",
         reason: "report-task-missing",
-        passed: true,
+        passed: false,
         conditions: [],
         findings: [],
         rawScanPath,
@@ -273,7 +274,7 @@ export async function runSonarCloudReview(input: ReviewScope): Promise<SonarClou
       return {
         status: "failed",
         reason: ceTask.failureReason ?? "ce-task-failed",
-        passed: true,
+        passed: false,
         conditions: [],
         findings: [],
         rawScanPath,

@@ -9,16 +9,26 @@ import {
   abandonBranch,
   appendBranchCommit,
   branchNameCandidate,
+  branchNameProject,
   branchNameStory,
+  branchNameWave,
   createCandidateBranch,
+  ensureWaveBranch,
   ensureStoryBranch,
   finalizeCandidateDecision,
-  mergeStoryBranchIntoProject,
+  mergeProjectBranchIntoItem,
+  mergeStoryBranchIntoWave,
+  mergeWaveBranchIntoProject,
 } from "../src/core/repoSimulation.js"
 import { layout, type WorkflowContext } from "../src/core/workspaceLayout.js"
 import type { DocumentationArtifact, SimulatedRepoState } from "../src/types.js"
 
-const ctx: WorkflowContext = { workspaceId: "ws-repo", runId: "run-repo-1" }
+const ctx: WorkflowContext = {
+  workspaceId: "ws-repo",
+  runId: "run-repo-1",
+  itemSlug: "cockpit-overlay",
+  baseBranch: "develop",
+}
 
 function doc(): DocumentationArtifact {
   return {
@@ -48,24 +58,33 @@ async function readRepoState(): Promise<SimulatedRepoState> {
 }
 
 test("branchNameStory and branchNameCandidate lowercase", () => {
-  assert.equal(branchNameStory("P01", "US-02"), "story/p01-us-02")
+  assert.equal(branchNameProject(ctx, "P01"), "proj/cockpit-overlay__p01")
+  assert.equal(branchNameWave(ctx, "P01", 2), "wave/cockpit-overlay__p01__w2")
+  assert.equal(branchNameStory(ctx, "P01", 2, "US-02"), "story/cockpit-overlay__p01__w2__us-02")
   assert.equal(
-    branchNameCandidate({ workspaceId: "ws", runId: "RUN-X" }, "P01"),
-    "pr/run-x-p01",
+    branchNameCandidate({ workspaceId: "ws", runId: "RUN-X", itemSlug: "Cockpit Overlay" }),
+    "candidate/run-x__cockpit-overlay",
   )
 })
 
-test("ensureStoryBranch creates project branch + story branch, idempotent on repeat", async () => {
+test("ensureStoryBranch creates item/project/wave/story branches, idempotent on repeat", async () => {
   await withTmpCwd(async () => {
-    const b1 = await ensureStoryBranch(ctx, "P01", "US-1")
-    assert.equal(b1.name, "story/p01-us-1")
-    assert.equal(b1.base, "proj/p01")
+    await ensureWaveBranch(ctx, "P01", 1)
+    const b1 = await ensureStoryBranch(ctx, "P01", 1, "US-1")
+    assert.equal(b1.name, "story/cockpit-overlay__p01__w1__us-1")
+    assert.equal(b1.base, "wave/cockpit-overlay__p01__w1")
 
     const state = await readRepoState()
     const names = state.branches.map(b => b.name).sort()
-    assert.deepEqual(names, ["main", "proj/p01", "story/p01-us-1"])
+    assert.deepEqual(names, [
+      "develop",
+      "item/cockpit-overlay",
+      "proj/cockpit-overlay__p01",
+      "story/cockpit-overlay__p01__w1__us-1",
+      "wave/cockpit-overlay__p01__w1",
+    ])
 
-    const b2 = await ensureStoryBranch(ctx, "P01", "US-1")
+    const b2 = await ensureStoryBranch(ctx, "P01", 1, "US-1")
     assert.equal(b2.name, b1.name)
     const state2 = await readRepoState()
     assert.equal(state2.branches.length, state.branches.length, "no duplicate branches on idempotent call")
@@ -74,8 +93,9 @@ test("ensureStoryBranch creates project branch + story branch, idempotent on rep
 
 test("appendBranchCommit adds commits with deterministic-ish hashes", async () => {
   await withTmpCwd(async () => {
-    await ensureStoryBranch(ctx, "P01", "US-1")
-    const name = "story/p01-us-1"
+    await ensureWaveBranch(ctx, "P01", 1)
+    await ensureStoryBranch(ctx, "P01", 1, "US-1")
+    const name = "story/cockpit-overlay__p01__w1__us-1"
 
     const b1 = await appendBranchCommit(ctx, name, "first commit", ["src/a.ts"])
     const b2 = await appendBranchCommit(ctx, name, "second commit", ["src/b.ts"])
@@ -86,32 +106,40 @@ test("appendBranchCommit adds commits with deterministic-ish hashes", async () =
   })
 })
 
-test("mergeStoryBranchIntoProject marks story merged and adds merge commit on project", async () => {
+test("mergeStoryBranchIntoWave then mergeWaveBranchIntoProject promotes work through the branch tree", async () => {
   await withTmpCwd(async () => {
-    await ensureStoryBranch(ctx, "P01", "US-1")
-    await appendBranchCommit(ctx, "story/p01-us-1", "work", ["src/a.ts"])
+    await ensureWaveBranch(ctx, "P01", 1)
+    await ensureStoryBranch(ctx, "P01", 1, "US-1")
+    await appendBranchCommit(ctx, "story/cockpit-overlay__p01__w1__us-1", "work", ["src/a.ts"])
 
-    const { storyBranch, projectBranch } = await mergeStoryBranchIntoProject(
+    const { storyBranch, waveBranch } = await mergeStoryBranchIntoWave(
       ctx,
       "P01",
-      "story/p01-us-1",
+      1,
+      "story/cockpit-overlay__p01__w1__us-1",
       ["src/a.ts"],
     )
     assert.equal(storyBranch.status, "merged")
     assert.ok(storyBranch.mergedAt)
-    assert.equal(projectBranch.name, "proj/p01")
+    assert.equal(waveBranch.name, "wave/cockpit-overlay__p01__w1")
+    assert.equal(waveBranch.commits.length, 1)
+    assert.match(waveBranch.commits[0].message, /Merge story\/cockpit-overlay__p01__w1__us-1/)
+
+    const { projectBranch } = await mergeWaveBranchIntoProject(ctx, "P01", 1)
+    assert.equal(projectBranch.name, "proj/cockpit-overlay__p01")
     assert.equal(projectBranch.commits.length, 1)
-    assert.match(projectBranch.commits[0].message, /Merge story\/p01-us-1/)
+    assert.match(projectBranch.commits[0].message, /Merge wave\/cockpit-overlay__p01__w1/)
   })
 })
 
 test("abandonBranch sets status abandoned; subsequent commit reopens it", async () => {
   await withTmpCwd(async () => {
-    await ensureStoryBranch(ctx, "P01", "US-1")
-    const abandoned = await abandonBranch(ctx, "story/p01-us-1")
+    await ensureWaveBranch(ctx, "P01", 1)
+    await ensureStoryBranch(ctx, "P01", 1, "US-1")
+    const abandoned = await abandonBranch(ctx, "story/cockpit-overlay__p01__w1__us-1")
     assert.equal(abandoned.status, "abandoned")
 
-    const reopened = await appendBranchCommit(ctx, "story/p01-us-1", "resurrect", [])
+    const reopened = await appendBranchCommit(ctx, "story/cockpit-overlay__p01__w1__us-1", "resurrect", [])
     assert.equal(reopened.status, "open")
   })
 })
@@ -124,15 +152,19 @@ test("appendBranchCommit on unknown branch throws", async () => {
 
 test("createCandidateBranch clones project commits + adds docs commit, writes handoff file", async () => {
   await withTmpCwd(async () => {
-    await ensureStoryBranch(ctx, "P01", "US-1")
-    await appendBranchCommit(ctx, "story/p01-us-1", "w", ["x"])
-    await mergeStoryBranchIntoProject(ctx, "P01", "story/p01-us-1", ["x"])
+    await ensureWaveBranch(ctx, "P01", 1)
+    await ensureStoryBranch(ctx, "P01", 1, "US-1")
+    await appendBranchCommit(ctx, "story/cockpit-overlay__p01__w1__us-1", "w", ["x"])
+    await mergeStoryBranchIntoWave(ctx, "P01", 1, "story/cockpit-overlay__p01__w1__us-1", ["x"])
+    await mergeWaveBranchIntoProject(ctx, "P01", 1)
+    await mergeProjectBranchIntoItem(ctx, "P01")
 
     const handoff = await createCandidateBranch(ctx, { id: "P01", name: "P" }, doc())
-    assert.equal(handoff.candidateBranch.name, branchNameCandidate(ctx, "P01"))
-    assert.equal(handoff.candidateBranch.base, "main")
+    assert.equal(handoff.candidateBranch.name, branchNameCandidate(ctx))
+    assert.equal(handoff.candidateBranch.base, "item/cockpit-overlay")
     assert.equal(handoff.candidateBranch.status, "open")
     assert.equal(handoff.readyForMerge, true)
+    assert.equal(handoff.mergeTargetBranch, "develop")
 
     const persisted = JSON.parse(await readFile(layout.handoffFile(ctx, "P01"), "utf8"))
     assert.equal(persisted.candidateBranch.name, handoff.candidateBranch.name)
@@ -140,48 +172,55 @@ test("createCandidateBranch clones project commits + adds docs commit, writes ha
     const state = await readRepoState()
     const candidate = state.branches.find(b => b.name === handoff.candidateBranch.name)
     assert.ok(candidate)
-    // inherits project merge commit + appends docs commit
+    // inherits item merge commit + appends docs commit
     assert.equal(candidate!.commits.length, 2)
   })
 })
 
 test("parallel repo-state mutations preserve every story branch and merge", async () => {
   await withTmpCwd(async () => {
+    await ensureWaveBranch(ctx, "P01", 1)
     await Promise.all([
-      ensureStoryBranch(ctx, "P01", "US-1"),
-      ensureStoryBranch(ctx, "P01", "US-2"),
+      ensureStoryBranch(ctx, "P01", 1, "US-1"),
+      ensureStoryBranch(ctx, "P01", 1, "US-2"),
     ])
 
     await Promise.all([
-      appendBranchCommit(ctx, "story/p01-us-1", "work-1", ["src/us1.ts"]),
-      appendBranchCommit(ctx, "story/p01-us-2", "work-2", ["src/us2.ts"]),
+      appendBranchCommit(ctx, "story/cockpit-overlay__p01__w1__us-1", "work-1", ["src/us1.ts"]),
+      appendBranchCommit(ctx, "story/cockpit-overlay__p01__w1__us-2", "work-2", ["src/us2.ts"]),
     ])
 
     await Promise.all([
-      mergeStoryBranchIntoProject(ctx, "P01", "story/p01-us-1", ["src/us1.ts"]),
-      mergeStoryBranchIntoProject(ctx, "P01", "story/p01-us-2", ["src/us2.ts"]),
+      mergeStoryBranchIntoWave(ctx, "P01", 1, "story/cockpit-overlay__p01__w1__us-1", ["src/us1.ts"]),
+      mergeStoryBranchIntoWave(ctx, "P01", 1, "story/cockpit-overlay__p01__w1__us-2", ["src/us2.ts"]),
     ])
+    await mergeWaveBranchIntoProject(ctx, "P01", 1)
 
     const state = await readRepoState()
-    const story1 = state.branches.find(branch => branch.name === "story/p01-us-1")
-    const story2 = state.branches.find(branch => branch.name === "story/p01-us-2")
-    const project = state.branches.find(branch => branch.name === "proj/p01")
+    const story1 = state.branches.find(branch => branch.name === "story/cockpit-overlay__p01__w1__us-1")
+    const story2 = state.branches.find(branch => branch.name === "story/cockpit-overlay__p01__w1__us-2")
+    const wave = state.branches.find(branch => branch.name === "wave/cockpit-overlay__p01__w1")
+    const project = state.branches.find(branch => branch.name === "proj/cockpit-overlay__p01")
 
     assert.equal(story1?.status, "merged")
     assert.equal(story2?.status, "merged")
-    assert.equal(project?.commits.length, 2)
+    assert.equal(wave?.commits.length, 2)
+    assert.equal(project?.commits.length, 1)
     assert.deepEqual(
-      project?.commits.map(commit => commit.filesChanged[0]).sort(),
+      wave?.commits.map(commit => commit.filesChanged[0]).sort(),
       ["src/us1.ts", "src/us2.ts"],
     )
   })
 })
 
-test("finalizeCandidateDecision merges into main / rejects / leaves test", async () => {
+test("finalizeCandidateDecision merges into the captured base branch / rejects / leaves test", async () => {
   await withTmpCwd(async () => {
-    await ensureStoryBranch(ctx, "P01", "US-1")
-    await appendBranchCommit(ctx, "story/p01-us-1", "w", ["x"])
-    await mergeStoryBranchIntoProject(ctx, "P01", "story/p01-us-1", ["x"])
+    await ensureWaveBranch(ctx, "P01", 1)
+    await ensureStoryBranch(ctx, "P01", 1, "US-1")
+    await appendBranchCommit(ctx, "story/cockpit-overlay__p01__w1__us-1", "w", ["x"])
+    await mergeStoryBranchIntoWave(ctx, "P01", 1, "story/cockpit-overlay__p01__w1__us-1", ["x"])
+    await mergeWaveBranchIntoProject(ctx, "P01", 1)
+    await mergeProjectBranchIntoItem(ctx, "P01")
     const handoff = await createCandidateBranch(ctx, { id: "P01", name: "P" }, doc())
 
     const merged = await finalizeCandidateDecision(ctx, handoff, "merge")
@@ -189,23 +228,25 @@ test("finalizeCandidateDecision merges into main / rejects / leaves test", async
     assert.equal(merged.candidateBranch.status, "merged")
 
     const state = await readRepoState()
-    const main = state.branches.find(b => b.name === "main")!
-    assert.equal(main.commits.length, 1)
-    assert.match(main.commits[0].message, /Merge pr\//)
+    const base = state.branches.find(b => b.name === "develop")!
+    assert.equal(base.commits.length, 1)
+    assert.match(base.commits[0].message, /Merge candidate\//)
     assert.ok(state.mergedRuns.includes(ctx.runId))
   })
 
   await withTmpCwd(async () => {
-    await ensureStoryBranch(ctx, "P01", "US-1")
+    await ensureWaveBranch(ctx, "P01", 1)
+    await ensureStoryBranch(ctx, "P01", 1, "US-1")
     const handoff = await createCandidateBranch(ctx, { id: "P01", name: "P" }, doc())
     const rejected = await finalizeCandidateDecision(ctx, handoff, "reject")
     assert.equal(rejected.candidateBranch.status, "abandoned")
     const state = await readRepoState()
-    assert.equal(state.branches.find(b => b.name === "main")!.commits.length, 0)
+    assert.equal(state.branches.find(b => b.name === "develop")!.commits.length, 0)
   })
 
   await withTmpCwd(async () => {
-    await ensureStoryBranch(ctx, "P01", "US-1")
+    await ensureWaveBranch(ctx, "P01", 1)
+    await ensureStoryBranch(ctx, "P01", 1, "US-1")
     const handoff = await createCandidateBranch(ctx, { id: "P01", name: "P" }, doc())
     const kept = await finalizeCandidateDecision(ctx, handoff, "test")
     assert.equal(kept.candidateBranch.status, "open")

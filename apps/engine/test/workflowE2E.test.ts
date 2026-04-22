@@ -135,22 +135,30 @@ test("runWorkflow runs end-to-end with all review/side loops, producing artifact
     const wave2 = JSON.parse(await readFile(layout.waveSummaryFile(ctx, 2), "utf8"))
     assert.equal(wave1.storiesMerged.length, 1, "wave 1 (sequential) should merge US-01")
     assert.equal(wave1.storiesBlocked.length, 0)
-    assert.equal(wave2.storiesMerged.length, 2, "wave 2 (parallel) should merge both stories")
+    assert.equal(wave1.waveBranch, "wave/test-workflow__p01__w1")
+    assert.equal(wave1.projectBranch, "proj/test-workflow__p01")
+    assert.equal(wave2.storiesMerged.length, 2, "wave 2 should merge both stories")
     assert.equal(wave2.storiesBlocked.length, 0, "wave 2 must not silently block any story")
 
     const repoState = JSON.parse(
       await readFile(layout.repoStateWorkspaceFile(ctx.workspaceId), "utf8"),
     ) as SimulatedRepoState
-    assert.equal(repoState.branches.find(branch => branch.name === "story/p01-us-02")?.status, "merged")
-    assert.equal(repoState.branches.find(branch => branch.name === "story/p01-us-03")?.status, "merged")
-    assert.equal(repoState.branches.find(branch => branch.name === "proj/p01")?.commits.length, 3)
+    assert.equal(repoState.baseBranch, "main")
+    assert.equal(repoState.itemBranch, "item/test-workflow")
+    assert.equal(repoState.branches.find(branch => branch.name === "story/test-workflow__p01__w2__us-02")?.status, "merged")
+    assert.equal(repoState.branches.find(branch => branch.name === "story/test-workflow__p01__w2__us-03")?.status, "merged")
+    assert.equal(repoState.branches.find(branch => branch.name === "wave/test-workflow__p01__w2")?.commits.length, 2)
+    assert.equal(repoState.branches.find(branch => branch.name === "proj/test-workflow__p01")?.commits.length, 2)
+    assert.equal(repoState.branches.find(branch => branch.name === "item/test-workflow")?.commits.length, 1)
 
     // handoff file created with merge decision
     const handoffPath = layout.handoffFile(ctx, "P01")
     const handoff = JSON.parse(await readFile(handoffPath, "utf8"))
     assert.equal(handoff.decision, "test")
     assert.equal(handoff.candidateBranch.status, "open")
-    assert.match(handoff.candidateBranch.name, /^pr\//)
+    assert.equal(handoff.candidateBranch.base, "item/test-workflow")
+    assert.equal(handoff.mergeTargetBranch, "main")
+    assert.match(handoff.candidateBranch.name, /^candidate\//)
 
     // With the event-bus model, stages emit presentation + chat_message
     // events even when no run context is active; the bare IO just captures

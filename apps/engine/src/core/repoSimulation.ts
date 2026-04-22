@@ -22,6 +22,14 @@ function branchHash(seed: string): string {
   return `${normalized.slice(0, 8) || "commit"}${hash.toString(36).slice(0, 6)}`
 }
 
+function slugify(value: string, fallback = "branch"): string {
+  const slug = value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+  return slug || fallback
+}
+
 function cloneBranch(branch: SimulatedBranch): SimulatedBranch {
   return {
     ...branch,
@@ -29,16 +37,37 @@ function cloneBranch(branch: SimulatedBranch): SimulatedBranch {
   }
 }
 
-function branchNameProject(projectId: string): string {
-  return `proj/${projectId.toLowerCase()}`
+function itemSlugFromContext(context: WorkflowContext): string {
+  return slugify(context.itemSlug ?? context.workspaceId.replace(/-[^-]+$/, ""), "item")
 }
 
-export function branchNameStory(projectId: string, storyId: string): string {
-  return `story/${projectId.toLowerCase()}-${storyId.toLowerCase()}`
+function baseBranchFromContext(context: WorkflowContext): string {
+  return context.baseBranch?.trim() || "main"
 }
 
-export function branchNameCandidate(context: WorkflowContext, projectId: string): string {
-  return `pr/${context.runId.toLowerCase()}-${projectId.toLowerCase()}`
+export function branchNameItem(context: WorkflowContext): string {
+  return `item/${itemSlugFromContext(context)}`
+}
+
+export function branchNameProject(context: WorkflowContext, projectId: string): string {
+  return `proj/${itemSlugFromContext(context)}__${slugify(projectId)}`
+}
+
+export function branchNameWave(context: WorkflowContext, projectId: string, waveNumber: number): string {
+  return `wave/${itemSlugFromContext(context)}__${slugify(projectId)}__w${waveNumber}`
+}
+
+export function branchNameStory(
+  context: WorkflowContext,
+  projectId: string,
+  waveNumber: number,
+  storyId: string,
+): string {
+  return `story/${itemSlugFromContext(context)}__${slugify(projectId)}__w${waveNumber}__${slugify(storyId)}`
+}
+
+export function branchNameCandidate(context: WorkflowContext, itemSlug?: string): string {
+  return `candidate/${slugify(context.runId)}__${slugify(itemSlug ?? itemSlugFromContext(context))}`
 }
 
 async function readRepoState(path: string): Promise<SimulatedRepoState | undefined> {
@@ -80,14 +109,19 @@ async function persistRepoState(context: WorkflowContext, state: SimulatedRepoSt
 async function loadRepoState(context: WorkflowContext): Promise<SimulatedRepoState> {
   const persisted = await readRepoState(layout.repoStateWorkspaceFile(context.workspaceId))
   if (persisted) {
-    if (!persisted.branches.some(branch => branch.name === "main")) {
-      persisted.branches.push({ name: "main", base: "", commits: [], status: "open" })
+    const baseBranch = persisted.baseBranch || baseBranchFromContext(context)
+    if (!persisted.branches.some(branch => branch.name === baseBranch)) {
+      persisted.branches.push({ name: baseBranch, base: "", kind: "base", commits: [], status: "open" })
     }
+    persisted.baseBranch = baseBranch
     return persisted
   }
+
+  const baseBranch = baseBranchFromContext(context)
   return {
-    branches: [{ name: "main", base: "", commits: [], status: "open" }],
+    branches: [{ name: baseBranch, base: "", kind: "base", commits: [], status: "open" }],
     mergedRuns: [],
+    baseBranch,
   }
 }
 
@@ -117,32 +151,85 @@ async function mutateRepoState<T>(
   }
 }
 
-function ensureProjectBranch(state: SimulatedRepoState, projectId: string): SimulatedBranch {
-  const name = branchNameProject(projectId)
+function ensureItemBranch(state: SimulatedRepoState, context: WorkflowContext): SimulatedBranch {
+  const name = branchNameItem(context)
+  const existing = getBranch(state, name)
+  if (existing) {
+    state.itemBranch = existing.name
+    return existing
+  }
+  const item = upsertBranch(state, {
+    name,
+    base: state.baseBranch,
+    kind: "item",
+    commits: [],
+    status: "open",
+  })
+  state.itemBranch = item.name
+  return item
+}
+
+function ensureProjectBranch(state: SimulatedRepoState, context: WorkflowContext, projectId: string): SimulatedBranch {
+  const itemBranch = ensureItemBranch(state, context)
+  const name = branchNameProject(context, projectId)
   const existing = getBranch(state, name)
   if (existing) return existing
   return upsertBranch(state, {
     name,
-    base: "main",
+    base: itemBranch.name,
+    kind: "project",
     commits: [],
     status: "open",
   })
 }
 
-export async function ensureStoryBranch(
+export async function ensureWaveBranch(
   context: WorkflowContext,
   projectId: string,
-  storyId: string,
+  waveNumber: number,
 ): Promise<SimulatedBranch> {
   return mutateRepoState(context, state => {
-    const projectBranch = ensureProjectBranch(state, projectId)
-    const name = branchNameStory(projectId, storyId)
+    const projectBranch = ensureProjectBranch(state, context, projectId)
+    const name = branchNameWave(context, projectId, waveNumber)
     const existing = getBranch(state, name)
     if (existing) return cloneBranch(existing)
     return cloneBranch(
       upsertBranch(state, {
         name,
         base: projectBranch.name,
+        kind: "wave",
+        commits: [],
+        status: "open",
+      }),
+    )
+  })
+}
+
+export async function ensureStoryBranch(
+  context: WorkflowContext,
+  projectId: string,
+  waveNumber: number,
+  storyId: string,
+): Promise<SimulatedBranch> {
+  return mutateRepoState(context, state => {
+    const projectBranch = ensureProjectBranch(state, context, projectId)
+    const waveName = branchNameWave(context, projectId, waveNumber)
+    const waveBranch = getBranch(state, waveName)
+      ?? upsertBranch(state, {
+        name: waveName,
+        base: projectBranch.name,
+        kind: "wave",
+        commits: [],
+        status: "open",
+      })
+    const name = branchNameStory(context, projectId, waveNumber, storyId)
+    const existing = getBranch(state, name)
+    if (existing) return cloneBranch(existing)
+    return cloneBranch(
+      upsertBranch(state, {
+        name,
+        base: waveBranch.name,
+        kind: "story",
         commits: [],
         status: "open",
       }),
@@ -179,25 +266,87 @@ export async function abandonBranch(
   })
 }
 
-export async function mergeStoryBranchIntoProject(
+export async function mergeStoryBranchIntoWave(
   context: WorkflowContext,
   projectId: string,
+  waveNumber: number,
   storyBranchName: string,
   filesChanged: string[],
-): Promise<{ storyBranch: SimulatedBranch; projectBranch: SimulatedBranch }> {
+): Promise<{ storyBranch: SimulatedBranch; waveBranch: SimulatedBranch }> {
   return mutateRepoState(context, state => {
     const storyBranch = requireBranch(state, storyBranchName)
-    const projectBranch = ensureProjectBranch(state, projectId)
-    projectBranch.commits.push({
-      hash: branchHash(`${projectBranch.name}-${storyBranch.name}-merge`),
-      message: `Merge ${storyBranch.name} into ${projectBranch.name}`,
+    const waveBranch = requireBranch(state, branchNameWave(context, projectId, waveNumber))
+    if (storyBranch.status === "merged") {
+      return {
+        storyBranch: cloneBranch(storyBranch),
+        waveBranch: cloneBranch(waveBranch),
+      }
+    }
+    waveBranch.commits.push({
+      hash: branchHash(`${waveBranch.name}-${storyBranch.name}-merge`),
+      message: `Merge ${storyBranch.name} into ${waveBranch.name}`,
       filesChanged,
     })
     storyBranch.status = "merged"
     storyBranch.mergedAt = nowIso()
     return {
       storyBranch: cloneBranch(storyBranch),
+      waveBranch: cloneBranch(waveBranch),
+    }
+  })
+}
+
+export async function mergeWaveBranchIntoProject(
+  context: WorkflowContext,
+  projectId: string,
+  waveNumber: number,
+): Promise<{ waveBranch: SimulatedBranch; projectBranch: SimulatedBranch }> {
+  return mutateRepoState(context, state => {
+    const waveBranch = requireBranch(state, branchNameWave(context, projectId, waveNumber))
+    const projectBranch = ensureProjectBranch(state, context, projectId)
+    if (waveBranch.status === "merged") {
+      return {
+        waveBranch: cloneBranch(waveBranch),
+        projectBranch: cloneBranch(projectBranch),
+      }
+    }
+    projectBranch.commits.push({
+      hash: branchHash(`${projectBranch.name}-${waveBranch.name}-merge`),
+      message: `Merge ${waveBranch.name} into ${projectBranch.name}`,
+      filesChanged: waveBranch.commits.flatMap(commit => commit.filesChanged),
+    })
+    waveBranch.status = "merged"
+    waveBranch.mergedAt = nowIso()
+    return {
+      waveBranch: cloneBranch(waveBranch),
       projectBranch: cloneBranch(projectBranch),
+    }
+  })
+}
+
+export async function mergeProjectBranchIntoItem(
+  context: WorkflowContext,
+  projectId: string,
+): Promise<{ projectBranch: SimulatedBranch; itemBranch: SimulatedBranch }> {
+  return mutateRepoState(context, state => {
+    const projectBranch = ensureProjectBranch(state, context, projectId)
+    const itemBranch = ensureItemBranch(state, context)
+    if (projectBranch.status === "merged") {
+      return {
+        projectBranch: cloneBranch(projectBranch),
+        itemBranch: cloneBranch(itemBranch),
+      }
+    }
+    itemBranch.commits.push({
+      hash: branchHash(`${itemBranch.name}-${projectBranch.name}-merge`),
+      message: `Merge ${projectBranch.name} into ${itemBranch.name}`,
+      filesChanged: projectBranch.commits.flatMap(commit => commit.filesChanged),
+    })
+    projectBranch.status = "merged"
+    projectBranch.mergedAt = nowIso()
+    return {
+      projectBranch: cloneBranch(projectBranch),
+      itemBranch: cloneBranch(itemBranch),
     }
   })
 }
@@ -207,19 +356,21 @@ export async function createCandidateBranch(
   project: { id: string; name: string },
   documentationArtifact: DocumentationArtifact,
 ): Promise<MergeHandoffArtifact> {
-  const candidateBranchName = branchNameCandidate(context, project.id)
-  const projectBranchName = branchNameProject(project.id)
+  const candidateBranchName = branchNameCandidate(context)
+  const itemBranchName = branchNameItem(context)
+  const mergeTargetBranch = baseBranchFromContext(context)
 
   const candidateBranch = await mutateRepoState(context, state => {
-    const projectBranch = ensureProjectBranch(state, project.id)
+    const itemBranch = ensureItemBranch(state, context)
     const candidate = upsertBranch(state, {
       name: candidateBranchName,
-      base: "main",
+      base: itemBranch.name,
+      kind: "candidate",
       commits: [
-        ...projectBranch.commits.map(commit => ({ ...commit, filesChanged: [...commit.filesChanged] })),
+        ...itemBranch.commits.map(commit => ({ ...commit, filesChanged: [...commit.filesChanged] })),
         {
           hash: branchHash(`${candidateBranchName}-docs`),
-          message: `Prepare ${candidateBranchName} from ${projectBranchName}`,
+          message: `Prepare ${candidateBranchName} from ${itemBranchName}`,
           filesChanged: [
             "docs/technical-doc.md",
             "docs/features-doc.md",
@@ -240,22 +391,23 @@ export async function createCandidateBranch(
       base: candidateBranch.base,
       status: candidateBranch.status,
     },
+    mergeTargetBranch,
     readyForUserTest: true,
     readyForMerge: true,
     includes: [
       {
         projectId: project.id,
         runId: context.runId,
-        sourceBranch: projectBranchName,
+        sourceBranch: itemBranchName,
       },
     ],
     mergeChecklist: [
       "Execution passed for all required stories.",
       `Project review status: ${documentationArtifact.mode === "generate" ? "generated" : "updated"} docs prepared.`,
       "QA review completed or explicitly accepted by the user.",
-      "Candidate branch is ready for manual user testing before merge to main.",
+      `Candidate branch is ready for manual user testing before merge to ${mergeTargetBranch}.`,
     ],
-    summary: `${candidateBranch.name} is ready for user testing and optional manual merge into main.`,
+    summary: `${candidateBranch.name} is ready for user testing and optional manual merge into ${mergeTargetBranch}.`,
   }
 
   await writeHandoff(context, handoff)
@@ -274,12 +426,12 @@ export async function finalizeCandidateDecision(
 ): Promise<MergeHandoffArtifact> {
   const updated = await mutateRepoState(context, state => {
     const candidate = requireBranch(state, artifact.candidateBranch.name)
-    const main = requireBranch(state, "main")
+    const target = requireBranch(state, artifact.mergeTargetBranch)
 
     if (decision === "merge") {
-      main.commits.push({
-        hash: branchHash(`main-${candidate.name}-merge`),
-        message: `Merge ${candidate.name} into main`,
+      target.commits.push({
+        hash: branchHash(`${target.name}-${candidate.name}-merge`),
+        message: `Merge ${candidate.name} into ${target.name}`,
         filesChanged: candidate.commits.flatMap(commit => commit.filesChanged),
       })
       candidate.status = "merged"
@@ -302,10 +454,10 @@ export async function finalizeCandidateDecision(
       decision,
       summary:
         decision === "merge"
-          ? `${candidate.name} was merged into main by the user.`
+          ? `${candidate.name} was merged into ${target.name} by the user.`
           : decision === "reject"
-            ? `${candidate.name} was rejected by the user and remains out of main.`
-            : `${candidate.name} remains open for further testing before merge.`,
+            ? `${candidate.name} was rejected by the user and remains out of ${target.name}.`
+            : `${candidate.name} remains open for further testing before merge into ${target.name}.`,
     }
   })
 

@@ -10,7 +10,7 @@ import { layout } from "../src/core/workspaceLayout.js"
 import { resetTestReviewAdapters, setTestReviewAdapters } from "../src/review/registry.js"
 import type { StoryExecutionContext, StoryTestPlanArtifact } from "../src/types.js"
 
-const ctx = { workspaceId: "ws-ralph", runId: "run-ralph" }
+const ctx = { workspaceId: "ws-ralph", runId: "run-ralph", itemSlug: "ralph-item", baseBranch: "main" }
 
 function testPlan(storyId: string): StoryTestPlanArtifact {
   return {
@@ -33,6 +33,7 @@ function testPlan(storyId: string): StoryTestPlanArtifact {
 
 function storyContext(storyId: string): StoryExecutionContext {
   return {
+    item: { slug: "ralph-item", baseBranch: "main" },
     project: { id: "P01", name: "P" },
     conceptSummary: "concept",
     story: {
@@ -92,7 +93,7 @@ test("runRalphStory goes through 3 review cycles, ending in passed + merged bran
     // Branch was created, committed to, and merged
     assert.ok(result.implementation.branch)
     assert.equal(result.implementation.branch?.status, "merged")
-    assert.equal(result.implementation.branch?.name, "story/p01-us-10")
+    assert.equal(result.implementation.branch?.name, "story/ralph-item__p01__w1__us-10")
     assert.ok((result.implementation.branch?.commits.length ?? 0) >= 4)
 
     // Persisted artifacts
@@ -178,7 +179,7 @@ test("runRalphStory records pass-partial when one tool passes and the other is s
 
 test("writeWaveSummary classifies stories by status", async () => {
   await withTmpCwd(async () => {
-    const summary = await writeWaveSummary(ctx, { id: "W-X", number: 7 }, [
+    const summary = await writeWaveSummary(ctx, { id: "W-X", number: 7 }, "P01", [
       {
         storyId: "S1",
         implementation: {
@@ -192,7 +193,7 @@ test("writeWaveSummary classifies stories by status", async () => {
           iterations: [],
           changedFiles: ["src/s1.ts"],
           finalSummary: "ok",
-          branch: { name: "story/p-s1", base: "proj/p", commits: [{ hash: "a", message: "m", filesChanged: [] }], status: "merged" },
+          branch: { name: "story/ralph-item__p01__w7__s1", base: "wave/ralph-item__p01__w7", commits: [{ hash: "a", message: "m", filesChanged: [] }], status: "merged" },
         },
       },
       {
@@ -213,6 +214,8 @@ test("writeWaveSummary classifies stories by status", async () => {
     ])
 
     assert.equal(summary.waveId, "W-X")
+    assert.equal(summary.waveBranch, "wave/ralph-item__p01__w7")
+    assert.equal(summary.projectBranch, "proj/ralph-item__p01")
     assert.equal(summary.storiesMerged.length, 1)
     assert.equal(summary.storiesMerged[0].storyId, "S1")
     assert.equal(summary.storiesBlocked.length, 1)

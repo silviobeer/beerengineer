@@ -3,6 +3,8 @@ import { join } from "node:path"
 export type WorkflowContext = {
   workspaceId: string
   runId: string
+  itemSlug?: string
+  baseBranch?: string
 }
 
 function sanitizeSegment(segment: string): string {
