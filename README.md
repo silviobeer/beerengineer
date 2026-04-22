@@ -1,6 +1,6 @@
 # BeerEngineer2 — Prototyp-Dokumentation
 
-Interaktiver CLI-Prototyp der BeerEngineer-Engine.
+Interaktiver CLI-Prototyp der BeerEngineer-Engine — jetzt mit Live-Board-UI.
 Simuliert den vollständigen Workflow von der Idee bis zum Delivery-Report —
 ohne echte LLMs, mit demselben Kontrollfluss.
 
@@ -9,10 +9,191 @@ Jeder Schritt soll langfristig als `StageRun` mit Status, Logs und Artefakt-Date
 Aktuell ist das fuer `brainstorm`, `requirements`, `architecture`, `planning` und `project-review` umgesetzt und dient als Referenz fuer die weiteren Stages.
 
 ```bash
-npm install
-npm start         # interaktiver Lauf
-npm run typecheck # tsc --noEmit
+npm install                                          # workspace install
+npm run start --workspace=@beerengineer2/engine      # CLI-Lauf (interaktiv)
+npm run start:api                                    # HTTP+SSE API auf :4100
+npm run dev:ui                                       # Next.js UI auf :3000
+npm test --workspace=@beerengineer2/engine           # Engine-Unit-Tests
 ```
+
+---
+
+## Architektur — zwei Layer, eine Engine
+
+Das Repository ist seit dem Frontend-Board-Schritt ein **npm-Monorepo** mit zwei
+Layern: derselbe Workflow-Engine kann sowohl interaktiv im Terminal laufen, als
+auch von einer Browser-UI gesteuert und live beobachtet werden.
+
+```
+beerengineer2/
+├── apps/
+│   ├── engine/   ← der Workflow-Kern (Stages, Runtime, DB, HTTP+SSE-Server)
+│   └── ui/       ← Next.js-Board, das die Engine fernsteuert
+└── package.json  ← npm workspaces: ["apps/*"]
+```
+
+### Die zentrale Architektur-Entscheidung
+
+**Die Engine ist UI-agnostisch.** Sie kennt keine HTTP-Routen, keine React-Komponenten,
+keine Browser. Sie weiss nur, dass es **eine `WorkflowIO`** gibt mit zwei Methoden:
+
+```ts
+type WorkflowIO = {
+  ask(prompt: string): Promise<string>      // Frage an den Operator
+  emit(event: WorkflowEvent): void          // strukturiertes Event publizieren
+}
+```
+
+Der Entrypoint (CLI **oder** API) entscheidet, **welche Implementierung** dieser
+Schnittstelle aktiv ist. Damit ist der gleiche Code auf zwei Wegen nutzbar:
+
+- **CLI-Adapter** (`core/ioCli.ts`) → `ask` liest von stdin, `emit` schreibt in die
+  Konsole.
+- **API-Adapter** (`core/ioApi.ts`) → `ask` schreibt einen Eintrag in `pending_prompts`
+  und stellt einen `Promise` aus, den die UI per `POST /runs/:id/input` aufloest;
+  `emit` schiebt das Event in den SSE-Stream **und** in einen DB-Sync-Subscriber.
+
+### CLI ↔ UI — End-to-End
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                        BROWSER (Next.js UI · Port 3000)                      │
+│                                                                              │
+│   /             /runs              /runs/[id]                                │
+│   Live Board    Start + Liste      LiveRunConsole (SSE-Subscriber)           │
+│       │             │                    │           ▲                       │
+│       │ liest       │ POST /runs         │ EventSource           │ SSE       │
+│       │ SQLite      │                    │ /runs/:id/events       │          │
+│       │ (server-    │ POST               │                        │          │
+│       │  side       │ /runs/:id/input    │                        │          │
+│       │  read)      │ GET                │                        │          │
+│       │             │ /runs/:id/prompts  │                        │          │
+└───────┼─────────────┼────────────────────┼────────────────────────┼──────────┘
+        │             │                    │                        │
+        │             ▼                    ▼                        │
+        │   ┌─────────────────────────────────────────────────────────────┐
+        │   │            ENGINE HTTP+SSE-Server (Port 4100)               │
+        │   │                                                             │
+        │   │   POST /runs              → prepareRun() → start (async)    │
+        │   │   POST /runs/:id/input    → ApiIOSession.answerPrompt()     │
+        │   │   GET  /runs[/:id[/...]]  → DB-Lesepfade                    │
+        │   │   GET  /runs/:id/events   → SSE: Replay + live forward      │
+        │   │   GET  /board             → projizierter Board-DTO          │
+        │   └────────────┬─────────────────────────────────┬──────────────┘
+        │                │ setWorkflowIO(apiIO)            │
+        │                ▼                                 │
+        │   ┌─────────────────────────────────────────────┴──────────────┐
+        │   │                 WORKFLOW-ENGINE (UI-agnostic)               │
+        │   │                                                             │
+        │   │   runWorkflow(item)                                         │
+        │   │     └── withStageLifecycle("brainstorm", …) ──┐             │
+        │   │     └── withStageLifecycle("requirements", …) │ emit        │
+        │   │     └── … 9 stages …                          │ stage_      │
+        │   │     └── withStageLifecycle("handoff", …)      │ started/    │
+        │   │                                               │ completed   │
+        │   │   stages call ask(prompt)  ◀── routed to active WorkflowIO │
+        │   └─────────────────────────────┬───────────────────────────────┘
+        │                                 │ io.emit / io.ask
+        │                                 ▼
+        │   ┌──────────────────────────────────────────────────────────────┐
+        │   │   attachDbSync(io, repos)  — Event-Subscriber                │
+        │   │                                                              │
+        │   │   stage_started      → INSERT stage_runs                     │
+        │   │                        UPDATE items.current_column           │
+        │   │   stage_completed    → UPDATE stage_runs.status              │
+        │   │   prompt_requested   → INSERT stage_logs                     │
+        │   │   artifact_written   → INSERT artifact_files                 │
+        │   │   run_finished       → UPDATE runs.status                    │
+        │   └──────────────────────────┬───────────────────────────────────┘
+        │                              │
+        │                              ▼
+        ▼   ┌──────────────────────────────────────────────────────────────┐
+            │      SQLite (BEERENGINEER_UI_DB_PATH, default ~/.local/...)  │
+            │                                                              │
+            │   workspaces · items · projects                              │
+            │      ↑ liest die UI direkt via better-sqlite3                │
+            │                                                              │
+            │   runs · stage_runs · stage_logs · artifact_files            │
+            │   pending_prompts                                            │
+            │      ↑ schreibt der DB-Sync; liest die HTTP-API              │
+            └──────────────────────────────────────────────────────────────┘
+```
+
+### Drei Verbindungswege zwischen CLI/Engine und UI
+
+| Verbindung | Richtung | Transport | Zweck |
+|---|---|---|---|
+| **SQLite (geteiltes File)** | Engine → UI | `better-sqlite3` (server-side read in Next.js) | Board-Daten (`workspaces/items/projects`) ohne Polling — Next.js liest beim Page-Render direkt aus der DB. |
+| **HTTP REST** | UI → Engine | `fetch` über `NEXT_PUBLIC_ENGINE_BASE_URL` (Default `http://127.0.0.1:4100`) | Run starten, Antwort auf Prompt schicken, Snapshots/Tree abfragen. |
+| **SSE (Server-Sent Events)** | Engine → UI | `EventSource` auf `/runs/:id/events` | Live-Stream aller Workflow-Events (`stage_started`, `prompt_requested`, `artifact_written`, …) inkl. History-Replay. |
+
+Die **SQLite-Datei ist die geteilte Source of Truth**. Engine schreibt, UI liest.
+HTTP+SSE liegt nur auf den Schreibseiten (Run-Steuerung) und auf dem Live-Pfad
+(neue Events sofort sehen, ohne neu zu laden).
+
+### Workflow-Event-Modell
+
+```ts
+type WorkflowEvent =
+  | { type: "run_started";        runId; itemId; title }
+  | { type: "run_finished";       runId; status: "completed" | "failed" }
+  | { type: "stage_started";      runId; stageRunId; stageKey; projectId? }
+  | { type: "stage_completed";    runId; stageRunId; stageKey; status }
+  | { type: "prompt_requested";   runId; promptId; prompt }
+  | { type: "prompt_answered";    runId; promptId; answer }
+  | { type: "artifact_written";   runId; label; kind; path }
+  | { type: "log";                runId; message }
+  | { type: "item_column_changed";runId; itemId; column; phaseStatus }
+```
+
+Jedes Event hat **drei Konsumenten**:
+
+1. `attachDbSync` persistiert es in `stage_logs` + Folge-Tabellen.
+2. `EventEmitter` der `ApiIOSession` schiebt es in jeden offenen SSE-Stream.
+3. SSE-Replay liest auf `/runs/:id/events` zuerst alle bereits persistierten
+   Events aus `stage_logs`, dann die Live-Folgeevents — Clients koennen also
+   spaet andocken, ohne History zu verlieren.
+
+### Stage → Board-Spalten-Mapping
+
+Die UI hat fuenf feste Board-Spalten (`idea | brainstorm | requirements |
+implementation | done`). Die Engine hat neun Stages. Die Projektion lebt
+**im Backend** (`core/runOrchestrator.ts → mapStageToColumn`), nicht in der UI:
+
+| Engine-Stage | Board-Spalte |
+|---|---|
+| _kein Stage / draft_ | `idea` |
+| `brainstorm` | `brainstorm` |
+| `requirements` | `requirements` |
+| `architecture`, `planning`, `execution`, `project-review`, `qa` | `implementation` |
+| `documentation`, `handoff` (bei `completed`) | `done` |
+
+So muss die UI nichts ueber Engine-Status wissen — sie zeichnet nur, was im
+`current_column`-Feld der `items`-Tabelle steht.
+
+### API-Vertrag (kompletter Server)
+
+| Method | Route | Effekt |
+|---|---|---|
+| `POST` | `/runs` | Startet Workflow async, antwortet `202 { runId }` |
+| `POST` | `/runs/:id/input` | Beantwortet offenen Prompt: `{ promptId, answer }` |
+| `GET`  | `/runs` | Alle Runs (neueste zuerst) |
+| `GET`  | `/runs/:id` | Snapshot eines Runs |
+| `GET`  | `/runs/:id/tree` | Run + Stage-Runs + Artefakte |
+| `GET`  | `/runs/:id/events` | SSE: History-Replay + Live-Events |
+| `GET`  | `/runs/:id/prompts` | Aktuell offener Prompt (oder `null`) |
+| `GET`  | `/board[?workspace=key]` | Board-DTO (Spalten + Karten) |
+| `GET`  | `/health` | `{ ok: true }` |
+
+### Test-Pyramide
+
+- **Engine-Unit** (`apps/engine/test/dbSync.test.ts`): `mapStageToColumn`,
+  `attachDbSync`-Lifecycle, Pending-Prompt-Roundtrip — laufen unter `node:test`.
+- **Playwright-Integration** (`apps/ui/tests/e2e/runs-live.spec.ts`): spawnt den
+  Engine-Server, startet einen Run via HTTP, durchlaeuft alle 9 Stages mit
+  automatischen Prompt-Antworten, oeffnet `/runs` und `/runs/:id` im Browser.
+
+---
 
 ---
 
@@ -498,13 +679,31 @@ Spaeter sollen alle Stages in denselben Workspace-Container schreiben.
 
 ## Dateien
 
+> Hinweis: Seit dem UI-Schritt liegt der Engine-Code unter `apps/engine/src/`,
+> nicht mehr direkt unter `src/`. Siehe Abschnitt "Architektur — zwei Layer,
+> eine Engine" oben fuer das vollstaendige Layout.
+
 ```
-src/
+apps/engine/src/
   types.ts                  Shared Types
   print.ts                  Ausgabe-Helfer
 
+  api/
+    server.ts               HTTP+SSE-Server (POST /runs, GET /board, …)
+    board.ts                Board-DTO + Run-Tree-Aggregation
+
+  db/
+    schema.sql              SQLite-Schema (workspaces/items/projects + Engine-Tabellen)
+    connection.ts           openDatabase / applySchema / initDatabase
+    repositories.ts         typed Repos: Workspaces, Items, Projects, Runs,
+                            StageRuns, StageLogs, ArtifactFiles, PendingPrompts
+
   core/
-    reviewLoop.ts           altes generisches Primitiv (produce → review → loop)
+    io.ts                   WorkflowIO-Abstraktion + setWorkflowIO/getWorkflowIO
+    ioCli.ts                CLI-Adapter (readline)
+    ioApi.ts                API-Adapter (DB-Prompt + EventEmitter)
+    runContext.ts           setActiveRun + withStageLifecycle (emit stage_started/completed)
+    runOrchestrator.ts      prepareRun / attachDbSync / mapStageToColumn
     parallelReview.ts       Kombiniert mehrere Reviewer parallel
     stageRuntime.ts         formale Stage-Runtime mit Status/Logs/Files
 
