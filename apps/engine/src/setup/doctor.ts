@@ -11,6 +11,8 @@ type ToolProbe = {
   ok: boolean
   version?: string
   detail?: string
+  stdout?: string
+  stderr?: string
 }
 
 type DoctorOptions = {
@@ -84,9 +86,39 @@ function probeCommand(command: string, args: string[] = []): Promise<ToolProbe> 
         ok: code === 0,
         version: outputLine || undefined,
         detail: code === 0 ? undefined : outputLine || `exit ${code ?? "unknown"}`,
+        stdout: stdout || undefined,
+        stderr: stderr || undefined,
       })
     })
   })
+}
+
+async function probeClaudeAuth(): Promise<CheckResult> {
+  const auth = await probeCommand("claude", ["auth", "status"])
+  if (!auth.ok) {
+    return createCheck(
+      "llm.anthropic.auth",
+      "Anthropic / Claude Code auth",
+      "missing",
+      "Claude Code is not logged in and ANTHROPIC_API_KEY is not set",
+      {
+        remedy: { hint: "Run `claude`, complete `/login`, or export ANTHROPIC_API_KEY before running BeerEngineer." },
+      },
+    )
+  }
+
+  try {
+    const parsed = JSON.parse(auth.stdout ?? auth.version ?? "{}") as { loggedIn?: boolean; authMethod?: string; subscriptionType?: string }
+    if (parsed.loggedIn) {
+      const via = parsed.authMethod ? ` via ${parsed.authMethod}` : ""
+      const plan = parsed.subscriptionType ? ` (${parsed.subscriptionType})` : ""
+      return createCheck("llm.anthropic.auth", "Anthropic / Claude Code auth", "ok", `Logged in${via}${plan}`)
+    }
+  } catch {
+    // Fall through to a generic success detail when the CLI output is not JSON.
+  }
+
+  return createCheck("llm.anthropic.auth", "Anthropic / Claude Code auth", "ok", auth.version ?? "Claude Code auth available")
 }
 
 function statusIsOk(status: SetupStatus): boolean {
@@ -255,6 +287,16 @@ async function runLlmChecks(provider: AppConfig["llm"]["provider"], config: AppC
   })
   if (!cli.ok) {
     return [cliCheck, createCheck(def.authId, `${def.label} auth`, "skipped", `${def.command} CLI is not available`)]
+  }
+  if (provider === "anthropic") {
+    const apiKey = process.env[def.apiKeyRef]
+    if (apiKey) {
+      return [
+        cliCheck,
+        createCheck(def.authId, `${def.label} auth`, "ok", `${def.apiKeyRef} is set`),
+      ]
+    }
+    return [cliCheck, await probeClaudeAuth()]
   }
   const present = Boolean(process.env[def.apiKeyRef])
   return [

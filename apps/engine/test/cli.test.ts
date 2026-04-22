@@ -142,6 +142,48 @@ test("setup --no-interactive provisions config and database", () => {
   }
 })
 
+test("setup accepts Claude subscription auth without ANTHROPIC_API_KEY", () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-"))
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
+  const stubBin = join(dir, "bin")
+  const configPath = join(dir, "config", "config.json")
+  const dataDir = join(dir, "data")
+
+  try {
+    makeStubBin(stubBin, "git", "echo 'git version 2.47.0'")
+    makeStubBin(stubBin, "claude", `
+if [ "$#" -ge 1 ] && [ "$1" = "--version" ]; then
+  echo 'claude 1.2.3'
+elif [ "$#" -ge 2 ] && [ "$1" = "auth" ] && [ "$2" = "status" ]; then
+  echo '{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"max"}'
+else
+  exit 1
+fi`)
+    const result = spawnSync(
+      process.execPath,
+      [binPath, "setup", "--no-interactive"],
+      {
+        cwd: engineRoot,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${stubBin}:${process.env.PATH ?? ""}`,
+          BEERENGINEER_CONFIG_PATH: configPath,
+          BEERENGINEER_DATA_DIR: dataDir,
+        },
+      }
+    )
+
+    assert.equal(result.status, 0, `${result.stdout ?? ""}\n${result.stderr ?? ""}`)
+    assert.match(result.stdout ?? "", /App setup initialized config, data dir, and database\./)
+    assert.doesNotMatch(result.stdout ?? "", /ANTHROPIC_API_KEY is not set/)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test("workspace add/register/open/remove work end-to-end through the CLI", () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-workspace-cli-"))
   const testDir = dirname(fileURLToPath(import.meta.url))
