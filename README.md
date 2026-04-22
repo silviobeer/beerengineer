@@ -21,6 +21,25 @@ npm run dev:ui                                       # Next.js UI lokal
 npm test --workspace=@beerengineer2/engine           # Engine-Unit-Tests
 ```
 
+### LLM-Prompts
+
+Die gehosteten Engine-Prompts liegen jetzt als Markdown-Dateien unter
+`apps/engine/prompts/`:
+
+- `system/<stage-id>.md` fuer Stage-Prompts
+- `reviewers/<stage-id>.md` fuer Reviewer-Prompts
+- `workers/<worker-id>.md` fuer Execution- und Worker-Prompts
+
+Die aeussere JSON-/Envelope-Logik bleibt in
+`apps/engine/src/llm/hosted/promptEnvelope.ts`; die Markdown-Dateien
+definieren nur das stage-spezifische Verhalten und den inneren
+Artifact-Contract.
+
+Zur Laufzeit kann das Prompt-Verzeichnis mit
+`BEERENGINEER_PROMPTS_DIR=/pfad/zu/prompts` ueberschrieben werden. Der
+Loader akzeptiert absolute Pfade oder Pfade relativ zum aktuellen
+Working Directory.
+
 ### CLI-Kommandos
 
 Der Engine-Workspace exportiert jetzt ein echtes `beerengineer`-CLI-Binary.
