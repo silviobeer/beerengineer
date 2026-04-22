@@ -178,6 +178,45 @@ export function withDbSync(
           data: { projectId: event.projectId, code: event.code, position: event.position }
         }))
       }
+      case "run_blocked":
+      case "run_failed": {
+        const scope = event.scope
+        const scopeRef =
+          scope.type === "stage"
+            ? scope.stageId
+            : scope.type === "story"
+            ? `${scope.waveNumber}/${scope.storyId}`
+            : null
+        repos.setRunRecovery(event.runId, {
+          status: event.type === "run_blocked" ? "blocked" : "failed",
+          scope: scope.type,
+          scopeRef,
+          summary: event.summary
+        })
+        return withPersistedMeta(event, repos.appendLog({
+          runId: event.runId,
+          eventType: event.type,
+          message: event.summary,
+          data: { cause: event.cause, scope, branch: "branch" in event ? event.branch : undefined }
+        }))
+      }
+      case "external_remediation_recorded": {
+        return withPersistedMeta(event, repos.appendLog({
+          runId: event.runId,
+          eventType: "external_remediation_recorded",
+          message: event.summary,
+          data: { remediationId: event.remediationId, scope: event.scope, branch: event.branch }
+        }))
+      }
+      case "run_resumed": {
+        repos.clearRunRecovery(event.runId)
+        return withPersistedMeta(event, repos.appendLog({
+          runId: event.runId,
+          eventType: "run_resumed",
+          message: `run resumed from ${event.scope.type} scope`,
+          data: { remediationId: event.remediationId, scope: event.scope }
+        }))
+      }
     }
   }
 

@@ -7,6 +7,7 @@ import { type WorkflowEvent } from "../core/io.js"
 import { createApiIOSession } from "../core/ioApi.js"
 import { prepareRun } from "../core/runOrchestrator.js"
 import { createItemActionsService, isItemAction, type ItemActionEvent } from "../core/itemActions.js"
+import { isResumeInFlight, loadResumeReadiness, performResume } from "../core/resume.js"
 
 const PORT = Number(process.env.PORT ?? 4100)
 const HOST = process.env.HOST ?? "127.0.0.1"
@@ -67,14 +68,21 @@ async function handleItemAction(
   res: ServerResponse,
   itemId: string
 ): Promise<void> {
-  const body = (await readJson(req)) as { action?: unknown }
+  const body = (await readJson(req)) as {
+    action?: unknown
+    resume?: { summary?: string; branch?: string; commitSha?: string; reviewNotes?: string }
+  }
   if (!isItemAction(body.action)) {
     return json(res, 400, { error: "action is required", valid: ["start_brainstorm", "promote_to_requirements", "start_implementation", "resume_run", "mark_done"] })
   }
 
-  const result = await itemActions.perform(itemId, body.action)
+  const resumeInput = body.resume?.summary
+    ? { resume: body.resume as { summary: string; branch?: string; commitSha?: string; reviewNotes?: string } }
+    : undefined
+  const result = await itemActions.perform(itemId, body.action, resumeInput)
   if (!result.ok) {
     if (result.status === 404) return json(res, 404, { error: result.error })
+    if (result.status === 422) return json(res, 422, { error: result.error, action: result.action })
     return json(res, 409, {
       error: result.error,
       current: result.current,
@@ -87,6 +95,7 @@ async function handleItemAction(
     phaseStatus: result.phaseStatus
   }
   if (result.runId) payload.runId = result.runId
+  if (result.remediationId) payload.remediationId = result.remediationId
   json(res, 200, payload)
 }
 
@@ -203,6 +212,80 @@ function handleGetRunTree(res: ServerResponse, runId: string): void {
 
 function handleListRuns(res: ServerResponse): void {
   json(res, 200, { runs: repos.listRuns() })
+}
+
+async function handleResumeRun(req: IncomingMessage, res: ServerResponse, runId: string): Promise<void> {
+  const body = (await readJson(req)) as {
+    summary?: string
+    branch?: string
+    commit?: string
+    reviewNotes?: string
+  }
+
+  const readiness = await loadResumeReadiness(repos, runId)
+  if (readiness.kind === "not_found") return json(res, 404, { error: "run_not_found" })
+  if (readiness.kind === "no_recovery") {
+    return json(res, 409, { error: "not_resumable", recovery: null })
+  }
+  if (readiness.kind === "not_resumable") {
+    return json(res, 409, { error: readiness.reason, recovery: readiness.record ?? null })
+  }
+  if (!body.summary || body.summary.trim().length === 0) {
+    return json(res, 422, { error: "remediation_required" })
+  }
+  if (isResumeInFlight(runId)) {
+    return json(res, 409, { error: "resume_in_progress", recovery: readiness.record })
+  }
+
+  const scopeRef =
+    readiness.record.scope.type === "stage"
+      ? readiness.record.scope.stageId
+      : readiness.record.scope.type === "story"
+      ? `${readiness.record.scope.waveNumber}/${readiness.record.scope.storyId}`
+      : null
+  const remediation = repos.createExternalRemediation({
+    runId,
+    scope: readiness.record.scope.type,
+    scopeRef,
+    summary: body.summary,
+    branch: body.branch,
+    commitSha: body.commit,
+    reviewNotes: body.reviewNotes,
+    source: "api",
+  })
+
+  // Reuse the API IO session machinery so SSE clients see the resumed run.
+  const session = createApiIOSession(repos)
+  sessions.set(runId, session)
+  trackSessionItem(runId, readiness.run.item_id)
+  subscribeSessionToBoardStream(session, readiness.run.item_id)
+
+  performResume({ repos, io: session.io, runId, remediation })
+    .catch(err => console.error("[resume]", err))
+    .finally(() => {
+      setTimeout(() => {
+        session.dispose()
+        if (sessions.get(runId) === session) sessions.delete(runId)
+      }, 30_000)
+    })
+
+  json(res, 200, { runId, remediationId: remediation.id, resumed: true })
+}
+
+function handleGetRecovery(res: ServerResponse, runId: string): void {
+  const run = repos.getRun(runId)
+  if (!run) return json(res, 404, { error: "run_not_found" })
+  if (!run.recovery_status) return json(res, 200, { recovery: null })
+  json(res, 200, {
+    recovery: {
+      status: run.recovery_status,
+      scope: run.recovery_scope,
+      scopeRef: run.recovery_scope_ref,
+      summary: run.recovery_summary,
+      resumable: run.recovery_status === "blocked" && !isResumeInFlight(runId),
+      remediations: repos.listExternalRemediations(runId),
+    },
+  })
 }
 
 async function handleRunInput(req: IncomingMessage, res: ServerResponse, runId: string): Promise<void> {
@@ -381,8 +464,8 @@ const server = createServer(async (req, res) => {
     const itemMatch = path.match(/^\/items\/([^/]+)\/actions$/)
     if (itemMatch && req.method === "POST") return handleItemAction(req, res, itemMatch[1])
 
-    // /runs/:id + /runs/:id/input + /runs/:id/tree + /runs/:id/events + /runs/:id/prompts
-    const runMatch = path.match(/^\/runs\/([^/]+)(?:\/(input|tree|events|prompts))?$/)
+    // /runs/:id + /runs/:id/input + /runs/:id/tree + /runs/:id/events + /runs/:id/prompts + /runs/:id/resume
+    const runMatch = path.match(/^\/runs\/([^/]+)(?:\/(input|tree|events|prompts|resume|recovery))?$/)
     if (runMatch) {
       const [, runId, sub] = runMatch
       if (!sub && req.method === "GET") return handleGetRun(res, runId)
@@ -393,6 +476,8 @@ const server = createServer(async (req, res) => {
         const open = repos.getOpenPrompt(runId)
         return json(res, 200, { prompt: open ?? null })
       }
+      if (sub === "resume" && req.method === "POST") return handleResumeRun(req, res, runId)
+      if (sub === "recovery" && req.method === "GET") return handleGetRecovery(res, runId)
     }
 
     // /health

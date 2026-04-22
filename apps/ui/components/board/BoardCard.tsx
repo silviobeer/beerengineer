@@ -7,6 +7,11 @@ export function BoardCard({ card }: { card: BoardCardViewModel }) {
     <article className={card.selected ? "board-card selected" : "board-card"}>
       <div className="board-card-top">
         <span className="code">{card.itemCode}</span>
+        {card.recoveryStatus ? (
+          <span className="recovery-badge" data-status={card.recoveryStatus}>
+            {card.recoveryStatus === "blocked" ? "Blocked" : "Failed"}
+          </span>
+        ) : null}
         <BoardCardModeIcon mode={card.mode} />
       </div>
       <h4>{card.title}</h4>

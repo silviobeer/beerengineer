@@ -26,6 +26,7 @@ export function applySchema(db: Db): void {
   const sql = readFileSync(schemaPath, "utf8")
   db.exec(sql)
   migrateRunsOwnerColumn(db)
+  migrateRunsRecoveryColumns(db)
 }
 
 export function initDatabase(dbPath?: string | null): Db {
@@ -43,4 +44,18 @@ function migrateRunsOwnerColumn(db: Db): void {
   const cols = db.prepare("PRAGMA table_info(runs)").all() as Array<{ name: string }>
   if (cols.some(c => c.name === "owner")) return
   db.exec("ALTER TABLE runs ADD COLUMN owner TEXT NOT NULL DEFAULT 'api'")
+}
+
+/**
+ * Add the recovery projection columns to an older `runs` table. New databases
+ * pick these up from schema.sql directly; this branch keeps pre-existing local
+ * DBs readable after upgrade.
+ */
+function migrateRunsRecoveryColumns(db: Db): void {
+  const cols = db.prepare("PRAGMA table_info(runs)").all() as Array<{ name: string }>
+  const has = (name: string) => cols.some(c => c.name === name)
+  if (!has("recovery_status")) db.exec("ALTER TABLE runs ADD COLUMN recovery_status TEXT")
+  if (!has("recovery_scope")) db.exec("ALTER TABLE runs ADD COLUMN recovery_scope TEXT")
+  if (!has("recovery_scope_ref")) db.exec("ALTER TABLE runs ADD COLUMN recovery_scope_ref TEXT")
+  if (!has("recovery_summary")) db.exec("ALTER TABLE runs ADD COLUMN recovery_summary TEXT")
 }

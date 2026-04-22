@@ -6,6 +6,7 @@ import type {
   StageAgentResponse,
 } from "./adapters.js"
 import { emitEvent, getActiveRun } from "./runContext.js"
+import { writeRecoveryRecord, type RecoveryCause } from "./recovery.js"
 import { layout, type WorkflowContext } from "./workspaceLayout.js"
 
 export type StageStatus =
@@ -195,6 +196,31 @@ export function createStageRun<TState, TArtifact>(
   }
 }
 
+async function recordStageBlocked<TState, TArtifact>(
+  run: StageRun<TState, TArtifact>,
+  cause: RecoveryCause,
+  summary: string,
+  extra?: { detail?: string; findings?: Array<{ source: string; severity: string; message: string }> },
+): Promise<void> {
+  const ctx: WorkflowContext = { workspaceId: run.workspaceId, runId: run.runId }
+  const record = await writeRecoveryRecord(ctx, {
+    status: cause === "system_error" ? "failed" : "blocked",
+    cause,
+    scope: { type: "stage", runId: run.runId, stageId: run.stage },
+    summary,
+    detail: extra?.detail,
+    evidencePaths: [layout.stageRunFile(ctx, run.stage), layout.stageLogFile(ctx, run.stage)],
+    findings: extra?.findings,
+  })
+  emitEvent({
+    type: record.status === "failed" ? "run_failed" : "run_blocked",
+    runId: run.runId,
+    scope: { type: "stage", runId: run.runId, stageId: run.stage },
+    cause,
+    summary,
+  })
+}
+
 export async function runStage<TState, TArtifact, TResult>(
   definition: StageDefinition<TState, TArtifact, TResult>,
 ): Promise<{ result: TResult; run: StageRun<TState, TArtifact> }> {
@@ -202,6 +228,26 @@ export async function runStage<TState, TArtifact, TResult>(
 
   await persistRun(run)
   setStatus(run, "chat_in_progress")
+
+  try {
+    return await runStageBody(definition, run)
+  } catch (err) {
+    // Unhandled exceptions (adapter errors, etc.) become `failed` recovery
+    // records. Reviewer-driven blocks already wrote their own record before
+    // throwing — we detect that by checking run.status.
+    if (run.status !== "blocked" && run.status !== "failed") {
+      setStatus(run, "failed")
+      await persistRun(run)
+      await recordStageBlocked(run, "system_error", (err as Error).message)
+    }
+    throw err
+  }
+}
+
+async function runStageBody<TState, TArtifact, TResult>(
+  definition: StageDefinition<TState, TArtifact, TResult>,
+  run: StageRun<TState, TArtifact>,
+): Promise<{ result: TResult; run: StageRun<TState, TArtifact> }> {
 
   let response: StageAgentResponse<TArtifact> = await definition.stageAgent.step({
     kind: "begin",
@@ -268,6 +314,7 @@ export async function runStage<TState, TArtifact, TResult>(
     if (review.kind === "block") {
       setStatus(run, "blocked")
       await persistRun(run)
+      await recordStageBlocked(run, "review_block", review.reason)
       throw new Error(review.reason)
     }
 
@@ -275,7 +322,9 @@ export async function runStage<TState, TArtifact, TResult>(
     if (run.reviewIteration >= definition.maxReviews) {
       setStatus(run, "blocked")
       await persistRun(run)
-      throw new Error(`Blocked: no pass after ${definition.maxReviews} reviews`)
+      const summary = `Blocked: no pass after ${definition.maxReviews} reviews`
+      await recordStageBlocked(run, "review_limit", summary, { detail: review.feedback })
+      throw new Error(summary)
     }
 
     setStatus(run, "revision_requested")

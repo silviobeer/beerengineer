@@ -11,12 +11,20 @@ import { Repos } from "./db/repositories.js"
 import { runWorkflowWithSync } from "./core/runOrchestrator.js"
 import type { ItemRow } from "./db/repositories.js"
 
+export type ResumeFlags = {
+  summary?: string
+  branch?: string
+  commit?: string
+  notes?: string
+  yes?: boolean
+}
+
 type Command =
   | { kind: "help" }
   | { kind: "doctor" }
   | { kind: "start-ui" }
   | { kind: "workflow" }
-  | { kind: "item-action"; itemRef: string; action: string }
+  | { kind: "item-action"; itemRef: string; action: string; resume?: ResumeFlags }
   | { kind: "unknown"; token: string }
 
 const REQUIRED_TABLES = [
@@ -46,7 +54,20 @@ export function parseArgs(argv: string[]): Command {
     const itemRef = readFlag(argv, "--item")
     const action = readFlag(argv, "--action")
     if (!itemRef || !action) return { kind: "unknown", token: argv.join(" ") }
-    return { kind: "item-action", itemRef, action }
+    const resume: ResumeFlags = {}
+    const summary = readFlag(argv, "--remediation-summary")
+    const branch = readFlag(argv, "--branch")
+    const commit = readFlag(argv, "--commit")
+    const notes = readFlag(argv, "--notes")
+    if (summary) resume.summary = summary
+    if (branch) resume.branch = branch
+    if (commit) resume.commit = commit
+    if (notes) resume.notes = notes
+    if (argv.includes("--yes")) resume.yes = true
+    if (Object.keys(resume).length === 0) {
+      return { kind: "item-action", itemRef, action }
+    }
+    return { kind: "item-action", itemRef, action, resume }
   }
   return { kind: "unknown", token: argv.join(" ") }
 }
@@ -67,6 +88,13 @@ function printHelp(): void {
     "  Item actions:",
     "    start_brainstorm  promote_to_requirements  start_implementation",
     "    resume_run  mark_done",
+    "",
+    "  Resume flags (for --action resume_run on a blocked run):",
+    "    --remediation-summary <text>   Required. What you fixed outside BeerEngineer2.",
+    "    --branch <name>                Optional. Branch that holds the fix.",
+    "    --commit <sha>                 Optional. Fix commit SHA.",
+    "    --notes <text>                 Optional. Extra review notes.",
+    "    --yes                          Skip the interactive prompt when on a TTY.",
     "",
     "  Aliases:",
     "    -h  --help",
@@ -199,7 +227,36 @@ async function runInteractiveWorkflow(): Promise<void> {
   }
 }
 
-export async function runItemAction(itemRef: string, action: string): Promise<number> {
+async function collectRemediationFlags(flags: ResumeFlags, interactive: boolean): Promise<ResumeFlags | null> {
+  const out: ResumeFlags = { ...flags }
+  if (interactive && !out.summary) {
+    const { ask, close } = await import("./sim/human.js")
+    try {
+      out.summary = (await ask("  Remediation summary (required): ")).trim() || undefined
+      if (!out.branch) out.branch = (await ask("  Branch (optional):            ")).trim() || undefined
+      if (!out.notes) out.notes = (await ask("  Review notes (optional):      ")).trim() || undefined
+    } finally {
+      close()
+    }
+  }
+  if (!out.summary) return null
+  return out
+}
+
+function printResumeBlockedOutput(
+  runId: string,
+  recovery: { summary: string | null; scope: string | null; scopeRef: string | null },
+  itemRef: string,
+): void {
+  console.error(`\n  Run ${runId} is blocked.`)
+  if (recovery.summary) console.error(`  Reason: ${recovery.summary}`)
+  if (recovery.scope) console.error(`  Scope:  ${recovery.scope}${recovery.scopeRef ? ` (${recovery.scopeRef})` : ""}`)
+  console.error(
+    `  Resume with: beerengineer item action --item ${itemRef} --action resume_run --remediation-summary "<what you fixed>"`,
+  )
+}
+
+export async function runItemAction(itemRef: string, action: string, resumeFlags?: ResumeFlags): Promise<number> {
   const { createItemActionsService, isItemAction } = await import("./core/itemActions.js")
   if (!isItemAction(action)) {
     console.error(`  Unknown action: ${action}`)
@@ -221,18 +278,57 @@ export async function runItemAction(itemRef: string, action: string): Promise<nu
     }
     const item = resolved.item
 
+    // For resume_run, preflight-check whether the active run actually has a
+    // recovery record. If it does, collect remediation fields before calling
+    // perform() so we can fail fast in non-TTY mode with exit 75.
+    let resumePayload: { summary: string; branch?: string; commitSha?: string; reviewNotes?: string } | undefined
+    if (action === "resume_run") {
+      const active = repos.latestActiveRunForItem(item.id)
+      if (active?.recovery_status === "blocked") {
+        const isTty = Boolean(process.stdin.isTTY && process.stdout.isTTY) && resumeFlags?.yes !== true
+        const collected = await collectRemediationFlags(resumeFlags ?? {}, isTty)
+        if (!collected || !collected.summary) {
+          printResumeBlockedOutput(active.id, {
+            summary: active.recovery_summary,
+            scope: active.recovery_scope,
+            scopeRef: active.recovery_scope_ref,
+          }, itemRef)
+          console.error("  Missing --remediation-summary (required for non-interactive resume).")
+          return 75
+        }
+        resumePayload = {
+          summary: collected.summary,
+          branch: collected.branch,
+          commitSha: collected.commit,
+          reviewNotes: collected.notes
+        }
+      } else if (active?.recovery_status === "failed") {
+        console.error(`  Run ${active.id} is marked failed and cannot be resumed until reclassified.`)
+        return 2
+      }
+    }
+
     const service = createItemActionsService(repos)
-    const result = await service.perform(item.id, action)
+    const result = await service.perform(item.id, action, resumePayload ? { resume: resumePayload } : undefined)
     if (!result.ok) {
       if (result.status === 404) console.error(`  Item not found: ${itemRef}`)
-      else console.error(`  Invalid transition: ${result.action} from ${result.current.column}/${result.current.phaseStatus}`)
+      else if (result.status === 422) {
+        console.error(`  Missing remediation summary (pass --remediation-summary).`)
+        service.dispose()
+        return 75
+      } else if (result.error === "not_resumable" || result.error === "resume_in_progress") {
+        console.error(`  Not resumable: ${result.error}`)
+        service.dispose()
+        return 2
+      } else {
+        console.error(`  Invalid transition: ${result.action} from ${result.current.column}/${result.current.phaseStatus}`)
+      }
       service.dispose()
       return 1
     }
     console.log(`  ${action} applied`)
     if (result.runId) console.log(`  run-id: ${result.runId}`)
-    // For actions that start a run we must wait for it to complete, otherwise
-    // the CLI would exit mid-stream. Stage the wait by draining the session.
+    if (result.remediationId) console.log(`  remediation-id: ${result.remediationId}`)
     if (result.runId) {
       const session = service.sessions.get(result.runId)
       if (session) {
@@ -241,6 +337,16 @@ export async function runItemAction(itemRef: string, action: string): Promise<nu
             if (ev.type === "run_finished") resolve()
           })
         })
+        // If the run re-blocked, print the new recovery summary so the
+        // operator sees the next fix cycle up front.
+        const refreshed = repos.getRun(result.runId)
+        if (refreshed?.recovery_status === "blocked") {
+          printResumeBlockedOutput(result.runId, {
+            summary: refreshed.recovery_summary,
+            scope: refreshed.recovery_scope,
+            scopeRef: refreshed.recovery_scope_ref,
+          }, itemRef)
+        }
       }
     }
     service.dispose()
@@ -262,7 +368,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     case "start-ui":
       process.exit(await startUi())
     case "item-action":
-      process.exit(await runItemAction(cmd.itemRef, cmd.action))
+      process.exit(await runItemAction(cmd.itemRef, cmd.action, cmd.resume))
     case "unknown":
       console.error(`  Unknown command: ${cmd.token}`)
       printHelp()

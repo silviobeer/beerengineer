@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { parallelReview } from "../../core/parallelReview.js"
 import {
@@ -7,6 +7,8 @@ import {
   ensureStoryBranch,
   mergeStoryBranchIntoProject,
 } from "../../core/repoSimulation.js"
+import { emitEvent, getActiveRun } from "../../core/runContext.js"
+import { writeRecoveryRecord } from "../../core/recovery.js"
 import { layout, type WorkflowContext } from "../../core/workspaceLayout.js"
 import type { StageLogEntry } from "../../core/stageRuntime.js"
 import { print } from "../../print.js"
@@ -74,6 +76,59 @@ function requireBranch(implementation: StoryImplementationArtifact): SimulatedBr
     throw new Error(`Missing simulated branch for story ${implementation.story.id}`)
   }
   return implementation.branch
+}
+
+async function recordStoryBlocked(
+  ctx: WorkflowContext,
+  storyContext: StoryExecutionContext,
+  implementation: StoryImplementationArtifact,
+  review: StoryReviewArtifact | undefined,
+  cause: "review_limit" | "story_error",
+  summary: string,
+): Promise<void> {
+  const dir = layout.executionRalphDir(ctx, storyContext.wave.number, storyContext.story.id)
+  const findings = review?.reviewers
+    .flatMap(reviewer =>
+      reviewer.findings.map(finding => ({
+        source: reviewer.source,
+        severity: finding.severity,
+        message: finding.message,
+      })),
+    ) ?? []
+  await writeRecoveryRecord(ctx, {
+    status: "blocked",
+    cause,
+    scope: {
+      type: "story",
+      runId: ctx.runId,
+      waveNumber: storyContext.wave.number,
+      storyId: storyContext.story.id,
+    },
+    summary,
+    branch: implementation.branch?.name,
+    evidencePaths: [
+      join(dir, "implementation.json"),
+      join(dir, "story-review.json"),
+      join(dir, "log.jsonl"),
+    ],
+    findings,
+  })
+  const activeRun = getActiveRun()
+  if (activeRun) {
+    emitEvent({
+      type: "run_blocked",
+      runId: activeRun.runId,
+      scope: {
+        type: "story",
+        runId: ctx.runId,
+        waveNumber: storyContext.wave.number,
+        storyId: storyContext.story.id,
+      },
+      cause,
+      summary,
+      branch: implementation.branch?.name,
+    })
+  }
 }
 
 function buildReviewArtifact(
@@ -214,9 +269,17 @@ export async function runRalphStory(
   const implementationPath = join(dir, "implementation.json")
   const reviewPath = join(dir, "story-review.json")
   const logPath = join(dir, "log.jsonl")
+  const remediationPath = join(dir, "pending-remediation.json")
 
   const persistedImplementation = await readJsonIfExists<StoryImplementationArtifact>(implementationPath)
   const persistedReview = await readJsonIfExists<StoryReviewArtifact>(reviewPath)
+  const pendingRemediation = await readJsonIfExists<{
+    id: string
+    summary: string
+    branch?: string | null
+    commitSha?: string | null
+    reviewNotes?: string | null
+  }>(remediationPath)
 
   const implementation: StoryImplementationArtifact = persistedImplementation ?? {
     story: { id: storyContext.story.id, title: storyContext.story.title },
@@ -260,6 +323,26 @@ export async function runRalphStory(
   }
 
   let nextFeedback = storyReview?.outcome === "revise" ? storyReview.feedbackSummary.join("; ") : undefined
+  if (pendingRemediation) {
+    const remediationLine = [
+      `[external-remediation] ${pendingRemediation.summary}`,
+      pendingRemediation.branch ? `branch=${pendingRemediation.branch}` : undefined,
+      pendingRemediation.commitSha ? `commit=${pendingRemediation.commitSha}` : undefined,
+      pendingRemediation.reviewNotes ? `notes=${pendingRemediation.reviewNotes}` : undefined,
+    ]
+      .filter(Boolean)
+      .join(" | ")
+    nextFeedback = nextFeedback ? `${remediationLine}; ${nextFeedback}` : remediationLine
+    await appendLog(logPath, logEntry("stage_message", "External remediation applied to next iteration", {
+      storyId: storyContext.story.id,
+      remediationId: pendingRemediation.id,
+    }))
+    try {
+      await unlink(remediationPath)
+    } catch {
+      // Already consumed / removed — ignore.
+    }
+  }
 
   for (
     let reviewCycle = Math.max(implementation.currentReviewCycle, 0);
@@ -353,6 +436,14 @@ export async function runRalphStory(
           storyId: storyContext.story.id,
           status: "blocked",
         }))
+        await recordStoryBlocked(
+          runtimeContext,
+          storyContext,
+          implementation,
+          storyReview,
+          "story_error",
+          implementation.finalSummary,
+        )
         return { implementation, review: storyReview }
       }
     }
@@ -421,6 +512,14 @@ export async function runRalphStory(
     storyId: storyContext.story.id,
     status: "blocked",
   }))
+  await recordStoryBlocked(
+    runtimeContext,
+    storyContext,
+    implementation,
+    storyReview,
+    "review_limit",
+    implementation.finalSummary,
+  )
   return { implementation, review: storyReview }
 }
 

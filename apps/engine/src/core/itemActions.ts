@@ -1,7 +1,8 @@
 import { EventEmitter } from "node:events"
-import type { ItemRow, Repos, RunRow } from "../db/repositories.js"
+import type { ExternalRemediationRow, ItemRow, Repos, RunRow } from "../db/repositories.js"
 import { createApiIOSession, type ApiIOSession } from "./ioApi.js"
 import { prepareRun } from "./runOrchestrator.js"
+import { loadResumeReadiness, performResume } from "./resume.js"
 
 export type ItemAction =
   | "start_brainstorm"
@@ -19,18 +20,26 @@ export const ITEM_ACTIONS: readonly ItemAction[] = [
 ] as const
 
 export type ItemActionResult =
-  | { ok: true; itemId: string; runId?: string; column: ItemRow["current_column"]; phaseStatus: ItemRow["phase_status"] }
+  | { ok: true; itemId: string; runId?: string; column: ItemRow["current_column"]; phaseStatus: ItemRow["phase_status"]; remediationId?: string }
   | { ok: false; status: 404; error: "item_not_found" }
-  | { ok: false; status: 409; error: "invalid_transition"; current: { column: string; phaseStatus: string }; action: ItemAction }
+  | { ok: false; status: 409; error: "invalid_transition" | "not_resumable" | "resume_in_progress"; current: { column: string; phaseStatus: string }; action: ItemAction }
+  | { ok: false; status: 422; error: "remediation_required"; action: ItemAction }
 
 export type ItemActionEvent =
   | { type: "item_column_changed"; itemId: string; from: ItemRow["current_column"]; to: ItemRow["current_column"]; phaseStatus: ItemRow["phase_status"] }
   | { type: "run_started"; runId: string; itemId: string; startedAt: number }
   | { type: "stage_started"; runId: string; itemId: string; stage: string }
 
+export type ResumePayload = {
+  summary: string
+  branch?: string
+  commitSha?: string
+  reviewNotes?: string
+}
+
 export type ItemActionsService = {
   /** Perform an action against an item. */
-  perform(itemId: string, action: ItemAction): Promise<ItemActionResult>
+  perform(itemId: string, action: ItemAction, input?: { resume?: ResumePayload }): Promise<ItemActionResult>
   /** Subscribe to board-level events emitted by this service. */
   on(event: "event", listener: (ev: ItemActionEvent) => void): void
   off(event: "event", listener: (ev: ItemActionEvent) => void): void
@@ -194,7 +203,7 @@ export function createItemActionsService(repos: Repos, opts: ItemActionsOptions 
   }
 
   return {
-    async perform(itemId, action): Promise<ItemActionResult> {
+    async perform(itemId, action, input): Promise<ItemActionResult> {
       const item = repos.getItem(itemId)
       if (!item) return { ok: false, status: 404, error: "item_not_found" }
 
@@ -218,15 +227,7 @@ export function createItemActionsService(repos: Repos, opts: ItemActionsOptions 
           column: transition.column,
           phase: "running"
         })
-        // The orchestrator's db-sync wrapper will update column/phase as
-        // stages progress; emit the snapshot we know now.
-        return {
-          ok: true,
-          itemId: item.id,
-          runId,
-          column,
-          phaseStatus
-        }
+        return { ok: true, itemId: item.id, runId, column, phaseStatus }
       }
 
       // resume
@@ -240,6 +241,62 @@ export function createItemActionsService(repos: Repos, opts: ItemActionsOptions 
           action
         }
       }
+
+      // If the active run has a recovery record, the resume path requires a
+      // remediation payload and funnels through performResume(). Otherwise
+      // fall back to the legacy "return the active runId" behavior.
+      const readiness = await loadResumeReadiness(repos, active.id)
+      if (readiness.kind === "ready") {
+        if (!input?.resume) {
+          return { ok: false, status: 422, error: "remediation_required", action }
+        }
+        const scopeRef =
+          readiness.record.scope.type === "stage"
+            ? readiness.record.scope.stageId
+            : readiness.record.scope.type === "story"
+            ? `${readiness.record.scope.waveNumber}/${readiness.record.scope.storyId}`
+            : null
+        const remediation: ExternalRemediationRow = repos.createExternalRemediation({
+          runId: active.id,
+          scope: readiness.record.scope.type,
+          scopeRef,
+          summary: input.resume.summary,
+          branch: input.resume.branch,
+          commitSha: input.resume.commitSha,
+          reviewNotes: input.resume.reviewNotes,
+          source: "cli"
+        })
+        const session = createApiIOSession(repos)
+        sessions.set(active.id, session)
+        opts.onSessionStart?.({ session, runId: active.id, itemId: item.id })
+        performResume({ repos, io: session.io, runId: active.id, remediation })
+          .catch(err => console.error("[itemActions.resume]", err))
+          .finally(() => {
+            const t = setTimeout(() => {
+              session.dispose()
+              if (sessions.get(active.id) === session) sessions.delete(active.id)
+            }, 30_000)
+            t.unref?.()
+          })
+        return {
+          ok: true,
+          itemId: item.id,
+          runId: active.id,
+          column: item.current_column,
+          phaseStatus: item.phase_status,
+          remediationId: remediation.id
+        }
+      }
+      if (readiness.kind === "not_resumable") {
+        return {
+          ok: false,
+          status: 409,
+          error: readiness.reason === "failed" ? "not_resumable" : "resume_in_progress",
+          current: { column: item.current_column, phaseStatus: item.phase_status },
+          action
+        }
+      }
+
       return {
         ok: true,
         itemId: item.id,

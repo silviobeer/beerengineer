@@ -7,8 +7,34 @@ export type RunRow = {
   title: string
   status: string
   current_stage: string | null
+  recovery_status?: "blocked" | "failed" | null
+  recovery_scope?: "run" | "stage" | "story" | null
+  recovery_scope_ref?: string | null
+  recovery_summary?: string | null
   created_at: number
   updated_at: number
+}
+
+export type RecoveryRemediation = {
+  id: string
+  run_id: string
+  scope: "run" | "stage" | "story"
+  scope_ref: string | null
+  summary: string
+  branch: string | null
+  commit_sha: string | null
+  review_notes: string | null
+  source: "cli" | "ui" | "api"
+  created_at: number
+}
+
+export type RecoveryDetail = {
+  status: "blocked" | "failed"
+  scope: "run" | "stage" | "story" | null
+  scopeRef: string | null
+  summary: string | null
+  resumable: boolean
+  remediations: RecoveryRemediation[]
 }
 
 export type StageRunRow = {
@@ -63,6 +89,27 @@ export async function getOpenPrompt(runId: string): Promise<PendingPromptRow | n
   if (!res.ok) return null
   const body = (await res.json()) as { prompt: PendingPromptRow | null }
   return body.prompt ?? null
+}
+
+export async function getRunRecovery(runId: string): Promise<RecoveryDetail | null> {
+  const res = await fetch(`${ENGINE_BASE_URL}/runs/${runId}/recovery`, { cache: "no-store" })
+  if (!res.ok) return null
+  const body = (await res.json()) as { recovery: RecoveryDetail | null }
+  return body.recovery
+}
+
+export async function resumeRun(
+  runId: string,
+  payload: { summary: string; branch?: string; commit?: string; reviewNotes?: string }
+): Promise<{ ok: true; remediationId: string } | { ok: false; status: number; error: string }> {
+  const res = await fetch(`${ENGINE_BASE_URL}/runs/${runId}/resume`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload)
+  })
+  const body = await res.json().catch(() => ({}))
+  if (res.ok) return { ok: true, remediationId: (body as { remediationId: string }).remediationId }
+  return { ok: false, status: res.status, error: (body as { error?: string }).error ?? `http_${res.status}` }
 }
 
 export async function getRun(runId: string): Promise<RunRow | null> {

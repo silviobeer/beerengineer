@@ -47,8 +47,26 @@ export type RunRow = {
   status: string
   current_stage: string | null
   owner: RunOwner
+  recovery_status: "blocked" | "failed" | null
+  recovery_scope: "run" | "stage" | "story" | null
+  recovery_scope_ref: string | null
+  recovery_summary: string | null
   created_at: number
   updated_at: number
+}
+
+export type ExternalRemediationRow = {
+  id: string
+  run_id: string
+  scope: "run" | "stage" | "story"
+  scope_ref: string | null
+  summary: string
+  branch: string | null
+  commit_sha: string | null
+  review_notes: string | null
+  source: "cli" | "ui" | "api"
+  actor_id: string | null
+  created_at: number
 }
 
 export type StageRunRow = {
@@ -237,6 +255,10 @@ export class Repos {
       status: "running",
       current_stage: null,
       owner: input.owner ?? "api",
+      recovery_status: null,
+      recovery_scope: null,
+      recovery_scope_ref: null,
+      recovery_summary: null,
       created_at: now(),
       updated_at: now()
     }
@@ -245,7 +267,17 @@ export class Repos {
         `INSERT INTO runs (id, workspace_id, item_id, title, status, current_stage, owner, created_at, updated_at)
          VALUES (@id, @workspace_id, @item_id, @title, @status, @current_stage, @owner, @created_at, @updated_at)`
       )
-      .run(row)
+      .run({
+        id: row.id,
+        workspace_id: row.workspace_id,
+        item_id: row.item_id,
+        title: row.title,
+        status: row.status,
+        current_stage: row.current_stage,
+        owner: row.owner,
+        created_at: row.created_at,
+        updated_at: row.updated_at
+      })
     return row
   }
 
@@ -260,6 +292,82 @@ export class Repos {
     this.db
       .prepare("UPDATE runs SET status = ?, current_stage = ?, updated_at = ? WHERE id = ?")
       .run(next.status, next.current_stage, next.updated_at, id)
+  }
+
+  /**
+   * Write the recovery projection onto a run. Pass `null` for all fields to
+   * clear (used when a blocked scope resumes successfully).
+   */
+  setRunRecovery(
+    id: string,
+    patch: {
+      status: RunRow["recovery_status"]
+      scope: RunRow["recovery_scope"]
+      scopeRef: string | null
+      summary: string | null
+    }
+  ): void {
+    this.db
+      .prepare(
+        `UPDATE runs
+         SET recovery_status = ?, recovery_scope = ?, recovery_scope_ref = ?, recovery_summary = ?, updated_at = ?
+         WHERE id = ?`
+      )
+      .run(patch.status, patch.scope, patch.scopeRef, patch.summary, now(), id)
+  }
+
+  clearRunRecovery(id: string): void {
+    this.setRunRecovery(id, { status: null, scope: null, scopeRef: null, summary: null })
+  }
+
+  createExternalRemediation(input: {
+    id?: string
+    runId: string
+    scope: ExternalRemediationRow["scope"]
+    scopeRef?: string | null
+    summary: string
+    branch?: string | null
+    commitSha?: string | null
+    reviewNotes?: string | null
+    source: ExternalRemediationRow["source"]
+    actorId?: string | null
+  }): ExternalRemediationRow {
+    const row: ExternalRemediationRow = {
+      id: input.id ?? randomUUID(),
+      run_id: input.runId,
+      scope: input.scope,
+      scope_ref: input.scopeRef ?? null,
+      summary: input.summary,
+      branch: input.branch ?? null,
+      commit_sha: input.commitSha ?? null,
+      review_notes: input.reviewNotes ?? null,
+      source: input.source,
+      actor_id: input.actorId ?? null,
+      created_at: now()
+    }
+    this.db
+      .prepare(
+        `INSERT INTO external_remediations (id, run_id, scope, scope_ref, summary, branch, commit_sha, review_notes, source, actor_id, created_at)
+         VALUES (@id, @run_id, @scope, @scope_ref, @summary, @branch, @commit_sha, @review_notes, @source, @actor_id, @created_at)`
+      )
+      .run(row)
+    return row
+  }
+
+  latestExternalRemediation(runId: string): ExternalRemediationRow | undefined {
+    return this.db
+      .prepare(
+        "SELECT * FROM external_remediations WHERE run_id = ? ORDER BY created_at DESC LIMIT 1"
+      )
+      .get(runId) as ExternalRemediationRow | undefined
+  }
+
+  listExternalRemediations(runId: string): ExternalRemediationRow[] {
+    return this.db
+      .prepare(
+        "SELECT * FROM external_remediations WHERE run_id = ? ORDER BY created_at ASC"
+      )
+      .all(runId) as ExternalRemediationRow[]
   }
 
   getRun(id: string): RunRow | undefined {

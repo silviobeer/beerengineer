@@ -127,7 +127,11 @@ function mapAttention(item: ItemRow): "waiting" | "review" | "failed" | "done" |
   }
 }
 
-function buildBoardViewModel(items: ItemRow[], projectCounts: Map<string, number>): BoardViewModel {
+function buildBoardViewModel(
+  items: ItemRow[],
+  projectCounts: Map<string, number>,
+  recoveryByItem: Map<string, "blocked" | "failed">
+): BoardViewModel {
   return {
     heading: "Workspace board",
     description: "Live BeerEngineer items grouped by their persisted workflow column for the active workspace.",
@@ -148,6 +152,7 @@ function buildBoardViewModel(items: ItemRow[], projectCounts: Map<string, number
           mode: mapItemMode(item),
           attention: mapAttention(item),
           selected: item.id === items[0]?.id,
+          recoveryStatus: recoveryByItem.get(item.id) ?? null,
           meta: [
             { label: "phase", value: item.phase_status },
             { label: "projects", value: String(projectCounts.get(item.id) ?? 0) }
@@ -288,6 +293,26 @@ export function getLiveBoardState(workspaceKey?: string | null): LiveBoardState 
       ).map((row) => [row.item_id, row.count])
     );
 
+    // Latest-wins: if an item has multiple runs, the most recent non-null
+    // recovery_status wins. The `runs` table predates the recovery columns on
+    // some DBs, so we guard the query against missing columns.
+    const recoveryByItem = new Map<string, "blocked" | "failed">()
+    try {
+      const recoveryRows = connection
+        .prepare(
+          `select item_id, recovery_status
+             from runs
+             where workspace_id = ? and recovery_status is not null
+             order by updated_at desc`
+        )
+        .all(activeWorkspaceRecord.id) as Array<{ item_id: string; recovery_status: "blocked" | "failed" }>
+      for (const row of recoveryRows) {
+        if (!recoveryByItem.has(row.item_id)) recoveryByItem.set(row.item_id, row.recovery_status)
+      }
+    } catch {
+      // Older DB — recovery columns absent. Leave map empty.
+    }
+
     const shell = {
       ...buildFallbackShell(workspaceSummaries, activeWorkspace),
       subtitle: `${activeWorkspace.name} · real BeerEngineer board data for the active workspace.`,
@@ -311,7 +336,7 @@ export function getLiveBoardState(workspaceKey?: string | null): LiveBoardState 
       };
     }
 
-    const board = buildBoardViewModel(items, projectCounts);
+    const board = buildBoardViewModel(items, projectCounts, recoveryByItem);
     const leadItem = items[0]!;
 
     return {

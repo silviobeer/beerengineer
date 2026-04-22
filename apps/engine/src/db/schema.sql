@@ -47,6 +47,10 @@ CREATE TABLE IF NOT EXISTS projects (
 -- A workflow run orchestrated by the engine. One run is for one item.
 -- owner records which surface started the run: "api" (HTTP) or "cli" (terminal).
 -- UI prompt answering is rejected for runs where owner = "cli" (see D2).
+-- recovery_* columns are a projection of the canonical `recovery.json` file on
+-- disk. The filesystem record is authoritative; these columns power list/board
+-- queries without touching the filesystem. `recovery_scope_ref` holds the
+-- stageId for stage scope or "<wave>/<story>" for story scope.
 CREATE TABLE IF NOT EXISTS runs (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id),
@@ -55,9 +59,31 @@ CREATE TABLE IF NOT EXISTS runs (
   status TEXT NOT NULL DEFAULT 'running',
   current_stage TEXT,
   owner TEXT NOT NULL DEFAULT 'api',
+  recovery_status TEXT,
+  recovery_scope TEXT,
+  recovery_scope_ref TEXT,
+  recovery_summary TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
+
+-- Operator-recorded audit trail of external remediations. One row per resume
+-- request. The most recent row for a run is injected into the next
+-- implementation + review prompt (see ralphRuntime.ts).
+CREATE TABLE IF NOT EXISTS external_remediations (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES runs(id),
+  scope TEXT NOT NULL,
+  scope_ref TEXT,
+  summary TEXT NOT NULL,
+  branch TEXT,
+  commit_sha TEXT,
+  review_notes TEXT,
+  source TEXT NOT NULL,
+  actor_id TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS external_remediations_run_idx ON external_remediations(run_id, created_at);
 
 -- stage_runs records each stage invocation (brainstorm, requirements, ...).
 CREATE TABLE IF NOT EXISTS stage_runs (

@@ -5,6 +5,11 @@ type WorkflowEventMeta = {
   at?: number
 }
 
+export type RecoveryEventScope =
+  | { type: "run"; runId: string }
+  | { type: "stage"; runId: string; stageId: string }
+  | { type: "story"; runId: string; waveNumber: number; storyId: string }
+
 export type WorkflowEvent =
   | ({ type: "run_started"; runId: string; itemId: string; title: string } & WorkflowEventMeta)
   | ({ type: "run_finished"; runId: string; status: "completed" | "failed"; error?: string } & WorkflowEventMeta)
@@ -16,6 +21,10 @@ export type WorkflowEvent =
   | ({ type: "log"; runId: string; message: string; level?: "info" | "warn" | "error" } & WorkflowEventMeta)
   | ({ type: "item_column_changed"; runId: string; itemId: string; column: string; phaseStatus: string } & WorkflowEventMeta)
   | ({ type: "project_created"; runId: string; itemId: string; projectId: string; code: string; name: string; summary: string; position: number } & WorkflowEventMeta)
+  | ({ type: "run_blocked"; runId: string; scope: RecoveryEventScope; cause: string; summary: string; branch?: string } & WorkflowEventMeta)
+  | ({ type: "run_failed"; runId: string; scope: RecoveryEventScope; cause: string; summary: string } & WorkflowEventMeta)
+  | ({ type: "external_remediation_recorded"; runId: string; remediationId: string; scope: RecoveryEventScope; summary: string; branch?: string } & WorkflowEventMeta)
+  | ({ type: "run_resumed"; runId: string; remediationId: string; scope: RecoveryEventScope } & WorkflowEventMeta)
 
 export type WorkflowIO = {
   /** Ask the operator a question and await a textual answer. */

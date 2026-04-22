@@ -44,6 +44,7 @@ export type BoardCardViewModel = {
   attention: AttentionState;
   meta: CardMeta[];
   selected?: boolean;
+  recoveryStatus?: "blocked" | "failed" | null;
 };
 
 export type BoardColumnViewModel = {

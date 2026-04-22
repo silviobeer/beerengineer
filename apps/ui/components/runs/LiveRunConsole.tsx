@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import { ENGINE_BASE_URL, answerPrompt, type RunRow, type StageRunRow } from "@/lib/api"
+import { RecoveryPanel } from "./RecoveryPanel"
 
 type TimelineEntry = {
   id: string
@@ -20,6 +21,7 @@ export function LiveRunConsole({ runId }: { runId: string }) {
   const [pending, setPending] = useState<PendingPrompt>(null)
   const [answer, setAnswer] = useState("")
   const [submitting, setSubmitting] = useState(false)
+  const [recoveryRefreshKey, setRecoveryRefreshKey] = useState(0)
   const sourceRef = useRef<EventSource | null>(null)
 
   async function refreshTree() {
@@ -80,8 +82,16 @@ export function LiveRunConsole({ runId }: { runId: string }) {
       "prompt_answered",
       "artifact_written",
       "log",
-      "item_column_changed"
+      "item_column_changed",
+      "run_blocked",
+      "run_failed",
+      "external_remediation_recorded",
+      "run_resumed"
     ].forEach(wire)
+
+    ;["run_blocked", "run_failed", "external_remediation_recorded", "run_resumed"].forEach(type => {
+      source.addEventListener(type, () => setRecoveryRefreshKey(k => k + 1))
+    })
 
     source.onerror = () => {
       void refreshTree()
@@ -118,6 +128,8 @@ export function LiveRunConsole({ runId }: { runId: string }) {
           {run?.current_stage ? <span className="mono-label">stage: {run.current_stage}</span> : null}
         </div>
       </header>
+
+      <RecoveryPanel runId={runId} refreshKey={recoveryRefreshKey} />
 
       <section className="live-run-stages">
         <div className="section-title">Stages</div>
