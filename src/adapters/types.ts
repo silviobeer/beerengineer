@@ -135,6 +135,7 @@ export type ImplementationReviewAdapterRunRequest = {
   runtime: AdapterRuntimeContext;
   interactionType: "implementation_review";
   prompt: string;
+  skills: Array<{ path: string; content: string }>;
   reviewerRole: ImplementationReviewProviderRole;
   story: ExecutionAdapterRunRequest["story"];
   project: ExecutionAdapterRunRequest["project"];

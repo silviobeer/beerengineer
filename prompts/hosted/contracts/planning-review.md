@@ -1,0 +1,2 @@
+Inside `output`, return exactly these fields:
+{ "status": "in_review"|"questions_only"|"ready"|"blocked"|"failed", "readiness": "ready"|"ready_with_assumptions"|"needs_evidence"|"needs_human_review"|"high_risk", "summary": string, "findings": Array<{ "type": "blocker"|"major_concern"|"question"|"suggestion", "title": string, "detail": string, "evidence"?: string|null }>, "missingInformation": string[], "recommendedNextEvidence": string[], "assumptionsDetected": string[] }

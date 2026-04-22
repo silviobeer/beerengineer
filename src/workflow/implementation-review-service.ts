@@ -1,6 +1,3 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-
 import type {
   ImplementationReviewProviderRole,
   PlanningReviewAutomationLevel,
@@ -20,11 +17,13 @@ import { implementationReviewOutputSchema } from "../schemas/output-contracts.js
 import { AppError } from "../shared/errors.js";
 import type { WorkflowDeps } from "./workflow-deps.js";
 import type { ReviewRemediationService } from "./review-remediation-service.js";
+import type { ResolvedWorkerProfile } from "./runtime-types.js";
 
 type ImplementationReviewServiceOptions = {
   deps: WorkflowDeps;
   reviewCoreService: ReviewCoreService;
   reviewRemediationService: ReviewRemediationService;
+  resolveWorkerProfile(profileKey: "implementationReview"): ResolvedWorkerProfile;
   buildAdapterRuntimeContext(input: {
     providerKey: string;
     model: string | null;
@@ -142,17 +141,6 @@ function mapGateDecision(input: {
   return "advisory";
 }
 
-function readPrompt(repoRoot: string): string {
-  try {
-    return readFileSync(resolve(repoRoot, "prompts/workers/implementation-review.md"), "utf8");
-  } catch (error) {
-    throw new AppError(
-      "IMPLEMENTATION_REVIEW_PROMPT_NOT_FOUND",
-      `Implementation review prompt could not be loaded: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
-}
-
 export class ImplementationReviewService {
   private readonly executionPlanner: ReviewExecutionPlanner;
   private readonly storyReviewProvider: StoryReviewProvider;
@@ -173,7 +161,7 @@ export class ImplementationReviewService {
     automationLevel?: PlanningReviewAutomationLevel;
     interactionMode?: ReviewInteractionMode;
   }) {
-    const promptContent = readPrompt(this.options.deps.repoRoot);
+    const resolvedWorkerProfile = this.options.resolveWorkerProfile("implementationReview");
     const context = this.loadExecutionContext(input.waveStoryExecutionId);
     const interactionMode = this.resolveInteractionMode(input.interactionMode);
     const automationLevel = input.automationLevel ?? "manual";
@@ -184,7 +172,12 @@ export class ImplementationReviewService {
       preferClaudeFor: ["regression_reviewer"],
       unavailableCode: "IMPLEMENTATION_REVIEW_PROVIDER_UNAVAILABLE"
     });
-    const llmProviders = await this.runLlmProviders(context, llmCapability.assignments, toolProviders, promptContent);
+    const llmProviders = await this.runLlmProviders(
+      context,
+      llmCapability.assignments,
+      toolProviders,
+      resolvedWorkerProfile
+    );
     const providers = [...toolProviders, ...llmProviders].filter((provider) => provider.findings.length > 0);
     const findings = providers.flatMap((provider) =>
       provider.findings.map((finding) => ({
@@ -356,7 +349,7 @@ export class ImplementationReviewService {
     context: LoadedExecutionContext,
     assignments: Array<{ providerKey: string; role: ImplementationReviewProviderRole }>,
     toolProviders: ReviewProviderResult[],
-    promptContent: string
+    resolvedWorkerProfile: ResolvedWorkerProfile
   ): Promise<ReviewProviderResult[]> {
     return Promise.all(
       assignments.map(async (assignment) => {
@@ -364,7 +357,8 @@ export class ImplementationReviewService {
         const result = await runtime.adapter.runImplementationReview({
           runtime: this.options.buildAdapterRuntimeContext(runtime),
           interactionType: "implementation_review",
-          prompt: promptContent,
+          prompt: resolvedWorkerProfile.promptContent,
+          skills: resolvedWorkerProfile.skills,
           reviewerRole: assignment.role,
           item: {
             id: context.item.id,

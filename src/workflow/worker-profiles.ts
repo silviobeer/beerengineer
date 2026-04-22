@@ -15,6 +15,10 @@ export const workerProfiles = {
     promptPath: "prompts/workers/app-verification.md",
     skillPaths: ["skills/app-verifier.md"]
   },
+  implementationReview: {
+    promptPath: "prompts/workers/implementation-review.md",
+    skillPaths: []
+  },
   storyReview: {
     promptPath: "prompts/workers/story-review.md",
     skillPaths: ["skills/story-reviewer.md"]

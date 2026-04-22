@@ -1,0 +1,2 @@
+Inside `output`, return exactly these fields:
+{ "overallStatus": "passed"|"review_required"|"failed", "summary": string, "findings": Array<{ "severity": "critical"|"high"|"medium"|"low", "category": "correctness"|"security"|"regression"|"maintainability", "title": string, "description": string, "evidence": string, "filePath"?: string|null, "line"?: number|null, "remediationClass"?: "safe_code_fix"|"test_gap"|"manual_follow_up"|null }>, "assumptions": string[], "recommendations": string[] }

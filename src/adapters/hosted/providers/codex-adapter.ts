@@ -4,8 +4,8 @@ import type {
 import { HostedCliAdapterBase } from "../hosted-cli-adapter.js";
 
 export class CodexCliAdapter extends HostedCliAdapterBase {
-  public constructor(baseCommand: string[], env: Record<string, string>, timeoutMs: number) {
-    super("codex", baseCommand, env, timeoutMs);
+  public constructor(repoRoot: string, baseCommand: string[], env: Record<string, string>, timeoutMs: number) {
+    super("codex", repoRoot, baseCommand, env, timeoutMs);
   }
 
   protected buildCommand(input: {

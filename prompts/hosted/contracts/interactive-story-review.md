@@ -1,0 +1,3 @@
+Inside `output`, return exactly these fields:
+{ "assistantMessage": string, "entryUpdates": Array<{ "entryId": string, "status": "pending"|"accepted"|"needs_revision"|"rejected"|"resolved", "summary": string, "changeRequest"?: string|null, "rationale"?: string|null, "severity"?: "critical"|"high"|"medium"|"low"|null }>, "needsStructuredFollowUp": boolean, "followUpHint": string|null, "recommendedResolution": "approve"|"approve_and_autorun"|"approve_all"|"approve_all_and_autorun"|"approve_selected"|"request_changes"|"request_story_revisions"|"apply_story_edits"|null }
+If feedback is ambiguous, return an empty `entryUpdates` array and set `needsStructuredFollowUp` to true.

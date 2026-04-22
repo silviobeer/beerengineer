@@ -1,0 +1,2 @@
+Inside `output`, return exactly these fields:
+{ "storyCode": string, "overallStatus": "passed"|"review_required"|"failed", "summary": string, "findings": Array<{ "severity": "critical"|"high"|"medium"|"low", "category": "correctness"|"security"|"reliability"|"performance"|"maintainability"|"persistence", "title": string, "description": string, "evidence": string, "filePath"?: string|null, "line"?: number|null, "suggestedFix"?: string|null }>, "recommendations": string[] }

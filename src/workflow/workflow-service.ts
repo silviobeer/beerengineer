@@ -22,7 +22,11 @@ import type {
 } from "../persistence/repositories.js";
 import { workerProfiles, type WorkerProfileKey } from "./worker-profiles.js";
 import type { AdapterRuntimeContext } from "../adapters/types.js";
-import { runtimeWorkerKeyByProfileKey, type InteractiveFlowKey } from "../adapters/runtime.js";
+import {
+  runtimeWorkerKeyByProfileKey,
+  type InteractiveFlowKey,
+  type RuntimeConfigurableWorkerProfileKey
+} from "../adapters/runtime.js";
 import { AutorunOrchestrator } from "./autorun-orchestrator.js";
 import type { AutorunSummary, AutorunStep } from "./autorun-types.js";
 import type { WorkflowDeps } from "./workflow-deps.js";
@@ -166,6 +170,7 @@ export class WorkflowService {
       deps,
       reviewCoreService: this.reviewCoreService,
       reviewRemediationService: this.reviewRemediationService,
+      resolveWorkerProfile: (profileKey) => this.resolveWorkerProfile(profileKey),
       buildAdapterRuntimeContext: (input) => this.buildAdapterRuntimeContext(input)
     });
     this.qaService = new QaService({
@@ -248,6 +253,7 @@ export class WorkflowService {
       approvePlanning: (projectId) => this.stageService.approvePlanning(projectId),
       startExecution: (projectId) => this.startExecution(projectId),
       tickExecution: (projectId) => this.tickExecution(projectId),
+      retryWaveStoryExecution: (waveStoryExecutionId) => this.retryWaveStoryExecution(waveStoryExecutionId),
       startStoryReviewRemediation: (storyReviewRunId) => this.startStoryReviewRemediation(storyReviewRunId),
       autoAcceptStoryReviewRemediationLimit: (storyReviewRunId) =>
         this.autoAcceptStoryReviewRemediationLimit(storyReviewRunId),
@@ -270,7 +276,15 @@ export class WorkflowService {
   }
 
   private resolveWorkerRuntime(workerProfileKey: WorkerProfileKey) {
-    return this.deps.agentRuntimeResolver.resolveWorker(runtimeWorkerKeyByProfileKey[workerProfileKey]);
+    if (workerProfileKey === "implementationReview") {
+      throw new AppError(
+        "IMPLEMENTATION_REVIEW_RUNTIME_INVALID",
+        "Implementation review uses provider-role assignment and does not resolve through worker runtime profiles"
+      );
+    }
+    return this.deps.agentRuntimeResolver.resolveWorker(
+      runtimeWorkerKeyByProfileKey[workerProfileKey as RuntimeConfigurableWorkerProfileKey]
+    );
   }
 
   private ensureStoryWorktree(storyCode: string, gitMetadata: GitBranchMetadata): GitBranchMetadata {
@@ -999,6 +1013,9 @@ export class WorkflowService {
     if (!this.hasOnlyAutoFixableStoryReviewFindings(openFindings)) {
       return false;
     }
+    if (this.hasHighSeverityFindings(openFindings)) {
+      return false;
+    }
 
     return (
       this.deps.storyReviewRemediationRunRepository.listByStoryId(sourceExecution.storyId).length >=
@@ -1041,6 +1058,12 @@ export class WorkflowService {
       throw new AppError(
         "STORY_REVIEW_AUTO_ACCEPT_NOT_ALLOWED",
         `Story review ${storyReviewRunId} contains non-auto-fixable findings`
+      );
+    }
+    if (this.hasHighSeverityFindings(openFindings)) {
+      throw new AppError(
+        "STORY_REVIEW_AUTO_ACCEPT_NOT_ALLOWED",
+        `Story review ${storyReviewRunId} contains high severity findings that require escalation after the loop limit`
       );
     }
 
@@ -1086,19 +1109,28 @@ export class WorkflowService {
       this.deps.storyReviewRemediationRunRepository.listByStoryId(sourceExecution.storyId).length >=
       MAX_STORY_REVIEW_REMEDIATION_ATTEMPTS
     ) {
+      if (this.hasHighSeverityFindings(findings)) {
+        return "story_review_high_severity_escalation";
+      }
       return "story_review_remediation_limit_reached";
     }
     return "story_review_review_required";
   }
 
-  private isAutoFixableStoryReviewSeverity(severity: StoryReviewFindingSeverity): boolean {
-    return severity === "medium" || severity === "low";
+  private isAutoFixableStoryReviewSeverity(_severity: StoryReviewFindingSeverity): boolean {
+    return true;
   }
 
   private hasOnlyAutoFixableStoryReviewFindings(
     findings: ReturnType<WorkflowDeps["storyReviewFindingRepository"]["listByStoryReviewRunId"]>
   ): boolean {
     return findings.every((finding) => this.isAutoFixableStoryReviewSeverity(finding.severity));
+  }
+
+  private hasHighSeverityFindings(
+    findings: ReturnType<WorkflowDeps["storyReviewFindingRepository"]["listByStoryReviewRunId"]>
+  ): boolean {
+    return findings.some((finding) => finding.severity === "high");
   }
 
   private invalidateDocumentationForProject(projectId: string, reason: string): void {

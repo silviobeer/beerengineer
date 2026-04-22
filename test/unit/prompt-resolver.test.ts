@@ -21,6 +21,7 @@ describe("prompt resolver", () => {
 
       expect(resolved.promptContent).toBe("prompt");
       expect(resolved.skills[0]?.content).toBe("skill");
+      expect(resolver.resolveFile("prompt.md")).toBe("prompt");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

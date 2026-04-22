@@ -1,0 +1,2 @@
+Inside `output`, return exactly these fields:
+{ "storyCode": string, "runner": "agent_browser"|"playwright", "overallStatus": "passed"|"review_required"|"failed", "summary": string, "resolvedStartUrl"?: string|null, "checks": Array<{ "id": string, "description": string, "status": "passed"|"review_required"|"failed", "evidence": string }>, "artifacts": Array<{ "kind": "screenshot"|"log"|"trace"|"report", "path": string, "label": string, "contentType": string }>, "failureSummary"?: string|null }

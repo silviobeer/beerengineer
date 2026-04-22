@@ -4,8 +4,8 @@ import type {
 import { HostedCliAdapterBase } from "../hosted-cli-adapter.js";
 
 export class ClaudeCliAdapter extends HostedCliAdapterBase {
-  public constructor(baseCommand: string[], env: Record<string, string>, timeoutMs: number) {
-    super("claude", baseCommand, env, timeoutMs);
+  public constructor(repoRoot: string, baseCommand: string[], env: Record<string, string>, timeoutMs: number) {
+    super("claude", repoRoot, baseCommand, env, timeoutMs);
   }
 
   protected buildCommand(input: {

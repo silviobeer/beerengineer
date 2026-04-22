@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
+import { PromptResolver } from "../../services/prompt-resolver.js";
 import { AppError } from "../../shared/errors.js";
 import type {
   AdapterRunRequest,
@@ -64,52 +65,35 @@ export class HostedAgentExecutionError extends AppError {
 }
 
 export abstract class HostedCliAdapterBase {
-  private static readonly structuredPayloadInstructionsByKind: Record<string, string> = {
-    story_test_preparation: [
-      "Inside `output`, return exactly these fields:",
-      '{ "summary": string, "testFiles": Array<{ "path": string, "content": string, "writeMode": "proposed"|"written" }>, "testsGenerated": Array<{ "path": string, "intent": string }>, "assumptions": string[], "blockers": string[] }',
-      "`testFiles` and `testsGenerated` are required and must be non-empty when the run succeeds."
-    ].join("\n"),
-    story_execution: [
-      "Inside `output`, return exactly these fields:",
-      '{ "summary": string, "changedFiles": string[], "testsRun": Array<{ "command": string, "status": "passed"|"failed"|"not_run" }>, "implementationNotes": string[], "blockers": string[] }'
-    ].join("\n"),
-    story_ralph_verification: [
-      "Inside `output`, return exactly these fields:",
-      '{ "storyCode": string, "overallStatus": "passed"|"review_required"|"failed", "summary": string, "acceptanceCriteriaResults": Array<{ "acceptanceCriterionId": string, "acceptanceCriterionCode": string, "status": "passed"|"review_required"|"failed", "evidence": string, "notes": string }>, "blockers": string[] }'
-    ].join("\n"),
-    story_app_verification: [
-      "Inside `output`, return exactly these fields:",
-      '{ "storyCode": string, "runner": "agent_browser"|"playwright", "overallStatus": "passed"|"review_required"|"failed", "summary": string, "resolvedStartUrl"?: string|null, "checks": Array<{ "id": string, "description": string, "status": "passed"|"review_required"|"failed", "evidence": string }>, "artifacts": Array<{ "kind": "screenshot"|"log"|"trace"|"report", "path": string, "label": string, "contentType": string }>, "failureSummary"?: string|null }'
-    ].join("\n"),
-    story_review: [
-      "Inside `output`, return exactly these fields:",
-      '{ "storyCode": string, "overallStatus": "passed"|"review_required"|"failed", "summary": string, "findings": Array<{ "severity": "critical"|"high"|"medium"|"low", "category": "correctness"|"security"|"reliability"|"performance"|"maintainability"|"persistence", "title": string, "description": string, "evidence": string, "filePath"?: string|null, "line"?: number|null, "suggestedFix"?: string|null }>, "recommendations": string[] }'
-    ].join("\n"),
-    project_qa: [
-      "Inside `output`, return exactly these fields:",
-      '{ "projectCode": string, "overallStatus": "passed"|"review_required"|"failed", "summary": string, "findings": Array<{ "severity": "critical"|"high"|"medium"|"low", "category": "functional"|"security"|"regression"|"ux", "title": string, "description": string, "evidence": string, "reproSteps": string[], "suggestedFix": string, "storyCode"?: string|null, "acceptanceCriterionCode"?: string|null }>, "recommendations": string[] }'
-    ].join("\n"),
-    project_documentation: [
-      "Inside `output`, return exactly these fields:",
-      '{ "projectCode": string, "overallStatus": "completed"|"review_required", "summary": string, "originalScope": string, "deliveredScope": string, "architectureSnapshot": string, "waves": Array<{ "waveCode": string, "goal": string, "storiesDelivered": string[] }>, "storiesDelivered": Array<{ "storyCode": string, "summary": string }>, "verificationSummary": { "ralphPassedStoryCodes": string[], "storyReviewPassedStoryCodes": string[], "qaStatus": "passed"|"review_required", "qaOpenFindingCount": number }, "technicalReviewSummary": { "reviewedStoryCodes": string[], "openFindingCounts": { "critical": number, "high": number, "medium": number, "low": number } }, "qaSummary": { "status": "passed"|"review_required", "summary": string, "openFindings": number }, "openFollowUps": string[], "keyChangedAreas": string[], "reportMarkdown": string }'
-    ].join("\n"),
-    planning_review: [
-      "Inside `output`, return exactly these fields:",
-      '{ "status": "in_review"|"questions_only"|"ready"|"blocked"|"failed", "readiness": "ready"|"ready_with_assumptions"|"needs_evidence"|"needs_human_review"|"high_risk", "summary": string, "findings": Array<{ "type": "blocker"|"major_concern"|"question"|"suggestion", "title": string, "detail": string, "evidence"?: string|null }>, "missingInformation": string[], "recommendedNextEvidence": string[], "assumptionsDetected": string[] }'
-    ].join("\n"),
-    implementation_review: [
-      "Inside `output`, return exactly these fields:",
-      '{ "overallStatus": "passed"|"review_required"|"failed", "summary": string, "findings": Array<{ "severity": "critical"|"high"|"medium"|"low", "category": "correctness"|"security"|"regression"|"maintainability", "title": string, "description": string, "evidence": string, "filePath"?: string|null, "line"?: number|null, "remediationClass"?: "safe_code_fix"|"test_gap"|"manual_follow_up"|null }>, "assumptions": string[], "recommendations": string[] }'
-    ].join("\n")
+  private static readonly structuredPayloadPromptPathByKind: Record<string, string> = {
+    story_test_preparation: "prompts/hosted/contracts/story-test-preparation.md",
+    story_execution: "prompts/hosted/contracts/story-execution.md",
+    story_ralph_verification: "prompts/hosted/contracts/story-ralph-verification.md",
+    story_app_verification: "prompts/hosted/contracts/story-app-verification.md",
+    story_review: "prompts/hosted/contracts/story-review.md",
+    project_qa: "prompts/hosted/contracts/project-qa.md",
+    project_documentation: "prompts/hosted/contracts/project-documentation.md",
+    planning_review: "prompts/hosted/contracts/planning-review.md",
+    implementation_review: "prompts/hosted/contracts/implementation-review.md"
   };
+
+  private static readonly structuredPayloadPromptPathByInteractionType: Record<string, string> = {
+    brainstorm_chat: "prompts/hosted/contracts/interactive-brainstorm.md",
+    story_review_chat: "prompts/hosted/contracts/interactive-story-review.md",
+    workspace_setup_assist: "prompts/hosted/contracts/workspace-setup-assist.md"
+  };
+
+  private readonly promptResolver: PromptResolver;
 
   protected constructor(
     public readonly key: string,
+    repoRoot: string,
     protected readonly baseCommand: string[],
     protected readonly baseEnv: Record<string, string>,
     protected readonly timeoutMs: number
-  ) {}
+  ) {
+    this.promptResolver = new PromptResolver(repoRoot);
+  }
 
   public async run(request: AdapterRunRequest): Promise<AdapterRunResult> {
     const executed = await this.executeCommand({
@@ -221,29 +205,16 @@ export abstract class HostedCliAdapterBase {
       prompt?: string;
       skills?: Array<{ path: string; content: string }>;
     };
-    const responseEnvelopeInstructions =
-      kind === "stage_run"
-        ? [
-            "The final JSON object must use this exact top-level shape:",
-            '{ "markdownArtifacts": Array<{ "kind": string, "content": string }>, "structuredArtifacts": Array<{ "kind": string, "content": unknown }>, "needsUserInput"?: boolean, "userInputQuestion"?: string|null, "followUpHint"?: string|null }',
-            "When the stage can not proceed safely without a user clarification, return empty artifact arrays, set `needsUserInput` to true, and provide `userInputQuestion`."
-          ].join("\n")
-        : [
-            "The final JSON object must use this exact top-level shape:",
-            '{ "output": <the structured result payload> }',
-            "Do not place assistant text or structured fields at the top level. Put the full result inside `output`."
-          ].join("\n");
+    const responseEnvelopeInstructions = this.loadPromptFile(
+      kind === "stage_run" ? "prompts/hosted/envelopes/stage-run.md" : "prompts/hosted/envelopes/output.md"
+    );
     const structuredPayloadInstructions = this.buildStructuredPayloadInstructions(kind, request);
     const resolvedSkillsSection =
       skills && skills.length > 0
         ? ["Resolved skills:", skills.map((skill) => `Path: ${skill.path}\n${skill.content}`).join("\n\n---\n\n")].join("\n")
         : null;
     const sections = [
-      "You are the BeerEngineer provider backend.",
-      "Return exactly one JSON object matching the requested result envelope.",
-      "Do not wrap the response in markdown fences or prose.",
-      "The runtime policy is engine-owned and must be followed exactly.",
-      "Use the provided prompt and skills as the authoritative work instructions.",
+      this.loadPromptFile("prompts/hosted/shared/preamble.md"),
       responseEnvelopeInstructions,
       structuredPayloadInstructions,
       `Request kind: ${kind}`,
@@ -259,29 +230,16 @@ export abstract class HostedCliAdapterBase {
   }
 
   private buildStructuredPayloadInstructions(kind: string, request: AnyAdapterRequest): string | null {
-    if ("interactionType" in request && request.interactionType === "brainstorm_chat") {
-      return [
-        "Inside `output`, return exactly these fields:",
-        '{ "assistantMessage": string, "draftPatch": { "problem"?: string|null, "coreOutcome"?: string|null, "targetUsers"?: string[], "useCases"?: string[], "constraints"?: string[], "nonGoals"?: string[], "risks"?: string[], "openQuestions"?: string[], "candidateDirections"?: string[], "recommendedDirection"?: string|null, "scopeNotes"?: string|null, "assumptions"?: string[] }, "projectShapeDecision"?: "single_project"|"split_projects"|null, "decisionRationale"?: string|null, "projectSeeds"?: string[], "needsStructuredFollowUp": boolean, "followUpHint": string|null }',
-        "Keep `draftPatch` narrow and only include keys you are actually changing."
-      ].join("\n");
+    if ("interactionType" in request) {
+      const promptPath = HostedCliAdapterBase.structuredPayloadPromptPathByInteractionType[request.interactionType];
+      return promptPath ? this.loadPromptFile(promptPath) : null;
     }
-    if ("interactionType" in request && request.interactionType === "story_review_chat") {
-      return [
-        "Inside `output`, return exactly these fields:",
-        '{ "assistantMessage": string, "entryUpdates": Array<{ "entryId": string, "status": "pending"|"accepted"|"needs_revision"|"rejected"|"resolved", "summary": string, "changeRequest"?: string|null, "rationale"?: string|null, "severity"?: "critical"|"high"|"medium"|"low"|null }>, "needsStructuredFollowUp": boolean, "followUpHint": string|null, "recommendedResolution": "approve"|"approve_and_autorun"|"approve_all"|"approve_all_and_autorun"|"approve_selected"|"request_changes"|"request_story_revisions"|"apply_story_edits"|null }',
-        "If feedback is ambiguous, return an empty `entryUpdates` array and set `needsStructuredFollowUp` to true."
-      ].join("\n");
-    }
-    if ("interactionType" in request && request.interactionType === "workspace_setup_assist") {
-      return [
-        "Inside `output`, return exactly these fields:",
-        '{ "assistantMessage": string, "plan": { "version": 1, "workspaceKey": string, "rootPath": string|null, "mode": "greenfield"|"brownfield", "stack": "node-ts", "scaffoldProjectFiles": boolean, "createRoot": boolean, "initGit": boolean, "installDeps": boolean, "withSonar": boolean, "withCoderabbit": boolean, "generatedAt": number }, "rationale": string[], "warnings": string[], "needsUserInput": boolean, "followUpHint": string|null }',
-        "Keep the response planning-only. Do not ask to execute commands directly.",
-        "Prefer preserving existing brownfield projects over scaffolding new starter files."
-      ].join("\n");
-    }
-    return HostedCliAdapterBase.structuredPayloadInstructionsByKind[kind] ?? null;
+    const promptPath = HostedCliAdapterBase.structuredPayloadPromptPathByKind[kind];
+    return promptPath ? this.loadPromptFile(promptPath) : null;
+  }
+
+  private loadPromptFile(relativePath: string): string {
+    return this.promptResolver.resolveFile(relativePath);
   }
 
   private async executeCommand(input: {

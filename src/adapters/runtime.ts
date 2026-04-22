@@ -22,7 +22,9 @@ export type AgentRuntimeWorkerKey =
   | "qa"
   | "documentation";
 
-export const runtimeWorkerKeyByProfileKey: Record<WorkerProfileKey, AgentRuntimeWorkerKey> = {
+export type RuntimeConfigurableWorkerProfileKey = Exclude<WorkerProfileKey, "implementationReview">;
+
+export const runtimeWorkerKeyByProfileKey: Record<RuntimeConfigurableWorkerProfileKey, AgentRuntimeWorkerKey> = {
   testPreparation: "test_preparation",
   execution: "execution",
   ralph: "ralph",
@@ -289,10 +291,10 @@ function createProviderAdapter(input: {
     return new LocalCliAdapter(input.repoRoot, input.adapterScriptPath, input.providerConfig.timeoutMs);
   }
   if (input.providerConfig.adapterKey === "codex") {
-    return new CodexCliAdapter(input.providerConfig.command, input.providerConfig.env, input.providerConfig.timeoutMs);
+    return new CodexCliAdapter(input.repoRoot, input.providerConfig.command, input.providerConfig.env, input.providerConfig.timeoutMs);
   }
   if (input.providerConfig.adapterKey === "claude") {
-    return new ClaudeCliAdapter(input.providerConfig.command, input.providerConfig.env, input.providerConfig.timeoutMs);
+    return new ClaudeCliAdapter(input.repoRoot, input.providerConfig.command, input.providerConfig.env, input.providerConfig.timeoutMs);
   }
   return new UnsupportedProviderAdapter(input.providerConfig.adapterKey, input.providerKey);
 }

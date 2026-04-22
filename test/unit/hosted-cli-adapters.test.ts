@@ -210,7 +210,7 @@ describe("hosted cli adapters", () => {
     const workspaceRoot = join(root, "workspace");
     mkdirSync(workspaceRoot, { recursive: true });
     const stubPath = resolve("test/fixtures/provider-cli-stub.mjs");
-    const adapter = new CodexCliAdapter([process.execPath, stubPath, "codex"], {
+    const adapter = new CodexCliAdapter(process.cwd(), [process.execPath, stubPath, "codex"], {
       STUB_OUTPUT: JSON.stringify({
         output: {
           assistantMessage: "Captured brainstorm updates.",
@@ -257,7 +257,7 @@ describe("hosted cli adapters", () => {
       ].join("\n"),
       "utf8"
     );
-    const adapter = new ClaudeCliAdapter([process.execPath, lingeringStubPath, "claude"], {}, 5_000);
+    const adapter = new ClaudeCliAdapter(process.cwd(), [process.execPath, lingeringStubPath, "claude"], {}, 5_000);
 
     try {
       const startedAt = Date.now();
@@ -277,7 +277,7 @@ describe("hosted cli adapters", () => {
     const workspaceRoot = join(root, "workspace");
     mkdirSync(workspaceRoot, { recursive: true });
     const stubPath = resolve("test/fixtures/provider-cli-stub.mjs");
-    const adapter = new ClaudeCliAdapter([process.execPath, stubPath, "claude"], {
+    const adapter = new ClaudeCliAdapter(process.cwd(), [process.execPath, stubPath, "claude"], {
       STUB_OUTPUT: JSON.stringify({
         output: {
           assistantMessage: "Captured 1 review update.",
@@ -321,7 +321,7 @@ describe("hosted cli adapters", () => {
     const workspaceRoot = join(root, "workspace");
     mkdirSync(workspaceRoot, { recursive: true });
     const stubPath = resolve("test/fixtures/provider-cli-stub.mjs");
-    const adapter = new CodexCliAdapter([process.execPath, stubPath, "codex"], {
+    const adapter = new CodexCliAdapter(process.cwd(), [process.execPath, stubPath, "codex"], {
       STUB_OUTPUT: "{}",
       STUB_EXIT_CODE: "2",
       STUB_STDERR: "authorization=secret-token very long provider failure"
@@ -342,7 +342,7 @@ describe("hosted cli adapters", () => {
     const workspaceRoot = join(root, "workspace");
     mkdirSync(workspaceRoot, { recursive: true });
     const stubPath = resolve("test/fixtures/provider-cli-stub.mjs");
-    const adapter = new CodexCliAdapter([process.execPath, stubPath, "codex"], {
+    const adapter = new CodexCliAdapter(process.cwd(), [process.execPath, stubPath, "codex"], {
       STUB_OUTPUT: JSON.stringify({
         output: {
           summary: "Prepared minimal test targets.",

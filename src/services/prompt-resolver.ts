@@ -20,13 +20,11 @@ export class PromptResolver {
   public constructor(private readonly repoRoot: string) {}
 
   public resolve(profile: ResolvableProfile): ResolvedRunProfile {
-    const promptPath = resolve(this.repoRoot, profile.promptPath);
-    const promptContent = this.readFile(promptPath);
+    const promptContent = this.resolveFile(profile.promptPath);
     const skills = profile.skillPaths.map((skillPath) => {
-      const absolutePath = resolve(this.repoRoot, skillPath);
       return {
         path: skillPath,
-        content: this.readFile(absolutePath)
+        content: this.resolveFile(skillPath)
       };
     });
 
@@ -35,6 +33,10 @@ export class PromptResolver {
       promptContent,
       skills
     };
+  }
+
+  public resolveFile(relativePath: string): string {
+    return this.readFile(resolve(this.repoRoot, relativePath));
   }
 
   private readFile(filePath: string): string {

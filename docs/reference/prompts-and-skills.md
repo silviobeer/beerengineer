@@ -39,6 +39,12 @@ Damit bleiben alte Runs nachvollziehbar, auch wenn Prompt- oder Skill-Dateien sp
 - `story_review`
   Prompt: `prompts/workers/story-review.md`
   Skill: `skills/story-reviewer.md`
+- `app_verification`
+  Prompt: `prompts/workers/app-verification.md`
+  Skill: `skills/app-verifier.md`
+- `implementation_review`
+  Prompt: `prompts/workers/implementation-review.md`
+  Skills: none
 - `qa`
   Prompt: `prompts/workers/qa.md`
   Skill: `skills/qa-verifier.md`
