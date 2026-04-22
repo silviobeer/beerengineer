@@ -20,6 +20,7 @@ import type {
   SonarConfig,
   ValidationResult,
   WorkspaceConfigFile,
+  WorkspacePreflightReport,
   WorkspaceReviewPolicy,
   WorkspaceRuntimePolicy,
   WorkspacePreview,
@@ -31,6 +32,14 @@ const SONAR_DEFAULT_HOST = "https://sonarcloud.io"
 const WORKSPACE_CONFIG_DIR = ".beerengineer"
 const WORKSPACE_CONFIG_FILE = "workspace.json"
 const SONAR_PROPERTIES_FILE = "sonar-project.properties"
+const GITIGNORE_FILE = ".gitignore"
+const SONAR_WORKFLOW_FILE = ".github/workflows/sonar.yml"
+const CODERABBIT_CONFIG_FILE = ".coderabbit.yaml"
+const BEERENGINEER_GITIGNORE_ENTRIES = [
+  ".env.local",
+  ".beerengineer/runs/",
+  ".beerengineer/cache/",
+]
 
 function toJson(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`
@@ -54,6 +63,18 @@ function workspaceConfigPath(root: string): string {
 
 function sonarPropertiesPath(root: string): string {
   return resolve(root, SONAR_PROPERTIES_FILE)
+}
+
+function gitignorePath(root: string): string {
+  return resolve(root, GITIGNORE_FILE)
+}
+
+function sonarWorkflowPath(root: string): string {
+  return resolve(root, SONAR_WORKFLOW_FILE)
+}
+
+function coderabbitConfigPath(root: string): string {
+  return resolve(root, CODERABBIT_CONFIG_FILE)
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -138,6 +159,61 @@ function runGit(args: string[], cwd: string): { ok: boolean; stdout: string; std
   }
 }
 
+function runCommand(command: string, args: string[], cwd: string): { ok: boolean; stdout: string; stderr: string } {
+  const result = spawnSync(command, args, { cwd, encoding: "utf8" })
+  return {
+    ok: result.status === 0,
+    stdout: result.stdout?.trim() ?? "",
+    stderr: result.stderr?.trim() ?? "",
+  }
+}
+
+function readEnvFileValue(raw: string, key: string): string | undefined {
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith("#")) continue
+    const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/)
+    if (!match || match[1] !== key) continue
+    const value = match[2].trim()
+    return value.replace(/^['"]|['"]$/g, "")
+  }
+  return undefined
+}
+
+function parseGitHubRemote(remoteUrl: string): { owner: string; repo: string } | null {
+  const ssh = remoteUrl.match(/^git@github\.com:([^/]+)\/(.+?)(?:\.git)?$/)
+  if (ssh) return { owner: ssh[1], repo: ssh[2] }
+  const https = remoteUrl.match(/^https:\/\/github\.com\/([^/]+)\/(.+?)(?:\.git)?$/)
+  if (https) return { owner: https[1], repo: https[2] }
+  return null
+}
+
+async function detectSonarToken(root: string): Promise<{ value?: string; source?: "env" | ".env.local" }> {
+  if (process.env.SONAR_TOKEN) return { value: process.env.SONAR_TOKEN, source: "env" }
+  try {
+    const envLocal = await readFile(resolve(root, ".env.local"), "utf8")
+    const value = readEnvFileValue(envLocal, "SONAR_TOKEN")
+    if (value) return { value, source: ".env.local" }
+  } catch {
+    // ignore
+  }
+  return {}
+}
+
+async function validateSonarToken(token: string): Promise<boolean> {
+  try {
+    const auth = Buffer.from(`${token}:`).toString("base64")
+    const response = await fetch(`${SONAR_DEFAULT_HOST}/api/authentication/validate`, {
+      headers: { authorization: `Basic ${auth}` },
+    })
+    if (!response.ok) return false
+    const body = await response.json() as { valid?: boolean }
+    return body.valid === true
+  } catch {
+    return false
+  }
+}
+
 function detectStack(entries: string[]): string | null {
   const names = new Set(entries)
   if (names.has("next.config.ts") || names.has("next.config.js")) return "next"
@@ -182,6 +258,177 @@ async function buildPathPreview(path: string, allowedRoots: string[]): Promise<O
     hasSonarProperties,
     conflicts,
   }
+}
+
+async function ensureManagedGitignore(root: string): Promise<{ changed: boolean }> {
+  const path = gitignorePath(root)
+  const exists = await pathExists(path)
+  const current = exists ? await readFile(path, "utf8") : ""
+  const missing = BEERENGINEER_GITIGNORE_ENTRIES.filter(entry => !current.split(/\r?\n/).includes(entry))
+  if (missing.length === 0) return { changed: false }
+
+  const prefix = current.length > 0 && !current.endsWith("\n") ? `${current}\n` : current
+  const body = exists
+    ? `${prefix}${missing.join("\n")}\n`
+    : `# BeerEngineer managed\n${BEERENGINEER_GITIGNORE_ENTRIES.join("\n")}\n`
+  await writeFile(path, body, "utf8")
+  return { changed: true }
+}
+
+async function writeFileIfMissing(path: string, content: string): Promise<boolean> {
+  if (await pathExists(path)) return false
+  await mkdir(dirname(path), { recursive: true })
+  await writeFile(path, content, "utf8")
+  return true
+}
+
+async function ensureGitRepo(root: string, defaultBranch = "main"): Promise<{ ok: boolean; actions: string[]; detail?: string }> {
+  const insideRepo = runGit(["rev-parse", "--is-inside-work-tree"], root)
+  if (insideRepo.ok && insideRepo.stdout === "true") {
+    return { ok: true, actions: [] }
+  }
+
+  const init = await initGit(root, { defaultBranch, initialCommit: false })
+  if (!init.ok) return init
+
+  const head = runGit(["rev-parse", "--verify", "HEAD"], root)
+  const actions = [...init.actions]
+  if (!head.ok) {
+    const commit = runGit(["commit", "--allow-empty", "-m", "Initial repository commit"], root)
+    if (!commit.ok) {
+      return { ok: false, actions, detail: commit.stderr || "git commit failed" }
+    }
+    actions.push("git initial empty commit")
+  }
+  return { ok: true, actions }
+}
+
+export async function runWorkspacePreflight(root: string, opts: { defaultBranch?: string } = {}): Promise<{ report: WorkspacePreflightReport; actions: string[] }> {
+  const actions: string[] = []
+  const gitSetup = await ensureGitRepo(root, opts.defaultBranch ?? "main")
+  const gitDetail = gitSetup.ok ? undefined : gitSetup.detail
+  if (gitSetup.ok) actions.push(...gitSetup.actions)
+
+  const gitProbe = runGit(["rev-parse", "--is-inside-work-tree"], root)
+  const branchProbe = gitProbe.ok ? runGit(["branch", "--show-current"], root) : { ok: false, stdout: "", stderr: "" }
+  const remoteProbe = gitProbe.ok ? runGit(["remote", "get-url", "origin"], root) : { ok: false, stdout: "", stderr: "" }
+  const parsedRemote = remoteProbe.ok ? parseGitHubRemote(remoteProbe.stdout) : null
+
+  const ghVersion = runCommand("gh", ["--version"], root)
+  const ghStatus = ghVersion.ok ? runCommand("gh", ["auth", "status"], root) : { ok: false, stdout: "", stderr: "gh unavailable" }
+  let ghUser: string | undefined
+  if (ghStatus.ok) {
+    const userProbe = runCommand("gh", ["api", "user", "--jq", ".login"], root)
+    ghUser = userProbe.ok ? userProbe.stdout : undefined
+  }
+
+  const sonarToken = await detectSonarToken(root)
+  const sonarValid = sonarToken.value ? await validateSonarToken(sonarToken.value) : undefined
+  const gitMissingDetail = gitDetail ?? (gitProbe.stderr || undefined)
+
+  return {
+    actions,
+    report: {
+      git: {
+        status: gitProbe.ok && gitProbe.stdout === "true" ? "ok" : "missing",
+        detail: gitProbe.ok ? undefined : gitMissingDetail,
+      },
+      github: parsedRemote
+        ? {
+            status: "ok",
+            owner: parsedRemote.owner,
+            repo: parsedRemote.repo,
+            defaultBranch: branchProbe.stdout || null,
+            remoteUrl: remoteProbe.stdout,
+          }
+        : {
+            status: remoteProbe.ok ? "invalid" : "missing",
+            detail: remoteProbe.ok ? "origin is not a GitHub remote" : remoteProbe.stderr || "origin remote is not configured",
+            defaultBranch: branchProbe.stdout || null,
+            remoteUrl: remoteProbe.ok ? remoteProbe.stdout : undefined,
+          },
+      gh: ghStatus.ok
+        ? {
+            status: "ok",
+            user: ghUser,
+          }
+        : {
+            status: ghVersion.ok ? "missing" : "skipped",
+            detail: ghVersion.ok ? (ghStatus.stderr || "gh auth status failed") : "GitHub CLI is not available",
+          },
+      sonar: sonarToken.value
+        ? {
+            status: sonarValid ? "ok" : "invalid",
+            tokenSource: sonarToken.source,
+            tokenValid: sonarValid,
+            detail: sonarValid ? undefined : "SONAR_TOKEN failed SonarCloud validation",
+          }
+        : {
+            status: "missing",
+            detail: "SONAR_TOKEN was not found in env or .env.local",
+          },
+      coderabbit: {
+        status: parsedRemote ? "pending-install" : "skipped",
+        detail: parsedRemote ? "GitHub App install still required" : "CodeRabbit install link requires a GitHub repo",
+      },
+      checkedAt: new Date().toISOString(),
+    },
+  }
+}
+
+function renderSonarProperties(owner: string, repo: string): string {
+  return [
+    `sonar.projectKey=${owner}_${repo}`,
+    `sonar.organization=${owner}`,
+    "sonar.sources=apps,packages",
+    "sonar.tests=.",
+    "sonar.test.inclusions=**/*.test.ts,**/*.spec.ts",
+    "sonar.exclusions=**/node_modules/**,**/dist/**,**/.next/**",
+    "sonar.javascript.lcov.reportPaths=coverage/lcov.info",
+  ].join("\n") + "\n"
+}
+
+function renderSonarWorkflow(): string {
+  return [
+    "name: SonarCloud",
+    "",
+    "on:",
+    "  push:",
+    "    branches:",
+    "      - main",
+    "  pull_request:",
+    "",
+    "jobs:",
+    "  sonarcloud:",
+    "    runs-on: ubuntu-latest",
+    "    steps:",
+    "      - uses: actions/checkout@v4",
+    "        with:",
+    "          fetch-depth: 0",
+    "      - uses: actions/setup-node@v4",
+    "        with:",
+    "          node-version: 22",
+    "      - name: SonarCloud Scan",
+    "        uses: SonarSource/sonarqube-scan-action@v5",
+    "        env:",
+    "          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}",
+  ].join("\n") + "\n"
+}
+
+function renderCoderabbitConfig(): string {
+  return [
+    "reviews:",
+    "  profile: chill",
+    "  request_changes_workflow: false",
+    "  auto_review:",
+    "    enabled: true",
+    "    drafts: false",
+    "language: en-US",
+  ].join("\n") + "\n"
+}
+
+function generateCodeRabbitInstallUrl(owner: string): string {
+  return `https://github.com/apps/coderabbitai/installations/new?target_id=${encodeURIComponent(owner)}&target_type=Organization`
 }
 
 function safeParseHarnessProfile(raw: string): { profile: HarnessProfile | null; error?: string } {
@@ -242,6 +489,7 @@ function buildWorkspaceConfigFile(input: {
   runtimePolicy?: WorkspaceRuntimePolicy
   sonar: SonarConfig
   reviewPolicy?: WorkspaceReviewPolicy
+  preflight?: WorkspacePreflightReport
   createdAt?: number
 }): WorkspaceConfigFile {
   return {
@@ -252,6 +500,7 @@ function buildWorkspaceConfigFile(input: {
     runtimePolicy: input.runtimePolicy ?? defaultWorkspaceRuntimePolicy(),
     sonar: input.sonar,
     reviewPolicy: input.reviewPolicy ?? normalizeReviewPolicy(undefined, input.sonar, input.key),
+    preflight: input.preflight,
     createdAt: input.createdAt ?? Date.now(),
   }
 }
@@ -316,6 +565,7 @@ export async function readWorkspaceConfig(root: string): Promise<WorkspaceConfig
       runtimePolicy?: unknown
       sonar?: unknown
       reviewPolicy?: unknown
+      preflight?: unknown
       createdAt?: unknown
     }
     if ((raw.schemaVersion !== 1 && raw.schemaVersion !== WORKSPACE_SCHEMA_VERSION) || typeof raw.key !== "string" || typeof raw.name !== "string") {
@@ -339,6 +589,7 @@ export async function readWorkspaceConfig(root: string): Promise<WorkspaceConfig
       runtimePolicy,
       sonar,
       reviewPolicy: normalizeReviewPolicy(reviewPolicy, sonar, raw.key),
+      preflight: raw.preflight && typeof raw.preflight === "object" ? raw.preflight as WorkspacePreflightReport : undefined,
       createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
     }
   } catch {
@@ -351,16 +602,8 @@ export async function writeWorkspaceConfig(root: string, config: WorkspaceConfig
   await writeFile(workspaceConfigPath(root), toJson(config), "utf8")
 }
 
-export async function writeSonarProperties(root: string, sonar: SonarConfig, workspaceName: string): Promise<void> {
-  if (!sonar.enabled) return
-  if (await pathExists(sonarPropertiesPath(root))) return
-  const lines = [
-    `sonar.projectKey=${sonar.projectKey}`,
-    sonar.organization ? `sonar.organization=${sonar.organization}` : undefined,
-    `sonar.host.url=${sonar.hostUrl ?? SONAR_DEFAULT_HOST}`,
-    `sonar.projectName=${workspaceName}`,
-  ].filter(Boolean)
-  await writeFile(sonarPropertiesPath(root), `${lines.join("\n")}\n`, "utf8")
+export async function writeSonarProperties(root: string, owner: string, repo: string): Promise<boolean> {
+  return writeFileIfMissing(sonarPropertiesPath(root), renderSonarProperties(owner, repo))
 }
 
 export function generateSonarProjectUrl(name: string, sonar: SonarConfig): string | undefined {
@@ -466,15 +709,8 @@ export async function scaffoldWorkspace(root: string, opts: { createGitignore: b
   await mkdir(resolve(root, WORKSPACE_CONFIG_DIR), { recursive: true })
   const actions = [`created ${WORKSPACE_CONFIG_DIR}/`]
   if (opts.createGitignore) {
-    const gitignorePath = resolve(root, ".gitignore")
-    if (!(await pathExists(gitignorePath))) {
-      await writeFile(
-        gitignorePath,
-        "# BeerEngineer workspace caches\n.beerengineer/runs/\n.beerengineer/cache/\n",
-        "utf8",
-      )
-      actions.push("created .gitignore")
-    }
+    const result = await ensureManagedGitignore(root)
+    if (result.changed) actions.push(`updated ${GITIGNORE_FILE}`)
   }
   return actions
 }
@@ -524,8 +760,7 @@ export async function registerWorkspace(input: RegisterWorkspaceInput, deps: Reg
   const existingConfig = await readWorkspaceConfig(path)
   const name = input.name ?? existingConfig?.name ?? basename(path)
   const key = input.key ?? existingConfig?.key ?? slugify(name)
-  const sonar = normalizeSonarConfig(input.sonar ?? existingConfig?.sonar, key, deps.config.llm.defaultSonarOrganization)
-  const reviewPolicy = normalizeReviewPolicy(existingConfig?.reviewPolicy, sonar, key, deps.config.llm.defaultSonarOrganization)
+  const requestedSonar = input.sonar ?? existingConfig?.sonar
   const validation = validateHarnessProfile(input.harnessProfile, deps.appReport)
   if (!validation.ok) {
     return { ok: false, error: validation.error?.code ?? "unknown", detail: validation.error?.detail ?? "invalid harness profile" }
@@ -551,6 +786,38 @@ export async function registerWorkspace(input: RegisterWorkspaceInput, deps: Reg
     await mkdir(resolve(path, WORKSPACE_CONFIG_DIR), { recursive: true })
   }
 
+  const gitignore = await ensureManagedGitignore(path)
+  if (!preview.isGreenfield && gitignore.changed) actions.push(`updated ${GITIGNORE_FILE}`)
+
+  const preflight = await runWorkspacePreflight(path, {
+    defaultBranch: input.git?.defaultBranch ?? "main",
+  })
+  actions.push(...preflight.actions)
+
+  const githubReady = preflight.report.github.status === "ok" && preflight.report.github.owner && preflight.report.github.repo
+  const sonar = githubReady && requestedSonar?.enabled
+    ? normalizeSonarConfig({
+        ...requestedSonar,
+        enabled: true,
+        organization: preflight.report.github.owner,
+        projectKey: `${preflight.report.github.owner}_${preflight.report.github.repo}`,
+        baseBranch: preflight.report.github.defaultBranch ?? requestedSonar.baseBranch,
+      }, key, deps.config.llm.defaultSonarOrganization)
+    : normalizeSonarConfig({ enabled: false }, key, deps.config.llm.defaultSonarOrganization)
+  const reviewPolicy = normalizeReviewPolicy(existingConfig?.reviewPolicy, sonar, key, deps.config.llm.defaultSonarOrganization)
+  const warnings = [...validation.warnings]
+  if (requestedSonar?.enabled && !githubReady) {
+    warnings.push("SonarCloud config generation skipped until a GitHub origin remote is configured")
+  }
+  if (preflight.report.sonar.status === "invalid") {
+    warnings.push("SONAR_TOKEN is present but failed SonarCloud validation")
+  } else if (requestedSonar?.enabled && preflight.report.sonar.status !== "ok") {
+    warnings.push("SONAR_TOKEN is not configured yet; CI and local scans will remain incomplete")
+  }
+  if (preflight.report.gh.status !== "ok") {
+    warnings.push("GitHub CLI is not authenticated; repo creation and secret sync remain manual")
+  }
+
   const workspaceConfig = buildWorkspaceConfigFile({
     key,
     name,
@@ -558,24 +825,24 @@ export async function registerWorkspace(input: RegisterWorkspaceInput, deps: Reg
     runtimePolicy: existingConfig?.runtimePolicy,
     sonar,
     reviewPolicy,
+    preflight: preflight.report,
     createdAt: existingConfig?.createdAt,
   })
   await writeWorkspaceConfig(path, workspaceConfig)
   actions.push(`wrote ${WORKSPACE_CONFIG_DIR}/${WORKSPACE_CONFIG_FILE}`)
 
-  if (sonar.enabled && !preview.hasSonarProperties) {
-    await writeSonarProperties(path, sonar, name)
-    actions.push(`wrote ${SONAR_PROPERTIES_FILE}`)
+  if (githubReady) {
+    const owner = preflight.report.github.owner!
+    const repo = preflight.report.github.repo!
+    if (await writeSonarProperties(path, owner, repo)) {
+      actions.push(`wrote ${SONAR_PROPERTIES_FILE}`)
+    }
+    if (await writeFileIfMissing(sonarWorkflowPath(path), renderSonarWorkflow())) {
+      actions.push(`wrote ${SONAR_WORKFLOW_FILE}`)
+    }
   }
-
-  const shouldInitGit = input.git?.init === true || (preview.isGreenfield && input.git?.init !== false)
-  if (!preview.isGitRepo && shouldInitGit) {
-    const git = await initGit(path, {
-      defaultBranch: input.git?.defaultBranch ?? "main",
-      initialCommit: preview.isGreenfield,
-    })
-    if (!git.ok) return { ok: false, error: "git_init_failed", detail: git.detail ?? "git init failed" }
-    actions.push(...git.actions)
+  if (await writeFileIfMissing(coderabbitConfigPath(path), renderCoderabbitConfig())) {
+    actions.push(`wrote ${CODERABBIT_CONFIG_FILE}`)
   }
 
   const dbRow = deps.repos.upsertWorkspace({
@@ -587,17 +854,27 @@ export async function registerWorkspace(input: RegisterWorkspaceInput, deps: Reg
     sonarEnabled: sonar.enabled,
   })
   const workspace = previewFromDbRow(dbRow)
-  const ghCommand = !preview.hasRemote ? `gh repo create ${key} --private --source .` : undefined
+  const ghOwner = preflight.report.gh.user ?? preflight.report.github.owner
+  const ghCommand = preflight.report.github.status !== "ok"
+    ? ghOwner
+      ? `gh repo create ${ghOwner}/${key} --private --source=. --remote=origin --push`
+      : `gh repo create ${key} --private --source=. --remote=origin --push`
+    : undefined
+  const coderabbitInstallUrl = preflight.report.github.owner
+    ? generateCodeRabbitInstallUrl(preflight.report.github.owner)
+    : undefined
 
   return {
     ok: true,
     workspace,
     preview: await previewWorkspace(path, deps.config, deps.repos),
     actions,
-    warnings: validation.warnings,
+    warnings,
+    preflight: preflight.report,
     sonarProjectUrl: generateSonarProjectUrl(name, sonar),
     sonarMcpSnippet: generateSonarMcpSnippet(sonar),
     ghCreateCommand: ghCommand,
+    coderabbitInstallUrl,
   }
 }
 

@@ -88,6 +88,42 @@ export type WorkspacePreview = {
   conflicts: string[]
 }
 
+export type WorkspacePreflightStatus = "ok" | "missing" | "invalid" | "pending-install" | "skipped"
+
+export type WorkspacePreflightCheck = {
+  status: WorkspacePreflightStatus
+  detail?: string
+}
+
+export type WorkspaceGitPreflight = WorkspacePreflightCheck
+
+export type WorkspaceGitHubPreflight = WorkspacePreflightCheck & {
+  owner?: string
+  repo?: string
+  defaultBranch?: string | null
+  remoteUrl?: string
+}
+
+export type WorkspaceGhPreflight = WorkspacePreflightCheck & {
+  user?: string
+}
+
+export type WorkspaceSonarPreflight = WorkspacePreflightCheck & {
+  tokenSource?: "env" | ".env.local"
+  tokenValid?: boolean
+}
+
+export type WorkspaceCoderabbitPreflight = WorkspacePreflightCheck
+
+export type WorkspacePreflightReport = {
+  git: WorkspaceGitPreflight
+  github: WorkspaceGitHubPreflight
+  gh: WorkspaceGhPreflight
+  sonar: WorkspaceSonarPreflight
+  coderabbit: WorkspaceCoderabbitPreflight
+  checkedAt: string
+}
+
 export type RegisterWorkspaceInput = {
   path: string
   create?: boolean
@@ -109,6 +145,7 @@ export type WorkspaceConfigFile = {
   runtimePolicy: WorkspaceRuntimePolicy
   sonar: SonarConfig
   reviewPolicy: WorkspaceReviewPolicy
+  preflight?: WorkspacePreflightReport
   createdAt: number
 }
 
@@ -144,9 +181,11 @@ export type RegisterResult =
       preview: WorkspacePreview
       actions: string[]
       warnings: string[]
+      preflight: WorkspacePreflightReport
       sonarProjectUrl?: string
       sonarMcpSnippet?: string
       ghCreateCommand?: string
+      coderabbitInstallUrl?: string
     }
   | {
       ok: false

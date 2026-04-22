@@ -101,6 +101,45 @@ beerengineer run --json
   Der Run endet mit einer `{"type":"cli_finished","runId":"…"}`-Zeile.
 ```
 
+### Workspace-Setup und Preflight
+
+App-Setup (`doctor` / `setup`) und Workspace-Setup sind jetzt klar getrennt:
+`beerengineer setup` macht nur die Maschine startklar. Das Registrieren eines
+konkreten Repos laeuft ueber die Workspace-Endpunkte bzw. die UI.
+
+Beim Registrieren einer Workspace fuehrt die Engine vor dem eigentlichen
+Scaffold einen **Preflight** aus und persistiert dessen Ergebnis in
+`.beerengineer/workspace.json` unter `preflight`. Der Preflight ist bewusst
+idempotent und soll spaetere Schritte wie SonarCloud, CodeRabbit und
+Branch-Strategie nicht bei jedem Schritt neu raten lassen.
+
+Aktuelles Verhalten:
+
+- lokales Git wird bei Bedarf automatisch initialisiert; falls noch kein
+  Commit existiert, wird ein leerer Initial-Commit angelegt
+- `origin` wird geprueft und nur dann als GitHub-ready akzeptiert, wenn die
+  URL wirklich auf GitHub zeigt; Owner/Repo/Default-Branch werden daraus
+  abgeleitet
+- `gh auth status` wird als eigener Preflight-Zustand gespeichert
+- `SONAR_TOKEN` wird aus der Umgebung oder aus `.env.local` gelesen und gegen
+  `https://sonarcloud.io/api/authentication/validate` geprueft
+- `.gitignore` wird am Repo-Root idempotent um BeerEngineer-Eintraege ergaenzt:
+  `.env.local`, `.beerengineer/runs/`, `.beerengineer/cache/`
+
+Generierte Dateien im Workspace:
+
+- immer: `.beerengineer/workspace.json`
+- immer: `.coderabbit.yaml`
+- immer: `.gitignore` (neu oder ergaenzt)
+- nur mit gueltigem GitHub-`origin`: `sonar-project.properties`
+- nur mit gueltigem GitHub-`origin`: `.github/workflows/sonar.yml`
+
+Wichtig: SonarCloud-Konfig wird **nicht** mehr allein aufgrund von
+`sonar.enabled=true` geschrieben. Ohne GitHub-Remote bleibt der Schritt gelb:
+die Workspace wird angelegt, aber Sonar-Dateien werden erst erzeugt, wenn das
+Repo wirklich mit GitHub verknuepft ist. In diesem Fall liefert die API auch
+einen passenden `gh repo create ... --remote=origin --push`-Vorschlag.
+
 ### Harness-Modus (NDJSON)
 
 `beerengineer --json` macht die CLI zu einer stabilen Machine-Schnittstelle:
@@ -923,6 +962,8 @@ Es sagt:
 - welcher Run zuletzt aktiv war
 - welche Stage aktuell laeuft
 - welcher Gesamtstatus vorliegt
+- welcher letzte Workspace-Preflight-Status vorlag (`preflight.git`,
+  `preflight.github`, `preflight.gh`, `preflight.sonar`, `preflight.coderabbit`)
 
 `runs/<run-id>/run.json` beschreibt den aktuellen Pipeline-Run.
 

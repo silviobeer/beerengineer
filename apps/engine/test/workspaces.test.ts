@@ -3,8 +3,9 @@ import assert from "node:assert/strict"
 import { mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { spawnSync } from "node:child_process"
 
-import { previewWorkspace, registerWorkspace, validateHarnessProfile } from "../src/core/workspaces.js"
+import { initGit, previewWorkspace, registerWorkspace, validateHarnessProfile } from "../src/core/workspaces.js"
 import { initDatabase } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
 import { defaultAppConfig } from "../src/setup/config.js"
@@ -103,14 +104,19 @@ test("previewWorkspace detects greenfield vs brownfield and registration state",
     assert.equal(brownfield.exists, true)
     assert.equal(brownfield.isRegistered, true)
     assert.equal(brownfield.hasWorkspaceConfigFile, true)
-    assert.equal(brownfield.hasSonarProperties, true)
+    assert.equal(brownfield.hasSonarProperties, false)
+    assert.equal(brownfield.isGitRepo, true)
+    if (!result.ok) return
+    assert.equal(result.preflight.git.status, "ok")
+    assert.equal(result.preflight.github.status, "missing")
+    assert.match(readFileSync(join(path, ".gitignore"), "utf8"), /\.env\.local/)
   } finally {
     db.close()
     rmSync(dir, { recursive: true, force: true })
   }
 })
 
-test("registerWorkspace writes workspace config and sonar properties", async () => {
+test("registerWorkspace persists preflight and writes quality config once GitHub remote metadata exists", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-workspaces-"))
   const db = initDatabase(join(dir, "db.sqlite"))
   try {
@@ -124,12 +130,16 @@ test("registerWorkspace writes workspace config and sonar properties", async () 
       },
     }
     const path = join(dir, "demo")
+    mkdirSync(path, { recursive: true })
+    const gitInit = await initGit(path, { defaultBranch: "main", initialCommit: false })
+    assert.equal(gitInit.ok, true)
+    const remoteAdd = spawnSync("git", ["remote", "add", "origin", "git@github.com:acme/demo.git"], { cwd: path, encoding: "utf8" })
+    assert.equal(remoteAdd.status, 0)
     const result = await registerWorkspace(
       {
         path,
         harnessProfile: { mode: "fast" },
         sonar: { enabled: true },
-        git: { init: false },
       },
       { repos, config, appReport: readyReport() },
     )
@@ -143,6 +153,7 @@ test("registerWorkspace writes workspace config and sonar properties", async () 
       harnessProfile: { mode: string }
       runtimePolicy: { stageAuthoring: string; reviewer: string; coderExecution: string }
       sonar: { organization?: string; projectKey?: string }
+      preflight: { github: { owner?: string; repo?: string; status: string }; git: { status: string } }
       reviewPolicy: {
         coderabbit: { enabled: boolean }
         sonarcloud: { organization?: string; projectKey?: string; enabled: boolean; region?: string; planTier?: string }
@@ -155,21 +166,35 @@ test("registerWorkspace writes workspace config and sonar properties", async () 
     assert.equal(workspaceJson.runtimePolicy.reviewer, "safe-readonly")
     assert.equal(workspaceJson.runtimePolicy.coderExecution, "safe-workspace-write")
     assert.equal(workspaceJson.sonar.organization, "acme")
-    assert.equal(workspaceJson.sonar.projectKey, "demo")
+    assert.equal(workspaceJson.sonar.projectKey, "acme_demo")
+    assert.equal(workspaceJson.preflight.git.status, "ok")
+    assert.equal(workspaceJson.preflight.github.status, "ok")
+    assert.equal(workspaceJson.preflight.github.owner, "acme")
+    assert.equal(workspaceJson.preflight.github.repo, "demo")
     assert.equal(workspaceJson.reviewPolicy.coderabbit.enabled, false)
     assert.equal(workspaceJson.reviewPolicy.sonarcloud.enabled, true)
     assert.equal(workspaceJson.reviewPolicy.sonarcloud.organization, "acme")
-    assert.equal(workspaceJson.reviewPolicy.sonarcloud.projectKey, "demo")
+    assert.equal(workspaceJson.reviewPolicy.sonarcloud.projectKey, "acme_demo")
     assert.equal(workspaceJson.reviewPolicy.sonarcloud.region, "eu")
     assert.equal(workspaceJson.reviewPolicy.sonarcloud.planTier, "unknown")
 
     const sonarProperties = readFileSync(join(path, "sonar-project.properties"), "utf8")
-    assert.match(sonarProperties, /sonar.projectKey=demo/)
+    assert.match(sonarProperties, /sonar.projectKey=acme_demo/)
     assert.match(sonarProperties, /sonar.organization=acme/)
+    assert.match(sonarProperties, /sonar\.sources=apps,packages/)
+    const sonarWorkflow = readFileSync(join(path, ".github", "workflows", "sonar.yml"), "utf8")
+    assert.match(sonarWorkflow, /SonarCloud Scan/)
+    const coderabbit = readFileSync(join(path, ".coderabbit.yaml"), "utf8")
+    assert.match(coderabbit, /profile: chill/)
+    const gitignore = readFileSync(join(path, ".gitignore"), "utf8")
+    assert.match(gitignore, /\.env\.local/)
+    assert.match(gitignore, /\.beerengineer\/runs\//)
 
     const dbWorkspace = repos.getWorkspaceByKey("demo")
     assert.equal(dbWorkspace?.sonar_enabled, 1)
     assert.equal(JSON.parse(dbWorkspace?.harness_profile_json ?? "{}").mode, "fast")
+    assert.equal(result.preflight.github.status, "ok")
+    assert.equal(result.coderabbitInstallUrl?.includes("coderabbit"), true)
   } finally {
     db.close()
     rmSync(dir, { recursive: true, force: true })
