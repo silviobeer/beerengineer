@@ -160,6 +160,9 @@ function buildBoardViewModel(items: ItemRow[], projectCounts: Map<string, number
 function buildOverlayViewModel(item: ItemRow, projectCount: number): ItemOverlayViewModel {
   return {
     itemCode: item.code,
+    itemId: item.id,
+    currentColumn: item.current_column,
+    currentPhase: item.phase_status,
     title: item.title,
     summary: item.description,
     mode: mapItemMode(item),

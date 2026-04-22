@@ -10,7 +10,7 @@ export class FakeArchitectureReviewAdapter
     if (this.attempts >= 2) return { kind: "pass" }
     return {
       kind: "revise",
-      feedback: "Bitte schaerfe Systemgrenzen, Kernkomponenten und Risiken fuer dieses Projekt.",
+      feedback: "Please sharpen system boundaries, core components, and risks for this project.",
     }
   }
 }

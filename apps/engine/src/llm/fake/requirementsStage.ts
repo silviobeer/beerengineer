@@ -3,9 +3,9 @@ import type { RequirementsArtifact, RequirementsState } from "../../stages/requi
 import type { AcceptanceCriterion } from "../../types/domain.js"
 
 const QUESTIONS = [
-  "Welche Funktion ist fuer den ersten Release am wichtigsten?",
-  "Welche Aktion muss fuer den Nutzer am schnellsten moeglich sein?",
-  "Welche wichtigen Randbedingungen muessen die Stories abdecken?",
+  "Which feature is most important for the first release?",
+  "Which action must be fastest for the user?",
+  "Which important boundary conditions must the stories cover?",
 ]
 
 function ac(
@@ -26,37 +26,37 @@ function buildArtifact(state: RequirementsState): RequirementsArtifact {
       stories: [
         {
           id: "US-01",
-          title: "Nutzer sieht den Kern-Workflow als gefuehrte Eingabemaske",
+          title: "User sees the core workflow as a guided input form",
           acceptanceCriteria: [
-            ac("AC-01", "Formular vorhanden", "ui"),
-            ac("AC-02", "Pflichtfelder validiert", "validation"),
-            ac("AC-03", "Fehler klar sichtbar", "error"),
+            ac("AC-01", "Form is present", "ui"),
+            ac("AC-02", "Required fields validated", "validation"),
+            ac("AC-03", "Errors clearly visible", "error"),
           ],
         },
         {
           id: "US-02",
-          title: "Nutzer sieht eine Uebersicht ueber bestehende Eintraege",
+          title: "User sees an overview of existing entries",
           acceptanceCriteria: [
-            ac("AC-01", "Liste zeigt alle relevanten Eintraege", "functional"),
+            ac("AC-01", "List shows all relevant entries", "functional"),
             ac(
               "AC-02",
-              userMessages[0] ? `Filter beruecksichtigt: ${userMessages[0]}` : "Filter und Sortierung vorhanden",
+              userMessages[0] ? `Filter considers: ${userMessages[0]}` : "Filter and sorting available",
               "functional",
             ),
-            ac("AC-03", "Status jedes Eintrags ist sichtbar", "state"),
+            ac("AC-03", "Status of each entry is visible", "state"),
           ],
         },
         {
           id: "US-03",
-          title: "Nutzer kann einen Eintrag anlegen und speichern",
+          title: "User can create and save an entry",
           acceptanceCriteria: [
-            ac("AC-01", "Speichern ist moeglich", "functional"),
+            ac("AC-01", "Saving is possible", "functional"),
             ac(
               "AC-02",
-              userMessages[1] ? `Speichern respektiert: ${userMessages[1]}` : "Validierung vor dem Speichern",
+              userMessages[1] ? `Save respects: ${userMessages[1]}` : "Validation before save",
               "validation",
             ),
-            ac("AC-03", "Bestaetigung nach erfolgreichem Speichern", "ui"),
+            ac("AC-03", "Confirmation after successful save", "ui"),
           ],
         },
       ],
@@ -87,7 +87,7 @@ export class FakeRequirementsStageAdapter implements StageAgentAdapter<Requireme
     state.lastReviewFeedback = input.reviewFeedback
     return {
       kind: "message",
-      message: "Welche Story oder welches AC soll ich auf Basis des Feedbacks noch schaerfen?",
+      message: "Which story or AC should I sharpen based on the feedback?",
     }
   }
 }

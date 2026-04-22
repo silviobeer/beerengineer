@@ -10,7 +10,7 @@ export class FakeTestWriterReviewAdapter
     if (this.attempts >= 2) return { kind: "pass" }
     return {
       kind: "revise",
-      feedback: "Bitte schaerfe die Zuordnung Testfall -> AC und ergaenze relevante Edge Cases.",
+      feedback: "Please sharpen the test case -> AC mapping and add relevant edge cases.",
     }
   }
 }

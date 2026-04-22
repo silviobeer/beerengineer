@@ -1,4 +1,5 @@
 import { BoardView } from "@/components/board/BoardView";
+import { BoardLiveSubscriber } from "@/components/board/BoardLiveSubscriber";
 import { ItemOverlay } from "@/components/overlay/ItemOverlay";
 import { EmptyState } from "@/components/primitives/EmptyState";
 import { ErrorState } from "@/components/primitives/ErrorState";
@@ -16,6 +17,7 @@ export default async function BoardPage({
   return (
     <AppShell shell={state.shell} activeHref="/" workspaceHrefBase="/">
       <div className="canvas">
+        <BoardLiveSubscriber workspaceKey={params?.workspace ?? null} />
         {state.kind === "ready" ? (
           <>
             <BoardView board={state.board} />

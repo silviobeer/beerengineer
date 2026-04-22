@@ -44,7 +44,7 @@ function selectProvider<T>(provider: ProviderId, options: { fake: () => T }): T 
       return options.fake()
     case "codex":
     case "claude-code":
-      throw new Error(`Provider "${provider}" ist noch nicht implementiert`)
+      throw new Error(`Provider "${provider}" is not yet implemented`)
   }
 }
 

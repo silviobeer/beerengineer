@@ -642,6 +642,32 @@ select {
   color: var(--petrol-dark);
 }
 
+button.detail-action {
+  background: transparent;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  padding: 6px 12px;
+  border-radius: 999px;
+}
+
+button.detail-action:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+.board-action-toast {
+  margin-top: 10px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.board-action-toast.error {
+  color: var(--danger, #b04a4a);
+}
+
+.board-action-toast.info {
+  color: var(--petrol-dark);
+}
+
 .inbox-row {
   display: flex;
   justify-content: space-between;

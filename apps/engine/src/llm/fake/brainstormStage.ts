@@ -2,11 +2,11 @@ import type { StageAgentAdapter, StageAgentInput, StageAgentResponse } from "../
 import type { BrainstormArtifact, BrainstormState } from "../../stages/brainstorm/types.js"
 
 const QUESTIONS = [
-  "Welches Problem soll das Produkt loesen?",
-  "Wer ist die wichtigste Zielgruppe?",
-  "Was ist das Kernversprechen in einem Satz?",
-  "Welche Einschraenkungen oder Rahmenbedingungen gibt es?",
-  "Warum sind bestehende Alternativen nicht gut genug?",
+  "What problem should the product solve?",
+  "Who is the primary target audience?",
+  "What is the core value proposition in one sentence?",
+  "What constraints or boundary conditions apply?",
+  "Why are existing alternatives not good enough?",
 ]
 
 function pickQuestion(state: BrainstormState): string {
@@ -23,20 +23,20 @@ function buildArtifact(state: BrainstormState): BrainstormArtifact {
   return {
     concept: {
       summary: `${state.item.title}: ${summary}`,
-      problem: userMessages[0] ?? "Noch unscharf beschriebenes Problem.",
-      users: [userMessages[1] ?? "Primaere Zielgruppe unklar"],
-      constraints: [userMessages[2] ?? "Keine expliziten Constraints genannt"],
+      problem: userMessages[0] ?? "Problem still vaguely described.",
+      users: [userMessages[1] ?? "Primary target audience unclear"],
+      constraints: [userMessages[2] ?? "No explicit constraints provided"],
     },
     projects: [
       {
         id: "P01",
         name: `${state.item.title} — Core`,
-        description: "Kern-Funktionalitaet",
+        description: "Core functionality",
         concept: {
           summary: `${state.item.title}: ${summary}`,
-          problem: userMessages[0] ?? "Noch unscharf beschriebenes Problem.",
-          users: [userMessages[1] ?? "Primaere Zielgruppe unklar"],
-          constraints: [userMessages[2] ?? "Keine expliziten Constraints genannt"],
+          problem: userMessages[0] ?? "Problem still vaguely described.",
+          users: [userMessages[1] ?? "Primary target audience unclear"],
+          constraints: [userMessages[2] ?? "No explicit constraints provided"],
         },
       },
     ],
@@ -62,7 +62,7 @@ export class FakeBrainstormStageAdapter implements StageAgentAdapter<BrainstormS
 
     return {
       kind: "message",
-      message: "Welche Einschraenkungen oder Rahmenbedingungen gibt es?",
+      message: "What constraints or boundary conditions apply?",
     }
   }
 }

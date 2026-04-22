@@ -37,6 +37,8 @@ export type ProjectRow = {
   updated_at: number
 }
 
+export type RunOwner = "cli" | "api"
+
 export type RunRow = {
   id: string
   workspace_id: string
@@ -44,6 +46,7 @@ export type RunRow = {
   title: string
   status: string
   current_stage: string | null
+  owner: RunOwner
   created_at: number
   updated_at: number
 }
@@ -118,6 +121,50 @@ export class Repos {
     return row
   }
 
+  /**
+   * Mint the next monotonically increasing item code (`ITEM-####`) for a
+   * workspace. Scans existing rows so the sequence survives process restarts
+   * and shared DB access from CLI + API.
+   */
+  nextItemCode(workspaceId: string): string {
+    const rows = this.db
+      .prepare("SELECT code FROM items WHERE workspace_id = ? AND code LIKE 'ITEM-%'")
+      .all(workspaceId) as Array<{ code: string }>
+    let max = 0
+    for (const { code } of rows) {
+      const m = /^ITEM-(\d+)$/.exec(code)
+      if (m) {
+        const n = Number(m[1])
+        if (Number.isFinite(n) && n > max) max = n
+      }
+    }
+    return `ITEM-${String(max + 1).padStart(4, "0")}`
+  }
+
+  getItem(id: string): ItemRow | undefined {
+    return this.db.prepare("SELECT * FROM items WHERE id = ?").get(id) as ItemRow | undefined
+  }
+
+  getItemByCode(workspaceId: string, code: string): ItemRow | undefined {
+    return this.db
+      .prepare("SELECT * FROM items WHERE workspace_id = ? AND code = ?")
+      .get(workspaceId, code) as ItemRow | undefined
+  }
+
+  findItemsByCode(code: string): ItemRow[] {
+    return this.db
+      .prepare("SELECT * FROM items WHERE code = ? ORDER BY created_at ASC")
+      .all(code) as ItemRow[]
+  }
+
+  latestActiveRunForItem(itemId: string): RunRow | undefined {
+    return this.db
+      .prepare(
+        "SELECT * FROM runs WHERE item_id = ? AND status = 'running' ORDER BY created_at DESC LIMIT 1"
+      )
+      .get(itemId) as RunRow | undefined
+  }
+
   createItem(input: {
     workspaceId: string
     code?: string
@@ -125,7 +172,7 @@ export class Repos {
     description: string
   }): ItemRow {
     const id = randomUUID()
-    const code = input.code ?? `IT-${id.slice(0, 6).toUpperCase()}`
+    const code = input.code ?? this.nextItemCode(input.workspaceId)
     const row: ItemRow = {
       id,
       workspace_id: input.workspaceId,
@@ -155,10 +202,11 @@ export class Repos {
   }
 
   createProject(input: { id?: string; itemId: string; code: string; name: string; summary?: string; status?: string; position?: number }): ProjectRow {
-    // Idempotent on `code`: if a row already exists with the same code, return
-    // it. Fake adapters re-use codes across runs and we don't want db-sync to
-    // log spurious UNIQUE-constraint warnings on every restart.
-    const existing = this.db.prepare("SELECT * FROM projects WHERE code = ?").get(input.code) as ProjectRow | undefined
+    // Idempotent only within one item: project codes like P01 are reused across
+    // different items by the fake adapters, so global dedup corrupts links.
+    const existing = this.db
+      .prepare("SELECT * FROM projects WHERE item_id = ? AND code = ?")
+      .get(input.itemId, input.code) as ProjectRow | undefined
     if (existing) return existing
     const row: ProjectRow = {
       id: input.id ?? randomUUID(),
@@ -180,7 +228,7 @@ export class Repos {
     return row
   }
 
-  createRun(input: { workspaceId: string; itemId: string; title: string }): RunRow {
+  createRun(input: { workspaceId: string; itemId: string; title: string; owner?: RunOwner }): RunRow {
     const row: RunRow = {
       id: randomUUID(),
       workspace_id: input.workspaceId,
@@ -188,13 +236,14 @@ export class Repos {
       title: input.title,
       status: "running",
       current_stage: null,
+      owner: input.owner ?? "api",
       created_at: now(),
       updated_at: now()
     }
     this.db
       .prepare(
-        `INSERT INTO runs (id, workspace_id, item_id, title, status, current_stage, created_at, updated_at)
-         VALUES (@id, @workspace_id, @item_id, @title, @status, @current_stage, @created_at, @updated_at)`
+        `INSERT INTO runs (id, workspace_id, item_id, title, status, current_stage, owner, created_at, updated_at)
+         VALUES (@id, @workspace_id, @item_id, @title, @status, @current_stage, @owner, @created_at, @updated_at)`
       )
       .run(row)
     return row

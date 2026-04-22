@@ -7,7 +7,7 @@ import { join } from "node:path"
 import { initDatabase } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
 import { runWithWorkflowIO, type WorkflowIO, type WorkflowEvent } from "../src/core/io.js"
-import { attachDbSync, mapStageToColumn, withDbSync } from "../src/core/runOrchestrator.js"
+import { attachDbSync, mapStageToColumn, prepareRun, withDbSync } from "../src/core/runOrchestrator.js"
 import { runWithActiveRun } from "../src/core/runContext.js"
 import { createApiIOSession } from "../src/core/ioApi.js"
 import { ask } from "../src/sim/human.js"
@@ -136,6 +136,26 @@ test("project_created events persist project rows used by later stage runs", () 
   db.close()
 })
 
+test("project codes are item-scoped, so different items can each have P01", () => {
+  const db = tmpDb()
+  const repos = new Repos(db)
+  const ws = repos.upsertWorkspace({ key: "test", name: "Test" })
+  const itemA = repos.createItem({ workspaceId: ws.id, title: "A", description: "DA" })
+  const itemB = repos.createItem({ workspaceId: ws.id, title: "B", description: "DB" })
+
+  const projectA = repos.createProject({ id: "PRJ-A", itemId: itemA.id, code: "P01", name: "Project A" })
+  const projectB = repos.createProject({ id: "PRJ-B", itemId: itemB.id, code: "P01", name: "Project B" })
+
+  assert.equal(projectA.id, "PRJ-A")
+  assert.equal(projectB.id, "PRJ-B")
+  const rows = db.prepare("SELECT id, item_id, code FROM projects ORDER BY id ASC").all() as Array<{ id: string; item_id: string; code: string }>
+  assert.deepEqual(rows, [
+    { id: "PRJ-A", item_id: itemA.id, code: "P01" },
+    { id: "PRJ-B", item_id: itemB.id, code: "P01" },
+  ])
+  db.close()
+})
+
 test("API prompt answers and artifact writes are persisted through the db sync layer", async () => {
   const db = tmpDb()
   const repos = new Repos(db)
@@ -223,5 +243,46 @@ test("withDbSync stamps streamId+at on persisted events without mutating the ori
   assert.equal((original as { streamId?: string }).streamId, undefined, "input event must not be mutated")
   assert.ok(captured[0].streamId, "forwarded event carries the persisted streamId")
   assert.ok(captured[0].at, "forwarded event carries the persisted timestamp")
+  db.close()
+})
+
+test("stage_completed updates the exact emitted stageRunId even when stage keys repeat across projects", () => {
+  const db = tmpDb()
+  const repos = new Repos(db)
+  const ws = repos.upsertWorkspace({ key: "test", name: "Test" })
+  const item = repos.createItem({ workspaceId: ws.id, title: "T", description: "D" })
+  const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "T" })
+  const io = withDbSync(makeIO([]), repos, { runId: run.id, itemId: item.id })
+
+  repos.createProject({ id: "project-1", itemId: item.id, code: "P01", name: "Project 1" })
+  repos.createProject({ id: "project-2", itemId: item.id, code: "P02", name: "Project 2" })
+  io.emit({ type: "stage_started", runId: run.id, stageRunId: "req-1", stageKey: "requirements", projectId: "project-1" })
+  io.emit({ type: "stage_started", runId: run.id, stageRunId: "req-2", stageKey: "requirements", projectId: "project-2" })
+  io.emit({ type: "stage_completed", runId: run.id, stageRunId: "req-1", stageKey: "requirements", status: "completed" })
+
+  const stage1 = db.prepare("SELECT status FROM stage_runs WHERE id = ?").get("req-1") as { status: string }
+  const stage2 = db.prepare("SELECT status FROM stage_runs WHERE id = ?").get("req-2") as { status: string }
+  assert.equal(stage1.status, "completed")
+  assert.equal(stage2.status, "running")
+  db.close()
+})
+
+test("prepareRun keeps an existing item's workspace instead of forcing default", () => {
+  const db = tmpDb()
+  const repos = new Repos(db)
+  const defaultWs = repos.upsertWorkspace({ key: "default", name: "Default Workspace" })
+  const otherWs = repos.upsertWorkspace({ key: "other", name: "Other Workspace" })
+  const item = repos.createItem({ workspaceId: otherWs.id, title: "T", description: "D" })
+  const prepared = prepareRun(
+    { id: item.id, title: item.title, description: item.description },
+    repos,
+    makeIO([]),
+    { itemId: item.id }
+  )
+
+  const run = repos.getRun(prepared.runId)
+  assert.ok(run)
+  assert.equal(run?.workspace_id, otherWs.id)
+  assert.notEqual(run?.workspace_id, defaultWs.id)
   db.close()
 })

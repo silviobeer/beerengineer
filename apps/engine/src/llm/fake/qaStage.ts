@@ -9,8 +9,8 @@ async function delay(ms: number): Promise<void> {
 function findingsForLoop(loop: number): Finding[] {
   if (loop === 1) {
     return [
-      { source: "qa-llm", severity: "medium", message: "Fehlende Loading-States in Listen-View" },
-      { source: "qa-llm", severity: "low", message: "Inkonsistente Button-Labels" },
+      { source: "qa-llm", severity: "medium", message: "Missing loading states in list view" },
+      { source: "qa-llm", severity: "low", message: "Inconsistent button labels" },
     ]
   }
   return []
@@ -27,7 +27,7 @@ export class FakeQaStageAdapter implements StageAgentAdapter<QaState, QaArtifact
       if (state.findings.length === 0) {
         return { kind: "artifact", artifact: { accepted: true, loops: state.loop, findings: [] } }
       }
-      const message = `Reviewer-Findings: ${state.findings.map(f => `[${f.source}/${f.severity}] ${f.message}`).join("; ")}. Fixen oder Akzeptieren? [fix/accept]`
+      const message = `Reviewer findings: ${state.findings.map(f => `[${f.source}/${f.severity}] ${f.message}`).join("; ")}. Fix or accept? [fix/accept]`
       return { kind: "message", message }
     }
 
@@ -46,7 +46,7 @@ export class FakeQaStageAdapter implements StageAgentAdapter<QaState, QaArtifact
       if (state.findings.length === 0) {
         return { kind: "artifact", artifact: { accepted: false, loops: state.loop, findings: [] } }
       }
-      const message = `Reviewer-Findings: ${state.findings.map(f => `[${f.source}/${f.severity}] ${f.message}`).join("; ")}. Fixen oder Akzeptieren? [fix/accept]`
+      const message = `Reviewer findings: ${state.findings.map(f => `[${f.source}/${f.severity}] ${f.message}`).join("; ")}. Fix or accept? [fix/accept]`
       return { kind: "message", message }
     }
 

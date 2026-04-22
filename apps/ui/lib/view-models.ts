@@ -79,6 +79,12 @@ export type ChatMessageViewModel = {
 
 export type ItemOverlayViewModel = {
   itemCode: string;
+  /** Persisted item id (UUID). Required for backend actions. */
+  itemId?: string;
+  /** Current board column for this item. */
+  currentColumn?: "idea" | "brainstorm" | "requirements" | "implementation" | "done";
+  /** Current phase status for this item. */
+  currentPhase?: "draft" | "running" | "review_required" | "completed" | "failed";
   title: string;
   summary: string;
   mode: ItemMode;

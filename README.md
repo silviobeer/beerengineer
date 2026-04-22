@@ -11,9 +11,44 @@ Aktuell ist das fuer `brainstorm`, `requirements`, `architecture`, `planning` un
 ```bash
 npm install                                          # workspace install
 npm run start --workspace=@beerengineer2/engine      # CLI-Lauf (interaktiv)
+npm exec --workspace=@beerengineer2/engine beerengineer -- --help
+npm exec --workspace=@beerengineer2/engine beerengineer -- --doctor
+npm exec --workspace=@beerengineer2/engine beerengineer -- start ui
+npm exec --workspace=@beerengineer2/engine beerengineer -- item action --item ITEM-0001 --action promote_to_requirements
 npm run start:api                                    # HTTP+SSE API auf :4100
 npm run dev:ui                                       # Next.js UI auf :3000
 npm test --workspace=@beerengineer2/engine           # Engine-Unit-Tests
+```
+
+### CLI-Kommandos
+
+Der Engine-Workspace exportiert jetzt ein echtes `beerengineer`-CLI-Binary.
+Im Repo nutzt du es am einfachsten ueber `npm exec --workspace=@beerengineer2/engine beerengineer -- ...`.
+
+```text
+beerengineer --help | -h
+  Gibt die Usage auf stdout aus.
+
+beerengineer --doctor
+  Prueft Node.js, oeffnet/initialisiert die SQLite-DB, verifiziert die Kern-Tabellen
+  (`workspaces`, `items`, `projects`, `runs`, `stage_runs`, `stage_logs`,
+  `artifact_files`, `pending_prompts`) und bestaetigt, dass der UI-Workspace
+  unter `apps/ui` vorhanden ist. Exit-Code 0 bei Erfolg, sonst non-zero.
+
+beerengineer start ui
+  Startet `npm run dev` im aufgeloesten UI-Workspace mit inherited stdio und
+  leitet `SIGINT`/`SIGTERM` an den Kindprozess weiter.
+
+beerengineer item action --item <id|code> --action <name>
+  Fuehrt eine Item-Aktion gegen ein bestehendes Item aus.
+  Gueltige Actions: `start_brainstorm`, `promote_to_requirements`,
+  `start_implementation`, `resume_run`, `mark_done`.
+  `--item` akzeptiert entweder die persistierte Item-UUID oder einen
+  per-Workspace-Code wie `ITEM-0001`. Mehrdeutige Codes werden abgelehnt;
+  in dem Fall muss die UUID verwendet werden.
+
+beerengineer
+  Ohne Argumente startet der bisherige interaktive CLI-Workflow unveraendert.
 ```
 
 ---
@@ -148,7 +183,7 @@ durchreicht. Kein Monkey-Patching, kein Mutieren — Layering ist explizit:
 |---|---|---|---|
 | **SQLite (geteiltes File)** | Engine → UI | `better-sqlite3` (server-side read in Next.js) | Board-Daten (`workspaces/items/projects`) ohne Polling — Next.js liest beim Page-Render direkt aus der DB. |
 | **HTTP REST** | UI → Engine | `fetch` über `NEXT_PUBLIC_ENGINE_BASE_URL` (Default `http://127.0.0.1:4100`) | Run starten, Antwort auf Prompt schicken, Snapshots/Tree abfragen. |
-| **SSE (Server-Sent Events)** | Engine → UI | `EventSource` auf `/runs/:id/events` | Live-Stream aller Workflow-Events (`stage_started`, `prompt_requested`, `artifact_written`, …) inkl. History-Replay. |
+| **SSE (Server-Sent Events)** | Engine → UI | `EventSource` auf `/runs/:id/events` und `/events?workspace=<key>` | Run-Konsole: Live-Stream eines Runs inkl. History-Replay. Board: workspace-gefilterte Live-Invalidierung fuer Item-/Run-Aenderungen. |
 
 Die **SQLite-Datei ist die geteilte Source of Truth**. Engine schreibt, UI liest.
 HTTP+SSE liegt nur auf den Schreibseiten (Run-Steuerung) und auf dem Live-Pfad
@@ -216,12 +251,14 @@ So muss die UI nichts ueber Engine-Status wissen — sie zeichnet nur, was im
 | Method | Route | Effekt |
 |---|---|---|
 | `POST` | `/runs` | Startet Workflow async, antwortet `202 { runId }` |
-| `POST` | `/runs/:id/input` | Beantwortet offenen Prompt: `{ promptId, answer }` |
+| `POST` | `/runs/:id/input` | Beantwortet offenen Prompt: `{ promptId, answer }`; gibt `409 { error: "cli_owned" }` fuer CLI-ownte Runs zurueck |
 | `GET`  | `/runs` | Alle Runs (neueste zuerst) |
 | `GET`  | `/runs/:id` | Snapshot eines Runs |
 | `GET`  | `/runs/:id/tree` | Run + Stage-Runs + Artefakte |
 | `GET`  | `/runs/:id/events` | SSE: History-Replay + Live-Events |
 | `GET`  | `/runs/:id/prompts` | Aktuell offener Prompt (oder `null`) |
+| `POST` | `/items/:id/actions` | Fuehrt eine Item-Aktion aus; `200` mit `{ itemId, column, phaseStatus, runId? }`, `409` bei ungueltigem Uebergang |
+| `GET`  | `/events[?workspace=key]` | Workspace-gefilterter Board-SSE-Stream fuer `run_started`, `stage_*`, `item_column_changed`, `run_finished`, `project_created` |
 | `GET`  | `/board[?workspace=key]` | Board-DTO (Spalten + Karten) |
 | `GET`  | `/health` | `{ ok: true }` |
 

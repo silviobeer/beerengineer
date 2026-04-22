@@ -10,7 +10,7 @@ export class FakePlanningReviewAdapter
     if (this.attempts >= 2) return { kind: "pass" }
     return {
       kind: "revise",
-      feedback: "Bitte schaerfe Wave-Ziele, Dependencies und Exit Criteria fuer den Implementierungsplan.",
+      feedback: "Please sharpen wave goals, dependencies, and exit criteria for the implementation plan.",
     }
   }
 }

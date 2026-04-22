@@ -1,6 +1,6 @@
-# UI console test — Core Features Documentation
+# Test CLI End-to-End — Core Features Documentation
 
-Feature and scope summary for UI console test — Core, derived from the PRD and execution results.
+Feature and scope summary for Test CLI End-to-End — Core, derived from the PRD and execution results.
 
 ## Implemented Features
 US-01: Nutzer sieht den Kern-Workflow als gefuehrte Eingabemaske; US-02: Nutzer sieht eine Uebersicht ueber bestehende Eintraege; US-03: Nutzer kann einen Eintrag anlegen und speichern

@@ -7,6 +7,8 @@ import type {
 } from "../types.js"
 import { layout, type WorkflowContext } from "./workspaceLayout.js"
 
+const repoStateLocks = new Map<string, Promise<void>>()
+
 function nowIso(): string {
   return new Date().toISOString()
 }
@@ -93,10 +95,26 @@ async function mutateRepoState<T>(
   context: WorkflowContext,
   mutate: (state: SimulatedRepoState) => T,
 ): Promise<T> {
-  const state = await loadRepoState(context)
-  const result = mutate(state)
-  await persistRepoState(context, state)
-  return result
+  const lockKey = layout.repoStateWorkspaceFile(context.workspaceId)
+  const previous = repoStateLocks.get(lockKey) ?? Promise.resolve()
+  let release!: () => void
+  const current = new Promise<void>(resolve => {
+    release = resolve
+  })
+  repoStateLocks.set(lockKey, previous.then(() => current))
+
+  await previous
+  try {
+    const state = await loadRepoState(context)
+    const result = mutate(state)
+    await persistRepoState(context, state)
+    return result
+  } finally {
+    release()
+    if (repoStateLocks.get(lockKey) === current) {
+      repoStateLocks.delete(lockKey)
+    }
+  }
 }
 
 function ensureProjectBranch(state: SimulatedRepoState, projectId: string): SimulatedBranch {

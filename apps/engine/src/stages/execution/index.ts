@@ -31,8 +31,15 @@ export async function execution(ctx: WithPlan): Promise<WaveSummary[]> {
     completedWaveIds.add(wave.id)
   }
 
-  print.ok("Alle Waves abgeschlossen\n")
+  print.ok("All waves complete\n")
   return summaries
+}
+
+export function assertWaveSucceeded(wave: WaveDefinition, summary: WaveSummary): void {
+  if (summary.storiesBlocked.length === 0) return
+  throw new Error(
+    `Wave ${wave.id} blocked stories: ${summary.storiesBlocked.join(", ")}.`,
+  )
 }
 
 function assertWaveDependenciesSatisfied(
@@ -52,7 +59,7 @@ async function executeWave(
   wave: WaveDefinition,
   storyById: Map<string, UserStory>,
 ): Promise<WaveSummary> {
-  const tag = wave.parallel ? "(parallel)" : "(sequenziell)"
+  const tag = wave.parallel ? "(parallel)" : "(sequential)"
   print.step(`\nWave ${wave.number} ${tag}: ${wave.stories.map(s => s.id).join(", ")}`)
 
   const run = (story: Pick<UserStory, "id" | "title">) =>
@@ -64,8 +71,9 @@ async function executeWave(
 
   const summary = await writeWaveSummary({ workspaceId: ctx.workspaceId, runId: ctx.runId }, wave, results)
   print.ok(
-    `Wave ${wave.number} abgeschlossen — merged: ${summary.storiesMerged.length}, blocked: ${summary.storiesBlocked.length}`,
+    `Wave ${wave.number} complete — merged: ${summary.storiesMerged.length}, blocked: ${summary.storiesBlocked.length}`,
   )
+  assertWaveSucceeded(wave, summary)
   return summary
 }
 
@@ -126,7 +134,7 @@ async function implementStory(
 ): Promise<StoryResult> {
   print.step(`  Story ${story.id}: ${story.title}`)
   const testPlan = await writeStoryTestPlan(ctx, wave, story)
-  print.dim(`  Testplan: ${testPlan.testPlan.testCases.map(tc => tc.id).join(", ")}`)
+  print.dim(`  Test plan: ${testPlan.testPlan.testCases.map(tc => tc.id).join(", ")}`)
   const storyContext = buildStoryExecutionContext(ctx.project, wave, ctx.architecture, testPlan)
   const result: StoryArtifacts = await runRalphStory(storyContext, { workspaceId: ctx.workspaceId, runId: ctx.runId })
   print.dim(`  Status: ${result.implementation.status}`)
@@ -174,8 +182,8 @@ async function writeStoryTestPlan(
   const acs: AcceptanceCriterion[] = story.acceptanceCriteria.length > 0
     ? story.acceptanceCriteria
     : [
-        { id: "AC-01", text: `${story.id} Grundfluss funktioniert`, priority: "must", category: "functional" },
-        { id: "AC-02", text: `${story.id} Validierung deckt Fehlerfaelle ab`, priority: "must", category: "validation" },
+        { id: "AC-01", text: `${story.id} core flow works`, priority: "must", category: "functional" },
+        { id: "AC-02", text: `${story.id} validation covers error cases`, priority: "must", category: "validation" },
       ]
 
   const { result } = await runStage({

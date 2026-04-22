@@ -34,16 +34,19 @@ CREATE TABLE IF NOT EXISTS items (
 CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY,
   item_id TEXT NOT NULL REFERENCES items(id),
-  code TEXT NOT NULL UNIQUE,
+  code TEXT NOT NULL,
   name TEXT NOT NULL,
   summary TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL DEFAULT 'draft',
   position INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
+  updated_at INTEGER NOT NULL,
+  UNIQUE(item_id, code)
 );
 
 -- A workflow run orchestrated by the engine. One run is for one item.
+-- owner records which surface started the run: "api" (HTTP) or "cli" (terminal).
+-- UI prompt answering is rejected for runs where owner = "cli" (see D2).
 CREATE TABLE IF NOT EXISTS runs (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id),
@@ -51,6 +54,7 @@ CREATE TABLE IF NOT EXISTS runs (
   title TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'running',
   current_stage TEXT,
+  owner TEXT NOT NULL DEFAULT 'api',
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );

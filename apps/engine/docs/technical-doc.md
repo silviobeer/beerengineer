@@ -1,6 +1,6 @@
-# UI console test — Core Technical Documentation
+# Test CLI End-to-End — Core Technical Documentation
 
-Technical reference for UI console test — Core, generated from architecture, planning, execution, and project review artifacts.
+Technical reference for Test CLI End-to-End — Core, generated from architecture, planning, execution, and project review artifacts.
 
 ## System Overview
 Projektweite Kernarchitektur fuer UI, API und Datenhaltung. System shape: Monorepo mit UI, API und gemeinsamer Datenhaltung.
@@ -18,4 +18,4 @@ Frontend: Kern-Workflow und Listenansichten; Backend: Validierung, Speicherung u
 low maintainability: Shared helper logic appears duplicated in multiple modules.
 
 ## Update Mode
-This run updated the technical documentation for UI console test — Core using the latest workflow artifacts.
+This run updated the technical documentation for Test CLI End-to-End — Core using the latest workflow artifacts.

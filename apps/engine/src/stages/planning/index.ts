@@ -46,9 +46,9 @@ export async function planning(ctx: WithArchitecture): Promise<ImplementationPla
       ]
     },
     async onApproved(artifact, run) {
-      print.ok("Planning-Review: Implementierungsplan ist bereit.")
+      print.ok("Planning review: implementation plan is ready.")
       artifact.plan.waves.forEach(wave => {
-        const tag = wave.parallel ? "(parallel)" : "(sequenziell)"
+        const tag = wave.parallel ? "(parallel)" : "(sequential)"
         print.llm(`Wave ${wave.number} ${tag}`, wave.stories.map(story => story.title).join(", "))
       })
       printStageCompletion(run, "planning")

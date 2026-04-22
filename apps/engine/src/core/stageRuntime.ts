@@ -215,7 +215,7 @@ export async function runStage<TState, TArtifact, TResult>(
       await persistRun(run)
       definition.showMessage(definition.stageAgentLabel, response.message)
 
-      const userMessage = await definition.askUser("  du > ")
+      const userMessage = await definition.askUser("  you > ")
       pushLog(run, { type: "user_message", message: userMessage })
       run.iteration++
       setStatus(run, "chat_in_progress")
@@ -229,7 +229,7 @@ export async function runStage<TState, TArtifact, TResult>(
 
     run.artifact = response.artifact
     setStatus(run, "artifact_ready")
-    pushLog(run, { type: "artifact_created", message: "Artefakt erzeugt." })
+    pushLog(run, { type: "artifact_created", message: "Artifact created." })
 
     const artifactContents = await definition.persistArtifacts(run, response.artifact)
     run.files = await writeArtifactFiles(run.stageArtifactsDir, artifactContents)
@@ -258,7 +258,7 @@ export async function runStage<TState, TArtifact, TResult>(
     })
 
     if (review.kind === "pass") {
-      pushLog(run, { type: "review_pass", message: "Review bestanden." })
+      pushLog(run, { type: "review_pass", message: "Review passed." })
       setStatus(run, "approved")
       await persistRun(run)
       const result = await definition.onApproved(response.artifact, run)
@@ -275,7 +275,7 @@ export async function runStage<TState, TArtifact, TResult>(
     if (run.reviewIteration >= definition.maxReviews) {
       setStatus(run, "blocked")
       await persistRun(run)
-      throw new Error(`Blocked: kein Pass nach ${definition.maxReviews} Reviews`)
+      throw new Error(`Blocked: no pass after ${definition.maxReviews} reviews`)
     }
 
     setStatus(run, "revision_requested")

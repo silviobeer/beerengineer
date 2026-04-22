@@ -25,10 +25,22 @@ export function applySchema(db: Db): void {
   const schemaPath = fileURLToPath(new URL("./schema.sql", import.meta.url))
   const sql = readFileSync(schemaPath, "utf8")
   db.exec(sql)
+  migrateRunsOwnerColumn(db)
 }
 
 export function initDatabase(dbPath?: string | null): Db {
   const db = openDatabase(dbPath)
   applySchema(db)
   return db
+}
+
+/**
+ * Add the `owner` column to an older `runs` table that predates the CLI/API
+ * split. Existing rows default to "api" because they were historically only
+ * created by the HTTP server.
+ */
+function migrateRunsOwnerColumn(db: Db): void {
+  const cols = db.prepare("PRAGMA table_info(runs)").all() as Array<{ name: string }>
+  if (cols.some(c => c.name === "owner")) return
+  db.exec("ALTER TABLE runs ADD COLUMN owner TEXT NOT NULL DEFAULT 'api'")
 }

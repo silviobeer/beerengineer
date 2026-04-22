@@ -3,12 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "beerengineer": "./bin/beerengineer.js"
+  },
   "scripts": {
     "start": "tsx src/index.ts",
     "dev": "tsx watch src/api/server.ts",
     "start:api": "tsx src/api/server.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --test --import tsx test/**/*.test.ts"
+    "test": "node --test --import tsx test/*.test.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.10.0"

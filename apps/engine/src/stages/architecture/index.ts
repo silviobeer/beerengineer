@@ -45,7 +45,7 @@ export async function architecture(ctx: WithPrd): Promise<ArchitectureArtifact> 
       ]
     },
     async onApproved(artifact, run) {
-      print.ok("Architecture-Review: Plan ist bereit fuer den naechsten Schritt.")
+      print.ok("Architecture review: plan is ready for the next step.")
       print.llm("LLM-4", artifact.architecture.summary)
       printStageCompletion(run, "architecture")
       return artifact

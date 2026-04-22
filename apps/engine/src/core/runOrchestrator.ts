@@ -89,7 +89,7 @@ export function withDbSync(
         }))
       }
       case "stage_completed": {
-        const stageRunId = stageRunIds.get(event.stageKey)
+        const stageRunId = event.stageRunId ?? stageRunIds.get(event.stageKey)
         if (stageRunId) {
           repos.completeStageRun(stageRunId, event.status, event.error ?? null)
         }
@@ -233,22 +233,27 @@ export function prepareRun(
   item: Item,
   repos: Repos,
   io: WorkflowIO,
-  opts: { workspaceKey?: string; workspaceName?: string } = {}
+  opts: { workspaceKey?: string; workspaceName?: string; owner?: "cli" | "api"; itemId?: string } = {}
 ) {
-  const workspace = repos.upsertWorkspace({
-    key: opts.workspaceKey ?? "default",
-    name: opts.workspaceName ?? "Default Workspace",
-    description: "BeerEngineer2 engine workspace"
-  })
-  const itemRow = repos.createItem({
-    workspaceId: workspace.id,
-    title: item.title,
-    description: item.description
-  })
+  const itemRow = opts.itemId
+    ? repos.getItem(opts.itemId) ?? (() => {
+        throw new Error(`item ${opts.itemId} not found`)
+      })()
+    : repos.createItem({
+        workspaceId: repos.upsertWorkspace({
+          key: opts.workspaceKey ?? "default",
+          name: opts.workspaceName ?? "Default Workspace",
+          description: "BeerEngineer2 engine workspace"
+        }).id,
+        title: item.title,
+        description: item.description
+      })
+  const workspaceId = itemRow.workspace_id
   const runRow = repos.createRun({
-    workspaceId: workspace.id,
+    workspaceId,
     itemId: itemRow.id,
-    title: item.title
+    title: item.title,
+    owner: opts.owner ?? "api"
   })
 
   const dbSyncedIo = withDbSync(io, repos, { runId: runRow.id, itemId: itemRow.id })
@@ -269,7 +274,7 @@ export function prepareRun(
     )
   }
 
-  return { runId: runRow.id, itemId: itemRow.id, workspaceId: workspace.id, start, io: dbSyncedIo }
+  return { runId: runRow.id, itemId: itemRow.id, workspaceId, start, io: dbSyncedIo }
 }
 
 /** Convenience for CLI: prepare + start + await. */
@@ -277,7 +282,7 @@ export async function runWorkflowWithSync(
   item: Item,
   repos: Repos,
   io: WorkflowIO,
-  opts: { workspaceKey?: string; workspaceName?: string } = {}
+  opts: { workspaceKey?: string; workspaceName?: string; owner?: "cli" | "api"; itemId?: string } = {}
 ): Promise<string> {
   const { runId, start } = prepareRun(item, repos, io, opts)
   await start()

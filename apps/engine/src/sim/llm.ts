@@ -5,12 +5,12 @@ const delay = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
 
 export async function llm6bImplement(story: UserStory): Promise<void> {
   await delay(350)
-  print.dim(`    → ${story.id} implementiert. Tests: ${story.acceptanceCriteria.length} passed.`)
+  print.dim(`    → ${story.id} implemented. Tests: ${story.acceptanceCriteria.length} passed.`)
 }
 
 export async function llm6bFix(feedback: string): Promise<void> {
   await delay(400)
-  print.dim(`    → Fixes implementiert für: ${feedback.slice(0, 70)}...`)
+  print.dim(`    → Fixes applied for: ${feedback.slice(0, 70)}...`)
 }
 
 function storyTag(storyId?: string): string {
@@ -22,19 +22,19 @@ export async function crReview(loop: number, storyId?: string): Promise<Finding[
   const tag = storyTag(storyId)
   if (loop === 1) {
     return [
-      { source: "coderabbit", severity: "high", message: `${tag}Doppelte Validierungslogik zwischen Route und Service.` },
-      { source: "coderabbit", severity: "medium", message: `${tag}Fehlender Guard fuer leeren Fehlerzustand in der UI.` },
+      { source: "coderabbit", severity: "high", message: `${tag}Duplicated validation logic between route and service.` },
+      { source: "coderabbit", severity: "medium", message: `${tag}Missing guard for empty error state in the UI.` },
     ]
   }
 
   if (loop === 2) {
     return [
-      { source: "coderabbit", severity: "medium", message: `${tag}Fehlender Guard fuer leeren Fehlerzustand in der UI.` },
+      { source: "coderabbit", severity: "medium", message: `${tag}Missing guard for empty error state in the UI.` },
     ]
   }
 
   return [
-    { source: "coderabbit", severity: "low", message: `${tag}Naming im Hilfsmodul ist noch leicht inkonsistent.` },
+    { source: "coderabbit", severity: "low", message: `${tag}Naming in the helper module is still slightly inconsistent.` },
   ]
 }
 
@@ -54,7 +54,7 @@ export async function sonarReview(
         { metric: "maintainability", status: "error", actual: "B", threshold: "A" },
       ],
       findings: [
-        { source: "sonarqube", severity: "medium", message: `${tag}Komplexitaet der Service-Methode liegt ueber dem Zielwert.` },
+        { source: "sonarqube", severity: "medium", message: `${tag}Service method complexity is above the target threshold.` },
         { source: "sonarqube", severity: "low", message: `${tag}Unused import in handler.ts.` },
       ],
     }
@@ -69,7 +69,7 @@ export async function sonarReview(
         { metric: "maintainability", status: "ok", actual: "A", threshold: "A" },
       ],
       findings: [
-        { source: "sonarqube", severity: "medium", message: `${tag}Fehlende Failure-Path-Absicherung im Integrationspfad.` },
+        { source: "sonarqube", severity: "medium", message: `${tag}Missing failure-path safeguard in the integration path.` },
       ],
     }
   }
@@ -82,7 +82,7 @@ export async function sonarReview(
       { metric: "maintainability", status: "ok", actual: "A", threshold: "A" },
     ],
     findings: [
-      { source: "sonarqube", severity: "low", message: `${tag}Kleiner Cleanup im Logging-Modul bleibt offen.` },
+      { source: "sonarqube", severity: "low", message: `${tag}Small cleanup in the logging module is still outstanding.` },
     ],
   }
 }

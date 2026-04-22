@@ -10,7 +10,7 @@ export class FakeRequirementsReviewAdapter
     if (this.attempts >= 2) return { kind: "pass" }
     return {
       kind: "revise",
-      feedback: "Story US-02 ist noch zu vage. Bitte praezisiere Scope und Acceptance Criteria anhand des Konzepts.",
+      feedback: "Story US-02 is still too vague. Please refine scope and acceptance criteria based on the concept.",
     }
   }
 }

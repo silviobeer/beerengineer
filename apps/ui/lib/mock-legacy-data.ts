@@ -8,8 +8,8 @@ import type {
 } from "@/lib/view-models";
 
 export const shellViewModel: ShellViewModel = {
-  title: "Workspace-first Shell ohne Sidebar",
-  subtitle: "Workspace, Navigation und globale Zustände leben oben. Das Board bleibt die Primärfläche.",
+  title: "Workspace-first shell without sidebar",
+  subtitle: "Workspace, navigation, and global state live at the top. The board stays the primary surface.",
   activeWorkspace: {
     key: "beerengineer-cli-ui-prep",
     name: "beerengineer-cli-ui-prep",
@@ -39,7 +39,7 @@ export const shellViewModel: ShellViewModel = {
 
 export const boardViewModel: BoardViewModel = {
   heading: "beerengineer-cli-ui-prep",
-  description: "Items dieser Codebase. Details öffnen kontextuell als rechtes Overlay.",
+  description: "Items of this codebase. Details open contextually as a right-side overlay.",
   filters: [
     { label: "all items" },
     { label: "requirements focus", tone: "petrol" },

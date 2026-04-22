@@ -11,17 +11,17 @@ function buildArtifact(project: Project, state: TestWriterState): StoryTestPlanA
     story: state.story,
     acceptanceCriteria: state.acceptanceCriteria,
     testPlan: {
-      summary: `Testplan fuer ${state.story.id} auf Basis der strukturierten Acceptance Criteria.`,
+      summary: `Test plan for ${state.story.id} based on the structured acceptance criteria.`,
       testCases: state.acceptanceCriteria.map((ac, index) => ({
         id: `TC-${index + 1}`,
-        name: `${state.story.id} prueft ${ac.id}`,
+        name: `${state.story.id} verifies ${ac.id}`,
         mapsToAcId: ac.id,
         type: index === 0 ? "integration" : "unit",
         description: ac.text,
       })),
-      fixtures: ["Seed-Daten fuer Story-Kontext"],
-      edgeCases: ["Leere Eingaben", "Ungueltige Statuswerte"],
-      assumptions: state.lastReviewFeedback ? [state.lastReviewFeedback] : ["Story-Kontext ist stabil"],
+      fixtures: ["Seed data for story context"],
+      edgeCases: ["Empty inputs", "Invalid status values"],
+      assumptions: state.lastReviewFeedback ? [state.lastReviewFeedback] : ["Story context is stable"],
     },
   }
 }

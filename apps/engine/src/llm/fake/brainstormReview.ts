@@ -9,7 +9,7 @@ export class FakeBrainstormReviewAdapter implements ReviewAgentAdapter<Brainstor
     if (this.attempts >= 2) return { kind: "pass" }
     return {
       kind: "revise",
-      feedback: "Bitte schaerfe Problem, Zielgruppe oder Constraints noch etwas nach.",
+      feedback: "Please sharpen the problem, target audience, or constraints a bit more.",
     }
   }
 }

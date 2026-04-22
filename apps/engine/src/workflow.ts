@@ -49,8 +49,8 @@ export async function runWorkflow(item: Item): Promise<void> {
     await runProject({ ...context, project })
   }
 
-  print.header("FERTIG")
-  print.ok(`Item "${item.title}" ist done ✓`)
+  print.header("DONE")
+  print.ok(`Item "${item.title}" is done ✓`)
 }
 
 async function runProject(initialCtx: ProjectContext): Promise<void> {
@@ -74,7 +74,7 @@ async function handoffCandidate(ctx: WithDocumentation): Promise<void> {
   print.dim(`→ Base: ${handoff.candidateBranch.base}`)
   handoff.mergeChecklist.forEach(item => print.dim(`→ ${item}`))
 
-  const decisionRaw = await ask("  Kandidat testen, mergen oder ablehnen? [test/merge/reject] > ")
+  const decisionRaw = await ask("  Test, merge or reject candidate? [test/merge/reject] > ")
   const decision = normalizeDecision(decisionRaw)
   const updated = await finalizeCandidateDecision(ctx, handoff, decision)
   print.ok(updated.summary)

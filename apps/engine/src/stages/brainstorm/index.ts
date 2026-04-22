@@ -9,7 +9,7 @@ import type { BrainstormState } from "./types.js"
 
 export async function brainstorm(item: Item, context: WorkflowContext): Promise<Project[]> {
   print.header("brainstorm")
-  print.step("Interaktive Session via LLM-Adapter + Stage-Runtime\n")
+  print.step("Interactive session via LLM adapter + stage runtime\n")
 
   const { result } = await runStage({
     stageId: "brainstorm",
@@ -57,8 +57,8 @@ export async function brainstorm(item: Item, context: WorkflowContext): Promise<
       ]
     },
     async onApproved(artifact, run) {
-      print.ok("LLM-Review: Concept ist bereit fuer den naechsten Schritt.")
-      print.step("\nLLM-1 promoted Concept zu Projects...")
+      print.ok("LLM review: concept is ready for the next step.")
+      print.step("\nLLM-1 promoted concept to projects...")
       artifact.projects.forEach(p => print.dim(`→ ${p.id}: ${p.name}`))
       printStageCompletion(run, "brainstorm")
       return artifact.projects

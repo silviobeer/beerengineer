@@ -9,7 +9,7 @@ import type { RequirementsState } from "./types.js"
 
 export async function requirements(ctx: ProjectContext): Promise<PRD> {
   print.header(`requirements — ${ctx.project.name}`)
-  print.dim(`Konzept: ${ctx.project.concept.summary}`)
+  print.dim(`Concept: ${ctx.project.concept.summary}`)
 
   const { result } = await runStage({
     stageId: "requirements",
@@ -51,7 +51,7 @@ export async function requirements(ctx: ProjectContext): Promise<PRD> {
       ]
     },
     async onApproved(artifact, run) {
-      print.ok("LLM-Review: PRD ist bereit fuer den naechsten Schritt.")
+      print.ok("LLM review: PRD is ready for the next step.")
       artifact.prd.stories.forEach(story => {
         print.llm(`Story ${story.id}`, story.title)
         story.acceptanceCriteria.forEach(ac => print.dim(`  AC ${ac.id}: ${ac.text}`))

@@ -76,3 +76,33 @@ export async function getRunTree(runId: string): Promise<{ run: RunRow; stageRun
   if (!res.ok) return null
   return (await res.json()) as { run: RunRow; stageRuns: StageRunRow[] }
 }
+
+export type ItemAction =
+  | "start_brainstorm"
+  | "promote_to_requirements"
+  | "start_implementation"
+  | "resume_run"
+  | "mark_done"
+
+export type ItemActionResponse =
+  | { ok: true; itemId: string; runId?: string; column: string; phaseStatus: string }
+  | { ok: false; status: number; error: string; current?: { column: string; phaseStatus: string }; action?: string }
+
+export async function performItemAction(itemId: string, action: ItemAction): Promise<ItemActionResponse> {
+  const res = await fetch(`${ENGINE_BASE_URL}/items/${itemId}/actions`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action })
+  })
+  const body = await res.json().catch(() => ({}))
+  if (res.ok) {
+    return { ok: true, ...(body as { itemId: string; runId?: string; column: string; phaseStatus: string }) }
+  }
+  return {
+    ok: false,
+    status: res.status,
+    error: (body as { error?: string }).error ?? `http_${res.status}`,
+    current: (body as { current?: { column: string; phaseStatus: string } }).current,
+    action: (body as { action?: string }).action
+  }
+}
