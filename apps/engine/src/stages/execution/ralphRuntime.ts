@@ -1,6 +1,6 @@
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises"
+import { spawnSync } from "node:child_process"
 import { join } from "node:path"
-import { parallelReview } from "../../core/parallelReview.js"
 import {
   abandonBranch,
   appendBranchCommit,
@@ -12,9 +12,12 @@ import { writeRecoveryRecord } from "../../core/recovery.js"
 import { layout, type WorkflowContext } from "../../core/workspaceLayout.js"
 import type { StageLogEntry } from "../../core/stageRuntime.js"
 import { stagePresent } from "../../core/stagePresentation.js"
+import { readWorkspaceConfig } from "../../core/workspaces.js"
 import { executionCoderPolicy, resolveHarness, type RunLlmConfig } from "../../llm/registry.js"
 import { runCoderHarness } from "../../llm/hosted/execution/coderHarness.js"
-import { crReview, llm6bFix, llm6bImplement, sonarReview } from "../../sim/llm.js"
+import { llm6bFix, llm6bImplement } from "../../sim/llm.js"
+import { runStoryReviewTools } from "../../review/registry.js"
+import type { CodeRabbitResult, SonarCloudResult } from "../../review/types.js"
 import type {
   Finding,
   SimulatedBranch,
@@ -37,6 +40,7 @@ type StoryReviewRun = {
   coderabbitFindings: Finding[]
   sonarFindings: Finding[]
   combinedFindings: Finding[]
+  coderabbit: StoryReviewArtifact["gate"]["coderabbit"]
   sonar: StoryReviewArtifact["gate"]["sonar"]
   failedBecause: string[]
   outcome: StoryReviewArtifact["outcome"]
@@ -51,6 +55,11 @@ function fakeChangedFiles(storyId: string): string[] {
     `src/${storyId.toLowerCase()}/handler.ts`,
     `src/${storyId.toLowerCase()}/service.ts`,
   ]
+}
+
+type GitBaseline = {
+  headSha: string | null
+  untrackedFiles: string[]
 }
 
 async function readJsonIfExists<T>(path: string): Promise<T | undefined> {
@@ -155,8 +164,9 @@ function buildReviewArtifact(
     reviewCycle,
     reviewers,
     gate: {
-      status: result.outcome === "pass" ? "pass" : "fail",
+      status: result.outcome.startsWith("pass") ? "pass" : "fail",
       failedBecause: result.failedBecause,
+      coderabbit: result.coderabbit,
       sonar: result.sonar,
     },
     outcome: result.outcome,
@@ -166,6 +176,17 @@ function buildReviewArtifact(
 
 function buildFeedbackSummary(result: StoryReviewRun): string[] {
   const summary: string[] = []
+  const toolStatusLine = (
+    tool: "coderabbit" | "sonar",
+    value: StoryReviewArtifact["gate"]["coderabbit"] | StoryReviewArtifact["gate"]["sonar"],
+  ): string => {
+    if (value.status === "ran") {
+      return `[tool-status] ${tool}: ran (${value.passed ? "pass" : "fail"})`
+    }
+    return `[tool-status] ${tool}: ${value.status} (${value.reason})`
+  }
+  summary.push(toolStatusLine("coderabbit", result.coderabbit))
+  summary.push(toolStatusLine("sonar", result.sonar))
   for (const reason of result.failedBecause) summary.push(`[gate] ${reason}`)
   for (const finding of result.combinedFindings) summary.push(`[${finding.source}] ${finding.message}`)
   return summary
@@ -181,26 +202,165 @@ function dedupeFindings(findings: Finding[]): Finding[] {
   })
 }
 
-async function runStoryReview(reviewCycle: number, storyId: string): Promise<StoryReviewRun> {
-  const [coderabbitResult, sonarResultRaw] = await parallelReview(
-    `Parallel Review ${storyId}: CodeRabbit + SonarQube...`,
-    [
-      () => crReview(reviewCycle, storyId) as Promise<unknown>,
-      () => sonarReview(reviewCycle, storyId) as Promise<unknown>,
-    ],
-  )
-  const coderabbitFindings = coderabbitResult as Finding[]
-  const sonarResult = sonarResultRaw as Awaited<ReturnType<typeof sonarReview>>
+function runGit(args: string[], cwd: string): { ok: boolean; stdout: string } {
+  const result = spawnSync("git", args, { cwd, encoding: "utf8" })
+  return { ok: result.status === 0, stdout: result.stdout?.trim() ?? "" }
+}
 
-  const combinedFindings = dedupeFindings([...coderabbitFindings, ...sonarResult.findings])
-  const failedBecause: string[] = []
+function listUntrackedFiles(workspaceRoot: string): string[] {
+  const result = runGit(["ls-files", "--others", "--exclude-standard"], workspaceRoot)
+  if (!result.ok) return []
+  return result.stdout.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+}
 
-  if (coderabbitFindings.some(finding => finding.severity === "critical" || finding.severity === "high")) {
-    failedBecause.push("CodeRabbit still reports critical or high-severity review issues.")
+async function readBaselineSha(path: string): Promise<string | null> {
+  const baseline = await readJsonIfExists<GitBaseline>(path)
+  return baseline?.headSha ?? null
+}
+
+async function collectReviewChangedFiles(workspaceRoot: string, baselinePath: string): Promise<string[]> {
+  const baseline = await readJsonIfExists<GitBaseline>(baselinePath)
+  const tracked = baseline?.headSha
+    ? runGit(["diff", "--name-only", baseline.headSha], workspaceRoot).stdout
+    : runGit(["status", "--porcelain"], workspaceRoot).stdout
+        .split(/\r?\n/)
+        .map(line => line.slice(3).trim())
+        .filter(Boolean)
+        .join("\n")
+  const baselineUntracked = new Set(baseline?.untrackedFiles ?? [])
+  const currentUntracked = listUntrackedFiles(workspaceRoot)
+  const untrackedDelta = currentUntracked.filter(file => !baselineUntracked.has(file))
+  return Array.from(new Set([...tracked.split(/\r?\n/).map(line => line.trim()).filter(Boolean), ...untrackedDelta])).sort()
+}
+
+function coderabbitGate(result: CodeRabbitResult): StoryReviewArtifact["gate"]["coderabbit"] {
+  switch (result.status) {
+    case "ran":
+      return {
+        status: "ran",
+        passed: !result.findings.some(finding => finding.severity === "critical" || finding.severity === "high"),
+      }
+    case "skipped":
+      return { status: "skipped", reason: result.reason ?? "coderabbit-skipped" }
+    case "failed":
+      return { status: "failed", reason: result.reason ?? "coderabbit-failed", exitCode: result.exitCode }
+  }
+}
+
+function sonarGate(result: SonarCloudResult): StoryReviewArtifact["gate"]["sonar"] {
+  switch (result.status) {
+    case "ran":
+      return {
+        status: "ran",
+        passed: result.passed,
+        conditions: result.conditions,
+      }
+    case "skipped":
+      return { status: "skipped", reason: result.reason ?? "sonar-skipped" }
+    case "failed":
+      return { status: "failed", reason: result.reason ?? "sonar-failed", exitCode: result.exitCode }
+  }
+}
+
+function reviewOutcome(
+  coderabbit: StoryReviewArtifact["gate"]["coderabbit"],
+  sonar: StoryReviewArtifact["gate"]["sonar"],
+  failedBecause: string[],
+): StoryReviewArtifact["outcome"] {
+  const ranTools = [coderabbit, sonar].filter(tool => tool.status === "ran")
+  const skippedTools = [coderabbit, sonar].filter(tool => tool.status === "skipped")
+  const failedTools = [coderabbit, sonar].filter(tool => tool.status === "failed")
+  if (failedBecause.length > 0) return "revise"
+  if (ranTools.length === 0 && skippedTools.length === 2) return "pass-unreviewed"
+  if (ranTools.length === 0 && failedTools.length === 2) return "pass-tool-failure"
+  if (skippedTools.length > 0 || failedTools.length > 0) return "pass-partial"
+  return "pass"
+}
+
+async function runStoryReview(input: {
+  reviewCycle: number
+  storyContext: StoryExecutionContext
+  artifactsDir: string
+  baselinePath: string
+  llm?: RunLlmConfig
+  implementation: StoryImplementationArtifact
+}): Promise<StoryReviewRun> {
+  if (!input.llm) {
+    const review = await runStoryReviewTools({
+      workspaceRoot: process.cwd(),
+      artifactsDir: input.artifactsDir,
+      baselineSha: null,
+      storyBranch: requireBranch(input.implementation).name,
+      baseBranch: "main",
+      changedFiles: input.implementation.changedFiles,
+      storyId: input.storyContext.story.id,
+      reviewCycle: input.reviewCycle,
+      reviewPolicy: {
+        coderabbit: { enabled: false },
+        sonarcloud: { enabled: false },
+      },
+      forceFake: true,
+    })
+    const coderabbit = coderabbitGate(review.coderabbit)
+    const sonar = sonarGate(review.sonarcloud)
+    const failedBecause: string[] = []
+    if (coderabbit.status === "ran" && !coderabbit.passed) {
+      failedBecause.push("CodeRabbit still reports critical or high-severity review issues.")
+    }
+    if (sonar.status === "ran" && !sonar.passed) {
+      const failedMetrics = (sonar.conditions ?? [])
+        .filter(condition => condition.status === "error")
+        .map(condition => `${condition.metric} ${condition.actual}/${condition.threshold}`)
+      failedBecause.push(
+        failedMetrics.length > 0
+          ? `SonarQube quality gate failed: ${failedMetrics.join(", ")}.`
+          : "SonarQube quality gate failed.",
+      )
+    }
+    return {
+      coderabbitFindings: review.coderabbit.findings,
+      sonarFindings: review.sonarcloud.findings,
+      combinedFindings: dedupeFindings([...review.coderabbit.findings, ...review.sonarcloud.findings]),
+      coderabbit,
+      sonar,
+      failedBecause,
+      outcome: reviewOutcome(coderabbit, sonar, failedBecause),
+    }
   }
 
-  if (!sonarResult.passed) {
-    const failedMetrics = sonarResult.conditions
+  const workspaceConfig = await readWorkspaceConfig(input.llm.workspaceRoot)
+  const reviewPolicy = workspaceConfig?.reviewPolicy ?? {
+    coderabbit: { enabled: false },
+    sonarcloud: workspaceConfig?.sonar ?? { enabled: false },
+  }
+  const baselineSha = await readBaselineSha(input.baselinePath)
+  const changedFiles = await collectReviewChangedFiles(input.llm.workspaceRoot, input.baselinePath)
+  const baseBranch = reviewPolicy.sonarcloud.baseBranch ?? (runGit(["branch", "--show-current"], input.llm.workspaceRoot).stdout || "main")
+
+  const review = await runStoryReviewTools({
+    workspaceRoot: input.llm.workspaceRoot,
+    artifactsDir: input.artifactsDir,
+    baselineSha,
+    storyBranch: requireBranch(input.implementation).name,
+    baseBranch,
+    changedFiles,
+    storyId: input.storyContext.story.id,
+    reviewCycle: input.reviewCycle,
+    reviewPolicy,
+  })
+
+  const coderabbitFindings = review.coderabbit.findings
+  const sonarFindings = review.sonarcloud.findings
+  const combinedFindings = dedupeFindings([...coderabbitFindings, ...sonarFindings])
+  const failedBecause: string[] = []
+  const coderabbit = coderabbitGate(review.coderabbit)
+  const sonar = sonarGate(review.sonarcloud)
+
+  if (coderabbit.status === "ran" && !coderabbit.passed) {
+    failedBecause.push("CodeRabbit still reports critical or high-severity review issues.")
+  }
+  if (sonar.status === "ran" && !sonar.passed) {
+    const failedMetrics = (sonar.conditions ?? [])
       .filter(condition => condition.status === "error")
       .map(condition => `${condition.metric} ${condition.actual}/${condition.threshold}`)
     failedBecause.push(
@@ -212,14 +372,12 @@ async function runStoryReview(reviewCycle: number, storyId: string): Promise<Sto
 
   return {
     coderabbitFindings,
-    sonarFindings: sonarResult.findings,
+    sonarFindings,
     combinedFindings,
-    sonar: {
-      passed: sonarResult.passed,
-      conditions: sonarResult.conditions,
-    },
+    coderabbit,
+    sonar,
     failedBecause,
-    outcome: failedBecause.length === 0 ? "pass" : "revise",
+    outcome: reviewOutcome(coderabbit, sonar, failedBecause),
   }
 }
 
@@ -227,6 +385,9 @@ function printReviewResult(result: StoryReviewRun): void {
   result.combinedFindings.forEach(finding => stagePresent.finding(finding.source, finding.severity, finding.message))
   if (result.failedBecause.length === 0) {
     stagePresent.ok("Story gate open: CodeRabbit and SonarQube are within target.")
+    if (result.outcome !== "pass") {
+      stagePresent.warn(`Review passed with warnings: ${result.outcome}`)
+    }
     return
   }
   result.failedBecause.forEach(reason => stagePresent.warn(`Gate blocked: ${reason}`))
@@ -488,13 +649,20 @@ export async function runRalphStory(
       reviewCycle,
     }))
 
-    const reviewResult = await runStoryReview(reviewCycle + 1, storyContext.story.id)
+    const reviewResult = await runStoryReview({
+      reviewCycle: reviewCycle + 1,
+      storyContext,
+      artifactsDir: dir,
+      baselinePath,
+      llm,
+      implementation,
+    })
     printReviewResult(reviewResult)
     storyReview = buildReviewArtifact(storyContext, reviewCycle + 1, reviewResult)
     await writeJson(cycleReviewPath(dir, reviewCycle + 1), storyReview)
     await writeJson(reviewPath, storyReview)
     await appendLog(logPath, logEntry(
-      storyReview.outcome === "pass" ? "review_pass" : "review_revise",
+      storyReview.outcome.startsWith("pass") ? "review_pass" : "review_revise",
       `Review cycle ${reviewCycle} ${storyReview.outcome}`,
       {
         storyId: storyContext.story.id,
@@ -503,7 +671,7 @@ export async function runRalphStory(
       },
     ))
 
-    if (storyReview.outcome === "pass") {
+    if (storyReview.outcome.startsWith("pass")) {
       if (implementation.branch) {
         const merge = await mergeStoryBranchIntoProject(
           runtimeContext,

@@ -56,6 +56,17 @@ export type SonarConfig = {
   projectKey?: string
   organization?: string
   hostUrl?: string
+  region?: "eu" | "us"
+  planTier?: "free" | "team" | "enterprise" | "oss" | "unknown"
+  baseBranch?: string
+  scanTimeoutMs?: number
+}
+
+export type WorkspaceReviewPolicy = {
+  coderabbit: {
+    enabled: boolean
+  }
+  sonarcloud: SonarConfig
 }
 
 export type WorkspacePreview = {
@@ -97,6 +108,7 @@ export type WorkspaceConfigFile = {
   harnessProfile: HarnessProfile
   runtimePolicy: WorkspaceRuntimePolicy
   sonar: SonarConfig
+  reviewPolicy: WorkspaceReviewPolicy
   createdAt: number
 }
 

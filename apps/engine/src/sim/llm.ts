@@ -41,7 +41,16 @@ export async function crReview(loop: number, storyId?: string): Promise<Finding[
 export async function sonarReview(
   loop: number,
   storyId?: string,
-): Promise<StoryReviewArtifact["gate"]["sonar"] & { findings: Finding[] }> {
+): Promise<{
+  passed: boolean
+  conditions: Array<{
+    metric: "reliability" | "security" | "maintainability"
+    status: "ok" | "error"
+    actual: string
+    threshold: string
+  }>
+  findings: Finding[]
+}> {
   await delay(320)
   const tag = storyTag(storyId)
 

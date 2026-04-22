@@ -107,17 +107,42 @@ export type StoryReviewArtifact = {
   gate: {
     status: "pass" | "fail"
     failedBecause: string[]
-    sonar: {
-      passed: boolean
-      conditions: Array<{
-        metric: "reliability" | "security" | "maintainability"
-        status: "ok" | "error"
-        actual: string
-        threshold: string
-      }>
-    }
+    coderabbit:
+      | {
+          status: "ran"
+          passed: boolean
+        }
+      | {
+          status: "skipped"
+          reason: string
+        }
+      | {
+          status: "failed"
+          reason: string
+          exitCode?: number
+        }
+    sonar:
+      | {
+          status: "ran"
+          passed: boolean
+          conditions?: Array<{
+            metric: "reliability" | "security" | "maintainability" | string
+            status: "ok" | "error"
+            actual: string
+            threshold: string
+          }>
+        }
+      | {
+          status: "skipped"
+          reason: string
+        }
+      | {
+          status: "failed"
+          reason: string
+          exitCode?: number
+        }
   }
-  outcome: "pass" | "revise"
+  outcome: "pass" | "revise" | "pass-unreviewed" | "pass-tool-failure" | "pass-partial"
   feedbackSummary: string[]
 }
 

@@ -143,6 +143,10 @@ test("registerWorkspace writes workspace config and sonar properties", async () 
       harnessProfile: { mode: string }
       runtimePolicy: { stageAuthoring: string; reviewer: string; coderExecution: string }
       sonar: { organization?: string; projectKey?: string }
+      reviewPolicy: {
+        coderabbit: { enabled: boolean }
+        sonarcloud: { organization?: string; projectKey?: string; enabled: boolean; region?: string; planTier?: string }
+      }
     }
     assert.equal(workspaceJson.schemaVersion, 2)
     assert.equal(workspaceJson.key, "demo")
@@ -152,6 +156,12 @@ test("registerWorkspace writes workspace config and sonar properties", async () 
     assert.equal(workspaceJson.runtimePolicy.coderExecution, "safe-workspace-write")
     assert.equal(workspaceJson.sonar.organization, "acme")
     assert.equal(workspaceJson.sonar.projectKey, "demo")
+    assert.equal(workspaceJson.reviewPolicy.coderabbit.enabled, false)
+    assert.equal(workspaceJson.reviewPolicy.sonarcloud.enabled, true)
+    assert.equal(workspaceJson.reviewPolicy.sonarcloud.organization, "acme")
+    assert.equal(workspaceJson.reviewPolicy.sonarcloud.projectKey, "demo")
+    assert.equal(workspaceJson.reviewPolicy.sonarcloud.region, "eu")
+    assert.equal(workspaceJson.reviewPolicy.sonarcloud.planTier, "unknown")
 
     const sonarProperties = readFileSync(join(path, "sonar-project.properties"), "utf8")
     assert.match(sonarProperties, /sonar.projectKey=demo/)
@@ -189,6 +199,10 @@ test("readWorkspaceConfig upgrades schemaVersion 1 files with default runtime po
       stageAuthoring: "safe-readonly",
       reviewer: "safe-readonly",
       coderExecution: "safe-workspace-write",
+    })
+    assert.deepEqual(config?.reviewPolicy, {
+      coderabbit: { enabled: false },
+      sonarcloud: { enabled: false },
     })
   } finally {
     rmSync(dir, { recursive: true, force: true })

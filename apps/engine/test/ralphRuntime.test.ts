@@ -7,6 +7,7 @@ import { join } from "node:path"
 
 import { runRalphStory, writeWaveSummary, type StoryArtifacts } from "../src/stages/execution/ralphRuntime.js"
 import { layout } from "../src/core/workspaceLayout.js"
+import { resetTestReviewAdapters, setTestReviewAdapters } from "../src/review/registry.js"
 import type { StoryExecutionContext, StoryTestPlanArtifact } from "../src/types.js"
 
 const ctx = { workspaceId: "ws-ralph", runId: "run-ralph" }
@@ -130,6 +131,48 @@ test("runRalphStory resumes from persisted state (no duplicate work)", async () 
     assert.equal(again.implementation.status, "passed")
     // Iterations stay the same
     assert.equal(again.implementation.iterations.length, firstImpl.iterations.length)
+  })
+})
+
+test("runRalphStory records pass-partial when one tool passes and the other is skipped", async () => {
+  await withTmpCwd(async () => {
+    setTestReviewAdapters({
+      coderabbit: async () => ({
+        status: "skipped",
+        reason: "coderabbit-disabled",
+        findings: [],
+        rawPath: "coderabbit.raw.txt",
+        command: [],
+        exitCode: 0,
+      }),
+      sonarcloud: async () => ({
+        status: "ran",
+        passed: true,
+        conditions: [{ metric: "reliability", status: "ok", actual: "A", threshold: "A" }],
+        findings: [],
+        rawScanPath: "sonar-scan.raw.txt",
+        rawGatePath: "sonar-gate.raw.json",
+        command: [],
+        exitCode: 0,
+      }),
+    })
+    try {
+      const result = await runRalphStory(storyContext("US-30"), ctx)
+      assert.equal(result.implementation.status, "passed")
+      assert.equal(result.review?.outcome, "pass-partial")
+      assert.deepEqual(result.review?.gate.coderabbit, {
+        status: "skipped",
+        reason: "coderabbit-disabled",
+      })
+      assert.deepEqual(result.review?.gate.sonar, {
+        status: "ran",
+        passed: true,
+        conditions: [{ metric: "reliability", status: "ok", actual: "A", threshold: "A" }],
+      })
+      assert.match(result.review?.feedbackSummary.join("\n") ?? "", /\[tool-status\] coderabbit: skipped/)
+    } finally {
+      resetTestReviewAdapters()
+    }
   })
 })
 

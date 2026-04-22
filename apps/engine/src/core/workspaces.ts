@@ -20,6 +20,7 @@ import type {
   SonarConfig,
   ValidationResult,
   WorkspaceConfigFile,
+  WorkspaceReviewPolicy,
   WorkspaceRuntimePolicy,
   WorkspacePreview,
   WorkspaceRow,
@@ -213,6 +214,24 @@ function normalizeSonarConfig(config: SonarConfig | undefined, key: string, defa
     projectKey: config.projectKey ?? key,
     organization: config.organization ?? defaultOrg,
     hostUrl: config.hostUrl ?? SONAR_DEFAULT_HOST,
+    region: config.region ?? "eu",
+    planTier: config.planTier ?? "unknown",
+    baseBranch: config.baseBranch,
+    scanTimeoutMs: config.scanTimeoutMs,
+  }
+}
+
+function normalizeReviewPolicy(
+  policy: WorkspaceReviewPolicy | undefined,
+  legacySonar: SonarConfig | undefined,
+  key: string,
+  defaultOrg?: string,
+): WorkspaceReviewPolicy {
+  return {
+    coderabbit: {
+      enabled: policy?.coderabbit?.enabled === true,
+    },
+    sonarcloud: normalizeSonarConfig(policy?.sonarcloud ?? legacySonar, key, defaultOrg),
   }
 }
 
@@ -222,6 +241,7 @@ function buildWorkspaceConfigFile(input: {
   harnessProfile: HarnessProfile
   runtimePolicy?: WorkspaceRuntimePolicy
   sonar: SonarConfig
+  reviewPolicy?: WorkspaceReviewPolicy
   createdAt?: number
 }): WorkspaceConfigFile {
   return {
@@ -231,6 +251,7 @@ function buildWorkspaceConfigFile(input: {
     harnessProfile: input.harnessProfile,
     runtimePolicy: input.runtimePolicy ?? defaultWorkspaceRuntimePolicy(),
     sonar: input.sonar,
+    reviewPolicy: input.reviewPolicy ?? normalizeReviewPolicy(undefined, input.sonar, input.key),
     createdAt: input.createdAt ?? Date.now(),
   }
 }
@@ -294,6 +315,7 @@ export async function readWorkspaceConfig(root: string): Promise<WorkspaceConfig
       harnessProfile?: unknown
       runtimePolicy?: unknown
       sonar?: unknown
+      reviewPolicy?: unknown
       createdAt?: unknown
     }
     if ((raw.schemaVersion !== 1 && raw.schemaVersion !== WORKSPACE_SCHEMA_VERSION) || typeof raw.key !== "string" || typeof raw.name !== "string") {
@@ -303,13 +325,20 @@ export async function readWorkspaceConfig(root: string): Promise<WorkspaceConfig
       return null
     }
     const runtimePolicy = normalizeRuntimePolicy(raw.runtimePolicy) ?? defaultWorkspaceRuntimePolicy()
+    const sonar = normalizeSonarConfig(
+      raw.sonar && typeof raw.sonar === "object" ? (raw.sonar as SonarConfig) : undefined,
+      raw.key,
+    )
+    const reviewPolicy =
+      raw.reviewPolicy && typeof raw.reviewPolicy === "object" ? (raw.reviewPolicy as WorkspaceReviewPolicy) : undefined
     return {
       schemaVersion: WORKSPACE_SCHEMA_VERSION,
       key: raw.key,
       name: raw.name,
       harnessProfile: raw.harnessProfile,
       runtimePolicy,
-      sonar: (raw.sonar && typeof raw.sonar === "object" ? raw.sonar : { enabled: false }) as SonarConfig,
+      sonar,
+      reviewPolicy: normalizeReviewPolicy(reviewPolicy, sonar, raw.key),
       createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
     }
   } catch {
@@ -496,6 +525,7 @@ export async function registerWorkspace(input: RegisterWorkspaceInput, deps: Reg
   const name = input.name ?? existingConfig?.name ?? basename(path)
   const key = input.key ?? existingConfig?.key ?? slugify(name)
   const sonar = normalizeSonarConfig(input.sonar ?? existingConfig?.sonar, key, deps.config.llm.defaultSonarOrganization)
+  const reviewPolicy = normalizeReviewPolicy(existingConfig?.reviewPolicy, sonar, key, deps.config.llm.defaultSonarOrganization)
   const validation = validateHarnessProfile(input.harnessProfile, deps.appReport)
   if (!validation.ok) {
     return { ok: false, error: validation.error?.code ?? "unknown", detail: validation.error?.detail ?? "invalid harness profile" }
@@ -527,6 +557,7 @@ export async function registerWorkspace(input: RegisterWorkspaceInput, deps: Reg
     harnessProfile: input.harnessProfile,
     runtimePolicy: existingConfig?.runtimePolicy,
     sonar,
+    reviewPolicy,
     createdAt: existingConfig?.createdAt,
   })
   await writeWorkspaceConfig(path, workspaceConfig)
