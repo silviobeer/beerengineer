@@ -235,15 +235,29 @@ test("subscriber is not attached when telegram is disabled", () => {
 })
 
 test("setup report is blocked when telegram is enabled but required fields are missing", async () => {
-  const report = await generateSetupReport({
-    overrides: {
-      telegramEnabled: true,
-    },
-  })
+  const prevConfigPath = process.env.BEERENGINEER_CONFIG_PATH
+  const prevToken = process.env.TELEGRAM_BOT_TOKEN
+  const dir = mkdtempSync(join(tmpdir(), "be2-notify-report-"))
+  const path = join(dir, "config.json")
+  writeConfigFile(path, defaultAppConfig())
+  process.env.BEERENGINEER_CONFIG_PATH = path
+  delete process.env.TELEGRAM_BOT_TOKEN
+  try {
+    const report = await generateSetupReport({
+      overrides: {
+        telegramEnabled: true,
+      },
+    })
 
-  assert.equal(report.overall, "blocked")
-  const group = report.groups.find(entry => entry.id === "notifications")
-  assert.ok(group)
-  assert.equal(group?.satisfied, false)
-  assert.equal(group?.checks.find(check => check.id === "notifications.telegram.default-chat-id")?.status, "missing")
+    assert.equal(report.overall, "blocked")
+    const group = report.groups.find(entry => entry.id === "notifications")
+    assert.ok(group)
+    assert.equal(group?.satisfied, false)
+    assert.equal(group?.checks.find(check => check.id === "notifications.telegram.default-chat-id")?.status, "missing")
+  } finally {
+    if (prevConfigPath === undefined) delete process.env.BEERENGINEER_CONFIG_PATH
+    else process.env.BEERENGINEER_CONFIG_PATH = prevConfigPath
+    if (prevToken === undefined) delete process.env.TELEGRAM_BOT_TOKEN
+    else process.env.TELEGRAM_BOT_TOKEN = prevToken
+  }
 })

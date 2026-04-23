@@ -10,6 +10,8 @@ import { attachDbSync } from "./runOrchestrator.js"
 import { attachCrossProcessBridge } from "./crossProcessBridge.js"
 import type { EventBus } from "./bus.js"
 import type { ExternalRemediationRow, Repos, RunRow } from "../db/repositories.js"
+import { attachTelegramNotifications } from "../notifications/index.js"
+import { defaultAppConfig, readConfigFile, resolveConfigPath, resolveMergedConfig, resolveOverrides } from "../setup/config.js"
 import { readWorkspaceConfig } from "./workspaces.js"
 
 /** Returned by load(). Centralizes the decision about whether a run can be resumed. */
@@ -196,7 +198,10 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
     }
     const bus = input.io.bus
     const writtenLogIds = new Set<string>()
+    const notificationConfig =
+      resolveMergedConfig(readConfigFile(resolveConfigPath(resolveOverrides())), resolveOverrides()) ?? defaultAppConfig()
     const detachDbSync = attachDbSync(bus, input.repos, { runId: run.id, itemId: run.item_id }, { writtenLogIds })
+    const detachTelegram = attachTelegramNotifications(bus, input.repos, notificationConfig)
     const detachBridge = attachCrossProcessBridge(bus, input.repos, run.id, { writtenLogIds })
 
     const eventScope =
@@ -237,7 +242,7 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
       })
 
       await runWithWorkflowIO(input.io, async () =>
-        runWithActiveRun({ runId: run.id, itemId: run.item_id }, async () => {
+        runWithActiveRun({ runId: run.id, itemId: run.item_id, title: run.title }, async () => {
           input.repos.updateRun(run.id, { status: "running" })
           try {
             await runWorkflow(
@@ -248,11 +253,13 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
                 workspaceRoot: workspaceRow?.root_path ?? undefined,
               },
             )
-            bus.emit({ type: "run_finished", runId: run.id, status: "completed" })
+            bus.emit({ type: "run_finished", runId: run.id, itemId: run.item_id, title: run.title, status: "completed" })
           } catch (err) {
             bus.emit({
               type: "run_finished",
               runId: run.id,
+              itemId: run.item_id,
+              title: run.title,
               status: "failed",
               error: (err as Error).message,
             })
@@ -262,6 +269,7 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
       )
     } finally {
       detachBridge()
+      detachTelegram?.()
       detachDbSync()
     }
   } finally {

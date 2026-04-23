@@ -2,6 +2,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs"
 import { readFile, writeFile } from "node:fs/promises"
+import { createServer } from "node:http"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { spawnSync } from "node:child_process"
@@ -15,6 +16,7 @@ import { layout } from "../src/core/workspaceLayout.js"
 import { writeRecoveryRecord } from "../src/core/recovery.js"
 import { performResume } from "../src/core/resume.js"
 import { createBus, busToWorkflowIO, type EventBus } from "../src/core/bus.js"
+import { defaultAppConfig, writeConfigFile } from "../src/setup/config.js"
 import type { StoryImplementationArtifact } from "../src/types.js"
 import type { WorkspaceConfigFile } from "../src/types/workspace.js"
 
@@ -149,14 +151,65 @@ test("performResume resumes a blocked story from execution without rerunning pri
         source: "api",
       })
 
+      const requests: Array<{ url: string; body: string }> = []
+      const server = createServer((req, res) => {
+        let body = ""
+        req.on("data", chunk => {
+          body += chunk.toString()
+        })
+        req.on("end", () => {
+          requests.push({ url: req.url ?? "", body })
+          res.writeHead(200, { "content-type": "application/json" })
+          res.end(JSON.stringify({ ok: true }))
+        })
+      })
+      await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()))
+      const address = server.address()
+      assert.ok(address && typeof address === "object")
+
+      const configPath = join(process.cwd(), "config.json")
+      writeConfigFile(configPath, {
+        ...defaultAppConfig(),
+        publicBaseUrl: "http://100.64.0.7:3100",
+        notifications: {
+          telegram: {
+            enabled: true,
+            botTokenEnv: "TELEGRAM_BOT_TOKEN",
+            defaultChatId: "123456",
+          },
+        },
+      })
+      const prevConfigPath = process.env.BEERENGINEER_CONFIG_PATH
+      const prevToken = process.env.TELEGRAM_BOT_TOKEN
+      const prevApiBase = process.env.BEERENGINEER_TELEGRAM_API_BASE_URL
+      process.env.BEERENGINEER_CONFIG_PATH = configPath
+      process.env.TELEGRAM_BOT_TOKEN = "resume-secret-token"
+      process.env.BEERENGINEER_TELEGRAM_API_BASE_URL = `http://127.0.0.1:${address.port}`
+
       const resumed = makeWorkflowIO()
-      await performResume({ repos, io: resumed.io, runId: run.id, remediation })
+      try {
+        await performResume({ repos, io: resumed.io, runId: run.id, remediation })
+        for (let i = 0; i < 100; i++) {
+          if (repos.getNotificationDelivery(`${run.id}:run_finished`)?.status === "delivered") break
+          await new Promise(resolve => setTimeout(resolve, 20))
+        }
+      } finally {
+        await new Promise<void>((resolve, reject) => server.close(err => (err ? reject(err) : resolve())))
+        if (prevConfigPath === undefined) delete process.env.BEERENGINEER_CONFIG_PATH
+        else process.env.BEERENGINEER_CONFIG_PATH = prevConfigPath
+        if (prevToken === undefined) delete process.env.TELEGRAM_BOT_TOKEN
+        else process.env.TELEGRAM_BOT_TOKEN = prevToken
+        if (prevApiBase === undefined) delete process.env.BEERENGINEER_TELEGRAM_API_BASE_URL
+        else process.env.BEERENGINEER_TELEGRAM_API_BASE_URL = prevApiBase
+      }
 
       const resumedStages = resumed.events
         .filter((event): event is Extract<WorkflowEvent, { type: "stage_started" }> => event.type === "stage_started")
         .map(event => event.stageKey)
       assert.deepEqual(resumedStages, ["execution", "project-review", "qa", "documentation", "handoff"])
       assert.equal(repos.getRun(run.id)?.recovery_status, null)
+      assert.ok(requests.length > 0, "resume should emit Telegram notifications")
+      assert.equal(repos.getNotificationDelivery(`${run.id}:run_finished`)?.status, "delivered")
     } finally {
       db.close()
     }
