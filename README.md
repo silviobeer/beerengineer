@@ -42,6 +42,13 @@ Hosted provider calls now keep two layers of state in sync:
 
 If a persisted provider session is explicitly rejected as unknown or expired, the engine starts a fresh provider session and keeps the structured context. Other provider/runtime failures still fail normally instead of silently downgrading to a fresh session.
 
+**Provider resilience & live progress (Apr 2026):**
+
+- **Transient retries** — Claude and Codex adapters retry on SIGTERM (exit 143), SIGKILL (137), empty-output failures, and common network error patterns. Two backoffs at 2s and 8s before the error propagates.
+- **Prompt via stdin** — Claude prompts are piped on stdin instead of `-p "<text>"` to avoid `spawn E2BIG` on large late-stage prompts (project-review, qa) that accumulate prior-stage context beyond the kernel's argv limit.
+- **Codex live streaming** — `codex exec --json` emits `thread.started` / `turn.started` / `turn.completed` / `item.*` events live; the adapter forwards them as dim `presentation` events on the workflow bus so the UI shows progress during long agent loops instead of staying silent until close.
+- **Claude streaming** — spec'd in `specs/claude-cli-streaming.md`, not yet implemented. Today the Claude provider still buffers the full agent loop before the UI sees results.
+
 Zur Laufzeit kann das Prompt-Verzeichnis mit
 `BEERENGINEER_PROMPTS_DIR=/pfad/zu/prompts` ueberschrieben werden. Der
 Loader akzeptiert absolute Pfade oder Pfade relativ zum aktuellen
