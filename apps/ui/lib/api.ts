@@ -142,6 +142,49 @@ export type ItemActionResponse =
   | { ok: true; itemId: string; runId?: string; column: string; phaseStatus: string }
   | { ok: false; status: number; error: string; current?: { column: string; phaseStatus: string }; action?: string }
 
+export type SetupStatusValue = "ok" | "missing" | "misconfigured" | "skipped" | "unknown" | "uninitialized"
+
+export type SetupRemedy = {
+  hint: string
+  command?: string
+  url?: string
+}
+
+export type SetupCheckResult = {
+  id: string
+  label: string
+  status: SetupStatusValue
+  version?: string
+  detail?: string
+  remedy?: SetupRemedy
+}
+
+export type SetupGroupResult = {
+  id: string
+  label: string
+  level: "required" | "recommended" | "optional"
+  minOk: number
+  idealOk?: number
+  passed: number
+  satisfied: boolean
+  ideal: boolean
+  checks: SetupCheckResult[]
+}
+
+export type SetupReport = {
+  reportVersion: 1
+  overall: "ok" | "warning" | "blocked"
+  groups: SetupGroupResult[]
+  generatedAt: number
+}
+
+export async function getSetupStatus(group?: string): Promise<SetupReport | null> {
+  const qs = group ? `?group=${encodeURIComponent(group)}` : ""
+  const res = await fetch(`${ENGINE_BASE_URL}/setup/status${qs}`, { cache: "no-store" })
+  if (!res.ok) return null
+  return (await res.json()) as SetupReport
+}
+
 export async function performItemAction(itemId: string, action: ItemAction): Promise<ItemActionResponse> {
   const res = await fetch(`${ENGINE_BASE_URL}/items/${itemId}/actions`, {
     method: "POST",
