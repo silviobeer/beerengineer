@@ -65,7 +65,7 @@ Return an `artifact` object matching `ArchitectureArtifact`:
 
 - `project`: `{ id, name, description }`
 - `concept`: `{ summary, problem, users, constraints }`
-- `prdSummary`: `{ storyCount, storyIds }`
+- `prdSummary`: `{ storyCount, storyIds }` — `storyIds` MUST be the exact ids from the supplied PRD; do NOT invent ids, do NOT add placeholder or scaffold ids
 - `architecture`: `{ summary, systemShape, components, dataModelNotes, apiNotes, deploymentNotes, constraints, risks, openQuestions }`
 
 Rules:

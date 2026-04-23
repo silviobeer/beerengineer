@@ -76,6 +76,9 @@ Return an `artifact` object matching `ImplementationPlanArtifact`:
 
 For each wave:
 - use `{ id, number, goal, stories, parallel, dependencies, exitCriteria }`
+- `stories` MUST be `Array<{ id: string, title: string }>` — never `Array<string>` and never wrapped shapes
+- every `stories[*].id` MUST be the exact `id` of an existing story in the supplied PRD; do NOT invent new stories, do NOT omit the `id`, do NOT synthesize scaffold or placeholder stories
+- every `stories[*].title` must match the corresponding PRD story's title
 - every project story must appear in exactly one wave
 
 Rules:
@@ -84,3 +87,4 @@ Rules:
 - keep the plan importable and compact rather than essay-style
 - every wave must have a clear delivery goal and concrete exit criteria
 - use `sequencingNotes` and `risks` to call out coordination hazards, shared prerequisites, and critical assumptions
+- if you believe the PRD is missing a story, return `{kind:"message"}` asking to revisit requirements — do NOT add a story to the plan that is absent from the PRD

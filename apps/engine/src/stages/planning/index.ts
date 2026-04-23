@@ -3,8 +3,52 @@ import { printStageCompletion, stageSummary, summaryArtifactFile } from "../../c
 import { stagePresent } from "../../core/stagePresentation.js"
 import { createPlanningReview, createPlanningStage, type RunLlmConfig } from "../../llm/registry.js"
 import { renderPlanMarkdown } from "../../render/plan.js"
-import type { ImplementationPlanArtifact, WithArchitecture } from "../../types.js"
+import type { ImplementationPlanArtifact, PRD, WithArchitecture } from "../../types.js"
+import type { ReviewAgentAdapter, ReviewAgentResponse } from "../../core/adapters.js"
 import type { PlanningState } from "./types.js"
+
+function validatePlanStoryIds(artifact: ImplementationPlanArtifact, prd: PRD): string | null {
+  const prdIds = new Set(prd.stories.map(s => s.id))
+  const seen = new Set<string>()
+  const issues: string[] = []
+  for (const wave of artifact.plan.waves) {
+    for (const ref of wave.stories ?? []) {
+      const id = (ref as { id?: string })?.id
+      const title = (ref as { title?: string })?.title
+      if (!id || typeof id !== "string") {
+        issues.push(`Wave ${wave.number} contains a story without an \`id\` (shape must be {id, title}).`)
+        continue
+      }
+      if (!prdIds.has(id)) {
+        issues.push(`Wave ${wave.number} references story id "${id}"${title ? ` ("${title}")` : ""} that is not in the PRD. Only PRD story ids are allowed.`)
+      }
+      if (seen.has(id)) {
+        issues.push(`Story id "${id}" appears in more than one wave; each PRD story must appear exactly once.`)
+      }
+      seen.add(id)
+    }
+  }
+  for (const s of prd.stories) {
+    if (!seen.has(s.id)) issues.push(`PRD story "${s.id}" is not assigned to any wave.`)
+  }
+  return issues.length > 0 ? issues.join(" ") : null
+}
+
+function validatingReviewer<S>(
+  inner: ReviewAgentAdapter<S, ImplementationPlanArtifact>,
+  validate: (artifact: ImplementationPlanArtifact) => string | null,
+): ReviewAgentAdapter<S, ImplementationPlanArtifact> {
+  return {
+    async review(input): Promise<ReviewAgentResponse> {
+      if (!input) return inner.review(input)
+      const feedback = validate(input.artifact)
+      if (feedback) return { kind: "revise", feedback }
+      return inner.review(input)
+    },
+    getSessionId: inner.getSessionId?.bind(inner),
+    setSessionId: inner.setSessionId?.bind(inner),
+  }
+}
 
 export async function planning(ctx: WithArchitecture, llm?: RunLlmConfig): Promise<ImplementationPlanArtifact> {
   stagePresent.header(`planning — ${ctx.project.name}`)
@@ -22,7 +66,7 @@ export async function planning(ctx: WithArchitecture, llm?: RunLlmConfig): Promi
       revisionCount: 0,
     }),
     stageAgent: createPlanningStage(ctx.project, llm),
-    reviewer: createPlanningReview(llm),
+    reviewer: validatingReviewer(createPlanningReview(llm), artifact => validatePlanStoryIds(artifact, ctx.prd)),
     askUser: async () => "",
     async persistArtifacts(run, artifact) {
       return [
@@ -53,7 +97,7 @@ export async function planning(ctx: WithArchitecture, llm?: RunLlmConfig): Promi
       printStageCompletion(run, "planning")
       return artifact
     },
-    maxReviews: 2,
+    maxReviews: 4,
   })
 
   return result
