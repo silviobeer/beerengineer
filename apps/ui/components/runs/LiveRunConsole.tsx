@@ -20,6 +20,9 @@ type TimelineEntry = {
   at: number
   message: string
   author?: string
+  kind?: string
+  severity?: string
+  findingSource?: string
   data?: unknown
 }
 
@@ -132,8 +135,10 @@ export function LiveRunConsole({
         message?: string
         text?: string
         role?: string
-        data?: { role?: string; source?: string; kind?: string }
+        data?: { role?: string; source?: string; kind?: string; meta?: { source?: string; severity?: string } }
       } | null
+      const presentationKind =
+        type === "presentation" && typeof payload?.data?.kind === "string" ? payload.data.kind : undefined
       const entry: TimelineEntry = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         type,
@@ -149,9 +154,10 @@ export function LiveRunConsole({
             ? payload.role
             : typeof payload?.data?.role === "string"
             ? payload.data.role
-            : type === "presentation" && typeof payload?.data?.kind === "string"
-            ? payload.data.kind
-            : undefined,
+            : presentationKind,
+        kind: presentationKind,
+        severity: payload?.data?.meta?.severity,
+        findingSource: payload?.data?.meta?.source,
         data
       }
       setTimeline(prev => [...prev, entry].slice(-200))
@@ -268,9 +274,22 @@ export function LiveRunConsole({
           <h3>Conversation transcript</h3>
           <ul>
             {timeline.map(entry => (
-              <li key={entry.id} data-kind={entry.type}>
-                <span className="mono-label">{entry.type}</span>
-                {entry.author ? <span className="mono-label">{entry.author}</span> : null}
+              <li
+                key={entry.id}
+                data-kind={entry.kind ?? entry.type}
+                data-event-type={entry.type}
+                data-severity={entry.severity}
+              >
+                <span className="mono-label">{entry.kind ?? entry.type}</span>
+                {entry.severity ? (
+                  <span className="timeline-severity" data-severity={entry.severity}>
+                    {entry.severity}
+                  </span>
+                ) : null}
+                {entry.findingSource ? <span className="mono-label">{entry.findingSource}</span> : null}
+                {entry.author && entry.author !== entry.kind ? (
+                  <span className="mono-label">{entry.author}</span>
+                ) : null}
                 <span>{entry.message}</span>
               </li>
             ))}
