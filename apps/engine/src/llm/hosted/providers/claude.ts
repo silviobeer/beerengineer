@@ -20,7 +20,9 @@ function buildClaudeCommand(input: HostedProviderInvokeInput): string[] {
   }
   if (input.runtime.model) command.push("--model", input.runtime.model)
   if (input.session?.sessionId) command.push("--resume", input.session.sessionId)
-  command.push("-p", input.prompt)
+  // Prompt goes on stdin rather than `-p` so we do not hit ARG_MAX
+  // (E2BIG) on large late-stage prompts that accumulate prior-stage
+  // artifacts (project-review, qa, etc.).
   return command
 }
 
@@ -44,7 +46,7 @@ function sleep(ms: number): Promise<void> {
 
 export async function invokeClaude(input: HostedProviderInvokeInput, attempt = 0): Promise<HostedCliExecutionResult> {
   const command = buildClaudeCommand(input)
-  const result = await spawnCommand(command, null, input.runtime.workspaceRoot)
+  const result = await spawnCommand(command, input.prompt, input.runtime.workspaceRoot)
   const combined = `${result.stdout}\n${result.stderr}`
   if (result.exitCode !== 0) {
     if (input.session?.sessionId && unknownSession(combined)) {
