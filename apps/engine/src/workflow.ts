@@ -7,6 +7,12 @@ import {
   finalizeCandidateDecision,
   mergeProjectBranchIntoItem,
 } from "./core/repoSimulation.js"
+import {
+  detectRealGitMode,
+  ensureItemBranchReal,
+  ensureProjectBranchReal,
+  mergeProjectIntoItemReal,
+} from "./core/realGit.js"
 import type { RecoveryScope } from "./core/recovery.js"
 import { layout } from "./core/workspaceLayout.js"
 import type {
@@ -88,10 +94,18 @@ async function readJson<T>(path: string): Promise<T> {
   return JSON.parse(await readFile(path, "utf8")) as T
 }
 
-function resolveBaseBranch(): string {
-  const result = spawnSync("git", ["branch", "--show-current"], { encoding: "utf8" })
+function resolveBaseBranch(item: Item, workspaceRoot?: string): { branch: string; source: "item" | "env" | "git" | "default" } {
+  const itemOverride = item.baseBranch?.trim()
+  if (itemOverride) return { branch: itemOverride, source: "item" }
+  const envOverride = process.env.BEERENGINEER_BASE_BRANCH?.trim()
+  if (envOverride) return { branch: envOverride, source: "env" }
+  const result = spawnSync("git", ["branch", "--show-current"], {
+    cwd: workspaceRoot ?? process.cwd(),
+    encoding: "utf8",
+  })
   const branch = result.status === 0 ? result.stdout.trim() : ""
-  return branch || "main"
+  if (branch) return { branch, source: "git" }
+  return { branch: "main", source: "default" }
 }
 
 function normalizeExecutionResume(stageId: string): ExecutionResumeOptions | undefined {
@@ -162,14 +176,25 @@ async function loadDocumentation(context: WorkflowContext): Promise<Documentatio
   return readJson<DocumentationArtifact>(join(layout.stageArtifactsDir(context, "documentation"), "documentation.json"))
 }
 
-export async function runWorkflow(item: Item, options?: { resume?: WorkflowResumeInput; llm?: WorkflowLlmOptions }): Promise<void> {
+export async function runWorkflow(item: Item, options?: { resume?: WorkflowResumeInput; llm?: WorkflowLlmOptions; workspaceRoot?: string }): Promise<void> {
   const slug = item.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
   const activeRun = getActiveRun()
+  const { branch: baseBranch, source: baseBranchSource } = resolveBaseBranch(item, options?.workspaceRoot)
+  stagePresent.dim(`→ Base branch: ${baseBranch} (source: ${baseBranchSource})`)
   const context: WorkflowContext = {
     workspaceId: slug ? `${slug}-${item.id.toLowerCase()}` : item.id.toLowerCase(),
     runId: activeRun?.runId ?? `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`,
     itemSlug: slug || item.id.toLowerCase(),
-    baseBranch: resolveBaseBranch(),
+    baseBranch,
+    workspaceRoot: options?.workspaceRoot,
+  }
+
+  const realGit = detectRealGitMode(context)
+  if (realGit.enabled) {
+    stagePresent.dim(`→ Real git mode: branches will be created in ${realGit.workspaceRoot}`)
+    ensureItemBranchReal(realGit, context)
+  } else {
+    stagePresent.dim(`→ Simulated git mode (${realGit.reason})`)
   }
 
   const resumePlan = options?.resume ? normalizeProjectResume(options.resume) : null
@@ -192,7 +217,9 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
   }
 
   for (const project of projects) {
+    if (realGit.enabled) ensureProjectBranchReal(realGit, context, project.id)
     await runProject({ ...context, project }, resumePlan ?? undefined, options?.llm)
+    if (realGit.enabled) mergeProjectIntoItemReal(realGit, context, project.id)
   }
 
   stagePresent.header("DONE")

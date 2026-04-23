@@ -381,7 +381,7 @@ export function prepareRun(
         runWithActiveRun({ runId: runRow.id, itemId: itemRow.id }, async () => {
           bus.emit({ type: "run_started", runId: runRow.id, itemId: itemRow.id, title: item.title })
           try {
-            await runWorkflow({ ...item, id: itemRow.id }, { llm })
+            await runWorkflow({ ...item, id: itemRow.id }, { llm, workspaceRoot: workspaceRow?.root_path ?? undefined })
             bus.emit({ type: "run_finished", runId: runRow.id, status: "completed" })
           } catch (err) {
             const message = (err as Error).message

@@ -3,8 +3,15 @@ import { join } from "node:path"
 export type WorkflowContext = {
   workspaceId: string
   runId: string
+  // Present in top-level workflow runs; absent in pure-layout call sites
+  // (e.g., resume, stageRuntime) that only need workspaceId/runId to resolve
+  // filesystem paths. Branch/repo helpers require them and will throw.
   itemSlug?: string
   baseBranch?: string
+  // Absolute path of the target workspace on disk. When set, the workflow
+  // operates against a real git repo at this path (base-branch detection,
+  // realGit branch ops); when absent, it falls back to the simulated repo.
+  workspaceRoot?: string
 }
 
 function sanitizeSegment(segment: string): string {

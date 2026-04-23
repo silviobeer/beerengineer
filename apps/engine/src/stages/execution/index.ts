@@ -1,6 +1,13 @@
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { ensureWaveBranch, mergeWaveBranchIntoProject } from "../../core/repoSimulation.js"
+import {
+  detectRealGitMode,
+  ensureStoryBranchReal,
+  ensureWaveBranchReal,
+  mergeStoryIntoWaveReal,
+  mergeWaveIntoProjectReal,
+} from "../../core/realGit.js"
 import { runStage } from "../../core/stageRuntime.js"
 import { createTestWriterReview, createTestWriterStage, type RunLlmConfig } from "../../llm/registry.js"
 import { stagePresent } from "../../core/stagePresentation.js"
@@ -30,6 +37,13 @@ type ExecutionResumeOptions = {
 export type ExecutionLlmOptions = {
   stage?: RunLlmConfig
   executionCoder?: RunLlmConfig
+}
+
+function requireField<T>(value: T | undefined, name: string): T {
+  if (value === undefined || value === null) {
+    throw new Error(`WorkflowContext.${name} is required during execution stage`)
+  }
+  return value
 }
 
 async function readJsonIfExists<T>(path: string): Promise<T | undefined> {
@@ -94,14 +108,33 @@ async function executeWave(
   resume?: ExecutionResumeOptions,
   llm?: ExecutionLlmOptions,
 ): Promise<WaveSummary> {
+  // `wave.parallel` is an authoring-time signal that stories in this wave
+  // have no internal ordering dependencies. We still execute them sequentially
+  // because the simulated repo state is a single shared file; concurrent
+  // story runs would serialize on the repo-state lock anyway and make test
+  // runs non-deterministic. Revisit once each story owns its own worktree.
   const tag = wave.parallel ? "(planned parallel, executed sequentially)" : "(sequential)"
   stagePresent.step(`\nWave ${wave.number} ${tag}: ${wave.stories.map(s => s.id).join(", ")}`)
   await ensureWaveBranch(ctx, ctx.project.id, wave.number)
 
-  const run = (story: Pick<UserStory, "id" | "title">) =>
-    implementStory(ctx, wave, resolveStory(story, storyById), {
+  const realGit = detectRealGitMode(ctx)
+  if (realGit.enabled) {
+    ensureWaveBranchReal(realGit, ctx, ctx.project.id, wave.number)
+  }
+
+  const run = async (story: Pick<UserStory, "id" | "title">) => {
+    const resolved = resolveStory(story, storyById)
+    if (realGit.enabled) {
+      ensureStoryBranchReal(realGit, ctx, ctx.project.id, wave.number, resolved.id)
+    }
+    const result = await implementStory(ctx, wave, resolved, {
       rerunTestWriter: resume != null && resume.storyId === story.id ? Boolean(resume.rerunTestWriter) : false,
     }, llm)
+    if (realGit.enabled && result.implementation.status !== "blocked") {
+      mergeStoryIntoWaveReal(realGit, ctx, ctx.project.id, wave.number, resolved.id)
+    }
+    return result
+  }
 
   const results = await sequentially(wave.stories, run)
 
@@ -111,6 +144,9 @@ async function executeWave(
   )
   assertWaveSucceeded(wave, summary)
   await mergeWaveBranchIntoProject(ctx, ctx.project.id, wave.number)
+  if (realGit.enabled) {
+    mergeWaveIntoProjectReal(realGit, ctx, ctx.project.id, wave.number)
+  }
   return summary
 }
 
@@ -185,8 +221,8 @@ function buildStoryExecutionContext(
 ): StoryExecutionContext {
   return {
     item: {
-      slug: ctx.itemSlug ?? ctx.workspaceId.replace(/-[^-]+$/, ""),
-      baseBranch: ctx.baseBranch ?? "main",
+      slug: requireField(ctx.itemSlug, "itemSlug"),
+      baseBranch: requireField(ctx.baseBranch, "baseBranch"),
     },
     project: { id: ctx.project.id, name: ctx.project.name },
     conceptSummary: ctx.project.concept.summary,
