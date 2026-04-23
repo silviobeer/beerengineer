@@ -1,12 +1,14 @@
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
-import { ensureWaveBranch, mergeWaveBranchIntoProject } from "../../core/repoSimulation.js"
+import { branchNameStory, ensureWaveBranch, mergeWaveBranchIntoProject } from "../../core/repoSimulation.js"
 import {
   detectRealGitMode,
   ensureStoryBranchReal,
+  ensureStoryWorktreeReal,
   ensureWaveBranchReal,
   mergeStoryIntoWaveReal,
   mergeWaveIntoProjectReal,
+  removeStoryWorktreeReal,
 } from "../../core/realGit.js"
 import { runStage } from "../../core/stageRuntime.js"
 import { createTestWriterReview, createTestWriterStage, type RunLlmConfig } from "../../llm/registry.js"
@@ -108,12 +110,10 @@ async function executeWave(
   resume?: ExecutionResumeOptions,
   llm?: ExecutionLlmOptions,
 ): Promise<WaveSummary> {
-  // `wave.parallel` is an authoring-time signal that stories in this wave
-  // have no internal ordering dependencies. We still execute them sequentially
-  // because the simulated repo state is a single shared file; concurrent
-  // story runs would serialize on the repo-state lock anyway and make test
-  // runs non-deterministic. Revisit once each story owns its own worktree.
-  const tag = wave.parallel ? "(planned parallel, executed sequentially)" : "(sequential)"
+  // `wave.parallel` remains sequential for now, but real-git story execution
+  // now gets an isolated worktree per story so filesystem changes no longer
+  // collide across branches.
+  const tag = wave.parallel ? "(planned parallel, executed sequentially with isolated worktrees)" : "(sequential)"
   stagePresent.step(`\nWave ${wave.number} ${tag}: ${wave.stories.map(s => s.id).join(", ")}`)
   await ensureWaveBranch(ctx, ctx.project.id, wave.number)
 
@@ -124,14 +124,33 @@ async function executeWave(
 
   const run = async (story: Pick<UserStory, "id" | "title">) => {
     const resolved = resolveStory(story, storyById)
-    if (realGit.enabled) {
+    const storyWorktreeRoot = realGit.enabled
+      ? ensureStoryWorktreeReal(
+          realGit,
+          ctx,
+          ctx.project.id,
+          wave.number,
+          resolved.id,
+          layout.executionStoryWorktreeDir(ctx, wave.number, resolved.id),
+        )
+      : undefined
+    // `ensureStoryWorktreeReal` already creates the story branch if
+    // missing and checks it out inside the worktree. Calling
+    // `ensureStoryBranchReal` here would `git checkout <story>` in the
+    // main workspace, which git refuses because the branch is already
+    // used by the worktree — crashes the run with
+    // "is already used by worktree at …". Only run the main-workspace
+    // checkout when worktrees are disabled.
+    if (realGit.enabled && !storyWorktreeRoot) {
       ensureStoryBranchReal(realGit, ctx, ctx.project.id, wave.number, resolved.id)
     }
     const result = await implementStory(ctx, wave, resolved, {
       rerunTestWriter: resume != null && resume.storyId === story.id ? Boolean(resume.rerunTestWriter) : false,
+      worktreeRoot: storyWorktreeRoot,
     }, llm)
     if (realGit.enabled && result.implementation.status !== "blocked") {
       mergeStoryIntoWaveReal(realGit, ctx, ctx.project.id, wave.number, resolved.id)
+      if (storyWorktreeRoot) removeStoryWorktreeReal(realGit, storyWorktreeRoot)
     }
     return result
   }
@@ -189,7 +208,7 @@ async function implementStory(
   ctx: WithArchitecture,
   wave: WaveDefinition,
   story: UserStory,
-  opts: { rerunTestWriter?: boolean } = {},
+  opts: { rerunTestWriter?: boolean; worktreeRoot?: string } = {},
   llm?: ExecutionLlmOptions,
 ): Promise<StoryResult> {
   stagePresent.step(`  Story ${story.id}: ${story.title}`)
@@ -207,8 +226,11 @@ async function implementStory(
     ? (await readJsonIfExists<StoryTestPlanArtifact>(testPlanPath)) ?? await writeStoryTestPlan(ctx, wave, story, llm?.stage)
     : await writeStoryTestPlan(ctx, wave, story, llm?.stage)
   stagePresent.dim(`  Test plan: ${testPlan.testPlan.testCases.map(tc => tc.id).join(", ")}`)
-  const storyContext = buildStoryExecutionContext(ctx, wave, ctx.architecture, testPlan)
-  const result: StoryArtifacts = await runRalphStory(storyContext, ctx, llm?.executionCoder)
+  const storyContext = buildStoryExecutionContext(ctx, wave, ctx.architecture, testPlan, opts.worktreeRoot)
+  const executionLlm = llm?.executionCoder && opts.worktreeRoot
+    ? { ...llm.executionCoder, workspaceRoot: opts.worktreeRoot }
+    : llm?.executionCoder
+  const result: StoryArtifacts = await runRalphStory(storyContext, ctx, executionLlm)
   stagePresent.dim(`  Status: ${result.implementation.status}`)
   return { storyId: story.id, implementation: result.implementation }
 }
@@ -218,6 +240,7 @@ function buildStoryExecutionContext(
   wave: WaveDefinition,
   architecture: ArchitectureArtifact,
   testPlan: StoryTestPlanArtifact,
+  worktreeRoot?: string,
 ): StoryExecutionContext {
   return {
     item: {
@@ -246,6 +269,8 @@ function buildStoryExecutionContext(
       goal: wave.goal,
       dependencies: wave.dependencies,
     },
+    storyBranch: branchNameStory(ctx, ctx.project.id, wave.number, testPlan.story.id),
+    worktreeRoot,
     testPlan,
   }
 }
