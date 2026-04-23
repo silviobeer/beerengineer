@@ -1,20 +1,30 @@
 import type { Concept } from "../types/domain.js"
 
+function toStringList(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(v => String(v))
+  if (value == null) return []
+  if (typeof value === "string") return value.split(/\r?\n/).map(s => s.replace(/^[-*]\s*/, "").trim()).filter(Boolean)
+  if (typeof value === "object") return Object.values(value as Record<string, unknown>).map(v => String(v))
+  return [String(value)]
+}
+
 export function renderConceptMarkdown(concept: Concept): string {
+  const users = toStringList(concept.users)
+  const constraints = toStringList(concept.constraints)
   return [
     "# Concept",
     "",
     "## Summary",
-    concept.summary,
+    concept.summary ?? "",
     "",
     "## Problem",
-    concept.problem,
+    concept.problem ?? "",
     "",
     "## Users",
-    ...concept.users.map(user => `- ${user}`),
+    ...users.map(user => `- ${user}`),
     "",
     "## Constraints",
-    ...concept.constraints.map(constraint => `- ${constraint}`),
+    ...constraints.map(constraint => `- ${constraint}`),
     "",
   ].join("\n")
 }

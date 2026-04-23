@@ -45,7 +45,7 @@ type Command =
   | { kind: "doctor"; json?: boolean; group?: string }
   | { kind: "setup"; group?: string; noInteractive?: boolean }
   | { kind: "start-ui" }
-  | { kind: "workflow"; json?: boolean }
+  | { kind: "workflow"; json?: boolean; workspaceKey?: string }
   | { kind: "item-action"; itemRef: string; action: string; resume?: ResumeFlags }
   | { kind: "workspace-preview"; path?: string; json?: boolean }
   | {
@@ -87,9 +87,12 @@ export function parseArgs(argv: string[]): Command {
   const [first, second] = argv
   const json = argv.includes("--json")
   const group = readFlag(argv, "--group")
-  if (first === undefined || first === "--json") return { kind: "workflow", json }
-  if (first === "run" && (second === "--json" || argv[2] === "--json" || second === undefined)) {
-    return { kind: "workflow", json }
+  const workspaceKey = readFlag(argv, "--workspace")
+  if (first === undefined || first === "--json" || first === "--workspace") {
+    return { kind: "workflow", json, workspaceKey }
+  }
+  if (first === "run") {
+    return { kind: "workflow", json, workspaceKey }
   }
   if (first === "--help" || first === "-h" || first === "help") return { kind: "help" }
   if (first === "--doctor" || first === "doctor") return { kind: "doctor", json, group }
@@ -525,9 +528,9 @@ export function startUi(): Promise<number> {
   })
 }
 
-async function runInteractiveWorkflow(opts: { json?: boolean } = {}): Promise<void> {
+async function runInteractiveWorkflow(opts: { json?: boolean; workspaceKey?: string } = {}): Promise<void> {
   if (opts.json) {
-    return runJsonWorkflow()
+    return runJsonWorkflow({ workspaceKey: opts.workspaceKey })
   }
 
   console.log("\n  ╔════════════════════════════════════════╗")
@@ -545,11 +548,12 @@ async function runInteractiveWorkflow(opts: { json?: boolean } = {}): Promise<vo
   const io = createCliIO(repos)
 
   try {
+    const workspaceMeta = resolveWorkspaceMeta(repos, opts.workspaceKey)
     const runId = await runWorkflowWithSync(
       { id: "new", title, description },
       repos,
       io,
-      { owner: "cli" }
+      { owner: "cli", ...workspaceMeta }
     )
     console.log(`\n  run-id: ${runId}`)
   } finally {
@@ -557,6 +561,16 @@ async function runInteractiveWorkflow(opts: { json?: boolean } = {}): Promise<vo
     close()
     db.close()
   }
+}
+
+function resolveWorkspaceMeta(
+  repos: Repos,
+  workspaceKey: string | undefined,
+): { workspaceKey?: string; workspaceName?: string } {
+  if (!workspaceKey) return {}
+  const workspace = getRegisteredWorkspace(repos, workspaceKey)
+  if (!workspace) throw new Error(`Unknown workspace: ${workspaceKey}`)
+  return { workspaceKey: workspace.key, workspaceName: workspace.name }
 }
 
 /**
@@ -568,7 +582,7 @@ async function runInteractiveWorkflow(opts: { json?: boolean } = {}): Promise<vo
  * Intake (title/description) is supplied by the harness via a special
  * bootstrap prompt — the run starts by asking for them as regular events.
  */
-async function runJsonWorkflow(): Promise<void> {
+async function runJsonWorkflow(opts: { workspaceKey?: string } = {}): Promise<void> {
   const { attachNdjsonRenderer } = await import("./core/renderers/ndjson.js")
   const db = initDatabase()
   const repos = new Repos(db)
@@ -583,11 +597,12 @@ async function runJsonWorkflow(): Promise<void> {
     const title = await io.ask("Idea (title)")
     const description = await io.ask("Idea (description)")
 
+    const workspaceMeta = resolveWorkspaceMeta(repos, opts.workspaceKey)
     const runId = await runWorkflowWithSync(
       { id: "new", title, description },
       repos,
       io,
-      { owner: "cli" }
+      { owner: "cli", ...workspaceMeta }
     )
     // Emit a final signpost event so the harness can detect end-of-run.
     process.stdout.write(`${JSON.stringify({ type: "cli_finished", runId })}\n`)
@@ -850,7 +865,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       process.exit(1)
     case "workflow":
       try {
-        await runInteractiveWorkflow({ json: cmd.json })
+        await runInteractiveWorkflow({ json: cmd.json, workspaceKey: cmd.workspaceKey })
       } catch (err) {
         if (cmd.json) {
           process.stderr.write(`${JSON.stringify({ type: "cli_error", message: (err as Error).message })}\n`)

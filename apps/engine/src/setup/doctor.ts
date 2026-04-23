@@ -56,7 +56,13 @@ function remedyForTool(tool: string): CheckResult["remedy"] | undefined {
       platform === "darwin"
         ? { hint: "Install sonar-scanner with Homebrew.", command: "brew install sonar-scanner" }
         : { hint: "Install sonar-scanner from SonarSource docs.", url: "https://docs.sonarsource.com/sonarqube-cloud/advanced-setup/analysis-scanner-configuration/" },
-    "sonarqube-cli": { hint: "Install sonarqube-cli globally with npm.", command: "npm i -g sonarqube-cli" },
+    sonar: {
+      hint: "Install sonarqube-cli from SonarSource (installs the `sonar` binary).",
+      command:
+        platform === "win32"
+          ? "irm https://raw.githubusercontent.com/SonarSource/sonarqube-cli/refs/heads/master/user-scripts/install.ps1 | iex"
+          : "curl -o- https://raw.githubusercontent.com/SonarSource/sonarqube-cli/refs/heads/master/user-scripts/install.sh | bash",
+    },
   }
   return hints[tool]
 }
@@ -91,6 +97,23 @@ function probeCommand(command: string, args: string[] = []): Promise<ToolProbe> 
       })
     })
   })
+}
+
+async function probeCodexAuth(): Promise<CheckResult> {
+  const auth = await probeCommand("codex", ["login", "status"])
+  if (auth.ok) {
+    const detail = (auth.stdout ?? auth.version ?? "Codex auth available").split(/\r?\n/)[0]
+    return createCheck("llm.openai.auth", "OpenAI / Codex auth", "ok", detail)
+  }
+  return createCheck(
+    "llm.openai.auth",
+    "OpenAI / Codex auth",
+    "missing",
+    "Codex is not logged in and OPENAI_API_KEY is not set",
+    {
+      remedy: { hint: "Run `codex login`, or export OPENAI_API_KEY before running BeerEngineer." },
+    },
+  )
 }
 
 async function probeClaudeAuth(): Promise<CheckResult> {
@@ -298,6 +321,16 @@ async function runLlmChecks(provider: AppConfig["llm"]["provider"], config: AppC
     }
     return [cliCheck, await probeClaudeAuth()]
   }
+  if (provider === "openai") {
+    const apiKey = process.env[def.apiKeyRef]
+    if (apiKey) {
+      return [
+        cliCheck,
+        createCheck(def.authId, `${def.label} auth`, "ok", `${def.apiKeyRef} is set`),
+      ]
+    }
+    return [cliCheck, await probeCodexAuth()]
+  }
   const present = Boolean(process.env[def.apiKeyRef])
   return [
     cliCheck,
@@ -334,7 +367,7 @@ async function runReviewChecks(): Promise<CheckResult[]> {
   const [coderabbit, sonarScanner, sonarqubeCli] = await Promise.all([
     probeCommand("coderabbit", ["--version"]),
     probeCommand("sonar-scanner", ["--version"]),
-    probeCommand("sonarqube-cli", ["--version"]),
+    probeCommand("sonar", ["--version"]),
   ])
   const sonarTokenPresent = Boolean(process.env.SONAR_TOKEN)
   return [
@@ -345,7 +378,7 @@ async function runReviewChecks(): Promise<CheckResult[]> {
       remedy: sonarScanner.ok ? undefined : remedyForTool("sonar-scanner"),
     }),
     createCheck("review.sonarqube-cli", "sonarqube-cli", sonarqubeCli.ok ? "ok" : "missing", sonarqubeCli.version ?? sonarqubeCli.detail, {
-      remedy: sonarqubeCli.ok ? undefined : remedyForTool("sonarqube-cli"),
+      remedy: sonarqubeCli.ok ? undefined : remedyForTool("sonar"),
     }),
     createCheck(
       "review.sonar-token",

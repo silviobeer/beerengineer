@@ -100,7 +100,7 @@ async function executeWave(
 
   const run = (story: Pick<UserStory, "id" | "title">) =>
     implementStory(ctx, wave, resolveStory(story, storyById), {
-      rerunTestWriter: resume?.storyId === story.id ? Boolean(resume.rerunTestWriter) : false,
+      rerunTestWriter: resume != null && resume.storyId === story.id ? Boolean(resume.rerunTestWriter) : false,
     }, llm)
 
   const results = await sequentially(wave.stories, run)
@@ -144,8 +144,9 @@ function resolveStory(
 ): UserStory {
   const full = storyById.get(ref.id)
   if (full) return full
-  stagePresent.warn(`Story ${ref.id} is referenced by the plan but missing from the PRD — synthesizing scaffold ACs.`)
-  return { id: ref.id, title: ref.title, acceptanceCriteria: [] }
+  const id = ref.id ?? `scaffold-${(ref.title ?? "story").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "story"}`
+  stagePresent.warn(`Story ${ref.id ?? "<unnamed>"} is referenced by the plan but missing from the PRD — synthesizing scaffold ACs as ${id}.`)
+  return { id, title: ref.title ?? id, acceptanceCriteria: [] }
 }
 
 async function implementStory(

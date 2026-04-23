@@ -20,19 +20,20 @@ export async function qa(ctx: ProjectContext, llm?: RunLlmConfig): Promise<void>
     reviewer: createQaReview(llm),
     askUser: prompt => ask(prompt),
     async persistArtifacts(_run, artifact) {
+      const findings = artifact.findings ?? []
       return [
         {
           kind: "json",
           label: "QA Report JSON",
           fileName: "qa-report.json",
-          content: JSON.stringify(artifact, null, 2),
+          content: JSON.stringify({ ...artifact, findings }, null, 2),
         },
         summaryArtifactFile(
           "qa",
           stageSummary(_run, [
             `Loops: ${artifact.loops}`,
             `Accepted: ${artifact.accepted}`,
-            `Open findings: ${artifact.findings.length}`,
+            `Open findings: ${findings.length}`,
           ]),
         ),
       ]

@@ -167,27 +167,37 @@ export class HostedStageAdapter<S, A> implements StageAgentAdapter<S, A> {
   ) {}
 
   async step(request: StageAgentInput<S>) {
-    const result = await runHostedCli(
-      {
-        kind: "stage",
-        runtime: {
-          provider: this.input.provider,
-          model: this.input.model,
-          workspaceRoot: this.input.workspaceRoot,
-          policy: this.input.runtimePolicy,
-        },
-        prompt: buildStagePrompt({
-          stageId: this.input.stageId,
-          provider: this.input.provider,
-          model: this.input.model,
-          runtimePolicy: this.input.runtimePolicy,
-          request,
-        }),
-        payload: request,
-      },
+    const basePrompt = buildStagePrompt({
+      stageId: this.input.stageId,
+      provider: this.input.provider,
+      model: this.input.model,
+      runtimePolicy: this.input.runtimePolicy,
+      request,
+    })
+    const runtime = {
+      provider: this.input.provider,
+      model: this.input.model,
+      workspaceRoot: this.input.workspaceRoot,
+      policy: this.input.runtimePolicy,
+    }
+    const firstResult = await runHostedCli(
+      { kind: "stage", runtime, prompt: basePrompt, payload: request },
       this.input.buildCommand,
     )
-    return mapStageEnvelopeToResponse(parseJsonObject(result.outputText) as HostedStageOutputEnvelope<A>)
+    try {
+      return mapStageEnvelopeToResponse(parseJsonObject(firstResult.outputText) as HostedStageOutputEnvelope<A>)
+    } catch (err) {
+      const retryPrompt = `${basePrompt}\n\nIMPORTANT: your previous response was not valid JSON. You MUST respond with ONLY a single JSON object that matches the output envelope schema — no prose before or after, no markdown, no code fences. Respond with the JSON object now.\n\nPrevious response (for your reference):\n${firstResult.outputText.slice(0, 2000)}`
+      const retryResult = await runHostedCli(
+        { kind: "stage", runtime, prompt: retryPrompt, payload: request },
+        this.input.buildCommand,
+      )
+      try {
+        return mapStageEnvelopeToResponse(parseJsonObject(retryResult.outputText) as HostedStageOutputEnvelope<A>)
+      } catch {
+        throw err
+      }
+    }
   }
 }
 
@@ -204,27 +214,37 @@ export class HostedReviewAdapter<S, A> implements ReviewAgentAdapter<S, A> {
   ) {}
 
   async review(request: { artifact: A; state: S }) {
-    const result = await runHostedCli(
-      {
-        kind: "review",
-        runtime: {
-          provider: this.input.provider,
-          model: this.input.model,
-          workspaceRoot: this.input.workspaceRoot,
-          policy: this.input.runtimePolicy,
-        },
-        prompt: buildReviewPrompt({
-          stageId: this.input.stageId,
-          provider: this.input.provider,
-          model: this.input.model,
-          runtimePolicy: this.input.runtimePolicy,
-          request,
-        }),
-        payload: request,
-      },
+    const basePrompt = buildReviewPrompt({
+      stageId: this.input.stageId,
+      provider: this.input.provider,
+      model: this.input.model,
+      runtimePolicy: this.input.runtimePolicy,
+      request,
+    })
+    const runtime = {
+      provider: this.input.provider,
+      model: this.input.model,
+      workspaceRoot: this.input.workspaceRoot,
+      policy: this.input.runtimePolicy,
+    }
+    const firstResult = await runHostedCli(
+      { kind: "review", runtime, prompt: basePrompt, payload: request },
       this.input.buildCommand,
     )
-    return mapReviewEnvelopeToResponse(parseJsonObject(result.outputText) as HostedReviewOutputEnvelope)
+    try {
+      return mapReviewEnvelopeToResponse(parseJsonObject(firstResult.outputText) as HostedReviewOutputEnvelope)
+    } catch (err) {
+      const retryPrompt = `${basePrompt}\n\nIMPORTANT: your previous response was not valid JSON. You MUST respond with ONLY a single JSON object that matches the review output envelope schema — no prose before or after, no markdown, no code fences. Respond with the JSON object now.\n\nPrevious response (for your reference):\n${firstResult.outputText.slice(0, 2000)}`
+      const retryResult = await runHostedCli(
+        { kind: "review", runtime, prompt: retryPrompt, payload: request },
+        this.input.buildCommand,
+      )
+      try {
+        return mapReviewEnvelopeToResponse(parseJsonObject(retryResult.outputText) as HostedReviewOutputEnvelope)
+      } catch {
+        throw err
+      }
+    }
   }
 }
 
