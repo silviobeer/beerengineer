@@ -28,13 +28,31 @@ function unknownSession(text: string): boolean {
   return /unknown session|expired session|could not resume|resume.*not found/i.test(text)
 }
 
-export async function invokeClaude(input: HostedProviderInvokeInput): Promise<HostedCliExecutionResult> {
+function isTransientFailure(exitCode: number, stdout: string, stderr: string): boolean {
+  if (exitCode === 143 || exitCode === 137) return true
+  const combined = `${stdout}\n${stderr}`.trim()
+  if (exitCode !== 0 && combined.length === 0) return true
+  if (/network error|socket hang up|ECONNRESET|ETIMEDOUT|temporary failure/i.test(combined)) return true
+  return false
+}
+
+const TRANSIENT_RETRY_DELAYS_MS = [2000, 8000]
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+export async function invokeClaude(input: HostedProviderInvokeInput, attempt = 0): Promise<HostedCliExecutionResult> {
   const command = buildClaudeCommand(input)
   const result = await spawnCommand(command, null, input.runtime.workspaceRoot)
   const combined = `${result.stdout}\n${result.stderr}`
   if (result.exitCode !== 0) {
     if (input.session?.sessionId && unknownSession(combined)) {
-      return invokeClaude({ ...input, session: { provider: input.runtime.provider, sessionId: null } })
+      return invokeClaude({ ...input, session: { provider: input.runtime.provider, sessionId: null } }, attempt)
+    }
+    if (isTransientFailure(result.exitCode, result.stdout, result.stderr) && attempt < TRANSIENT_RETRY_DELAYS_MS.length) {
+      await sleep(TRANSIENT_RETRY_DELAYS_MS[attempt])
+      return invokeClaude(input, attempt + 1)
     }
     throw new Error(`${input.runtime.provider} exited with code ${result.exitCode}: ${combined.trim() || "no output"}`)
   }
