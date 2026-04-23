@@ -151,6 +151,30 @@ async function writeWorkspaceRecord(
   )
 }
 
+export async function persistWorkflowRunState(
+  ctx: WorkflowContext,
+  stageId: string,
+  status: StageStatus | "completed",
+): Promise<void> {
+  const dir = layout.runDir(ctx)
+  await mkdir(dir, { recursive: true })
+  await writeFile(
+    layout.runFile(ctx),
+    JSON.stringify(
+      {
+        id: ctx.runId,
+        workspaceId: ctx.workspaceId,
+        currentStage: stageId,
+        status,
+        updatedAt: nowIso(),
+      },
+      null,
+      2,
+    ),
+  )
+  await writeWorkspaceRecord(ctx, stageId, status === "completed" ? "approved" : status)
+}
+
 async function persistRun<TState, TArtifact>(run: StageRun<TState, TArtifact>): Promise<void> {
   const ctx: WorkflowContext = { workspaceId: run.workspaceId, runId: run.runId }
   await mkdir(run.stageDir, { recursive: true })
@@ -174,7 +198,7 @@ async function persistRun<TState, TArtifact>(run: StageRun<TState, TArtifact>): 
       2,
     ),
   )
-  await writeWorkspaceRecord(ctx, run.stage, run.status)
+  await persistWorkflowRunState(ctx, run.stage, run.status)
 }
 
 function pushLog<TState, TArtifact>(

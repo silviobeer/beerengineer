@@ -4,17 +4,20 @@ import { spawnSync } from "node:child_process"
 import { join, resolve } from "node:path"
 import { randomUUID } from "node:crypto"
 import {
+  branchNameItem,
+  branchNameProject,
   createCandidateBranch,
   finalizeCandidateDecision,
   mergeProjectBranchIntoItem,
 } from "./core/repoSimulation.js"
 import {
   detectRealGitMode,
+  exitRunToItemBranchReal,
   ensureItemBranchReal,
   ensureProjectBranchReal,
   mergeProjectIntoItemReal,
 } from "./core/realGit.js"
-import type { RecoveryScope } from "./core/recovery.js"
+import { writeRecoveryRecord, type RecoveryScope } from "./core/recovery.js"
 import { layout } from "./core/workspaceLayout.js"
 import type {
   ArchitectureArtifact,
@@ -91,12 +94,48 @@ export type WorkflowLlmOptions = {
   execution?: ExecutionLlmOptions
 }
 
+class BlockedRunError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "BlockedRunError"
+  }
+}
+
 async function readJson<T>(path: string): Promise<T> {
   return JSON.parse(await readFile(path, "utf8")) as T
 }
 
 function isEngineOwnedBranchName(branch: string): boolean {
   return /^(item|proj|wave|story|candidate)\//.test(branch)
+}
+
+function resolveGitDefaultBranch(workspaceRoot: string): string | null {
+  const originHead = spawnSync("git", ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], {
+    cwd: workspaceRoot,
+    encoding: "utf8",
+  })
+  if (originHead.status === 0) {
+    const branch = originHead.stdout.trim().replace(/^origin\//, "")
+    if (branch) return branch
+  }
+
+  const remoteShow = spawnSync("git", ["remote", "show", "origin"], {
+    cwd: workspaceRoot,
+    encoding: "utf8",
+  })
+  if (remoteShow.status === 0) {
+    const match = remoteShow.stdout.match(/^\s*HEAD branch:\s+(.+)$/m)
+    const branch = match?.[1]?.trim()
+    if (branch) return branch
+  }
+
+  const current = spawnSync("git", ["branch", "--show-current"], {
+    cwd: workspaceRoot,
+    encoding: "utf8",
+  })
+  const branch = current.status === 0 ? current.stdout.trim() : ""
+  if (branch && !isEngineOwnedBranchName(branch)) return branch
+  return null
 }
 
 function resolveBaseBranch(item: Item, workspaceRoot?: string): { branch: string; source: "item" | "env" | "config" | "git" | "default" } {
@@ -122,20 +161,46 @@ function resolveBaseBranch(item: Item, workspaceRoot?: string): { branch: string
         parsed.preflight?.github?.defaultBranch?.trim() ||
         parsed.reviewPolicy?.sonarcloud?.baseBranch?.trim() ||
         parsed.sonar?.baseBranch?.trim()
-      if (fromConfig) return { branch: fromConfig, source: "config" }
+      if (fromConfig && !isEngineOwnedBranchName(fromConfig)) return { branch: fromConfig, source: "config" }
     } catch {
       // no config, fall through to git probe
     }
   }
 
+  const branch = workspaceRoot ? resolveGitDefaultBranch(workspaceRoot) : null
+  if (branch) return { branch, source: "git" }
+  return { branch: "main", source: "default" }
+}
+
+async function blockRunForWorkspaceState(context: WorkflowContext, summary: string): Promise<never> {
+  const activeRun = getActiveRun()
+  if (activeRun) {
+    await writeRecoveryRecord(context, {
+      status: "blocked",
+      cause: "system_error",
+      scope: { type: "run", runId: activeRun.runId },
+      summary,
+      detail: "Clean, commit, or stash the current workspace changes before starting a new item run.",
+      evidencePaths: [layout.runDir(context)],
+    })
+    emitEvent({
+      type: "run_blocked",
+      runId: activeRun.runId,
+      scope: { type: "run", runId: activeRun.runId },
+      cause: "system_error",
+      summary,
+    })
+  }
+  throw new BlockedRunError(summary)
+}
+
+function currentGitBranch(workspaceRoot: string): string | null {
   const result = spawnSync("git", ["branch", "--show-current"], {
-    cwd: workspaceRoot ?? process.cwd(),
+    cwd: workspaceRoot,
     encoding: "utf8",
   })
   const branch = result.status === 0 ? result.stdout.trim() : ""
-  // If HEAD is on an engine-owned branch, don't treat it as a base branch.
-  if (branch && !isEngineOwnedBranchName(branch)) return { branch, source: "git" }
-  return { branch: "main", source: "default" }
+  return branch || null
 }
 
 function normalizeExecutionResume(stageId: string): ExecutionResumeOptions | undefined {
@@ -222,38 +287,70 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
   const realGit = detectRealGitMode(context)
   if (realGit.enabled) {
     stagePresent.dim(`→ Real git mode: branches will be created in ${realGit.workspaceRoot}`)
-    ensureItemBranchReal(realGit, context)
+  } else if (options?.workspaceRoot && realGit.reason === "workspace has uncommitted changes (dirty repo)") {
+    const currentBranch = currentGitBranch(options.workspaceRoot)
+    const summary =
+      currentBranch === "main" || currentBranch === "master"
+        ? `Workspace ${options.workspaceRoot} has uncommitted changes on ${currentBranch}. ` +
+          "Strategy violation: main/master must stay clean; item work belongs on isolated item branches."
+        : `Workspace ${options.workspaceRoot} has uncommitted changes. ` +
+          "BeerEngineer requires a clean repo before it creates an isolated item branch."
+    stagePresent.warn(summary)
+    await blockRunForWorkspaceState(context, summary)
   } else {
     stagePresent.dim(`→ Simulated git mode (${realGit.reason})`)
   }
 
-  const resumePlan = options?.resume ? normalizeProjectResume(options.resume) : null
-  const projects = resumePlan
-    ? await loadProjects(context)
-    : await withStageLifecycle("brainstorm", {}, () => brainstorm(item, context, options?.llm?.stage))
-  if (activeRun) {
-    projects.forEach((project, index) => {
-      emitEvent({
-        type: "project_created",
-        runId: activeRun.runId,
-        itemId: activeRun.itemId,
-        projectId: project.id,
-        code: project.id,
-        name: project.name,
-        summary: project.description,
-        position: index,
+  try {
+    if (realGit.enabled) ensureItemBranchReal(realGit, context)
+
+    const resumePlan = options?.resume ? normalizeProjectResume(options.resume) : null
+    const projects = resumePlan
+      ? await loadProjects(context)
+      : await withStageLifecycle("brainstorm", {}, () => brainstorm(item, context, options?.llm?.stage))
+    if (activeRun) {
+      projects.forEach((project, index) => {
+        emitEvent({
+          type: "project_created",
+          runId: activeRun.runId,
+          itemId: activeRun.itemId,
+          projectId: project.id,
+          code: project.id,
+          name: project.name,
+          summary: project.description,
+          position: index,
+        })
       })
-    })
-  }
+    }
 
-  for (const project of projects) {
-    if (realGit.enabled) ensureProjectBranchReal(realGit, context, project.id)
-    await runProject({ ...context, project }, resumePlan ?? undefined, options?.llm)
-    if (realGit.enabled) mergeProjectIntoItemReal(realGit, context, project.id)
-  }
+    for (const project of projects) {
+      if (realGit.enabled) ensureProjectBranchReal(realGit, context, project.id)
+      await runProject({ ...context, project }, resumePlan ?? undefined, options?.llm)
+      if (realGit.enabled) mergeProjectIntoItemReal(realGit, context, project.id)
+    }
 
-  stagePresent.header("DONE")
-  stagePresent.ok(`Item "${item.title}" is done ✓`)
+    stagePresent.header("DONE")
+    stagePresent.ok(`Item "${item.title}" is done ✓`)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (realGit.enabled && (message.startsWith("realGit:") || message.startsWith("branch_gate:"))) {
+      const summary =
+        `Run blocked: git branch gate failed for "${item.title}". ` +
+        `${message.replace(/^branch_gate:\s*/, "").replace(/^realGit:\s*/, "")}`
+      stagePresent.warn(summary)
+      await blockRunForWorkspaceState(context, summary)
+    }
+    throw error
+  } finally {
+    if (realGit.enabled) {
+      try {
+        const exitBranch = exitRunToItemBranchReal(realGit, context)
+        stagePresent.dim(`→ Run exit branch: ${exitBranch}`)
+      } catch (error) {
+        stagePresent.warn(`Run exit branch restore failed: ${(error as Error).message}`)
+      }
+    }
+  }
 }
 
 async function runProject(initialCtx: ProjectContext, resume?: ProjectResumePlan, llm?: WorkflowLlmOptions): Promise<void> {
@@ -310,6 +407,15 @@ async function runProject(initialCtx: ProjectContext, resume?: ProjectResumePlan
 }
 
 async function handoffCandidate(ctx: WithDocumentation): Promise<void> {
+  const realGit = detectRealGitMode(ctx)
+  if (realGit.enabled) {
+    stagePresent.header(`handoff — ${ctx.project.name}`)
+    stagePresent.ok("Project already merged into the item branch in real git mode.")
+    stagePresent.dim(`→ Item branch: ${branchNameItem(ctx)}`)
+    stagePresent.dim(`→ Project branch: ${branchNameProject(ctx, ctx.project.id)}`)
+    return
+  }
+
   const handoff = await createCandidateBranch(ctx, ctx.project, ctx.documentation)
   stagePresent.header(`handoff — ${ctx.project.name}`)
   stagePresent.ok(handoff.summary)

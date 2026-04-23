@@ -1,6 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { mkdtempSync } from "node:fs"
+import { readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { PassThrough } from "node:stream"
@@ -20,7 +21,8 @@ import { createCliIO } from "../src/core/ioCli.js"
 import { createBus } from "../src/core/bus.js"
 import { attachNdjsonRenderer } from "../src/core/renderers/ndjson.js"
 import { ask } from "../src/sim/human.js"
-import { createStageRun, writeArtifactFiles } from "../src/core/stageRuntime.js"
+import { createStageRun, persistWorkflowRunState, writeArtifactFiles } from "../src/core/stageRuntime.js"
+import { layout } from "../src/core/workspaceLayout.js"
 
 function tmpDb() {
   const dir = mkdtempSync(join(tmpdir(), "be2-dbsync-"))
@@ -340,6 +342,43 @@ test("chat_message and presentation are persisted through the bus subscribers", 
   db.close()
 })
 
+test("persisted log activity refreshes run and stage updated_at timestamps", () => {
+  const db = tmpDb()
+  const repos = new Repos(db)
+  const ws = repos.upsertWorkspace({ key: "test", name: "Test" })
+  const item = repos.createItem({ workspaceId: ws.id, title: "T", description: "D" })
+  const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "T" })
+  const { bus } = makeBusIO()
+
+  try {
+    attachDbSync(bus, repos, { runId: run.id, itemId: item.id })
+    bus.emit({ type: "run_started", runId: run.id, itemId: item.id, title: "T" })
+    bus.emit({ type: "stage_started", runId: run.id, stageRunId: "stage-1", stageKey: "execution" })
+
+    const runBefore = repos.getRun(run.id)
+    const stageBefore = repos.listStageRunsForRun(run.id).find(stage => stage.id === "stage-1")
+    assert.ok(runBefore)
+    assert.ok(stageBefore)
+
+    bus.emit({
+      type: "presentation",
+      runId: run.id,
+      stageRunId: "stage-1",
+      kind: "dim",
+      text: "claude: turn started",
+    })
+
+    const runAfter = repos.getRun(run.id)
+    const stageAfter = repos.listStageRunsForRun(run.id).find(stage => stage.id === "stage-1")
+    assert.ok(runAfter)
+    assert.ok(stageAfter)
+    assert.ok((runAfter?.updated_at ?? 0) >= (runBefore?.updated_at ?? 0))
+    assert.ok((stageAfter?.updated_at ?? 0) >= (stageBefore?.updated_at ?? 0))
+  } finally {
+    db.close()
+  }
+})
+
 test("attachDbSync is idempotent on re-emitted stage_started events", () => {
   const db = tmpDb()
   const repos = new Repos(db)
@@ -402,4 +441,24 @@ test("prepareRun keeps an existing item's workspace instead of forcing default",
   assert.notEqual(run?.workspace_id, defaultWs.id)
   session.dispose()
   db.close()
+})
+
+test("persistWorkflowRunState keeps run.json and workspace.json aligned with run completion", async () => {
+  const ctx = { workspaceId: "ws-runstate", runId: "run-runstate" }
+
+  await persistWorkflowRunState(ctx, "handoff", "completed")
+
+  const runFile = JSON.parse(readFileSync(layout.runFile(ctx), "utf8")) as {
+    currentStage: string
+    status: string
+  }
+  const workspaceFile = JSON.parse(readFileSync(layout.workspaceFile(ctx.workspaceId), "utf8")) as {
+    currentStage: string
+    status: string
+  }
+
+  assert.equal(runFile.currentStage, "handoff")
+  assert.equal(runFile.status, "completed")
+  assert.equal(workspaceFile.currentStage, "handoff")
+  assert.equal(workspaceFile.status, "approved")
 })

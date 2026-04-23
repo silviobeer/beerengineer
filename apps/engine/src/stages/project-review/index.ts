@@ -73,7 +73,7 @@ export async function projectReview(ctx: WithExecution, llm?: RunLlmConfig): Pro
       printStageCompletion(run, "project-review")
       return artifact
     },
-    maxReviews: 2,
+    maxReviews: 4,
   })
 
   return result

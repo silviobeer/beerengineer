@@ -295,11 +295,11 @@ async function runStoryReview(input: {
 }): Promise<StoryReviewRun> {
   if (!input.llm) {
     const review = await runStoryReviewTools({
-      workspaceRoot: process.cwd(),
+      workspaceRoot: input.storyContext.worktreeRoot ?? process.cwd(),
       artifactsDir: input.artifactsDir,
       baselineSha: null,
-      storyBranch: requireBranch(input.implementation).name,
-      baseBranch: "main",
+      storyBranch: input.storyContext.storyBranch ?? requireBranch(input.implementation).name,
+      baseBranch: input.storyContext.item.baseBranch,
       changedFiles: input.implementation.changedFiles,
       storyId: input.storyContext.story.id,
       reviewCycle: input.reviewCycle,
@@ -336,20 +336,21 @@ async function runStoryReview(input: {
     }
   }
 
-  const workspaceConfig = await readWorkspaceConfig(input.llm.workspaceRoot)
+  const reviewWorkspaceRoot = input.storyContext.worktreeRoot ?? input.llm.workspaceRoot
+  const workspaceConfig = await readWorkspaceConfig(reviewWorkspaceRoot)
   const reviewPolicy = workspaceConfig?.reviewPolicy ?? {
     coderabbit: { enabled: false },
     sonarcloud: workspaceConfig?.sonar ?? { enabled: false },
   }
   const baselineSha = await readBaselineSha(input.baselinePath)
-  const changedFiles = await collectReviewChangedFiles(input.llm.workspaceRoot, input.baselinePath)
-  const baseBranch = reviewPolicy.sonarcloud.baseBranch ?? (runGit(["branch", "--show-current"], input.llm.workspaceRoot).stdout || "main")
+  const changedFiles = await collectReviewChangedFiles(reviewWorkspaceRoot, input.baselinePath)
+  const baseBranch = reviewPolicy.sonarcloud.baseBranch ?? input.storyContext.item.baseBranch
 
   const review = await runStoryReviewTools({
-    workspaceRoot: input.llm.workspaceRoot,
+    workspaceRoot: reviewWorkspaceRoot,
     artifactsDir: input.artifactsDir,
     baselineSha,
-    storyBranch: requireBranch(input.implementation).name,
+    storyBranch: input.storyContext.storyBranch ?? requireBranch(input.implementation).name,
     baseBranch,
     changedFiles,
     storyId: input.storyContext.story.id,

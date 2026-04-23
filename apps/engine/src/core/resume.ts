@@ -1,6 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
-import { runWorkflow } from "../workflow.js"
+import { runWorkflow, type WorkflowLlmOptions } from "../workflow.js"
 import type { StoryImplementationArtifact } from "../types.js"
 import { readRecoveryRecord, type RecoveryRecord } from "./recovery.js"
 import { runWithWorkflowIO, type WorkflowIO } from "./io.js"
@@ -10,6 +10,7 @@ import { attachDbSync } from "./runOrchestrator.js"
 import { attachCrossProcessBridge } from "./crossProcessBridge.js"
 import type { EventBus } from "./bus.js"
 import type { ExternalRemediationRow, Repos, RunRow } from "../db/repositories.js"
+import { readWorkspaceConfig } from "./workspaces.js"
 
 /** Returned by load(). Centralizes the decision about whether a run can be resumed. */
 export type ResumeReadiness =
@@ -168,6 +169,25 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
     throw new Error(`not_resumable:${readiness.kind}`)
   }
   const { run, record, ctx } = readiness
+  const workspaceRow = input.repos.getWorkspace(run.workspace_id)
+  let llm: WorkflowLlmOptions | undefined
+  if (workspaceRow?.root_path) {
+    const workspaceConfig = await readWorkspaceConfig(workspaceRow.root_path)
+    if (workspaceConfig) {
+      const stageConfig = {
+        workspaceRoot: workspaceRow.root_path,
+        harnessProfile: workspaceConfig.harnessProfile,
+        runtimePolicy: workspaceConfig.runtimePolicy,
+      }
+      llm = {
+        stage: stageConfig,
+        execution: {
+          stage: stageConfig,
+          executionCoder: stageConfig,
+        },
+      }
+    }
+  }
 
   inflightResumes.add(input.runId)
   try {
@@ -222,7 +242,11 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
           try {
             await runWorkflow(
               { id: run.item_id, title: run.title, description: "" },
-              { resume: { scope: record.scope, currentStage: run.current_stage } },
+              {
+                resume: { scope: record.scope, currentStage: run.current_stage },
+                llm,
+                workspaceRoot: workspaceRow?.root_path ?? undefined,
+              },
             )
             bus.emit({ type: "run_finished", runId: run.id, status: "completed" })
           } catch (err) {

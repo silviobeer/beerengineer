@@ -62,7 +62,7 @@ export async function brainstorm(item: Item, context: WorkflowContext, llm?: Run
       printStageCompletion(run, "brainstorm")
       return artifact.projects
     },
-    maxReviews: 2,
+    maxReviews: 4,
   })
 
   return result

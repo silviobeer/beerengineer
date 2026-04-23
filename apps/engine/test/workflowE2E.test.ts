@@ -1,14 +1,16 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { readFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { spawnSync } from "node:child_process"
 
 import { runWithWorkflowIO, type WorkflowEvent, type WorkflowIO } from "../src/core/io.js"
 import { runWorkflow } from "../src/workflow.ts"
 import { layout } from "../src/core/workspaceLayout.js"
 import type { SimulatedRepoState } from "../src/types.js"
+import { runWithActiveRun } from "../src/core/runContext.js"
 
 function makeIO(answers: {
   brainstorm: string[]
@@ -118,7 +120,7 @@ test("runWorkflow runs end-to-end with all review/side loops, producing artifact
     )
     assert.equal(plan.plan.waves.length, 2)
     assert.equal(plan.plan.waves[0].stories.length, 1)
-    assert.equal(plan.plan.waves[1].parallel, true)
+    assert.equal(plan.plan.waves[1].internallyParallelizable, true)
 
     const qaReport = JSON.parse(
       await readFile(join(layout.stageArtifactsDir(ctx, "qa"), "qa-report.json"), "utf8"),
@@ -156,7 +158,7 @@ test("runWorkflow runs end-to-end with all review/side loops, producing artifact
     const handoff = JSON.parse(await readFile(handoffPath, "utf8"))
     assert.equal(handoff.decision, "test")
     assert.equal(handoff.candidateBranch.status, "open")
-    assert.equal(handoff.candidateBranch.base, "item/test-workflow")
+    assert.equal(handoff.candidateBranch.base, "proj/test-workflow__p01")
     assert.equal(handoff.mergeTargetBranch, "main")
     assert.match(handoff.candidateBranch.name, /^candidate\//)
 
@@ -176,4 +178,181 @@ test("runWorkflow runs end-to-end with all review/side loops, producing artifact
     const finalWs = JSON.parse(await readFile(layout.workspaceFile(ctx.workspaceId), "utf8"))
     assert.equal(finalWs.status, "approved", "last stage status propagated to workspace")
   })
+})
+
+test("runWorkflow blocks early when the workspace git repo is dirty", async () => {
+  const root = mkdtempSync(join(tmpdir(), "be2-dirty-workflow-"))
+  const events: WorkflowEvent[] = []
+  try {
+    spawnSync("git", ["init", "--initial-branch=main"], { cwd: root, encoding: "utf8" })
+    spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: root, encoding: "utf8" })
+    spawnSync("git", ["config", "user.name", "test"], { cwd: root, encoding: "utf8" })
+    writeFileSync(join(root, "README.md"), "seed\n")
+    spawnSync("git", ["add", "-A"], { cwd: root, encoding: "utf8" })
+    spawnSync("git", ["commit", "-m", "seed"], { cwd: root, encoding: "utf8" })
+    spawnSync("git", ["remote", "add", "origin", "https://github.com/acme/demo.git"], { cwd: root, encoding: "utf8" })
+    spawnSync("git", ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"], { cwd: root, encoding: "utf8" })
+    mkdirSync(join(root, ".beerengineer"), { recursive: true })
+    writeFileSync(
+      join(root, ".beerengineer", "workspace.json"),
+      JSON.stringify({
+        schemaVersion: 2,
+        key: "dirty",
+        name: "Dirty",
+        harnessProfile: { mode: "claude-first" },
+        runtimePolicy: {
+          stageAuthoring: "safe-readonly",
+          reviewer: "safe-readonly",
+          coderExecution: "safe-workspace-write",
+        },
+        sonar: { enabled: false, baseBranch: "story/legacy-config-branch" },
+        reviewPolicy: {
+          coderabbit: { enabled: false },
+          sonarcloud: { enabled: false, baseBranch: "story/legacy-config-branch" },
+        },
+        preflight: {
+          git: { status: "ok" },
+          github: { status: "ok", owner: "acme", repo: "demo", defaultBranch: "story/legacy-config-branch" },
+          gh: { status: "missing" },
+          sonar: { status: "missing" },
+          coderabbit: { status: "missing" },
+          checkedAt: new Date().toISOString(),
+        },
+        createdAt: Date.now(),
+      }, null, 2),
+    )
+    writeFileSync(join(root, "dirty.txt"), "uncommitted\n")
+
+    const io: WorkflowIO = {
+      async ask() {
+        throw new Error("should not prompt while blocking on dirty repo")
+      },
+      emit(event) {
+        events.push(event)
+      },
+    }
+
+    await assert.rejects(
+      () =>
+        runWithWorkflowIO(io, () =>
+          runWithActiveRun({ runId: "run-dirty", itemId: "item-dirty" }, () =>
+            runWorkflow(
+              { id: "item-dirty", title: "Dirty Repo Item", description: "should block" },
+              { workspaceRoot: root },
+            ),
+          ),
+        ),
+      /Strategy violation: main\/master must stay clean/i,
+    )
+
+    const blocked = events.find((event) => event.type === "run_blocked")
+    assert.ok(blocked, "expected run_blocked event")
+    if (blocked?.type === "run_blocked") {
+      assert.equal(blocked.scope.type, "run")
+      assert.match(blocked.summary, /Strategy violation/i)
+      assert.match(blocked.summary, /main\/master/i)
+    }
+    const baseBranchPresentation = events.find(
+      (event) => event.type === "presentation" && /Base branch: main/.test(event.text),
+    )
+    assert.ok(baseBranchPresentation, "expected workflow to ignore stale story/* config branch and resolve main")
+    assert.equal(events.some((event) => event.type === "run_finished"), false)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("runWorkflow blocks dirty engine-owned branches without labeling them as main/master violations", async () => {
+  const root = mkdtempSync(join(tmpdir(), "be2-dirty-story-workflow-"))
+  const events: WorkflowEvent[] = []
+  try {
+    spawnSync("git", ["init", "--initial-branch=main"], { cwd: root, encoding: "utf8" })
+    spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: root, encoding: "utf8" })
+    spawnSync("git", ["config", "user.name", "test"], { cwd: root, encoding: "utf8" })
+    writeFileSync(join(root, "README.md"), "seed\n")
+    spawnSync("git", ["add", "-A"], { cwd: root, encoding: "utf8" })
+    spawnSync("git", ["commit", "-m", "seed"], { cwd: root, encoding: "utf8" })
+    spawnSync("git", ["checkout", "-b", "story/legacy-config-branch"], { cwd: root, encoding: "utf8" })
+    writeFileSync(join(root, "dirty.txt"), "uncommitted\n")
+
+    const io: WorkflowIO = {
+      async ask() {
+        throw new Error("should not prompt while blocking on dirty repo")
+      },
+      emit(event) {
+        events.push(event)
+      },
+    }
+
+    await assert.rejects(
+      () =>
+        runWithWorkflowIO(io, () =>
+          runWithActiveRun({ runId: "run-dirty-story", itemId: "item-dirty-story" }, () =>
+            runWorkflow(
+              { id: "item-dirty-story", title: "Dirty Story Repo Item", description: "should block" },
+              { workspaceRoot: root },
+            ),
+          ),
+        ),
+      /BeerEngineer requires a clean repo before it creates an isolated item branch\./i,
+    )
+
+    const blocked = events.find((event) => event.type === "run_blocked")
+    assert.ok(blocked, "expected run_blocked event")
+    if (blocked?.type === "run_blocked") {
+      assert.equal(blocked.scope.type, "run")
+      assert.match(blocked.summary, /has uncommitted changes/i)
+      assert.doesNotMatch(blocked.summary, /Strategy violation/i)
+      assert.doesNotMatch(blocked.summary, /main\/master/i)
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("runWorkflow skips interactive handoff in real git mode after merging project into item", async () => {
+  const root = mkdtempSync(join(tmpdir(), "be2-realgit-handoff-"))
+  const { io, promptLog } = makeIO({
+    brainstorm: [
+      "Browser greeting plus cli.",
+      "Audience: developers.",
+      "Constraint: local only.",
+      "Stable enough.",
+    ],
+    requirements: [
+      "Need browser.",
+      "Need cli preserved.",
+      "Need tests.",
+    ],
+    qa: "accept",
+    handoff: "reject",
+  })
+
+  try {
+    spawnSync("git", ["init", "--initial-branch=main"], { cwd: root, encoding: "utf8" })
+    spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: root, encoding: "utf8" })
+    spawnSync("git", ["config", "user.name", "test"], { cwd: root, encoding: "utf8" })
+    writeFileSync(join(root, "README.md"), "seed\n")
+    spawnSync("git", ["add", "-A"], { cwd: root, encoding: "utf8" })
+    spawnSync("git", ["commit", "-m", "seed"], { cwd: root, encoding: "utf8" })
+
+    await runWithWorkflowIO(io, () =>
+      runWorkflow(
+        { id: "item-real-git", title: "Real Git Handoff", description: "should not prompt at handoff" },
+        { workspaceRoot: root },
+      ),
+    )
+
+    assert.equal(
+      promptLog.some(prompt => prompt.startsWith("  Test, merge")),
+      false,
+      "real git mode must not prompt for candidate handoff decisions",
+    )
+    assert.equal(
+      spawnSync("git", ["branch", "--show-current"], { cwd: root, encoding: "utf8" }).stdout.trim(),
+      "item/real-git-handoff",
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })

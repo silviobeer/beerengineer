@@ -110,10 +110,12 @@ async function executeWave(
   resume?: ExecutionResumeOptions,
   llm?: ExecutionLlmOptions,
 ): Promise<WaveSummary> {
-  // `wave.parallel` remains sequential for now, but real-git story execution
-  // now gets an isolated worktree per story so filesystem changes no longer
-  // collide across branches.
-  const tag = wave.parallel ? "(planned parallel, executed sequentially with isolated worktrees)" : "(sequential)"
+  // A wave is a serial integration boundary. `internallyParallelizable`
+  // means only that its stories are dependency-independent and may execute
+  // concurrently inside the wave once the runtime supports that mode.
+  const tag = wave.internallyParallelizable
+    ? "(stories eligible for parallel execution inside the wave; currently executed sequentially with isolated worktrees)"
+    : "(stories executed sequentially)"
   stagePresent.step(`\nWave ${wave.number} ${tag}: ${wave.stories.map(s => s.id).join(", ")}`)
   await ensureWaveBranch(ctx, ctx.project.id, wave.number)
 
@@ -222,17 +224,20 @@ async function implementStory(
   }
 
   const testPlanPath = join(layout.executionTestWriterDir(ctx, wave.number, story.id), "test-plan.json")
+  const storyStageLlm = executionStageLlmForStory(llm?.stage, opts.worktreeRoot)
   const testPlan = !opts.rerunTestWriter
-    ? (await readJsonIfExists<StoryTestPlanArtifact>(testPlanPath)) ?? await writeStoryTestPlan(ctx, wave, story, llm?.stage)
-    : await writeStoryTestPlan(ctx, wave, story, llm?.stage)
+    ? (await readJsonIfExists<StoryTestPlanArtifact>(testPlanPath)) ?? await writeStoryTestPlan(ctx, wave, story, storyStageLlm)
+    : await writeStoryTestPlan(ctx, wave, story, storyStageLlm)
   stagePresent.dim(`  Test plan: ${testPlan.testPlan.testCases.map(tc => tc.id).join(", ")}`)
   const storyContext = buildStoryExecutionContext(ctx, wave, ctx.architecture, testPlan, opts.worktreeRoot)
-  const executionLlm = llm?.executionCoder && opts.worktreeRoot
-    ? { ...llm.executionCoder, workspaceRoot: opts.worktreeRoot }
-    : llm?.executionCoder
+  const executionLlm = executionStageLlmForStory(llm?.executionCoder, opts.worktreeRoot)
   const result: StoryArtifacts = await runRalphStory(storyContext, ctx, executionLlm)
   stagePresent.dim(`  Status: ${result.implementation.status}`)
   return { storyId: story.id, implementation: result.implementation }
+}
+
+export function executionStageLlmForStory(llm: RunLlmConfig | undefined, worktreeRoot?: string): RunLlmConfig | undefined {
+  return llm && worktreeRoot ? { ...llm, workspaceRoot: worktreeRoot } : llm
 }
 
 function buildStoryExecutionContext(

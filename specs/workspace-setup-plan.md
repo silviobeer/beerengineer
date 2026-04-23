@@ -119,6 +119,25 @@ Keep them separate; don't conflate.
    ```
    User clicks, SonarCloud does the right thing. API-create is a v2 flag.
 
+   Setup guidance should explicitly tell the user what to do in SonarQube
+   Cloud:
+
+   - first create or import the project in SonarQube Cloud
+   - prefer repository import/binding when possible, because SonarQube Cloud
+     can create projects by importing repositories from the user's DevOps
+     platform
+   - if repository import is not possible, create the project manually
+   - choose the correct region before continuing:
+     - EU default: `https://sonarcloud.io`
+     - US region: `https://sonarqube.us`
+   - if the project lives in the US region, scanner config must include
+     `sonar.region=us`
+   - tell the user to put durable analysis settings in the SonarQube Cloud UI
+     when possible; command-line overrides are transient
+
+   This should be shown as plain-English next steps in both CLI and UI, not
+   just as a raw deeplink.
+
 3. **Sonar MCP wiring** (so harnesses can query Sonar results). This is
    **harness-side config**, not workspace-side — it belongs in
    `~/.claude/mcp.json`, `~/.codex/mcp.json`, etc. For v1, BeerEngineer
@@ -129,6 +148,15 @@ Keep them separate; don't conflate.
 
 v1 Sonar setup = generate the `.properties` file + the workspace config
 block + print SonarCloud URL + print MCP snippets. Zero network calls.
+
+The setup copy should be explicit about the minimum manual steps:
+
+1. Create or import the SonarQube Cloud project.
+2. Generate a token for analysis.
+3. Store the token locally as `SONAR_TOKEN`.
+4. Confirm the Sonar organization, project key, host URL, and region.
+5. Let BeerEngineer generate `sonar-project.properties`.
+6. Optionally wire Sonar MCP into the installed harness configs.
 
 ## Harness profiles
 
@@ -246,8 +274,14 @@ sonar-project.properties ...                           ✓
 Registered as "new-thing" (key: new-thing).
 
 Next steps
-  · Create the SonarCloud project:
+  · Create or import the SonarQube Cloud project first:
       https://sonarcloud.io/projects/create?organization=silvio&name=new-thing&key=new-thing
+    If your org is on the US instance, use the SonarQube Cloud US site and
+    set `sonar.region=us` in scanner config.
+  · In SonarQube Cloud, prefer setting durable analysis parameters in the UI.
+    Keep local scanner flags for connection/runtime details only.
+  · Create an analysis token and export it locally:
+      export SONAR_TOKEN=...
   · Add Sonar MCP to your harness:
       ~/.claude/mcp.json  — paste this snippet:
       { "servers": { "sonarqube": { "url": "https://sonarcloud.io", "token": "<SONAR_TOKEN>" } } }
@@ -285,6 +319,14 @@ beerengineer workspace add \
 For modes 5 and 6 pass `--profile-json '{"mode":"self","roles":{...}}'`.
 
 The UI's future `POST /workspaces` body mirrors the same shape.
+
+For Sonar-enabled setup, the UI should also include a compact help block:
+
+- "Before finishing setup, create/import this repo in SonarQube Cloud."
+- "If you are using the US region, choose US here and BeerEngineer will emit
+  `sonar.region=us`."
+- "Create an analysis token and store it locally as `SONAR_TOKEN`."
+- "Long-lived analysis settings belong in the SonarQube Cloud UI."
 
 ## CLI commands
 

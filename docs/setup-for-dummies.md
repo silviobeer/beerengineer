@@ -61,6 +61,48 @@ Each one needs its own auth (API key or login flow). Check each tool's docs.
 Don't try to install everything at once. Get the required stuff working,
 add the nice-to-haves later when you run into them.
 
+**If you want SonarQube Cloud later, there are a few manual steps people
+often miss:**
+
+- BeerEngineer can generate local Sonar config files, but you still need to
+  create or import the project in SonarQube Cloud itself.
+- If possible, import the repository into SonarQube Cloud instead of creating
+  the project by hand.
+- After that, create an analysis token and export it locally as
+  `SONAR_TOKEN`.
+- If your organization uses the US SonarQube Cloud instance instead of the
+  EU default, that must be selected explicitly during setup.
+
+**Configure the project for AI Code Assurance** (BeerEngineer output is
+AI-generated, so this must be set up before the first scan):
+
+1. **Mark the project as containing AI code.**
+   Open the project in SonarQube Cloud → *Project settings* →
+   *AI-generated code* → enable **Contains AI-generated code**. This adds
+   the **+Contains AI code** label to the project.
+
+   API equivalent (useful for scripting):
+   ```
+   curl -XPOST -H "Authorization: Bearer $SONAR_TOKEN" \
+     "https://sonarcloud.io/api/projects/set_contains_ai_code?contains_ai_code=true&project=<PROJECT_KEY>"
+   ```
+
+2. **Apply an AI-qualified quality gate.**
+   *Project settings* → *Quality Gate* → select **Sonar way for AI Code**
+   (the built-in gate that qualifies for AI Code Assurance). If you prefer
+   a custom gate, a Quality Standard administrator must first qualify it
+   for AI Code Assurance in the org-level quality-gate settings; only then
+   will it appear as an eligible option here.
+
+3. **Disable automatic analysis.**
+   BeerEngineer runs `sonar-scanner` from the workspace, so automatic
+   analysis must be off to avoid double-scans and conflicting results.
+   *Administration* → *Analysis Method* → unselect **Enabled for this
+   project**. Then point the page at a CI-based / scanner-based method.
+
+Only after steps 1–3 are done will the project be flagged as AI Code
+Assured in the SonarQube Cloud UI.
+
 ---
 
 ## Step 1 — Install BeerEngineer2 itself
@@ -203,6 +245,13 @@ Hit `y` at the end, and BeerEngineer creates:
   .gitignore                          ← pre-populated
   sonar-project.properties            ← only if you enabled sonar
 ```
+
+If you enable Sonar, BeerEngineer should also tell you:
+
+1. Create or import the repo in SonarQube Cloud.
+2. Check whether your org is on the EU default site or the US site.
+3. Create an analysis token and export `SONAR_TOKEN`.
+4. Keep durable analysis settings in the SonarQube Cloud UI when possible.
 
 **Brownfield (existing project):**
 

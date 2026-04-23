@@ -2,6 +2,7 @@ export type Item = {
   id: string
   title: string
   description: string
+  baseBranch?: string
 }
 
 export type Concept = {
@@ -71,7 +72,7 @@ export type WaveDefinition = {
     id: string
     title: string
   }>
-  parallel: boolean
+  internallyParallelizable: boolean
   dependencies: string[]
   exitCriteria: string[]
 }

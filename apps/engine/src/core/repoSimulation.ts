@@ -38,11 +38,18 @@ function cloneBranch(branch: SimulatedBranch): SimulatedBranch {
 }
 
 function itemSlugFromContext(context: WorkflowContext): string {
-  return slugify(context.itemSlug ?? context.workspaceId.replace(/-[^-]+$/, ""), "item")
+  if (!context.itemSlug) {
+    throw new Error("WorkflowContext.itemSlug is required for branch operations")
+  }
+  return slugify(context.itemSlug, "item")
 }
 
 function baseBranchFromContext(context: WorkflowContext): string {
-  return context.baseBranch?.trim() || "main"
+  const branch = context.baseBranch?.trim()
+  if (!branch) {
+    throw new Error("WorkflowContext.baseBranch is required for branch operations")
+  }
+  return branch
 }
 
 export function branchNameItem(context: WorkflowContext): string {
@@ -66,8 +73,8 @@ export function branchNameStory(
   return `story/${itemSlugFromContext(context)}__${slugify(projectId)}__w${waveNumber}__${slugify(storyId)}`
 }
 
-export function branchNameCandidate(context: WorkflowContext, itemSlug?: string): string {
-  return `candidate/${slugify(context.runId)}__${slugify(itemSlug ?? itemSlugFromContext(context))}`
+export function branchNameCandidate(context: WorkflowContext, projectId: string): string {
+  return `candidate/${slugify(context.runId)}__${itemSlugFromContext(context)}__${slugify(projectId)}`
 }
 
 async function readRepoState(path: string): Promise<SimulatedRepoState | undefined> {
@@ -356,21 +363,21 @@ export async function createCandidateBranch(
   project: { id: string; name: string },
   documentationArtifact: DocumentationArtifact,
 ): Promise<MergeHandoffArtifact> {
-  const candidateBranchName = branchNameCandidate(context)
-  const itemBranchName = branchNameItem(context)
+  const candidateBranchName = branchNameCandidate(context, project.id)
+  const projectBranchName = branchNameProject(context, project.id)
   const mergeTargetBranch = baseBranchFromContext(context)
 
   const candidateBranch = await mutateRepoState(context, state => {
-    const itemBranch = ensureItemBranch(state, context)
+    const projectBranch = ensureProjectBranch(state, context, project.id)
     const candidate = upsertBranch(state, {
       name: candidateBranchName,
-      base: itemBranch.name,
+      base: projectBranch.name,
       kind: "candidate",
       commits: [
-        ...itemBranch.commits.map(commit => ({ ...commit, filesChanged: [...commit.filesChanged] })),
+        ...projectBranch.commits.map(commit => ({ ...commit, filesChanged: [...commit.filesChanged] })),
         {
           hash: branchHash(`${candidateBranchName}-docs`),
-          message: `Prepare ${candidateBranchName} from ${itemBranchName}`,
+          message: `Prepare ${candidateBranchName} from ${projectBranchName}`,
           filesChanged: [
             "docs/technical-doc.md",
             "docs/features-doc.md",
@@ -398,7 +405,7 @@ export async function createCandidateBranch(
       {
         projectId: project.id,
         runId: context.runId,
-        sourceBranch: itemBranchName,
+        sourceBranch: projectBranchName,
       },
     ],
     mergeChecklist: [

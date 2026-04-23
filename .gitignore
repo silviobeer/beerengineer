@@ -13,3 +13,6 @@ apps/ui/playwright-report/
 apps/engine/dist/
 *.tsbuildinfo
 .DS_Store
+.env.local
+.beerengineer/runs/
+.beerengineer/cache/

@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 
-import { spawn } from "node:child_process"
-import { existsSync } from "node:fs"
+import { spawn, spawnSync } from "node:child_process"
+import { cpSync, existsSync } from "node:fs"
 import { resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { ask, close } from "./sim/human.js"
 import { createCliIO } from "./core/ioCli.js"
+import { detectRealGitMode, gcManagedStoryWorktreesReal } from "./core/realGit.js"
+import { layout } from "./core/workspaceLayout.js"
 import {
   backfillWorkspaceConfigs,
   getRegisteredWorkspace,
@@ -18,7 +20,7 @@ import {
 } from "./core/workspaces.js"
 import { initDatabase } from "./db/connection.js"
 import { Repos } from "./db/repositories.js"
-import { runWorkflowWithSync } from "./core/runOrchestrator.js"
+import { prepareRun, runWorkflowWithSync } from "./core/runOrchestrator.js"
 import type { ItemRow } from "./db/repositories.js"
 import {
   KNOWN_GROUP_IDS,
@@ -73,6 +75,7 @@ type Command =
   | { kind: "workspace-remove"; key?: string; json?: boolean; purge?: boolean }
   | { kind: "workspace-open"; key?: string }
   | { kind: "workspace-backfill"; json?: boolean }
+  | { kind: "workspace-worktree-gc"; key?: string; json?: boolean }
   | { kind: "unknown"; token: string }
 
 const UI_DEV_HOST = "127.0.0.1"
@@ -130,6 +133,7 @@ export function parseArgs(argv: string[]): Command {
   if (first === "workspace" && second === "remove") return { kind: "workspace-remove", key: argv[2], json, purge: argv.includes("--purge") }
   if (first === "workspace" && second === "open") return { kind: "workspace-open", key: argv[2] }
   if (first === "workspace" && second === "backfill") return { kind: "workspace-backfill", json }
+  if (first === "workspace" && second === "gc-worktrees") return { kind: "workspace-worktree-gc", key: argv[2], json }
   if (first === "start" && second === "ui") return { kind: "start-ui" }
   if (first === "item" && second === "action") {
     const itemRef = readFlag(argv, "--item")
@@ -175,6 +179,7 @@ function printHelp(): void {
     "    beerengineer workspace remove <key> [--purge]        Unregister a workspace",
     "    beerengineer workspace open <key>                    Print the workspace root path",
     "    beerengineer workspace backfill [--json]             Write missing .beerengineer/workspace.json files",
+    "    beerengineer workspace gc-worktrees <key> [--json]   Remove orphaned BeerEngineer story worktrees",
     "    beerengineer --help                                  Show this help",
     "",
     "  Item actions:",
@@ -539,6 +544,53 @@ async function runWorkspaceBackfillCommand(json = false): Promise<number> {
   }
 }
 
+async function runWorkspaceWorktreeGcCommand(key: string | undefined, json = false): Promise<number> {
+  if (!key) {
+    console.error("  Missing key: beerengineer workspace gc-worktrees <key>")
+    return 2
+  }
+
+  const db = initDatabase()
+  try {
+    const repos = new Repos(db)
+    const workspace = getRegisteredWorkspace(repos, key)
+    const rootPath = workspace?.rootPath?.trim()
+    if (!rootPath) {
+      console.error(`  Workspace not found or has no root path: ${key}`)
+      return 1
+    }
+
+    const mode = detectRealGitMode({
+      workspaceId: "gc",
+      runId: "gc",
+      itemSlug: "gc",
+      baseBranch: "main",
+      workspaceRoot: rootPath,
+    })
+    if (!mode.enabled && mode.reason !== "workspace has uncommitted changes (dirty repo)") {
+      console.error(`  Cannot gc worktrees: ${mode.reason}`)
+      return 1
+    }
+
+    const result = gcManagedStoryWorktreesReal(
+      { enabled: true, workspaceRoot: rootPath, baseBranch: "main" },
+      layout.worktreesRoot(),
+    )
+
+    if (json) {
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
+    } else {
+      console.log(`  Removed worktrees: ${result.removed.length}`)
+      result.removed.forEach(path => console.log(`    removed ${path}`))
+      console.log(`  Kept worktrees: ${result.kept.length}`)
+      result.kept.forEach(entry => console.log(`    kept ${entry.path} (${entry.reason})`))
+    }
+    return 0
+  } finally {
+    db.close()
+  }
+}
+
 export function startUi(): Promise<number> {
   const uiDir = resolveUiWorkspacePath()
   if (!existsSync(resolve(uiDir, "package.json"))) {
@@ -689,6 +741,94 @@ function printResumeBlockedOutput(
   )
 }
 
+function runGit(rootPath: string, args: string[]): { ok: boolean; stdout: string; stderr: string } {
+  const result = spawnSync("git", args, { cwd: rootPath, encoding: "utf8" })
+  return {
+    ok: result.status === 0,
+    stdout: (result.stdout ?? "").trim(),
+    stderr: (result.stderr ?? "").trim(),
+  }
+}
+
+function parseStatusBranch(line: string): string {
+  return line
+    .replace(/^##\s+/, "")
+    .split("...")[0]!
+    .split(/\s+\[/)[0]!
+    .trim()
+}
+
+function printDirtyRepoPreflight(rootPath: string): number {
+  const inside = runGit(rootPath, ["rev-parse", "--is-inside-work-tree"])
+  if (!inside.ok || inside.stdout !== "true") return 0
+
+  const status = runGit(rootPath, ["status", "--porcelain", "--branch"])
+  if (!status.ok) return 0
+
+  const lines = status.stdout.split(/\r?\n/).filter(Boolean)
+  const branchLine = lines.find(line => line.startsWith("## ")) ?? "## unknown"
+  const branchName = parseStatusBranch(branchLine)
+  const changed = lines.filter(line => !line.startsWith("## "))
+  if (changed.length === 0) return 0
+
+  const tracked = changed.filter(line => !line.startsWith("?? ")).length
+  const untracked = changed.filter(line => line.startsWith("?? ")).length
+  const onBaseBranch = branchName === "main" || branchName === "master"
+
+  console.error("  Git preflight failed: workspace repo is dirty.")
+  console.error(`  Root:   ${rootPath}`)
+  console.error(`  Branch: ${branchName || branchLine.slice(3)}`)
+  console.error(`  Changed files: ${changed.length} (${tracked} tracked, ${untracked} untracked)`)
+  if (onBaseBranch) {
+    console.error("  Strategy violation: uncommitted work is sitting on main/master.")
+    console.error("  BeerEngineer expects main/master to stay clean; item work must happen on item/* branches.")
+  } else {
+    console.error("  BeerEngineer requires a clean repo before starting a new item branch.")
+  }
+  console.error("  Next steps: git status")
+  console.error("             git add -A && git commit -m \"...\"")
+  console.error("             git stash push -u")
+  return 73
+}
+
+function preflightCliBranchingStart(repos: Repos, workspaceId: string): number {
+  const workspace = repos.getWorkspace(workspaceId)
+  const rootPath = workspace?.root_path?.trim()
+  if (!rootPath) return 0
+  return printDirtyRepoPreflight(rootPath)
+}
+
+function workflowWorkspaceId(item: Pick<ItemRow, "id" | "title">): string {
+  const slug = item.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
+  return slug ? `${slug}-${item.id.toLowerCase()}` : item.id.toLowerCase()
+}
+
+function hasStageArtifacts(item: Pick<ItemRow, "id" | "title">, runId: string, stageId: string): boolean {
+  return existsSync(layout.stageDir({ workspaceId: workflowWorkspaceId(item), runId }, stageId))
+}
+
+function latestRunWithStageArtifacts(
+  repos: Repos,
+  item: Pick<ItemRow, "id" | "title">,
+  stageId: string,
+): { id: string } | undefined {
+  return repos
+    .listRuns()
+    .filter(run => run.item_id === item.id)
+    .sort((a, b) => b.created_at - a.created_at)
+    .find(run => hasStageArtifacts(item, run.id, stageId))
+}
+
+function seedStageFromPreviousRun(item: ItemRow, sourceRunId: string, targetRunId: string, stageId: string): boolean {
+  const workspaceId = workflowWorkspaceId(item)
+  const sourceCtx = { workspaceId, runId: sourceRunId }
+  const targetCtx = { workspaceId, runId: targetRunId }
+  const sourceStageDir = layout.stageDir(sourceCtx, stageId)
+  if (!existsSync(sourceStageDir)) return false
+  cpSync(sourceStageDir, layout.stageDir(targetCtx, stageId), { recursive: true })
+  return true
+}
+
 export async function runItemAction(itemRef: string, action: string, resumeFlags?: ResumeFlags): Promise<number> {
   const { createItemActionsService, isItemAction, lookupTransition } = await import("./core/itemActions.js")
   if (!isItemAction(action)) {
@@ -721,6 +861,8 @@ export async function runItemAction(itemRef: string, action: string, resumeFlags
         console.error(`  Invalid transition: ${action} from ${item.current_column}/${item.phase_status}`)
         return 1
       }
+      const preflightExit = preflightCliBranchingStart(repos, item.workspace_id)
+      if (preflightExit !== 0) return preflightExit
       const io = createCliIO(repos)
       try {
         const runId = await runWorkflowWithSync(
@@ -731,6 +873,45 @@ export async function runItemAction(itemRef: string, action: string, resumeFlags
         )
         console.log(`  ${action} applied`)
         console.log(`  run-id: ${runId}`)
+        return 0
+      } finally {
+        io.close?.()
+      }
+    }
+
+    if (action === "start_implementation") {
+      const transition = lookupTransition(action, item.current_column, item.phase_status)
+      if (transition.kind !== "start-run") {
+        console.error(`  Invalid transition: ${action} from ${item.current_column}/${item.phase_status}`)
+        return 1
+      }
+      const preflightExit = preflightCliBranchingStart(repos, item.workspace_id)
+      if (preflightExit !== 0) return preflightExit
+      const sourceRun = latestRunWithStageArtifacts(repos, item, "brainstorm")
+      if (!sourceRun) {
+        console.error("  Cannot start implementation: no prior brainstorm artifacts found for this item.")
+        console.error("  Run start_brainstorm first, then retry start_implementation.")
+        return 1
+      }
+      const io = createCliIO(repos)
+      try {
+        const prepared = prepareRun(
+          { id: item.id, title: item.title, description: item.description },
+          repos,
+          io,
+          {
+            owner: "cli",
+            itemId: item.id,
+            resume: { scope: { type: "run", runId: "pending" }, currentStage: "requirements" },
+          },
+        )
+        if (!seedStageFromPreviousRun(item, sourceRun.id, prepared.runId, "brainstorm")) {
+          console.error("  Cannot start implementation: failed to seed brainstorm artifacts into the new run.")
+          return 1
+        }
+        await prepared.start()
+        console.log(`  ${action} applied`)
+        console.log(`  run-id: ${prepared.runId}`)
         return 0
       } finally {
         io.close?.()
@@ -903,6 +1084,8 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       process.exit(await runWorkspaceOpenCommand(cmd.key))
     case "workspace-backfill":
       process.exit(await runWorkspaceBackfillCommand(cmd.json))
+    case "workspace-worktree-gc":
+      process.exit(await runWorkspaceWorktreeGcCommand(cmd.key, cmd.json))
     case "start-ui":
       process.exit(await startUi())
     case "item-action":

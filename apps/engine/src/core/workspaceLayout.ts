@@ -26,6 +26,10 @@ function root(): string {
   return join(process.cwd(), ".beerengineer", "workspaces")
 }
 
+function worktreesRoot(): string {
+  return join(process.cwd(), ".beerengineer", "worktrees")
+}
+
 function workspaceDir(workspaceId: string): string {
   return join(root(), workspaceId)
 }
@@ -40,6 +44,7 @@ function stageDir(ctx: WorkflowContext, stageId: string): string {
 
 export const layout = {
   workspaceDir,
+  worktreesRoot,
   workspaceFile(workspaceId: string): string {
     return join(workspaceDir(workspaceId), "workspace.json")
   },
@@ -74,6 +79,18 @@ export const layout = {
   },
   executionStoryDir(ctx: WorkflowContext, waveNumber: number, storyId: string): string {
     return join(layout.executionWaveDir(ctx, waveNumber), "stories", storyId)
+  },
+  executionStoryWorktreeDir(ctx: WorkflowContext, waveNumber: number, storyId: string): string {
+    return join(
+      worktreesRoot(),
+      ctx.workspaceId,
+      "runs",
+      ctx.runId,
+      "waves",
+      `wave-${waveNumber}`,
+      "stories",
+      sanitizeSegment(storyId),
+    )
   },
   executionTestWriterDir(ctx: WorkflowContext, waveNumber: number, storyId: string): string {
     return join(layout.executionStoryDir(ctx, waveNumber, storyId), "test-writer")

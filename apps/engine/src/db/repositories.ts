@@ -526,6 +526,11 @@ export class Repos {
          VALUES (@id, @run_id, @stage_run_id, @event_type, @message, @data_json, @created_at)`
       )
       .run(row)
+    const touchedAt = now()
+    this.db.prepare("UPDATE runs SET updated_at = ? WHERE id = ?").run(touchedAt, input.runId)
+    if (input.stageRunId) {
+      this.db.prepare("UPDATE stage_runs SET updated_at = ? WHERE id = ?").run(touchedAt, input.stageRunId)
+    }
     return row
   }
 

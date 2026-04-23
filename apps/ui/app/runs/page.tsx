@@ -8,8 +8,14 @@ import { StartRunForm } from "@/components/runs/StartRunForm"
 
 export const dynamic = "force-dynamic"
 
-export default async function RunsPage() {
+export default async function RunsPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ workspace?: string }>
+}) {
+  const resolvedSearchParams = searchParams ? await searchParams : undefined
   const runs = await listRuns().catch(() => [])
+  const defaultWorkspaceKey = resolvedSearchParams?.workspace?.trim() || "alpha"
 
   return (
     <AppShell shell={shellViewModel} activeHref="/runs" workspaceHrefBase="/runs">
@@ -21,7 +27,7 @@ export default async function RunsPage() {
         <div className="runs-grid">
           <section className="runs-start">
             <h3>Start a new run</h3>
-            <StartRunForm defaultWorkspaceKey="alpha" />
+            <StartRunForm defaultWorkspaceKey={defaultWorkspaceKey} />
           </section>
           <section className="runs-list">
             <h3>Recent runs ({runs.length})</h3>

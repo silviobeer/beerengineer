@@ -1,9 +1,10 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, mkdirSync, rmSync } from "node:fs"
 import { readFile, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { spawnSync } from "node:child_process"
 
 import { initDatabase } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
@@ -15,6 +16,7 @@ import { writeRecoveryRecord } from "../src/core/recovery.js"
 import { performResume } from "../src/core/resume.js"
 import { createBus, busToWorkflowIO, type EventBus } from "../src/core/bus.js"
 import type { StoryImplementationArtifact } from "../src/types.js"
+import type { WorkspaceConfigFile } from "../src/types/workspace.js"
 
 function makeWorkflowIO(): { io: WorkflowIO & { bus: EventBus }; events: WorkflowEvent[] } {
   const events: WorkflowEvent[] = []
@@ -77,6 +79,29 @@ async function withTmpCwd<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+function sh(cwd: string, args: string[]): void {
+  const result = spawnSync("git", args, { cwd, encoding: "utf8" })
+  if (result.status !== 0) {
+    throw new Error(`git ${args.join(" ")} failed: ${result.stderr}`)
+  }
+}
+
+async function writeWorkspaceConfig(root: string): Promise<void> {
+  mkdirSync(join(root, ".beerengineer"), { recursive: true })
+  const config: WorkspaceConfigFile = {
+    schemaVersion: 2,
+    key: "t",
+    name: "T",
+    rootPath: root,
+    harnessProfile: { mode: "fast" },
+    runtimePolicy: { mode: "safe-workspace-write" },
+    sonarEnabled: false,
+    createdAt: Date.now(),
+    lastOpenedAt: null,
+  }
+  await writeFile(join(root, ".beerengineer", "workspace.json"), `${JSON.stringify(config, null, 2)}\n`)
+}
+
 test("performResume resumes a blocked story from execution without rerunning prior stages", async () => {
   await withTmpCwd(async () => {
     const db = initDatabase(join(process.cwd(), "test.sqlite"))
@@ -132,6 +157,77 @@ test("performResume resumes a blocked story from execution without rerunning pri
         .map(event => event.stageKey)
       assert.deepEqual(resumedStages, ["execution", "project-review", "qa", "documentation", "handoff"])
       assert.equal(repos.getRun(run.id)?.recovery_status, null)
+    } finally {
+      db.close()
+    }
+  })
+})
+
+test("performResume preserves workspaceRoot so resume stays in real git mode", async () => {
+  await withTmpCwd(async () => {
+    const repoRoot = join(process.cwd(), "repo")
+    mkdirSync(repoRoot, { recursive: true })
+    sh(repoRoot, ["init", "--initial-branch=main"])
+    sh(repoRoot, ["config", "user.email", "test@example.invalid"])
+    sh(repoRoot, ["config", "user.name", "test"])
+    await writeFile(join(repoRoot, "README.md"), "seed\n")
+    sh(repoRoot, ["add", "README.md"])
+    sh(repoRoot, ["commit", "-m", "seed"])
+    await writeWorkspaceConfig(repoRoot)
+    sh(repoRoot, ["add", ".beerengineer/workspace.json"])
+    sh(repoRoot, ["commit", "-m", "workspace config"])
+
+    const db = initDatabase(join(process.cwd(), "test.sqlite"))
+    const repos = new Repos(db)
+    const ws = repos.upsertWorkspace({ key: "t", name: "T", rootPath: repoRoot })
+    const item = repos.createItem({ workspaceId: ws.id, title: "Resume Git Mode", description: "smoke" })
+    const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "api" })
+
+    try {
+      const ctx = { workspaceId: `resume-git-mode-${item.id.toLowerCase()}`, runId: run.id }
+      mkdirSync(layout.runDir(ctx), { recursive: true })
+      await writeFile(layout.runFile(ctx), `${JSON.stringify({ id: run.id }, null, 2)}\n`)
+      await writeRecoveryRecord(ctx, {
+        status: "failed",
+        cause: "system_error",
+        scope: { type: "run", runId: run.id },
+        summary: "Resume after external remediation.",
+        evidencePaths: [],
+      })
+      repos.setRunRecovery(run.id, {
+        status: "failed",
+        scope: "run",
+        scopeRef: null,
+        summary: "Resume after external remediation.",
+      })
+      repos.updateRun(run.id, { current_stage: "documentation" })
+
+      const remediation = repos.createExternalRemediation({
+        runId: run.id,
+        scope: "run",
+        scopeRef: null,
+        summary: "Workspace has been cleaned and the item branch restored.",
+        branch: "item/resume-git-mode",
+        source: "api",
+      })
+
+      const resumed = makeWorkflowIO()
+      await assert.rejects(
+        performResume({ repos, io: resumed.io, runId: run.id, remediation }),
+        /ENOENT|no such file or directory/,
+      )
+
+      const presentationTexts = resumed.events
+        .filter((event): event is Extract<typeof resumed.events[number], { type: "presentation" }> => event.type === "presentation")
+        .map(event => event.text)
+      assert.ok(
+        presentationTexts.some(text => text.includes("→ Real git mode: branches will be created in")),
+        `expected resume to preserve workspaceRoot and stay in real git mode, got ${JSON.stringify(presentationTexts)}`,
+      )
+      assert.ok(
+        presentationTexts.every(text => !text.includes("Simulated git mode (workspaceRoot not set)")),
+        `resume unexpectedly lost workspaceRoot: ${JSON.stringify(presentationTexts)}`,
+      )
     } finally {
       db.close()
     }

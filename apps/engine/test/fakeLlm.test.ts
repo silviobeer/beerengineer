@@ -165,7 +165,7 @@ test("architecture stage + reviewer: autorun with revise-then-pass", async () =>
   )
 })
 
-test("planning stage produces two waves (W1 sequential, W2 parallel); reviewer revises then passes", async () => {
+test("planning stage produces two waves with explicit story-level parallelism semantics; reviewer revises then passes", async () => {
   const stage = new FakePlanningStageAdapter(project)
   const review = new FakePlanningReviewAdapter()
   const prd3: PRD = {
@@ -181,9 +181,9 @@ test("planning stage produces two waves (W1 sequential, W2 parallel); reviewer r
   if (out.kind === "artifact") {
     const waves = out.artifact.plan.waves
     assert.equal(waves.length, 2)
-    assert.equal(waves[0].parallel, false)
+    assert.equal(waves[0].internallyParallelizable, false)
     assert.equal(waves[0].stories.length, 1)
-    assert.equal(waves[1].parallel, true)
+    assert.equal(waves[1].internallyParallelizable, true)
     assert.deepEqual(waves[1].dependencies, ["W1"])
     assert.equal(waves[1].stories.length, 2)
   }
@@ -196,7 +196,7 @@ test("test-writer stage builds a test plan from ACs; reviewer revises then passe
   const review = new FakeTestWriterReviewAdapter()
   const state = {
     projectId: project.id,
-    wave: { id: "W1", number: 1, goal: "g", dependencies: [], stories: [], parallel: false, exitCriteria: [] },
+    wave: { id: "W1", number: 1, goal: "g", dependencies: [], stories: [], internallyParallelizable: false, exitCriteria: [] },
     story: { id: "US-01", title: "x" },
     acceptanceCriteria: [
       { id: "AC-01", text: "a", priority: "must" as const, category: "functional" as const },
@@ -399,7 +399,7 @@ test("documentation stage produces artifact covering the PRD stories", async () 
             number: 1,
             goal: "g",
             stories: [{ id: "US-01", title: "t" }],
-            parallel: false,
+            internallyParallelizable: false,
             dependencies: [],
             exitCriteria: [],
           },

@@ -51,7 +51,7 @@ export type ShellViewModel = {
 /**
  * Operator attention dimension. Extends the original five-state union with
  * the cockpit-level states. `running` is motion-only (never a badge); see
- * Motion Specification in docs/frontend-operator-cockpit-plan.md.
+ * Motion Specification in specs/frontend-operator-cockpit-plan.md.
  */
 export type AttentionState =
   | "idle"

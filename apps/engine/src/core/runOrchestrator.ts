@@ -4,9 +4,10 @@ import { runWithWorkflowIO, type WorkflowEvent, type WorkflowIO } from "./io.js"
 import { runWithActiveRun } from "./runContext.js"
 import { createBus, busToWorkflowIO, type EventBus } from "./bus.js"
 import { attachCrossProcessBridge } from "./crossProcessBridge.js"
+import { persistWorkflowRunState } from "./stageRuntime.js"
 import type { Repos } from "../db/repositories.js"
 import { readWorkspaceConfig } from "./workspaces.js"
-import type { WorkflowLlmOptions } from "../workflow.js"
+import type { WorkflowLlmOptions, WorkflowResumeInput } from "../workflow.js"
 
 /**
  * Map a stage key to the UI's board column + phase status. The UI column set is
@@ -207,6 +208,7 @@ export function attachDbSync(
       }
       case "run_blocked":
       case "run_failed": {
+        repos.updateRun(event.runId, { status: event.type === "run_blocked" ? "blocked" : "failed" })
         const scope = event.scope
         const scopeRefVal =
           scope.type === "stage"
@@ -315,7 +317,13 @@ export function prepareRun(
   item: Item,
   repos: Repos,
   io: WorkflowIO & { bus?: EventBus },
-  opts: { workspaceKey?: string; workspaceName?: string; owner?: "cli" | "api"; itemId?: string } = {}
+  opts: {
+    workspaceKey?: string
+    workspaceName?: string
+    owner?: "cli" | "api"
+    itemId?: string
+    resume?: WorkflowResumeInput
+  } = {}
 ) {
   const itemRow = opts.itemId
     ? repos.getItem(opts.itemId) ?? (() => {
@@ -381,11 +389,33 @@ export function prepareRun(
         runWithActiveRun({ runId: runRow.id, itemId: itemRow.id }, async () => {
           bus.emit({ type: "run_started", runId: runRow.id, itemId: itemRow.id, title: item.title })
           try {
-            await runWorkflow({ ...item, id: itemRow.id }, { llm, workspaceRoot: workspaceRow?.root_path ?? undefined })
+            await runWorkflow(
+              { ...item, id: itemRow.id },
+              {
+                resume: opts.resume,
+                llm,
+                workspaceRoot: workspaceRow?.root_path ?? undefined,
+              },
+            )
+            const finalRun = repos.getRun(runRow.id)
+            if (finalRun?.recovery_status === "blocked") return
+            await persistWorkflowRunState(
+              { workspaceId, runId: runRow.id },
+              finalRun?.current_stage ?? "handoff",
+              "completed",
+            )
             bus.emit({ type: "run_finished", runId: runRow.id, status: "completed" })
           } catch (err) {
             const message = (err as Error).message
-            bus.emit({ type: "run_finished", runId: runRow.id, status: "failed", error: message })
+            const finalRun = repos.getRun(runRow.id)
+            if (finalRun?.recovery_status !== "blocked") {
+              await persistWorkflowRunState(
+                { workspaceId, runId: runRow.id },
+                finalRun?.current_stage ?? "execution",
+                "failed",
+              )
+              bus.emit({ type: "run_finished", runId: runRow.id, status: "failed", error: message })
+            }
             throw err
           }
         })
@@ -404,7 +434,13 @@ export async function runWorkflowWithSync(
   item: Item,
   repos: Repos,
   io: WorkflowIO & { bus?: EventBus },
-  opts: { workspaceKey?: string; workspaceName?: string; owner?: "cli" | "api"; itemId?: string } = {}
+  opts: {
+    workspaceKey?: string
+    workspaceName?: string
+    owner?: "cli" | "api"
+    itemId?: string
+    resume?: WorkflowResumeInput
+  } = {}
 ): Promise<string> {
   const { runId, start } = prepareRun(item, repos, io, opts)
   await start()

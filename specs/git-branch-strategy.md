@@ -22,7 +22,7 @@ Optional final handoff:
 ## Scope of v1 (known limitations)
 
 - **Sequential story execution within a wave.** v1 uses a single working tree, so stories inside the same wave are executed one after another, not in parallel. The wave branch is still a meaningful integration boundary (wave-level review, retry, replay), but it is not yet a parallel-merge target. Per-story worktrees are a separate workstream; see [Future work](#future-work).
-- **Planning may still mark same-wave stories as parallelizable.** The planning stage is allowed to capture safe story-level parallelism inside one wave, but in real git v1 that metadata means "dependency-independent and eligible for future concurrent execution," not "execute concurrently now." Until per-story worktrees exist, same-wave stories still run sequentially against the shared wave branch.
+- **Planning may still mark same-wave stories as internally parallelizable.** The planning stage is allowed to capture safe story-level parallelism inside one wave, but in real git v1 that metadata means "dependency-independent and eligible for future concurrent execution," not "execute concurrently now." Until per-story worktrees exist, same-wave stories still run sequentially against the shared wave branch.
 - **Simulation fallback stays available.** Runs fall back to the existing simulated `story -> project -> pr` model when real git mode is not viable (see [Simulation fallback](#simulation-fallback)).
 
 ## Branch levels
@@ -87,7 +87,7 @@ Purpose:
 
 Note:
 
-- A wave may contain stories that the planner marked as safe for same-wave parallelism.
+- A wave may contain stories that the planner marked as internally parallelizable within that wave.
 - In v1 real git mode, that affects grouping and dependency semantics only; execution inside the wave remains sequential.
 
 ### 5. Story branch

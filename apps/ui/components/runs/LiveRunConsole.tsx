@@ -47,7 +47,7 @@ function deriveBranches(run: RunRow | null): BranchRowViewModel[] {
   const rows: BranchRowViewModel[] = [
     { scope: "main", name: "main", status: "active", detail: "default base" }
   ]
-  if (run.recovery_status === "blocked") {
+  if (run.recovery_status === "blocked" && run.recovery_scope === "story") {
     rows.push({
       scope: "candidate",
       name: `candidate/${run.id.slice(0, 8)}`,
@@ -61,7 +61,7 @@ function deriveBranches(run: RunRow | null): BranchRowViewModel[] {
 
 function deriveMerge(run: RunRow | null): MergePanelViewModel {
   return {
-    candidateBranch: run?.recovery_status === "blocked" ? `candidate/${run.id.slice(0, 8)}` : null,
+    candidateBranch: run?.recovery_status === "blocked" && run.recovery_scope === "story" ? `candidate/${run.id.slice(0, 8)}` : null,
     baseBranch: "main",
     checklistSummary: run?.recovery_status === "blocked" ? "Recovery pending" : "No merge candidate",
     validationStatus: "preview only",

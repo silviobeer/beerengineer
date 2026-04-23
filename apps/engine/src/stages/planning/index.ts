@@ -13,7 +13,7 @@ function validatePlanStoryIds(artifact: ImplementationPlanArtifact, prd: PRD): s
   const issues: string[] = []
   const waves = artifact.plan?.waves
   if (!Array.isArray(waves)) {
-    return `Plan is missing a \`plan.waves\` array. The artifact must include \`plan.waves: Array<{id,number,goal,stories,parallel,dependencies,exitCriteria}>\`; got \`${JSON.stringify(artifact.plan ?? null).slice(0, 200)}\`.`
+    return `Plan is missing a \`plan.waves\` array. The artifact must include \`plan.waves: Array<{id,number,goal,stories,internallyParallelizable,dependencies,exitCriteria}>\`; got \`${JSON.stringify(artifact.plan ?? null).slice(0, 200)}\`.`
   }
   if (waves.length === 0) {
     return `Plan contains zero waves. Every PRD story must belong to exactly one wave; emit at least one wave with the PRD stories assigned.`
@@ -121,7 +121,7 @@ export async function planning(ctx: WithArchitecture, llm?: RunLlmConfig): Promi
       stagePresent.ok("Planning review: implementation plan is ready.")
       const waves = Array.isArray(artifact.plan?.waves) ? artifact.plan.waves : []
       waves.forEach(wave => {
-        const tag = wave.parallel ? "(parallel)" : "(sequential)"
+        const tag = wave.internallyParallelizable ? "(stories can run in parallel)" : "(stories run sequentially)"
         const stories = Array.isArray(wave.stories) ? wave.stories : []
         stagePresent.chat(`Wave ${wave.number} ${tag}`, stories.map(story => story.title).join(", "))
       })

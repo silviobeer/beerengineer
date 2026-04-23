@@ -62,8 +62,11 @@ test("branchNameStory and branchNameCandidate lowercase", () => {
   assert.equal(branchNameWave(ctx, "P01", 2), "wave/cockpit-overlay__p01__w2")
   assert.equal(branchNameStory(ctx, "P01", 2, "US-02"), "story/cockpit-overlay__p01__w2__us-02")
   assert.equal(
-    branchNameCandidate({ workspaceId: "ws", runId: "RUN-X", itemSlug: "Cockpit Overlay" }),
-    "candidate/run-x__cockpit-overlay",
+    branchNameCandidate(
+      { workspaceId: "ws", runId: "RUN-X", itemSlug: "Cockpit Overlay", baseBranch: "main" },
+      "P01",
+    ),
+    "candidate/run-x__cockpit-overlay__p01",
   )
 })
 
@@ -160,8 +163,8 @@ test("createCandidateBranch clones project commits + adds docs commit, writes ha
     await mergeProjectBranchIntoItem(ctx, "P01")
 
     const handoff = await createCandidateBranch(ctx, { id: "P01", name: "P" }, doc())
-    assert.equal(handoff.candidateBranch.name, branchNameCandidate(ctx))
-    assert.equal(handoff.candidateBranch.base, "item/cockpit-overlay")
+    assert.equal(handoff.candidateBranch.name, branchNameCandidate(ctx, "P01"))
+    assert.equal(handoff.candidateBranch.base, "proj/cockpit-overlay__p01")
     assert.equal(handoff.candidateBranch.status, "open")
     assert.equal(handoff.readyForMerge, true)
     assert.equal(handoff.mergeTargetBranch, "develop")
@@ -172,8 +175,21 @@ test("createCandidateBranch clones project commits + adds docs commit, writes ha
     const state = await readRepoState()
     const candidate = state.branches.find(b => b.name === handoff.candidateBranch.name)
     assert.ok(candidate)
-    // inherits item merge commit + appends docs commit
+    // inherits project merge commit + appends docs commit
     assert.equal(candidate!.commits.length, 2)
+  })
+})
+
+test("createCandidateBranch produces distinct candidates per project in the same item", async () => {
+  await withTmpCwd(async () => {
+    const handoff1 = await createCandidateBranch(ctx, { id: "P01", name: "One" }, doc())
+    const handoff2 = await createCandidateBranch(ctx, { id: "P02", name: "Two" }, doc())
+    assert.notEqual(handoff1.candidateBranch.name, handoff2.candidateBranch.name)
+    assert.equal(handoff1.candidateBranch.name, "candidate/run-repo-1__cockpit-overlay__p01")
+    assert.equal(handoff2.candidateBranch.name, "candidate/run-repo-1__cockpit-overlay__p02")
+    const state = await readRepoState()
+    assert.ok(state.branches.find(b => b.name === handoff1.candidateBranch.name))
+    assert.ok(state.branches.find(b => b.name === handoff2.candidateBranch.name))
   })
 })
 

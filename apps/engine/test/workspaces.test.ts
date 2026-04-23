@@ -5,7 +5,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { spawnSync } from "node:child_process"
 
-import { initGit, previewWorkspace, registerWorkspace, validateHarnessProfile } from "../src/core/workspaces.js"
+import { initGit, previewWorkspace, registerWorkspace, runWorkspacePreflight, validateHarnessProfile } from "../src/core/workspaces.js"
 import { initDatabase } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
 import { defaultAppConfig } from "../src/setup/config.js"
@@ -196,6 +196,33 @@ test("registerWorkspace persists preflight and writes quality config once GitHub
     assert.equal(JSON.parse(dbWorkspace?.harness_profile_json ?? "{}").mode, "fast")
     assert.equal(result.preflight.github.status, "ok")
     assert.equal(result.coderabbitInstallUrl?.includes("coderabbit"), true)
+  } finally {
+    db.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("workspace preflight and preview prefer origin HEAD over current story branch", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-workspaces-"))
+  const db = initDatabase(join(dir, "db.sqlite"))
+  try {
+    const repos = new Repos(db)
+    const config = { ...defaultAppConfig(), allowedRoots: [dir] }
+    const path = join(dir, "demo")
+    mkdirSync(path, { recursive: true })
+
+    const gitInit = await initGit(path, { defaultBranch: "main", initialCommit: false })
+    assert.equal(gitInit.ok, true)
+    assert.equal(spawnSync("git", ["commit", "--allow-empty", "-m", "init"], { cwd: path, encoding: "utf8" }).status, 0)
+    assert.equal(spawnSync("git", ["checkout", "-b", "story/demo__proj__w1__branching"], { cwd: path, encoding: "utf8" }).status, 0)
+    assert.equal(spawnSync("git", ["remote", "add", "origin", "https://github.com/acme/demo.git"], { cwd: path, encoding: "utf8" }).status, 0)
+    assert.equal(spawnSync("git", ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"], { cwd: path, encoding: "utf8" }).status, 0)
+
+    const preview = await previewWorkspace(path, config, repos)
+    assert.equal(preview.defaultBranch, "main")
+
+    const preflight = await runWorkspacePreflight(path)
+    assert.equal(preflight.report.github.defaultBranch, "main")
   } finally {
     db.close()
     rmSync(dir, { recursive: true, force: true })

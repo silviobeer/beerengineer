@@ -201,6 +201,37 @@ function parseGitHubRemote(remoteUrl: string): { owner: string; repo: string } |
   return null
 }
 
+function isEngineOwnedBranch(branch: string): boolean {
+  return /^(item|proj|wave|story|candidate)\//.test(branch)
+}
+
+function resolveGitDefaultBranch(root: string): string | null {
+  const originHead = runGit(["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], root)
+  if (originHead.ok && originHead.stdout) {
+    return originHead.stdout.replace(/^origin\//, "") || null
+  }
+
+  const remoteShow = runGit(["remote", "show", "origin"], root)
+  if (remoteShow.ok) {
+    const match = remoteShow.stdout.match(/^\s*HEAD branch:\s+(.+)$/m)
+    const branch = match?.[1]?.trim()
+    if (branch) return branch
+  }
+
+  const currentBranch = runGit(["branch", "--show-current"], root)
+  if (currentBranch.ok && currentBranch.stdout && !isEngineOwnedBranch(currentBranch.stdout)) {
+    return currentBranch.stdout
+  }
+
+  for (const candidate of ["main", "master"]) {
+    if (runGit(["rev-parse", "--verify", "--quiet", `refs/heads/${candidate}`], root).ok) {
+      return candidate
+    }
+  }
+
+  return null
+}
+
 async function detectSonarToken(root: string): Promise<{ value?: string; source?: "env" | ".env.local" }> {
   if (process.env.SONAR_TOKEN) return { value: process.env.SONAR_TOKEN, source: "env" }
   try {
@@ -393,7 +424,7 @@ async function buildPathPreview(path: string, allowedRoots: string[]): Promise<O
   const isWritable = exists ? await isWritablePath(resolvedPath) : await findWritableParent(resolvedPath)
   const gitProbe = exists && isDirectory ? runGit(["rev-parse", "--is-inside-work-tree"], resolvedPath) : { ok: false, stdout: "", stderr: "" }
   const isGitRepo = gitProbe.ok && gitProbe.stdout === "true"
-  const defaultBranch = isGitRepo ? (runGit(["branch", "--show-current"], resolvedPath).stdout || null) : null
+  const defaultBranch = isGitRepo ? resolveGitDefaultBranch(resolvedPath) : null
   const remoteProbe = isGitRepo ? runGit(["remote"], resolvedPath) : { ok: false, stdout: "", stderr: "" }
   const hasRemote = Boolean(remoteProbe.stdout)
   const configFile = exists && isDirectory ? await readWorkspaceConfig(resolvedPath) : null
@@ -467,7 +498,7 @@ async function ensureGitRepo(root: string, defaultBranch = "main"): Promise<{ ok
 
 export async function runWorkspacePreflight(root: string): Promise<{ report: WorkspacePreflightReport }> {
   const gitProbe = runGit(["rev-parse", "--is-inside-work-tree"], root)
-  const branchProbe = gitProbe.ok ? runGit(["branch", "--show-current"], root) : { ok: false, stdout: "", stderr: "" }
+  const defaultBranch = gitProbe.ok ? resolveGitDefaultBranch(root) : null
   const remoteProbe = gitProbe.ok ? runGit(["remote", "get-url", "origin"], root) : { ok: false, stdout: "", stderr: "" }
   const parsedRemote = remoteProbe.ok ? parseGitHubRemote(remoteProbe.stdout) : null
 
@@ -496,13 +527,13 @@ export async function runWorkspacePreflight(root: string): Promise<{ report: Wor
             status: "ok",
             owner: parsedRemote.owner,
             repo: parsedRemote.repo,
-            defaultBranch: branchProbe.stdout || null,
+            defaultBranch,
             remoteUrl: remoteProbe.stdout,
           }
         : {
             status: remoteProbe.ok ? "invalid" : "missing",
             detail: remoteProbe.ok ? "origin is not a GitHub remote" : remoteProbe.stderr || "origin remote is not configured",
-            defaultBranch: branchProbe.stdout || null,
+            defaultBranch,
             remoteUrl: remoteProbe.ok ? remoteProbe.stdout : undefined,
           },
       gh: ghStatus.ok

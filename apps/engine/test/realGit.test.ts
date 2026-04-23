@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { spawnSync } from "node:child_process"
@@ -10,7 +10,10 @@ import {
   detectRealGitMode,
   ensureItemBranchReal,
   ensureProjectBranchReal,
+  exitRunToItemBranchReal,
+  gcManagedStoryWorktreesReal,
   ensureStoryBranchReal,
+  ensureStoryWorktreeReal,
   ensureWaveBranchReal,
   mergeProjectIntoItemReal,
   mergeStoryIntoWaveReal,
@@ -49,10 +52,14 @@ test("realGit creates item/project/wave/story branches and merges them back", ()
     assert.equal(mode.enabled, true)
     if (!mode.enabled) return
 
-    ensureItemBranchReal(mode, ctx)
-    ensureProjectBranchReal(mode, ctx, "proj-a")
-    ensureWaveBranchReal(mode, ctx, "proj-a", 1)
-    ensureStoryBranchReal(mode, ctx, "proj-a", 1, "story-x")
+    assert.equal(ensureItemBranchReal(mode, ctx), "item/demo-item")
+    assert.equal(sh(root, ["branch", "--show-current"]), "item/demo-item")
+    assert.equal(ensureProjectBranchReal(mode, ctx, "proj-a"), "proj/demo-item__proj-a")
+    assert.equal(sh(root, ["branch", "--show-current"]), "proj/demo-item__proj-a")
+    assert.equal(ensureWaveBranchReal(mode, ctx, "proj-a", 1), "wave/demo-item__proj-a__w1")
+    assert.equal(sh(root, ["branch", "--show-current"]), "wave/demo-item__proj-a__w1")
+    assert.equal(ensureStoryBranchReal(mode, ctx, "proj-a", 1, "story-x"), "story/demo-item__proj-a__w1__story-x")
+    assert.equal(sh(root, ["branch", "--show-current"]), "story/demo-item__proj-a__w1__story-x")
 
     // Make a commit on the story branch
     writeFileSync(join(root, "feature.txt"), "hello\n")
@@ -81,6 +88,10 @@ test("realGit creates item/project/wave/story branches and merges them back", ()
     sh(root, ["checkout", "item/demo-item"])
     const log = sh(root, ["log", "--oneline"]).split(/\r?\n/)
     assert.ok(log.some(line => line.includes("story commit")), `expected story commit on item branch, got ${JSON.stringify(log)}`)
+
+    sh(root, ["checkout", "story/demo-item__proj-a__w1__story-x"])
+    assert.equal(exitRunToItemBranchReal(mode, ctx), "item/demo-item")
+    assert.equal(sh(root, ["branch", "--show-current"]), "item/demo-item")
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -127,5 +138,73 @@ test("detectRealGitMode falls back when workspace is not a git repo", () => {
     if (!mode.enabled) assert.match(mode.reason, /not a git repo/)
   } finally {
     rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("realGit creates a dedicated worktree for a story branch", () => {
+  const root = seedRepo()
+  const worktreeRoot = mkdtempSync(join(tmpdir(), "be2-story-worktree-"))
+  rmSync(worktreeRoot, { recursive: true, force: true })
+  try {
+    const ctx: WorkflowContext = {
+      workspaceId: "test-workspace",
+      runId: "run-2",
+      itemSlug: "demo-item",
+      baseBranch: "main",
+      workspaceRoot: root,
+    }
+
+    const mode = detectRealGitMode(ctx)
+    assert.equal(mode.enabled, true)
+    if (!mode.enabled) return
+
+    ensureItemBranchReal(mode, ctx)
+    ensureProjectBranchReal(mode, ctx, "proj-a")
+    ensureWaveBranchReal(mode, ctx, "proj-a", 1)
+
+    const path = ensureStoryWorktreeReal(mode, ctx, "proj-a", 1, "story-x", worktreeRoot)
+    assert.equal(path, worktreeRoot)
+    assert.equal(sh(worktreeRoot, ["branch", "--show-current"]), "story/demo-item__proj-a__w1__story-x")
+    assert.equal(
+      sh(root, ["branch", "--show-current"]),
+      "wave/demo-item__proj-a__w1",
+      "main checkout should stay on the wave branch when a story worktree is created",
+    )
+
+    const worktrees = sh(root, ["worktree", "list", "--porcelain"])
+    assert.match(worktrees, new RegExp(worktreeRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
+    assert.match(worktrees, /refs\/heads\/story\/demo-item__proj-a__w1__story-x/)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+    rmSync(worktreeRoot, { recursive: true, force: true })
+  }
+})
+
+test("realGit gc removes orphaned managed worktree directories that are no longer registered", () => {
+  const root = seedRepo()
+  const managedRoot = mkdtempSync(join(tmpdir(), "be2-story-worktree-gc-"))
+  const worktreeRoot = join(managedRoot, "workspace", "runs", "run-3", "waves", "wave-1", "stories", "story-x")
+  try {
+    const ctx: WorkflowContext = {
+      workspaceId: "test-workspace",
+      runId: "run-3",
+      itemSlug: "demo-item",
+      baseBranch: "main",
+      workspaceRoot: root,
+    }
+
+    const mode = detectRealGitMode(ctx)
+    assert.equal(mode.enabled, true)
+    if (!mode.enabled) return
+
+    mkdirSync(worktreeRoot, { recursive: true })
+    writeFileSync(join(worktreeRoot, ".git"), "gitdir: /orphaned/worktree\n")
+
+    const result = gcManagedStoryWorktreesReal(mode, managedRoot)
+    assert.deepEqual(result.removed, [worktreeRoot])
+    assert.equal(result.kept.length, 0)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+    rmSync(managedRoot, { recursive: true, force: true })
   }
 })

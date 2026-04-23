@@ -1,5 +1,9 @@
 export const ENGINE_BASE_URL = process.env.NEXT_PUBLIC_ENGINE_BASE_URL ?? "http://127.0.0.1:4100"
 
+async function readJsonResponse<T>(res: Response): Promise<T> {
+  return (await res.json()) as T
+}
+
 export type RunRow = {
   id: string
   workspace_id: string
@@ -68,16 +72,16 @@ export async function startRun(input: {
   description: string
   workspaceKey?: string
 }): Promise<{ runId: string } | { error: string }> {
-  const res = await fetch(`${ENGINE_BASE_URL}/runs`, {
+  const res = await fetch(`/api/runs`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input)
   })
-  return (await res.json()) as { runId: string } | { error: string }
+  return readJsonResponse<{ runId: string } | { error: string }>(res)
 }
 
 export async function answerPrompt(runId: string, promptId: string, answer: string): Promise<void> {
-  const res = await fetch(`${ENGINE_BASE_URL}/runs/${runId}/input`, {
+  const res = await fetch(`/api/runs/${runId}/input`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ promptId, answer })
@@ -109,7 +113,7 @@ export async function resumeRun(
   runId: string,
   payload: { summary: string; branch?: string; commit?: string; reviewNotes?: string }
 ): Promise<{ ok: true; remediationId: string } | { ok: false; status: number; error: string }> {
-  const res = await fetch(`${ENGINE_BASE_URL}/runs/${runId}/resume`, {
+  const res = await fetch(`/api/runs/${runId}/resume`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload)
@@ -186,7 +190,7 @@ export async function getSetupStatus(group?: string): Promise<SetupReport | null
 }
 
 export async function performItemAction(itemId: string, action: ItemAction): Promise<ItemActionResponse> {
-  const res = await fetch(`${ENGINE_BASE_URL}/items/${itemId}/actions`, {
+  const res = await fetch(`/api/items/${itemId}/actions`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ action })
@@ -202,4 +206,63 @@ export async function performItemAction(itemId: string, action: ItemAction): Pro
     current: (body as { current?: { column: string; phaseStatus: string } }).current,
     action: (body as { action?: string }).action
   }
+}
+
+export type WorkspacePreview = {
+  schemaVersion: number
+  path: string
+  exists: boolean
+  isDirectory: boolean
+  isWritable: boolean
+  isGitRepo: boolean
+  hasRemote: boolean
+  defaultBranch: string | null
+  detectedStack: string | null
+  existingFiles: string[]
+  isRegistered: boolean
+  isInsideAllowedRoot: boolean
+  isGreenfield: boolean
+  hasWorkspaceConfigFile: boolean
+  hasSonarProperties: boolean
+  conflicts: string[]
+}
+
+export type WorkspaceRegistrationResponse =
+  | {
+      ok: true
+      workspace: {
+        key: string
+        name: string
+        rootPath: string
+      }
+      warnings: string[]
+      actions: string[]
+    }
+  | {
+      ok: false
+      error: string
+      detail: string
+    }
+
+export async function previewWorkspace(path: string): Promise<WorkspacePreview | { error: string }> {
+  const qs = new URLSearchParams({ path }).toString()
+  const res = await fetch(`/api/workspaces/preview?${qs}`, { cache: "no-store" })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    return { error: (body as { error?: string }).error ?? `http_${res.status}` }
+  }
+  return readJsonResponse<WorkspacePreview>(res)
+}
+
+export async function createWorkspace(input: {
+  path: string
+  key?: string
+  name?: string
+}): Promise<WorkspaceRegistrationResponse> {
+  const res = await fetch(`/api/workspaces`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input)
+  })
+  return readJsonResponse<WorkspaceRegistrationResponse>(res)
 }

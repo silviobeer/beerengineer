@@ -57,6 +57,8 @@ export type StoryExecutionContext = {
     goal: string
     dependencies: string[]
   }
+  storyBranch?: string
+  worktreeRoot?: string
   testPlan: StoryTestPlanArtifact
 }
 
