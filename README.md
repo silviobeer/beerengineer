@@ -47,7 +47,8 @@ If a persisted provider session is explicitly rejected as unknown or expired, th
 - **Transient retries** — Claude and Codex adapters retry on SIGTERM (exit 143), SIGKILL (137), empty-output failures, and common network error patterns. Two backoffs at 2s and 8s before the error propagates.
 - **Prompt via stdin** — Claude prompts are piped on stdin instead of `-p "<text>"` to avoid `spawn E2BIG` on large late-stage prompts (project-review, qa) that accumulate prior-stage context beyond the kernel's argv limit.
 - **Codex live streaming** — `codex exec --json` emits `thread.started` / `turn.started` / `turn.completed` / `item.*` events live; the adapter forwards them as dim `presentation` events on the workflow bus so the UI shows progress during long agent loops instead of staying silent until close.
-- **Claude streaming** — spec'd in `specs/claude-cli-streaming.md`, not yet implemented. Today the Claude provider still buffers the full agent loop before the UI sees results.
+- **Claude live streaming** — `claude --print --verbose --output-format stream-json` now emits live `system` / `assistant` / `result` records; the adapter summarizes session start, tool use, turn completion, CLI retry notices, and local wrapper retries onto the workflow bus with the active `stageRunId`.
+- **Claude bare mode stays opt-in** — set `CLAUDE_BARE=1` to try faster startup without hooks/memory. It is not the default because, on the validated local CLI (`Claude Code 2.1.118`), `--bare` dropped subscription-auth and returned `Not logged in · Please run /login`.
 
 Zur Laufzeit kann das Prompt-Verzeichnis mit
 `BEERENGINEER_PROMPTS_DIR=/pfad/zu/prompts` ueberschrieben werden. Der

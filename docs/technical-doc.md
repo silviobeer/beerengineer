@@ -35,7 +35,7 @@ Loop awareness: reviewers receive `ReviewContext { cycle, maxReviews, isFinalCyc
 
 `apps/engine/src/llm/registry.ts` maps (stage, role) + workspace profile to a runtime descriptor: provider, model, permission policy. For hosted providers the call fans out to `hostedCliAdapter.ts` → one of:
 
-- `providers/claude.ts` — `claude --print --output-format json` with permission-mode, model, and `--resume <id>` flags; prompt piped on stdin
+- `providers/claude.ts` — `claude --print --verbose --output-format stream-json` with permission-mode, model, and `--resume <id>` flags; prompt piped on stdin, stream events summarized onto the workflow bus, final `result` (or assistant-text fallback) reconstructed into `outputText`
 - `providers/codex.ts` — `codex exec [resume <id>] --json --sandbox <mode>` with live event streaming
 
 Both providers share:
@@ -44,7 +44,7 @@ Both providers share:
 - Unknown-session fallback: retry once without session id
 - Transient-failure retry: exit 143/137, empty output, network error patterns; 2s + 8s backoff
 
-Codex additionally uses the `spawnCommand` `onStdoutLine` hook to parse JSONL events as they arrive and emit `presentation` events to the workflow bus (dim kind) for live progress. Claude streaming is spec'd (`specs/claude-cli-streaming.md`) but not yet implemented.
+`spawnCommand` exposes an `onStdoutLine` hook used by both providers. Codex parses JSONL turn/item events directly; Claude parses the validated Claude Code stream envelope (`system` / `assistant` / `user` / `result`, with `--verbose` required for `stream-json`) and emits summarized `presentation` events for session start, tool use, turn completion, and retry signals. `CLAUDE_BARE=1` is supported as an opt-in experiment but is not default because local validation showed `--bare` can disable subscription-auth.
 
 ## Planning artifact contract
 

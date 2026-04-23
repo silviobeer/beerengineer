@@ -1,8 +1,9 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { emitEvent, getActiveRun } from "../../../core/runContext.js"
 import { spawnCommand, type HostedCliExecutionResult, type HostedProviderInvokeInput } from "../providerRuntime.js"
+import { isTransientFailure, sleep, transientRetryDelaysMs } from "./_retry.js"
+import { emitRetryMarker, makeJsonLineStreamCallback } from "./_stream.js"
 
 function baseCommand(input: HostedProviderInvokeInput, responsePath: string): string[] {
   const command = ["codex", "exec"]
@@ -24,20 +25,6 @@ function baseCommand(input: HostedProviderInvokeInput, responsePath: string): st
 
 function unknownSession(text: string): boolean {
   return /unknown thread|expired thread|resume.*not found|invalid thread/i.test(text)
-}
-
-function isTransientFailure(exitCode: number, stdout: string, stderr: string): boolean {
-  if (exitCode === 143 || exitCode === 137) return true
-  const combined = `${stdout}\n${stderr}`.trim()
-  if (exitCode !== 0 && combined.length === 0) return true
-  if (/network error|socket hang up|ECONNRESET|ETIMEDOUT|temporary failure/i.test(combined)) return true
-  return false
-}
-
-const TRANSIENT_RETRY_DELAYS_MS = [2000, 8000]
-
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms))
 }
 
 function parseUsage(stdout: string): { sessionId: string | null; cachedInputTokens: number; totalInputTokens: number } {
@@ -102,32 +89,17 @@ function summarizeStreamEvent(event: CodexStreamEvent): { kind: "dim" | "step"; 
   }
 }
 
-function streamCallbackFor(): ((line: string) => void) | undefined {
-  const active = getActiveRun()
-  if (!active) return undefined
-  return (line: string) => {
-    let event: CodexStreamEvent
-    try {
-      event = JSON.parse(line) as CodexStreamEvent
-    } catch {
-      return
-    }
-    const summary = summarizeStreamEvent(event)
-    if (!summary) return
-    emitEvent({
-      type: "presentation",
-      runId: active.runId,
-      stageRunId: null,
-      kind: summary.kind,
-      text: summary.text,
-    })
-  }
+function streamCallbackFor(): (line: string) => void {
+  return makeJsonLineStreamCallback<CodexStreamEvent>({
+    summarize: summarizeStreamEvent,
+  })
 }
 
 export async function invokeCodex(input: HostedProviderInvokeInput, attempt = 0): Promise<HostedCliExecutionResult> {
   const tempDir = await mkdtemp(join(tmpdir(), "beerengineer-codex-"))
   const responsePath = join(tempDir, "last-message.txt")
   const command = baseCommand(input, responsePath)
+  const retryDelays = transientRetryDelaysMs()
   try {
     const result = await spawnCommand(command, input.prompt, input.runtime.workspaceRoot, {
       onStdoutLine: streamCallbackFor(),
@@ -137,8 +109,9 @@ export async function invokeCodex(input: HostedProviderInvokeInput, attempt = 0)
       if (input.session?.sessionId && unknownSession(combined)) {
         return invokeCodex({ ...input, session: { provider: input.runtime.provider, sessionId: null } }, attempt)
       }
-      if (isTransientFailure(result.exitCode, result.stdout, result.stderr) && attempt < TRANSIENT_RETRY_DELAYS_MS.length) {
-        await sleep(TRANSIENT_RETRY_DELAYS_MS[attempt])
+      if (isTransientFailure(result.exitCode, result.stdout, result.stderr) && attempt < retryDelays.length) {
+        emitRetryMarker("codex", attempt + 2, retryDelays.length + 1, retryDelays[attempt] ?? 0)
+        await sleep(retryDelays[attempt] ?? 0)
         return invokeCodex(input, attempt + 1)
       }
       throw new Error(`${input.runtime.provider} exited with code ${result.exitCode}: ${combined.trim() || "no output"}`)

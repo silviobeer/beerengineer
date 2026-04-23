@@ -43,8 +43,10 @@ Stage agents and reviewers persist their provider session id across review cycle
 ## Provider resilience
 
 - Claude CLI: retry on transient SIGTERM (`exit 143`), SIGKILL (`137`), empty-output failures, and common network-error signatures. Two backoffs at 2s and 8s.
+- Claude CLI: `--print --verbose --output-format stream-json` now streams live `system`, `assistant`, and `result` events; the adapter forwards session start, tool use, turn completion, provider retry notices, and local retry markers to the workflow bus while preserving the active `stageRunId`.
 - Codex CLI: same retry logic; additionally streams `thread.started`, `turn.started`, `turn.completed`, and `item.*` events live to the workflow bus while the agent is running.
 - Prompt delivery uses stdin for Claude (avoids E2BIG on large late-stage prompts) and has always used stdin for Codex.
+- `CLAUDE_BARE=1` is available as an opt-in startup experiment, but it is not the default because local validation against Claude Code `2.1.118` broke subscription-auth.
 
 ## Workspace setup
 

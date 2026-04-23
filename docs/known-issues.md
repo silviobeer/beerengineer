@@ -9,8 +9,7 @@ As of commit `0cb5873` (Apr 2026).
 
 ## Provider / hosted CLI
 
-- **No live Claude progress stream.** Claude CLI invocations use `--output-format json`, which buffers the entire agent loop until close. A Ralph story can stay "dark" for 3–8 minutes with Haiku 4.5 before emitting its summary. Codex already streams turn/tool events via the `_stream.ts` callback path; Claude streaming is spec'd in `specs/claude-cli-streaming.md` but not yet implemented.
-- **Shared retry / transient-failure logic is duplicated** between `providers/claude.ts` and `providers/codex.ts`. Extract to a shared helper when the Claude streaming migration lands.
+- **Claude `--bare` is not default yet.** Anthropic documents it as the main startup-time lever for scripted use, but the validated local CLI (`Claude Code 2.1.118`) returned `Not logged in · Please run /login` under `--bare` when subscription auth was otherwise working. The engine therefore leaves bare mode opt-in via `CLAUDE_BARE=1`.
 
 ## Observability
 
@@ -22,4 +21,4 @@ As of commit `0cb5873` (Apr 2026).
 
 ## Testing gaps
 
-- **Hosted-CLI providers have no unit tests** that exercise retry, unknown-session, or stream-callback paths. Regression risk when editing providers is real; relies on integration runs against live CLIs.
+- **Claude stream parsing is fixture-backed, not CLI-version-locked.** We validated the envelope against the installed CLI and captured a fixture, but upstream may still add or rename event shapes in later Claude Code releases. Unknown events are ignored intentionally.

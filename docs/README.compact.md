@@ -18,7 +18,8 @@ npm exec --workspace=@beerengineer2/engine beerengineer -- setup --no-interactiv
 - **Real git branching** from `item/` → `proj/` → `wave/` → `story/` with `--no-ff` merges
 - **Parallel review gate** per story: CodeRabbit + SonarCloud (when configured); fix-cycles until critical/high clears
 - **Retry-on-transient** for hosted CLI: exit 143/137, empty output, network errors (2s + 8s backoff)
-- **Codex live streaming** of turn/tool events; Claude streaming spec'd, not yet implemented
+- **Codex + Claude live streaming** of turn/tool progress into the workflow bus
+- **Claude bare mode is optional** via `CLAUDE_BARE=1`; it is not the default because local validation showed it can disable subscription-auth
 
 ## Docs
 
