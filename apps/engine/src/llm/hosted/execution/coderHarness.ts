@@ -30,6 +30,18 @@ function listUntrackedFiles(workspaceRoot: string): string[] {
   return result.stdout.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
 }
 
+export function shouldIgnoreTransientUntrackedPath(path: string): boolean {
+  const normalized = path.replace(/\\/g, "/").replace(/^\.\//, "")
+  return (
+    normalized === "node_modules" ||
+    normalized.startsWith("node_modules/") ||
+    normalized === ".git" ||
+    normalized.startsWith(".git/") ||
+    normalized === ".beerengineer" ||
+    normalized.startsWith(".beerengineer/")
+  )
+}
+
 export async function ensureGitBaseline(workspaceRoot: string, baselinePath: string): Promise<GitBaseline> {
   try {
     return JSON.parse(await readFile(baselinePath, "utf8")) as GitBaseline
@@ -54,7 +66,9 @@ function collectChangedFiles(workspaceRoot: string, baseline: GitBaseline): stri
         .join("\n")
   const currentUntracked = listUntrackedFiles(workspaceRoot)
   const baselineUntracked = new Set(baseline.untrackedFiles)
-  const untrackedDelta = currentUntracked.filter(path => !baselineUntracked.has(path))
+  const untrackedDelta = currentUntracked.filter(
+    path => !baselineUntracked.has(path) && !shouldIgnoreTransientUntrackedPath(path),
+  )
   return Array.from(new Set([...tracked.split(/\r?\n/).map(line => line.trim()).filter(Boolean), ...untrackedDelta])).sort()
 }
 

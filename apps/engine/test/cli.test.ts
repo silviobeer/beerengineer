@@ -269,7 +269,7 @@ test("notifications test telegram sends a smoke message through the configured b
     assert.match(result.stdout ?? "", /Telegram test notification sent\./)
     assert.equal(requests.length, 1)
     assert.match(requests[0].url, /\/botsecret-token\/sendMessage$/)
-    assert.match(requests[0].body, /Telegram notification test/)
+    assert.match(requests[0].body, /BeerEngineer test notification/)
   } finally {
     await new Promise<void>((resolve, reject) => server.close(err => err ? reject(err) : resolve()))
     rmSync(dir, { recursive: true, force: true })

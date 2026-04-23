@@ -12,6 +12,20 @@ export type NotificationDispatchResult =
   | { delivered: true; eventType: WorkflowEvent["type"] }
   | { delivered: false; eventType: WorkflowEvent["type"]; reason: string }
 
+export type SupportedTelegramEvent = Extract<
+  WorkflowEvent,
+  { type: "run_started" | "run_blocked" | "run_finished" | "stage_completed" }
+>
+
+export function isSupportedTelegramEvent(event: WorkflowEvent): event is SupportedTelegramEvent {
+  return (
+    event.type === "run_started" ||
+    event.type === "run_blocked" ||
+    event.type === "run_finished" ||
+    event.type === "stage_completed"
+  )
+}
+
 function isTelegramEnabled(config: AppConfig): boolean {
   return config.notifications?.telegram?.enabled === true
 }
@@ -80,7 +94,7 @@ function buildMessage(event: WorkflowEvent, runLink: string): string | null {
   }
 }
 
-function dedupKeyForEvent(event: Extract<WorkflowEvent, { type: "run_started" | "run_blocked" | "run_finished" | "stage_completed" }>): string {
+function dedupKeyForEvent(event: SupportedTelegramEvent): string {
   switch (event.type) {
     case "run_started":
       return `${event.runId}:run_started`
@@ -112,12 +126,7 @@ export class TelegramNotificationDispatcher {
     if (!telegram) {
       return { delivered: false, eventType: event.type, reason: "telegram not configured" }
     }
-    if (
-      event.type !== "run_started" &&
-      event.type !== "run_blocked" &&
-      event.type !== "run_finished" &&
-      event.type !== "stage_completed"
-    ) {
+    if (!isSupportedTelegramEvent(event)) {
       return { delivered: false, eventType: event.type, reason: "event not supported" }
     }
     const message = buildMessage(event, createExternalLinkBuilder(telegram.publicBaseUrl).run(event.runId))

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import { useSearchParams } from "next/navigation"
-import { ENGINE_BASE_URL, type RunRow, type StageRunRow } from "@/lib/api"
+import { type RunRow, type StageRunRow } from "@/lib/api"
 import { PromptComposer } from "@/components/primitives/PromptComposer"
 import { BranchRow } from "@/components/primitives/BranchRow"
 import { ItemMergePanel } from "@/components/overlay/ItemMergePanel"
@@ -26,7 +26,7 @@ type TimelineEntry = {
   data?: unknown
 }
 
-type PendingPrompt = { id: string; prompt: string } | null
+type PendingPrompt = { id: string; prompt: string; rawPrompt: string } | null
 
 type Tab = "transcript" | "stages" | "branches" | "preview"
 
@@ -37,9 +37,68 @@ const TABS: Array<{ key: Tab; label: string }> = [
   { key: "preview", label: "Preview" }
 ]
 
+function formatTranscriptTimestamp(at: number): string {
+  return new Intl.DateTimeFormat("de-CH", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    fractionalSecondDigits: 3,
+    hour12: false,
+  }).format(new Date(at))
+}
+
 function isGenericPrompt(prompt: string | null | undefined): boolean {
   if (!prompt) return true
   return /^\s*you\s*>\s*$/i.test(prompt)
+}
+
+function deriveTimelinePresentation(
+  type: string,
+  payload: {
+    message?: string
+    text?: string
+    role?: string
+    data?: { role?: string; source?: string; kind?: string; meta?: { source?: string; severity?: string } }
+  } | null
+): { author?: string; kind?: string; message?: string; hidden?: boolean } {
+  const message =
+    typeof payload?.message === "string"
+      ? payload.message
+      : typeof payload?.text === "string"
+      ? payload.text
+      : undefined
+
+  if (type === "prompt_requested" && isGenericPrompt(message)) {
+    return { hidden: true }
+  }
+  if (type === "prompt_answered") {
+    return { author: "You", kind: "answer", message }
+  }
+  if (type === "chat_message") {
+    return {
+      author:
+        typeof payload?.role === "string"
+          ? payload.role
+          : typeof payload?.data?.role === "string"
+          ? payload.data.role
+          : "Assistant",
+      kind: "message",
+      message,
+    }
+  }
+  return {
+    author:
+      typeof payload?.role === "string"
+        ? payload.role
+        : typeof payload?.data?.role === "string"
+        ? payload.data.role
+        : undefined,
+    kind: typeof payload?.data?.kind === "string" ? payload.data.kind : undefined,
+    message,
+  }
 }
 
 function deriveBranches(run: RunRow | null): BranchRowViewModel[] {
@@ -104,7 +163,7 @@ export function LiveRunConsole({
   const sourceRef = useRef<EventSource | null>(null)
 
   async function refreshTree() {
-    const res = await fetch(`${ENGINE_BASE_URL}/runs/${runId}/tree`, { cache: "no-store" })
+    const res = await fetch(`/api/runs/${runId}/tree`, { cache: "no-store" })
     if (!res.ok) return
     const body = (await res.json()) as { run: RunRow; stageRuns: StageRunRow[] }
     setRun(body.run)
@@ -112,10 +171,18 @@ export function LiveRunConsole({
   }
 
   async function refreshPrompt() {
-    const res = await fetch(`${ENGINE_BASE_URL}/runs/${runId}/prompts`, { cache: "no-store" })
+    const res = await fetch(`/api/runs/${runId}/prompts`, { cache: "no-store" })
     if (!res.ok) return
-    const body = (await res.json()) as { prompt: { id: string; prompt: string } | null }
-    setPending(body.prompt ? { id: body.prompt.id, prompt: body.prompt.prompt } : null)
+    const body = (await res.json()) as { prompt: { id: string; prompt: string; displayPrompt?: string | null } | null }
+    setPending(
+      body.prompt
+        ? {
+            id: body.prompt.id,
+            prompt: body.prompt.displayPrompt ?? body.prompt.prompt,
+            rawPrompt: body.prompt.prompt,
+          }
+        : null
+    )
   }
 
   useEffect(() => {
@@ -127,35 +194,33 @@ export function LiveRunConsole({
     void refreshTree()
     void refreshPrompt()
 
-    const source = new EventSource(`${ENGINE_BASE_URL}/runs/${runId}/events`)
+    const source = new EventSource(`/api/runs/${runId}/events`)
     sourceRef.current = source
 
     const append = (type: string, data: unknown) => {
       const payload = data as {
+        at?: number
         message?: string
         text?: string
         role?: string
         data?: { role?: string; source?: string; kind?: string; meta?: { source?: string; severity?: string } }
       } | null
-      const presentationKind =
-        type === "presentation" && typeof payload?.data?.kind === "string" ? payload.data.kind : undefined
+      const presentation = deriveTimelinePresentation(type, payload)
+      if (presentation.hidden) return
       const entry: TimelineEntry = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         type,
-        at: Date.now(),
+        at: typeof payload?.at === "number" ? payload.at : Date.now(),
         message:
-          typeof payload?.message === "string"
+          typeof presentation.message === "string"
+            ? presentation.message
+            : typeof payload?.message === "string"
             ? payload.message
             : typeof payload?.text === "string"
             ? payload.text
             : type,
-        author:
-          typeof payload?.role === "string"
-            ? payload.role
-            : typeof payload?.data?.role === "string"
-            ? payload.data.role
-            : presentationKind,
-        kind: presentationKind,
+        author: presentation.author,
+        kind: presentation.kind,
         severity: payload?.data?.meta?.severity,
         findingSource: payload?.data?.meta?.source,
         data
@@ -215,7 +280,7 @@ export function LiveRunConsole({
   const merge = deriveMerge(run)
   const preview = derivePreview(run, previewReachable, previewUrl)
   const pendingPromptText =
-    pending && isGenericPrompt(pending.prompt)
+    pending && isGenericPrompt(pending.rawPrompt)
       ? [...timeline].reverse().find(entry => entry.type === "chat_message" && entry.message.trim().length > 0)?.message ?? pending.prompt
       : pending?.prompt ?? null
 
@@ -290,6 +355,7 @@ export function LiveRunConsole({
                 {entry.author && entry.author !== entry.kind ? (
                   <span className="mono-label">{entry.author}</span>
                 ) : null}
+                <span className="timeline-timestamp">{formatTranscriptTimestamp(entry.at)}</span>
                 <span>{entry.message}</span>
               </li>
             ))}

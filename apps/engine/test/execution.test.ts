@@ -2,6 +2,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 
 import { assertWaveSucceeded, executionStageLlmForStory } from "../src/stages/execution/index.js"
+import { shouldIgnoreTransientUntrackedPath } from "../src/llm/hosted/execution/coderHarness.js"
 import { defaultWorkspaceRuntimePolicy } from "../src/core/workspaces.js"
 
 test("assertWaveSucceeded rejects blocked stories", () => {
@@ -49,4 +50,14 @@ test("executionStageLlmForStory pins hosted stages to the story worktree", () =>
   })
   assert.equal(executionStageLlmForStory(llm), llm)
   assert.equal(executionStageLlmForStory(undefined, "/repo/worktrees/story-002"), undefined)
+})
+
+test("shouldIgnoreTransientUntrackedPath excludes install/cache directories only", () => {
+  assert.equal(shouldIgnoreTransientUntrackedPath("node_modules/express/index.js"), true)
+  assert.equal(shouldIgnoreTransientUntrackedPath("node_modules/.package-lock.json"), true)
+  assert.equal(shouldIgnoreTransientUntrackedPath(".git/index"), true)
+  assert.equal(shouldIgnoreTransientUntrackedPath(".beerengineer/workspace.json"), true)
+  assert.equal(shouldIgnoreTransientUntrackedPath("public/index.html"), false)
+  assert.equal(shouldIgnoreTransientUntrackedPath("docs/QA-RESULTS.md"), false)
+  assert.equal(shouldIgnoreTransientUntrackedPath("src/main.ts"), false)
 })

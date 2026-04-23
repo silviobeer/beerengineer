@@ -1,4 +1,5 @@
 import { InboxView } from "@/components/inbox/InboxView";
+import { BoardLiveSubscriber } from "@/components/board/BoardLiveSubscriber";
 import { AppShell } from "@/components/shell/AppShell";
 import { ErrorState } from "@/components/primitives/ErrorState";
 import { buildInboxShell, getLiveInboxState } from "@/lib/live-inbox";
@@ -17,6 +18,7 @@ export default async function InboxPage({
   if (state.kind === "fallback") {
     return (
       <AppShell shell={shellViewModel} activeHref="/inbox" workspaceHrefBase="/inbox">
+        <BoardLiveSubscriber workspaceKey={params?.workspace ?? null} />
         <InboxView inbox={inboxViewModel} />
         <ErrorState title="Live inbox unavailable" detail={state.reason} />
       </AppShell>
@@ -33,6 +35,7 @@ export default async function InboxPage({
 
   return (
     <AppShell shell={shell} activeHref="/inbox" workspaceHrefBase="/inbox">
+      <BoardLiveSubscriber workspaceKey={params?.workspace ?? null} />
       <InboxView inbox={state.inbox} />
     </AppShell>
   );

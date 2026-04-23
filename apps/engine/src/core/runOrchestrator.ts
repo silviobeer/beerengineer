@@ -354,8 +354,9 @@ export function prepareRun(
   // considered a bug upstream.
   const bus = io.bus ?? createBus()
   const writtenLogIds = new Set<string>()
+  const overrides = resolveOverrides()
   const notificationConfig =
-    resolveMergedConfig(readConfigFile(resolveConfigPath(resolveOverrides())), resolveOverrides()) ?? defaultAppConfig()
+    resolveMergedConfig(readConfigFile(resolveConfigPath(overrides)), overrides) ?? defaultAppConfig()
 
   const start = async (): Promise<void> => {
     const workspaceRow = repos.getWorkspace(workspaceId)

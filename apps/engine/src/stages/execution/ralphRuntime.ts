@@ -17,7 +17,7 @@ import type { StageLogEntry } from "../../core/stageRuntime.js"
 import { stagePresent } from "../../core/stagePresentation.js"
 import { readWorkspaceConfig } from "../../core/workspaces.js"
 import { executionCoderPolicy, resolveHarness, type RunLlmConfig } from "../../llm/registry.js"
-import { runCoderHarness } from "../../llm/hosted/execution/coderHarness.js"
+import { runCoderHarness, shouldIgnoreTransientUntrackedPath } from "../../llm/hosted/execution/coderHarness.js"
 import type { IterationContext } from "../../llm/hosted/promptEnvelope.js"
 import { llm6bFix, llm6bImplement } from "../../sim/llm.js"
 import { runStoryReviewTools } from "../../review/registry.js"
@@ -133,6 +133,8 @@ async function recordStoryBlocked(
     emitEvent({
       type: "run_blocked",
       runId: activeRun.runId,
+      itemId: activeRun.itemId,
+      title: activeRun.title ?? activeRun.itemId,
       scope: {
         type: "story",
         runId: ctx.runId,
@@ -237,7 +239,9 @@ async function collectReviewChangedFiles(workspaceRoot: string, baselinePath: st
         .join("\n")
   const baselineUntracked = new Set(baseline?.untrackedFiles ?? [])
   const currentUntracked = listUntrackedFiles(workspaceRoot)
-  const untrackedDelta = currentUntracked.filter(file => !baselineUntracked.has(file))
+  const untrackedDelta = currentUntracked.filter(
+    file => !baselineUntracked.has(file) && !shouldIgnoreTransientUntrackedPath(file),
+  )
   return Array.from(new Set([...tracked.split(/\r?\n/).map(line => line.trim()).filter(Boolean), ...untrackedDelta])).sort()
 }
 

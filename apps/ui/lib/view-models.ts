@@ -241,6 +241,7 @@ export type InboxRowViewModel = {
   status: string;
   primaryAction: string;
   detail: string;
+  lastAnswer?: string | null;
   /** Deep-link target into the exact context. */
   href?: string;
   /** When set, the row can expand inline to reveal a PromptComposer. */

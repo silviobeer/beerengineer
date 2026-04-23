@@ -1,10 +1,13 @@
+import { spawnSync } from "node:child_process"
 import { runStage } from "../../core/stageRuntime.js"
 import { printStageCompletion, stageSummary, summaryArtifactFile } from "../../core/stageHelpers.js"
 import { stagePresent } from "../../core/stagePresentation.js"
+import { branchNameProject } from "../../core/repoSimulation.js"
 import { createProjectReviewReview, createProjectReviewStage, type RunLlmConfig } from "../../llm/registry.js"
+import { shouldIgnoreTransientUntrackedPath } from "../../llm/hosted/execution/coderHarness.js"
 import { renderProjectReviewMarkdown } from "../../render/projectReview.js"
 import type { ProjectReviewArtifact, ProjectReviewFinding, WithExecution } from "../../types.js"
-import type { ProjectReviewState } from "./types.js"
+import type { ProjectReviewRepoEvidence, ProjectReviewState } from "./types.js"
 
 type SeverityCounts = Partial<Record<ProjectReviewFinding["severity"], number>>
 
@@ -15,8 +18,83 @@ function findingsBySeverity(artifact: ProjectReviewArtifact): SeverityCounts {
   }, {})
 }
 
+function runGit(cwd: string, args: string[]): { ok: boolean; stdout: string; stderr: string } {
+  const result = spawnSync("git", args, { cwd, encoding: "utf8" })
+  return {
+    ok: result.status === 0,
+    stdout: (result.stdout ?? "").trim(),
+    stderr: (result.stderr ?? "").trim(),
+  }
+}
+
+function sanitizeExecutionSummaries(executionSummaries: WithExecution["executionSummaries"]): WithExecution["executionSummaries"] {
+  return executionSummaries.map(wave => ({
+    ...wave,
+    storiesMerged: wave.storiesMerged.map(story => ({
+      ...story,
+      filesIntegrated: story.filesIntegrated.filter(path => !shouldIgnoreTransientUntrackedPath(path)),
+    })),
+  }))
+}
+
+function isTextReviewTarget(path: string): boolean {
+  return /\.(md|txt|html?|css|js|jsx|ts|tsx|json|ya?ml|sh)$/i.test(path)
+}
+
+function reviewTargetPaths(executionSummaries: WithExecution["executionSummaries"]): string[] {
+  const fromExecution = executionSummaries
+    .flatMap(wave => wave.storiesMerged.flatMap(story => story.filesIntegrated))
+    .filter(path => !shouldIgnoreTransientUntrackedPath(path))
+    .filter(path => isTextReviewTarget(path))
+  const explicit = [
+    "docs/QA-RESULTS.md",
+    "public/index.html",
+    "README.md",
+    "SMOKE-TEST-SETUP.md",
+    "package.json",
+    "package-lock.json",
+  ]
+  return Array.from(new Set([...explicit, ...fromExecution])).sort()
+}
+
+function readBranchFile(workspaceRoot: string, branch: string, path: string): string | null {
+  const result = runGit(workspaceRoot, ["show", `${branch}:${path}`])
+  return result.ok ? result.stdout : null
+}
+
+export function collectProjectReviewRepoEvidence(ctx: WithExecution): ProjectReviewRepoEvidence | undefined {
+  if (!ctx.workspaceRoot) return undefined
+
+  const branch = branchNameProject(ctx, ctx.project.id)
+  const branchCheck = runGit(ctx.workspaceRoot, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`])
+  if (!branchCheck.ok) return undefined
+
+  const tracked = runGit(ctx.workspaceRoot, ["ls-tree", "-r", "--name-only", branch])
+  const trackedFiles = tracked.ok
+    ? tracked.stdout.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+    : []
+
+  const checkedFiles = reviewTargetPaths(ctx.executionSummaries).map(path => {
+    const content = readBranchFile(ctx.workspaceRoot!, branch, path)
+    return {
+      path,
+      exists: content !== null,
+      excerpt: content === null ? undefined : content.slice(0, 2400),
+    }
+  })
+
+  return {
+    branch,
+    trackedFileCount: trackedFiles.length,
+    trackedFilesSample: trackedFiles.slice(0, 200),
+    checkedFiles,
+  }
+}
+
 export async function projectReview(ctx: WithExecution, llm?: RunLlmConfig): Promise<ProjectReviewArtifact> {
   stagePresent.header(`project-review — ${ctx.project.name}`)
+  const sanitizedExecutionSummaries = sanitizeExecutionSummaries(ctx.executionSummaries)
+  const repoEvidence = collectProjectReviewRepoEvidence({ ...ctx, executionSummaries: sanitizedExecutionSummaries })
 
   const { result } = await runStage({
     stageId: "project-review",
@@ -29,7 +107,8 @@ export async function projectReview(ctx: WithExecution, llm?: RunLlmConfig): Pro
       prd: ctx.prd,
       architecture: ctx.architecture,
       implementationPlan: ctx.plan,
-      executionSummaries: ctx.executionSummaries,
+      executionSummaries: sanitizedExecutionSummaries,
+      repoEvidence,
       revisionCount: 0,
     }),
     stageAgent: createProjectReviewStage(ctx.project, llm),

@@ -8,6 +8,7 @@ import { runWithActiveRun } from "./runContext.js"
 import { layout, type WorkflowContext } from "./workspaceLayout.js"
 import { attachDbSync } from "./runOrchestrator.js"
 import { attachCrossProcessBridge } from "./crossProcessBridge.js"
+import { persistWorkflowRunState } from "./stageRuntime.js"
 import type { EventBus } from "./bus.js"
 import type { ExternalRemediationRow, Repos, RunRow } from "../db/repositories.js"
 import { attachTelegramNotifications } from "../notifications/index.js"
@@ -198,8 +199,9 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
     }
     const bus = input.io.bus
     const writtenLogIds = new Set<string>()
+    const overrides = resolveOverrides()
     const notificationConfig =
-      resolveMergedConfig(readConfigFile(resolveConfigPath(resolveOverrides())), resolveOverrides()) ?? defaultAppConfig()
+      resolveMergedConfig(readConfigFile(resolveConfigPath(overrides)), overrides) ?? defaultAppConfig()
     const detachDbSync = attachDbSync(bus, input.repos, { runId: run.id, itemId: run.item_id }, { writtenLogIds })
     const detachTelegram = attachTelegramNotifications(bus, input.repos, notificationConfig)
     const detachBridge = attachCrossProcessBridge(bus, input.repos, run.id, { writtenLogIds })
@@ -253,8 +255,20 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
                 workspaceRoot: workspaceRow?.root_path ?? undefined,
               },
             )
+            const finalRun = input.repos.getRun(run.id)
+            await persistWorkflowRunState(
+              { workspaceId: run.workspace_id, runId: run.id },
+              finalRun?.current_stage ?? "handoff",
+              "completed",
+            )
             bus.emit({ type: "run_finished", runId: run.id, itemId: run.item_id, title: run.title, status: "completed" })
           } catch (err) {
+            const finalRun = input.repos.getRun(run.id)
+            await persistWorkflowRunState(
+              { workspaceId: run.workspace_id, runId: run.id },
+              finalRun?.current_stage ?? run.current_stage ?? "execution",
+              "failed",
+            )
             bus.emit({
               type: "run_finished",
               runId: run.id,

@@ -639,6 +639,9 @@ export class Repos {
     channel: string
     chatId: string
   }): boolean {
+    // Re-claim rows that previously failed so a transient Telegram outage
+    // doesn't permanently suppress the notification. Delivered rows remain
+    // the dedupe fence.
     const timestamp = now()
     const result = this.db
       .prepare(
@@ -647,7 +650,10 @@ export class Repos {
          ) VALUES (
            @dedup_key, @channel, @chat_id, 'pending', 0, NULL, NULL, NULL, @created_at, @updated_at
          )
-         ON CONFLICT(dedup_key) DO NOTHING`
+         ON CONFLICT(dedup_key) DO UPDATE SET
+           status = 'pending',
+           updated_at = @updated_at
+         WHERE notification_deliveries.status = 'failed'`
       )
       .run({
         dedup_key: input.dedupKey,

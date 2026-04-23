@@ -6,7 +6,7 @@ export function InboxList({ rows }: { rows: InboxRowViewModel[] }) {
   return (
     <Panel>
       {rows.map((row) => (
-        <InboxRow key={row.title} row={row} />
+        <InboxRow key={row.prompt ? `${row.prompt.runId}:${row.prompt.promptId}` : `${row.kind}:${row.href ?? row.title}`} row={row} />
       ))}
     </Panel>
   );

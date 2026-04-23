@@ -118,6 +118,11 @@ test.describe("live run flow", () => {
     })
     expect(start.status()).toBe(202)
     const { runId } = (await start.json()) as { runId: string }
+    const directEngineRequests: string[] = []
+
+    page.on("request", req => {
+      if (req.url().startsWith(ENGINE_URL)) directEngineRequests.push(req.url())
+    })
 
     await page.goto("/runs")
     await expect(page.getByRole("heading", { name: /recent runs/i })).toBeVisible()
@@ -128,6 +133,23 @@ test.describe("live run flow", () => {
     // The live console reaches out to the engine — at minimum the stage list
     // should appear once the first event streams in.
     await expect(page.locator(".live-run-stages ol li").first()).toBeVisible({ timeout: 15_000 })
+    expect(directEngineRequests).toEqual([])
+
+    const promptDeadline = Date.now() + 30_000
+    let resolvedPrompt = ""
+    while (Date.now() < promptDeadline) {
+      const promptRes = await request.get(`/api/runs/${runId}/prompts`)
+      expect(promptRes.ok()).toBeTruthy()
+      const prompt = (await promptRes.json()) as {
+        prompt: { prompt: string; displayPrompt?: string | null } | null
+      }
+      if (prompt.prompt?.displayPrompt && prompt.prompt.displayPrompt !== prompt.prompt.prompt) {
+        resolvedPrompt = prompt.prompt.displayPrompt
+        break
+      }
+      await new Promise(r => setTimeout(r, 500))
+    }
+    expect(resolvedPrompt).toMatch(/Question 1 of 3|Question 2 of 3|workflow engine/i)
 
     // Clean up the run by driving it to completion so the engine isn't left hanging.
     const deadline = Date.now() + 60_000

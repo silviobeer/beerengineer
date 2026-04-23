@@ -302,9 +302,22 @@ async function recordStageBlocked<TState, TArtifact>(
     evidencePaths: [layout.stageRunFile(ctx, run.stage), layout.stageLogFile(ctx, run.stage)],
     findings: extra?.findings,
   })
+  const activeRun = getActiveRun()
+  if (record.status === "failed") {
+    emitEvent({
+      type: "run_failed",
+      runId: run.runId,
+      scope: { type: "stage", runId: run.runId, stageId: run.stage },
+      cause,
+      summary,
+    })
+    return
+  }
   emitEvent({
-    type: record.status === "failed" ? "run_failed" : "run_blocked",
+    type: "run_blocked",
     runId: run.runId,
+    itemId: activeRun?.itemId ?? "unknown-item",
+    title: activeRun?.title ?? activeRun?.itemId ?? "unknown-item",
     scope: { type: "stage", runId: run.runId, stageId: run.stage },
     cause,
     summary,

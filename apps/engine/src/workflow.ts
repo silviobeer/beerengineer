@@ -186,6 +186,8 @@ async function blockRunForWorkspaceState(context: WorkflowContext, summary: stri
     emitEvent({
       type: "run_blocked",
       runId: activeRun.runId,
+      itemId: activeRun.itemId,
+      title: activeRun.title ?? activeRun.itemId,
       scope: { type: "run", runId: activeRun.runId },
       cause: "system_error",
       summary,

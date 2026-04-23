@@ -89,6 +89,29 @@ type PendingPromptRow = {
   answered_at: number | null;
 };
 
+type GlobalPromptRow = {
+  id: string;
+  run_id: string;
+  workspace_key: string;
+  item_code: string | null;
+  item_title: string | null;
+};
+
+type GlobalRecoveryRunRow = {
+  id: string;
+  title: string | null;
+  recovery_status: "blocked" | "failed" | null;
+  workspace_key: string;
+  item_code: string | null;
+  item_title: string | null;
+};
+
+type GlobalReviewItemRow = {
+  code: string;
+  title: string;
+  workspace_key: string;
+};
+
 type LiveBoardReadyState = {
   kind: "ready";
   shell: ShellViewModel;
@@ -211,6 +234,13 @@ function buildItemHref(itemCode: string, workspaceKey?: string | null): string {
   if (workspaceKey) params.set("workspace", workspaceKey);
   params.set("item", itemCode);
   return `/?${params.toString()}`;
+}
+
+function buildInboxHref(workspaceKey?: string | null): string {
+  if (!workspaceKey) return "/inbox"
+  const params = new URLSearchParams()
+  params.set("workspace", workspaceKey)
+  return `/inbox?${params.toString()}`
 }
 
 function buildBoardViewModel(
@@ -692,49 +722,80 @@ export function getLiveBoardState(workspaceKey?: string | null, selectedItemCode
       historyByItem.get(selectedItem.id) ?? []
     );
 
-    // Workspace-scoped signals power the SignalPopover in the top bar.
-    const awaitingAnswerCount = promptRows.length;
-    const blockedCount = runRows.filter((row) => row.recovery_status === "blocked").length;
-    const failedCount = runRows.filter((row) => row.recovery_status === "failed").length;
-    const reviewRequiredCount = items.filter((item) => item.phase_status === "review_required").length;
+    const globalPromptRows = safeAll<GlobalPromptRow>(
+      connection,
+      `select pp.id, pp.run_id, w.key as workspace_key, i.code as item_code, i.title as item_title
+         from pending_prompts pp
+         join runs r on r.id = pp.run_id
+         join workspaces w on w.id = r.workspace_id
+         left join items i on i.id = r.item_id
+        where pp.answer is null
+        order by pp.created_at asc`
+    );
+    const globalRecoveryRuns = safeAll<GlobalRecoveryRunRow>(
+      connection,
+      `select r.id, r.title,
+              ${columnExists(connection, "runs", "recovery_status") ? "r.recovery_status" : "null"} as recovery_status,
+              w.key as workspace_key,
+              i.code as item_code,
+              i.title as item_title
+         from runs r
+         join workspaces w on w.id = r.workspace_id
+         left join items i on i.id = r.item_id
+        where ${columnExists(connection, "runs", "recovery_status") ? "r.recovery_status is not null" : "1 = 0"}
+        order by r.updated_at desc, r.created_at desc`
+    );
+    const globalReviewItems = safeAll<GlobalReviewItemRow>(
+      connection,
+      `select i.code, i.title, w.key as workspace_key
+         from items i
+         join workspaces w on w.id = i.workspace_id
+        where i.phase_status = 'review_required'
+        order by i.updated_at desc, i.created_at desc`
+    );
+
+    const awaitingAnswerCount = globalPromptRows.length;
+    const blockedCount = globalRecoveryRuns.filter((row) => row.recovery_status === "blocked").length;
+    const failedCount = globalRecoveryRuns.filter((row) => row.recovery_status === "failed").length;
+    const reviewRequiredCount = globalReviewItems.length;
 
     const signalEntries: WorkspaceSignalEntry[] = [];
-    for (const prompt of promptRows) {
+    for (const prompt of globalPromptRows) {
       signalEntries.push({
         key: "awaiting_answer",
-        label: `Prompt waiting · ${prompt.run_id.slice(0, 8)}`,
+        label: `${prompt.workspace_key} · ${prompt.item_code ?? "—"}${prompt.item_title ? ` · ${prompt.item_title}` : ""}`,
         count: 1,
         href: `/runs/${prompt.run_id}`,
         tone: "gold"
       });
     }
-    for (const run of runRows.filter((row) => row.recovery_status === "blocked")) {
+    for (const run of globalRecoveryRuns.filter((row) => row.recovery_status === "blocked")) {
       signalEntries.push({
         key: "blocked",
-        label: `Blocked · ${run.title ?? run.id.slice(0, 8)}`,
+        label: `${run.workspace_key} · ${run.item_code ?? "—"}${run.title ?? run.item_title ? ` · ${run.title ?? run.item_title}` : ""}`,
         count: 1,
         href: `/runs/${run.id}`,
         tone: "danger"
       });
     }
-    for (const item of items.filter((row) => row.phase_status === "review_required")) {
+    for (const item of globalReviewItems) {
       signalEntries.push({
         key: "review_required",
-        label: `Review · ${item.code}`,
+        label: `${item.workspace_key} · ${item.code} · ${item.title}`,
         count: 1,
-        href: buildItemHref(item.code, activeWorkspaceRecord.key),
+        href: buildItemHref(item.code, item.workspace_key),
         tone: "gold"
       });
     }
 
     const globalSignals: GlobalSignal[] = [
       { label: "items", value: String(items.length), tone: "petrol" },
-      { label: "prompts", value: String(awaitingAnswerCount), tone: awaitingAnswerCount > 0 ? "gold" : "neutral", signalKey: "awaiting_answer", href: "/inbox" },
-      { label: "blocked", value: String(blockedCount), tone: blockedCount > 0 ? "danger" : "neutral", signalKey: "blocked", href: "/inbox" },
-      { label: "review", value: String(reviewRequiredCount), tone: reviewRequiredCount > 0 ? "gold" : "neutral", signalKey: "review_required", href: "/inbox" }
+      { label: "prompts", value: String(awaitingAnswerCount), tone: awaitingAnswerCount > 0 ? "gold" : "neutral", signalKey: "awaiting_answer", href: buildInboxHref(activeWorkspaceRecord.key) },
+      { label: "blocked", value: String(blockedCount), tone: blockedCount > 0 ? "danger" : "neutral", signalKey: "blocked", href: buildInboxHref(activeWorkspaceRecord.key) },
+      { label: "review", value: String(reviewRequiredCount), tone: reviewRequiredCount > 0 ? "gold" : "neutral", signalKey: "review_required", href: buildInboxHref(activeWorkspaceRecord.key) }
     ];
     if (failedCount > 0) {
-      globalSignals.push({ label: "failed", value: String(failedCount), tone: "danger", signalKey: "blocked", href: "/inbox" });
+      globalSignals.push({ label: "failed", value: String(failedCount), tone: "danger", signalKey: "blocked", href: buildInboxHref(activeWorkspaceRecord.key) });
     }
 
     const shell = {

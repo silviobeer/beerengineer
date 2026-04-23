@@ -21,6 +21,7 @@ export function InboxRow({ row }: { row: InboxRowViewModel }) {
           </div>
           <strong>{row.title}</strong>
           <p>{row.detail}</p>
+          {row.lastAnswer ? <p className="muted">Last answer: {row.lastAnswer}</p> : null}
           {open && row.prompt ? (
             <PromptComposer
               runId={row.prompt.runId}

@@ -2,7 +2,6 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
-import { ENGINE_BASE_URL } from "@/lib/api";
 
 type BoardEventType =
   | "run_started"
@@ -10,7 +9,13 @@ type BoardEventType =
   | "stage_completed"
   | "item_column_changed"
   | "run_finished"
-  | "project_created";
+  | "project_created"
+  | "prompt_requested"
+  | "prompt_answered"
+  | "run_blocked"
+  | "run_failed"
+  | "run_resumed"
+  | "external_remediation_recorded";
 
 const RELEVANT: BoardEventType[] = [
   "run_started",
@@ -18,7 +23,13 @@ const RELEVANT: BoardEventType[] = [
   "stage_completed",
   "item_column_changed",
   "run_finished",
-  "project_created"
+  "project_created",
+  "prompt_requested",
+  "prompt_answered",
+  "run_blocked",
+  "run_failed",
+  "run_resumed",
+  "external_remediation_recorded"
 ];
 
 const WINDOW_MS = 400;
@@ -64,7 +75,7 @@ export function BoardLiveSubscriber({ workspaceKey }: { workspaceKey?: string | 
 
     const connect = () => {
       if (disposed) return;
-      const url = new URL(`${ENGINE_BASE_URL}/events`);
+      const url = new URL("/api/events", window.location.origin);
       if (workspaceKey) {
         url.searchParams.set("workspace", workspaceKey);
       }

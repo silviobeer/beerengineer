@@ -332,7 +332,7 @@ test("interop: UI tail of stage_logs sees a CLI-owned run's full event sequence"
           text: "Q1",
         })
         io.bus.emit({ type: "stage_completed", runId: fx.run.id, stageRunId: "s1", stageKey: "brainstorm", status: "completed" })
-        io.bus.emit({ type: "run_finished", runId: fx.run.id, status: "completed" })
+        io.bus.emit({ type: "run_finished", runId: fx.run.id, itemId: fx.itemId, title: "Interop run", status: "completed" })
       }),
     )
 

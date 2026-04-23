@@ -7,7 +7,7 @@ import { getWorkflowIO, hasWorkflowIO, type WorkflowEvent } from "./io.js"
  * invoking runWorkflow(). Lets stages emit events without threading the
  * runId through every signature.
  */
-type RunContext = { runId: string; itemId: string; stageRunId?: string | null }
+type RunContext = { runId: string; itemId: string; title?: string; stageRunId?: string | null }
 const runContextStorage = new AsyncLocalStorage<RunContext>()
 
 export function runWithActiveRun<T>(ctx: RunContext, fn: () => T): T {

@@ -108,6 +108,7 @@ export function getLiveInboxState(workspaceKey?: string | null): LiveInboxState 
       .all(activeWorkspace.id) as PromptRow[];
 
     const latestQuestionByRun = new Map<string, string>();
+    const latestAnswerByRun = new Map<string, string>();
     const chatRows = connection
       .prepare(
         `select run_id, message
@@ -120,6 +121,20 @@ export function getLiveInboxState(workspaceKey?: string | null): LiveInboxState 
     for (const row of chatRows) {
       if (!latestQuestionByRun.has(row.run_id) && row.message.trim().length > 0) {
         latestQuestionByRun.set(row.run_id, row.message);
+      }
+    }
+    const answerRows = connection
+      .prepare(
+        `select run_id, message
+           from stage_logs
+          where run_id in (select id from runs where workspace_id = ?)
+            and event_type = 'prompt_answered'
+          order by created_at desc, rowid desc`
+      )
+      .all(activeWorkspace.id) as Array<{ run_id: string; message: string }>;
+    for (const row of answerRows) {
+      if (!latestAnswerByRun.has(row.run_id) && row.message.trim().length > 0) {
+        latestAnswerByRun.set(row.run_id, row.message);
       }
     }
 
@@ -137,6 +152,7 @@ export function getLiveInboxState(workspaceKey?: string | null): LiveInboxState 
         status: "awaiting answer",
         primaryAction: "Open run",
         detail: promptText.slice(0, 140),
+        lastAnswer: latestAnswerByRun.get(prompt.run_id) ?? null,
         href: `/runs/${prompt.run_id}`,
         prompt: { runId: prompt.run_id, promptId: prompt.id, prompt: promptText }
       });

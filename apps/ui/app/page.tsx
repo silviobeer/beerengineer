@@ -17,7 +17,7 @@ export default async function BoardPage({
   return (
     <AppShell shell={state.shell} activeHref="/" workspaceHrefBase="/">
       <div className="canvas">
-        <BoardLiveSubscriber workspaceKey={params?.workspace ?? null} />
+        <BoardLiveSubscriber />
         {state.kind === "ready" ? (
           <>
             <BoardView board={state.board} />

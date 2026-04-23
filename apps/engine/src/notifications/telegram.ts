@@ -51,6 +51,8 @@ function timeoutSignal(timeoutMs: number): AbortSignal {
 }
 
 function parseRetryAfter(response: Response): number | null {
+  // RFC 7231 allows `Retry-After: <HTTP-date>` too, but the Telegram Bot API
+  // always returns integer seconds, so we only handle the numeric form here.
   const header = response.headers.get("retry-after")
   if (!header) return null
   const seconds = Number(header)
