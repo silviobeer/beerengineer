@@ -207,6 +207,25 @@ Fallback auf simulated-repo-Modus, wenn eine der Vorbedingungen verletzt ist
 (kein git-Repo, dirty tree, keine Base-Branch, kein `workspaceRoot`). Der Grund
 wird beim Run-Start als Presentation-Event geloggt.
 
+#### Base-Branch-Aufloesung (Reihenfolge)
+
+`resolveBaseBranch` pickt die Base-Branch deterministisch, damit ein
+abgebrochener Vorlauf keine Folgeschaeden erzeugt (HEAD kann nach einem Crash
+noch auf `story/...` / `wave/...` parken):
+
+1. `Item.baseBranch` (expliziter Override pro Item)
+2. `BEERENGINEER_BASE_BRANCH` (env)
+3. `workspace.json` — `preflight.github.defaultBranch`, sonst
+   `reviewPolicy.sonarcloud.baseBranch`, sonst `sonar.baseBranch`
+4. `git branch --show-current` im `workspaceRoot` — aber nur, wenn HEAD
+   **nicht** auf einer Engine-eigenen Branch (`item/`, `proj/`, `wave/`,
+   `story/`, `candidate/`) steht
+5. `main` als letzter Fallback
+
+Vor jedem Branch-Op in Real-Git-Modus parkt die Engine HEAD zusaetzlich auf
+der Base-Branch, sodass `ensureItemBranchReal` garantiert von einer sauberen
+Ref aus arbeitet.
+
 ### Harness-Modus (NDJSON)
 
 `beerengineer --json` macht die CLI zu einer stabilen Machine-Schnittstelle:

@@ -74,6 +74,14 @@ function mergeNoFf(mode: RealGitEnabled, target: string, source: string, message
 }
 
 export function ensureItemBranchReal(mode: RealGitEnabled, context: WorkflowContext): string {
+  // Defensive: if a previous run crashed mid-execution, HEAD may still be on a
+  // story/wave/proj/item branch. Park on the base branch before creating or
+  // reusing the item branch so subsequent `ensureBranchFrom` calls start from
+  // an authoritative ref.
+  if (branchExists(mode.workspaceRoot, mode.baseBranch)) {
+    const co = runGit(mode.workspaceRoot, ["checkout", mode.baseBranch])
+    if (!co.ok) throw new Error(`realGit: could not park on base branch ${mode.baseBranch}: ${co.stderr}`)
+  }
   const name = branchNameItem(context)
   ensureBranchFrom(mode, name, mode.baseBranch)
   return name

@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises"
+import { readFileSync } from "node:fs"
 import { spawnSync } from "node:child_process"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 import { randomUUID } from "node:crypto"
 import {
   createCandidateBranch,
@@ -94,17 +95,46 @@ async function readJson<T>(path: string): Promise<T> {
   return JSON.parse(await readFile(path, "utf8")) as T
 }
 
-function resolveBaseBranch(item: Item, workspaceRoot?: string): { branch: string; source: "item" | "env" | "git" | "default" } {
+function isEngineOwnedBranchName(branch: string): boolean {
+  return /^(item|proj|wave|story|candidate)\//.test(branch)
+}
+
+function resolveBaseBranch(item: Item, workspaceRoot?: string): { branch: string; source: "item" | "env" | "config" | "git" | "default" } {
   const itemOverride = item.baseBranch?.trim()
   if (itemOverride) return { branch: itemOverride, source: "item" }
   const envOverride = process.env.BEERENGINEER_BASE_BRANCH?.trim()
   if (envOverride) return { branch: envOverride, source: "env" }
+
+  // Prefer the workspace-config-recorded default branch over whatever happens
+  // to be checked out right now: if a previous run crashed mid-execution, the
+  // repo may still be parked on a story/wave/proj branch, and we must not
+  // treat that as the "base".
+  if (workspaceRoot) {
+    try {
+      const configPath = resolve(workspaceRoot, ".beerengineer", "workspace.json")
+      const raw = readFileSync(configPath, "utf8")
+      const parsed = JSON.parse(raw) as {
+        preflight?: { github?: { defaultBranch?: string | null } }
+        reviewPolicy?: { sonarcloud?: { baseBranch?: string } }
+        sonar?: { baseBranch?: string }
+      }
+      const fromConfig =
+        parsed.preflight?.github?.defaultBranch?.trim() ||
+        parsed.reviewPolicy?.sonarcloud?.baseBranch?.trim() ||
+        parsed.sonar?.baseBranch?.trim()
+      if (fromConfig) return { branch: fromConfig, source: "config" }
+    } catch {
+      // no config, fall through to git probe
+    }
+  }
+
   const result = spawnSync("git", ["branch", "--show-current"], {
     cwd: workspaceRoot ?? process.cwd(),
     encoding: "utf8",
   })
   const branch = result.status === 0 ? result.stdout.trim() : ""
-  if (branch) return { branch, source: "git" }
+  // If HEAD is on an engine-owned branch, don't treat it as a base branch.
+  if (branch && !isEngineOwnedBranchName(branch)) return { branch, source: "git" }
   return { branch: "main", source: "default" }
 }
 
