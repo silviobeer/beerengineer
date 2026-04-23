@@ -11,6 +11,13 @@ function validatePlanStoryIds(artifact: ImplementationPlanArtifact, prd: PRD): s
   const prdIds = new Set(prd.stories.map(s => s.id))
   const seen = new Set<string>()
   const issues: string[] = []
+  const waveIds = new Set(artifact.plan.waves.map(w => w.id))
+  const waveIdsBefore = new Map<string, Set<string>>()
+  const idsBefore = new Set<string>()
+  for (const wave of artifact.plan.waves) {
+    waveIdsBefore.set(wave.id, new Set(idsBefore))
+    idsBefore.add(wave.id)
+  }
   for (const wave of artifact.plan.waves) {
     for (const ref of wave.stories ?? []) {
       const id = (ref as { id?: string })?.id
@@ -26,6 +33,17 @@ function validatePlanStoryIds(artifact: ImplementationPlanArtifact, prd: PRD): s
         issues.push(`Story id "${id}" appears in more than one wave; each PRD story must appear exactly once.`)
       }
       seen.add(id)
+    }
+    for (const dep of wave.dependencies ?? []) {
+      if (typeof dep !== "string" || !/^W\d+$/.test(dep)) {
+        issues.push(`Wave ${wave.id} has invalid dependency "${dep}". Dependencies must be an Array<string> of earlier wave ids like "W1" — never prose, never story ids.`)
+        continue
+      }
+      if (!waveIds.has(dep)) {
+        issues.push(`Wave ${wave.id} depends on unknown wave "${dep}".`)
+      } else if (!waveIdsBefore.get(wave.id)!.has(dep)) {
+        issues.push(`Wave ${wave.id} depends on "${dep}" which is not an earlier wave (dependencies must flow forward only).`)
+      }
     }
   }
   for (const s of prd.stories) {

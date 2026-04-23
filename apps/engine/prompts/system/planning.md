@@ -76,10 +76,12 @@ Return an `artifact` object matching `ImplementationPlanArtifact`:
 
 For each wave:
 - use `{ id, number, goal, stories, parallel, dependencies, exitCriteria }`
+- `id` MUST be `"W<number>"` (e.g., `"W1"`, `"W2"`, …); `number` MUST match
 - `stories` MUST be `Array<{ id: string, title: string }>` — never `Array<string>` and never wrapped shapes
 - every `stories[*].id` MUST be the exact `id` of an existing story in the supplied PRD; do NOT invent new stories, do NOT omit the `id`, do NOT synthesize scaffold or placeholder stories
 - every `stories[*].title` must match the corresponding PRD story's title
 - every project story must appear in exactly one wave
+- `dependencies` MUST be `Array<string>` containing ONLY existing wave ids of EARLIER waves (e.g., `["W1"]`). Never prose, never story ids, never wrapped shapes. An empty array `[]` means no prerequisite waves.
 
 Rules:
 - dependencies must flow forward only
