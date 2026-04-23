@@ -61,7 +61,12 @@ type Command =
       sonarKey?: string
       sonarOrg?: string
       sonarHost?: string
+      sonarToken?: string
+      sonarTokenPersist?: boolean
       noGit?: boolean
+      ghCreate?: boolean
+      ghPublic?: boolean
+      ghOwner?: string
     }
   | { kind: "workspace-list"; json?: boolean }
   | { kind: "workspace-get"; key?: string; json?: boolean }
@@ -112,7 +117,12 @@ export function parseArgs(argv: string[]): Command {
       sonarKey: readFlag(argv, "--sonar-key"),
       sonarOrg: readFlag(argv, "--sonar-org"),
       sonarHost: readFlag(argv, "--sonar-host"),
+      sonarToken: readFlag(argv, "--sonar-token"),
+      sonarTokenPersist: !argv.includes("--no-sonar-token-persist"),
       noGit: argv.includes("--no-git"),
+      ghCreate: argv.includes("--gh-create"),
+      ghPublic: argv.includes("--gh-public"),
+      ghOwner: readFlag(argv, "--gh-owner"),
     }
   }
   if (first === "workspace" && second === "list") return { kind: "workspace-list", json }
@@ -159,6 +169,7 @@ function printHelp(): void {
     "    beerengineer setup [--group <id>] [--no-interactive] Provision app config/data/DB and retry checks",
     "    beerengineer workspace preview <path> [--json]       Preview workspace registration",
     "    beerengineer workspace add [--path <p>] [flags]      Register a workspace",
+    "                                                         [--gh-create] [--gh-public] [--gh-owner <user>]",
     "    beerengineer workspace list [--json]                 List registered workspaces",
     "    beerengineer workspace get <key> [--json]            Get one workspace",
     "    beerengineer workspace remove <key> [--purge]        Unregister a workspace",
@@ -329,6 +340,8 @@ async function runWorkspaceAddCommand(cmd: Extract<Command, { kind: "workspace-a
         harnessProfile: prompted.profile,
         sonar: prompted.sonar,
         git: { init: prompted.gitInit, defaultBranch: "main" },
+        github: prompted.github,
+        sonarToken: prompted.sonarToken,
       }
     } else {
       if (!cmd.path) {
@@ -349,6 +362,12 @@ async function runWorkspaceAddCommand(cmd: Extract<Command, { kind: "workspace-a
             }
           : { enabled: false },
         git: { init: cmd.noGit !== true, defaultBranch: "main" },
+        github: cmd.ghCreate
+          ? { create: true, visibility: cmd.ghPublic ? "public" : "private", owner: cmd.ghOwner }
+          : undefined,
+        sonarToken: cmd.sonarToken
+          ? { value: cmd.sonarToken, persist: cmd.sonarTokenPersist !== false }
+          : undefined,
       }
     }
   } catch (err) {
@@ -374,10 +393,31 @@ async function runWorkspaceAddCommand(cmd: Extract<Command, { kind: "workspace-a
     console.log(`\n  Registered as "${result.workspace.name}" (key: ${result.workspace.key}).`)
     if (result.sonarProjectUrl) {
       console.log("\n  Next steps")
-      console.log(`    Sonar project: ${result.sonarProjectUrl}`)
-      if (result.sonarMcpSnippet) console.log(`    Sonar MCP snippet:\n${result.sonarMcpSnippet}`)
+      console.log("    SonarQube Cloud")
+      console.log(`    1. Create or import the project in SonarQube Cloud: ${result.sonarProjectUrl}`)
+      console.log("    2. Check whether your org uses the EU default or the US region.")
+      console.log("    3. Create an analysis token and export it locally: export SONAR_TOKEN=...")
+      console.log("    4. Mark the project as AI-generated: Project settings > AI-generated code >")
+      console.log("       enable \"Contains AI-generated code\" (adds the +Contains AI code label).")
+      console.log("    5. Apply an AI-qualified quality gate: Project settings > Quality Gate >")
+      console.log("       select \"Sonar way for AI Code\" (or a custom gate qualified for AI Code")
+      console.log("       Assurance by a Quality Standard admin).")
+      console.log("    6. Disable automatic analysis: Administration > Analysis Method > uncheck")
+      console.log("       \"Enabled for this project\" so only the local sonar-scanner runs.")
+      console.log("    7. Keep durable analysis settings in the SonarQube Cloud UI when possible.")
+      console.log("    8. If the project is on the US region, set sonar.region=us for scanner runs.")
+      if (result.sonarMcpSnippet) {
+        console.log("    9. Optional: add Sonar MCP to your harness config:")
+        console.log(`\n${indentBlock(result.sonarMcpSnippet, 6)}`)
+      }
     } else if (result.ghCreateCommand) {
       console.log("\n  Next steps")
+    }
+    if (result.sonarProjectUrl || result.ghCreateCommand) {
+      console.log("    CodeRabbit")
+      console.log("    - Optional: install the CLI with npm i -g @coderabbit/cli")
+      console.log("    - Authenticate it per the CodeRabbit CLI docs before enabling real review runs")
+      console.log("    - If it is not configured, BeerEngineer will skip CodeRabbit review for the workspace")
     }
     if (result.ghCreateCommand) console.log(`    Optional remote: ${result.ghCreateCommand}`)
     console.log(`    Open: beerengineer workspace open ${result.workspace.key}`)
@@ -385,6 +425,14 @@ async function runWorkspaceAddCommand(cmd: Extract<Command, { kind: "workspace-a
   } finally {
     db.close()
   }
+}
+
+function indentBlock(text: string, spaces: number): string {
+  const prefix = " ".repeat(spaces)
+  return text
+    .split("\n")
+    .map(line => `${prefix}${line}`)
+    .join("\n")
 }
 
 async function runWorkspaceListCommand(json = false): Promise<number> {

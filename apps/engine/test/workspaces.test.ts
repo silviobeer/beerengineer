@@ -171,7 +171,8 @@ test("registerWorkspace persists preflight and writes quality config once GitHub
     assert.equal(workspaceJson.preflight.github.status, "ok")
     assert.equal(workspaceJson.preflight.github.owner, "acme")
     assert.equal(workspaceJson.preflight.github.repo, "demo")
-    assert.equal(workspaceJson.reviewPolicy.coderabbit.enabled, false)
+    // CodeRabbit CLI is detected by preflight; enabled tracks CLI availability
+    assert.equal(workspaceJson.reviewPolicy.coderabbit.enabled, result.preflight.coderabbit.status === "ok")
     assert.equal(workspaceJson.reviewPolicy.sonarcloud.enabled, true)
     assert.equal(workspaceJson.reviewPolicy.sonarcloud.organization, "acme")
     assert.equal(workspaceJson.reviewPolicy.sonarcloud.projectKey, "acme_demo")

@@ -83,15 +83,19 @@ beerengineer item action --item <id|code> --action <name>
   Exit-Code `75`, wenn ein Resume ohne erforderliche Remediation-Daten in
   non-interactive mode gestartet wird.
 
-beerengineer
-  Ohne Argumente startet der Default-Workflow.
+beerengineer [--workspace <key>]
+  Ohne Argumente startet der Default-Workflow gegen die "default"-Workspace.
+  Mit `--workspace <key>` laeuft der Run gegen eine registrierte Workspace
+  (siehe `beerengineer workspace add`); die Engine setzt die Base-Branch aus
+  *deren* git-Repo (nicht aus dem aktuellen cwd) und wendet die Real-Git-
+  Branch-Strategie an (siehe "Real-Git-Modus" weiter unten).
   Benutzer-Interaktion ist auf Intake und Blocker/Resume-Faelle begrenzt.
   Innerhalb der Stages koennen weiterhin verschiedene LLM-/Reviewer-Schritte
   laufen, aber ab `architecture` bis `documentation` gibt es keinen User-Chat,
   solange der Run nicht blockiert.
 
-beerengineer --json
-beerengineer run --json
+beerengineer --json [--workspace <key>]
+beerengineer run --json [--workspace <key>]
   Harness-Modus fuer Agenten (z.B. Codex). Stdout traegt pro Zeile ein
   `WorkflowEvent` als JSON (`chat_message`, `presentation`, `prompt_requested`,
   `stage_started`, `stage_completed`, `run_finished`, …). Der Harness liest
@@ -137,8 +141,71 @@ Generierte Dateien im Workspace:
 Wichtig: SonarCloud-Konfig wird **nicht** mehr allein aufgrund von
 `sonar.enabled=true` geschrieben. Ohne GitHub-Remote bleibt der Schritt gelb:
 die Workspace wird angelegt, aber Sonar-Dateien werden erst erzeugt, wenn das
-Repo wirklich mit GitHub verknuepft ist. In diesem Fall liefert die API auch
-einen passenden `gh repo create ... --remote=origin --push`-Vorschlag.
+Repo wirklich mit GitHub verknuepft ist.
+
+#### GitHub-Repo automatisch anlegen
+
+Wenn kein `origin`-Remote existiert und `gh auth status` ok ist, bietet die CLI
+an, das Repo fuer dich zu erzeugen:
+
+- interaktiv: Prompt "Create a new GitHub repo now?" (default: Nein, Visibility
+  `private`/`public` als Folgefrage).
+- non-interactive: `--gh-create` [`--gh-public`] [`--gh-owner <user>`]. Intern
+  laeuft `gh repo create <owner>/<key> --private|--public --source=. --remote=origin --push`;
+  danach wird der Preflight automatisch wiederholt, damit CodeRabbit und Sonar
+  die neu entstandene GitHub-Bindung sehen.
+
+#### CodeRabbit
+
+Die Engine nutzt die lokale `coderabbit`-CLI (laeuft gegen den Story-Diff) —
+es wird **kein** GitHub-App-Install verlangt. Der Preflight setzt
+`coderabbit.status = "ok"` sobald die CLI auf dem `PATH` liegt; andernfalls
+`missing`. `reviewPolicy.coderabbit.enabled` spiegelt diesen Preflight-Zustand,
+explizite `enabled: true|false` im Config-File gewinnt.
+
+#### SonarCloud — token-Prompt und API-Provisioning
+
+Wenn Sonar aktiviert ist und kein `SONAR_TOKEN` in der Umgebung oder in
+`.env.local` liegt, fragt der interaktive `workspace add` nach dem Token und
+bietet an, ihn in `.env.local` (git-ignored) zu persistieren. Non-interactive:
+`--sonar-token <value>` mit optionalem `--no-sonar-token-persist`.
+
+Mit einem gueltigen Token provisioniert `registerWorkspace` SonarCloud direkt
+via API (alles *best-effort* — Fehlschlaege werden als Warnungen gemeldet,
+brechen die Registrierung nicht ab):
+
+1. `POST /api/projects/create` — Projekt wird angelegt, wenn es noch nicht
+   existiert (`api/projects/search`-Probe).
+2. `POST /api/qualitygates/select` — das AI-qualifizierte Quality Gate wird
+   angewendet. Default-Name: `"Sonar way for AI Code"`; ueberschreibbar via
+   `SonarConfig.qualityGateName`. Wenn das Gate nicht im Org vorhanden ist,
+   wird der Schritt uebersprungen.
+3. `POST /api/autoscan/activation?enable=false` — Automatic Analysis wird
+   abgeschaltet, damit nur der lokale `sonar-scanner` das Gate bedient.
+
+Manuell bleibt: "Contains AI-generated code" im SonarCloud-UI setzen — fuer
+dieses Toggle existiert aktuell kein oeffentlicher Setter im SonarCloud-API.
+
+### Real-Git-Modus
+
+Wenn der Run gegen eine registrierte Workspace laeuft (`--workspace <key>`),
+das Repo clean ist und die Base-Branch aufloesbar ist, arbeitet die Execution-
+Stage mit *echten* git-Branches statt nur mit dem simulierten JSON-Repo.
+Schema (siehe `specs/git-branch-strategy.md`):
+
+```
+<base> → item/<slug> → proj/<slug>__<project> → wave/...__w<n> → story/...__w<n>__<story>
+```
+
+- Story-Commits landen auf der Story-Branch.
+- Nach erfolgreichem Story-Abschluss: `git merge --no-ff` in die Wave-Branch.
+- Am Wave-Ende: Wave → Project. Am Project-Ende: Project → Item.
+- Die Base-Branch wird nie automatisch gemerged — der Handoff/Candidate-Schritt
+  bleibt explizit.
+
+Fallback auf simulated-repo-Modus, wenn eine der Vorbedingungen verletzt ist
+(kein git-Repo, dirty tree, keine Base-Branch, kein `workspaceRoot`). Der Grund
+wird beim Run-Start als Presentation-Event geloggt.
 
 ### Harness-Modus (NDJSON)
 

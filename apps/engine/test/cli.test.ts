@@ -19,9 +19,10 @@ function makeStubBin(dir: string, name: string, body: string): void {
 }
 
 test("parseArgs recognizes help, doctor, start ui, workflow, item action, and unknown commands", () => {
-  assert.deepEqual(parseArgs([]), { kind: "workflow", json: false })
-  assert.deepEqual(parseArgs(["--json"]), { kind: "workflow", json: true })
-  assert.deepEqual(parseArgs(["run", "--json"]), { kind: "workflow", json: true })
+  assert.deepEqual(parseArgs([]), { kind: "workflow", json: false, workspaceKey: undefined })
+  assert.deepEqual(parseArgs(["--json"]), { kind: "workflow", json: true, workspaceKey: undefined })
+  assert.deepEqual(parseArgs(["run", "--json"]), { kind: "workflow", json: true, workspaceKey: undefined })
+  assert.deepEqual(parseArgs(["--workspace", "demo"]), { kind: "workflow", json: false, workspaceKey: "demo" })
   assert.deepEqual(parseArgs(["--help"]), { kind: "help" })
   assert.deepEqual(parseArgs(["-h"]), { kind: "help" })
   assert.deepEqual(parseArgs(["--doctor"]), { kind: "doctor", json: false, group: undefined })
@@ -41,7 +42,12 @@ test("parseArgs recognizes help, doctor, start ui, workflow, item action, and un
     sonarKey: undefined,
     sonarOrg: undefined,
     sonarHost: undefined,
+    sonarToken: undefined,
+    sonarTokenPersist: true,
     noGit: true,
+    ghCreate: false,
+    ghPublic: false,
+    ghOwner: undefined,
   })
   assert.deepEqual(parseArgs(["workspace", "list", "--json"]), { kind: "workspace-list", json: true })
   assert.deepEqual(parseArgs(["workspace", "get", "demo", "--json"]), { kind: "workspace-get", key: "demo", json: true })

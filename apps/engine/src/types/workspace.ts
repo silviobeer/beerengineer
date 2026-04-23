@@ -60,6 +60,7 @@ export type SonarConfig = {
   planTier?: "free" | "team" | "enterprise" | "oss" | "unknown"
   baseBranch?: string
   scanTimeoutMs?: number
+  qualityGateName?: string
 }
 
 export type WorkspaceReviewPolicy = {
@@ -134,6 +135,15 @@ export type RegisterWorkspaceInput = {
   git?: {
     init?: boolean
     defaultBranch?: string
+  }
+  github?: {
+    create?: boolean
+    visibility?: "public" | "private"
+    owner?: string
+  }
+  sonarToken?: {
+    value: string
+    persist?: boolean
   }
 }
 

@@ -138,19 +138,30 @@ export async function isInsideAllowedRootRealpath(path: string, allowedRoots: st
   return false
 }
 
+function hasGitIdentityConfigured(cwd: string): boolean {
+  const email = spawnSync("git", ["config", "--get", "user.email"], { cwd, encoding: "utf8" })
+  const name = spawnSync("git", ["config", "--get", "user.name"], { cwd, encoding: "utf8" })
+  return email.status === 0 && !!email.stdout?.trim() && name.status === 0 && !!name.stdout?.trim()
+}
+
 function runGit(args: string[], cwd: string): { ok: boolean; stdout: string; stderr: string } {
-  // Only inject the BeerEngineer fallback identity when we're about to create a
-  // commit. Read-only probes inherit the unmodified environment so we don't
-  // leak a fake identity into unrelated tooling that shells out after us.
-  const env = args[0] === "commit"
-    ? {
+  // Only inject the BeerEngineer fallback identity for commits AND only when the
+  // user has neither env vars nor git config set. GIT_AUTHOR_* env takes
+  // precedence over git config, so blind injection would silently hijack a
+  // configured user's identity on the empty initial commit.
+  let env: NodeJS.ProcessEnv = process.env
+  if (args[0] === "commit") {
+    const hasEnvIdentity = process.env.GIT_AUTHOR_EMAIL && process.env.GIT_AUTHOR_NAME
+    if (!hasEnvIdentity && !hasGitIdentityConfigured(cwd)) {
+      env = {
         ...process.env,
         GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME ?? "BeerEngineer",
         GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL ?? "beerengineer@example.invalid",
         GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME ?? "BeerEngineer",
         GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL ?? "beerengineer@example.invalid",
       }
-    : process.env
+    }
+  }
   const result = spawnSync("git", args, { cwd, encoding: "utf8", env })
   return {
     ok: result.status === 0,
@@ -181,9 +192,11 @@ function readEnvFileValue(raw: string, key: string): string | undefined {
 }
 
 function parseGitHubRemote(remoteUrl: string): { owner: string; repo: string } | null {
-  const ssh = remoteUrl.match(/^git@github\.com:([^/]+)\/(.+?)(?:\.git)?$/)
+  // Repo capture rejects `/` to avoid mis-parsing URLs like
+  // https://github.com/owner/repo/tree/main as repo="repo/tree/main".
+  const ssh = remoteUrl.match(/^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/)
   if (ssh) return { owner: ssh[1], repo: ssh[2] }
-  const https = remoteUrl.match(/^https:\/\/github\.com\/([^/]+)\/(.+?)(?:\.git)?$/)
+  const https = remoteUrl.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/)
   if (https) return { owner: https[1], repo: https[2] }
   return null
 }
@@ -200,11 +213,26 @@ async function detectSonarToken(root: string): Promise<{ value?: string; source?
   return {}
 }
 
+async function persistSonarTokenToEnvLocal(root: string, token: string): Promise<void> {
+  const envLocalPath = resolve(root, ".env.local")
+  let existing = ""
+  try {
+    existing = await readFile(envLocalPath, "utf8")
+  } catch {
+    // file doesn't exist yet — fine
+  }
+  const lines = existing.split(/\r?\n/).filter(line => !line.match(/^SONAR_TOKEN\s*=/))
+  const trimmed = lines.filter((line, idx) => !(idx === lines.length - 1 && line === "")).join("\n")
+  const next = `${trimmed ? `${trimmed}\n` : ""}SONAR_TOKEN=${token}\n`
+  await writeFile(envLocalPath, next)
+}
+
 async function validateSonarToken(token: string): Promise<boolean> {
   try {
     const auth = Buffer.from(`${token}:`).toString("base64")
     const response = await fetch(`${SONAR_DEFAULT_HOST}/api/authentication/validate`, {
       headers: { authorization: `Basic ${auth}` },
+      signal: AbortSignal.timeout(5000),
     })
     if (!response.ok) return false
     const body = await response.json() as { valid?: boolean }
@@ -212,6 +240,139 @@ async function validateSonarToken(token: string): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+async function sonarProjectExists(token: string, organization: string, projectKey: string, host = SONAR_DEFAULT_HOST): Promise<boolean> {
+  try {
+    const auth = Buffer.from(`${token}:`).toString("base64")
+    const url = new URL(`${host}/api/projects/search`)
+    url.searchParams.set("organization", organization)
+    url.searchParams.set("projects", projectKey)
+    const response = await fetch(url, {
+      headers: { authorization: `Basic ${auth}` },
+      signal: AbortSignal.timeout(5000),
+    })
+    if (!response.ok) return false
+    const body = await response.json() as { components?: unknown[] }
+    return Array.isArray(body.components) && body.components.length > 0
+  } catch {
+    return false
+  }
+}
+
+export type SonarCreateResult =
+  | { ok: true; created: true }
+  | { ok: true; created: false; reason: "already-exists" }
+  | { ok: false; reason: string }
+
+async function createSonarProject(
+  token: string,
+  organization: string,
+  projectKey: string,
+  name: string,
+  visibility: "public" | "private" = "private",
+  host = SONAR_DEFAULT_HOST,
+): Promise<SonarCreateResult> {
+  try {
+    if (await sonarProjectExists(token, organization, projectKey, host)) {
+      return { ok: true, created: false, reason: "already-exists" }
+    }
+    const auth = Buffer.from(`${token}:`).toString("base64")
+    const url = new URL(`${host}/api/projects/create`)
+    url.searchParams.set("organization", organization)
+    url.searchParams.set("project", projectKey)
+    url.searchParams.set("name", name)
+    url.searchParams.set("visibility", visibility)
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { authorization: `Basic ${auth}` },
+      signal: AbortSignal.timeout(8000),
+    })
+    if (response.ok) return { ok: true, created: true }
+    const detail = await response.text().catch(() => "")
+    return { ok: false, reason: `HTTP ${response.status}: ${detail.slice(0, 200)}` }
+  } catch (err) {
+    return { ok: false, reason: (err as Error).message }
+  }
+}
+
+async function sonarPost(
+  token: string,
+  path: string,
+  params: Record<string, string>,
+  host = SONAR_DEFAULT_HOST,
+): Promise<{ ok: boolean; status: number; detail: string }> {
+  try {
+    const auth = Buffer.from(`${token}:`).toString("base64")
+    const url = new URL(`${host}${path}`)
+    for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v)
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { authorization: `Basic ${auth}` },
+      signal: AbortSignal.timeout(8000),
+    })
+    if (response.ok) return { ok: true, status: response.status, detail: "" }
+    const detail = (await response.text().catch(() => "")).slice(0, 200)
+    return { ok: false, status: response.status, detail }
+  } catch (err) {
+    return { ok: false, status: 0, detail: (err as Error).message }
+  }
+}
+
+async function findSonarQualityGateId(
+  token: string,
+  organization: string,
+  gateName: string,
+  host = SONAR_DEFAULT_HOST,
+): Promise<string | undefined> {
+  try {
+    const auth = Buffer.from(`${token}:`).toString("base64")
+    const url = new URL(`${host}/api/qualitygates/list`)
+    url.searchParams.set("organization", organization)
+    const response = await fetch(url, {
+      headers: { authorization: `Basic ${auth}` },
+      signal: AbortSignal.timeout(5000),
+    })
+    if (!response.ok) return undefined
+    const body = await response.json() as { qualitygates?: Array<{ name?: string; id?: string | number }> }
+    const hit = (body.qualitygates ?? []).find(g => g.name === gateName)
+    return hit?.id !== undefined ? String(hit.id) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+async function assignSonarQualityGate(
+  token: string,
+  organization: string,
+  projectKey: string,
+  gateName: string,
+  host = SONAR_DEFAULT_HOST,
+): Promise<{ ok: boolean; reason: string }> {
+  const gateId = await findSonarQualityGateId(token, organization, gateName, host)
+  if (!gateId) {
+    return { ok: false, reason: `quality gate "${gateName}" not found in ${organization}` }
+  }
+  const result = await sonarPost(token, "/api/qualitygates/select", {
+    organization,
+    projectKey,
+    gateId,
+  }, host)
+  if (result.ok) return { ok: true, reason: "" }
+  return { ok: false, reason: `HTTP ${result.status}: ${result.detail}` }
+}
+
+async function disableSonarAutoScan(
+  token: string,
+  projectKey: string,
+  host = SONAR_DEFAULT_HOST,
+): Promise<{ ok: boolean; reason: string }> {
+  const result = await sonarPost(token, "/api/autoscan/activation", {
+    projectKey,
+    enable: "false",
+  }, host)
+  if (result.ok) return { ok: true, reason: "" }
+  return { ok: false, reason: `HTTP ${result.status}: ${result.detail}` }
 }
 
 function detectStack(entries: string[]): string | null {
@@ -264,7 +425,8 @@ async function ensureManagedGitignore(root: string): Promise<{ changed: boolean 
   const path = gitignorePath(root)
   const exists = await pathExists(path)
   const current = exists ? await readFile(path, "utf8") : ""
-  const missing = BEERENGINEER_GITIGNORE_ENTRIES.filter(entry => !current.split(/\r?\n/).includes(entry))
+  const existingLines = new Set(current.split(/\r?\n/).map(line => line.trim()))
+  const missing = BEERENGINEER_GITIGNORE_ENTRIES.filter(entry => !existingLines.has(entry))
   if (missing.length === 0) return { changed: false }
 
   const prefix = current.length > 0 && !current.endsWith("\n") ? `${current}\n` : current
@@ -303,12 +465,7 @@ async function ensureGitRepo(root: string, defaultBranch = "main"): Promise<{ ok
   return { ok: true, actions }
 }
 
-export async function runWorkspacePreflight(root: string, opts: { defaultBranch?: string } = {}): Promise<{ report: WorkspacePreflightReport; actions: string[] }> {
-  const actions: string[] = []
-  const gitSetup = await ensureGitRepo(root, opts.defaultBranch ?? "main")
-  const gitDetail = gitSetup.ok ? undefined : gitSetup.detail
-  if (gitSetup.ok) actions.push(...gitSetup.actions)
-
+export async function runWorkspacePreflight(root: string): Promise<{ report: WorkspacePreflightReport }> {
   const gitProbe = runGit(["rev-parse", "--is-inside-work-tree"], root)
   const branchProbe = gitProbe.ok ? runGit(["branch", "--show-current"], root) : { ok: false, stdout: "", stderr: "" }
   const remoteProbe = gitProbe.ok ? runGit(["remote", "get-url", "origin"], root) : { ok: false, stdout: "", stderr: "" }
@@ -324,14 +481,15 @@ export async function runWorkspacePreflight(root: string, opts: { defaultBranch?
 
   const sonarToken = await detectSonarToken(root)
   const sonarValid = sonarToken.value ? await validateSonarToken(sonarToken.value) : undefined
-  const gitMissingDetail = gitDetail ?? (gitProbe.stderr || undefined)
+
+  const coderabbitCli = runCommand("coderabbit", ["--version"], root)
+  const crCli = coderabbitCli.ok ? coderabbitCli : runCommand("cr", ["--version"], root)
 
   return {
-    actions,
     report: {
       git: {
         status: gitProbe.ok && gitProbe.stdout === "true" ? "ok" : "missing",
-        detail: gitProbe.ok ? undefined : gitMissingDetail,
+        detail: gitProbe.ok ? undefined : (gitProbe.stderr || undefined),
       },
       github: parsedRemote
         ? {
@@ -367,10 +525,15 @@ export async function runWorkspacePreflight(root: string, opts: { defaultBranch?
             status: "missing",
             detail: "SONAR_TOKEN was not found in env or .env.local",
           },
-      coderabbit: {
-        status: parsedRemote ? "pending-install" : "skipped",
-        detail: parsedRemote ? "GitHub App install still required" : "CodeRabbit install link requires a GitHub repo",
-      },
+      coderabbit: crCli.ok
+        ? {
+            status: "ok",
+            detail: `CodeRabbit CLI available (${crCli.stdout.split(/\r?\n/)[0] || "unknown version"})`,
+          }
+        : {
+            status: "missing",
+            detail: "CodeRabbit CLI not found — install with `npm i -g @coderabbit/cli`",
+          },
       checkedAt: new Date().toISOString(),
     },
   }
@@ -427,8 +590,11 @@ function renderCoderabbitConfig(): string {
   ].join("\n") + "\n"
 }
 
-function generateCodeRabbitInstallUrl(owner: string): string {
-  return `https://github.com/apps/coderabbitai/installations/new?target_id=${encodeURIComponent(owner)}&target_type=Organization`
+function generateCodeRabbitInstallUrl(): string {
+  // Generic install flow — GitHub asks the user to pick the target account.
+  // Avoids guessing User vs Organization (the previous `target_type=Organization`
+  // 404s for personal accounts) and sidesteps needing numeric target_id lookups.
+  return "https://github.com/apps/coderabbitai/installations/new"
 }
 
 function safeParseHarnessProfile(raw: string): { profile: HarnessProfile | null; error?: string } {
@@ -473,10 +639,14 @@ function normalizeReviewPolicy(
   legacySonar: SonarConfig | undefined,
   key: string,
   defaultOrg?: string,
+  coderabbitCliAvailable: boolean = false,
 ): WorkspaceReviewPolicy {
+  const coderabbitExplicit = policy?.coderabbit?.enabled
   return {
     coderabbit: {
-      enabled: policy?.coderabbit?.enabled === true,
+      // CodeRabbit CLI runs locally on a diff — no GitHub App required.
+      // Default to enabled when the CLI is present; honor explicit opt-out.
+      enabled: coderabbitExplicit === false ? false : coderabbitExplicit === true ? true : coderabbitCliAvailable,
     },
     sonarcloud: normalizeSonarConfig(policy?.sonarcloud ?? legacySonar, key, defaultOrg),
   }
@@ -784,15 +954,45 @@ export async function registerWorkspace(input: RegisterWorkspaceInput, deps: Reg
     }
   } else {
     await mkdir(resolve(path, WORKSPACE_CONFIG_DIR), { recursive: true })
+    const gitignore = await ensureManagedGitignore(path)
+    if (gitignore.changed) actions.push(`updated ${GITIGNORE_FILE}`)
   }
 
-  const gitignore = await ensureManagedGitignore(path)
-  if (!preview.isGreenfield && gitignore.changed) actions.push(`updated ${GITIGNORE_FILE}`)
+  const gitSetup = await ensureGitRepo(path, input.git?.defaultBranch ?? "main")
+  if (!gitSetup.ok) {
+    return { ok: false, error: "git_init_failed", detail: gitSetup.detail ?? "git init failed" }
+  }
+  actions.push(...gitSetup.actions)
 
-  const preflight = await runWorkspacePreflight(path, {
-    defaultBranch: input.git?.defaultBranch ?? "main",
-  })
-  actions.push(...preflight.actions)
+  // Accept a SONAR_TOKEN supplied by the caller (interactive prompt or --sonar-token flag).
+  // Persist to .env.local when requested, and surface via process.env so the subsequent
+  // preflight's token validation + project creation can use it.
+  if (input.sonarToken?.value) {
+    if (!process.env.SONAR_TOKEN) process.env.SONAR_TOKEN = input.sonarToken.value
+    if (input.sonarToken.persist) {
+      await persistSonarTokenToEnvLocal(path, input.sonarToken.value)
+      actions.push("wrote SONAR_TOKEN to .env.local")
+    }
+  }
+
+  let preflight = await runWorkspacePreflight(path)
+
+  if (
+    input.github?.create &&
+    preflight.report.github.status !== "ok" &&
+    preflight.report.gh.status === "ok"
+  ) {
+    const visibility = input.github.visibility === "public" ? "--public" : "--private"
+    const owner = input.github.owner ?? preflight.report.gh.user
+    const slug = owner ? `${owner}/${key}` : key
+    const ghResult = runCommand("gh", ["repo", "create", slug, visibility, "--source=.", "--remote=origin", "--push"], path)
+    if (ghResult.ok) {
+      actions.push(`gh repo create ${slug}`)
+      preflight = await runWorkspacePreflight(path)
+    } else {
+      actions.push(`! gh repo create ${slug} failed: ${ghResult.stderr || ghResult.stdout || "unknown error"}`)
+    }
+  }
 
   const githubReady = preflight.report.github.status === "ok" && preflight.report.github.owner && preflight.report.github.repo
   const sonar = githubReady && requestedSonar?.enabled
@@ -804,7 +1004,8 @@ export async function registerWorkspace(input: RegisterWorkspaceInput, deps: Reg
         baseBranch: preflight.report.github.defaultBranch ?? requestedSonar.baseBranch,
       }, key, deps.config.llm.defaultSonarOrganization)
     : normalizeSonarConfig({ enabled: false }, key, deps.config.llm.defaultSonarOrganization)
-  const reviewPolicy = normalizeReviewPolicy(existingConfig?.reviewPolicy, sonar, key, deps.config.llm.defaultSonarOrganization)
+  const coderabbitCliAvailable = preflight.report.coderabbit.status === "ok"
+  const reviewPolicy = normalizeReviewPolicy(existingConfig?.reviewPolicy, sonar, key, deps.config.llm.defaultSonarOrganization, coderabbitCliAvailable)
   const warnings = [...validation.warnings]
   if (requestedSonar?.enabled && !githubReady) {
     warnings.push("SonarCloud config generation skipped until a GitHub origin remote is configured")
@@ -840,6 +1041,53 @@ export async function registerWorkspace(input: RegisterWorkspaceInput, deps: Reg
     if (await writeFileIfMissing(sonarWorkflowPath(path), renderSonarWorkflow())) {
       actions.push(`wrote ${SONAR_WORKFLOW_FILE}`)
     }
+    // Create the SonarCloud project if the token can talk to the API and the
+    // project doesn't yet exist. Non-fatal — scanner runs later will fail
+    // cleanly if creation was refused (wrong permissions, org mismatch, etc.).
+    if (sonar.enabled && preflight.report.sonar.status === "ok") {
+      const token = (await detectSonarToken(path)).value
+      if (token && sonar.organization && sonar.projectKey) {
+        const host = sonar.hostUrl ?? SONAR_DEFAULT_HOST
+        const create = await createSonarProject(
+          token,
+          sonar.organization,
+          sonar.projectKey,
+          name,
+          "private",
+          host,
+        )
+        const projectReady = create.ok
+        if (create.ok && create.created) {
+          actions.push(`created SonarCloud project ${sonar.organization}/${sonar.projectKey}`)
+        } else if (create.ok && !create.created) {
+          actions.push(`SonarCloud project ${sonar.organization}/${sonar.projectKey} already exists`)
+        } else {
+          warnings.push(`SonarCloud project create failed: ${create.reason}`)
+        }
+
+        if (projectReady) {
+          // Best-effort: apply AI-qualified quality gate. Default is "Sonar way for AI Code";
+          // callers can override via SonarConfig.qualityGateName.
+          const gateName = sonar.qualityGateName ?? "Sonar way for AI Code"
+          const gate = await assignSonarQualityGate(token, sonar.organization, sonar.projectKey, gateName, host)
+          if (gate.ok) {
+            actions.push(`applied SonarCloud quality gate "${gateName}"`)
+          } else {
+            warnings.push(`SonarCloud quality gate "${gateName}" not applied: ${gate.reason}`)
+          }
+
+          // Best-effort: disable automatic analysis so only the local sonar-scanner runs.
+          const autoscan = await disableSonarAutoScan(token, sonar.projectKey, host)
+          if (autoscan.ok) {
+            actions.push("disabled SonarCloud automatic analysis")
+          } else {
+            warnings.push(`SonarCloud automatic analysis not disabled: ${autoscan.reason}`)
+          }
+        }
+      } else if (!token) {
+        warnings.push("SonarCloud project creation skipped: SONAR_TOKEN not available")
+      }
+    }
   }
   if (await writeFileIfMissing(coderabbitConfigPath(path), renderCoderabbitConfig())) {
     actions.push(`wrote ${CODERABBIT_CONFIG_FILE}`)
@@ -861,7 +1109,7 @@ export async function registerWorkspace(input: RegisterWorkspaceInput, deps: Reg
       : `gh repo create ${key} --private --source=. --remote=origin --push`
     : undefined
   const coderabbitInstallUrl = preflight.report.github.owner
-    ? generateCodeRabbitInstallUrl(preflight.report.github.owner)
+    ? generateCodeRabbitInstallUrl()
     : undefined
 
   return {
@@ -969,6 +1217,8 @@ export async function promptForWorkspaceAddDefaults(config: AppConfig): Promise<
   profile: HarnessProfile
   sonar: SonarConfig
   gitInit?: boolean
+  github?: { create: boolean; visibility: "public" | "private" }
+  sonarToken?: { value: string; persist: boolean }
 }> {
   const rl = createInterface({ input, output })
   try {
@@ -1013,11 +1263,43 @@ export async function promptForWorkspaceAddDefaults(config: AppConfig): Promise<
 
     const defaultGitInit = preview.isGreenfield || !preview.isGitRepo
     const gitInit = await promptYesNo(rl, "Initialize git?", defaultGitInit)
+
+    // Offer GitHub repo creation when gh is authenticated and the workspace
+    // has no detected origin remote. Preflight runs again inside registerWorkspace
+    // after the repo is created, so CodeRabbit/Sonar can key off it.
+    let github: { create: boolean; visibility: "public" | "private" } | undefined
+    const ghProbe = runCommand("gh", ["auth", "status"], process.cwd())
+    const hasGhAuth = ghProbe.ok
+    const hasOrigin = preview.isGitRepo && runCommand("git", ["remote", "get-url", "origin"], path).ok
+    if (hasGhAuth && !hasOrigin) {
+      const create = await promptYesNo(rl, "No GitHub origin detected. Create a new GitHub repo now?", false)
+      if (create) {
+        const visibilityAnswer = await promptLine(rl, "Visibility [private/public]", "private")
+        const visibility: "public" | "private" = visibilityAnswer.toLowerCase().startsWith("pub") ? "public" : "private"
+        github = { create: true, visibility }
+      }
+    }
+
+    // Offer to supply SONAR_TOKEN when Sonar is enabled but none is detected.
+    let sonarToken: { value: string; persist: boolean } | undefined
+    if (sonar.enabled) {
+      const detected = await detectSonarToken(path)
+      if (!detected.value) {
+        console.log("\n  SONAR_TOKEN is required for SonarCloud project creation and scanner runs.")
+        console.log("  Generate one at https://sonarcloud.io/account/security")
+        const value = (await promptLine(rl, "SONAR_TOKEN (blank to skip)", "")).trim()
+        if (value) {
+          const persist = await promptYesNo(rl, "Write SONAR_TOKEN to .env.local (git-ignored)?", true)
+          sonarToken = { value, persist }
+        }
+      }
+    }
+
     const proceed = await promptYesNo(rl, "Proceed?", true)
     if (!proceed) {
       throw new Error("workspace add cancelled")
     }
-    return { path, name, key, profile, sonar, gitInit }
+    return { path, name, key, profile, sonar, gitInit, github, sonarToken }
   } finally {
     rl.close()
   }
