@@ -29,6 +29,7 @@ export function applySchema(db: Db): void {
   migrateWorkspacesColumns(db)
   migrateRunsOwnerColumn(db)
   migrateRunsRecoveryColumns(db)
+  migrateStageRunsSessionColumns(db)
   stampMigrationLevel(db)
 }
 
@@ -89,4 +90,11 @@ function migrateWorkspacesColumns(db: Db): void {
   if (!has("last_opened_at")) {
     db.exec("ALTER TABLE workspaces ADD COLUMN last_opened_at INTEGER")
   }
+}
+
+function migrateStageRunsSessionColumns(db: Db): void {
+  const cols = db.prepare("PRAGMA table_info(stage_runs)").all() as Array<{ name: string }>
+  const has = (name: string) => cols.some(c => c.name === name)
+  if (!has("stage_agent_session_id")) db.exec("ALTER TABLE stage_runs ADD COLUMN stage_agent_session_id TEXT")
+  if (!has("reviewer_session_id")) db.exec("ALTER TABLE stage_runs ADD COLUMN reviewer_session_id TEXT")
 }

@@ -95,6 +95,8 @@ CREATE TABLE IF NOT EXISTS stage_runs (
   project_id TEXT REFERENCES projects(id),
   stage_key TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending',
+  stage_agent_session_id TEXT,
+  reviewer_session_id TEXT,
   started_at INTEGER,
   completed_at INTEGER,
   error_message TEXT,

@@ -86,6 +86,12 @@ export type StoryImplementationArtifact = {
     result: "continue" | "tests_failed" | "review_feedback_applied" | "done" | "blocked"
     notes: string[]
   }>
+  coderSessionId?: string | null
+  priorAttempts?: Array<{
+    iteration: number
+    summary: string
+    outcome: "passed" | "failed" | "blocked"
+  }>
   changedFiles: string[]
   finalSummary: string
   branch?: SimulatedBranch

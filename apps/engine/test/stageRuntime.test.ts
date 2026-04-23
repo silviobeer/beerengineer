@@ -23,23 +23,31 @@ function makeState(): State {
 }
 
 class ScriptedStage implements StageAgentAdapter<State, Art> {
+  private sessionId: string | null = null
   constructor(private script: StageAgentResponse<Art>[]) {}
   async step(input: StageAgentInput<State>): Promise<StageAgentResponse<Art>> {
     input.state.calls.push(input.kind)
     if (input.kind === "user-message") input.state.userMessages.push(input.userMessage)
+    this.sessionId = `stage-${input.state.calls.length}`
     const next = this.script.shift()
     if (!next) throw new Error("scripted stage: no more responses")
     return next
   }
+  getSessionId(): string | null { return this.sessionId }
+  setSessionId(sessionId: string | null): void { this.sessionId = sessionId }
 }
 
 class ScriptedReviewer implements ReviewAgentAdapter<State, Art> {
+  private sessionId: string | null = null
   constructor(private script: ReviewAgentResponse[]) {}
   async review(): Promise<ReviewAgentResponse> {
+    this.sessionId = `review-${this.script.length}`
     const next = this.script.shift()
     if (!next) throw new Error("scripted reviewer: no more responses")
     return next
   }
+  getSessionId(): string | null { return this.sessionId }
+  setSessionId(sessionId: string | null): void { this.sessionId = sessionId }
 }
 
 function withTmpCwd(): { restore: () => void; dir: string } {
@@ -94,6 +102,8 @@ test("happy path: begin -> artifact -> review pass -> approved", async () => {
     assert.equal(result, "done")
     assert.equal(run.status, "approved")
     assert.equal(run.reviewIteration, 1)
+    assert.equal(run.stageAgentSessionId, "stage-1")
+    assert.equal(run.reviewerSessionId, "review-1")
     assert.equal(run.files.length, 1)
     const statuses = run.logs.filter(l => l.type === "status_changed").map(l => l.message)
     assert.deepEqual(statuses, [
@@ -102,6 +112,36 @@ test("happy path: begin -> artifact -> review pass -> approved", async () => {
       "Status -> in_review",
       "Status -> approved",
     ])
+  } finally {
+    env.restore()
+  }
+})
+
+test("runtime persists structured stage and reviewer session state", async () => {
+  const env = withTmpCwd()
+  try {
+    const state = makeState()
+    const stage = new ScriptedStage([
+      { kind: "message", message: "Question 1?" },
+      { kind: "artifact", artifact: { payload: "v1" } },
+      { kind: "artifact", artifact: { payload: "v2" } },
+    ])
+    const reviewer = new ScriptedReviewer([
+      { kind: "revise", feedback: "tighten this" },
+      { kind: "pass" },
+    ])
+    const def = baseDefinition({ stageAgent: stage, reviewer, askUser: async () => "answer" })
+    def.createInitialState = () => state
+    const { run } = await runStage(def)
+    assert.equal(run.stageAgentTurnCount, 3)
+    assert.equal(run.stageAgentSessionId, "stage-3")
+    assert.equal(run.reviewerSessionId, "review-1")
+    const stageFile = JSON.parse(await readFile(layout.stageRunFile({ workspaceId: "ws-1", runId: "run-1" }, "testing"), "utf8"))
+    assert.equal(stageFile.stageAgentTurnCount, 3)
+    assert.equal(stageFile.stageAgentSessionId, "stage-3")
+    assert.equal(stageFile.reviewerSessionId, "review-1")
+    const reviewEntry = run.logs.find(l => l.type === "review_revise")
+    assert.deepEqual(reviewEntry?.data, { cycle: 1, reviewOutcome: "revise" })
   } finally {
     env.restore()
   }

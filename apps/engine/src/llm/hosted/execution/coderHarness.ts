@@ -1,13 +1,11 @@
 import { readFile, writeFile } from "node:fs/promises"
 import { spawnSync } from "node:child_process"
 import type { StoryExecutionContext } from "../../../types.js"
-import type { HostedCliRequest } from "../promptEnvelope.js"
+import type { HostedCliRequest, HostedProviderId, IterationContext } from "../promptEnvelope.js"
 import { buildExecutionPrompt } from "../promptEnvelope.js"
-import { parseJsonObject, runHostedCli } from "../hostedCliAdapter.js"
-import { buildClaudeCommand } from "../providers/claude.js"
-import { buildCodexCommand } from "../providers/codex.js"
+import { invokeHostedCli, parseJsonObject } from "../hostedCliAdapter.js"
+import type { HostedSession } from "../providerRuntime.js"
 import type { ResolvedHarness, RuntimePolicy } from "../../registry.js"
-import type { HostedProviderId } from "../promptEnvelope.js"
 
 type GitBaseline = {
   headSha: string | null
@@ -60,36 +58,15 @@ function collectChangedFiles(workspaceRoot: string, baseline: GitBaseline): stri
   return Array.from(new Set([...tracked.split(/\r?\n/).map(line => line.trim()).filter(Boolean), ...untrackedDelta])).sort()
 }
 
-function commandBuilderForHarness(harness: ResolvedHarness, runtimePolicy: RuntimePolicy) {
-  return ({ responsePath }: { responsePath: string }) => {
-    switch (harness.provider) {
-      case "claude-code":
-        return buildClaudeCommand({
-          model: harness.model,
-          workspaceRoot: harness.workspaceRoot,
-          policy: runtimePolicy,
-        })
-      case "codex":
-        return buildCodexCommand({
-          model: harness.model,
-          workspaceRoot: harness.workspaceRoot,
-          policy: runtimePolicy,
-          responsePath,
-        })
-      case "opencode":
-      case "fake":
-        throw new Error(`Unsupported execution harness ${harness.provider}`)
-    }
-  }
-}
-
 export async function runCoderHarness(input: {
   harness: ResolvedHarness
   runtimePolicy: RuntimePolicy
   baselinePath: string
   storyContext: StoryExecutionContext
   reviewFeedback?: string
-}): Promise<CoderHarnessOutput & { changedFiles: string[] }> {
+  sessionId?: string | null
+  iterationContext?: IterationContext
+}): Promise<CoderHarnessOutput & { changedFiles: string[]; sessionId: string | null }> {
   if (input.harness.provider === "fake" || input.harness.provider === "opencode") {
     throw new Error(`Unsupported execution harness ${input.harness.provider}`)
   }
@@ -109,6 +86,7 @@ export async function runCoderHarness(input: {
       runtimePolicy: input.runtimePolicy,
       storyId: input.storyContext.story.id,
       action: input.reviewFeedback ? "fix" : "implement",
+      iterationContext: input.iterationContext,
       payload: {
         storyContext: input.storyContext,
         reviewFeedback: input.reviewFeedback ?? null,
@@ -119,8 +97,9 @@ export async function runCoderHarness(input: {
       reviewFeedback: input.reviewFeedback ?? null,
     },
   }
-  const result = await runHostedCli(request, ({ responsePath }) =>
-    commandBuilderForHarness(input.harness, input.runtimePolicy)({ responsePath }),
+  const result = await invokeHostedCli(
+    request,
+    { provider, sessionId: input.sessionId ?? null } satisfies HostedSession,
   )
   const parsed = parseJsonObject(result.outputText) as CoderHarnessOutput
   return {
@@ -129,5 +108,6 @@ export async function runCoderHarness(input: {
     implementationNotes: Array.isArray(parsed.implementationNotes) ? parsed.implementationNotes : [],
     blockers: Array.isArray(parsed.blockers) ? parsed.blockers : [],
     changedFiles: collectChangedFiles(input.harness.workspaceRoot, baseline),
+    sessionId: result.session.sessionId,
   }
 }

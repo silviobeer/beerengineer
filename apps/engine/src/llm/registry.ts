@@ -30,9 +30,6 @@ import type { QaArtifact, QaState } from "../stages/qa/types.js"
 import type { RequirementsArtifact, RequirementsState } from "../stages/requirements/types.js"
 import type { Project } from "../types/domain.js"
 import { HostedReviewAdapter, HostedStageAdapter } from "./hosted/hostedCliAdapter.js"
-import { buildClaudeCommand } from "./hosted/providers/claude.js"
-import { buildCodexCommand } from "./hosted/providers/codex.js"
-import { buildOpenCodeCommand } from "./hosted/providers/opencode.js"
 
 export type RuntimePolicy =
   | { mode: "safe-readonly" }
@@ -133,26 +130,6 @@ function reviewerPolicy(policy: WorkspaceRuntimePolicy): RuntimePolicy {
   return { mode: policy.reviewer }
 }
 
-function buildCommand(provider: RealProviderId, input: {
-  model?: string
-  workspaceRoot: string
-  policy: RuntimePolicy
-  responsePath: string
-}): string[] {
-  switch (provider) {
-    case "claude-code":
-      return buildClaudeCommand({
-        model: input.model,
-        workspaceRoot: input.workspaceRoot,
-        policy: input.policy,
-      })
-    case "codex":
-      return buildCodexCommand(input)
-    case "opencode":
-      return buildOpenCodeCommand()
-  }
-}
-
 function logResolution(stage: StageId, role: HarnessRole, harness: ResolvedHarness, policy: RuntimePolicy): void {
   const run = getActiveRun()
   if (!run) return
@@ -184,7 +161,6 @@ function createHostedStageAdapter<S, A>(stage: StageId, llm: RunLlmConfig): Stag
     model: harness.model,
     workspaceRoot: llm.workspaceRoot,
     runtimePolicy: policy,
-    buildCommand: input => buildCommand(provider, input),
   })
 }
 
@@ -209,7 +185,6 @@ function createHostedReviewAdapter<S, A>(stage: StageId, llm: RunLlmConfig): Rev
     model: harness.model,
     workspaceRoot: llm.workspaceRoot,
     runtimePolicy: policy,
-    buildCommand: input => buildCommand(provider, input),
   })
 }
 

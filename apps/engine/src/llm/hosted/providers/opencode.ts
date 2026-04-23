@@ -1,3 +1,5 @@
-export function buildOpenCodeCommand(): string[] {
-  throw new Error('Provider "opencode" is not implemented yet')
+import type { HostedCliExecutionResult, HostedProviderInvokeInput } from "../providerRuntime.js"
+
+export async function invokeOpenCode(input: HostedProviderInvokeInput): Promise<HostedCliExecutionResult> {
+  throw new Error(`Provider "${input.runtime.provider}" is not implemented yet`)
 }

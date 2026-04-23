@@ -27,6 +27,12 @@ Stay inside execution scope:
 - do not expand the story scope
 - do not mix unrelated cleanup into the active change unless required for correctness
 
+## Iteration Discipline
+
+- treat `iterationContext` in the payload as the authoritative source for iteration and review-cycle counters
+- use `priorAttempts` to avoid retrying a strategy that already failed
+- if repeated attempts keep failing for the same root cause, escalate clearly instead of guessing
+
 ## Return Format
 
 Return a concise summary that includes:

@@ -100,6 +100,8 @@ test("runRalphStory goes through 3 review cycles, ending in passed + merged bran
     const dir = layout.executionRalphDir(ctx, 1, "US-10")
     const persistedImpl = JSON.parse(await readFile(join(dir, "implementation.json"), "utf8"))
     assert.equal(persistedImpl.status, "passed")
+    assert.ok(Array.isArray(persistedImpl.priorAttempts))
+    assert.equal(persistedImpl.priorAttempts.length, persistedImpl.iterations.length)
     const persistedReview = JSON.parse(await readFile(join(dir, "story-review.json"), "utf8"))
     assert.equal(persistedReview.outcome, "pass")
     // Per-cycle review snapshots

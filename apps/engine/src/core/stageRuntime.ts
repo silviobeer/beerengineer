@@ -1,8 +1,10 @@
 import { mkdir, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import type {
+  ReviewContext,
   ReviewAgentAdapter,
   StageAgentAdapter,
+  StageContext,
   StageAgentResponse,
 } from "./adapters.js"
 import { emitEvent, getActiveRun } from "./runContext.js"
@@ -62,7 +64,10 @@ export type StageRun<TState, TArtifact> = {
   stageArtifactsDir: string
   status: StageStatus
   iteration: number
+  stageAgentTurnCount: number
   reviewIteration: number
+  stageAgentSessionId?: string | null
+  reviewerSessionId?: string | null
   state: TState
   artifact?: TArtifact
   logs: StageLogEntry[]
@@ -204,13 +209,57 @@ export function createStageRun<TState, TArtifact>(
     stageArtifactsDir: layout.stageArtifactsDir(ctx, definition.stageId),
     status: "not_started",
     iteration: 0,
+    stageAgentTurnCount: 0,
     reviewIteration: 0,
+    stageAgentSessionId: null,
+    reviewerSessionId: null,
     state: definition.createInitialState(),
     logs: [],
     files: [],
     createdAt: startedAt,
     updatedAt: startedAt,
   }
+}
+
+function reviewHistory<TState, TArtifact>(run: StageRun<TState, TArtifact>): ReviewContext["priorFeedback"] {
+  return run.logs
+    .filter(entry => entry.type === "review_revise" || entry.type === "status_changed" && entry.data?.reviewOutcome === "block")
+    .flatMap(entry => {
+      const cycle = typeof entry.data?.cycle === "number" ? entry.data.cycle : undefined
+      const outcome = entry.data?.reviewOutcome
+      if (!cycle || (outcome !== "revise" && outcome !== "block")) return []
+      return [{ cycle, outcome, text: entry.message }]
+    })
+}
+
+function buildStageContext<TState, TArtifact>(
+  run: StageRun<TState, TArtifact>,
+  phase: StageContext["phase"],
+): StageContext {
+  const priorFeedback = reviewHistory(run)
+  return {
+    turnCount: run.stageAgentTurnCount + 1,
+    phase,
+    ...(phase === "review-feedback" ? { priorFeedback } : {}),
+  }
+}
+
+function buildReviewContext<TState, TArtifact>(
+  run: StageRun<TState, TArtifact>,
+  maxReviews: number,
+): ReviewContext {
+  const cycle = run.reviewIteration
+  return {
+    cycle,
+    maxReviews,
+    isFinalCycle: cycle >= maxReviews,
+    priorFeedback: reviewHistory(run),
+  }
+}
+
+function syncSessions<TState, TArtifact, TResult>(definition: StageDefinition<TState, TArtifact, TResult>, run: StageRun<TState, TArtifact>): void {
+  run.stageAgentSessionId = definition.stageAgent.getSessionId?.() ?? run.stageAgentSessionId ?? null
+  run.reviewerSessionId = definition.reviewer.getSessionId?.() ?? run.reviewerSessionId ?? null
 }
 
 async function recordStageBlocked<TState, TArtifact>(
@@ -265,11 +314,17 @@ async function runStageBody<TState, TArtifact, TResult>(
   definition: StageDefinition<TState, TArtifact, TResult>,
   run: StageRun<TState, TArtifact>,
 ): Promise<{ result: TResult; run: StageRun<TState, TArtifact> }> {
+  definition.stageAgent.setSessionId?.(run.stageAgentSessionId ?? null)
+  definition.reviewer.setSessionId?.(run.reviewerSessionId ?? null)
 
   let response: StageAgentResponse<TArtifact> = await definition.stageAgent.step({
     kind: "begin",
     state: run.state,
+    stageContext: buildStageContext(run, "begin"),
   })
+  run.stageAgentTurnCount++
+  syncSessions(definition, run)
+  await persistRun(run)
 
   while (true) {
     if (response.kind === "message") {
@@ -286,7 +341,11 @@ async function runStageBody<TState, TArtifact, TResult>(
         kind: "user-message",
         state: run.state,
         userMessage,
+        stageContext: buildStageContext(run, "user-message"),
       })
+      run.stageAgentTurnCount++
+      syncSessions(definition, run)
+      await persistRun(run)
       continue
     }
 
@@ -318,7 +377,10 @@ async function runStageBody<TState, TArtifact, TResult>(
     const review = await definition.reviewer.review({
       artifact: response.artifact,
       state: run.state,
+      reviewContext: buildReviewContext(run, definition.maxReviews),
     })
+    syncSessions(definition, run)
+    await persistRun(run)
 
     if (review.kind === "pass") {
       pushLog(run, { type: "review_pass", message: "Review passed." })
@@ -329,13 +391,14 @@ async function runStageBody<TState, TArtifact, TResult>(
     }
 
     if (review.kind === "block") {
+      pushLog(run, { type: "status_changed", message: review.reason, data: { cycle: run.reviewIteration, reviewOutcome: "block" } })
       setStatus(run, "blocked")
       await persistRun(run)
       await recordStageBlocked(run, "review_block", review.reason)
       throw new Error(review.reason)
     }
 
-    pushLog(run, { type: "review_revise", message: review.feedback })
+    pushLog(run, { type: "review_revise", message: review.feedback, data: { cycle: run.reviewIteration, reviewOutcome: "revise" } })
     if (run.reviewIteration >= definition.maxReviews) {
       setStatus(run, "blocked")
       await persistRun(run)
@@ -351,6 +414,10 @@ async function runStageBody<TState, TArtifact, TResult>(
       kind: "review-feedback",
       state: run.state,
       reviewFeedback: review.feedback,
+      stageContext: buildStageContext(run, "review-feedback"),
     })
+    run.stageAgentTurnCount++
+    syncSessions(definition, run)
+    await persistRun(run)
   }
 }

@@ -78,6 +78,8 @@ export type StageRunRow = {
   project_id: string | null
   stage_key: string
   status: string
+  stage_agent_session_id: string | null
+  reviewer_session_id: string | null
   started_at: number | null
   completed_at: number | null
   error_message: string | null
@@ -463,6 +465,8 @@ export class Repos {
       project_id: input.projectId ?? null,
       stage_key: input.stageKey,
       status: "running",
+      stage_agent_session_id: null,
+      reviewer_session_id: null,
       started_at: now(),
       completed_at: null,
       error_message: null,
@@ -471,11 +475,19 @@ export class Repos {
     }
     this.db
       .prepare(
-        `INSERT INTO stage_runs (id, run_id, project_id, stage_key, status, started_at, completed_at, error_message, created_at, updated_at)
-         VALUES (@id, @run_id, @project_id, @stage_key, @status, @started_at, @completed_at, @error_message, @created_at, @updated_at)`
+        `INSERT INTO stage_runs (id, run_id, project_id, stage_key, status, stage_agent_session_id, reviewer_session_id, started_at, completed_at, error_message, created_at, updated_at)
+         VALUES (@id, @run_id, @project_id, @stage_key, @status, @stage_agent_session_id, @reviewer_session_id, @started_at, @completed_at, @error_message, @created_at, @updated_at)`
       )
       .run(row)
     return row
+  }
+
+  updateStageRunSessions(id: string, sessions: { stageAgentSessionId?: string | null; reviewerSessionId?: string | null }): void {
+    this.db
+      .prepare(
+        "UPDATE stage_runs SET stage_agent_session_id = COALESCE(?, stage_agent_session_id), reviewer_session_id = COALESCE(?, reviewer_session_id), updated_at = ? WHERE id = ?"
+      )
+      .run(sessions.stageAgentSessionId, sessions.reviewerSessionId, now(), id)
   }
 
   completeStageRun(id: string, status: "completed" | "failed", errorMessage?: string | null): void {

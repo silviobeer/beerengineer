@@ -1,103 +1,47 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises"
-import { spawn } from "node:child_process"
-import { join } from "node:path"
-import { tmpdir } from "node:os"
-import type { ReviewAgentAdapter, StageAgentAdapter, StageAgentInput } from "../../core/adapters.js"
+import type { ReviewAgentAdapter, ReviewContext, StageAgentAdapter, StageAgentInput } from "../../core/adapters.js"
+import { emitEvent, getActiveRun } from "../../core/runContext.js"
 import type { RuntimePolicy } from "../registry.js"
 import type { HostedCliRequest, HostedProviderId } from "./promptEnvelope.js"
 import { mapReviewEnvelopeToResponse, mapStageEnvelopeToResponse, type HostedReviewOutputEnvelope, type HostedStageOutputEnvelope } from "./outputEnvelope.js"
 import { buildReviewPrompt, buildStagePrompt } from "./promptEnvelope.js"
+import type { HostedCliExecutionResult, HostedProviderInvokeInput, HostedSession } from "./providerRuntime.js"
+import { invokeClaude } from "./providers/claude.js"
+import { invokeCodex } from "./providers/codex.js"
+import { invokeOpenCode } from "./providers/opencode.js"
 
-export type HostedCliExecutionResult = {
-  stdout: string
-  stderr: string
-  exitCode: number
-  command: string[]
-  outputText: string
+export type HostedProviderAdapter = {
+  invoke(input: HostedProviderInvokeInput): Promise<HostedCliExecutionResult>
 }
 
-type ProviderCommandBuilder = (input: {
-  provider: HostedProviderId
-  model?: string
-  workspaceRoot: string
-  policy: RuntimePolicy
-  responsePath: string
-}) => string[]
+function providerAdapter(provider: HostedProviderId): HostedProviderAdapter {
+  switch (provider) {
+    case "claude-code":
+      return { invoke: invokeClaude }
+    case "codex":
+      return { invoke: invokeCodex }
+    case "opencode":
+      return { invoke: invokeOpenCode }
+  }
+}
 
-export async function runHostedCli(
+export async function invokeHostedCli(
   request: HostedCliRequest,
-  buildCommand: ProviderCommandBuilder,
+  session?: HostedSession | null,
 ): Promise<HostedCliExecutionResult> {
-  const tempDir = await mkdtemp(join(tmpdir(), "beerengineer-hosted-"))
-  const responsePath = join(tempDir, "last-message.txt")
-  const command = buildCommand({
-    provider: request.runtime.provider,
-    model: request.runtime.model,
-    workspaceRoot: request.runtime.workspaceRoot,
-    policy: request.runtime.policy,
-    responsePath,
+  const result = await providerAdapter(request.runtime.provider).invoke({
+    prompt: request.prompt,
+    runtime: request.runtime,
+    session,
   })
-
-  try {
-    const result = await spawnCommand(command, request.prompt, request.runtime.workspaceRoot)
-    const outputText = await resolveOutputText(result.stdout, responsePath)
-    if (result.exitCode !== 0) {
-      throw new Error(
-        `${request.runtime.provider} exited with code ${result.exitCode}: ${result.stderr || result.stdout || "no output"}`,
-      )
-    }
-    return {
-      stdout: result.stdout,
-      stderr: result.stderr,
-      exitCode: result.exitCode,
-      command,
-      outputText,
-    }
-  } finally {
-    await rm(tempDir, { recursive: true, force: true })
-  }
-}
-
-async function resolveOutputText(stdout: string, responsePath: string): Promise<string> {
-  try {
-    const fromFile = await readFile(responsePath, "utf8")
-    if (fromFile.trim()) return fromFile
-  } catch {
-    // Provider did not use an output file; fall back to stdout.
-  }
-  return stdout
-}
-
-function spawnCommand(command: string[], stdinText: string, cwd: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command[0], command.slice(1), {
-      cwd,
-      env: process.env,
-      stdio: ["pipe", "pipe", "pipe"],
+  const active = getActiveRun()
+  if (active) {
+    emitEvent({
+      type: "log",
+      runId: active.runId,
+      message: `llm.invocation provider=${request.runtime.provider} session=${result.session.sessionId && session?.sessionId ? "resumed" : "started"} cachedTokens=${result.cacheStats?.cachedInputTokens ?? 0} totalTokens=${result.cacheStats?.totalInputTokens ?? 0}`,
     })
-    const stdoutChunks: Buffer[] = []
-    const stderrChunks: Buffer[] = []
-    let settled = false
-    const settle = (fn: () => void) => {
-      if (settled) return
-      settled = true
-      fn()
-    }
-    child.once("error", err => settle(() => reject(err)))
-    child.stdout.on("data", chunk => stdoutChunks.push(chunk as Buffer))
-    child.stderr.on("data", chunk => stderrChunks.push(chunk as Buffer))
-    child.once("close", code => {
-      settle(() =>
-        resolve({
-          stdout: Buffer.concat(stdoutChunks).toString("utf8"),
-          stderr: Buffer.concat(stderrChunks).toString("utf8"),
-          exitCode: code ?? 1,
-        }),
-      )
-    })
-    child.stdin.write(stdinText)
-    child.stdin.end()
-  })
+  }
+  return result
 }
 
 function parseJsonObject(text: string): Record<string, unknown> {
@@ -122,8 +66,6 @@ function parseJsonObject(text: string): Record<string, unknown> {
   throw new Error(`Provider output did not contain a JSON object: ${trimmed.slice(0, 200)}`)
 }
 
-// Scan for the outermost balanced {...} block, ignoring braces inside strings.
-// Robust against markdown prose before/after and embedded example objects.
 function extractOutermostJsonObject(text: string): string | null {
   let depth = 0
   let start = -1
@@ -154,19 +96,36 @@ function extractOutermostJsonObject(text: string): string | null {
   return null
 }
 
+type HostedAdapterInput = {
+  stageId: string
+  provider: HostedProviderId
+  model?: string
+  workspaceRoot: string
+  runtimePolicy: RuntimePolicy
+}
+
 export class HostedStageAdapter<S, A> implements StageAgentAdapter<S, A> {
-  constructor(
-    private readonly input: {
-      stageId: string
-      provider: HostedProviderId
-      model?: string
-      workspaceRoot: string
-      runtimePolicy: RuntimePolicy
-      buildCommand: ProviderCommandBuilder
-    },
-  ) {}
+  private session: HostedSession
+
+  constructor(private readonly input: HostedAdapterInput) {
+    this.session = { provider: input.provider, sessionId: null }
+  }
+
+  getSessionId(): string | null {
+    return this.session.sessionId
+  }
+
+  setSessionId(sessionId: string | null): void {
+    this.session = { provider: this.input.provider, sessionId }
+  }
 
   async step(request: StageAgentInput<S>) {
+    const runtime = {
+      provider: this.input.provider,
+      model: this.input.model,
+      workspaceRoot: this.input.workspaceRoot,
+      policy: this.input.runtimePolicy,
+    }
     const basePrompt = buildStagePrompt({
       stageId: this.input.stageId,
       provider: this.input.provider,
@@ -174,24 +133,20 @@ export class HostedStageAdapter<S, A> implements StageAgentAdapter<S, A> {
       runtimePolicy: this.input.runtimePolicy,
       request,
     })
-    const runtime = {
-      provider: this.input.provider,
-      model: this.input.model,
-      workspaceRoot: this.input.workspaceRoot,
-      policy: this.input.runtimePolicy,
-    }
-    const firstResult = await runHostedCli(
+    const firstResult = await invokeHostedCli(
       { kind: "stage", runtime, prompt: basePrompt, payload: request },
-      this.input.buildCommand,
+      this.session,
     )
+    this.session = firstResult.session
     try {
       return mapStageEnvelopeToResponse(parseJsonObject(firstResult.outputText) as HostedStageOutputEnvelope<A>)
     } catch (err) {
       const retryPrompt = `${basePrompt}\n\nIMPORTANT: your previous response was not valid JSON. You MUST respond with ONLY a single JSON object that matches the output envelope schema — no prose before or after, no markdown, no code fences. Respond with the JSON object now.\n\nPrevious response (for your reference):\n${firstResult.outputText.slice(0, 2000)}`
-      const retryResult = await runHostedCli(
+      const retryResult = await invokeHostedCli(
         { kind: "stage", runtime, prompt: retryPrompt, payload: request },
-        this.input.buildCommand,
+        this.session,
       )
+      this.session = retryResult.session
       try {
         return mapStageEnvelopeToResponse(parseJsonObject(retryResult.outputText) as HostedStageOutputEnvelope<A>)
       } catch {
@@ -202,18 +157,28 @@ export class HostedStageAdapter<S, A> implements StageAgentAdapter<S, A> {
 }
 
 export class HostedReviewAdapter<S, A> implements ReviewAgentAdapter<S, A> {
-  constructor(
-    private readonly input: {
-      stageId: string
-      provider: HostedProviderId
-      model?: string
-      workspaceRoot: string
-      runtimePolicy: RuntimePolicy
-      buildCommand: ProviderCommandBuilder
-    },
-  ) {}
+  private session: HostedSession
 
-  async review(request: { artifact: A; state: S }) {
+  constructor(private readonly input: HostedAdapterInput) {
+    this.session = { provider: input.provider, sessionId: null }
+  }
+
+  getSessionId(): string | null {
+    return this.session.sessionId
+  }
+
+  setSessionId(sessionId: string | null): void {
+    this.session = { provider: this.input.provider, sessionId }
+  }
+
+  async review(request?: { artifact: A; state: S; reviewContext?: ReviewContext }) {
+    if (!request) throw new Error("Hosted review adapter requires a review payload")
+    const runtime = {
+      provider: this.input.provider,
+      model: this.input.model,
+      workspaceRoot: this.input.workspaceRoot,
+      policy: this.input.runtimePolicy,
+    }
     const basePrompt = buildReviewPrompt({
       stageId: this.input.stageId,
       provider: this.input.provider,
@@ -221,24 +186,20 @@ export class HostedReviewAdapter<S, A> implements ReviewAgentAdapter<S, A> {
       runtimePolicy: this.input.runtimePolicy,
       request,
     })
-    const runtime = {
-      provider: this.input.provider,
-      model: this.input.model,
-      workspaceRoot: this.input.workspaceRoot,
-      policy: this.input.runtimePolicy,
-    }
-    const firstResult = await runHostedCli(
+    const firstResult = await invokeHostedCli(
       { kind: "review", runtime, prompt: basePrompt, payload: request },
-      this.input.buildCommand,
+      this.session,
     )
+    this.session = firstResult.session
     try {
       return mapReviewEnvelopeToResponse(parseJsonObject(firstResult.outputText) as HostedReviewOutputEnvelope)
     } catch (err) {
       const retryPrompt = `${basePrompt}\n\nIMPORTANT: your previous response was not valid JSON. You MUST respond with ONLY a single JSON object that matches the review output envelope schema — no prose before or after, no markdown, no code fences. Respond with the JSON object now.\n\nPrevious response (for your reference):\n${firstResult.outputText.slice(0, 2000)}`
-      const retryResult = await runHostedCli(
+      const retryResult = await invokeHostedCli(
         { kind: "review", runtime, prompt: retryPrompt, payload: request },
-        this.input.buildCommand,
+        this.session,
       )
+      this.session = retryResult.session
       try {
         return mapReviewEnvelopeToResponse(parseJsonObject(retryResult.outputText) as HostedReviewOutputEnvelope)
       } catch {

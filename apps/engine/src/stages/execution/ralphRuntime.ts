@@ -18,6 +18,7 @@ import { stagePresent } from "../../core/stagePresentation.js"
 import { readWorkspaceConfig } from "../../core/workspaces.js"
 import { executionCoderPolicy, resolveHarness, type RunLlmConfig } from "../../llm/registry.js"
 import { runCoderHarness } from "../../llm/hosted/execution/coderHarness.js"
+import type { IterationContext } from "../../llm/hosted/promptEnvelope.js"
 import { llm6bFix, llm6bImplement } from "../../sim/llm.js"
 import { runStoryReviewTools } from "../../review/registry.js"
 import type { CodeRabbitResult, SonarCloudResult } from "../../review/types.js"
@@ -462,6 +463,8 @@ export async function runRalphStory(
     maxReviewCycles: MAX_REVIEW_CYCLES,
     currentReviewCycle: 0,
     iterations: [],
+    coderSessionId: null,
+    priorAttempts: [],
     changedFiles: [],
     finalSummary: "",
   }
@@ -554,15 +557,25 @@ export async function runRalphStory(
             role: "coder",
             stage: "execution",
           })
+          const iterationContext: IterationContext = {
+            iteration: iterationNumber,
+            maxIterations: maxIterationsPerCycle,
+            reviewCycle: reviewCycle + 1,
+            maxReviewCycles,
+            priorAttempts: implementation.priorAttempts ?? [],
+          }
           const coderResult = await runCoderHarness({
             harness,
             runtimePolicy: executionCoderPolicy(llm.runtimePolicy),
             baselinePath,
             storyContext,
             reviewFeedback: isRemediation ? nextFeedback ?? "" : undefined,
+            sessionId: implementation.coderSessionId ?? null,
+            iterationContext,
           })
           coderSummary = coderResult.summary
           changedFilesThisIteration = coderResult.changedFiles
+          implementation.coderSessionId = coderResult.sessionId
           notes = [...notes, ...coderResult.implementationNotes]
           if (coderResult.blockers.length > 0) {
             notes.push(...coderResult.blockers.map(blocker => `[blocker] ${blocker}`))
@@ -589,6 +602,11 @@ export async function runRalphStory(
           checks,
           result: result === "done" && isRemediation ? "review_feedback_applied" : result,
           notes,
+        })
+        ;(implementation.priorAttempts ??= []).push({
+          iteration: iterationNumber,
+          summary: coderSummary ?? (result === "done" ? "Implementation reached green." : "Implementation still failing checks."),
+          outcome: result === "done" ? "passed" : result === "tests_failed" ? "failed" : "blocked",
         })
         implementation.changedFiles = Array.from(
           new Set([...implementation.changedFiles, ...changedFilesThisIteration]),

@@ -35,6 +35,13 @@ Die aeussere JSON-/Envelope-Logik bleibt in
 definieren nur das stage-spezifische Verhalten und den inneren
 Artifact-Contract.
 
+Hosted provider calls now keep two layers of state in sync:
+
+- provider-native session resume for stage agents, reviewers, and the execution coder when the provider supports it
+- structured payload context (`stageContext`, `reviewContext`, `iterationContext`) as the deterministic source of truth for counters and recovery
+
+If a persisted provider session is explicitly rejected as unknown or expired, the engine starts a fresh provider session and keeps the structured context. Other provider/runtime failures still fail normally instead of silently downgrading to a fresh session.
+
 Zur Laufzeit kann das Prompt-Verzeichnis mit
 `BEERENGINEER_PROMPTS_DIR=/pfad/zu/prompts` ueberschrieben werden. Der
 Loader akzeptiert absolute Pfade oder Pfade relativ zum aktuellen

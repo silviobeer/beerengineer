@@ -14,6 +14,7 @@ test("stage prompt preserves the outer JSON contract after externalization", () 
   assert.match(prompt, /Return exactly one JSON object and nothing else\./)
   assert.match(prompt, /"kind": "artifact"/)
   assert.match(prompt, /Stage: planning/)
+  assert.match(prompt, /stageContext/)
   assert.match(prompt, /Return an `artifact` object matching `ImplementationPlanArtifact`:/)
   assert.doesNotMatch(prompt, /implementation-plan-data/)
 })
@@ -27,6 +28,7 @@ test("review prompt preserves the pass revise block contract and falls back to t
   })
 
   assert.match(prompt, /Use one of these exact shapes: \{ "kind": "pass" \} \| \{ "kind": "revise", "feedback": string \} \| \{ "kind": "block", "reason": string \}/)
+  assert.match(prompt, /reviewContext/)
   assert.match(prompt, /You review the `documentation` stage artifact/)
 
   const fallbackPrompt = buildReviewPrompt({
@@ -50,5 +52,6 @@ test("execution prompt loads the external worker prompt and keeps the coder cont
 
   assert.match(prompt, /You are the bounded implementation worker for one story\./)
   assert.match(prompt, /Modify files directly inside the workspace when required by the task\./)
+  assert.match(prompt, /iterationContext/)
   assert.match(prompt, /"summary": string/)
 })
