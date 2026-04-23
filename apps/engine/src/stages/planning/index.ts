@@ -11,15 +11,26 @@ function validatePlanStoryIds(artifact: ImplementationPlanArtifact, prd: PRD): s
   const prdIds = new Set(prd.stories.map(s => s.id))
   const seen = new Set<string>()
   const issues: string[] = []
-  const waveIds = new Set(artifact.plan.waves.map(w => w.id))
+  const waves = artifact.plan?.waves
+  if (!Array.isArray(waves)) {
+    return `Plan is missing a \`plan.waves\` array. The artifact must include \`plan.waves: Array<{id,number,goal,stories,parallel,dependencies,exitCriteria}>\`; got \`${JSON.stringify(artifact.plan ?? null).slice(0, 200)}\`.`
+  }
+  if (waves.length === 0) {
+    return `Plan contains zero waves. Every PRD story must belong to exactly one wave; emit at least one wave with the PRD stories assigned.`
+  }
+  const waveIds = new Set(waves.map(w => w.id))
   const waveIdsBefore = new Map<string, Set<string>>()
   const idsBefore = new Set<string>()
-  for (const wave of artifact.plan.waves) {
+  for (const wave of waves) {
     waveIdsBefore.set(wave.id, new Set(idsBefore))
     idsBefore.add(wave.id)
   }
-  for (const wave of artifact.plan.waves) {
-    for (const ref of wave.stories ?? []) {
+  for (const wave of waves) {
+    const storyList = Array.isArray(wave.stories) ? wave.stories : []
+    if (storyList.length === 0) {
+      issues.push(`Wave ${wave.id ?? wave.number ?? "?"} has zero stories. Every wave must contain at least one PRD story.`)
+    }
+    for (const ref of storyList) {
       const id = (ref as { id?: string })?.id
       const title = (ref as { title?: string })?.title
       if (!id || typeof id !== "string") {
@@ -102,15 +113,17 @@ export async function planning(ctx: WithArchitecture, llm?: RunLlmConfig): Promi
         },
         summaryArtifactFile(
           "planning",
-          stageSummary(run, [`Waves: ${artifact.plan.waves.length}`]),
+          stageSummary(run, [`Waves: ${Array.isArray(artifact.plan?.waves) ? artifact.plan.waves.length : 0}`]),
         ),
       ]
     },
     async onApproved(artifact, run) {
       stagePresent.ok("Planning review: implementation plan is ready.")
-      artifact.plan.waves.forEach(wave => {
+      const waves = Array.isArray(artifact.plan?.waves) ? artifact.plan.waves : []
+      waves.forEach(wave => {
         const tag = wave.parallel ? "(parallel)" : "(sequential)"
-        stagePresent.chat(`Wave ${wave.number} ${tag}`, wave.stories.map(story => story.title).join(", "))
+        const stories = Array.isArray(wave.stories) ? wave.stories : []
+        stagePresent.chat(`Wave ${wave.number} ${tag}`, stories.map(story => story.title).join(", "))
       })
       printStageCompletion(run, "planning")
       return artifact
