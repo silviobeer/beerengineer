@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { spawnCommand, type HostedCliExecutionResult, type HostedProviderInvokeInput } from "../providerRuntime.js"
-import { isTransientFailure, sleep, transientRetryDelaysMs } from "./_retry.js"
+import { isTransientFailure, isTransientSpawnError, sleep, transientRetryDelaysMs } from "./_retry.js"
 import { emitRetryMarker, makeJsonLineStreamCallback } from "./_stream.js"
 
 function baseCommand(input: HostedProviderInvokeInput, responsePath: string): string[] {
@@ -101,9 +101,19 @@ export async function invokeCodex(input: HostedProviderInvokeInput, attempt = 0)
   const command = baseCommand(input, responsePath)
   const retryDelays = transientRetryDelaysMs()
   try {
-    const result = await spawnCommand(command, input.prompt, input.runtime.workspaceRoot, {
-      onStdoutLine: streamCallbackFor(),
-    })
+    let result
+    try {
+      result = await spawnCommand(command, input.prompt, input.runtime.workspaceRoot, {
+        onStdoutLine: streamCallbackFor(),
+      })
+    } catch (err) {
+      if (isTransientSpawnError(err) && attempt < retryDelays.length) {
+        emitRetryMarker("codex", attempt + 2, retryDelays.length + 1, retryDelays[attempt] ?? 0)
+        await sleep(retryDelays[attempt] ?? 0)
+        return invokeCodex(input, attempt + 1)
+      }
+      throw err
+    }
     const combined = `${result.stdout}\n${result.stderr}`
     if (result.exitCode !== 0) {
       if (input.session?.sessionId && unknownSession(combined)) {

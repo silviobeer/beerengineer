@@ -1,5 +1,5 @@
 import { spawnCommand, type HostedCliExecutionResult, type HostedProviderInvokeInput } from "../providerRuntime.js"
-import { isTransientFailure, sleep, transientRetryDelaysMs } from "./_retry.js"
+import { isTransientFailure, isTransientSpawnError, sleep, transientRetryDelaysMs } from "./_retry.js"
 import { emitRetryMarker, makeJsonLineStreamCallback, type StreamEventSummary } from "./_stream.js"
 
 type ClaudeUsage = {
@@ -229,9 +229,19 @@ export async function invokeClaude(input: HostedProviderInvokeInput, attempt = 0
   const command = buildClaudeCommand(input)
   const state = createClaudeStreamState()
   const retryDelays = transientRetryDelaysMs()
-  const result = await spawnCommand(command, input.prompt, input.runtime.workspaceRoot, {
-    onStdoutLine: createClaudeStreamCallback(state),
-  })
+  let result
+  try {
+    result = await spawnCommand(command, input.prompt, input.runtime.workspaceRoot, {
+      onStdoutLine: createClaudeStreamCallback(state),
+    })
+  } catch (err) {
+    if (isTransientSpawnError(err) && attempt < retryDelays.length) {
+      emitRetryMarker("claude", attempt + 2, retryDelays.length + 1, retryDelays[attempt] ?? 0)
+      await sleep(retryDelays[attempt] ?? 0)
+      return invokeClaude(input, attempt + 1)
+    }
+    throw err
+  }
   const combined = `${result.stdout}\n${result.stderr}`
   if (result.exitCode !== 0) {
     if (input.session?.sessionId && unknownSession(combined)) {
