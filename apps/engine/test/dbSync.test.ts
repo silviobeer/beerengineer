@@ -58,7 +58,7 @@ test("attachDbSync persists stage lifecycle into DB", () => {
     bus.emit({ type: "run_started", runId: run.id, itemId: item.id, title: "T" })
     bus.emit({ type: "stage_started", runId: run.id, stageRunId: "x", stageKey: "brainstorm" })
     bus.emit({ type: "stage_completed", runId: run.id, stageRunId: "x", stageKey: "brainstorm", status: "completed" })
-    bus.emit({ type: "run_finished", runId: run.id, status: "completed" })
+    bus.emit({ type: "run_finished", runId: run.id, itemId: item.id, title: "T", status: "completed" })
 
     const stages = repos.listStageRunsForRun(run.id)
     assert.equal(stages.length, 1)
@@ -89,6 +89,33 @@ test("pending prompts round-trip via repos", () => {
   const answered = repos.answerPendingPrompt(p1.id, "answer!")
   assert.equal(answered?.answer, "answer!")
   assert.equal(repos.getOpenPrompt(run.id), undefined)
+  db.close()
+})
+
+test("notification delivery claims are durable and deduplicate by key", () => {
+  const db = tmpDb()
+  const repos = new Repos(db)
+
+  const first = repos.claimNotificationDelivery({
+    dedupKey: "run-1:run_finished",
+    channel: "telegram",
+    chatId: "123",
+  })
+  const second = repos.claimNotificationDelivery({
+    dedupKey: "run-1:run_finished",
+    channel: "telegram",
+    chatId: "123",
+  })
+
+  assert.equal(first, true)
+  assert.equal(second, false)
+
+  repos.completeNotificationDelivery("run-1:run_finished", { status: "delivered" })
+  const delivery = repos.getNotificationDelivery("run-1:run_finished")
+  assert.equal(delivery?.status, "delivered")
+  assert.equal(delivery?.attempt_count, 1)
+  assert.equal(delivery?.chat_id, "123")
+
   db.close()
 })
 

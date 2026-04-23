@@ -18,6 +18,7 @@ import { prepareRun } from "../core/runOrchestrator.js"
 import { createItemActionsService, isItemAction, type ItemActionEvent } from "../core/itemActions.js"
 import { isResumeInFlight, loadResumeReadiness, performResume } from "../core/resume.js"
 import { LOG_TAIL_INTERVAL_MS } from "../core/constants.js"
+import { sendTelegramTestNotification } from "../notifications/command.js"
 import { generateSetupReport } from "../setup/doctor.js"
 import {
   KNOWN_GROUP_IDS,
@@ -266,6 +267,32 @@ async function handleStartRun(req: IncomingMessage, res: ServerResponse): Promis
     })
 
   json(res, 202, { runId: prepared.runId })
+}
+
+async function handleNotificationTest(req: IncomingMessage, res: ServerResponse, channel: string): Promise<void> {
+  const config = loadEffectiveConfig()
+  if (!config) {
+    return json(res, 500, { error: "config_unavailable" })
+  }
+  if (channel !== "telegram") {
+    return json(res, 404, { error: "not found" })
+  }
+  const result = await sendTelegramTestNotification(config, repos)
+  if (!result.ok) {
+    return json(res, 400, { error: result.error })
+  }
+  return json(res, 200, { ok: true })
+}
+
+function handleNotificationDeliveries(url: URL, res: ServerResponse): void {
+  const channel = url.searchParams.get("channel")?.trim() || undefined
+  const limitParam = url.searchParams.get("limit")
+  const parsedLimit = limitParam ? Number(limitParam) : undefined
+  const deliveries = repos.listNotificationDeliveries({
+    channel,
+    limit: Number.isFinite(parsedLimit) ? parsedLimit : undefined,
+  })
+  json(res, 200, { deliveries })
 }
 
 async function handleSetupStatus(url: URL, res: ServerResponse): Promise<void> {
@@ -663,6 +690,11 @@ const server = createServer(async (req, res) => {
     if (path === "/board" && req.method === "GET") return handleGetBoard(url, res)
     // GET /setup/status
     if (path === "/setup/status" && req.method === "GET") return handleSetupStatus(url, res)
+    // POST /notifications/test/:channel
+    const notificationTestMatch = path.match(/^\/notifications\/test\/([^/]+)$/)
+    if (notificationTestMatch && req.method === "POST") return handleNotificationTest(req, res, notificationTestMatch[1])
+    // GET /notifications/deliveries
+    if (path === "/notifications/deliveries" && req.method === "GET") return handleNotificationDeliveries(url, res)
     // GET /workspaces/preview?path=...
     if (path === "/workspaces/preview" && req.method === "GET") return handleWorkspacePreview(url, res)
     // GET /workspaces

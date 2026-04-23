@@ -8,13 +8,17 @@ BeerEngineer now has a dedicated app-level setup flow for machine readiness.
 npm exec --workspace=@beerengineer2/engine beerengineer -- doctor
 npm exec --workspace=@beerengineer2/engine beerengineer -- doctor --json
 npm exec --workspace=@beerengineer2/engine beerengineer -- setup --no-interactive
+npm exec --workspace=@beerengineer2/engine beerengineer -- setup --group notifications
+npm exec --workspace=@beerengineer2/engine beerengineer -- notifications test telegram
 ```
 
 - `doctor` is read-only. It reports config, data-dir, DB, toolchain, and auth status.
 - `setup` provisions the default config, data directory, and SQLite database, then reruns diagnostics. It refuses to overwrite a config file that exists but fails validation — fix or remove it by hand, then retry.
+- `setup --group notifications` re-runs only the notification setup flow and guides you through `publicBaseUrl`, the Telegram bot-token env var name, and the default chat id.
+- `notifications test telegram` sends a smoke-test message through the configured Telegram bot/chat, using the same engine delivery path as real run events.
 - `GET /setup/status` returns the same JSON contract as `doctor --json`. Passing `?group=` with an unknown id responds `400 { "error": "unknown_group" }`; the CLI equivalent exits with code 2.
 
-Known group ids: `core`, `vcs.github`, `llm.anthropic`, `llm.openai`, `llm.opencode`, `browser-agent`, `review`.
+Known group ids: `core`, `vcs.github`, `llm.anthropic`, `llm.openai`, `llm.opencode`, `browser-agent`, `review`, `notifications`.
 
 ## Config
 
@@ -28,6 +32,7 @@ Default config shape:
   "dataDir": "<env-paths user data dir>",
   "allowedRoots": ["~/projects"],
   "enginePort": 4100,
+  "publicBaseUrl": "http://100.x.y.z:3100",
   "llm": {
     "provider": "anthropic",
     "model": "claude-opus-4-7",
@@ -36,6 +41,13 @@ Default config shape:
   "vcs": {
     "github": {
       "enabled": false
+    }
+  },
+  "notifications": {
+    "telegram": {
+      "enabled": false,
+      "botTokenEnv": "TELEGRAM_BOT_TOKEN",
+      "defaultChatId": ""
     }
   },
   "browser": {
@@ -50,11 +62,38 @@ Supported env overrides:
 - `BEERENGINEER_DATA_DIR`
 - `BEERENGINEER_ALLOWED_ROOTS`
 - `BEERENGINEER_ENGINE_PORT`
+- `BEERENGINEER_PUBLIC_BASE_URL`
 - `BEERENGINEER_LLM_PROVIDER`
 - `BEERENGINEER_LLM_MODEL`
 - `BEERENGINEER_LLM_API_KEY_REF`
 - `BEERENGINEER_GITHUB_ENABLED`
+- `BEERENGINEER_TELEGRAM_ENABLED`
+- `BEERENGINEER_TELEGRAM_BOT_TOKEN_ENV`
+- `BEERENGINEER_TELEGRAM_DEFAULT_CHAT_ID`
+- `BEERENGINEER_TELEGRAM_API_BASE_URL`
 - `BEERENGINEER_BROWSER_ENABLED`
+
+## Notifications
+
+Telegram notifications depend on two sources of configuration:
+
+- App config stores whether Telegram is enabled, which env var contains the bot token, the default chat id, and the externally reachable `publicBaseUrl`.
+- The bot token itself stays in the environment and is never persisted into `config.json`.
+
+The `notifications` doctor group reports:
+
+- whether `publicBaseUrl` exists and is a valid non-loopback `http(s)` URL
+- whether Telegram notifications are enabled
+- which env var is expected for the bot token
+- whether that env var is currently present
+- whether a default chat id is configured
+
+Operational notes:
+
+- `publicBaseUrl` must be reachable by the person receiving the Telegram message. In practice this usually means a Tailscale IP or DNS name, not `localhost` and not `127.0.0.1`.
+- The settings page reads this same status via `GET /setup/status?group=notifications`.
+- The settings page can trigger a smoke test and show recent delivery rows from `notification_deliveries`.
+- `GET /notifications/deliveries` and `POST /notifications/test/telegram` expose the same data/actions over HTTP.
 
 ## Report semantics
 

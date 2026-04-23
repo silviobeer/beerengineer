@@ -55,9 +55,23 @@ export type PendingPromptRow = {
   id: string
   run_id: string
   prompt: string
+  displayPrompt?: string | null
   answer: string | null
   created_at: number
   answered_at: number | null
+}
+
+export type NotificationDeliveryRow = {
+  dedup_key: string
+  channel: string
+  chat_id: string
+  status: string
+  attempt_count: number
+  last_attempt_at: number | null
+  delivered_at: number | null
+  error_message: string | null
+  created_at: number
+  updated_at: number
 }
 
 export async function listRuns(): Promise<RunRow[]> {
@@ -96,14 +110,14 @@ export async function answerPrompt(runId: string, promptId: string, answer: stri
 }
 
 export async function getOpenPrompt(runId: string): Promise<PendingPromptRow | null> {
-  const res = await fetch(`${ENGINE_BASE_URL}/runs/${runId}/prompts`, { cache: "no-store" })
+  const res = await fetch(`/api/runs/${runId}/prompts`, { cache: "no-store" })
   if (!res.ok) return null
   const body = (await res.json()) as { prompt: PendingPromptRow | null }
   return body.prompt ?? null
 }
 
 export async function getRunRecovery(runId: string): Promise<RecoveryDetail | null> {
-  const res = await fetch(`${ENGINE_BASE_URL}/runs/${runId}/recovery`, { cache: "no-store" })
+  const res = await fetch(`/api/runs/${runId}/recovery`, { cache: "no-store" })
   if (!res.ok) return null
   const body = (await res.json()) as { recovery: RecoveryDetail | null }
   return body.recovery
@@ -124,13 +138,13 @@ export async function resumeRun(
 }
 
 export async function getRun(runId: string): Promise<RunRow | null> {
-  const res = await fetch(`${ENGINE_BASE_URL}/runs/${runId}`, { cache: "no-store" })
+  const res = await fetch(`/api/runs/${runId}`, { cache: "no-store" })
   if (!res.ok) return null
   return (await res.json()) as RunRow
 }
 
 export async function getRunTree(runId: string): Promise<{ run: RunRow; stageRuns: StageRunRow[] } | null> {
-  const res = await fetch(`${ENGINE_BASE_URL}/runs/${runId}/tree`, { cache: "no-store" })
+  const res = await fetch(`/api/runs/${runId}/tree`, { cache: "no-store" })
   if (!res.ok) return null
   return (await res.json()) as { run: RunRow; stageRuns: StageRunRow[] }
 }
@@ -187,6 +201,24 @@ export async function getSetupStatus(group?: string): Promise<SetupReport | null
   const res = await fetch(`${ENGINE_BASE_URL}/setup/status${qs}`, { cache: "no-store" })
   if (!res.ok) return null
   return (await res.json()) as SetupReport
+}
+
+export function findSetupGroup(report: SetupReport | null, groupId: string): SetupGroupResult | null {
+  return report?.groups.find(group => group.id === groupId) ?? null
+}
+
+export async function getNotificationDeliveries(opts: {
+  channel?: string
+  limit?: number
+} = {}): Promise<NotificationDeliveryRow[]> {
+  const qs = new URLSearchParams()
+  if (opts.channel) qs.set("channel", opts.channel)
+  if (opts.limit !== undefined) qs.set("limit", String(opts.limit))
+  const suffix = qs.toString() ? `?${qs.toString()}` : ""
+  const res = await fetch(`${ENGINE_BASE_URL}/notifications/deliveries${suffix}`, { cache: "no-store" })
+  if (!res.ok) return []
+  const body = (await res.json()) as { deliveries: NotificationDeliveryRow[] }
+  return body.deliveries ?? []
 }
 
 export async function performItemAction(itemId: string, action: ItemAction): Promise<ItemActionResponse> {

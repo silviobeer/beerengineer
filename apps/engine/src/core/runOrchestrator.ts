@@ -8,6 +8,8 @@ import { persistWorkflowRunState } from "./stageRuntime.js"
 import type { Repos } from "../db/repositories.js"
 import { readWorkspaceConfig } from "./workspaces.js"
 import type { WorkflowLlmOptions, WorkflowResumeInput } from "../workflow.js"
+import { attachTelegramNotifications } from "../notifications/index.js"
+import { defaultAppConfig, readConfigFile, resolveConfigPath, resolveMergedConfig, resolveOverrides } from "../setup/config.js"
 
 /**
  * Map a stage key to the UI's board column + phase status. The UI column set is
@@ -352,6 +354,8 @@ export function prepareRun(
   // considered a bug upstream.
   const bus = io.bus ?? createBus()
   const writtenLogIds = new Set<string>()
+  const notificationConfig =
+    resolveMergedConfig(readConfigFile(resolveConfigPath(resolveOverrides())), resolveOverrides()) ?? defaultAppConfig()
 
   const start = async (): Promise<void> => {
     const workspaceRow = repos.getWorkspace(workspaceId)
@@ -383,10 +387,11 @@ export function prepareRun(
       }
     }
     const detachDbSync = attachDbSync(bus, repos, { runId: runRow.id, itemId: itemRow.id }, { writtenLogIds })
+    const detachTelegram = attachTelegramNotifications(bus, repos, notificationConfig)
     const detachBridge = attachCrossProcessBridge(bus, repos, runRow.id, { writtenLogIds })
     try {
       await runWithWorkflowIO(io, async () =>
-        runWithActiveRun({ runId: runRow.id, itemId: itemRow.id }, async () => {
+        runWithActiveRun({ runId: runRow.id, itemId: itemRow.id, title: item.title }, async () => {
           bus.emit({ type: "run_started", runId: runRow.id, itemId: itemRow.id, title: item.title })
           try {
             await runWorkflow(
@@ -404,7 +409,7 @@ export function prepareRun(
               finalRun?.current_stage ?? "handoff",
               "completed",
             )
-            bus.emit({ type: "run_finished", runId: runRow.id, status: "completed" })
+            bus.emit({ type: "run_finished", runId: runRow.id, itemId: itemRow.id, title: item.title, status: "completed" })
           } catch (err) {
             const message = (err as Error).message
             const finalRun = repos.getRun(runRow.id)
@@ -414,7 +419,7 @@ export function prepareRun(
                 finalRun?.current_stage ?? "execution",
                 "failed",
               )
-              bus.emit({ type: "run_finished", runId: runRow.id, status: "failed", error: message })
+              bus.emit({ type: "run_finished", runId: runRow.id, itemId: itemRow.id, title: item.title, status: "failed", error: message })
             }
             throw err
           }
@@ -422,6 +427,7 @@ export function prepareRun(
       )
     } finally {
       detachBridge()
+      detachTelegram?.()
       detachDbSync()
     }
   }

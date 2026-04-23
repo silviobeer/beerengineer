@@ -213,6 +213,58 @@ OK: all required groups satisfied.
 Next:  beerengineer workspace add
 ```
 
+### Optional: turn on Telegram notifications now
+
+If you want BeerEngineer to send run updates to Telegram, do it right after the
+base setup while you're already in operator mode:
+
+```
+beerengineer setup --group notifications
+```
+
+What this asks for:
+
+1. **Public base URL** — the URL people should open when a Telegram message links
+   back into BeerEngineer. This must be a real reachable address, usually a
+   Tailscale IP or DNS name such as `http://100.x.y.z:3100`. Do not use
+   `localhost`, `127.0.0.1`, or `.local` hostnames.
+2. **Bot token env var name** — usually `TELEGRAM_BOT_TOKEN`.
+3. **Default chat id** — the Telegram chat or group that should receive the
+   messages.
+
+The token itself is **not** stored in BeerEngineer config. Put it in your shell
+environment instead:
+
+```
+export TELEGRAM_BOT_TOKEN=123456:abc...
+```
+
+If you don't know the chat id yet:
+
+1. Create or pick a bot in Telegram.
+2. Send any message to that bot (or add it to a group and send a message there).
+3. Run:
+
+   ```
+   curl "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/getUpdates"
+   ```
+
+4. Find `"chat":{"id":...}` in the JSON. That's the value BeerEngineer wants.
+   For groups, the number is often negative.
+
+After setup, verify delivery:
+
+```
+beerengineer notifications test telegram
+beerengineer doctor --group notifications
+```
+
+You can also open the Settings page later to:
+
+- see whether Telegram is configured correctly
+- send the same smoke-test message from the UI
+- inspect recent delivery history
+
 ## Step 3 — Register your first workspace
 
 A workspace is just a folder. BeerEngineer doesn't care if it exists yet or

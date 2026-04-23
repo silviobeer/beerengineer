@@ -140,3 +140,20 @@ CREATE TABLE IF NOT EXISTS pending_prompts (
   answered_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS pending_prompts_run_idx ON pending_prompts(run_id, answered_at);
+
+-- Durable dedup + audit for outbound notifications. One row per unique
+-- delivery intent; replaying the same dedup_key is a no-op.
+CREATE TABLE IF NOT EXISTS notification_deliveries (
+  dedup_key TEXT PRIMARY KEY,
+  channel TEXT NOT NULL,
+  chat_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  last_attempt_at INTEGER,
+  delivered_at INTEGER,
+  error_message TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS notification_deliveries_channel_created_idx
+  ON notification_deliveries(channel, created_at);

@@ -1,9 +1,10 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { createServer } from "node:http"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
-import { spawnSync } from "node:child_process"
+import { spawn, spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 
 import { initDatabase } from "../src/db/connection.js"
@@ -29,6 +30,7 @@ test("parseArgs recognizes help, doctor, start ui, workflow, item action, and un
   assert.deepEqual(parseArgs(["--doctor"]), { kind: "doctor", json: false, group: undefined })
   assert.deepEqual(parseArgs(["doctor", "--json", "--group", "core"]), { kind: "doctor", json: true, group: "core" })
   assert.deepEqual(parseArgs(["setup", "--no-interactive"]), { kind: "setup", group: undefined, noInteractive: true })
+  assert.deepEqual(parseArgs(["notifications", "test", "telegram"]), { kind: "notifications-test", channel: "telegram" })
   assert.deepEqual(parseArgs(["workspace", "preview", "/tmp/demo", "--json"]), { kind: "workspace-preview", path: "/tmp/demo", json: true })
   assert.deepEqual(parseArgs(["workspace", "add", "--path", "/tmp/demo", "--profile", "fast", "--sonar", "--no-git", "--no-interactive"]), {
     kind: "workspace-add",
@@ -187,6 +189,89 @@ fi`)
     assert.match(result.stdout ?? "", /App setup initialized config, data dir, and database\./)
     assert.doesNotMatch(result.stdout ?? "", /ANTHROPIC_API_KEY is not set/)
   } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("notifications test telegram sends a smoke message through the configured bot", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-"))
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
+  const configPath = join(dir, "config", "config.json")
+  const dataDir = join(dir, "data")
+  const requests: Array<{ url: string; body: string }> = []
+
+  const server = createServer((req, res) => {
+    const chunks: Buffer[] = []
+    req.on("data", chunk => chunks.push(chunk as Buffer))
+    req.on("end", () => {
+      requests.push({ url: req.url ?? "", body: Buffer.concat(chunks).toString("utf8") })
+      res.writeHead(200, { "content-type": "application/json" })
+      res.end(JSON.stringify({ ok: true, result: { message_id: 1 } }))
+    })
+  })
+
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()))
+  const address = server.address()
+  const port = typeof address === "object" && address ? address.port : 0
+
+  try {
+    mkdirSync(join(dir, "config"), { recursive: true })
+    writeFileSync(configPath, JSON.stringify({
+      schemaVersion: 1,
+      dataDir,
+      allowedRoots: [join(dir, "projects")],
+      enginePort: 4100,
+      publicBaseUrl: "http://100.64.0.7:3100",
+      llm: {
+        provider: "anthropic",
+        model: "claude-opus-4-7",
+        apiKeyRef: "ANTHROPIC_API_KEY",
+        defaultHarnessProfile: { mode: "claude-first" },
+      },
+      notifications: {
+        telegram: {
+          enabled: true,
+          botTokenEnv: "TELEGRAM_BOT_TOKEN",
+          defaultChatId: "123456",
+        },
+      },
+      vcs: { github: { enabled: false } },
+      browser: { enabled: false },
+    }, null, 2))
+
+    const result = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
+      const child = spawn(
+        process.execPath,
+        [binPath, "notifications", "test", "telegram"],
+        {
+          cwd: engineRoot,
+          env: {
+            ...process.env,
+            BEERENGINEER_CONFIG_PATH: configPath,
+            BEERENGINEER_DATA_DIR: dataDir,
+            BEERENGINEER_TELEGRAM_API_BASE_URL: `http://127.0.0.1:${port}`,
+            TELEGRAM_BOT_TOKEN: "secret-token",
+          },
+          stdio: ["ignore", "pipe", "pipe"],
+        }
+      )
+      let stdout = ""
+      let stderr = ""
+      child.stdout.on("data", chunk => { stdout += chunk.toString("utf8") })
+      child.stderr.on("data", chunk => { stderr += chunk.toString("utf8") })
+      child.on("error", reject)
+      child.on("exit", code => resolve({ code, stdout, stderr }))
+    })
+
+    assert.equal(result.code, 0, `${result.stdout ?? ""}\n${result.stderr ?? ""}`)
+    assert.match(result.stdout ?? "", /Telegram test notification sent\./)
+    assert.equal(requests.length, 1)
+    assert.match(requests[0].url, /\/botsecret-token\/sendMessage$/)
+    assert.match(requests[0].body, /Telegram notification test/)
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(err => err ? reject(err) : resolve()))
     rmSync(dir, { recursive: true, force: true })
   }
 })

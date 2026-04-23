@@ -14,7 +14,7 @@ export type PresentationKind = "header" | "step" | "ok" | "warn" | "dim" | "find
 
 export type WorkflowEvent =
   | ({ type: "run_started"; runId: string; itemId: string; title: string } & WorkflowEventMeta)
-  | ({ type: "run_finished"; runId: string; status: "completed" | "failed"; error?: string } & WorkflowEventMeta)
+  | ({ type: "run_finished"; runId: string; itemId: string; title: string; status: "completed" | "failed"; error?: string } & WorkflowEventMeta)
   | ({ type: "stage_started"; runId: string; stageRunId: string; stageKey: string; projectId?: string | null } & WorkflowEventMeta)
   | ({ type: "stage_completed"; runId: string; stageRunId: string; stageKey: string; status: "completed" | "failed"; error?: string } & WorkflowEventMeta)
   | ({ type: "prompt_requested"; runId: string; promptId: string; prompt: string; stageRunId?: string | null } & WorkflowEventMeta)
@@ -25,7 +25,7 @@ export type WorkflowEvent =
   | ({ type: "presentation"; runId?: string; stageRunId?: string | null; kind: PresentationKind; text: string; meta?: { source?: string; severity?: string } } & WorkflowEventMeta)
   | ({ type: "item_column_changed"; runId: string; itemId: string; column: string; phaseStatus: string } & WorkflowEventMeta)
   | ({ type: "project_created"; runId: string; itemId: string; projectId: string; code: string; name: string; summary: string; position: number } & WorkflowEventMeta)
-  | ({ type: "run_blocked"; runId: string; scope: RecoveryEventScope; cause: string; summary: string; branch?: string } & WorkflowEventMeta)
+  | ({ type: "run_blocked"; runId: string; itemId: string; title: string; scope: RecoveryEventScope; cause: string; summary: string; branch?: string } & WorkflowEventMeta)
   | ({ type: "run_failed"; runId: string; scope: RecoveryEventScope; cause: string; summary: string } & WorkflowEventMeta)
   | ({ type: "external_remediation_recorded"; runId: string; remediationId: string; scope: RecoveryEventScope; summary: string; branch?: string } & WorkflowEventMeta)
   | ({ type: "run_resumed"; runId: string; remediationId: string; scope: RecoveryEventScope } & WorkflowEventMeta)

@@ -33,6 +33,7 @@ import {
 import { generateSetupReport, runDoctorCommand, runSetupCommand } from "./setup/doctor.js"
 import type { AppConfig } from "./setup/types.js"
 import type { HarnessProfile, RegisterWorkspaceInput } from "./types/workspace.js"
+import { sendTelegramTestNotification } from "./notifications/command.js"
 
 export type ResumeFlags = {
   summary?: string
@@ -46,6 +47,7 @@ type Command =
   | { kind: "help" }
   | { kind: "doctor"; json?: boolean; group?: string }
   | { kind: "setup"; group?: string; noInteractive?: boolean }
+  | { kind: "notifications-test"; channel: "telegram" }
   | { kind: "start-ui" }
   | { kind: "workflow"; json?: boolean; workspaceKey?: string }
   | { kind: "item-action"; itemRef: string; action: string; resume?: ResumeFlags }
@@ -105,6 +107,7 @@ export function parseArgs(argv: string[]): Command {
   if (first === "--help" || first === "-h" || first === "help") return { kind: "help" }
   if (first === "--doctor" || first === "doctor") return { kind: "doctor", json, group }
   if (first === "setup") return { kind: "setup", group, noInteractive: argv.includes("--no-interactive") }
+  if (first === "notifications" && second === "test" && argv[2] === "telegram") return { kind: "notifications-test", channel: "telegram" }
   if (first === "workspace" && second === "preview") return { kind: "workspace-preview", path: argv[2], json }
   if (first === "workspace" && second === "add") {
     return {
@@ -171,6 +174,7 @@ function printHelp(): void {
     "                                                         Perform an item action",
     "    beerengineer doctor [--json] [--group <id>]          Run machine diagnostics",
     "    beerengineer setup [--group <id>] [--no-interactive] Provision app config/data/DB and retry checks",
+    "    beerengineer notifications test telegram             Send a Telegram test notification",
     "    beerengineer workspace preview <path> [--json]       Preview workspace registration",
     "    beerengineer workspace add [--path <p>] [flags]      Register a workspace",
     "                                                         [--gh-create] [--gh-public] [--gh-owner <user>]",
@@ -589,6 +593,28 @@ async function runWorkspaceWorktreeGcCommand(key: string | undefined, json = fal
   } finally {
     db.close()
   }
+}
+
+async function runNotificationsTestCommand(channel: "telegram"): Promise<number> {
+  const config = loadEffectiveConfig()
+  if (!config) {
+    console.error("  App config is missing or invalid. Run `beerengineer setup` first.")
+    return 1
+  }
+  if (channel !== "telegram") {
+    console.error(`  Unsupported notification channel: ${channel}`)
+    return 2
+  }
+  const db = initDatabase()
+  const repos = new Repos(db)
+  const result = await sendTelegramTestNotification(config, repos)
+  db.close()
+  if (!result.ok) {
+    console.error(`  Telegram test failed: ${result.error}`)
+    return 1
+  }
+  console.log("  Telegram test notification sent.")
+  return 0
 }
 
 export function startUi(): Promise<number> {
@@ -1070,6 +1096,8 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
         process.exit(2)
       }
       process.exit(await runSetupCommand({ group: cmd.group, noInteractive: cmd.noInteractive }))
+    case "notifications-test":
+      process.exit(await runNotificationsTestCommand(cmd.channel))
     case "workspace-preview":
       process.exit(await runWorkspacePreviewCommand(cmd.path, cmd.json))
     case "workspace-add":

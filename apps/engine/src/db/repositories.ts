@@ -118,6 +118,19 @@ export type PendingPromptRow = {
   answered_at: number | null
 }
 
+export type NotificationDeliveryRow = {
+  dedup_key: string
+  channel: string
+  chat_id: string
+  status: string
+  attempt_count: number
+  last_attempt_at: number | null
+  delivered_at: number | null
+  error_message: string | null
+  created_at: number
+  updated_at: number
+}
+
 export class Repos {
   constructor(private readonly db: Db) {}
 
@@ -619,6 +632,87 @@ export class Repos {
     return this.db
       .prepare("SELECT * FROM pending_prompts WHERE id = ?")
       .get(id) as PendingPromptRow | undefined
+  }
+
+  claimNotificationDelivery(input: {
+    dedupKey: string
+    channel: string
+    chatId: string
+  }): boolean {
+    const timestamp = now()
+    const result = this.db
+      .prepare(
+        `INSERT INTO notification_deliveries (
+           dedup_key, channel, chat_id, status, attempt_count, last_attempt_at, delivered_at, error_message, created_at, updated_at
+         ) VALUES (
+           @dedup_key, @channel, @chat_id, 'pending', 0, NULL, NULL, NULL, @created_at, @updated_at
+         )
+         ON CONFLICT(dedup_key) DO NOTHING`
+      )
+      .run({
+        dedup_key: input.dedupKey,
+        channel: input.channel,
+        chat_id: input.chatId,
+        created_at: timestamp,
+        updated_at: timestamp,
+      })
+    return result.changes > 0
+  }
+
+  completeNotificationDelivery(dedupKey: string, patch: {
+    status: "delivered" | "failed"
+    errorMessage?: string | null
+  }): void {
+    const timestamp = now()
+    this.db
+      .prepare(
+        `UPDATE notification_deliveries
+         SET status = ?,
+             attempt_count = attempt_count + 1,
+             last_attempt_at = ?,
+             delivered_at = ?,
+             error_message = ?,
+             updated_at = ?
+         WHERE dedup_key = ?`
+      )
+      .run(
+        patch.status,
+        timestamp,
+        patch.status === "delivered" ? timestamp : null,
+        patch.errorMessage ?? null,
+        timestamp,
+        dedupKey,
+      )
+  }
+
+  getNotificationDelivery(dedupKey: string): NotificationDeliveryRow | undefined {
+    return this.db
+      .prepare("SELECT * FROM notification_deliveries WHERE dedup_key = ?")
+      .get(dedupKey) as NotificationDeliveryRow | undefined
+  }
+
+  listNotificationDeliveries(opts: {
+    channel?: string
+    limit?: number
+  } = {}): NotificationDeliveryRow[] {
+    const limit = Math.max(1, Math.min(opts.limit ?? 20, 200))
+    if (opts.channel) {
+      return this.db
+        .prepare(
+          `SELECT * FROM notification_deliveries
+           WHERE channel = ?
+           ORDER BY created_at DESC
+           LIMIT ?`
+        )
+        .all(opts.channel, limit) as NotificationDeliveryRow[]
+    }
+    return this.db
+      .prepare(
+        `SELECT * FROM notification_deliveries
+         ORDER BY created_at DESC
+         LIMIT ?`
+      )
+      .all(limit) as NotificationDeliveryRow[]
   }
 
   answerPendingPrompt(id: string, answer: string): PendingPromptRow | undefined {

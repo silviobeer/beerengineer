@@ -30,6 +30,7 @@ export function applySchema(db: Db): void {
   migrateRunsOwnerColumn(db)
   migrateRunsRecoveryColumns(db)
   migrateStageRunsSessionColumns(db)
+  migrateNotificationDeliveriesTable(db)
   stampMigrationLevel(db)
 }
 
@@ -97,4 +98,25 @@ function migrateStageRunsSessionColumns(db: Db): void {
   const has = (name: string) => cols.some(c => c.name === name)
   if (!has("stage_agent_session_id")) db.exec("ALTER TABLE stage_runs ADD COLUMN stage_agent_session_id TEXT")
   if (!has("reviewer_session_id")) db.exec("ALTER TABLE stage_runs ADD COLUMN reviewer_session_id TEXT")
+}
+
+function migrateNotificationDeliveriesTable(db: Db): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS notification_deliveries (
+      dedup_key TEXT PRIMARY KEY,
+      channel TEXT NOT NULL,
+      chat_id TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      last_attempt_at INTEGER,
+      delivered_at INTEGER,
+      error_message TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `)
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS notification_deliveries_channel_created_idx
+    ON notification_deliveries(channel, created_at)
+  `)
 }

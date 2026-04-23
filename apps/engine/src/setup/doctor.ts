@@ -3,7 +3,7 @@ import { spawn } from "node:child_process"
 import { accessSync, constants, existsSync, mkdirSync } from "node:fs"
 import { createInterface } from "node:readline/promises"
 import { stdin as input, stdout as output } from "node:process"
-import { resolveConfiguredDbPath, resolveConfigPath, resolveMergedConfig, readConfigFile, REQUIRED_MIGRATION_LEVEL, resolveOverrides, writeConfigFile } from "./config.js"
+import { normalizePublicBaseUrl, resolveConfiguredDbPath, resolveConfigPath, resolveMergedConfig, readConfigFile, REQUIRED_MIGRATION_LEVEL, resolveOverrides, writeConfigFile } from "./config.js"
 import type { AppConfig, CheckResult, GroupResult, SetupOverrides, SetupReport, SetupStatus } from "./types.js"
 import { initDatabase } from "../db/connection.js"
 
@@ -402,12 +402,104 @@ async function runReviewChecks(): Promise<CheckResult[]> {
   ]
 }
 
+function buildTelegramExportCommand(envName: string): string {
+  return `export ${envName}=<telegram-bot-token>`
+}
+
+async function runNotificationChecks(config: AppConfig | null): Promise<CheckResult[]> {
+  if (!config) {
+    return [
+      createCheck("notifications.public-base-url", "Public base URL", "skipped", "effective config is unavailable"),
+      createCheck("notifications.telegram.enabled", "Telegram notifications enabled", "skipped", "effective config is unavailable"),
+      createCheck("notifications.telegram.bot-token-env", "Telegram bot token env var", "skipped", "effective config is unavailable"),
+      createCheck("notifications.telegram.bot-token-present", "Telegram bot token present", "skipped", "effective config is unavailable"),
+      createCheck("notifications.telegram.default-chat-id", "Telegram default chat id", "skipped", "effective config is unavailable"),
+    ]
+  }
+
+  const checks: CheckResult[] = []
+  const baseUrl = config.publicBaseUrl?.trim()
+  if (!baseUrl) {
+    checks.push(createCheck(
+      "notifications.public-base-url",
+      "Public base URL",
+      "missing",
+      "Missing publicBaseUrl. Telegram links need a Tailscale-reachable absolute URL.",
+      { remedy: { hint: "Set publicBaseUrl to the externally reachable UI address, for example http://100.x.y.z:3100." } },
+    ))
+  } else {
+    try {
+      const normalized = normalizePublicBaseUrl(baseUrl)
+      checks.push(createCheck("notifications.public-base-url", "Public base URL", "ok", normalized))
+    } catch (err) {
+      checks.push(createCheck(
+        "notifications.public-base-url",
+        "Public base URL",
+        "misconfigured",
+        (err as Error).message,
+        { remedy: { hint: "Use an absolute http(s) URL that is reachable over Tailscale and not localhost.", command: "BEERENGINEER_PUBLIC_BASE_URL=http://100.x.y.z:3100" } },
+      ))
+    }
+  }
+
+  const telegramEnabled = config.notifications?.telegram?.enabled === true
+  checks.push(createCheck(
+    "notifications.telegram.enabled",
+    "Telegram notifications enabled",
+    telegramEnabled ? "ok" : "skipped",
+    telegramEnabled ? "Enabled in config" : "Disabled in config",
+  ))
+
+  const tokenEnv = config.notifications?.telegram?.botTokenEnv?.trim()
+  if (!telegramEnabled) {
+    checks.push(createCheck("notifications.telegram.bot-token-env", "Telegram bot token env var", "skipped", "Telegram notifications are disabled in config"))
+    checks.push(createCheck("notifications.telegram.bot-token-present", "Telegram bot token present", "skipped", "Telegram notifications are disabled in config"))
+    checks.push(createCheck("notifications.telegram.default-chat-id", "Telegram default chat id", "skipped", "Telegram notifications are disabled in config"))
+    return checks
+  }
+
+  if (!tokenEnv) {
+    checks.push(createCheck(
+      "notifications.telegram.bot-token-env",
+      "Telegram bot token env var",
+      "missing",
+      "Missing notifications.telegram.botTokenEnv",
+      { remedy: { hint: "Store the Telegram bot token in an env var and record that env var name in config." } },
+    ))
+  } else {
+    checks.push(createCheck("notifications.telegram.bot-token-env", "Telegram bot token env var", "ok", tokenEnv))
+  }
+
+  const tokenPresent = tokenEnv ? Boolean(process.env[tokenEnv]) : false
+  checks.push(createCheck(
+    "notifications.telegram.bot-token-present",
+    "Telegram bot token present",
+    tokenPresent ? "ok" : "missing",
+    tokenPresent ? `${tokenEnv} is set` : `${tokenEnv ?? "bot token env"} is not set in this shell`,
+    tokenPresent || !tokenEnv
+      ? {}
+      : { remedy: { hint: "Export the Telegram bot token before starting the engine.", command: buildTelegramExportCommand(tokenEnv) } },
+  ))
+
+  const chatId = config.notifications?.telegram?.defaultChatId?.trim()
+  checks.push(createCheck(
+    "notifications.telegram.default-chat-id",
+    "Telegram default chat id",
+    chatId ? "ok" : "missing",
+    chatId ? chatId : "Missing notifications.telegram.defaultChatId",
+    chatId ? {} : { remedy: { hint: "Record the chat id that should receive BeerEngineer notifications." } },
+  ))
+
+  return checks
+}
+
 export async function generateSetupReport(options: DoctorOptions = {}): Promise<SetupReport> {
   const overrides = resolveOverrides(options.overrides)
   const configPath = resolveConfigPath(overrides)
   const configState = readConfigFile(configPath)
   const config = resolveMergedConfig(configState, overrides)
   const llmGroup = getActiveLlmGroup(configState.kind === "ok" ? config : null)
+  const telegramEnabled = config?.notifications?.telegram?.enabled === true
 
   const groupDefs: GroupDefinition[] = [
     {
@@ -417,6 +509,14 @@ export async function generateSetupReport(options: DoctorOptions = {}): Promise<
       minOk: 6,
       active: true,
       run: () => runCoreChecks(configPath, configState, config),
+    },
+    {
+      id: "notifications",
+      label: "Notification delivery",
+      level: "required",
+      minOk: telegramEnabled ? 4 : 0,
+      active: true,
+      run: () => runNotificationChecks(config),
     },
     {
       id: "vcs.github",
@@ -582,7 +682,89 @@ function diffPrint(previous: SetupReport, next: SetupReport): void {
   }
 }
 
+async function maybeConfigureTelegramInteractive(configPath: string, config: AppConfig): Promise<AppConfig> {
+  if (!(process.stdin.isTTY && process.stdout.isTTY)) return config
+
+  const rl = createInterface({ input, output })
+  try {
+    console.log("")
+    console.log("  Telegram notifications are outbound alerts only.")
+    console.log("  They can report run started, run blocked, and run finished.")
+    console.log("  They cannot start runs, resume runs, answer prompts, or change workflow state.")
+    console.log("")
+    console.log("  Setup steps:")
+    console.log("    1. Open Telegram and talk to @BotFather.")
+    console.log("    2. Create a bot and copy its token.")
+    console.log("    3. Put that token in an environment variable.")
+    console.log("    4. Start a chat with the bot or add it to a group, then send one message.")
+    console.log("    5. Find the target chat id.")
+    console.log("    6. Set publicBaseUrl to the Tailscale-reachable UI address, never localhost.")
+    console.log("")
+
+    const enabledAnswer = (await rl.question("  Enable Telegram notifications? [y/N] ")).trim().toLowerCase()
+    const enabled = enabledAnswer === "y" || enabledAnswer === "yes"
+    const next: AppConfig = {
+      ...config,
+      notifications: {
+        telegram: {
+          enabled,
+          botTokenEnv: config.notifications?.telegram?.botTokenEnv,
+          defaultChatId: config.notifications?.telegram?.defaultChatId,
+        },
+      },
+    }
+    const telegram = next.notifications!.telegram!
+
+    if (!enabled) {
+      writeConfigFile(configPath, next)
+      return next
+    }
+
+    while (true) {
+      const baseUrlAnswer = (await rl.question(`  Public base URL [${next.publicBaseUrl ?? "http://100.x.y.z:3100"}]: `)).trim()
+      const candidate = baseUrlAnswer || next.publicBaseUrl || "http://100.x.y.z:3100"
+      try {
+        next.publicBaseUrl = normalizePublicBaseUrl(candidate)
+        break
+      } catch (err) {
+        console.log(`  ${String((err as Error).message)}`)
+      }
+    }
+
+    const tokenEnvAnswer = (await rl.question(`  Telegram bot token env var [${telegram.botTokenEnv ?? "TELEGRAM_BOT_TOKEN"}]: `)).trim()
+    next.notifications!.telegram = {
+      ...telegram,
+      enabled: true,
+      botTokenEnv: tokenEnvAnswer || telegram.botTokenEnv || "TELEGRAM_BOT_TOKEN",
+    }
+
+    while (true) {
+      const currentTelegram = next.notifications!.telegram!
+      const chatIdAnswer = (await rl.question(`  Telegram chat id [${currentTelegram.defaultChatId ?? ""}]: `)).trim()
+      const chatId = chatIdAnswer || currentTelegram.defaultChatId
+      if (chatId) {
+        next.notifications!.telegram!.defaultChatId = chatId
+        break
+      }
+      console.log("  Telegram chat id is required when notifications are enabled.")
+    }
+
+    writeConfigFile(configPath, next)
+    console.log("")
+    console.log("  Next steps:")
+    console.log(`    ${buildTelegramExportCommand(next.notifications!.telegram!.botTokenEnv ?? "TELEGRAM_BOT_TOKEN")}`)
+    console.log(`    publicBaseUrl is set to ${next.publicBaseUrl}`)
+    console.log("    Start the UI on the same host/port so Telegram links stay reachable over Tailscale.")
+    console.log("")
+    return next
+  } finally {
+    rl.close()
+  }
+}
+
 export async function runSetupCommand(options: SetupRunOptions = {}): Promise<number> {
+  const resolved = resolveOverrides(options.overrides)
+  const configPath = resolveConfigPath(resolved)
   let report = await generateSetupReport(options)
   printDoctorReport(report, { installHints: true })
 
@@ -603,6 +785,12 @@ export async function runSetupCommand(options: SetupRunOptions = {}): Promise<nu
   }
 
   const interactive = !options.noInteractive && Boolean(process.stdin.isTTY && process.stdout.isTTY)
+  if (interactive && (!options.group || options.group === "notifications")) {
+    const configured = maybeConfigureTelegramInteractive(configPath, buildProvisionedConfig(resolved))
+    await configured
+    report = await generateSetupReport(options)
+    printDoctorReport(report, { installHints: true })
+  }
   while (interactive && report.overall === "blocked") {
     const action = await promptRetryAction(report.groups.filter(group => group.level === "required").every(group => group.satisfied))
     if (action === "quit") return doctorExitCode(report)

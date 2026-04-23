@@ -171,6 +171,36 @@ test("GET /setup/status returns the doctor report contract", async () => {
   }
 })
 
+test("GET /notifications/deliveries returns recent delivery rows", async () => {
+  const dbPath = tmpDbPath()
+  const db = initDatabase(dbPath)
+  const repos = new Repos(db)
+  repos.claimNotificationDelivery({
+    dedupKey: "run-1:run_finished",
+    channel: "telegram",
+    chatId: "123",
+  })
+  repos.completeNotificationDelivery("run-1:run_finished", { status: "delivered" })
+  db.close()
+
+  const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
+  try {
+    await waitForHealth(base)
+    const res = await fetch(`${base}/notifications/deliveries?channel=telegram&limit=5`)
+    assert.equal(res.status, 200)
+    const body = await res.json() as {
+      deliveries: Array<{ dedup_key: string; channel: string; status: string; attempt_count: number }>
+    }
+    assert.equal(body.deliveries.length, 1)
+    assert.equal(body.deliveries[0]?.dedup_key, "run-1:run_finished")
+    assert.equal(body.deliveries[0]?.channel, "telegram")
+    assert.equal(body.deliveries[0]?.status, "delivered")
+    assert.equal(body.deliveries[0]?.attempt_count, 1)
+  } finally {
+    await stopServer(proc)
+  }
+})
+
 test("workspace HTTP endpoints preview, add, get, open, list, remove, and backfill", async () => {
   const dbPath = tmpDbPath()
   initDatabase(dbPath).close()

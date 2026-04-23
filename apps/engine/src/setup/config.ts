@@ -13,6 +13,7 @@ export const CONFIG_SCHEMA_VERSION = 1
 export const REQUIRED_MIGRATION_LEVEL = 1
 export const KNOWN_GROUP_IDS = [
   "core",
+  "notifications",
   "vcs.github",
   "llm.anthropic",
   "llm.openai",
@@ -43,6 +44,39 @@ function parseProvider(value: string | undefined): LlmProvider | undefined {
   return undefined
 }
 
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "0.0.0.0"])
+
+function normalizeOptionalString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : undefined
+}
+
+export function isLoopbackHostname(hostname: string): boolean {
+  const normalized = hostname.trim().toLowerCase()
+  return LOOPBACK_HOSTS.has(normalized) || normalized.endsWith(".local")
+}
+
+export function normalizePublicBaseUrl(value: string): string {
+  let parsed: URL
+  try {
+    parsed = new URL(value)
+  } catch {
+    throw new Error("publicBaseUrl must be a valid absolute URL")
+  }
+
+  if (!parsed.protocol || (parsed.protocol !== "http:" && parsed.protocol !== "https:")) {
+    throw new Error("publicBaseUrl must use http or https")
+  }
+  if (isLoopbackHostname(parsed.hostname)) {
+    throw new Error("publicBaseUrl must not use a loopback or .local hostname")
+  }
+
+  parsed.pathname = parsed.pathname.replace(/\/+$/, "")
+  if (!parsed.pathname) parsed.pathname = "/"
+  return parsed.toString().replace(/\/$/, "")
+}
+
 export function defaultConfigPath(): string {
   return resolve(appPaths.config, "config.json")
 }
@@ -57,11 +91,17 @@ export function defaultAppConfig(): AppConfig {
     dataDir: defaultDataDir(),
     allowedRoots: [resolve(homedir(), "projects")],
     enginePort: 4100,
+    publicBaseUrl: undefined,
     llm: {
       provider: "anthropic",
       model: "claude-opus-4-7",
       apiKeyRef: "ANTHROPIC_API_KEY",
       defaultHarnessProfile: { mode: "claude-first" },
+    },
+    notifications: {
+      telegram: {
+        enabled: false,
+      },
     },
     vcs: {
       github: {
@@ -152,6 +192,13 @@ function validateConfig(input: unknown): AppConfig {
   if (typeof config.enginePort !== "number" || !Number.isInteger(config.enginePort) || config.enginePort <= 0) {
     throw new Error("enginePort must be a positive integer")
   }
+  const publicBaseUrl = config.publicBaseUrl === undefined
+    ? undefined
+    : typeof config.publicBaseUrl === "string"
+    ? normalizePublicBaseUrl(config.publicBaseUrl)
+    : (() => {
+        throw new Error("publicBaseUrl must be a string when set")
+      })()
   if (!config.llm || typeof config.llm !== "object") throw new Error("llm config is required")
   if (!parseProvider(config.llm.provider)) throw new Error("llm.provider must be anthropic, openai, or opencode")
   if (typeof config.llm.model !== "string" || config.llm.model.length === 0) {
@@ -164,17 +211,49 @@ function validateConfig(input: unknown): AppConfig {
   if (config.llm.defaultSonarOrganization !== undefined && typeof config.llm.defaultSonarOrganization !== "string") {
     throw new Error("llm.defaultSonarOrganization must be a string when set")
   }
+  const telegram = config.notifications?.telegram
+  if (telegram !== undefined && !isObject(telegram)) {
+    throw new Error("notifications.telegram must be an object when set")
+  }
+  const telegramEnabled =
+    telegram?.enabled === undefined
+      ? undefined
+      : typeof telegram.enabled === "boolean"
+      ? telegram.enabled
+      : (() => {
+          throw new Error("notifications.telegram.enabled must be a boolean when set")
+        })()
+  const telegramBotTokenEnv =
+    telegram?.botTokenEnv === undefined
+      ? undefined
+      : normalizeOptionalString(telegram.botTokenEnv) ?? (() => {
+          throw new Error("notifications.telegram.botTokenEnv must be a non-empty string when set")
+        })()
+  const telegramDefaultChatId =
+    telegram?.defaultChatId === undefined
+      ? undefined
+      : normalizeOptionalString(telegram.defaultChatId) ?? (() => {
+          throw new Error("notifications.telegram.defaultChatId must be a non-empty string when set")
+        })()
   return {
     schemaVersion: CONFIG_SCHEMA_VERSION,
     dataDir: config.dataDir,
     allowedRoots: [...config.allowedRoots],
     enginePort: config.enginePort,
+    publicBaseUrl,
     llm: {
       provider: config.llm.provider,
       model: config.llm.model,
       apiKeyRef: config.llm.apiKeyRef,
       defaultHarnessProfile,
       defaultSonarOrganization: config.llm.defaultSonarOrganization,
+    },
+    notifications: {
+      telegram: {
+        enabled: telegramEnabled ?? false,
+        botTokenEnv: telegramBotTokenEnv,
+        defaultChatId: telegramDefaultChatId,
+      },
     },
     vcs: {
       github: {
@@ -205,10 +284,14 @@ function envOverrides(): SetupOverrides {
     dataDir: process.env.BEERENGINEER_DATA_DIR,
     allowedRoots: parseAllowedRoots(process.env.BEERENGINEER_ALLOWED_ROOTS),
     enginePort: Number.isInteger(parsedPort) ? parsedPort : undefined,
+    publicBaseUrl: process.env.BEERENGINEER_PUBLIC_BASE_URL,
     llmProvider: parseProvider(process.env.BEERENGINEER_LLM_PROVIDER),
     llmModel: process.env.BEERENGINEER_LLM_MODEL,
     llmApiKeyRef: process.env.BEERENGINEER_LLM_API_KEY_REF,
     llmDefaultSonarOrganization: process.env.BEERENGINEER_LLM_DEFAULT_SONAR_ORG,
+    telegramEnabled: coerceBoolean(process.env.BEERENGINEER_TELEGRAM_ENABLED),
+    telegramBotTokenEnv: process.env.BEERENGINEER_TELEGRAM_BOT_TOKEN_ENV,
+    telegramDefaultChatId: process.env.BEERENGINEER_TELEGRAM_DEFAULT_CHAT_ID,
     githubEnabled: coerceBoolean(process.env.BEERENGINEER_GITHUB_ENABLED),
     browserEnabled: coerceBoolean(process.env.BEERENGINEER_BROWSER_ENABLED),
   }
@@ -230,12 +313,20 @@ export function resolveMergedConfig(state: ConfigFileState, overrides: SetupOver
     dataDir: overrides.dataDir ?? base.dataDir,
     allowedRoots: overrides.allowedRoots ?? base.allowedRoots,
     enginePort: overrides.enginePort ?? base.enginePort,
+    publicBaseUrl: overrides.publicBaseUrl ?? base.publicBaseUrl,
     llm: {
       provider: overrides.llmProvider ?? base.llm.provider,
       model: overrides.llmModel ?? base.llm.model,
       apiKeyRef: overrides.llmApiKeyRef ?? base.llm.apiKeyRef,
       defaultHarnessProfile: base.llm.defaultHarnessProfile,
       defaultSonarOrganization: overrides.llmDefaultSonarOrganization ?? base.llm.defaultSonarOrganization,
+    },
+    notifications: {
+      telegram: {
+        enabled: overrides.telegramEnabled ?? base.notifications?.telegram?.enabled ?? false,
+        botTokenEnv: overrides.telegramBotTokenEnv ?? base.notifications?.telegram?.botTokenEnv,
+        defaultChatId: overrides.telegramDefaultChatId ?? base.notifications?.telegram?.defaultChatId,
+      },
     },
     vcs: {
       github: {

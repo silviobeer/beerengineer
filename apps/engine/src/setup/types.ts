@@ -42,12 +42,20 @@ export type AppConfig = {
   dataDir: string
   allowedRoots: string[]
   enginePort: number
+  publicBaseUrl?: string
   llm: {
     provider: LlmProvider
     model: string
     apiKeyRef: string
     defaultHarnessProfile: import("../types/workspace.js").HarnessProfile
     defaultSonarOrganization?: string
+  }
+  notifications?: {
+    telegram?: {
+      enabled?: boolean
+      botTokenEnv?: string
+      defaultChatId?: string
+    }
   }
   vcs?: {
     github?: {
@@ -69,10 +77,14 @@ export type SetupOverrides = {
   dataDir?: string
   allowedRoots?: string[]
   enginePort?: number
+  publicBaseUrl?: string
   llmProvider?: LlmProvider
   llmModel?: string
   llmApiKeyRef?: string
   llmDefaultSonarOrganization?: string
+  telegramEnabled?: boolean
+  telegramBotTokenEnv?: string
+  telegramDefaultChatId?: string
   githubEnabled?: boolean
   browserEnabled?: boolean
 }

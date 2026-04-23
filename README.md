@@ -14,6 +14,8 @@ npm run start --workspace=@beerengineer2/engine      # CLI-Lauf
 npm exec --workspace=@beerengineer2/engine beerengineer -- --help
 npm exec --workspace=@beerengineer2/engine beerengineer -- doctor
 npm exec --workspace=@beerengineer2/engine beerengineer -- setup --no-interactive
+npm exec --workspace=@beerengineer2/engine beerengineer -- setup --group notifications
+npm exec --workspace=@beerengineer2/engine beerengineer -- notifications test telegram
 npm exec --workspace=@beerengineer2/engine beerengineer -- start ui
 npm exec --workspace=@beerengineer2/engine beerengineer -- item action --item ITEM-0001 --action promote_to_requirements
 npm run start:api                                    # HTTP+SSE API auf :4100
@@ -68,7 +70,9 @@ beerengineer doctor [--json] [--group <id>]
   Read-only Machine-Diagnose: prueft Node.js, Config-File, Data-Dir, DB,
   Migrations-Level (`user_version`) und die aktiven Toolchain-/Auth-Gruppen
   (`core`, `vcs.github`, `llm.anthropic|openai|opencode`, `browser-agent`,
-  `review`). Mit `--group` wird nur eine Gruppe gemeldet. `--json` gibt den
+  `review`, `notifications`). Mit `--group` wird nur eine Gruppe gemeldet.
+  `notifications` prueft `publicBaseUrl` plus Telegram-Setup
+  (`enabled`, `botTokenEnv`, Default-Chat, Token in env). `--json` gibt den
   `SetupReport` (reportVersion 1) aus. Exit-Code 1 bei `overall=blocked`,
   2 bei unbekannter Gruppe, 0 sonst. `--doctor` bleibt als Alias erhalten.
 
@@ -77,6 +81,12 @@ beerengineer setup [--group <id>] [--no-interactive]
   die SQLite-DB und startet die Diagnose erneut. Verweigert das Ueberschreiben
   eines bestehenden, aber ungueltigen Config-Files — dann muss der Nutzer die
   Datei manuell reparieren oder entfernen. Details: `docs/app-setup.md`.
+  `setup --group notifications` fuehrt gezielt durch die Telegram-
+  Benachrichtigungs-Konfiguration.
+
+beerengineer notifications test telegram
+  Sendet eine Telegram-Testnachricht an den konfigurierten Default-Chat.
+  Nutzt denselben Engine-Sendepfad wie echte Lifecycle-Events.
 
 beerengineer start ui
   Startet die UI auf `http://127.0.0.1:3100`, oeffnet den Browser und
@@ -598,6 +608,8 @@ neuesten Runs fuer das Item.
 | `GET`  | `/events[?workspace=key]` | Workspace-gefilterter Board-SSE-Stream fuer `run_started`, `stage_*`, `item_column_changed`, `run_finished`, `project_created` plus Recovery/Resume-Invalidierungen |
 | `GET`  | `/board[?workspace=key]` | Board-DTO (Spalten + Karten) |
 | `GET`  | `/setup/status[?group=<id>]` | Selber JSON-Kontrakt wie `doctor --json` (`SetupReport`, `reportVersion: 1`). Unbekannte `group`-Werte → `400 { error: "unknown_group" }`. |
+| `POST` | `/notifications/test/:channel` | Sendet einen Smoke-Test ueber den konfigurierten Kanal. Aktuell implementiert: `telegram`. |
+| `GET`  | `/notifications/deliveries[?channel=<name>&limit=<n>]` | Liefert die neuesten Delivery-Audit-Zeilen aus `notification_deliveries`, newest first. |
 | `GET`  | `/health` | `{ ok: true }` |
 
 ### Konfigurations-Variablen
@@ -607,7 +619,8 @@ neuesten Runs fuer das Item.
 | `BEERENGINEER_UI_DB_PATH` | Pfad zur SQLite-Datei. Default: `~/.local/share/beerengineer/beerengineer.sqlite`. **Engine und UI muessen denselben Pfad sehen**, sonst sieht die UI keine Engine-Daten. |
 | `BEERENGINEER_CONFIG_PATH` | Pfad zum App-Config-File. Default OS-spezifisch via `env-paths` (z.B. `~/.config/beerengineer/config.json`). Siehe `docs/app-setup.md`. |
 | `BEERENGINEER_DATA_DIR` | Data-Verzeichnis, in dem `setup` die SQLite-DB anlegt. Default via `env-paths`. |
-| `BEERENGINEER_ALLOWED_ROOTS` / `BEERENGINEER_ENGINE_PORT` / `BEERENGINEER_LLM_PROVIDER` / `BEERENGINEER_LLM_MODEL` / `BEERENGINEER_LLM_API_KEY_REF` / `BEERENGINEER_GITHUB_ENABLED` / `BEERENGINEER_BROWSER_ENABLED` | Feld-weise Overrides fuer den App-Config. Vollstaendige Liste und Semantik in `docs/app-setup.md`. |
+| `BEERENGINEER_ALLOWED_ROOTS` / `BEERENGINEER_ENGINE_PORT` / `BEERENGINEER_LLM_PROVIDER` / `BEERENGINEER_LLM_MODEL` / `BEERENGINEER_LLM_API_KEY_REF` / `BEERENGINEER_GITHUB_ENABLED` / `BEERENGINEER_BROWSER_ENABLED` / `BEERENGINEER_PUBLIC_BASE_URL` / `BEERENGINEER_TELEGRAM_ENABLED` / `BEERENGINEER_TELEGRAM_BOT_TOKEN_ENV` / `BEERENGINEER_TELEGRAM_DEFAULT_CHAT_ID` | Feld-weise Overrides fuer den App-Config. Vollstaendige Liste und Semantik in `docs/app-setup.md`. |
+| `BEERENGINEER_TELEGRAM_API_BASE_URL` | Optionaler Override fuer die Telegram API Base URL. Hauptsaechlich fuer Tests/Stubs gedacht; Default `https://api.telegram.org`. |
 | `NEXT_PUBLIC_ENGINE_BASE_URL` | UI → Engine HTTP-Base. Default `http://127.0.0.1:4100`. |
 | `PORT` / `HOST` | Bind-Adresse des Engine-Servers. Default `127.0.0.1:4100`. |
 | `BEERENGINEER_SEED` | `0` deaktiviert das Demo-Seed. Wird unter `NODE_ENV=test` per Default deaktiviert; sonst aktiv, sobald die DB leer ist. |
