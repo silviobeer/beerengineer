@@ -161,13 +161,14 @@ unchanged; the new transport is invisible to the review loop.
 
 ## Configuration
 
-`.env.local` example:
+Runtime env knobs (read at resolve time, no restart needed for next
+run):
 
 ```
 # Subscription path (default): nothing extra needed.
 # Hybrid API path: set both to enable.
-ANTHROPIC_API_KEY=sk-ant-…
-BEERENGINEER_REVIEWER_TRANSPORT=api
+ANTHROPIC_API_KEY=sk-ant-…              # user-scoped secret, NOT in workspace.json
+BEERENGINEER_REVIEWER_TRANSPORT=api     # workspace-scoped opt-in
 ```
 
 Optional tuning knobs:
@@ -176,6 +177,193 @@ Optional tuning knobs:
   touching profile config. Defaults to the profile's configured model.
 - `BEERENGINEER_REVIEWER_MAX_TOKENS` — cap output tokens. Default 2048
   is plenty for JSON envelopes.
+
+### Where the API key lives
+
+`ANTHROPIC_API_KEY` is a secret. It must **never** be written into
+`workspace.json` (which is committed) and the setup must be explicit
+about where it goes. Recommended precedence, highest wins:
+
+1. Process env (CI / ad-hoc `ANTHROPIC_API_KEY=… npx beerengineer …`)
+2. User-scoped `~/.config/beerengineer/.env`
+3. Workspace `.env.local` — gitignored; only if the user explicitly
+   chose per-workspace during setup
+
+The workspace `.env.local` option is there for users who want a
+workspace-local override (e.g. testing with a sandbox key) but setup
+must verify `.env.local` is covered by `.gitignore` before writing.
+Refuse to write the key into any file that is not gitignored.
+
+`BEERENGINEER_REVIEWER_TRANSPORT=api` is not secret and can live
+anywhere. Put it in `.env.local` by default.
+
+## Setup Integration
+
+The subscription path must remain the zero-config default. Users who
+only have Claude Pro / Max see no new prompts and nothing changes.
+
+Users who opt in get a new step during `beerengineer workspace add`
+and in `beerengineer setup`. Concretely:
+
+### New interactive step: reviewer transport
+
+Slots in after the SonarCloud / CodeRabbit preflight, before the final
+workspace.json write:
+
+```
+Reviewer transport:
+  [1] Subscription (default) — Claude Code CLI for coders and reviewers
+      Works with Claude Pro / Max. Slowest option on Haiku because every
+      reviewer call pays CLI startup.
+  [2] Hybrid (faster) — Claude Code CLI for coders, Anthropic API for reviewers
+      Needs an Anthropic Console API key (separate from the subscription).
+      Reviewer calls skip CLI boot → ~2-3x faster on Haiku.
+      Estimated additional cost: ~$0.01 per run with Haiku (tracked below).
+
+Choose (1/2) [1]:
+```
+
+If user picks (2):
+
+1. Prompt for `ANTHROPIC_API_KEY` (hidden input). Accept empty →
+   downgrade to (1) with a warning.
+2. Validate the key with a minimal live call:
+   `messages.create({ model: haiku-4-5, max_tokens: 1, messages: [{role: "user", content: "ok"}] })`.
+   If it fails (401, network, quota), show the error and offer retry
+   or downgrade.
+3. Ask where to persist:
+   - `[a]` user-scoped `~/.config/beerengineer/.env` (recommended;
+     applies to all workspaces)
+   - `[b]` workspace `.env.local` (only this workspace; must be
+     gitignored)
+4. Write `BEERENGINEER_REVIEWER_TRANSPORT=api` to workspace `.env.local`
+   either way.
+
+If user picks (1) or opts out: write
+`BEERENGINEER_REVIEWER_TRANSPORT=cli` (or just omit) and move on.
+
+### Non-interactive setup
+
+`beerengineer setup --no-interactive` honors env variables already
+present:
+
+- If `ANTHROPIC_API_KEY` is set **and** `BEERENGINEER_REVIEWER_TRANSPORT`
+  is unset → emit a note recommending `=api` but default to `cli`. Do
+  not silently opt in.
+- If both are set → validate key and persist preflight accordingly.
+- If transport is `api` but no key is available → fail the preflight
+  with a clear error.
+
+### workspace.json changes
+
+Add one non-secret field to the preflight block:
+
+```json
+{
+  "preflight": {
+    "reviewerTransport": "cli" | "messages-api",
+    "reviewerTransportValidatedAt": "2026-04-23T…"
+  }
+}
+```
+
+`reviewerTransportValidatedAt` is the timestamp of the last successful
+live probe. Stale > 30 days → doctor re-probes.
+
+### doctor checks
+
+Add a "Reviewer transport" check group:
+
+- **transport declared**: workspace.json has the field set (warns on
+  missing → offers to default to "cli").
+- **api key present** (only if transport = api): key is readable from
+  user-scoped or workspace env.
+- **api key valid** (only if transport = api): probe with a 1-token
+  messages call; pass / fail.
+- **fallback reachable**: `claude --version` works, so a fallback to
+  CLI reviewer is possible if the API path breaks.
+- **cost tracking hint** (info, not pass/fail): print cumulative
+  reviewer-token cost over the last 7 days if the engine has been
+  logging it.
+
+Existing workspaces without the field get an info-level nudge:
+"Fast reviewers available: run `beerengineer workspace upgrade
+--reviewer-transport` to opt in." No forced migration.
+
+### Graceful degradation at runtime
+
+If the live reviewer call fails with 401 / 403 (key invalidated) or
+sustained 429 (rate limit) despite retries, the hybrid adapter
+transparently falls back to the CLI reviewer for that call, emits a
+`presentation / kind: "warn"` event explaining the downgrade, and
+continues. The run does not fail for a reviewer-transport hiccup.
+
+The registry exposes both adapters; the hybrid adapter orchestrates the
+fallback so the upstream review loop is unaware.
+
+### Cost transparency
+
+Before opt-in, the setup wizard shows a rough estimate based on
+profile + typical story count:
+
+```
+Estimated additional reviewer cost with messages-api transport:
+  Haiku:         ~$0.005 – $0.02 per run
+  Sonnet:        ~$0.03 – $0.10 per run
+  Opus:          ~$0.20 – $0.60 per run
+(tracked automatically in workspace.json after each run)
+```
+
+After each run with transport=api, the engine records actual
+reviewer-token spend and updates a rolling 7-day total in
+`workspace.json.preflight.reviewerCost7d`. Doctor surfaces this.
+
+### Security guardrails
+
+- Setup refuses to write `ANTHROPIC_API_KEY` into any file unless it
+  verified the path is gitignored.
+- The engine redacts `sk-ant-…` prefixes in every log emit path.
+- `beerengineer doctor --redact-keys` (existing behavior) continues to
+  work; extend it to wipe the new env variables from any captured
+  diagnostics.
+
+### Profile orthogonality
+
+`profile.mode` (fast / balanced / thorough) stays one-dimensional and
+controls model/policy choices per role. `reviewerTransport` is
+orthogonal: every (profile × transport) combination is legal.
+
+| profile.mode | reviewerTransport | Intended use |
+|---|---|---|
+| fast | cli | Subscription-only demos, smallest dep surface |
+| fast | messages-api | Subscription + a bit of API spend for faster reviewers |
+| thorough | cli | Subscription with stronger coder models; reviewers are CLI too |
+| thorough | messages-api | Mixed: heavy coder calls on subscription, light reviewers on API |
+
+### Documentation impact
+
+- `README.md`: one paragraph describing the two modes and when to
+  choose which.
+- `docs/features-doc.md`: add to the provider-resilience section.
+- `docs/setup-for-dummies.md`: new "Reviewer transport" subsection
+  with step-by-step for picking + where to get an API key
+  (console.anthropic.com).
+- `docs/known-issues.md`: note that the hybrid mode does not use
+  subscription billing for reviewer tokens and that the first-run
+  probe costs a token.
+
+### Rollout order (revised)
+
+1. Implement `providers/claude-messages.ts` + registry `transport`
+   selection (backward compatible: nothing changes for existing runs).
+2. Add workspace.json `preflight.reviewerTransport` field with default
+   `"cli"`; migration emits a note on first doctor run.
+3. Extend `workspace add` + `setup` with the new interactive step.
+4. Doctor + preflight output.
+5. Docs updates + setup-for-dummies.
+6. Flip rollout flag; run helloworld driver with + without API mode to
+   measure wall-clock delta and publish in the spec's "Expected Wall-
+   Clock Savings" section.
 
 `beerengineer doctor` prints which reviewer transport is active and
 flags if `BEERENGINEER_REVIEWER_TRANSPORT=api` is set without a key.
