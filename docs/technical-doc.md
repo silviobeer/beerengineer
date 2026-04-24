@@ -14,6 +14,13 @@ The implementation plan shipped 2 wave(s). Wave 1: Deliver core workflow (US-01)
 ## Architecture Decisions
 Frontend: Core workflow and list views; Backend: Validation, persistence, and workflow logic; Storage: Durable storage of entries and status
 
+## Real Git Worktree Model
+Real-Git runs keep the primary workspace on the base branch. Item work happens
+inside a durable item worktree under `.beerengineer/worktrees/<workspace>/items/<item>/worktree`;
+story execution uses ephemeral run-scoped worktrees nested under the same item.
+Story worktrees are removed in a `finally` path so failed runs do not leave the
+operator inside a stale story checkout.
+
 ## Known Risks
 low maintainability: Shared helper logic appears duplicated in multiple modules.
 

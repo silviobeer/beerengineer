@@ -43,6 +43,18 @@ test("repoState and handoff helpers produce deterministic paths", () => {
   )
 })
 
+test("item worktree helpers are item-scoped and story worktrees are run-scoped beneath them", () => {
+  const itemCtx: WorkflowContext = { ...ctx, itemSlug: "Dark Mode Toggle" }
+  const itemRoot = layout.itemWorktreeRootDir(itemCtx)
+  assert.ok(itemRoot.endsWith(`.beerengineer${sep}worktrees${sep}demo-ws-1${sep}items${sep}dark-mode-toggle`))
+  assert.equal(layout.itemWorktreeDir(itemCtx), `${itemRoot}${sep}worktree`)
+  assert.equal(layout.itemStoriesRootDir(itemCtx), `${itemRoot}${sep}stories`)
+  assert.equal(
+    layout.executionStoryWorktreeDir(itemCtx, 3, "US_1"),
+    `${itemRoot}${sep}stories${sep}${ctx.runId.toLowerCase()}-us-1${sep}worktree`,
+  )
+})
+
 test("execution helpers nest wave -> story -> test-writer / ralph", () => {
   const waveDir = layout.executionWaveDir(ctx, 3)
   assert.ok(waveDir.endsWith(`stages${sep}execution${sep}waves${sep}wave-3`))

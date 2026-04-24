@@ -22,6 +22,11 @@ function sanitizeStageId(stageId: string): string {
   return stageId.split("/").map(sanitizeSegment).join("/")
 }
 
+function requireItemSlug(ctx: WorkflowContext): string {
+  if (!ctx.itemSlug?.trim()) throw new Error("WorkflowContext.itemSlug is required for item-scoped worktree paths")
+  return sanitizeSegment(ctx.itemSlug)
+}
+
 function root(): string {
   return join(process.cwd(), ".beerengineer", "workspaces")
 }
@@ -74,6 +79,15 @@ export const layout = {
   handoffFile(ctx: WorkflowContext, projectId: string): string {
     return join(layout.handoffDir(ctx), `${projectId.toLowerCase()}-merge-handoff.json`)
   },
+  itemWorktreeRootDir(ctx: WorkflowContext): string {
+    return join(worktreesRoot(), ctx.workspaceId, "items", requireItemSlug(ctx))
+  },
+  itemWorktreeDir(ctx: WorkflowContext): string {
+    return join(layout.itemWorktreeRootDir(ctx), "worktree")
+  },
+  itemStoriesRootDir(ctx: WorkflowContext): string {
+    return join(layout.itemWorktreeRootDir(ctx), "stories")
+  },
   executionWaveDir(ctx: WorkflowContext, waveNumber: number): string {
     return join(stageDir(ctx, "execution"), "waves", `wave-${waveNumber}`)
   },
@@ -82,14 +96,9 @@ export const layout = {
   },
   executionStoryWorktreeDir(ctx: WorkflowContext, waveNumber: number, storyId: string): string {
     return join(
-      worktreesRoot(),
-      ctx.workspaceId,
-      "runs",
-      ctx.runId,
-      "waves",
-      `wave-${waveNumber}`,
-      "stories",
-      sanitizeSegment(storyId),
+      layout.itemStoriesRootDir(ctx),
+      `${sanitizeSegment(ctx.runId)}-${sanitizeSegment(storyId)}`,
+      "worktree",
     )
   },
   executionTestWriterDir(ctx: WorkflowContext, waveNumber: number, storyId: string): string {

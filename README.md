@@ -102,6 +102,9 @@ beerengineer item action --item <id|code> --action <name>
   Fuehrt eine Item-Aktion gegen ein bestehendes Item aus.
   Gueltige Actions: `start_brainstorm`, `promote_to_requirements`,
   `start_implementation`, `resume_run`, `mark_done`.
+  Hinweis: `mark_done` ist derzeit noch der Legacy-Abschluss fuer
+  `implementation/review_required`; die neue explizite Test/Merge-
+  Lifecycle-API aus dem Handoff-Plan ist noch nicht verdrahtet.
   `--item` akzeptiert entweder die persistierte Item-UUID oder einen
   per-Workspace-Code wie `ITEM-0001`. Mehrdeutige Codes werden abgelehnt;
   in dem Fall muss die UUID verwendet werden.
@@ -298,6 +301,11 @@ Schema (siehe `specs/git-branch-strategy.md`):
 ```
 
 - Story-Commits landen auf der Story-Branch.
+- Die primaere Workspace bleibt auf der Base-Branch; die Engine arbeitet im
+  Real-Git-Modus in einem langlebigen Item-Worktree unter
+  `.beerengineer/worktrees/<workspace>/items/<item>/worktree`.
+- Story-Ausfuehrungen laufen in kurzlebigen Run-Worktrees unter
+  `.beerengineer/worktrees/<workspace>/items/<item>/stories/<run>-<story>/worktree`.
 - Nach erfolgreichem Story-Abschluss: `git merge --no-ff` in die Wave-Branch.
 - Am Wave-Ende: Wave → Project. Am Project-Ende: Project → Item.
 - Die Base-Branch wird nie automatisch gemerged — der Handoff/Candidate-Schritt
@@ -322,9 +330,10 @@ noch auf `story/...` / `wave/...` parken):
    `story/`, `candidate/`) steht
 5. `main` als letzter Fallback
 
-Vor jedem Branch-Op in Real-Git-Modus parkt die Engine HEAD zusaetzlich auf
-der Base-Branch, sodass `ensureItemBranchReal` garantiert von einer sauberen
-Ref aus arbeitet.
+Wichtig: die Engine mutiert den primaeren Checkout nicht mehr fuer Item-Arbeit.
+`ensureItemBranchReal` erstellt die Item-Branch aus der Base-Ref und bindet sie
+an den Item-Worktree; Project/Wave/Story-Branches werden innerhalb dieses
+Worktree-Kontexts bewegt.
 
 ### Harness-Modus (NDJSON)
 
@@ -702,7 +711,7 @@ siehe [`spec/api-contract.md`](spec/api-contract.md).
 | `GET`  | `/runs/:id/recovery` | Recovery-Snapshot fuer Run-Detailseite: Status, Scope, Summary, Remediations, `resumable` |
 | `GET`  | `/items[?workspace=<key>&status=<phase>&column=<column>&limit=<n>]` | Item-Liste fuer Engine-Clients. |
 | `GET`  | `/items/:id` | Einzelnes Item. |
-| `POST` | `/items/:id/actions/:action` | Explizite Action-Routen: `start_brainstorm` / `start_implementation` starten Runs in-process (`200 { kind: "started", runId, itemId, column, phaseStatus, action }`), `promote_to_requirements` / `mark_done` sind reine State-Transitions. `409 invalid_transition`, `404 item_not_found`. |
+| `POST` | `/items/:id/actions/:action` | Explizite Action-Routen: `start_brainstorm` / `start_implementation` starten Runs in-process (`200 { kind: "started", runId, itemId, column, phaseStatus, action }`), `promote_to_requirements` / `mark_done` sind reine State-Transitions. `mark_done` ist aktuell noch der Legacy-Abschluss fuer den Review-Ready-Status. `409 invalid_transition`, `404 item_not_found`. |
 | `GET`  | `/events[?workspace=key]` | Workspace-gefilterter Board-SSE-Stream fuer `run_started`, `stage_*`, `item_column_changed`, `run_finished`, `project_created` |
 | `GET`  | `/board[?workspace=key]` | Board-DTO (Spalten + Karten) |
 | `GET`  | `/setup/status[?group=<id>]` | Selber JSON-Kontrakt wie `doctor --json` (`SetupReport`, `reportVersion: 1`). Unbekannte `group` → `400 { error: "unknown_group" }` |
@@ -842,19 +851,24 @@ identisch benannt. Die Namen werden zentral in `core/repoSimulation.ts` via
 Der Ablauf im Real-Git-Modus (`detectRealGitMode` schaltet ihn an, sobald der
 Workspace ein sauberes Repo ist):
 
-1. `runWorkflow` parkt auf der Base-Branch und legt `item/<slug>` an.
-2. Pro Project: `proj/...` aus `item/...`.
+1. `runWorkflow` laesst den primaeren Workspace auf der Base-Branch und legt
+   `item/<slug>` in einem langlebigen Item-Worktree unter
+   `.beerengineer/worktrees/<workspace>/items/<item>/worktree` an.
+2. Pro Project: `proj/...` aus `item/...` innerhalb des Item-Worktrees.
 3. `execution` legt pro Wave `wave/...` aus `proj/...` an und pro Story ein
-   `story/...` + isoliertes Worktree unter `.beerengineer/worktrees/...`.
+   `story/...` + isoliertes Run-Worktree unter
+   `.beerengineer/worktrees/<workspace>/items/<item>/stories/<run>-<story>/worktree`.
 4. Jede Ralph-Iteration commitet im Worktree.
 5. Story passed → `mergeStoryIntoWaveReal` (no-ff). Story blocked →
    `abandonStoryBranchReal` verschiebt die Ref nach
    `refs/beerengineer/abandoned/story/<name>/<timestamp>` und loescht den
    branch — die History bleibt recoverable, aber raeumt `git branch` auf.
-6. Wave done → `mergeWaveIntoProjectReal`. Project done → `mergeProjectIntoItemReal`.
-7. Handoff beendet den Run auf `item/<slug>`. Das Mergen von `item` nach `base`
-   ist eine **menschliche Entscheidung** (PR-Flow). Die Engine merged nie
-   selbststaendig nach der Base-Branch.
+6. Story-Worktrees werden in `finally` wieder entfernt, auch wenn eine Story
+   fehlschlaegt oder blockiert.
+7. Wave done → `mergeWaveIntoProjectReal`. Project done → `mergeProjectIntoItemReal`.
+8. Handoff beendet den Run auf `item/<slug>` im Item-Worktree. Das Mergen von
+   `item` nach `base` ist eine **menschliche Entscheidung** (PR-Flow). Die
+   Engine merged nie selbststaendig nach der Base-Branch.
 
 Im Simulations-Modus laeuft dieselbe Hierarchie als JSON unter
 `.beerengineer/workspaces/<id>/repo-state.json`; das Handoff erzeugt dort

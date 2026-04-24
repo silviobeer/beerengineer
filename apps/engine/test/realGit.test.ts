@@ -52,20 +52,23 @@ test("realGit creates item/project/wave/story branches and merges them back", ()
     const mode = detectRealGitMode(ctx)
     assert.equal(mode.enabled, true)
     if (!mode.enabled) return
+    assert.ok(mode.itemWorktreeRoot)
 
     assert.equal(ensureItemBranchReal(mode, ctx), "item/demo-item")
-    assert.equal(sh(root, ["branch", "--show-current"]), "item/demo-item")
+    assert.equal(sh(root, ["branch", "--show-current"]), "main")
+    assert.equal(sh(mode.itemWorktreeRoot!, ["branch", "--show-current"]), "item/demo-item")
     assert.equal(ensureProjectBranchReal(mode, ctx, "proj-a"), "proj/demo-item__proj-a")
-    assert.equal(sh(root, ["branch", "--show-current"]), "proj/demo-item__proj-a")
+    assert.equal(sh(root, ["branch", "--show-current"]), "main")
+    assert.equal(sh(mode.itemWorktreeRoot!, ["branch", "--show-current"]), "proj/demo-item__proj-a")
     assert.equal(ensureWaveBranchReal(mode, ctx, "proj-a", 1), "wave/demo-item__proj-a__w1")
-    assert.equal(sh(root, ["branch", "--show-current"]), "wave/demo-item__proj-a__w1")
+    assert.equal(sh(mode.itemWorktreeRoot!, ["branch", "--show-current"]), "wave/demo-item__proj-a__w1")
     assert.equal(ensureStoryBranchReal(mode, ctx, "proj-a", 1, "story-x"), "story/demo-item__proj-a__w1__story-x")
-    assert.equal(sh(root, ["branch", "--show-current"]), "story/demo-item__proj-a__w1__story-x")
+    assert.equal(sh(mode.itemWorktreeRoot!, ["branch", "--show-current"]), "story/demo-item__proj-a__w1__story-x")
 
     // Make a commit on the story branch
-    writeFileSync(join(root, "feature.txt"), "hello\n")
-    sh(root, ["add", "-A"])
-    sh(root, ["commit", "-m", "story commit"])
+    writeFileSync(join(mode.itemWorktreeRoot!, "feature.txt"), "hello\n")
+    sh(mode.itemWorktreeRoot!, ["add", "-A"])
+    sh(mode.itemWorktreeRoot!, ["commit", "-m", "story commit"])
 
     mergeStoryIntoWaveReal(mode, ctx, "proj-a", 1, "story-x")
     mergeWaveIntoProjectReal(mode, ctx, "proj-a", 1)
@@ -86,13 +89,14 @@ test("realGit creates item/project/wave/story branches and merges them back", ()
     assert.equal(mainHead, seedHead)
 
     // Item branch should contain the story commit
-    sh(root, ["checkout", "item/demo-item"])
-    const log = sh(root, ["log", "--oneline"]).split(/\r?\n/)
+    sh(mode.itemWorktreeRoot!, ["checkout", "item/demo-item"])
+    const log = sh(mode.itemWorktreeRoot!, ["log", "--oneline"]).split(/\r?\n/)
     assert.ok(log.some(line => line.includes("story commit")), `expected story commit on item branch, got ${JSON.stringify(log)}`)
 
-    sh(root, ["checkout", "story/demo-item__proj-a__w1__story-x"])
+    sh(mode.itemWorktreeRoot!, ["checkout", "story/demo-item__proj-a__w1__story-x"])
     assert.equal(exitRunToItemBranchReal(mode, ctx), "item/demo-item")
-    assert.equal(sh(root, ["branch", "--show-current"]), "item/demo-item")
+    assert.equal(sh(root, ["branch", "--show-current"]), "main")
+    assert.equal(sh(mode.itemWorktreeRoot!, ["branch", "--show-current"]), "item/demo-item")
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -158,6 +162,7 @@ test("realGit creates a dedicated worktree for a story branch", () => {
     const mode = detectRealGitMode(ctx)
     assert.equal(mode.enabled, true)
     if (!mode.enabled) return
+    assert.ok(mode.itemWorktreeRoot)
 
     ensureItemBranchReal(mode, ctx)
     ensureProjectBranchReal(mode, ctx, "proj-a")
@@ -168,9 +173,10 @@ test("realGit creates a dedicated worktree for a story branch", () => {
     assert.equal(sh(worktreeRoot, ["branch", "--show-current"]), "story/demo-item__proj-a__w1__story-x")
     assert.equal(
       sh(root, ["branch", "--show-current"]),
-      "wave/demo-item__proj-a__w1",
-      "main checkout should stay on the wave branch when a story worktree is created",
+      "main",
+      "primary checkout should stay on the base branch when a story worktree is created",
     )
+    assert.equal(sh(mode.itemWorktreeRoot!, ["branch", "--show-current"]), "wave/demo-item__proj-a__w1")
 
     const worktrees = sh(root, ["worktree", "list", "--porcelain"])
     assert.match(worktrees, new RegExp(worktreeRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
@@ -194,15 +200,16 @@ test("abandonStoryBranchReal moves the story branch under refs/beerengineer/aban
     const mode = detectRealGitMode(ctx)
     assert.equal(mode.enabled, true)
     if (!mode.enabled) return
+    assert.ok(mode.itemWorktreeRoot)
 
     ensureItemBranchReal(mode, ctx)
     ensureProjectBranchReal(mode, ctx, "proj-a")
     ensureWaveBranchReal(mode, ctx, "proj-a", 1)
     ensureStoryBranchReal(mode, ctx, "proj-a", 1, "story-x")
-    writeFileSync(join(root, "s.txt"), "x\n")
-    sh(root, ["add", "-A"])
-    sh(root, ["commit", "-m", "story"])
-    const storySha = sh(root, ["rev-parse", "HEAD"])
+    writeFileSync(join(mode.itemWorktreeRoot!, "s.txt"), "x\n")
+    sh(mode.itemWorktreeRoot!, ["add", "-A"])
+    sh(mode.itemWorktreeRoot!, ["commit", "-m", "story"])
+    const storySha = sh(mode.itemWorktreeRoot!, ["rev-parse", "HEAD"])
 
     const result = abandonStoryBranchReal(mode, ctx, "proj-a", 1, "story-x")
     assert.ok(result, "expected abandon to succeed")
@@ -220,7 +227,7 @@ test("abandonStoryBranchReal moves the story branch under refs/beerengineer/aban
   }
 })
 
-test("ensureItemBranchReal does not park on base when the item branch already exists", () => {
+test("ensureItemBranchReal keeps the primary workspace on base when the item branch already exists", () => {
   const root = seedRepo()
   try {
     const ctx: WorkflowContext = {
@@ -233,17 +240,16 @@ test("ensureItemBranchReal does not park on base when the item branch already ex
     const mode = detectRealGitMode(ctx)
     assert.equal(mode.enabled, true)
     if (!mode.enabled) return
+    assert.ok(mode.itemWorktreeRoot)
 
     ensureItemBranchReal(mode, ctx)
     ensureProjectBranchReal(mode, ctx, "proj-a")
-    // Simulate a resume: HEAD is on proj branch. Calling ensureItemBranchReal
-    // must not flip the checkout to main before switching to item.
-    assert.equal(sh(root, ["branch", "--show-current"]), "proj/demo-item__proj-a")
+    assert.equal(sh(root, ["branch", "--show-current"]), "main")
+    assert.equal(sh(mode.itemWorktreeRoot!, ["branch", "--show-current"]), "proj/demo-item__proj-a")
 
     ensureItemBranchReal(mode, ctx)
-    assert.equal(sh(root, ["branch", "--show-current"]), "item/demo-item")
-    // main must still point at the seed commit — the park path should not have been taken
-    // (previously it was unconditional).
+    assert.equal(sh(root, ["branch", "--show-current"]), "main")
+    assert.equal(sh(mode.itemWorktreeRoot!, ["branch", "--show-current"]), "item/demo-item")
     const reflog = sh(root, ["reflog", "show", "main"]).split(/\r?\n/)
     assert.equal(reflog.length, 1, `main reflog should have a single entry, got ${JSON.stringify(reflog)}`)
   } finally {

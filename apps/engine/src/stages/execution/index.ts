@@ -127,44 +127,49 @@ async function executeWave(
 
   const run = async (story: Pick<UserStory, "id" | "title">) => {
     const resolved = resolveStory(story, storyById)
-    const storyWorktreeRoot = realGit.enabled
-      ? ensureStoryWorktreeReal(
-          realGit,
-          ctx,
-          ctx.project.id,
-          wave.number,
-          resolved.id,
-          layout.executionStoryWorktreeDir(ctx, wave.number, resolved.id),
-        )
-      : undefined
-    // `ensureStoryWorktreeReal` already creates the story branch if
-    // missing and checks it out inside the worktree. Calling
-    // `ensureStoryBranchReal` here would `git checkout <story>` in the
-    // main workspace, which git refuses because the branch is already
-    // used by the worktree — crashes the run with
-    // "is already used by worktree at …". Only run the main-workspace
-    // checkout when worktrees are disabled.
-    if (realGit.enabled && !storyWorktreeRoot) {
-      ensureStoryBranchReal(realGit, ctx, ctx.project.id, wave.number, resolved.id)
+    let storyWorktreeRoot: string | undefined
+    let result: StoryResult | undefined
+    try {
+      storyWorktreeRoot = realGit.enabled
+        ? ensureStoryWorktreeReal(
+            realGit,
+            ctx,
+            ctx.project.id,
+            wave.number,
+            resolved.id,
+            layout.executionStoryWorktreeDir(ctx, wave.number, resolved.id),
+          )
+        : undefined
+      // `ensureStoryWorktreeReal` already creates the story branch if
+      // missing and checks it out inside the worktree. Calling
+      // `ensureStoryBranchReal` here would `git checkout <story>` in the
+      // main workspace, which git refuses because the branch is already
+      // used by the worktree — crashes the run with
+      // "is already used by worktree at …". Only run the main-workspace
+      // checkout when worktrees are disabled.
+      if (realGit.enabled && !storyWorktreeRoot) {
+        ensureStoryBranchReal(realGit, ctx, ctx.project.id, wave.number, resolved.id)
+      }
+      result = await implementStory(ctx, wave, resolved, {
+        rerunTestWriter: resume != null && resume.storyId === story.id ? Boolean(resume.rerunTestWriter) : false,
+        worktreeRoot: storyWorktreeRoot,
+      }, llm)
+      // Gate real-git merge on the same condition as the simulated merge
+      // (ralphRuntime only sim-merges when the story outcome is "passed"). This
+      // keeps the two state machines from diverging on anything other than
+      // "passed" (e.g. ready_for_review left behind by a crashed cycle).
+      if (realGit.enabled && result.implementation.status === "passed") {
+        mergeStoryIntoWaveReal(realGit, ctx, ctx.project.id, wave.number, resolved.id)
+      }
+      if (realGit.enabled && result.implementation.status === "blocked") {
+        abandonStoryBranchReal(realGit, ctx, ctx.project.id, wave.number, resolved.id)
+      }
+      return result
+    } finally {
+      if (realGit.enabled && storyWorktreeRoot) {
+        removeStoryWorktreeReal(realGit, storyWorktreeRoot)
+      }
     }
-    const result = await implementStory(ctx, wave, resolved, {
-      rerunTestWriter: resume != null && resume.storyId === story.id ? Boolean(resume.rerunTestWriter) : false,
-      worktreeRoot: storyWorktreeRoot,
-    }, llm)
-    // Gate real-git merge on the same condition as the simulated merge
-    // (ralphRuntime only sim-merges when the story outcome is "passed"). This
-    // keeps the two state machines from diverging on anything other than
-    // "passed" (e.g. ready_for_review left behind by a crashed cycle).
-    if (realGit.enabled && result.implementation.status === "passed") {
-      mergeStoryIntoWaveReal(realGit, ctx, ctx.project.id, wave.number, resolved.id)
-    }
-    if (realGit.enabled && result.implementation.status === "blocked") {
-      abandonStoryBranchReal(realGit, ctx, ctx.project.id, wave.number, resolved.id)
-    }
-    if (realGit.enabled && storyWorktreeRoot) {
-      removeStoryWorktreeReal(realGit, storyWorktreeRoot)
-    }
-    return result
   }
 
   const results = await sequentially(wave.stories, run)

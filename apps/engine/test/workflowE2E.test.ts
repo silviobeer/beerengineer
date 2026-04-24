@@ -350,7 +350,7 @@ test("runWorkflow skips interactive handoff in real git mode after merging proje
     )
     assert.equal(
       spawnSync("git", ["branch", "--show-current"], { cwd: root, encoding: "utf8" }).stdout.trim(),
-      "item/real-git-handoff",
+      "main",
     )
   } finally {
     rmSync(root, { recursive: true, force: true })
