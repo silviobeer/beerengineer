@@ -3,8 +3,9 @@ import { join } from "node:path"
 import { emitEvent, getActiveRun } from "../../core/runContext.js"
 import { resolveReferences } from "../../core/referencesStore.js"
 import { printStageCompletion, stageSummary, summaryArtifactFile } from "../../core/stageHelpers.js"
-import { runStage } from "../../core/stageRuntime.js"
+import { type StageArtifactContent } from "../../core/stageRuntime.js"
 import { stagePresent } from "../../core/stagePresentation.js"
+import { runStageWithUserReview } from "../../core/stageWithUserReview.js"
 import { layout } from "../../core/workspaceLayout.js"
 import { createFrontendDesignReview, createFrontendDesignStage, type RunLlmConfig } from "../../llm/registry.js"
 import { renderDesignPreview } from "../../render/designPreview.js"
@@ -12,8 +13,6 @@ import { renderMockupFile, renderMockupSitemap } from "../../render/mockupFile.j
 import { ask } from "../../sim/human.js"
 import type { DesignArtifact, WireframeArtifact, WorkflowContext } from "../../types.js"
 import type { FrontendDesignInput, FrontendDesignState } from "./types.js"
-
-const MAX_USER_REVIEW_ROUNDS = 3
 
 function buildDesignSummary(artifact: DesignArtifact): string {
   const palette = artifact.tokens.light
@@ -95,53 +94,27 @@ export async function frontendDesign(
   const wireframes = loadWireframesForRun(context, input)
   const hasWireframes = wireframes !== undefined && wireframes.screens.length > 0
 
-  // Shared state that persists across user-review iterations so the stage
-  // agent can see revision feedback on subsequent runStage calls.
-  let pendingRevisionFeedback: string | undefined
-  let userReviewRound = 0
-  // Prior iteration's final state — carried forward on revise so the stage
-  // agent sees the full conversation history (clarification Q&A, references,
-  // input mode) and does not re-ask questions already answered.
-  let priorState: FrontendDesignState | undefined
-
-  while (true) {
-    const revisionFeedback = pendingRevisionFeedback
-    const reviewRound = userReviewRound
-
-    const { result: artifact, run } = await runStage({
-      stageId: "frontend-design",
-      stageAgentLabel: "Visual Designer",
-      reviewerLabel: "Design Review",
-      workspaceId: context.workspaceId,
-      runId: reviewRound === 0 ? context.runId : `${context.runId}-rev${reviewRound}`,
-      createInitialState: (): FrontendDesignState => {
-        if (priorState) {
-          // On revise: preserve history, inputMode, references, and force
-          // clarificationCount to max so the stage agent skips the Q&A loop
-          // and goes straight to regenerating the artifact with the new
-          // revision feedback injected.
-          return {
-            ...priorState,
-            pendingRevisionFeedback: revisionFeedback,
-            userReviewRound: reviewRound,
-            clarificationCount: priorState.maxClarifications,
-          }
-        }
-        return {
-          input,
-          inputMode: "none",
-          references: input.references ?? [],
-          history: [],
-          clarificationCount: 0,
-          maxClarifications: 3,
-          pendingRevisionFeedback: revisionFeedback,
-          userReviewRound: reviewRound,
-        }
-      },
-      stageAgent: createFrontendDesignStage(llm),
-      reviewer: createFrontendDesignReview(llm),
-      askUser: ask,
-      async persistArtifacts(run, artifact) {
+  return runStageWithUserReview<FrontendDesignState, DesignArtifact, DesignArtifact>({
+    stageId: "frontend-design",
+    stageAgentLabel: "Visual Designer",
+    reviewerLabel: "Design Review",
+    workspaceId: context.workspaceId,
+    baseRunId: context.runId,
+    stageAgent: createFrontendDesignStage(llm),
+    reviewer: createFrontendDesignReview(llm),
+    askUser: ask,
+    maxReviews: 3,
+    buildFreshState: ({ revisionFeedback, reviewRound }): FrontendDesignState => ({
+      input,
+      inputMode: "none",
+      references: input.references ?? [],
+      history: [],
+      clarificationCount: 0,
+      maxClarifications: 3,
+      pendingRevisionFeedback: revisionFeedback,
+      userReviewRound: reviewRound,
+    }),
+    async persistArtifacts(run, artifact): Promise<StageArtifactContent[]> {
         const sourceFiles = resolveReferences(context, "design", input.references)
         const enrichedArtifact = { ...artifact, sourceFiles }
 
@@ -217,64 +190,47 @@ export async function frontendDesign(
           }
         }
 
-        const mockupCount = mockupScreenIds.length
-        return [
-          ...coreArtifacts,
-          ...mockupArtifacts,
-          summaryArtifactFile(
-            "frontend-design",
-            stageSummary(run, [
-              `Tone: ${artifact.tone}`,
-              `Mode: ${artifact.inputMode}`,
-              ...(mockupCount > 0 ? [`Mockups: ${mockupCount}`] : []),
-            ]),
-          ),
-        ]
-      },
-      async onApproved(artifact, run) {
-        // Intentionally do NOT emit design_ready or printStageCompletion here —
-        // those happen only after the user approves in the post-artifact review gate.
-        // Capture the final state so the next revise iteration can carry
-        // history, inputMode, and references forward — without this, each
-        // revise round starts with empty history and the LLM re-asks every
-        // clarification question.
-        priorState = run.state
-        return artifact
-      },
-      maxReviews: 3,
-    })
+      const mockupCount = mockupScreenIds.length
+      return [
+        ...coreArtifacts,
+        ...mockupArtifacts,
+        summaryArtifactFile(
+          "frontend-design",
+          stageSummary(run, [
+            `Tone: ${artifact.tone}`,
+            `Mode: ${artifact.inputMode}`,
+            ...(mockupCount > 0 ? [`Mockups: ${mockupCount}`] : []),
+          ]),
+        ),
+      ]
+    },
+    buildGatePrompt: ({ artifact, run }) => {
+      const summary = buildDesignSummary(artifact)
 
-    // ── Post-artifact user review gate ────────────────────────────────────────
-    const summary = buildDesignSummary(artifact)
+      // Build mockup URLs for the gate prompt so the user can open them in a browser.
+      // Exclude sitemap.html from the per-screen list (it's the index, not a screen).
+      const mockupFiles = run.files.filter(
+        f => f.path.includes("/mockups/") && f.path.endsWith(".html") && !f.path.endsWith("sitemap.html"),
+      )
+      let mockupSection = ""
+      if (mockupFiles.length > 0) {
+        const publicBase = resolvePublicBase(context)
+        const urlLines = mockupFiles.map(f => {
+          const screenId = f.path.split("/mockups/")[1]?.replace(/\.html$/, "") ?? ""
+          const url = `${publicBase}/runs/${run.runId}/artifacts/stages/frontend-design/artifacts/mockups/${screenId}.html`
+          return `  ${url}`
+        })
+        mockupSection =
+          `\nHigh-fidelity mockups (open in browser):\n` + urlLines.join("\n") + "\n"
+      }
 
-    // Build mockup URLs for the gate prompt so the user can open them in a browser.
-    // Exclude sitemap.html from the per-screen list (it's the index, not a screen).
-    const mockupFiles = run.files.filter(
-      f => f.path.includes("/mockups/") && f.path.endsWith(".html") && !f.path.endsWith("sitemap.html"),
-    )
-    let mockupSection = ""
-    if (mockupFiles.length > 0) {
-      const publicBase = resolvePublicBase(context)
-      const urlLines = mockupFiles.map(f => {
-        // Extract the screen id from the file path (everything after /mockups/, minus .html).
-        const screenId = f.path.split("/mockups/")[1]?.replace(/\.html$/, "") ?? ""
-        // URL format: {publicBaseUrl}/runs/{runId}/artifacts/stages/frontend-design/artifacts/mockups/{screenId}.html
-        const url = `${publicBase}/runs/${run.runId}/artifacts/stages/frontend-design/artifacts/mockups/${screenId}.html`
-        return `  ${url}`
-      })
-      mockupSection =
-        `\nHigh-fidelity mockups (open in browser):\n` + urlLines.join("\n") + "\n"
-    }
-
-    const prompt =
-      `Design summary:\n${summary}\n` +
-      mockupSection +
-      `\nType "approve" to commit, or "revise: <feedback>" to adjust.`
-
-    const userReply = (await ask(prompt)).trim()
-
-    if (/^approve$/i.test(userReply)) {
-      // User approved — emit events and finalise
+      return (
+        `Design summary:\n${summary}\n` +
+        mockupSection +
+        `\nType "approve" to commit, or "revise: <feedback>" to adjust.`
+      )
+    },
+    async onUserApprove({ artifact, run }) {
       const itemId = getActiveRun()?.itemId ?? context.workspaceId
       const previewPath = run.files.find(file => file.path.endsWith("design-preview.html"))?.path
       if (!previewPath) {
@@ -289,33 +245,6 @@ export async function frontendDesign(
       printStageCompletion(run, "frontend-design")
       stagePresent.ok("Design language approved.")
       return artifact
-    }
-
-    if (/^revise:/i.test(userReply)) {
-      userReviewRound++
-      if (userReviewRound > MAX_USER_REVIEW_ROUNDS) {
-        throw new Error(
-          `frontend-design: post-artifact review cap reached (${MAX_USER_REVIEW_ROUNDS} rounds). ` +
-          "Approve the artifact or restart the stage with updated references.",
-        )
-      }
-      pendingRevisionFeedback = userReply.replace(/^revise:\s*/i, "").trim()
-      stagePresent.step(`User revision round ${userReviewRound}: ${pendingRevisionFeedback}`)
-      continue
-    }
-
-    // Treat any unrecognised reply as approval to preserve backward compat
-    stagePresent.warn(`Unrecognised reply "${userReply}" — treating as approve.`)
-    const itemId = getActiveRun()?.itemId ?? context.workspaceId
-    const previewPath = run.files.find(file => file.path.endsWith("design-preview.html"))?.path
-    emitEvent({
-      type: "design_ready",
-      runId: run.runId,
-      itemId,
-      url: previewPath ?? "",
-    })
-    printStageCompletion(run, "frontend-design")
-    stagePresent.ok("Design language approved.")
-    return artifact
-  }
+    },
+  })
 }
