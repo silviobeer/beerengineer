@@ -34,7 +34,7 @@
       "reviewer": { "harness": "claude", "provider": "anthropic", "model": "claude-sonnet-4-6" }
     },
     "claude-first": {
-      "coder": { "harness": "claude", "provider": "anthropic", "model": "claude-opus-4-7" },
+      "coder": { "harness": "claude", "provider": "anthropic", "model": "claude-sonnet-4-6" },
       "reviewer": { "harness": "codex", "provider": "openai", "model": "gpt-5.4" }
     },
     "codex-only": {

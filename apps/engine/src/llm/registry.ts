@@ -95,7 +95,7 @@ type PresetRoleEntry = { harness: "claude" | "codex" | "opencode"; provider: str
 type PresetEntry = { coder: PresetRoleEntry; reviewer: PresetRoleEntry }
 const PRESETS = (presetsJson as { presets: Record<string, PresetEntry> }).presets
 
-function resolveFromPreset(presetKey: string, role: HarnessRole, workspaceRoot: string): ResolvedHarness {
+function resolveFromPreset(presetKey: string, role: HarnessRole, stage: StageId, workspaceRoot: string): ResolvedHarness {
   const preset = PRESETS[presetKey]
   if (!preset) throw new Error(`Unknown preset key "${presetKey}"`)
   const entry = preset[role]
@@ -103,7 +103,15 @@ function resolveFromPreset(presetKey: string, role: HarnessRole, workspaceRoot: 
   if (provider === "opencode") {
     throw new Error(`Preset "${presetKey}" resolves to opencode for role "${role}", which is not implemented yet`)
   }
-  return { harness: provider, provider, model: entry.model, workspaceRoot }
+  // Execution stage writes real code and needs the strongest coder model,
+  // while design-prep / requirements / planning stages are text generation
+  // where a faster mid-tier model is plenty. Upgrade Sonnet -> Opus just for
+  // execution-coder on Claude-family presets.
+  let model = entry.model
+  if (stage === "execution" && role === "coder" && provider === "claude-code" && model === "claude-sonnet-4-6") {
+    model = "claude-opus-4-7"
+  }
+  return { harness: provider, provider, model, workspaceRoot }
 }
 
 export function resolveHarness(input: AdapterFactoryInput): ResolvedHarness {
@@ -116,7 +124,7 @@ export function resolveHarness(input: AdapterFactoryInput): ResolvedHarness {
     case "codex-only":
     case "codex-first":
     case "fast":
-      return resolveFromPreset(input.harnessProfile.mode, input.role, input.workspaceRoot)
+      return resolveFromPreset(input.harnessProfile.mode, input.role, input.stage, input.workspaceRoot)
     case "opencode":
     case "opencode-china":
     case "opencode-euro":

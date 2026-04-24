@@ -47,7 +47,7 @@ test("resolveHarness claude-first splits coder=claude and reviewer=codex per pre
   })
 
   assert.equal(coder.provider, "claude-code")
-  assert.equal(coder.model, "claude-opus-4-7")
+  assert.equal(coder.model, "claude-sonnet-4-6")
   assert.equal(reviewer.provider, "codex")
   assert.equal(reviewer.model, "gpt-5.4")
 })
@@ -90,4 +90,16 @@ test("resolveHarness rejects opencode until the provider is implemented", () => 
       }),
     /opencode/,
   )
+})
+
+test("resolveHarness upgrades coder to opus for execution stage on claude-first (implementation needs the strongest model)", () => {
+  const resolved = resolveHarness({
+    workspaceRoot: "/tmp/demo",
+    harnessProfile: { mode: "claude-first" },
+    runtimePolicy: defaultWorkspaceRuntimePolicy(),
+    role: "coder",
+    stage: "execution",
+  })
+  assert.equal(resolved.provider, "claude-code")
+  assert.equal(resolved.model, "claude-opus-4-7")
 })
