@@ -20,3 +20,27 @@ apps/engine/dist/
 .bg-shell/
 .claude/settings.local.json
 coverage/
+
+# Databases (belt & suspenders — anywhere)
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Logs
+*.log
+*.log.*
+
+# OS metadata
+Thumbs.db
+desktop.ini
+
+# IDE / editor
+.idea/
+*.swp
+*.swo
+*~
+
+# Deploy artifacts
+.vercel/
+out/
+build/
