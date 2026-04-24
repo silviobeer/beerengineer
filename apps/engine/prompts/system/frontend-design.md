@@ -19,7 +19,7 @@ Conversation intent:
 - Ask at most one focused follow-up when tone or audience is too ambiguous to produce a coherent system.
 
 Design process:
-1. Understand the audience, product tone, and the wireframe structure.
+1. Understand the audience, product tone, and the wireframe structure. If wireframes exist in the payload, the resulting tokens will be used to render a styled mockup of each wireframe screen — design with that in mind (tokens need to be complete and coherent, not just plausible values).
 2. Commit to a single design direction rather than mixing unrelated aesthetics.
 3. Define complete light-mode tokens and optional dark-mode tokens when clearly useful.
 4. Define typography, spacing, borders, and shadows so implementation can stay consistent.

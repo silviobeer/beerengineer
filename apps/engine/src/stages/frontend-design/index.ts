@@ -1,14 +1,16 @@
-import { mkdirSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { emitEvent, getActiveRun } from "../../core/runContext.js"
 import { resolveReferences } from "../../core/referencesStore.js"
 import { printStageCompletion, stageSummary, summaryArtifactFile } from "../../core/stageHelpers.js"
 import { runStage } from "../../core/stageRuntime.js"
 import { stagePresent } from "../../core/stagePresentation.js"
+import { layout } from "../../core/workspaceLayout.js"
 import { createFrontendDesignReview, createFrontendDesignStage, type RunLlmConfig } from "../../llm/registry.js"
 import { renderDesignPreview } from "../../render/designPreview.js"
+import { renderMockupIndex, renderStyledMockup } from "../../render/styledMockup.js"
 import { ask } from "../../sim/human.js"
-import type { DesignArtifact, WorkflowContext } from "../../types.js"
+import type { DesignArtifact, WireframeArtifact, WorkflowContext } from "../../types.js"
 import type { FrontendDesignInput, FrontendDesignState } from "./types.js"
 
 const MAX_USER_REVIEW_ROUNDS = 3
@@ -35,12 +37,61 @@ function buildDesignSummary(artifact: DesignArtifact): string {
   ].join("\n")
 }
 
+/**
+ * Try to load the wireframes artifact that visual-companion wrote for this
+ * run. Prefers the in-memory value from `input.wireframes` (already passed
+ * from workflow.ts when both stages run in sequence); falls back to reading
+ * wireframes.json from the visual-companion artifacts directory on disk when
+ * resuming or running frontend-design standalone.
+ *
+ * Returns undefined (not null, never throws) when no wireframes exist — the
+ * stage gracefully skips mockup generation in that case.
+ */
+function loadWireframesForRun(
+  context: WorkflowContext,
+  input: FrontendDesignInput,
+): WireframeArtifact | undefined {
+  // 1. In-memory value (fast path — set by workflow.ts when stages run together)
+  if (input.wireframes) return input.wireframes
+
+  // 2. Disk lookup — latest visual-companion artifacts for this workspace+run
+  const vcArtifactsDir = layout.stageArtifactsDir(context, "visual-companion")
+  const vcPath = join(vcArtifactsDir, "wireframes.json")
+  if (!existsSync(vcPath)) return undefined
+
+  try {
+    return JSON.parse(readFileSync(vcPath, "utf8")) as WireframeArtifact
+  } catch {
+    stagePresent.warn(`frontend-design: could not parse wireframes.json at ${vcPath} — skipping mockup generation.`)
+    return undefined
+  }
+}
+
+/**
+ * Resolve the public base URL used to construct browser-openable mockup links
+ * in the review-gate summary. Falls back to a file:// path when no public URL
+ * is configured (local development without a publicBaseUrl setting).
+ */
+function resolvePublicBase(context: WorkflowContext): string {
+  // When running in the API/hosted context the active run carries the publicBaseUrl.
+  // When running in the CLI (no active run) we fall back to a local placeholder.
+  const activeRun = getActiveRun()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const configured = (activeRun as any)?.publicBaseUrl as string | undefined
+  return configured?.replace(/\/$/, "") ?? `file://${layout.stageArtifactsDir(context, "frontend-design")}`
+}
+
 export async function frontendDesign(
   context: WorkflowContext,
   input: FrontendDesignInput,
   llm?: RunLlmConfig,
 ): Promise<DesignArtifact> {
   stagePresent.header("frontend-design")
+
+  // Resolve wireframes once — shared across all revise rounds (the wireframe
+  // structure is stable; only the design tokens change on revision).
+  const wireframes = loadWireframesForRun(context, input)
+  const hasWireframes = wireframes !== undefined && wireframes.screens.length > 0
 
   // Shared state that persists across user-review iterations so the stage
   // agent can see revision feedback on subsequent runStage calls.
@@ -85,15 +136,15 @@ export async function frontendDesign(
           JSON.stringify(enrichedArtifact, null, 2),
         )
 
-        return [
+        const coreArtifacts = [
           {
-            kind: "json",
+            kind: "json" as const,
             label: "Design JSON",
             fileName: "design.json",
             content: JSON.stringify(enrichedArtifact, null, 2),
           },
           {
-            kind: "txt",
+            kind: "txt" as const,
             label: "Design Preview",
             fileName: "design-preview.html",
             // validateDesignArtifact is called inside renderDesignPreview — this
@@ -101,13 +152,64 @@ export async function frontendDesign(
             // a malformed structure (e.g. missing typography.scale or null field).
             content: renderDesignPreview(enrichedArtifact),
           },
+        ]
+
+        // ── Styled mockups (per wireframe screen) ─────────────────────────────
+        // Runs only when a visual-companion artifact exists for this item.
+        // On revise rounds we regenerate every mockup file so they stay in sync
+        // with the updated tokens.
+        const mockupArtifacts: ReturnType<typeof summaryArtifactFile>[] = []
+        const mockupScreenIds: string[] = []
+
+        if (hasWireframes && wireframes) {
+          const publicBase = resolvePublicBase(context)
+          const mockupDir = join(run.stageArtifactsDir, "mockups")
+          mkdirSync(mockupDir, { recursive: true })
+
+          for (const screen of wireframes.screens) {
+            try {
+              const html = renderStyledMockup(screen, enrichedArtifact)
+              const fileName = `mockups/${screen.id}.html`
+              mockupArtifacts.push({
+                kind: "txt" as const,
+                label: `Mockup — ${screen.name}`,
+                fileName,
+                content: html,
+              })
+              mockupScreenIds.push(screen.id)
+            } catch (err) {
+              stagePresent.warn(
+                `frontend-design: could not render styled mockup for screen "${screen.id}": ${(err as Error).message}`,
+              )
+            }
+          }
+
+          if (mockupScreenIds.length > 0) {
+            const indexHtml = renderMockupIndex(wireframes.screens, run.runId, publicBase)
+            mockupArtifacts.push({
+              kind: "txt" as const,
+              label: "Mockups Index",
+              fileName: "mockups/index.html",
+              content: indexHtml,
+            })
+          }
+        }
+
+        const mockupCount = mockupScreenIds.length
+        return [
+          ...coreArtifacts,
+          ...mockupArtifacts,
           summaryArtifactFile(
             "frontend-design",
-            stageSummary(run, [`Tone: ${artifact.tone}`, `Mode: ${artifact.inputMode}`]),
+            stageSummary(run, [
+              `Tone: ${artifact.tone}`,
+              `Mode: ${artifact.inputMode}`,
+              ...(mockupCount > 0 ? [`Mockups: ${mockupCount}`] : []),
+            ]),
           ),
         ]
       },
-      async onApproved(artifact, run) {
+      async onApproved(artifact, _run) {
         // Intentionally do NOT emit design_ready or printStageCompletion here —
         // those happen only after the user approves in the post-artifact review gate.
         return artifact
@@ -117,9 +219,26 @@ export async function frontendDesign(
 
     // ── Post-artifact user review gate ────────────────────────────────────────
     const summary = buildDesignSummary(artifact)
+
+    // Build mockup URLs for the gate prompt so the user can open them in a browser
+    const mockupFiles = run.files.filter(f => f.path.includes("/mockups/") && f.path.endsWith(".html") && !f.path.endsWith("index.html"))
+    let mockupSection = ""
+    if (mockupFiles.length > 0) {
+      const publicBase = resolvePublicBase(context)
+      const urlLines = mockupFiles.map(f => {
+        // Build a URL the user can open — prefer publicBase URL, fall back to file path
+        const screenId = f.path.split("/mockups/")[1]?.replace(/\.html$/, "") ?? ""
+        const url = `${publicBase}/runs/${run.runId}/artifacts/stages/frontend-design/artifacts/mockups/${screenId}.html`
+        return `  ${url}`
+      })
+      mockupSection =
+        `\nStyled mockups (open in browser):\n` + urlLines.join("\n") + "\n"
+    }
+
     const prompt =
-      `Design summary:\n${summary}\n\n` +
-      `Type "approve" to commit, or "revise: <feedback>" to adjust.`
+      `Design summary:\n${summary}\n` +
+      mockupSection +
+      `\nType "approve" to commit, or "revise: <feedback>" to adjust.`
 
     const userReply = (await ask(prompt)).trim()
 

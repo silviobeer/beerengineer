@@ -161,6 +161,8 @@ function escapeHtml(value: string): string {
 const COLOR_PATTERN = /^(#[0-9a-f]{3,8}|rgba?\([0-9.,\s%]+\)|hsla?\([0-9.,\s%]+\)|transparent|currentColor|[a-z]+)$/i
 const FONT_FAMILY_PATTERN = /^[A-Za-z0-9 ,'"\-]+$/
 const FONT_WEIGHT_PATTERN = /^(normal|bold|lighter|bolder|[1-9]00)$/
+// Border-radius values: "0", "0px", "4px", "8px", "12px", "9999px", "50%", etc.
+const BORDER_RADIUS_PATTERN = /^[0-9]+(%|px|rem|em)?$/
 
 function safeCssValue(raw: string | undefined, pattern: RegExp, fallback: string): string {
   if (typeof raw !== "string") return fallback
@@ -201,6 +203,11 @@ export function renderDesignPreview(artifact: DesignArtifact): string {
   const displayWeight = safeCssValue(artifact.typography.display.weight, FONT_WEIGHT_PATTERN, "700")
   const bodyFamily = safeCssValue(artifact.typography.body.family, FONT_FAMILY_PATTERN, "sans-serif")
   const bodyWeight = safeCssValue(artifact.typography.body.weight, FONT_WEIGHT_PATTERN, "normal")
+  // Use artifact border tokens — never hardcode fallback radius values that conflict with the
+  // design language. "0px" is an intentional zero-radius design; "4px" is a conservative default
+  // for the preview chrome only (not for the actual app components).
+  const panelRadius = safeCssValue(artifact.borders.cards, BORDER_RADIUS_PATTERN, "4px")
+  const chipRadius = safeCssValue(artifact.borders.badges, BORDER_RADIUS_PATTERN, "4px")
 
   return `<!doctype html>
 <html>
@@ -209,10 +216,10 @@ export function renderDesignPreview(artifact: DesignArtifact): string {
     <title>Design Preview</title>
     <style>
       body { font-family: sans-serif; background: ${bg}; color: ${fg}; padding: 24px; }
-      .panel { background: ${surface}; border: 1px solid #d7d7d7; padding: 16px; margin-bottom: 16px; border-radius: 12px; }
+      .panel { background: ${surface}; border: 1px solid #d7d7d7; padding: 16px; margin-bottom: 16px; border-radius: ${panelRadius}; }
       .swatches { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
       .swatch { display: flex; gap: 12px; align-items: center; }
-      .chip { width: 48px; height: 48px; border-radius: 12px; border: 1px solid #999; }
+      .chip { width: 48px; height: 48px; border-radius: ${chipRadius}; border: 1px solid #999; }
       .sample-display { font-family: ${displayFamily}; font-weight: ${displayWeight}; font-size: 2rem; }
       .sample-body { font-family: ${bodyFamily}; font-weight: ${bodyWeight}; }
       ul { padding-left: 20px; }
@@ -247,4 +254,4 @@ export function renderDesignPreview(artifact: DesignArtifact): string {
 </html>`
 }
 
-export const __testing = { safeCssValue, COLOR_PATTERN, FONT_FAMILY_PATTERN, FONT_WEIGHT_PATTERN }
+export const __testing = { safeCssValue, COLOR_PATTERN, FONT_FAMILY_PATTERN, FONT_WEIGHT_PATTERN, BORDER_RADIUS_PATTERN }
