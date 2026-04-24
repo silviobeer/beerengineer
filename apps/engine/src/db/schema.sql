@@ -1,6 +1,6 @@
 -- beerengineer2 board + engine schema.
--- Compatible with the queries in apps/ui/lib/live-board.ts (workspaces, items, projects)
--- and extended with engine-side tables (runs, stage_runs, stage_logs, artifact_files).
+-- Core board tables (workspaces, items, projects) plus engine-side tables
+-- (runs, stage_runs, stage_logs, artifact_files).
 
 CREATE TABLE IF NOT EXISTS workspaces (
   id TEXT PRIMARY KEY,
@@ -15,10 +15,9 @@ CREATE TABLE IF NOT EXISTS workspaces (
   updated_at INTEGER NOT NULL
 );
 
--- The UI groups cards by items.current_column. Values must stay in sync with
--- orderedBoardColumns in apps/ui/lib/live-board.ts:
+-- Board clients group cards by items.current_column.
 --   idea | brainstorm | requirements | implementation | done
--- phase_status values consumed by the UI:
+-- phase_status values:
 --   draft | running | review_required | completed | failed
 CREATE TABLE IF NOT EXISTS items (
   id TEXT PRIMARY KEY,

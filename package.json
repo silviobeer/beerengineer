@@ -8,7 +8,6 @@
   ],
   "scripts": {
     "dev:engine": "npm run dev --workspace=@beerengineer2/engine",
-    "dev:ui": "npm run dev --workspace=beerengineer-ui",
     "start:api": "npm run start:api --workspace=@beerengineer2/engine",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present"

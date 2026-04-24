@@ -1,5 +1,13 @@
 # Overnight build log — frontend-CLI board integration
 
+> **2026-04-24 UI teardown.** `apps/ui` has been removed ahead of a
+> greenfield rebuild. The Next.js UI, its Playwright tests, and the
+> `beerengineer-ui` npm workspace described below **no longer exist in the
+> tree** — this file is kept as historical build-log. Current status: CLI +
+> Engine HTTP API only; the API contract lives at `spec/api-contract.md`
+> and `apps/engine/src/api/openapi.json` (served at `GET /openapi.json`).
+> The next UI is pending a separate plan; see `specs/ui-rebuild-plan.md`.
+
 Status (Milestone 3 reached): backend ready · live run control · UI integrated.
 
 ## What shipped
