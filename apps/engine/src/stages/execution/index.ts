@@ -167,7 +167,15 @@ async function executeWave(
       return result
     } finally {
       if (realGit.enabled && storyWorktreeRoot) {
-        removeStoryWorktreeReal(realGit, storyWorktreeRoot)
+        // Swallow cleanup errors so they cannot mask a primary failure from
+        // `implementStory` / branch ops. The primary error carries the real
+        // debugging signal; worktree-removal failures are surfaced via logs
+        // and cleaned up by `gcManagedStoryWorktreesReal` on the next run.
+        try {
+          removeStoryWorktreeReal(realGit, storyWorktreeRoot)
+        } catch (err) {
+          stagePresent.dim(`worktree cleanup failed for ${storyWorktreeRoot}: ${(err as Error).message}`)
+        }
       }
     }
   }

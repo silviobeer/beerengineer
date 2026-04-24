@@ -12,7 +12,7 @@ import {
 import { isEngineOwnedBranchName } from "./baseBranch.js"
 
 export type RealGitDisabled = { enabled: false; reason: string }
-export type RealGitEnabled = { enabled: true; workspaceRoot: string; baseBranch: string; itemWorktreeRoot?: string }
+export type RealGitEnabled = { enabled: true; workspaceRoot: string; baseBranch: string; itemWorktreeRoot: string }
 export type RealGitMode = RealGitEnabled | RealGitDisabled
 
 type GitResult = { ok: boolean; stdout: string; stderr: string }
@@ -43,6 +43,10 @@ export function detectRealGitMode(context: WorkflowContext): RealGitMode {
   const baseBranch = context.baseBranch?.trim()
   if (!baseBranch) return { enabled: false, reason: "base branch could not be resolved" }
 
+  if (!context.itemSlug?.trim()) {
+    return { enabled: false, reason: "itemSlug is required for real-git mode (item worktree is mandatory)" }
+  }
+
   const porcelain = runGit(workspaceRoot, ["status", "--porcelain"])
   if (!porcelain.ok) return { enabled: false, reason: `git status failed: ${porcelain.stderr}` }
   if (porcelain.stdout.length > 0) return { enabled: false, reason: "workspace has uncommitted changes (dirty repo)" }
@@ -51,12 +55,12 @@ export function detectRealGitMode(context: WorkflowContext): RealGitMode {
     enabled: true,
     workspaceRoot,
     baseBranch,
-    itemWorktreeRoot: context.itemSlug ? layout.itemWorktreeDir(context) : undefined,
+    itemWorktreeRoot: layout.itemWorktreeDir(context),
   }
 }
 
 function branchWorkspaceRoot(mode: RealGitEnabled): string {
-  return mode.itemWorktreeRoot ?? mode.workspaceRoot
+  return mode.itemWorktreeRoot
 }
 
 function branchExists(workspaceRoot: string, branch: string): boolean {
@@ -165,9 +169,21 @@ function mergeNoFf(mode: RealGitEnabled, target: string, source: string, message
   }
 }
 
+// Worktree management always operates against the primary checkout
+// (mode.workspaceRoot): worktree add/remove is git's view of the repo as a
+// whole, and the `from` branch is a ref reachable from any worktree. We
+// deliberately bypass branchWorkspaceRoot so worktree lifecycle never depends
+// on which worktree currently has HEAD.
 function ensureManagedWorktree(mode: RealGitEnabled, branch: string, targetPath: string, from: string): string {
-  ensureBranchExistsFrom({ ...mode, itemWorktreeRoot: undefined }, branch, from)
-  const existing = findWorktreeByPath(mode.workspaceRoot, targetPath)
+  const primary = mode.workspaceRoot
+  if (!branchExists(primary, branch)) {
+    if (!branchExists(primary, from)) {
+      throw new Error(`realGit: cannot branch ${branch} from missing base ${from}`)
+    }
+    const create = runGit(primary, ["branch", branch, from])
+    if (!create.ok) throw new Error(`realGit: create ${branch} from ${from} failed: ${create.stderr}`)
+  }
+  const existing = findWorktreeByPath(primary, targetPath)
   if (existing?.branch === branch) {
     if (currentBranch(targetPath) !== branch) {
       const co = runGit(targetPath, ["checkout", branch])
@@ -176,12 +192,12 @@ function ensureManagedWorktree(mode: RealGitEnabled, branch: string, targetPath:
     return targetPath
   }
   if (existing) {
-    const remove = runGit(mode.workspaceRoot, ["worktree", "remove", "--force", targetPath])
+    const remove = runGit(primary, ["worktree", "remove", "--force", targetPath])
     if (!remove.ok) throw new Error(`realGit: remove stale worktree ${targetPath} failed: ${remove.stderr}`)
   } else if (existsSync(targetPath)) {
     rmSync(targetPath, { recursive: true, force: true })
   }
-  const add = runGit(mode.workspaceRoot, ["worktree", "add", "--force", targetPath, branch])
+  const add = runGit(primary, ["worktree", "add", "--force", targetPath, branch])
   if (!add.ok) throw new Error(`realGit: create worktree ${targetPath} for ${branch} failed: ${add.stderr || add.stdout}`)
   const actual = currentBranch(targetPath)
   if (actual !== branch) {
@@ -192,11 +208,7 @@ function ensureManagedWorktree(mode: RealGitEnabled, branch: string, targetPath:
 
 export function ensureItemBranchReal(mode: RealGitEnabled, context: WorkflowContext): string {
   const name = branchNameItem(context)
-  if (mode.itemWorktreeRoot) {
-    ensureManagedWorktree({ ...mode, itemWorktreeRoot: undefined }, name, resolve(mode.itemWorktreeRoot), mode.baseBranch)
-    return name
-  }
-  ensureBranchFrom(mode, name, mode.baseBranch)
+  ensureManagedWorktree(mode, name, mode.itemWorktreeRoot, mode.baseBranch)
   return name
 }
 
@@ -302,7 +314,10 @@ export function abandonStoryBranchReal(
   const abandonedRef = `refs/beerengineer/abandoned/${branch}/${stamp}`
   const sha = runGit(root, ["rev-parse", `refs/heads/${branch}`])
   if (!sha.ok || !sha.stdout) return null
-  // If we're currently on the branch, park on base before deleting it.
+  // If we're currently on the branch, park the item worktree on the item
+  // branch (the natural resting state for item-scoped execution) and only
+  // fall back to base when the item branch has not yet been created — for
+  // example when abandonment happens before `ensureItemBranchReal`.
   if (currentBranch(root) === branch) {
     const parkBranch = branchNameItem(context)
     if (branchExists(root, parkBranch)) {

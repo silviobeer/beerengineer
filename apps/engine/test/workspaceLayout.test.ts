@@ -51,7 +51,7 @@ test("item worktree helpers are item-scoped and story worktrees are run-scoped b
   assert.equal(layout.itemStoriesRootDir(itemCtx), `${itemRoot}${sep}stories`)
   assert.equal(
     layout.executionStoryWorktreeDir(itemCtx, 3, "US_1"),
-    `${itemRoot}${sep}stories${sep}${ctx.runId.toLowerCase()}-us-1${sep}worktree`,
+    `${itemRoot}${sep}stories${sep}${ctx.runId.toLowerCase()}__us-1${sep}worktree`,
   )
 })
 

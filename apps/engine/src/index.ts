@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { ask, close } from "./sim/human.js"
 import { createCliIO } from "./core/ioCli.js"
-import { detectRealGitMode, gcManagedStoryWorktreesReal } from "./core/realGit.js"
+import { detectRealGitMode, gcManagedStoryWorktreesReal, type RealGitEnabled } from "./core/realGit.js"
 import { layout } from "./core/workspaceLayout.js"
 import {
   backfillWorkspaceConfigs,
@@ -1234,10 +1234,16 @@ async function runWorkspaceWorktreeGcCommand(key: string | undefined, json = fal
       return 1
     }
 
-    const result = gcManagedStoryWorktreesReal(
-      { enabled: true, workspaceRoot: rootPath, baseBranch: "main" },
-      layout.worktreesRoot(),
-    )
+    // GC uses the workspace root for worktree listing/removal regardless of
+    // whether the repo was clean or dirty; synthesize a minimal enabled mode
+    // so we do not depend on detectRealGitMode's dirty-repo gate.
+    const gcMode: RealGitEnabled = {
+      enabled: true,
+      workspaceRoot: rootPath,
+      baseBranch: "main",
+      itemWorktreeRoot: rootPath,
+    }
+    const result = gcManagedStoryWorktreesReal(gcMode, layout.worktreesRoot())
 
     if (json) {
       process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)

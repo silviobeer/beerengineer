@@ -97,7 +97,7 @@ export const layout = {
   executionStoryWorktreeDir(ctx: WorkflowContext, waveNumber: number, storyId: string): string {
     return join(
       layout.itemStoriesRootDir(ctx),
-      `${sanitizeSegment(ctx.runId)}-${sanitizeSegment(storyId)}`,
+      `${sanitizeSegment(ctx.runId)}__${sanitizeSegment(storyId)}`,
       "worktree",
     )
   },
