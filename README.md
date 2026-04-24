@@ -16,6 +16,12 @@ npm exec --workspace=@beerengineer2/engine beerengineer -- doctor
 npm exec --workspace=@beerengineer2/engine beerengineer -- setup --no-interactive
 npm exec --workspace=@beerengineer2/engine beerengineer -- setup --group notifications
 npm exec --workspace=@beerengineer2/engine beerengineer -- notifications test telegram
+npm exec --workspace=@beerengineer2/engine beerengineer -- workspace list
+npm exec --workspace=@beerengineer2/engine beerengineer -- workspace use helloworld
+npm exec --workspace=@beerengineer2/engine beerengineer -- status --all
+npm exec --workspace=@beerengineer2/engine beerengineer -- items --all --compact
+npm exec --workspace=@beerengineer2/engine beerengineer -- chats --all --compact
+npm exec --workspace=@beerengineer2/engine beerengineer -- runs --all --compact
 npm exec --workspace=@beerengineer2/engine beerengineer -- start ui
 npm exec --workspace=@beerengineer2/engine beerengineer -- item action --item ITEM-0001 --action promote_to_requirements
 npm run start:api                                    # HTTP+SSE API auf :4100
@@ -119,6 +125,37 @@ beerengineer [--workspace <key>]
   laufen, aber ab `architecture` bis `documentation` gibt es keinen User-Chat,
   solange der Run nicht blockiert.
 
+beerengineer workspace use <key>
+  Merkt lokal die aktuelle Workspace fuer nachfolgende Navigation mit
+  `status`, `items`, `runs` und `chats`.
+
+beerengineer status [--all] [--json]
+  Operator-Ueberblick ueber den aktuellen Workspace oder global ueber alle
+  Workspaces. `status --all` sortiert nach Handlungsdruck.
+
+beerengineer items [--workspace <key>] [--all] [--compact] [--json]
+beerengineer runs  [--workspace <key>] [--all] [--compact] [--json]
+beerengineer chats [--workspace <key>] [--all] [--compact] [--json]
+  Read-model-Navigation fuer Items, Runs und offene Chats.
+
+beerengineer item get <id|code> [--workspace <key>] [--json]
+beerengineer run get <run-id> [--json]
+  Detailansichten fuer ein Item bzw. einen Run inklusive aufgeloester
+  offener Frage.
+
+beerengineer chat answer (--prompt <id> | --run <run-id>) [--text <msg>] [--multiline] [--editor]
+  Beantwortet einen offenen Prompt ueber denselben Prompt-/Answer-Pfad wie UI
+  und Harness. Ohne `--text` liest die CLI von stdin.
+
+beerengineer run watch <run-id>
+  Tailt den Run operator-lesbar (`-> stage`, `chat`, `? waiting`,
+  `> answer`, `done ...`).
+
+beerengineer item open <id|code> [--workspace <key>]
+beerengineer run open <run-id>
+  Gibt die UI-URL aus und oeffnet sie nur dann lokal im Browser, wenn die
+  konfigurierte UI-Adresse erreichbar ist.
+
 beerengineer --json [--workspace <key>] [--verbose]
 beerengineer run --json [--workspace <key>] [--verbose]
   Harness-Modus fuer Agenten (z.B. Claude Code, Codex). Stdout traegt pro
@@ -145,6 +182,28 @@ beerengineer run --json [--workspace <key>] [--verbose]
   auf stdin. Human-Output ist in beiden Modi auf stderr verbannt.
   Der Run endet mit einer `{"type":"cli_finished","runId":"…"}`-Zeile.
 ```
+
+### Architektur-Specs
+
+Die aktuelle Zielrichtung fuer CLI, API, UI, Conversation und Chattools ist
+in folgenden Specs festgehalten:
+
+- `spec/cli-api-ui-refactoring-plan.md`
+- `spec/conversation-model-plan.md`
+- `spec/conversation-json-schema.md`
+- `spec/chattool-integration-plan.md`
+- `spec/engine-api-route-design.md`
+
+Wichtig:
+
+- `CLI first` bleibt Produktprinzip fuer Operator-Workflows
+- die Zielarchitektur ist aber `API centered`
+- die Interaktion mit dem LLM soll ueber einen kanonischen
+  Conversation-/Open-Prompt-Layer fuer CLI, Simple UI, Pro UI und externe
+  Chattools laufen
+- die aktuelle Telegram-Implementierung ist weiterhin primär
+  **outbound notifications**; bidirektionale Chattool-Integration ist als
+  naechster Architektur-Schritt beschrieben, aber noch nicht umgesetzt
 
 ### Workspace-Setup und Preflight
 
