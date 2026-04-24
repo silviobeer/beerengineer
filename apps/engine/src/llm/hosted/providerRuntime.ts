@@ -45,10 +45,15 @@ export function spawnCommand(
     const stderrChunks: Buffer[] = []
     let lineBuffer = ""
     let settled = false
+    let stdinClosed = false
     const settle = (fn: () => void) => {
       if (settled) return
       settled = true
       fn()
+    }
+    const ignoreBrokenPipe = (err: NodeJS.ErrnoException) => {
+      if (err.code === "EPIPE" || err.code === "ERR_STREAM_DESTROYED") return
+      settle(() => reject(err))
     }
     const flushLines = (final = false) => {
       if (!options.onStdoutLine) return
@@ -64,6 +69,10 @@ export function spawnCommand(
       }
     }
     child.once("error", err => settle(() => reject(err)))
+    child.stdin.on("error", ignoreBrokenPipe)
+    child.stdin.on("close", () => {
+      stdinClosed = true
+    })
     child.stdout.on("data", chunk => {
       stdoutChunks.push(chunk as Buffer)
       if (options.onStdoutLine) {
@@ -82,7 +91,11 @@ export function spawnCommand(
         }),
       )
     })
-    if (stdinText != null) child.stdin.write(stdinText)
-    child.stdin.end()
+    if (stdinText != null && !stdinClosed && !child.stdin.destroyed) {
+      child.stdin.write(stdinText, err => {
+        if (err) ignoreBrokenPipe(err)
+      })
+    }
+    if (!stdinClosed && !child.stdin.destroyed) child.stdin.end()
   })
 }

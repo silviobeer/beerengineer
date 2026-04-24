@@ -51,16 +51,6 @@ export type StageRunRow = {
   error_message: string | null
 }
 
-export type PendingPromptRow = {
-  id: string
-  run_id: string
-  prompt: string
-  displayPrompt?: string | null
-  answer: string | null
-  created_at: number
-  answered_at: number | null
-}
-
 export type NotificationDeliveryRow = {
   dedup_key: string
   channel: string
@@ -95,7 +85,7 @@ export async function startRun(input: {
 }
 
 export async function answerPrompt(runId: string, promptId: string, answer: string): Promise<void> {
-  const res = await fetch(`/api/runs/${runId}/input`, {
+  const res = await fetch(`/api/runs/${runId}/answer`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ promptId, answer })
@@ -109,11 +99,37 @@ export async function answerPrompt(runId: string, promptId: string, answer: stri
   throw new Error(message)
 }
 
-export async function getOpenPrompt(runId: string): Promise<PendingPromptRow | null> {
-  const res = await fetch(`/api/runs/${runId}/prompts`, { cache: "no-store" })
+export type ConversationEntry = {
+  id: string
+  runId: string
+  stageKey: string | null
+  kind: "system" | "message" | "question" | "answer"
+  actor: "system" | "agent" | "user"
+  text: string
+  createdAt: string
+  promptId?: string
+  answerTo?: string
+}
+
+export type OpenPrompt = {
+  promptId: string
+  runId: string
+  stageKey: string | null
+  text: string
+  createdAt: string
+}
+
+export type ConversationResponse = {
+  runId: string
+  updatedAt: string
+  entries: ConversationEntry[]
+  openPrompt: OpenPrompt | null
+}
+
+export async function getConversation(runId: string): Promise<ConversationResponse | null> {
+  const res = await fetch(`/api/runs/${runId}/conversation`, { cache: "no-store" })
   if (!res.ok) return null
-  const body = (await res.json()) as { prompt: PendingPromptRow | null }
-  return body.prompt ?? null
+  return (await res.json()) as ConversationResponse
 }
 
 export async function getRunRecovery(runId: string): Promise<RecoveryDetail | null> {
@@ -126,14 +142,14 @@ export async function getRunRecovery(runId: string): Promise<RecoveryDetail | nu
 export async function resumeRun(
   runId: string,
   payload: { summary: string; branch?: string; commit?: string; reviewNotes?: string }
-): Promise<{ ok: true; remediationId: string } | { ok: false; status: number; error: string }> {
+): Promise<{ ok: true; runId: string; status: string } | { ok: false; status: number; error: string }> {
   const res = await fetch(`/api/runs/${runId}/resume`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload)
   })
   const body = await res.json().catch(() => ({}))
-  if (res.ok) return { ok: true, remediationId: (body as { remediationId: string }).remediationId }
+  if (res.ok) return { ok: true, runId: (body as { runId: string }).runId, status: (body as { status: string }).status }
   return { ok: false, status: res.status, error: (body as { error?: string }).error ?? `http_${res.status}` }
 }
 
@@ -153,7 +169,6 @@ export type ItemAction =
   | "start_brainstorm"
   | "promote_to_requirements"
   | "start_implementation"
-  | "resume_run"
   | "mark_done"
 
 export type ItemActionResponse =
@@ -222,10 +237,10 @@ export async function getNotificationDeliveries(opts: {
 }
 
 export async function performItemAction(itemId: string, action: ItemAction): Promise<ItemActionResponse> {
-  const res = await fetch(`/api/items/${itemId}/actions`, {
+  const res = await fetch(`/api/items/${itemId}/actions/${action}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ action })
+    body: JSON.stringify({})
   })
   const body = await res.json().catch(() => ({}))
   if (res.ok) {

@@ -1,6 +1,6 @@
-# Browser greeting page Technical Documentation
+# Real Git Handoff — Core Technical Documentation
 
-Technical reference for Browser greeting page, generated from architecture, planning, execution, and project review artifacts.
+Technical reference for Real Git Handoff — Core, generated from architecture, planning, execution, and project review artifacts.
 
 ## System Overview
 Project-wide core architecture for UI, API, and data storage. System shape: Monorepo with UI, API, and shared data storage.
@@ -18,4 +18,4 @@ Frontend: Core workflow and list views; Backend: Validation, persistence, and wo
 low maintainability: Shared helper logic appears duplicated in multiple modules.
 
 ## Update Mode
-This run updated the technical documentation for Browser greeting page using the latest workflow artifacts.
+This run updated the technical documentation for Real Git Handoff — Core using the latest workflow artifacts.

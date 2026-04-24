@@ -46,7 +46,7 @@ No generic `POST /items/:id/actions` with an action string in the body. Explicit
 
 - `GET /runs?workspace=:key&itemId=&status=&owner=&limit=&cursor=`
 - `POST /runs` — create run
-  - Request: `{ workspaceKey, title, description?, owner? }`
+  - Request: `{ workspaceKey, title, description? }`
   - Response: `{ runId, itemId, status }`
 - `GET /runs/:id`
 - `GET /runs/:id/tree`

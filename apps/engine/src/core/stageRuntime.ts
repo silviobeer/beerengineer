@@ -369,7 +369,12 @@ async function runStageBody<TState, TArtifact, TResult>(
       await persistRun(run)
       emitChatMessage(run, definition.stageAgentLabel, "stage-agent", response.message, true)
 
-      const userMessage = await definition.askUser("  you > ")
+      // Pass the agent's message as the prompt text so `pending_prompts` and
+      // every transcript projection show real content instead of a "you >"
+      // placeholder. Terminal renderers already displayed the chat_message
+      // event above, so the CLI can safely suppress duplicate echo when it
+      // sees the same text come back through `prompt_requested`.
+      const userMessage = await definition.askUser(response.message)
       pushLog(run, { type: "user_message", message: userMessage })
       run.userTurnCount++
       setStatus(run, "chat_in_progress")

@@ -10,12 +10,12 @@ See `spec/api-contract.md` for routes and JSON schemas.
 
 Today the UI is a **mixed client**:
 - API client for reads (board, run detail, events).
-- CLI launcher for execution (`POST /api/runs`, `POST /api/items/:id/actions`, `POST /api/runs/:id/resume` all spawn `beerengineer …`).
+- CLI launcher for execution (`POST /api/runs`, `POST /api/items/:id/actions/:action`, `POST /api/runs/:id/resume` all spawn `beerengineer …`).
 
 Concrete spawn sites:
 - `apps/ui/app/api/_lib/cli.ts` — `spawn(process.execPath, [ENGINE_BIN, …])`
 - `apps/ui/app/api/runs/route.ts` — POST spawns `run --json`.
-- `apps/ui/app/api/items/[id]/actions/route.ts` — spawns `start_brainstorm`, `start_implementation`, `resume_run`.
+- `apps/ui/app/api/items/[id]/actions/[action]/route.ts` — forwards explicit item actions; older UI revisions spawned `start_brainstorm` / `start_implementation`.
 - `apps/ui/app/api/runs/[id]/resume/route.ts` — spawns `run resume`.
 
 Secondary problem: there is no canonical **conversation** view. Clients reconstruct chat from `chat_message` / `prompt_requested` / `prompt_answered` events, which makes `you >`-placeholders leak into UI and CLI.
@@ -76,7 +76,7 @@ Derived, not stored:
 | Current (spawn) | Replacement |
 |---|---|
 | `apps/ui/app/api/runs/route.ts` POST → `spawnEngineCli(['run', '--json', …])` | Forward to `POST {engine}/runs` |
-| `apps/ui/app/api/items/[id]/actions/route.ts` → CLI for `start_brainstorm` / `start_implementation` | Forward to `POST {engine}/items/:id/actions/:action` |
+| `apps/ui/app/api/items/[id]/actions/[action]/route.ts` → CLI for `start_brainstorm` / `start_implementation` | Forward to `POST {engine}/items/:id/actions/:action` |
 | `apps/ui/app/api/runs/[id]/resume/route.ts` → CLI for resume | Forward to `POST {engine}/runs/:id/resume` (already exists) |
 | `apps/ui/app/api/_lib/cli.ts` | Delete once the three sites above no longer import it |
 

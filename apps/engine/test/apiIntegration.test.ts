@@ -122,16 +122,16 @@ async function collectSseEventsFor(url: string, durationMs: number): Promise<str
   return done.then(() => events)
 }
 
-test("POST /items/:id/actions returns 404 on unknown item", async () => {
+test("POST /items/:id/actions/:action returns 404 on unknown item", async () => {
   const dbPath = tmpDbPath()
   initDatabase(dbPath).close()
   const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
   try {
     await waitForHealth(base)
-    const res = await fetch(`${base}/items/no-such/actions`, {
+    const res = await fetch(`${base}/items/no-such/actions/start_brainstorm`, {
       method: "POST",
       headers: authHeaders({ "content-type": "application/json" }),
-      body: JSON.stringify({ action: "start_brainstorm" })
+      body: JSON.stringify({})
     })
     assert.equal(res.status, 404)
     const body = await res.json() as { error: string }
@@ -452,7 +452,7 @@ test("DELETE purge refuses when stored root_path is outside allowedRoots", async
   }
 })
 
-test("POST /items/:id/actions returns 409 on invalid transition", async () => {
+test("POST /items/:id/actions/:action returns 409 on invalid transition", async () => {
   const dbPath = tmpDbPath()
   const db = initDatabase(dbPath)
   const repos = new Repos(db)
@@ -464,10 +464,10 @@ test("POST /items/:id/actions returns 409 on invalid transition", async () => {
   const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
   try {
     await waitForHealth(base)
-    const res = await fetch(`${base}/items/${item.id}/actions`, {
+    const res = await fetch(`${base}/items/${item.id}/actions/start_brainstorm`, {
       method: "POST",
       headers: authHeaders({ "content-type": "application/json" }),
-      body: JSON.stringify({ action: "start_brainstorm" })
+      body: JSON.stringify({})
     })
     assert.equal(res.status, 409)
     const body = await res.json() as { error: string; action: string; current: { column: string; phaseStatus: string } }
@@ -479,7 +479,7 @@ test("POST /items/:id/actions returns 409 on invalid transition", async () => {
   }
 })
 
-test("POST /items/:id/actions promotes brainstorm to requirements and persists column", async () => {
+test("POST /items/:id/actions/:action promotes brainstorm to requirements and persists column", async () => {
   const dbPath = tmpDbPath()
   const db = initDatabase(dbPath)
   const repos = new Repos(db)
@@ -491,10 +491,10 @@ test("POST /items/:id/actions promotes brainstorm to requirements and persists c
   const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
   try {
     await waitForHealth(base)
-    const res = await fetch(`${base}/items/${item.id}/actions`, {
+    const res = await fetch(`${base}/items/${item.id}/actions/promote_to_requirements`, {
       method: "POST",
       headers: authHeaders({ "content-type": "application/json" }),
-      body: JSON.stringify({ action: "promote_to_requirements" })
+      body: JSON.stringify({})
     })
     assert.equal(res.status, 200)
     const body = await res.json() as { itemId: string; column: string; phaseStatus: string }
@@ -512,7 +512,7 @@ test("POST /items/:id/actions promotes brainstorm to requirements and persists c
   }
 })
 
-test("POST /runs/:id/input accepts answers for cli-owned runs", async () => {
+test("POST /runs/:id/answer accepts answers for cli-owned runs", async () => {
   const dbPath = tmpDbPath()
   const db = initDatabase(dbPath)
   const repos = new Repos(db)
@@ -525,7 +525,7 @@ test("POST /runs/:id/input accepts answers for cli-owned runs", async () => {
   const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
   try {
     await waitForHealth(base)
-    const res = await fetch(`${base}/runs/${run.id}/input`, {
+    const res = await fetch(`${base}/runs/${run.id}/answer`, {
       method: "POST",
       headers: authHeaders({ "content-type": "application/json" }),
       body: JSON.stringify({ promptId: prompt.id, answer: "anything" })
@@ -583,10 +583,10 @@ test("GET /events streams item_column_changed for board-visible actions", async 
     // Wait briefly so the SSE subscription has been registered server-side.
     await new Promise(r => setTimeout(r, 150))
 
-    const res = await fetch(`${base}/items/${item.id}/actions`, {
+    const res = await fetch(`${base}/items/${item.id}/actions/promote_to_requirements`, {
       method: "POST",
       headers: authHeaders({ "content-type": "application/json" }),
-      body: JSON.stringify({ action: "promote_to_requirements" })
+      body: JSON.stringify({})
     })
     assert.equal(res.status, 200)
 
@@ -639,10 +639,10 @@ test("GET /events?workspace=<key> filters out events from other workspaces", asy
     })().catch(() => {})
 
     await new Promise(r => setTimeout(r, 150))
-    const res = await fetch(`${base}/items/${item2.id}/actions`, {
+    const res = await fetch(`${base}/items/${item2.id}/actions/promote_to_requirements`, {
       method: "POST",
       headers: authHeaders({ "content-type": "application/json" }),
-      body: JSON.stringify({ action: "promote_to_requirements" })
+      body: JSON.stringify({})
     })
     assert.equal(res.status, 200)
 

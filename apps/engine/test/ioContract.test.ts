@@ -98,7 +98,7 @@ test("crossProcessBridge resolves a CLI prompt from a foreign stage_log row", as
     })
     // Simulate `prepareRun` wiring: the cross-process bridge is what re-emits
     // `prompt_answered` rows written by another process (e.g. the API server
-    // when the UI POSTs an answer to `/runs/:id/input`).
+    // when the UI POSTs an answer to `/runs/:id/answer`).
     const writtenLogIds = new Set<string>()
     const detachBridge = attachCrossProcessBridge(io.bus, repos, run.id, {
       writtenLogIds,

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import { useSearchParams } from "next/navigation"
-import { type RunRow, type StageRunRow } from "@/lib/api"
+import { type ConversationEntry, type ConversationResponse, type RunRow, type StageRunRow } from "@/lib/api"
 import { PromptComposer } from "@/components/primitives/PromptComposer"
 import { BranchRow } from "@/components/primitives/BranchRow"
 import { ItemMergePanel } from "@/components/overlay/ItemMergePanel"
@@ -14,19 +14,7 @@ import type {
 } from "@/lib/view-models"
 import { RecoveryPanel } from "./RecoveryPanel"
 
-type TimelineEntry = {
-  id: string
-  type: string
-  at: number
-  message: string
-  author?: string
-  kind?: string
-  severity?: string
-  findingSource?: string
-  data?: unknown
-}
-
-type PendingPrompt = { id: string; prompt: string; rawPrompt: string } | null
+type PendingPrompt = { id: string; prompt: string } | null
 
 type Tab = "transcript" | "stages" | "branches" | "preview"
 
@@ -50,55 +38,11 @@ function formatTranscriptTimestamp(at: number): string {
   }).format(new Date(at))
 }
 
-function isGenericPrompt(prompt: string | null | undefined): boolean {
-  if (!prompt) return true
-  return /^\s*you\s*>\s*$/i.test(prompt)
-}
-
-function deriveTimelinePresentation(
-  type: string,
-  payload: {
-    message?: string
-    text?: string
-    role?: string
-    data?: { role?: string; source?: string; kind?: string; meta?: { source?: string; severity?: string } }
-  } | null
-): { author?: string; kind?: string; message?: string; hidden?: boolean } {
-  const message =
-    typeof payload?.message === "string"
-      ? payload.message
-      : typeof payload?.text === "string"
-      ? payload.text
-      : undefined
-
-  if (type === "prompt_requested" && isGenericPrompt(message)) {
-    return { hidden: true }
-  }
-  if (type === "prompt_answered") {
-    return { author: "You", kind: "answer", message }
-  }
-  if (type === "chat_message") {
-    return {
-      author:
-        typeof payload?.role === "string"
-          ? payload.role
-          : typeof payload?.data?.role === "string"
-          ? payload.data.role
-          : "Assistant",
-      kind: "message",
-      message,
-    }
-  }
-  return {
-    author:
-      typeof payload?.role === "string"
-        ? payload.role
-        : typeof payload?.data?.role === "string"
-        ? payload.data.role
-        : undefined,
-    kind: typeof payload?.data?.kind === "string" ? payload.data.kind : undefined,
-    message,
-  }
+function actorLabel(entry: ConversationEntry): string {
+  if (entry.kind === "answer") return "You"
+  if (entry.actor === "user") return "You"
+  if (entry.actor === "agent") return entry.stageKey ?? "Assistant"
+  return "system"
 }
 
 function deriveBranches(run: RunRow | null): BranchRowViewModel[] {
@@ -157,7 +101,7 @@ export function LiveRunConsole({
   const [tab, setTab] = useState<Tab>(initialTab)
   const [run, setRun] = useState<RunRow | null>(null)
   const [stages, setStages] = useState<StageRunRow[]>([])
-  const [timeline, setTimeline] = useState<TimelineEntry[]>([])
+  const [entries, setEntries] = useState<ConversationEntry[]>([])
   const [pending, setPending] = useState<PendingPrompt>(null)
   const [recoveryRefreshKey, setRecoveryRefreshKey] = useState(0)
   const sourceRef = useRef<EventSource | null>(null)
@@ -170,17 +114,14 @@ export function LiveRunConsole({
     setStages(body.stageRuns)
   }
 
-  async function refreshPrompt() {
-    const res = await fetch(`/api/runs/${runId}/prompts`, { cache: "no-store" })
+  async function refreshConversation() {
+    const res = await fetch(`/api/runs/${runId}/conversation`, { cache: "no-store" })
     if (!res.ok) return
-    const body = (await res.json()) as { prompt: { id: string; prompt: string; displayPrompt?: string | null } | null }
+    const body = (await res.json()) as ConversationResponse
+    setEntries(body.entries)
     setPending(
-      body.prompt
-        ? {
-            id: body.prompt.id,
-            prompt: body.prompt.displayPrompt ?? body.prompt.prompt,
-            rawPrompt: body.prompt.prompt,
-          }
+      body.openPrompt
+        ? { id: body.openPrompt.promptId, prompt: body.openPrompt.text }
         : null
     )
   }
@@ -192,53 +133,21 @@ export function LiveRunConsole({
 
   useEffect(() => {
     void refreshTree()
-    void refreshPrompt()
+    void refreshConversation()
 
     const source = new EventSource(`/api/runs/${runId}/events`)
     sourceRef.current = source
 
-    const append = (type: string, data: unknown) => {
-      const payload = data as {
-        at?: number
-        message?: string
-        text?: string
-        role?: string
-        data?: { role?: string; source?: string; kind?: string; meta?: { source?: string; severity?: string } }
-      } | null
-      const presentation = deriveTimelinePresentation(type, payload)
-      if (presentation.hidden) return
-      const entry: TimelineEntry = {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        type,
-        at: typeof payload?.at === "number" ? payload.at : Date.now(),
-        message:
-          typeof presentation.message === "string"
-            ? presentation.message
-            : typeof payload?.message === "string"
-            ? payload.message
-            : typeof payload?.text === "string"
-            ? payload.text
-            : type,
-        author: presentation.author,
-        kind: presentation.kind,
-        severity: payload?.data?.meta?.severity,
-        findingSource: payload?.data?.meta?.source,
-        data
-      }
-      setTimeline(prev => [...prev, entry].slice(-200))
-    }
-
     const wire = (type: string) => {
-      source.addEventListener(type, evt => {
-        try {
-          const payload = JSON.parse((evt as MessageEvent).data as string)
-          append(type, payload)
-        } catch {
-          append(type, null)
-        }
+      source.addEventListener(type, () => {
         void refreshTree()
-        if (type === "prompt_requested" || type === "prompt_answered") {
-          void refreshPrompt()
+        if (
+          type === "prompt_requested" ||
+          type === "prompt_answered" ||
+          type === "chat_message" ||
+          type === "run_finished"
+        ) {
+          void refreshConversation()
         }
       })
     }
@@ -279,10 +188,6 @@ export function LiveRunConsole({
   const branches = deriveBranches(run)
   const merge = deriveMerge(run)
   const preview = derivePreview(run, previewReachable, previewUrl)
-  const pendingPromptText =
-    pending && isGenericPrompt(pending.rawPrompt)
-      ? [...timeline].reverse().find(entry => entry.type === "chat_message" && entry.message.trim().length > 0)?.message ?? pending.prompt
-      : pending?.prompt ?? null
 
   return (
     <div className="live-run-console">
@@ -306,10 +211,13 @@ export function LiveRunConsole({
         <PromptComposer
           runId={runId}
           promptId={pending.id}
-          prompt={pendingPromptText ?? pending.prompt}
+          prompt={pending.prompt}
           variant="full"
           autoFocus
-          onAnswered={() => setPending(null)}
+          onAnswered={() => {
+            setPending(null)
+            void refreshConversation()
+          }}
         />
       ) : run?.status === "running" ? (
         <div className="prompt-waiting">Waiting for engine…</div>
@@ -338,28 +246,20 @@ export function LiveRunConsole({
         <section className="run-section live-run-timeline" role="tabpanel">
           <h3>Conversation transcript</h3>
           <ul>
-            {timeline.map(entry => (
+            {entries.map(entry => (
               <li
                 key={entry.id}
-                data-kind={entry.kind ?? entry.type}
-                data-event-type={entry.type}
-                data-severity={entry.severity}
+                data-kind={entry.kind}
+                data-actor={entry.actor}
+                data-stage={entry.stageKey ?? ""}
               >
-                <span className="mono-label">{entry.kind ?? entry.type}</span>
-                {entry.severity ? (
-                  <span className="timeline-severity" data-severity={entry.severity}>
-                    {entry.severity}
-                  </span>
-                ) : null}
-                {entry.findingSource ? <span className="mono-label">{entry.findingSource}</span> : null}
-                {entry.author && entry.author !== entry.kind ? (
-                  <span className="mono-label">{entry.author}</span>
-                ) : null}
-                <span className="timeline-timestamp">{formatTranscriptTimestamp(entry.at)}</span>
-                <span>{entry.message}</span>
+                <span className="mono-label">{entry.kind}</span>
+                <span className="mono-label">{actorLabel(entry)}</span>
+                <span className="timeline-timestamp">{formatTranscriptTimestamp(Date.parse(entry.createdAt))}</span>
+                <span>{entry.text}</span>
               </li>
             ))}
-            {timeline.length === 0 ? <li className="muted">Listening for events…</li> : null}
+            {entries.length === 0 ? <li className="muted">Listening for events…</li> : null}
           </ul>
         </section>
       ) : null}

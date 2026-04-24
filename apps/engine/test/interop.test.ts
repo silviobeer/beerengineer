@@ -18,7 +18,7 @@
  *      was the API or the CLI.
  *   5. Prompt persistence is idempotent across re-emits.
  *   6. Event ordering matches emission order on a single bus.
- *   7. No session-in-this-process: POST /runs/:id/input still routes the
+ *   7. No session-in-this-process: POST /runs/:id/answer still routes the
  *      answer via the DB (shared transport), and the CLI picks it up.
  */
 
@@ -73,10 +73,9 @@ function mkFixture(owner: "cli" | "api" = "cli"): Fixture {
   }
 }
 
-/** Simulates the API server's POST /runs/:id/input handler when no
+/** Simulates the API server's POST /runs/:id/answer handler when no
  *  in-process session exists (i.e. the run is owned by another process,
- *  like the CLI). This is the code path under test — copied from the
- *  server's `handleRunInput` no-session branch — isolated so a test can
+ *  like the CLI). This is the code path under test, isolated so a test can
  *  call it without spinning up HTTP. */
 function simulateApiAnswer(repos: Repos, runId: string, promptId: string, answer: string): void {
   const answered = repos.answerPendingPrompt(promptId, answer)
@@ -130,7 +129,7 @@ test("interop: CLI ask() resolves when API writes prompt_answered to stage_logs"
         }
         assert.ok(pending, "pending prompt must be persisted before UI can answer")
 
-        // Simulate the API server handling a POST /runs/:id/input from the
+        // Simulate the API server handling a POST /runs/:id/answer from the
         // UI — this is the exact code path used for CLI-owned runs.
         simulateApiAnswer(fx.repos, fx.run.id, pending.id, "ship it")
 

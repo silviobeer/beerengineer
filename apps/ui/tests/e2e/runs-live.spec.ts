@@ -79,11 +79,11 @@ test.describe("live run flow", () => {
       const run = (await runRes.json()) as { status: string }
       if (run.status === "completed" || run.status === "failed") break
 
-      const promptRes = await request.get(`${ENGINE_URL}/runs/${runId}/prompts`)
-      const promptBody = (await promptRes.json()) as { prompt: { id: string } | null }
-      if (promptBody.prompt) {
-        await request.post(`${ENGINE_URL}/runs/${runId}/input`, {
-          data: { promptId: promptBody.prompt.id, answer: "automated driver" }
+      const convRes = await request.get(`${ENGINE_URL}/runs/${runId}/conversation`)
+      const convBody = (await convRes.json()) as { openPrompt: { promptId: string } | null }
+      if (convBody.openPrompt) {
+        await request.post(`${ENGINE_URL}/runs/${runId}/answer`, {
+          data: { promptId: convBody.openPrompt.promptId, answer: "automated driver" }
         })
       }
       await new Promise(r => setTimeout(r, 500))
@@ -138,13 +138,11 @@ test.describe("live run flow", () => {
     const promptDeadline = Date.now() + 30_000
     let resolvedPrompt = ""
     while (Date.now() < promptDeadline) {
-      const promptRes = await request.get(`/api/runs/${runId}/prompts`)
-      expect(promptRes.ok()).toBeTruthy()
-      const prompt = (await promptRes.json()) as {
-        prompt: { prompt: string; displayPrompt?: string | null } | null
-      }
-      if (prompt.prompt?.displayPrompt && prompt.prompt.displayPrompt !== prompt.prompt.prompt) {
-        resolvedPrompt = prompt.prompt.displayPrompt
+      const convRes = await request.get(`/api/runs/${runId}/conversation`)
+      expect(convRes.ok()).toBeTruthy()
+      const body = (await convRes.json()) as { openPrompt: { text: string } | null }
+      if (body.openPrompt?.text && !/^\s*you\s*>\s*$/i.test(body.openPrompt.text)) {
+        resolvedPrompt = body.openPrompt.text
         break
       }
       await new Promise(r => setTimeout(r, 500))
@@ -157,13 +155,13 @@ test.describe("live run flow", () => {
       const runRes = await request.get(`${ENGINE_URL}/runs/${runId}`)
       const run = (await runRes.json()) as { status: string }
       if (run.status === "completed" || run.status === "failed") break
-      const prompt = (await (await request.get(`${ENGINE_URL}/runs/${runId}/prompts`)).json()) as {
-        prompt: { id: string } | null
+      const conv = (await (await request.get(`${ENGINE_URL}/runs/${runId}/conversation`)).json()) as {
+        openPrompt: { promptId: string } | null
       }
-      if (prompt.prompt) {
+      if (conv.openPrompt) {
         await expect(page.locator(".live-run-timeline")).toContainText(/LLM-|reviewer|step|header/i, { timeout: 15_000 })
-        await request.post(`${ENGINE_URL}/runs/${runId}/input`, {
-          data: { promptId: prompt.prompt.id, answer: "ok" }
+        await request.post(`${ENGINE_URL}/runs/${runId}/answer`, {
+          data: { promptId: conv.openPrompt.promptId, answer: "ok" }
         })
       }
       await new Promise(r => setTimeout(r, 500))

@@ -8,7 +8,7 @@ import type { Repos } from "../db/repositories.js"
  *  - on `prompt_answered`, mark the matching row as answered.
  *
  * This replaces the duplicate prompt/answer mirroring that used to live in
- * both `ioCli` and `ioApi`.
+ * both the CLI adapter (`ioCli`) and the HTTP-side run service.
  *
  * Returns the unsubscribe function.
  */

@@ -25,6 +25,7 @@ export function ItemOverlay({ overlay }: { overlay: ItemOverlayViewModel }) {
         {overlay.itemId && overlay.currentColumn && overlay.currentPhase ? (
           <ItemBoardActions
             itemId={overlay.itemId}
+            latestRunId={overlay.runSummary?.runId ?? null}
             column={overlay.currentColumn}
             phase={overlay.currentPhase}
           />

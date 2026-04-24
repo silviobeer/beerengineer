@@ -280,7 +280,7 @@ export function attachDbSync(
  *   3. Whatever renderer the caller wired up (humanCli, NDJSON, SSE bridge).
  *
  * Prompt persistence (`withPromptPersistence`) is attached earlier by the
- * IO factory (`createCliIO` / `createApiIOSession`) since it's a transport
+ * IO factory (`createCliIO` / `runService.buildApiIo`) since it's a transport
  * obligation, not a per-run concern.
  */
 export function prepareRun(
@@ -322,7 +322,7 @@ export function prepareRun(
     workspaceFsId,
   })
 
-  // Every caller now passes a bus-backed io (createCliIO / createApiIOSession
+  // Every caller now passes a bus-backed io (createCliIO / runService.buildApiIo
   // both expose `.bus`). If for some reason a bare io slipped in, synthesize
   // a local bus so subscribers still attach somewhere — but this should be
   // considered a bug upstream.
@@ -418,7 +418,7 @@ export function withDbSync(
   if (!bus) {
     throw new Error(
       "withDbSync: inner io has no attached bus. Pass a bus-backed io " +
-      "(createCliIO / createApiIOSession) or call attachDbSync(bus, repos, ctx) directly."
+      "(createCliIO / runService.buildApiIo) or call attachDbSync(bus, repos, ctx) directly."
     )
   }
   attachDbSync(bus, repos, ctx)

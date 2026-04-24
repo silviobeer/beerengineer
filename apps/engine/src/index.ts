@@ -1067,6 +1067,7 @@ async function runRunGetCommand(runId: string | undefined, json = false): Promis
 }
 
 async function runChatAnswerCommand(cmd: Extract<Command, { kind: "chat-answer" }>): Promise<number> {
+  const { recordAnswer } = await import("./core/conversation.js")
   const db = initDatabase()
   try {
     const repos = new Repos(db)
@@ -1079,8 +1080,16 @@ async function runChatAnswerCommand(cmd: Extract<Command, { kind: "chat-answer" 
       return 1
     }
     const answer = readAnswerBody({ provided: cmd.answer, multiline: cmd.multiline })
-    repos.answerPendingPrompt(prompt.id, answer)
-    repos.appendLog({ runId: prompt.run_id, stageRunId: prompt.stage_run_id, eventType: "prompt_answered", message: answer, data: { promptId: prompt.id } })
+    const result = recordAnswer(repos, {
+      runId: prompt.run_id,
+      promptId: prompt.id,
+      answer,
+      source: "cli",
+    })
+    if (!result.ok) {
+      console.error(`  Could not record answer: ${result.code}`)
+      return 1
+    }
     console.log(`  answered ${prompt.id}`)
     console.log(`  run: ${prompt.run_id}`)
     if (cmd.runId) console.log("  target: latest open prompt for run")
@@ -1104,13 +1113,24 @@ async function runRunWatchCommand(runId: string | undefined): Promise<number> {
       return 1
     }
     console.log(`  watching ${run.id}  ${run.title}`)
-    repos.listLogsForRun(run.id).forEach(log => {
-      if (log.event_type === "stage_started") console.log(`  -> stage  ${log.message}`)
-      else if (log.event_type === "stage_completed") console.log(`  <- stage  ${log.message}`)
-      else if (log.event_type === "chat_message") console.log(`  chat  ${log.message}`)
-      else if (log.event_type === "prompt_requested") console.log("  ? waiting")
-      else if (log.event_type === "prompt_answered") console.log(`  > answer  ${log.message}`)
-    })
+    const { buildConversation } = await import("./core/conversation.js")
+    const conversation = buildConversation(repos, run.id)
+    const conversationLogIds = new Set(conversation?.entries.map(e => e.id) ?? [])
+    for (const log of repos.listLogsForRun(run.id)) {
+      if (log.event_type === "stage_started") {
+        console.log(`  -> stage  ${log.message}`)
+      } else if (log.event_type === "stage_completed") {
+        console.log(`  <- stage  ${log.message}`)
+      } else if (log.event_type === "chat_message" && conversationLogIds.has(log.id)) {
+        console.log(`  chat  ${log.message}`)
+      } else if (log.event_type === "prompt_requested" && conversationLogIds.has(log.id)) {
+        const entry = conversation?.entries.find(e => e.id === log.id)
+        console.log(`  ?  ${entry?.text ?? log.message}`)
+      } else if (log.event_type === "prompt_answered") {
+        console.log(`  > answer  ${log.message}`)
+      }
+    }
+    if (conversation?.openPrompt) console.log(`  ?  waiting  ${conversation.openPrompt.text}`)
     const refreshed = repos.getRun(run.id)
     console.log(`  done  ${refreshed?.current_stage ?? "—"} / ${refreshed?.status ?? "unknown"}`)
     return 0

@@ -2,7 +2,9 @@ import type { IncomingMessage, ServerResponse } from "node:http"
 import type { Db } from "../../db/connection.js"
 import type { Repos } from "../../db/repositories.js"
 import { getBoard, getRunTree } from "../board.js"
-import { isResumeInFlight, loadResumeReadiness } from "../../core/resume.js"
+import { isResumeInFlight } from "../../core/resume.js"
+import { buildConversation, recordAnswer } from "../../core/conversation.js"
+import { resumeRunInProcess, startRunFromIdea } from "../../core/runService.js"
 import { json, readJson } from "../http.js"
 
 export function handleGetBoard(db: Db, url: URL, res: ServerResponse): void {
@@ -13,13 +15,14 @@ export function handleGetBoard(db: Db, url: URL, res: ServerResponse): void {
 
 export function handleGetRun(repos: Repos, res: ServerResponse, runId: string): void {
   const run = repos.getRun(runId)
-  if (!run) return json(res, 404, { error: "run not found" })
-  json(res, 200, run)
+  if (!run) return json(res, 404, { error: "run not found", code: "not_found" })
+  const conv = buildConversation(repos, runId)
+  json(res, 200, { ...run, openPrompt: conv?.openPrompt ?? null })
 }
 
 export function handleGetRunTree(repos: Repos, res: ServerResponse, runId: string): void {
   const tree = getRunTree(repos, runId)
-  if (!tree) return json(res, 404, { error: "run not found" })
+  if (!tree) return json(res, 404, { error: "run not found", code: "not_found" })
   json(res, 200, tree)
 }
 
@@ -27,14 +30,15 @@ export function handleListRuns(repos: Repos, res: ServerResponse): void {
   json(res, 200, { runs: repos.listRuns() })
 }
 
-export function handleGetRunPrompts(repos: Repos, res: ServerResponse, runId: string): void {
-  const open = repos.getOpenPrompt(runId)
-  json(res, 200, { prompt: open ?? null })
+export function handleGetConversation(repos: Repos, res: ServerResponse, runId: string): void {
+  const conversation = buildConversation(repos, runId)
+  if (!conversation) return json(res, 404, { error: "run not found", code: "not_found" })
+  json(res, 200, conversation)
 }
 
 export function handleGetRecovery(repos: Repos, res: ServerResponse, runId: string): void {
   const run = repos.getRun(runId)
-  if (!run) return json(res, 404, { error: "run_not_found" })
+  if (!run) return json(res, 404, { error: "run_not_found", code: "not_found" })
   if (!run.recovery_status) return json(res, 200, { recovery: null })
   json(res, 200, {
     recovery: {
@@ -49,9 +53,11 @@ export function handleGetRecovery(repos: Repos, res: ServerResponse, runId: stri
 }
 
 /**
- * Record the remediation row and return `needsSpawn: true`. The engine HTTP
- * server never calls `performResume` — the UI layer is responsible for
- * spawning the CLI to actually re-enter the workflow.
+ * Resume a blocked run. Previously this route recorded the remediation row
+ * and returned `needsSpawn: true`; the UI then had to spawn the CLI to
+ * re-enter the workflow. Post-refactor the engine HTTP process owns the
+ * resume — `resumeRunInProcess` fires the workflow in the background and
+ * returns the ids immediately.
  */
 export async function handleResumeRun(
   repos: Repos,
@@ -66,71 +72,75 @@ export async function handleResumeRun(
     reviewNotes?: string
   }
 
-  const readiness = await loadResumeReadiness(repos, runId)
-  if (readiness.kind === "not_found") return json(res, 404, { error: "run_not_found" })
-  if (readiness.kind === "no_recovery") {
-    return json(res, 409, { error: "not_resumable", recovery: null })
-  }
-  if (readiness.kind === "not_resumable") {
-    return json(res, 409, { error: readiness.reason, recovery: readiness.record ?? null })
-  }
-  if (!body.summary || body.summary.trim().length === 0) {
-    return json(res, 422, { error: "remediation_required" })
-  }
-  if (isResumeInFlight(runId)) {
-    return json(res, 409, { error: "resume_in_progress", recovery: readiness.record })
-  }
-
-  const scopeRef =
-    readiness.record.scope.type === "stage"
-      ? readiness.record.scope.stageId
-      : readiness.record.scope.type === "story"
-      ? `${readiness.record.scope.waveNumber}/${readiness.record.scope.storyId}`
-      : null
-  const remediation = repos.createExternalRemediation({
+  const result = await resumeRunInProcess(repos, {
     runId,
-    scope: readiness.record.scope.type,
-    scopeRef,
-    summary: body.summary,
+    summary: body.summary ?? "",
     branch: body.branch,
-    commitSha: body.commit,
+    commit: body.commit,
     reviewNotes: body.reviewNotes,
-    source: "api",
   })
+  if (!result.ok) {
+    return json(res, result.status, { error: result.error })
+  }
+  const run = repos.getRun(result.runId)
+  json(res, 200, { runId: result.runId, status: run?.status ?? "running" })
+}
 
-  json(res, 200, { runId, remediationId: remediation.id, needsSpawn: true })
+/** `POST /runs` — start a fresh run from a title/description + optional workspace. */
+export async function handleCreateRun(
+  repos: Repos,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  const body = (await readJson(req)) as {
+    title?: string
+    description?: string
+    workspaceKey?: string
+  }
+  const title = typeof body.title === "string" ? body.title.trim() : ""
+  if (!title) return json(res, 400, { error: "title is required", code: "bad_request" })
+
+  const result = startRunFromIdea(repos, {
+    title,
+    description: typeof body.description === "string" ? body.description.trim() : "",
+    workspaceKey: typeof body.workspaceKey === "string" && body.workspaceKey.trim()
+      ? body.workspaceKey.trim()
+      : undefined,
+  })
+  if (!result.ok) return json(res, result.status, { error: result.error })
+  const run = repos.getRun(result.runId)
+  json(res, 202, {
+    runId: result.runId,
+    itemId: result.itemId,
+    status: run?.status ?? "running",
+  })
 }
 
 /**
- * All runs live in the CLI process. UI-side prompt answers are written into
- * the shared transport (pending_prompts row + prompt_answered log). The
- * CLI's `attachCrossProcessBridge` tails that log and re-emits the event
- * onto its local bus, resolving the pending `ask()`.
+ * Canonical answer endpoint. Write path:
+ *   1. Mark `pending_prompts` row as answered.
+ *   2. Append `prompt_answered` to `stage_logs` — `attachCrossProcessBridge`
+ *      on the workflow's bus picks it up and re-emits locally, resolving
+ *      the workflow's pending `bus.request()`.
+ *   3. Return the updated conversation snapshot.
  */
-export async function handleRunInput(
+export async function handleAnswer(
   repos: Repos,
   req: IncomingMessage,
   res: ServerResponse,
   runId: string,
 ): Promise<void> {
   const body = (await readJson(req)) as { answer?: string; promptId?: string }
-  if (!body.answer) return json(res, 400, { error: "answer is required" })
-
-  const run = repos.getRun(runId)
-  if (!run) return json(res, 404, { error: "run not found" })
-
-  const promptId = body.promptId ?? repos.getOpenPrompt(runId)?.id
-  if (!promptId) return json(res, 404, { error: "no open prompt" })
-
-  const answered = repos.answerPendingPrompt(promptId, body.answer)
-  if (!answered) return json(res, 404, { error: "prompt not pending" })
-
-  repos.appendLog({
+  const result = recordAnswer(repos, {
     runId,
-    eventType: "prompt_answered",
-    message: body.answer,
-    data: { promptId, source: "api" },
+    promptId: body.promptId,
+    answer: typeof body.answer === "string" ? body.answer : "",
+    source: "api",
   })
-
-  json(res, 200, { runId, promptId, answer: body.answer })
+  if (!result.ok) {
+    if (result.code === "empty_answer") return json(res, 400, { error: "answer is required", code: "bad_request" })
+    if (result.code === "run_not_found") return json(res, 404, { error: "run not found", code: "not_found" })
+    return json(res, 409, { error: "prompt_not_open", code: "prompt_not_open" })
+  }
+  json(res, 200, result.conversation)
 }

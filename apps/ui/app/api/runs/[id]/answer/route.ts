@@ -4,7 +4,7 @@ import { forwardToEngine } from "@/app/api/_lib/engine"
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params
   const body = await req.text()
-  const res = await forwardToEngine(`/runs/${id}/resume`, {
+  const res = await forwardToEngine(`/runs/${id}/answer`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body,

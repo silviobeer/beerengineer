@@ -9,9 +9,9 @@ type Column = NonNullable<Parameters<typeof validActionsFor>[0]>;
 type Phase = NonNullable<Parameters<typeof validActionsFor>[1]>;
 
 type ActionDescriptor = {
-  action: ItemAction;
+  action: ItemAction | "resume_run";
   label: string;
-  kind: "start-run" | "state";
+  kind: "start-run" | "state" | "open-run";
 };
 
 function validActionsFor(
@@ -25,14 +25,14 @@ function validActionsFor(
   }
   if (column === "brainstorm") {
     actions.push({ action: "promote_to_requirements", label: "Promote to requirements", kind: "state" });
-    actions.push({ action: "resume_run", label: "Resume run", kind: "state" });
+    actions.push({ action: "resume_run", label: "Open run to resume", kind: "open-run" });
   }
   if (column === "requirements") {
     actions.push({ action: "start_implementation", label: "Start implementation", kind: "start-run" });
-    actions.push({ action: "resume_run", label: "Resume run", kind: "state" });
+    actions.push({ action: "resume_run", label: "Open run to resume", kind: "open-run" });
   }
   if (column === "implementation" && (phase === "running" || phase === "failed")) {
-    actions.push({ action: "resume_run", label: "Resume run", kind: "state" });
+    actions.push({ action: "resume_run", label: "Open run to resume", kind: "open-run" });
   }
   if (column === "implementation" && phase === "review_required") {
     actions.push({ action: "mark_done", label: "Mark done", kind: "state" });
@@ -42,14 +42,15 @@ function validActionsFor(
 
 type Props = {
   itemId: string;
+  latestRunId?: string | null;
   column: Column;
   phase: Phase;
 };
 
-export function ItemBoardActions({ itemId, column, phase }: Props) {
+export function ItemBoardActions({ itemId, latestRunId = null, column, phase }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
-  const [busy, setBusy] = useState<ItemAction | null>(null);
+  const [busy, setBusy] = useState<ActionDescriptor["action"] | null>(null);
   const [toast, setToast] = useState<{ kind: "error" | "info"; msg: string } | null>(null);
 
   const actions = validActionsFor(column, phase);
@@ -58,9 +59,18 @@ export function ItemBoardActions({ itemId, column, phase }: Props) {
   const onClick = async (descriptor: ActionDescriptor) => {
     setToast(null);
     setBusy(descriptor.action);
+    if (descriptor.kind === "open-run") {
+      setBusy(null);
+      if (!latestRunId) {
+        setToast({ kind: "error", msg: "No run available for this item." });
+        return;
+      }
+      router.push(`/runs/${latestRunId}`);
+      return;
+    }
     let response: ItemActionResponse;
     try {
-      response = await performItemAction(itemId, descriptor.action);
+      response = await performItemAction(itemId, descriptor.action as ItemAction);
     } catch (err) {
       setBusy(null);
       setToast({ kind: "error", msg: err instanceof Error ? err.message : "Network error" });
@@ -74,8 +84,6 @@ export function ItemBoardActions({ itemId, column, phase }: Props) {
           kind: "error",
           msg: `Cannot ${descriptor.action} from ${response.current.column}/${response.current.phaseStatus}`
         });
-      } else if (response.status === 422 && descriptor.action === "resume_run") {
-        setToast({ kind: "error", msg: "Open the run detail page and provide remediation details to resume." });
       } else {
         setToast({ kind: "error", msg: response.error });
       }

@@ -16,20 +16,11 @@ export type ApiIOSession = {
 }
 
 /**
- * Create an IO session for the API layer. The session owns the bus and the
- * two subscribers that are transport-level obligations for anything that
- * issues prompts through the API:
- *
- *   1. `withPromptPersistence` — mirrors every `prompt_requested` into the
- *      shared `pending_prompts` table so `GET /runs/:id/prompts` works and
- *      the UI's input panel can find it. Marks the row answered when a
- *      matching `prompt_answered` flows through.
- *   2. A legacy `EventEmitter` bridge so existing SSE handlers that consumed
- *      `session.emitter.on("event", …)` keep working unchanged.
- *
- * DB projection (`attachDbSync`) and cross-process answer routing are still
- * attached by `prepareRun` / `performResume`, because they are run-scoped
- * concerns and the session factory doesn't know runId yet.
+ * Build a bus-backed IO session with prompt persistence attached, plus an
+ * EventEmitter bridge for legacy SSE glue. Production run hosting uses
+ * `core/runService.ts → buildApiIo`; this helper stays because the test
+ * suite exercises the bus + persistence wiring through it, and the
+ * `ioContract` test checks that it implements `WorkflowIO`.
  */
 export function createApiIOSession(repos: Repos): ApiIOSession {
   const bus = createBus()
@@ -37,9 +28,6 @@ export function createApiIOSession(repos: Repos): ApiIOSession {
   emitter.setMaxListeners(50)
 
   const detachPersistence = withPromptPersistence(bus, repos)
-  // Bridge bus -> emitter so existing `emitter.on("event", …)` consumers
-  // (board stream, legacy code) keep working. They become just another
-  // subscriber on the bus.
   const detachBridge = bus.subscribe((event: WorkflowEvent) => {
     emitter.emit("event", event)
   })
@@ -51,24 +39,13 @@ export function createApiIOSession(repos: Repos): ApiIOSession {
     emitter,
     bus,
     answerPrompt(promptId, answer) {
-      // `bus.answer` returns true iff the promptId has a pending request
-      // in *this* process. That's the in-memory case — the UI answering a
-      // live API-owned run.
-      if (bus.answer(promptId, answer)) return true
-
-      // No in-memory pending request — this is either a CLI-owned run
-      // (another process holds the pending promise) or a stale session. The
-      // caller (HTTP handler) is responsible for updating `pending_prompts`
-      // and writing a `prompt_answered` stage_log row; see `handleRunInput`
-      // in `api/server.ts`. We return false so the handler falls back to
-      // that shared-transport write path.
-      return false
+      return bus.answer(promptId, answer)
     },
     dispose() {
       detachBridge()
       detachPersistence()
-      emitter.removeAllListeners()
       bus.close()
+      emitter.removeAllListeners()
     },
   }
 }

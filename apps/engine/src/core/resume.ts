@@ -179,7 +179,7 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
   inflightResumes.add(input.runId)
   try {
     if (!input.io.bus) {
-      throw new Error("performResume: io must be bus-backed (createApiIOSession / createCliIO)")
+      throw new Error("performResume: io must be bus-backed (runService.buildApiIo / createCliIO)")
     }
     const bus = input.io.bus
     const detach = attachRunSubscribers(bus, input.repos, { runId: run.id, itemId: run.item_id })

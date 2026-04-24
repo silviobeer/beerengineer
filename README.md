@@ -414,20 +414,25 @@ UX-Output emittieren (`stagePresent.header/step/ok/warn/dim/finding/chat`).
 Jeder Call wird zu einem `presentation`- oder `chat_message`-Event auf dem
 Bus — kein Stage importiert mehr `print.ts` (die Datei wurde entfernt).
 
-**Workflows laufen ausschliesslich im CLI-Prozess.** Der Engine-HTTP-Server
-(`apps/engine/src/api/server.ts`) startet nie selbst einen Run und haelt keine
-Bus-Sessions mehr — er ist reine DB-Lese- und Intent-Schreib-Ebene plus SSE-
-Tails. Die UI sprengt fuer jede Run-/Resume-Aktion eine CLI-Kindprozess
-(`apps/ui/app/api/_lib/cli.ts → spawnEngineCli`), die Antworten auf Prompts
-gehen ueber den Cross-Process-Bridge (`stage_logs`-Tail + `pending_prompts`).
+**Workflows laufen im Prozess, der den Run startet.** Nach der
+Conversation-/API-Refactorierung (siehe `spec/architecture.md`, `spec/api-contract.md`)
+ist der Engine-HTTP-Server gleichberechtigter Workflow-Host: `POST /runs`,
+`POST /items/:id/actions/:action`, `POST /runs/:id/resume` feuern den
+Workflow ueber `core/runService.ts` direkt im HTTP-Prozess, geben die `runId`
+202-Accepted zurueck und lassen den Bus im Hintergrund laufen. Die Next.js-UI-
+Routes spawnen **keine** CLI-Kinderprozesse mehr — sie sind reine Forwards zu
+den genannten Engine-Endpoints. Local-Mode-CLI-Commands (z. B. `item action`)
+nutzen dieselben `runService`-Funktionen in-process, sodass CLI und HTTP den
+gleichen Code teilen.
 
 - **CLI-Adapter** (`core/ioCli.ts`) → baut einen Bus, haengt den humanCli-Renderer
   und die Prompt-Persistenz an, nutzt `readline` fuer `prompt_answered`.
 - **`--json`-Modus** → identischer Bus, aber `ndjson`-Renderer statt humanCli.
   Prompt-Answers kommen als JSON-Zeilen auf stdin.
-- **API-IO-Session** (`core/ioApi.ts`) → Bus mit Prompt-Persistenz, nur noch
-  als Test-Fixture und fuer parallele In-Process-Bus-Flows verfuegbar. Der
-  Engine-HTTP-Server benutzt sie nicht mehr.
+- **Engine-HTTP-IO** (`core/runService.ts → buildApiIo`) → Bus mit Prompt-
+  Persistenz, ohne Terminal-Renderer. Antworten kommen ueber
+  `POST /runs/:id/answer` herein, werden in `stage_logs` geschrieben und via
+  `attachCrossProcessBridge` auf den lokalen Bus re-emittiert.
 
 **IO ist scoped, nicht global.** `runWithWorkflowIO(io, fn)` aus `core/io.ts` setzt
 die aktive IO via `AsyncLocalStorage` — jeder parallele Run im selben Node-Prozess
@@ -454,16 +459,20 @@ braucht es *einen* Transport, den alle Prozesse teilen — und das ist die
 nicht von ihm selbst geschrieben wurden als Events auf den lokalen Bus
 zurueckspielt. Konkret:
 
-- CLI startet einen Run. `attachDbSync` schreibt jedes Event in `stage_logs`,
-  merkt sich die Row-IDs (`writtenLogIds`).
+- Ein Run startet (CLI oder HTTP-Prozess). `attachDbSync` schreibt jedes Event
+  in `stage_logs`, merkt sich die Row-IDs (`writtenLogIds`).
 - Stage emittiert `prompt_requested` → landet in `stage_logs` + `pending_prompts`.
-- UI liest `GET /runs/:id/prompts`, POSTet `/runs/:id/input` mit der Antwort.
-- API-Handler markiert `pending_prompts.answer` **und** schreibt eine neue
-  `prompt_answered`-Row in `stage_logs` (das ist der cross-process Push).
-- CLI's Bridge pollt alle 250 ms (`core/constants.ts → LOG_TAIL_INTERVAL_MS`),
-  sieht die neue Row, erkennt dass sie **nicht** in `writtenLogIds` liegt
-  (also fremd geschrieben), emittiert ein `prompt_answered` auf den lokalen
-  Bus → der wartende `ask()` wird aufgeloest, der Run laeuft weiter.
+- UI liest `GET /runs/:id/conversation`, POSTet `/runs/:id/answer` mit der Antwort.
+- `recordAnswer` (`core/conversation.ts`) markiert `pending_prompts.answer`
+  **und** schreibt eine neue `prompt_answered`-Row in `stage_logs` — das ist
+  der cross-process Push.
+- Die Bridge des Run-Prozesses pollt alle 250 ms (`core/constants.ts →
+  LOG_TAIL_INTERVAL_MS`), sieht die neue Row, erkennt dass sie **nicht** in
+  `writtenLogIds` liegt (also fremd geschrieben), emittiert ein
+  `prompt_answered` auf den lokalen Bus → der wartende `ask()` wird
+  aufgeloest, der Run laeuft weiter. Wenn der Run im HTTP-Prozess lebt, greift
+  derselbe Mechanismus: `/answer` und `attachCrossProcessBridge` sind
+  prozess-agnostisch.
 
 Das ist das gleiche Tail-Muster, das auch die SSE-Endpoints benutzen — eine
 einzige Tail-Strategie, ein einziger Dedup-Schluessel (`log.id`).
@@ -472,80 +481,63 @@ einzige Tail-Strategie, ein einziger Dedup-Schluessel (`log.id`).
 
 | Subscriber                      | Angebracht in                               | Reason                                  |
 |---------------------------------|---------------------------------------------|-----------------------------------------|
-| `withPromptPersistence`         | `createCliIO` / `createApiIOSession`        | Transport-Level — "wer Prompts emittiert, muss sie auch in `pending_prompts` spiegeln" |
+| `withPromptPersistence`         | `createCliIO` / `runService.buildApiIo`     | Transport-Level — "wer Prompts emittiert, muss sie auch in `pending_prompts` spiegeln" |
 | `attachDbSync`                  | `prepareRun` / `performResume`              | Run-scoped — braucht `runId` und `itemId` |
 | `attachCrossProcessBridge`      | `prepareRun` / `performResume`              | Run-scoped, filtert via `writtenLogIds` |
-| Renderer (humanCli / ndjson / SSE-Bridge) | `createCliIO` / `createApiIOSession` | Transport-Level — wohin die Events ausgegeben werden |
+| Renderer (humanCli / ndjson / SSE-Bridge) | `createCliIO` (HTTP braucht keinen Terminal-Renderer) | Transport-Level — wohin die Events ausgegeben werden |
 
 ### CLI ↔ UI — End-to-End
 
-**Invariante: Workflows laufen ausschliesslich im CLI-Prozess.** Der
-Engine-HTTP-Server macht DB-Reads, SSE-Tails auf `stage_logs` und schreibt
-Intent-Rows (Column-Change, Remediation) — er startet nie selbst
-`prepareRun()`. Jede Start-/Resume-Aktion aus der UI spawnt einen
-CLI-Kindprozess.
+**Invariante (post-Refactor): Die Engine-HTTP-API ist die Single Source of Truth.**
+Der Engine-Server macht DB-Reads, SSE-Tails und **hostet Workflows in-process**:
+`POST /runs`, `POST /items/:id/actions/:action`, `POST /runs/:id/resume`
+kicken einen Run ueber `core/runService.ts` in dem HTTP-Prozess selbst an. Die
+Next.js-UI-Routes leiten 1:1 weiter (`apps/ui/app/api/_lib/engine.ts →
+forwardToEngine`). `apps/ui/app/api/_lib/cli.ts` existiert nicht mehr.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │                       BROWSER (Next.js UI · Port 3100)                       │
 │                                                                              │
 │   /              /runs               /runs/[id]                              │
-│   Live Board    Start + Liste       LiveRunConsole (SSE-Subscriber)          │
+│   Live Board    Start + Liste       LiveRunConsole (SSE + /conversation)     │
 │       │              │                     │           ▲                     │
 │       │ SSR liest    │ POST /api/runs      │ EventSource         │ SSE       │
 │       │ SQLite       │ POST /api/items/... │ /api/runs/:id/events │          │
-│       │ (server-     │ POST /api/runs/..   │                      │          │
-│       │  side read)  │      /resume        │                      │          │
+│       │ (server-     │ POST /api/runs/..   │ GET /api/runs/:id    │          │
+│       │  side read)  │      /answer|resume │     /conversation    │          │
 └───────┼──────────────┼──────────────┬──────┴──────────────────────┼──────────┘
         │              │              │                             │
         │              ▼              ▼                             │ forward
         │   ┌─────────────────────────────────────────┐             │ to engine
         │   │   Next.js API routes (apps/ui/app/api)  │             │
         │   │                                         │             │
-        │   │   POST /api/runs          → spawnCLI    │             │
-        │   │   POST /api/items/:id/... → spawnCLI    │             │
+        │   │   POST /api/runs          → forward     │             │
+        │   │   POST /api/items/:id/... → forward     │             │
         │   │   POST /api/runs/:id/resume            │             │
-        │   │     → spawnCLI (item-action)           │             │
+        │   │     → forward                          │             │
+        │   │   GET /api/runs/:id/conversation       │             │
+        │   │   POST /api/runs/:id/answer            │             │
         │   │   alles andere → forwardToEngine ──────┼─────────────┤
-        │   └──────────────┬──────────────────────────┘             │
-        │                  │ spawn beerengineer ...                 │
-        │                  ▼                                        │
-        │   ┌─────────────────────────────────────────┐             │
-        │   │        CLI (beerengineer-Kindprozess)   │             │
-        │   │                                         │             │
-        │   │   runWorkflow(item)                     │             │
-        │   │     createCliIO(repos) → Bus            │             │
-        │   │     attachRunSubscribers(bus, repos, …) │             │
-        │   │       · attachDbSync                    │             │
-        │   │       · attachTelegramNotifications     │             │
-        │   │       · attachCrossProcessBridge        │             │
-        │   │                                         │             │
-        │   │   Stages: ask(prompt) → Bus.request     │             │
-        │   │     → NDJSON stdout (Agent-Modus)       │             │
-        │   │     → Stderr-Signpost                   │             │
-        │   │     → pending_prompts + stage_logs      │             │
-        │   │                                         │             │
-        │   │   Cross-Process-Bridge liest fremde     │             │
-        │   │   `prompt_answered`-Rows aus            │             │
-        │   │   stage_logs und resolved den Bus.      │             │
-        │   └──────────────┬──────────────────────────┘             │
-        │                  │                                        │
-        │                  ▼                                        ▼
+        │   └─────────────────────────────────────────┘             │
+        │                                                            │
+        │                                                            ▼
         │   ┌─────────────────────────────────────────────────────────┐
         │   │          ENGINE HTTP+SSE-Server (Port 4100)             │
         │   │                                                         │
-        │   │   GET  /runs[/:id[/tree|events|prompts|recovery]] DB    │
+        │   │   POST /runs                     runService.startRun…   │
+        │   │   POST /items/:id/actions/:name  runService.startRun…   │
+        │   │                                    OR state transition  │
+        │   │   POST /runs/:id/resume          runService.resumeRun…  │
+        │   │   POST /runs/:id/answer          conversation.recordAns… │
+        │   │   GET  /runs/:id/conversation    conversation.build…    │
+        │   │   GET  /runs[/:id[/tree|events|recovery]] DB-Reads      │
         │   │   GET  /events[?workspace=key]   SSE tail(stage_logs)   │
         │   │   GET  /board[?workspace=key]    Board-DTO              │
-        │   │   POST /runs/:id/input           DB: pending_prompts    │
-        │   │                                    + stage_logs         │
-        │   │   POST /runs/:id/resume          DB: remediation → 200  │
-        │   │                                    { needsSpawn:true }  │
-        │   │   POST /items/:id/actions        DB: column change      │
-        │   │                                    OR remediation,      │
-        │   │                                    gibt needs_spawn     │
-        │   │                                    zurueck bei          │
-        │   │                                    start-run/resume     │
+        │   │                                                         │
+        │   │   runService.buildApiIo baut Bus + Prompt-Persistenz,   │
+        │   │   prepareRun attached dbSync / Telegram / CrossProc-    │
+        │   │   Bridge — der Workflow laeuft im HTTP-Prozess.         │
         │   │                                                         │
         │   │   Token-Handshake: schreibt beim Start                  │
         │   │   $XDG_STATE_HOME/beerengineer/api.token                │
@@ -553,7 +545,19 @@ CLI-Kindprozess.
         │   │   apps/ui/app/api/_lib/engine.ts                        │
         │   └──────────────────┬──────────────────────────────────────┘
         │                      │
-        ▼                      ▼
+        │                      ▼
+        │   ┌─────────────────────────────────────────┐
+        │   │   CLI-Prozess (optional / local mode)   │
+        │   │                                         │
+        │   │   `beerengineer` / `item action`        │
+        │   │     createCliIO(repos) → Bus            │
+        │   │     runService.startRunForItem / …      │
+        │   │     attachRunSubscribers(bus, repos, …) │
+        │   │                                         │
+        │   │   Nicht mehr fuer UI-Flows noetig —     │
+        │   │   bleibt als Operator-Werkzeug.         │
+        │   └──────────────┬──────────────────────────┘
+        ▼                  ▼
         ┌────────────────────────────────────────────────────────────────┐
         │      SQLite (BEERENGINEER_UI_DB_PATH, default ~/.local/...)    │
         │                                                                │
@@ -562,8 +566,9 @@ CLI-Kindprozess.
         │   runs · external_remediations  (runs.workspace_fs_id!)        │
         │   stage_runs · stage_logs · artifact_files                     │
         │   pending_prompts                                              │
-        │      ↑ CLI schreibt ueber attachDbSync;                        │
-        │        Engine schreibt nur Intent (Column/Remediation/Input)   │
+        │      ↑ Engine-HTTP- und CLI-Prozess schreiben ueber attachDb-  │
+        │        Sync; /answer schreibt zusaetzlich eine prompt_answered-│
+        │        Row in stage_logs als cross-process Push                │
         └────────────────────────────────────────────────────────────────┘
 ```
 
@@ -679,21 +684,25 @@ neuesten Runs fuer das Item.
 
 ### API-Vertrag (Engine-HTTP-Server)
 
-Der Server startet keine Workflows mehr — mutierende Endpoints schreiben nur
-Intent-Rows und signalisieren `needsSpawn: true`, wenn die UI-Seite einen
-CLI-Kindprozess starten muss.
+Die Engine-HTTP-API ist die kanonische Schnittstelle fuer alle Clients
+(UI, CLI, zukuenftige Webhooks). Mutierende Endpoints starten Runs **in-process**;
+die UI leitet 1:1 weiter und spawnt keine CLI mehr. Vollstaendiger Vertrag:
+siehe [`spec/api-contract.md`](spec/api-contract.md).
 
 | Method | Route | Effekt |
 |---|---|---|
 | `GET`  | `/runs` | Alle Runs (neueste zuerst) |
-| `GET`  | `/runs/:id` | Snapshot eines Runs |
+| `POST` | `/runs` | Neuen Run aus `{ title, description?, workspaceKey? }` starten. Antwort: `202 { runId, itemId, status }`. Workflow laeuft in-process im Hintergrund; SSE/`/conversation` zeigen den Fortschritt. |
+| `GET`  | `/runs/:id` | Snapshot eines Runs; enthaelt `openPrompt`, wenn ein offener Prompt vorliegt. |
 | `GET`  | `/runs/:id/tree` | Run + Stage-Runs + Artefakte |
 | `GET`  | `/runs/:id/events` | SSE: History-Replay + Live-Events (tail auf `stage_logs`) |
-| `GET`  | `/runs/:id/prompts` | Aktuell offener Prompt (oder `null`) |
-| `POST` | `/runs/:id/input` | Beantwortet offenen Prompt: schreibt `pending_prompts.answer` + eine `prompt_answered`-Row in `stage_logs`; der CLI-Prozess mit dem Run pickt sie ueber `attachCrossProcessBridge` auf. Antwort: `200 { runId, promptId, answer }`. |
-| `POST` | `/runs/:id/resume` | Schreibt `external_remediations`-Row fuer einen blocked/failed Run. Antwort: `200 { runId, remediationId, needsSpawn: true }`, `404`, `409` oder `422 remediation_required`. Die UI muss anschliessend `beerengineer item action --action resume_run` spawnen; `apps/ui/app/api/runs/[id]/resume/route.ts` macht genau das. |
+| `GET`  | `/runs/:id/conversation` | Kanonische Transkript-Projektion: `{ runId, updatedAt, entries[], openPrompt }`. `entries[]` enthaelt `system | message | question | answer`-Eintraege mit aufgeloestem `text` (kein `you >`-Platzhalter). |
+| `POST` | `/runs/:id/answer` | Beantwortet offenen Prompt. Body `{ promptId, answer }`. Schreibt `pending_prompts.answer` + `prompt_answered`-Row in `stage_logs`; die `attachCrossProcessBridge` des Run-Prozesses pickt sie auf. Antwort: `200 ConversationResponse` (post-write). `400 bad_request`, `404 not_found`, `409 prompt_not_open`. |
+| `POST` | `/runs/:id/resume` | Legt eine `external_remediations`-Row an und re-entered den Workflow in-process. Antwort: `200 { runId, status }`, `404 run_not_found`, `409 not_resumable | resume_in_progress`, `422 remediation_required`. |
 | `GET`  | `/runs/:id/recovery` | Recovery-Snapshot fuer Run-Detailseite: Status, Scope, Summary, Remediations, `resumable` |
-| `POST` | `/items/:id/actions` | Pure State-Transitions (`promote_to_requirements`, `mark_done`) werden hier direkt angewandt: `200 { kind: "state", itemId, column, phaseStatus }`. Start-Run- und Resume-Aktionen (`start_brainstorm`, `start_implementation`, `resume_run`) schreiben nur die Column-Change bzw. Remediation und antworten `200 { kind: "needs_spawn", needsSpawn: true, action, itemId, column, phaseStatus, runId?, remediationId? }`. `409` bei ungueltigem Uebergang, `422 remediation_required` fuer Resume ohne Summary. |
+| `GET`  | `/items[?workspace=<key>&status=<phase>&column=<column>&limit=<n>]` | Item-Liste fuer Engine-Clients. |
+| `GET`  | `/items/:id` | Einzelnes Item. |
+| `POST` | `/items/:id/actions/:action` | Explizite Action-Routen: `start_brainstorm` / `start_implementation` starten Runs in-process (`200 { kind: "started", runId, itemId, column, phaseStatus, action }`), `promote_to_requirements` / `mark_done` sind reine State-Transitions. `409 invalid_transition`, `404 item_not_found`. |
 | `GET`  | `/events[?workspace=key]` | Workspace-gefilterter Board-SSE-Stream fuer `run_started`, `stage_*`, `item_column_changed`, `run_finished`, `project_created` |
 | `GET`  | `/board[?workspace=key]` | Board-DTO (Spalten + Karten) |
 | `GET`  | `/setup/status[?group=<id>]` | Selber JSON-Kontrakt wie `doctor --json` (`SetupReport`, `reportVersion: 1`). Unbekannte `group` → `400 { error: "unknown_group" }` |
@@ -701,8 +710,9 @@ CLI-Kindprozess starten muss.
 | `GET`  | `/notifications/deliveries[?channel=<name>&limit=<n>]` | Neueste Delivery-Audit-Zeilen aus `notification_deliveries`, newest first |
 | `GET`  | `/health` | `{ ok: true }` |
 
-Der frueher existierende `POST /runs` wurde entfernt — die UI spawnt fuer
-Start-Runs direkt die CLI via `apps/ui/app/api/runs/route.ts → startCliWorkflow`.
+Entfernt im Refactor: `POST /runs/:id/input` (→ `/answer`), `GET /runs/:id/prompts`
+(→ `GET /runs/:id/conversation`), `needsSpawn: true`-Responses sowie jeglicher
+CLI-Spawn im UI-Layer.
 
 **Auth:** CSRF-Token-Datei-Handshake. Der Engine schreibt beim Start
 `$XDG_STATE_HOME/beerengineer/api.token` (Mode 0600); die UI-Next.js-Routes
@@ -1275,8 +1285,8 @@ apps/engine/src/
     seed.ts                 Optionales Dev-Seed (deaktivierbar via BEERENGINEER_SEED)
     board.ts                Board-DTO + Run-Tree-Aggregation
     routes/
-      items.ts              POST /items/:id/actions
-      runs.ts               GET/POST /runs, /runs/:id, /runs/:id/input|resume|...
+      items.ts              GET /items[/:id], POST /items/:id/actions/:action
+      runs.ts               GET/POST /runs, /runs/:id[/answer|conversation|resume|tree|events|recovery]
       workspaces.ts         Workspace-CRUD + cached setup report
       setup.ts              GET /setup/status
       notifications.ts      POST /notifications/test/:channel, deliveries

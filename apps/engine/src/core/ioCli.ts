@@ -63,8 +63,13 @@ export function createCliIO(repos?: Repos, opts: CliIOOptions = {}): WorkflowIO 
         }
 
         if (rl) {
-          // Interactive TTY prompts go straight through readline.
-          rl.question(event.prompt, resolveAnswer)
+          // Interactive TTY. The agent's message text already reached the
+          // terminal via `attachHumanCliRenderer`'s `chat_message` line; we
+          // just need a short answer cue here. The full prompt text is
+          // carried by the bus event (and persisted verbatim by
+          // `withPromptPersistence`) so the UI and transcript projection
+          // still see meaningful content.
+          rl.question("  > ", resolveAnswer)
           return
         }
 
