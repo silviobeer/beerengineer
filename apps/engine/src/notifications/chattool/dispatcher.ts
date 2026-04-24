@@ -1,5 +1,6 @@
 import type { MessageEntry } from "../../core/messagingProjection.js"
 import { shouldDeliverAtLevel, type MessagingLevel } from "../../core/messagingLevel.js"
+import { CHATTOOL_PROMPT_RENOTIFY_WINDOW_MS } from "../../core/constants.js"
 import type { Repos } from "../../db/repositories.js"
 import { createExternalLinkBuilder } from "../links.js"
 import { correlationKeyForMessage, describeChatMessage, messageRoleForEntry } from "./render.js"
@@ -26,8 +27,12 @@ export class ChatToolDispatcher {
       chatId: this.channelRef,
       runId: entry.runId,
       promptId: message.promptId,
-      expiresAt: entry.type === "prompt_requested" ? Date.now() + 45_000 : null,
+      expiresAt: entry.type === "prompt_requested" ? Date.now() + CHATTOOL_PROMPT_RENOTIFY_WINDOW_MS : null,
     })
+    // Dedup suppression is not a provider-side failure, but callers still
+    // need to distinguish it from "no matching template" (null). Keep the
+    // `{ ok: false, error }` shape with a stable prefix so the compat layer
+    // can report `duplicate notification skipped (...)` as the reason.
     if (!claimed) return { ok: false, error: `duplicate notification skipped (${correlationKey})` }
 
     const links = createExternalLinkBuilder(this.publicBaseUrl)

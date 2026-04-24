@@ -21,7 +21,19 @@ export function handleRunEvents(repos: Repos, req: IncomingMessage, res: ServerR
   res.write(`event: hello\ndata: ${JSON.stringify({ runId, at: Date.now() })}\n\n`)
 
   let closed = false
+  // Bounded ring: `tailStageLogs` already advances a rowid cursor, so this
+  // set only guards the narrow race between the initial `pollOnce()` replay
+  // and the first interval tick. A few thousand recent ids is plenty and
+  // caps memory on multi-hour runs.
+  const SEEN_RING_CAPACITY = 4096
   const seenStreamIds = new Set<string>()
+  const markSeen = (id: string): void => {
+    if (seenStreamIds.size >= SEEN_RING_CAPACITY) {
+      const oldest = seenStreamIds.values().next().value
+      if (typeof oldest === "string") seenStreamIds.delete(oldest)
+    }
+    seenStreamIds.add(id)
+  }
 
   const close = (): void => {
     if (closed) return
@@ -37,7 +49,7 @@ export function handleRunEvents(repos: Repos, req: IncomingMessage, res: ServerR
       if (row.event_type === "run_finished" || row.event_type === "run_failed" || row.event_type === "run_blocked") close()
       return
     }
-    seenStreamIds.add(row.id)
+    markSeen(row.id)
     writeSse(res, entry.type, entry)
     if (entry.type === "run_finished" || entry.type === "run_failed" || entry.type === "run_blocked") close()
   })

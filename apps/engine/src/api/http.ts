@@ -45,11 +45,4 @@ export function writeSse(res: ServerResponse, event: string, data: unknown): voi
   res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
 }
 
-export function parseLogData(dataJson: string | null): unknown {
-  if (!dataJson) return undefined
-  try {
-    return JSON.parse(dataJson)
-  } catch {
-    return undefined
-  }
-}
+export { parseLogData } from "../core/jsonEnvelope.js"

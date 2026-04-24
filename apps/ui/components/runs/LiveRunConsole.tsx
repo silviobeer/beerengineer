@@ -266,57 +266,68 @@ export function LiveRunConsole({
   }, [searchParams])
 
   useEffect(() => {
-    void refreshRunAndTree()
-    void refreshMessages()
+    let cancelled = false
+    let source: EventSource | null = null
 
-    const qs = new URLSearchParams({ level: String(level) })
-    if (lastMessageIdRef.current) qs.set("since", lastMessageIdRef.current)
-    const source = new EventSource(`/api/runs/${runId}/events?${qs.toString()}`)
-    sourceRef.current = source
+    async function bootstrap() {
+      await Promise.all([refreshRunAndTree(), refreshMessages()])
+      if (cancelled) return
 
-    const wire = (type: string) => {
-      source.addEventListener(type, event => {
-        const entry = JSON.parse((event as MessageEvent<string>).data) as MessageEntry
-        setEntries(current => (current.some(existing => existing.id === entry.id) ? current : [...current, entry]))
-        lastMessageIdRef.current = entry.id
-        void refreshRunAndTree()
+      // Open the live tail *after* history has loaded so `since` anchors the
+      // stream to the last message already on screen. Without this await the
+      // stream re-replays from rowid=0 on every mount.
+      const qs = new URLSearchParams({ level: String(level) })
+      if (lastMessageIdRef.current) qs.set("since", lastMessageIdRef.current)
+      source = new EventSource(`/api/runs/${runId}/events?${qs.toString()}`)
+      sourceRef.current = source
+
+      const wire = (type: string) => {
+        source!.addEventListener(type, event => {
+          const entry = JSON.parse((event as MessageEvent<string>).data) as MessageEntry
+          setEntries(current => (current.some(existing => existing.id === entry.id) ? current : [...current, entry]))
+          lastMessageIdRef.current = entry.id
+          void refreshRunAndTree()
+        })
+      }
+
+      ;[
+        "run_started",
+        "run_finished",
+        "run_failed",
+        "run_blocked",
+        "run_resumed",
+        "phase_started",
+        "phase_completed",
+        "phase_failed",
+        "prompt_requested",
+        "prompt_answered",
+        "agent_message",
+        "user_message",
+        "loop_iteration",
+        "tool_called",
+        "tool_result",
+        "llm_thinking",
+        "llm_tokens",
+        "artifact_written",
+        "log",
+        "presentation",
+        "external_remediation_recorded",
+      ].forEach(wire)
+
+      ;["run_blocked", "run_failed", "external_remediation_recorded", "run_resumed"].forEach(type => {
+        source!.addEventListener(type, () => setRecoveryRefreshKey(current => current + 1))
       })
+
+      source.onerror = () => {
+        void refreshRunAndTree()
+      }
     }
 
-    ;[
-      "run_started",
-      "run_finished",
-      "run_failed",
-      "run_blocked",
-      "run_resumed",
-      "phase_started",
-      "phase_completed",
-      "phase_failed",
-      "prompt_requested",
-      "prompt_answered",
-      "agent_message",
-      "user_message",
-      "loop_iteration",
-      "tool_called",
-      "tool_result",
-      "llm_thinking",
-      "llm_tokens",
-      "artifact_written",
-      "log",
-      "presentation",
-      "external_remediation_recorded",
-    ].forEach(wire)
-
-    ;["run_blocked", "run_failed", "external_remediation_recorded", "run_resumed"].forEach(type => {
-      source.addEventListener(type, () => setRecoveryRefreshKey(current => current + 1))
-    })
-
-    source.onerror = () => {
-      void refreshRunAndTree()
-    }
+    void bootstrap()
 
     return () => {
-      source.close()
+      cancelled = true
+      source?.close()
       sourceRef.current = null
     }
   }, [runId, level])

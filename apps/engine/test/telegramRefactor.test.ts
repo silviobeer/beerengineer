@@ -194,7 +194,7 @@ test("dispatcher rate-limits prompt_requested inside the minimum gap and re-noti
   // and the WHERE clause allows re-claim when expires_at <= now.
   repos["db"].prepare(
     "UPDATE notification_deliveries SET expires_at = ? WHERE dedup_key = ?",
-  ).run(expiredTimestamp, `${run.id}:prompt_requested`)
+  ).run(expiredTimestamp, `${run.id}:prompt_requested:${pending.id}`)
 
   const third = await dispatcher.deliver(projected({
     type: "prompt_requested",

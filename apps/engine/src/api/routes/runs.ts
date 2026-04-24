@@ -4,6 +4,7 @@ import type { Repos } from "../../db/repositories.js"
 import { getBoard, getRunTree } from "../board.js"
 import { isResumeInFlight } from "../../core/resume.js"
 import { buildConversation, recordAnswer, recordUserMessage } from "../../core/conversation.js"
+import { MESSAGES_ENDPOINT_MAX_SCAN } from "../../core/constants.js"
 import { messagingLevelFromQuery, shouldDeliverAtLevel } from "../../core/messagingLevel.js"
 import { projectStageLogRow } from "../../core/messagingProjection.js"
 import { resumeRunInProcess, startRunFromIdea } from "../../core/runService.js"
@@ -49,22 +50,36 @@ export function handleGetMessages(repos: Repos, url: URL, res: ServerResponse, r
 
   const entries = []
   let cursor = since
-  while (entries.length < limit) {
+  let scanned = 0
+  let hitScanCap = false
+  outer: while (entries.length < limit) {
     const batch = repos.listLogsForRunAfterId(runId, cursor, limit * 4)
     if (batch.length === 0) break
     for (const row of batch) {
       const entry = projectStageLogRow(row)
       if (entry && shouldDeliverAtLevel(entry, level)) entries.push(entry)
       cursor = row.id
-      if (entries.length >= limit) break
+      scanned += 1
+      if (entries.length >= limit) break outer
+      if (scanned >= MESSAGES_ENDPOINT_MAX_SCAN) {
+        hitScanCap = true
+        break outer
+      }
     }
     if (batch.length < limit * 4) break
   }
 
+  const nextSince =
+    entries.length === limit
+      ? entries[entries.length - 1]?.id ?? null
+      : hitScanCap
+      ? cursor
+      : null
+
   json(res, 200, {
     runId,
     schema: "messages-v1",
-    nextSince: entries.length === limit ? entries[entries.length - 1]?.id ?? null : null,
+    nextSince,
     entries,
   })
 }
@@ -75,12 +90,14 @@ export async function handlePostMessage(
   res: ServerResponse,
   runId: string,
 ): Promise<void> {
-  const body = (await readJson(req)) as { text?: string; source?: string }
-  const source = body.source === "cli" || body.source === "webhook" ? body.source : "api"
+  const body = (await readJson(req)) as { text?: string }
+  // External callers can't spoof source — the HTTP boundary pins it to "api".
+  // Internal surfaces (CLI, webhook handler) call `recordUserMessage` directly
+  // and set their own source.
   const result = recordUserMessage(repos, {
     runId,
     text: typeof body.text === "string" ? body.text : "",
-    source,
+    source: "api",
   })
   if (!result.ok) {
     if (result.code === "empty_message") return json(res, 400, { error: "text is required", code: "bad_request" })

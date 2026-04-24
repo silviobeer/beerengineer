@@ -1,3 +1,9 @@
+// Compatibility shim for the pre-chattool `notifications/telegram*` module
+// shape. Existing callers (server bootstrap, tests, CLI notifications cmd)
+// still import from here; new code should reach into `chattool/` directly.
+// Remove on the next deprecation pass once all call sites are migrated —
+// tracked against messaging-levels.md Phase 5 (Slack provider) so the shim
+// doesn't ossify.
 import type { IncomingMessage, ServerResponse } from "node:http"
 import type { EventBus } from "../../core/bus.js"
 import type { MessageEntry } from "../../core/messagingProjection.js"

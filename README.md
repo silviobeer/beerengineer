@@ -94,6 +94,26 @@ beerengineer notifications test telegram
   Sendet eine Telegram-Testnachricht an den konfigurierten Default-Chat.
   Nutzt denselben Engine-Sendepfad wie echte Lifecycle-Events.
 
+beerengineer runs messages <run-id> [--level L0|L1|L2] [--since <id>] [--limit N] [--json]
+  Finite History-Projektion (`MessageEntry`) fuer einen Run. Default L2.
+  NDJSON mit `--json`.
+
+beerengineer runs tail <run-id> [--level L0|L1|L2] [--since <id>] [--json]
+  Long-lived Tail auf den kanonischen Message-Stream. Default L1.
+  Endet auf `run_finished` / `run_failed`; `--since` macht die Subscription
+  re-entrant nach Disconnect.
+
+beerengineer runs watch <run-id> [--level L0|L1|L2]
+  History-Replay + Live-Tail in einem Aufruf.
+
+beerengineer chat send <run-id> <text>
+  Postet eine freie User-Nachricht in den Run (kein Prompt-Answer).
+
+beerengineer chat answer (--prompt <id> | --run <id>) [--text <...>]
+beerengineer chat answer <run-id> <text>
+  Beantwortet den offenen Prompt. Geht denselben `recordAnswer({ source })`-
+  Pfad wie die HTTP-API und der Telegram-Webhook.
+
 beerengineer start ui
   Startet die UI auf `http://127.0.0.1:3100`, oeffnet den Browser und
   leitet `SIGINT`/`SIGTERM` an den Kindprozess weiter.
@@ -196,6 +216,11 @@ in folgenden Specs festgehalten:
 - `spec/conversation-json-schema.md`
 - `spec/chattool-integration-plan.md`
 - `spec/engine-api-route-design.md`
+- `spec/messaging-levels.md` — kanonische `MessageEntry`-Projektion +
+  L0/L1/L2-Verbositaetsmodell fuer SSE, `/messages` History,
+  CLI-Tail und Chattool-Dispatcher
+- `spec/telegram-refactor.md` — outbound Enrichment mit `openPrompt` +
+  inbound Webhook-Replies via `recordAnswer({ source: "webhook" })`
 
 Wichtig:
 
@@ -204,9 +229,15 @@ Wichtig:
 - die Interaktion mit dem LLM soll ueber einen kanonischen
   Conversation-/Open-Prompt-Layer fuer CLI, Simple UI, Pro UI und externe
   Chattools laufen
-- die aktuelle Telegram-Implementierung ist weiterhin primär
-  **outbound notifications**; bidirektionale Chattool-Integration ist als
-  naechster Architektur-Schritt beschrieben, aber noch nicht umgesetzt
+- Messaging-Konsumenten (SSE, `/messages`, CLI-Tail, Chattool) lesen
+  ausschliesslich durch die gemeinsame `MessageEntry`-Projektion; es gibt
+  keinen zweiten Event-Klassifikator mehr neben `core/messagingLevel.ts`
+- Telegram ist jetzt ein `ChatToolProvider` hinter
+  `notifications/chattool/`; Outbound ist level-aware (`L2` per Default),
+  Inbound-Replies werden via `POST /webhooks/telegram` auf
+  `recordAnswer({ source: "webhook" })` gemapped (Bidirektionalitaet war
+  frueher als "naechster Architektur-Schritt" beschrieben — ist jetzt
+  umgesetzt)
 
 ### Workspace-Setup und Preflight
 
@@ -704,7 +735,9 @@ siehe [`spec/api-contract.md`](spec/api-contract.md).
 | `POST` | `/runs` | Neuen Run aus `{ title, description?, workspaceKey? }` starten. Antwort: `202 { runId, itemId, status }`. Workflow laeuft in-process im Hintergrund; SSE/`/conversation` zeigen den Fortschritt. |
 | `GET`  | `/runs/:id` | Snapshot eines Runs; enthaelt `openPrompt`, wenn ein offener Prompt vorliegt. |
 | `GET`  | `/runs/:id/tree` | Run + Stage-Runs + Artefakte |
-| `GET`  | `/runs/:id/events` | SSE: History-Replay + Live-Events (tail auf `stage_logs`) |
+| `GET`  | `/runs/:id/events[?level=L0\|L1\|L2&since=<id>]` | SSE: History-Replay + Live-Events (tail auf `stage_logs`), projiziert als kanonische `MessageEntry`. `level` filtert nach Detailgrad (Default L2 = Milestones); `since` setzt einen stabilen Resume-Cursor. Errors (`run_failed`, `phase_failed`, `run_blocked`) sind force-through. |
+| `GET`  | `/runs/:id/messages[?level=&since=&limit=]` | Finite History-Projektion (`schema: "messages-v1"`). Default `level=2`, `limit=200` (≤ 500). Scan ist pro Request auf `MESSAGES_ENDPOINT_MAX_SCAN` Zeilen gedeckelt — bei Erreichen liefert `nextSince` einen Cursor zum Weiterpaginieren. |
+| `POST` | `/runs/:id/messages` | Freitext-User-Nachricht in den Run (kein Prompt-Answer). Body `{ text }`; `source` wird am HTTP-Rand auf `"api"` fixiert. Antwort: `201 { ok: true, entry, conversation }`. |
 | `GET`  | `/runs/:id/conversation` | Kanonische Transkript-Projektion: `{ runId, updatedAt, entries[], openPrompt }`. `entries[]` enthaelt `system | message | question | answer`-Eintraege mit aufgeloestem `text` (kein `you >`-Platzhalter). |
 | `POST` | `/runs/:id/answer` | Beantwortet offenen Prompt. Body `{ promptId, answer }`. Schreibt `pending_prompts.answer` + `prompt_answered`-Row in `stage_logs`; die `attachCrossProcessBridge` des Run-Prozesses pickt sie auf. Antwort: `200 ConversationResponse` (post-write). `400 bad_request`, `404 not_found`, `409 prompt_not_open`. |
 | `POST` | `/runs/:id/resume` | Legt eine `external_remediations`-Row an und re-entered den Workflow in-process. Antwort: `200 { runId, status }`, `404 run_not_found`, `409 not_resumable | resume_in_progress`, `422 remediation_required`. |
@@ -736,7 +769,7 @@ als Env-Var ueberschreibt die Datei. Mutierende Requests ohne Header
 | `BEERENGINEER_UI_DB_PATH` | Pfad zur SQLite-Datei. Default: `~/.local/share/beerengineer/beerengineer.sqlite`. **Engine und UI muessen denselben Pfad sehen**, sonst sieht die UI keine Engine-Daten. |
 | `BEERENGINEER_CONFIG_PATH` | Pfad zum App-Config-File. Default OS-spezifisch via `env-paths` (z.B. `~/.config/beerengineer/config.json`). Siehe `docs/app-setup.md`. |
 | `BEERENGINEER_DATA_DIR` | Data-Verzeichnis, in dem `setup` die SQLite-DB anlegt. Default via `env-paths`. |
-| `BEERENGINEER_ALLOWED_ROOTS` / `BEERENGINEER_ENGINE_PORT` / `BEERENGINEER_LLM_PROVIDER` / `BEERENGINEER_LLM_MODEL` / `BEERENGINEER_LLM_API_KEY_REF` / `BEERENGINEER_GITHUB_ENABLED` / `BEERENGINEER_BROWSER_ENABLED` / `BEERENGINEER_PUBLIC_BASE_URL` / `BEERENGINEER_TELEGRAM_ENABLED` / `BEERENGINEER_TELEGRAM_BOT_TOKEN_ENV` / `BEERENGINEER_TELEGRAM_DEFAULT_CHAT_ID` | Feld-weise Overrides fuer den App-Config. Vollstaendige Liste und Semantik in `docs/app-setup.md`. |
+| `BEERENGINEER_ALLOWED_ROOTS` / `BEERENGINEER_ENGINE_PORT` / `BEERENGINEER_LLM_PROVIDER` / `BEERENGINEER_LLM_MODEL` / `BEERENGINEER_LLM_API_KEY_REF` / `BEERENGINEER_GITHUB_ENABLED` / `BEERENGINEER_BROWSER_ENABLED` / `BEERENGINEER_PUBLIC_BASE_URL` / `BEERENGINEER_TELEGRAM_ENABLED` / `BEERENGINEER_TELEGRAM_BOT_TOKEN_ENV` / `BEERENGINEER_TELEGRAM_DEFAULT_CHAT_ID` / `BEERENGINEER_TELEGRAM_LEVEL` / `BEERENGINEER_TELEGRAM_INBOUND_ENABLED` / `BEERENGINEER_TELEGRAM_WEBHOOK_SECRET_ENV` | Feld-weise Overrides fuer den App-Config. `TELEGRAM_LEVEL` setzt den Chattool-Dispatcher-Level (0/1/2, Default 2). `TELEGRAM_INBOUND_ENABLED` schaltet `POST /webhooks/telegram` frei; `TELEGRAM_WEBHOOK_SECRET_ENV` zeigt auf die Env-Var mit dem von Telegram gesetzten `x-telegram-bot-api-secret-token`. Vollstaendige Liste und Semantik in `docs/app-setup.md`. |
 | `BEERENGINEER_TELEGRAM_API_BASE_URL` | Optionaler Override fuer die Telegram API Base URL. Hauptsaechlich fuer Tests/Stubs gedacht; Default `https://api.telegram.org`. |
 | `NEXT_PUBLIC_ENGINE_BASE_URL` | UI → Engine HTTP-Base. Default `http://127.0.0.1:4100`. |
 | `PORT` / `HOST` | Bind-Adresse des Engine-Servers. Default `127.0.0.1:4100`. |

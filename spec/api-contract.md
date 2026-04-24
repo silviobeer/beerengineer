@@ -76,6 +76,49 @@ No generic `POST /items/:id/actions` with an action string in the body. Explicit
 No `/open-prompt` endpoint — derive from `/conversation`.
 No `POST /runs/:id/input` in the target contract (kept as deprecated alias during Phase 2, removed in Phase 4).
 
+### Messages (canonical projected event log)
+
+Follow-on to the conversation endpoint. Where `/conversation` returns the
+operator-facing transcript (messages, questions, answers only), `/messages`
+returns the full event log projected through `MessageEntry` with level
+filtering — the shape defined in `spec/messaging-levels.md`.
+
+- `GET /runs/:id/messages?level=&since=&limit=`
+  - `level` ∈ `0 | 1 | 2` (or `L0 | L1 | L2`). Default `2`. See
+    `spec/messaging-levels.md` §1 for the detail-rank semantics.
+  - `since` is the stable `MessageEntry.id` cursor. Omit for head of log.
+  - `limit` ≤ 500, default 200.
+  - Server-side scan is capped at `MESSAGES_ENDPOINT_MAX_SCAN` rows per
+    request. When the cap is hit before `limit` entries are assembled the
+    response returns `nextSince` pointing at the last scanned row so the
+    client can resume — even when the client's `limit` was not met.
+  - Response:
+    ```jsonc
+    {
+      "runId": "run_…",
+      "schema": "messages-v1",
+      "nextSince": "msg_…",   // null when end of log reached
+      "entries": [MessageEntry, …]
+    }
+    ```
+- `POST /runs/:id/messages`
+  - Free-form user chat posted into the run. **Does not** close an open
+    prompt — use `POST /runs/:id/answer` for that.
+  - Request: `{ text }`. The HTTP boundary pins `source = "api"`; internal
+    surfaces (CLI, webhook handler) call `recordUserMessage` directly and
+    set their own source.
+  - Response: `{ ok: true, entry: ConversationEntry, conversation: ConversationResponse }`.
+
+### Events (SSE)
+
+- `GET /events?workspace=:key&level=` (workspace-scoped)
+- `GET /runs/:id/events?level=&since=` (run-scoped)
+
+Both SSE streams emit projected `MessageEntry` frames. `level` and `since`
+behave identically to the `/messages` endpoint above; errors
+(`run_failed`, `run_blocked`, `phase_failed`) are force-through regardless
+of level.
+
 ### Notifications (outbound only)
 
 - `GET /notifications/deliveries`
@@ -141,6 +184,21 @@ Computed as: last `question` entry in `entries` with no matching `answer` (i.e. 
 
 No `client.surface` / `client.channel`. If audit is needed, log the HTTP source server-side.
 
+### MessageEntry
+
+```ts
+{
+  id: string                 // stable cursor; alias of stage_logs.id
+  ts: string                 // ISO
+  runId: string
+  stageRunId: string | null
+  type: CanonicalMessageType // see spec/messaging-levels.md §5
+  level: 0 | 1 | 2
+  force: boolean             // true → delivered regardless of subscribed level
+  payload: Record<string, unknown>  // event-shape-specific; mirrors WorkflowEvent
+}
+```
+
 ### Error body
 
 ```ts
@@ -161,10 +219,13 @@ UI API routes forward 1:1 to Engine API. No orchestration logic.
 | `GET /api/runs` | `GET /runs?workspace=…` |
 | `GET /api/runs/:id` | `GET /runs/:id` |
 | `GET /api/runs/:id/conversation` | `GET /runs/:id/conversation` |
+| `GET /api/runs/:id/messages` | `GET /runs/:id/messages` |
+| `POST /api/runs/:id/messages` | `POST /runs/:id/messages` |
 | `POST /api/runs/:id/answer` | `POST /runs/:id/answer` |
 | `POST /api/runs` | `POST /runs` |
 | `POST /api/runs/:id/resume` | `POST /runs/:id/resume` |
 | `POST /api/items/:id/actions/:action` | `POST /items/:id/actions/:action` |
+| `GET /api/runs/:id/events` (SSE) | `GET /runs/:id/events` (proxied) |
 | `GET /api/events` (SSE) | `GET /events` (proxied) |
 
 ### CLI

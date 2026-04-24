@@ -1,4 +1,4 @@
-import { parseLogData } from "../api/http.js"
+import { parseLogData } from "./jsonEnvelope.js"
 import type { StageLogRow } from "../db/repositories.js"
 import type { WorkflowEvent } from "./io.js"
 import { levelOf, type CanonicalMessageType, type MessagingLevel } from "./messagingLevel.js"

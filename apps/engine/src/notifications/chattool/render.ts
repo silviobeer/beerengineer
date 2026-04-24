@@ -54,8 +54,15 @@ export function correlationKeyForMessage(entry: MessageEntry): string {
     case "run_finished":
     case "run_failed":
     case "run_resumed":
-    case "prompt_requested":
       return `${entry.runId}:${entry.type}`
+    case "prompt_requested": {
+      // Include promptId so multiple sequential prompts on the same run each
+      // get their own delivery row — otherwise the PRIMARY KEY clash would
+      // overwrite `telegram_message_id` and replies to older prompt messages
+      // would fail correlation lookup.
+      const promptId = typeof entry.payload.promptId === "string" ? entry.payload.promptId : entry.id
+      return `${entry.runId}:prompt_requested:${promptId}`
+    }
     case "run_blocked": {
       const scope = entry.payload.scope
       if (typeof scope === "object" && scope !== null) {

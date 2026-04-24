@@ -1,5 +1,5 @@
 import type { Repos, StageLogRow } from "../db/repositories.js"
-import { parseLogData } from "../api/http.js"
+import { parseLogData } from "./jsonEnvelope.js"
 
 export type AnswerSource = "cli" | "api" | "webhook"
 export type UserMessageSource = "cli" | "api" | "webhook"

@@ -473,6 +473,46 @@ Not built as part of this plan. Surface is ready; adding Slack means: implement 
 3. **Stable cursor implementation.** The API should expose `messageId`, not raw `stage_logs.id` or `created_at`. We still need to decide whether `messageId` is a direct alias over existing log ids in v1 or a new opaque cursor synthesized by the projection.
 4. **Chattool inbound for providers without reply-to semantics** (Slack threads, Teams). The Telegram mapping uses `reply_to_message.message_id`. Slack needs `thread_ts` on the dispatched outbound message; Teams has its own. Each provider maps its concept into the same `notification_deliveries` lookup — no new table.
 
+## 11a. Implementation notes (post-Phase 3)
+
+Resolved during the Phase 0–3 landing (`b2968c6`) and the review follow-up:
+
+- **Correlation key for `prompt_requested`** now includes `promptId` —
+  `${runId}:prompt_requested:${promptId}` — so sequential prompts on the
+  same run each get their own `notification_deliveries` row. Without it the
+  PRIMARY-KEY clash overwrote `telegram_message_id` and Telegram replies to
+  older prompt messages could not be correlated back to `(runId, promptId)`.
+- **Prompt re-notify window** is promoted to the named constant
+  `CHATTOOL_PROMPT_RENOTIFY_WINDOW_MS` in `core/constants.ts` (45 s today).
+- **`/messages` scan cap** is bounded by `MESSAGES_ENDPOINT_MAX_SCAN`
+  (5 000 rows per request). When the cap is hit before the client's
+  `limit` is met the response still returns a `nextSince` cursor so the
+  paginator can resume — this guards against pathological "all rows
+  filtered out" loops on L0-heavy runs queried at L2.
+- **SSE `seenStreamIds`** in `api/sse/runStream.ts` is a bounded ring of
+  4 096 ids (trimmed FIFO). The rowid cursor inside `tailStageLogs` does
+  the real work; the ring only guards the initial-pollOnce-vs-interval
+  race.
+- **`POST /runs/:id/messages`** pins `source = "api"` at the HTTP
+  boundary. Internal surfaces (CLI, chattool webhook handler) continue to
+  call `recordUserMessage` directly with their own `source` value.
+- **`item_column_changed` classifier entry** is kept so the
+  WorkflowEvent → level switch stays exhaustive at compile time, but the
+  event is not persisted to `stage_logs` (runOrchestrator handles it as a
+  board side-effect). If we ever want the event in the message stream,
+  adding persistence is the lever — the classifier will catch any
+  regression automatically.
+- **Dispatcher dedup return shape** stays as
+  `{ ok: false, error: "duplicate notification skipped (...)" }` rather
+  than `null`. Both flow through the compat layer to `delivered: false`;
+  the stable error prefix is what the existing tests and telemetry key
+  off. `null` remains reserved for "no matching template" (the dispatcher
+  has nothing to render for this event type).
+- **`parseLogData`** lives in `core/jsonEnvelope.ts`. `api/http.ts`
+  re-exports it for backwards compatibility with existing imports; new
+  code should import from `core/` to keep the `core → api` dependency
+  arrow straight.
+
 ## 12. Out of scope
 
 - Channel-binding CRUD, per-workspace routing, user-level subscriptions, do-not-disturb windows. If and when real operators ask for these, they get their own plan.

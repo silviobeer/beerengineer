@@ -81,6 +81,10 @@ export function levelOf(event: WorkflowEvent): LevelInfo {
         type: "agent_message",
       }
     case "item_column_changed":
+      // Not persisted to stage_logs today (runOrchestrator handles it as a
+      // side-effect-only board update), so the read-side never sees it. The
+      // classifier entry keeps the WorkflowEvent switch exhaustive so adding
+      // persistence later can't regress without a compile error.
       return { level: 1, force: false, type: "item_column_changed" }
     case "project_created":
       return { level: 2, force: false, type: "project_created" }
