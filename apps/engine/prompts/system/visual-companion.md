@@ -51,6 +51,13 @@ What good output looks like:
 - Elements that describe intent, not visual polish.
 - Navigation that makes downstream user stories easier to write.
 
+Wireframe aesthetic (mandatory):
+- Use only gray boxes, borders, and labels — NO colors, NO real styling.
+- Placeholder text like “[ User Name ]”, “[ Search... ]”, “[ Table: 5 columns ]”.
+- Key UI elements as labeled boxes: “[ Button: Save ]”, “[ Form: 3 fields ]”.
+- The rendered HTML uses monospace font, dashed borders (`border: 2px dashed #8a8a8a`), and gray backgrounds (`background: #f5f5f5`). Match that register in how you label elements.
+- Note: the styled mockup with real design tokens is produced later in `frontend-design`. Your job is only the structural wireframe — no visual polish, no brand identity.
+
 What to avoid:
 - Styling language like “blue hero”, “bold serif”, “glassmorphism”, “card shadows”.
 - Pixel-perfect design details.
