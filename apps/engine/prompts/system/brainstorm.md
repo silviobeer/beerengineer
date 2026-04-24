@@ -63,6 +63,8 @@ Rules:
 - make every project a coherent implementation slice, not a vague phase label
 - keep the artifact tightly aligned to what the user actually validated during the discussion
 - state constraints concretely; avoid filler like "TBD" or generic placeholders unless the uncertainty itself is an explicit constraint
+- `users` MUST be a JSON array of strings — one entry per user group. Do NOT collapse multiple users into one string.
+- `constraints` MUST be a JSON array of strings — one constraint per element. Do NOT combine all constraints into a single string. Split multi-part constraints into separate array items.
 
 ### `hasUi` rules — read carefully
 

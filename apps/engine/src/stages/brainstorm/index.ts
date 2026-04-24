@@ -6,6 +6,7 @@ import { renderConceptMarkdown } from "../../render/concept.js"
 import { ask } from "../../sim/human.js"
 import { createBrainstormReview, createBrainstormStage, type RunLlmConfig } from "../../llm/registry.js"
 import type { BrainstormState } from "./types.js"
+import { normalizeBrainstormArtifact } from "./types.js"
 
 export async function brainstorm(item: Item, context: WorkflowContext, llm?: RunLlmConfig): Promise<Project[]> {
   stagePresent.header("brainstorm")
@@ -27,6 +28,9 @@ export async function brainstorm(item: Item, context: WorkflowContext, llm?: Run
     reviewer: createBrainstormReview(llm),
     askUser: ask,
     async persistArtifacts(run, artifact) {
+      // Coerce string-typed array fields that real LLMs may serialise as a
+      // single string (e.g. run fb199f59 crash: constraints was a string).
+      artifact = normalizeBrainstormArtifact(artifact)
       const hasUi = artifact.projects.some(project => project.hasUi === true)
       return [
         {
