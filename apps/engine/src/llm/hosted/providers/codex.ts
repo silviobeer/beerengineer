@@ -1,30 +1,83 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { spawnCommand, type HostedCliExecutionResult, type HostedProviderInvokeInput } from "../providerRuntime.js"
-import { isTransientFailure, isTransientSpawnError, sleep, transientRetryDelaysMs } from "./_retry.js"
-import { emitRetryMarker, makeJsonLineStreamCallback } from "./_stream.js"
+import type { HostedCliExecutionResult, HostedProviderInvokeInput } from "../providerRuntime.js"
+import { invokeProviderCli, type ProviderDriver } from "./_invoke.js"
+import { makeJsonLineStreamCallback } from "./_stream.js"
 
-function baseCommand(input: HostedProviderInvokeInput, responsePath: string): string[] {
-  const command = ["codex", "exec"]
-  if (input.session?.sessionId) {
-    command.push("resume", input.session.sessionId)
-  }
-  command.push("--skip-git-repo-check", "--json")
-  if (input.runtime.policy.mode === "safe-readonly") {
-    command.push("--sandbox", "read-only")
-  } else if (input.runtime.policy.mode === "safe-workspace-write") {
-    command.push("--sandbox", "workspace-write")
-  } else {
-    command.push("--full-auto", "--dangerously-bypass-approvals-and-sandbox")
-  }
-  if (input.runtime.model) command.push("--model", input.runtime.model)
-  command.push("--cd", input.runtime.workspaceRoot, "--output-last-message", responsePath, "-")
-  return command
+type CodexStreamEvent = {
+  type?: string
+  thread_id?: string
+  turn_id?: string
+  usage?: { cached_input_tokens?: number; input_tokens?: number; output_tokens?: number }
+  item?: { type?: string; name?: string; text?: string }
+  delta?: string
+  message?: string
 }
 
-function unknownSession(text: string): boolean {
-  return /unknown thread|expired thread|resume.*not found|invalid thread/i.test(text)
+type CodexStreamState = {
+  streamedSummary: boolean
+  /** Temp dir allocated for `--output-last-message`. Set by buildCommand; cleaned
+   *  up by `afterEach`. Placing it on the stream state lets the driver's
+   *  lifecycle hooks see both command args and the temp-dir path. */
+  tempDir: string | null
+  responsePath: string | null
+}
+
+function createCodexStreamState(): CodexStreamState {
+  return { streamedSummary: false, tempDir: null, responsePath: null }
+}
+
+function summarizeCodexEvent(event: CodexStreamEvent, state: CodexStreamState): { kind: "dim" | "step"; text: string } | null {
+  switch (event.type) {
+    case "thread.started":
+      state.streamedSummary = true
+      return { kind: "dim", text: `codex: thread started (${event.thread_id ?? "unknown"})` }
+    case "turn.started":
+      state.streamedSummary = true
+      return { kind: "dim", text: `codex: turn started` }
+    case "turn.completed": {
+      state.streamedSummary = true
+      const u = event.usage
+      const parts: string[] = []
+      if (u?.input_tokens !== undefined) parts.push(`in=${u.input_tokens}`)
+      if (u?.output_tokens !== undefined) parts.push(`out=${u.output_tokens}`)
+      if (u?.cached_input_tokens !== undefined) parts.push(`cache=${u.cached_input_tokens}`)
+      return { kind: "dim", text: `codex: turn completed${parts.length > 0 ? ` (${parts.join(" ")})` : ""}` }
+    }
+    case "item.started":
+    case "item.added":
+      if (event.item?.type) {
+        state.streamedSummary = true
+        return { kind: "dim", text: `codex: ${event.item.type}${event.item.name ? ` ${event.item.name}` : ""}` }
+      }
+      return null
+    case "item.completed":
+      if (event.item?.type) {
+        state.streamedSummary = true
+        return { kind: "dim", text: `codex: ${event.item.type} done` }
+      }
+      return null
+    case "error":
+      state.streamedSummary = true
+      return { kind: "step", text: `codex error: ${event.message ?? "unknown"}` }
+    default:
+      return null
+  }
+}
+
+function buildCodexCommand(input: HostedProviderInvokeInput, state: CodexStreamState, tempDir: string): string[] {
+  state.tempDir = tempDir
+  state.responsePath = join(tempDir, "last-message.txt")
+  const command = ["codex", "exec"]
+  if (input.session?.sessionId) command.push("resume", input.session.sessionId)
+  command.push("--skip-git-repo-check", "--json")
+  if (input.runtime.policy.mode === "safe-readonly") command.push("--sandbox", "read-only")
+  else if (input.runtime.policy.mode === "safe-workspace-write") command.push("--sandbox", "workspace-write")
+  else command.push("--full-auto", "--dangerously-bypass-approvals-and-sandbox")
+  if (input.runtime.model) command.push("--model", input.runtime.model)
+  command.push("--cd", input.runtime.workspaceRoot, "--output-last-message", state.responsePath, "-")
+  return command
 }
 
 function parseUsage(stdout: string): { sessionId: string | null; cachedInputTokens: number; totalInputTokens: number } {
@@ -51,93 +104,50 @@ function parseUsage(stdout: string): { sessionId: string | null; cachedInputToke
   return { sessionId, cachedInputTokens, totalInputTokens }
 }
 
-type CodexStreamEvent = {
-  type?: string
-  thread_id?: string
-  turn_id?: string
-  usage?: { cached_input_tokens?: number; input_tokens?: number; output_tokens?: number }
-  item?: { type?: string; name?: string; text?: string }
-  delta?: string
-  message?: string
-}
-
-function summarizeStreamEvent(event: CodexStreamEvent): { kind: "dim" | "step"; text: string } | null {
-  switch (event.type) {
-    case "thread.started":
-      return { kind: "dim", text: `codex: thread started (${event.thread_id ?? "unknown"})` }
-    case "turn.started":
-      return { kind: "dim", text: `codex: turn started` }
-    case "turn.completed": {
-      const u = event.usage
-      const parts: string[] = []
-      if (u?.input_tokens !== undefined) parts.push(`in=${u.input_tokens}`)
-      if (u?.output_tokens !== undefined) parts.push(`out=${u.output_tokens}`)
-      if (u?.cached_input_tokens !== undefined) parts.push(`cache=${u.cached_input_tokens}`)
-      return { kind: "dim", text: `codex: turn completed${parts.length > 0 ? ` (${parts.join(" ")})` : ""}` }
-    }
-    case "item.started":
-    case "item.added":
-      if (event.item?.type) return { kind: "dim", text: `codex: ${event.item.type}${event.item.name ? ` ${event.item.name}` : ""}` }
-      return null
-    case "item.completed":
-      if (event.item?.type) return { kind: "dim", text: `codex: ${event.item.type} done` }
-      return null
-    case "error":
-      return { kind: "step", text: `codex error: ${event.message ?? "unknown"}` }
-    default:
-      return null
-  }
-}
-
-function streamCallbackFor(): (line: string) => void {
-  return makeJsonLineStreamCallback<CodexStreamEvent>({
-    summarize: summarizeStreamEvent,
-  })
-}
-
-export async function invokeCodex(input: HostedProviderInvokeInput, attempt = 0): Promise<HostedCliExecutionResult> {
+/**
+ * Codex needs a fresh temp dir per-attempt because `--output-last-message`
+ * writes to a file path. We pre-allocate it before the driver builds the
+ * command and clean it up in `afterEach`.
+ */
+export async function invokeCodex(input: HostedProviderInvokeInput): Promise<HostedCliExecutionResult> {
   const tempDir = await mkdtemp(join(tmpdir(), "beerengineer-codex-"))
-  const responsePath = join(tempDir, "last-message.txt")
-  const command = baseCommand(input, responsePath)
-  const retryDelays = transientRetryDelaysMs()
+  const driver: ProviderDriver<CodexStreamState> = {
+    tag: "codex",
+    createStreamState: createCodexStreamState,
+    buildCommand: activeInput => buildCodexCommand(activeInput, state, tempDir),
+    streamCallback: ownState =>
+      makeJsonLineStreamCallback<CodexStreamEvent>({
+        summarize: event => summarizeCodexEvent(event, ownState),
+      }),
+    streamedSummary: ownState => ownState.streamedSummary,
+    unknownSession: text => /unknown thread|expired thread|resume.*not found|invalid thread/i.test(text),
+    async finalize({ input: activeInput, raw, command, state: finalState }) {
+      const outputText =
+        (finalState.responsePath
+          ? await readFile(finalState.responsePath, "utf8").catch(() => "")
+          : "") || raw.stdout
+      const usage = parseUsage(raw.stdout)
+      return {
+        ...raw,
+        command,
+        outputText,
+        session: { provider: activeInput.runtime.provider, sessionId: usage.sessionId ?? activeInput.session?.sessionId ?? null },
+        cacheStats: {
+          cachedInputTokens: usage.cachedInputTokens,
+          totalInputTokens: usage.totalInputTokens,
+        },
+      }
+    },
+  }
+  // `state` is the driver's mutable state. We need a reference accessible
+  // from `buildCommand` (called before `createStreamState` returns into the
+  // driver) — so we pre-create it and use a closure.
+  const state = driver.createStreamState()
+  // Override createStreamState to hand back the same pre-allocated state.
+  driver.createStreamState = () => state
+
   try {
-    let result
-    try {
-      result = await spawnCommand(command, input.prompt, input.runtime.workspaceRoot, {
-        onStdoutLine: streamCallbackFor(),
-      })
-    } catch (err) {
-      if (isTransientSpawnError(err) && attempt < retryDelays.length) {
-        emitRetryMarker("codex", attempt + 2, retryDelays.length + 1, retryDelays[attempt] ?? 0)
-        await sleep(retryDelays[attempt] ?? 0)
-        return invokeCodex(input, attempt + 1)
-      }
-      throw err
-    }
-    const combined = `${result.stdout}\n${result.stderr}`
-    if (result.exitCode !== 0) {
-      if (input.session?.sessionId && unknownSession(combined)) {
-        return invokeCodex({ ...input, session: { provider: input.runtime.provider, sessionId: null } }, attempt)
-      }
-      if (isTransientFailure(result.exitCode, result.stdout, result.stderr) && attempt < retryDelays.length) {
-        emitRetryMarker("codex", attempt + 2, retryDelays.length + 1, retryDelays[attempt] ?? 0)
-        await sleep(retryDelays[attempt] ?? 0)
-        return invokeCodex(input, attempt + 1)
-      }
-      throw new Error(`${input.runtime.provider} exited with code ${result.exitCode}: ${combined.trim() || "no output"}`)
-    }
-    const outputText = await readFile(responsePath, "utf8").catch(() => "")
-    const usage = parseUsage(result.stdout)
-    return {
-      ...result,
-      command,
-      outputText: outputText || result.stdout,
-      session: { provider: input.runtime.provider, sessionId: usage.sessionId ?? input.session?.sessionId ?? null },
-      cacheStats: {
-        cachedInputTokens: usage.cachedInputTokens,
-        totalInputTokens: usage.totalInputTokens,
-      },
-    }
+    return await invokeProviderCli(driver, input)
   } finally {
     await rm(tempDir, { recursive: true, force: true })
   }

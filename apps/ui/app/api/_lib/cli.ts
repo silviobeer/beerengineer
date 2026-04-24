@@ -13,68 +13,84 @@ function registerChild(child: ChildProcess): void {
   child.once("error", cleanup)
 }
 
-function cliEnv(): NodeJS.ProcessEnv {
-  return { ...process.env }
-}
+type SpawnSuccess = { runId: string }
+type SpawnFailure = { error: string; status?: number }
+type SpawnResult = SpawnSuccess | SpawnFailure
 
-export async function startCliWorkflow(input: {
-  title: string
-  description: string
-  workspaceKey?: string
-}): Promise<{ runId: string } | { error: string; status?: number }> {
-  const args = [ENGINE_BIN, "run", "--json"]
-  if (input.workspaceKey?.trim()) {
-    args.push("--workspace", input.workspaceKey.trim())
-  }
+/**
+ * One of the two resolution strategies a CLI invocation can use:
+ *
+ *  - `"ndjson"`: parse stdout as newline-delimited JSON events. Resolve on
+ *     the first event with a `runId` (typically `run_started`). Optional
+ *     `bootstrapAnswers` feed initial `prompt_requested` events back on
+ *     stdin (used by `POST /api/runs` to ferry title/description through
+ *     the CLI's interactive prompts).
+ *  - `"text"`: scan stdout text for a regex matching the runId (used by
+ *     `item-action` subcommands, which print `run-id: <uuid>`).
+ */
+type SpawnStrategy =
+  | { kind: "ndjson"; bootstrapAnswers?: string[] }
+  | { kind: "text"; runIdPattern: RegExp }
 
-  const child = spawn(process.execPath, args, {
+async function spawnEngineCli(args: string[], strategy: SpawnStrategy): Promise<SpawnResult> {
+  const child = spawn(process.execPath, [ENGINE_BIN, ...args], {
     cwd: ROOT,
-    env: cliEnv(),
+    env: { ...process.env },
     stdio: ["pipe", "pipe", "pipe"],
-    detached: false,
+    detached: true,
   })
   registerChild(child)
 
   return await new Promise(resolvePromise => {
     let resolved = false
-    let bootstrapAnswerIndex = 0
     let stdoutBuffer = ""
     let stderrBuffer = ""
+    let bootstrapIndex = 0
 
-    const finish = (result: { runId: string } | { error: string; status?: number }) => {
+    const finish = (result: SpawnResult): void => {
       if (resolved) return
       resolved = true
+      // Once we have the runId, the rest of the workflow talks to the UI
+      // through DB-backed events and prompts. Release the CLI from this
+      // request worker so it survives past the response.
+      child.stdin?.end()
+      child.unref()
       resolvePromise(result)
+    }
+
+    const handleNdjsonLine = (line: string): void => {
+      const trimmed = line.trim()
+      if (!trimmed) return
+      let event: { type?: string; promptId?: string; runId?: string }
+      try {
+        event = JSON.parse(trimmed)
+      } catch {
+        return
+      }
+      if (strategy.kind !== "ndjson") return
+      if (event.type === "prompt_requested" && typeof event.promptId === "string") {
+        const answers = strategy.bootstrapAnswers ?? []
+        const answer = bootstrapIndex < answers.length ? answers[bootstrapIndex] : null
+        bootstrapIndex += 1
+        if (answer !== null) {
+          child.stdin?.write(`${JSON.stringify({ type: "prompt_answered", promptId: event.promptId, answer })}\n`)
+        }
+      }
+      if ((event.type === "run_started" || event.type === "cli_finished") && typeof event.runId === "string") {
+        finish({ runId: event.runId })
+      }
     }
 
     child.stdout?.on("data", chunk => {
       stdoutBuffer += chunk.toString("utf8")
-      const lines = stdoutBuffer.split(/\r?\n/)
-      stdoutBuffer = lines.pop() ?? ""
-
-      for (const line of lines) {
-        const trimmed = line.trim()
-        if (!trimmed) continue
-        try {
-          const event = JSON.parse(trimmed) as {
-            type?: string
-            promptId?: string
-            runId?: string
-          }
-          if (event.type === "prompt_requested" && typeof event.promptId === "string") {
-            const answer = bootstrapAnswerIndex === 0 ? input.title : bootstrapAnswerIndex === 1 ? input.description : null
-            bootstrapAnswerIndex += 1
-            if (answer !== null) {
-              child.stdin?.write(`${JSON.stringify({ type: "prompt_answered", promptId: event.promptId, answer })}\n`)
-            }
-          }
-          if ((event.type === "run_started" || event.type === "cli_finished") && typeof event.runId === "string") {
-            finish({ runId: event.runId })
-          }
-        } catch {
-          // ignore non-json lines
-        }
+      if (strategy.kind === "ndjson") {
+        const lines = stdoutBuffer.split(/\r?\n/)
+        stdoutBuffer = lines.pop() ?? ""
+        lines.forEach(handleNdjsonLine)
+        return
       }
+      const match = stdoutBuffer.match(strategy.runIdPattern)
+      if (match?.[1]) finish({ runId: match[1] })
     })
 
     child.stderr?.on("data", chunk => {
@@ -82,12 +98,11 @@ export async function startCliWorkflow(input: {
     })
 
     child.once("exit", code => {
-      if (!resolved) {
-        finish({
-          error: stderrBuffer.trim() || `workflow_cli_exit_${code ?? "unknown"}`,
-          status: code ?? undefined,
-        })
-      }
+      if (resolved) return
+      finish({
+        error: stderrBuffer.trim() || stdoutBuffer.trim() || `engine_cli_exit_${code ?? "unknown"}`,
+        status: code ?? undefined,
+      })
     })
 
     child.once("error", err => {
@@ -96,59 +111,68 @@ export async function startCliWorkflow(input: {
   })
 }
 
+function isSpawnSuccess(result: SpawnResult): result is SpawnSuccess {
+  return "runId" in result
+}
+
+/**
+ * `POST /api/runs` — spawn the interactive `beerengineer run --json`
+ * workflow, ferrying title/description through the first two
+ * `prompt_requested` events so the UI caller can return a runId immediately.
+ */
+export async function startCliWorkflow(input: {
+  title: string
+  description: string
+  workspaceKey?: string
+}): Promise<SpawnResult> {
+  const args = ["run", "--json"]
+  if (input.workspaceKey?.trim()) args.push("--workspace", input.workspaceKey.trim())
+  return spawnEngineCli(args, {
+    kind: "ndjson",
+    bootstrapAnswers: [input.title, input.description],
+  })
+}
+
+/** `POST /api/items/:id/actions` for start_brainstorm / start_implementation. */
 export async function runCliItemAction(input: {
   itemRef: string
   action: "start_brainstorm" | "start_implementation"
-}): Promise<
-  | { ok: true; runId: string }
-  | { ok: false; status: number; error: string }
-> {
-  const child = spawn(
-    process.execPath,
-    [ENGINE_BIN, "item", "action", "--item", input.itemRef, "--action", input.action],
-    {
-      cwd: ROOT,
-      env: cliEnv(),
-      stdio: ["pipe", "pipe", "pipe"],
-      detached: false,
-    }
+}): Promise<{ ok: true; runId: string } | { ok: false; status: number; error: string }> {
+  const result = await spawnEngineCli(
+    ["item", "action", "--item", input.itemRef, "--action", input.action],
+    { kind: "text", runIdPattern: /run-id:\s*([a-f0-9-]+)/i },
   )
-  registerChild(child)
+  return isSpawnSuccess(result)
+    ? { ok: true, runId: result.runId }
+    : { ok: false, status: result.status ?? 1, error: result.error }
+}
 
-  return await new Promise(resolvePromise => {
-    let resolved = false
-    let stdout = ""
-    let stderr = ""
+/**
+ * `POST /api/runs/:id/resume` — spawn the CLI to re-enter a blocked run via
+ * `item action --action resume_run` with the remediation flags. `--yes`
+ * skips the interactive remediation prompt (UI has already collected the
+ * fields).
+ */
+export async function runCliResume(input: {
+  itemRef: string
+  summary: string
+  branch?: string
+  commit?: string
+  reviewNotes?: string
+}): Promise<{ ok: true; runId: string } | { ok: false; status: number; error: string }> {
+  const args = [
+    "item", "action",
+    "--item", input.itemRef,
+    "--action", "resume_run",
+    "--remediation-summary", input.summary,
+    "--yes",
+  ]
+  if (input.branch) args.push("--branch", input.branch)
+  if (input.commit) args.push("--commit", input.commit)
+  if (input.reviewNotes) args.push("--notes", input.reviewNotes)
 
-    const finish = (result: { ok: true; runId: string } | { ok: false; status: number; error: string }) => {
-      if (resolved) return
-      resolved = true
-      resolvePromise(result)
-    }
-
-    child.stdout?.on("data", chunk => {
-      stdout += chunk.toString("utf8")
-      const match = stdout.match(/run-id:\s*([a-f0-9-]+)/i)
-      if (match) {
-        finish({ ok: true, runId: match[1]! })
-      }
-    })
-
-    child.stderr?.on("data", chunk => {
-      stderr += chunk.toString("utf8")
-    })
-
-    child.once("exit", code => {
-      if (resolved) return
-      finish({
-        ok: false,
-        status: code ?? 1,
-        error: stderr.trim() || stdout.trim() || `item_action_exit_${code ?? "unknown"}`,
-      })
-    })
-
-    child.once("error", err => {
-      finish({ ok: false, status: 1, error: err.message })
-    })
-  })
+  const result = await spawnEngineCli(args, { kind: "text", runIdPattern: /run-id:\s*([a-f0-9-]+)/i })
+  return isSpawnSuccess(result)
+    ? { ok: true, runId: result.runId }
+    : { ok: false, status: result.status ?? 1, error: result.error }
 }

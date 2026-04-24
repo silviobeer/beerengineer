@@ -43,7 +43,7 @@ export async function requirements(ctx: ProjectContext, llm?: RunLlmConfig): Pro
         summaryArtifactFile(
           "requirements",
           stageSummary(run, [
-            `Clarification turns: ${run.iteration}`,
+            `Clarification turns: ${run.userTurnCount}`,
             `Stories produced: ${artifact.prd.stories.length}`,
           ]),
         ),

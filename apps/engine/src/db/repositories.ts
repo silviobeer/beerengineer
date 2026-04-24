@@ -54,6 +54,7 @@ export type RunRow = {
   recovery_scope: "run" | "stage" | "story" | null
   recovery_scope_ref: string | null
   recovery_summary: string | null
+  workspace_fs_id: string | null
   created_at: number
   updated_at: number
 }
@@ -116,6 +117,18 @@ export type PendingPromptRow = {
   answer: string | null
   created_at: number
   answered_at: number | null
+}
+
+export type OpenPromptContextRow = PendingPromptRow & {
+  workspace_id: string
+  workspace_key: string
+  workspace_name: string
+  item_id: string
+  item_code: string
+  item_title: string
+  run_title: string
+  run_status: string
+  current_stage: string | null
 }
 
 export type NotificationDeliveryRow = {
@@ -257,6 +270,12 @@ export class Repos {
       .all(code) as ItemRow[]
   }
 
+  listItemsForWorkspace(workspaceId: string): ItemRow[] {
+    return this.db
+      .prepare("SELECT * FROM items WHERE workspace_id = ? ORDER BY created_at ASC")
+      .all(workspaceId) as ItemRow[]
+  }
+
   latestActiveRunForItem(itemId: string): RunRow | undefined {
     return this.db
       .prepare(
@@ -339,7 +358,13 @@ export class Repos {
     return row
   }
 
-  createRun(input: { workspaceId: string; itemId: string; title: string; owner?: RunOwner }): RunRow {
+  createRun(input: {
+    workspaceId: string
+    itemId: string
+    title: string
+    owner?: RunOwner
+    workspaceFsId?: string | null
+  }): RunRow {
     const row: RunRow = {
       id: randomUUID(),
       workspace_id: input.workspaceId,
@@ -352,13 +377,14 @@ export class Repos {
       recovery_scope: null,
       recovery_scope_ref: null,
       recovery_summary: null,
+      workspace_fs_id: input.workspaceFsId ?? null,
       created_at: now(),
       updated_at: now()
     }
     this.db
       .prepare(
-        `INSERT INTO runs (id, workspace_id, item_id, title, status, current_stage, owner, created_at, updated_at)
-         VALUES (@id, @workspace_id, @item_id, @title, @status, @current_stage, @owner, @created_at, @updated_at)`
+        `INSERT INTO runs (id, workspace_id, item_id, title, status, current_stage, owner, workspace_fs_id, created_at, updated_at)
+         VALUES (@id, @workspace_id, @item_id, @title, @status, @current_stage, @owner, @workspace_fs_id, @created_at, @updated_at)`
       )
       .run({
         id: row.id,
@@ -368,13 +394,17 @@ export class Repos {
         status: row.status,
         current_stage: row.current_stage,
         owner: row.owner,
+        workspace_fs_id: row.workspace_fs_id,
         created_at: row.created_at,
         updated_at: row.updated_at
       })
     return row
   }
 
-  updateRun(id: string, patch: Partial<Pick<RunRow, "status" | "current_stage">>): void {
+  updateRun(
+    id: string,
+    patch: Partial<Pick<RunRow, "status" | "current_stage" | "recovery_status" | "recovery_scope" | "recovery_scope_ref" | "recovery_summary">>
+  ): void {
     const existing = this.db.prepare("SELECT * FROM runs WHERE id = ?").get(id) as RunRow | undefined
     if (!existing) return
     const next = {
@@ -383,8 +413,27 @@ export class Repos {
       updated_at: now()
     }
     this.db
-      .prepare("UPDATE runs SET status = ?, current_stage = ?, updated_at = ? WHERE id = ?")
-      .run(next.status, next.current_stage, next.updated_at, id)
+      .prepare(
+        `UPDATE runs
+         SET status = ?,
+             current_stage = ?,
+             recovery_status = ?,
+             recovery_scope = ?,
+             recovery_scope_ref = ?,
+             recovery_summary = ?,
+             updated_at = ?
+         WHERE id = ?`
+      )
+      .run(
+        next.status,
+        next.current_stage,
+        next.recovery_status,
+        next.recovery_scope,
+        next.recovery_scope_ref,
+        next.recovery_summary,
+        next.updated_at,
+        id,
+      )
   }
 
   /**
@@ -734,5 +783,51 @@ export class Repos {
         "SELECT * FROM pending_prompts WHERE run_id = ? AND answered_at IS NULL ORDER BY created_at ASC LIMIT 1"
       )
       .get(runId) as PendingPromptRow | undefined
+  }
+
+  listOpenPrompts(opts: { workspaceId?: string } = {}): OpenPromptContextRow[] {
+    if (opts.workspaceId) {
+      return this.db
+        .prepare(
+          `SELECT p.*,
+                  w.id AS workspace_id,
+                  w.key AS workspace_key,
+                  w.name AS workspace_name,
+                  i.id AS item_id,
+                  i.code AS item_code,
+                  i.title AS item_title,
+                  r.title AS run_title,
+                  r.status AS run_status,
+                  r.current_stage AS current_stage
+             FROM pending_prompts p
+             JOIN runs r ON r.id = p.run_id
+             JOIN items i ON i.id = r.item_id
+             JOIN workspaces w ON w.id = r.workspace_id
+            WHERE p.answered_at IS NULL
+              AND r.workspace_id = ?
+            ORDER BY p.created_at ASC`
+        )
+        .all(opts.workspaceId) as OpenPromptContextRow[]
+    }
+    return this.db
+      .prepare(
+        `SELECT p.*,
+                w.id AS workspace_id,
+                w.key AS workspace_key,
+                w.name AS workspace_name,
+                i.id AS item_id,
+                i.code AS item_code,
+                i.title AS item_title,
+                r.title AS run_title,
+                r.status AS run_status,
+                r.current_stage AS current_stage
+           FROM pending_prompts p
+           JOIN runs r ON r.id = p.run_id
+           JOIN items i ON i.id = r.item_id
+           JOIN workspaces w ON w.id = r.workspace_id
+          WHERE p.answered_at IS NULL
+          ORDER BY p.created_at ASC`
+      )
+      .all() as OpenPromptContextRow[]
   }
 }

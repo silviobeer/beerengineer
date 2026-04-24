@@ -49,7 +49,7 @@ export async function brainstorm(item: Item, context: WorkflowContext, llm?: Run
         summaryArtifactFile(
           "brainstorm",
           stageSummary(run, [
-            `Questions asked: ${run.iteration}`,
+            `Questions asked: ${run.userTurnCount}`,
             `Projects produced: ${artifact.projects.length}`,
           ]),
         ),

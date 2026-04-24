@@ -2,8 +2,13 @@ import type { ReviewAgentAdapter, ReviewContext, StageAgentAdapter, StageAgentIn
 import { emitEvent, getActiveRun } from "../../core/runContext.js"
 import type { RuntimePolicy } from "../registry.js"
 import type { HostedCliRequest, HostedProviderId } from "./promptEnvelope.js"
-import { mapReviewEnvelopeToResponse, mapStageEnvelopeToResponse, type HostedReviewOutputEnvelope, type HostedStageOutputEnvelope } from "./outputEnvelope.js"
 import { buildReviewPrompt, buildStagePrompt } from "./promptEnvelope.js"
+import {
+  mapReviewEnvelopeToResponse,
+  mapStageEnvelopeToResponse,
+  type HostedReviewOutputEnvelope,
+  type HostedStageOutputEnvelope,
+} from "./outputEnvelope.js"
 import type { HostedCliExecutionResult, HostedProviderInvokeInput, HostedSession } from "./providerRuntime.js"
 import { invokeClaude } from "./providers/claude.js"
 import { invokeCodex } from "./providers/codex.js"
@@ -104,6 +109,40 @@ type HostedAdapterInput = {
   runtimePolicy: RuntimePolicy
 }
 
+/**
+ * Invoke the hosted CLI and parse the response as a JSON envelope. If the
+ * first invocation returns non-JSON, re-invoke once with a hardening hint
+ * appended to the prompt. Session ids are threaded through both turns so
+ * provider-native conversation state keeps working.
+ */
+async function invokeAndParse<Env>(params: {
+  request: HostedCliRequest
+  session: HostedSession
+  parse: (raw: Record<string, unknown>) => Env
+  retryHint: string
+}): Promise<{ envelope: Env; session: HostedSession }> {
+  const firstResult = await invokeHostedCli(params.request, params.session)
+  let session = firstResult.session
+  try {
+    return { envelope: params.parse(parseJsonObject(firstResult.outputText)), session }
+  } catch (err) {
+    const retryPrompt = `${params.request.prompt}\n\n${params.retryHint}\n\nPrevious response (for your reference):\n${firstResult.outputText.slice(0, 2000)}`
+    const retryResult = await invokeHostedCli({ ...params.request, prompt: retryPrompt }, session)
+    session = retryResult.session
+    try {
+      return { envelope: params.parse(parseJsonObject(retryResult.outputText)), session }
+    } catch {
+      throw err
+    }
+  }
+}
+
+const STAGE_RETRY_HINT =
+  "IMPORTANT: your previous response was not valid JSON. You MUST respond with ONLY a single JSON object that matches the output envelope schema — no prose before or after, no markdown, no code fences. Respond with the JSON object now."
+
+const REVIEW_RETRY_HINT =
+  "IMPORTANT: your previous response was not valid JSON. You MUST respond with ONLY a single JSON object that matches the review output envelope schema — no prose before or after, no markdown, no code fences. Respond with the JSON object now."
+
 export class HostedStageAdapter<S, A> implements StageAgentAdapter<S, A> {
   private session: HostedSession
 
@@ -126,33 +165,21 @@ export class HostedStageAdapter<S, A> implements StageAgentAdapter<S, A> {
       workspaceRoot: this.input.workspaceRoot,
       policy: this.input.runtimePolicy,
     }
-    const basePrompt = buildStagePrompt({
+    const prompt = buildStagePrompt({
       stageId: this.input.stageId,
       provider: this.input.provider,
       model: this.input.model,
       runtimePolicy: this.input.runtimePolicy,
       request,
     })
-    const firstResult = await invokeHostedCli(
-      { kind: "stage", runtime, prompt: basePrompt, payload: request },
-      this.session,
-    )
-    this.session = firstResult.session
-    try {
-      return mapStageEnvelopeToResponse(parseJsonObject(firstResult.outputText) as HostedStageOutputEnvelope<A>)
-    } catch (err) {
-      const retryPrompt = `${basePrompt}\n\nIMPORTANT: your previous response was not valid JSON. You MUST respond with ONLY a single JSON object that matches the output envelope schema — no prose before or after, no markdown, no code fences. Respond with the JSON object now.\n\nPrevious response (for your reference):\n${firstResult.outputText.slice(0, 2000)}`
-      const retryResult = await invokeHostedCli(
-        { kind: "stage", runtime, prompt: retryPrompt, payload: request },
-        this.session,
-      )
-      this.session = retryResult.session
-      try {
-        return mapStageEnvelopeToResponse(parseJsonObject(retryResult.outputText) as HostedStageOutputEnvelope<A>)
-      } catch {
-        throw err
-      }
-    }
+    const { envelope, session } = await invokeAndParse<HostedStageOutputEnvelope<A>>({
+      request: { kind: "stage", runtime, prompt, payload: request },
+      session: this.session,
+      parse: raw => raw as HostedStageOutputEnvelope<A>,
+      retryHint: STAGE_RETRY_HINT,
+    })
+    this.session = session
+    return mapStageEnvelopeToResponse(envelope)
   }
 }
 
@@ -179,33 +206,21 @@ export class HostedReviewAdapter<S, A> implements ReviewAgentAdapter<S, A> {
       workspaceRoot: this.input.workspaceRoot,
       policy: this.input.runtimePolicy,
     }
-    const basePrompt = buildReviewPrompt({
+    const prompt = buildReviewPrompt({
       stageId: this.input.stageId,
       provider: this.input.provider,
       model: this.input.model,
       runtimePolicy: this.input.runtimePolicy,
       request,
     })
-    const firstResult = await invokeHostedCli(
-      { kind: "review", runtime, prompt: basePrompt, payload: request },
-      this.session,
-    )
-    this.session = firstResult.session
-    try {
-      return mapReviewEnvelopeToResponse(parseJsonObject(firstResult.outputText) as HostedReviewOutputEnvelope)
-    } catch (err) {
-      const retryPrompt = `${basePrompt}\n\nIMPORTANT: your previous response was not valid JSON. You MUST respond with ONLY a single JSON object that matches the review output envelope schema — no prose before or after, no markdown, no code fences. Respond with the JSON object now.\n\nPrevious response (for your reference):\n${firstResult.outputText.slice(0, 2000)}`
-      const retryResult = await invokeHostedCli(
-        { kind: "review", runtime, prompt: retryPrompt, payload: request },
-        this.session,
-      )
-      this.session = retryResult.session
-      try {
-        return mapReviewEnvelopeToResponse(parseJsonObject(retryResult.outputText) as HostedReviewOutputEnvelope)
-      } catch {
-        throw err
-      }
-    }
+    const { envelope, session } = await invokeAndParse<HostedReviewOutputEnvelope>({
+      request: { kind: "review", runtime, prompt, payload: request },
+      session: this.session,
+      parse: raw => raw as HostedReviewOutputEnvelope,
+      retryHint: REVIEW_RETRY_HINT,
+    })
+    this.session = session
+    return mapReviewEnvelopeToResponse(envelope)
   }
 }
 

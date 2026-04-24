@@ -7,6 +7,7 @@ import { spawnSync } from "node:child_process"
 
 import type { WorkflowContext } from "../src/core/workspaceLayout.js"
 import {
+  abandonStoryBranchReal,
   detectRealGitMode,
   ensureItemBranchReal,
   ensureProjectBranchReal,
@@ -177,6 +178,76 @@ test("realGit creates a dedicated worktree for a story branch", () => {
   } finally {
     rmSync(root, { recursive: true, force: true })
     rmSync(worktreeRoot, { recursive: true, force: true })
+  }
+})
+
+test("abandonStoryBranchReal moves the story branch under refs/beerengineer/abandoned and deletes the branch", () => {
+  const root = seedRepo()
+  try {
+    const ctx: WorkflowContext = {
+      workspaceId: "w",
+      runId: "r",
+      itemSlug: "demo-item",
+      baseBranch: "main",
+      workspaceRoot: root,
+    }
+    const mode = detectRealGitMode(ctx)
+    assert.equal(mode.enabled, true)
+    if (!mode.enabled) return
+
+    ensureItemBranchReal(mode, ctx)
+    ensureProjectBranchReal(mode, ctx, "proj-a")
+    ensureWaveBranchReal(mode, ctx, "proj-a", 1)
+    ensureStoryBranchReal(mode, ctx, "proj-a", 1, "story-x")
+    writeFileSync(join(root, "s.txt"), "x\n")
+    sh(root, ["add", "-A"])
+    sh(root, ["commit", "-m", "story"])
+    const storySha = sh(root, ["rev-parse", "HEAD"])
+
+    const result = abandonStoryBranchReal(mode, ctx, "proj-a", 1, "story-x")
+    assert.ok(result, "expected abandon to succeed")
+    assert.match(result!.abandonedRef, /^refs\/beerengineer\/abandoned\/story\//)
+
+    const branches = sh(root, ["for-each-ref", "--format=%(refname:short)", "refs/heads/"]).split(/\r?\n/)
+    assert.ok(
+      !branches.includes("story/demo-item__proj-a__w1__story-x"),
+      `story branch should be deleted, got ${JSON.stringify(branches)}`,
+    )
+    const preserved = sh(root, ["rev-parse", result!.abandonedRef])
+    assert.equal(preserved, storySha, "abandoned ref must preserve the story SHA")
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("ensureItemBranchReal does not park on base when the item branch already exists", () => {
+  const root = seedRepo()
+  try {
+    const ctx: WorkflowContext = {
+      workspaceId: "w",
+      runId: "r",
+      itemSlug: "demo-item",
+      baseBranch: "main",
+      workspaceRoot: root,
+    }
+    const mode = detectRealGitMode(ctx)
+    assert.equal(mode.enabled, true)
+    if (!mode.enabled) return
+
+    ensureItemBranchReal(mode, ctx)
+    ensureProjectBranchReal(mode, ctx, "proj-a")
+    // Simulate a resume: HEAD is on proj branch. Calling ensureItemBranchReal
+    // must not flip the checkout to main before switching to item.
+    assert.equal(sh(root, ["branch", "--show-current"]), "proj/demo-item__proj-a")
+
+    ensureItemBranchReal(mode, ctx)
+    assert.equal(sh(root, ["branch", "--show-current"]), "item/demo-item")
+    // main must still point at the seed commit — the park path should not have been taken
+    // (previously it was unconditional).
+    const reflog = sh(root, ["reflog", "show", "main"]).split(/\r?\n/)
+    assert.equal(reflog.length, 1, `main reflog should have a single entry, got ${JSON.stringify(reflog)}`)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
   }
 })
 

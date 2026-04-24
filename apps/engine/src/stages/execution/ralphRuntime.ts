@@ -435,31 +435,47 @@ function cycleReviewPath(dir: string, cycle: number): string {
   return join(dir, `story-review-cycle-${cycle}.json`)
 }
 
-export async function runRalphStory(
-  storyContext: StoryExecutionContext,
+type RalphPaths = {
+  dir: string
+  implementationPath: string
+  reviewPath: string
+  logPath: string
+  remediationPath: string
+  baselinePath: string
+}
+
+type PendingRemediation = {
+  id: string
+  summary: string
+  branch?: string | null
+  commitSha?: string | null
+  reviewNotes?: string | null
+}
+
+type RalphLoopContext = {
+  runtimeContext: WorkflowContext
+  storyContext: StoryExecutionContext
+  paths: RalphPaths
+  llm?: RunLlmConfig
+}
+
+function ralphPaths(
   runtimeContext: WorkflowContext,
-  llm?: RunLlmConfig,
-): Promise<StoryArtifacts> {
+  storyContext: StoryExecutionContext,
+): RalphPaths {
   const dir = layout.executionRalphDir(runtimeContext, storyContext.wave.number, storyContext.story.id)
-  await mkdir(dir, { recursive: true })
+  return {
+    dir,
+    implementationPath: join(dir, "implementation.json"),
+    reviewPath: join(dir, "story-review.json"),
+    logPath: join(dir, "log.jsonl"),
+    remediationPath: join(dir, "pending-remediation.json"),
+    baselinePath: join(dir, "coder-baseline.json"),
+  }
+}
 
-  const implementationPath = join(dir, "implementation.json")
-  const reviewPath = join(dir, "story-review.json")
-  const logPath = join(dir, "log.jsonl")
-  const remediationPath = join(dir, "pending-remediation.json")
-  const baselinePath = join(dir, "coder-baseline.json")
-
-  const persistedImplementation = await readJsonIfExists<StoryImplementationArtifact>(implementationPath)
-  const persistedReview = await readJsonIfExists<StoryReviewArtifact>(reviewPath)
-  const pendingRemediation = await readJsonIfExists<{
-    id: string
-    summary: string
-    branch?: string | null
-    commitSha?: string | null
-    reviewNotes?: string | null
-  }>(remediationPath)
-
-  const implementation: StoryImplementationArtifact = persistedImplementation ?? {
+function newImplementation(storyContext: StoryExecutionContext): StoryImplementationArtifact {
+  return {
     story: { id: storyContext.story.id, title: storyContext.story.title },
     mode: "ralph-wiggum",
     status: "in_progress",
@@ -473,57 +489,342 @@ export async function runRalphStory(
     changedFiles: [],
     finalSummary: "",
   }
+}
 
-  const maxIterationsPerCycle = implementation.maxIterations
-  const maxReviewCycles = implementation.maxReviewCycles
+async function ensureBranchAndStartLog(
+  ctx: RalphLoopContext,
+  implementation: StoryImplementationArtifact,
+): Promise<void> {
+  if (implementation.iterations.length > 0) return
+  if (!implementation.branch) {
+    implementation.branch = await ensureStoryBranch(
+      ctx.runtimeContext,
+      ctx.storyContext.project.id,
+      ctx.storyContext.wave.number,
+      ctx.storyContext.story.id,
+    )
+    await writeJson(ctx.paths.implementationPath, implementation)
+    await appendLog(ctx.paths.logPath, logEntry("branch_event", `Branch created: ${implementation.branch.name}`, {
+      storyId: ctx.storyContext.story.id,
+      branch: implementation.branch.name,
+      base: implementation.branch.base,
+    }))
+  }
+  await appendLog(ctx.paths.logPath, logEntry("status_changed", `Story ${ctx.storyContext.story.id} started`, {
+    storyId: ctx.storyContext.story.id,
+  }))
+}
 
+async function consumePendingRemediation(
+  ctx: RalphLoopContext,
+  remediation: PendingRemediation | undefined,
+  existingFeedback: string | undefined,
+): Promise<string | undefined> {
+  if (!remediation) return existingFeedback
+  const remediationLine = [
+    `[external-remediation] ${remediation.summary}`,
+    remediation.branch ? `branch=${remediation.branch}` : undefined,
+    remediation.commitSha ? `commit=${remediation.commitSha}` : undefined,
+    remediation.reviewNotes ? `notes=${remediation.reviewNotes}` : undefined,
+  ]
+    .filter(Boolean)
+    .join(" | ")
+  const merged = existingFeedback ? `${remediationLine}; ${existingFeedback}` : remediationLine
+  await appendLog(ctx.paths.logPath, logEntry("stage_message", "External remediation applied to next iteration", {
+    storyId: ctx.storyContext.story.id,
+    remediationId: remediation.id,
+  }))
+  try {
+    await unlink(ctx.paths.remediationPath)
+  } catch {
+    // Already consumed / removed — ignore.
+  }
+  return merged
+}
+
+async function runOneIteration(
+  ctx: RalphLoopContext,
+  implementation: StoryImplementationArtifact,
+  opts: {
+    reviewCycle: number
+    maxIterationsPerCycle: number
+    maxReviewCycles: number
+    iterationsThisCycle: number
+    feedback: string | undefined
+  },
+): Promise<"done" | "tests_failed"> {
+  const { runtimeContext, storyContext, paths, llm } = ctx
+  const iterationNumber = implementation.iterations.length + 1
+  const isRemediation = Boolean(opts.feedback)
+  const action = isRemediation
+    ? `Apply review feedback: ${opts.feedback}`
+    : "Implement story against approved test plan"
+
+  stagePresent.step(
+    isRemediation
+      ? `    Ralph addresses review findings for ${storyContext.story.id}...`
+      : `    Ralph implements ${storyContext.story.id}...`,
+  )
+
+  let coderSummary: string | undefined
+  let changedFilesThisIteration: string[] = []
+  let notes: string[] = isRemediation ? ["Remediation run triggered by story review."] : []
+
+  if (llm) {
+    const harness = resolveHarness({
+      workspaceRoot: llm.workspaceRoot,
+      harnessProfile: llm.harnessProfile,
+      runtimePolicy: llm.runtimePolicy,
+      role: "coder",
+      stage: "execution",
+    })
+    const iterationContext: IterationContext = {
+      iteration: iterationNumber,
+      maxIterations: opts.maxIterationsPerCycle,
+      reviewCycle: opts.reviewCycle + 1,
+      maxReviewCycles: opts.maxReviewCycles,
+      priorAttempts: implementation.priorAttempts ?? [],
+    }
+    const coderResult = await runCoderHarness({
+      harness,
+      runtimePolicy: executionCoderPolicy(llm.runtimePolicy),
+      baselinePath: paths.baselinePath,
+      storyContext,
+      reviewFeedback: isRemediation ? opts.feedback ?? "" : undefined,
+      sessionId: implementation.coderSessionId ?? null,
+      iterationContext,
+    })
+    coderSummary = coderResult.summary
+    changedFilesThisIteration = coderResult.changedFiles
+    implementation.coderSessionId = coderResult.sessionId
+    notes = [...notes, ...coderResult.implementationNotes]
+    if (coderResult.blockers.length > 0) {
+      notes.push(...coderResult.blockers.map(blocker => `[blocker] ${blocker}`))
+    }
+    stagePresent.dim(`    → ${coderSummary}`)
+  } else if (isRemediation) {
+    await llm6bFix(opts.feedback ?? "")
+  } else {
+    await llm6bImplement({
+      id: storyContext.story.id,
+      title: storyContext.story.title,
+      acceptanceCriteria: storyContext.story.acceptanceCriteria,
+    })
+    changedFilesThisIteration = fakeChangedFiles(storyContext.story.id)
+  }
+
+  const checks = checksForIteration(opts.iterationsThisCycle, isRemediation)
+  const result = resultFromChecks(checks)
+
+  implementation.iterations.push({
+    number: iterationNumber,
+    reviewCycle: opts.reviewCycle,
+    action,
+    checks,
+    result: result === "done" && isRemediation ? "review_feedback_applied" : result,
+    notes,
+  })
+  ;(implementation.priorAttempts ??= []).push({
+    iteration: iterationNumber,
+    summary: coderSummary ?? (result === "done" ? "Implementation reached green." : "Implementation still failing checks."),
+    outcome: result === "done" ? "passed" : result === "tests_failed" ? "failed" : "blocked",
+  })
+  implementation.changedFiles = Array.from(
+    new Set([...implementation.changedFiles, ...changedFilesThisIteration]),
+  )
+  implementation.branch = await appendBranchCommit(
+    runtimeContext,
+    requireBranch(implementation).name,
+    isRemediation
+      ? `Apply review feedback for ${storyContext.story.id}`
+      : `Implement ${storyContext.story.id}`,
+    implementation.changedFiles,
+  )
+  implementation.status = result === "done" ? "ready_for_review" : "in_progress"
+  if (result === "done") {
+    implementation.finalSummary = "Implementation reached a green state and is ready for story review."
+  }
+
+  await writeJson(paths.implementationPath, implementation)
+  const lastCommit = requireBranch(implementation).commits[requireBranch(implementation).commits.length - 1]
+  await appendLog(paths.logPath, logEntry("branch_event", `Commit: ${lastCommit.message}`, {
+    storyId: storyContext.story.id,
+    branch: requireBranch(implementation).name,
+    commit: lastCommit.message,
+  }))
+  await appendLog(paths.logPath, logEntry("iteration", `Iteration ${iterationNumber} (cycle ${opts.reviewCycle}): ${result}`, {
+    storyId: storyContext.story.id,
+    iteration: iterationNumber,
+    reviewCycle: opts.reviewCycle,
+    action,
+    checks,
+    result,
+  }))
+
+  return result
+}
+
+/** Run iterations until green or iteration budget is exhausted. */
+async function runCoderCycleUntilGreen(
+  ctx: RalphLoopContext,
+  implementation: StoryImplementationArtifact,
+  opts: {
+    reviewCycle: number
+    maxIterationsPerCycle: number
+    maxReviewCycles: number
+    feedback: string | undefined
+  },
+): Promise<"ready_for_review" | "exhausted"> {
+  implementation.status = "in_progress"
+  let iterationsThisCycle = countIterationsInCycle(implementation, opts.reviewCycle)
+
+  while (iterationsThisCycle < opts.maxIterationsPerCycle) {
+    iterationsThisCycle++
+    const result = await runOneIteration(ctx, implementation, {
+      reviewCycle: opts.reviewCycle,
+      maxIterationsPerCycle: opts.maxIterationsPerCycle,
+      maxReviewCycles: opts.maxReviewCycles,
+      iterationsThisCycle,
+      feedback: opts.feedback,
+    })
+    if (result === "done") return "ready_for_review"
+  }
+  return "exhausted"
+}
+
+/**
+ * Run one review over a `ready_for_review` implementation. On pass, merge the
+ * story branch into the wave. On revise, return the feedback for the next cycle.
+ */
+async function runOneReviewCycle(
+  ctx: RalphLoopContext,
+  implementation: StoryImplementationArtifact,
+  reviewCycle: number,
+): Promise<{ kind: "passed"; review: StoryReviewArtifact } | { kind: "revise"; review: StoryReviewArtifact; nextFeedback: string }> {
+  const { runtimeContext, storyContext, paths, llm } = ctx
+  await appendLog(paths.logPath, logEntry("status_changed", `Transition to review cycle ${reviewCycle}`, {
+    storyId: storyContext.story.id,
+    reviewCycle,
+  }))
+
+  const reviewResult = await runStoryReview({
+    reviewCycle: reviewCycle + 1,
+    storyContext,
+    artifactsDir: paths.dir,
+    baselinePath: paths.baselinePath,
+    llm,
+    implementation,
+  })
+  printReviewResult(reviewResult)
+  const storyReview = buildReviewArtifact(storyContext, reviewCycle + 1, reviewResult)
+  await writeJson(cycleReviewPath(paths.dir, reviewCycle + 1), storyReview)
+  await writeJson(paths.reviewPath, storyReview)
+  await appendLog(paths.logPath, logEntry(
+    storyReview.outcome.startsWith("pass") ? "review_pass" : "review_revise",
+    `Review cycle ${reviewCycle} ${storyReview.outcome}`,
+    {
+      storyId: storyContext.story.id,
+      reviewCycle,
+      findings: reviewResult.combinedFindings,
+    },
+  ))
+
+  if (!storyReview.outcome.startsWith("pass")) {
+    implementation.status = "in_progress"
+    await writeJson(paths.implementationPath, implementation)
+    return { kind: "revise", review: storyReview, nextFeedback: storyReview.feedbackSummary.join("; ") }
+  }
+
+  if (implementation.branch) {
+    const merge = await mergeStoryBranchIntoWave(
+      runtimeContext,
+      storyContext.project.id,
+      storyContext.wave.number,
+      implementation.branch.name,
+      implementation.changedFiles,
+    )
+    implementation.branch = merge.storyBranch
+    await appendLog(paths.logPath, logEntry("branch_event", `Merged ${merge.storyBranch.name} → ${merge.waveBranch.name}`, {
+      storyId: storyContext.story.id,
+      branch: merge.storyBranch.name,
+      target: merge.waveBranch.name,
+    }))
+  }
+  implementation.status = "passed"
+  implementation.finalSummary = `Story implementation and story review both passed, then ${implementation.branch?.name ?? "story branch"} was merged into ${implementation.branch?.base ?? "wave branch"}.`
+  await writeJson(paths.implementationPath, implementation)
+  await appendLog(paths.logPath, logEntry("status_changed", `Story ${storyContext.story.id} passed`, {
+    storyId: storyContext.story.id,
+    status: "passed",
+  }))
+  return { kind: "passed", review: storyReview }
+}
+
+/**
+ * Unified blocked tail: mark the implementation blocked, abandon the story
+ * branch, record the recovery artifact, and return. Used for both
+ * iteration-budget and review-cycle-budget exhaustion.
+ */
+async function blockStory(
+  ctx: RalphLoopContext,
+  implementation: StoryImplementationArtifact,
+  storyReview: StoryReviewArtifact | undefined,
+  cause: "story_error" | "review_limit",
+  summary: string,
+): Promise<StoryArtifacts> {
+  const { runtimeContext, storyContext, paths } = ctx
+  implementation.status = "blocked"
+  implementation.finalSummary = summary
+  if (implementation.branch) {
+    implementation.branch = await abandonBranch(runtimeContext, implementation.branch.name)
+    await appendLog(paths.logPath, logEntry("branch_event", `Branch abandoned: ${implementation.branch.name}`, {
+      storyId: storyContext.story.id,
+      branch: implementation.branch.name,
+    }))
+  }
+  await writeJson(paths.implementationPath, implementation)
+  await appendLog(paths.logPath, logEntry("status_changed", `Story ${storyContext.story.id} blocked`, {
+    storyId: storyContext.story.id,
+    status: "blocked",
+  }))
+  await recordStoryBlocked(
+    runtimeContext,
+    storyContext,
+    implementation,
+    storyReview,
+    cause,
+    summary,
+  )
+  return { implementation, review: storyReview }
+}
+
+export async function runRalphStory(
+  storyContext: StoryExecutionContext,
+  runtimeContext: WorkflowContext,
+  llm?: RunLlmConfig,
+): Promise<StoryArtifacts> {
+  const paths = ralphPaths(runtimeContext, storyContext)
+  await mkdir(paths.dir, { recursive: true })
+
+  const persistedImplementation = await readJsonIfExists<StoryImplementationArtifact>(paths.implementationPath)
+  const persistedReview = await readJsonIfExists<StoryReviewArtifact>(paths.reviewPath)
+  const pendingRemediation = await readJsonIfExists<PendingRemediation>(paths.remediationPath)
+
+  const implementation: StoryImplementationArtifact = persistedImplementation ?? newImplementation(storyContext)
   let storyReview = persistedReview
 
   if (implementation.status === "passed" || implementation.status === "blocked") {
     return { implementation, review: storyReview }
   }
 
-  if (implementation.iterations.length === 0) {
-    if (!implementation.branch) {
-      implementation.branch = await ensureStoryBranch(
-        runtimeContext,
-        storyContext.project.id,
-        storyContext.wave.number,
-        storyContext.story.id,
-      )
-      await writeJson(implementationPath, implementation)
-      await appendLog(logPath, logEntry("branch_event", `Branch created: ${implementation.branch.name}`, {
-        storyId: storyContext.story.id,
-        branch: implementation.branch.name,
-        base: implementation.branch.base,
-      }))
-    }
-    await appendLog(logPath, logEntry("status_changed", `Story ${storyContext.story.id} started`, {
-      storyId: storyContext.story.id,
-    }))
-  }
+  const loopCtx: RalphLoopContext = { runtimeContext, storyContext, paths, llm }
+  await ensureBranchAndStartLog(loopCtx, implementation)
 
-  let nextFeedback = storyReview?.outcome === "revise" ? storyReview.feedbackSummary.join("; ") : undefined
-  if (pendingRemediation) {
-    const remediationLine = [
-      `[external-remediation] ${pendingRemediation.summary}`,
-      pendingRemediation.branch ? `branch=${pendingRemediation.branch}` : undefined,
-      pendingRemediation.commitSha ? `commit=${pendingRemediation.commitSha}` : undefined,
-      pendingRemediation.reviewNotes ? `notes=${pendingRemediation.reviewNotes}` : undefined,
-    ]
-      .filter(Boolean)
-      .join(" | ")
-    nextFeedback = nextFeedback ? `${remediationLine}; ${nextFeedback}` : remediationLine
-    await appendLog(logPath, logEntry("stage_message", "External remediation applied to next iteration", {
-      storyId: storyContext.story.id,
-      remediationId: pendingRemediation.id,
-    }))
-    try {
-      await unlink(remediationPath)
-    } catch {
-      // Already consumed / removed — ignore.
-    }
-  }
+  const initialFeedback = storyReview?.outcome === "revise" ? storyReview.feedbackSummary.join("; ") : undefined
+  let nextFeedback = await consumePendingRemediation(loopCtx, pendingRemediation, initialFeedback)
+
+  const maxIterationsPerCycle = implementation.maxIterations
+  const maxReviewCycles = implementation.maxReviewCycles
 
   for (
     let reviewCycle = Math.max(implementation.currentReviewCycle, 0);
@@ -533,229 +834,38 @@ export async function runRalphStory(
     implementation.currentReviewCycle = reviewCycle
 
     if (implementation.status !== "ready_for_review") {
-      implementation.status = "in_progress"
-      let iterationsThisCycle = countIterationsInCycle(implementation, reviewCycle)
-
-      while (iterationsThisCycle < maxIterationsPerCycle) {
-        iterationsThisCycle++
-        const iterationNumber = implementation.iterations.length + 1
-        const isRemediation = Boolean(nextFeedback)
-        const action = isRemediation
-          ? `Apply review feedback: ${nextFeedback}`
-          : "Implement story against approved test plan"
-
-        if (isRemediation) {
-          stagePresent.step(`    Ralph addresses review findings for ${storyContext.story.id}...`)
-        } else {
-          stagePresent.step(`    Ralph implements ${storyContext.story.id}...`)
-        }
-
-        let coderSummary: string | undefined
-        let changedFilesThisIteration: string[] = []
-        let notes: string[] = isRemediation ? ["Remediation run triggered by story review."] : []
-
-        if (llm) {
-          const harness = resolveHarness({
-            workspaceRoot: llm.workspaceRoot,
-            harnessProfile: llm.harnessProfile,
-            runtimePolicy: llm.runtimePolicy,
-            role: "coder",
-            stage: "execution",
-          })
-          const iterationContext: IterationContext = {
-            iteration: iterationNumber,
-            maxIterations: maxIterationsPerCycle,
-            reviewCycle: reviewCycle + 1,
-            maxReviewCycles,
-            priorAttempts: implementation.priorAttempts ?? [],
-          }
-          const coderResult = await runCoderHarness({
-            harness,
-            runtimePolicy: executionCoderPolicy(llm.runtimePolicy),
-            baselinePath,
-            storyContext,
-            reviewFeedback: isRemediation ? nextFeedback ?? "" : undefined,
-            sessionId: implementation.coderSessionId ?? null,
-            iterationContext,
-          })
-          coderSummary = coderResult.summary
-          changedFilesThisIteration = coderResult.changedFiles
-          implementation.coderSessionId = coderResult.sessionId
-          notes = [...notes, ...coderResult.implementationNotes]
-          if (coderResult.blockers.length > 0) {
-            notes.push(...coderResult.blockers.map(blocker => `[blocker] ${blocker}`))
-          }
-          stagePresent.dim(`    → ${coderSummary}`)
-        } else if (isRemediation) {
-          await llm6bFix(nextFeedback ?? "")
-        } else {
-          await llm6bImplement({
-            id: storyContext.story.id,
-            title: storyContext.story.title,
-            acceptanceCriteria: storyContext.story.acceptanceCriteria,
-          })
-          changedFilesThisIteration = fakeChangedFiles(storyContext.story.id)
-        }
-
-        const checks = checksForIteration(iterationsThisCycle, isRemediation)
-        const result = resultFromChecks(checks)
-
-        implementation.iterations.push({
-          number: iterationNumber,
-          reviewCycle,
-          action,
-          checks,
-          result: result === "done" && isRemediation ? "review_feedback_applied" : result,
-          notes,
-        })
-        ;(implementation.priorAttempts ??= []).push({
-          iteration: iterationNumber,
-          summary: coderSummary ?? (result === "done" ? "Implementation reached green." : "Implementation still failing checks."),
-          outcome: result === "done" ? "passed" : result === "tests_failed" ? "failed" : "blocked",
-        })
-        implementation.changedFiles = Array.from(
-          new Set([...implementation.changedFiles, ...changedFilesThisIteration]),
-        )
-        implementation.branch = await appendBranchCommit(
-          runtimeContext,
-          requireBranch(implementation).name,
-          isRemediation
-            ? `Apply review feedback for ${storyContext.story.id}`
-            : `Implement ${storyContext.story.id}`,
-          implementation.changedFiles,
-        )
-        implementation.status = result === "done" ? "ready_for_review" : "in_progress"
-        if (result === "done") {
-          implementation.finalSummary = "Implementation reached a green state and is ready for story review."
-        }
-
-        await writeJson(implementationPath, implementation)
-        const lastCommit = requireBranch(implementation).commits[requireBranch(implementation).commits.length - 1]
-        await appendLog(logPath, logEntry("branch_event", `Commit: ${lastCommit.message}`, {
-          storyId: storyContext.story.id,
-          branch: requireBranch(implementation).name,
-          commit: lastCommit.message,
-        }))
-        await appendLog(logPath, logEntry("iteration", `Iteration ${iterationNumber} (cycle ${reviewCycle}): ${result}`, {
-          storyId: storyContext.story.id,
-          iteration: iterationNumber,
-          reviewCycle,
-          action,
-          checks,
-          result,
-        }))
-
-        if (result === "done") break
-      }
-
-      if (implementation.status !== "ready_for_review") {
-        implementation.status = "blocked"
-        implementation.finalSummary = `Blocked after ${maxIterationsPerCycle} implementation iterations in review cycle ${reviewCycle + 1} without reaching green.`
-        if (implementation.branch) {
-          implementation.branch = await abandonBranch(runtimeContext, implementation.branch.name)
-          await appendLog(logPath, logEntry("branch_event", `Branch abandoned: ${implementation.branch.name}`, {
-            storyId: storyContext.story.id,
-            branch: implementation.branch.name,
-          }))
-        }
-        await writeJson(implementationPath, implementation)
-        await appendLog(logPath, logEntry("status_changed", `Story ${storyContext.story.id} blocked`, {
-          storyId: storyContext.story.id,
-          status: "blocked",
-        }))
-        await recordStoryBlocked(
-          runtimeContext,
-          storyContext,
+      const coderOutcome = await runCoderCycleUntilGreen(loopCtx, implementation, {
+        reviewCycle,
+        maxIterationsPerCycle,
+        maxReviewCycles,
+        feedback: nextFeedback,
+      })
+      if (coderOutcome === "exhausted") {
+        return blockStory(
+          loopCtx,
           implementation,
           storyReview,
           "story_error",
-          implementation.finalSummary,
+          `Blocked after ${maxIterationsPerCycle} implementation iterations in review cycle ${reviewCycle + 1} without reaching green.`,
         )
-        return { implementation, review: storyReview }
       }
     }
 
-    await appendLog(logPath, logEntry("status_changed", `Transition to review cycle ${reviewCycle}`, {
-      storyId: storyContext.story.id,
-      reviewCycle,
-    }))
-
-    const reviewResult = await runStoryReview({
-      reviewCycle: reviewCycle + 1,
-      storyContext,
-      artifactsDir: dir,
-      baselinePath,
-      llm,
-      implementation,
-    })
-    printReviewResult(reviewResult)
-    storyReview = buildReviewArtifact(storyContext, reviewCycle + 1, reviewResult)
-    await writeJson(cycleReviewPath(dir, reviewCycle + 1), storyReview)
-    await writeJson(reviewPath, storyReview)
-    await appendLog(logPath, logEntry(
-      storyReview.outcome.startsWith("pass") ? "review_pass" : "review_revise",
-      `Review cycle ${reviewCycle} ${storyReview.outcome}`,
-      {
-        storyId: storyContext.story.id,
-        reviewCycle,
-        findings: reviewResult.combinedFindings,
-      },
-    ))
-
-    if (storyReview.outcome.startsWith("pass")) {
-      if (implementation.branch) {
-        const merge = await mergeStoryBranchIntoWave(
-          runtimeContext,
-          storyContext.project.id,
-          storyContext.wave.number,
-          implementation.branch.name,
-          implementation.changedFiles,
-        )
-        implementation.branch = merge.storyBranch
-        await appendLog(logPath, logEntry("branch_event", `Merged ${merge.storyBranch.name} → ${merge.waveBranch.name}`, {
-          storyId: storyContext.story.id,
-          branch: merge.storyBranch.name,
-          target: merge.waveBranch.name,
-        }))
-      }
-      implementation.status = "passed"
-      implementation.finalSummary = `Story implementation and story review both passed, then ${implementation.branch?.name ?? "story branch"} was merged into ${implementation.branch?.base ?? "wave branch"}.`
-      await writeJson(implementationPath, implementation)
-      await appendLog(logPath, logEntry("status_changed", `Story ${storyContext.story.id} passed`, {
-        storyId: storyContext.story.id,
-        status: "passed",
-      }))
+    const cycleResult = await runOneReviewCycle(loopCtx, implementation, reviewCycle)
+    storyReview = cycleResult.review
+    if (cycleResult.kind === "passed") {
       return { implementation, review: storyReview }
     }
-
-    nextFeedback = storyReview.feedbackSummary.join("; ")
-    implementation.status = "in_progress"
-    await writeJson(implementationPath, implementation)
+    nextFeedback = cycleResult.nextFeedback
   }
 
-  implementation.status = "blocked"
-  implementation.finalSummary = `Blocked after ${maxReviewCycles} story review cycles because the CodeRabbit/SonarQube gate did not open.`
-  if (implementation.branch) {
-    implementation.branch = await abandonBranch(runtimeContext, implementation.branch.name)
-    await appendLog(logPath, logEntry("branch_event", `Branch abandoned: ${implementation.branch.name}`, {
-      storyId: storyContext.story.id,
-      branch: implementation.branch.name,
-    }))
-  }
-  await writeJson(implementationPath, implementation)
-  await appendLog(logPath, logEntry("status_changed", `Story ${storyContext.story.id} blocked`, {
-    storyId: storyContext.story.id,
-    status: "blocked",
-  }))
-  await recordStoryBlocked(
-    runtimeContext,
-    storyContext,
+  return blockStory(
+    loopCtx,
     implementation,
     storyReview,
     "review_limit",
-    implementation.finalSummary,
+    `Blocked after ${maxReviewCycles} story review cycles because the CodeRabbit/SonarQube gate did not open.`,
   )
-  return { implementation, review: storyReview }
 }
 
 export async function writeWaveSummary(

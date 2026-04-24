@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from "node:child_process"
-import { cpSync, existsSync } from "node:fs"
-import { resolve } from "node:path"
+import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { ask, close } from "./sim/human.js"
 import { createCliIO } from "./core/ioCli.js"
@@ -49,7 +49,7 @@ type Command =
   | { kind: "setup"; group?: string; noInteractive?: boolean }
   | { kind: "notifications-test"; channel: "telegram" }
   | { kind: "start-ui" }
-  | { kind: "workflow"; json?: boolean; workspaceKey?: string }
+  | { kind: "workflow"; json?: boolean; workspaceKey?: string; verbose?: boolean }
   | { kind: "item-action"; itemRef: string; action: string; resume?: ResumeFlags }
   | { kind: "workspace-preview"; path?: string; json?: boolean }
   | {
@@ -74,10 +74,24 @@ type Command =
     }
   | { kind: "workspace-list"; json?: boolean }
   | { kind: "workspace-get"; key?: string; json?: boolean }
+  | { kind: "workspace-items"; key?: string; json?: boolean }
+  | { kind: "workspace-use"; key?: string }
   | { kind: "workspace-remove"; key?: string; json?: boolean; purge?: boolean }
   | { kind: "workspace-open"; key?: string }
   | { kind: "workspace-backfill"; json?: boolean }
   | { kind: "workspace-worktree-gc"; key?: string; json?: boolean }
+  | { kind: "status"; workspaceKey?: string; json?: boolean; all?: boolean }
+  | { kind: "chat-list"; workspaceKey?: string; json?: boolean; all?: boolean; compact?: boolean }
+  | { kind: "chat-answer"; promptId?: string; runId?: string; answer?: string; multiline?: boolean; editor?: boolean }
+  | { kind: "items"; workspaceKey?: string; json?: boolean; all?: boolean; compact?: boolean }
+  | { kind: "chats"; workspaceKey?: string; json?: boolean; all?: boolean; compact?: boolean }
+  | { kind: "runs"; workspaceKey?: string; json?: boolean; all?: boolean; compact?: boolean }
+  | { kind: "item-get"; itemRef?: string; workspaceKey?: string; json?: boolean }
+  | { kind: "item-open"; itemRef?: string; workspaceKey?: string }
+  | { kind: "run-list"; workspaceKey?: string; json?: boolean; all?: boolean; compact?: boolean }
+  | { kind: "run-get"; runId?: string; json?: boolean }
+  | { kind: "run-open"; runId?: string }
+  | { kind: "run-watch"; runId?: string }
   | { kind: "unknown"; token: string }
 
 const UI_DEV_HOST = "127.0.0.1"
@@ -98,16 +112,26 @@ export function parseArgs(argv: string[]): Command {
   const json = argv.includes("--json")
   const group = readFlag(argv, "--group")
   const workspaceKey = readFlag(argv, "--workspace")
+  const all = argv.includes("--all")
+  const compact = argv.includes("--compact")
   if (first === undefined || first === "--json" || first === "--workspace") {
-    return { kind: "workflow", json, workspaceKey }
+    return { kind: "workflow", json, workspaceKey, verbose: argv.includes("--verbose") }
   }
   if (first === "run") {
-    return { kind: "workflow", json, workspaceKey }
+    if (second === undefined || second === "--json" || second === "--workspace" || second === "--verbose") {
+      return { kind: "workflow", json, workspaceKey, verbose: argv.includes("--verbose") }
+    }
+    if (second === "list") return { kind: "run-list", workspaceKey, json, all, compact }
+    if (second === "get") return { kind: "run-get", runId: argv[2], json }
+    if (second === "open") return { kind: "run-open", runId: argv[2] }
+    if (second === "watch") return { kind: "run-watch", runId: argv[2] }
+    return { kind: "unknown", token: argv.join(" ") }
   }
   if (first === "--help" || first === "-h" || first === "help") return { kind: "help" }
   if (first === "--doctor" || first === "doctor") return { kind: "doctor", json, group }
   if (first === "setup") return { kind: "setup", group, noInteractive: argv.includes("--no-interactive") }
   if (first === "notifications" && second === "test" && argv[2] === "telegram") return { kind: "notifications-test", channel: "telegram" }
+  if (first === "status") return { kind: "status", workspaceKey, json, all }
   if (first === "workspace" && second === "preview") return { kind: "workspace-preview", path: argv[2], json }
   if (first === "workspace" && second === "add") {
     return {
@@ -133,10 +157,28 @@ export function parseArgs(argv: string[]): Command {
   }
   if (first === "workspace" && second === "list") return { kind: "workspace-list", json }
   if (first === "workspace" && second === "get") return { kind: "workspace-get", key: argv[2], json }
+  if (first === "workspace" && second === "items") return { kind: "workspace-items", key: argv[2], json }
+  if (first === "workspace" && second === "use") return { kind: "workspace-use", key: argv[2] }
   if (first === "workspace" && second === "remove") return { kind: "workspace-remove", key: argv[2], json, purge: argv.includes("--purge") }
   if (first === "workspace" && second === "open") return { kind: "workspace-open", key: argv[2] }
   if (first === "workspace" && second === "backfill") return { kind: "workspace-backfill", json }
   if (first === "workspace" && second === "gc-worktrees") return { kind: "workspace-worktree-gc", key: argv[2], json }
+  if (first === "chat" && second === "list") return { kind: "chat-list", workspaceKey, json, all, compact }
+  if (first === "chat" && second === "answer") {
+    return {
+      kind: "chat-answer",
+      promptId: readFlag(argv, "--prompt"),
+      runId: readFlag(argv, "--run"),
+      answer: readFlag(argv, "--text"),
+      multiline: argv.includes("--multiline"),
+      editor: argv.includes("--editor"),
+    }
+  }
+  if (first === "items") return { kind: "items", workspaceKey, json, all, compact }
+  if (first === "chats") return { kind: "chats", workspaceKey, json, all, compact }
+  if (first === "runs") return { kind: "runs", workspaceKey, json, all, compact }
+  if (first === "item" && second === "get") return { kind: "item-get", itemRef: argv[2], workspaceKey, json }
+  if (first === "item" && second === "open") return { kind: "item-open", itemRef: argv[2], workspaceKey }
   if (first === "start" && second === "ui") return { kind: "start-ui" }
   if (first === "item" && second === "action") {
     const itemRef = readFlag(argv, "--item")
@@ -170,6 +212,10 @@ function printHelp(): void {
     "    beerengineer --json                                  Harness mode: NDJSON events on stdout, prompt answers on stdin",
     "    beerengineer run --json                              Same as `beerengineer --json`",
     "    beerengineer start ui                                Start the UI on http://127.0.0.1:3100 and open it in the browser",
+    "    beerengineer status [--all] [--json]                Workspace status overview",
+    "    beerengineer items [--all] [--compact]              List items",
+    "    beerengineer chats [--all] [--compact]              List open chats",
+    "    beerengineer runs [--all] [--compact]               List runs",
     "    beerengineer item action --item <id|code> --action <name>",
     "                                                         Perform an item action",
     "    beerengineer doctor [--json] [--group <id>]          Run machine diagnostics",
@@ -180,10 +226,20 @@ function printHelp(): void {
     "                                                         [--gh-create] [--gh-public] [--gh-owner <user>]",
     "    beerengineer workspace list [--json]                 List registered workspaces",
     "    beerengineer workspace get <key> [--json]            Get one workspace",
+    "    beerengineer workspace items <key> [--json]          List items for one workspace",
+    "    beerengineer workspace use <key>                     Select the current workspace",
     "    beerengineer workspace remove <key> [--purge]        Unregister a workspace",
     "    beerengineer workspace open <key>                    Print the workspace root path",
     "    beerengineer workspace backfill [--json]             Write missing .beerengineer/workspace.json files",
     "    beerengineer workspace gc-worktrees <key> [--json]   Remove orphaned BeerEngineer story worktrees",
+    "    beerengineer item get <id|code> [--workspace <key>]  Show one item",
+    "    beerengineer item open <id|code> [--workspace <key>] Open one item in the UI",
+    "    beerengineer run list [--all] [--compact]            List runs",
+    "    beerengineer run get <run-id> [--json]               Show one run",
+    "    beerengineer run watch <run-id>                      Print run events",
+    "    beerengineer run open <run-id>                       Open one run in the UI",
+    "    beerengineer chat list [--all] [--compact]           List open prompts",
+    "    beerengineer chat answer (--prompt <id>|--run <id>)  Answer a prompt",
     "    beerengineer --help                                  Show this help",
     "",
     "  Item actions:",
@@ -203,7 +259,14 @@ function printHelp(): void {
     "    architecture through documentation run without user chat unless a blocker stops the run.",
     "",
     "  Aliases:",
-    "    -h  --help  --doctor",
+    "    -h  --help  --doctor  items  chats  runs",
+    "",
+    "  Quick start:",
+    "    beerengineer workspace list",
+    "    beerengineer workspace use <key>",
+    "    beerengineer status",
+    "    beerengineer items",
+    "    beerengineer chats",
     "",
     "  Setup groups:",
     `    ${KNOWN_GROUP_IDS.join("  ")}`,
@@ -220,7 +283,125 @@ export function resolveUiLaunchUrl(): string {
   return `http://${UI_DEV_HOST}:${UI_DEV_PORT}`
 }
 
+function resolveCliStatePath(): string {
+  const overrides = resolveOverrides()
+  const configPath = resolveConfigPath(overrides)
+  return join(dirname(configPath), "cli-state.json")
+}
+
+function loadCliState(): { currentWorkspaceKey?: string } {
+  try {
+    return JSON.parse(readFileSync(resolveCliStatePath(), "utf8")) as { currentWorkspaceKey?: string }
+  } catch {
+    return {}
+  }
+}
+
+function saveCliState(patch: { currentWorkspaceKey?: string }): void {
+  const statePath = resolveCliStatePath()
+  mkdirSync(dirname(statePath), { recursive: true })
+  writeFileSync(statePath, JSON.stringify({ ...loadCliState(), ...patch }, null, 2), "utf8")
+}
+
+function isGenericPrompt(prompt: string | null | undefined): boolean {
+  return !prompt || /^\s*you\s*>\s*$/i.test(prompt)
+}
+
+function shortRunId(runId: string): string {
+  return runId.slice(0, 8)
+}
+
+function latestRunForItem(repos: Repos, itemId: string) {
+  return repos
+    .listRuns()
+    .filter(run => run.item_id === itemId)
+    .sort((a, b) => b.created_at - a.created_at)[0]
+}
+
+function latestQuestionForRun(repos: Repos, runId: string): string | null {
+  return repos
+    .listLogsForRun(runId)
+    .filter(log => log.event_type === "chat_message" && log.message.trim().length > 0)
+    .sort((a, b) => b.created_at - a.created_at)[0]?.message ?? null
+}
+
+function latestAnswerForRun(repos: Repos, runId: string): string | null {
+  return repos
+    .listLogsForRun(runId)
+    .filter(log => log.event_type === "prompt_answered" && log.message.trim().length > 0)
+    .sort((a, b) => b.created_at - a.created_at)[0]?.message ?? null
+}
+
+function promptDisplayText(repos: Repos, prompt: { run_id: string; prompt: string }): string {
+  return isGenericPrompt(prompt.prompt) ? latestQuestionForRun(repos, prompt.run_id) ?? prompt.prompt : prompt.prompt
+}
+
+function deriveRunStatus(run: { status: string; recovery_status: string | null }, hasPrompt: boolean): string {
+  if (hasPrompt) return "needs_answer"
+  if (run.recovery_status === "blocked") return "blocked"
+  if (run.recovery_status === "failed" || run.status === "failed") return "failed"
+  if (run.status === "completed") return "completed"
+  return run.status
+}
+
+function deriveItemStatus(
+  item: Pick<ItemRow, "current_column" | "phase_status">,
+  latestRun: { status: string; recovery_status: string | null } | undefined,
+  hasPrompt: boolean,
+): string {
+  if (hasPrompt) return "needs_answer"
+  if (latestRun?.recovery_status === "blocked") return "blocked"
+  if (item.phase_status === "review_required") return "review_required"
+  if (latestRun?.recovery_status === "failed" || item.phase_status === "failed") return "failed"
+  if (item.current_column === "done" && item.phase_status === "completed") return "done"
+  return item.phase_status
+}
+
+function itemSortWeight(status: string): number {
+  switch (status) {
+    case "needs_answer": return 0
+    case "blocked": return 1
+    case "running": return 2
+    case "review_required": return 3
+    case "failed": return 4
+    case "done": return 9
+    default: return 5
+  }
+}
+
+function runSortWeight(status: string): number {
+  switch (status) {
+    case "needs_answer": return 0
+    case "blocked": return 1
+    case "running": return 2
+    case "failed": return 3
+    case "completed": return 9
+    default: return 5
+  }
+}
+
+function truncate(text: string, max: number): string {
+  return text.length <= max ? text : `${text.slice(0, Math.max(0, max - 1))}…`
+}
+
+function readAnswerBody(opts: { provided?: string; multiline?: boolean }): string {
+  if (opts.provided !== undefined) return opts.provided
+  const raw = readFileSync(0, "utf8")
+  if (opts.multiline) return raw.replace(/\s+$/, "")
+  return raw.split(/\r?\n/)[0]?.trim() ?? ""
+}
+
+async function isUiReachable(url: string): Promise<boolean> {
+  try {
+    const res = await fetch(new URL("/", url), { method: "HEAD", signal: AbortSignal.timeout(1500) })
+    return res.ok || res.status < 500
+  } catch {
+    return false
+  }
+}
+
 function openBrowser(url: string): void {
+  if (process.env.BEERENGINEER_DISABLE_BROWSER_OPEN === "1") return
   const platform = process.platform
   const command =
     platform === "darwin"
@@ -238,6 +419,16 @@ function openBrowser(url: string): void {
   } catch {
     // Browser launch is best-effort; the dev server is still the primary action.
   }
+}
+
+function resolveSelectedWorkspace(repos: Repos, explicit?: string) {
+  if (explicit) return repos.getWorkspaceByKey(explicit)
+  const remembered = loadCliState().currentWorkspaceKey
+  if (remembered) {
+    const workspace = repos.getWorkspaceByKey(remembered)
+    if (workspace) return workspace
+  }
+  return repos.listWorkspaces().sort((a, b) => (b.last_opened_at ?? 0) - (a.last_opened_at ?? 0) || a.key.localeCompare(b.key))[0]
 }
 
 export function resolveItemReference(
@@ -526,6 +717,453 @@ async function runWorkspaceOpenCommand(key: string | undefined): Promise<number>
     const rootPath = openWorkspace(new Repos(db), key)
     if (!rootPath) return 1
     process.stdout.write(`${rootPath}\n`)
+    return 0
+  } finally {
+    db.close()
+  }
+}
+
+async function runWorkspaceUseCommand(key: string | undefined): Promise<number> {
+  if (!key) {
+    console.error("  Missing key: beerengineer workspace use <key>")
+    return 2
+  }
+  const db = initDatabase()
+  try {
+    const repos = new Repos(db)
+    const workspace = repos.getWorkspaceByKey(key)
+    if (!workspace) {
+      console.error(`  Workspace not found: ${key}`)
+      return 1
+    }
+    repos.touchWorkspaceLastOpenedAt(key)
+    saveCliState({ currentWorkspaceKey: key })
+    console.log(`  Current workspace: ${key}`)
+    return 0
+  } finally {
+    db.close()
+  }
+}
+
+function printItemRows(
+  rows: Array<{ workspaceKey?: string; code: string; title: string; stage: string; status: string }>,
+  compact = false,
+): void {
+  if (compact) {
+    console.log("  workspace  item      title                           stage/status")
+    rows.forEach(row => {
+      console.log(`  ${(row.workspaceKey ?? "").padEnd(9)} ${row.code} ${truncate(row.title, 60)}  ${row.stage} / ${row.status}`)
+    })
+    return
+  }
+  rows.forEach(row => {
+    const prefix = row.workspaceKey ? `${row.workspaceKey}  ` : ""
+    console.log(`  ${prefix}${row.code}  ${row.title}`)
+    console.log(`    ${row.stage} / ${row.status}`)
+  })
+}
+
+async function runItemsCommand(workspaceKey: string | undefined, all = false, json = false, compact = false): Promise<number> {
+  const db = initDatabase()
+  try {
+    const repos = new Repos(db)
+    const selectedWorkspace = all ? null : resolveSelectedWorkspace(repos, workspaceKey)
+    const workspaces = all ? repos.listWorkspaces() : selectedWorkspace ? [selectedWorkspace] : []
+    if (workspaces.length === 0) {
+      console.error("  No workspace selected.")
+      return 1
+    }
+    const rows = workspaces.flatMap(workspace => {
+      const promptsByRun = new Map(repos.listOpenPrompts({ workspaceId: workspace.id }).map(prompt => [prompt.run_id, prompt]))
+      return repos.listItemsForWorkspace(workspace.id).map(item => {
+        const latestRun = latestRunForItem(repos, item.id)
+        const prompt = latestRun ? promptsByRun.get(latestRun.id) : undefined
+        return {
+          workspaceKey: all ? workspace.key : undefined,
+          code: item.code,
+          title: item.title,
+          stage: latestRun?.current_stage ?? item.current_column,
+          status: deriveItemStatus(item, latestRun, Boolean(prompt)),
+          sortCreatedAt: item.created_at,
+        }
+      })
+    }).sort((a, b) => itemSortWeight(a.status) - itemSortWeight(b.status) || a.sortCreatedAt - b.sortCreatedAt)
+
+    if (json) {
+      process.stdout.write(`${JSON.stringify(rows, null, 2)}\n`)
+      return 0
+    }
+    console.log(all ? "  Items across all workspaces" : `  Items for workspace ${workspaces[0]!.key}`)
+    printItemRows(rows, compact)
+    return 0
+  } finally {
+    db.close()
+  }
+}
+
+async function runWorkspaceItemsCommand(key: string | undefined, json = false): Promise<number> {
+  if (!key) {
+    console.error("  Missing key: beerengineer workspace items <key>")
+    return 2
+  }
+  return runItemsCommand(key, false, json, false)
+}
+
+function printChatRows(
+  rows: Array<{ workspaceKey?: string; itemCode: string; itemTitle: string; stage: string; status: string; prompt: string; runId: string }>,
+  compact = false,
+): void {
+  if (compact) {
+    console.log("  workspace  item      title                           stage/status             prompt")
+    rows.forEach(row => {
+      console.log(`  ${(row.workspaceKey ?? "").padEnd(9)} ${row.itemCode} ${truncate(row.itemTitle, 60)}  ${`${row.stage} / ${row.status}`.padEnd(24)}  ${truncate(row.prompt, 70)}`)
+    })
+    return
+  }
+  rows.forEach(row => {
+    const prefix = row.workspaceKey ? `${row.workspaceKey}  ` : ""
+    console.log(`  ${prefix}${row.itemCode}  ${row.itemTitle}`)
+    console.log(`    ${row.stage} / ${row.status}`)
+    console.log(`    prompt: ${row.prompt}`)
+    console.log(`    run: ${row.runId}`)
+    const lastAnswer = row.runId ? null : null
+    void lastAnswer
+  })
+}
+
+async function runChatListCommand(workspaceKey: string | undefined, all = false, json = false, compact = false): Promise<number> {
+  const db = initDatabase()
+  try {
+    const repos = new Repos(db)
+    const workspace = all ? undefined : resolveSelectedWorkspace(repos, workspaceKey)
+    const prompts = repos.listOpenPrompts(workspace ? { workspaceId: workspace.id } : {})
+    const rows = prompts.map(prompt => ({
+      workspaceKey: prompt.workspace_key,
+      itemCode: prompt.item_code,
+      itemTitle: prompt.item_title,
+      stage: prompt.current_stage ?? "—",
+      status: "needs_answer",
+      prompt: promptDisplayText(repos, prompt),
+      runId: prompt.run_id,
+      createdAt: prompt.created_at,
+    })).sort((a, b) => a.createdAt - b.createdAt)
+
+    if (json) {
+      process.stdout.write(`${JSON.stringify(rows, null, 2)}\n`)
+      return 0
+    }
+    console.log(all ? "  Open chats across all workspaces" : `  Open chats for workspace ${workspace?.key ?? "—"}`)
+    printChatRows(rows, compact)
+    return 0
+  } finally {
+    db.close()
+  }
+}
+
+function gitState(rootPath: string | null): string {
+  if (!rootPath) return "none"
+  const inside = runGit(rootPath, ["rev-parse", "--is-inside-work-tree"])
+  if (!inside.ok || inside.stdout !== "true") return "none"
+  const status = runGit(rootPath, ["status", "--porcelain", "--branch"])
+  if (!status.ok) return "unknown"
+  const lines = status.stdout.split(/\r?\n/).filter(Boolean)
+  const branchLine = lines.find(line => line.startsWith("## ")) ?? "## unknown"
+  const branch = parseStatusBranch(branchLine)
+  const changed = lines.filter(line => !line.startsWith("## "))
+  return `${branch} / ${changed.length === 0 ? "clean" : "dirty"}`
+}
+
+async function runStatusCommand(workspaceKey: string | undefined, all = false, json = false): Promise<number> {
+  const db = initDatabase()
+  try {
+    const repos = new Repos(db)
+    if (all) {
+      const workspaces = repos.listWorkspaces()
+      const promptRows = repos.listOpenPrompts()
+      const rows = workspaces.map(workspace => {
+        const items = repos.listItemsForWorkspace(workspace.id)
+        const runs = repos.listRuns().filter(run => run.workspace_id === workspace.id)
+        const chats = promptRows.filter(prompt => prompt.workspace_id === workspace.id)
+        const latestRun = runs.sort((a, b) => b.created_at - a.created_at)[0]
+        const state =
+          chats.length > 0 ? "needs_answer" :
+          runs.some(run => run.recovery_status === "blocked") ? "blocked" :
+          runs.some(run => run.status === "running") ? "running" :
+          "idle"
+        return {
+          workspace: workspace.key,
+          state,
+          itemCount: items.length,
+          runCount: runs.length,
+          chatCount: chats.length,
+          latest: latestRun ? `${latestRun.current_stage ?? "—"} / run/${shortRunId(latestRun.id)}` : "idle",
+        }
+      }).sort((a, b) => itemSortWeight(a.state) - itemSortWeight(b.state) || a.workspace.localeCompare(b.workspace))
+      if (json) {
+        process.stdout.write(`${JSON.stringify(rows, null, 2)}\n`)
+        return 0
+      }
+      console.log("  Status across all workspaces")
+      console.log(`  counts: workspaces=${workspaces.length} items=${workspaces.reduce((sum, w) => sum + repos.listItemsForWorkspace(w.id).length, 0)} runs=${repos.listRuns().length} chats=${promptRows.length}`)
+      rows.forEach(row => {
+        console.log(`  ${row.workspace.padEnd(8)}  ${row.state.padEnd(12)}  i=${row.itemCount} r=${row.runCount} c=${row.chatCount}  ${row.latest}`)
+      })
+      return 0
+    }
+
+    const workspace = resolveSelectedWorkspace(repos, workspaceKey)
+    if (!workspace) {
+      console.error("  No workspace selected.")
+      return 1
+    }
+    const items = repos.listItemsForWorkspace(workspace.id)
+    const runs = repos.listRuns().filter(run => run.workspace_id === workspace.id)
+    const openPrompts = repos.listOpenPrompts({ workspaceId: workspace.id })
+    const latestRun = runs.sort((a, b) => b.created_at - a.created_at)[0]
+    const state =
+      openPrompts.length > 0 ? "needs_answer" :
+      runs.some(run => run.recovery_status === "blocked") ? "blocked" :
+      runs.some(run => run.status === "running") ? "running" :
+      "idle"
+    if (json) {
+      process.stdout.write(`${JSON.stringify({ workspace: workspace.key, state, itemCount: items.length, runCount: runs.length, chatCount: openPrompts.length }, null, 2)}\n`)
+      return 0
+    }
+    console.log(`  Workspace ${workspace.key}`)
+    console.log(`  state: ${state}`)
+    console.log(`  root: ${workspace.root_path ?? "—"}`)
+    console.log(`  git: ${gitState(workspace.root_path)}`)
+    console.log(`  counts: items=${items.length} runs=${runs.length} chats=${openPrompts.length}`)
+    if (latestRun) console.log(`  latest run: run/${shortRunId(latestRun.id)} / ${latestRun.current_stage ?? "—"} / ${deriveRunStatus(latestRun, openPrompts.some(prompt => prompt.run_id === latestRun.id))}`)
+    return 0
+  } finally {
+    db.close()
+  }
+}
+
+async function runItemGetCommand(itemRef: string | undefined, workspaceKey: string | undefined, json = false): Promise<number> {
+  if (!itemRef) {
+    console.error("  Missing item reference: beerengineer item get <id|code>")
+    return 2
+  }
+  const db = initDatabase()
+  try {
+    const repos = new Repos(db)
+    const workspace = resolveSelectedWorkspace(repos, workspaceKey)
+    if (!workspace) return 1
+    const item = repos.getItemByCode(workspace.id, itemRef) ?? repos.getItem(itemRef)
+    if (!item) {
+      console.error(`  Item not found: ${itemRef}`)
+      return 1
+    }
+    const latestRun = latestRunForItem(repos, item.id)
+    const prompt = latestRun ? repos.getOpenPrompt(latestRun.id) : undefined
+    const status = deriveItemStatus(item, latestRun, Boolean(prompt))
+    const openChat = prompt ? promptDisplayText(repos, prompt) : null
+    if (json) {
+      process.stdout.write(`${JSON.stringify({ item, workspace: workspace.key, latestRun, status, openChat }, null, 2)}\n`)
+      return 0
+    }
+    console.log(`  ${item.code}  ${item.title}`)
+    console.log(`  workspace: ${workspace.key}`)
+    console.log(`  stage/status: ${latestRun?.current_stage ?? item.current_column} / ${status}`)
+    if (latestRun) console.log(`  run: ${latestRun.id} (${latestRun.status})`)
+    if (openChat) console.log(`  open chat: ${openChat}`)
+    return 0
+  } finally {
+    db.close()
+  }
+}
+
+async function runRunListCommand(workspaceKey: string | undefined, all = false, json = false, compact = false): Promise<number> {
+  const db = initDatabase()
+  try {
+    const repos = new Repos(db)
+    const workspaces = new Map(repos.listWorkspaces().map(workspace => [workspace.id, workspace]))
+    const selected = all ? null : resolveSelectedWorkspace(repos, workspaceKey)
+    const prompts = repos.listOpenPrompts(selected ? { workspaceId: selected.id } : {})
+    const promptRunIds = new Set(prompts.map(prompt => prompt.run_id))
+    const items = new Map(
+      (selected ? repos.listItemsForWorkspace(selected.id) : Array.from(workspaces.keys()).flatMap(id => repos.listItemsForWorkspace(id)))
+        .map(item => [item.id, item])
+    )
+    const rows = repos.listRuns()
+      .filter(run => all || run.workspace_id === selected?.id)
+      .map(run => ({
+        workspaceKey: all ? workspaces.get(run.workspace_id)?.key ?? "—" : undefined,
+        runId: shortRunId(run.id),
+        itemCode: items.get(run.item_id)?.code ?? "—",
+        itemTitle: items.get(run.item_id)?.title ?? run.title,
+        stage: run.current_stage ?? "—",
+        status: deriveRunStatus(run, promptRunIds.has(run.id)),
+        owner: run.owner,
+        sortCreatedAt: run.created_at,
+      }))
+      .sort((a, b) => runSortWeight(a.status) - runSortWeight(b.status) || b.sortCreatedAt - a.sortCreatedAt)
+    if (json) {
+      process.stdout.write(`${JSON.stringify(rows, null, 2)}\n`)
+      return 0
+    }
+    console.log(all ? "  Runs across all workspaces" : `  Runs for workspace ${selected?.key ?? "—"}`)
+    if (compact) {
+      console.log("  workspace  run       item      title                           stage/status/owner")
+      rows.forEach(row => {
+        console.log(`  ${(row.workspaceKey ?? "").padEnd(9)} ${row.runId} ${row.itemCode} ${truncate(row.itemTitle ?? "—", 60)}  ${row.stage} / ${row.status} / ${row.owner}`)
+      })
+      return 0
+    }
+    rows.forEach(row => {
+      const prefix = row.workspaceKey ? `${row.workspaceKey}  ` : ""
+      console.log(`  ${prefix}run/${row.runId}  ${row.itemCode}  ${row.itemTitle}`)
+      console.log(`    ${row.stage} / ${row.status} / ${row.owner}`)
+    })
+    return 0
+  } finally {
+    db.close()
+  }
+}
+
+async function runRunGetCommand(runId: string | undefined, json = false): Promise<number> {
+  if (!runId) {
+    console.error("  Missing run id: beerengineer run get <run-id>")
+    return 2
+  }
+  const db = initDatabase()
+  try {
+    const repos = new Repos(db)
+    const run = repos.getRun(runId)
+    if (!run) {
+      console.error(`  Run not found: ${runId}`)
+      return 1
+    }
+    const workspace = repos.getWorkspace(run.workspace_id)
+    const item = repos.getItem(run.item_id)
+    const prompt = repos.getOpenPrompt(run.id)
+    const openChat = prompt ? promptDisplayText(repos, prompt) : null
+    const payload = {
+      run,
+      workspaceKey: workspace?.key ?? null,
+      itemCode: item?.code ?? null,
+      itemTitle: item?.title ?? null,
+      openChat,
+      artifactCount: repos.listArtifactsForRun(run.id).length,
+      stageRunCount: repos.listStageRunsForRun(run.id).length,
+    }
+    if (json) {
+      process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`)
+      return 0
+    }
+    console.log(`  ${run.id}`)
+    console.log(`  workspace: ${workspace?.key ?? "—"}`)
+    console.log(`  item: ${item?.code ?? "—"}  ${item?.title ?? "—"}`)
+    console.log(`  stage/status: ${run.current_stage ?? "—"} / ${deriveRunStatus(run, Boolean(prompt))}`)
+    if (openChat) console.log(`  open chat: ${openChat}`)
+    console.log(`  stage runs: ${payload.stageRunCount}`)
+    console.log(`  artifacts: ${payload.artifactCount}`)
+    return 0
+  } finally {
+    db.close()
+  }
+}
+
+async function runChatAnswerCommand(cmd: Extract<Command, { kind: "chat-answer" }>): Promise<number> {
+  const db = initDatabase()
+  try {
+    const repos = new Repos(db)
+    const prompt =
+      cmd.promptId ? repos.getPendingPrompt(cmd.promptId) :
+      cmd.runId ? repos.getOpenPrompt(cmd.runId) :
+      undefined
+    if (!prompt || prompt.answered_at) {
+      console.error("  Open prompt not found.")
+      return 1
+    }
+    const answer = readAnswerBody({ provided: cmd.answer, multiline: cmd.multiline })
+    repos.answerPendingPrompt(prompt.id, answer)
+    repos.appendLog({ runId: prompt.run_id, stageRunId: prompt.stage_run_id, eventType: "prompt_answered", message: answer, data: { promptId: prompt.id } })
+    console.log(`  answered ${prompt.id}`)
+    console.log(`  run: ${prompt.run_id}`)
+    if (cmd.runId) console.log("  target: latest open prompt for run")
+    return 0
+  } finally {
+    db.close()
+  }
+}
+
+async function runRunWatchCommand(runId: string | undefined): Promise<number> {
+  if (!runId) {
+    console.error("  Missing run id: beerengineer run watch <run-id>")
+    return 2
+  }
+  const db = initDatabase()
+  try {
+    const repos = new Repos(db)
+    const run = repos.getRun(runId)
+    if (!run) {
+      console.error(`  Run not found: ${runId}`)
+      return 1
+    }
+    console.log(`  watching ${run.id}  ${run.title}`)
+    repos.listLogsForRun(run.id).forEach(log => {
+      if (log.event_type === "stage_started") console.log(`  -> stage  ${log.message}`)
+      else if (log.event_type === "stage_completed") console.log(`  <- stage  ${log.message}`)
+      else if (log.event_type === "chat_message") console.log(`  chat  ${log.message}`)
+      else if (log.event_type === "prompt_requested") console.log("  ? waiting")
+      else if (log.event_type === "prompt_answered") console.log(`  > answer  ${log.message}`)
+    })
+    const refreshed = repos.getRun(run.id)
+    console.log(`  done  ${refreshed?.current_stage ?? "—"} / ${refreshed?.status ?? "unknown"}`)
+    return 0
+  } finally {
+    db.close()
+  }
+}
+
+function resolvePublicBaseUrl(): string {
+  return loadEffectiveConfig()?.publicBaseUrl?.trim() || resolveUiLaunchUrl()
+}
+
+async function runItemOpenCommand(itemRef: string | undefined, workspaceKey: string | undefined): Promise<number> {
+  if (!itemRef) {
+    console.error("  Missing item reference: beerengineer item open <id|code>")
+    return 2
+  }
+  const db = initDatabase()
+  try {
+    const repos = new Repos(db)
+    const workspace = resolveSelectedWorkspace(repos, workspaceKey)
+    if (!workspace) return 1
+    const item = repos.getItemByCode(workspace.id, itemRef) ?? repos.getItem(itemRef)
+    if (!item) {
+      console.error(`  Item not found: ${itemRef}`)
+      return 1
+    }
+    const url = `${resolvePublicBaseUrl()}/?workspace=${encodeURIComponent(workspace.key)}&item=${encodeURIComponent(item.code)}`
+    console.log(`  ${url}`)
+    if (await isUiReachable(url)) openBrowser(url)
+    else console.log("  UI is not reachable on that address; printed URL only.")
+    return 0
+  } finally {
+    db.close()
+  }
+}
+
+async function runRunOpenCommand(runId: string | undefined): Promise<number> {
+  if (!runId) {
+    console.error("  Missing run id: beerengineer run open <run-id>")
+    return 2
+  }
+  const db = initDatabase()
+  try {
+    const repos = new Repos(db)
+    if (!repos.getRun(runId)) {
+      console.error(`  Run not found: ${runId}`)
+      return 1
+    }
+    const url = `${resolvePublicBaseUrl()}/runs/${encodeURIComponent(runId)}`
+    console.log(`  ${url}`)
+    if (await isUiReachable(url)) openBrowser(url)
+    else console.log("  UI is not reachable on that address; printed URL only.")
     return 0
   } finally {
     db.close()
@@ -1048,26 +1686,16 @@ export async function runItemAction(itemRef: string, action: string, resumeFlags
       return 1
     }
     console.log(`  ${action} applied`)
-    if (result.runId) console.log(`  run-id: ${result.runId}`)
-    if (result.remediationId) console.log(`  remediation-id: ${result.remediationId}`)
-    if (result.runId) {
-      const session = service.sessions.get(result.runId)
-      if (session) {
-        await new Promise<void>(resolve => {
-          session.emitter.on("event", ev => {
-            if (ev.type === "run_finished") resolve()
-          })
-        })
-        // If the run re-blocked, print the new recovery summary so the
-        // operator sees the next fix cycle up front.
-        const refreshed = repos.getRun(result.runId)
-        if (refreshed?.recovery_status === "blocked") {
-          printResumeBlockedOutput(result.runId, {
-            summary: refreshed.recovery_summary,
-            scope: refreshed.recovery_scope,
-            scopeRef: refreshed.recovery_scope_ref,
-          }, itemRef)
-        }
+    if (result.kind === "needs_spawn" && result.runId) console.log(`  run-id: ${result.runId}`)
+    if (result.kind === "needs_spawn" && result.remediationId) console.log(`  remediation-id: ${result.remediationId}`)
+    if (result.kind === "needs_spawn" && result.runId) {
+      const refreshed = repos.getRun(result.runId)
+      if (refreshed?.recovery_status === "blocked") {
+        printResumeBlockedOutput(result.runId, {
+          summary: refreshed.recovery_summary,
+          scope: refreshed.recovery_scope,
+          scopeRef: refreshed.recovery_scope_ref,
+        }, itemRef)
       }
     }
     service.dispose()
@@ -1106,6 +1734,10 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       process.exit(await runWorkspaceListCommand(cmd.json))
     case "workspace-get":
       process.exit(await runWorkspaceGetCommand(cmd.key, cmd.json))
+    case "workspace-items":
+      process.exit(await runWorkspaceItemsCommand(cmd.key, cmd.json))
+    case "workspace-use":
+      process.exit(await runWorkspaceUseCommand(cmd.key))
     case "workspace-remove":
       process.exit(await runWorkspaceRemoveCommand(cmd.key, cmd.purge, cmd.json))
     case "workspace-open":
@@ -1114,6 +1746,28 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       process.exit(await runWorkspaceBackfillCommand(cmd.json))
     case "workspace-worktree-gc":
       process.exit(await runWorkspaceWorktreeGcCommand(cmd.key, cmd.json))
+    case "status":
+      process.exit(await runStatusCommand(cmd.workspaceKey, cmd.all, cmd.json))
+    case "chat-list":
+    case "chats":
+      process.exit(await runChatListCommand(cmd.workspaceKey, cmd.all, cmd.json, cmd.compact))
+    case "chat-answer":
+      process.exit(await runChatAnswerCommand(cmd))
+    case "items":
+      process.exit(await runItemsCommand(cmd.workspaceKey, cmd.all, cmd.json, cmd.compact))
+    case "item-get":
+      process.exit(await runItemGetCommand(cmd.itemRef, cmd.workspaceKey, cmd.json))
+    case "item-open":
+      process.exit(await runItemOpenCommand(cmd.itemRef, cmd.workspaceKey))
+    case "run-list":
+    case "runs":
+      process.exit(await runRunListCommand(cmd.workspaceKey, cmd.all, cmd.json, cmd.compact))
+    case "run-get":
+      process.exit(await runRunGetCommand(cmd.runId, cmd.json))
+    case "run-open":
+      process.exit(await runRunOpenCommand(cmd.runId))
+    case "run-watch":
+      process.exit(await runRunWatchCommand(cmd.runId))
     case "start-ui":
       process.exit(await startUi())
     case "item-action":

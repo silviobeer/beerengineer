@@ -7,17 +7,7 @@ import { join } from "node:path"
 import { initDatabase } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
 import { createItemActionsService, type ItemAction } from "../src/core/itemActions.js"
-import type { ItemRow } from "../src/db/repositories.js"
 import { layout } from "../src/core/workspaceLayout.js"
-
-/** Stub run starter: creates a real `runs` row (owner=api) but does not fire
- *  the workflow — lets tests assert run-creation without hanging on prompts. */
-function stubRunStarter(repos: Repos) {
-  return (item: ItemRow) => {
-    const run = repos.createRun({ workspaceId: item.workspace_id, itemId: item.id, title: item.title, owner: "api" })
-    return { runId: run.id }
-  }
-}
 
 function tmpDb() {
   const dir = mkdtempSync(join(tmpdir(), "be2-itemactions-"))
@@ -35,7 +25,8 @@ function makeItem(
   return repos.getItem(item.id)!
 }
 
-// The matrix from the plan — every cell, either a target transition or "reject".
+// The action/state matrix. Every cell: either a target transition, "reject",
+// "start-run" (service records intent + returns needs_spawn), or "resume".
 const MATRIX_CASES: Array<{
   action: ItemAction
   column: "idea" | "brainstorm" | "requirements" | "implementation" | "done"
@@ -84,10 +75,11 @@ for (const c of MATRIX_CASES) {
     const db = tmpDb()
     const repos = new Repos(db)
     const item = makeItem(repos, c.column, c.phase)
-    const service = createItemActionsService(repos, { startRun: stubRunStarter(repos) })
+    const service = createItemActionsService(repos)
     try {
       if (c.expect === "resume") {
-        // For resume: seed an active run if expected to succeed.
+        // Seed a resumable run with no recovery record — the service should
+        // return `needs_spawn` pointing at it.
         repos.createRun({ workspaceId: item.workspace_id, itemId: item.id, title: "t" })
       }
       const result = await service.perform(item.id, c.action)
@@ -99,15 +91,27 @@ for (const c of MATRIX_CASES) {
         }
       } else if (c.expect === "start-run") {
         assert.equal(result.ok, true)
-        if (result.ok) assert.ok(result.runId)
+        if (result.ok) {
+          assert.equal(result.kind, "needs_spawn")
+          if (result.kind === "needs_spawn") {
+            assert.equal(result.action, c.action)
+            assert.equal(result.phaseStatus, "running")
+          }
+        }
       } else if (c.expect === "resume") {
         assert.equal(result.ok, true)
-        if (result.ok) assert.ok(result.runId)
+        if (result.ok) {
+          assert.equal(result.kind, "needs_spawn")
+          if (result.kind === "needs_spawn") assert.ok(result.runId)
+        }
       } else {
         assert.equal(result.ok, true)
         if (result.ok) {
-          assert.equal(result.column, c.expect.column)
-          assert.equal(result.phaseStatus, c.expect.phaseStatus)
+          assert.equal(result.kind, "state")
+          if (result.kind === "state") {
+            assert.equal(result.column, c.expect.column)
+            assert.equal(result.phaseStatus, c.expect.phaseStatus)
+          }
           const persisted = repos.getItem(item.id)!
           assert.equal(persisted.current_column, c.expect.column)
           assert.equal(persisted.phase_status, c.expect.phaseStatus)
@@ -123,7 +127,7 @@ for (const c of MATRIX_CASES) {
 test("perform on unknown item returns 404", async () => {
   const db = tmpDb()
   const repos = new Repos(db)
-  const service = createItemActionsService(repos, { startRun: stubRunStarter(repos) })
+  const service = createItemActionsService(repos)
   try {
     const result = await service.perform("no-such-id", "start_brainstorm")
     assert.equal(result.ok, false)
@@ -141,7 +145,7 @@ test("state mutation emits item_column_changed event", async () => {
   const db = tmpDb()
   const repos = new Repos(db)
   const item = makeItem(repos, "brainstorm", "running")
-  const service = createItemActionsService(repos, { startRun: stubRunStarter(repos) })
+  const service = createItemActionsService(repos)
   const events: Array<{ type: string }> = []
   service.on("event", ev => events.push(ev))
   try {
@@ -160,43 +164,25 @@ test("state mutation emits item_column_changed event", async () => {
   }
 })
 
-test("start-run action creates a run with owner='api'", async () => {
+test("start-run action records column change and returns needs_spawn without creating a run", async () => {
   const db = tmpDb()
   const repos = new Repos(db)
   const item = makeItem(repos, "idea", "draft")
-  const service = createItemActionsService(repos, { startRun: stubRunStarter(repos) })
+  const service = createItemActionsService(repos)
   try {
     const result = await service.perform(item.id, "start_brainstorm")
     assert.equal(result.ok, true)
-    if (!result.ok || !result.runId) throw new Error("expected runId")
-    const run = repos.getRun(result.runId)
-    assert.ok(run)
-    assert.equal(run!.owner, "api")
-    assert.equal(run!.item_id, item.id)
-  } finally {
-    service.dispose()
-    db.close()
-  }
-})
-
-test("start_implementation creates an implementation-entry run without rerunning brainstorm", async () => {
-  const db = tmpDb()
-  const repos = new Repos(db)
-  const item = makeItem(repos, "requirements", "draft")
-  const service = createItemActionsService(repos)
-  try {
-    const result = await service.perform(item.id, "start_implementation")
-    assert.equal(result.ok, true)
-    if (!result.ok || !result.runId) throw new Error("expected runId")
-
-    const run = repos.getRun(result.runId)
-    const persisted = repos.getItem(item.id)
-    const stages = repos.listStageRunsForRun(result.runId)
-
-    assert.equal(run?.current_stage, "execution")
-    assert.equal(persisted?.current_column, "implementation")
-    assert.equal(persisted?.phase_status, "running")
-    assert.deepEqual(stages.map(stage => stage.stage_key), ["execution"])
+    if (!result.ok) return
+    assert.equal(result.kind, "needs_spawn")
+    if (result.kind !== "needs_spawn") return
+    assert.equal(result.action, "start_brainstorm")
+    assert.equal(result.column, "brainstorm")
+    assert.equal(result.phaseStatus, "running")
+    assert.equal(result.runId, undefined, "service must not create a run row — the CLI does that on spawn")
+    const persisted = repos.getItem(item.id)!
+    assert.equal(persisted.current_column, "brainstorm")
+    assert.equal(persisted.phase_status, "running")
+    assert.equal(repos.listRuns().length, 0, "no run row should have been created")
   } finally {
     service.dispose()
     db.close()
@@ -210,7 +196,7 @@ test("resume_run requires remediation details when the latest resumable run has 
   const db = tmpDb()
   const repos = new Repos(db)
   const item = makeItem(repos, "implementation", "failed")
-  const service = createItemActionsService(repos, { startRun: stubRunStarter(repos) })
+  const service = createItemActionsService(repos)
   try {
     const run = repos.createRun({ workspaceId: item.workspace_id, itemId: item.id, title: item.title, owner: "api" })
     repos.updateRun(run.id, { status: "failed" })
@@ -228,6 +214,42 @@ test("resume_run requires remediation details when the latest resumable run has 
       assert.equal(result.status, 422)
       assert.equal(result.error, "remediation_required")
     }
+  } finally {
+    service.dispose()
+    db.close()
+    process.chdir(prev)
+  }
+})
+
+test("resume_run records remediation and returns needs_spawn with runId + remediationId", async () => {
+  const prev = process.cwd()
+  const dir = mkdtempSync(join(tmpdir(), "be2-itemactions-resume-"))
+  process.chdir(dir)
+  const db = tmpDb()
+  const repos = new Repos(db)
+  const item = makeItem(repos, "implementation", "failed")
+  const service = createItemActionsService(repos)
+  try {
+    const run = repos.createRun({ workspaceId: item.workspace_id, itemId: item.id, title: item.title, owner: "api" })
+    repos.updateRun(run.id, { status: "failed" })
+    repos.setRunRecovery(run.id, { status: "blocked", scope: "run", scopeRef: null, summary: "blocked" })
+    const ctx = { workspaceId: `t-${item.id.toLowerCase()}`, runId: run.id }
+    await import("node:fs/promises").then(fs =>
+      fs.mkdir(layout.runDir(ctx), { recursive: true }).then(() =>
+        fs.writeFile(layout.runFile(ctx), JSON.stringify({ id: run.id }, null, 2)),
+      ),
+    )
+
+    const result = await service.perform(item.id, "resume_run", {
+      resume: { summary: "manual fix", branch: "feature/x" },
+    })
+    assert.equal(result.ok, true)
+    if (!result.ok) return
+    assert.equal(result.kind, "needs_spawn")
+    if (result.kind !== "needs_spawn") return
+    assert.equal(result.runId, run.id)
+    assert.ok(result.remediationId, "remediationId should be returned")
+    assert.equal(repos.listExternalRemediations(run.id).length, 1)
   } finally {
     service.dispose()
     db.close()

@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { branchNameStory, ensureWaveBranch, mergeWaveBranchIntoProject } from "../../core/repoSimulation.js"
 import {
+  abandonStoryBranchReal,
   detectRealGitMode,
   ensureStoryBranchReal,
   ensureStoryWorktreeReal,
@@ -150,9 +151,18 @@ async function executeWave(
       rerunTestWriter: resume != null && resume.storyId === story.id ? Boolean(resume.rerunTestWriter) : false,
       worktreeRoot: storyWorktreeRoot,
     }, llm)
-    if (realGit.enabled && result.implementation.status !== "blocked") {
+    // Gate real-git merge on the same condition as the simulated merge
+    // (ralphRuntime only sim-merges when the story outcome is "passed"). This
+    // keeps the two state machines from diverging on anything other than
+    // "passed" (e.g. ready_for_review left behind by a crashed cycle).
+    if (realGit.enabled && result.implementation.status === "passed") {
       mergeStoryIntoWaveReal(realGit, ctx, ctx.project.id, wave.number, resolved.id)
-      if (storyWorktreeRoot) removeStoryWorktreeReal(realGit, storyWorktreeRoot)
+    }
+    if (realGit.enabled && result.implementation.status === "blocked") {
+      abandonStoryBranchReal(realGit, ctx, ctx.project.id, wave.number, resolved.id)
+    }
+    if (realGit.enabled && storyWorktreeRoot) {
+      removeStoryWorktreeReal(realGit, storyWorktreeRoot)
     }
     return result
   }

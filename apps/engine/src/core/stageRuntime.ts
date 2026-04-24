@@ -63,7 +63,8 @@ export type StageRun<TState, TArtifact> = {
   stageDir: string
   stageArtifactsDir: string
   status: StageStatus
-  iteration: number
+  /** Count of user replies to the stage agent. Paired with `stageAgentTurnCount`. */
+  userTurnCount: number
   stageAgentTurnCount: number
   reviewIteration: number
   stageAgentSessionId?: string | null
@@ -232,7 +233,7 @@ export function createStageRun<TState, TArtifact>(
     stageDir: layout.stageDir(ctx, definition.stageId),
     stageArtifactsDir: layout.stageArtifactsDir(ctx, definition.stageId),
     status: "not_started",
-    iteration: 0,
+    userTurnCount: 0,
     stageAgentTurnCount: 0,
     reviewIteration: 0,
     stageAgentSessionId: null,
@@ -246,14 +247,12 @@ export function createStageRun<TState, TArtifact>(
 }
 
 function reviewHistory<TState, TArtifact>(run: StageRun<TState, TArtifact>): ReviewContext["priorFeedback"] {
-  return run.logs
-    .filter(entry => entry.type === "review_revise" || entry.type === "status_changed" && entry.data?.reviewOutcome === "block")
-    .flatMap(entry => {
-      const cycle = typeof entry.data?.cycle === "number" ? entry.data.cycle : undefined
-      const outcome = entry.data?.reviewOutcome
-      if (!cycle || (outcome !== "revise" && outcome !== "block")) return []
-      return [{ cycle, outcome, text: entry.message }]
-    })
+  return run.logs.flatMap(entry => {
+    const cycle = typeof entry.data?.cycle === "number" ? entry.data.cycle : undefined
+    const outcome = entry.data?.reviewOutcome
+    if (!cycle || (outcome !== "revise" && outcome !== "block")) return []
+    return [{ cycle, outcome, text: entry.message }]
+  })
 }
 
 function buildStageContext<TState, TArtifact>(
@@ -372,7 +371,7 @@ async function runStageBody<TState, TArtifact, TResult>(
 
       const userMessage = await definition.askUser("  you > ")
       pushLog(run, { type: "user_message", message: userMessage })
-      run.iteration++
+      run.userTurnCount++
       setStatus(run, "chat_in_progress")
       response = await definition.stageAgent.step({
         kind: "user-message",

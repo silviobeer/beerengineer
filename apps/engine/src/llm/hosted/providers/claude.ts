@@ -1,6 +1,6 @@
-import { spawnCommand, type HostedCliExecutionResult, type HostedProviderInvokeInput } from "../providerRuntime.js"
-import { isTransientFailure, isTransientSpawnError, sleep, transientRetryDelaysMs } from "./_retry.js"
-import { emitRetryMarker, makeJsonLineStreamCallback, type StreamEventSummary } from "./_stream.js"
+import type { HostedCliExecutionResult, HostedProviderInvokeInput } from "../providerRuntime.js"
+import { invokeProviderCli, type ProviderDriver } from "./_invoke.js"
+import { makeJsonLineStreamCallback, type StreamEventSummary } from "./_stream.js"
 
 type ClaudeUsage = {
   input_tokens?: number
@@ -51,6 +51,19 @@ type ClaudeStreamState = {
   completedAssistantMessageIds: Set<string>
 }
 
+function createClaudeStreamState(): ClaudeStreamState {
+  return {
+    sessionId: null,
+    resultText: null,
+    fallbackTextParts: [],
+    textBlockTypes: new Map(),
+    usage: null,
+    sawResult: false,
+    streamedSummary: false,
+    completedAssistantMessageIds: new Set(),
+  }
+}
+
 function isToolUseContent(part: ClaudeAssistantContent): part is Extract<ClaudeAssistantContent, { type?: "tool_use"; name?: string }> {
   return part.type === "tool_use"
 }
@@ -67,30 +80,14 @@ function permissionMode(policy: HostedProviderInvokeInput["runtime"]["policy"]):
 }
 
 function buildClaudeCommand(input: HostedProviderInvokeInput): string[] {
-  const command = [
-    "claude",
-    "--print",
-    "--verbose",
-    "--output-format",
-    "stream-json",
-    "--add-dir",
-    input.runtime.workspaceRoot,
-  ]
+  const command = ["claude", "--print", "--verbose", "--output-format", "stream-json", "--add-dir", input.runtime.workspaceRoot]
   const mode = permissionMode(input.runtime.policy)
   if (mode) command.push("--permission-mode", mode)
-  if (input.runtime.policy.mode === "unsafe-autonomous-write") {
-    command.push("--dangerously-skip-permissions")
-  }
-  if (process.env.CLAUDE_BARE === "1") {
-    command.push("--bare")
-  }
+  if (input.runtime.policy.mode === "unsafe-autonomous-write") command.push("--dangerously-skip-permissions")
+  if (process.env.CLAUDE_BARE === "1") command.push("--bare")
   if (input.runtime.model) command.push("--model", input.runtime.model)
   if (input.session?.sessionId) command.push("--resume", input.session.sessionId)
   return command
-}
-
-function unknownSession(text: string): boolean {
-  return /unknown session|expired session|could not resume|resume.*not found/i.test(text)
 }
 
 function usageParts(usage?: ClaudeUsage | null): string[] {
@@ -124,9 +121,7 @@ function summarizeClaudeEvent(event: ClaudeStreamEvent, state: ClaudeStreamState
     state.usage = message.usage ?? state.usage
     if (Array.isArray(message.content)) {
       for (const part of message.content) {
-        if (part.type === "text" && typeof part.text === "string") {
-          state.fallbackTextParts.push(part.text)
-        }
+        if (part.type === "text" && typeof part.text === "string") state.fallbackTextParts.push(part.text)
       }
       const toolUse = message.content.find((part): part is Extract<ClaudeAssistantContent, { type?: "tool_use"; name?: string }> => {
         return isToolUseContent(part) && typeof part.name === "string"
@@ -165,9 +160,7 @@ function summarizeClaudeEvent(event: ClaudeStreamEvent, state: ClaudeStreamState
         return { kind: "dim", text: "claude: tool" }
       }
     }
-    if (inner.type === "message_delta" && inner.usage) {
-      state.usage = inner.usage
-    }
+    if (inner.type === "message_delta" && inner.usage) state.usage = inner.usage
     if (
       inner.type === "content_block_delta" &&
       typeof inner.index === "number" &&
@@ -200,76 +193,41 @@ function summarizeClaudeEvent(event: ClaudeStreamEvent, state: ClaudeStreamState
   return null
 }
 
-function createClaudeStreamState(): ClaudeStreamState {
-  return {
-    sessionId: null,
-    resultText: null,
-    fallbackTextParts: [],
-    textBlockTypes: new Map(),
-    usage: null,
-    sawResult: false,
-    streamedSummary: false,
-    completedAssistantMessageIds: new Set(),
-  }
-}
-
-function createClaudeStreamCallback(state: ClaudeStreamState): (line: string) => void {
-  return makeJsonLineStreamCallback<ClaudeStreamEvent>({
-    summarize: event => summarizeClaudeEvent(event, state),
-  })
-}
-
 function finalOutputText(state: ClaudeStreamState): string {
   if (typeof state.resultText === "string") return state.resultText
   if (state.fallbackTextParts.length > 0) return state.fallbackTextParts.join("")
   return ""
 }
 
-export async function invokeClaude(input: HostedProviderInvokeInput, attempt = 0): Promise<HostedCliExecutionResult> {
-  const command = buildClaudeCommand(input)
-  const state = createClaudeStreamState()
-  const retryDelays = transientRetryDelaysMs()
-  let result
-  try {
-    result = await spawnCommand(command, input.prompt, input.runtime.workspaceRoot, {
-      onStdoutLine: createClaudeStreamCallback(state),
-    })
-  } catch (err) {
-    if (isTransientSpawnError(err) && attempt < retryDelays.length) {
-      emitRetryMarker("claude", attempt + 2, retryDelays.length + 1, retryDelays[attempt] ?? 0)
-      await sleep(retryDelays[attempt] ?? 0)
-      return invokeClaude(input, attempt + 1)
+const claudeDriver: ProviderDriver<ClaudeStreamState> = {
+  tag: "claude",
+  buildCommand: buildClaudeCommand,
+  createStreamState: createClaudeStreamState,
+  streamCallback: state =>
+    makeJsonLineStreamCallback<ClaudeStreamEvent>({
+      summarize: event => summarizeClaudeEvent(event, state),
+    }),
+  streamedSummary: state => state.streamedSummary,
+  unknownSession: text => /unknown session|expired session|could not resume|resume.*not found/i.test(text),
+  async finalize({ input, raw, command, state }) {
+    const outputText = finalOutputText(state)
+    if (!state.sawResult && outputText.length === 0) {
+      const combined = `${raw.stdout}\n${raw.stderr}`
+      throw new Error(`claude stream ended without a result event or recoverable assistant text: ${combined.trim() || "no output"}`)
     }
-    throw err
-  }
-  const combined = `${result.stdout}\n${result.stderr}`
-  if (result.exitCode !== 0) {
-    if (input.session?.sessionId && unknownSession(combined)) {
-      return invokeClaude({ ...input, session: { provider: input.runtime.provider, sessionId: null } }, attempt)
+    return {
+      ...raw,
+      command,
+      outputText,
+      session: { provider: input.runtime.provider, sessionId: state.sessionId ?? input.session?.sessionId ?? null },
+      cacheStats: {
+        cachedInputTokens: state.usage?.cache_read_input_tokens ?? 0,
+        totalInputTokens: state.usage?.input_tokens ?? 0,
+      },
     }
-    if (isTransientFailure(result.exitCode, result.stdout, result.stderr) && attempt < retryDelays.length) {
-      if (state.streamedSummary) {
-        emitRetryMarker("claude", attempt + 2, retryDelays.length + 1, retryDelays[attempt] ?? 0)
-      }
-      await sleep(retryDelays[attempt] ?? 0)
-      return invokeClaude(input, attempt + 1)
-    }
-    throw new Error(`${input.runtime.provider} exited with code ${result.exitCode}: ${combined.trim() || "no output"}`)
-  }
+  },
+}
 
-  const outputText = finalOutputText(state)
-  if (!state.sawResult && outputText.length === 0) {
-    throw new Error(`claude stream ended without a result event or recoverable assistant text: ${combined.trim() || "no output"}`)
-  }
-
-  return {
-    ...result,
-    command,
-    outputText,
-    session: { provider: input.runtime.provider, sessionId: state.sessionId ?? input.session?.sessionId ?? null },
-    cacheStats: {
-      cachedInputTokens: state.usage?.cache_read_input_tokens ?? 0,
-      totalInputTokens: state.usage?.input_tokens ?? 0,
-    },
-  }
+export async function invokeClaude(input: HostedProviderInvokeInput): Promise<HostedCliExecutionResult> {
+  return invokeProviderCli(claudeDriver, input)
 }

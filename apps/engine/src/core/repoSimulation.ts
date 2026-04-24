@@ -52,16 +52,20 @@ function baseBranchFromContext(context: WorkflowContext): string {
   return branch
 }
 
+function joinBranch(kind: string, ...segments: string[]): string {
+  return `${kind}/${segments.join("__")}`
+}
+
 export function branchNameItem(context: WorkflowContext): string {
-  return `item/${itemSlugFromContext(context)}`
+  return joinBranch("item", itemSlugFromContext(context))
 }
 
 export function branchNameProject(context: WorkflowContext, projectId: string): string {
-  return `proj/${itemSlugFromContext(context)}__${slugify(projectId)}`
+  return joinBranch("proj", itemSlugFromContext(context), slugify(projectId))
 }
 
 export function branchNameWave(context: WorkflowContext, projectId: string, waveNumber: number): string {
-  return `wave/${itemSlugFromContext(context)}__${slugify(projectId)}__w${waveNumber}`
+  return joinBranch("wave", itemSlugFromContext(context), slugify(projectId), `w${waveNumber}`)
 }
 
 export function branchNameStory(
@@ -70,11 +74,11 @@ export function branchNameStory(
   waveNumber: number,
   storyId: string,
 ): string {
-  return `story/${itemSlugFromContext(context)}__${slugify(projectId)}__w${waveNumber}__${slugify(storyId)}`
+  return joinBranch("story", itemSlugFromContext(context), slugify(projectId), `w${waveNumber}`, slugify(storyId))
 }
 
 export function branchNameCandidate(context: WorkflowContext, projectId: string): string {
-  return `candidate/${slugify(context.runId)}__${itemSlugFromContext(context)}__${slugify(projectId)}`
+  return joinBranch("candidate", slugify(context.runId), itemSlugFromContext(context), slugify(projectId))
 }
 
 async function readRepoState(path: string): Promise<SimulatedRepoState | undefined> {

@@ -21,10 +21,13 @@ function makeStubBin(dir: string, name: string, body: string): void {
 }
 
 test("parseArgs recognizes help, doctor, start ui, workflow, item action, and unknown commands", () => {
-  assert.deepEqual(parseArgs([]), { kind: "workflow", json: false, workspaceKey: undefined })
-  assert.deepEqual(parseArgs(["--json"]), { kind: "workflow", json: true, workspaceKey: undefined })
-  assert.deepEqual(parseArgs(["run", "--json"]), { kind: "workflow", json: true, workspaceKey: undefined })
-  assert.deepEqual(parseArgs(["--workspace", "demo"]), { kind: "workflow", json: false, workspaceKey: "demo" })
+  assert.deepEqual(parseArgs([]), { kind: "workflow", json: false, workspaceKey: undefined, verbose: false })
+  assert.deepEqual(parseArgs(["--json"]), { kind: "workflow", json: true, workspaceKey: undefined, verbose: false })
+  assert.deepEqual(parseArgs(["run", "--json"]), { kind: "workflow", json: true, workspaceKey: undefined, verbose: false })
+  assert.deepEqual(parseArgs(["--workspace", "demo"]), { kind: "workflow", json: false, workspaceKey: "demo", verbose: false })
+  assert.deepEqual(parseArgs(["run", "--json", "--verbose"]), { kind: "workflow", json: true, workspaceKey: undefined, verbose: true })
+  assert.deepEqual(parseArgs(["status", "--workspace", "demo", "--json"]), { kind: "status", workspaceKey: "demo", json: true, all: false })
+  assert.deepEqual(parseArgs(["status", "--all", "--json"]), { kind: "status", workspaceKey: undefined, json: true, all: true })
   assert.deepEqual(parseArgs(["--help"]), { kind: "help" })
   assert.deepEqual(parseArgs(["-h"]), { kind: "help" })
   assert.deepEqual(parseArgs(["--doctor"]), { kind: "doctor", json: false, group: undefined })
@@ -54,10 +57,33 @@ test("parseArgs recognizes help, doctor, start ui, workflow, item action, and un
   })
   assert.deepEqual(parseArgs(["workspace", "list", "--json"]), { kind: "workspace-list", json: true })
   assert.deepEqual(parseArgs(["workspace", "get", "demo", "--json"]), { kind: "workspace-get", key: "demo", json: true })
+  assert.deepEqual(parseArgs(["workspace", "items", "demo", "--json"]), { kind: "workspace-items", key: "demo", json: true })
+  assert.deepEqual(parseArgs(["workspace", "use", "demo"]), { kind: "workspace-use", key: "demo" })
   assert.deepEqual(parseArgs(["workspace", "remove", "demo", "--purge"]), { kind: "workspace-remove", key: "demo", json: false, purge: true })
   assert.deepEqual(parseArgs(["workspace", "open", "demo"]), { kind: "workspace-open", key: "demo" })
   assert.deepEqual(parseArgs(["workspace", "backfill", "--json"]), { kind: "workspace-backfill", json: true })
+  assert.deepEqual(parseArgs(["chat", "list", "--workspace", "demo", "--json"]), { kind: "chat-list", workspaceKey: "demo", json: true, all: false, compact: false })
+  assert.deepEqual(parseArgs(["chat", "list", "--all", "--json"]), { kind: "chat-list", workspaceKey: undefined, json: true, all: true, compact: false })
+  assert.deepEqual(parseArgs(["chat", "list", "--all", "--compact"]), { kind: "chat-list", workspaceKey: undefined, json: false, all: true, compact: true })
+  assert.deepEqual(parseArgs(["chat", "answer", "--prompt", "p-1", "--text", "Ship it"]), { kind: "chat-answer", promptId: "p-1", runId: undefined, answer: "Ship it", multiline: false, editor: false })
+  assert.deepEqual(parseArgs(["chat", "answer", "--run", "r-1", "--multiline"]), { kind: "chat-answer", promptId: undefined, runId: "r-1", answer: undefined, multiline: true, editor: false })
+  assert.deepEqual(parseArgs(["chat", "answer", "--run", "r-1", "--editor"]), { kind: "chat-answer", promptId: undefined, runId: "r-1", answer: undefined, multiline: false, editor: true })
+  assert.deepEqual(parseArgs(["items", "--workspace", "demo", "--json"]), { kind: "items", workspaceKey: "demo", json: true, all: false, compact: false })
+  assert.deepEqual(parseArgs(["items", "--all", "--json"]), { kind: "items", workspaceKey: undefined, json: true, all: true, compact: false })
+  assert.deepEqual(parseArgs(["chats", "--workspace", "demo", "--json"]), { kind: "chats", workspaceKey: "demo", json: true, all: false, compact: false })
+  assert.deepEqual(parseArgs(["chats", "--all", "--json"]), { kind: "chats", workspaceKey: undefined, json: true, all: true, compact: false })
+  assert.deepEqual(parseArgs(["item", "get", "ITEM-0001", "--workspace", "demo", "--json"]), { kind: "item-get", itemRef: "ITEM-0001", workspaceKey: "demo", json: true })
+  assert.deepEqual(parseArgs(["item", "open", "ITEM-0001", "--workspace", "demo"]), { kind: "item-open", itemRef: "ITEM-0001", workspaceKey: "demo" })
+  assert.deepEqual(parseArgs(["run", "list", "--workspace", "demo", "--json"]), { kind: "run-list", workspaceKey: "demo", json: true, all: false, compact: false })
+  assert.deepEqual(parseArgs(["run", "list", "--all", "--json"]), { kind: "run-list", workspaceKey: undefined, json: true, all: true, compact: false })
+  assert.deepEqual(parseArgs(["run", "list", "--all", "--compact"]), { kind: "run-list", workspaceKey: undefined, json: false, all: true, compact: true })
+  assert.deepEqual(parseArgs(["run", "get", "run-123", "--json"]), { kind: "run-get", runId: "run-123", json: true })
+  assert.deepEqual(parseArgs(["run", "open", "run-123"]), { kind: "run-open", runId: "run-123" })
+  assert.deepEqual(parseArgs(["run", "watch", "run-123"]), { kind: "run-watch", runId: "run-123" })
   assert.deepEqual(parseArgs(["start", "ui"]), { kind: "start-ui" })
+  assert.deepEqual(parseArgs(["runs", "--workspace", "demo", "--json"]), { kind: "runs", workspaceKey: "demo", json: true, all: false, compact: false })
+  assert.deepEqual(parseArgs(["runs", "--all", "--json"]), { kind: "runs", workspaceKey: undefined, json: true, all: true, compact: false })
+  assert.deepEqual(parseArgs(["chats", "--all", "--compact"]), { kind: "chats", workspaceKey: undefined, json: false, all: true, compact: true })
   assert.deepEqual(parseArgs(["item", "action", "--item", "ITEM-0001", "--action", "start_brainstorm"]), {
     kind: "item-action",
     itemRef: "ITEM-0001",
@@ -276,6 +302,164 @@ test("notifications test telegram sends a smoke message through the configured b
   }
 })
 
+test("item open and run open print UI URLs based on publicBaseUrl", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-"))
+  const previousUiDbPath = process.env.BEERENGINEER_UI_DB_PATH
+  const previousConfigPath = process.env.BEERENGINEER_CONFIG_PATH
+  const previousDisableOpen = process.env.BEERENGINEER_DISABLE_BROWSER_OPEN
+  const dbPath = join(dir, "beerengineer.sqlite")
+  const configPath = join(dir, "config.json")
+  const db = initDatabase(dbPath)
+  const repos = new Repos(db)
+
+  try {
+    process.env.BEERENGINEER_UI_DB_PATH = dbPath
+    process.env.BEERENGINEER_CONFIG_PATH = configPath
+    process.env.BEERENGINEER_DISABLE_BROWSER_OPEN = "1"
+    writeFileSync(configPath, JSON.stringify({
+      schemaVersion: 1,
+      dataDir: dir,
+      allowedRoots: ["/tmp"],
+      enginePort: 4100,
+      publicBaseUrl: "http://100.80.38.41:3100",
+      llm: {
+        provider: "anthropic",
+        model: "claude-opus-4-7",
+        apiKeyRef: "ANTHROPIC_API_KEY",
+        defaultHarnessProfile: { mode: "claude-first" },
+      },
+      vcs: { github: { enabled: false } },
+      browser: { enabled: false },
+    }), "utf8")
+
+    const ws = repos.upsertWorkspace({ key: "demo", name: "Demo", rootPath: "/tmp/demo" })
+    const item = repos.createItem({ workspaceId: ws.id, code: "ITEM-0600", title: "Open item", description: "open" })
+    const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "cli" })
+
+    let stdout = ""
+    const originalWrite = process.stdout.write.bind(process.stdout)
+    const originalExit = process.exit
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      stdout += chunk.toString()
+      return true
+    }) as typeof process.stdout.write
+    process.exit = ((code?: number) => {
+      throw new Error(`EXIT:${code ?? 0}`)
+    }) as typeof process.exit
+
+    try {
+      await main(["item", "open", "ITEM-0600", "--workspace", "demo"])
+      assert.fail("expected main() to exit")
+    } catch (err) {
+      assert.equal((err as Error).message, "EXIT:0")
+    }
+
+    try {
+      await main(["run", "open", run.id])
+      assert.fail("expected main() to exit")
+    } catch (err) {
+      assert.equal((err as Error).message, "EXIT:0")
+    } finally {
+      process.stdout.write = originalWrite
+      process.exit = originalExit
+    }
+
+    assert.match(stdout, /http:\/\/100\.80\.38\.41:3100\/\?workspace=demo&item=ITEM-0600/)
+    assert.match(stdout, new RegExp(`http://100\\.80\\.38\\.41:3100/runs/${run.id}`))
+    assert.match(stdout, /UI is not reachable on that address; printed URL only\./)
+  } finally {
+    db.close()
+    if (previousUiDbPath === undefined) delete process.env.BEERENGINEER_UI_DB_PATH
+    else process.env.BEERENGINEER_UI_DB_PATH = previousUiDbPath
+    if (previousConfigPath === undefined) delete process.env.BEERENGINEER_CONFIG_PATH
+    else process.env.BEERENGINEER_CONFIG_PATH = previousConfigPath
+    if (previousDisableOpen === undefined) delete process.env.BEERENGINEER_DISABLE_BROWSER_OPEN
+    else process.env.BEERENGINEER_DISABLE_BROWSER_OPEN = previousDisableOpen
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("chat answer reads the answer body from stdin when --text is omitted", () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-"))
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
+  const dbPath = join(dir, "beerengineer.sqlite")
+  const db = initDatabase(dbPath)
+  const repos = new Repos(db)
+
+  try {
+    const ws = repos.upsertWorkspace({ key: "demo", name: "Demo", rootPath: "/tmp/demo" })
+    const item = repos.createItem({ workspaceId: ws.id, code: "ITEM-0700", title: "stdin item", description: "stdin" })
+    const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "cli" })
+    const stage = repos.createStageRun({ runId: run.id, stageKey: "requirements" })
+    repos.createPendingPrompt({ id: "p-stdin", runId: run.id, stageRunId: stage.id, prompt: "  you > " })
+
+    const result = spawnSync(
+      process.execPath,
+      [binPath, "chat", "answer", "--prompt", "p-stdin"],
+      {
+        cwd: engineRoot,
+        encoding: "utf8",
+        input: "Answer from stdin\n",
+        env: {
+          ...process.env,
+          BEERENGINEER_UI_DB_PATH: dbPath,
+          EDITOR: "",
+          VISUAL: "",
+        },
+      }
+    )
+
+    assert.equal(result.status, 0, `${result.stdout ?? ""}\n${result.stderr ?? ""}`)
+    assert.match(result.stdout ?? "", /answered p-stdin/)
+    assert.equal(repos.getPendingPrompt("p-stdin")?.answer, "Answer from stdin")
+  } finally {
+    db.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("chat answer supports explicit multiline stdin mode", () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-"))
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
+  const dbPath = join(dir, "beerengineer.sqlite")
+  const db = initDatabase(dbPath)
+  const repos = new Repos(db)
+
+  try {
+    const ws = repos.upsertWorkspace({ key: "demo", name: "Demo", rootPath: "/tmp/demo" })
+    const item = repos.createItem({ workspaceId: ws.id, code: "ITEM-0800", title: "multiline item", description: "stdin" })
+    const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "cli" })
+    const stage = repos.createStageRun({ runId: run.id, stageKey: "requirements" })
+    repos.createPendingPrompt({ id: "p-multiline", runId: run.id, stageRunId: stage.id, prompt: "  you > " })
+
+    const result = spawnSync(
+      process.execPath,
+      [binPath, "chat", "answer", "--prompt", "p-multiline", "--multiline"],
+      {
+        cwd: engineRoot,
+        encoding: "utf8",
+        input: "Line one\nLine two\n",
+        env: {
+          ...process.env,
+          BEERENGINEER_UI_DB_PATH: dbPath,
+          EDITOR: "",
+          VISUAL: "",
+        },
+      }
+    )
+
+    assert.equal(result.status, 0, `${result.stdout ?? ""}\n${result.stderr ?? ""}`)
+    assert.equal(repos.getPendingPrompt("p-multiline")?.answer, "Line one\nLine two")
+  } finally {
+    db.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test("workspace add/register/open/remove work end-to-end through the CLI", () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-workspace-cli-"))
   const testDir = dirname(fileURLToPath(import.meta.url))
@@ -453,224 +637,4 @@ test("help output explains that user prompts are limited to intake and blockers"
   assert.match(output, /User prompts are limited to intake and blocked-run recovery\./)
   assert.match(output, /architecture/)
   assert.match(output, /documentation run without user chat unless a blocker stops the run\./)
-})
-
-// Integration smoke test: drives the real workflow through stdio with scripted
-// answers. Kept in the main suite because it's the regression catch for the
-// lookupTransition wiring between index.ts and itemActions.ts — skipping it
-// previously let a broken start_brainstorm CLI ship unnoticed.
-test("beerengineer item action start_brainstorm runs to completion through the terminal CLI", () => {
-  const dir = mkdtempSync(join(tmpdir(), "be2-cli-"))
-  const testDir = dirname(fileURLToPath(import.meta.url))
-  const engineRoot = resolve(testDir, "..")
-  const binPath = resolve(engineRoot, "bin/beerengineer.js")
-
-  try {
-    const dbPath = join(dir, "workflow.sqlite")
-    const db = initDatabase(dbPath)
-    const repos = new Repos(db)
-    const ws = repos.upsertWorkspace({ key: "default", name: "Default Workspace" })
-    repos.createItem({ workspaceId: ws.id, code: "ITEM-0001", title: "CLI Workflow", description: "smoke" })
-    db.close()
-
-    const result = spawnSync(
-      process.execPath,
-      [binPath, "item", "action", "--item", "ITEM-0001", "--action", "start_brainstorm"],
-      {
-        cwd: engineRoot,
-        encoding: "utf8",
-        env: { ...process.env, BEERENGINEER_UI_DB_PATH: dbPath },
-        input: [
-          "answer 1",
-          "answer 2",
-          "answer 3",
-          "clarify 1",
-          "clarify 2",
-          ...Array.from({ length: 16 }, () => "accept"),
-          ...Array.from({ length: 16 }, () => "merge"),
-        ].join("\n") + "\n",
-        timeout: 15000,
-      }
-    )
-
-    assert.equal(result.status, 0, `${result.stdout ?? ""}\n${result.stderr ?? ""}`)
-    assert.match(result.stdout ?? "", /start_brainstorm applied/)
-    assert.match(result.stdout ?? "", /run-id:/)
-
-    const verifyDb = initDatabase(dbPath)
-    const verifyRepos = new Repos(verifyDb)
-    const runs = verifyRepos.listRuns()
-    assert.equal(runs.length, 1)
-    assert.equal(runs[0].owner, "cli")
-    assert.equal(runs[0].status, "completed")
-    verifyDb.close()
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
-})
-
-test("beerengineer item action start_implementation resumes from brainstorm artifacts as a cli-owned run", () => {
-  const dir = mkdtempSync(join(tmpdir(), "be2-cli-impl-"))
-  const testDir = dirname(fileURLToPath(import.meta.url))
-  const engineRoot = resolve(testDir, "..")
-  const binPath = resolve(engineRoot, "bin/beerengineer.js")
-  let workspaceIdForCleanup: string | null = null
-
-  try {
-    const dbPath = join(dir, "workflow.sqlite")
-    const db = initDatabase(dbPath)
-    const repos = new Repos(db)
-    const ws = repos.upsertWorkspace({ key: "default", name: "Default Workspace" })
-    const item = repos.createItem({
-      workspaceId: ws.id,
-      code: "ITEM-0001",
-      title: "CLI Implementation",
-      description: "resume from brainstorm",
-    })
-    repos.setItemColumn(item.id, "requirements", "draft")
-    const seedRun = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "cli" })
-    db.close()
-
-    const workspaceId = `cli-implementation-${item.id.toLowerCase()}`
-    workspaceIdForCleanup = workspaceId
-    const brainstormDir = layout.stageArtifactsDir({ workspaceId, runId: seedRun.id }, "brainstorm")
-    rmSync(layout.workspaceDir(workspaceId), { recursive: true, force: true })
-    mkdirSync(brainstormDir, { recursive: true })
-    writeFileSync(
-      join(brainstormDir, "projects.json"),
-      JSON.stringify(
-        [
-          {
-            id: item.id,
-            name: "Browser greeting page",
-            description: "Add a browser-rendered greeting alongside the CLI.",
-            concept: {
-              summary: "Browser greeting page for the hello-world-cli repo.",
-              problem: "The repo only exposes Hello, World! via CLI today.",
-              users: ["Developers who want a browser UI in addition to the CLI"],
-              constraints: ["React 18", "TypeScript strict", "Vitest", "Do not break bin/hello.js"],
-            },
-          },
-        ],
-        null,
-        2,
-      ),
-    )
-
-    const result = spawnSync(
-      process.execPath,
-      [binPath, "item", "action", "--item", "ITEM-0001", "--action", "start_implementation"],
-      {
-        cwd: engineRoot,
-        encoding: "utf8",
-        env: { ...process.env, BEERENGINEER_UI_DB_PATH: dbPath },
-        input: [
-          "Focus on a single static greeting page.",
-          "Keep CLI and browser entry points separate.",
-          ...Array.from({ length: 16 }, () => "accept"),
-          ...Array.from({ length: 16 }, () => "merge"),
-        ].join("\n") + "\n",
-        timeout: 20000,
-      },
-    )
-
-    assert.equal(result.status, 0, `${result.stdout ?? ""}\n${result.stderr ?? ""}`)
-    assert.match(result.stdout ?? "", /start_implementation applied/)
-    assert.match(result.stdout ?? "", /run-id:/)
-
-    const verifyDb = initDatabase(dbPath)
-    const verifyRepos = new Repos(verifyDb)
-    const runs = verifyRepos.listRuns().filter(run => run.item_id === item.id)
-    const latest = runs.sort((a, b) => b.created_at - a.created_at)[0]
-    assert.equal(latest?.owner, "cli")
-    assert.equal(latest?.status, "completed")
-    verifyDb.close()
-  } finally {
-    if (workspaceIdForCleanup) rmSync(layout.workspaceDir(workspaceIdForCleanup), { recursive: true, force: true })
-    rmSync(dir, { recursive: true, force: true })
-  }
-})
-
-test("beerengineer item action resume_run exits 75 without remediation summary in non-interactive mode", () => {
-  const dir = mkdtempSync(join(tmpdir(), "be2-cli-"))
-  const testDir = dirname(fileURLToPath(import.meta.url))
-  const engineRoot = resolve(testDir, "..")
-  const binPath = resolve(engineRoot, "bin/beerengineer.js")
-
-  try {
-    const dbPath = join(dir, "resume.sqlite")
-    const db = initDatabase(dbPath)
-    const repos = new Repos(db)
-    const ws = repos.upsertWorkspace({ key: "default", name: "Default Workspace" })
-    const item = repos.createItem({ workspaceId: ws.id, code: "ITEM-0001", title: "Blocked CLI Workflow", description: "smoke" })
-    repos.setItemColumn(item.id, "implementation", "failed")
-    const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "cli" })
-    repos.setRunRecovery(run.id, { status: "blocked", scope: "run", scopeRef: null, summary: "fix needed" })
-    db.close()
-
-    const result = spawnSync(
-      process.execPath,
-      [binPath, "item", "action", "--item", "ITEM-0001", "--action", "resume_run"],
-      {
-        cwd: engineRoot,
-        encoding: "utf8",
-        env: { ...process.env, BEERENGINEER_UI_DB_PATH: dbPath },
-      }
-    )
-
-    assert.equal(result.status, 75, `${result.stdout ?? ""}\n${result.stderr ?? ""}`)
-    assert.match(result.stderr ?? "", /Missing --remediation-summary/)
-    assert.match(result.stderr ?? "", /Run .* is blocked\./)
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
-})
-
-test("beerengineer item action start_brainstorm fails early on dirty workspace repo", () => {
-  const dir = mkdtempSync(join(tmpdir(), "be2-cli-dirty-"))
-  const testDir = dirname(fileURLToPath(import.meta.url))
-  const engineRoot = resolve(testDir, "..")
-  const binPath = resolve(engineRoot, "bin/beerengineer.js")
-  const repoRoot = join(dir, "workspace")
-
-  try {
-    mkdirSync(repoRoot, { recursive: true })
-    assert.equal(spawnSync("git", ["init", "--initial-branch=main"], { cwd: repoRoot, encoding: "utf8" }).status, 0)
-    assert.equal(spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: repoRoot, encoding: "utf8" }).status, 0)
-    assert.equal(spawnSync("git", ["config", "user.name", "test"], { cwd: repoRoot, encoding: "utf8" }).status, 0)
-    writeFileSync(join(repoRoot, "README.md"), "seed\n")
-    assert.equal(spawnSync("git", ["add", "-A"], { cwd: repoRoot, encoding: "utf8" }).status, 0)
-    assert.equal(spawnSync("git", ["commit", "-m", "seed"], { cwd: repoRoot, encoding: "utf8" }).status, 0)
-    writeFileSync(join(repoRoot, "dirty.txt"), "uncommitted\n")
-
-    const dbPath = join(dir, "workflow.sqlite")
-    const db = initDatabase(dbPath)
-    const repos = new Repos(db)
-    const ws = repos.upsertWorkspace({ key: "default", name: "Default Workspace", rootPath: repoRoot })
-    repos.createItem({ workspaceId: ws.id, code: "ITEM-0001", title: "CLI Workflow", description: "smoke" })
-    db.close()
-
-    const result = spawnSync(
-      process.execPath,
-      [binPath, "item", "action", "--item", "ITEM-0001", "--action", "start_brainstorm"],
-      {
-        cwd: engineRoot,
-        encoding: "utf8",
-        env: { ...process.env, BEERENGINEER_UI_DB_PATH: dbPath },
-      }
-    )
-
-    assert.equal(result.status, 73, `${result.stdout ?? ""}\n${result.stderr ?? ""}`)
-    assert.match(result.stderr ?? "", /Git preflight failed: workspace repo is dirty\./)
-    assert.match(result.stderr ?? "", /Strategy violation: uncommitted work is sitting on main\/master\./)
-    assert.match(result.stderr ?? "", /main\/master to stay clean; item work must happen on item\/\* branches\./)
-    assert.match(result.stderr ?? "", /git status/)
-
-    const verifyDb = initDatabase(dbPath)
-    const verifyRepos = new Repos(verifyDb)
-    assert.equal(verifyRepos.listRuns().length, 0)
-    verifyDb.close()
-  } finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
 })

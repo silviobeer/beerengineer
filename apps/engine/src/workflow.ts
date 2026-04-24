@@ -1,7 +1,6 @@
 import { readFile } from "node:fs/promises"
-import { readFileSync } from "node:fs"
 import { spawnSync } from "node:child_process"
-import { join, resolve } from "node:path"
+import { join } from "node:path"
 import { randomUUID } from "node:crypto"
 import {
   branchNameItem,
@@ -17,6 +16,7 @@ import {
   ensureProjectBranchReal,
   mergeProjectIntoItemReal,
 } from "./core/realGit.js"
+import { resolveBaseBranchForItem } from "./core/baseBranch.js"
 import { writeRecoveryRecord, type RecoveryScope } from "./core/recovery.js"
 import { layout } from "./core/workspaceLayout.js"
 import type {
@@ -103,73 +103,6 @@ class BlockedRunError extends Error {
 
 async function readJson<T>(path: string): Promise<T> {
   return JSON.parse(await readFile(path, "utf8")) as T
-}
-
-function isEngineOwnedBranchName(branch: string): boolean {
-  return /^(item|proj|wave|story|candidate)\//.test(branch)
-}
-
-function resolveGitDefaultBranch(workspaceRoot: string): string | null {
-  const originHead = spawnSync("git", ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], {
-    cwd: workspaceRoot,
-    encoding: "utf8",
-  })
-  if (originHead.status === 0) {
-    const branch = originHead.stdout.trim().replace(/^origin\//, "")
-    if (branch) return branch
-  }
-
-  const remoteShow = spawnSync("git", ["remote", "show", "origin"], {
-    cwd: workspaceRoot,
-    encoding: "utf8",
-  })
-  if (remoteShow.status === 0) {
-    const match = remoteShow.stdout.match(/^\s*HEAD branch:\s+(.+)$/m)
-    const branch = match?.[1]?.trim()
-    if (branch) return branch
-  }
-
-  const current = spawnSync("git", ["branch", "--show-current"], {
-    cwd: workspaceRoot,
-    encoding: "utf8",
-  })
-  const branch = current.status === 0 ? current.stdout.trim() : ""
-  if (branch && !isEngineOwnedBranchName(branch)) return branch
-  return null
-}
-
-function resolveBaseBranch(item: Item, workspaceRoot?: string): { branch: string; source: "item" | "env" | "config" | "git" | "default" } {
-  const itemOverride = item.baseBranch?.trim()
-  if (itemOverride) return { branch: itemOverride, source: "item" }
-  const envOverride = process.env.BEERENGINEER_BASE_BRANCH?.trim()
-  if (envOverride) return { branch: envOverride, source: "env" }
-
-  // Prefer the workspace-config-recorded default branch over whatever happens
-  // to be checked out right now: if a previous run crashed mid-execution, the
-  // repo may still be parked on a story/wave/proj branch, and we must not
-  // treat that as the "base".
-  if (workspaceRoot) {
-    try {
-      const configPath = resolve(workspaceRoot, ".beerengineer", "workspace.json")
-      const raw = readFileSync(configPath, "utf8")
-      const parsed = JSON.parse(raw) as {
-        preflight?: { github?: { defaultBranch?: string | null } }
-        reviewPolicy?: { sonarcloud?: { baseBranch?: string } }
-        sonar?: { baseBranch?: string }
-      }
-      const fromConfig =
-        parsed.preflight?.github?.defaultBranch?.trim() ||
-        parsed.reviewPolicy?.sonarcloud?.baseBranch?.trim() ||
-        parsed.sonar?.baseBranch?.trim()
-      if (fromConfig && !isEngineOwnedBranchName(fromConfig)) return { branch: fromConfig, source: "config" }
-    } catch {
-      // no config, fall through to git probe
-    }
-  }
-
-  const branch = workspaceRoot ? resolveGitDefaultBranch(workspaceRoot) : null
-  if (branch) return { branch, source: "git" }
-  return { branch: "main", source: "default" }
 }
 
 async function blockRunForWorkspaceState(context: WorkflowContext, summary: string): Promise<never> {
@@ -276,7 +209,7 @@ async function loadDocumentation(context: WorkflowContext): Promise<Documentatio
 export async function runWorkflow(item: Item, options?: { resume?: WorkflowResumeInput; llm?: WorkflowLlmOptions; workspaceRoot?: string }): Promise<void> {
   const slug = item.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
   const activeRun = getActiveRun()
-  const { branch: baseBranch, source: baseBranchSource } = resolveBaseBranch(item, options?.workspaceRoot)
+  const { branch: baseBranch, source: baseBranchSource } = resolveBaseBranchForItem(item.baseBranch, options?.workspaceRoot)
   stagePresent.dim(`→ Base branch: ${baseBranch} (source: ${baseBranchSource})`)
   const context: WorkflowContext = {
     workspaceId: slug ? `${slug}-${item.id.toLowerCase()}` : item.id.toLowerCase(),
@@ -405,16 +338,17 @@ async function runProject(initialCtx: ProjectContext, resume?: ProjectResumePlan
   }
 
   await mergeProjectBranchIntoItem(ctx, ctx.project.id)
-  await withStageLifecycle("handoff", { projectId }, () => handoffCandidate(assertWithDocumentation(ctx)))
+  await withStageLifecycle("handoff", { projectId }, () => handoffProject(assertWithDocumentation(ctx)))
 }
 
-async function handoffCandidate(ctx: WithDocumentation): Promise<void> {
+async function handoffProject(ctx: WithDocumentation): Promise<void> {
   const realGit = detectRealGitMode(ctx)
   if (realGit.enabled) {
     stagePresent.header(`handoff — ${ctx.project.name}`)
-    stagePresent.ok("Project already merged into the item branch in real git mode.")
     stagePresent.dim(`→ Item branch: ${branchNameItem(ctx)}`)
     stagePresent.dim(`→ Project branch: ${branchNameProject(ctx, ctx.project.id)}`)
+    stagePresent.dim(`→ Base branch: ${realGit.baseBranch}`)
+    stagePresent.ok(`Project ${ctx.project.id} is already merged into ${branchNameItem(ctx)}; handoff complete.`)
     return
   }
 

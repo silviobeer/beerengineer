@@ -8,6 +8,7 @@ import {
   branchNameStory,
   branchNameWave,
 } from "./repoSimulation.js"
+import { isEngineOwnedBranchName } from "./baseBranch.js"
 
 export type RealGitDisabled = { enabled: false; reason: string }
 export type RealGitEnabled = { enabled: true; workspaceRoot: string; baseBranch: string }
@@ -112,6 +113,7 @@ function assertActiveBranch(mode: RealGitEnabled, expected: string, reason: stri
 
 function ensureBranchFrom(mode: RealGitEnabled, branch: string, from: string): void {
   if (branchExists(mode.workspaceRoot, branch)) {
+    if (currentBranch(mode.workspaceRoot) === branch) return
     const co = runGit(mode.workspaceRoot, ["checkout", branch])
     if (!co.ok) throw new Error(`realGit: checkout ${branch} failed: ${co.stderr}`)
     assertActiveBranch(mode, branch, `checking out existing branch ${branch}`)
@@ -151,16 +153,20 @@ function mergeNoFf(mode: RealGitEnabled, target: string, source: string, message
 }
 
 export function ensureItemBranchReal(mode: RealGitEnabled, context: WorkflowContext): string {
-  // Defensive: if a previous run crashed mid-execution, HEAD may still be on a
-  // story/wave/proj/item branch. Park on the base branch before creating or
-  // reusing the item branch so subsequent `ensureBranchFrom` calls start from
-  // an authoritative ref.
-  if (branchExists(mode.workspaceRoot, mode.baseBranch)) {
-    const co = runGit(mode.workspaceRoot, ["checkout", mode.baseBranch])
-    if (!co.ok) throw new Error(`realGit: could not park on base branch ${mode.baseBranch}: ${co.stderr}`)
-    assertActiveBranch(mode, mode.baseBranch, `parking on base branch ${mode.baseBranch}`)
-  }
   const name = branchNameItem(context)
+  // If the item branch does not yet exist, park on base first so the new
+  // branch forks from base — not from whatever engine-owned branch a crashed
+  // previous run might have left checked out. If the item branch already
+  // exists, there is no need to touch base: ensureBranchFrom will just check
+  // it out (or no-op if we're already on it).
+  if (!branchExists(mode.workspaceRoot, name) && branchExists(mode.workspaceRoot, mode.baseBranch)) {
+    const current = currentBranch(mode.workspaceRoot)
+    if (current !== mode.baseBranch) {
+      const co = runGit(mode.workspaceRoot, ["checkout", mode.baseBranch])
+      if (!co.ok) throw new Error(`realGit: could not park on base branch ${mode.baseBranch}: ${co.stderr}`)
+      assertActiveBranch(mode, mode.baseBranch, `parking on base branch ${mode.baseBranch}`)
+    }
+  }
   ensureBranchFrom(mode, name, mode.baseBranch)
   return name
 }
@@ -207,13 +213,15 @@ export function ensureStoryWorktreeReal(
   const targetPath = resolve(worktreeRoot)
   const existing = findWorktreeByPath(mode.workspaceRoot, targetPath)
   if (existing?.branch === branch) {
-    const actual = currentBranch(targetPath)
-    if (actual !== branch) {
-      const co = runGit(targetPath, ["checkout", branch])
-      if (!co.ok) throw new Error(`realGit: checkout ${branch} in worktree ${targetPath} failed: ${co.stderr}`)
-    }
     if (currentBranch(targetPath) !== branch) {
-      throw new Error(`branch_gate: expected worktree ${targetPath} on ${branch}, but HEAD is ${currentBranch(targetPath) || "<detached>"}`)
+      const co = runGit(targetPath, ["checkout", branch])
+      if (!co.ok) {
+        throw new Error(`realGit: checkout ${branch} in worktree ${targetPath} failed: ${co.stderr}`)
+      }
+      const after = currentBranch(targetPath)
+      if (after !== branch) {
+        throw new Error(`branch_gate: expected worktree ${targetPath} on ${branch}, but HEAD is ${after || "<detached>"}`)
+      }
     }
     return targetPath
   }
@@ -277,6 +285,42 @@ export function exitRunToItemBranchReal(mode: RealGitEnabled, context: WorkflowC
   assertActiveBranch(mode, item, `exiting run to item branch ${item}`)
   return item
 }
+
+export function abandonStoryBranchReal(
+  mode: RealGitEnabled,
+  context: WorkflowContext,
+  projectId: string,
+  waveNumber: number,
+  storyId: string,
+): { abandonedRef: string } | null {
+  const branch = branchNameStory(context, projectId, waveNumber, storyId)
+  if (!branchExists(mode.workspaceRoot, branch)) return null
+  // Move to a namespaced ref so the branch disappears from `git branch` but
+  // remains recoverable. Timestamp prevents collisions on repeat abandons.
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-")
+  const abandonedRef = `refs/beerengineer/abandoned/${branch}/${stamp}`
+  const sha = runGit(mode.workspaceRoot, ["rev-parse", `refs/heads/${branch}`])
+  if (!sha.ok || !sha.stdout) return null
+  // If we're currently on the branch, park on base before deleting it.
+  if (currentBranch(mode.workspaceRoot) === branch) {
+    if (branchExists(mode.workspaceRoot, mode.baseBranch)) {
+      runGit(mode.workspaceRoot, ["checkout", mode.baseBranch])
+    }
+  }
+  const update = runGit(mode.workspaceRoot, ["update-ref", abandonedRef, sha.stdout])
+  if (!update.ok) return null
+  const del = runGit(mode.workspaceRoot, ["branch", "-D", branch])
+  if (!del.ok) {
+    // Roll back the namespaced ref if the branch delete failed, so we don't
+    // leave duplicates pointing at the same commit.
+    runGit(mode.workspaceRoot, ["update-ref", "-d", abandonedRef])
+    return null
+  }
+  return { abandonedRef }
+}
+
+// Re-export so callers that only reach for real-git helpers still get a single entry point.
+export { isEngineOwnedBranchName }
 
 export function removeStoryWorktreeReal(mode: RealGitEnabled, worktreeRoot: string): void {
   const targetPath = resolve(worktreeRoot)

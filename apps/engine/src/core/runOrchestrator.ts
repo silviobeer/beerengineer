@@ -3,44 +3,12 @@ import type { Item } from "../types.js"
 import { runWithWorkflowIO, type WorkflowEvent, type WorkflowIO } from "./io.js"
 import { runWithActiveRun } from "./runContext.js"
 import { createBus, busToWorkflowIO, type EventBus } from "./bus.js"
-import { attachCrossProcessBridge } from "./crossProcessBridge.js"
 import { persistWorkflowRunState } from "./stageRuntime.js"
 import type { Repos } from "../db/repositories.js"
-import { readWorkspaceConfig } from "./workspaces.js"
-import type { WorkflowLlmOptions, WorkflowResumeInput } from "../workflow.js"
-import { attachTelegramNotifications } from "../notifications/index.js"
-import { defaultAppConfig, readConfigFile, resolveConfigPath, resolveMergedConfig, resolveOverrides } from "../setup/config.js"
-
-/**
- * Map a stage key to the UI's board column + phase status. The UI column set is
- * fixed in live-board.ts: idea | brainstorm | requirements | implementation | done.
- * The engine has more stages; we project them down to the column the card
- * should live in for each stage.
- */
-export function mapStageToColumn(
-  stageKey: string | undefined,
-  outcome: "running" | "completed" | "failed"
-): { column: "idea" | "brainstorm" | "requirements" | "implementation" | "done"; phaseStatus: "draft" | "running" | "review_required" | "completed" | "failed" } {
-  const phaseStatus = outcome === "running" ? "running" : outcome === "failed" ? "failed" : "completed"
-  if (!stageKey) return { column: "idea", phaseStatus: "draft" }
-  switch (stageKey) {
-    case "brainstorm":
-      return { column: "brainstorm", phaseStatus }
-    case "requirements":
-      return { column: "requirements", phaseStatus }
-    case "architecture":
-    case "planning":
-    case "execution":
-    case "project-review":
-    case "qa":
-      return { column: "implementation", phaseStatus }
-    case "documentation":
-    case "handoff":
-      return { column: outcome === "completed" ? "done" : "implementation", phaseStatus }
-    default:
-      return { column: "implementation", phaseStatus }
-  }
-}
+import type { WorkflowResumeInput } from "../workflow.js"
+import { attachRunSubscribers, resolveWorkflowLlmOptions } from "./runSubscribers.js"
+import { mapStageToColumn } from "./boardColumns.js"
+export { mapStageToColumn } from "./boardColumns.js"
 
 export type AttachDbSyncOptions = {
   /**
@@ -341,11 +309,17 @@ export function prepareRun(
         description: item.description
       })
   const workspaceId = itemRow.workspace_id
+  // The engine derives the on-disk workspace dir from the item title +
+  // item_id. Persist it so resume doesn't have to re-derive from a mutable
+  // title or scan every workspace directory.
+  const slug = item.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
+  const workspaceFsId = slug ? `${slug}-${itemRow.id.toLowerCase()}` : itemRow.id.toLowerCase()
   const runRow = repos.createRun({
     workspaceId,
     itemId: itemRow.id,
     title: item.title,
-    owner: opts.owner ?? "api"
+    owner: opts.owner ?? "api",
+    workspaceFsId,
   })
 
   // Every caller now passes a bus-backed io (createCliIO / createApiIOSession
@@ -353,43 +327,18 @@ export function prepareRun(
   // a local bus so subscribers still attach somewhere — but this should be
   // considered a bug upstream.
   const bus = io.bus ?? createBus()
-  const writtenLogIds = new Set<string>()
-  const overrides = resolveOverrides()
-  const notificationConfig =
-    resolveMergedConfig(readConfigFile(resolveConfigPath(overrides)), overrides) ?? defaultAppConfig()
 
   const start = async (): Promise<void> => {
     const workspaceRow = repos.getWorkspace(workspaceId)
-    let llm: WorkflowLlmOptions | undefined
-    if (workspaceRow?.root_path) {
-      // When the workspace config is missing or invalid, fall through to the
-      // fake-adapter path instead of throwing — legacy rows that predate the
-      // v2 schema need to keep working until they're backfilled.
-      const workspaceConfig = await readWorkspaceConfig(workspaceRow.root_path)
-      if (workspaceConfig) {
-        const stageConfig = {
-          workspaceRoot: workspaceRow.root_path,
-          harnessProfile: workspaceConfig.harnessProfile,
-          runtimePolicy: workspaceConfig.runtimePolicy,
-        }
-        llm = {
-          stage: stageConfig,
-          execution: {
-            stage: stageConfig,
-            executionCoder: stageConfig,
-          },
-        }
-      } else {
-        bus.emit({
-          type: "log",
-          runId: runRow.id,
-          message: `workspace config missing or invalid for ${workspaceRow.root_path}; falling back to fake LLM adapters`,
-        })
-      }
+    const llm = await resolveWorkflowLlmOptions(workspaceRow)
+    if (workspaceRow?.root_path && !llm) {
+      bus.emit({
+        type: "log",
+        runId: runRow.id,
+        message: `workspace config missing or invalid for ${workspaceRow.root_path}; falling back to fake LLM adapters`,
+      })
     }
-    const detachDbSync = attachDbSync(bus, repos, { runId: runRow.id, itemId: itemRow.id }, { writtenLogIds })
-    const detachTelegram = attachTelegramNotifications(bus, repos, notificationConfig)
-    const detachBridge = attachCrossProcessBridge(bus, repos, runRow.id, { writtenLogIds })
+    const detach = attachRunSubscribers(bus, repos, { runId: runRow.id, itemId: itemRow.id })
     try {
       await runWithWorkflowIO(io, async () =>
         runWithActiveRun({ runId: runRow.id, itemId: itemRow.id, title: item.title }, async () => {
@@ -427,9 +376,7 @@ export function prepareRun(
         })
       )
     } finally {
-      detachBridge()
-      detachTelegram?.()
-      detachDbSync()
+      detach()
     }
   }
 

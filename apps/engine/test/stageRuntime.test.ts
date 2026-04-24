@@ -164,7 +164,7 @@ test("message loop: begin -> message -> user-message -> artifact", async () => {
       }),
     )
 
-    assert.equal(run.iteration, 1)
+    assert.equal(run.userTurnCount, 1)
     assert.equal(run.status, "approved")
     const statuses = run.logs.filter(l => l.type === "status_changed").map(l => l.message)
     assert.ok(statuses.includes("Status -> waiting_for_user"))

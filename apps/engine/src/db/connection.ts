@@ -29,6 +29,7 @@ export function applySchema(db: Db): void {
   migrateWorkspacesColumns(db)
   migrateRunsOwnerColumn(db)
   migrateRunsRecoveryColumns(db)
+  migrateRunsFsWorkspaceIdColumn(db)
   migrateStageRunsSessionColumns(db)
   migrateNotificationDeliveriesTable(db)
   stampMigrationLevel(db)
@@ -91,6 +92,17 @@ function migrateWorkspacesColumns(db: Db): void {
   if (!has("last_opened_at")) {
     db.exec("ALTER TABLE workspaces ADD COLUMN last_opened_at INTEGER")
   }
+}
+
+/**
+ * Add `workspace_fs_id` — the on-disk workspace directory name the engine
+ * derives from the item title. Persisted so resume doesn't have to re-derive
+ * it from the (mutable) title or scan every workspace dir.
+ */
+function migrateRunsFsWorkspaceIdColumn(db: Db): void {
+  const cols = db.prepare("PRAGMA table_info(runs)").all() as Array<{ name: string }>
+  if (cols.some(c => c.name === "workspace_fs_id")) return
+  db.exec("ALTER TABLE runs ADD COLUMN workspace_fs_id TEXT")
 }
 
 function migrateStageRunsSessionColumns(db: Db): void {

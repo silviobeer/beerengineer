@@ -1,19 +1,15 @@
 import { readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
-import { runWorkflow, type WorkflowLlmOptions } from "../workflow.js"
+import { runWorkflow } from "../workflow.js"
 import type { StoryImplementationArtifact } from "../types.js"
 import { readRecoveryRecord, type RecoveryRecord } from "./recovery.js"
 import { runWithWorkflowIO, type WorkflowIO } from "./io.js"
 import { runWithActiveRun } from "./runContext.js"
 import { layout, type WorkflowContext } from "./workspaceLayout.js"
-import { attachDbSync } from "./runOrchestrator.js"
-import { attachCrossProcessBridge } from "./crossProcessBridge.js"
 import { persistWorkflowRunState } from "./stageRuntime.js"
 import type { EventBus } from "./bus.js"
 import type { ExternalRemediationRow, Repos, RunRow } from "../db/repositories.js"
-import { attachTelegramNotifications } from "../notifications/index.js"
-import { defaultAppConfig, readConfigFile, resolveConfigPath, resolveMergedConfig, resolveOverrides } from "../setup/config.js"
-import { readWorkspaceConfig } from "./workspaces.js"
+import { attachRunSubscribers, resolveWorkflowLlmOptions } from "./runSubscribers.js"
 
 /** Returned by load(). Centralizes the decision about whether a run can be resumed. */
 export type ResumeReadiness =
@@ -28,23 +24,34 @@ export function isResumeInFlight(runId: string): boolean {
   return inflightResumes.has(runId)
 }
 
+async function runFileMatchesRun(ctx: WorkflowContext, runId: string): Promise<boolean> {
+  try {
+    const raw = await readFile(layout.runFile(ctx), "utf8")
+    const parsed = JSON.parse(raw) as { id?: string }
+    return parsed.id === runId
+  } catch {
+    return false
+  }
+}
+
 async function inferWorkspaceDir(run: RunRow): Promise<WorkflowContext | null> {
+  // Preferred: the fs-workspace-id was persisted when the run was created.
+  if (run.workspace_fs_id) {
+    const ctx: WorkflowContext = { workspaceId: run.workspace_fs_id, runId: run.id }
+    if (await runFileMatchesRun(ctx, run.id)) return ctx
+  }
+
+  // Legacy: runs created before the workspace_fs_id column existed. Derive
+  // from the title and probe the expected location first.
   const slug = run.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
-  const direct: WorkflowContext = {
+  const derived: WorkflowContext = {
     workspaceId: slug ? `${slug}-${run.item_id.toLowerCase()}` : run.item_id.toLowerCase(),
     runId: run.id,
   }
-  try {
-    const raw = await readFile(layout.runFile(direct), "utf8")
-    const parsed = JSON.parse(raw) as { id?: string }
-    if (parsed.id === run.id) return direct
-  } catch {
-    // Fall back to scanning legacy directories below.
-  }
+  if (await runFileMatchesRun(derived, run.id)) return derived
 
-  // The engine derives the filesystem workspaceId from the item title (not the
-  // DB workspace row). Probe the persisted run.json under each candidate to
-  // find the one that belongs to this runId.
+  // Last resort: the title may have been renamed since the run started. Scan
+  // every workspace dir for the matching run.json.
   const { readdir } = await import("node:fs/promises")
   const root = layout.workspaceDir("")
   try {
@@ -52,13 +59,7 @@ async function inferWorkspaceDir(run: RunRow): Promise<WorkflowContext | null> {
     for (const entry of entries) {
       if (!entry.isDirectory()) continue
       const ctx: WorkflowContext = { workspaceId: entry.name, runId: run.id }
-      try {
-        const raw = await readFile(layout.runFile(ctx), "utf8")
-        const parsed = JSON.parse(raw) as { id?: string }
-        if (parsed.id === run.id) return ctx
-      } catch {
-        continue
-      }
+      if (await runFileMatchesRun(ctx, run.id)) return ctx
     }
   } catch {
     return null
@@ -173,24 +174,7 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
   }
   const { run, record, ctx } = readiness
   const workspaceRow = input.repos.getWorkspace(run.workspace_id)
-  let llm: WorkflowLlmOptions | undefined
-  if (workspaceRow?.root_path) {
-    const workspaceConfig = await readWorkspaceConfig(workspaceRow.root_path)
-    if (workspaceConfig) {
-      const stageConfig = {
-        workspaceRoot: workspaceRow.root_path,
-        harnessProfile: workspaceConfig.harnessProfile,
-        runtimePolicy: workspaceConfig.runtimePolicy,
-      }
-      llm = {
-        stage: stageConfig,
-        execution: {
-          stage: stageConfig,
-          executionCoder: stageConfig,
-        },
-      }
-    }
-  }
+  const llm = await resolveWorkflowLlmOptions(workspaceRow)
 
   inflightResumes.add(input.runId)
   try {
@@ -198,13 +182,7 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
       throw new Error("performResume: io must be bus-backed (createApiIOSession / createCliIO)")
     }
     const bus = input.io.bus
-    const writtenLogIds = new Set<string>()
-    const overrides = resolveOverrides()
-    const notificationConfig =
-      resolveMergedConfig(readConfigFile(resolveConfigPath(overrides)), overrides) ?? defaultAppConfig()
-    const detachDbSync = attachDbSync(bus, input.repos, { runId: run.id, itemId: run.item_id }, { writtenLogIds })
-    const detachTelegram = attachTelegramNotifications(bus, input.repos, notificationConfig)
-    const detachBridge = attachCrossProcessBridge(bus, input.repos, run.id, { writtenLogIds })
+    const detach = attachRunSubscribers(bus, input.repos, { runId: run.id, itemId: run.item_id })
 
     const eventScope =
       record.scope.type === "story"
@@ -282,9 +260,7 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
         }),
       )
     } finally {
-      detachBridge()
-      detachTelegram?.()
-      detachDbSync()
+      detach()
     }
   } finally {
     inflightResumes.delete(input.runId)
