@@ -1,5 +1,44 @@
 import type { Screen, WireframeArtifact } from "../types/domain.js"
 
+/**
+ * Validate that every screen in a WireframeArtifact has the shape the renderer
+ * needs: `layout.regions` must be a non-null array, and `elements` must be a
+ * non-null array. Throws a descriptive Error (not a TypeError) if the LLM
+ * returned a malformed artifact so callers get an actionable message instead of
+ * an opaque `.map is not a function` crash.
+ */
+export function validateWireframeArtifact(artifact: WireframeArtifact): void {
+  if (!Array.isArray(artifact.screens)) {
+    throw new Error(
+      "Invalid wireframe artifact from LLM: artifact.screens is not an array. " +
+      "The LLM response may have been truncated or returned a malformed structure."
+    )
+  }
+  for (let i = 0; i < artifact.screens.length; i++) {
+    const screen = artifact.screens[i]
+    if (!screen || typeof screen !== "object") {
+      throw new Error(
+        `Invalid wireframe artifact from LLM: screens[${i}] is not an object.`
+      )
+    }
+    if (!screen.layout || !Array.isArray(screen.layout.regions)) {
+      throw new Error(
+        `Invalid wireframe artifact from LLM: screens[${i}] (id="${screen.id ?? "?"}") ` +
+        `is missing layout.regions array. ` +
+        `Got layout=${JSON.stringify(screen.layout)}. ` +
+        "The LLM must return each screen with a layout.regions array — retry or inspect the LLM output."
+      )
+    }
+    if (!Array.isArray(screen.elements)) {
+      throw new Error(
+        `Invalid wireframe artifact from LLM: screens[${i}] (id="${screen.id ?? "?"}") ` +
+        `is missing elements array. ` +
+        "The LLM must return each screen with an elements array — retry or inspect the LLM output."
+      )
+    }
+  }
+}
+
 function escapeHtml(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -92,6 +131,7 @@ export function renderScreenMap(artifact: WireframeArtifact): string {
 }
 
 export function renderWireframeFiles(artifact: WireframeArtifact): Array<{ fileName: string; label: string; content: string }> {
+  validateWireframeArtifact(artifact)
   return [
     { fileName: "screen-map.html", label: "Wireframe Screen Map", content: renderScreenMap(artifact) },
     ...artifact.screens.map(screen => ({

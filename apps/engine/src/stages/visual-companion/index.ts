@@ -1,7 +1,7 @@
 import { emitEvent, getActiveRun } from "../../core/runContext.js"
 import { resolveReferences } from "../../core/referencesStore.js"
 import { printStageCompletion, stageSummary, summaryArtifactFile } from "../../core/stageHelpers.js"
-import { runStage } from "../../core/stageRuntime.js"
+import { runStage, type StageArtifactContent } from "../../core/stageRuntime.js"
 import { stagePresent } from "../../core/stagePresentation.js"
 import { createVisualCompanionReview, createVisualCompanionStage, type RunLlmConfig } from "../../llm/registry.js"
 import { renderWireframeFiles } from "../../render/wireframes.js"
@@ -34,13 +34,15 @@ export async function visualCompanion(
     askUser: ask,
     async persistArtifacts(run, artifact) {
       const sourceFiles = resolveReferences(context, "wireframes", input.references)
-      const files = renderWireframeFiles({ ...artifact, sourceFiles })
-      return [
+      const enrichedArtifact = { ...artifact, sourceFiles }
+      // Write JSON artifacts first so raw data is preserved on disk even if
+      // HTML rendering fails due to a malformed LLM response.
+      const jsonFiles: StageArtifactContent[] = [
         {
           kind: "json",
           label: "Wireframes JSON",
           fileName: "wireframes.json",
-          content: JSON.stringify({ ...artifact, sourceFiles }, null, 2),
+          content: JSON.stringify(enrichedArtifact, null, 2),
         },
         {
           kind: "json",
@@ -48,7 +50,14 @@ export async function visualCompanion(
           fileName: "project-freeze.json",
           content: JSON.stringify({ projectIds: input.projects.map(project => project.id) }, null, 2),
         },
-        ...files.map(file => ({
+      ]
+      // validateWireframeArtifact is called inside renderWireframeFiles — this
+      // will throw a descriptive Error (not a TypeError) if the LLM returned
+      // a malformed structure (e.g. missing layout.regions).
+      const htmlFiles = renderWireframeFiles(enrichedArtifact)
+      return [
+        ...jsonFiles,
+        ...htmlFiles.map(file => ({
           kind: "txt" as const,
           label: file.label,
           fileName: file.fileName,

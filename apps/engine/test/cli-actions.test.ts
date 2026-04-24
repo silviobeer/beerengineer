@@ -31,7 +31,14 @@ test("beerengineer item action start_brainstorm runs to completion through the t
         cwd: engineRoot,
         encoding: "utf8",
         env: { ...process.env, BEERENGINEER_UI_DB_PATH: dbPath },
-        input: "Title from terminal\nDescription from terminal\naccept\n",
+        // Fake brainstorm + visual-companion + frontend-design + requirements etc.
+        // each ask follow-up prompts; feed enough generic answers to carry the
+        // whole flow to completion. Extras are harmless once stdin is closed.
+        // (Previously relied on silent empty-answer on stdin EOF; that behaviour
+        // was removed intentionally — see stageRuntime.ts:398.)
+        input:
+          "Title from terminal\nDescription from terminal\naccept\n" +
+          "ok\nok\nok\nok\nok\nok\nok\nok\nok\nok\nok\nok\nok\nok\nok\nok\nok\nok\nok\nok\n",
         timeout: 15000,
       }
     )
