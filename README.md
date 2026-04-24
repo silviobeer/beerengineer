@@ -162,4 +162,4 @@ Detailed design notes and implementation history (in German):
 
 ## License
 
-TBD.
+[MIT](LICENSE) © Silvio Beer
