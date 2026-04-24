@@ -60,3 +60,41 @@ test("renderDesignPreview renders token sections", () => {
   assert.match(html, /Fraunces/)
   assert.match(html, /#000/)
 })
+
+test("renderDesignPreview neutralizes hostile token values inside <style>", () => {
+  const artifact: DesignArtifact = {
+    inputMode: "none",
+    tokens: {
+      light: {
+        primary: "#fff; }</style><script>alert('pwn')</script><style>",
+        secondary: "javascript:alert(1)",
+        accent: "url(evil)",
+        background: "#fff; }</style><script>alert(2)</script>",
+        surface: "#f0f0f0",
+        textPrimary: "expression(alert(3))",
+        textMuted: "#666",
+        success: "#0a0",
+        warning: "#aa0",
+        error: "#a00",
+        info: "#00a",
+      },
+    },
+    typography: {
+      display: { family: `"; } body { display:none; /*`, weight: "700", usage: "Display" },
+      body: { family: "</style><script>", weight: "500", usage: "Body" },
+      scale: { md: "1rem" },
+    },
+    spacing: { baseUnit: "8px", sectionPadding: "32px", cardPadding: "20px", contentMaxWidth: "1200px" },
+    borders: { buttons: "999px", cards: "20px", badges: "999px" },
+    shadows: { sm: "0 1px 2px rgba(0,0,0,0.1)" },
+    tone: "Hostile test fixture",
+    antiPatterns: ["injection"],
+  }
+  const html = renderDesignPreview(artifact)
+  // Injected payload must not land as a real tag — the <style> block values
+  // were validated and fell back to safe defaults, and body-level echoes were
+  // HTML-escaped.
+  assert.doesNotMatch(html, /<script>alert/i)
+  // Exactly one </style> is expected: the closing tag of our own header block.
+  assert.equal(html.match(/<\/style>/gi)?.length ?? 0, 1)
+})

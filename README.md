@@ -136,6 +136,9 @@ beerengineer item action --item <id|code> --action <name>
   Projekt-Phase (`requirements` ff.). `rerun_design_prep` seeded ebenfalls
   aus `brainstorm`, startet aber erneut bei `visual-companion`, damit
   Wireframes/Design ohne kompletten Re-Brainstorm aktualisiert werden koennen.
+  Fehlen in der Quell-Run die Design-Prep-Artefakte (z. B. Legacy-Item vor
+  Einfuehrung der Design-Prep-Stages), werden `visual-companion` und
+  `frontend-design` automatisch nachgezogen statt den Resume abzubrechen.
   Hinweis: `mark_done` ist derzeit noch der Legacy-Abschluss fuer
   `implementation/review_required`; die neue explizite Test/Merge-
   Lifecycle-API aus dem Handoff-Plan ist noch nicht verdrahtet.
@@ -542,6 +545,15 @@ einzige Tail-Strategie, ein einziger Dedup-Schluessel (`log.id`).
 
 ### CLI ↔ UI — End-to-End
 
+> **Historisch (apps/ui removed 2026-04-24).** Die folgenden zwei Unter-
+> abschnitte — "CLI ↔ UI — End-to-End" und "Drei Verbindungswege zwischen
+> CLI/Engine und UI" — beschreiben den Next.js-UI-Aufbau, der mit dem UI-
+> Teardown gelöscht wurde. Sie stehen hier als Referenz für den Rebuild
+> (siehe `specs/ui-rebuild-plan.md`, Designer-Einstieg in
+> `docs/api-for-designers.md`). Die Architektur-Invariante ("Engine-HTTP-
+> API ist Single Source of Truth") gilt unverändert; die UI-konkreten
+> Pfade und Proxy-Routen existieren nicht mehr im Tree.
+
 **Invariante (post-Refactor): Die Engine-HTTP-API ist die Single Source of Truth.**
 Der Engine-Server macht DB-Reads, SSE-Tails und **hostet Workflows in-process**:
 `POST /runs`, `POST /items/:id/actions/:action`, `POST /runs/:id/resume`
@@ -801,18 +813,16 @@ als Env-Var ueberschreibt die Datei. Mutierende Requests ohne Header
 
 ### Test-Pyramide
 
-- **Engine-Unit** (`apps/engine/test/*.test.ts`, aktuell 223 Tests, laufen unter
+- **Engine-Unit** (`apps/engine/test/*.test.ts`, aktuell 236 Tests, laufen unter
   `node:test --import tsx`). Deckt u.a. ab: `mapStageToColumn`, Bus-Subscriber-
   Lifecycle, Pending-Prompt-Roundtrip, AsyncLocalStorage-Isolation paralleler
   Runs, Real-Git-Branch-Operationen + `abandonStoryBranchReal`, Base-Branch-
   Aufloesung, API-Routen-Integration (`apiIntegration.test.ts`), Ralph-
   Runtime, Hosted-CLI-Adapter mit Retry/JSON-Recovery, Cross-Process-Bridge,
   Resume mit Remediation.
-- **Playwright-Integration** (`apps/ui/tests/e2e/runs-live.spec.ts`): spawnt
-  den Engine-Server auf einer eigenen Test-DB, startet einen Run (via
-  Spawn-CLI), durchlaeuft alle Stages mit automatischen Prompt-Antworten,
-  oeffnet `/runs` und `/runs/:id` im Browser und prueft, dass die
-  `LiveRunConsole` den Stage-Verlauf rendert.
+- ~~Playwright-Integration~~ — entfallen mit dem UI-Teardown
+  (`apps/ui/tests/e2e/*` gelöscht). End-to-End-Tests gegen die neue UI
+  entstehen mit dem Rebuild, siehe `specs/ui-rebuild-plan.md`.
 
 ---
 

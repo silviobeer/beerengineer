@@ -8,6 +8,7 @@ import { ask, close } from "./sim/human.js"
 import { createCliIO } from "./core/ioCli.js"
 import { detectRealGitMode, gcManagedStoryWorktreesReal, type RealGitEnabled } from "./core/realGit.js"
 import { layout } from "./core/workspaceLayout.js"
+import { latestCompletedRunForItem, workflowWorkspaceId } from "./core/itemWorkspace.js"
 import {
   backfillWorkspaceConfigs,
   getRegisteredWorkspace,
@@ -541,18 +542,6 @@ export function resolveItemReference(
   if (byCode.length === 0) return { kind: "missing" }
   if (byCode.length > 1) return { kind: "ambiguous", matches: byCode }
   return { kind: "found", item: byCode[0] }
-}
-
-function latestCompletedRunForItem(repos: Repos, itemId: string) {
-  return repos
-    .listRuns()
-    .filter(run => run.item_id === itemId && run.status === "completed")
-    .sort((a, b) => b.created_at - a.created_at)[0]
-}
-
-function workflowWorkspaceId(item: Pick<ItemRow, "id" | "title">): string {
-  const slug = item.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
-  return slug ? `${slug}-${item.id.toLowerCase()}` : item.id.toLowerCase()
 }
 
 function readArtifactJson<T>(item: Pick<ItemRow, "id" | "title">, runId: string, stageId: string, fileName: string): T | null {

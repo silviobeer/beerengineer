@@ -55,7 +55,16 @@ const API_TOKEN_WAS_PROVIDED = Boolean(process.env.BEERENGINEER_API_TOKEN)
 const ALLOWED_ORIGIN = process.env.BEERENGINEER_UI_ORIGIN ?? "http://127.0.0.1:3100"
 
 const OPENAPI_PATH = resolvePath(dirname(fileURLToPath(import.meta.url)), "openapi.json")
-const OPENAPI_BODY = readFileSync(OPENAPI_PATH, "utf8")
+let cachedOpenApi: string | null = null
+function loadOpenApi(): string | null {
+  if (cachedOpenApi !== null) return cachedOpenApi
+  try {
+    cachedOpenApi = readFileSync(OPENAPI_PATH, "utf8")
+  } catch {
+    cachedOpenApi = ""
+  }
+  return cachedOpenApi || null
+}
 
 const db = initDatabase()
 const repos = new Repos(db)
@@ -187,8 +196,10 @@ const server = createServer(async (req, res) => {
 
     // ---- OpenAPI spec --------------------------------------------------------
     if (path === "/openapi.json" && req.method === "GET") {
+      const body = loadOpenApi()
+      if (!body) return json(res, 503, { error: "openapi_unavailable", code: "service_unavailable" })
       res.writeHead(200, { "content-type": "application/json; charset=utf-8" })
-      res.end(OPENAPI_BODY)
+      res.end(body)
       return
     }
 

@@ -47,6 +47,9 @@ export function projectWireframes(
   }
 }
 
+// Design tokens are item-wide by contract — no per-project filtering exists
+// or is planned. Kept as a named function so call sites stay symmetric with
+// projectWireframes() and so a future scoping change has a single touch point.
 export function projectDesign(artifact: DesignArtifact): DesignArtifact {
   return artifact
 }

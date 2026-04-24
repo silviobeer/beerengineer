@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs"
 import { readFile } from "node:fs/promises"
 import { spawnSync } from "node:child_process"
 import { join } from "node:path"
@@ -352,10 +353,25 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
     }
     const itemConcept = await loadConcept(context)
     const itemHasUi = projects.some(project => project.hasUi === true)
+    // If we were asked to skip directly to projects but the seeded artifacts
+    // aren't actually present (legacy run, partial seed), fall back to running
+    // the corresponding design-prep stage instead of crashing on ENOENT.
+    const wireframesFileExists = existsSync(join(layout.stageArtifactsDir(context, "visual-companion"), "wireframes.json"))
+    const designFileExists = existsSync(join(layout.stageArtifactsDir(context, "frontend-design"), "design.json"))
+    const shouldRunVisualCompanion = itemHasUi && (
+      itemResumePlan.startStage === "brainstorm" ||
+      itemResumePlan.startStage === "visual-companion" ||
+      !wireframesFileExists
+    )
+    const shouldRunFrontendDesign = itemHasUi && (
+      shouldRunVisualCompanion ||
+      itemResumePlan.startStage === "frontend-design" ||
+      !designFileExists
+    )
     const wireframes =
       !itemHasUi
         ? undefined
-        : itemResumePlan.startStage === "brainstorm" || itemResumePlan.startStage === "visual-companion"
+        : shouldRunVisualCompanion
         ? await withStageLifecycle("visual-companion", {}, () =>
             visualCompanion(context, { itemConcept, projects, references: [] }, options?.llm?.stage),
           )
@@ -363,9 +379,7 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
     const design =
       !itemHasUi
         ? undefined
-        : itemResumePlan.startStage === "brainstorm" ||
-          itemResumePlan.startStage === "visual-companion" ||
-          itemResumePlan.startStage === "frontend-design"
+        : shouldRunFrontendDesign
         ? await withStageLifecycle("frontend-design", {}, () =>
             frontendDesign(context, { itemConcept, projects, wireframes, references: [] }, options?.llm?.stage),
           )

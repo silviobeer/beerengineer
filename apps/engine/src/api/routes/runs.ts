@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http"
-import { existsSync, readFileSync } from "node:fs"
-import { extname, join, normalize } from "node:path"
+import { readFile, stat } from "node:fs/promises"
+import { extname, resolve as resolvePath, sep } from "node:path"
 import type { Db } from "../../db/connection.js"
 import type { Repos } from "../../db/repositories.js"
 import { getBoard, getRunTree } from "../board.js"
@@ -51,14 +51,43 @@ export function handleGetArtifacts(repos: Repos, res: ServerResponse, runId: str
   json(res, 200, { runId, artifacts: repos.listArtifactsForRun(runId) })
 }
 
-export function handleGetArtifactFile(repos: Repos, res: ServerResponse, runId: string, requestedPath: string): void {
+export async function handleGetArtifactFile(
+  repos: Repos,
+  res: ServerResponse,
+  runId: string,
+  requestedPath: string,
+): Promise<void> {
   const run = repos.getRun(runId)
   if (!run || !run.workspace_fs_id) return json(res, 404, { error: "run not found", code: "not_found" })
-  const safePath = normalize(requestedPath).replace(/^(\.\.(\/|\\|$))+/, "")
-  const fullPath = join(layout.runDir({ workspaceId: run.workspace_fs_id, runId }), safePath)
-  if (!existsSync(fullPath)) return json(res, 404, { error: "artifact not found", code: "not_found" })
-  res.writeHead(200, { "content-type": contentTypeFor(fullPath) })
-  res.end(readFileSync(fullPath))
+  // Decode once — the regex in the router yields the raw URL segment, which
+  // may still contain percent-escapes (e.g. %2e for "." inside a segment).
+  let decoded: string
+  try {
+    decoded = decodeURIComponent(requestedPath)
+  } catch {
+    return json(res, 400, { error: "invalid_path", code: "bad_request" })
+  }
+  if (decoded.includes("\0")) return json(res, 400, { error: "invalid_path", code: "bad_request" })
+  const base = resolvePath(layout.runDir({ workspaceId: run.workspace_fs_id, runId }))
+  const full = resolvePath(base, decoded)
+  if (full !== base && !full.startsWith(base + sep)) {
+    return json(res, 400, { error: "invalid_path", code: "bad_request" })
+  }
+  try {
+    const info = await stat(full)
+    if (!info.isFile()) return json(res, 404, { error: "artifact not found", code: "not_found" })
+  } catch {
+    return json(res, 404, { error: "artifact not found", code: "not_found" })
+  }
+  const body = await readFile(full)
+  // Artifact files are written by the engine but rendered from LLM output. Prevent
+  // MIME sniffing and disable script execution if the browser ever loads them.
+  res.writeHead(200, {
+    "content-type": contentTypeFor(full),
+    "x-content-type-options": "nosniff",
+    "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; img-src data:;",
+  })
+  res.end(body)
 }
 
 export function handleListRuns(repos: Repos, res: ServerResponse): void {

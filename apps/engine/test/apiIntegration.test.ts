@@ -599,6 +599,18 @@ test("design-prep artifact endpoints expose item views and raw artifact files", 
     const raw = await fetch(`${base}/runs/${run.id}/artifacts/stages/visual-companion/artifacts/screen-map.html`)
     assert.equal(raw.status, 200)
     assert.match(await raw.text(), /map/)
+    const headers = raw.headers
+    assert.equal(headers.get("x-content-type-options"), "nosniff")
+    assert.match(headers.get("content-security-policy") ?? "", /default-src 'none'/)
+
+    // Percent-encoded path-traversal attempts (which the URL parser keeps
+    // verbatim) must be rejected with 400 rather than escaping the run dir.
+    // Plain `../` sequences are collapsed by the URL parser before they ever
+    // reach the server, so only the encoded form needs server-side defense.
+    const traversal = await fetch(`${base}/runs/${run.id}/artifacts/..%2F..%2Fetc%2Fpasswd`)
+    assert.equal(traversal.status, 400)
+    const nullByte = await fetch(`${base}/runs/${run.id}/artifacts/foo%00.html`)
+    assert.equal(nullByte.status, 400)
   } finally {
     await stopServer(proc)
   }

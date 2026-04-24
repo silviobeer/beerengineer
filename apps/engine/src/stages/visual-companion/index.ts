@@ -1,4 +1,4 @@
-import { emitEvent } from "../../core/runContext.js"
+import { emitEvent, getActiveRun } from "../../core/runContext.js"
 import { resolveReferences } from "../../core/referencesStore.js"
 import { printStageCompletion, stageSummary, summaryArtifactFile } from "../../core/stageHelpers.js"
 import { runStage } from "../../core/stageRuntime.js"
@@ -61,10 +61,11 @@ export async function visualCompanion(
       ]
     },
     async onApproved(artifact, run) {
+      const itemId = getActiveRun()?.itemId ?? context.workspaceId
       emitEvent({
         type: "wireframes_ready",
         runId: run.runId,
-        itemId: context.workspaceId,
+        itemId,
         screenCount: artifact.screens.length,
         urls: run.files.filter(file => file.path.endsWith(".html")).map(file => file.path),
       })

@@ -1,4 +1,4 @@
-import { emitEvent } from "../../core/runContext.js"
+import { emitEvent, getActiveRun } from "../../core/runContext.js"
 import { resolveReferences } from "../../core/referencesStore.js"
 import { printStageCompletion, stageSummary, summaryArtifactFile } from "../../core/stageHelpers.js"
 import { runStage } from "../../core/stageRuntime.js"
@@ -54,11 +54,16 @@ export async function frontendDesign(
       ]
     },
     async onApproved(artifact, run) {
+      const itemId = getActiveRun()?.itemId ?? context.workspaceId
+      const previewPath = run.files.find(file => file.path.endsWith("design-preview.html"))?.path
+      if (!previewPath) {
+        stagePresent.warn("design-preview.html missing from persisted artifacts; design_ready event will carry an empty url.")
+      }
       emitEvent({
         type: "design_ready",
         runId: run.runId,
-        itemId: context.workspaceId,
-        url: run.files.find(file => file.path.endsWith("design-preview.html"))?.path ?? "",
+        itemId,
+        url: previewPath ?? "",
       })
       printStageCompletion(run, "frontend-design")
       return artifact

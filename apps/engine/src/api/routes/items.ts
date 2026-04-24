@@ -3,19 +3,11 @@ import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import type { Repos } from "../../db/repositories.js"
 import { isItemAction, lookupTransition, type ItemActionsService } from "../../core/itemActions.js"
+import { latestCompletedRunForItem, workflowWorkspaceId } from "../../core/itemWorkspace.js"
 import { startRunForItem } from "../../core/runService.js"
 import { layout } from "../../core/workspaceLayout.js"
 import { json, readJson } from "../http.js"
-import type { DesignArtifact, Item, WireframeArtifact } from "../../types.js"
-
-function workflowWorkspaceId(item: Pick<Item, "id" | "title">): string {
-  const slug = item.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
-  return slug ? `${slug}-${item.id.toLowerCase()}` : item.id.toLowerCase()
-}
-
-function latestCompletedRunForItem(repos: Repos, itemId: string) {
-  return repos.listRuns().filter(run => run.item_id === itemId && run.status === "completed").sort((a, b) => b.created_at - a.created_at)[0]
-}
+import type { DesignArtifact, WireframeArtifact } from "../../types.js"
 
 export function handleListItems(repos: Repos, url: URL, res: ServerResponse): void {
   const workspaceKey = url.searchParams.get("workspace")?.trim() ?? ""

@@ -298,10 +298,12 @@ async function runCoreChecks(configPath: string, configState: ReturnType<typeof 
     } else if (!workspace?.root_path) {
       checks.push(createCheck("core.designPrepReferences", "design-prep references folder writable", "skipped", "no registered workspace roots"))
     } else {
-      const target = `${workspace.root_path}/.beerengineer/references/design-prep`
-      mkdirSync(target, { recursive: true })
-      accessSync(target, constants.W_OK)
-      checks.push(createCheck("core.designPrepReferences", "design-prep references folder writable", "ok", target))
+      // Probe the workspace root itself for writability rather than creating
+      // the design-prep subdirectory eagerly — doctor should be read-only.
+      const probeTarget = `${workspace.root_path}/.beerengineer`
+      const parentTarget = existsSync(probeTarget) ? probeTarget : workspace.root_path
+      accessSync(parentTarget, constants.W_OK)
+      checks.push(createCheck("core.designPrepReferences", "design-prep references folder writable", "ok", `${probeTarget}/references/design-prep (parent: ${parentTarget})`))
     }
     db.close()
   } catch (err) {

@@ -1,5 +1,5 @@
-import { copyFileSync, existsSync, mkdirSync } from "node:fs"
-import { isAbsolute, join, relative, resolve } from "node:path"
+import { existsSync, mkdirSync } from "node:fs"
+import { isAbsolute, join, relative, resolve, sep } from "node:path"
 import { layout, type WorkflowContext } from "./workspaceLayout.js"
 import type { ReferenceInput, SourceFile } from "../types/domain.js"
 
@@ -7,22 +7,25 @@ function stageReferenceDir(ctx: WorkflowContext, bucket: "wireframes" | "design"
   return join(layout.runDir(ctx), "references", "design-prep", bucket)
 }
 
-function sanitizeName(name: string): string {
-  return name.replace(/[^a-z0-9._-]+/gi, "-").replace(/^-|-$/g, "") || "reference"
-}
-
 function looksLikeUrl(value: string): boolean {
   return /^https?:\/\//i.test(value) || /^figma:\/\//i.test(value)
 }
 
+function isInside(root: string, candidate: string): boolean {
+  const normalizedRoot = resolve(root)
+  return candidate === normalizedRoot || candidate.startsWith(normalizedRoot + sep)
+}
+
+// Resolve reference inputs into a serializable manifest. To avoid exfiltrating
+// arbitrary files into the workspace, paths are required to live under the
+// workspace root; anything else is recorded as `missing` rather than copied.
 export function resolveReferences(
   ctx: WorkflowContext,
   bucket: "wireframes" | "design",
   references: ReferenceInput[] | undefined,
 ): SourceFile[] {
   if (!references || references.length === 0) return []
-  const outDir = stageReferenceDir(ctx, bucket)
-  mkdirSync(outDir, { recursive: true })
+  mkdirSync(stageReferenceDir(ctx, bucket), { recursive: true })
 
   return references.map((reference, index) => {
     const value = reference.value.trim()
@@ -32,23 +35,29 @@ export function resolveReferences(
       return { type, url: value, description } satisfies SourceFile
     }
 
+    const workspaceRoot = ctx.workspaceRoot ? resolve(ctx.workspaceRoot) : null
     const absolute = isAbsolute(value)
-      ? value
-      : ctx.workspaceRoot
-      ? resolve(ctx.workspaceRoot, value)
-      : resolve(process.cwd(), value)
-    const workspaceRelative =
-      ctx.workspaceRoot && absolute.startsWith(resolve(ctx.workspaceRoot) + "/")
-        ? relative(ctx.workspaceRoot, absolute)
-        : null
-    if (workspaceRelative) {
-      return { type: "file", path: workspaceRelative, description }
+      ? resolve(value)
+      : resolve(workspaceRoot ?? process.cwd(), value)
+
+    if (!workspaceRoot) {
+      return { type: "file", path: relative(process.cwd(), absolute), description }
     }
 
-    const targetName = `${index + 1}-${sanitizeName(absolute.split("/").pop() ?? "reference")}`
-    const target = join(outDir, targetName)
-    if (existsSync(absolute)) copyFileSync(absolute, target)
-    return { type: "file", path: relative(process.cwd(), target), description }
+    if (!isInside(workspaceRoot, absolute)) {
+      // Refuse to stage files from outside the workspace. Record the intent
+      // so reviewers can see the rejection without leaking absolute paths.
+      return {
+        type: "file",
+        path: "(rejected: outside workspace root)",
+        description: `${description} [rejected]`,
+      }
+    }
+
+    const workspaceRelative = relative(workspaceRoot, absolute)
+    const payload: SourceFile = { type: "file", path: workspaceRelative, description }
+    return existsSync(absolute)
+      ? payload
+      : { ...payload, description: `${description} [missing]` }
   })
 }
-
