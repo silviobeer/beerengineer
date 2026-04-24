@@ -91,7 +91,10 @@ function buildCodexCommand(input: HostedProviderInvokeInput, state: CodexStreamS
     command.push("--full-auto", "--dangerously-bypass-approvals-and-sandbox")
   }
   if (input.runtime.model) command.push("--model", input.runtime.model)
-  command.push("--cd", input.runtime.workspaceRoot, "--output-last-message", state.responsePath, "-")
+  // `codex exec resume` inherits cwd from the original session and rejects
+  // `--cd`; only pass it on fresh exec.
+  if (!isResume) command.push("--cd", input.runtime.workspaceRoot)
+  command.push("--output-last-message", state.responsePath, "-")
   return command
 }
 
