@@ -99,6 +99,10 @@ export async function frontendDesign(
   // agent can see revision feedback on subsequent runStage calls.
   let pendingRevisionFeedback: string | undefined
   let userReviewRound = 0
+  // Prior iteration's final state — carried forward on revise so the stage
+  // agent sees the full conversation history (clarification Q&A, references,
+  // input mode) and does not re-ask questions already answered.
+  let priorState: FrontendDesignState | undefined
 
   while (true) {
     const revisionFeedback = pendingRevisionFeedback
@@ -110,16 +114,30 @@ export async function frontendDesign(
       reviewerLabel: "Design Review",
       workspaceId: context.workspaceId,
       runId: reviewRound === 0 ? context.runId : `${context.runId}-rev${reviewRound}`,
-      createInitialState: (): FrontendDesignState => ({
-        input,
-        inputMode: "none",
-        references: input.references ?? [],
-        history: [],
-        clarificationCount: 0,
-        maxClarifications: 3,
-        pendingRevisionFeedback: revisionFeedback,
-        userReviewRound: reviewRound,
-      }),
+      createInitialState: (): FrontendDesignState => {
+        if (priorState) {
+          // On revise: preserve history, inputMode, references, and force
+          // clarificationCount to max so the stage agent skips the Q&A loop
+          // and goes straight to regenerating the artifact with the new
+          // revision feedback injected.
+          return {
+            ...priorState,
+            pendingRevisionFeedback: revisionFeedback,
+            userReviewRound: reviewRound,
+            clarificationCount: priorState.maxClarifications,
+          }
+        }
+        return {
+          input,
+          inputMode: "none",
+          references: input.references ?? [],
+          history: [],
+          clarificationCount: 0,
+          maxClarifications: 3,
+          pendingRevisionFeedback: revisionFeedback,
+          userReviewRound: reviewRound,
+        }
+      },
       stageAgent: createFrontendDesignStage(llm),
       reviewer: createFrontendDesignReview(llm),
       askUser: ask,
@@ -213,9 +231,14 @@ export async function frontendDesign(
           ),
         ]
       },
-      async onApproved(artifact, _run) {
+      async onApproved(artifact, run) {
         // Intentionally do NOT emit design_ready or printStageCompletion here —
         // those happen only after the user approves in the post-artifact review gate.
+        // Capture the final state so the next revise iteration can carry
+        // history, inputMode, and references forward — without this, each
+        // revise round starts with empty history and the LLM re-asks every
+        // clarification question.
+        priorState = run.state
         return artifact
       },
       maxReviews: 3,

@@ -34,6 +34,10 @@ export async function visualCompanion(
   let userReviewRound = 0
   let lastApprovedArtifact: WireframeArtifact | undefined
   let lastRun: Awaited<ReturnType<typeof runStage>>["run"] | undefined
+  // Prior iteration's final state — carried forward on revise so the stage
+  // agent sees the full conversation history (clarification Q&A, references,
+  // input mode) and does not re-ask questions already answered.
+  let priorState: VisualCompanionState | undefined
 
   while (true) {
     const revisionFeedback = pendingRevisionFeedback
@@ -45,16 +49,30 @@ export async function visualCompanion(
       reviewerLabel: "UX Review",
       workspaceId: context.workspaceId,
       runId: reviewRound === 0 ? context.runId : `${context.runId}-rev${reviewRound}`,
-      createInitialState: (): VisualCompanionState => ({
-        input,
-        inputMode: "none",
-        references: input.references ?? [],
-        history: [],
-        clarificationCount: 0,
-        maxClarifications: 3,
-        pendingRevisionFeedback: revisionFeedback,
-        userReviewRound: reviewRound,
-      }),
+      createInitialState: (): VisualCompanionState => {
+        if (priorState) {
+          // On revise: preserve history, inputMode, references, and force
+          // clarificationCount to max so the stage agent skips the Q&A loop
+          // and goes straight to regenerating the artifact with the new
+          // revision feedback injected.
+          return {
+            ...priorState,
+            pendingRevisionFeedback: revisionFeedback,
+            userReviewRound: reviewRound,
+            clarificationCount: priorState.maxClarifications,
+          }
+        }
+        return {
+          input,
+          inputMode: "none",
+          references: input.references ?? [],
+          history: [],
+          clarificationCount: 0,
+          maxClarifications: 3,
+          pendingRevisionFeedback: revisionFeedback,
+          userReviewRound: reviewRound,
+        }
+      },
       stageAgent: createVisualCompanionStage(llm),
       reviewer: createVisualCompanionReview(llm),
       askUser: ask,
@@ -110,6 +128,11 @@ export async function visualCompanion(
         // those happen only after the user approves in the post-artifact review gate.
         lastApprovedArtifact = artifact
         lastRun = run
+        // Capture the final state so the next revise iteration can carry
+        // history, inputMode, and references forward — without this, each
+        // revise round starts with empty history and the LLM re-asks every
+        // clarification question.
+        priorState = run.state
         return artifact
       },
       maxReviews: 3,
