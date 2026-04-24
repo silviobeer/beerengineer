@@ -1,6 +1,8 @@
 import type { IncomingMessage, ServerResponse } from "node:http"
 import type { Repos } from "../../db/repositories.js"
-import { parseLogData, writeSse } from "../http.js"
+import { writeSse } from "../http.js"
+import { messagingLevelFromQuery, shouldDeliverAtLevel } from "../../core/messagingLevel.js"
+import { projectStageLogRow } from "../../core/messagingProjection.js"
 import { tailStageLogs } from "./tailStageLogs.js"
 
 /**
@@ -8,6 +10,9 @@ import { tailStageLogs } from "./tailStageLogs.js"
  * the given runId, then polls for new rows until the run finishes.
  */
 export function handleRunEvents(repos: Repos, req: IncomingMessage, res: ServerResponse, runId: string): void {
+  const url = new URL(req.url ?? `/runs/${runId}/events`, "http://127.0.0.1")
+  const subscribedLevel = messagingLevelFromQuery(url.searchParams.get("level"), 2)
+  const sinceId = url.searchParams.get("since")
   res.writeHead(200, {
     "content-type": "text/event-stream",
     "cache-control": "no-cache",
@@ -25,17 +30,16 @@ export function handleRunEvents(repos: Repos, req: IncomingMessage, res: ServerR
     res.end()
   }
 
-  const tail = tailStageLogs(repos, { scope: { kind: "run", runId } }, row => {
+  const tail = tailStageLogs(repos, { scope: { kind: "run", runId }, sinceId }, row => {
     if (closed || seenStreamIds.has(row.id)) return
+    const entry = projectStageLogRow(row)
+    if (!entry || !shouldDeliverAtLevel(entry, subscribedLevel)) {
+      if (row.event_type === "run_finished" || row.event_type === "run_failed" || row.event_type === "run_blocked") close()
+      return
+    }
     seenStreamIds.add(row.id)
-    writeSse(res, row.event_type, {
-      streamId: row.id,
-      at: row.created_at,
-      message: row.message,
-      stageRunId: row.stage_run_id,
-      data: parseLogData(row.data_json),
-    })
-    if (row.event_type === "run_finished") close()
+    writeSse(res, entry.type, entry)
+    if (entry.type === "run_finished" || entry.type === "run_failed" || entry.type === "run_blocked") close()
   })
 
   // Initial replay of everything already in the log.
@@ -53,7 +57,7 @@ export function handleRunEvents(repos: Repos, req: IncomingMessage, res: ServerR
   }, 1_000)
   watchdog.unref?.()
 
-  req.on("close", () => {
+  res.on("close", () => {
     closed = true
     tail.stop()
     clearInterval(watchdog)

@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { test } from "node:test"
 
 import { createBus } from "../src/core/bus.js"
+import { projectWorkflowEvent } from "../src/core/messagingProjection.js"
 import { initDatabase } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
 import { attachTelegramNotifications } from "../src/notifications/index.js"
@@ -14,6 +15,13 @@ import { sanitizeTelegramText, sendTelegramMessage } from "../src/notifications/
 import { sendTelegramTestNotification } from "../src/notifications/command.js"
 import { defaultAppConfig, readConfigFile, writeConfigFile } from "../src/setup/config.js"
 import { generateSetupReport } from "../src/setup/doctor.js"
+
+let messageSeq = 0
+
+function projected(event: Record<string, unknown>) {
+  messageSeq += 1
+  return projectWorkflowEvent(event as never, { id: `msg-${messageSeq}`, ts: messageSeq })
+}
 
 test("config round-trips publicBaseUrl and telegram settings", () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-notify-config-"))
@@ -110,7 +118,7 @@ test("dispatcher maps canonical events into telegram messages", async () => {
     },
   )
 
-  const result = await dispatcher.deliver({
+  const result = await dispatcher.deliver(projected({
     type: "run_blocked",
     runId: "run-1",
     itemId: "item-1",
@@ -118,7 +126,7 @@ test("dispatcher maps canonical events into telegram messages", async () => {
     scope: { type: "story", runId: "run-1", waveNumber: 2, storyId: "US-01" },
     cause: "story_error",
     summary: "Blocked on sk-abcdefghijklmnopqrstuvwxyz012345 in logs",
-  })
+  }))
 
   assert.deepEqual(result, { delivered: true, eventType: "run_blocked" })
   assert.equal(sent.length, 1)
@@ -133,7 +141,7 @@ test("dispatcher maps canonical events into telegram messages", async () => {
   db.close()
 })
 
-test("dispatcher maps stage_completed into telegram messages", async () => {
+test("dispatcher maps phase_completed into telegram messages", async () => {
   const sent: Array<{ token: string; chatId: string; text: string }> = []
   const dir = mkdtempSync(join(tmpdir(), "be2-notify-db-"))
   const db = initDatabase(join(dir, "test.sqlite"))
@@ -161,15 +169,15 @@ test("dispatcher maps stage_completed into telegram messages", async () => {
     },
   )
 
-  const result = await dispatcher.deliver({
+  const result = await dispatcher.deliver(projected({
     type: "stage_completed",
     runId: "run-1",
     stageRunId: "stage-1",
     stageKey: "requirements",
     status: "completed",
-  })
+  }))
 
-  assert.deepEqual(result, { delivered: true, eventType: "stage_completed" })
+  assert.deepEqual(result, { delivered: true, eventType: "phase_completed" })
   assert.equal(sent.length, 1)
   assert.match(sent[0].text, /BeerEngineer stage completed/)
   assert.match(sent[0].text, /Stage: requirements/)
@@ -206,13 +214,13 @@ test("dispatcher skips duplicate canonical events after the first durable claim"
     },
   )
 
-  const event = {
+  const event = projected({
     type: "run_finished" as const,
     runId: "run-1",
     itemId: "item-1",
     title: "Fix login",
     status: "completed" as const,
-  }
+  })
   const first = await dispatcher.deliver(event)
   const second = await dispatcher.deliver(event)
 
@@ -266,13 +274,13 @@ test("dispatcher marks failed deliveries and re-claims them on the next event", 
     },
   )
 
-  const event = {
+  const event = projected({
     type: "run_finished" as const,
     runId: "run-retry",
     itemId: "item-retry",
     title: "Retry me",
     status: "completed" as const,
-  }
+  })
   const first = await dispatcher.deliver(event)
   assert.equal(first.delivered, false)
   assert.match((first as { reason: string }).reason, /HTTP 500/)
@@ -313,9 +321,9 @@ test("telegram client returns an error when 429 arrives without a retry-after he
 })
 
 test("isSupportedTelegramEvent accepts the canonical four and rejects others", () => {
-  assert.equal(isSupportedTelegramEvent({ type: "run_started", runId: "r", itemId: "i", title: "t" } as never), true)
-  assert.equal(isSupportedTelegramEvent({ type: "stage_completed", runId: "r", stageRunId: "s", stageKey: "k", status: "completed" } as never), true)
-  assert.equal(isSupportedTelegramEvent({ type: "log", runId: "r", message: "m" } as never), false)
+  assert.equal(isSupportedTelegramEvent({ type: "run_started", runId: "r", stageRunId: null, id: "m1", ts: "", level: 2, force: false, payload: {} } as never), true)
+  assert.equal(isSupportedTelegramEvent({ type: "phase_completed", runId: "r", stageRunId: "s", id: "m2", ts: "", level: 2, force: false, payload: {} } as never), true)
+  assert.equal(isSupportedTelegramEvent({ type: "log", runId: "r", stageRunId: null, id: "m3", ts: "", level: 0, force: false, payload: {} } as never), false)
 })
 
 test("telegram test rejects tokens that start with bot (common paste mistake)", async () => {

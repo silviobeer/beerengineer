@@ -1,18 +1,12 @@
 import type { IncomingMessage, ServerResponse } from "node:http"
 import type { Db } from "../../db/connection.js"
 import type { Repos } from "../../db/repositories.js"
-import { parseLogData, writeSse } from "../http.js"
+import { writeSse } from "../http.js"
+import { messagingLevelFromQuery } from "../../core/messagingLevel.js"
+import { projectStageLogRow } from "../../core/messagingProjection.js"
 import { tailStageLogs } from "./tailStageLogs.js"
 
-type BoardSseClient = { res: ServerResponse; id: string; workspaceId: string | null }
-
-const BOARD_RELEVANT_EVENTS = new Set([
-  "run_started",
-  "stage_started",
-  "stage_completed",
-  "run_finished",
-  "project_created",
-])
+type BoardSseClient = { res: ServerResponse; id: string; workspaceId: string | null; level: 0 | 1 | 2 }
 
 export type ItemColumnChangedPayload = {
   itemId: string
@@ -48,10 +42,11 @@ export function createBoardStream(repos: Repos, db: Db): BoardStream {
     return null
   }
 
-  const broadcast = (event: string, data: unknown): void => {
+  const broadcast = (event: string, data: unknown, level?: 0 | 1 | 2): void => {
     const workspaceId = resolveEventWorkspace(data)
     for (const client of clients) {
       if (client.workspaceId && workspaceId && client.workspaceId !== workspaceId) continue
+      if (level !== undefined && level < client.level) continue
       try {
         writeSse(client.res, event, data)
       } catch {
@@ -61,16 +56,9 @@ export function createBoardStream(repos: Repos, db: Db): BoardStream {
   }
 
   const tail = tailStageLogs(repos, { scope: { kind: "workspace", workspaceId: null } }, row => {
-    if (!BOARD_RELEVANT_EVENTS.has(row.event_type)) return
-    broadcast(row.event_type, {
-      runId: row.run_id,
-      itemId: row.item_id,
-      streamId: row.id,
-      at: row.created_at,
-      message: row.message,
-      stageRunId: row.stage_run_id,
-      data: parseLogData(row.data_json),
-    })
+    const entry = projectStageLogRow(row)
+    if (!entry) return
+    broadcast(entry.type, { ...entry, itemId: row.item_id }, entry.level)
   })
 
   return {
@@ -81,6 +69,7 @@ export function createBoardStream(repos: Repos, db: Db): BoardStream {
         ? (db.prepare("SELECT id FROM workspaces WHERE key = ?").get(workspaceKey) as { id: string } | undefined)?.id
           ?? "__missing__"
         : null
+      const level = messagingLevelFromQuery(url.searchParams.get("level"), 2)
 
       res.writeHead(200, {
         "content-type": "text/event-stream",
@@ -89,7 +78,7 @@ export function createBoardStream(repos: Repos, db: Db): BoardStream {
       })
       res.write(`event: hello\ndata: ${JSON.stringify({ at: Date.now(), workspace: workspaceKey })}\n\n`)
 
-      const client: BoardSseClient = { res, id: Math.random().toString(36).slice(2), workspaceId }
+      const client: BoardSseClient = { res, id: Math.random().toString(36).slice(2), workspaceId, level }
       clients.add(client)
 
       const keepAlive = setInterval(() => {
@@ -102,7 +91,7 @@ export function createBoardStream(repos: Repos, db: Db): BoardStream {
       }, 25_000)
       keepAlive.unref?.()
 
-      req.on("close", () => {
+      res.on("close", () => {
         clearInterval(keepAlive)
         clients.delete(client)
       })

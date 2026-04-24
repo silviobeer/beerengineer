@@ -1,6 +1,14 @@
 import type { HostedCliExecutionResult, HostedProviderInvokeInput } from "../providerRuntime.js"
+import { sanitizePreviewValue } from "../../../core/messagePreview.js"
 import { invokeProviderCli, type ProviderDriver } from "./_invoke.js"
-import { makeJsonLineStreamCallback, type StreamEventSummary } from "./_stream.js"
+import {
+  emitHostedThinking,
+  emitHostedTokens,
+  emitHostedToolCalled,
+  emitHostedToolResult,
+  makeJsonLineStreamCallback,
+  type StreamEventSummary,
+} from "./_stream.js"
 
 type ClaudeUsage = {
   input_tokens?: number
@@ -49,6 +57,7 @@ type ClaudeStreamState = {
   sawResult: boolean
   streamedSummary: boolean
   completedAssistantMessageIds: Set<string>
+  toolCalls: Map<string, { name: string; argsPreview?: string }>
 }
 
 function createClaudeStreamState(): ClaudeStreamState {
@@ -61,6 +70,7 @@ function createClaudeStreamState(): ClaudeStreamState {
     sawResult: false,
     streamedSummary: false,
     completedAssistantMessageIds: new Set(),
+    toolCalls: new Map(),
   }
 }
 
@@ -127,6 +137,9 @@ function summarizeClaudeEvent(event: ClaudeStreamEvent, state: ClaudeStreamState
         return isToolUseContent(part) && typeof part.name === "string"
       })
       if (toolUse?.name) {
+        const argsPreview = sanitizePreviewValue("input" in toolUse ? toolUse.input : undefined)
+        if (toolUse.id) state.toolCalls.set(toolUse.id, { name: toolUse.name, argsPreview })
+        emitHostedToolCalled(toolUse.name, argsPreview, "claude")
         state.streamedSummary = true
         return { kind: "dim", text: `claude: tool ${toolUse.name}` }
       }
@@ -140,6 +153,22 @@ function summarizeClaudeEvent(event: ClaudeStreamEvent, state: ClaudeStreamState
       }
     }
     return null
+  }
+
+  if (event.type === "user" && event.message?.content) {
+    const toolResult = event.message.content.find(part => part.type === "tool_result") as
+      | { type?: string; content?: unknown; is_error?: boolean; tool_use_id?: string }
+      | undefined
+    if (toolResult) {
+      const call = toolResult.tool_use_id ? state.toolCalls.get(toolResult.tool_use_id) : undefined
+      emitHostedToolResult(
+        call?.name ?? toolResult.tool_use_id ?? "tool",
+        call?.argsPreview,
+        sanitizePreviewValue(toolResult.content),
+        "claude",
+        toolResult.is_error === true,
+      )
+    }
   }
 
   if (event.type === "stream_event" && event.event) {
@@ -156,8 +185,12 @@ function summarizeClaudeEvent(event: ClaudeStreamEvent, state: ClaudeStreamState
       const blockType = inner.content_block?.type
       if (typeof blockType === "string") state.textBlockTypes.set(inner.index, blockType)
       if (blockType === "tool_use") {
+        emitHostedToolCalled("tool", undefined, "claude")
         state.streamedSummary = true
         return { kind: "dim", text: "claude: tool" }
+      }
+      if (blockType === "thinking") {
+        emitHostedThinking("thinking", "claude")
       }
     }
     if (inner.type === "message_delta" && inner.usage) state.usage = inner.usage
@@ -169,6 +202,15 @@ function summarizeClaudeEvent(event: ClaudeStreamEvent, state: ClaudeStreamState
       typeof inner.delta.text === "string"
     ) {
       state.fallbackTextParts.push(inner.delta.text)
+    }
+    if (
+      inner.type === "content_block_delta" &&
+      typeof inner.index === "number" &&
+      state.textBlockTypes.get(inner.index) === "thinking" &&
+      inner.delta?.type === "text_delta" &&
+      typeof inner.delta.text === "string"
+    ) {
+      emitHostedThinking(sanitizePreviewValue(inner.delta.text) ?? inner.delta.text, "claude")
     }
     return null
   }
@@ -215,6 +257,13 @@ const claudeDriver: ProviderDriver<ClaudeStreamState> = {
       const combined = `${raw.stdout}\n${raw.stderr}`
       throw new Error(`claude stream ended without a result event or recoverable assistant text: ${combined.trim() || "no output"}`)
     }
+    emitHostedTokens(
+      state.usage?.input_tokens ?? 0,
+      state.usage?.output_tokens ?? 0,
+      state.usage?.cache_read_input_tokens ?? 0,
+      "claude",
+      input.runtime.model,
+    )
     return {
       ...raw,
       command,

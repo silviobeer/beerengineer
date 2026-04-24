@@ -1,9 +1,10 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { sanitizePreviewValue } from "../../../core/messagePreview.js"
 import type { HostedCliExecutionResult, HostedProviderInvokeInput } from "../providerRuntime.js"
 import { invokeProviderCli, type ProviderDriver } from "./_invoke.js"
-import { makeJsonLineStreamCallback } from "./_stream.js"
+import { emitHostedThinking, emitHostedTokens, emitHostedToolCalled, emitHostedToolResult, makeJsonLineStreamCallback } from "./_stream.js"
 
 type CodexStreamEvent = {
   type?: string
@@ -48,12 +49,15 @@ function summarizeCodexEvent(event: CodexStreamEvent, state: CodexStreamState): 
     case "item.started":
     case "item.added":
       if (event.item?.type) {
+        if (event.item.type === "reasoning" && typeof event.item.text === "string") emitHostedThinking(sanitizePreviewValue(event.item.text) ?? event.item.text, "codex")
+        else emitHostedToolCalled(event.item.name ?? event.item.type, sanitizePreviewValue(event.item.text), "codex")
         state.streamedSummary = true
         return { kind: "dim", text: `codex: ${event.item.type}${event.item.name ? ` ${event.item.name}` : ""}` }
       }
       return null
     case "item.completed":
       if (event.item?.type) {
+        emitHostedToolResult(event.item.name ?? event.item.type, undefined, sanitizePreviewValue(event.item.text), "codex")
         state.streamedSummary = true
         return { kind: "dim", text: `codex: ${event.item.type} done` }
       }
@@ -127,6 +131,7 @@ export async function invokeCodex(input: HostedProviderInvokeInput): Promise<Hos
           ? await readFile(finalState.responsePath, "utf8").catch(() => "")
           : "") || raw.stdout
       const usage = parseUsage(raw.stdout)
+      emitHostedTokens(usage.totalInputTokens, 0, usage.cachedInputTokens, "codex", activeInput.runtime.model)
       return {
         ...raw,
         command,

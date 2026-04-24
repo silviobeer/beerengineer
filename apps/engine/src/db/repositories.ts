@@ -98,6 +98,11 @@ export type StageLogRow = {
   created_at: number
 }
 
+export type StageLogCursorRow = StageLogRow & {
+  log_rowid: number
+  item_id?: string
+}
+
 export type ArtifactFileRow = {
   id: string
   run_id: string | null
@@ -606,6 +611,30 @@ export class Repos {
       .all(runId, sinceCreatedAt) as StageLogRow[]
   }
 
+  listLogsForRunAfterCursor(runId: string, afterRowId = 0, limit?: number): StageLogCursorRow[] {
+    const sql =
+      typeof limit === "number"
+        ? `SELECT rowid AS log_rowid, *
+             FROM stage_logs
+            WHERE run_id = ? AND rowid > ?
+            ORDER BY rowid ASC
+            LIMIT ?`
+        : `SELECT rowid AS log_rowid, *
+             FROM stage_logs
+            WHERE run_id = ? AND rowid > ?
+            ORDER BY rowid ASC`
+    const stmt = this.db.prepare(sql)
+    return (typeof limit === "number"
+      ? stmt.all(runId, afterRowId, limit)
+      : stmt.all(runId, afterRowId)) as StageLogCursorRow[]
+  }
+
+  listLogsForRunAfterId(runId: string, afterId?: string | null, limit?: number): StageLogCursorRow[] {
+    if (!afterId) return this.listLogsForRunAfterCursor(runId, 0, limit)
+    const row = this.getStageLogCursorById(afterId, runId)
+    return this.listLogsForRunAfterCursor(runId, row?.log_rowid ?? 0, limit)
+  }
+
   listLogsForWorkspace(workspaceId: string | null, sinceCreatedAt = 0): Array<StageLogRow & { item_id: string }> {
     if (workspaceId) {
       return this.db
@@ -627,6 +656,59 @@ export class Repos {
           ORDER BY l.created_at ASC, l.rowid ASC`
       )
       .all(sinceCreatedAt) as Array<StageLogRow & { item_id: string }>
+  }
+
+  listLogsForWorkspaceAfterCursor(workspaceId: string | null, afterRowId = 0, limit?: number): StageLogCursorRow[] {
+    if (workspaceId) {
+      const sql =
+        typeof limit === "number"
+          ? `SELECT l.rowid AS log_rowid, l.*, r.item_id
+               FROM stage_logs l
+               JOIN runs r ON r.id = l.run_id
+              WHERE r.workspace_id = ? AND l.rowid > ?
+              ORDER BY l.rowid ASC
+              LIMIT ?`
+          : `SELECT l.rowid AS log_rowid, l.*, r.item_id
+               FROM stage_logs l
+               JOIN runs r ON r.id = l.run_id
+              WHERE r.workspace_id = ? AND l.rowid > ?
+              ORDER BY l.rowid ASC`
+      const stmt = this.db.prepare(sql)
+      return (typeof limit === "number"
+        ? stmt.all(workspaceId, afterRowId, limit)
+        : stmt.all(workspaceId, afterRowId)) as StageLogCursorRow[]
+    }
+    const sql =
+      typeof limit === "number"
+        ? `SELECT l.rowid AS log_rowid, l.*, r.item_id
+             FROM stage_logs l
+             JOIN runs r ON r.id = l.run_id
+            WHERE l.rowid > ?
+            ORDER BY l.rowid ASC
+            LIMIT ?`
+        : `SELECT l.rowid AS log_rowid, l.*, r.item_id
+             FROM stage_logs l
+             JOIN runs r ON r.id = l.run_id
+            WHERE l.rowid > ?
+            ORDER BY l.rowid ASC`
+    const stmt = this.db.prepare(sql)
+    return (typeof limit === "number"
+      ? stmt.all(afterRowId, limit)
+      : stmt.all(afterRowId)) as StageLogCursorRow[]
+  }
+
+  listLogsForWorkspaceAfterId(workspaceId: string | null, afterId?: string | null, limit?: number): StageLogCursorRow[] {
+    if (!afterId) return this.listLogsForWorkspaceAfterCursor(workspaceId, 0, limit)
+    const row = this.getStageLogCursorById(afterId)
+    return this.listLogsForWorkspaceAfterCursor(workspaceId, row?.log_rowid ?? 0, limit)
+  }
+
+  getStageLogCursorById(id: string, runId?: string): { log_rowid: number } | undefined {
+    const sql = runId
+      ? "SELECT rowid AS log_rowid FROM stage_logs WHERE id = ? AND run_id = ?"
+      : "SELECT rowid AS log_rowid FROM stage_logs WHERE id = ?"
+    const stmt = this.db.prepare(sql)
+    return (runId ? stmt.get(id, runId) : stmt.get(id)) as { log_rowid: number } | undefined
   }
 
   recordArtifact(input: {

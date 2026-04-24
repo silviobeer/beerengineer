@@ -21,7 +21,7 @@ function emit(kind: PresentationKind, text: string, meta?: { source?: string; se
   })
 }
 
-function emitChat(role: string, text: string, source: "stage-agent" | "reviewer" | "system" = "system"): void {
+function emitChat(role: string, text: string, source: "stage-agent" | "reviewer" | "system" | "cli" | "api" | "webhook" = "system"): void {
   const active = getActiveRun()
   if (!active) return
   emitEvent({
@@ -50,7 +50,7 @@ export const stagePresent = {
     emit("finding", text, { source, severity })
   },
   /** Emit a chat-style message (LLM output, reviewer feedback, etc.). */
-  chat(role: string, text: string, source: "stage-agent" | "reviewer" | "system" = "system") {
+  chat(role: string, text: string, source: "stage-agent" | "reviewer" | "system" | "cli" | "api" | "webhook" = "system") {
     emitChat(role, text, source)
   },
 }

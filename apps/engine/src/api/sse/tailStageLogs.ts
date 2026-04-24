@@ -1,4 +1,4 @@
-import type { Repos, StageLogRow } from "../../db/repositories.js"
+import type { Repos, StageLogCursorRow } from "../../db/repositories.js"
 import { LOG_TAIL_INTERVAL_MS } from "../../core/constants.js"
 
 export type TailScope =
@@ -8,12 +8,12 @@ export type TailScope =
 export type TailOptions = {
   scope: TailScope
   intervalMs?: number
-  /** Read starting at this unix-ms cursor. Default 0 = full history. */
-  startCursor?: number
+  /** Read starting after this stable stage_logs id. */
+  sinceId?: string | null
 }
 
 /** Workspace-scoped rows carry `item_id` from the join in repositories. */
-export type TailRow = StageLogRow & { item_id?: string }
+export type TailRow = StageLogCursorRow
 
 /**
  * Poll `stage_logs` at a fixed interval, delivering each new row to `onRow`.
@@ -27,23 +27,25 @@ export function tailStageLogs(
   opts: TailOptions,
   onRow: (row: TailRow) => void,
 ): { stop(): void; pollOnce(): void } {
-  let cursor = opts.startCursor ?? 0
+  let cursor =
+    opts.sinceId
+      ? (repos.getStageLogCursorById(opts.sinceId, opts.scope.kind === "run" ? opts.scope.runId : undefined)?.log_rowid ?? 0)
+      : 0
   let stopped = false
 
   const pollOnce = (): void => {
     if (stopped) return
     const rows =
       opts.scope.kind === "run"
-        ? repos.listLogsForRun(opts.scope.runId, cursor)
-        : repos.listLogsForWorkspace(opts.scope.workspaceId, cursor)
+        ? repos.listLogsForRunAfterCursor(opts.scope.runId, cursor)
+        : repos.listLogsForWorkspaceAfterCursor(opts.scope.workspaceId, cursor)
     for (const row of rows) {
-      cursor = Math.max(cursor, row.created_at + 1)
+      cursor = row.log_rowid
       onRow(row)
     }
   }
 
   const timer = setInterval(pollOnce, opts.intervalMs ?? LOG_TAIL_INTERVAL_MS)
-  timer.unref?.()
 
   return {
     stop(): void {

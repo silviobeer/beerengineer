@@ -406,14 +406,22 @@ function buildTelegramExportCommand(envName: string): string {
   return `export ${envName}=<telegram-bot-token>`
 }
 
+function buildTelegramWebhookSecretExportCommand(envName: string): string {
+  return `export ${envName}=<telegram-webhook-secret>`
+}
+
 async function runNotificationChecks(config: AppConfig | null): Promise<CheckResult[]> {
   if (!config) {
     return [
       createCheck("notifications.public-base-url", "Public base URL", "skipped", "effective config is unavailable"),
       createCheck("notifications.telegram.enabled", "Telegram notifications enabled", "skipped", "effective config is unavailable"),
+      createCheck("notifications.telegram.level", "Telegram message level", "skipped", "effective config is unavailable"),
       createCheck("notifications.telegram.bot-token-env", "Telegram bot token env var", "skipped", "effective config is unavailable"),
       createCheck("notifications.telegram.bot-token-present", "Telegram bot token present", "skipped", "effective config is unavailable"),
       createCheck("notifications.telegram.default-chat-id", "Telegram default chat id", "skipped", "effective config is unavailable"),
+      createCheck("notifications.telegram.inbound.enabled", "Telegram inbound replies enabled", "skipped", "effective config is unavailable"),
+      createCheck("notifications.telegram.inbound.webhook-secret-env", "Telegram webhook secret env var", "skipped", "effective config is unavailable"),
+      createCheck("notifications.telegram.inbound.webhook-secret-present", "Telegram webhook secret present", "skipped", "effective config is unavailable"),
     ]
   }
 
@@ -452,11 +460,22 @@ async function runNotificationChecks(config: AppConfig | null): Promise<CheckRes
 
   const tokenEnv = config.notifications?.telegram?.botTokenEnv?.trim()
   if (!telegramEnabled) {
+    checks.push(createCheck("notifications.telegram.level", "Telegram message level", "skipped", "Telegram notifications are disabled in config"))
     checks.push(createCheck("notifications.telegram.bot-token-env", "Telegram bot token env var", "skipped", "Telegram notifications are disabled in config"))
     checks.push(createCheck("notifications.telegram.bot-token-present", "Telegram bot token present", "skipped", "Telegram notifications are disabled in config"))
     checks.push(createCheck("notifications.telegram.default-chat-id", "Telegram default chat id", "skipped", "Telegram notifications are disabled in config"))
+    checks.push(createCheck("notifications.telegram.inbound.enabled", "Telegram inbound replies enabled", "skipped", "Telegram notifications are disabled in config"))
+    checks.push(createCheck("notifications.telegram.inbound.webhook-secret-env", "Telegram webhook secret env var", "skipped", "Telegram notifications are disabled in config"))
+    checks.push(createCheck("notifications.telegram.inbound.webhook-secret-present", "Telegram webhook secret present", "skipped", "Telegram notifications are disabled in config"))
     return checks
   }
+
+  checks.push(createCheck(
+    "notifications.telegram.level",
+    "Telegram message level",
+    "ok",
+    `L${config.notifications?.telegram?.level ?? 2}`,
+  ))
 
   if (!tokenEnv) {
     checks.push(createCheck(
@@ -488,6 +507,46 @@ async function runNotificationChecks(config: AppConfig | null): Promise<CheckRes
     chatId ? "ok" : "missing",
     chatId ? chatId : "Missing notifications.telegram.defaultChatId",
     chatId ? {} : { remedy: { hint: "Record the chat id that should receive BeerEngineer notifications." } },
+  ))
+
+  const inboundEnabled = config.notifications?.telegram?.inbound?.enabled === true
+  checks.push(createCheck(
+    "notifications.telegram.inbound.enabled",
+    "Telegram inbound replies enabled",
+    inboundEnabled ? "ok" : "skipped",
+    inboundEnabled ? "Enabled in config" : "Disabled in config",
+  ))
+
+  const webhookSecretEnv = config.notifications?.telegram?.inbound?.webhookSecretEnv?.trim()
+  checks.push(createCheck(
+    "notifications.telegram.inbound.webhook-secret-env",
+    "Telegram webhook secret env var",
+    inboundEnabled ? (webhookSecretEnv ? "ok" : "missing") : "skipped",
+    inboundEnabled
+      ? webhookSecretEnv ?? "Missing notifications.telegram.inbound.webhookSecretEnv"
+      : "Telegram inbound replies are disabled in config",
+    inboundEnabled && !webhookSecretEnv
+      ? { remedy: { hint: "Store the Telegram webhook secret in an env var and record that env var name in config." } }
+      : {},
+  ))
+
+  const webhookSecretPresent = webhookSecretEnv ? Boolean(process.env[webhookSecretEnv]) : false
+  checks.push(createCheck(
+    "notifications.telegram.inbound.webhook-secret-present",
+    "Telegram webhook secret present",
+    inboundEnabled
+      ? (webhookSecretEnv ? (webhookSecretPresent ? "ok" : "missing") : "missing")
+      : "skipped",
+    inboundEnabled
+      ? webhookSecretEnv
+        ? webhookSecretPresent
+          ? `${webhookSecretEnv} is set`
+          : `${webhookSecretEnv} is not set in this shell`
+        : "Webhook secret env var is not configured"
+      : "Telegram inbound replies are disabled in config",
+    inboundEnabled && webhookSecretEnv && !webhookSecretPresent
+      ? { remedy: { hint: "Export the Telegram webhook secret before starting the engine.", command: buildTelegramWebhookSecretExportCommand(webhookSecretEnv) } }
+      : {},
   ))
 
   return checks
@@ -688,9 +747,9 @@ async function maybeConfigureTelegramInteractive(configPath: string, config: App
   const rl = createInterface({ input, output })
   try {
     console.log("")
-    console.log("  Telegram notifications are outbound alerts only.")
-    console.log("  They can report run started, run blocked, and run finished.")
-    console.log("  They cannot start runs, resume runs, answer prompts, or change workflow state.")
+    console.log("  Telegram can deliver outbound notifications and optional inbound prompt replies.")
+    console.log("  Outbound runs on messaging levels: L2 milestones, L1 operational detail, L0 debug detail.")
+    console.log("  Inbound is limited to replying to BeerEngineer prompts when enabled.")
     console.log("")
     console.log("  Setup steps:")
     console.log("    1. Open Telegram and talk to @BotFather.")
@@ -710,6 +769,11 @@ async function maybeConfigureTelegramInteractive(configPath: string, config: App
           enabled,
           botTokenEnv: config.notifications?.telegram?.botTokenEnv,
           defaultChatId: config.notifications?.telegram?.defaultChatId,
+          level: config.notifications?.telegram?.level ?? 2,
+          inbound: {
+            enabled: config.notifications?.telegram?.inbound?.enabled ?? false,
+            webhookSecretEnv: config.notifications?.telegram?.inbound?.webhookSecretEnv,
+          },
         },
       },
     }
@@ -739,6 +803,17 @@ async function maybeConfigureTelegramInteractive(configPath: string, config: App
     }
 
     while (true) {
+      const currentLevel = next.notifications!.telegram!.level ?? 2
+      const levelAnswer = (await rl.question(`  Telegram message level [${currentLevel}] (0=debug, 1=ops, 2=milestones): `)).trim()
+      const candidate = levelAnswer || String(currentLevel)
+      if (candidate === "0" || candidate === "1" || candidate === "2") {
+        next.notifications!.telegram!.level = Number(candidate) as 0 | 1 | 2
+        break
+      }
+      console.log("  Telegram message level must be 0, 1, or 2.")
+    }
+
+    while (true) {
       const currentTelegram = next.notifications!.telegram!
       const chatIdAnswer = (await rl.question(`  Telegram chat id [${currentTelegram.defaultChatId ?? ""}]: `)).trim()
       const chatId = chatIdAnswer || currentTelegram.defaultChatId
@@ -749,11 +824,32 @@ async function maybeConfigureTelegramInteractive(configPath: string, config: App
       console.log("  Telegram chat id is required when notifications are enabled.")
     }
 
+    const inboundAnswer = (await rl.question(`  Enable Telegram inbound prompt replies? [${next.notifications!.telegram!.inbound?.enabled ? "Y/n" : "y/N"}] `)).trim().toLowerCase()
+    const inboundEnabled =
+      inboundAnswer === ""
+        ? next.notifications!.telegram!.inbound?.enabled === true
+        : inboundAnswer === "y" || inboundAnswer === "yes"
+    next.notifications!.telegram!.inbound = {
+      ...next.notifications!.telegram!.inbound,
+      enabled: inboundEnabled,
+    }
+
+    if (inboundEnabled) {
+      const secretEnvAnswer =
+        (await rl.question(`  Telegram webhook secret env var [${next.notifications!.telegram!.inbound?.webhookSecretEnv ?? "TELEGRAM_WEBHOOK_SECRET"}]: `)).trim()
+      next.notifications!.telegram!.inbound!.webhookSecretEnv =
+        secretEnvAnswer || next.notifications!.telegram!.inbound!.webhookSecretEnv || "TELEGRAM_WEBHOOK_SECRET"
+    }
+
     writeConfigFile(configPath, next)
     console.log("")
     console.log("  Next steps:")
     console.log(`    ${buildTelegramExportCommand(next.notifications!.telegram!.botTokenEnv ?? "TELEGRAM_BOT_TOKEN")}`)
+    if (next.notifications!.telegram!.inbound?.enabled && next.notifications!.telegram!.inbound?.webhookSecretEnv) {
+      console.log(`    ${buildTelegramWebhookSecretExportCommand(next.notifications!.telegram!.inbound!.webhookSecretEnv!)}`)
+    }
     console.log(`    publicBaseUrl is set to ${next.publicBaseUrl}`)
+    console.log(`    Telegram level is L${next.notifications!.telegram!.level ?? 2}`)
     console.log("    Start the UI on the same host/port so Telegram links stay reachable over Tailscale.")
     console.log("")
     return next

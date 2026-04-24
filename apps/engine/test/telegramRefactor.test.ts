@@ -8,6 +8,7 @@ import { Readable } from "node:stream"
 import { test } from "node:test"
 
 import { initDatabase } from "../src/db/connection.js"
+import { projectWorkflowEvent } from "../src/core/messagingProjection.js"
 import { Repos } from "../src/db/repositories.js"
 import { TelegramNotificationDispatcher } from "../src/notifications/dispatcher.js"
 import {
@@ -16,6 +17,13 @@ import {
 } from "../src/notifications/telegramWebhook.js"
 import { defaultAppConfig } from "../src/setup/config.js"
 import type { AppConfig } from "../src/setup/types.js"
+
+let messageSeq = 0
+
+function projected(event: Record<string, unknown>) {
+  messageSeq += 1
+  return projectWorkflowEvent(event as never, { id: `msg-${messageSeq}`, ts: messageSeq })
+}
 
 function tmpDb() {
   const dir = mkdtempSync(join(tmpdir(), "be2-telegram-refactor-"))
@@ -119,7 +127,7 @@ test("dispatcher appends openPrompt.text to run_blocked messages and persists te
     },
   )
 
-  const result = await dispatcher.deliver({
+  const result = await dispatcher.deliver(projected({
     type: "run_blocked",
     runId: run.id,
     itemId: run.item_id,
@@ -127,7 +135,7 @@ test("dispatcher appends openPrompt.text to run_blocked messages and persists te
     scope: { type: "stage", runId: run.id, stageId: "requirements" },
     cause: "stage_error",
     summary: "LLM could not decide the target branch",
-  })
+  }))
 
   assert.equal(result.delivered, true)
   assert.equal(sent.length, 1)
@@ -162,18 +170,18 @@ test("dispatcher rate-limits prompt_requested inside the minimum gap and re-noti
     },
   )
 
-  const first = await dispatcher.deliver({
+  const first = await dispatcher.deliver(projected({
     type: "prompt_requested",
     runId: run.id,
     promptId: pending.id,
     prompt: "What is the fix?",
-  })
-  const second = await dispatcher.deliver({
+  }))
+  const second = await dispatcher.deliver(projected({
     type: "prompt_requested",
     runId: run.id,
     promptId: pending.id,
     prompt: "What is the fix?",
-  })
+  }))
 
   assert.equal(first.delivered, true)
   assert.equal(second.delivered, false)
@@ -188,12 +196,12 @@ test("dispatcher rate-limits prompt_requested inside the minimum gap and re-noti
     "UPDATE notification_deliveries SET expires_at = ? WHERE dedup_key = ?",
   ).run(expiredTimestamp, `${run.id}:prompt_requested`)
 
-  const third = await dispatcher.deliver({
+  const third = await dispatcher.deliver(projected({
     type: "prompt_requested",
     runId: run.id,
     promptId: pending.id,
     prompt: "What is the fix?",
-  })
+  }))
   assert.equal(third.delivered, true)
   assert.equal(sent.length, 2)
   assert.equal(repos.listNotificationDeliveries().length, countBefore)

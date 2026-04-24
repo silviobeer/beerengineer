@@ -68,10 +68,42 @@ test("attachDbSync persists stage lifecycle into DB", () => {
 
     const logs = repos.listLogsForRun(run.id)
     const types = logs.map(l => l.event_type).sort()
-    assert.deepEqual(types, ["run_finished", "stage_completed", "stage_started"].sort())
+    assert.deepEqual(types, ["run_started", "run_finished", "stage_completed", "stage_started"].sort())
 
     const updatedRun = repos.getRun(run.id)
     assert.equal(updatedRun?.status, "completed")
+  } finally {
+    db.close()
+  }
+})
+
+test("attachDbSync persists synthetic messaging-level events", () => {
+  const db = tmpDb()
+  const repos = new Repos(db)
+  const ws = repos.upsertWorkspace({ key: "test", name: "Test" })
+  const item = repos.createItem({ workspaceId: ws.id, title: "T", description: "D" })
+  const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "T" })
+  const { bus } = makeBusIO()
+
+  try {
+    attachDbSync(bus, repos, { runId: run.id, itemId: item.id })
+    repos.createStageRun({ id: "stage-1", runId: run.id, stageKey: "requirements" })
+    bus.emit({ type: "loop_iteration", runId: run.id, stageRunId: "stage-1", n: 1, phase: "begin", stageKey: "requirements" })
+    bus.emit({ type: "tool_called", runId: run.id, stageRunId: "stage-1", name: "Bash", argsPreview: "{\"cmd\":\"pwd\"}", provider: "claude" })
+    bus.emit({ type: "tool_result", runId: run.id, stageRunId: "stage-1", name: "Bash", resultPreview: "/workspace", provider: "claude" })
+    bus.emit({ type: "llm_thinking", runId: run.id, stageRunId: "stage-1", text: "Planning next step", provider: "claude" })
+    bus.emit({ type: "llm_tokens", runId: run.id, stageRunId: "stage-1", in: 12, out: 8, cached: 5, provider: "claude" })
+
+    const logs = repos.listLogsForRun(run.id)
+    assert.deepEqual(
+      logs.map(log => log.event_type),
+      ["loop_iteration", "tool_called", "tool_result", "llm_thinking", "llm_tokens"],
+    )
+    assert.match(logs[0]?.data_json ?? "", /"phase":"begin"/)
+    assert.match(logs[1]?.data_json ?? "", /"argsPreview":/)
+    assert.match(logs[1]?.data_json ?? "", /pwd/)
+    assert.match(logs[4]?.data_json ?? "", /"in":12/)
+    assert.match(logs[4]?.data_json ?? "", /"out":8/)
   } finally {
     db.close()
   }

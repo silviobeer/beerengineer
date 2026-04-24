@@ -2,10 +2,15 @@ import type { Repos, StageLogRow } from "../db/repositories.js"
 import { parseLogData } from "../api/http.js"
 
 export type AnswerSource = "cli" | "api" | "webhook"
+export type UserMessageSource = "cli" | "api" | "webhook"
 
 export type AnswerResult =
   | { ok: true; conversation: ConversationResponse; promptId: string }
   | { ok: false; code: "run_not_found" | "prompt_not_open" | "empty_answer" | "prompt_mismatch" }
+
+export type UserMessageResult =
+  | { ok: true; conversation: ConversationResponse; entryId: string }
+  | { ok: false; code: "run_not_found" | "empty_message" }
 
 /**
  * The one place that marks a pending prompt as answered. Every caller — the
@@ -46,6 +51,30 @@ export function recordAnswer(
   return { ok: true, conversation, promptId }
 }
 
+export function recordUserMessage(
+  repos: Repos,
+  input: { runId: string; text: string; source: UserMessageSource },
+): UserMessageResult {
+  const text = input.text.trim()
+  if (!text) return { ok: false, code: "empty_message" }
+  if (!repos.getRun(input.runId)) return { ok: false, code: "run_not_found" }
+
+  const row = repos.appendLog({
+    runId: input.runId,
+    eventType: "chat_message",
+    message: text,
+    data: {
+      role: "user",
+      source: input.source,
+      requiresResponse: false,
+    },
+  })
+
+  const conversation = buildConversation(repos, input.runId)
+  if (!conversation) return { ok: false, code: "run_not_found" }
+  return { ok: true, conversation, entryId: row.id }
+}
+
 export type ConversationEntryKind = "system" | "message" | "question" | "answer"
 export type ConversationEntryActor = "system" | "agent" | "user"
 
@@ -83,7 +112,8 @@ function isPlaceholderText(text: string | null | undefined): boolean {
   return PLACEHOLDER_RX.test(text)
 }
 
-function actorFromSource(source: string | undefined): ConversationEntryActor {
+function actorFromChat(source: string | undefined, role: string | undefined): ConversationEntryActor {
+  if (role === "user") return "user"
   if (source === "stage-agent" || source === "reviewer") return "agent"
   return "system"
 }
@@ -158,13 +188,13 @@ export function buildConversation(repos: Repos, runId: string): ConversationResp
     if (row.event_type === "chat_message") {
       const text = row.message.trim()
       if (!text) continue
-      const data = parseLogData(row.data_json) as { source?: string } | undefined
+      const data = parseLogData(row.data_json) as { source?: string; role?: string } | undefined
       entries.push({
         id: row.id,
         runId,
         stageKey,
         kind: "message",
-        actor: actorFromSource(data?.source),
+        actor: actorFromChat(data?.source, data?.role),
         text,
         createdAt,
       })

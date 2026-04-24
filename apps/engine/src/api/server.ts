@@ -19,9 +19,11 @@ import {
   handleCreateRun,
   handleGetBoard,
   handleGetConversation,
+  handleGetMessages,
   handleGetRun,
   handleGetRunTree,
   handleGetRecovery,
+  handlePostMessage,
   handleListRuns,
   handleResumeRun,
 } from "./routes/runs.js"
@@ -36,7 +38,7 @@ import {
 } from "./routes/workspaces.js"
 import { handleSetupStatus } from "./routes/setup.js"
 import { handleNotificationDeliveries, handleNotificationTest } from "./routes/notifications.js"
-import { handleTelegramWebhook } from "../notifications/telegramWebhook.js"
+import { handleTelegramChatToolWebhook } from "../notifications/chattool/webhooks/telegram.js"
 import { handleRunEvents } from "./sse/runStream.js"
 import { createBoardStream } from "./sse/boardStream.js"
 import { seedIfEmpty } from "./seed.js"
@@ -95,7 +97,7 @@ const server = createServer(async (req, res) => {
   if (path === "/webhooks/telegram" && req.method === "POST") {
     const config = loadEffectiveConfig()
     if (!config) return json(res, 500, { error: "config unavailable" })
-    return handleTelegramWebhook(repos, config, req, res)
+    return handleTelegramChatToolWebhook(repos, config, req, res)
   }
 
   if (!requireCsrfToken(req, API_TOKEN)) {
@@ -151,12 +153,14 @@ const server = createServer(async (req, res) => {
     if (itemMatch && req.method === "GET") return handleGetItem(repos, res, itemMatch[1])
 
     // ---- Run-scoped subresources --------------------------------------------
-    const runMatch = path.match(/^\/runs\/([^/]+)(?:\/(tree|events|resume|recovery|conversation|answer))?$/)
+    const runMatch = path.match(/^\/runs\/([^/]+)(?:\/(tree|events|messages|resume|recovery|conversation|answer))?$/)
     if (runMatch) {
       const [, runId, sub] = runMatch
       if (!sub && req.method === "GET") return handleGetRun(repos, res, runId)
       if (sub === "tree" && req.method === "GET") return handleGetRunTree(repos, res, runId)
       if (sub === "events" && req.method === "GET") return handleRunEvents(repos, req, res, runId)
+      if (sub === "messages" && req.method === "GET") return handleGetMessages(repos, url, res, runId)
+      if (sub === "messages" && req.method === "POST") return handlePostMessage(repos, req, res, runId)
       if (sub === "conversation" && req.method === "GET") return handleGetConversation(repos, res, runId)
       if (sub === "answer" && req.method === "POST") return handleAnswer(repos, req, res, runId)
       if (sub === "resume" && req.method === "POST") return handleResumeRun(repos, req, res, runId)

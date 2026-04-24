@@ -101,6 +101,7 @@ export function defaultAppConfig(): AppConfig {
     notifications: {
       telegram: {
         enabled: false,
+        level: 2,
         inbound: {
           enabled: false,
         },
@@ -238,6 +239,14 @@ function validateConfig(input: unknown): AppConfig {
       : normalizeOptionalString(telegram.defaultChatId) ?? (() => {
           throw new Error("notifications.telegram.defaultChatId must be a non-empty string when set")
         })()
+  const telegramLevel =
+    telegram?.level === undefined
+      ? undefined
+      : telegram.level === 0 || telegram.level === 1 || telegram.level === 2
+      ? telegram.level
+      : (() => {
+          throw new Error("notifications.telegram.level must be 0, 1, or 2 when set")
+        })()
   const telegramInbound = telegram?.inbound
   if (telegramInbound !== undefined && !isObject(telegramInbound)) {
     throw new Error("notifications.telegram.inbound must be an object when set")
@@ -274,6 +283,7 @@ function validateConfig(input: unknown): AppConfig {
         enabled: telegramEnabled ?? false,
         botTokenEnv: telegramBotTokenEnv,
         defaultChatId: telegramDefaultChatId,
+        level: telegramLevel ?? 2,
         inbound: {
           enabled: telegramInboundEnabled ?? false,
           webhookSecretEnv: telegramWebhookSecretEnv,
@@ -317,6 +327,10 @@ function envOverrides(): SetupOverrides {
     telegramEnabled: coerceBoolean(process.env.BEERENGINEER_TELEGRAM_ENABLED),
     telegramBotTokenEnv: process.env.BEERENGINEER_TELEGRAM_BOT_TOKEN_ENV,
     telegramDefaultChatId: process.env.BEERENGINEER_TELEGRAM_DEFAULT_CHAT_ID,
+    telegramLevel:
+      process.env.BEERENGINEER_TELEGRAM_LEVEL === "0" || process.env.BEERENGINEER_TELEGRAM_LEVEL === "1" || process.env.BEERENGINEER_TELEGRAM_LEVEL === "2"
+        ? Number(process.env.BEERENGINEER_TELEGRAM_LEVEL) as 0 | 1 | 2
+        : undefined,
     telegramInboundEnabled: coerceBoolean(process.env.BEERENGINEER_TELEGRAM_INBOUND_ENABLED),
     telegramWebhookSecretEnv: process.env.BEERENGINEER_TELEGRAM_WEBHOOK_SECRET_ENV,
     githubEnabled: coerceBoolean(process.env.BEERENGINEER_GITHUB_ENABLED),
@@ -353,6 +367,7 @@ export function resolveMergedConfig(state: ConfigFileState, overrides: SetupOver
         enabled: overrides.telegramEnabled ?? base.notifications?.telegram?.enabled ?? false,
         botTokenEnv: overrides.telegramBotTokenEnv ?? base.notifications?.telegram?.botTokenEnv,
         defaultChatId: overrides.telegramDefaultChatId ?? base.notifications?.telegram?.defaultChatId,
+        level: overrides.telegramLevel ?? base.notifications?.telegram?.level ?? 2,
         inbound: {
           enabled:
             overrides.telegramInboundEnabled ?? base.notifications?.telegram?.inbound?.enabled ?? false,

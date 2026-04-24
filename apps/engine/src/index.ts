@@ -22,6 +22,10 @@ import { initDatabase } from "./db/connection.js"
 import { Repos } from "./db/repositories.js"
 import { prepareRun, runWorkflowWithSync } from "./core/runOrchestrator.js"
 import type { ItemRow } from "./db/repositories.js"
+import { projectStageLogRow, type MessageEntry } from "./core/messagingProjection.js"
+import { messagingLevelFromQuery, shouldDeliverAtLevel, type MessagingLevel } from "./core/messagingLevel.js"
+import { renderMessageEntry, terminalExitCodeForEntry } from "./core/messageRendering.js"
+import { tailStageLogs } from "./api/sse/tailStageLogs.js"
 import {
   KNOWN_GROUP_IDS,
   readConfigFile,
@@ -82,7 +86,8 @@ type Command =
   | { kind: "workspace-worktree-gc"; key?: string; json?: boolean }
   | { kind: "status"; workspaceKey?: string; json?: boolean; all?: boolean }
   | { kind: "chat-list"; workspaceKey?: string; json?: boolean; all?: boolean; compact?: boolean }
-  | { kind: "chat-answer"; promptId?: string; runId?: string; answer?: string; multiline?: boolean; editor?: boolean }
+  | { kind: "chat-send"; runId?: string; text?: string; json?: boolean }
+  | { kind: "chat-answer"; promptId?: string; runId?: string; answer?: string; multiline?: boolean; editor?: boolean; json?: boolean }
   | { kind: "items"; workspaceKey?: string; json?: boolean; all?: boolean; compact?: boolean }
   | { kind: "chats"; workspaceKey?: string; json?: boolean; all?: boolean; compact?: boolean }
   | { kind: "runs"; workspaceKey?: string; json?: boolean; all?: boolean; compact?: boolean }
@@ -91,11 +96,15 @@ type Command =
   | { kind: "run-list"; workspaceKey?: string; json?: boolean; all?: boolean; compact?: boolean }
   | { kind: "run-get"; runId?: string; json?: boolean }
   | { kind: "run-open"; runId?: string }
-  | { kind: "run-watch"; runId?: string }
+  | { kind: "run-tail"; runId?: string; level: MessagingLevel; since?: string; json?: boolean }
+  | { kind: "run-messages"; runId?: string; level: MessagingLevel; since?: string; limit: number; json?: boolean }
+  | { kind: "run-watch"; runId?: string; level: MessagingLevel; since?: string; json?: boolean }
   | { kind: "unknown"; token: string }
 
 const UI_DEV_HOST = "127.0.0.1"
 const UI_DEV_PORT = 3100
+const EXIT_USAGE = 20
+const EXIT_TRANSPORT = 30
 
 function readFlag(argv: string[], name: string): string | undefined {
   const idx = argv.indexOf(name)
@@ -114,6 +123,12 @@ export function parseArgs(argv: string[]): Command {
   const workspaceKey = readFlag(argv, "--workspace")
   const all = argv.includes("--all")
   const compact = argv.includes("--compact")
+  const since = readFlag(argv, "--since")
+  const level = messagingLevelFromQuery(readFlag(argv, "--level"), 1)
+  const messagesLevel = messagingLevelFromQuery(readFlag(argv, "--level"), 2)
+  const rawLimit = Number(readFlag(argv, "--limit") ?? 200)
+  const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.floor(rawLimit) : 200
+  const positionalThird = argv[2] && !argv[2].startsWith("--") ? argv[2] : undefined
   if (first === undefined || first === "--json" || first === "--workspace") {
     return { kind: "workflow", json, workspaceKey, verbose: argv.includes("--verbose") }
   }
@@ -124,7 +139,9 @@ export function parseArgs(argv: string[]): Command {
     if (second === "list") return { kind: "run-list", workspaceKey, json, all, compact }
     if (second === "get") return { kind: "run-get", runId: argv[2], json }
     if (second === "open") return { kind: "run-open", runId: argv[2] }
-    if (second === "watch") return { kind: "run-watch", runId: argv[2] }
+    if (second === "tail") return { kind: "run-tail", runId: argv[2], level, since, json }
+    if (second === "messages") return { kind: "run-messages", runId: argv[2], level: messagesLevel, since, limit, json }
+    if (second === "watch") return { kind: "run-watch", runId: argv[2], level, since, json }
     return { kind: "unknown", token: argv.join(" ") }
   }
   if (first === "--help" || first === "-h" || first === "help") return { kind: "help" }
@@ -164,19 +181,36 @@ export function parseArgs(argv: string[]): Command {
   if (first === "workspace" && second === "backfill") return { kind: "workspace-backfill", json }
   if (first === "workspace" && second === "gc-worktrees") return { kind: "workspace-worktree-gc", key: argv[2], json }
   if (first === "chat" && second === "list") return { kind: "chat-list", workspaceKey, json, all, compact }
+  if (first === "chat" && second === "send") {
+    return {
+      kind: "chat-send",
+      runId: positionalThird ?? readFlag(argv, "--run"),
+      text: argv.slice(3).filter(part => !part.startsWith("--")).join(" ") || readFlag(argv, "--text"),
+      json,
+    }
+  }
   if (first === "chat" && second === "answer") {
+    const positionalRunId = positionalThird
+    const positionalAnswer =
+      positionalRunId ? argv.slice(3).filter(part => !part.startsWith("--")).join(" ") || undefined : undefined
     return {
       kind: "chat-answer",
       promptId: readFlag(argv, "--prompt"),
-      runId: readFlag(argv, "--run"),
-      answer: readFlag(argv, "--text"),
+      runId: readFlag(argv, "--run") ?? positionalRunId,
+      answer: readFlag(argv, "--text") ?? positionalAnswer,
       multiline: argv.includes("--multiline"),
       editor: argv.includes("--editor"),
+      json,
     }
   }
   if (first === "items") return { kind: "items", workspaceKey, json, all, compact }
   if (first === "chats") return { kind: "chats", workspaceKey, json, all, compact }
-  if (first === "runs") return { kind: "runs", workspaceKey, json, all, compact }
+  if (first === "runs") {
+    if (second === "tail") return { kind: "run-tail", runId: argv[2], level, since, json }
+    if (second === "messages") return { kind: "run-messages", runId: argv[2], level: messagesLevel, since, limit, json }
+    if (second === "watch") return { kind: "run-watch", runId: argv[2], level, since, json }
+    return { kind: "runs", workspaceKey, json, all, compact }
+  }
   if (first === "item" && second === "get") return { kind: "item-get", itemRef: argv[2], workspaceKey, json }
   if (first === "item" && second === "open") return { kind: "item-open", itemRef: argv[2], workspaceKey }
   if (first === "start" && second === "ui") return { kind: "start-ui" }
@@ -236,10 +270,17 @@ function printHelp(): void {
     "    beerengineer item open <id|code> [--workspace <key>] Open one item in the UI",
     "    beerengineer run list [--all] [--compact]            List runs",
     "    beerengineer run get <run-id> [--json]               Show one run",
-    "    beerengineer run watch <run-id>                      Print run events",
+    "    beerengineer runs messages <run-id> [--level L2]    Show canonical message history",
+    "                                                         Flags: [--since <id>] [--limit N] [--json]",
+    "    beerengineer runs tail <run-id> [--level L1]        Tail canonical message stream",
+    "                                                         Flags: [--since <id>] [--json]",
+    "    beerengineer runs watch <run-id> [--level L1]       Replay history, then tail live",
+    "                                                         Flags: [--since <id>] [--json]",
     "    beerengineer run open <run-id>                       Open one run in the UI",
     "    beerengineer chat list [--all] [--compact]           List open prompts",
+    "    beerengineer chat send <run-id> <text>              Send a free-form user message",
     "    beerengineer chat answer (--prompt <id>|--run <id>)  Answer a prompt",
+    "    beerengineer chat answer <run-id> <text>             Positional shortcut for the active prompt",
     "    beerengineer --help                                  Show this help",
     "",
     "  Item actions:",
@@ -252,6 +293,11 @@ function printHelp(): void {
     "    --commit <sha>                 Optional. Fix commit SHA.",
     "    --notes <text>                 Optional. Extra review notes.",
     "    --yes                          Skip the interactive prompt when on a TTY.",
+    "",
+    "  Message levels:",
+    "    L2  milestones only",
+    "    L1  milestones plus operational detail",
+    "    L0  full debug stream",
     "",
     "  Workflow behavior:",
     "    User prompts are limited to intake and blocked-run recovery.",
@@ -382,6 +428,47 @@ function runSortWeight(status: string): number {
 
 function truncate(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, Math.max(0, max - 1))}…`
+}
+
+function currentRunTerminalCode(repos: Repos, runId: string): number | null {
+  const run = repos.getRun(runId)
+  if (!run) return null
+  if (run.recovery_status === "blocked") return 11
+  if (run.recovery_status === "failed" || run.status === "failed") return 10
+  if (run.status === "completed") return 0
+  return null
+}
+
+function listProjectedMessages(
+  repos: Repos,
+  input: { runId: string; level: MessagingLevel; since?: string; limit: number },
+): { entries: MessageEntry[]; nextSince: string | null } {
+  const entries: MessageEntry[] = []
+  let cursor = input.since
+  const batchSize = Math.min(Math.max(input.limit, 1), 500)
+  while (entries.length < input.limit) {
+    const batch = repos.listLogsForRunAfterId(input.runId, cursor, batchSize)
+    if (batch.length === 0) break
+    for (const row of batch) {
+      const entry = projectStageLogRow(row)
+      if (entry && shouldDeliverAtLevel(entry, input.level)) entries.push(entry)
+      cursor = row.id
+      if (entries.length >= input.limit) break
+    }
+    if (batch.length < batchSize) break
+  }
+  return {
+    entries,
+    nextSince: entries.length === input.limit ? entries[entries.length - 1]?.id ?? null : null,
+  }
+}
+
+function printMessageEntry(entry: MessageEntry): void {
+  console.log(`  ${renderMessageEntry(entry)}`)
+}
+
+function emitJsonLine(payload: unknown): void {
+  process.stdout.write(`${JSON.stringify(payload)}\n`)
 }
 
 function readAnswerBody(opts: { provided?: string; multiline?: boolean }): string {
@@ -1077,7 +1164,7 @@ async function runChatAnswerCommand(cmd: Extract<Command, { kind: "chat-answer" 
       undefined
     if (!prompt || prompt.answered_at) {
       console.error("  Open prompt not found.")
-      return 1
+      return EXIT_USAGE
     }
     const answer = readAnswerBody({ provided: cmd.answer, multiline: cmd.multiline })
     const result = recordAnswer(repos, {
@@ -1088,7 +1175,11 @@ async function runChatAnswerCommand(cmd: Extract<Command, { kind: "chat-answer" 
     })
     if (!result.ok) {
       console.error(`  Could not record answer: ${result.code}`)
-      return 1
+      return EXIT_USAGE
+    }
+    if (cmd.json) {
+      process.stdout.write(`${JSON.stringify(result.conversation, null, 2)}\n`)
+      return 0
     }
     console.log(`  answered ${prompt.id}`)
     console.log(`  run: ${prompt.run_id}`)
@@ -1099,10 +1190,117 @@ async function runChatAnswerCommand(cmd: Extract<Command, { kind: "chat-answer" 
   }
 }
 
-async function runRunWatchCommand(runId: string | undefined): Promise<number> {
+async function runChatSendCommand(cmd: Extract<Command, { kind: "chat-send" }>): Promise<number> {
+  const { recordUserMessage } = await import("./core/conversation.js")
+  if (!cmd.runId || !cmd.text) {
+    console.error("  Usage: beerengineer chat send <run-id> <text>")
+    return EXIT_USAGE
+  }
+  const db = initDatabase()
+  try {
+    const repos = new Repos(db)
+    const result = recordUserMessage(repos, {
+      runId: cmd.runId,
+      text: cmd.text,
+      source: "cli",
+    })
+    if (!result.ok) {
+      console.error(`  Could not send message: ${result.code}`)
+      return EXIT_USAGE
+    }
+    const entry = projectStageLogRow(repos.listLogsForRun(cmd.runId).find(row => row.id === result.entryId)!)
+    if (cmd.json) {
+      process.stdout.write(`${JSON.stringify(entry ?? { id: result.entryId, runId: cmd.runId }, null, 2)}\n`)
+      return 0
+    }
+    console.log(`  sent ${result.entryId}`)
+    console.log(`  run: ${cmd.runId}`)
+    return 0
+  } finally {
+    db.close()
+  }
+}
+
+async function runRunMessagesCommand(cmd: Extract<Command, { kind: "run-messages" }>): Promise<number> {
+  if (!cmd.runId) {
+    console.error("  Missing run id: beerengineer runs messages <run-id>")
+    return EXIT_USAGE
+  }
+  const db = initDatabase()
+  try {
+    const repos = new Repos(db)
+    const run = repos.getRun(cmd.runId)
+    if (!run) {
+      console.error(`  Run not found: ${cmd.runId}`)
+      return 1
+    }
+    const result = listProjectedMessages(repos, {
+      runId: cmd.runId,
+      level: cmd.level,
+      since: cmd.since,
+      limit: cmd.limit,
+    })
+    if (cmd.json) {
+      process.stdout.write(`${JSON.stringify({ runId: cmd.runId, schema: "messages-v1", nextSince: result.nextSince, entries: result.entries }, null, 2)}\n`)
+      return 0
+    }
+    console.log(`  messages ${run.id}  ${run.title}`)
+    result.entries.forEach(printMessageEntry)
+    return 0
+  } finally {
+    db.close()
+  }
+}
+
+async function runRunTailCommand(cmd: Extract<Command, { kind: "run-tail" }>): Promise<number> {
+  if (!cmd.runId) {
+    console.error("  Missing run id: beerengineer runs tail <run-id>")
+    return EXIT_USAGE
+  }
+  const db = initDatabase()
+  try {
+    const repos = new Repos(db)
+    const run = repos.getRun(cmd.runId)
+    if (!run) {
+      console.error(`  Run not found: ${cmd.runId}`)
+      return 1
+    }
+    const sinceId =
+      cmd.since ??
+      repos.listLogsForRunAfterCursor(cmd.runId, 0).slice(-1)[0]?.id ??
+      undefined
+
+    return await new Promise<number>((resolve) => {
+      let resolved = false
+      const finish = (code: number): void => {
+        if (resolved) return
+        resolved = true
+        tail.stop()
+        resolve(code)
+      }
+      const tail = tailStageLogs(repos, { scope: { kind: "run", runId: cmd.runId! }, sinceId }, row => {
+        const entry = projectStageLogRow(row)
+        if (!entry || !shouldDeliverAtLevel(entry, cmd.level)) return
+        if (cmd.json) emitJsonLine(entry)
+        else printMessageEntry(entry)
+        const exitCode = terminalExitCodeForEntry(entry)
+        if (exitCode !== null) finish(exitCode)
+      })
+      tail.pollOnce()
+
+      const terminal = currentRunTerminalCode(repos, cmd.runId!)
+      if (terminal !== null && !resolved) finish(terminal)
+    })
+  } finally {
+    db.close()
+  }
+}
+
+async function runRunWatchCommand(cmd: Extract<Command, { kind: "run-watch" }>): Promise<number> {
+  const runId = cmd.runId
   if (!runId) {
-    console.error("  Missing run id: beerengineer run watch <run-id>")
-    return 2
+    console.error("  Missing run id: beerengineer runs watch <run-id>")
+    return EXIT_USAGE
   }
   const db = initDatabase()
   try {
@@ -1112,28 +1310,37 @@ async function runRunWatchCommand(runId: string | undefined): Promise<number> {
       console.error(`  Run not found: ${runId}`)
       return 1
     }
-    console.log(`  watching ${run.id}  ${run.title}`)
-    const { buildConversation } = await import("./core/conversation.js")
-    const conversation = buildConversation(repos, run.id)
-    const conversationLogIds = new Set(conversation?.entries.map(e => e.id) ?? [])
-    for (const log of repos.listLogsForRun(run.id)) {
-      if (log.event_type === "stage_started") {
-        console.log(`  -> stage  ${log.message}`)
-      } else if (log.event_type === "stage_completed") {
-        console.log(`  <- stage  ${log.message}`)
-      } else if (log.event_type === "chat_message" && conversationLogIds.has(log.id)) {
-        console.log(`  chat  ${log.message}`)
-      } else if (log.event_type === "prompt_requested" && conversationLogIds.has(log.id)) {
-        const entry = conversation?.entries.find(e => e.id === log.id)
-        console.log(`  ?  ${entry?.text ?? log.message}`)
-      } else if (log.event_type === "prompt_answered") {
-        console.log(`  > answer  ${log.message}`)
-      }
+    if (!cmd.json) console.log(`  watching ${run.id}  ${run.title}`)
+    const result = listProjectedMessages(repos, {
+      runId,
+      level: cmd.level,
+      since: cmd.since,
+      limit: Number.MAX_SAFE_INTEGER,
+    })
+    for (const entry of result.entries) {
+      if (cmd.json) emitJsonLine(entry)
+      else printMessageEntry(entry)
     }
-    if (conversation?.openPrompt) console.log(`  ?  waiting  ${conversation.openPrompt.text}`)
-    const refreshed = repos.getRun(run.id)
-    console.log(`  done  ${refreshed?.current_stage ?? "—"} / ${refreshed?.status ?? "unknown"}`)
-    return 0
+    const terminalFromHistory = result.entries.map(terminalExitCodeForEntry).find(code => code !== null)
+    if (terminalFromHistory !== undefined) {
+      if (!cmd.json) {
+        const refreshed = repos.getRun(run.id)
+        console.log(`  done  ${refreshed?.current_stage ?? "—"} / ${refreshed?.status ?? "unknown"}`)
+      }
+      return terminalFromHistory ?? 0
+    }
+    const tailCode = await runRunTailCommand({
+      kind: "run-tail",
+      runId,
+      level: cmd.level,
+      since: result.entries.at(-1)?.id ?? cmd.since,
+      json: cmd.json,
+    })
+    if (!cmd.json) {
+      const refreshed = repos.getRun(run.id)
+      console.log(`  done  ${refreshed?.current_stage ?? "—"} / ${refreshed?.status ?? "unknown"}`)
+    }
+    return tailCode
   } finally {
     db.close()
   }
@@ -1777,6 +1984,8 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     case "chat-list":
     case "chats":
       process.exit(await runChatListCommand(cmd.workspaceKey, cmd.all, cmd.json, cmd.compact))
+    case "chat-send":
+      process.exit(await runChatSendCommand(cmd))
     case "chat-answer":
       process.exit(await runChatAnswerCommand(cmd))
     case "items":
@@ -1792,8 +2001,12 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       process.exit(await runRunGetCommand(cmd.runId, cmd.json))
     case "run-open":
       process.exit(await runRunOpenCommand(cmd.runId))
+    case "run-tail":
+      process.exit(await runRunTailCommand(cmd))
+    case "run-messages":
+      process.exit(await runRunMessagesCommand(cmd))
     case "run-watch":
-      process.exit(await runRunWatchCommand(cmd.runId))
+      process.exit(await runRunWatchCommand(cmd))
     case "start-ui":
       process.exit(await startUi())
     case "item-action":

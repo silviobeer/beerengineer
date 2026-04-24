@@ -4,6 +4,14 @@ async function readJsonResponse<T>(res: Response): Promise<T> {
   return (await res.json()) as T
 }
 
+export type OpenPrompt = {
+  promptId: string
+  runId: string
+  stageKey: string | null
+  text: string
+  createdAt: string
+}
+
 export type RunRow = {
   id: string
   workspace_id: string
@@ -17,6 +25,7 @@ export type RunRow = {
   recovery_summary?: string | null
   created_at: number
   updated_at: number
+  openPrompt?: OpenPrompt | null
 }
 
 export type RecoveryRemediation = {
@@ -111,19 +120,31 @@ export type ConversationEntry = {
   answerTo?: string
 }
 
-export type OpenPrompt = {
-  promptId: string
-  runId: string
-  stageKey: string | null
-  text: string
-  createdAt: string
-}
-
 export type ConversationResponse = {
   runId: string
   updatedAt: string
   entries: ConversationEntry[]
   openPrompt: OpenPrompt | null
+}
+
+export type MessagingLevel = 0 | 1 | 2
+
+export type MessageEntry = {
+  id: string
+  ts: string
+  runId: string
+  stageRunId: string | null
+  type: string
+  level: MessagingLevel
+  force: boolean
+  payload: Record<string, unknown>
+}
+
+export type MessageHistoryResponse = {
+  runId: string
+  schema: "messages-v1"
+  nextSince: string | null
+  entries: MessageEntry[]
 }
 
 export async function getConversation(runId: string): Promise<ConversationResponse | null> {
@@ -163,6 +184,20 @@ export async function getRunTree(runId: string): Promise<{ run: RunRow; stageRun
   const res = await fetch(`/api/runs/${runId}/tree`, { cache: "no-store" })
   if (!res.ok) return null
   return (await res.json()) as { run: RunRow; stageRuns: StageRunRow[] }
+}
+
+export async function getRunMessages(
+  runId: string,
+  opts: { level?: MessagingLevel; since?: string; limit?: number } = {},
+): Promise<MessageHistoryResponse | null> {
+  const qs = new URLSearchParams()
+  if (opts.level !== undefined) qs.set("level", String(opts.level))
+  if (opts.since) qs.set("since", opts.since)
+  if (opts.limit !== undefined) qs.set("limit", String(opts.limit))
+  const suffix = qs.toString() ? `?${qs.toString()}` : ""
+  const res = await fetch(`/api/runs/${runId}/messages${suffix}`, { cache: "no-store" })
+  if (!res.ok) return null
+  return (await res.json()) as MessageHistoryResponse
 }
 
 export type ItemAction =

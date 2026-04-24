@@ -51,6 +51,15 @@ export function attachDbSync(
     switch (event.type) {
       case "run_started": {
         repos.updateRun(event.runId, { status: "running" })
+        track(repos.appendLog({
+          runId: event.runId,
+          eventType: "run_started",
+          message: event.title,
+          data: {
+            itemId: event.itemId,
+            title: event.title,
+          },
+        }))
         return
       }
       case "stage_started": {
@@ -73,7 +82,12 @@ export function attachDbSync(
           runId: event.runId,
           stageRunId: stageRun.id,
           eventType: "stage_started",
-          message: `stage ${event.stageKey} started`
+          message: `stage ${event.stageKey} started`,
+          data: {
+            stageRunId: stageRun.id,
+            stageKey: event.stageKey,
+            projectId: persistedProjectId,
+          },
         }))
         return
       }
@@ -89,7 +103,12 @@ export function attachDbSync(
           stageRunId: stageRunId ?? null,
           eventType: "stage_completed",
           message: `stage ${event.stageKey} ${event.status}`,
-          data: event.error ? { error: event.error } : undefined
+          data: {
+            stageRunId: stageRunId ?? null,
+            stageKey: event.stageKey,
+            status: event.status,
+            error: event.error,
+          },
         }))
         return
       }
@@ -99,7 +118,7 @@ export function attachDbSync(
           stageRunId: event.stageRunId ?? null,
           eventType: "prompt_requested",
           message: event.prompt,
-          data: { promptId: event.promptId }
+          data: { promptId: event.promptId, prompt: event.prompt }
         }))
         return
       }
@@ -108,7 +127,73 @@ export function attachDbSync(
           runId: event.runId,
           eventType: "prompt_answered",
           message: event.answer,
-          data: { promptId: event.promptId }
+          data: { promptId: event.promptId, answer: event.answer }
+        }))
+        return
+      }
+      case "loop_iteration": {
+        track(repos.appendLog({
+          runId: event.runId,
+          stageRunId: event.stageRunId ?? null,
+          eventType: "loop_iteration",
+          message: `${event.phase} ${event.n}`,
+          data: { n: event.n, phase: event.phase, stageKey: event.stageKey ?? null },
+        }))
+        return
+      }
+      case "tool_called": {
+        track(repos.appendLog({
+          runId: event.runId,
+          stageRunId: event.stageRunId ?? null,
+          eventType: "tool_called",
+          message: event.name,
+          data: {
+            name: event.name,
+            argsPreview: event.argsPreview,
+            provider: event.provider,
+          },
+        }))
+        return
+      }
+      case "tool_result": {
+        track(repos.appendLog({
+          runId: event.runId,
+          stageRunId: event.stageRunId ?? null,
+          eventType: "tool_result",
+          message: event.name,
+          data: {
+            name: event.name,
+            argsPreview: event.argsPreview,
+            resultPreview: event.resultPreview,
+            provider: event.provider,
+            isError: event.isError ?? false,
+          },
+        }))
+        return
+      }
+      case "llm_thinking": {
+        track(repos.appendLog({
+          runId: event.runId,
+          stageRunId: event.stageRunId ?? null,
+          eventType: "llm_thinking",
+          message: event.text,
+          data: { provider: event.provider, model: event.model },
+        }))
+        return
+      }
+      case "llm_tokens": {
+        track(repos.appendLog({
+          runId: event.runId,
+          stageRunId: event.stageRunId ?? null,
+          eventType: "llm_tokens",
+          message: `${event.provider ?? "llm"} in=${event.in} out=${event.out}`,
+          data: {
+            in: event.in,
+            out: event.out,
+            cached: event.cached ?? 0,
+            provider: event.provider,
+            model: event.model,
+          },
         }))
         return
       }
@@ -125,7 +210,7 @@ export function attachDbSync(
           stageRunId: event.stageRunId ?? null,
           eventType: "artifact_written",
           message: event.label,
-          data: { path: event.path, kind: event.kind }
+          data: { label: event.label, path: event.path, kind: event.kind }
         }))
         return
       }
@@ -133,7 +218,8 @@ export function attachDbSync(
         track(repos.appendLog({
           runId: event.runId,
           eventType: "log",
-          message: event.message
+          message: event.message,
+          data: { level: event.level ?? "info" },
         }))
         return
       }
@@ -145,7 +231,12 @@ export function attachDbSync(
           runId: event.runId,
           eventType: "run_finished",
           message: `run ${event.status}`,
-          data: event.error ? { error: event.error } : undefined
+          data: {
+            itemId: event.itemId,
+            title: event.title,
+            status: event.status,
+            error: event.error,
+          },
         }))
         return
       }
@@ -172,7 +263,14 @@ export function attachDbSync(
           runId: event.runId,
           eventType: "project_created",
           message: event.name,
-          data: { projectId: event.projectId, code: event.code, position: event.position }
+          data: {
+            itemId: event.itemId,
+            projectId: event.projectId,
+            code: event.code,
+            name: event.name,
+            summary: event.summary,
+            position: event.position,
+          },
         }))
         return
       }
@@ -196,7 +294,13 @@ export function attachDbSync(
           runId: event.runId,
           eventType: event.type,
           message: event.summary,
-          data: { cause: event.cause, scope, branch: "branch" in event ? event.branch : undefined }
+          data: {
+            itemId: "itemId" in event ? event.itemId : undefined,
+            title: "title" in event ? event.title : undefined,
+            cause: event.cause,
+            scope,
+            branch: "branch" in event ? event.branch : undefined,
+          },
         }))
         return
       }
@@ -250,6 +354,10 @@ export function attachDbSync(
           },
         }))
         return
+      }
+      default: {
+        const exhaustive: never = event
+        return exhaustive
       }
     }
   }

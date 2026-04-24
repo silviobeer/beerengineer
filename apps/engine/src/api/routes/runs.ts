@@ -3,7 +3,9 @@ import type { Db } from "../../db/connection.js"
 import type { Repos } from "../../db/repositories.js"
 import { getBoard, getRunTree } from "../board.js"
 import { isResumeInFlight } from "../../core/resume.js"
-import { buildConversation, recordAnswer } from "../../core/conversation.js"
+import { buildConversation, recordAnswer, recordUserMessage } from "../../core/conversation.js"
+import { messagingLevelFromQuery, shouldDeliverAtLevel } from "../../core/messagingLevel.js"
+import { projectStageLogRow } from "../../core/messagingProjection.js"
 import { resumeRunInProcess, startRunFromIdea } from "../../core/runService.js"
 import { json, readJson } from "../http.js"
 
@@ -34,6 +36,58 @@ export function handleGetConversation(repos: Repos, res: ServerResponse, runId: 
   const conversation = buildConversation(repos, runId)
   if (!conversation) return json(res, 404, { error: "run not found", code: "not_found" })
   json(res, 200, conversation)
+}
+
+export function handleGetMessages(repos: Repos, url: URL, res: ServerResponse, runId: string): void {
+  const run = repos.getRun(runId)
+  if (!run) return json(res, 404, { error: "run not found", code: "not_found" })
+
+  const level = messagingLevelFromQuery(url.searchParams.get("level"), 2)
+  const since = url.searchParams.get("since")
+  const rawLimit = Number(url.searchParams.get("limit") ?? 200)
+  const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 500) : 200
+
+  const entries = []
+  let cursor = since
+  while (entries.length < limit) {
+    const batch = repos.listLogsForRunAfterId(runId, cursor, limit * 4)
+    if (batch.length === 0) break
+    for (const row of batch) {
+      const entry = projectStageLogRow(row)
+      if (entry && shouldDeliverAtLevel(entry, level)) entries.push(entry)
+      cursor = row.id
+      if (entries.length >= limit) break
+    }
+    if (batch.length < limit * 4) break
+  }
+
+  json(res, 200, {
+    runId,
+    schema: "messages-v1",
+    nextSince: entries.length === limit ? entries[entries.length - 1]?.id ?? null : null,
+    entries,
+  })
+}
+
+export async function handlePostMessage(
+  repos: Repos,
+  req: IncomingMessage,
+  res: ServerResponse,
+  runId: string,
+): Promise<void> {
+  const body = (await readJson(req)) as { text?: string; source?: string }
+  const source = body.source === "cli" || body.source === "webhook" ? body.source : "api"
+  const result = recordUserMessage(repos, {
+    runId,
+    text: typeof body.text === "string" ? body.text : "",
+    source,
+  })
+  if (!result.ok) {
+    if (result.code === "empty_message") return json(res, 400, { error: "text is required", code: "bad_request" })
+    return json(res, 404, { error: "run not found", code: "not_found" })
+  }
+  const entry = result.conversation.entries.find(candidate => candidate.id === result.entryId) ?? null
+  json(res, 201, { ok: true, entry, conversation: result.conversation })
 }
 
 export function handleGetRecovery(repos: Repos, res: ServerResponse, runId: string): void {

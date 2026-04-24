@@ -38,7 +38,7 @@ test("workspace items lists not-done items first with stage/status context", asy
     const originalWrite = process.stdout.write.bind(process.stdout)
     const originalExit = process.exit
     process.stdout.write = ((chunk: string | Uint8Array) => {
-      stdout += chunk.toString()
+      stdout += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8")
       return true
     }) as typeof process.stdout.write
     process.exit = ((code?: number) => {
@@ -100,7 +100,7 @@ test("chat list shows open prompts across workspaces with resolved question text
     const originalWrite = process.stdout.write.bind(process.stdout)
     const originalExit = process.exit
     process.stdout.write = ((chunk: string | Uint8Array) => {
-      stdout += chunk.toString()
+      stdout += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8")
       return true
     }) as typeof process.stdout.write
     process.exit = ((code?: number) => {
@@ -155,7 +155,7 @@ test("workspace use selects the current workspace for items/chats shortcuts", as
     const originalWrite = process.stdout.write.bind(process.stdout)
     const originalExit = process.exit
     process.stdout.write = ((chunk: string | Uint8Array) => {
-      stdout += chunk.toString()
+      stdout += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8")
       return true
     }) as typeof process.stdout.write
     process.exit = ((code?: number) => {
@@ -227,7 +227,7 @@ test("status summarizes the current workspace and repo state", async () => {
     const originalWrite = process.stdout.write.bind(process.stdout)
     const originalExit = process.exit
     process.stdout.write = ((chunk: string | Uint8Array) => {
-      stdout += chunk.toString()
+      stdout += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8")
       return true
     }) as typeof process.stdout.write
     process.exit = ((code?: number) => {
@@ -719,7 +719,7 @@ test("chat answer can target the latest open prompt by run id", async () => {
   }
 })
 
-test("run watch prints shaped events and final status", async () => {
+test("run watch replays canonical messages and final status", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-cli-"))
   const previousUiDbPath = process.env.BEERENGINEER_UI_DB_PATH
   const dbPath = join(dir, "beerengineer.sqlite")
@@ -731,12 +731,31 @@ test("run watch prints shaped events and final status", async () => {
     const ws = repos.upsertWorkspace({ key: "demo", name: "Demo", rootPath: "/tmp/demo" })
     const item = repos.createItem({ workspaceId: ws.id, code: "ITEM-0500", title: "Watch item", description: "watch" })
     const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "cli" })
+    repos.appendLog({ runId: run.id, eventType: "run_started", message: item.title, data: { itemId: item.id, title: item.title } })
     repos.updateRun(run.id, { current_stage: "requirements", status: "completed" })
     const stageRun = repos.createStageRun({ runId: run.id, stageKey: "requirements" })
     repos.completeStageRun(stageRun.id, "completed")
-    repos.appendLog({ runId: run.id, stageRunId: stageRun.id, eventType: "stage_started", message: "requirements" })
-    repos.appendLog({ runId: run.id, stageRunId: stageRun.id, eventType: "chat_message", message: "Working through requirements" })
-    repos.appendLog({ runId: run.id, stageRunId: stageRun.id, eventType: "stage_completed", message: "requirements" })
+    repos.appendLog({ runId: run.id, stageRunId: stageRun.id, eventType: "stage_started", message: "requirements", data: { stageKey: "requirements" } })
+    repos.appendLog({
+      runId: run.id,
+      stageRunId: stageRun.id,
+      eventType: "chat_message",
+      message: "Working through requirements",
+      data: { role: "assistant", source: "stage-agent", requiresResponse: true },
+    })
+    repos.appendLog({
+      runId: run.id,
+      stageRunId: stageRun.id,
+      eventType: "stage_completed",
+      message: "requirements",
+      data: { stageKey: "requirements", status: "completed" },
+    })
+    repos.appendLog({
+      runId: run.id,
+      eventType: "run_finished",
+      message: "run completed",
+      data: { itemId: item.id, title: item.title, status: "completed" },
+    })
 
     let stdout = ""
     const originalWrite = process.stdout.write.bind(process.stdout)
@@ -760,10 +779,158 @@ test("run watch prints shaped events and final status", async () => {
     }
 
     assert.match(stdout, /watching .* Watch item/)
-    assert.match(stdout, /-> stage  requirements/)
-    assert.match(stdout, /chat  Working through requirements/)
-    assert.match(stdout, /<- stage  requirements/)
+    assert.match(stdout, /run started  Watch item/)
+    assert.match(stdout, /-> phase  requirements/)
+    assert.match(stdout, /agent  Working through requirements/)
+    assert.match(stdout, /<- phase  requirements/)
     assert.match(stdout, /done  requirements \/ completed/)
+  } finally {
+    db.close()
+    if (previousUiDbPath === undefined) delete process.env.BEERENGINEER_UI_DB_PATH
+    else process.env.BEERENGINEER_UI_DB_PATH = previousUiDbPath
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("runs messages prints canonical JSON payload", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-"))
+  const previousUiDbPath = process.env.BEERENGINEER_UI_DB_PATH
+  const dbPath = join(dir, "beerengineer.sqlite")
+  const db = initDatabase(dbPath)
+  const repos = new Repos(db)
+
+  try {
+    process.env.BEERENGINEER_UI_DB_PATH = dbPath
+    const ws = repos.upsertWorkspace({ key: "demo", name: "Demo", rootPath: "/tmp/demo" })
+    const item = repos.createItem({ workspaceId: ws.id, code: "ITEM-0501", title: "Messages item", description: "messages" })
+    const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "cli" })
+    repos.appendLog({ runId: run.id, eventType: "run_started", message: item.title, data: { itemId: item.id, title: item.title } })
+    repos.appendLog({ runId: run.id, eventType: "chat_message", message: "debug", data: { role: "assistant", source: "stage-agent" } })
+
+    let stdout = ""
+    const originalWrite = process.stdout.write.bind(process.stdout)
+    const originalExit = process.exit
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      stdout += chunk.toString()
+      return true
+    }) as typeof process.stdout.write
+    process.exit = ((code?: number) => {
+      throw new Error(`EXIT:${code ?? 0}`)
+    }) as typeof process.exit
+
+    try {
+      await main(["runs", "messages", run.id, "--json"])
+      assert.fail("expected main() to exit")
+    } catch (err) {
+      assert.equal((err as Error).message, "EXIT:0")
+    } finally {
+      process.stdout.write = originalWrite
+      process.exit = originalExit
+    }
+
+    const payload = JSON.parse(stdout) as { schema: string; entries: Array<{ type: string }> }
+    assert.equal(payload.schema, "messages-v1")
+    assert.deepEqual(payload.entries.map(entry => entry.type), ["run_started"])
+  } finally {
+    db.close()
+    if (previousUiDbPath === undefined) delete process.env.BEERENGINEER_UI_DB_PATH
+    else process.env.BEERENGINEER_UI_DB_PATH = previousUiDbPath
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("runs tail streams new canonical entries from --since and exits blocked with code 11", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-"))
+  const previousUiDbPath = process.env.BEERENGINEER_UI_DB_PATH
+  const dbPath = join(dir, "beerengineer.sqlite")
+  const db = initDatabase(dbPath)
+  const repos = new Repos(db)
+
+  try {
+    process.env.BEERENGINEER_UI_DB_PATH = dbPath
+    const ws = repos.upsertWorkspace({ key: "demo", name: "Demo", rootPath: "/tmp/demo" })
+    const item = repos.createItem({ workspaceId: ws.id, code: "ITEM-0502", title: "Tail item", description: "tail" })
+    const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "cli" })
+    const first = repos.appendLog({ runId: run.id, eventType: "run_started", message: item.title, data: { itemId: item.id, title: item.title } })
+
+    let stdout = ""
+    const originalWrite = process.stdout.write.bind(process.stdout)
+    const originalExit = process.exit
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      stdout += chunk.toString()
+      return true
+    }) as typeof process.stdout.write
+    process.exit = ((code?: number) => {
+      throw new Error(`EXIT:${code ?? 0}`)
+    }) as typeof process.exit
+
+    const promise = main(["runs", "tail", run.id, "--since", first.id, "--level", "L2"])
+    setTimeout(() => {
+      repos.appendLog({
+        runId: run.id,
+        eventType: "run_blocked",
+        message: "Need operator input",
+        data: { itemId: item.id, title: item.title, cause: "blocked", scope: { type: "run", runId: run.id } },
+      })
+    }, 100)
+
+    try {
+      await promise
+      assert.fail("expected main() to exit")
+    } catch (err) {
+      assert.equal((err as Error).message, "EXIT:11")
+    } finally {
+      process.stdout.write = originalWrite
+      process.exit = originalExit
+    }
+
+    assert.match(stdout, /run blocked  Need operator input/)
+  } finally {
+    db.close()
+    if (previousUiDbPath === undefined) delete process.env.BEERENGINEER_UI_DB_PATH
+    else process.env.BEERENGINEER_UI_DB_PATH = previousUiDbPath
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("chat send appends a user message", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-"))
+  const previousUiDbPath = process.env.BEERENGINEER_UI_DB_PATH
+  const dbPath = join(dir, "beerengineer.sqlite")
+  const db = initDatabase(dbPath)
+  const repos = new Repos(db)
+
+  try {
+    process.env.BEERENGINEER_UI_DB_PATH = dbPath
+    const ws = repos.upsertWorkspace({ key: "demo", name: "Demo", rootPath: "/tmp/demo" })
+    const item = repos.createItem({ workspaceId: ws.id, code: "ITEM-0503", title: "Chat send item", description: "chat" })
+    const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "cli" })
+
+    let stdout = ""
+    const originalWrite = process.stdout.write.bind(process.stdout)
+    const originalExit = process.exit
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      stdout += chunk.toString()
+      return true
+    }) as typeof process.stdout.write
+    process.exit = ((code?: number) => {
+      throw new Error(`EXIT:${code ?? 0}`)
+    }) as typeof process.exit
+
+    try {
+      await main(["chat", "send", run.id, "Heads", "up"])
+      assert.fail("expected main() to exit")
+    } catch (err) {
+      assert.equal((err as Error).message, "EXIT:0")
+    } finally {
+      process.stdout.write = originalWrite
+      process.exit = originalExit
+    }
+
+    assert.match(stdout, /sent/)
+    const log = repos.listLogsForRun(run.id).find(row => row.event_type === "chat_message")
+    assert.ok(log)
+    assert.equal(log?.message, "Heads up")
   } finally {
     db.close()
     if (previousUiDbPath === undefined) delete process.env.BEERENGINEER_UI_DB_PATH

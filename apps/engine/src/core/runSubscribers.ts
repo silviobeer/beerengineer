@@ -3,7 +3,7 @@ import { attachCrossProcessBridge } from "./crossProcessBridge.js"
 import { attachDbSync } from "./runOrchestrator.js"
 import { readWorkspaceConfig } from "./workspaces.js"
 import type { Repos, WorkspaceRow } from "../db/repositories.js"
-import { attachTelegramNotifications } from "../notifications/index.js"
+import { attachChatToolNotifications } from "../notifications/chattool/index.js"
 import {
   defaultAppConfig,
   readConfigFile,
@@ -14,7 +14,7 @@ import {
 import type { WorkflowLlmOptions } from "../workflow.js"
 
 /**
- * Attach the standard three-subscriber stack (DB sync, Telegram notifications,
+ * Attach the standard three-subscriber stack (DB sync, chattool notifications,
  * cross-process bridge) to `bus` for the lifetime of a workflow run. Returns a
  * single `detach()` that tears all three down in reverse order. Used by both
  * `prepareRun` (fresh runs) and `performResume`.
@@ -30,7 +30,7 @@ export function attachRunSubscribers(
     resolveMergedConfig(readConfigFile(resolveConfigPath(overrides)), overrides) ?? defaultAppConfig()
 
   const detachDbSync = attachDbSync(bus, repos, ctx, { writtenLogIds })
-  const detachTelegram = attachTelegramNotifications(bus, repos, notificationConfig)
+  const detachTelegram = attachChatToolNotifications(bus, repos, notificationConfig)
   const detachBridge = attachCrossProcessBridge(bus, repos, ctx.runId, { writtenLogIds })
 
   return () => {

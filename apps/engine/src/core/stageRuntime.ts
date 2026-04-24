@@ -99,7 +99,7 @@ function nowIso(): string {
 function emitChatMessage<TState, TArtifact>(
   run: StageRun<TState, TArtifact>,
   role: string,
-  source: "stage-agent" | "reviewer" | "system",
+  source: "stage-agent" | "reviewer" | "system" | "cli" | "api" | "webhook",
   text: string,
   requiresResponse = false,
 ): void {
@@ -111,6 +111,23 @@ function emitChatMessage<TState, TArtifact>(
     source,
     text,
     requiresResponse,
+  })
+}
+
+function emitLoopIteration<TState, TArtifact>(
+  run: StageRun<TState, TArtifact>,
+  phase: "begin" | "user-message" | "review-feedback" | "review",
+  n: number,
+): void {
+  const activeRun = getActiveRun()
+  if (!activeRun) return
+  emitEvent({
+    type: "loop_iteration",
+    runId: activeRun.runId,
+    stageRunId: activeRun.stageRunId ?? null,
+    n,
+    phase,
+    stageKey: run.stage,
   })
 }
 
@@ -358,6 +375,7 @@ async function runStageBody<TState, TArtifact, TResult>(
     state: run.state,
     stageContext: buildStageContext(run, "begin"),
   })
+  emitLoopIteration(run, "begin", run.stageAgentTurnCount + 1)
   run.stageAgentTurnCount++
   syncSessions(definition, run)
   await persistRun(run)
@@ -384,6 +402,7 @@ async function runStageBody<TState, TArtifact, TResult>(
         userMessage,
         stageContext: buildStageContext(run, "user-message"),
       })
+      emitLoopIteration(run, "user-message", run.stageAgentTurnCount + 1)
       run.stageAgentTurnCount++
       syncSessions(definition, run)
       await persistRun(run)
@@ -420,6 +439,7 @@ async function runStageBody<TState, TArtifact, TResult>(
       state: run.state,
       reviewContext: buildReviewContext(run, definition.maxReviews),
     })
+    emitLoopIteration(run, "review", run.reviewIteration)
     syncSessions(definition, run)
     await persistRun(run)
 
@@ -457,6 +477,7 @@ async function runStageBody<TState, TArtifact, TResult>(
       reviewFeedback: review.feedback,
       stageContext: buildStageContext(run, "review-feedback"),
     })
+    emitLoopIteration(run, "review-feedback", run.stageAgentTurnCount + 1)
     run.stageAgentTurnCount++
     syncSessions(definition, run)
     await persistRun(run)

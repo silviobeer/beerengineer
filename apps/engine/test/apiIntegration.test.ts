@@ -668,7 +668,7 @@ test("GET /runs/:id/events streams persisted logs for detached cli-owned runs", 
   const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
   try {
     await waitForHealth(base)
-    const ssePromise = collectSseEvents(`${base}/runs/${run.id}/events`, events => events.includes("stage_started"))
+    const ssePromise = collectSseEvents(`${base}/runs/${run.id}/events?level=1`, events => events.includes("phase_started"))
     await new Promise(r => setTimeout(r, 150))
 
     const db2 = initDatabase(dbPath)
@@ -678,7 +678,7 @@ test("GET /runs/:id/events streams persisted logs for detached cli-owned runs", 
 
     const events = await ssePromise
     assert.ok(events.includes("hello"))
-    assert.ok(events.includes("stage_started"), `expected stage_started in ${events.join(",")}`)
+    assert.ok(events.includes("phase_started"), `expected phase_started in ${events.join(",")}`)
   } finally {
     await stopServer(proc)
   }
@@ -696,7 +696,7 @@ test("GET /events streams persisted workspace logs for detached cli-owned runs",
   const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
   try {
     await waitForHealth(base)
-    const ssePromise = collectSseEvents(`${base}/events?workspace=t`, events => events.includes("stage_started"))
+    const ssePromise = collectSseEvents(`${base}/events?workspace=t&level=1`, events => events.includes("phase_started"))
     await new Promise(r => setTimeout(r, 150))
 
     const db2 = initDatabase(dbPath)
@@ -706,7 +706,7 @@ test("GET /events streams persisted workspace logs for detached cli-owned runs",
 
     const events = await ssePromise
     assert.ok(events.includes("hello"))
-    assert.ok(events.includes("stage_started"), `expected stage_started in ${events.join(",")}`)
+    assert.ok(events.includes("phase_started"), `expected phase_started in ${events.join(",")}`)
   } finally {
     await stopServer(proc)
   }
@@ -724,7 +724,7 @@ test("GET /events does not rebroadcast the same persisted workspace log on every
   const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
   try {
     await waitForHealth(base)
-    const ssePromise = collectSseEventsFor(`${base}/events?workspace=t`, 900)
+    const ssePromise = collectSseEventsFor(`${base}/events?workspace=t&level=1`, 900)
     await new Promise(r => setTimeout(r, 150))
 
     const db2 = initDatabase(dbPath)
@@ -734,10 +734,94 @@ test("GET /events does not rebroadcast the same persisted workspace log on every
 
     const events = await ssePromise
     assert.equal(
-      events.filter(event => event === "stage_started").length,
+      events.filter(event => event === "phase_started").length,
       1,
-      `expected exactly one stage_started event, got ${events.join(",")}`,
+      `expected exactly one phase_started event, got ${events.join(",")}`,
     )
+  } finally {
+    await stopServer(proc)
+  }
+})
+
+test("GET /runs/:id/messages returns canonical projected messages with level filtering and stable since cursor", async () => {
+  const dbPath = tmpDbPath()
+  const db = initDatabase(dbPath)
+  const repos = new Repos(db)
+  const ws = repos.upsertWorkspace({ key: "t", name: "T" })
+  const item = repos.createItem({ workspaceId: ws.id, title: "t", description: "" })
+  const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "t", owner: "cli" })
+  repos.appendLog({ runId: run.id, eventType: "run_started", message: "t", data: { itemId: item.id, title: "t" } })
+  repos.appendLog({ runId: run.id, eventType: "chat_message", message: "debug", data: { role: "assistant", source: "stage-agent" } })
+  repos.appendLog({
+    runId: run.id,
+    eventType: "stage_completed",
+    message: "stage requirements completed",
+    data: { stageKey: "requirements", status: "completed" },
+  })
+  db.close()
+
+  const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
+  try {
+    await waitForHealth(base)
+    const firstRes = await fetch(`${base}/runs/${run.id}/messages?level=2&limit=2`)
+    assert.equal(firstRes.status, 200)
+    const firstBody = await firstRes.json() as {
+      schema: string
+      nextSince: string | null
+      entries: Array<{ id: string; type: string; level: number }>
+    }
+    assert.equal(firstBody.schema, "messages-v1")
+    assert.deepEqual(firstBody.entries.map(entry => entry.type), ["run_started", "phase_completed"])
+    assert.equal(firstBody.entries[0]?.level, 2)
+    assert.equal(firstBody.nextSince, firstBody.entries[1]?.id ?? null)
+
+    const secondRes = await fetch(`${base}/runs/${run.id}/messages?level=0&since=${firstBody.entries[0].id}`)
+    assert.equal(secondRes.status, 200)
+    const secondBody = await secondRes.json() as {
+      entries: Array<{ type: string }>
+    }
+    assert.deepEqual(secondBody.entries.map(entry => entry.type), ["agent_message", "phase_completed"])
+  } finally {
+    await stopServer(proc)
+  }
+})
+
+test("POST /runs/:id/messages appends a canonical user message through the API write path", async () => {
+  const dbPath = tmpDbPath()
+  const db = initDatabase(dbPath)
+  const repos = new Repos(db)
+  const ws = repos.upsertWorkspace({ key: "t", name: "T" })
+  const item = repos.createItem({ workspaceId: ws.id, title: "t", description: "" })
+  const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "t", owner: "cli" })
+  db.close()
+
+  const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
+  try {
+    await waitForHealth(base)
+    const res = await fetch(`${base}/runs/${run.id}/messages`, {
+      method: "POST",
+      headers: authHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({ text: "Heads up from API" }),
+    })
+    assert.equal(res.status, 201)
+    const body = await res.json() as {
+      ok: boolean
+      entry: { kind: string; actor: string; text: string } | null
+      conversation: { entries: Array<{ text: string; actor: string }> }
+    }
+    assert.equal(body.ok, true)
+    assert.equal(body.entry?.kind, "message")
+    assert.equal(body.entry?.actor, "user")
+    assert.equal(body.entry?.text, "Heads up from API")
+    assert.equal(body.conversation.entries.at(-1)?.text, "Heads up from API")
+
+    const db2 = initDatabase(dbPath)
+    const repos2 = new Repos(db2)
+    const log = repos2.listLogsForRun(run.id).find(row => row.event_type === "chat_message")
+    assert.ok(log)
+    assert.equal(log?.message, "Heads up from API")
+    assert.match(log?.data_json ?? "", /"source":"api"/)
+    db2.close()
   } finally {
     await stopServer(proc)
   }
