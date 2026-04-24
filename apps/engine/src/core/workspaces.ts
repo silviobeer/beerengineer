@@ -679,7 +679,11 @@ function normalizeReviewPolicy(
       // Default to enabled when the CLI is present; honor explicit opt-out.
       enabled: coderabbitExplicit === false ? false : coderabbitExplicit === true ? true : coderabbitCliAvailable,
     },
-    sonarcloud: normalizeSonarConfig(policy?.sonarcloud ?? legacySonar, key, defaultOrg),
+    // Always recompute sonarcloud from the freshly validated config passed in
+    // as `legacySonar`. Previously we preferred `policy?.sonarcloud` from the
+    // on-disk workspace.json, which meant setup corrections (e.g. changing the
+    // org, flipping enabled) had no effect without a `workspace remove` first.
+    sonarcloud: normalizeSonarConfig(legacySonar, key, defaultOrg),
   }
 }
 
@@ -961,7 +965,15 @@ export async function registerWorkspace(input: RegisterWorkspaceInput, deps: Reg
   const existingConfig = await readWorkspaceConfig(path)
   const name = input.name ?? existingConfig?.name ?? basename(path)
   const key = input.key ?? existingConfig?.key ?? slugify(name)
-  const requestedSonar = input.sonar ?? existingConfig?.sonar
+  let requestedSonar = input.sonar ?? existingConfig?.sonar
+  // Auto-enable Sonar when the user has clearly configured it locally:
+  // sonar-project.properties exists in the repo. Without this, re-running
+  // workspace add without --sonar silently downgrades sonar.enabled to false.
+  // Token validity is re-checked after preflight below, before we treat the
+  // requested config as effective.
+  if (!requestedSonar?.enabled && preview.hasSonarProperties) {
+    requestedSonar = { ...(requestedSonar ?? {}), enabled: true }
+  }
   const validation = validateHarnessProfile(input.harnessProfile, deps.appReport)
   if (!validation.ok) {
     return { ok: false, error: validation.error?.code ?? "unknown", detail: validation.error?.detail ?? "invalid harness profile" }

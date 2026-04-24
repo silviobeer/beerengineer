@@ -82,7 +82,7 @@ type Command =
   | { kind: "workspace-get"; key?: string; json?: boolean }
   | { kind: "workspace-items"; key?: string; json?: boolean }
   | { kind: "workspace-use"; key?: string }
-  | { kind: "workspace-remove"; key?: string; json?: boolean; purge?: boolean }
+  | { kind: "workspace-remove"; key?: string; json?: boolean; purge?: boolean; yes?: boolean; noInteractive?: boolean }
   | { kind: "workspace-open"; key?: string }
   | { kind: "workspace-backfill"; json?: boolean }
   | { kind: "workspace-worktree-gc"; key?: string; json?: boolean }
@@ -180,7 +180,14 @@ export function parseArgs(argv: string[]): Command {
   if (first === "workspace" && second === "get") return { kind: "workspace-get", key: argv[2], json }
   if (first === "workspace" && second === "items") return { kind: "workspace-items", key: argv[2], json }
   if (first === "workspace" && second === "use") return { kind: "workspace-use", key: argv[2] }
-  if (first === "workspace" && second === "remove") return { kind: "workspace-remove", key: argv[2], json, purge: argv.includes("--purge") }
+  if (first === "workspace" && second === "remove") return {
+    kind: "workspace-remove",
+    key: argv[2],
+    json,
+    purge: argv.includes("--purge"),
+    yes: argv.includes("--yes"),
+    noInteractive: argv.includes("--no-interactive"),
+  }
   if (first === "workspace" && second === "open") return { kind: "workspace-open", key: argv[2] }
   if (first === "workspace" && second === "backfill") return { kind: "workspace-backfill", json }
   if (first === "workspace" && second === "gc-worktrees") return { kind: "workspace-worktree-gc", key: argv[2], json }
@@ -263,12 +270,17 @@ function printHelp(): void {
     "    beerengineer notifications test telegram             Send a Telegram test notification",
     "    beerengineer workspace preview <path> [--json]       Preview workspace registration",
     "    beerengineer workspace add [--path <p>] [flags]      Register a workspace",
-    "                                                         [--gh-create] [--gh-public] [--gh-owner <user>]",
+    "                                                         [--name <n>] [--key <k>] [--profile <json>|--profile-json <file>]",
+    "                                                         [--sonar] [--sonar-token <t>] [--no-sonar-token-persist]",
+    "                                                         [--sonar-key <k>] [--sonar-org <o>] [--sonar-host <url>]",
+    "                                                         [--no-git] [--gh-create] [--gh-public] [--gh-owner <user>]",
+    "                                                         [--no-interactive] [--json]",
     "    beerengineer workspace list [--json]                 List registered workspaces",
     "    beerengineer workspace get <key> [--json]            Get one workspace",
     "    beerengineer workspace items <key> [--json]          List items for one workspace",
     "    beerengineer workspace use <key>                     Select the current workspace",
-    "    beerengineer workspace remove <key> [--purge]        Unregister a workspace",
+    "    beerengineer workspace remove <key> [--purge] [--yes]",
+    "                                                         Unregister a workspace (--purge also rm -rf's root; --yes skips confirm)",
     "    beerengineer workspace open <key>                    Print the workspace root path",
     "    beerengineer workspace backfill [--json]             Write missing .beerengineer/workspace.json files",
     "    beerengineer workspace gc-worktrees <key> [--json]   Remove orphaned BeerEngineer story worktrees",
@@ -783,7 +795,13 @@ async function runWorkspaceGetCommand(key: string | undefined, json = false): Pr
   }
 }
 
-async function runWorkspaceRemoveCommand(key: string | undefined, purge = false, json = false): Promise<number> {
+async function runWorkspaceRemoveCommand(
+  key: string | undefined,
+  purge = false,
+  json = false,
+  yes = false,
+  noInteractive = false,
+): Promise<number> {
   if (!key) {
     console.error("  Missing key: beerengineer workspace remove <key>")
     return 2
@@ -797,7 +815,29 @@ async function runWorkspaceRemoveCommand(key: string | undefined, purge = false,
   }
   const db = initDatabase()
   try {
-    const result = await removeWorkspace(new Repos(db), key, {
+    const repos = new Repos(db)
+    if (purge && !yes) {
+      const workspace = getRegisteredWorkspace(repos, key)
+      const targetPath = workspace?.rootPath ?? "(unknown path)"
+      const interactive = !noInteractive && !json && process.stdin.isTTY && process.stdout.isTTY
+      if (!interactive) {
+        const message = `Refusing to purge workspace ${key} (${targetPath}) without --yes in non-interactive mode.`
+        if (json) {
+          process.stdout.write(`${JSON.stringify({ ok: false, error: "confirmation_required", detail: message }, null, 2)}\n`)
+        } else {
+          console.error(`  ${message}`)
+          console.error(`  Re-run with: beerengineer workspace remove ${key} --purge --yes`)
+        }
+        return 2
+      }
+      const answer = await ask(`  About to rm -rf ${targetPath}. This cannot be undone. Type 'yes' to confirm: `)
+      close()
+      if (answer.trim().toLowerCase() !== "yes") {
+        console.log("  Purge cancelled.")
+        return 1
+      }
+    }
+    const result = await removeWorkspace(repos, key, {
       purge,
       allowedRoots: config?.allowedRoots,
     })
@@ -2114,7 +2154,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     case "workspace-use":
       process.exit(await runWorkspaceUseCommand(cmd.key))
     case "workspace-remove":
-      process.exit(await runWorkspaceRemoveCommand(cmd.key, cmd.purge, cmd.json))
+      process.exit(await runWorkspaceRemoveCommand(cmd.key, cmd.purge, cmd.json, cmd.yes, cmd.noInteractive))
     case "workspace-open":
       process.exit(await runWorkspaceOpenCommand(cmd.key))
     case "workspace-backfill":
