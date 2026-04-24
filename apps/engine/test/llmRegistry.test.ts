@@ -49,7 +49,7 @@ test("resolveHarness claude-first splits coder=claude and reviewer=codex per pre
   assert.equal(coder.provider, "claude-code")
   assert.equal(coder.model, "claude-opus-4-7")
   assert.equal(reviewer.provider, "codex")
-  assert.equal(reviewer.model, "gpt-5-4")
+  assert.equal(reviewer.model, "gpt-5.4")
 })
 
 test("resolveHarness codex-first splits coder=codex and reviewer=claude per preset", () => {

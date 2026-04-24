@@ -13,7 +13,7 @@
     {
       "name": "openai",
       "models": [
-        { "id": "gpt-5-4", "default": { "role": "coder" } },
+        { "id": "gpt-5.4", "default": { "role": "coder" } },
         { "id": "gpt-4o", "default": { "role": "reviewer" } },
         { "id": "o3" }
       ]
@@ -30,15 +30,15 @@
   ],
   "presets": {
     "codex-first": {
-      "coder": { "harness": "codex", "provider": "openai", "model": "gpt-5-4" },
+      "coder": { "harness": "codex", "provider": "openai", "model": "gpt-5.4" },
       "reviewer": { "harness": "claude", "provider": "anthropic", "model": "claude-sonnet-4-6" }
     },
     "claude-first": {
       "coder": { "harness": "claude", "provider": "anthropic", "model": "claude-opus-4-7" },
-      "reviewer": { "harness": "codex", "provider": "openai", "model": "gpt-5-4" }
+      "reviewer": { "harness": "codex", "provider": "openai", "model": "gpt-5.4" }
     },
     "codex-only": {
-      "coder": { "harness": "codex", "provider": "openai", "model": "gpt-5-4" },
+      "coder": { "harness": "codex", "provider": "openai", "model": "gpt-5.4" },
       "reviewer": { "harness": "codex", "provider": "openai", "model": "gpt-4o" }
     },
     "claude-only": {
