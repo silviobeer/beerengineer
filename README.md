@@ -119,14 +119,30 @@ beerengineer [--workspace <key>]
   laufen, aber ab `architecture` bis `documentation` gibt es keinen User-Chat,
   solange der Run nicht blockiert.
 
-beerengineer --json [--workspace <key>]
-beerengineer run --json [--workspace <key>]
-  Harness-Modus fuer Agenten (z.B. Codex). Stdout traegt pro Zeile ein
-  `WorkflowEvent` als JSON (`chat_message`, `presentation`, `prompt_requested`,
-  `stage_started`, `stage_completed`, `run_finished`, …). Der Harness liest
-  `prompt_requested`-Events und antwortet mit einer JSON-Zeile
-  `{"type":"prompt_answered","promptId":"<id>","answer":"<text>"}` auf stdin.
-  Human-Output ist in diesem Modus deaktiviert — Fehler gehen auf stderr.
+beerengineer --json [--workspace <key>] [--verbose]
+beerengineer run --json [--workspace <key>] [--verbose]
+  Harness-Modus fuer Agenten (z.B. Claude Code, Codex). Stdout traegt pro
+  Zeile ein JSON-Event. Zwei Modi:
+
+  - **Agent-Modus (Default, ohne `--verbose`).** Die erste Zeile ist ein
+    einmaliger `workflow_started`-Handshake, der das Reply-Protokoll
+    inline dokumentiert:
+      `{"type":"workflow_started","version":1,"protocol":{"wake_on":["prompt_requested"],"reply":"{\"type\":\"prompt_answered\",\"promptId\":\"…\",\"answer\":\"…\"}","terminal_events":["run_finished","run_blocked","run_failed","cli_finished"]}}`
+    Danach kommen nur die Events, auf die ein Agent reagieren muss:
+    `prompt_requested`, `prompt_answered`, `run_started`, `run_finished`,
+    `run_blocked`, `run_failed`. Lifecycle-Geplapper (`chat_message`,
+    `presentation`, `log`, `stage_started`, …) bleibt drausen — der Agent
+    filtert nur auf `type === "prompt_requested"`. Zusaetzlich erscheint
+    bei jedem offenen Prompt eine kompakte Stderr-Zeile
+    `⏸  beerengineer waiting on prompt [p-…]: <text>` — damit auch
+    Shell-Wrapper, die Stdout-JSON nicht parsen, die blockierte Stelle
+    sehen.
+  - **Firehose-Modus (`--verbose`).** Stdout mirrored jeden Bus-Event fuer
+    Debugging / Replay.
+
+  Der Harness liest `prompt_requested`-Events und antwortet mit einer
+  JSON-Zeile `{"type":"prompt_answered","promptId":"<id>","answer":"<text>"}`
+  auf stdin. Human-Output ist in beiden Modi auf stderr verbannt.
   Der Run endet mit einer `{"type":"cli_finished","runId":"…"}`-Zeile.
 ```
 
@@ -317,13 +333,17 @@ Prompts sind **Events auf dem Bus** — `prompt_requested` wird emittiert, der
 Resolver antwortet mit `prompt_answered`, und der Bus schaltet den wartenden
 `ask`-Promise frei. Kein separates Prompter-Interface mehr.
 
-**Drei Renderer-Familien subscriben an den Bus:**
+**Renderer-Familien subscriben an den Bus:**
 
 | Renderer                                  | Wann aktiv                    | Wohin                                  |
 |-------------------------------------------|-------------------------------|----------------------------------------|
 | `core/renderers/humanCli.ts`              | `beerengineer` (interaktiv)   | Formatierte Zeilen auf `process.stdout` |
-| `core/renderers/ndjson.ts`                | `beerengineer --json`         | Eine JSON-Zeile pro Event auf stdout; liest `prompt_answered` von stdin |
-| `ApiIOSession.emitter` (Bridge → SSE)     | HTTP-API                      | SSE-Stream auf `/runs/:id/events`      |
+| `core/renderers/ndjson.ts` (`mode: "agent"`) | `beerengineer --json` (Default) | Handshake + Agent-relevante Events auf stdout; liest `prompt_answered` von stdin; Stderr-Signpost bei Prompts |
+| `core/renderers/ndjson.ts` (`mode: "firehose"`) | `beerengineer --json --verbose` | Jeder Bus-Event auf stdout (Debug/Replay) |
+
+Der SSE-Stream auf `/runs/:id/events` ist kein Renderer mehr: die
+`/runs/:id/events`-Route tailed `stage_logs` direkt (siehe SSE-Section).
+Damit gibt es keinen `ApiIOSession.emitter`-Bridge mehr im Engine-HTTP-Pfad.
 
 **`core/promptPersistence.ts`** ist ein einziger Bus-Subscriber, der
 `pending_prompts`-Rows auf `prompt_requested` anlegt und auf `prompt_answered`
@@ -335,16 +355,20 @@ UX-Output emittieren (`stagePresent.header/step/ok/warn/dim/finding/chat`).
 Jeder Call wird zu einem `presentation`- oder `chat_message`-Event auf dem
 Bus — kein Stage importiert mehr `print.ts` (die Datei wurde entfernt).
 
-Der Entrypoint (CLI **oder** API) entscheidet, **welche Renderer** aktiv sind.
-Der gleiche Code ist auf drei Wegen nutzbar:
+**Workflows laufen ausschliesslich im CLI-Prozess.** Der Engine-HTTP-Server
+(`apps/engine/src/api/server.ts`) startet nie selbst einen Run und haelt keine
+Bus-Sessions mehr — er ist reine DB-Lese- und Intent-Schreib-Ebene plus SSE-
+Tails. Die UI sprengt fuer jede Run-/Resume-Aktion eine CLI-Kindprozess
+(`apps/ui/app/api/_lib/cli.ts → spawnEngineCli`), die Antworten auf Prompts
+gehen ueber den Cross-Process-Bridge (`stage_logs`-Tail + `pending_prompts`).
 
 - **CLI-Adapter** (`core/ioCli.ts`) → baut einen Bus, haengt den humanCli-Renderer
   und die Prompt-Persistenz an, nutzt `readline` fuer `prompt_answered`.
 - **`--json`-Modus** → identischer Bus, aber `ndjson`-Renderer statt humanCli.
   Prompt-Answers kommen als JSON-Zeilen auf stdin.
-- **API-Adapter** (`core/ioApi.ts`) → Bus mit Prompt-Persistenz, Bridge zum
-  `EventEmitter` den die SSE-Handler abonnieren; `session.answerPrompt(id, answer)`
-  emittiert `prompt_answered` auf den Bus.
+- **API-IO-Session** (`core/ioApi.ts`) → Bus mit Prompt-Persistenz, nur noch
+  als Test-Fixture und fuer parallele In-Process-Bus-Flows verfuegbar. Der
+  Engine-HTTP-Server benutzt sie nicht mehr.
 
 **IO ist scoped, nicht global.** `runWithWorkflowIO(io, fn)` aus `core/io.ts` setzt
 die aktive IO via `AsyncLocalStorage` — jeder parallele Run im selben Node-Prozess
@@ -396,89 +420,92 @@ einzige Tail-Strategie, ein einziger Dedup-Schluessel (`log.id`).
 
 ### CLI ↔ UI — End-to-End
 
+**Invariante: Workflows laufen ausschliesslich im CLI-Prozess.** Der
+Engine-HTTP-Server macht DB-Reads, SSE-Tails auf `stage_logs` und schreibt
+Intent-Rows (Column-Change, Remediation) — er startet nie selbst
+`prepareRun()`. Jede Start-/Resume-Aktion aus der UI spawnt einen
+CLI-Kindprozess.
+
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│                        BROWSER (Next.js UI · Port 3000)                      │
+│                       BROWSER (Next.js UI · Port 3100)                       │
 │                                                                              │
-│   /             /runs              /runs/[id]                                │
-│   Live Board    Start + Liste      LiveRunConsole (SSE-Subscriber)           │
-│       │             │                    │           ▲                       │
-│       │ liest       │ POST /runs         │ EventSource           │ SSE       │
-│       │ SQLite      │                    │ /runs/:id/events       │          │
-│       │ (server-    │ POST               │                        │          │
-│       │  side       │ /runs/:id/input    │                        │          │
-│       │  read)      │ GET                │                        │          │
-│       │             │ /runs/:id/prompts  │                        │          │
-└───────┼─────────────┼────────────────────┼────────────────────────┼──────────┘
-        │             │                    │                        │
-        │             ▼                    ▼                        │
-        │   ┌─────────────────────────────────────────────────────────────┐
-        │   │            ENGINE HTTP+SSE-Server (Port 4100)               │
-        │   │                                                             │
-        │   │   POST /runs              → prepareRun() → start (async)    │
-        │   │   POST /runs/:id/input    → session.answerPrompt()          │
-        │   │                             ODER (bei CLI-owned runs):      │
-        │   │                             pending_prompts.answer +        │
-        │   │                             stage_logs prompt_answered      │
-        │   │   GET  /runs[/:id[/...]]  → DB-Lesepfade                    │
-        │   │   GET  /runs/:id/events   → tail(stage_logs, runId)         │
-        │   │   GET  /board             → projizierter Board-DTO          │
-        │   │   GET  /events            → tail(stage_logs, workspace)     │
-        │   └────────────┬─────────────────────────────────┬──────────────┘
-        │                │ runWithWorkflowIO(apiIO,                        │
-        │                │   () => runWithActiveRun({runId,itemId},        │
-        │                │     () => runWorkflow(item)))                   │
-        │                │                                                 │
-        │                │ Bus-Subscriber an apiIO.bus:                    │
-        │                │   • attachDbSync(bus, repos, ctx)               │
-        │                │   • attachCrossProcessBridge(bus, repos, runId) │
-        │                │   • emitter.bridge → SSE                        │
-        │                ▼                                 │
-        │   ┌─────────────────────────────────────────────┴──────────────┐
-        │   │                 WORKFLOW-ENGINE (UI-agnostic)               │
-        │   │                                                             │
-        │   │   runWorkflow(item)                                         │
-        │   │     └── withStageLifecycle("brainstorm", …) ──┐             │
-        │   │     └── withStageLifecycle("requirements", …) │ emit        │
-        │   │     └── … 9 stages …                          │ stage_      │
-        │   │     └── withStageLifecycle("handoff", …)      │ started/    │
-        │   │                                               │ completed   │
-        │   │   stages call ask(prompt)  ◀── routed to active WorkflowIO │
-        │   └─────────────────────────────┬───────────────────────────────┘
-        │                                 │ io.emit / io.ask
-        │                                 ▼
-        │   ┌──────────────────────────────────────────────────────────────┐
-        │   │   attachDbSync(bus, repos, ctx)  — Bus-Subscriber            │
-        │   │                                                              │
-        │   │   stage_started      → stage_runs (idempotent auf id)       │
-        │   │   stage_completed    → stage_runs.status / errored          │
-        │   │   prompt_requested   → stage_logs                            │
-        │   │   prompt_answered    → stage_logs (cross-process push)       │
-        │   │   artifact_written   → artifact_files + stage_logs           │
-        │   │   chat_message       → stage_logs (shared conversation)      │
-        │   │   presentation      → stage_logs (UX replay-able)            │
-        │   │   project_created    → projects (idempotent auf code)        │
-        │   │   item_column_changed→ items.current_column                  │
-        │   │   run_started/finished → runs.status                         │
-        │   │                                                              │
-        │   │   Jede geschriebene stage_logs.id wird in writtenLogIds     │
-        │   │   getrackt — damit der crossProcessBridge die eigene        │
-        │   │   Schreibseite von fremden Rows unterscheidet und keine     │
-        │   │   Feedback-Loop entsteht.                                    │
-        │   └──────────────────────────┬───────────────────────────────────┘
-        │                              │
-        │                              ▼
-        ▼   ┌──────────────────────────────────────────────────────────────┐
-            │      SQLite (BEERENGINEER_UI_DB_PATH, default ~/.local/...)  │
-            │                                                              │
-            │   workspaces · items · projects                              │
-            │      ↑ liest die UI direkt via better-sqlite3                │
-            │                                                              │
-            │   runs · external_remediations                               │
-            │   stage_runs · stage_logs · artifact_files                   │
-            │   pending_prompts                                            │
-            │      ↑ schreibt der DB-Sync; liest die HTTP-API              │
-            └──────────────────────────────────────────────────────────────┘
+│   /              /runs               /runs/[id]                              │
+│   Live Board    Start + Liste       LiveRunConsole (SSE-Subscriber)          │
+│       │              │                     │           ▲                     │
+│       │ SSR liest    │ POST /api/runs      │ EventSource         │ SSE       │
+│       │ SQLite       │ POST /api/items/... │ /api/runs/:id/events │          │
+│       │ (server-     │ POST /api/runs/..   │                      │          │
+│       │  side read)  │      /resume        │                      │          │
+└───────┼──────────────┼──────────────┬──────┴──────────────────────┼──────────┘
+        │              │              │                             │
+        │              ▼              ▼                             │ forward
+        │   ┌─────────────────────────────────────────┐             │ to engine
+        │   │   Next.js API routes (apps/ui/app/api)  │             │
+        │   │                                         │             │
+        │   │   POST /api/runs          → spawnCLI    │             │
+        │   │   POST /api/items/:id/... → spawnCLI    │             │
+        │   │   POST /api/runs/:id/resume            │             │
+        │   │     → spawnCLI (item-action)           │             │
+        │   │   alles andere → forwardToEngine ──────┼─────────────┤
+        │   └──────────────┬──────────────────────────┘             │
+        │                  │ spawn beerengineer ...                 │
+        │                  ▼                                        │
+        │   ┌─────────────────────────────────────────┐             │
+        │   │        CLI (beerengineer-Kindprozess)   │             │
+        │   │                                         │             │
+        │   │   runWorkflow(item)                     │             │
+        │   │     createCliIO(repos) → Bus            │             │
+        │   │     attachRunSubscribers(bus, repos, …) │             │
+        │   │       · attachDbSync                    │             │
+        │   │       · attachTelegramNotifications     │             │
+        │   │       · attachCrossProcessBridge        │             │
+        │   │                                         │             │
+        │   │   Stages: ask(prompt) → Bus.request     │             │
+        │   │     → NDJSON stdout (Agent-Modus)       │             │
+        │   │     → Stderr-Signpost                   │             │
+        │   │     → pending_prompts + stage_logs      │             │
+        │   │                                         │             │
+        │   │   Cross-Process-Bridge liest fremde     │             │
+        │   │   `prompt_answered`-Rows aus            │             │
+        │   │   stage_logs und resolved den Bus.      │             │
+        │   └──────────────┬──────────────────────────┘             │
+        │                  │                                        │
+        │                  ▼                                        ▼
+        │   ┌─────────────────────────────────────────────────────────┐
+        │   │          ENGINE HTTP+SSE-Server (Port 4100)             │
+        │   │                                                         │
+        │   │   GET  /runs[/:id[/tree|events|prompts|recovery]] DB    │
+        │   │   GET  /events[?workspace=key]   SSE tail(stage_logs)   │
+        │   │   GET  /board[?workspace=key]    Board-DTO              │
+        │   │   POST /runs/:id/input           DB: pending_prompts    │
+        │   │                                    + stage_logs         │
+        │   │   POST /runs/:id/resume          DB: remediation → 200  │
+        │   │                                    { needsSpawn:true }  │
+        │   │   POST /items/:id/actions        DB: column change      │
+        │   │                                    OR remediation,      │
+        │   │                                    gibt needs_spawn     │
+        │   │                                    zurueck bei          │
+        │   │                                    start-run/resume     │
+        │   │                                                         │
+        │   │   Token-Handshake: schreibt beim Start                  │
+        │   │   $XDG_STATE_HOME/beerengineer/api.token                │
+        │   │   (0600); UI liest die Datei via                        │
+        │   │   apps/ui/app/api/_lib/engine.ts                        │
+        │   └──────────────────┬──────────────────────────────────────┘
+        │                      │
+        ▼                      ▼
+        ┌────────────────────────────────────────────────────────────────┐
+        │      SQLite (BEERENGINEER_UI_DB_PATH, default ~/.local/...)    │
+        │                                                                │
+        │   workspaces · items · projects                                │
+        │      ↑ UI liest SSR, CLI + Engine schreiben                    │
+        │   runs · external_remediations  (runs.workspace_fs_id!)        │
+        │   stage_runs · stage_logs · artifact_files                     │
+        │   pending_prompts                                              │
+        │      ↑ CLI schreibt ueber attachDbSync;                        │
+        │        Engine schreibt nur Intent (Column/Remediation/Input)   │
+        └────────────────────────────────────────────────────────────────┘
 ```
 
 ### Drei Verbindungswege zwischen CLI/Engine und UI
@@ -558,7 +585,7 @@ persistiert wurde. Das schuetzt vor Doppel-Emits aus retried Workflow-Pfaden.
 
 Die UI hat fuenf feste Board-Spalten (`idea | brainstorm | requirements |
 implementation | done`). Die Engine hat neun Stages. Die Projektion lebt
-**im Backend** (`core/runOrchestrator.ts → mapStageToColumn`), nicht in der UI:
+**im Backend** (`core/boardColumns.ts → mapStageToColumn`), nicht in der UI:
 
 | Engine-Stage | Board-Spalte |
 |---|---|
@@ -591,26 +618,38 @@ Die Run-Detailseite (`/runs/:id`) zeigt Scope, Summary, fruehere Remediations
 und die Resume-CTA. Board-Karten zeigen `Blocked` / `Failed` anhand des
 neuesten Runs fuer das Item.
 
-### API-Vertrag (kompletter Server)
+### API-Vertrag (Engine-HTTP-Server)
+
+Der Server startet keine Workflows mehr — mutierende Endpoints schreiben nur
+Intent-Rows und signalisieren `needsSpawn: true`, wenn die UI-Seite einen
+CLI-Kindprozess starten muss.
 
 | Method | Route | Effekt |
 |---|---|---|
-| `POST` | `/runs` | Startet Workflow async, antwortet `202 { runId }` |
-| `POST` | `/runs/:id/input` | Beantwortet offenen Prompt: `{ promptId, answer }`; gibt `409 { error: "cli_owned" }` fuer CLI-ownte Runs zurueck |
 | `GET`  | `/runs` | Alle Runs (neueste zuerst) |
 | `GET`  | `/runs/:id` | Snapshot eines Runs |
 | `GET`  | `/runs/:id/tree` | Run + Stage-Runs + Artefakte |
-| `GET`  | `/runs/:id/events` | SSE: History-Replay + Live-Events |
+| `GET`  | `/runs/:id/events` | SSE: History-Replay + Live-Events (tail auf `stage_logs`) |
 | `GET`  | `/runs/:id/prompts` | Aktuell offener Prompt (oder `null`) |
-| `POST` | `/runs/:id/resume` | Resume eines blocked/failed Runs mit `{ summary, branch?, commit?, reviewNotes? }`; `200`, `404`, `409` oder `422 remediation_required` |
+| `POST` | `/runs/:id/input` | Beantwortet offenen Prompt: schreibt `pending_prompts.answer` + eine `prompt_answered`-Row in `stage_logs`; der CLI-Prozess mit dem Run pickt sie ueber `attachCrossProcessBridge` auf. Antwort: `200 { runId, promptId, answer }`. |
+| `POST` | `/runs/:id/resume` | Schreibt `external_remediations`-Row fuer einen blocked/failed Run. Antwort: `200 { runId, remediationId, needsSpawn: true }`, `404`, `409` oder `422 remediation_required`. Die UI muss anschliessend `beerengineer item action --action resume_run` spawnen; `apps/ui/app/api/runs/[id]/resume/route.ts` macht genau das. |
 | `GET`  | `/runs/:id/recovery` | Recovery-Snapshot fuer Run-Detailseite: Status, Scope, Summary, Remediations, `resumable` |
-| `POST` | `/items/:id/actions` | Fuehrt eine Item-Aktion aus; `200` mit `{ itemId, column, phaseStatus, runId?, remediationId? }`, `409` bei ungueltigem Uebergang, `422 remediation_required` fuer Resume ohne Summary |
-| `GET`  | `/events[?workspace=key]` | Workspace-gefilterter Board-SSE-Stream fuer `run_started`, `stage_*`, `item_column_changed`, `run_finished`, `project_created` plus Recovery/Resume-Invalidierungen |
+| `POST` | `/items/:id/actions` | Pure State-Transitions (`promote_to_requirements`, `mark_done`) werden hier direkt angewandt: `200 { kind: "state", itemId, column, phaseStatus }`. Start-Run- und Resume-Aktionen (`start_brainstorm`, `start_implementation`, `resume_run`) schreiben nur die Column-Change bzw. Remediation und antworten `200 { kind: "needs_spawn", needsSpawn: true, action, itemId, column, phaseStatus, runId?, remediationId? }`. `409` bei ungueltigem Uebergang, `422 remediation_required` fuer Resume ohne Summary. |
+| `GET`  | `/events[?workspace=key]` | Workspace-gefilterter Board-SSE-Stream fuer `run_started`, `stage_*`, `item_column_changed`, `run_finished`, `project_created` |
 | `GET`  | `/board[?workspace=key]` | Board-DTO (Spalten + Karten) |
-| `GET`  | `/setup/status[?group=<id>]` | Selber JSON-Kontrakt wie `doctor --json` (`SetupReport`, `reportVersion: 1`). Unbekannte `group`-Werte → `400 { error: "unknown_group" }`. |
-| `POST` | `/notifications/test/:channel` | Sendet einen Smoke-Test ueber den konfigurierten Kanal. Aktuell implementiert: `telegram`. |
-| `GET`  | `/notifications/deliveries[?channel=<name>&limit=<n>]` | Liefert die neuesten Delivery-Audit-Zeilen aus `notification_deliveries`, newest first. |
+| `GET`  | `/setup/status[?group=<id>]` | Selber JSON-Kontrakt wie `doctor --json` (`SetupReport`, `reportVersion: 1`). Unbekannte `group` → `400 { error: "unknown_group" }` |
+| `POST` | `/notifications/test/:channel` | Sendet einen Smoke-Test ueber den konfigurierten Kanal. Aktuell implementiert: `telegram` |
+| `GET`  | `/notifications/deliveries[?channel=<name>&limit=<n>]` | Neueste Delivery-Audit-Zeilen aus `notification_deliveries`, newest first |
 | `GET`  | `/health` | `{ ok: true }` |
+
+Der frueher existierende `POST /runs` wurde entfernt — die UI spawnt fuer
+Start-Runs direkt die CLI via `apps/ui/app/api/runs/route.ts → startCliWorkflow`.
+
+**Auth:** CSRF-Token-Datei-Handshake. Der Engine schreibt beim Start
+`$XDG_STATE_HOME/beerengineer/api.token` (Mode 0600); die UI-Next.js-Routes
+lesen sie ueber `apps/ui/app/api/_lib/engine.ts`. `BEERENGINEER_API_TOKEN`
+als Env-Var ueberschreibt die Datei. Mutierende Requests ohne Header
+`x-beerengineer-token` werden mit `403` abgelehnt.
 
 ### Konfigurations-Variablen
 
@@ -623,21 +662,26 @@ neuesten Runs fuer das Item.
 | `BEERENGINEER_TELEGRAM_API_BASE_URL` | Optionaler Override fuer die Telegram API Base URL. Hauptsaechlich fuer Tests/Stubs gedacht; Default `https://api.telegram.org`. |
 | `NEXT_PUBLIC_ENGINE_BASE_URL` | UI → Engine HTTP-Base. Default `http://127.0.0.1:4100`. |
 | `PORT` / `HOST` | Bind-Adresse des Engine-Servers. Default `127.0.0.1:4100`. |
+| `BEERENGINEER_API_TOKEN` | CSRF-Token fuer mutierende HTTP-Requests. Ist die Variable gesetzt, nutzen Engine und UI diesen Wert; sonst generiert der Engine beim Start einen Zufallstoken und schreibt ihn in die Token-Datei. |
+| `BEERENGINEER_API_TOKEN_FILE` | Pfad zur Token-Datei, die Engine und UI teilen. Default `$XDG_STATE_HOME/beerengineer/api.token` bzw. `~/.local/state/beerengineer/api.token`. |
+| `BEERENGINEER_BASE_BRANCH` | Override fuer die Base-Branch-Aufloesung beim Run-Start. Greift vor der Workspace-Config und dem Git-Probe. |
 | `BEERENGINEER_SEED` | `0` deaktiviert das Demo-Seed. Wird unter `NODE_ENV=test` per Default deaktiviert; sonst aktiv, sobald die DB leer ist. |
 | `BE2_RUN_SLOW_TESTS` | `1` aktiviert den langsamen CLI-Smoke-Test (`start_brainstorm runs to completion`). Per Default skipped. |
 
 ### Test-Pyramide
 
-- **Engine-Unit** (`apps/engine/test/dbSync.test.ts`, 8 Tests): `mapStageToColumn`,
-  `withDbSync`-Lifecycle, Pending-Prompt-Roundtrip, AsyncLocalStorage-Isolation
-  paralleler Runs, `project_created`-Persistierung, end-to-end Prompt + Artifact,
-  Idempotenz von `stage_started`, "no mutation" auf das Original-Event — laufen
-  unter `node:test --import tsx`.
-- **Playwright-Integration** (`apps/ui/tests/e2e/runs-live.spec.ts`, 2 Tests):
-  spawnt den Engine-Server auf einer eigenen Test-DB, startet einen Run via HTTP,
-  durchlaeuft alle 9 Stages mit automatischen Prompt-Antworten, oeffnet `/runs`
-  und `/runs/:id` im Browser und prueft, dass die `LiveRunConsole` den Stage-Verlauf
-  rendert.
+- **Engine-Unit** (`apps/engine/test/*.test.ts`, aktuell 223 Tests, laufen unter
+  `node:test --import tsx`). Deckt u.a. ab: `mapStageToColumn`, Bus-Subscriber-
+  Lifecycle, Pending-Prompt-Roundtrip, AsyncLocalStorage-Isolation paralleler
+  Runs, Real-Git-Branch-Operationen + `abandonStoryBranchReal`, Base-Branch-
+  Aufloesung, API-Routen-Integration (`apiIntegration.test.ts`), Ralph-
+  Runtime, Hosted-CLI-Adapter mit Retry/JSON-Recovery, Cross-Process-Bridge,
+  Resume mit Remediation.
+- **Playwright-Integration** (`apps/ui/tests/e2e/runs-live.spec.ts`): spawnt
+  den Engine-Server auf einer eigenen Test-DB, startet einen Run (via
+  Spawn-CLI), durchlaeuft alle Stages mit automatischen Prompt-Antworten,
+  oeffnet `/runs` und `/runs/:id` im Browser und prueft, dass die
+  `LiveRunConsole` den Stage-Verlauf rendert.
 
 ---
 
@@ -715,23 +759,48 @@ Ein Workspace kann mehrere Runs haben. Ein Run enthaelt die Stage-Ausfuehrungen 
 
 ## Git-Strategie
 
-Die Git-Simulation ist bewusst in vier Ebenen getrennt:
+Die Branch-Hierarchie ist fuenfstufig und in beiden Modi (simuliert + real-git)
+identisch benannt. Die Namen werden zentral in `core/repoSimulation.ts` via
+`joinBranch(kind, ...segments)` gebildet (S2-Refactor):
 
-- `story/<project-id>-<story-id>` = Arbeitsbranch pro Story
-- `proj/<project-id>` = integrierter Projektbranch
-- `pr/<run-id>-<project-id>` = finaler Kandidat fuer User-Test und optionales Merge
-- `main` = nur durch den Benutzer veraendert
+- `base`                                                             = User-Default (`main`/`master`/…, ueber `resolveBaseBranchForItem` aufgeloest)
+- `item/<slug>`                                                      = pro Item
+- `proj/<slug>__<projectId>`                                         = pro Project
+- `wave/<slug>__<projectId>__w<N>`                                   = pro Wave
+- `story/<slug>__<projectId>__w<N>__<storyId>`                       = pro Story
+- `candidate/<runId>__<slug>__<projectId>`                           = finaler Kandidat (nur Sim-Modus)
 
-Der Ablauf ist:
+Der Ablauf im Real-Git-Modus (`detectRealGitMode` schaltet ihn an, sobald der
+Workspace ein sauberes Repo ist):
 
-1. `execution` erstellt fuer jede Story einen `story/*`-Branch.
-2. Jede Implementierungs- oder Remediation-Iteration erzeugt einen simulierten Commit auf diesem Branch.
-3. Wenn die Story-Gates passieren, merged die Engine `story/*` nach `proj/<project-id>`.
-4. Nach `project-review`, `qa` und `documentation` erzeugt die Engine `pr/<run-id>-<project-id>`.
-5. Der Benutzer entscheidet am Ende zwischen `test`, `merge` oder `reject`.
-6. Nur bei `merge` wird der Kandidaten-Branch simuliert nach `main` gemerged.
+1. `runWorkflow` parkt auf der Base-Branch und legt `item/<slug>` an.
+2. Pro Project: `proj/...` aus `item/...`.
+3. `execution` legt pro Wave `wave/...` aus `proj/...` an und pro Story ein
+   `story/...` + isoliertes Worktree unter `.beerengineer/worktrees/...`.
+4. Jede Ralph-Iteration commitet im Worktree.
+5. Story passed → `mergeStoryIntoWaveReal` (no-ff). Story blocked →
+   `abandonStoryBranchReal` verschiebt die Ref nach
+   `refs/beerengineer/abandoned/story/<name>/<timestamp>` und loescht den
+   branch — die History bleibt recoverable, aber raeumt `git branch` auf.
+6. Wave done → `mergeWaveIntoProjectReal`. Project done → `mergeProjectIntoItemReal`.
+7. Handoff beendet den Run auf `item/<slug>`. Das Mergen von `item` nach `base`
+   ist eine **menschliche Entscheidung** (PR-Flow). Die Engine merged nie
+   selbststaendig nach der Base-Branch.
 
-Die Engine merged also **nie selbststaendig nach `main`**. `main` ist die menschliche Freigabegrenze.
+Im Simulations-Modus laeuft dieselbe Hierarchie als JSON unter
+`.beerengineer/workspaces/<id>/repo-state.json`; das Handoff erzeugt dort
+einen `candidate/...`-Branch mit Test/Merge/Reject-Entscheidung. Im
+Real-Git-Modus gibt es kein Candidate-Branch — der Handoff zeigt nur die
+`item/...`-Branch als PR-Quelle an.
+
+**Base-Branch-Aufloesung** (`core/baseBranch.ts`) hat eine klare Hierarchie:
+`item.baseBranch` → `BEERENGINEER_BASE_BRANCH` → Workspace-Config
+(`preflight.github.defaultBranch` / `reviewPolicy.sonarcloud.baseBranch`) →
+Git-Probe (`origin/HEAD`, `git remote show origin`, current branch wenn er
+nicht engine-owned ist) → Fallback `main`. Branches, die mit `item|proj|
+wave|story|candidate` beginnen, sind **engine-owned** und werden nie als
+Base erkannt — selbst wenn HEAD gerade dort steht (z.B. nach einem
+gecrashten Run).
 
 ---
 
@@ -872,13 +941,20 @@ item:create
 │  Stage-Status: chat_in_progress → artifact_ready → in_review         │
 │                → approved | blocked                                  │
 │                                                                      │
-│  Stage approved → Trigger handoffCandidate()                         │
-│   - createCandidateBranch: proj/<p> → pr/<run-id>-<p>                │
+│  Stage approved → Trigger handoffProject()                           │
+│                                                                      │
+│  Sim-Modus:                                                          │
+│   - createCandidateBranch: proj/<p> → candidate/<runId>__…           │
 │   - askUser("test/merge/reject")                                     │
 │   - finalizeCandidateDecision:                                       │
-│       merge  → pr/* wird nach main gemerged                          │
-│       test   → pr/* bleibt offen                                     │
-│       reject → pr/* wird abandoned                                   │
+│       merge  → candidate/* wird nach base gemerged                   │
+│       test   → candidate/* bleibt offen                              │
+│       reject → candidate/* wird abandoned                            │
+│                                                                      │
+│  Real-Git-Modus:                                                     │
+│   - Project ist bereits in item/<slug> gemerged.                     │
+│   - Handoff zeigt item/proj/base an — Merge item → base macht der    │
+│     Benutzer manuell (PR-Flow).                                      │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -1134,69 +1210,76 @@ apps/engine/src/
   types.ts                  Shared Types
 
   api/
-    server.ts               HTTP+SSE-Server (POST /runs, GET /board, …)
+    server.ts               HTTP-Dispatch (~165 LOC, nur Routing + CORS/CSRF)
+    http.ts                 json/readJson/setCors/requireCsrfToken/writeSse
+    tokenFile.ts            File-basierter CSRF-Token-Handshake fuer die UI
+    seed.ts                 Optionales Dev-Seed (deaktivierbar via BEERENGINEER_SEED)
     board.ts                Board-DTO + Run-Tree-Aggregation
+    routes/
+      items.ts              POST /items/:id/actions
+      runs.ts               GET/POST /runs, /runs/:id, /runs/:id/input|resume|...
+      workspaces.ts         Workspace-CRUD + cached setup report
+      setup.ts              GET /setup/status
+      notifications.ts      POST /notifications/test/:channel, deliveries
+    sse/
+      tailStageLogs.ts      Geteilte Poll-Tail-Schleife auf stage_logs
+      runStream.ts          GET /runs/:id/events
+      boardStream.ts        GET /events (workspace-gefiltert) + item_column_changed
 
   db/
-    schema.sql              SQLite-Schema (workspaces/items/projects + Engine-Tabellen)
-    connection.ts           openDatabase / applySchema / initDatabase
-    repositories.ts         typed Repos: Workspaces, Items, Projects, Runs,
-                            StageRuns, StageLogs, ArtifactFiles, PendingPrompts
+    schema.sql              SQLite-Schema (inkl. runs.workspace_fs_id fuer Resume)
+    connection.ts           openDatabase / applySchema / initDatabase inkl. Migrationen
+    repositories.ts         typed Repos
 
   core/
     io.ts                   WorkflowIO-Abstraktion + AsyncLocalStorage
-                            (runWithWorkflowIO / getWorkflowIO / hasWorkflowIO)
-    ioCli.ts                CLI-Adapter (readline)
-    ioApi.ts                API-Adapter (createApiIOSession): DB-Prompt + EventEmitter,
-                            ask() resolved runId via getActiveRun()
+    ioCli.ts                CLI-Adapter (readline / NDJSON-Harness-Modus)
+    ioApi.ts                Test-Fixture + legacy Bus+Prompt-Persistenz-Session
+                            (der Engine-HTTP-Server benutzt sie nicht mehr)
     runContext.ts           AsyncLocalStorage fuer den aktiven Run
-                            (runWithActiveRun / getActiveRun / withStageLifecycle)
-    runOrchestrator.ts      prepareRun / withDbSync (Wrapper-IO) /
-                            attachDbSync (deprecated mutate-and-detach Shim) /
-                            mapStageToColumn
-    parallelReview.ts       Kombiniert mehrere Reviewer parallel
-    stageRuntime.ts         formale Stage-Runtime mit Status/Logs/Files
+    runOrchestrator.ts      prepareRun / attachDbSync / withDbSync (shim)
+    runSubscribers.ts       attachRunSubscribers (DB-Sync + Telegram + CP-Bridge)
+                            + resolveWorkflowLlmOptions
+    boardColumns.ts         mapStageToColumn (UI-Board-Projektion)
+    baseBranch.ts           resolveBaseBranchForItem/ForWorkspace + isEngineOwnedBranchName
+    crossProcessBridge.ts   Tail-Subscriber, der fremde prompt_answered-Rows
+                            wieder auf den lokalen Bus emittiert
+    promptPersistence.ts    pending_prompts-Mirror auf Bus-Events
+    stageRuntime.ts         Formale Stage-Runtime mit Status/Logs/Files
+    recovery.ts / resume.ts Recovery-Records + performResume()
+    renderers/
+      humanCli.ts           Interaktiver Terminal-Renderer
+      ndjson.ts             Agent/Firehose NDJSON + workflow_started-Handshake
 
   llm/
-    types.ts                gemeinsame Adapter-Interfaces
-    registry.ts             Provider-Auswahl pro LLM-Rolle
-    fake/
-      brainstormStage.ts    Fake Stage-Agent fuer Brainstorm-Chat
-      brainstormReview.ts   Fake Reviewer fuer Brainstorm-Gate
-      requirementsStage.ts  Fake Stage-Agent fuer Requirements-Chat
-      requirementsReview.ts Fake Reviewer fuer Requirements-Gate
-      architectureStage.ts  Fake Stage-Agent fuer Architecture-Autorun
-      architectureReview.ts Fake Reviewer fuer Architecture-Gate
-      planningStage.ts      Fake Stage-Agent fuer Planning-Autorun
-      planningReview.ts     Fake Reviewer fuer Planning-Gate
-
-  sim/
-    llm.ts                  Stub-LLM-Antworten pro Rolle
-    human.ts                readline-Prompts (ask, close)
+    types.ts                ProviderId + gemeinsame Adapter-Shapes
+    registry.ts             Factory-Tabelle (createXxxStage/Review) + resolveHarness
+    runtimePolicy.ts        stageAuthoring/reviewer/executionCoderPolicy-Translators
+    hosted/
+      hostedCliAdapter.ts   HostedStageAdapter + HostedReviewAdapter + invokeAndParse
+      promptEnvelope.ts     buildHostedPrompt + Schema-Tabelle (stage/review/execution)
+      outputEnvelope.ts     Mapper: Envelope → StageAgentResponse/ReviewAgentResponse
+      providerRuntime.ts    spawnCommand + HostedSession-Typen
+      providers/
+        _invoke.ts          invokeProviderCli(driver) — gemeinsamer Retry-Shell
+        _retry.ts           transientRetryDelaysMs / isTransientFailure / ...
+        _stream.ts          makeJsonLineStreamCallback + emitRetryMarker
+        claude.ts           Driver: Command + stream-json Parser + finalize
+        codex.ts            Driver: Command + --output-last-message + temp-dir
+        opencode.ts         Platzhalter (throws)
+      execution/
+        coderHarness.ts     Execution-Coder Harness (Ralph-Inner)
+    fake/                   Pro-Stage Fake-Adapter (deterministisch)
+    prompts/
+      loader.ts             Laedt apps/engine/prompts/<kind>/<stage>.md
 
   stages/
-    brainstorm/
-      index.ts              Item → Brainstorm-Chat → Concept/Project[]
-      types.ts              Brainstorm-State und Artefakt
-    requirements/
-      index.ts              Concept → PRD via Runtime
-      types.ts              Requirements-State und Artefakt
-    architecture/
-      index.ts              Concept + PRD → ArchitectureArtifact via Runtime
-      types.ts              Architecture-State und Artefakt
-    planning/
-      index.ts              PRD + ArchitectureArtifact → ImplementationPlanArtifact via Runtime
-      types.ts              Planning-State und Artefakt
-    execution/
-      index.ts              ImplementationPlanArtifact → test-plan -> impl + review loop
-      types.ts              TestWriter-State und StoryTestPlanArtifact
-    qa/
-      index.ts              Project → qa + fix loop
-    documentation/
-      index.ts              Project → Report
+    brainstorm/   requirements/   architecture/   planning/
+    execution/ (index.ts + ralphRuntime.ts)
+    project-review/   qa/   documentation/
 
-  workflow.ts               runWorkflow() + runProject()
-  index.ts                  Entry Point
+  workflow.ts               runWorkflow() + runProject() + handoffProject()
+  index.ts                  Entry Point (CLI main + parseArgs)
 ```
 
 ### `src/types.ts`
@@ -1475,14 +1558,14 @@ Reviewer = `revise`, wenn **eine** der folgenden Bedingungen zutrifft:
 
 Sonst `pass` → `approved`.
 
-**Handoff-Trigger** (direkt nach Stage-`approved`, in `workflow.ts → handoffCandidate`):
-| Trigger | Aktion |
-|---|---|
-| Stage `approved` | `createCandidateBranch(proj/<p> → pr/<run-id>-<p>)` |
-| Kandidaten-Branch erstellt | `askUser("test/merge/reject")` |
-| Antwort `merge` | `pr/*` wird simuliert nach `main` gemerged |
-| Antwort `test` | `pr/*` bleibt offen, Default |
-| Antwort `reject` | `pr/*` → Status `abandoned` |
+**Handoff-Trigger** (direkt nach Stage-`approved`, in `workflow.ts → handoffProject`):
+
+- **Sim-Modus**: `createCandidateBranch(proj/<p> → candidate/<runId>__...)`, dann
+  `askUser("test/merge/reject")`. Nur bei `merge` wird der Kandidat simuliert in die
+  Base-Branch gemerged; `test` haelt ihn offen; `reject` markiert ihn `abandoned`.
+- **Real-Git-Modus**: Das Project ist bereits in die Item-Branch gemerged. Der Handoff
+  zeigt nur `item/<slug>` + Projekt- und Base-Branch-Namen an. Der finale Merge nach
+  Base ist eine menschliche Entscheidung (PR-Flow).
 
 ### `src/workflow.ts`
 
