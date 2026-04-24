@@ -3,6 +3,7 @@ import type { ReviewAgentAdapter, StageAgentAdapter } from "../core/adapters.js"
 import { emitEvent, getActiveRun } from "../core/runContext.js"
 import type { HarnessProfile, HarnessRole, WorkspaceRuntimePolicy } from "../types/workspace.js"
 import { reviewerPolicy, stageAuthoringPolicy, type RuntimePolicy } from "./runtimePolicy.js"
+import presetsJson from "../core/harness/presets.json" with { type: "json" }
 
 import { FakeBrainstormReviewAdapter } from "./fake/brainstormReview.js"
 import { FakeBrainstormStageAdapter } from "./fake/brainstormStage.js"
@@ -90,6 +91,21 @@ type AdapterFactoryInput = {
   testingOverride?: "fake"
 }
 
+type PresetRoleEntry = { harness: "claude" | "codex" | "opencode"; provider: string; model?: string }
+type PresetEntry = { coder: PresetRoleEntry; reviewer: PresetRoleEntry }
+const PRESETS = (presetsJson as { presets: Record<string, PresetEntry> }).presets
+
+function resolveFromPreset(presetKey: string, role: HarnessRole, workspaceRoot: string): ResolvedHarness {
+  const preset = PRESETS[presetKey]
+  if (!preset) throw new Error(`Unknown preset key "${presetKey}"`)
+  const entry = preset[role]
+  const provider = toProviderId(entry.harness)
+  if (provider === "opencode") {
+    throw new Error(`Preset "${presetKey}" resolves to opencode for role "${role}", which is not implemented yet`)
+  }
+  return { harness: provider, provider, model: entry.model, workspaceRoot }
+}
+
 export function resolveHarness(input: AdapterFactoryInput): ResolvedHarness {
   if (input.testingOverride === "fake" || process.env.BEERENGINEER_FORCE_FAKE_LLM === "1") {
     return { harness: "fake", provider: "fake", workspaceRoot: input.workspaceRoot }
@@ -97,17 +113,10 @@ export function resolveHarness(input: AdapterFactoryInput): ResolvedHarness {
   switch (input.harnessProfile.mode) {
     case "claude-only":
     case "claude-first":
-      return { harness: "claude-code", provider: "claude-code", workspaceRoot: input.workspaceRoot }
     case "codex-only":
     case "codex-first":
-      return { harness: "codex", provider: "codex", workspaceRoot: input.workspaceRoot }
     case "fast":
-      return {
-        harness: "claude-code",
-        provider: "claude-code",
-        model: "claude-haiku-4-5",
-        workspaceRoot: input.workspaceRoot,
-      }
+      return resolveFromPreset(input.harnessProfile.mode, input.role, input.workspaceRoot)
     case "opencode":
     case "opencode-china":
     case "opencode-euro":
