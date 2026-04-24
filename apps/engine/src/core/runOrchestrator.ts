@@ -47,6 +47,38 @@ export function attachDbSync(
     opts.writtenLogIds?.add(row.id)
   }
 
+  /**
+   * Returns true when this run is the authoritative source of truth for the
+   * item's displayed column/phase state.
+   *
+   * Rule (Option A from spec): a run may write item state only when no OTHER
+   * run for the same item is currently live (status = "running" or "blocked").
+   * If any sibling run is live, all writes from this run are suppressed —
+   * regardless of whether this run is completing, failing, or progressing.
+   *
+   * This means:
+   *  - A side-run (e.g. rerun_design_prep) started while a main run is live
+   *    never overwrites the main run's item state, even on success or failure.
+   *  - The main run keeps driving item state as long as it is the only live run.
+   *  - Failed runs do not write item state via run_finished — the item retains
+   *    whatever column/phase the last successful stage write set. This matches
+   *    the spec's "failed runs never mutate items.current_column / phase_status".
+   *
+   * The `thisRunStatus` parameter lets the run_finished handler pass the
+   * *incoming* event status before it mutates the DB row, so a run transitioning
+   * to "failed" correctly suppresses its own run_finished item write without
+   * racing against a concurrent DB read.
+   */
+  const isAuthoritative = (thisRunStatus?: string): boolean => {
+    // A run finishing as "failed" must never write item state (Option A).
+    if (thisRunStatus === "failed") return false
+    const allRuns = repos.listRunsForItem(ctx.itemId)
+    // Suppress writes when any OTHER run for this item is live.
+    return !allRuns.some(
+      r => r.id !== ctx.runId && (r.status === "running" || r.status === "blocked")
+    )
+  }
+
   const persist = (event: WorkflowEvent): void => {
     switch (event.type) {
       case "run_started": {
@@ -77,7 +109,7 @@ export function attachDbSync(
         stageRunIds.set(event.stageKey, stageRun.id)
         repos.updateRun(event.runId, { current_stage: event.stageKey })
         const { column, phaseStatus } = mapStageToColumn(event.stageKey, "running")
-        repos.setItemColumn(ctx.itemId, column, phaseStatus)
+        if (isAuthoritative()) repos.setItemColumn(ctx.itemId, column, phaseStatus)
         track(repos.appendLog({
           runId: event.runId,
           stageRunId: stageRun.id,
@@ -97,7 +129,7 @@ export function attachDbSync(
           repos.completeStageRun(stageRunId, event.status, event.error ?? null)
         }
         const { column, phaseStatus } = mapStageToColumn(event.stageKey, event.status)
-        repos.setItemColumn(ctx.itemId, column, phaseStatus)
+        if (isAuthoritative()) repos.setItemColumn(ctx.itemId, column, phaseStatus)
         track(repos.appendLog({
           runId: event.runId,
           stageRunId: stageRunId ?? null,
@@ -224,9 +256,14 @@ export function attachDbSync(
         return
       }
       case "run_finished": {
+        // Snapshot authority *before* updating the run status, so the guard
+        // sees the run's current (pre-mutation) status and not the new one.
+        // Passing event.status tells isAuthoritative what this run is becoming,
+        // so a run that is completing as "failed" correctly suppresses item writes.
+        const authoritative = isAuthoritative(event.status)
         repos.updateRun(event.runId, { status: event.status })
         const { column, phaseStatus } = mapStageToColumn("documentation", event.status)
-        repos.setItemColumn(ctx.itemId, column, phaseStatus)
+        if (authoritative) repos.setItemColumn(ctx.itemId, column, phaseStatus)
         track(repos.appendLog({
           runId: event.runId,
           eventType: "run_finished",

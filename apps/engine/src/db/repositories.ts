@@ -301,6 +301,17 @@ export class Repos {
       .get(itemId) as RunRow | undefined
   }
 
+  /**
+   * Returns all runs for a given item ordered newest-first (by created_at).
+   * Used by the DB-sync layer to determine whether a given run is still the
+   * authoritative run for item state updates.
+   */
+  listRunsForItem(itemId: string): RunRow[] {
+    return this.db
+      .prepare("SELECT * FROM runs WHERE item_id = ? ORDER BY created_at DESC")
+      .all(itemId) as RunRow[]
+  }
+
   createItem(input: {
     workspaceId: string
     code?: string
