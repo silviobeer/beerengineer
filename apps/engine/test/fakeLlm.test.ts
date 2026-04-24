@@ -20,6 +20,7 @@ import { FakeProjectReviewReviewAdapter } from "../src/llm/fake/projectReviewRev
 import { FakeDocumentationStageAdapter } from "../src/llm/fake/documentationStage.js"
 import { FakeDocumentationReviewAdapter } from "../src/llm/fake/documentationReview.js"
 import type { Project, Concept, PRD } from "../src/types.js"
+import { loadPrompt, clearPromptCache } from "../src/llm/prompts/loader.js"
 
 const concept: Concept = {
   summary: "s",
@@ -80,6 +81,64 @@ test("parallelReview runs all reviewers concurrently and collects results in ord
 })
 
 // ─── Stage adapters ──────────────────────────────────────────────────────────
+
+test("brainstorm fake: UI-bearing item produces hasUi=true on concept and all projects", async () => {
+  // Regression guard for the live-run bug where hasUi was silently emitted as
+  // false for UI projects (Next.js routes, React components, Tailwind, SSE).
+  // The fake adapter is the canonical reference; its output shape must mirror
+  // what the system prompt contract demands of the real LLM.
+  const stage = new FakeBrainstormStageAdapter()
+  const state = {
+    item: {
+      id: "ui-1",
+      title: "Board + Item-Detail screens",
+      description:
+        "Next.js App Router, React 19, Tailwind v4. Two screens at /w/[key] and /w/[key]/items/[itemId]. " +
+        "Design primitives: Panel, StatusChip, Button, ChatMessage, StepperMini. Live SSE, chat transcript, action buttons.",
+    },
+    questionsAsked: 0,
+    targetQuestions: 3,
+    history: [] as Array<{ role: string; text: string }>,
+  }
+
+  await stage.step({ kind: "begin", state })
+
+  let response = await stage.step({ kind: "user-message", state, userMessage: "answer 0" })
+  assert.equal(response.kind, "message")
+  response = await stage.step({ kind: "user-message", state, userMessage: "answer 1" })
+  assert.equal(response.kind, "message")
+  response = await stage.step({ kind: "user-message", state, userMessage: "answer 2" })
+
+  assert.equal(response.kind, "artifact", "expected artifact response after 3 answers")
+  if (response.kind !== "artifact") return
+
+  assert.equal(response.artifact.concept.hasUi, true, "concept.hasUi must be true for UI-bearing item")
+  assert.ok(response.artifact.projects.length >= 1, "expected at least one project")
+  for (const p of response.artifact.projects) {
+    assert.equal(p.hasUi, true, `project ${p.id} hasUi must be true for UI-bearing item`)
+  }
+})
+
+test("brainstorm system prompt documents hasUi inference rules", () => {
+  // Guards the prompt contract: if someone removes the hasUi rules from the
+  // system prompt, this test fails so the regression is caught before a live run.
+  clearPromptCache()
+  const prompt: string = loadPrompt("system", "brainstorm")
+  assert.match(prompt, /hasUi/, "system prompt must document the hasUi field")
+  assert.match(prompt, /screens|routes|components|React|Next\.js/i, "system prompt must list explicit UI signals for hasUi")
+  assert.match(prompt, /hasUi.*true|true.*hasUi/is, "system prompt must explain when hasUi should be true")
+})
+
+test("brainstorm reviewer prompt documents hasUi verification requirement", () => {
+  clearPromptCache()
+  const prompt: string = loadPrompt("reviewers", "brainstorm")
+  assert.match(prompt, /hasUi/, "reviewer prompt must reference hasUi")
+  assert.match(
+    prompt,
+    /screens|routes|components|React|Next\.js/i,
+    "reviewer prompt must list UI signals that trigger hasUi=true",
+  )
+})
 
 test("brainstorm stage asks 3 questions then returns artifact; review passes on 2nd attempt", async () => {
   const stage = new FakeBrainstormStageAdapter()
