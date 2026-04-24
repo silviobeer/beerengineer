@@ -529,6 +529,16 @@ export class Repos {
     return this.db.prepare("SELECT * FROM runs ORDER BY created_at DESC").all() as RunRow[]
   }
 
+  /**
+   * Return every run currently in `status='running'`. Used at startup to
+   * identify orphaned runs (workers that died with the previous process).
+   */
+  listRunningRuns(): RunRow[] {
+    return this.db
+      .prepare("SELECT * FROM runs WHERE status = 'running' ORDER BY created_at ASC")
+      .all() as RunRow[]
+  }
+
   createStageRun(input: { id?: string; runId: string; stageKey: string; projectId?: string | null }): StageRunRow {
     const row: StageRunRow = {
       id: input.id ?? randomUUID(),
