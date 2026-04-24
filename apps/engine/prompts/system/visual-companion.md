@@ -33,8 +33,11 @@ Process:
 Artifact requirements:
 - `inputMode` must be `none` or `references`.
 - `screens[]` must cover the item-wide UI.
+- Every screen MUST have a non-empty string `name` and a non-empty string `purpose`.
 - `screens[].projectIds[]` must contain only ids from the provided projects.
 - `layout.kind` must be one of the allowed schema values.
+- Every region inside `layout.regions[]` MUST have both a non-empty string `id` AND a non-empty string `label`. Never set `label` to `null` or omit it.
+- Every element inside `elements[]` MUST have a non-empty string `kind` and a non-empty string `label`. The optional `placeholder` field, when present, must also be a non-empty string.
 - `elements[].region` must match an existing region id on the same screen.
 - `navigation.entryPoints[]` must cover every project with `hasUi === true`.
 - `navigation.flows[]` must only reference existing screen ids.

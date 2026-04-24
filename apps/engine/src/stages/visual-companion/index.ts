@@ -1,3 +1,5 @@
+import { mkdirSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
 import { emitEvent, getActiveRun } from "../../core/runContext.js"
 import { resolveReferences } from "../../core/referencesStore.js"
 import { printStageCompletion, stageSummary, summaryArtifactFile } from "../../core/stageHelpers.js"
@@ -35,8 +37,18 @@ export async function visualCompanion(
     async persistArtifacts(run, artifact) {
       const sourceFiles = resolveReferences(context, "wireframes", input.references)
       const enrichedArtifact = { ...artifact, sourceFiles }
-      // Write JSON artifacts first so raw data is preserved on disk even if
-      // HTML rendering fails due to a malformed LLM response.
+
+      // Write wireframes.json synchronously to disk BEFORE attempting HTML
+      // render. This guarantees the raw LLM artifact is on disk even if
+      // renderWireframeFiles throws due to a malformed structure (e.g. a region
+      // with a null label). Without this, a render crash leaves no JSON artifact
+      // at all — as reproduced in run 1a5b6eb0-64e6-463c-96b5-228c97602d46.
+      mkdirSync(run.stageArtifactsDir, { recursive: true })
+      writeFileSync(
+        join(run.stageArtifactsDir, "wireframes.json"),
+        JSON.stringify(enrichedArtifact, null, 2),
+      )
+
       const jsonFiles: StageArtifactContent[] = [
         {
           kind: "json",
@@ -53,7 +65,7 @@ export async function visualCompanion(
       ]
       // validateWireframeArtifact is called inside renderWireframeFiles — this
       // will throw a descriptive Error (not a TypeError) if the LLM returned
-      // a malformed structure (e.g. missing layout.regions).
+      // a malformed structure (e.g. missing layout.regions or a null label).
       const htmlFiles = renderWireframeFiles(enrichedArtifact)
       return [
         ...jsonFiles,
