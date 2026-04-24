@@ -14,6 +14,11 @@ export type VisualCompanionState = {
   history: ChatMessage[]
   clarificationCount: number
   maxClarifications: number
+  /** Feedback from the user's post-artifact review ("revise: …"). Injected at
+   *  the start of a new runStage iteration so the stage agent can read it. */
+  pendingRevisionFeedback?: string
+  /** How many user review rounds have completed (approve/revise). */
+  userReviewRound: number
 }
 
 export type { WireframeArtifact }

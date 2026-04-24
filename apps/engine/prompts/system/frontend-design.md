@@ -30,10 +30,52 @@ Design process:
 Artifact requirements:
 - Fill all required token categories.
 - Use concrete token values, especially for colors and scales.
-- `typography.scale` must be a usable map of token name to size value.
-- `antiPatterns` must be specific and useful.
+- `antiPatterns` must be specific and useful (non-empty array).
 - `inputMode` must be `none` or `references`.
 - `sourceFiles` may be omitted; the engine handles reference normalization separately.
+
+## Output Contract — every field below is REQUIRED
+
+The renderer will crash with a TypeError if any field is absent. Return all of these:
+
+```
+tone: string                          // non-empty sentence
+antiPatterns: string[]                // at least one entry
+tokens:
+  light:
+    primary, secondary, accent,
+    background, surface,
+    textPrimary, textMuted,
+    success, warning, error, info     // all non-empty color strings
+  dark: (optional, same shape as light)
+typography:
+  display:
+    family: string                    // non-empty font name
+    weight: string                    // e.g. "700"
+    usage: string
+  body:
+    family: string                    // non-empty font name
+    weight: string                    // e.g. "normal"
+    usage: string
+  mono: (optional, same shape)
+  scale:
+    <token-name>: <size-value>        // e.g. { "xs": "0.75rem", "sm": "0.875rem", … }
+                                      // MUST be a non-empty object — not null, not undefined
+spacing:
+  baseUnit: string                    // e.g. "4px"
+  sectionPadding: string              // e.g. "48px 24px"
+  cardPadding: string                 // e.g. "16px"
+  contentMaxWidth: string             // e.g. "1200px"
+borders:
+  buttons: string                     // e.g. "border-radius: 8px"
+  cards: string                       // e.g. "border-radius: 12px"
+  badges: string                      // e.g. "border-radius: 9999px"
+shadows:
+  <token-name>: <value>               // e.g. { "card": "0 2px 8px rgba(0,0,0,.08)" }
+                                      // MUST be a non-empty object — not null, not undefined
+```
+
+Do NOT omit `typography.scale` or `shadows`. Do NOT set them to `null`.
 
 What good output looks like:
 - A memorable but practical direction.

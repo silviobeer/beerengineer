@@ -2,6 +2,16 @@ import type { StageAgentAdapter, StageAgentInput, StageAgentResponse } from "../
 import type { DesignArtifact } from "../../types/domain.js"
 import type { FrontendDesignState } from "../../stages/frontend-design/types.js"
 
+const CLARIFICATION_QUESTIONS = [
+  "Do you already have a design system or reference apps you'd like to align with?",
+  "What's the primary emotional tone — playful, professional, minimal, bold?",
+  "Any hard constraints on color (e.g. accessibility AA, brand guidelines)?",
+]
+
+function pickQuestion(state: FrontendDesignState): string {
+  return CLARIFICATION_QUESTIONS[state.clarificationCount % CLARIFICATION_QUESTIONS.length]
+}
+
 function buildArtifact(state: FrontendDesignState): DesignArtifact {
   return {
     tokens: {
@@ -62,15 +72,42 @@ function buildArtifact(state: FrontendDesignState): DesignArtifact {
 
 export class FakeFrontendDesignStageAdapter implements StageAgentAdapter<FrontendDesignState, DesignArtifact> {
   async step(input: StageAgentInput<FrontendDesignState>): Promise<StageAgentResponse<DesignArtifact>> {
+    const state = input.state
+
     if (input.kind === "begin") {
-      return { kind: "message", message: "Do you already have a design system or reference apps?" }
+      // If a revision feedback is pending from the user review gate, acknowledge
+      // and ask the first clarification (the real LLM adapter can see the context).
+      if (state.pendingRevisionFeedback) {
+        return {
+          kind: "message",
+          message: `Noted: "${state.pendingRevisionFeedback}". Let me address that — ${pickQuestion(state)}`,
+        }
+      }
+      return { kind: "message", message: pickQuestion(state) }
     }
+
     if (input.kind === "user-message") {
       const reply = String(input.userMessage ?? "").trim()
-      input.state.history.push({ role: "user", text: reply })
-      input.state.inputMode = /^no\b/i.test(reply) || reply === "" ? "none" : "references"
-      return { kind: "artifact", artifact: buildArtifact(input.state) }
+      state.history.push({ role: "user", text: reply })
+      state.clarificationCount++
+
+      // Ask follow-up questions until we reach maxClarifications
+      if (state.clarificationCount < state.maxClarifications) {
+        return { kind: "message", message: pickQuestion(state) }
+      }
+
+      // Enough context — produce the artifact
+      state.inputMode = /^no\b/i.test(state.history[0]?.text ?? "") || state.history.length === 0
+        ? "none"
+        : "references"
+      return { kind: "artifact", artifact: buildArtifact(state) }
     }
-    return { kind: "artifact", artifact: buildArtifact(input.state) }
+
+    // review-feedback: LLM reviewer asked for a revision — produce updated artifact
+    if (input.kind === "review-feedback") {
+      return { kind: "artifact", artifact: buildArtifact(state) }
+    }
+
+    return { kind: "artifact", artifact: buildArtifact(state) }
   }
 }

@@ -12,19 +12,33 @@ import { layout } from "../src/core/workspaceLayout.js"
 import type { SimulatedRepoState } from "../src/types.js"
 import { runWithActiveRun } from "../src/core/runContext.js"
 
+/** Default answers for design-prep stages: 3 clarification no-ops + approve. */
+const DEFAULT_VISUAL_COMPANION_ANSWERS = ["no existing mockups", "dashboard first", "WCAG AA required", "approve"]
+const DEFAULT_FRONTEND_DESIGN_ANSWERS = ["no design system", "professional", "no brand constraints", "approve"]
+
 function makeIO(answers: {
   brainstorm: string[]
-  visualCompanion: string
-  frontendDesign: string
+  /** Clarification answers for visual-companion, followed by the user-review reply ("approve" / "revise: …").
+   *  Defaults to 3 no-op clarification answers + "approve". */
+  visualCompanion?: string[]
+  /** Clarification answers for frontend-design, followed by the user-review reply ("approve" / "revise: …").
+   *  Defaults to 3 no-op clarification answers + "approve". */
+  frontendDesign?: string[]
   requirements: string[]
   qa: string
   handoff: string
 }): { io: WorkflowIO; events: WorkflowEvent[]; promptLog: string[] } {
   const events: WorkflowEvent[] = []
   const promptLog: string[] = []
+  const vcAnswers = answers.visualCompanion ?? DEFAULT_VISUAL_COMPANION_ANSWERS
+  const fdAnswers = answers.frontendDesign ?? DEFAULT_FRONTEND_DESIGN_ANSWERS
   // The runtime prompt text is always "  you > "; use the preceding showMessage flow
-  // via a counter-based mapping: brainstorm uses 4 asks, requirements 3, qa 1, handoff 1.
+  // via a counter-based mapping: brainstorm uses 4 asks, visual-companion uses
+  // maxClarifications+1 asks (3 clarifications + 1 user-review), frontend-design likewise,
+  // requirements uses 3 asks, qa 1, handoff 1.
   let brainstormIdx = 0
+  let visualCompanionIdx = 0
+  let frontendDesignIdx = 0
   let requirementsIdx = 0
   let phase: "brainstorm" | "visual-companion" | "frontend-design" | "requirements" | "qa" | "handoff" = "brainstorm"
   let brainstormAsks = 0
@@ -41,12 +55,14 @@ function makeIO(answers: {
         return answer
       }
       if (phase === "visual-companion") {
-        phase = "frontend-design"
-        return answers.visualCompanion
+        const answer = vcAnswers[visualCompanionIdx++] ?? "approve"
+        if (visualCompanionIdx >= vcAnswers.length) phase = "frontend-design"
+        return answer
       }
       if (phase === "frontend-design") {
-        phase = "requirements"
-        return answers.frontendDesign
+        const answer = fdAnswers[frontendDesignIdx++] ?? "approve"
+        if (frontendDesignIdx >= fdAnswers.length) phase = "requirements"
+        return answer
       }
       if (phase === "requirements") {
         const answer = answers.requirements[requirementsIdx++] ?? "ok"
@@ -91,8 +107,10 @@ test("runWorkflow runs end-to-end with all review/side loops, producing artifact
         "Constraint: single-node, no cloud access.",
         "Yes, constraints are stable enough.",
       ],
-      visualCompanion: "no",
-      frontendDesign: "no",
+      // 3 clarification answers + 1 user-review approval
+      visualCompanion: ["no existing mockups", "dashboard first", "WCAG AA required", "approve"],
+      // 3 clarification answers + 1 user-review approval
+      frontendDesign: ["no design system", "professional", "no brand constraints", "approve"],
       requirements: [
         "Focus: core workflow as input form.",
         "Status badges per entry.",
