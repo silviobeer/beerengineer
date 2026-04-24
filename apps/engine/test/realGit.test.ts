@@ -1,11 +1,11 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { spawnSync } from "node:child_process"
 
-import type { WorkflowContext } from "../src/core/workspaceLayout.js"
+import { layout, type WorkflowContext } from "../src/core/workspaceLayout.js"
 import {
   abandonStoryBranchReal,
   detectRealGitMode,
@@ -152,7 +152,7 @@ test("realGit creates a dedicated worktree for a story branch", () => {
   rmSync(worktreeRoot, { recursive: true, force: true })
   try {
     const ctx: WorkflowContext = {
-      workspaceId: "test-workspace",
+      workspaceId: "test-workspace-migrate",
       runId: "run-2",
       itemSlug: "demo-item",
       baseBranch: "main",
@@ -184,6 +184,43 @@ test("realGit creates a dedicated worktree for a story branch", () => {
   } finally {
     rmSync(root, { recursive: true, force: true })
     rmSync(worktreeRoot, { recursive: true, force: true })
+  }
+})
+
+test("ensureStoryWorktreeReal migrates a legacy story worktree path to the canonical path", () => {
+  const root = seedRepo()
+  try {
+    const ctx: WorkflowContext = {
+      workspaceId: "test-workspace-migrate-legacy",
+      runId: "run-2",
+      itemSlug: "demo-item",
+      baseBranch: "main",
+      workspaceRoot: root,
+    }
+
+    const mode = detectRealGitMode(ctx)
+    assert.equal(mode.enabled, true)
+    if (!mode.enabled) return
+
+    ensureItemBranchReal(mode, ctx)
+    ensureProjectBranchReal(mode, ctx, "proj-a")
+    ensureWaveBranchReal(mode, ctx, "proj-a", 1)
+
+    const legacyPath = layout.executionStoryLegacyWorktreeDir(ctx, 1, "story-x")
+    const canonicalPath = layout.executionStoryWorktreeDir(ctx, 1, "story-x")
+
+    ensureStoryWorktreeReal(mode, ctx, "proj-a", 1, "story-x", legacyPath)
+    const migrated = ensureStoryWorktreeReal(mode, ctx, "proj-a", 1, "story-x", canonicalPath)
+
+    assert.equal(migrated, canonicalPath)
+    assert.equal(sh(canonicalPath, ["branch", "--show-current"]), "story/demo-item__proj-a__w1__story-x")
+    assert.equal(existsSync(legacyPath), false, "legacy story worktree path should be removed after migration")
+
+    const worktrees = sh(root, ["worktree", "list", "--porcelain"])
+    assert.ok(!worktrees.includes(legacyPath), `legacy path should be absent, got ${worktrees}`)
+    assert.match(worktrees, new RegExp(canonicalPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
+  } finally {
+    rmSync(root, { recursive: true, force: true })
   }
 })
 
@@ -263,7 +300,7 @@ test("realGit gc removes orphaned managed worktree directories that are no longe
   const worktreeRoot = join(managedRoot, "workspace", "runs", "run-3", "waves", "wave-1", "stories", "story-x")
   try {
     const ctx: WorkflowContext = {
-      workspaceId: "test-workspace",
+      workspaceId: "test-workspace-gc-dup-live",
       runId: "run-3",
       itemSlug: "demo-item",
       baseBranch: "main",
@@ -283,5 +320,41 @@ test("realGit gc removes orphaned managed worktree directories that are no longe
   } finally {
     rmSync(root, { recursive: true, force: true })
     rmSync(managedRoot, { recursive: true, force: true })
+  }
+})
+
+test("realGit gc removes legacy duplicate managed worktrees for the same story branch", () => {
+  const root = seedRepo()
+  try {
+    const ctx: WorkflowContext = {
+      workspaceId: "test-workspace-gc-dup-live",
+      runId: "run-3",
+      itemSlug: "demo-item",
+      baseBranch: "main",
+      workspaceRoot: root,
+    }
+
+    const mode = detectRealGitMode(ctx)
+    assert.equal(mode.enabled, true)
+    if (!mode.enabled) return
+
+    ensureItemBranchReal(mode, ctx)
+    ensureProjectBranchReal(mode, ctx, "proj-a")
+    ensureWaveBranchReal(mode, ctx, "proj-a", 1)
+
+    const legacyPath = layout.executionStoryLegacyWorktreeDir(ctx, 1, "story-x")
+    const canonicalPath = layout.executionStoryWorktreeDir(ctx, 1, "story-x")
+    ensureStoryWorktreeReal(mode, ctx, "proj-a", 1, "story-x", legacyPath)
+    sh(root, ["worktree", "add", "--force", canonicalPath, "story/demo-item__proj-a__w1__story-x"])
+
+    const result = gcManagedStoryWorktreesReal(mode, layout.itemStoriesRootDir(ctx))
+    assert.deepEqual(result.removed, [legacyPath])
+    assert.deepEqual(result.kept, [{ path: canonicalPath, reason: "branch story/demo-item__proj-a__w1__story-x still exists" }])
+
+    const worktrees = sh(root, ["worktree", "list", "--porcelain"])
+    assert.ok(!worktrees.includes(legacyPath), `legacy path should be absent after gc, got ${worktrees}`)
+    assert.match(worktrees, new RegExp(canonicalPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
+  } finally {
+    rmSync(root, { recursive: true, force: true })
   }
 })

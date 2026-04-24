@@ -94,6 +94,13 @@ export const layout = {
   executionStoryDir(ctx: WorkflowContext, waveNumber: number, storyId: string): string {
     return join(layout.executionWaveDir(ctx, waveNumber), "stories", storyId)
   },
+  executionStoryLegacyWorktreeDir(ctx: WorkflowContext, waveNumber: number, storyId: string): string {
+    return join(
+      layout.itemStoriesRootDir(ctx),
+      `${sanitizeSegment(ctx.runId)}-${sanitizeSegment(storyId)}`,
+      "worktree",
+    )
+  },
   executionStoryWorktreeDir(ctx: WorkflowContext, waveNumber: number, storyId: string): string {
     return join(
       layout.itemStoriesRootDir(ctx),

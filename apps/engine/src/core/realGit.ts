@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process"
 import { existsSync, readdirSync, rmSync } from "node:fs"
-import { resolve } from "node:path"
+import { basename, resolve } from "node:path"
 import type { WorkflowContext } from "./workspaceLayout.js"
 import { layout } from "./workspaceLayout.js"
 import {
@@ -92,6 +92,11 @@ function listWorktrees(workspaceRoot: string): WorktreeEntry[] {
 function findWorktreeByPath(workspaceRoot: string, worktreeRoot: string): WorktreeEntry | undefined {
   const expected = resolve(worktreeRoot)
   return listWorktrees(workspaceRoot).find(entry => entry.path === expected)
+}
+
+function isCanonicalManagedWorktreePath(path: string): boolean {
+  const parent = basename(resolve(path, ".."))
+  return parent.includes("__")
 }
 
 function collectManagedWorktreePaths(root: string): string[] {
@@ -250,7 +255,13 @@ export function ensureStoryWorktreeReal(
   worktreeRoot: string,
 ): string {
   const branch = branchNameStory(context, projectId, waveNumber, storyId)
-  return ensureManagedWorktree(mode, branch, resolve(worktreeRoot), branchNameWave(context, projectId, waveNumber))
+  const canonicalPath = resolve(worktreeRoot)
+  const legacyPath = resolve(layout.executionStoryLegacyWorktreeDir(context, waveNumber, storyId))
+  if (legacyPath !== canonicalPath) {
+    const legacy = findWorktreeByPath(mode.workspaceRoot, legacyPath)
+    if (legacy?.branch === branch) removeStoryWorktreeReal(mode, legacyPath)
+  }
+  return ensureManagedWorktree(mode, branch, canonicalPath, branchNameWave(context, projectId, waveNumber))
 }
 
 export function mergeStoryIntoWaveReal(
@@ -356,8 +367,33 @@ export function gcManagedStoryWorktreesReal(mode: RealGitEnabled, managedRoot: s
   const managedPaths = collectManagedWorktreePaths(managedRoot)
   const live = new Map(listWorktrees(mode.workspaceRoot).map(entry => [entry.path, entry]))
   const result: ManagedWorktreeGcResult = { removed: [], kept: [] }
+  const duplicatePathsToRemove = new Set<string>()
+  const liveManagedByBranch = new Map<string, string[]>()
 
   for (const path of managedPaths) {
+    const entry = live.get(path)
+    if (!entry?.branch) continue
+    const paths = liveManagedByBranch.get(entry.branch) ?? []
+    paths.push(path)
+    liveManagedByBranch.set(entry.branch, paths)
+  }
+
+  for (const paths of liveManagedByBranch.values()) {
+    if (paths.length < 2) continue
+    const sorted = [...paths].sort((left, right) => {
+      const canonicalDelta = Number(isCanonicalManagedWorktreePath(right)) - Number(isCanonicalManagedWorktreePath(left))
+      if (canonicalDelta !== 0) return canonicalDelta
+      return left.localeCompare(right)
+    })
+    for (const stale of sorted.slice(1)) duplicatePathsToRemove.add(stale)
+  }
+
+  for (const path of managedPaths) {
+    if (duplicatePathsToRemove.has(path)) {
+      removeStoryWorktreeReal(mode, path)
+      result.removed.push(path)
+      continue
+    }
     const entry = live.get(path)
     if (!entry) {
       rmSync(path, { recursive: true, force: true })
