@@ -55,6 +55,11 @@ export type AppConfig = {
       enabled?: boolean
       botTokenEnv?: string
       defaultChatId?: string
+      inbound?: {
+        enabled?: boolean
+        /** Env var name holding the Telegram `secret_token` header value. */
+        webhookSecretEnv?: string
+      }
     }
   }
   vcs?: {
@@ -85,6 +90,8 @@ export type SetupOverrides = {
   telegramEnabled?: boolean
   telegramBotTokenEnv?: string
   telegramDefaultChatId?: string
+  telegramInboundEnabled?: boolean
+  telegramWebhookSecretEnv?: string
   githubEnabled?: boolean
   browserEnabled?: boolean
 }

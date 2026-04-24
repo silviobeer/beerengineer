@@ -127,8 +127,23 @@ function migrateNotificationDeliveriesTable(db: Db): void {
       updated_at INTEGER NOT NULL
     )
   `)
+  const cols = db.prepare("PRAGMA table_info(notification_deliveries)").all() as Array<{ name: string }>
+  const has = (name: string) => cols.some(c => c.name === name)
+  if (!has("run_id")) db.exec("ALTER TABLE notification_deliveries ADD COLUMN run_id TEXT")
+  if (!has("prompt_id")) db.exec("ALTER TABLE notification_deliveries ADD COLUMN prompt_id TEXT")
+  if (!has("telegram_message_id")) db.exec("ALTER TABLE notification_deliveries ADD COLUMN telegram_message_id INTEGER")
+  if (!has("expires_at")) db.exec("ALTER TABLE notification_deliveries ADD COLUMN expires_at INTEGER")
+
   db.exec(`
     CREATE INDEX IF NOT EXISTS notification_deliveries_channel_created_idx
     ON notification_deliveries(channel, created_at)
+  `)
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS notification_deliveries_telegram_msg_idx
+    ON notification_deliveries(channel, chat_id, telegram_message_id)
+  `)
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS notification_deliveries_run_prompt_idx
+    ON notification_deliveries(run_id, prompt_id)
   `)
 }

@@ -49,7 +49,6 @@ CREATE TABLE IF NOT EXISTS projects (
 
 -- A workflow run orchestrated by the engine. One run is for one item.
 -- owner records which surface started the run: "api" (HTTP) or "cli" (terminal).
--- UI prompt answering is rejected for runs where owner = "cli" (see D2).
 -- recovery_* columns are a projection of the canonical `recovery.json` file on
 -- disk. The filesystem record is authoritative; these columns power list/board
 -- queries without touching the filesystem. `recovery_scope_ref` holds the
@@ -130,7 +129,7 @@ CREATE TABLE IF NOT EXISTS artifact_files (
 );
 
 -- Pending human prompts. The engine inserts rows when awaiting input;
--- the UI answers via POST /runs/:id/input which updates answered_at + answer.
+-- the UI answers via POST /runs/:id/answer which updates answered_at + answer.
 CREATE TABLE IF NOT EXISTS pending_prompts (
   id TEXT PRIMARY KEY,
   run_id TEXT NOT NULL REFERENCES runs(id),
@@ -144,6 +143,10 @@ CREATE INDEX IF NOT EXISTS pending_prompts_run_idx ON pending_prompts(run_id, an
 
 -- Durable dedup + audit for outbound notifications. One row per unique
 -- delivery intent; replaying the same dedup_key is a no-op.
+-- `run_id` / `prompt_id` / `telegram_message_id` are set for messages that
+-- carry an openPrompt so the inbound Telegram webhook can map a reply back
+-- to the originating (runId, promptId) via the Telegram message_id.
+-- `expires_at` lets rate-limit-style dedups age out without deleting rows.
 CREATE TABLE IF NOT EXISTS notification_deliveries (
   dedup_key TEXT PRIMARY KEY,
   channel TEXT NOT NULL,
@@ -153,8 +156,16 @@ CREATE TABLE IF NOT EXISTS notification_deliveries (
   last_attempt_at INTEGER,
   delivered_at INTEGER,
   error_message TEXT,
+  run_id TEXT,
+  prompt_id TEXT,
+  telegram_message_id INTEGER,
+  expires_at INTEGER,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS notification_deliveries_channel_created_idx
   ON notification_deliveries(channel, created_at);
+-- The `telegram_message_id` / `run_id` / `prompt_id` indexes are created by
+-- migrateNotificationDeliveriesTable() after the ALTER TABLE ADD COLUMN runs
+-- for pre-existing DBs. Keeping them there (not here) lets the migration run
+-- in the right order: columns first, then indexes that depend on them.

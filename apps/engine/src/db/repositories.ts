@@ -140,6 +140,10 @@ export type NotificationDeliveryRow = {
   last_attempt_at: number | null
   delivered_at: number | null
   error_message: string | null
+  run_id: string | null
+  prompt_id: string | null
+  telegram_message_id: number | null
+  expires_at: number | null
   created_at: number
   updated_at: number
 }
@@ -683,31 +687,56 @@ export class Repos {
       .get(id) as PendingPromptRow | undefined
   }
 
+  /**
+   * Try to claim a dedup slot for an outbound notification. Returns `true`
+   * when the caller owns the delivery and must attempt the send. Three cases
+   * where a claim succeeds even though a row already exists:
+   *   - the previous attempt ended in `failed` (transient Telegram outage
+   *     shouldn't permanently suppress the notification);
+   *   - the previous row was `delivered` but its `expires_at` has passed
+   *     (used by the `prompt_requested` rate-limit guard: subsequent prompts
+   *     re-notify after N seconds).
+   * Callers that carry an openPrompt set `runId` / `promptId` so the inbound
+   * Telegram webhook can later resolve a reply_to_message_id back to the
+   * originating run + prompt.
+   */
   claimNotificationDelivery(input: {
     dedupKey: string
     channel: string
     chatId: string
+    runId?: string | null
+    promptId?: string | null
+    expiresAt?: number | null
   }): boolean {
-    // Re-claim rows that previously failed so a transient Telegram outage
-    // doesn't permanently suppress the notification. Delivered rows remain
-    // the dedupe fence.
     const timestamp = now()
     const result = this.db
       .prepare(
         `INSERT INTO notification_deliveries (
-           dedup_key, channel, chat_id, status, attempt_count, last_attempt_at, delivered_at, error_message, created_at, updated_at
+           dedup_key, channel, chat_id, status, attempt_count, last_attempt_at, delivered_at, error_message,
+           run_id, prompt_id, telegram_message_id, expires_at, created_at, updated_at
          ) VALUES (
-           @dedup_key, @channel, @chat_id, 'pending', 0, NULL, NULL, NULL, @created_at, @updated_at
+           @dedup_key, @channel, @chat_id, 'pending', 0, NULL, NULL, NULL,
+           @run_id, @prompt_id, NULL, @expires_at, @created_at, @updated_at
          )
          ON CONFLICT(dedup_key) DO UPDATE SET
            status = 'pending',
+           run_id = COALESCE(excluded.run_id, notification_deliveries.run_id),
+           prompt_id = COALESCE(excluded.prompt_id, notification_deliveries.prompt_id),
+           expires_at = excluded.expires_at,
            updated_at = @updated_at
-         WHERE notification_deliveries.status = 'failed'`
+         WHERE notification_deliveries.status = 'failed'
+            OR (
+              notification_deliveries.expires_at IS NOT NULL
+              AND notification_deliveries.expires_at <= @updated_at
+            )`
       )
       .run({
         dedup_key: input.dedupKey,
         channel: input.channel,
         chat_id: input.chatId,
+        run_id: input.runId ?? null,
+        prompt_id: input.promptId ?? null,
+        expires_at: input.expiresAt ?? null,
         created_at: timestamp,
         updated_at: timestamp,
       })
@@ -717,6 +746,7 @@ export class Repos {
   completeNotificationDelivery(dedupKey: string, patch: {
     status: "delivered" | "failed"
     errorMessage?: string | null
+    telegramMessageId?: number | null
   }): void {
     const timestamp = now()
     this.db
@@ -727,6 +757,7 @@ export class Repos {
              last_attempt_at = ?,
              delivered_at = ?,
              error_message = ?,
+             telegram_message_id = COALESCE(?, telegram_message_id),
              updated_at = ?
          WHERE dedup_key = ?`
       )
@@ -735,9 +766,50 @@ export class Repos {
         timestamp,
         patch.status === "delivered" ? timestamp : null,
         patch.errorMessage ?? null,
+        patch.telegramMessageId ?? null,
         timestamp,
         dedupKey,
       )
+  }
+
+  /**
+   * Resolve a Telegram reply to the originating (runId, promptId). Returns
+   * the most recent delivery that targeted the given chat with the given
+   * message_id — the inbound webhook uses this to route an answer without a
+   * separate channel-binding table.
+   */
+  findTelegramDeliveryByMessage(input: {
+    chatId: string
+    messageId: number
+  }): NotificationDeliveryRow | undefined {
+    return this.db
+      .prepare(
+        `SELECT * FROM notification_deliveries
+         WHERE channel = 'telegram'
+           AND chat_id = ?
+           AND telegram_message_id = ?
+         ORDER BY created_at DESC
+         LIMIT 1`
+      )
+      .get(input.chatId, input.messageId) as NotificationDeliveryRow | undefined
+  }
+
+  /**
+   * Most-recent telegram delivery for a chat that carries an open-prompt
+   * pointer. Used as a fallback when the operator sends a bare message (no
+   * reply-to) on a single-chat deployment.
+   */
+  findLatestTelegramPromptDeliveryForChat(chatId: string): NotificationDeliveryRow | undefined {
+    return this.db
+      .prepare(
+        `SELECT * FROM notification_deliveries
+         WHERE channel = 'telegram'
+           AND chat_id = ?
+           AND prompt_id IS NOT NULL
+         ORDER BY created_at DESC
+         LIMIT 1`
+      )
+      .get(chatId) as NotificationDeliveryRow | undefined
   }
 
   getNotificationDelivery(dedupKey: string): NotificationDeliveryRow | undefined {
@@ -780,7 +852,7 @@ export class Repos {
   getOpenPrompt(runId: string): PendingPromptRow | undefined {
     return this.db
       .prepare(
-        "SELECT * FROM pending_prompts WHERE run_id = ? AND answered_at IS NULL ORDER BY created_at ASC LIMIT 1"
+        "SELECT * FROM pending_prompts WHERE run_id = ? AND answered_at IS NULL ORDER BY created_at DESC LIMIT 1"
       )
       .get(runId) as PendingPromptRow | undefined
   }

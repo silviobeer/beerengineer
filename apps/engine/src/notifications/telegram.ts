@@ -14,7 +14,7 @@ export type TelegramDeliveryRequest = {
 }
 
 export type TelegramDeliveryResult =
-  | { ok: true; status: number }
+  | { ok: true; status: number; messageId?: number }
   | { ok: false; status?: number; error: string; dropped?: boolean }
 
 export type TelegramFetchLike = typeof fetch
@@ -80,6 +80,16 @@ async function sendOnce(
   })
 }
 
+async function extractMessageId(response: Response): Promise<number | undefined> {
+  try {
+    const body = (await response.clone().json()) as { ok?: boolean; result?: { message_id?: number } }
+    const id = body?.result?.message_id
+    return typeof id === "number" ? id : undefined
+  } catch {
+    return undefined
+  }
+}
+
 export async function sendTelegramMessage(
   request: TelegramDeliveryRequest,
   opts: { fetchImpl?: TelegramFetchLike; timeoutMs?: number } = {},
@@ -98,7 +108,8 @@ export async function sendTelegramMessage(
     }
 
     if (response.ok) {
-      return { ok: true, status: response.status }
+      const messageId = await extractMessageId(response)
+      return { ok: true, status: response.status, messageId }
     }
 
     return {
@@ -113,5 +124,42 @@ export async function sendTelegramMessage(
       error: (err as Error).message,
       dropped: true,
     }
+  }
+}
+
+export type TelegramReactionRequest = {
+  token: string
+  chatId: string
+  messageId: number
+  emoji: string
+}
+
+/**
+ * Best-effort reaction (e.g. 👍) on an existing message to acknowledge an
+ * inbound answer. Failures are swallowed — acknowledgement is a nicety, not
+ * a correctness requirement.
+ */
+export async function sendTelegramReaction(
+  request: TelegramReactionRequest,
+  opts: { fetchImpl?: TelegramFetchLike; timeoutMs?: number } = {},
+): Promise<void> {
+  const fetchImpl = opts.fetchImpl ?? fetch
+  const timeoutMs = opts.timeoutMs ?? TELEGRAM_TIMEOUT_MS
+  try {
+    await fetchImpl(
+      `${resolveTelegramApiBaseUrl()}/bot${encodeURIComponent(request.token)}/setMessageReaction`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          chat_id: request.chatId,
+          message_id: request.messageId,
+          reaction: [{ type: "emoji", emoji: request.emoji }],
+        }),
+        signal: timeoutSignal(timeoutMs),
+      },
+    )
+  } catch {
+    // noop: the operator already got a human-readable reply-text, reaction is optional.
   }
 }
