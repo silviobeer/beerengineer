@@ -206,6 +206,70 @@ test("validateDesignArtifact throws a descriptive error when shadows is missing"
 })
 
 // ---------------------------------------------------------------------------
+// mockupHtmlPerScreen field validation
+// ---------------------------------------------------------------------------
+
+test("validateDesignArtifact passes when mockupHtmlPerScreen is absent (optional field)", () => {
+  // The field is optional — artifacts without wireframes don't need it
+  assert.doesNotThrow(() => validateDesignArtifact(validArtifact))
+})
+
+test("validateDesignArtifact passes when mockupHtmlPerScreen has valid <!doctype html> entries", () => {
+  const withMockups = {
+    ...validArtifact,
+    mockupHtmlPerScreen: {
+      dashboard: "<!doctype html>\n<html><head></head><body><div>[Normal State]</div></body></html>",
+      detail: "<!DOCTYPE HTML>\n<html><body>detail</body></html>",
+    },
+  }
+  assert.doesNotThrow(() => validateDesignArtifact(withMockups))
+})
+
+test("validateDesignArtifact passes when mockupHtmlPerScreen has <html> entry (no doctype)", () => {
+  const withMockups = {
+    ...validArtifact,
+    mockupHtmlPerScreen: {
+      s1: "<html><head></head><body>ok</body></html>",
+    },
+  }
+  assert.doesNotThrow(() => validateDesignArtifact(withMockups))
+})
+
+test("validateDesignArtifact throws descriptive error when mockupHtmlPerScreen entry is empty string", () => {
+  const bad = { ...validArtifact, mockupHtmlPerScreen: { dashboard: "" } } as DesignArtifact
+
+  let thrown: Error | undefined
+  try { validateDesignArtifact(bad) } catch (e) { thrown = e as Error }
+  assert.ok(thrown, "Expected validateDesignArtifact to throw")
+  assert.ok(
+    thrown!.message.includes("mockupHtmlPerScreen") || thrown!.message.includes("dashboard"),
+    `Error must mention field name or key, got: ${thrown!.message}`,
+  )
+  assert.match(thrown!.message, /LLM/)
+})
+
+test("validateDesignArtifact throws descriptive error when mockupHtmlPerScreen entry is not HTML", () => {
+  const bad = { ...validArtifact, mockupHtmlPerScreen: { s1: "not html at all" } } as DesignArtifact
+
+  let thrown: Error | undefined
+  try { validateDesignArtifact(bad) } catch (e) { thrown = e as Error }
+  assert.ok(thrown, "Expected validateDesignArtifact to throw")
+  assert.ok(
+    /<!doctype|<html/i.test(thrown!.message),
+    `Error must mention expected format, got: ${thrown!.message}`,
+  )
+})
+
+test("validateDesignArtifact throws descriptive error when mockupHtmlPerScreen is an array", () => {
+  const bad = { ...validArtifact, mockupHtmlPerScreen: ["html1", "html2"] } as unknown as DesignArtifact
+
+  let thrown: Error | undefined
+  try { validateDesignArtifact(bad) } catch (e) { thrown = e as Error }
+  assert.ok(thrown, "Expected validateDesignArtifact to throw")
+  assert.match(thrown!.message, /mockupHtmlPerScreen/)
+})
+
+// ---------------------------------------------------------------------------
 // JSON-first persistence: design.json must exist even if render crashes
 // ---------------------------------------------------------------------------
 

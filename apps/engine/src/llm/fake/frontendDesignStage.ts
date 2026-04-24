@@ -12,7 +12,63 @@ function pickQuestion(state: FrontendDesignState): string {
   return CLARIFICATION_QUESTIONS[state.clarificationCount % CLARIFICATION_QUESTIONS.length]
 }
 
+/**
+ * Minimal but schema-valid mockup HTML for a single screen.
+ * Does not need to look pretty — just needs to pass the validator
+ * (starts with <!doctype html, is non-empty).
+ */
+function buildFakeMockupHtml(screenId: string, screenName: string): string {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>${screenName} — Mockup</title>
+  <style>
+    :root {
+      --color-primary: #0f766e;
+      --color-background: #f4f7f6;
+      --color-surface: #ffffff;
+      --color-text-primary: #102a2a;
+      --font-body: Manrope, sans-serif;
+    }
+    body { font-family: var(--font-body); background: var(--color-background); color: var(--color-text-primary); margin: 0; padding: 24px; }
+    .state-section { margin-bottom: 32px; }
+    .state-label { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: #527070; margin-bottom: 12px; }
+    .card { background: var(--color-surface); border: 1px solid #d4e0de; border-radius: 8px; padding: 16px; }
+  </style>
+</head>
+<body>
+  <div class="state-section">
+    <div class="state-label">[Normal State] — ${screenName}</div>
+    <div class="card">Screen: ${screenId} — Normal state with realistic content.</div>
+  </div>
+  <div class="state-section">
+    <div class="state-label">[Empty State]</div>
+    <div class="card">No items yet. Add your first entry to get started.</div>
+  </div>
+  <div class="state-section">
+    <div class="state-label">[Loading State]</div>
+    <div class="card" style="color:#9dc9c4">Loading…</div>
+  </div>
+  <div class="state-section">
+    <div class="state-label">[Error State]</div>
+    <div class="card" style="color:#b91c1c">Something went wrong. Please retry.</div>
+  </div>
+</body>
+</html>`
+}
+
 function buildArtifact(state: FrontendDesignState): DesignArtifact {
+  // Collect screen ids from the wireframes payload so we can emit a
+  // mockupHtmlPerScreen entry for each one.
+  const wireframes = state.input?.wireframes
+  const mockupHtmlPerScreen: Record<string, string> = {}
+  if (wireframes?.screens) {
+    for (const screen of wireframes.screens) {
+      mockupHtmlPerScreen[screen.id] = buildFakeMockupHtml(screen.id, screen.name)
+    }
+  }
+
   return {
     tokens: {
       light: {
@@ -67,6 +123,7 @@ function buildArtifact(state: FrontendDesignState): DesignArtifact {
     antiPatterns: ["generic SaaS blue gradients", "tiny low-contrast meta text", "unstyled empty states"],
     inputMode: state.inputMode,
     conceptAmendments: [],
+    mockupHtmlPerScreen: Object.keys(mockupHtmlPerScreen).length > 0 ? mockupHtmlPerScreen : undefined,
   }
 }
 

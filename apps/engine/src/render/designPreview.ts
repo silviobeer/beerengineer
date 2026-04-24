@@ -139,6 +139,31 @@ export function validateDesignArtifact(artifact: DesignArtifact): void {
       "Every design artifact must include a shadows Record<string, string> — retry or inspect the LLM output.",
     )
   }
+
+  // mockupHtmlPerScreen — optional but if present must be valid
+  if (artifact.mockupHtmlPerScreen !== undefined) {
+    if (typeof artifact.mockupHtmlPerScreen !== "object" || Array.isArray(artifact.mockupHtmlPerScreen)) {
+      throw new Error(
+        "Invalid design artifact from LLM: artifact.mockupHtmlPerScreen is present but not an object. " +
+        "It must be a Record<string, string> mapping screenId to a full HTML document — retry or inspect the LLM output.",
+      )
+    }
+    for (const [screenId, html] of Object.entries(artifact.mockupHtmlPerScreen)) {
+      if (typeof html !== "string" || html.trim().length === 0) {
+        throw new Error(
+          `Invalid design artifact from LLM: mockupHtmlPerScreen["${screenId}"] is empty or not a string. ` +
+          "Each entry must be a non-empty HTML document — retry or inspect the LLM output.",
+        )
+      }
+      const trimmed = html.trimStart().toLowerCase()
+      if (!trimmed.startsWith("<!doctype") && !trimmed.startsWith("<html")) {
+        throw new Error(
+          `Invalid design artifact from LLM: mockupHtmlPerScreen["${screenId}"] does not start with <!doctype or <html. ` +
+          "Each entry must be a self-contained HTML document — retry or inspect the LLM output.",
+        )
+      }
+    }
+  }
 }
 
 function escapeHtml(value: string): string {

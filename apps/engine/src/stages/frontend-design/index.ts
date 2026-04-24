@@ -8,7 +8,7 @@ import { stagePresent } from "../../core/stagePresentation.js"
 import { layout } from "../../core/workspaceLayout.js"
 import { createFrontendDesignReview, createFrontendDesignStage, type RunLlmConfig } from "../../llm/registry.js"
 import { renderDesignPreview } from "../../render/designPreview.js"
-import { renderMockupIndex, renderStyledMockup } from "../../render/styledMockup.js"
+import { renderMockupFile, renderMockupSitemap } from "../../render/mockupFile.js"
 import { ask } from "../../sim/human.js"
 import type { DesignArtifact, WireframeArtifact, WorkflowContext } from "../../types.js"
 import type { FrontendDesignInput, FrontendDesignState } from "./types.js"
@@ -69,16 +69,18 @@ function loadWireframesForRun(
 
 /**
  * Resolve the public base URL used to construct browser-openable mockup links
- * in the review-gate summary. Falls back to a file:// path when no public URL
- * is configured (local development without a publicBaseUrl setting).
+ * in the review-gate summary. Falls back to a hint showing the local HTTP
+ * address when no publicBaseUrl is configured, so the user can open files
+ * without needing file:// access.
  */
-function resolvePublicBase(context: WorkflowContext): string {
-  // When running in the API/hosted context the active run carries the publicBaseUrl.
-  // When running in the CLI (no active run) we fall back to a local placeholder.
+function resolvePublicBase(_context: WorkflowContext): string {
   const activeRun = getActiveRun()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const configured = (activeRun as any)?.publicBaseUrl as string | undefined
-  return configured?.replace(/\/$/, "") ?? `file://${layout.stageArtifactsDir(context, "frontend-design")}`
+  // Return configured URL without trailing slash, or a localhost placeholder.
+  // NOTE: never use file:// here — browsers may block local file access and the
+  // path would be wrong anyway (file:// + stageArtifactsDir != served URL).
+  return configured?.replace(/\/$/, "") ?? "http://localhost:4100"
 }
 
 export async function frontendDesign(
@@ -168,7 +170,9 @@ export async function frontendDesign(
 
           for (const screen of wireframes.screens) {
             try {
-              const html = renderStyledMockup(screen, enrichedArtifact)
+              // The LLM ships the full HTML inside mockupHtmlPerScreen — we just
+              // retrieve it verbatim. No procedural rendering occurs here.
+              const html = renderMockupFile(screen.id, enrichedArtifact)
               const fileName = `mockups/${screen.id}.html`
               mockupArtifacts.push({
                 kind: "txt" as const,
@@ -179,18 +183,18 @@ export async function frontendDesign(
               mockupScreenIds.push(screen.id)
             } catch (err) {
               stagePresent.warn(
-                `frontend-design: could not render styled mockup for screen "${screen.id}": ${(err as Error).message}`,
+                `frontend-design: could not write mockup for screen "${screen.id}": ${(err as Error).message}`,
               )
             }
           }
 
           if (mockupScreenIds.length > 0) {
-            const indexHtml = renderMockupIndex(wireframes.screens, run.runId, publicBase)
+            const sitemapHtml = renderMockupSitemap(wireframes.screens, run.runId, publicBase)
             mockupArtifacts.push({
               kind: "txt" as const,
-              label: "Mockups Index",
-              fileName: "mockups/index.html",
-              content: indexHtml,
+              label: "Mockups Sitemap",
+              fileName: "mockups/sitemap.html",
+              content: sitemapHtml,
             })
           }
         }
@@ -220,19 +224,23 @@ export async function frontendDesign(
     // ── Post-artifact user review gate ────────────────────────────────────────
     const summary = buildDesignSummary(artifact)
 
-    // Build mockup URLs for the gate prompt so the user can open them in a browser
-    const mockupFiles = run.files.filter(f => f.path.includes("/mockups/") && f.path.endsWith(".html") && !f.path.endsWith("index.html"))
+    // Build mockup URLs for the gate prompt so the user can open them in a browser.
+    // Exclude sitemap.html from the per-screen list (it's the index, not a screen).
+    const mockupFiles = run.files.filter(
+      f => f.path.includes("/mockups/") && f.path.endsWith(".html") && !f.path.endsWith("sitemap.html"),
+    )
     let mockupSection = ""
     if (mockupFiles.length > 0) {
       const publicBase = resolvePublicBase(context)
       const urlLines = mockupFiles.map(f => {
-        // Build a URL the user can open — prefer publicBase URL, fall back to file path
+        // Extract the screen id from the file path (everything after /mockups/, minus .html).
         const screenId = f.path.split("/mockups/")[1]?.replace(/\.html$/, "") ?? ""
+        // URL format: {publicBaseUrl}/runs/{runId}/artifacts/stages/frontend-design/artifacts/mockups/{screenId}.html
         const url = `${publicBase}/runs/${run.runId}/artifacts/stages/frontend-design/artifacts/mockups/${screenId}.html`
         return `  ${url}`
       })
       mockupSection =
-        `\nStyled mockups (open in browser):\n` + urlLines.join("\n") + "\n"
+        `\nHigh-fidelity mockups (open in browser):\n` + urlLines.join("\n") + "\n"
     }
 
     const prompt =

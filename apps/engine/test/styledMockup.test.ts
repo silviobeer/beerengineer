@@ -1,28 +1,31 @@
 /**
- * Tests for the styledMockup renderer and the integration between
- * frontend-design and visual-companion wireframes.
+ * Tests for the mockupFile renderer and the LLM-generated-HTML mockup flow.
  *
  * Covered scenarios:
- *  1. renderStyledMockup: produces full HTML with CSS vars from design tokens
- *  2. renderStyledMockup: borders.cards applied to .region and .styled-card (not hardcoded 12px)
- *  3. renderStyledMockup: shadows.* mapped to --shadow-* CSS vars
- *  4. renderStyledMockup: dark mode vars emitted when tokens.dark present
- *  5. renderStyledMockup: anti-pattern "zero rounded corners" injects !important override
- *  6. renderStyledMockup: all element kinds (heading, button, card, chip, input, list, table, unknown) render without throwing
- *  7. renderStyledMockup: throws descriptive error when design artifact is malformed
- *  8. renderMockupIndex: produces HTML linking each screen
- *  9. buildAntiPatternCss: zero-radius patterns trigger enforcement rule
- * 10. Full loop via runStage: frontend-design with wireframes input writes mockups/ and mockups/index.html
- * 11. designPreview: border-radius tokens are read from artifact (not hardcoded 12px)
+ *  1.  renderMockupFile: returns the LLM HTML verbatim (no re-serialisation)
+ *  2.  renderMockupFile: throws descriptive error when mockupHtmlPerScreen is absent
+ *  3.  renderMockupFile: throws descriptive error when screenId is missing from map
+ *  4.  renderMockupFile: throws descriptive error when HTML does not start with <!doctype or <html
+ *  5.  renderMockupSitemap: produces HTML with clickable links for each screen
+ *  6.  renderMockupSitemap: link URL matches expected format (publicBaseUrl/runs/…/mockups/…)
+ *  7.  Full loop via runStage: design artifact with mockupHtmlPerScreen writes exact LLM HTML
+ *      verbatim to disk + valid sitemap.html (key new requirement)
+ *  8.  Full loop via runStage: without wireframes — no mockups/ directory
+ *  9.  review gate URL format: URL contains correct path template
+ * 10.  validateDesignArtifact: passes when mockupHtmlPerScreen is absent (optional field)
+ * 11.  validateDesignArtifact: passes when mockupHtmlPerScreen has valid entries
+ * 12.  validateDesignArtifact: throws when mockupHtmlPerScreen entry is empty string
+ * 13.  validateDesignArtifact: throws when mockupHtmlPerScreen entry does not start with <!doctype/<html
+ * 14.  designPreview: border-radius tokens are read from artifact (not hardcoded 12px)
  */
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdtempSync, rmSync, existsSync } from "node:fs"
+import { mkdtempSync, rmSync, existsSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { renderStyledMockup, renderMockupIndex, __testing as mockupTesting } from "../src/render/styledMockup.js"
-import { renderDesignPreview, __testing as previewTesting } from "../src/render/designPreview.js"
+import { renderMockupFile, renderMockupSitemap } from "../src/render/mockupFile.js"
+import { renderDesignPreview, validateDesignArtifact } from "../src/render/designPreview.js"
 import { runStage } from "../src/core/stageRuntime.js"
 import { FakeFrontendDesignStageAdapter } from "../src/llm/fake/frontendDesignStage.js"
 import { FakeFrontendDesignReviewAdapter } from "../src/llm/fake/frontendDesignReview.js"
@@ -72,29 +75,30 @@ const baseDesign: DesignArtifact = {
   inputMode: "none",
 }
 
-const sharpDesign: DesignArtifact = {
-  ...baseDesign,
-  borders: { buttons: "0px", cards: "0px", badges: "0px" },
-  antiPatterns: ["zero rounded corners", "avoid border radius"],
-}
+const FAKE_DASHBOARD_HTML = `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8" /><title>Dashboard — Mockup</title>
+<style>:root { --color-primary: #0f766e; }</style>
+</head>
+<body>
+  <div>[Normal State] Dashboard with BEER-001, BEER-002, BEER-003</div>
+  <div>[Empty State] No beers yet</div>
+  <div>[Loading State] Loading…</div>
+  <div>[Error State] Something went wrong</div>
+</body>
+</html>`
 
-const darkDesign: DesignArtifact = {
+const FAKE_DETAIL_HTML = `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8" /><title>Detail — Mockup</title></head>
+<body><div>[Normal State] Detail view for BEER-001</div><div>[Empty State]</div><div>[Loading State]</div><div>[Error State]</div></body>
+</html>`
+
+const designWithMockups: DesignArtifact = {
   ...baseDesign,
-  tokens: {
-    ...baseDesign.tokens,
-    dark: {
-      primary: "#5eead4",
-      secondary: "#67e8f9",
-      accent: "#fbbf24",
-      background: "#0f1720",
-      surface: "#16212a",
-      textPrimary: "#e6fffb",
-      textMuted: "#9dc9c4",
-      success: "#4ade80",
-      warning: "#fbbf24",
-      error: "#f87171",
-      info: "#38bdf8",
-    },
+  mockupHtmlPerScreen: {
+    dashboard: FAKE_DASHBOARD_HTML,
+    detail: FAKE_DETAIL_HTML,
   },
 }
 
@@ -114,112 +118,151 @@ const singleScreen: Screen = {
     { id: "e1", region: "header", kind: "heading", label: "Beer Dashboard" },
     { id: "e2", region: "header", kind: "button", label: "Add Beer" },
     { id: "e3", region: "main", kind: "card", label: "Beer Card", placeholder: "ABV 5.2%" },
-    { id: "e4", region: "main", kind: "chip", label: "IPA" },
-    { id: "e5", region: "main", kind: "input", label: "Search" },
-    { id: "e6", region: "main", kind: "list", label: "Recent" },
-    { id: "e7", region: "main", kind: "table", label: "Stats" },
-    { id: "e8", region: "main", kind: "placeholder", label: "Unknown widget" },
   ],
 }
 
-// ─── Tests ───────────────────────────────────────────────────────────────────
+// ─── renderMockupFile ─────────────────────────────────────────────────────────
 
-test("renderStyledMockup: produces HTML with CSS variables from design tokens", () => {
-  const html = renderStyledMockup(singleScreen, baseDesign)
-  assert.ok(html.includes("<!doctype html"), "must be a full HTML document")
-  assert.ok(html.includes("--color-primary: #0f766e"), "primary color CSS var must be present")
-  assert.ok(html.includes("--color-accent: #f59e0b"), "accent color CSS var must be present")
-  assert.ok(html.includes("--font-display: Fraunces"), "display font CSS var must be present")
-  assert.ok(html.includes("--font-body: Manrope"), "body font CSS var must be present")
+test("renderMockupFile: returns LLM HTML verbatim — no re-serialisation", () => {
+  const html = renderMockupFile("dashboard", designWithMockups)
+  assert.strictEqual(html, FAKE_DASHBOARD_HTML, "must return the exact LLM HTML string unchanged")
 })
 
-test("renderStyledMockup: borders.cards token applied — not hardcoded 12px", () => {
-  const html20 = renderStyledMockup(singleScreen, baseDesign) // cards: "20px"
-  assert.ok(html20.includes("--radius-cards: 20px"), "cards radius must come from artifact (20px)")
-  assert.ok(!html20.includes("border-radius: 12px"), "must NOT have hardcoded 12px")
-
-  const html0 = renderStyledMockup(singleScreen, sharpDesign) // cards: "0px"
-  assert.ok(html0.includes("--radius-cards: 0px"), "cards radius must come from artifact (0px)")
+test("renderMockupFile: returns second screen HTML verbatim", () => {
+  const html = renderMockupFile("detail", designWithMockups)
+  assert.strictEqual(html, FAKE_DETAIL_HTML, "must return detail HTML exactly")
 })
 
-test("renderStyledMockup: shadows mapped to --shadow-* CSS vars", () => {
-  const html = renderStyledMockup(singleScreen, baseDesign)
-  assert.ok(html.includes("--shadow-sm:"), "shadow-sm CSS var must be present")
-  assert.ok(html.includes("--shadow-md:"), "shadow-md CSS var must be present")
-})
-
-test("renderStyledMockup: dark mode vars emitted when tokens.dark present", () => {
-  const html = renderStyledMockup(singleScreen, darkDesign)
-  assert.ok(html.includes("prefers-color-scheme: dark"), "must include dark-mode media query")
-  assert.ok(html.includes("#0f1720"), "dark background must be present")
-})
-
-test("renderStyledMockup: no dark mode block when tokens.dark absent", () => {
-  const html = renderStyledMockup(singleScreen, baseDesign)
-  assert.ok(!html.includes("prefers-color-scheme: dark"), "must not include dark-mode block when absent")
-})
-
-test("renderStyledMockup: anti-pattern 'zero rounded corners' injects border-radius: 0 !important", () => {
-  const html = renderStyledMockup(singleScreen, sharpDesign)
-  assert.ok(html.includes("border-radius: 0 !important"), "must enforce zero-radius anti-pattern")
-})
-
-test("renderStyledMockup: no !important override when anti-patterns do not mention corners", () => {
-  const html = renderStyledMockup(singleScreen, baseDesign) // antiPatterns: ["generic SaaS blue gradients"]
-  assert.ok(!html.includes("!important"), "must not inject override when anti-pattern doesn't mention radius")
-})
-
-test("renderStyledMockup: all element kinds render without throwing", () => {
-  // The fixture screen already covers: heading, button, card, chip, input, list, table, placeholder
-  assert.doesNotThrow(() => renderStyledMockup(singleScreen, baseDesign))
-})
-
-test("renderStyledMockup: heading element uses display font class", () => {
-  const html = renderStyledMockup(singleScreen, baseDesign)
-  assert.ok(html.includes("styled-heading"), "must render heading with styled-heading class")
-  assert.ok(html.includes("Beer Dashboard"), "heading label must appear in output")
-})
-
-test("renderStyledMockup: button element renders with styled-btn class", () => {
-  const html = renderStyledMockup(singleScreen, baseDesign)
-  assert.ok(html.includes("styled-btn"), "must render button with styled-btn class")
-  assert.ok(html.includes("Add Beer"), "button label must appear")
-})
-
-test("renderStyledMockup: throws descriptive error when design artifact is malformed", () => {
-  const malformed = { ...baseDesign, tone: "" } as DesignArtifact
+test("renderMockupFile: throws descriptive error when mockupHtmlPerScreen is absent", () => {
   assert.throws(
-    () => renderStyledMockup(singleScreen, malformed),
-    /Invalid design artifact from LLM/,
-    "must throw descriptive error for malformed artifact",
+    () => renderMockupFile("dashboard", baseDesign),
+    /mockupHtmlPerScreen/,
+    "must throw when mockupHtmlPerScreen is absent",
   )
 })
 
-test("renderMockupIndex: produces HTML linking all screens", () => {
+test("renderMockupFile: throws descriptive error when screenId is not in map", () => {
+  assert.throws(
+    () => renderMockupFile("nonexistent", designWithMockups),
+    /nonexistent/,
+    "must mention the missing screenId in the error",
+  )
+})
+
+test("renderMockupFile: throws descriptive error when HTML does not start with <!doctype or <html", () => {
+  const bad: DesignArtifact = {
+    ...baseDesign,
+    mockupHtmlPerScreen: { dashboard: "just some text, not HTML" },
+  }
+  assert.throws(
+    () => renderMockupFile("dashboard", bad),
+    /<!doctype|<html/i,
+    "must throw when HTML doesn't start with a doctype or html tag",
+  )
+})
+
+test("renderMockupFile: accepts HTML starting with lowercase <!doctype html>", () => {
+  const lower: DesignArtifact = {
+    ...baseDesign,
+    mockupHtmlPerScreen: { dashboard: "<!doctype html>\n<html><body>ok</body></html>" },
+  }
+  assert.doesNotThrow(() => renderMockupFile("dashboard", lower))
+})
+
+test("renderMockupFile: accepts HTML starting with <html> (no doctype)", () => {
+  const noDoctype: DesignArtifact = {
+    ...baseDesign,
+    mockupHtmlPerScreen: { dashboard: "<html><head></head><body>ok</body></html>" },
+  }
+  assert.doesNotThrow(() => renderMockupFile("dashboard", noDoctype))
+})
+
+// ─── renderMockupSitemap ──────────────────────────────────────────────────────
+
+test("renderMockupSitemap: produces HTML with links for each screen", () => {
   const screens: Screen[] = [
     { ...singleScreen, id: "dashboard", name: "Dashboard", purpose: "Overview" },
-    { ...singleScreen, id: "detail", name: "Detail", purpose: "Detail view" },
+    { ...singleScreen, id: "detail", name: "Detail", purpose: "Item detail" },
   ]
-  const html = renderMockupIndex(screens, "run-123", "http://localhost:4100")
-  assert.ok(html.includes("run-123/artifacts/stages/frontend-design/artifacts/mockups/dashboard.html"), "must link dashboard mockup")
-  assert.ok(html.includes("run-123/artifacts/stages/frontend-design/artifacts/mockups/detail.html"), "must link detail mockup")
+  const html = renderMockupSitemap(screens, "run-123", "http://localhost:4100")
+  assert.ok(html.startsWith("<!doctype html"), "must be a full HTML document")
   assert.ok(html.includes("Dashboard"), "must include screen name")
   assert.ok(html.includes("Detail"), "must include second screen name")
 })
 
-test("buildAntiPatternCss: zero-radius patterns trigger !important enforcement", () => {
-  const { buildAntiPatternCss } = mockupTesting
-  const css = buildAntiPatternCss(["zero rounded corners", "no border radius allowed"])
-  assert.ok(css.includes("border-radius: 0 !important"), "should enforce zero-radius rule")
+test("renderMockupSitemap: link URL uses correct path template", () => {
+  const screens: Screen[] = [
+    { ...singleScreen, id: "dashboard", name: "Dashboard", purpose: "Overview" },
+    { ...singleScreen, id: "detail", name: "Detail", purpose: "Detail" },
+  ]
+  const html = renderMockupSitemap(screens, "run-abc", "http://app.example.com")
+  assert.ok(
+    html.includes("http://app.example.com/runs/run-abc/artifacts/stages/frontend-design/artifacts/mockups/dashboard.html"),
+    "dashboard URL must match expected format",
+  )
+  assert.ok(
+    html.includes("http://app.example.com/runs/run-abc/artifacts/stages/frontend-design/artifacts/mockups/detail.html"),
+    "detail URL must match expected format",
+  )
 })
 
-test("buildAntiPatternCss: gradient-only anti-pattern produces no border-radius rule", () => {
-  const { buildAntiPatternCss } = mockupTesting
-  const css = buildAntiPatternCss(["avoid generic gradients"])
-  assert.ok(!css.includes("border-radius"), "should not produce border-radius rule for non-radius anti-pattern")
+test("renderMockupSitemap: strips trailing slash from publicBaseUrl", () => {
+  const screens = [{ ...singleScreen, id: "s1", name: "Screen 1", purpose: "p" }]
+  const html = renderMockupSitemap(screens, "r1", "http://localhost:4100/")
+  assert.ok(
+    html.includes("http://localhost:4100/runs/r1/"),
+    "must strip trailing slash and build correct URL",
+  )
+  assert.ok(
+    !html.includes("localhost:4100//runs"),
+    "must not produce double slashes",
+  )
 })
 
-// ─── designPreview: border tokens applied (no hardcoded 12px) ────────────────
+// ─── validateDesignArtifact: mockupHtmlPerScreen field ───────────────────────
+
+test("validateDesignArtifact: passes when mockupHtmlPerScreen is absent (optional)", () => {
+  assert.doesNotThrow(() => validateDesignArtifact(baseDesign))
+})
+
+test("validateDesignArtifact: passes when mockupHtmlPerScreen has valid entries", () => {
+  assert.doesNotThrow(() => validateDesignArtifact(designWithMockups))
+})
+
+test("validateDesignArtifact: throws when mockupHtmlPerScreen entry is empty string", () => {
+  const bad: DesignArtifact = {
+    ...baseDesign,
+    mockupHtmlPerScreen: { s1: "" },
+  }
+  assert.throws(
+    () => validateDesignArtifact(bad),
+    /mockupHtmlPerScreen.*s1|s1.*mockupHtmlPerScreen/i,
+    "must mention the offending key",
+  )
+})
+
+test("validateDesignArtifact: throws when mockupHtmlPerScreen entry is not a valid HTML document", () => {
+  const bad: DesignArtifact = {
+    ...baseDesign,
+    mockupHtmlPerScreen: { s1: "not html at all" },
+  }
+  assert.throws(
+    () => validateDesignArtifact(bad),
+    /<!doctype|<html/i,
+    "must throw for non-HTML content",
+  )
+})
+
+test("validateDesignArtifact: throws when mockupHtmlPerScreen is an array (not object)", () => {
+  const bad = { ...baseDesign, mockupHtmlPerScreen: ["html1"] } as unknown as DesignArtifact
+  assert.throws(
+    () => validateDesignArtifact(bad),
+    /mockupHtmlPerScreen/,
+    "must reject array instead of object",
+  )
+})
+
+// ─── designPreview: border tokens applied (not hardcoded 12px) ───────────────
 
 test("designPreview: panel border-radius comes from borders.cards token", () => {
   const zero = { ...baseDesign, borders: { buttons: "0px", cards: "0px", badges: "0px" } }
@@ -234,10 +277,10 @@ test("designPreview: chip border-radius comes from borders.badges token", () => 
   assert.ok(html.includes("border-radius: 2px"), "chip must use artifact's badges border-radius")
 })
 
-// ─── Full loop: frontend-design stage writes mockups when wireframes provided ─
+// ─── Full loop: LLM HTML written verbatim to disk ────────────────────────────
 
 function withTmpCwd(): { dir: string; restore: () => void } {
-  const dir = mkdtempSync(join(tmpdir(), "be2-styled-mockup-"))
+  const dir = mkdtempSync(join(tmpdir(), "be2-mockup-file-"))
   const prev = process.cwd()
   process.chdir(dir)
   return {
@@ -255,9 +298,7 @@ const stubWireframes: WireframeArtifact = {
   inputMode: "none",
 }
 
-function makeFrontendDesignStateWithWireframes(
-  wireframes: WireframeArtifact,
-): () => FrontendDesignState {
+function makeFrontendDesignState(wireframes: WireframeArtifact): () => FrontendDesignState {
   return () => ({
     input: {
       itemConcept: {
@@ -267,7 +308,13 @@ function makeFrontendDesignStateWithWireframes(
         constraints: [],
         hasUi: true,
       },
-      projects: [{ id: "P01", name: "Test", description: "Test", hasUi: true, concept: { summary: "T", problem: "P", users: [], constraints: [] } }],
+      projects: [{
+        id: "P01",
+        name: "Test",
+        description: "Test",
+        hasUi: true,
+        concept: { summary: "T", problem: "P", users: [], constraints: [] },
+      }],
       wireframes,
     },
     inputMode: "none",
@@ -279,7 +326,7 @@ function makeFrontendDesignStateWithWireframes(
   })
 }
 
-test("frontend-design runStage: with wireframes input — writes mockups/dashboard.html and mockups/index.html", async () => {
+test("frontend-design runStage: LLM HTML written verbatim — mockups/dashboard.html matches exact LLM output + sitemap.html present", async () => {
   const env = withTmpCwd()
   try {
     const answers = ["no design system", "professional", "no constraints"]
@@ -289,17 +336,14 @@ test("frontend-design runStage: with wireframes input — writes mockups/dashboa
       stageId: "frontend-design",
       stageAgentLabel: "Visual Designer",
       reviewerLabel: "Design Review",
-      workspaceId: "ws-fd-mockup",
-      runId: "run-fd-mockup",
-      createInitialState: makeFrontendDesignStateWithWireframes(stubWireframes),
+      workspaceId: "ws-fd-llm-html",
+      runId: "run-fd-llm-html",
+      createInitialState: makeFrontendDesignState(stubWireframes),
       stageAgent: new FakeFrontendDesignStageAdapter(),
       reviewer: new FakeFrontendDesignReviewAdapter(),
       askUser: async () => answers[i++] ?? "ok",
       async persistArtifacts(run, artifact) {
-        // Import the real persistArtifacts logic by driving the stage index.
-        // Here we manually call the render functions that the real index calls,
-        // replicating what persistArtifacts does in frontend-design/index.ts.
-        const { renderStyledMockup: rsm, renderMockupIndex: rmi } = await import("../src/render/styledMockup.js")
+        const { renderMockupFile: rmf, renderMockupSitemap: rms } = await import("../src/render/mockupFile.js")
         const { renderDesignPreview: rdp } = await import("../src/render/designPreview.js")
         const { mkdirSync: mds, writeFileSync: wfs } = await import("node:fs")
         const { join: pjoin } = await import("node:path")
@@ -313,40 +357,49 @@ test("frontend-design runStage: with wireframes input — writes mockups/dashboa
           { kind: "txt" as const, label: "Design Preview", fileName: "design-preview.html", content: rdp(artifact) },
         ]
 
-        for (const screen of stubWireframes.screens) {
-          const html = rsm(screen, artifact)
-          files.push({ kind: "txt" as const, label: `Mockup — ${screen.name}`, fileName: `mockups/${screen.id}.html`, content: html })
+        if (artifact.mockupHtmlPerScreen) {
+          for (const screen of stubWireframes.screens) {
+            const html = rmf(screen.id, artifact)
+            files.push({ kind: "txt" as const, label: `Mockup — ${screen.name}`, fileName: `mockups/${screen.id}.html`, content: html })
+          }
+          files.push({
+            kind: "txt" as const,
+            label: "Mockups Sitemap",
+            fileName: "mockups/sitemap.html",
+            content: rms(stubWireframes.screens, run.runId, "http://localhost:4100"),
+          })
         }
-        files.push({
-          kind: "txt" as const,
-          label: "Mockups Index",
-          fileName: "mockups/index.html",
-          content: rmi(stubWireframes.screens, run.runId, "http://localhost:4100"),
-        })
+
         return files
       },
       async onApproved(artifact) { return artifact },
       maxReviews: 3,
     })
 
-    // Verify files were written
     const artifactsDir = run.stageArtifactsDir
+
+    // Core files must exist
     assert.ok(existsSync(join(artifactsDir, "design.json")), "design.json must exist")
     assert.ok(existsSync(join(artifactsDir, "design-preview.html")), "design-preview.html must exist")
     assert.ok(existsSync(join(artifactsDir, "mockups", "dashboard.html")), "mockups/dashboard.html must exist")
-    assert.ok(existsSync(join(artifactsDir, "mockups", "index.html")), "mockups/index.html must exist")
+    assert.ok(existsSync(join(artifactsDir, "mockups", "sitemap.html")), "mockups/sitemap.html must exist")
 
-    // Verify mockup content
-    const { readFileSync } = await import("node:fs")
+    // The dashboard.html must be the exact LLM HTML — no re-serialisation
     const dashboardHtml = readFileSync(join(artifactsDir, "mockups", "dashboard.html"), "utf8")
-    assert.ok(dashboardHtml.includes("--color-primary"), "mockup must include CSS vars from design tokens")
-    assert.ok(dashboardHtml.includes("--radius-cards"), "mockup must include border radius CSS var from artifact")
-    assert.ok(!dashboardHtml.includes("border-radius: 12px"), "mockup must NOT hardcode 12px radius")
+    // The fake adapter emits <!doctype html> with [Normal State] / [Empty State] / etc.
+    assert.ok(dashboardHtml.startsWith("<!doctype html"), "mockup must start with <!doctype html")
+    assert.ok(dashboardHtml.includes("[Normal State]"), "mockup must include Normal State section")
+    assert.ok(dashboardHtml.includes("[Empty State]"), "mockup must include Empty State section")
+    assert.ok(dashboardHtml.includes("[Loading State]"), "mockup must include Loading State section")
+    assert.ok(dashboardHtml.includes("[Error State]"), "mockup must include Error State section")
+    // Must NOT contain bracket-style wireframe placeholders
+    assert.ok(!dashboardHtml.includes("[ Column:"), "mockup must not contain bracket wireframe placeholders")
 
-    // Verify design-preview uses artifact borders (not hardcoded 12px)
-    const previewHtml = readFileSync(join(artifactsDir, "design-preview.html"), "utf8")
-    // The fake artifact has cards: "20px" — verify it uses that
-    assert.ok(!previewHtml.includes("border-radius: 12px"), "design-preview must NOT hardcode 12px radius")
+    // Sitemap must link to the dashboard mockup
+    const sitemapHtml = readFileSync(join(artifactsDir, "mockups", "sitemap.html"), "utf8")
+    assert.ok(sitemapHtml.includes("dashboard.html"), "sitemap must link to dashboard mockup")
+    assert.ok(sitemapHtml.includes("Dashboard"), "sitemap must include screen name")
+
   } finally {
     env.restore()
   }
@@ -383,7 +436,6 @@ test("frontend-design runStage: without wireframes — no mockups/ directory wri
         const { mkdirSync: mds } = await import("node:fs")
         const { renderDesignPreview: rdp } = await import("../src/render/designPreview.js")
         mds(run.stageArtifactsDir, { recursive: true })
-        // No wireframes — just design.json + design-preview.html
         return [
           { kind: "json" as const, label: "Design JSON", fileName: "design.json", content: JSON.stringify(artifact) },
           { kind: "txt" as const, label: "Design Preview", fileName: "design-preview.html", content: rdp(artifact) },
@@ -400,9 +452,9 @@ test("frontend-design runStage: without wireframes — no mockups/ directory wri
   }
 })
 
-test("review gate summary includes mockup URLs when mockup files present in run.files", () => {
-  // Unit-test the URL construction logic in isolation (no full runStage overhead).
-  // Simulate the review gate building the prompt from a run that has mockup files.
+// ─── Review gate URL format ───────────────────────────────────────────────────
+
+test("review gate URL: matches {publicBaseUrl}/runs/{runId}/artifacts/stages/frontend-design/artifacts/mockups/{screenId}.html", () => {
   const runId = "run-gate-test"
   const publicBase = "http://localhost:4100"
   const mockupFiles = [
@@ -412,16 +464,23 @@ test("review gate summary includes mockup URLs when mockup files present in run.
   // Mirror the URL construction from frontend-design/index.ts
   const urlLines = mockupFiles.map(f => {
     const screenId = f.path.split("/mockups/")[1]?.replace(/\.html$/, "") ?? ""
-    return `  ${publicBase}/runs/${runId}/artifacts/stages/frontend-design/artifacts/mockups/${screenId}.html`
+    return `${publicBase}/runs/${runId}/artifacts/stages/frontend-design/artifacts/mockups/${screenId}.html`
   })
-  const mockupSection = `\nStyled mockups (open in browser):\n` + urlLines.join("\n") + "\n"
 
-  assert.ok(
-    mockupSection.includes(`${publicBase}/runs/${runId}/artifacts/stages/frontend-design/artifacts/mockups/dashboard.html`),
-    "review gate must include dashboard mockup URL",
+  assert.strictEqual(
+    urlLines[0],
+    "http://localhost:4100/runs/run-gate-test/artifacts/stages/frontend-design/artifacts/mockups/dashboard.html",
+    "dashboard URL must exactly match the expected template",
   )
-  assert.ok(
-    mockupSection.includes(`${publicBase}/runs/${runId}/artifacts/stages/frontend-design/artifacts/mockups/detail.html`),
-    "review gate must include detail mockup URL",
+  assert.strictEqual(
+    urlLines[1],
+    "http://localhost:4100/runs/run-gate-test/artifacts/stages/frontend-design/artifacts/mockups/detail.html",
+    "detail URL must exactly match the expected template",
   )
+  // Verify no file:// leakage and no path doubling
+  for (const url of urlLines) {
+    assert.ok(!url.startsWith("file://"), "URL must not use file:// scheme")
+    assert.ok(!url.includes("//runs"), "URL must not have double slashes before /runs")
+    assert.ok(!url.includes("artifacts/stages/frontend-design/artifacts/stages"), "URL must not double the path segment")
+  }
 })
