@@ -7,6 +7,9 @@ import type { Screen, WireframeArtifact } from "../types/domain.js"
  * non-empty string. Throws a descriptive Error (not a TypeError) if the LLM
  * returned a malformed artifact so callers get an actionable message instead of
  * an opaque `Cannot read properties of undefined (reading 'replaceAll')` crash.
+ *
+ * Also validates `wireframeHtmlPerScreen` when present: must be a non-empty
+ * object, each value a non-empty string starting with `<!doctype` or `<html`.
  */
 export function validateWireframeArtifact(artifact: WireframeArtifact): void {
   if (!Array.isArray(artifact.screens)) {
@@ -109,6 +112,40 @@ export function validateWireframeArtifact(artifact: WireframeArtifact): void {
       }
     }
   }
+
+  // Validate wireframeHtmlPerScreen when present
+  if ("wireframeHtmlPerScreen" in artifact && artifact.wireframeHtmlPerScreen !== undefined) {
+    const htmlMap = artifact.wireframeHtmlPerScreen
+    if (typeof htmlMap !== "object" || Array.isArray(htmlMap)) {
+      throw new Error(
+        "Invalid wireframe artifact from LLM: wireframeHtmlPerScreen must be an object mapping screenId to HTML string."
+      )
+    }
+    const keys = Object.keys(htmlMap)
+    if (keys.length === 0) {
+      throw new Error(
+        "Invalid wireframe artifact from LLM: wireframeHtmlPerScreen is present but empty. " +
+        "Either omit the field or provide at least one screen HTML entry."
+      )
+    }
+    for (const screenId of keys) {
+      const html = htmlMap[screenId]
+      if (typeof html !== "string" || html.length === 0) {
+        throw new Error(
+          `Invalid wireframe artifact from LLM: wireframeHtmlPerScreen["${screenId}"] is empty or not a string. ` +
+          "Each entry must be a non-empty HTML string."
+        )
+      }
+      const trimmed = html.trimStart().toLowerCase()
+      if (!trimmed.startsWith("<!doctype") && !trimmed.startsWith("<html")) {
+        throw new Error(
+          `Invalid wireframe artifact from LLM: wireframeHtmlPerScreen["${screenId}"] does not start with ` +
+          `<!doctype or <html. Got: "${html.slice(0, 40)}...". ` +
+          "Each entry must be a full standalone HTML document."
+        )
+      }
+    }
+  }
 }
 
 function escapeHtml(value: string): string {
@@ -130,7 +167,7 @@ function renderElement(kind: string, label: string, placeholder?: string): strin
   return `<div class="element"><span class="badge">${escapeHtml(kind)}</span> ${escapeHtml(label)}${detail}</div>`
 }
 
-function renderScreen(screen: Screen): string {
+function renderScreenProcedural(screen: Screen): string {
   const regions = screen.layout.regions.map(region => {
     const elements = screen.elements
       .filter(element => element.region === region.id)
@@ -171,14 +208,46 @@ function renderScreen(screen: Screen): string {
 </html>`
 }
 
+/**
+ * Return the LLM-provided HTML for a single screen verbatim.
+ *
+ * Throws a descriptive error if `screenId` is not present in
+ * `wireframeHtmlPerScreen`, or if the value fails the sanity check
+ * (non-empty, starts with `<!doctype` or `<html`).
+ */
+export function renderWireframeFile(screenId: string, artifact: WireframeArtifact): string {
+  const htmlMap = artifact.wireframeHtmlPerScreen
+  if (!htmlMap || !(screenId in htmlMap)) {
+    throw new Error(
+      `renderWireframeFile: no HTML entry for screenId "${screenId}" in wireframeHtmlPerScreen. ` +
+      `Available keys: ${htmlMap ? Object.keys(htmlMap).join(", ") || "(none)" : "(field absent)"}.`
+    )
+  }
+  const html = htmlMap[screenId]
+  if (typeof html !== "string" || html.length === 0) {
+    throw new Error(
+      `renderWireframeFile: wireframeHtmlPerScreen["${screenId}"] is empty or not a string.`
+    )
+  }
+  const trimmed = html.trimStart().toLowerCase()
+  if (!trimmed.startsWith("<!doctype") && !trimmed.startsWith("<html")) {
+    throw new Error(
+      `renderWireframeFile: wireframeHtmlPerScreen["${screenId}"] does not start with <!doctype or <html. ` +
+      `Got: "${html.slice(0, 60)}..."`
+    )
+  }
+  return html
+}
+
 export function renderScreenMap(artifact: WireframeArtifact): string {
   const screens = artifact.screens.map(screen => {
     const flows = artifact.navigation.flows
       .filter(flow => flow.from === screen.id)
       .map(flow => `<li>${escapeHtml(flow.trigger)} -> ${escapeHtml(flow.to)}</li>`)
       .join("")
+    const link = `<a href="${escapeHtml(screen.id)}.html">${escapeHtml(screen.name)}</a>`
     return `<article class="screen">
-      <h2>${escapeHtml(screen.name)}</h2>
+      <h2>${link}</h2>
       <p>${escapeHtml(screen.purpose)}</p>
       <p><strong>Projects:</strong> ${escapeHtml(screen.projectIds.join(", "))}</p>
       <ul>${flows || "<li>No outgoing flows</li>"}</ul>
@@ -195,6 +264,7 @@ export function renderScreenMap(artifact: WireframeArtifact): string {
       .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
       .screen { border: 2px dashed #7b7b7b; background: #fff; padding: 16px; }
       .meta { margin-bottom: 16px; }
+      a { color: #333; }
     </style>
   </head>
   <body>
@@ -210,13 +280,28 @@ export function renderScreenMap(artifact: WireframeArtifact): string {
 
 export function renderWireframeFiles(artifact: WireframeArtifact): Array<{ fileName: string; label: string; content: string }> {
   validateWireframeArtifact(artifact)
-  return [
-    { fileName: "screen-map.html", label: "Wireframe Screen Map", content: renderScreenMap(artifact) },
-    ...artifact.screens.map(screen => ({
+
+  const hasLlmHtml = artifact.wireframeHtmlPerScreen !== undefined &&
+    Object.keys(artifact.wireframeHtmlPerScreen).length > 0
+
+  const screenFiles = artifact.screens.map(screen => {
+    let content: string
+    if (hasLlmHtml && artifact.wireframeHtmlPerScreen![screen.id] !== undefined) {
+      // Use LLM-provided HTML verbatim — no re-serialisation
+      content = renderWireframeFile(screen.id, artifact)
+    } else {
+      // Fall back to procedural renderer (legacy artifacts or missing entry)
+      content = renderScreenProcedural(screen)
+    }
+    return {
       fileName: `${screen.id}.html`,
       label: `Wireframe ${screen.name}`,
-      content: renderScreen(screen),
-    })),
+      content,
+    }
+  })
+
+  return [
+    { fileName: "screen-map.html", label: "Wireframe Screen Map", content: renderScreenMap(artifact) },
+    ...screenFiles,
   ]
 }
-

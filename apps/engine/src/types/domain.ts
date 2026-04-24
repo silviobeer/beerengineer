@@ -91,6 +91,17 @@ export type WireframeArtifact = {
   inputMode: "none" | "references"
   sourceFiles?: SourceFile[]
   conceptAmendments?: Amendment[]
+  /**
+   * Lowfi wireframe HTML produced by the LLM — one standalone HTML document
+   * per screen. Each value must be a full `<!doctype html>…</html>` document
+   * with inline CSS only (monospace, gray palette, dashed borders). The
+   * renderer writes these verbatim to disk; no re-serialisation occurs.
+   *
+   * Required in new runs. May be absent in artifacts produced before this
+   * field was introduced (the renderer falls back to the procedural generator
+   * in that case).
+   */
+  wireframeHtmlPerScreen?: Record<string, string>
 }
 
 export type FontSpec = {
@@ -151,6 +162,14 @@ export type DesignArtifact = {
   inputMode: "none" | "references"
   sourceFiles?: SourceFile[]
   conceptAmendments?: Amendment[]
+  /**
+   * High-fidelity HTML mockups produced by the LLM — one standalone HTML
+   * document per UI-bearing screen from the wireframes artifact. Each value
+   * must be a full `<!doctype html>…</html>` document with inline CSS and
+   * realistic mock content. The renderer writes these verbatim to disk; no
+   * re-serialisation occurs.
+   */
+  mockupHtmlPerScreen?: Record<string, string>
 }
 
 export type AcceptanceCriterion = {

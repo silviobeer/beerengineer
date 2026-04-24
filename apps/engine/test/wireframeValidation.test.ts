@@ -14,7 +14,7 @@ import { tmpdir } from "node:os"
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-import { renderWireframeFiles, validateWireframeArtifact } from "../src/render/wireframes.js"
+import { renderWireframeFile, renderWireframeFiles, validateWireframeArtifact } from "../src/render/wireframes.js"
 import type { WireframeArtifact } from "../src/types.js"
 
 const validArtifact: WireframeArtifact = {
@@ -379,4 +379,125 @@ test("wireframes.json is written to disk even when renderWireframeFiles throws",
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
+})
+
+// ---------------------------------------------------------------------------
+// wireframeHtmlPerScreen validation
+// ---------------------------------------------------------------------------
+
+test("validateWireframeArtifact passes when wireframeHtmlPerScreen is a valid map", () => {
+  const artifact: WireframeArtifact = {
+    ...validArtifact,
+    wireframeHtmlPerScreen: {
+      home: "<!doctype html><html><head></head><body>[ Home ]</body></html>",
+    },
+  }
+  assert.doesNotThrow(() => validateWireframeArtifact(artifact))
+})
+
+test("validateWireframeArtifact passes when wireframeHtmlPerScreen uses <html> (no doctype)", () => {
+  const artifact: WireframeArtifact = {
+    ...validArtifact,
+    wireframeHtmlPerScreen: {
+      home: "<html><head></head><body>[ Home ]</body></html>",
+    },
+  }
+  assert.doesNotThrow(() => validateWireframeArtifact(artifact))
+})
+
+test("validateWireframeArtifact passes when wireframeHtmlPerScreen is absent (optional field)", () => {
+  assert.doesNotThrow(() => validateWireframeArtifact(validArtifact))
+})
+
+test("validateWireframeArtifact throws when wireframeHtmlPerScreen is an empty object", () => {
+  const artifact = { ...validArtifact, wireframeHtmlPerScreen: {} } as WireframeArtifact
+  let thrown: Error | undefined
+  try { validateWireframeArtifact(artifact) } catch (e) { thrown = e as Error }
+  assert.ok(thrown, "Expected validateWireframeArtifact to throw")
+  assert.match(thrown!.message, /wireframeHtmlPerScreen/)
+})
+
+test("validateWireframeArtifact throws when a wireframeHtmlPerScreen value is an empty string", () => {
+  const artifact: WireframeArtifact = {
+    ...validArtifact,
+    wireframeHtmlPerScreen: { home: "" },
+  }
+  let thrown: Error | undefined
+  try { validateWireframeArtifact(artifact) } catch (e) { thrown = e as Error }
+  assert.ok(thrown, "Expected validateWireframeArtifact to throw")
+  assert.match(thrown!.message, /wireframeHtmlPerScreen/)
+})
+
+test("validateWireframeArtifact throws when a wireframeHtmlPerScreen value does not start with doctype or html", () => {
+  const artifact: WireframeArtifact = {
+    ...validArtifact,
+    wireframeHtmlPerScreen: { home: "<div>not a full doc</div>" },
+  }
+  let thrown: Error | undefined
+  try { validateWireframeArtifact(artifact) } catch (e) { thrown = e as Error }
+  assert.ok(thrown, "Expected validateWireframeArtifact to throw")
+  assert.match(thrown!.message, /wireframeHtmlPerScreen/)
+  assert.match(thrown!.message, /<!doctype/)
+})
+
+// ---------------------------------------------------------------------------
+// renderWireframeFile — LLM HTML passthrough
+// ---------------------------------------------------------------------------
+
+test("renderWireframeFile returns LLM-provided HTML verbatim", () => {
+  const llmHtml = "<!doctype html><html><head></head><body>[ Kanban Board ]</body></html>"
+  const artifact: WireframeArtifact = {
+    ...validArtifact,
+    wireframeHtmlPerScreen: { home: llmHtml },
+  }
+  const result = renderWireframeFile("home", artifact)
+  assert.equal(result, llmHtml)
+})
+
+test("renderWireframeFile throws when screenId is not in wireframeHtmlPerScreen", () => {
+  const artifact: WireframeArtifact = {
+    ...validArtifact,
+    wireframeHtmlPerScreen: { home: "<!doctype html><html><body></body></html>" },
+  }
+  let thrown: Error | undefined
+  try { renderWireframeFile("missing-screen", artifact) } catch (e) { thrown = e as Error }
+  assert.ok(thrown)
+  assert.match(thrown!.message, /missing-screen/)
+})
+
+// ---------------------------------------------------------------------------
+// renderWireframeFiles — prefers LLM HTML when wireframeHtmlPerScreen present
+// ---------------------------------------------------------------------------
+
+test("renderWireframeFiles writes LLM HTML verbatim when wireframeHtmlPerScreen is set", () => {
+  const llmHtml = "<!doctype html><html><head></head><body>[ Board — 6 columns ]</body></html>"
+  const artifact: WireframeArtifact = {
+    ...validArtifact,
+    wireframeHtmlPerScreen: { home: llmHtml },
+  }
+  const files = renderWireframeFiles(artifact)
+  const homeFile = files.find(f => f.fileName === "home.html")
+  assert.ok(homeFile, "Expected home.html in output")
+  assert.equal(homeFile!.content, llmHtml, "Content must be the exact LLM-provided HTML")
+})
+
+test("renderWireframeFiles includes sitemap.html with links to every screen", () => {
+  const llmHtml = "<!doctype html><html><body>[ Board ]</body></html>"
+  const artifact: WireframeArtifact = {
+    ...validArtifact,
+    wireframeHtmlPerScreen: { home: llmHtml },
+  }
+  const files = renderWireframeFiles(artifact)
+  const sitemap = files.find(f => f.fileName === "screen-map.html")
+  assert.ok(sitemap, "Expected screen-map.html in output")
+  assert.ok(sitemap!.content.includes("home.html"), "Sitemap must link to home.html")
+})
+
+test("renderWireframeFiles falls back to procedural renderer when wireframeHtmlPerScreen is absent", () => {
+  const files = renderWireframeFiles(validArtifact)
+  assert.ok(files.length >= 2)
+  const homeFile = files.find(f => f.fileName === "home.html")
+  assert.ok(homeFile)
+  // Procedural output contains the screen name
+  assert.ok(homeFile!.content.includes("Home"))
 })

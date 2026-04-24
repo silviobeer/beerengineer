@@ -12,6 +12,57 @@ function pickQuestion(state: VisualCompanionState): string {
   return CLARIFICATION_QUESTIONS[state.clarificationCount % CLARIFICATION_QUESTIONS.length]
 }
 
+function buildScreenHtml(screenId: string, screenName: string, purpose: string): string {
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>${screenName} — Wireframe</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body { font-family: monospace; background: #f5f5f5; padding: 20px; }
+      .frame { border: 2px solid #333; background: white; max-width: 900px; margin: 0 auto; }
+      .box { border: 1px dashed #999; padding: 8px; margin: 4px; background: #fafafa; }
+      .label { font-size: 11px; color: #666; text-transform: uppercase; letter-spacing: 0.08em; }
+      .placeholder { background: #eee; padding: 12px; text-align: center; color: #999; }
+      .row { display: flex; gap: 4px; }
+      .col { flex: 1; }
+      h3 { padding: 8px; background: #333; color: white; font-size: 14px; letter-spacing: 0.08em; }
+    </style>
+  </head>
+  <body>
+    <div class="frame">
+      <h3>${screenName.toUpperCase()}</h3>
+      <div class="box">
+        <span class="label">purpose</span>
+        <p class="placeholder">[ ${purpose} ]</p>
+      </div>
+      <div class="box">
+        <span class="label">screen-id: ${screenId}</span>
+        <div class="row">
+          <div class="col box"><p class="placeholder">[ Region: Header ]</p></div>
+        </div>
+        <div class="row">
+          <div class="col box"><p class="placeholder">[ Region: Main Content ]</p></div>
+          <div class="col box"><p class="placeholder">[ Region: Sidebar ]</p></div>
+        </div>
+        <div class="row">
+          <div class="col box"><p class="placeholder">[ Region: Footer ]</p></div>
+        </div>
+      </div>
+      <div class="box">
+        <span class="label">states</span>
+        <div class="row">
+          <div class="col box"><p class="placeholder">[ Normal ]</p></div>
+          <div class="col box"><p class="placeholder">[ Empty ]</p></div>
+          <div class="col box"><p class="placeholder">[ Loading ]</p></div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>`
+}
+
 function buildArtifact(state: VisualCompanionState): WireframeArtifact {
   const uiProjects = state.input.projects.filter(project => project.hasUi)
   const screens: Screen[] = uiProjects.map((project, index) => ({
@@ -34,6 +85,12 @@ function buildArtifact(state: VisualCompanionState): WireframeArtifact {
       { id: "support", region: "aside", kind: "list", label: "Secondary tools" },
     ],
   }))
+
+  const wireframeHtmlPerScreen: Record<string, string> = {}
+  for (const screen of screens) {
+    wireframeHtmlPerScreen[screen.id] = buildScreenHtml(screen.id, screen.name, screen.purpose)
+  }
+
   return {
     screens,
     navigation: {
@@ -48,6 +105,7 @@ function buildArtifact(state: VisualCompanionState): WireframeArtifact {
     },
     inputMode: state.inputMode,
     conceptAmendments: [],
+    wireframeHtmlPerScreen,
   }
 }
 
