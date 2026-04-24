@@ -14,5 +14,9 @@ apps/engine/dist/
 *.tsbuildinfo
 .DS_Store
 .env.local
+.env*.local
 .beerengineer/runs/
 .beerengineer/cache/
+.bg-shell/
+.claude/settings.local.json
+coverage/
