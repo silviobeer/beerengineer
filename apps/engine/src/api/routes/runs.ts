@@ -57,7 +57,13 @@ export async function handleGetArtifactFile(
   runId: string,
   requestedPath: string,
 ): Promise<void> {
-  const run = repos.getRun(runId)
+  // Design-prep user-revise iterations derive the on-disk run directory as
+  // `<baseRunId>-rev<N>` while the DB still only stores `<baseRunId>`. Accept
+  // the revise-suffixed form by looking up the base run row but keeping the
+  // derived runId for the disk path.
+  const revMatch = runId.match(/^(.+)-rev(\d+)$/)
+  const lookupId = revMatch ? revMatch[1] : runId
+  const run = repos.getRun(lookupId)
   if (!run || !run.workspace_fs_id) return json(res, 404, { error: "run not found", code: "not_found" })
   // Decode once — the regex in the router yields the raw URL segment, which
   // may still contain percent-escapes (e.g. %2e for "." inside a segment).
