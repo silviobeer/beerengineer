@@ -74,11 +74,22 @@ function buildCodexCommand(input: HostedProviderInvokeInput, state: CodexStreamS
   state.tempDir = tempDir
   state.responsePath = join(tempDir, "last-message.txt")
   const command = ["codex", "exec"]
-  if (input.session?.sessionId) command.push("resume", input.session.sessionId)
+  const isResume = !!input.session?.sessionId
+  if (isResume) command.push("resume", input.session!.sessionId!)
   command.push("--skip-git-repo-check", "--json")
-  if (input.runtime.policy.mode === "safe-readonly") command.push("--sandbox", "read-only")
-  else if (input.runtime.policy.mode === "safe-workspace-write") command.push("--sandbox", "workspace-write")
-  else command.push("--full-auto", "--dangerously-bypass-approvals-and-sandbox")
+  // `codex exec resume` does not accept `--sandbox <mode>` — only `--full-auto`
+  // and `--dangerously-bypass-approvals-and-sandbox`. Route the safe-readonly /
+  // safe-workspace-write modes through `-c sandbox_mode=<mode>` on resume, which
+  // both subcommands accept.
+  if (input.runtime.policy.mode === "safe-readonly") {
+    if (isResume) command.push("-c", 'sandbox_mode="read-only"')
+    else command.push("--sandbox", "read-only")
+  } else if (input.runtime.policy.mode === "safe-workspace-write") {
+    if (isResume) command.push("-c", 'sandbox_mode="workspace-write"')
+    else command.push("--sandbox", "workspace-write")
+  } else {
+    command.push("--full-auto", "--dangerously-bypass-approvals-and-sandbox")
+  }
   if (input.runtime.model) command.push("--model", input.runtime.model)
   command.push("--cd", input.runtime.workspaceRoot, "--output-last-message", state.responsePath, "-")
   return command
