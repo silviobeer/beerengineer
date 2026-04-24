@@ -395,3 +395,21 @@ export function writeConfigFile(configPath: string, config: AppConfig): void {
 export function resolveConfiguredDbPath(config: Pick<AppConfig, "dataDir">): string {
   return resolve(config.dataDir, "beerengineer.sqlite")
 }
+
+/**
+ * Returns the `dataDir` from the effective on-disk config, or `null` when the
+ * config file is absent or unreadable.  Connection logic uses this to resolve
+ * the DB path without importing the full merged-config machinery.
+ *
+ * Honors `BEERENGINEER_CONFIG_PATH` and `BEERENGINEER_DATA_DIR` so that test
+ * harnesses can redirect both the config file and the data directory without
+ * calling the full setup flow.
+ */
+export function getConfiguredDataDirOrNull(): string | null {
+  // BEERENGINEER_DATA_DIR is the most direct override — respect it first.
+  if (process.env.BEERENGINEER_DATA_DIR) return process.env.BEERENGINEER_DATA_DIR
+  const configPath = process.env.BEERENGINEER_CONFIG_PATH ?? defaultConfigPath()
+  const state = readConfigFile(configPath)
+  if (state.kind === "ok") return state.config.dataDir
+  return null
+}
