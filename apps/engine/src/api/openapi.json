@@ -668,7 +668,8 @@
               }
             }
           }
-        }
+        },
+        "description": "Returns all runs, newest first. The handler currently ignores any query parameters; filters (workspace, itemId, status, limit, cursor) will be added when a concrete client needs them."
       },
       "post": {
         "tags": [
@@ -1354,11 +1355,11 @@
         ],
         "responses": {
           "200": {
-            "description": "Board projection.",
+            "description": "Board projection for a workspace.",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "$ref": "#/components/schemas/Board"
                 }
               }
             }
@@ -2309,6 +2310,114 @@
                       }
                     }
                   }
+                }
+              }
+            }
+          }
+        }
+      },
+      "Board": {
+        "type": "object",
+        "required": [
+          "workspaceKey",
+          "columns"
+        ],
+        "properties": {
+          "workspaceKey": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "columns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BoardColumn"
+            }
+          }
+        }
+      },
+      "BoardColumn": {
+        "type": "object",
+        "required": [
+          "key",
+          "title",
+          "cards"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "enum": [
+              "idea",
+              "brainstorm",
+              "requirements",
+              "implementation",
+              "done"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "cards": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BoardCard"
+            }
+          }
+        }
+      },
+      "BoardCard": {
+        "type": "object",
+        "required": [
+          "itemCode",
+          "itemId",
+          "title",
+          "summary",
+          "column",
+          "phaseStatus",
+          "meta"
+        ],
+        "properties": {
+          "itemCode": {
+            "type": "string"
+          },
+          "itemId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "column": {
+            "type": "string",
+            "enum": [
+              "idea",
+              "brainstorm",
+              "requirements",
+              "implementation",
+              "done"
+            ]
+          },
+          "phaseStatus": {
+            "type": "string"
+          },
+          "meta": {
+            "type": "array",
+            "description": "Display-friendly key-value tags for the card. Currently: phase, projects.",
+            "items": {
+              "type": "object",
+              "required": [
+                "label",
+                "value"
+              ],
+              "properties": {
+                "label": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
                 }
               }
             }

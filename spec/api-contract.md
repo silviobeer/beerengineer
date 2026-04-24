@@ -52,7 +52,7 @@ No generic `POST /items/:id/actions` with an action string in the body. Explicit
 
 ### Runs
 
-- `GET /runs?workspace=:key&itemId=&status=&owner=&limit=&cursor=`
+- `GET /runs` — returns `{ runs: [...] }`, newest first. **No filter parameters today** — `workspace`/`itemId`/`status`/`owner`/`limit`/`cursor` are ignored by the current handler. They will be added when a concrete client surface motivates them; see `apps/engine/src/api/routes/runs.ts:handleListRuns`.
 - `POST /runs` — create run
   - Request: `{ workspaceKey, title, description? }`
   - Response: `{ runId, itemId, status }`
