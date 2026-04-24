@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs"
+import { existsSync, readdirSync } from "node:fs"
 import { readFile } from "node:fs/promises"
 import { spawnSync } from "node:child_process"
 import { join } from "node:path"
@@ -31,6 +31,7 @@ import type {
   Project,
   ProjectReviewArtifact,
   ImplementationPlanArtifact,
+  ReferenceInput,
   WaveSummary,
   WireframeArtifact,
   WithDocumentation,
@@ -90,6 +91,29 @@ const projectStageOrder = [
   "documentation",
   "handoff",
 ] as const
+
+/**
+ * Enumerate files in the item workspace's `references/` directory so the
+ * design-prep stages (visual-companion, frontend-design) can see images,
+ * PDFs, and other reference material the operator dropped there. Returns
+ * an empty array if the directory is missing — stages interpret that as
+ * `inputMode: "none"` by default.
+ */
+function loadItemWorkspaceReferences(context: WorkflowContext): ReferenceInput[] {
+  const workspaceDir = layout.workspaceDir(context.workspaceId)
+  const refsDir = join(workspaceDir, "references")
+  if (!existsSync(refsDir)) return []
+  try {
+    return readdirSync(refsDir)
+      .filter(name => !name.startsWith("."))
+      .map(name => ({
+        value: join(refsDir, name),
+        description: name,
+      }))
+  } catch {
+    return []
+  }
+}
 
 function shouldRunProjectStage(
   resume: ProjectResumePlan | undefined,
@@ -368,12 +392,13 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
       itemResumePlan.startStage === "frontend-design" ||
       !designFileExists
     )
+    const designPrepReferences = loadItemWorkspaceReferences(context)
     const wireframes =
       !itemHasUi
         ? undefined
         : shouldRunVisualCompanion
         ? await withStageLifecycle("visual-companion", {}, () =>
-            visualCompanion(context, { itemConcept, projects, references: [] }, options?.llm?.stage),
+            visualCompanion(context, { itemConcept, projects, references: designPrepReferences }, options?.llm?.stage),
           )
         : await loadWireframes(context)
     const design =
@@ -381,7 +406,7 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
         ? undefined
         : shouldRunFrontendDesign
         ? await withStageLifecycle("frontend-design", {}, () =>
-            frontendDesign(context, { itemConcept, projects, wireframes, references: [] }, options?.llm?.stage),
+            frontendDesign(context, { itemConcept, projects, wireframes, references: designPrepReferences }, options?.llm?.stage),
           )
         : await loadDesign(context)
     if (activeRun) {
