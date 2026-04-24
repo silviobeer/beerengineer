@@ -1715,9 +1715,10 @@ async function runInteractiveWorkflow(opts: { json?: boolean; workspaceKey?: str
     return runJsonWorkflow({ workspaceKey: opts.workspaceKey })
   }
 
-  console.log("\n  ╔════════════════════════════════════════╗")
-  console.log("  ║   BeerEngineer2 — Simulation            ║")
-  console.log("  ╚════════════════════════════════════════╝\n")
+  console.log("\n  ╔══════════════════════════════════════════════════╗")
+  console.log("  ║   beerengineer_                                  ║")
+  console.log("  ║   Hand me an idea. Hold your beer.               ║")
+  console.log("  ╚══════════════════════════════════════════════════╝\n")
 
   // Collect the idea *before* we enter the workflow IO scope — `ask()` is used
   // by the orchestrator for mid-run prompts and would otherwise try to persist

@@ -1,3 +1,5 @@
+import { mkdirSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
 import { emitEvent, getActiveRun } from "../../core/runContext.js"
 import { resolveReferences } from "../../core/referencesStore.js"
 import { printStageCompletion, stageSummary, summaryArtifactFile } from "../../core/stageHelpers.js"
@@ -34,18 +36,34 @@ export async function frontendDesign(
     askUser: ask,
     async persistArtifacts(run, artifact) {
       const sourceFiles = resolveReferences(context, "design", input.references)
+      const enrichedArtifact = { ...artifact, sourceFiles }
+
+      // Write design.json synchronously to disk BEFORE attempting HTML render.
+      // This guarantees the raw LLM artifact is on disk even if renderDesignPreview
+      // throws due to a malformed structure (e.g. missing typography.scale).
+      // Without this, a render crash leaves no JSON artifact at all —
+      // as reproduced in run d17a5503-9809-477f-90e5-baa412dad854.
+      mkdirSync(run.stageArtifactsDir, { recursive: true })
+      writeFileSync(
+        join(run.stageArtifactsDir, "design.json"),
+        JSON.stringify(enrichedArtifact, null, 2),
+      )
+
       return [
         {
           kind: "json",
           label: "Design JSON",
           fileName: "design.json",
-          content: JSON.stringify({ ...artifact, sourceFiles }, null, 2),
+          content: JSON.stringify(enrichedArtifact, null, 2),
         },
         {
           kind: "txt",
           label: "Design Preview",
           fileName: "design-preview.html",
-          content: renderDesignPreview({ ...artifact, sourceFiles }),
+          // validateDesignArtifact is called inside renderDesignPreview — this
+          // will throw a descriptive Error (not a TypeError) if the LLM returned
+          // a malformed structure (e.g. missing typography.scale or null field).
+          content: renderDesignPreview(enrichedArtifact),
         },
         summaryArtifactFile(
           "frontend-design",

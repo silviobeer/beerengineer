@@ -1,6 +1,153 @@
 import type { ColorPalette, DesignArtifact } from "../types/domain.js"
 
+/**
+ * Validate that a DesignArtifact has the shape the renderer needs.
+ * Throws a descriptive Error (not a TypeError) when the LLM returned a
+ * malformed artifact so callers get an actionable message instead of an
+ * opaque `Cannot read properties of undefined (reading 'scale')` crash.
+ *
+ * Covers every field that `renderDesignPreview` touches:
+ *   - artifact.tone (string)
+ *   - artifact.antiPatterns (array)
+ *   - artifact.tokens.light (ColorPalette object)
+ *   - artifact.typography (object)
+ *   - artifact.typography.scale (object — not undefined/null)
+ *   - artifact.typography.display.family / .weight (strings)
+ *   - artifact.typography.body.family / .weight (strings)
+ *   - artifact.spacing.baseUnit / .sectionPadding / .cardPadding / .contentMaxWidth (strings)
+ *   - artifact.borders.buttons / .cards / .badges (strings)
+ *   - artifact.shadows (object — not undefined/null)
+ */
+export function validateDesignArtifact(artifact: DesignArtifact): void {
+  // tone
+  if (typeof artifact.tone !== "string" || artifact.tone.length === 0) {
+    throw new Error(
+      "Invalid design artifact from LLM: artifact.tone is missing or not a string. " +
+      "The LLM response may have been truncated or returned a malformed structure.",
+    )
+  }
+
+  // antiPatterns
+  if (!Array.isArray(artifact.antiPatterns)) {
+    throw new Error(
+      "Invalid design artifact from LLM: artifact.antiPatterns is not an array. " +
+      "Every design artifact must include an antiPatterns array — retry or inspect the LLM output.",
+    )
+  }
+
+  // tokens.light
+  if (!artifact.tokens || typeof artifact.tokens !== "object") {
+    throw new Error(
+      "Invalid design artifact from LLM: artifact.tokens is missing. " +
+      "The LLM must return tokens.light and optional tokens.dark — retry or inspect the LLM output.",
+    )
+  }
+  if (!artifact.tokens.light || typeof artifact.tokens.light !== "object") {
+    throw new Error(
+      "Invalid design artifact from LLM: artifact.tokens.light is missing. " +
+      "Every design artifact must include a light-mode token palette — retry or inspect the LLM output.",
+    )
+  }
+
+  // typography
+  if (!artifact.typography || typeof artifact.typography !== "object") {
+    throw new Error(
+      "Invalid design artifact from LLM: artifact.typography is missing. " +
+      "Every design artifact must include a typography object — retry or inspect the LLM output.",
+    )
+  }
+  if (!artifact.typography.scale || typeof artifact.typography.scale !== "object") {
+    throw new Error(
+      "Invalid design artifact from LLM: artifact.typography.scale is missing or not an object. " +
+      "typography.scale must be a Record<string, string> mapping token names to size values " +
+      "— retry or inspect the LLM output.",
+    )
+  }
+  if (!artifact.typography.display || typeof artifact.typography.display !== "object") {
+    throw new Error(
+      "Invalid design artifact from LLM: artifact.typography.display is missing. " +
+      "Every design artifact must include typography.display with family and weight — retry or inspect the LLM output.",
+    )
+  }
+  if (typeof artifact.typography.display.family !== "string" || artifact.typography.display.family.length === 0) {
+    throw new Error(
+      "Invalid design artifact from LLM: artifact.typography.display.family is missing or not a string. " +
+      "Every design artifact must have a non-empty display font family — retry or inspect the LLM output.",
+    )
+  }
+  if (typeof artifact.typography.display.weight !== "string" || artifact.typography.display.weight.length === 0) {
+    throw new Error(
+      "Invalid design artifact from LLM: artifact.typography.display.weight is missing or not a string. " +
+      "Every design artifact must have a non-empty display font weight — retry or inspect the LLM output.",
+    )
+  }
+  if (!artifact.typography.body || typeof artifact.typography.body !== "object") {
+    throw new Error(
+      "Invalid design artifact from LLM: artifact.typography.body is missing. " +
+      "Every design artifact must include typography.body with family and weight — retry or inspect the LLM output.",
+    )
+  }
+  if (typeof artifact.typography.body.family !== "string" || artifact.typography.body.family.length === 0) {
+    throw new Error(
+      "Invalid design artifact from LLM: artifact.typography.body.family is missing or not a string. " +
+      "Every design artifact must have a non-empty body font family — retry or inspect the LLM output.",
+    )
+  }
+  if (typeof artifact.typography.body.weight !== "string" || artifact.typography.body.weight.length === 0) {
+    throw new Error(
+      "Invalid design artifact from LLM: artifact.typography.body.weight is missing or not a string. " +
+      "Every design artifact must have a non-empty body font weight — retry or inspect the LLM output.",
+    )
+  }
+
+  // spacing
+  if (!artifact.spacing || typeof artifact.spacing !== "object") {
+    throw new Error(
+      "Invalid design artifact from LLM: artifact.spacing is missing. " +
+      "Every design artifact must include spacing tokens — retry or inspect the LLM output.",
+    )
+  }
+  for (const field of ["baseUnit", "sectionPadding", "cardPadding", "contentMaxWidth"] as const) {
+    if (typeof artifact.spacing[field] !== "string" || artifact.spacing[field].length === 0) {
+      throw new Error(
+        `Invalid design artifact from LLM: artifact.spacing.${field} is missing or not a string. ` +
+        "Every design artifact must have all spacing token fields — retry or inspect the LLM output.",
+      )
+    }
+  }
+
+  // borders
+  if (!artifact.borders || typeof artifact.borders !== "object") {
+    throw new Error(
+      "Invalid design artifact from LLM: artifact.borders is missing. " +
+      "Every design artifact must include borders tokens — retry or inspect the LLM output.",
+    )
+  }
+  for (const field of ["buttons", "cards", "badges"] as const) {
+    if (typeof artifact.borders[field] !== "string" || artifact.borders[field].length === 0) {
+      throw new Error(
+        `Invalid design artifact from LLM: artifact.borders.${field} is missing or not a string. ` +
+        "Every design artifact must have all border token fields — retry or inspect the LLM output.",
+      )
+    }
+  }
+
+  // shadows
+  if (!artifact.shadows || typeof artifact.shadows !== "object") {
+    throw new Error(
+      "Invalid design artifact from LLM: artifact.shadows is missing or not an object. " +
+      "Every design artifact must include a shadows Record<string, string> — retry or inspect the LLM output.",
+    )
+  }
+}
+
 function escapeHtml(value: string): string {
+  if (typeof value !== "string") {
+    throw new Error(
+      `escapeHtml received a non-string value: ${JSON.stringify(value)}. ` +
+      "Call validateDesignArtifact before rendering to catch missing string fields.",
+    )
+  }
   return value
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
@@ -35,6 +182,11 @@ function renderPalette(title: string, palette: ColorPalette): string {
 }
 
 export function renderDesignPreview(artifact: DesignArtifact): string {
+  // Validate before touching any fields — gives a descriptive Error instead of
+  // a raw TypeError when the LLM returns a partial artifact (e.g. missing
+  // typography.scale). Live crash: run d17a5503-9809-477f-90e5-baa412dad854.
+  validateDesignArtifact(artifact)
+
   const scale = Object.entries(artifact.typography.scale)
     .map(([name, value]) => `<li>${escapeHtml(name)}: ${escapeHtml(value)}</li>`)
     .join("")
