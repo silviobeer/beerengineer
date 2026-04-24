@@ -1,11 +1,14 @@
 import Database from "better-sqlite3"
 import { spawn } from "node:child_process"
-import { accessSync, constants, existsSync, mkdirSync } from "node:fs"
+import { accessSync, constants, existsSync, mkdirSync, readFileSync } from "node:fs"
 import { createInterface } from "node:readline/promises"
 import { stdin as input, stdout as output } from "node:process"
 import { normalizePublicBaseUrl, resolveConfiguredDbPath, resolveConfigPath, resolveMergedConfig, readConfigFile, REQUIRED_MIGRATION_LEVEL, resolveOverrides, writeConfigFile } from "./config.js"
 import type { AppConfig, CheckResult, GroupResult, SetupOverrides, SetupReport, SetupStatus } from "./types.js"
 import { initDatabase } from "../db/connection.js"
+import { Repos } from "../db/repositories.js"
+import { createFrontendDesignReview, createFrontendDesignStage, createVisualCompanionReview, createVisualCompanionStage } from "../llm/registry.js"
+import { layout } from "../core/workspaceLayout.js"
 
 type ToolProbe = {
   ok: boolean
@@ -264,6 +267,45 @@ async function runCoreChecks(configPath: string, configState: ReturnType<typeof 
   } catch (err) {
     checks.push(createCheck("core.db", "configured database", "misconfigured", `${dbPath}: ${(err as Error).message}`))
     checks.push(createCheck("core.migrations", "database migration level", "skipped", "database is not readable"))
+  }
+
+  try {
+    createVisualCompanionStage()
+    createVisualCompanionReview()
+    createFrontendDesignStage()
+    createFrontendDesignReview()
+    checks.push(createCheck("core.designPrepAdapters", "design-prep adapters registered", "ok", "visual-companion + frontend-design"))
+  } catch (err) {
+    checks.push(createCheck("core.designPrepAdapters", "design-prep adapters registered", "misconfigured", (err as Error).message))
+  }
+
+  try {
+    const db = initDatabase(dbPath)
+    const repos = new Repos(db)
+    const runs = repos.listRuns().filter(run => run.workspace_fs_id)
+    const hasUiRun = runs.some(run => {
+      try {
+        const projectsPath = layout.stageArtifactsDir({ workspaceId: run.workspace_fs_id!, runId: run.id }, "brainstorm")
+        const projects = JSON.parse(readFileSync(`${projectsPath}/projects.json`, "utf8")) as Array<{ hasUi?: boolean }>
+        return projects.some(project => project.hasUi === true)
+      } catch {
+        return false
+      }
+    })
+    const workspace = repos.listWorkspaces().find(candidate => candidate.root_path)
+    if (!hasUiRun) {
+      checks.push(createCheck("core.designPrepReferences", "design-prep references folder writable", "skipped", "no UI-bearing runs detected"))
+    } else if (!workspace?.root_path) {
+      checks.push(createCheck("core.designPrepReferences", "design-prep references folder writable", "skipped", "no registered workspace roots"))
+    } else {
+      const target = `${workspace.root_path}/.beerengineer/references/design-prep`
+      mkdirSync(target, { recursive: true })
+      accessSync(target, constants.W_OK)
+      checks.push(createCheck("core.designPrepReferences", "design-prep references folder writable", "ok", target))
+    }
+    db.close()
+  } catch (err) {
+    checks.push(createCheck("core.designPrepReferences", "design-prep references folder writable", "misconfigured", (err as Error).message))
   }
 
   return checks

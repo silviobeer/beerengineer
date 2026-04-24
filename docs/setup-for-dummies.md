@@ -340,7 +340,9 @@ npm run dev:ui --prefix ~/projects/beerengineer2
 
 Open `http://127.0.0.1:3100` in your browser. You should see your registered
 workspace. Click into it, create an item ("idea"), and let BeerEngineer walk
-you through brainstorm → requirements → implementation.
+you through brainstorm → visual companion → frontend design → requirements →
+implementation. For non-UI items, the two design-prep steps are skipped
+automatically.
 
 ---
 

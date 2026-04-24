@@ -6,6 +6,7 @@ export type ItemAction =
   | "start_brainstorm"
   | "promote_to_requirements"
   | "start_implementation"
+  | "rerun_design_prep"
   | "resume_run"
   | "mark_done"
 
@@ -13,6 +14,7 @@ export const ITEM_ACTIONS: readonly ItemAction[] = [
   "start_brainstorm",
   "promote_to_requirements",
   "start_implementation",
+  "rerun_design_prep",
   "resume_run",
   "mark_done"
 ] as const
@@ -81,6 +83,12 @@ const MATRIX: Record<ItemAction, Record<string, Transition>> = {
   },
   start_implementation: {
     "requirements/*": { kind: "start-run", column: "implementation" }
+  },
+  rerun_design_prep: {
+    "brainstorm/*": { kind: "start-run", column: "brainstorm" },
+    "requirements/*": { kind: "start-run", column: "brainstorm" },
+    "implementation/*": { kind: "start-run", column: "brainstorm" },
+    "done/*": { kind: "start-run", column: "brainstorm" },
   },
   resume_run: {
     "brainstorm/*": { kind: "resume" },

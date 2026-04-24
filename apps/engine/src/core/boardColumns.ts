@@ -1,8 +1,7 @@
 /**
- * Project the engine's stage taxonomy onto the UI board's fixed column set.
- * Columns must stay in sync with orderedBoardColumns in apps/ui/lib/live-board.ts:
+ * Project the engine's stage taxonomy onto the fixed board column set.
  *   idea | brainstorm | requirements | implementation | done
- * Phase-status values consumed by the UI:
+ * Phase-status values:
  *   draft | running | review_required | completed | failed
  */
 
@@ -18,6 +17,8 @@ export function mapStageToColumn(
   if (!stageKey) return { column: "idea", phaseStatus: "draft" }
   switch (stageKey) {
     case "brainstorm":
+    case "visual-companion":
+    case "frontend-design":
       return { column: "brainstorm", phaseStatus }
     case "requirements":
       return { column: "requirements", phaseStatus }

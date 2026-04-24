@@ -1,11 +1,13 @@
 import type { WorkflowContext } from "../core/workspaceLayout.js"
 import type {
   ArchitectureArtifact,
+  DesignArtifact,
   DocumentationArtifact,
   ImplementationPlanArtifact,
   PRD,
   Project,
   ProjectReviewArtifact,
+  WireframeArtifact,
 } from "./domain.js"
 import type { WaveSummary } from "./execution.js"
 
@@ -13,6 +15,8 @@ export type { WorkflowContext }
 
 export type ProjectContext = WorkflowContext & {
   project: Project
+  wireframes?: WireframeArtifact
+  design?: DesignArtifact
   prd?: PRD
   architecture?: ArchitectureArtifact
   plan?: ImplementationPlanArtifact

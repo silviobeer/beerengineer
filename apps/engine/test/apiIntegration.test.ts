@@ -1,12 +1,13 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { spawn, type ChildProcess } from "node:child_process"
 
 import { initDatabase } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
+import { layout } from "../src/core/workspaceLayout.js"
 
 async function waitForHealth(base: string, timeoutMs = 5000): Promise<void> {
   const start = Date.now()
@@ -538,6 +539,66 @@ test("POST /runs/:id/answer accepts answers for cli-owned runs", async () => {
     db2.close()
     assert.equal(answered?.answer, "anything")
     assert.ok(answered?.answered_at !== null)
+  } finally {
+    await stopServer(proc)
+  }
+})
+
+test("design-prep artifact endpoints expose item views and raw artifact files", async () => {
+  const dbPath = tmpDbPath()
+  const db = initDatabase(dbPath)
+  const repos = new Repos(db)
+  const ws = repos.upsertWorkspace({ key: "t", name: "T" })
+  const item = repos.createItem({ workspaceId: ws.id, title: "Design Prep", description: "" })
+  const workspaceId = `design-prep-${item.id.toLowerCase()}`
+  const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "cli", workspaceFsId: workspaceId })
+  repos.updateRun(run.id, { status: "completed" })
+  db.close()
+
+  const wireframesDir = layout.stageArtifactsDir({ workspaceId, runId: run.id }, "visual-companion")
+  const designDir = layout.stageArtifactsDir({ workspaceId, runId: run.id }, "frontend-design")
+  mkdirSync(wireframesDir, { recursive: true })
+  mkdirSync(designDir, { recursive: true })
+  writeFileSync(join(wireframesDir, "wireframes.json"), JSON.stringify({
+    inputMode: "none",
+    screens: [{ id: "home", name: "Home", purpose: "Overview", projectIds: ["P01"], layout: { kind: "single-column", regions: [{ id: "main", label: "Main" }] }, elements: [] }],
+    navigation: { entryPoints: [{ screenId: "home", projectId: "P01" }], flows: [] },
+  }))
+  writeFileSync(join(wireframesDir, "screen-map.html"), "<html>map</html>")
+  writeFileSync(join(wireframesDir, "home.html"), "<html>home</html>")
+  writeFileSync(join(designDir, "design.json"), JSON.stringify({
+    inputMode: "none",
+    tokens: { light: { primary: "#000", secondary: "#111", accent: "#222", background: "#fff", surface: "#f7f7f7", textPrimary: "#111", textMuted: "#666", success: "#0a0", warning: "#aa0", error: "#a00", info: "#00a" } },
+    typography: { display: { family: "Fraunces", weight: "700", usage: "Display" }, body: { family: "Manrope", weight: "500", usage: "Body" }, scale: { md: "1rem" } },
+    spacing: { baseUnit: "8px", sectionPadding: "32px", cardPadding: "16px", contentMaxWidth: "1200px" },
+    borders: { buttons: "999px", cards: "16px", badges: "999px" },
+    shadows: { sm: "0 1px 2px rgba(0,0,0,0.1)" },
+    tone: "Quiet and practical.",
+    antiPatterns: ["generic defaults"],
+  }))
+  writeFileSync(join(designDir, "design-preview.html"), "<html>preview</html>")
+
+  const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
+  try {
+    await waitForHealth(base)
+
+    const itemWireframes = await fetch(`${base}/items/${item.id}/wireframes`)
+    assert.equal(itemWireframes.status, 200)
+    const wfBody = await itemWireframes.json() as { screenMapUrl: string; screens: Array<{ url: string }> }
+    assert.match(wfBody.screenMapUrl, /screen-map\.html$/)
+    assert.equal(wfBody.screens.length, 1)
+
+    const itemDesign = await fetch(`${base}/items/${item.id}/design`)
+    assert.equal(itemDesign.status, 200)
+    const designBody = await itemDesign.json() as { previewUrl: string }
+    assert.match(designBody.previewUrl, /design-preview\.html$/)
+
+    const artifacts = await fetch(`${base}/runs/${run.id}/artifacts`)
+    assert.equal(artifacts.status, 200)
+
+    const raw = await fetch(`${base}/runs/${run.id}/artifacts/stages/visual-companion/artifacts/screen-map.html`)
+    assert.equal(raw.status, 200)
+    assert.match(await raw.text(), /map/)
   } finally {
     await stopServer(proc)
   }

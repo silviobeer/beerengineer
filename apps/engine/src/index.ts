@@ -38,6 +38,7 @@ import { generateSetupReport, runDoctorCommand, runSetupCommand } from "./setup/
 import type { AppConfig } from "./setup/types.js"
 import type { HarnessProfile, RegisterWorkspaceInput } from "./types/workspace.js"
 import { sendTelegramTestNotification } from "./notifications/command.js"
+import type { DesignArtifact, WireframeArtifact } from "./types.js"
 
 export type ResumeFlags = {
   summary?: string
@@ -93,6 +94,8 @@ type Command =
   | { kind: "runs"; workspaceKey?: string; json?: boolean; all?: boolean; compact?: boolean }
   | { kind: "item-get"; itemRef?: string; workspaceKey?: string; json?: boolean }
   | { kind: "item-open"; itemRef?: string; workspaceKey?: string }
+  | { kind: "item-wireframes"; itemRef?: string; workspaceKey?: string; open?: boolean; json?: boolean }
+  | { kind: "item-design"; itemRef?: string; workspaceKey?: string; open?: boolean; json?: boolean }
   | { kind: "run-list"; workspaceKey?: string; json?: boolean; all?: boolean; compact?: boolean }
   | { kind: "run-get"; runId?: string; json?: boolean }
   | { kind: "run-open"; runId?: string }
@@ -213,6 +216,8 @@ export function parseArgs(argv: string[]): Command {
   }
   if (first === "item" && second === "get") return { kind: "item-get", itemRef: argv[2], workspaceKey, json }
   if (first === "item" && second === "open") return { kind: "item-open", itemRef: argv[2], workspaceKey }
+  if (first === "item" && second === "wireframes") return { kind: "item-wireframes", itemRef: argv[2], workspaceKey, open: argv.includes("--open"), json }
+  if (first === "item" && second === "design") return { kind: "item-design", itemRef: argv[2], workspaceKey, open: argv.includes("--open"), json }
   if (first === "start" && second === "ui") return { kind: "start-ui" }
   if (first === "item" && second === "action") {
     const itemRef = readFlag(argv, "--item")
@@ -268,6 +273,10 @@ function printHelp(): void {
     "    beerengineer workspace gc-worktrees <key> [--json]   Remove orphaned BeerEngineer story worktrees",
     "    beerengineer item get <id|code> [--workspace <key>]  Show one item",
     "    beerengineer item open <id|code> [--workspace <key>] Open one item in the UI",
+    "    beerengineer item wireframes <id|code> [--open] [--workspace <key>] [--json]",
+    "                                                         Show/open wireframe artifacts",
+    "    beerengineer item design <id|code> [--open] [--workspace <key>] [--json]",
+    "                                                         Show/open design artifact",
     "    beerengineer run list [--all] [--compact]            List runs",
     "    beerengineer run get <run-id> [--json]               Show one run",
     "    beerengineer runs messages <run-id> [--level L2]    Show canonical message history",
@@ -285,7 +294,7 @@ function printHelp(): void {
     "",
     "  Item actions:",
     "    start_brainstorm  promote_to_requirements  start_implementation",
-    "    resume_run  mark_done",
+    "    rerun_design_prep  resume_run  mark_done",
     "",
     "  Resume flags (for --action resume_run on a blocked run):",
     "    --remediation-summary <text>   Required. What you fixed outside BeerEngineer2.",
@@ -303,6 +312,9 @@ function printHelp(): void {
     "    User prompts are limited to intake and blocked-run recovery.",
     "    Stage-internal LLM/reviewer interaction still happens, but stages from",
     "    architecture through documentation run without user chat unless a blocker stops the run.",
+    "    Items with UI additionally run two item-scoped stages — visual-companion",
+    "    and frontend-design — between brainstorm and requirements. Both are",
+    "    silently skipped when item-level hasUi === false.",
     "",
     "  Aliases:",
     "    -h  --help  --doctor  items  chats  runs",
@@ -529,6 +541,28 @@ export function resolveItemReference(
   if (byCode.length === 0) return { kind: "missing" }
   if (byCode.length > 1) return { kind: "ambiguous", matches: byCode }
   return { kind: "found", item: byCode[0] }
+}
+
+function latestCompletedRunForItem(repos: Repos, itemId: string) {
+  return repos
+    .listRuns()
+    .filter(run => run.item_id === itemId && run.status === "completed")
+    .sort((a, b) => b.created_at - a.created_at)[0]
+}
+
+function workflowWorkspaceId(item: Pick<ItemRow, "id" | "title">): string {
+  const slug = item.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
+  return slug ? `${slug}-${item.id.toLowerCase()}` : item.id.toLowerCase()
+}
+
+function readArtifactJson<T>(item: Pick<ItemRow, "id" | "title">, runId: string, stageId: string, fileName: string): T | null {
+  const path = join(layout.stageArtifactsDir({ workspaceId: workflowWorkspaceId(item), runId }, stageId), fileName)
+  if (!existsSync(path)) return null
+  return JSON.parse(readFileSync(path, "utf8")) as T
+}
+
+function artifactPath(item: Pick<ItemRow, "id" | "title">, runId: string, stageId: string, fileName: string): string {
+  return join(layout.stageArtifactsDir({ workspaceId: workflowWorkspaceId(item), runId }, stageId), fileName)
 }
 
 export async function runDoctor(options: { json?: boolean; group?: string } = {}): Promise<number> {
@@ -1056,6 +1090,127 @@ async function runItemGetCommand(itemRef: string | undefined, workspaceKey: stri
     console.log(`  stage/status: ${latestRun?.current_stage ?? item.current_column} / ${status}`)
     if (latestRun) console.log(`  run: ${latestRun.id} (${latestRun.status})`)
     if (openChat) console.log(`  open chat: ${openChat}`)
+    return 0
+  } finally {
+    db.close()
+  }
+}
+
+async function runItemWireframesCommand(
+  itemRef: string | undefined,
+  workspaceKey: string | undefined,
+  open = false,
+  json = false,
+): Promise<number> {
+  if (!itemRef) {
+    console.error("  Missing item reference: beerengineer item wireframes <id|code>")
+    return 2
+  }
+  const db = initDatabase()
+  try {
+    const repos = new Repos(db)
+    const workspace = resolveSelectedWorkspace(repos, workspaceKey)
+    if (!workspace) return 2
+    const item = repos.getItemByCode(workspace.id, itemRef) ?? repos.getItem(itemRef)
+    if (!item) {
+      const payload = { ok: false, code: 2, reason: `item not found: ${itemRef}` }
+      if (json) process.stdout.write(`${JSON.stringify(payload)}\n`)
+      else console.error(`  Item not found: ${itemRef}`)
+      return 2
+    }
+    const run = latestCompletedRunForItem(repos, item.id)
+    if (!run) {
+      const payload = { ok: false, code: 3, reason: `no completed run for ${item.code}` }
+      if (json) process.stdout.write(`${JSON.stringify(payload)}\n`)
+      else console.error(`  no completed run for ${item.code}`)
+      return 3
+    }
+    const artifact = readArtifactJson<WireframeArtifact>(item, run.id, "visual-companion", "wireframes.json")
+    if (!artifact) {
+      const payload = { ok: false, code: 3, reason: `no design-prep artifacts for ${item.code} (hasUi=false)` }
+      if (json) process.stdout.write(`${JSON.stringify(payload)}\n`)
+      else console.error(`  no design-prep artifacts for ${item.code} (hasUi=false)`)
+      return 3
+    }
+    const screenMapPath = artifactPath(item, run.id, "visual-companion", "screen-map.html")
+    if (json) {
+      process.stdout.write(`${JSON.stringify({
+        itemId: item.id,
+        runId: run.id,
+        screenCount: artifact.screens.length,
+        screenMapPath,
+        screens: artifact.screens.map(screen => ({
+          id: screen.id,
+          name: screen.name,
+          projectIds: screen.projectIds,
+          path: artifactPath(item, run.id, "visual-companion", `${screen.id}.html`),
+        })),
+      })}\n`)
+      if (open) openBrowser(`file://${screenMapPath}`)
+      return 0
+    }
+    console.log("  screen  projects  purpose  file")
+    artifact.screens.forEach(screen => {
+      console.log(`  ${screen.id}  ${screen.projectIds.join(",")}  ${truncate(screen.purpose, 30)}  ${artifactPath(item, run.id, "visual-companion", `${screen.id}.html`)}`)
+    })
+    console.log(`  screen-map: ${screenMapPath}`)
+    if (open) openBrowser(`file://${screenMapPath}`)
+    return 0
+  } finally {
+    db.close()
+  }
+}
+
+async function runItemDesignCommand(
+  itemRef: string | undefined,
+  workspaceKey: string | undefined,
+  open = false,
+  json = false,
+): Promise<number> {
+  if (!itemRef) {
+    console.error("  Missing item reference: beerengineer item design <id|code>")
+    return 2
+  }
+  const db = initDatabase()
+  try {
+    const repos = new Repos(db)
+    const workspace = resolveSelectedWorkspace(repos, workspaceKey)
+    if (!workspace) return 2
+    const item = repos.getItemByCode(workspace.id, itemRef) ?? repos.getItem(itemRef)
+    if (!item) {
+      const payload = { ok: false, code: 2, reason: `item not found: ${itemRef}` }
+      if (json) process.stdout.write(`${JSON.stringify(payload)}\n`)
+      else console.error(`  Item not found: ${itemRef}`)
+      return 2
+    }
+    const run = latestCompletedRunForItem(repos, item.id)
+    if (!run) {
+      const payload = { ok: false, code: 3, reason: `no completed run for ${item.code}` }
+      if (json) process.stdout.write(`${JSON.stringify(payload)}\n`)
+      else console.error(`  no completed run for ${item.code}`)
+      return 3
+    }
+    const artifact = readArtifactJson<DesignArtifact>(item, run.id, "frontend-design", "design.json")
+    if (!artifact) {
+      const payload = { ok: false, code: 3, reason: `no design-prep artifacts for ${item.code} (hasUi=false)` }
+      if (json) process.stdout.write(`${JSON.stringify(payload)}\n`)
+      else console.error(`  no design-prep artifacts for ${item.code} (hasUi=false)`)
+      return 3
+    }
+    const previewPath = artifactPath(item, run.id, "frontend-design", "design-preview.html")
+    if (json) {
+      process.stdout.write(`${JSON.stringify({ itemId: item.id, runId: run.id, ...artifact, previewPath })}\n`)
+      if (open) openBrowser(`file://${previewPath}`)
+      return 0
+    }
+    console.log(`  tone: ${artifact.tone}`)
+    console.log(`  light.primary: ${artifact.tokens.light.primary}`)
+    console.log(`  light.accent: ${artifact.tokens.light.accent}`)
+    console.log(`  display: ${artifact.typography.display.family}`)
+    console.log(`  body: ${artifact.typography.body.family}`)
+    console.log(`  spacing.baseUnit: ${artifact.spacing.baseUnit}`)
+    console.log(`  design-preview: ${previewPath}`)
+    if (open) openBrowser(`file://${previewPath}`)
     return 0
   } finally {
     db.close()
@@ -1695,11 +1850,6 @@ function preflightCliBranchingStart(repos: Repos, workspaceId: string): number {
   return printDirtyRepoPreflight(rootPath)
 }
 
-function workflowWorkspaceId(item: Pick<ItemRow, "id" | "title">): string {
-  const slug = item.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
-  return slug ? `${slug}-${item.id.toLowerCase()}` : item.id.toLowerCase()
-}
-
 function hasStageArtifacts(item: Pick<ItemRow, "id" | "title">, runId: string, stageId: string): boolean {
   return existsSync(layout.stageDir({ workspaceId: workflowWorkspaceId(item), runId }, stageId))
 }
@@ -1776,7 +1926,7 @@ export async function runItemAction(itemRef: string, action: string, resumeFlags
       }
     }
 
-    if (action === "start_implementation") {
+    if (action === "start_implementation" || action === "rerun_design_prep") {
       const transition = lookupTransition(action, item.current_column, item.phase_status)
       if (transition.kind !== "start-run") {
         console.error(`  Invalid transition: ${action} from ${item.current_column}/${item.phase_status}`)
@@ -1799,13 +1949,15 @@ export async function runItemAction(itemRef: string, action: string, resumeFlags
           {
             owner: "cli",
             itemId: item.id,
-            resume: { scope: { type: "run", runId: "pending" }, currentStage: "requirements" },
+            resume: { scope: { type: "run", runId: "pending" }, currentStage: action === "rerun_design_prep" ? "visual-companion" : "projects" },
           },
         )
         if (!seedStageFromPreviousRun(item, sourceRun.id, prepared.runId, "brainstorm")) {
           console.error("  Cannot start implementation: failed to seed brainstorm artifacts into the new run.")
           return 1
         }
+        seedStageFromPreviousRun(item, sourceRun.id, prepared.runId, "visual-companion")
+        seedStageFromPreviousRun(item, sourceRun.id, prepared.runId, "frontend-design")
         await prepared.start()
         console.log(`  ${action} applied`)
         console.log(`  run-id: ${prepared.runId}`)
@@ -1994,6 +2146,10 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       process.exit(await runItemGetCommand(cmd.itemRef, cmd.workspaceKey, cmd.json))
     case "item-open":
       process.exit(await runItemOpenCommand(cmd.itemRef, cmd.workspaceKey))
+    case "item-wireframes":
+      process.exit(await runItemWireframesCommand(cmd.itemRef, cmd.workspaceKey, cmd.open, cmd.json))
+    case "item-design":
+      process.exit(await runItemDesignCommand(cmd.itemRef, cmd.workspaceKey, cmd.open, cmd.json))
     case "run-list":
     case "runs":
       process.exit(await runRunListCommand(cmd.workspaceKey, cmd.all, cmd.json, cmd.compact))

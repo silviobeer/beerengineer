@@ -184,6 +184,21 @@ function eventFromStageLog(row: StageLogRow): WorkflowEvent | null {
         summary: typeof data.summary === "string" ? data.summary : "",
         position: typeof data.position === "number" ? data.position : 0,
       }
+    case "wireframes_ready":
+      return {
+        type: "wireframes_ready",
+        runId: row.run_id,
+        itemId: typeof data.itemId === "string" ? data.itemId : "",
+        screenCount: typeof data.screenCount === "number" ? data.screenCount : 0,
+        urls: Array.isArray(data.urls) ? data.urls.filter((value): value is string => typeof value === "string") : [],
+      }
+    case "design_ready":
+      return {
+        type: "design_ready",
+        runId: row.run_id,
+        itemId: typeof data.itemId === "string" ? data.itemId : "",
+        url: typeof data.url === "string" ? data.url : "",
+      }
     case "run_blocked":
       return {
         type: "run_blocked",

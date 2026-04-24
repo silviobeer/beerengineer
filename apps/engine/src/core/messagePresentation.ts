@@ -77,6 +77,10 @@ export function presentMessageEntry(entry: MessageEntry): MessagePresentation {
       return { icon: "🧑", label: "user", detail: payloadString(entry.payload.text) }
     case "project_created":
       return { icon: "📚", label: "project", detail: payloadString(entry.payload.name) }
+    case "wireframes_ready":
+      return { icon: "🗺️", label: "wireframes", detail: payloadString(String(entry.payload.screenCount ?? "")) }
+    case "design_ready":
+      return { icon: "🎨", label: "design", detail: payloadString(entry.payload.url) }
     case "log":
       return { icon: "📎", label: "log", detail: payloadString(entry.payload.message) }
     case "artifact_written":

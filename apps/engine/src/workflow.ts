@@ -21,6 +21,8 @@ import { writeRecoveryRecord, type RecoveryScope } from "./core/recovery.js"
 import { layout } from "./core/workspaceLayout.js"
 import type {
   ArchitectureArtifact,
+  Concept,
+  DesignArtifact,
   DocumentationArtifact,
   Item,
   PRD,
@@ -29,13 +31,17 @@ import type {
   ProjectReviewArtifact,
   ImplementationPlanArtifact,
   WaveSummary,
+  WireframeArtifact,
   WithDocumentation,
   WorkflowContext,
 } from "./types.js"
+import { mergeAmendments, projectDesign, projectWireframes } from "./core/designPrep.js"
 import { stagePresent } from "./core/stagePresentation.js"
 import { ask } from "./sim/human.js"
 import { emitEvent, getActiveRun, withStageLifecycle } from "./core/runContext.js"
 import { brainstorm } from "./stages/brainstorm/index.js"
+import { visualCompanion } from "./stages/visual-companion/index.js"
+import { frontendDesign } from "./stages/frontend-design/index.js"
 import { requirements } from "./stages/requirements/index.js"
 import { architecture } from "./stages/architecture/index.js"
 import { planning } from "./stages/planning/index.js"
@@ -63,6 +69,14 @@ type ProjectResumePlan = {
     | "documentation"
     | "handoff"
   execution?: ExecutionResumeOptions
+}
+
+type ItemResumePlan = {
+  startStage: "brainstorm" | "visual-companion" | "frontend-design" | "projects"
+}
+
+type DesignPrepFreeze = {
+  projectIds: string[]
 }
 
 const projectStageOrder = [
@@ -177,8 +191,96 @@ function normalizeProjectResume(input: WorkflowResumeInput): ProjectResumePlan |
   }
 }
 
+function normalizeItemResume(input: WorkflowResumeInput): ItemResumePlan {
+  const scope = input.scope
+  const stageId = scope.type === "stage" ? scope.stageId : scope.type === "run" ? input.currentStage ?? "" : "projects"
+  const topStage = stageId.split("/")[0]
+  switch (topStage) {
+    case "brainstorm":
+      return { startStage: "brainstorm" }
+    case "visual-companion":
+      return { startStage: "visual-companion" }
+    case "frontend-design":
+      return { startStage: "frontend-design" }
+    default:
+      return { startStage: "projects" }
+  }
+}
+
 async function loadProjects(context: WorkflowContext): Promise<Project[]> {
   return readJson<Project[]>(join(layout.stageArtifactsDir(context, "brainstorm"), "projects.json"))
+}
+
+async function loadConcept(context: WorkflowContext): Promise<Concept & { hasUi?: boolean }> {
+  try {
+    return await readJson<Concept & { hasUi?: boolean }>(join(layout.stageArtifactsDir(context, "brainstorm"), "concept.json"))
+  } catch {
+    const projects = await loadProjects(context)
+    const fallback = projects[0]?.concept ?? {
+      summary: "Recovered concept from brainstorm projects",
+      problem: "Concept file missing during resume",
+      users: ["unknown"],
+      constraints: ["Recovered from project artifacts"],
+    }
+    return { ...fallback, hasUi: projects.some(project => project.hasUi === true) }
+  }
+}
+
+async function loadWireframes(context: WorkflowContext): Promise<WireframeArtifact> {
+  return readJson<WireframeArtifact>(join(layout.stageArtifactsDir(context, "visual-companion"), "wireframes.json"))
+}
+
+async function loadDesign(context: WorkflowContext): Promise<DesignArtifact> {
+  return readJson<DesignArtifact>(join(layout.stageArtifactsDir(context, "frontend-design"), "design.json"))
+}
+
+async function loadDesignPrepFreeze(context: WorkflowContext): Promise<DesignPrepFreeze | null> {
+  try {
+    return await readJson<DesignPrepFreeze>(join(layout.stageArtifactsDir(context, "visual-companion"), "project-freeze.json"))
+  } catch {
+    return null
+  }
+}
+
+function normalizedProjectIds(projects: Project[]): string[] {
+  return [...projects.map(project => project.id)].sort()
+}
+
+function sameProjectSet(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) return false
+  return left.every((value, index) => value === right[index])
+}
+
+async function assertDesignPrepProjectFreeze(context: WorkflowContext, projects: Project[]): Promise<void> {
+  const freeze = await loadDesignPrepFreeze(context)
+  if (!freeze) return
+  const currentIds = normalizedProjectIds(projects)
+  const frozenIds = [...freeze.projectIds].sort()
+  if (sameProjectSet(currentIds, frozenIds)) return
+  const summary =
+    `Resume blocked: brainstorm project set changed after design prep. ` +
+    `Frozen=[${frozenIds.join(", ")}], current=[${currentIds.join(", ")}]. Re-run visual-companion and frontend-design.`
+  await writeRecoveryRecord(context, {
+    status: "blocked",
+    cause: "system_error",
+    scope: { type: "run", runId: context.runId },
+    summary,
+    detail: "Project bindings in wireframes/design artifacts no longer match brainstorm output.",
+    evidencePaths: [layout.stageArtifactsDir(context, "visual-companion"), layout.stageArtifactsDir(context, "frontend-design")],
+  })
+  const activeRun = getActiveRun()
+  if (activeRun) {
+    emitEvent({
+      type: "run_blocked",
+      runId: activeRun.runId,
+      itemId: activeRun.itemId,
+      title: activeRun.title ?? activeRun.itemId,
+      scope: { type: "run", runId: activeRun.runId },
+      cause: "system_error",
+      summary,
+    })
+  }
+  throw new BlockedRunError(summary)
 }
 
 async function loadPrd(context: WorkflowContext): Promise<PRD> {
@@ -239,10 +341,35 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
   try {
     if (realGit.enabled) ensureItemBranchReal(realGit, context)
 
+    const itemResumePlan = options?.resume ? normalizeItemResume(options.resume) : { startStage: "brainstorm" as const }
     const resumePlan = options?.resume ? normalizeProjectResume(options.resume) : null
-    const projects = resumePlan
-      ? await loadProjects(context)
-      : await withStageLifecycle("brainstorm", {}, () => brainstorm(item, context, options?.llm?.stage))
+    const projects =
+      itemResumePlan.startStage === "brainstorm"
+        ? await withStageLifecycle("brainstorm", {}, () => brainstorm(item, context, options?.llm?.stage))
+        : await loadProjects(context)
+    if (itemResumePlan.startStage === "projects") {
+      await assertDesignPrepProjectFreeze(context, projects)
+    }
+    const itemConcept = await loadConcept(context)
+    const itemHasUi = projects.some(project => project.hasUi === true)
+    const wireframes =
+      !itemHasUi
+        ? undefined
+        : itemResumePlan.startStage === "brainstorm" || itemResumePlan.startStage === "visual-companion"
+        ? await withStageLifecycle("visual-companion", {}, () =>
+            visualCompanion(context, { itemConcept, projects, references: [] }, options?.llm?.stage),
+          )
+        : await loadWireframes(context)
+    const design =
+      !itemHasUi
+        ? undefined
+        : itemResumePlan.startStage === "brainstorm" ||
+          itemResumePlan.startStage === "visual-companion" ||
+          itemResumePlan.startStage === "frontend-design"
+        ? await withStageLifecycle("frontend-design", {}, () =>
+            frontendDesign(context, { itemConcept, projects, wireframes, references: [] }, options?.llm?.stage),
+          )
+        : await loadDesign(context)
     if (activeRun) {
       projects.forEach((project, index) => {
         emitEvent({
@@ -260,7 +387,20 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
 
     for (const project of projects) {
       if (realGit.enabled) ensureProjectBranchReal(realGit, context, project.id)
-      await runProject({ ...context, project }, resumePlan ?? undefined, options?.llm)
+      const conceptAmendments = [
+        ...(wireframes?.conceptAmendments ?? []),
+        ...(design?.conceptAmendments ?? []),
+      ]
+      await runProject(
+        {
+          ...context,
+          project: { ...project, concept: mergeAmendments(project.concept, conceptAmendments, project.id) },
+          wireframes: wireframes ? projectWireframes(wireframes, project.id) : undefined,
+          design: design ? projectDesign(design) : undefined,
+        },
+        resumePlan ?? undefined,
+        options?.llm,
+      )
       if (realGit.enabled) mergeProjectIntoItemReal(realGit, context, project.id)
     }
 

@@ -1,5 +1,5 @@
 import type { ChatMessage } from "../../llm/types.js"
-import type { Concept, PRD } from "../../types.js"
+import type { Concept, DesignArtifact, PRD, WireframeArtifact } from "../../types.js"
 
 export type RequirementsArtifact = {
   concept: Concept
@@ -8,6 +8,8 @@ export type RequirementsArtifact = {
 
 export type RequirementsState = {
   concept: Concept
+  wireframes?: WireframeArtifact
+  design?: DesignArtifact
   clarificationCount: number
   maxClarifications: number
   history: ChatMessage[]

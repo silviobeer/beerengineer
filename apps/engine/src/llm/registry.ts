@@ -18,6 +18,10 @@ import { FakeQaReviewAdapter } from "./fake/qaReview.js"
 import { FakeQaStageAdapter } from "./fake/qaStage.js"
 import { FakeRequirementsReviewAdapter } from "./fake/requirementsReview.js"
 import { FakeRequirementsStageAdapter } from "./fake/requirementsStage.js"
+import { FakeVisualCompanionReviewAdapter } from "./fake/visualCompanionReview.js"
+import { FakeVisualCompanionStageAdapter } from "./fake/visualCompanionStage.js"
+import { FakeFrontendDesignReviewAdapter } from "./fake/frontendDesignReview.js"
+import { FakeFrontendDesignStageAdapter } from "./fake/frontendDesignStage.js"
 import { FakeTestWriterReviewAdapter } from "./fake/testWriterReview.js"
 import { FakeTestWriterStageAdapter } from "./fake/testWriterStage.js"
 
@@ -25,10 +29,12 @@ import type { ArchitectureArtifact, ArchitectureState } from "../stages/architec
 import type { BrainstormArtifact, BrainstormState } from "../stages/brainstorm/types.js"
 import type { DocumentationArtifact, DocumentationState } from "../stages/documentation/types.js"
 import type { StoryTestPlanArtifact, TestWriterState } from "../stages/execution/types.js"
+import type { DesignArtifact, FrontendDesignState } from "../stages/frontend-design/types.js"
 import type { ImplementationPlanArtifact, PlanningState } from "../stages/planning/types.js"
 import type { ProjectReviewArtifact, ProjectReviewState } from "../stages/project-review/types.js"
 import type { QaArtifact, QaState } from "../stages/qa/types.js"
 import type { RequirementsArtifact, RequirementsState } from "../stages/requirements/types.js"
+import type { VisualCompanionState, WireframeArtifact } from "../stages/visual-companion/types.js"
 import type { Project } from "../types/domain.js"
 import { HostedReviewAdapter, HostedStageAdapter } from "./hosted/hostedCliAdapter.js"
 
@@ -51,6 +57,8 @@ export type RunLlmConfig = {
 
 export type StageId =
   | "brainstorm"
+  | "visual-companion"
+  | "frontend-design"
   | "requirements"
   | "architecture"
   | "planning"
@@ -175,6 +183,8 @@ type FakeReviewFactory<S, A> = () => ReviewAgentAdapter<S, A>
 
 const FAKE_STAGES: {
   brainstorm: { stage: FakeStageFactory<BrainstormState, BrainstormArtifact>; review: FakeReviewFactory<BrainstormState, BrainstormArtifact> }
+  "visual-companion": { stage: FakeStageFactory<VisualCompanionState, WireframeArtifact>; review: FakeReviewFactory<VisualCompanionState, WireframeArtifact> }
+  "frontend-design": { stage: FakeStageFactory<FrontendDesignState, DesignArtifact>; review: FakeReviewFactory<FrontendDesignState, DesignArtifact> }
   requirements: { stage: FakeStageFactory<RequirementsState, RequirementsArtifact>; review: FakeReviewFactory<RequirementsState, RequirementsArtifact> }
   architecture: { stage: (project: Project) => StageAgentAdapter<ArchitectureState, ArchitectureArtifact>; review: FakeReviewFactory<ArchitectureState, ArchitectureArtifact> }
   planning: { stage: (project: Project) => StageAgentAdapter<PlanningState, ImplementationPlanArtifact>; review: FakeReviewFactory<PlanningState, ImplementationPlanArtifact> }
@@ -184,6 +194,8 @@ const FAKE_STAGES: {
   qa: { stage: FakeStageFactory<QaState, QaArtifact>; review: FakeReviewFactory<QaState, QaArtifact> }
 } = {
   brainstorm:      { stage: () => new FakeBrainstormStageAdapter(),    review: () => new FakeBrainstormReviewAdapter() },
+  "visual-companion": { stage: () => new FakeVisualCompanionStageAdapter(), review: () => new FakeVisualCompanionReviewAdapter() },
+  "frontend-design": { stage: () => new FakeFrontendDesignStageAdapter(), review: () => new FakeFrontendDesignReviewAdapter() },
   requirements:    { stage: () => new FakeRequirementsStageAdapter(),  review: () => new FakeRequirementsReviewAdapter() },
   architecture:    { stage: p => new FakeArchitectureStageAdapter(p),  review: () => new FakeArchitectureReviewAdapter() },
   planning:        { stage: p => new FakePlanningStageAdapter(p),      review: () => new FakePlanningReviewAdapter() },
@@ -198,6 +210,20 @@ export function createBrainstormStage(_project: Project | undefined, llm?: RunLl
 }
 export function createBrainstormReview(llm?: RunLlmConfig): ReviewAgentAdapter<BrainstormState, BrainstormArtifact> {
   return llm ? createHostedReviewAdapter("brainstorm", llm) : FAKE_STAGES.brainstorm.review()
+}
+
+export function createVisualCompanionStage(llm?: RunLlmConfig): StageAgentAdapter<VisualCompanionState, WireframeArtifact> {
+  return llm ? createHostedStageAdapter("visual-companion", llm) : FAKE_STAGES["visual-companion"].stage()
+}
+export function createVisualCompanionReview(llm?: RunLlmConfig): ReviewAgentAdapter<VisualCompanionState, WireframeArtifact> {
+  return llm ? createHostedReviewAdapter("visual-companion", llm) : FAKE_STAGES["visual-companion"].review()
+}
+
+export function createFrontendDesignStage(llm?: RunLlmConfig): StageAgentAdapter<FrontendDesignState, DesignArtifact> {
+  return llm ? createHostedStageAdapter("frontend-design", llm) : FAKE_STAGES["frontend-design"].stage()
+}
+export function createFrontendDesignReview(llm?: RunLlmConfig): ReviewAgentAdapter<FrontendDesignState, DesignArtifact> {
+  return llm ? createHostedReviewAdapter("frontend-design", llm) : FAKE_STAGES["frontend-design"].review()
 }
 
 export function createRequirementsStage(llm?: RunLlmConfig): StageAgentAdapter<RequirementsState, RequirementsArtifact> {

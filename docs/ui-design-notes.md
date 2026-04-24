@@ -106,9 +106,10 @@ Ownership rule: *does it belong to the thing being built, or to the tool
 building it?*
 
 - **Workspace repo** (in git): specs, PRDs, architecture docs, generated
-  code, test fixtures, design tokens — human-reviewable outputs.
+  code, test fixtures — human-reviewable outputs that belong to the product.
 - **BeerEngineer data dir** (not in any git): run transcripts, SSE events,
-  stage timings, prompt histories, attempt blobs, preview snapshots.
+  stage timings, prompt histories, attempt blobs, preview snapshots, plus
+  design-prep artifacts such as wireframe HTMLs and design-preview HTMLs.
 - Preview URLs / screenshots → engine data dir, referenced by URL in PR
   descriptions, never checked in.
 

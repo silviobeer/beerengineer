@@ -8,7 +8,7 @@ function toStringList(value: unknown): string[] {
   return [String(value)]
 }
 
-export function renderConceptMarkdown(concept: Concept): string {
+export function renderConceptMarkdown(concept: Concept & { hasUi?: boolean }): string {
   const users = toStringList(concept.users)
   const constraints = toStringList(concept.constraints)
   return [
@@ -25,6 +25,9 @@ export function renderConceptMarkdown(concept: Concept): string {
     "",
     "## Constraints",
     ...constraints.map(constraint => `- ${constraint}`),
+    "",
+    "## UI Signal",
+    concept.hasUi ? "UI-bearing item" : "No UI identified",
     "",
   ].join("\n")
 }

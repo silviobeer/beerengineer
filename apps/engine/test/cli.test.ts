@@ -76,6 +76,8 @@ test("parseArgs recognizes help, doctor, start ui, workflow, item action, and un
   assert.deepEqual(parseArgs(["chats", "--all", "--json"]), { kind: "chats", workspaceKey: undefined, json: true, all: true, compact: false })
   assert.deepEqual(parseArgs(["item", "get", "ITEM-0001", "--workspace", "demo", "--json"]), { kind: "item-get", itemRef: "ITEM-0001", workspaceKey: "demo", json: true })
   assert.deepEqual(parseArgs(["item", "open", "ITEM-0001", "--workspace", "demo"]), { kind: "item-open", itemRef: "ITEM-0001", workspaceKey: "demo" })
+  assert.deepEqual(parseArgs(["item", "wireframes", "ITEM-0001", "--workspace", "demo", "--open", "--json"]), { kind: "item-wireframes", itemRef: "ITEM-0001", workspaceKey: "demo", open: true, json: true })
+  assert.deepEqual(parseArgs(["item", "design", "ITEM-0001", "--workspace", "demo"]), { kind: "item-design", itemRef: "ITEM-0001", workspaceKey: "demo", open: false, json: false })
   assert.deepEqual(parseArgs(["run", "list", "--workspace", "demo", "--json"]), { kind: "run-list", workspaceKey: "demo", json: true, all: false, compact: false })
   assert.deepEqual(parseArgs(["run", "list", "--all", "--json"]), { kind: "run-list", workspaceKey: undefined, json: true, all: true, compact: false })
   assert.deepEqual(parseArgs(["run", "list", "--all", "--compact"]), { kind: "run-list", workspaceKey: undefined, json: false, all: true, compact: true })
@@ -379,6 +381,66 @@ test("item open and run open print UI URLs based on publicBaseUrl", async () => 
     else process.env.BEERENGINEER_CONFIG_PATH = previousConfigPath
     if (previousDisableOpen === undefined) delete process.env.BEERENGINEER_DISABLE_BROWSER_OPEN
     else process.env.BEERENGINEER_DISABLE_BROWSER_OPEN = previousDisableOpen
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("item wireframes and item design print artifact info and support --json", () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-artifacts-"))
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
+
+  try {
+    const dbPath = join(dir, "artifacts.sqlite")
+    const db = initDatabase(dbPath)
+    const repos = new Repos(db)
+    const ws = repos.upsertWorkspace({ key: "default", name: "Default Workspace" })
+    const item = repos.createItem({ workspaceId: ws.id, code: "ITEM-0001", title: "Artifact Item", description: "artifacts" })
+    const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "cli" })
+    repos.updateRun(run.id, { status: "completed", workspace_fs_id: "artifact-item-" + item.id.toLowerCase() })
+    db.close()
+
+    const workspaceId = `artifact-item-${item.id.toLowerCase()}`
+    const wireframesDir = layout.stageArtifactsDir({ workspaceId, runId: run.id }, "visual-companion")
+    const designDir = layout.stageArtifactsDir({ workspaceId, runId: run.id }, "frontend-design")
+    mkdirSync(wireframesDir, { recursive: true })
+    mkdirSync(designDir, { recursive: true })
+    writeFileSync(join(wireframesDir, "wireframes.json"), JSON.stringify({
+      inputMode: "none",
+      screens: [{ id: "home", name: "Home", purpose: "Overview", projectIds: ["P01"], layout: { kind: "single-column", regions: [{ id: "main", label: "Main" }] }, elements: [] }],
+      navigation: { entryPoints: [{ screenId: "home", projectId: "P01" }], flows: [] },
+    }, null, 2))
+    writeFileSync(join(wireframesDir, "screen-map.html"), "<html>map</html>")
+    writeFileSync(join(wireframesDir, "home.html"), "<html>home</html>")
+    writeFileSync(join(designDir, "design.json"), JSON.stringify({
+      inputMode: "none",
+      tokens: { light: { primary: "#000", secondary: "#111", accent: "#222", background: "#fff", surface: "#f7f7f7", textPrimary: "#111", textMuted: "#666", success: "#0a0", warning: "#aa0", error: "#a00", info: "#00a" } },
+      typography: { display: { family: "Fraunces", weight: "700", usage: "Display" }, body: { family: "Manrope", weight: "500", usage: "Body" }, scale: { md: "1rem" } },
+      spacing: { baseUnit: "8px", sectionPadding: "32px", cardPadding: "16px", contentMaxWidth: "1200px" },
+      borders: { buttons: "999px", cards: "16px", badges: "999px" },
+      shadows: { sm: "0 1px 2px rgba(0,0,0,0.1)" },
+      tone: "Clean and direct.",
+      antiPatterns: ["generic defaults"],
+    }, null, 2))
+    writeFileSync(join(designDir, "design-preview.html"), "<html>preview</html>")
+
+    const wireframes = spawnSync(process.execPath, [binPath, "item", "wireframes", "ITEM-0001", "--json"], {
+      cwd: engineRoot,
+      encoding: "utf8",
+      env: { ...process.env, BEERENGINEER_UI_DB_PATH: dbPath, BEERENGINEER_DISABLE_BROWSER_OPEN: "1" },
+    })
+    assert.equal(wireframes.status, 0, wireframes.stderr)
+    assert.equal((JSON.parse(wireframes.stdout) as { screenCount: number }).screenCount, 1)
+
+    const design = spawnSync(process.execPath, [binPath, "item", "design", "ITEM-0001"], {
+      cwd: engineRoot,
+      encoding: "utf8",
+      env: { ...process.env, BEERENGINEER_UI_DB_PATH: dbPath, BEERENGINEER_DISABLE_BROWSER_OPEN: "1" },
+    })
+    assert.equal(design.status, 0, design.stderr)
+    assert.match(design.stdout, /design-preview:/)
+  } finally {
     rmSync(dir, { recursive: true, force: true })
   }
 })

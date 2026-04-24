@@ -130,19 +130,22 @@ export function startRunFromIdea(
  */
 export function startRunForItem(
   repos: Repos,
-  input: { itemId: string; action: "start_brainstorm" | "start_implementation" },
+  input: { itemId: string; action: "start_brainstorm" | "start_implementation" | "rerun_design_prep" },
 ): StartRunResult {
   const item = repos.getItem(input.itemId)
   if (!item) return { ok: false, status: 404, error: "item_not_found" }
 
   let sourceRun: RunRow | undefined
   let resume: WorkflowResumeInput | undefined
-  if (input.action === "start_implementation") {
+  if (input.action === "start_implementation" || input.action === "rerun_design_prep") {
     sourceRun = latestRunWithStageArtifacts(repos, item, "brainstorm")
     if (!sourceRun) {
       return { ok: false, status: 409, error: "no_brainstorm_artifacts" }
     }
-    resume = { scope: { type: "run", runId: "pending" }, currentStage: "requirements" }
+    resume = {
+      scope: { type: "run", runId: "pending" },
+      currentStage: input.action === "rerun_design_prep" ? "visual-companion" : "projects",
+    }
   }
 
   const io = buildApiIo(repos)
@@ -153,10 +156,12 @@ export function startRunForItem(
     { owner: "api", itemId: item.id, resume },
   )
 
-  if (input.action === "start_implementation" && sourceRun) {
+  if ((input.action === "start_implementation" || input.action === "rerun_design_prep") && sourceRun) {
     if (!seedStageFromPreviousRun(item, sourceRun.id, prepared.runId, "brainstorm")) {
       return { ok: false, status: 409, error: "seed_failed" }
     }
+    seedStageFromPreviousRun(item, sourceRun.id, prepared.runId, "visual-companion")
+    seedStageFromPreviousRun(item, sourceRun.id, prepared.runId, "frontend-design")
   }
 
   fireInBackground(io, `startRunForItem:${input.action}`, prepared.start)

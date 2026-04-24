@@ -18,6 +18,8 @@ export async function architecture(ctx: WithPrd, llm?: RunLlmConfig): Promise<Ar
     createInitialState: (): ArchitectureState => ({
       projectId: ctx.project.id,
       prd: ctx.prd,
+      wireframes: ctx.wireframes,
+      design: ctx.design,
       revisionCount: 0,
     }),
     stageAgent: createArchitectureStage(ctx.project, llm),

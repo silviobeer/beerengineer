@@ -14,6 +14,8 @@ import { runWithActiveRun } from "../src/core/runContext.js"
 
 function makeIO(answers: {
   brainstorm: string[]
+  visualCompanion: string
+  frontendDesign: string
   requirements: string[]
   qa: string
   handoff: string
@@ -24,7 +26,7 @@ function makeIO(answers: {
   // via a counter-based mapping: brainstorm uses 4 asks, requirements 3, qa 1, handoff 1.
   let brainstormIdx = 0
   let requirementsIdx = 0
-  let phase: "brainstorm" | "requirements" | "qa" | "handoff" = "brainstorm"
+  let phase: "brainstorm" | "visual-companion" | "frontend-design" | "requirements" | "qa" | "handoff" = "brainstorm"
   let brainstormAsks = 0
   let requirementsAsks = 0
   const io: WorkflowIO = {
@@ -35,8 +37,16 @@ function makeIO(answers: {
       if (phase === "brainstorm") {
         const answer = answers.brainstorm[brainstormIdx++] ?? "ok"
         brainstormAsks++
-        if (brainstormAsks >= answers.brainstorm.length) phase = "requirements"
+        if (brainstormAsks >= answers.brainstorm.length) phase = "visual-companion"
         return answer
+      }
+      if (phase === "visual-companion") {
+        phase = "frontend-design"
+        return answers.visualCompanion
+      }
+      if (phase === "frontend-design") {
+        phase = "requirements"
+        return answers.frontendDesign
       }
       if (phase === "requirements") {
         const answer = answers.requirements[requirementsIdx++] ?? "ok"
@@ -81,6 +91,8 @@ test("runWorkflow runs end-to-end with all review/side loops, producing artifact
         "Constraint: single-node, no cloud access.",
         "Yes, constraints are stable enough.",
       ],
+      visualCompanion: "no",
+      frontendDesign: "no",
       requirements: [
         "Focus: core workflow as input form.",
         "Status badges per entry.",
@@ -308,6 +320,58 @@ test("runWorkflow blocks dirty engine-owned branches without labeling them as ma
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
+})
+
+test("runWorkflow blocks resume when design-prep freeze and brainstorm project ids drift", async () => {
+  await withTmpCwd(async () => {
+    const ctx = { workspaceId: "freeze-item-i-1", runId: "run-freeze" }
+    const brainstormDir = layout.stageArtifactsDir(ctx, "brainstorm")
+    const visualDir = layout.stageArtifactsDir(ctx, "visual-companion")
+    mkdirSync(brainstormDir, { recursive: true })
+    mkdirSync(visualDir, { recursive: true })
+    writeFileSync(join(brainstormDir, "concept.json"), JSON.stringify({
+      summary: "Freeze",
+      problem: "Freeze",
+      users: ["User"],
+      constraints: ["Constraint"],
+      hasUi: true,
+    }))
+    writeFileSync(join(brainstormDir, "projects.json"), JSON.stringify([
+      {
+        id: "P99",
+        name: "Changed",
+        description: "Changed project set",
+        hasUi: true,
+        concept: { summary: "Changed", problem: "Changed", users: ["User"], constraints: ["Constraint"] },
+      },
+    ]))
+    writeFileSync(join(visualDir, "project-freeze.json"), JSON.stringify({ projectIds: ["P01"] }))
+
+    const events: WorkflowEvent[] = []
+    const io: WorkflowIO = {
+      async ask() {
+        throw new Error("should not prompt")
+      },
+      emit(event) {
+        events.push(event)
+      },
+    }
+
+    await assert.rejects(
+      () =>
+        runWithWorkflowIO(io, () =>
+          runWithActiveRun({ runId: ctx.runId, itemId: "I-1", title: "Freeze Item" }, () =>
+            runWorkflow(
+              { id: "I-1", title: "Freeze Item", description: "freeze" },
+              { resume: { scope: { type: "run", runId: ctx.runId }, currentStage: "projects" } },
+            ),
+          ),
+        ),
+      /project set changed after design prep/i,
+    )
+
+    assert.ok(events.some(event => event.type === "run_blocked"))
+  })
 })
 
 test("runWorkflow skips interactive handoff in real git mode after merging project into item", async () => {

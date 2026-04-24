@@ -30,6 +30,8 @@ export type WorkflowEvent =
   | ({ type: "presentation"; runId?: string; stageRunId?: string | null; kind: PresentationKind; text: string; meta?: { source?: string; severity?: string } } & WorkflowEventMeta)
   | ({ type: "item_column_changed"; runId: string; itemId: string; column: string; phaseStatus: string } & WorkflowEventMeta)
   | ({ type: "project_created"; runId: string; itemId: string; projectId: string; code: string; name: string; summary: string; position: number } & WorkflowEventMeta)
+  | ({ type: "wireframes_ready"; runId: string; itemId: string; screenCount: number; urls: string[] } & WorkflowEventMeta)
+  | ({ type: "design_ready"; runId: string; itemId: string; url: string } & WorkflowEventMeta)
   | ({ type: "run_blocked"; runId: string; itemId: string; title: string; scope: RecoveryEventScope; cause: string; summary: string; branch?: string } & WorkflowEventMeta)
   | ({ type: "run_failed"; runId: string; scope: RecoveryEventScope; cause: string; summary: string } & WorkflowEventMeta)
   | ({ type: "external_remediation_recorded"; runId: string; remediationId: string; scope: RecoveryEventScope; summary: string; branch?: string } & WorkflowEventMeta)

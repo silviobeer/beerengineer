@@ -27,24 +27,25 @@ export async function brainstorm(item: Item, context: WorkflowContext, llm?: Run
     reviewer: createBrainstormReview(llm),
     askUser: ask,
     async persistArtifacts(run, artifact) {
+      const hasUi = artifact.projects.some(project => project.hasUi === true)
       return [
         {
           kind: "json",
           label: "Concept JSON",
           fileName: "concept.json",
-          content: JSON.stringify(artifact.concept, null, 2),
+          content: JSON.stringify({ ...artifact.concept, hasUi }, null, 2),
         },
         {
           kind: "json",
           label: "Projects JSON",
           fileName: "projects.json",
-          content: JSON.stringify(artifact.projects, null, 2),
+          content: JSON.stringify(artifact.projects.map(project => ({ ...project, hasUi: project.hasUi === true })), null, 2),
         },
         {
           kind: "md",
           label: "Concept Markdown",
           fileName: "concept.md",
-          content: renderConceptMarkdown(artifact.concept),
+          content: renderConceptMarkdown({ ...artifact.concept, hasUi }),
         },
         summaryArtifactFile(
           "brainstorm",
@@ -58,9 +59,9 @@ export async function brainstorm(item: Item, context: WorkflowContext, llm?: Run
     async onApproved(artifact, run) {
       stagePresent.ok("LLM review: concept is ready for the next step.")
       stagePresent.step("\nLLM-1 promoted concept to projects...")
-      artifact.projects.forEach(p => stagePresent.dim(`→ ${p.id}: ${p.name}`))
+      artifact.projects.forEach(p => stagePresent.dim(`→ ${p.id}: ${p.name}${p.hasUi ? " [ui]" : ""}`))
       printStageCompletion(run, "brainstorm")
-      return artifact.projects
+      return artifact.projects.map(project => ({ ...project, hasUi: project.hasUi === true }))
     },
     maxReviews: 4,
   })

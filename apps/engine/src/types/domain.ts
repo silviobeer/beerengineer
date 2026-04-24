@@ -12,11 +12,145 @@ export type Concept = {
   constraints: string[]
 }
 
+export type ReferenceInput = {
+  value: string
+  description?: string
+}
+
 export type Project = {
   id: string
   name: string
   description: string
   concept: Concept
+  hasUi?: boolean
+}
+
+export type SourceFile = {
+  type: "file" | "figma" | "url"
+  path?: string
+  url?: string
+  description: string
+}
+
+export type Amendment = {
+  type: "scope_addition" | "scope_change"
+  projectId?: string
+  description: string
+  relatedScreens?: string[]
+}
+
+export type LayoutDescription = {
+  kind: "single-column" | "two-column" | "sidebar-main" | "top-nav-main" | "grid"
+  regions: Array<{
+    id: string
+    label: string
+  }>
+}
+
+export type ScreenElement = {
+  id: string
+  region: string
+  kind:
+    | "heading"
+    | "text"
+    | "input"
+    | "button"
+    | "list"
+    | "card"
+    | "table"
+    | "placeholder"
+  label: string
+  placeholder?: string
+}
+
+export type Screen = {
+  id: string
+  name: string
+  purpose: string
+  projectIds: string[]
+  layout: LayoutDescription
+  elements: ScreenElement[]
+}
+
+export type NavigationFlow = {
+  id: string
+  from: string
+  to: string
+  trigger: string
+  projectIds: string[]
+}
+
+export type Navigation = {
+  entryPoints: Array<{ screenId: string; projectId: string }>
+  flows: NavigationFlow[]
+}
+
+export type WireframeArtifact = {
+  screens: Screen[]
+  navigation: Navigation
+  inputMode: "none" | "references"
+  sourceFiles?: SourceFile[]
+  conceptAmendments?: Amendment[]
+}
+
+export type FontSpec = {
+  family: string
+  weight: string
+  usage: string
+}
+
+export type ColorPalette = {
+  primary: string
+  secondary: string
+  accent: string
+  background: string
+  surface: string
+  textPrimary: string
+  textMuted: string
+  success: string
+  warning: string
+  error: string
+  info: string
+}
+
+export type DesignTokens = {
+  light: ColorPalette
+  dark?: ColorPalette
+}
+
+export type Typography = {
+  display: FontSpec
+  body: FontSpec
+  mono?: FontSpec
+  scale: Record<string, string>
+}
+
+export type Spacing = {
+  baseUnit: string
+  sectionPadding: string
+  cardPadding: string
+  contentMaxWidth: string
+}
+
+export type BorderTokens = {
+  buttons: string
+  cards: string
+  badges: string
+}
+
+export type ShadowScale = Record<string, string>
+
+export type DesignArtifact = {
+  tokens: DesignTokens
+  typography: Typography
+  spacing: Spacing
+  borders: BorderTokens
+  shadows: ShadowScale
+  tone: string
+  antiPatterns: string[]
+  inputMode: "none" | "references"
+  sourceFiles?: SourceFile[]
+  conceptAmendments?: Amendment[]
 }
 
 export type AcceptanceCriterion = {

@@ -1,6 +1,8 @@
 import { createServer } from "node:http"
-import { URL } from "node:url"
+import { URL, fileURLToPath } from "node:url"
 import { randomBytes } from "node:crypto"
+import { readFileSync } from "node:fs"
+import { dirname, resolve as resolvePath } from "node:path"
 import { initDatabase } from "../db/connection.js"
 import { Repos } from "../db/repositories.js"
 import { createItemActionsService, type ItemActionEvent } from "../core/itemActions.js"
@@ -13,9 +15,11 @@ import {
 } from "../setup/config.js"
 import type { AppConfig } from "../setup/types.js"
 import { json, requireCsrfToken, setCors } from "./http.js"
-import { handleGetItem, handleItemActionNamed, handleListItems } from "./routes/items.js"
+import { handleGetItem, handleGetItemDesign, handleGetItemWireframes, handleItemActionNamed, handleListItems } from "./routes/items.js"
 import {
   handleAnswer,
+  handleGetArtifactFile,
+  handleGetArtifacts,
   handleCreateRun,
   handleGetBoard,
   handleGetConversation,
@@ -49,6 +53,9 @@ const HOST = process.env.HOST ?? "127.0.0.1"
 const API_TOKEN = process.env.BEERENGINEER_API_TOKEN ?? randomBytes(24).toString("hex")
 const API_TOKEN_WAS_PROVIDED = Boolean(process.env.BEERENGINEER_API_TOKEN)
 const ALLOWED_ORIGIN = process.env.BEERENGINEER_UI_ORIGIN ?? "http://127.0.0.1:3100"
+
+const OPENAPI_PATH = resolvePath(dirname(fileURLToPath(import.meta.url)), "openapi.json")
+const OPENAPI_BODY = readFileSync(OPENAPI_PATH, "utf8")
 
 const db = initDatabase()
 const repos = new Repos(db)
@@ -149,8 +156,19 @@ const server = createServer(async (req, res) => {
     if (itemActionNamed && req.method === "POST") {
       return handleItemActionNamed(itemActions, repos, req, res, itemActionNamed[1], itemActionNamed[2])
     }
+    const itemWireframesMatch = path.match(/^\/items\/([^/]+)\/wireframes$/)
+    if (itemWireframesMatch && req.method === "GET") return handleGetItemWireframes(repos, res, itemWireframesMatch[1])
+    const itemDesignMatch = path.match(/^\/items\/([^/]+)\/design$/)
+    if (itemDesignMatch && req.method === "GET") return handleGetItemDesign(repos, res, itemDesignMatch[1])
     const itemMatch = path.match(/^\/items\/([^/]+)$/)
     if (itemMatch && req.method === "GET") return handleGetItem(repos, res, itemMatch[1])
+
+    const runArtifactsFileMatch = path.match(/^\/runs\/([^/]+)\/artifacts\/(.+)$/)
+    if (runArtifactsFileMatch && req.method === "GET") {
+      return handleGetArtifactFile(repos, res, runArtifactsFileMatch[1], runArtifactsFileMatch[2])
+    }
+    const runArtifactsMatch = path.match(/^\/runs\/([^/]+)\/artifacts$/)
+    if (runArtifactsMatch && req.method === "GET") return handleGetArtifacts(repos, res, runArtifactsMatch[1])
 
     // ---- Run-scoped subresources --------------------------------------------
     const runMatch = path.match(/^\/runs\/([^/]+)(?:\/(tree|events|messages|resume|recovery|conversation|answer))?$/)
@@ -165,6 +183,13 @@ const server = createServer(async (req, res) => {
       if (sub === "answer" && req.method === "POST") return handleAnswer(repos, req, res, runId)
       if (sub === "resume" && req.method === "POST") return handleResumeRun(repos, req, res, runId)
       if (sub === "recovery" && req.method === "GET") return handleGetRecovery(repos, res, runId)
+    }
+
+    // ---- OpenAPI spec --------------------------------------------------------
+    if (path === "/openapi.json" && req.method === "GET") {
+      res.writeHead(200, { "content-type": "application/json; charset=utf-8" })
+      res.end(OPENAPI_BODY)
+      return
     }
 
     // ---- Health --------------------------------------------------------------

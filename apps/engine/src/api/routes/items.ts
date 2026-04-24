@@ -1,8 +1,21 @@
 import type { IncomingMessage, ServerResponse } from "node:http"
+import { existsSync, readFileSync } from "node:fs"
+import { join } from "node:path"
 import type { Repos } from "../../db/repositories.js"
 import { isItemAction, lookupTransition, type ItemActionsService } from "../../core/itemActions.js"
 import { startRunForItem } from "../../core/runService.js"
+import { layout } from "../../core/workspaceLayout.js"
 import { json, readJson } from "../http.js"
+import type { DesignArtifact, Item, WireframeArtifact } from "../../types.js"
+
+function workflowWorkspaceId(item: Pick<Item, "id" | "title">): string {
+  const slug = item.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
+  return slug ? `${slug}-${item.id.toLowerCase()}` : item.id.toLowerCase()
+}
+
+function latestCompletedRunForItem(repos: Repos, itemId: string) {
+  return repos.listRuns().filter(run => run.item_id === itemId && run.status === "completed").sort((a, b) => b.created_at - a.created_at)[0]
+}
 
 export function handleListItems(repos: Repos, url: URL, res: ServerResponse): void {
   const workspaceKey = url.searchParams.get("workspace")?.trim() ?? ""
@@ -29,11 +42,54 @@ export function handleGetItem(repos: Repos, res: ServerResponse, itemId: string)
   json(res, 200, item)
 }
 
+export function handleGetItemWireframes(repos: Repos, res: ServerResponse, itemId: string): void {
+  const item = repos.getItem(itemId)
+  if (!item) return json(res, 404, { error: "item_not_found", code: "not_found" })
+  const run = latestCompletedRunForItem(repos, item.id)
+  if (!run) return json(res, 404, { error: "no_completed_run", code: "not_found" })
+  const base = layout.stageArtifactsDir({ workspaceId: workflowWorkspaceId(item), runId: run.id }, "visual-companion")
+  const dataPath = join(base, "wireframes.json")
+  if (!existsSync(dataPath)) return json(res, 404, { error: "no_design_prep", code: "not_found" })
+  const artifact = JSON.parse(readFileSync(dataPath, "utf8")) as WireframeArtifact
+  json(res, 200, {
+    itemId: item.id,
+    runId: run.id,
+    artifact,
+    screenMapPath: join(base, "screen-map.html"),
+    screenMapUrl: `/runs/${run.id}/artifacts/stages/visual-companion/artifacts/screen-map.html`,
+    screens: artifact.screens.map(screen => ({
+      id: screen.id,
+      name: screen.name,
+      path: join(base, `${screen.id}.html`),
+      url: `/runs/${run.id}/artifacts/stages/visual-companion/artifacts/${screen.id}.html`,
+    })),
+  })
+}
+
+export function handleGetItemDesign(repos: Repos, res: ServerResponse, itemId: string): void {
+  const item = repos.getItem(itemId)
+  if (!item) return json(res, 404, { error: "item_not_found", code: "not_found" })
+  const run = latestCompletedRunForItem(repos, item.id)
+  if (!run) return json(res, 404, { error: "no_completed_run", code: "not_found" })
+  const base = layout.stageArtifactsDir({ workspaceId: workflowWorkspaceId(item), runId: run.id }, "frontend-design")
+  const dataPath = join(base, "design.json")
+  if (!existsSync(dataPath)) return json(res, 404, { error: "no_design_prep", code: "not_found" })
+  const artifact = JSON.parse(readFileSync(dataPath, "utf8")) as DesignArtifact
+  json(res, 200, {
+    itemId: item.id,
+    runId: run.id,
+    artifact,
+    previewPath: join(base, "design-preview.html"),
+    previewUrl: `/runs/${run.id}/artifacts/stages/frontend-design/artifacts/design-preview.html`,
+  })
+}
+
 /**
  * `POST /items/:id/actions/:action` — explicit action routes.
  *
  *   start_brainstorm     → starts a new run in-process.
  *   start_implementation → starts a new run after seeding brainstorm artifacts.
+ *   rerun_design_prep    → starts a new run after seeding brainstorm artifacts and resumes at visual-companion.
  *   promote_to_requirements | mark_done → pure column/phase transitions.
  *   resume_run is addressed by `POST /runs/:id/resume` — items don't resume,
  *     runs do. Keeping the resume surface on the run scope avoids duplicating
@@ -52,14 +108,14 @@ export async function handleItemActionNamed(
     return json(res, 400, {
       error: "bad_request",
       code: "bad_request",
-      valid: ["start_brainstorm", "promote_to_requirements", "start_implementation", "mark_done"],
+      valid: ["start_brainstorm", "promote_to_requirements", "start_implementation", "rerun_design_prep", "mark_done"],
     })
   }
   // Consume the body even though these actions currently have no request
   // fields; that keeps the route future-proof for action-specific payloads.
   await readJson(req).catch(() => ({}))
 
-  if (action === "start_brainstorm" || action === "start_implementation") {
+  if (action === "start_brainstorm" || action === "start_implementation" || action === "rerun_design_prep") {
     const item = repos.getItem(itemId)
     if (!item) return json(res, 404, { error: "item_not_found", code: "not_found" })
     const transition = lookupTransition(action, item.current_column, item.phase_status)

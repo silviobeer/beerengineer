@@ -1,4 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http"
+import { existsSync, readFileSync } from "node:fs"
+import { extname, join, normalize } from "node:path"
 import type { Db } from "../../db/connection.js"
 import type { Repos } from "../../db/repositories.js"
 import { getBoard, getRunTree } from "../board.js"
@@ -9,6 +11,20 @@ import { messagingLevelFromQuery, shouldDeliverAtLevel } from "../../core/messag
 import { projectStageLogRow } from "../../core/messagingProjection.js"
 import { resumeRunInProcess, startRunFromIdea } from "../../core/runService.js"
 import { json, readJson } from "../http.js"
+import { layout } from "../../core/workspaceLayout.js"
+
+function contentTypeFor(path: string): string {
+  switch (extname(path).toLowerCase()) {
+    case ".html":
+      return "text/html; charset=utf-8"
+    case ".json":
+      return "application/json; charset=utf-8"
+    case ".md":
+      return "text/markdown; charset=utf-8"
+    default:
+      return "text/plain; charset=utf-8"
+  }
+}
 
 export function handleGetBoard(db: Db, url: URL, res: ServerResponse): void {
   const workspaceKey = url.searchParams.get("workspace")
@@ -27,6 +43,22 @@ export function handleGetRunTree(repos: Repos, res: ServerResponse, runId: strin
   const tree = getRunTree(repos, runId)
   if (!tree) return json(res, 404, { error: "run not found", code: "not_found" })
   json(res, 200, tree)
+}
+
+export function handleGetArtifacts(repos: Repos, res: ServerResponse, runId: string): void {
+  const run = repos.getRun(runId)
+  if (!run) return json(res, 404, { error: "run not found", code: "not_found" })
+  json(res, 200, { runId, artifacts: repos.listArtifactsForRun(runId) })
+}
+
+export function handleGetArtifactFile(repos: Repos, res: ServerResponse, runId: string, requestedPath: string): void {
+  const run = repos.getRun(runId)
+  if (!run || !run.workspace_fs_id) return json(res, 404, { error: "run not found", code: "not_found" })
+  const safePath = normalize(requestedPath).replace(/^(\.\.(\/|\\|$))+/, "")
+  const fullPath = join(layout.runDir({ workspaceId: run.workspace_fs_id, runId }), safePath)
+  if (!existsSync(fullPath)) return json(res, 404, { error: "artifact not found", code: "not_found" })
+  res.writeHead(200, { "content-type": contentTypeFor(fullPath) })
+  res.end(readFileSync(fullPath))
 }
 
 export function handleListRuns(repos: Repos, res: ServerResponse): void {

@@ -19,6 +19,8 @@ export async function requirements(ctx: ProjectContext, llm?: RunLlmConfig): Pro
     runId: ctx.runId,
     createInitialState: (): RequirementsState => ({
       concept: ctx.project.concept,
+      wireframes: ctx.wireframes,
+      design: ctx.design,
       clarificationCount: 0,
       maxClarifications: 2,
       history: [],

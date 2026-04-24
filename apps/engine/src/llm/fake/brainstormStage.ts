@@ -26,12 +26,14 @@ function buildArtifact(state: BrainstormState): BrainstormArtifact {
       problem: userMessages[0] ?? "Problem still vaguely described.",
       users: [userMessages[1] ?? "Primary target audience unclear"],
       constraints: [userMessages[2] ?? "No explicit constraints provided"],
+      hasUi: true,
     },
     projects: [
       {
         id: "P01",
         name: `${state.item.title} — Core`,
         description: "Core functionality",
+        hasUi: true,
         concept: {
           summary: `${state.item.title}: ${summary}`,
           problem: userMessages[0] ?? "Problem still vaguely described.",

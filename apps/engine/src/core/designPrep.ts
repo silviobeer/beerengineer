@@ -1,0 +1,69 @@
+import type {
+  Amendment,
+  Concept,
+  DesignArtifact,
+  Navigation,
+  NavigationFlow,
+  WireframeArtifact,
+} from "../types/domain.js"
+
+function mergeConceptText(base: string, amendments: Amendment[]): string {
+  if (amendments.length === 0) return base
+  const lines = amendments.map(amendment => `- ${amendment.description}`)
+  return [base, "", "Design prep amendments:", ...lines].join("\n")
+}
+
+function filterFlows(flows: NavigationFlow[], projectId: string, screenIds: Set<string>): NavigationFlow[] {
+  return flows.filter(
+    flow =>
+      flow.projectIds.includes(projectId) &&
+      screenIds.has(flow.from) &&
+      screenIds.has(flow.to),
+  )
+}
+
+function filterNavForProject(navigation: Navigation, projectId: string, screenIds: Set<string>): Navigation {
+  return {
+    entryPoints: navigation.entryPoints.filter(
+      entry => entry.projectId === projectId && screenIds.has(entry.screenId),
+    ),
+    flows: filterFlows(navigation.flows, projectId, screenIds),
+  }
+}
+
+export function projectWireframes(
+  artifact: WireframeArtifact,
+  projectId: string,
+): WireframeArtifact {
+  const screens = artifact.screens.filter(screen => screen.projectIds.includes(projectId))
+  const screenIds = new Set(screens.map(screen => screen.id))
+  return {
+    ...artifact,
+    screens,
+    navigation: filterNavForProject(artifact.navigation, projectId, screenIds),
+    conceptAmendments: artifact.conceptAmendments?.filter(
+      amendment => amendment.projectId === undefined || amendment.projectId === projectId,
+    ),
+  }
+}
+
+export function projectDesign(artifact: DesignArtifact): DesignArtifact {
+  return artifact
+}
+
+export function mergeAmendments(
+  concept: Concept,
+  amendments: Amendment[] | undefined,
+  projectId?: string,
+): Concept {
+  const relevant = (amendments ?? []).filter(
+    amendment => amendment.projectId === undefined || amendment.projectId === projectId,
+  )
+  if (relevant.length === 0) return concept
+  return {
+    ...concept,
+    summary: mergeConceptText(concept.summary, relevant),
+    constraints: [...concept.constraints, ...relevant.map(amendment => amendment.description)],
+  }
+}
+

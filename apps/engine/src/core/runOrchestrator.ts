@@ -274,6 +274,24 @@ export function attachDbSync(
         }))
         return
       }
+      case "wireframes_ready": {
+        track(repos.appendLog({
+          runId: event.runId,
+          eventType: "wireframes_ready",
+          message: `${event.screenCount} screens ready`,
+          data: { itemId: event.itemId, screenCount: event.screenCount, urls: event.urls },
+        }))
+        return
+      }
+      case "design_ready": {
+        track(repos.appendLog({
+          runId: event.runId,
+          eventType: "design_ready",
+          message: "design preview ready",
+          data: { itemId: event.itemId, url: event.url },
+        }))
+        return
+      }
       case "run_blocked":
       case "run_failed": {
         repos.updateRun(event.runId, { status: event.type === "run_blocked" ? "blocked" : "failed" })

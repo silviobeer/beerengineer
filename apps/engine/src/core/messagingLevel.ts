@@ -23,6 +23,8 @@ export type CanonicalMessageType =
   | "artifact_written"
   | "log"
   | "project_created"
+  | "wireframes_ready"
+  | "design_ready"
   | "external_remediation_recorded"
   | "item_column_changed"
   | "presentation"
@@ -88,6 +90,10 @@ export function levelOf(event: WorkflowEvent): LevelInfo {
       return { level: 1, force: false, type: "item_column_changed" }
     case "project_created":
       return { level: 2, force: false, type: "project_created" }
+    case "wireframes_ready":
+      return { level: 2, force: false, type: "wireframes_ready" }
+    case "design_ready":
+      return { level: 2, force: false, type: "design_ready" }
     case "artifact_written":
       return { level: 0, force: false, type: "artifact_written" }
     case "log":

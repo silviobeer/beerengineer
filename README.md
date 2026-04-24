@@ -1,12 +1,22 @@
 # BeerEngineer2 — Prototyp-Dokumentation
 
-CLI-Prototyp der BeerEngineer-Engine — jetzt mit Live-Board-UI.
+> **UI-Teardown (2026-04-24).** Das frühere `apps/ui` ist entfernt und wird
+> auf Basis eines stabilen, dokumentierten API-Vertrags (`spec/api-contract.md`
+> + `apps/engine/src/api/openapi.json`, served at `GET /openapi.json`) neu
+> gebaut. Bis der Rebuild landet, ist BeerEngineer2 ein reiner
+> **CLI + HTTP-API-Monorepo**. Abschnitte unten, die die Next.js-UI
+> beschreiben, stehen als **historische Design-Notizen** — sie beziehen
+> sich auf Code, der nicht mehr im Tree ist. Der Teardown-Plan liegt in
+> `specs/ui-rebuild-plan.md`.
+
+CLI-Prototyp der BeerEngineer-Engine.
 Simuliert den vollständigen Workflow von der Idee bis zum Delivery-Report —
 ohne echte LLMs, mit demselben Kontrollfluss.
 
 Wichtig: Die Architektur ist jetzt auf eine **formale Stage-Runtime** ausgerichtet.
 Jeder Schritt soll langfristig als `StageRun` mit Status, Logs und Artefakt-Dateien laufen.
-Aktuell ist das fuer `brainstorm`, `requirements`, `architecture`, `planning` und `project-review` umgesetzt und dient als Referenz fuer die weiteren Stages.
+Aktuell ist das fuer `brainstorm`, `visual-companion`, `frontend-design`, `requirements`,
+`architecture`, `planning` und `project-review` umgesetzt und dient als Referenz fuer die weiteren Stages.
 
 ```bash
 npm install                                          # workspace install
@@ -25,7 +35,6 @@ npm exec --workspace=@beerengineer2/engine beerengineer -- runs --all --compact
 npm exec --workspace=@beerengineer2/engine beerengineer -- start ui
 npm exec --workspace=@beerengineer2/engine beerengineer -- item action --item ITEM-0001 --action promote_to_requirements
 npm run start:api                                    # HTTP+SSE API auf :4100
-npm run dev:ui                                       # Next.js UI lokal
 npm test --workspace=@beerengineer2/engine           # Engine-Unit-Tests
 ```
 
@@ -121,7 +130,12 @@ beerengineer start ui
 beerengineer item action --item <id|code> --action <name>
   Fuehrt eine Item-Aktion gegen ein bestehendes Item aus.
   Gueltige Actions: `start_brainstorm`, `promote_to_requirements`,
-  `start_implementation`, `resume_run`, `mark_done`.
+  `start_implementation`, `rerun_design_prep`, `resume_run`, `mark_done`.
+  `start_implementation` seeded einen neuen Run aus den letzten
+  `brainstorm`-/Design-Prep-Artefakten und springt direkt in die
+  Projekt-Phase (`requirements` ff.). `rerun_design_prep` seeded ebenfalls
+  aus `brainstorm`, startet aber erneut bei `visual-companion`, damit
+  Wireframes/Design ohne kompletten Re-Brainstorm aktualisiert werden koennen.
   Hinweis: `mark_done` ist derzeit noch der Legacy-Abschluss fuer
   `implementation/review_required`; die neue explizite Test/Merge-
   Lifecycle-API aus dem Handoff-Plan ist noch nicht verdrahtet.
@@ -737,6 +751,8 @@ siehe [`spec/api-contract.md`](spec/api-contract.md).
 | `GET`  | `/runs/:id/tree` | Run + Stage-Runs + Artefakte |
 | `GET`  | `/runs/:id/events[?level=L0\|L1\|L2&since=<id>]` | SSE: History-Replay + Live-Events (tail auf `stage_logs`), projiziert als kanonische `MessageEntry`. `level` filtert nach Detailgrad (Default L2 = Milestones); `since` setzt einen stabilen Resume-Cursor. Errors (`run_failed`, `phase_failed`, `run_blocked`) sind force-through. |
 | `GET`  | `/runs/:id/messages[?level=&since=&limit=]` | Finite History-Projektion (`schema: "messages-v1"`). Default `level=2`, `limit=200` (≤ 500). Scan ist pro Request auf `MESSAGES_ENDPOINT_MAX_SCAN` Zeilen gedeckelt — bei Erreichen liefert `nextSince` einen Cursor zum Weiterpaginieren. |
+| `GET`  | `/runs/:id/artifacts` | Artefakt-Liste fuer einen Run (`{ runId, artifacts[] }`) als UI-Index ueber persistierte Dateien. |
+| `GET`  | `/runs/:id/artifacts/*path` | Raw-Artifact-Datei aus dem Run-Verzeichnis, z.B. HTML-Previews fuer Wireframes und Design. |
 | `POST` | `/runs/:id/messages` | Freitext-User-Nachricht in den Run (kein Prompt-Answer). Body `{ text }`; `source` wird am HTTP-Rand auf `"api"` fixiert. Antwort: `201 { ok: true, entry, conversation }`. |
 | `GET`  | `/runs/:id/conversation` | Kanonische Transkript-Projektion: `{ runId, updatedAt, entries[], openPrompt }`. `entries[]` enthaelt `system | message | question | answer`-Eintraege mit aufgeloestem `text` (kein `you >`-Platzhalter). |
 | `POST` | `/runs/:id/answer` | Beantwortet offenen Prompt. Body `{ promptId, answer }`. Schreibt `pending_prompts.answer` + `prompt_answered`-Row in `stage_logs`; die `attachCrossProcessBridge` des Run-Prozesses pickt sie auf. Antwort: `200 ConversationResponse` (post-write). `400 bad_request`, `404 not_found`, `409 prompt_not_open`. |
@@ -744,7 +760,9 @@ siehe [`spec/api-contract.md`](spec/api-contract.md).
 | `GET`  | `/runs/:id/recovery` | Recovery-Snapshot fuer Run-Detailseite: Status, Scope, Summary, Remediations, `resumable` |
 | `GET`  | `/items[?workspace=<key>&status=<phase>&column=<column>&limit=<n>]` | Item-Liste fuer Engine-Clients. |
 | `GET`  | `/items/:id` | Einzelnes Item. |
-| `POST` | `/items/:id/actions/:action` | Explizite Action-Routen: `start_brainstorm` / `start_implementation` starten Runs in-process (`200 { kind: "started", runId, itemId, column, phaseStatus, action }`), `promote_to_requirements` / `mark_done` sind reine State-Transitions. `mark_done` ist aktuell noch der Legacy-Abschluss fuer den Review-Ready-Status. `409 invalid_transition`, `404 item_not_found`. |
+| `GET`  | `/items/:id/wireframes` | Item-weite Visual-Companion-Sicht: `artifact`-JSON plus `screenMapUrl` und per-Screen HTML-URLs. |
+| `GET`  | `/items/:id/design` | Item-weite Frontend-Design-Sicht: `artifact`-JSON plus `previewUrl` fuer die Design-HTML-Vorschau. |
+| `POST` | `/items/:id/actions/:action` | Explizite Action-Routen: `start_brainstorm`, `start_implementation` und `rerun_design_prep` starten Runs in-process (`200 { kind: "started", runId, itemId, column, phaseStatus, action }`), `promote_to_requirements` / `mark_done` sind reine State-Transitions. `mark_done` ist aktuell noch der Legacy-Abschluss fuer den Review-Ready-Status. `409 invalid_transition`, `404 item_not_found`. |
 | `GET`  | `/events[?workspace=key]` | Workspace-gefilterter Board-SSE-Stream fuer `run_started`, `stage_*`, `item_column_changed`, `run_finished`, `project_created` |
 | `GET`  | `/board[?workspace=key]` | Board-DTO (Spalten + Karten) |
 | `GET`  | `/setup/status[?group=<id>]` | Selber JSON-Kontrakt wie `doctor --json` (`SetupReport`, `reportVersion: 1`). Unbekannte `group` → `400 { error: "unknown_group" }` |
@@ -853,7 +871,7 @@ Stage Definition
         - files
 ```
 
-`brainstorm`, `requirements`, `architecture`, `planning` und `project-review` nutzen dieses Modell bereits. `execution`, `qa` und `documentation` folgen noch dem aelteren Simulationsmuster und sollen schrittweise auf dieselbe Runtime migriert werden.
+`brainstorm`, `visual-companion`, `frontend-design`, `requirements`, `architecture`, `planning` und `project-review` nutzen dieses Modell bereits. `execution`, `qa` und `documentation` folgen noch dem aelteren Simulationsmuster und sollen schrittweise auf dieselbe Runtime migriert werden.
 
 ---
 
@@ -1390,7 +1408,8 @@ apps/engine/src/
       loader.ts             Laedt apps/engine/prompts/<kind>/<stage>.md
 
   stages/
-    brainstorm/   requirements/   architecture/   planning/
+    brainstorm/   visual-companion/   frontend-design/
+    requirements/   architecture/   planning/
     execution/ (index.ts + ralphRuntime.ts)
     project-review/   qa/   documentation/
 
@@ -1689,12 +1708,14 @@ Sonst `pass` → `approved`.
 export async function runWorkflow(item: Item): Promise<void> {
   const context = { workspaceId: `<slug>-<item-id>`, runId: "<iso-ts>" }
   const projects = await brainstorm(item, context)
+  const wireframes = await visualCompanion(context, { itemConcept, projects })
+  const design = await frontendDesign(context, { itemConcept, projects, wireframes })
   for (const project of projects) {
-    await runProject(project, context)
+    await runProject(project, context, { wireframes, design })
   }
 }
 
-async function runProject(project: Project, context: WorkflowContext): Promise<void> {
+async function runProject(project: Project, context: WorkflowContext, designPrep: ProjectContext): Promise<void> {
   const prd      = await requirements(project, context)
   const architectureArtifact = await architecture(project, prd, context)
   const implementationPlan   = await planning(project, prd, architectureArtifact, context)
@@ -1744,7 +1765,7 @@ Brainstorm, Requirements, Architecture und Planning sind bereits auf die neue Ru
 - Test-Writer-Reviewer: deterministisch revise auf Review 1, pass auf Review 2
 - Chat-Fragen laufen sichtbar durch den Adapter zum Benutzer
 - jeder Lauf erzeugt einen Workspace-Ordner mit Run-Unterordner unter `.beerengineer/workspaces/`
-- dort entstehen bereits Dummy-Artefakte und strukturierte Logs fuer `brainstorm`, `requirements`, `architecture`, `planning` und story-level Testplaene in `execution`
+- dort entstehen bereits Dummy-Artefakte und strukturierte Logs fuer `brainstorm`, `visual-companion`, `frontend-design`, `requirements`, `architecture`, `planning` und story-level Testplaene in `execution`
 
 Die uebrigen Stubs sind weiter so eingestellt, dass der **Execution-Loop sichtbar wird**:
 
