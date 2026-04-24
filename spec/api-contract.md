@@ -33,8 +33,10 @@ consumed by tooling.
 - `GET /workspaces`
 - `POST /workspaces`
 - `GET /workspaces/:key`
-- `DELETE /workspaces/:key`
-- `GET /workspaces/:key/preview`
+- `DELETE /workspaces/:key?purge=1`
+- `POST /workspaces/:key/open` — resolve the workspace's on-disk root path.
+- `POST /workspaces/backfill` — re-derive per-workspace config files from the registry.
+- `GET /workspaces/preview?path=<abs fs path>` — filesystem preflight for a candidate registration target. **Not** keyed by an existing workspace — the query parameter is an absolute filesystem path. Returns a `WorkspacePreview` (see OpenAPI) describing existence, writability, git status, greenfield heuristics, conflicts with existing registrations, etc.
 
 Workspace status (counts, latest run) is returned as part of `GET /workspaces/:key`. No separate `/status` endpoint.
 
@@ -43,7 +45,7 @@ Workspace status (counts, latest run) is returned as part of `GET /workspaces/:k
 - `GET /items?workspace=:key&status=&column=&limit=&cursor=`
 - `GET /items/:id`
 - `POST /items/:id/actions/:action`
-  - `:action` ∈ `start_brainstorm | start_implementation | promote_to_requirements | mark_done`
+  - `:action` ∈ `start_brainstorm | start_implementation | rerun_design_prep | promote_to_requirements | mark_done`
   - Request: `{}` (action-specific fields may be added per action; document them in the handler, not generically).
 
 No generic `POST /items/:id/actions` with an action string in the body. Explicit routes only.
@@ -80,7 +82,8 @@ No generic `POST /items/:id/actions` with an action string in the body. Explicit
   - Response: same shape as `GET /runs/:id/conversation` (post-write snapshot).
 
 No `/open-prompt` endpoint — derive from `/conversation`.
-No `POST /runs/:id/input` in the target contract (kept as deprecated alias during Phase 2, removed in Phase 4).
+No `POST /runs/:id/input`, no `GET /runs/:id/prompts` — both were removed
+before the UI teardown; clients use `/answer` and `/conversation` instead.
 
 ### Messages (canonical projected event log)
 
@@ -130,12 +133,26 @@ of level.
 - `GET /notifications/deliveries`
 - `POST /notifications/test/:channel`
 
-No channel-binding CRUD. No inbound webhook routes in this contract — added when and if real bidirectional chat ships (see `architecture.md` §7).
+No channel-binding CRUD.
 
-### Events
+### Webhooks (inbound, channel-authenticated)
 
-- `GET /events?workspace=:key` (SSE)
-- `GET /runs/:id/events` (SSE)
+- `POST /webhooks/telegram` — authenticates with `x-telegram-bot-api-secret-token`, bypasses the CSRF gate. Only reachable when `telegram.inbound.enabled` is set.
+
+### Artifacts
+
+- `GET /runs/:id/artifacts`
+- `GET /runs/:id/artifacts/:path` — single file under the run's workspace directory; `..` segments stripped.
+- `GET /items/:id/wireframes` — `visual-companion` artifact bundle for an item's most recent completed run.
+- `GET /items/:id/design` — `frontend-design` artifact bundle for an item's most recent completed run.
+
+### Board
+
+- `GET /board?workspace=:key` — columns + cards aggregate for a workspace.
+
+### Spec
+
+- `GET /openapi.json` — this contract as a machine-readable OpenAPI 3.1.0 document (served from `apps/engine/src/api/openapi.json`).
 
 ---
 
@@ -213,55 +230,27 @@ No `client.surface` / `client.channel`. If audit is needed, log the HTTP source 
 
 ---
 
-## Client → route mapping
-
-### UI (Next.js)
-
-UI API routes forward 1:1 to Engine API. No orchestration logic.
-
-| UI route (Next.js) | Engine call |
-|---|---|
-| `GET /api/workspaces` | `GET /workspaces` |
-| `GET /api/runs` | `GET /runs?workspace=…` |
-| `GET /api/runs/:id` | `GET /runs/:id` |
-| `GET /api/runs/:id/conversation` | `GET /runs/:id/conversation` |
-| `GET /api/runs/:id/messages` | `GET /runs/:id/messages` |
-| `POST /api/runs/:id/messages` | `POST /runs/:id/messages` |
-| `POST /api/runs/:id/answer` | `POST /runs/:id/answer` |
-| `POST /api/runs` | `POST /runs` |
-| `POST /api/runs/:id/resume` | `POST /runs/:id/resume` |
-| `POST /api/items/:id/actions/:action` | `POST /items/:id/actions/:action` |
-| `GET /api/runs/:id/events` (SSE) | `GET /runs/:id/events` (proxied) |
-| `GET /api/events` (SSE) | `GET /events` (proxied) |
+## Clients
 
 ### CLI
 
-CLI calls engine services **in-process** for local mode; the contract above is what remote-mode CLI would consume. Either way the data shapes are identical.
+The CLI calls engine services **in-process** for local mode; the contract above is what a remote-mode CLI would consume. Either way the data shapes are identical.
 
-Local-only commands (outside this contract): `workspace use`, `item open`, `run open`, compact rendering.
+Local-only commands (outside this contract): `workspace use`, compact rendering.
 
-### Future chattool webhook (out of scope for this refactor)
+### UI
 
-One route, one shape: receive provider payload, map to a known `(runId, promptId)`, call the same service that backs `POST /runs/:id/answer`.
+No UI ships today (`apps/ui` was removed 2026-04-24 ahead of a rebuild — see
+`specs/ui-rebuild-plan.md`). Any future UI is one HTTP client among many and
+gets no privileged access; the machine-readable contract lives at
+`GET /openapi.json`.
 
----
+### Chattool webhooks
 
-## Migration from current routes
-
-Already matches the target:
-- `GET /runs/:id`, `/runs/:id/tree`, `/runs/:id/recovery`, `/runs/:id/events`, `/events`
-- Workspace CRUD routes (in `apps/engine/src/api/routes/workspaces.ts`)
-- `POST /runs/:id/resume`, `POST /items/:id/actions/:action` (scaffolded in `apps/engine/src/api/routes/items.ts`)
-- Notifications test + deliveries
-
-Needs adding:
-- `GET /runs/:id/conversation`
-- `POST /runs/:id/answer`
-- `POST /runs` (create-run as engine intent, replacing UI's CLI spawn)
-
-Needs replacing/removing:
-- `POST /runs/:id/input` → deprecated alias for `/answer`, removed in Phase 4.
-- `GET /runs/:id/prompts` → removed once `/conversation` covers the same need.
+Inbound provider webhooks (currently only Telegram) hit
+`POST /webhooks/:channel`, authenticate with a channel-specific secret
+header, and map provider payloads to `(runId, promptId)` before calling the
+same service that backs `POST /runs/:id/answer`.
 
 ---
 
@@ -348,43 +337,20 @@ unused by the current UI. The contract keeps them because CLI / future-UI /
 webhook clients will need them; they just aren't part of the
 "don't silently lose this" UI baseline.
 
-### Endpoints the UI uses that this document does not currently list
+### Discrepancies resolved alongside the teardown
 
-All live under `## Routes` somewhere, but the `## Client → route mapping ›
-UI (Next.js)` table is missing them; worth backfilling when we next rewrite
-that table:
+The audit originally flagged four contract bugs. All fixed in the same
+teardown commit:
 
-- `GET /runs/:id/recovery` — consumed by `components/runs/RecoveryPanel.tsx`.
-- `POST /runs/:id/messages`, `GET /runs/:id/messages` — documented in `## Routes` but absent from the UI mapping table.
-- `POST /runs/:id/answer` — ditto.
-- `POST /runs/:id/resume` — ditto.
-- `POST /items/:id/actions/:action` — listed in the table but the parallel `## Routes` entry should note the `rerun_design_prep` action handled by `apps/ui/lib/api.ts:ItemAction`.
-- `GET /workspaces/preview` — the UI uses `?path=<fs path>` as a filesystem-preflight endpoint. This doc currently lists `GET /workspaces/:key/preview` (per-key), which is a **different shape** and does not match either the engine or the UI. See "Discrepancies" below.
-- `POST /notifications/test/:channel` — exists in `## Routes` but not the UI mapping table.
-- `GET /notifications/deliveries` — same.
-- `GET /setup/status` — same (listed as "existing" only; no caller context).
-
-### Discrepancies (contract vs. engine vs. UI)
-
-1. **`/workspaces/preview` shape.** Contract says `GET /workspaces/:key/preview`.
-   Engine implements `GET /workspaces/preview?path=…` (no `:key`), and that's
-   what the UI calls. The contract entry is wrong — it should document the
-   filesystem-preflight shape: `GET /workspaces/preview?path=<abs path>`
-   returning a `WorkspacePreview` summary (see `apps/ui/lib/api.ts:294-311`
-   for the field list the UI depends on).
-2. **Duplicate `/events` section.** The file has one block under `### Events
-   (SSE)` (lines ~112-120) describing `level`/`since` semantics, and a second
-   bare block `### Events` (lines ~130-132) that restates the route without
-   the semantics. Collapse into one.
-3. **Stale "Needs adding" list.** `## Migration from current routes` says
-   `GET /runs/:id/conversation`, `POST /runs/:id/answer`, `POST /runs` need
-   to be added. They are all implemented in `apps/engine/src/api/routes/runs.ts`
-   and consumed by the UI today. That migration block should be rewritten or
-   removed.
-4. **`POST /runs/:id/input` / `GET /runs/:id/prompts`.** Contract says these
-   exist as deprecated aliases pending removal. Neither appears in
-   `apps/engine/src/api/server.ts` route table nor in `apps/ui`; they already
-   look fully removed. The "deprecated" notes can drop.
+1. ~~`/workspaces/preview` shape.~~ Contract now documents the
+   `GET /workspaces/preview?path=<abs path>` filesystem-preflight shape
+   matching the engine. The OpenAPI spec is authoritative for field shape
+   (`WorkspacePreview`).
+2. ~~Duplicate `/events` section.~~ Collapsed.
+3. ~~Stale "Needs adding" migration list.~~ Removed — every listed
+   endpoint is already implemented.
+4. ~~Dead deprecation notes for `POST /runs/:id/input` /
+   `GET /runs/:id/prompts`.~~ Removed.
 
 ### Gaps for the next UI (read endpoints currently served via SQLite side-channel)
 

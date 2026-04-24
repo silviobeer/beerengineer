@@ -701,20 +701,22 @@ persistiert wurde. Das schuetzt vor Doppel-Emits aus retried Workflow-Pfaden.
 
 ### Stage → Board-Spalten-Mapping
 
-Die UI hat fuenf feste Board-Spalten (`idea | brainstorm | requirements |
-implementation | done`). Die Engine hat neun Stages. Die Projektion lebt
-**im Backend** (`core/boardColumns.ts → mapStageToColumn`), nicht in der UI:
+Board-Clients haben fuenf feste Spalten (`idea | brainstorm | requirements |
+implementation | done`); die Engine hat derzeit elf Stages (inkl. der
+Design-Prep-Stages `visual-companion`/`frontend-design` und des
+abschliessenden `handoff`). Die Projektion lebt **im Backend**
+(`core/boardColumns.ts → mapStageToColumn`), nicht im Client:
 
 | Engine-Stage | Board-Spalte |
 |---|---|
 | _kein Stage / draft_ | `idea` |
-| `brainstorm` | `brainstorm` |
+| `brainstorm`, `visual-companion`, `frontend-design` | `brainstorm` |
 | `requirements` | `requirements` |
 | `architecture`, `planning`, `execution`, `project-review`, `qa` | `implementation` |
 | `documentation`, `handoff` (bei `completed`) | `done` |
 
-So muss die UI nichts ueber Engine-Status wissen — sie zeichnet nur, was im
-`current_column`-Feld der `items`-Tabelle steht.
+So muss der Client nichts ueber Engine-Status wissen — er liest nur
+`items.current_column`.
 
 ### Recovery Und Resume
 

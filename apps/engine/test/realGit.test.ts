@@ -150,14 +150,16 @@ test("realGit creates a dedicated worktree for a story branch", () => {
   const root = seedRepo()
   const worktreeRoot = mkdtempSync(join(tmpdir(), "be2-story-worktree-"))
   rmSync(worktreeRoot, { recursive: true, force: true })
+  const ctx: WorkflowContext = {
+    workspaceId: "test-workspace-migrate",
+    runId: "run-2",
+    itemSlug: "demo-item",
+    baseBranch: "main",
+    workspaceRoot: root,
+  }
+  const staleRoot = layout.itemWorktreeRootDir(ctx)
+  rmSync(staleRoot, { recursive: true, force: true })
   try {
-    const ctx: WorkflowContext = {
-      workspaceId: "test-workspace-migrate",
-      runId: "run-2",
-      itemSlug: "demo-item",
-      baseBranch: "main",
-      workspaceRoot: root,
-    }
 
     const mode = detectRealGitMode(ctx)
     assert.equal(mode.enabled, true)
@@ -184,20 +186,22 @@ test("realGit creates a dedicated worktree for a story branch", () => {
   } finally {
     rmSync(root, { recursive: true, force: true })
     rmSync(worktreeRoot, { recursive: true, force: true })
+    rmSync(staleRoot, { recursive: true, force: true })
   }
 })
 
 test("ensureStoryWorktreeReal migrates a legacy story worktree path to the canonical path", () => {
   const root = seedRepo()
+  const ctx: WorkflowContext = {
+    workspaceId: "test-workspace-migrate-legacy",
+    runId: "run-2",
+    itemSlug: "demo-item",
+    baseBranch: "main",
+    workspaceRoot: root,
+  }
+  const staleRoot = layout.itemWorktreeRootDir(ctx)
+  rmSync(staleRoot, { recursive: true, force: true })
   try {
-    const ctx: WorkflowContext = {
-      workspaceId: "test-workspace-migrate-legacy",
-      runId: "run-2",
-      itemSlug: "demo-item",
-      baseBranch: "main",
-      workspaceRoot: root,
-    }
-
     const mode = detectRealGitMode(ctx)
     assert.equal(mode.enabled, true)
     if (!mode.enabled) return
@@ -221,6 +225,7 @@ test("ensureStoryWorktreeReal migrates a legacy story worktree path to the canon
     assert.match(worktrees, new RegExp(canonicalPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
   } finally {
     rmSync(root, { recursive: true, force: true })
+    rmSync(staleRoot, { recursive: true, force: true })
   }
 })
 
@@ -325,15 +330,19 @@ test("realGit gc removes orphaned managed worktree directories that are no longe
 
 test("realGit gc removes legacy duplicate managed worktrees for the same story branch", () => {
   const root = seedRepo()
+  const ctx: WorkflowContext = {
+    workspaceId: "test-workspace-gc-dup-live",
+    runId: "run-3",
+    itemSlug: "demo-item",
+    baseBranch: "main",
+    workspaceRoot: root,
+  }
+  // Purge any leftover directories from a previous failed run — they live
+  // under the shared worktreesRoot() (project-local .beerengineer/worktrees/),
+  // not the per-test tmpdir, so rmSync(root) in a prior run cannot reach them.
+  const staleRoot = layout.itemWorktreeRootDir(ctx)
+  rmSync(staleRoot, { recursive: true, force: true })
   try {
-    const ctx: WorkflowContext = {
-      workspaceId: "test-workspace-gc-dup-live",
-      runId: "run-3",
-      itemSlug: "demo-item",
-      baseBranch: "main",
-      workspaceRoot: root,
-    }
-
     const mode = detectRealGitMode(ctx)
     assert.equal(mode.enabled, true)
     if (!mode.enabled) return
@@ -356,5 +365,6 @@ test("realGit gc removes legacy duplicate managed worktrees for the same story b
     assert.match(worktrees, new RegExp(canonicalPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
   } finally {
     rmSync(root, { recursive: true, force: true })
+    rmSync(staleRoot, { recursive: true, force: true })
   }
 })

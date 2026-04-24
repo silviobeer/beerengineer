@@ -250,7 +250,7 @@ function printHelp(): void {
     "    beerengineer                                         Run the default workflow",
     "    beerengineer --json                                  Harness mode: NDJSON events on stdout, prompt answers on stdin",
     "    beerengineer run --json                              Same as `beerengineer --json`",
-    "    beerengineer start ui                                Start the UI on http://127.0.0.1:3100 and open it in the browser",
+    "    beerengineer start ui                                [unavailable — UI rebuild pending, see specs/ui-rebuild-plan.md]",
     "    beerengineer status [--all] [--json]                Workspace status overview",
     "    beerengineer items [--all] [--compact]              List items",
     "    beerengineer chats [--all] [--compact]              List open chats",
@@ -1646,7 +1646,8 @@ async function runNotificationsTestCommand(channel: "telegram"): Promise<number>
 export function startUi(): Promise<number> {
   const uiDir = resolveUiWorkspacePath()
   if (!existsSync(resolve(uiDir, "package.json"))) {
-    console.error(`  UI workspace not found at ${uiDir}`)
+    console.error("  UI is not currently part of this repo (apps/ui was removed 2026-04-24).")
+    console.error("  See specs/ui-rebuild-plan.md — a fresh UI is pending a separate plan.")
     return Promise.resolve(1)
   }
 

@@ -105,26 +105,6 @@
         }
       }
     },
-    "/openapi.yaml": {
-      "get": {
-        "tags": [
-          "Spec"
-        ],
-        "summary": "Fetch this OpenAPI document as YAML.",
-        "responses": {
-          "200": {
-            "description": "OpenAPI document.",
-            "content": {
-              "application/yaml": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/setup/status": {
       "get": {
         "tags": [
