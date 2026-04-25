@@ -13,6 +13,12 @@ import type { WaveSummary } from "./execution.js"
 
 export type { WorkflowContext }
 
+export type CodebaseSnapshot = {
+  topLevelFiles: Array<{ path: string; content: string }>
+  treeSummary: string[]
+  openApiSpec?: string
+}
+
 export type ProjectContext = WorkflowContext & {
   project: Project
   wireframes?: WireframeArtifact
@@ -23,6 +29,7 @@ export type ProjectContext = WorkflowContext & {
   executionSummaries?: WaveSummary[]
   projectReview?: ProjectReviewArtifact
   documentation?: DocumentationArtifact
+  codebase?: CodebaseSnapshot
 }
 
 export type WithPrd = ProjectContext & { prd: PRD }
