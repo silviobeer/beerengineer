@@ -161,7 +161,13 @@ export function resolveMergeConflictsViaLlm(input: {
     `merge-resolver: ${input.harness.provider}${input.harness.model ? `/${input.harness.model}` : ""} on ${conflicted.length} conflicted file${conflicted.length === 1 ? "" : "s"}`,
   )
 
-  const timeoutMs = input.timeoutMs ?? 180_000
+  // Resolver scales with conflict count: a 3-file story merge finishes in
+  // ~30s, but an 8-file wave→project merge needs more headroom because the
+  // model has to read each file, reason about it, and write the resolution.
+  // Empirically: 60s baseline + 60s per file, capped at 15 minutes. Override
+  // with `input.timeoutMs` when needed.
+  const baseTimeoutMs = 60_000 + conflicted.length * 60_000
+  const timeoutMs = input.timeoutMs ?? Math.min(baseTimeoutMs, 900_000)
   const startedAt = Date.now()
   const result = spawnSync(built.command[0], built.command.slice(1), {
     cwd: input.workspaceRoot,
