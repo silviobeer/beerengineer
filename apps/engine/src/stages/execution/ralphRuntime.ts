@@ -208,9 +208,36 @@ function dedupeFindings(findings: Finding[]): Finding[] {
   })
 }
 
-function runGit(args: string[], cwd: string): { ok: boolean; stdout: string } {
+function runGit(args: string[], cwd: string): { ok: boolean; stdout: string; stderr: string } {
   const result = spawnSync("git", args, { cwd, encoding: "utf8" })
-  return { ok: result.status === 0, stdout: result.stdout?.trim() ?? "" }
+  return {
+    ok: result.status === 0,
+    stdout: result.stdout?.trim() ?? "",
+    stderr: result.stderr?.trim() ?? "",
+  }
+}
+
+// Stages and commits any uncommitted work in the story worktree. The coder
+// agent writes files but does not always commit; without this, story branches
+// stay at the wave-base commit and `mergeStoryIntoWaveReal` becomes a silent
+// no-op that loses the work when the worktree is removed at end-of-wave.
+function commitWorktreeChanges(worktreeRoot: string, message: string): string | null {
+  const inside = runGit(["rev-parse", "--is-inside-work-tree"], worktreeRoot)
+  if (!inside.ok || inside.stdout !== "true") return null
+  const status = runGit(["status", "--porcelain"], worktreeRoot)
+  if (!status.ok || !status.stdout) return null
+  const add = runGit(["add", "-A"], worktreeRoot)
+  if (!add.ok) {
+    stagePresent.warn(`commit-worktree: git add failed in ${worktreeRoot}: ${add.stderr}`)
+    return null
+  }
+  const commit = runGit(["commit", "-m", message], worktreeRoot)
+  if (!commit.ok) {
+    stagePresent.warn(`commit-worktree: git commit failed in ${worktreeRoot}: ${commit.stderr || commit.stdout}`)
+    return null
+  }
+  const sha = runGit(["rev-parse", "HEAD"], worktreeRoot)
+  return sha.ok ? sha.stdout : null
 }
 
 function listUntrackedFiles(workspaceRoot: string): string[] {
@@ -341,7 +368,10 @@ async function runStoryReview(input: {
   }
 
   const reviewWorkspaceRoot = input.storyContext.worktreeRoot ?? input.llm.workspaceRoot
-  const workspaceConfig = await readWorkspaceConfig(reviewWorkspaceRoot)
+  // workspace.json lives in the primary workspaceRoot, not in story worktrees.
+  // Reading from `reviewWorkspaceRoot` (the per-story worktree) silently
+  // returns null and the review tools fall through to disabled.
+  const workspaceConfig = await readWorkspaceConfig(input.llm.workspaceRoot)
   const reviewPolicy = workspaceConfig?.reviewPolicy ?? {
     coderabbit: { enabled: false },
     sonarcloud: workspaceConfig?.sonar ?? { enabled: false },
@@ -602,6 +632,15 @@ async function runOneIteration(
       notes.push(...coderResult.blockers.map(blocker => `[blocker] ${blocker}`))
     }
     stagePresent.dim(`    → ${coderSummary}`)
+    if (storyContext.worktreeRoot) {
+      const commitMessage = isRemediation
+        ? `Apply review feedback for ${storyContext.story.id} (iteration ${iterationNumber})`
+        : `Implement ${storyContext.story.id} (iteration ${iterationNumber})`
+      const sha = commitWorktreeChanges(storyContext.worktreeRoot, commitMessage)
+      if (sha) {
+        stagePresent.dim(`    → committed ${storyContext.story.id} iteration ${iterationNumber}: ${sha.slice(0, 8)}`)
+      }
+    }
   } else if (isRemediation) {
     await llm6bFix(opts.feedback ?? "")
   } else {
