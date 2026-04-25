@@ -10,7 +10,9 @@ import {
   branchNameWave,
 } from "./repoSimulation.js"
 import { isEngineOwnedBranchName } from "./baseBranch.js"
-import { resolveMergeConflictsViaLlm } from "./mergeResolver.js"
+import { resolveMergeConflictsViaLlm, type MergeResolverHarness } from "./mergeResolver.js"
+
+export type RealGitMergeOptions = { mergeResolver?: MergeResolverHarness }
 
 export type RealGitDisabled = { enabled: false; reason: string }
 export type RealGitEnabled = { enabled: true; workspaceRoot: string; baseBranch: string; itemWorktreeRoot: string }
@@ -179,7 +181,13 @@ function ensureBranchExistsFrom(mode: RealGitEnabled, branch: string, from: stri
   if (!create.ok) throw new Error(`realGit: create ${branch} from ${from} failed: ${create.stderr}`)
 }
 
-function mergeNoFf(mode: RealGitEnabled, target: string, source: string, message: string): void {
+function mergeNoFf(
+  mode: RealGitEnabled,
+  target: string,
+  source: string,
+  message: string,
+  opts: RealGitMergeOptions = {},
+): void {
   const root = branchWorkspaceRoot(mode)
   const co = runGit(root, ["checkout", target])
   if (!co.ok) throw new Error(`realGit: checkout ${target} for merge failed: ${co.stderr}`)
@@ -193,8 +201,12 @@ function mergeNoFf(mode: RealGitEnabled, target: string, source: string, message
   if (!merge.ok) {
     const stderr = merge.stderr || merge.stdout
     const looksLikeConflict = /CONFLICT|Automatic merge failed/i.test(stderr)
-    if (looksLikeConflict) {
-      const resolution = resolveMergeConflictsViaLlm({ workspaceRoot: root, mergeMessage: message })
+    if (looksLikeConflict && opts.mergeResolver) {
+      const resolution = resolveMergeConflictsViaLlm({
+        workspaceRoot: root,
+        mergeMessage: message,
+        harness: opts.mergeResolver,
+      })
       if (resolution.ok) {
         const add = runGit(root, ["add", "-A"])
         if (add.ok) {
@@ -318,10 +330,11 @@ export function mergeStoryIntoWaveReal(
   projectId: string,
   waveNumber: number,
   storyId: string,
+  opts: RealGitMergeOptions = {},
 ): void {
   const wave = branchNameWave(context, projectId, waveNumber)
   const story = branchNameStory(context, projectId, waveNumber, storyId)
-  mergeNoFf(mode, wave, story, `Merge story ${storyId} into wave ${waveNumber}`)
+  mergeNoFf(mode, wave, story, `Merge story ${storyId} into wave ${waveNumber}`, opts)
 }
 
 export function mergeWaveIntoProjectReal(
@@ -329,20 +342,22 @@ export function mergeWaveIntoProjectReal(
   context: WorkflowContext,
   projectId: string,
   waveNumber: number,
+  opts: RealGitMergeOptions = {},
 ): void {
   const project = branchNameProject(context, projectId)
   const wave = branchNameWave(context, projectId, waveNumber)
-  mergeNoFf(mode, project, wave, `Merge wave ${waveNumber} into project ${projectId}`)
+  mergeNoFf(mode, project, wave, `Merge wave ${waveNumber} into project ${projectId}`, opts)
 }
 
 export function mergeProjectIntoItemReal(
   mode: RealGitEnabled,
   context: WorkflowContext,
   projectId: string,
+  opts: RealGitMergeOptions = {},
 ): void {
   const item = branchNameItem(context)
   const project = branchNameProject(context, projectId)
-  mergeNoFf(mode, item, project, `Merge project ${projectId} into item`)
+  mergeNoFf(mode, item, project, `Merge project ${projectId} into item`, opts)
 }
 
 export function exitRunToItemBranchReal(mode: RealGitEnabled, context: WorkflowContext): string {

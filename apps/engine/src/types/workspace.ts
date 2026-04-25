@@ -1,4 +1,4 @@
-export type HarnessRole = "coder" | "reviewer"
+export type HarnessRole = "coder" | "reviewer" | "merge-resolver"
 
 export type KnownHarness = "claude" | "codex" | "opencode"
 

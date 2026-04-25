@@ -13,7 +13,13 @@ import {
 } from "../../core/realGit.js"
 import { writeRecoveryRecord } from "../../core/recovery.js"
 import { runStage } from "../../core/stageRuntime.js"
-import { createTestWriterReview, createTestWriterStage, type RunLlmConfig } from "../../llm/registry.js"
+import {
+  createTestWriterReview,
+  createTestWriterStage,
+  resolveMergeResolverHarness,
+  type ResolvedHarness,
+  type RunLlmConfig,
+} from "../../llm/registry.js"
 import { stagePresent } from "../../core/stagePresentation.js"
 import { renderTestPlanMarkdown } from "../../render/testPlan.js"
 import { runRalphStory, writeWaveSummary, type StoryArtifacts } from "./ralphRuntime.js"
@@ -126,6 +132,14 @@ async function executeWave(
     ensureWaveBranchReal(realGit, ctx, ctx.project.id, wave.number)
   }
 
+  const mergeResolverHarness: { provider: ResolvedHarness["provider"]; model?: string } | undefined =
+    llm?.executionCoder
+      ? (() => {
+          const resolved = resolveMergeResolverHarness(llm.executionCoder!)
+          return { provider: resolved.provider, model: resolved.model }
+        })()
+      : undefined
+
   // Wave-branch merges/abandons must happen one at a time even when story
   // implementations run in parallel — concurrent `git merge` into the wave
   // branch races on the same ref. The chain serialises just the git ops while
@@ -173,7 +187,9 @@ async function executeWave(
       // on the wave branch.
       if (realGit.enabled && result.implementation.status === "passed") {
         await enqueueWaveBranchOp(() =>
-          mergeStoryIntoWaveReal(realGit, ctx, ctx.project.id, wave.number, resolved.id),
+          mergeStoryIntoWaveReal(realGit, ctx, ctx.project.id, wave.number, resolved.id, {
+            mergeResolver: mergeResolverHarness,
+          }),
         )
       }
       if (realGit.enabled && result.implementation.status === "blocked") {
@@ -226,7 +242,7 @@ async function executeWave(
   assertWaveSucceeded(wave, summary)
   await mergeWaveBranchIntoProject(ctx, ctx.project.id, wave.number)
   if (realGit.enabled) {
-    mergeWaveIntoProjectReal(realGit, ctx, ctx.project.id, wave.number)
+    mergeWaveIntoProjectReal(realGit, ctx, ctx.project.id, wave.number, { mergeResolver: mergeResolverHarness })
   }
   return summary
 }

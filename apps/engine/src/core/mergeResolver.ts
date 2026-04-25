@@ -2,6 +2,14 @@ import { spawnSync } from "node:child_process"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 
+import { stagePresent } from "./stagePresentation.js"
+
+export type MergeResolverHarness = {
+  // Provider id matches `ResolvedHarness.provider` for stage agents.
+  provider: "claude-code" | "codex" | "opencode" | "fake"
+  model?: string
+}
+
 export type MergeResolverResult =
   | { ok: true; resolvedFiles: string[] }
   | { ok: false; reason: string }
@@ -50,22 +58,69 @@ function buildPrompt(message: string, files: string[]): string {
   ].join("\n")
 }
 
+function buildCommandForProvider(
+  provider: MergeResolverHarness["provider"],
+  model: string | undefined,
+  workspaceRoot: string,
+  prompt: string,
+): { ok: true; command: string[] } | { ok: false; reason: string } {
+  switch (provider) {
+    case "claude-code": {
+      const command = [
+        "claude",
+        "--print",
+        "--output-format",
+        "json",
+        "--permission-mode",
+        "acceptEdits",
+        "--add-dir",
+        workspaceRoot,
+      ]
+      if (model) command.push("--model", model)
+      command.push(prompt)
+      return { ok: true, command }
+    }
+    case "codex": {
+      const command = [
+        "codex",
+        "exec",
+        "--cd",
+        workspaceRoot,
+        "--sandbox",
+        "workspace-write",
+      ]
+      if (model) command.push("-c", `model=${JSON.stringify(model)}`)
+      command.push(prompt)
+      return { ok: true, command }
+    }
+    case "opencode":
+      return { ok: false, reason: "merge-resolver: opencode provider not implemented yet" }
+    case "fake":
+      return { ok: false, reason: "merge-resolver: fake provider — skipped" }
+  }
+}
+
 /**
- * Attempt to resolve git merge conflicts in `workspaceRoot` using a Claude
- * CLI in acceptEdits mode. Returns success when every previously-conflicted
- * file is free of conflict markers AND `git diff --name-only --diff-filter=U`
- * is empty. Caller is responsible for `git add` + `git commit` to finalize the
- * merge after a successful return.
+ * Attempt to resolve git merge conflicts in `workspaceRoot` using the
+ * configured merge-resolver harness. Returns success when every previously-
+ * conflicted file is free of conflict markers AND
+ * `git diff --name-only --diff-filter=U` is empty. Caller is responsible for
+ * `git add` + `git commit` to finalize the merge after a successful return.
  *
- * Disabled when `BEERENGINEER_DISABLE_LLM_MERGE_RESOLVER=1`.
+ * Disabled when `BEERENGINEER_DISABLE_LLM_MERGE_RESOLVER=1` or when `harness`
+ * is undefined (e.g. running with `testingOverride: "fake"`).
  */
 export function resolveMergeConflictsViaLlm(input: {
   workspaceRoot: string
   mergeMessage: string
+  harness?: MergeResolverHarness
   timeoutMs?: number
 }): MergeResolverResult {
   if (process.env.BEERENGINEER_DISABLE_LLM_MERGE_RESOLVER === "1") {
     return { ok: false, reason: "llm-merge-resolver-disabled" }
+  }
+  if (!input.harness) {
+    return { ok: false, reason: "merge-resolver: no harness configured" }
   }
 
   const conflicted = listConflictedFiles(input.workspaceRoot)
@@ -74,31 +129,28 @@ export function resolveMergeConflictsViaLlm(input: {
   }
 
   const prompt = buildPrompt(input.mergeMessage, conflicted)
-  const timeoutMs = input.timeoutMs ?? 180_000
-  const result = spawnSync(
-    "claude",
-    [
-      "--print",
-      "--output-format",
-      "json",
-      "--permission-mode",
-      "acceptEdits",
-      "--add-dir",
-      input.workspaceRoot,
-      "--model",
-      "claude-sonnet-4-6",
-      prompt,
-    ],
-    {
-      cwd: input.workspaceRoot,
-      encoding: "utf8",
-      timeout: timeoutMs,
-    },
+  const built = buildCommandForProvider(
+    input.harness.provider,
+    input.harness.model,
+    input.workspaceRoot,
+    prompt,
   )
+  if (!built.ok) return built
+
+  stagePresent.dim(
+    `merge-resolver: ${input.harness.provider}${input.harness.model ? `/${input.harness.model}` : ""} on ${conflicted.length} conflicted file${conflicted.length === 1 ? "" : "s"}`,
+  )
+
+  const timeoutMs = input.timeoutMs ?? 180_000
+  const result = spawnSync(built.command[0], built.command.slice(1), {
+    cwd: input.workspaceRoot,
+    encoding: "utf8",
+    timeout: timeoutMs,
+  })
   if (result.status !== 0) {
     const reason = result.signal
-      ? `claude-cli-signaled-${result.signal}`
-      : `claude-cli-exit-${result.status ?? "unknown"}`
+      ? `${input.harness.provider}-cli-signaled-${result.signal}`
+      : `${input.harness.provider}-cli-exit-${result.status ?? "unknown"}`
     return { ok: false, reason: `${reason}: ${(result.stderr ?? "").slice(0, 400)}` }
   }
 

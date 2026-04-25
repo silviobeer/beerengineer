@@ -92,13 +92,21 @@ type AdapterFactoryInput = {
 }
 
 type PresetRoleEntry = { harness: "claude" | "codex" | "opencode"; provider: string; model?: string }
-type PresetEntry = { coder: PresetRoleEntry; reviewer: PresetRoleEntry }
+type PresetEntry = {
+  coder: PresetRoleEntry
+  reviewer: PresetRoleEntry
+  // Optional so older / external preset files keep loading; resolveFromPreset
+  // falls back to `coder` when a role is missing.
+  "merge-resolver"?: PresetRoleEntry
+}
 const PRESETS = (presetsJson as { presets: Record<string, PresetEntry> }).presets
 
 function resolveFromPreset(presetKey: string, role: HarnessRole, stage: StageId, workspaceRoot: string): ResolvedHarness {
   const preset = PRESETS[presetKey]
   if (!preset) throw new Error(`Unknown preset key "${presetKey}"`)
-  const entry = preset[role]
+  // Roles new to the schema (e.g. "merge-resolver") may be absent from older
+  // preset files. Fall back to the coder role so mainline runs keep working.
+  const entry = preset[role] ?? preset.coder
   const provider = toProviderId(entry.harness)
   if (provider === "opencode") {
     throw new Error(`Preset "${presetKey}" resolves to opencode for role "${role}", which is not implemented yet`)
@@ -112,6 +120,16 @@ function resolveFromPreset(presetKey: string, role: HarnessRole, stage: StageId,
     model = "claude-opus-4-7"
   }
   return { harness: provider, provider, model, workspaceRoot }
+}
+
+/**
+ * Resolve the harness used to fix wave-merge conflicts. Mirrors
+ * `resolveHarness` for stage agents but is named so call sites read clearly.
+ * Falls back to the coder harness if the active preset / self-config does
+ * not declare a `merge-resolver` entry.
+ */
+export function resolveMergeResolverHarness(llm: RunLlmConfig): ResolvedHarness {
+  return resolveHarness({ ...llm, role: "merge-resolver", stage: "execution" })
 }
 
 export function resolveHarness(input: AdapterFactoryInput): ResolvedHarness {
@@ -130,7 +148,8 @@ export function resolveHarness(input: AdapterFactoryInput): ResolvedHarness {
     case "opencode-euro":
       throw new Error(`Harness profile mode "${input.harnessProfile.mode}" is not implemented yet`)
     case "self": {
-      const selected = input.harnessProfile.roles[input.role]
+      const roles = input.harnessProfile.roles as Record<string, { harness: "claude" | "codex" | "opencode"; model?: string }>
+      const selected = roles[input.role] ?? roles.coder
       const provider = toProviderId(selected.harness)
       if (provider === "opencode") {
         throw new Error('Harness profile resolves to "opencode", which is not implemented yet')
