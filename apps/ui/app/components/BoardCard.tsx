@@ -1,48 +1,139 @@
 "use client";
 
-import Link from "next/link";
-import { forwardRef } from "react";
-import type { WorkspaceItem } from "../lib/types";
+import { useSSE } from "../lib/sse/SSEContext";
+import type { ItemState } from "../lib/sse/types";
 
 export type BoardCardProps = {
-  item: WorkspaceItem;
-  workspaceKey: string;
+  itemId: string;
+  itemCode?: string;
+  title?: string;
+  summary?: string;
+  showMiniStepper?: boolean;
+  actions?: ReadonlyArray<{ name: string; label: string; onClick?: () => void }>;
 };
 
-export const BoardCard = forwardRef<HTMLAnchorElement, BoardCardProps>(
-  function BoardCard({ item, workspaceKey }, ref) {
-    return (
-      <Link
-        ref={ref}
-        href={`/w/${workspaceKey}/items/${item.id}`}
-        data-testid="board-card"
-        data-item-id={item.id}
-        data-attention={item.attentionDot ? "true" : "false"}
-        className="block p-3 border border-[var(--color-border,#333)] bg-[var(--color-card,#0c0c0c)] hover:border-[var(--color-accent,#5fa)] no-underline"
-      >
-        <div className="flex items-center gap-2">
-          {item.itemCode ? (
-            <span className="font-mono text-[10px] uppercase text-[var(--color-muted,#888)]">
-              {item.itemCode}
+const STATUS_LABELS: Record<string, string> = {
+  running: "Running",
+  review: "Review",
+  done: "Done",
+  blocked: "Blocked",
+  pending: "Pending",
+  todo: "Todo",
+};
+
+function labelFor(status: string | undefined): string {
+  if (!status) return "—";
+  return STATUS_LABELS[status] ?? status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+const STEP_LABELS = ["Arch", "Plan", "Exec", "Review"] as const;
+
+export function BoardCard({
+  itemId,
+  itemCode,
+  title,
+  summary,
+  showMiniStepper = false,
+  actions,
+}: BoardCardProps) {
+  const { itemState } = useSSE();
+  const state: ItemState = itemState[itemId] ?? { id: itemId };
+
+  const status = state.status;
+  const attention = state.attention === true;
+  const step = state.step;
+
+  return (
+    <article
+      data-testid="board-card"
+      data-item-id={itemId}
+      className="border border-[var(--color-border,#333)] p-3 font-mono text-xs"
+    >
+      <header className="flex items-start justify-between gap-2">
+        <div className="flex flex-col">
+          {itemCode ? (
+            <span data-testid="card-code" className="text-[var(--color-muted,#888)]">
+              {itemCode}
             </span>
           ) : null}
-          {item.attentionDot ? (
+          {title ? (
+            <span data-testid="card-title" className="font-semibold">
+              {title}
+            </span>
+          ) : null}
+        </div>
+        <div className="flex items-center gap-2">
+          {attention ? (
             <span
-              data-testid="board-card-attention-dot"
+              data-testid="attention-dot"
               aria-label="Aufmerksamkeit erforderlich"
               className="inline-block w-2 h-2 rounded-full bg-[var(--color-warn,#fa5)]"
             />
           ) : null}
+          <span
+            data-testid="status-chip"
+            data-status={status ?? ""}
+            className="px-2 py-0.5 border border-[var(--color-border,#333)]"
+          >
+            {labelFor(status)}
+          </span>
         </div>
-        <div className="mt-1 text-sm font-medium">{item.title}</div>
-        {item.summary ? (
-          <p className="mt-1 text-xs text-[var(--color-muted,#888)] line-clamp-2">
-            {item.summary}
-          </p>
-        ) : null}
-      </Link>
-    );
-  }
-);
+      </header>
+
+      {summary ? (
+        <p
+          data-testid="card-summary"
+          className="mt-2 line-clamp-2 text-[var(--color-muted,#888)]"
+        >
+          {summary}
+        </p>
+      ) : null}
+
+      {showMiniStepper ? (
+        <ol
+          data-testid="mini-stepper"
+          aria-label="Implementation steps"
+          className="mt-2 flex gap-1"
+        >
+          {STEP_LABELS.map((label, idx) => {
+            const segNum = idx + 1;
+            const active = step === segNum;
+            return (
+              <li
+                key={label}
+                data-testid="mini-stepper-segment"
+                data-segment={String(segNum)}
+                data-active={active ? "true" : "false"}
+                className={
+                  active
+                    ? "px-2 border border-[var(--color-accent,#5fa)] text-[var(--color-accent,#5fa)]"
+                    : "px-2 border border-[var(--color-border,#333)] text-[var(--color-muted,#888)]"
+                }
+              >
+                {label}
+              </li>
+            );
+          })}
+        </ol>
+      ) : null}
+
+      {actions && actions.length > 0 ? (
+        <div data-testid="card-actions" className="mt-2 flex gap-2">
+          {actions.map((a) => (
+            <button
+              key={a.name}
+              type="button"
+              data-testid={`card-action-${a.name}`}
+              onClick={a.onClick}
+              className="px-2 py-0.5 border border-[var(--color-border,#333)]"
+            >
+              {a.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </article>
+  );
+}
 
 export default BoardCard;

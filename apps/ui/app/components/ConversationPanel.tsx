@@ -1,228 +1,147 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState, type ChangeEvent } from "react";
+import { useSSE } from "../lib/sse/SSEContext";
+import type { ChatEntry } from "../lib/sse/types";
 
-export type ConversationRole = "system" | "operator" | "engine";
-
-export type ReviewGateAction = { label: string; value: string };
-
-export type ConversationEntry = {
-  id: string;
-  role: ConversationRole;
-  text: string;
-  type?: "message" | "review-gate";
-  promptId?: string;
-  actions?: ReviewGateAction[];
-  answered?: boolean;
-};
-
-export type OpenPrompt =
-  | { type: "review-gate" | "clarification"; promptId: string }
-  | null;
-
-export type PostAnswerArgs = {
-  runId: string;
-  promptId: string;
-  answer: string;
-};
-
-export type PostAnswerFn = (args: PostAnswerArgs) => Promise<unknown>;
+export type ConversationMode =
+  | { kind: "inert" }
+  | { kind: "clarification"; promptText?: string }
+  | {
+      kind: "review_gate";
+      promptText?: string;
+      actions: ReadonlyArray<{ name: string; label: string }>;
+    };
 
 export type ConversationPanelProps = {
-  runId: string;
-  entries: ConversationEntry[];
-  openPrompt: OpenPrompt;
-  postAnswer: PostAnswerFn;
+  runId: string | null;
+  initialEntries?: ChatEntry[];
+  mode: ConversationMode;
+  onSend?: (text: string) => void | Promise<void>;
+  onAction?: (actionName: string) => void | Promise<void>;
 };
 
-const SPEAKER_LABELS: Record<ConversationRole, string> = {
-  system: "S:",
-  operator: "You:",
-  engine: "Beerengineer:",
-};
+function bubbleLabel(role: string): string {
+  if (role === "system" || role === "S") return "S:";
+  if (role === "user" || role === "You") return "You:";
+  if (role === "assistant" || role === "Beerengineer") return "Beerengineer:";
+  return `${role}:`;
+}
 
 export function ConversationPanel({
   runId,
-  entries,
-  openPrompt,
-  postAnswer,
+  initialEntries = [],
+  mode,
+  onSend,
+  onAction,
 }: ConversationPanelProps) {
+  const { registerConversationListener } = useSSE();
+  const [entries, setEntries] = useState<ChatEntry[]>(initialEntries);
   const [draft, setDraft] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [appendedOperatorBubbles, setAppendedOperatorBubbles] = useState<
-    ConversationEntry[]
-  >([]);
-  const [submitting, setSubmitting] = useState(false);
 
-  const showFreeForm = openPrompt?.type === "clarification";
-  const trimmed = draft.trim();
-  const sendDisabled = trimmed.length === 0 || submitting;
+  useEffect(() => {
+    if (!runId) return;
+    return registerConversationListener((entry) => {
+      if (entry.runId && runId && entry.runId !== runId) return;
+      setEntries((prev) => [...prev, entry]);
+      if (entry.role === "user") setDraft("");
+    });
+  }, [runId, registerConversationListener]);
 
-  const allEntries = [...entries, ...appendedOperatorBubbles];
-
-  async function handleReviewGateClick(
-    promptId: string,
-    answer: string,
-  ): Promise<void> {
-    setError(null);
-    try {
-      await postAnswer({ runId, promptId, answer });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to submit answer");
-    }
+  if (mode.kind === "inert" || !runId) {
+    return (
+      <section
+        data-testid="conversation-panel"
+        aria-label="Conversation"
+        className="border border-[var(--color-border,#333)] p-3 font-mono text-xs"
+      >
+        <p data-testid="conversation-inert" className="text-[var(--color-muted,#888)]">
+          No active run — start one to begin a conversation.
+        </p>
+      </section>
+    );
   }
 
-  async function handleSend(): Promise<void> {
-    if (!openPrompt || openPrompt.type !== "clarification") return;
-    if (trimmed.length === 0) return;
-    if (submitting) return;
-
-    setSubmitting(true);
-    setError(null);
-    try {
-      await postAnswer({
-        runId,
-        promptId: openPrompt.promptId,
-        answer: draft,
-      });
-      const submittedText = draft;
-      setAppendedOperatorBubbles((prev) => [
-        ...prev,
-        {
-          id: `local-${openPrompt.promptId}-${prev.length}`,
-          role: "operator",
-          text: submittedText,
-        },
-      ]);
-      setDraft("");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to submit answer");
-    } finally {
-      setSubmitting(false);
-    }
-  }
+  const handleSend = () => {
+    if (!onSend) return;
+    void onSend(draft);
+  };
 
   return (
     <section
       data-testid="conversation-panel"
-      aria-label="Interactions"
-      className="flex flex-col h-full"
+      aria-label="Conversation"
+      className="flex flex-col gap-2 border border-[var(--color-border,#333)] p-3 font-mono text-xs"
     >
-      <ol
-        data-testid="conversation-list"
-        role="list"
-        className="flex-1 overflow-auto px-3 py-2 space-y-2"
-      >
-        {allEntries.map((entry) => (
-          <Bubble
-            key={entry.id}
-            entry={entry}
-            onReviewGateClick={handleReviewGateClick}
-          />
+      <ol data-testid="conversation-list" className="flex flex-col gap-1">
+        {entries.map((entry, idx) => (
+          <li
+            key={entry.id ?? `${idx}-${entry.role}`}
+            data-testid="chat-bubble"
+            data-role={entry.role}
+            className="px-2 py-1 border border-[var(--color-border-soft,#1a1a1a)]"
+          >
+            <span className="text-[var(--color-muted,#888)]">
+              {bubbleLabel(entry.role)}
+            </span>{" "}
+            <span>{entry.content}</span>
+          </li>
         ))}
       </ol>
 
-      {showFreeForm ? (
-        <form
-          data-testid="conversation-form"
-          className="flex flex-col gap-2 border-t border-[var(--color-border,#333)] p-3"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void handleSend();
-          }}
-        >
+      {mode.kind === "clarification" ? (
+        <div data-testid="clarification-form" className="flex flex-col gap-2">
+          {mode.promptText ? (
+            <p
+              data-testid="conversation-prompt"
+              className="text-[var(--color-muted,#888)]"
+            >
+              {mode.promptText}
+            </p>
+          ) : null}
           <textarea
-            data-testid="conversation-textarea"
+            data-testid="conversation-input"
             aria-label="Antwort"
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            rows={3}
-            className="w-full font-mono text-sm bg-transparent border border-[var(--color-border,#333)] p-2"
+            onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setDraft(e.target.value)}
+            className="border border-[var(--color-border,#333)] bg-transparent p-1"
           />
-          <div className="flex justify-end gap-2">
-            <button
-              type="submit"
-              data-testid="conversation-send"
-              disabled={sendDisabled}
-              className="px-3 py-1 text-xs font-mono uppercase tracking-wider bg-[var(--color-accent,#5fa)] text-black disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Send
-            </button>
-          </div>
-          {error ? (
-            <div
-              data-testid="conversation-error"
-              role="alert"
-              className="text-xs text-[var(--color-error,#f55)]"
-            >
-              {error}
-            </div>
-          ) : null}
-        </form>
+          <button
+            type="button"
+            data-testid="conversation-send"
+            aria-label="Send"
+            onClick={handleSend}
+            className="self-end px-3 py-1 border border-[var(--color-border,#333)]"
+          >
+            Send
+          </button>
+        </div>
       ) : null}
-    </section>
-  );
-}
 
-type BubbleProps = {
-  entry: ConversationEntry;
-  onReviewGateClick: (promptId: string, answer: string) => void;
-};
-
-function Bubble({ entry, onReviewGateClick }: BubbleProps) {
-  const label = SPEAKER_LABELS[entry.role];
-  const isReviewGate =
-    entry.role === "engine" && entry.type === "review-gate";
-  const actions = isReviewGate ? entry.actions ?? [] : [];
-  const answered = entry.answered === true;
-
-  return (
-    <li
-      role="listitem"
-      data-testid="conversation-bubble"
-      data-role={entry.role}
-      data-entry-id={entry.id}
-      className="flex flex-col gap-1 font-mono text-sm"
-    >
-      <div className="flex gap-2">
-        <span
-          data-testid="conversation-bubble-label"
-          className="font-bold text-[var(--color-accent,#5fa)]"
-        >
-          {label}
-        </span>
-        <span
-          data-testid="conversation-bubble-text"
-          className="flex-1 whitespace-pre-wrap"
-        >
-          {entry.text}
-        </span>
-      </div>
-      {isReviewGate && actions.length > 0 && !answered ? (
-        <div
-          data-testid="conversation-review-gate-actions"
-          data-prompt-id={entry.promptId}
-          className="flex gap-2 pt-1"
-        >
-          {actions.map((action) => (
-            <button
-              key={action.value}
-              type="button"
-              data-testid="conversation-review-gate-button"
-              data-action-value={action.value}
-              onClick={() => {
-                if (entry.promptId) {
-                  onReviewGateClick(entry.promptId, action.value);
-                }
-              }}
-              className="px-3 py-1 text-xs font-mono uppercase tracking-wider border border-[var(--color-border,#333)]"
+      {mode.kind === "review_gate" ? (
+        <div data-testid="review-gate-actions" className="flex gap-2">
+          {mode.promptText ? (
+            <p
+              data-testid="conversation-prompt"
+              className="text-[var(--color-muted,#888)] mr-auto"
             >
-              {action.label}
+              {mode.promptText}
+            </p>
+          ) : null}
+          {mode.actions.map((a) => (
+            <button
+              key={a.name}
+              type="button"
+              data-testid={`gate-action-${a.name}`}
+              onClick={() => onAction?.(a.name)}
+              className="px-3 py-1 border border-[var(--color-border,#333)]"
+            >
+              {a.label}
             </button>
           ))}
         </div>
       ) : null}
-    </li>
+    </section>
   );
 }
 

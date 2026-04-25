@@ -1,216 +1,221 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, waitFor, act } from "@testing-library/react";
+import { describe, it, expect, afterEach } from "vitest";
+import { act, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { SSEConnectionManager } from "../../lib/sse/SSEContext";
+import { MockEventSource, makeMockEventSourceFactory } from "../../lib/sse/mockEventSource";
 import ItemDetail from "../ItemDetail";
 
-type Deferred<T> = {
-  promise: Promise<T>;
-  resolve: (v: T) => void;
-  reject: (err: unknown) => void;
-};
-function deferred<T>(): Deferred<T> {
-  let resolve!: (v: T) => void;
-  let reject!: (err: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
+function getRunSource(runId: string) {
+  const es = MockEventSource.instances.find((e) =>
+    e.url === `/runs/${runId}/events`
+  );
+  if (!es) throw new Error(`No run EventSource for ${runId}`);
+  return es;
 }
 
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json" },
+function getWorkspaceSource() {
+  const es = MockEventSource.instances.find((e) =>
+    e.url.startsWith("/events?workspace=")
+  );
+  if (!es) throw new Error("No workspace EventSource");
+  return es;
+}
+
+function fireRun(runId: string, type: string, data: unknown) {
+  act(() => {
+    getRunSource(runId).simulateEvent(type, data);
   });
 }
 
-const populatedItem = {
-  id: "item-1",
-  title: "Item A",
-  status: "active",
-  currentRunId: null,
-};
-
-const originalFetch = globalThis.fetch;
-
-function installFetchMock(impl: () => Promise<Response>) {
-  const fn = vi.fn(impl);
-  (globalThis as unknown as { fetch: typeof fetch }).fetch =
-    fn as unknown as typeof fetch;
-  return fn;
+function fireWorkspace(type: string, data: unknown) {
+  act(() => {
+    getWorkspaceSource().simulateEvent(type, data);
+  });
 }
 
-afterEach(() => {
-  (globalThis as unknown as { fetch: typeof fetch }).fetch = originalFetch;
-  vi.restoreAllMocks();
-});
-
-describe("ItemDetail", () => {
-  // TC-07
-  it("shows only the loading indicator while GET /items/:id is in flight", () => {
-    const d = deferred<Response>();
-    installFetchMock(() => d.promise);
-
-    render(<ItemDetail itemId="item-1" />);
-
-    expect(screen.getByTestId("item-detail-loading")).toBeInTheDocument();
-    expect(screen.queryByTestId("item-detail-content")).toBeNull();
-    expect(screen.queryByTestId("item-detail-error")).toBeNull();
-    expect(screen.queryByTestId("item-detail-title")).toBeNull();
+describe("ItemDetail live updates via SSE", () => {
+  afterEach(() => {
+    MockEventSource.reset();
   });
 
-  // TC-08
-  it("shows the error state when GET /items/:id returns 404", async () => {
-    installFetchMock(() =>
-      Promise.resolve(jsonResponse({ error: "not found" }, 404))
+  // TC-05
+  it("status chip updates via workspace SSE", () => {
+    const factory = makeMockEventSourceFactory();
+    render(
+      <SSEConnectionManager
+        workspaceKey="ws-a"
+        eventSourceFactory={factory}
+        initialItems={[{ id: "i-1", status: "running" }]}
+      >
+        <ItemDetail itemId="i-1" runId={null} />
+      </SSEConnectionManager>
     );
+    expect(screen.getByTestId("status-chip")).toHaveTextContent("Running");
+    fireWorkspace("state-change", { id: "i-1", status: "done" });
+    expect(screen.getByTestId("status-chip")).toHaveTextContent("Done");
+  });
 
-    render(<ItemDetail itemId="missing" />);
-
-    await waitFor(() =>
-      expect(screen.getByTestId("item-detail-error")).toBeInTheDocument()
+  // TC-06 — chat append via run SSE
+  it("chat history appends a new bubble via run SSE", () => {
+    const factory = makeMockEventSourceFactory();
+    render(
+      <SSEConnectionManager
+        workspaceKey="ws-a"
+        eventSourceFactory={factory}
+        initialItems={[{ id: "i-1", status: "running" }]}
+        initialRunId="run-1"
+      >
+        <ItemDetail
+          itemId="i-1"
+          runId="run-1"
+          conversationMode={{ kind: "clarification" }}
+          initialChat={[
+            { id: "c1", runId: "run-1", role: "system", content: "hello world" },
+          ]}
+        />
+      </SSEConnectionManager>
     );
-    expect(screen.queryByTestId("item-detail-loading")).toBeNull();
-    expect(screen.queryByTestId("item-detail-content")).toBeNull();
-    const error = screen.getByTestId("item-detail-error");
-    expect(error.getAttribute("data-variant")).toBe("not_found");
-  });
-
-  // TC-09
-  it("shows the error state when GET /items/:id returns 500", async () => {
-    installFetchMock(() => Promise.resolve(jsonResponse({}, 500)));
-
-    render(<ItemDetail itemId="item-1" />);
-
-    await waitFor(() =>
-      expect(screen.getByTestId("item-detail-error")).toBeInTheDocument()
-    );
-    expect(screen.queryByTestId("item-detail-loading")).toBeNull();
-    expect(screen.queryByTestId("item-detail-content")).toBeNull();
-    expect(screen.queryByTestId("item-detail-title")).toBeNull();
-  });
-
-  // TC-10
-  it("shows the error state when fetch rejects with a network error", async () => {
-    installFetchMock(() => Promise.reject(new TypeError("Failed to fetch")));
-
-    render(<ItemDetail itemId="item-1" />);
-
-    await waitFor(() =>
-      expect(screen.getByTestId("item-detail-error")).toBeInTheDocument()
-    );
-    expect(screen.queryByTestId("item-detail-loading")).toBeNull();
-    expect(screen.getByTestId("item-detail-error").getAttribute("data-variant")).toBe(
-      "network"
-    );
-  });
-
-  // TC-11
-  it("loading and error states are mutually exclusive across renders", async () => {
-    // loading render
-    {
-      const d = deferred<Response>();
-      installFetchMock(() => d.promise);
-      const { unmount, container } = render(<ItemDetail itemId="item-1" />);
-      expect(screen.getByTestId("item-detail-loading")).toBeInTheDocument();
-      expect(screen.queryByTestId("item-detail-error")).toBeNull();
-      const loadingText = (container.textContent ?? "").trim();
-      unmount();
-      (globalThis as unknown as { fetch: typeof fetch }).fetch = originalFetch;
-
-      // error render
-      installFetchMock(() => Promise.resolve(jsonResponse({}, 500)));
-      const { container: errorContainer } = render(
-        <ItemDetail itemId="item-1" />
-      );
-      await waitFor(() =>
-        expect(screen.getByTestId("item-detail-error")).toBeInTheDocument()
-      );
-      expect(screen.queryByTestId("item-detail-loading")).toBeNull();
-      const errorText = (errorContainer.textContent ?? "").trim();
-      expect(errorText).not.toBe(loadingText);
-    }
-  });
-
-  // TC-13: full state matrix
-  it("state matrix is mutually exclusive across loading, error, and content", async () => {
-    const ids = [
-      "item-detail-loading",
-      "item-detail-error",
-      "item-detail-content",
-    ] as const;
-    const present = () => ids.filter((id) => screen.queryByTestId(id) != null);
-
-    // loading
-    {
-      const d = deferred<Response>();
-      installFetchMock(() => d.promise);
-      const { unmount } = render(<ItemDetail itemId="item-1" />);
-      expect(present()).toEqual(["item-detail-loading"]);
-      unmount();
-      (globalThis as unknown as { fetch: typeof fetch }).fetch = originalFetch;
-    }
-
-    // error
-    {
-      installFetchMock(() => Promise.resolve(jsonResponse({}, 404)));
-      const { unmount } = render(<ItemDetail itemId="item-1" />);
-      await waitFor(() =>
-        expect(screen.getByTestId("item-detail-error")).toBeInTheDocument()
-      );
-      expect(present()).toEqual(["item-detail-error"]);
-      unmount();
-      (globalThis as unknown as { fetch: typeof fetch }).fetch = originalFetch;
-    }
-
-    // content
-    {
-      installFetchMock(() => Promise.resolve(jsonResponse(populatedItem)));
-      const { unmount } = render(<ItemDetail itemId="item-1" />);
-      await waitFor(() =>
-        expect(screen.getByTestId("item-detail-content")).toBeInTheDocument()
-      );
-      expect(present()).toEqual(["item-detail-content"]);
-      unmount();
-    }
-  });
-
-  // TC-18
-  it("transitions from loading to content when fetch resolves successfully", async () => {
-    const d = deferred<Response>();
-    installFetchMock(() => d.promise);
-
-    render(<ItemDetail itemId="item-1" />);
-    expect(screen.getByTestId("item-detail-loading")).toBeInTheDocument();
-
-    await act(async () => {
-      d.resolve(jsonResponse(populatedItem));
+    expect(screen.getAllByTestId("chat-bubble")).toHaveLength(1);
+    fireRun("run-1", "chat", {
+      runId: "run-1",
+      role: "assistant",
+      content: "second message",
+      id: "c2",
     });
-
-    await waitFor(() =>
-      expect(screen.getByTestId("item-detail-content")).toBeInTheDocument()
-    );
-    expect(screen.queryByTestId("item-detail-loading")).toBeNull();
-    expect(screen.getByTestId("item-detail-title")).toHaveTextContent("Item A");
+    const bubbles = screen.getAllByTestId("chat-bubble");
+    expect(bubbles).toHaveLength(2);
+    expect(bubbles[1]).toHaveTextContent("second message");
   });
 
-  // TC-19
-  it("transitions from loading to error when fetch returns 500", async () => {
-    const d = deferred<Response>();
-    installFetchMock(() => d.promise);
-
-    render(<ItemDetail itemId="item-1" />);
-    expect(screen.getByTestId("item-detail-loading")).toBeInTheDocument();
-
-    await act(async () => {
-      d.resolve(jsonResponse({}, 500));
-    });
-
-    await waitFor(() =>
-      expect(screen.getByTestId("item-detail-error")).toBeInTheDocument()
+  // TC-07 — log rail append via run SSE
+  it("log rail appends a new line via run SSE", () => {
+    const factory = makeMockEventSourceFactory();
+    render(
+      <SSEConnectionManager
+        workspaceKey="ws-a"
+        eventSourceFactory={factory}
+        initialItems={[{ id: "i-1", status: "running" }]}
+        initialRunId="run-1"
+      >
+        <ItemDetail itemId="i-1" runId="run-1" />
+      </SSEConnectionManager>
     );
-    expect(screen.queryByTestId("item-detail-loading")).toBeNull();
-    expect(screen.queryByTestId("item-detail-content")).toBeNull();
-    expect(screen.queryByTestId("item-detail-title")).toBeNull();
+    expect(screen.queryAllByTestId("log-line")).toHaveLength(0);
+    fireRun("run-1", "log", {
+      runId: "run-1",
+      severity: "WARN",
+      timestamp: "2024-01-15T10:30:00Z",
+      message: "deploy started",
+      id: "l1",
+    });
+    const lines = screen.getAllByTestId("log-line");
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toHaveTextContent("deploy started");
+  });
+
+  // TC-16 — Send button does not change before SSE confirmation
+  it("Send button and textarea are unchanged before SSE confirms", async () => {
+    const user = userEvent.setup();
+    const factory = makeMockEventSourceFactory();
+    const sent: string[] = [];
+    render(
+      <SSEConnectionManager
+        workspaceKey="ws-a"
+        eventSourceFactory={factory}
+        initialItems={[{ id: "i-1", status: "running" }]}
+        initialRunId="run-1"
+      >
+        <ItemDetail
+          itemId="i-1"
+          runId="run-1"
+          conversationMode={{ kind: "clarification", promptText: "Need clarification" }}
+          onSend={(text) => {
+            sent.push(text);
+          }}
+        />
+      </SSEConnectionManager>
+    );
+
+    const textarea = screen.getByTestId("conversation-input") as HTMLTextAreaElement;
+    await user.type(textarea, "my answer");
+    expect(textarea.value).toBe("my answer");
+
+    const sendBtn = screen.getByTestId("conversation-send");
+    const labelBefore = sendBtn.getAttribute("aria-label");
+    const enabledBefore = !sendBtn.hasAttribute("disabled");
+
+    await user.click(sendBtn);
+
+    expect(sendBtn.getAttribute("aria-label")).toBe(labelBefore);
+    expect(!sendBtn.hasAttribute("disabled")).toBe(enabledBefore);
+    expect(textarea.value).toBe("my answer");
+    expect(sent).toEqual(["my answer"]);
+    // Bubble has not appeared yet
+    expect(screen.queryAllByTestId("chat-bubble")).toHaveLength(0);
+
+    fireRun("run-1", "chat", {
+      runId: "run-1",
+      role: "user",
+      content: "my answer",
+      id: "u-1",
+    });
+    expect(screen.getAllByTestId("chat-bubble")).toHaveLength(1);
+    expect((screen.getByTestId("conversation-input") as HTMLTextAreaElement).value).toBe(
+      ""
+    );
+  });
+
+  // TC-18 — review-gate action click does not change chip before SSE
+  it("review-gate action click does not change status chip before SSE", async () => {
+    const user = userEvent.setup();
+    const factory = makeMockEventSourceFactory();
+    const fired: string[] = [];
+    render(
+      <SSEConnectionManager
+        workspaceKey="ws-a"
+        eventSourceFactory={factory}
+        initialItems={[{ id: "i-1", status: "review" }]}
+        initialRunId="run-1"
+      >
+        <ItemDetail
+          itemId="i-1"
+          runId="run-1"
+          conversationMode={{
+            kind: "review_gate",
+            actions: [
+              { name: "approve", label: "Approve" },
+              { name: "reject", label: "Reject" },
+            ],
+          }}
+          onAction={(name) => {
+            fired.push(name);
+          }}
+        />
+      </SSEConnectionManager>
+    );
+    expect(screen.getByTestId("status-chip")).toHaveTextContent("Review");
+    await user.click(screen.getByTestId("gate-action-approve"));
+    expect(fired).toEqual(["approve"]);
+    expect(screen.getByTestId("status-chip")).toHaveTextContent("Review");
+
+    fireWorkspace("state-change", { id: "i-1", status: "done" });
+    expect(screen.getByTestId("status-chip")).toHaveTextContent("Done");
+  });
+
+  it("renders inert conversation/log placeholders when runId is null", () => {
+    const factory = makeMockEventSourceFactory();
+    render(
+      <SSEConnectionManager
+        workspaceKey="ws-a"
+        eventSourceFactory={factory}
+        initialItems={[{ id: "i-1", status: "running" }]}
+      >
+        <ItemDetail itemId="i-1" runId={null} />
+      </SSEConnectionManager>
+    );
+    expect(screen.getByTestId("conversation-inert")).toBeInTheDocument();
+    expect(screen.getByTestId("log-rail-inert")).toBeInTheDocument();
+    expect(screen.queryByTestId("conversation-input")).toBeNull();
+    expect(screen.queryByTestId("log-filter")).toBeNull();
   });
 });
