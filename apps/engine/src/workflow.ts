@@ -11,6 +11,7 @@ import {
   mergeProjectBranchIntoItem,
 } from "./core/repoSimulation.js"
 import {
+  assertWorkspaceRootOnBaseBranch,
   detectRealGitMode,
   exitRunToItemBranchReal,
   ensureItemBranchReal,
@@ -365,7 +366,10 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
   }
 
   try {
-    if (realGit.enabled) ensureItemBranchReal(realGit, context)
+    if (realGit.enabled) {
+      ensureItemBranchReal(realGit, context)
+      assertWorkspaceRootOnBaseBranch(realGit, "after ensureItemBranchReal (run start)")
+    }
 
     const itemResumePlan = options?.resume ? normalizeItemResume(options.resume) : { startStage: "brainstorm" as const }
     const resumePlan = options?.resume ? normalizeProjectResume(options.resume) : null
@@ -442,7 +446,10 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
         resumePlan ?? undefined,
         options?.llm,
       )
-      if (realGit.enabled) mergeProjectIntoItemReal(realGit, context, project.id)
+      if (realGit.enabled) {
+        mergeProjectIntoItemReal(realGit, context, project.id)
+        assertWorkspaceRootOnBaseBranch(realGit, `after merging project ${project.id} into item`)
+      }
     }
 
     stagePresent.header("DONE")
@@ -464,6 +471,11 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
         stagePresent.dim(`→ Run exit branch: ${exitBranch}`)
       } catch (error) {
         stagePresent.warn(`Run exit branch restore failed: ${(error as Error).message}`)
+      }
+      try {
+        assertWorkspaceRootOnBaseBranch(realGit, "run exit")
+      } catch (error) {
+        stagePresent.warn(`Workspace root invariant failed at run exit: ${(error as Error).message}`)
       }
     }
   }

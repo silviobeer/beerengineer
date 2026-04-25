@@ -8,6 +8,7 @@ import { spawnSync } from "node:child_process"
 import { layout, type WorkflowContext } from "../src/core/workspaceLayout.js"
 import {
   abandonStoryBranchReal,
+  assertWorkspaceRootOnBaseBranch,
   detectRealGitMode,
   ensureItemBranchReal,
   ensureProjectBranchReal,
@@ -97,6 +98,75 @@ test("realGit creates item/project/wave/story branches and merges them back", ()
     assert.equal(exitRunToItemBranchReal(mode, ctx), "item/demo-item")
     assert.equal(sh(root, ["branch", "--show-current"]), "main")
     assert.equal(sh(mode.itemWorktreeRoot!, ["branch", "--show-current"]), "item/demo-item")
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("assertWorkspaceRootOnBaseBranch passes when primary stays on baseBranch and item worktree exists separately", () => {
+  const root = seedRepo()
+  try {
+    const ctx: WorkflowContext = {
+      workspaceId: "guard-ws",
+      runId: "guard-run",
+      itemSlug: "guard-item",
+      baseBranch: "main",
+      workspaceRoot: root,
+    }
+    const mode = detectRealGitMode(ctx)
+    assert.equal(mode.enabled, true)
+    if (!mode.enabled) return
+    ensureItemBranchReal(mode, ctx)
+    // No throw expected — primary still on main, itemWorktreeRoot is a separate path on item branch.
+    assertWorkspaceRootOnBaseBranch(mode, "test")
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("assertWorkspaceRootOnBaseBranch throws when primary HEAD is hijacked off baseBranch", () => {
+  const root = seedRepo()
+  try {
+    const ctx: WorkflowContext = {
+      workspaceId: "hijack-ws",
+      runId: "hijack-run",
+      itemSlug: "hijack-item",
+      baseBranch: "main",
+      workspaceRoot: root,
+    }
+    const mode = detectRealGitMode(ctx)
+    assert.equal(mode.enabled, true)
+    if (!mode.enabled) return
+    ensureItemBranchReal(mode, ctx)
+    // Simulate the failure mode: someone switched the primary checkout to a non-base branch.
+    sh(root, ["checkout", "-b", "rogue/local-edit"])
+    assert.throws(
+      () => assertWorkspaceRootOnBaseBranch(mode, "test hijack"),
+      /branch_gate: primary workspaceRoot was hijacked off main/,
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("assertWorkspaceRootOnBaseBranch throws when itemWorktreeRoot equals workspaceRoot", () => {
+  const root = seedRepo()
+  try {
+    const ctx: WorkflowContext = {
+      workspaceId: "same-path-ws",
+      runId: "same-path-run",
+      itemSlug: "same-path-item",
+      baseBranch: "main",
+      workspaceRoot: root,
+    }
+    const mode = detectRealGitMode(ctx)
+    assert.equal(mode.enabled, true)
+    if (!mode.enabled) return
+    const broken = { ...mode, itemWorktreeRoot: mode.workspaceRoot }
+    assert.throws(
+      () => assertWorkspaceRootOnBaseBranch(broken, "test same path"),
+      /workspaceRoot and itemWorktreeRoot must differ/,
+    )
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

@@ -63,6 +63,27 @@ function branchWorkspaceRoot(mode: RealGitEnabled): string {
   return mode.itemWorktreeRoot
 }
 
+// Guards the invariant that all branch/checkout work happens in the item
+// worktree, never in the primary checkout. If the engine ever lands HEAD of
+// `mode.workspaceRoot` on something other than `baseBranch`, we want to fail
+// fast — silently mutating main is the worst possible failure mode.
+export function assertWorkspaceRootOnBaseBranch(
+  mode: RealGitEnabled,
+  when: string,
+): void {
+  if (resolve(mode.workspaceRoot) === resolve(mode.itemWorktreeRoot)) {
+    throw new Error(
+      `branch_gate: workspaceRoot and itemWorktreeRoot must differ (${mode.workspaceRoot}) — ${when}`,
+    )
+  }
+  const actual = currentBranch(mode.workspaceRoot)
+  if (actual !== mode.baseBranch) {
+    throw new Error(
+      `branch_gate: primary workspaceRoot was hijacked off ${mode.baseBranch} (now on ${actual || "<detached>"}) — ${when}`,
+    )
+  }
+}
+
 function branchExists(workspaceRoot: string, branch: string): boolean {
   return runGit(workspaceRoot, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]).ok
 }
