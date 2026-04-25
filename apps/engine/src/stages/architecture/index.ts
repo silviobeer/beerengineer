@@ -51,7 +51,7 @@ export async function architecture(ctx: WithPrd, llm?: RunLlmConfig): Promise<Ar
       printStageCompletion(run, "architecture")
       return artifact
     },
-    maxReviews: 2,
+    maxReviews: 3,
   })
 
   return result

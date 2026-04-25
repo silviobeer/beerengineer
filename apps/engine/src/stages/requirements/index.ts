@@ -60,7 +60,7 @@ export async function requirements(ctx: ProjectContext, llm?: RunLlmConfig): Pro
       printStageCompletion(run, "requirements")
       return artifact.prd
     },
-    maxReviews: 2,
+    maxReviews: 3,
   })
 
   return result
