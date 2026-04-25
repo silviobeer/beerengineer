@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useReducer, useRef } from "react";
+import { useEffect, useReducer, useState } from "react";
 import type { Item, SseStateChangeEvent } from "./types";
 
 type Action =
@@ -46,8 +46,7 @@ export interface UseBoardSseResult {
 export function useBoardSse(options: UseBoardSseOptions): UseBoardSseResult {
   const { initialItems, url, eventSourceFactory } = options;
   const [items, dispatch] = useReducer(reducer, initialItems);
-  const isOfflineRef = useRef(false);
-  const [, force] = useReducer((x: number) => x + 1, 0);
+  const [isOffline, setIsOffline] = useState(false);
 
   useEffect(() => {
     dispatch({ type: "init", items: initialItems });
@@ -58,14 +57,12 @@ export function useBoardSse(options: UseBoardSseOptions): UseBoardSseResult {
   useEffect(() => {
     if (!url) return;
     const make =
-      eventSourceFactory ??
-      ((u: string): EventSource => new EventSource(u));
+      eventSourceFactory ?? ((u: string): EventSource => new EventSource(u));
     let es: EventSource | null = null;
     try {
       es = make(url);
     } catch {
-      isOfflineRef.current = true;
-      force();
+      setIsOffline(true);
       return;
     }
 
@@ -80,14 +77,8 @@ export function useBoardSse(options: UseBoardSseOptions): UseBoardSseResult {
         // ignore malformed payloads
       }
     };
-    const onError = () => {
-      isOfflineRef.current = true;
-      force();
-    };
-    const onOpen = () => {
-      isOfflineRef.current = false;
-      force();
-    };
+    const onError = () => setIsOffline(true);
+    const onOpen = () => setIsOffline(false);
 
     es.addEventListener("message", onMessage as EventListener);
     es.addEventListener("error", onError as EventListener);
@@ -101,5 +92,5 @@ export function useBoardSse(options: UseBoardSseOptions): UseBoardSseResult {
     };
   }, [url, eventSourceFactory]);
 
-  return { items, isOffline: isOfflineRef.current };
+  return { items, isOffline };
 }
