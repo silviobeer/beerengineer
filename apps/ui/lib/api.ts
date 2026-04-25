@@ -1,4 +1,4 @@
-import type { Item, Phase } from "./types";
+import type { Item, Phase, Workspace } from "./types";
 
 const ENGINE_URL =
   process.env.ENGINE_URL ?? process.env.NEXT_PUBLIC_ENGINE_URL ?? "http://localhost:4100";
@@ -83,4 +83,40 @@ function derivePipelineState(c: RawBoardCard): string {
 
 export function buildSseUrl(workspaceKey: string): string {
   return `${ENGINE_URL}/events?workspace=${encodeURIComponent(workspaceKey)}&level=2`;
+}
+
+interface RawWorkspace {
+  key?: string | null;
+  name?: string | null;
+}
+
+export async function fetchWorkspaces(): Promise<Workspace[]> {
+  const result = await fetchWorkspacesResult();
+  return result.workspaces;
+}
+
+export interface FetchWorkspacesResult {
+  workspaces: Workspace[];
+  error: boolean;
+}
+
+export async function fetchWorkspacesResult(): Promise<FetchWorkspacesResult> {
+  const url = `${ENGINE_URL}/workspaces`;
+  try {
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) return { workspaces: [], error: true };
+    const payload = (await res.json()) as
+      | { workspaces?: RawWorkspace[] }
+      | RawWorkspace[];
+    const list = Array.isArray(payload) ? payload : payload.workspaces ?? [];
+    const out: Workspace[] = [];
+    for (const w of list) {
+      if (typeof w?.key === "string" && w.key.length > 0) {
+        out.push({ key: w.key, name: typeof w.name === "string" && w.name.length > 0 ? w.name : w.key });
+      }
+    }
+    return { workspaces: out, error: false };
+  } catch {
+    return { workspaces: [], error: true };
+  }
 }

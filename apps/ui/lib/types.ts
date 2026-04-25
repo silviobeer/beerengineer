@@ -15,7 +15,17 @@ export type PipelineState =
   | "openPrompt"
   | "review-gate-waiting"
   | "run-blocked"
+  | "failed"
   | string;
+
+export const STAGE_KEYS = ["arch", "plan", "exec", "review"] as const;
+export type StageKey = (typeof STAGE_KEYS)[number];
+export const STAGE_LABELS: Record<StageKey, string> = {
+  arch: "Arch",
+  plan: "Plan",
+  exec: "Exec",
+  review: "Review",
+};
 
 export interface Item {
   id: string;
@@ -24,6 +34,7 @@ export interface Item {
   summary?: string | null;
   phase: Phase;
   pipelineState: PipelineState;
+  current_stage?: string | null;
 }
 
 export interface BoardData {
@@ -35,4 +46,9 @@ export interface SseStateChangeEvent {
   itemId: string;
   pipelineState?: PipelineState;
   phase?: Phase;
+}
+
+export interface Workspace {
+  key: string;
+  name: string;
 }
