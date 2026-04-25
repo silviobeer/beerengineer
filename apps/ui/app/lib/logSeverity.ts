@@ -7,8 +7,8 @@ export type LogSeverity =
   | "CRITICAL"
   | string;
 
-const HIGH_SEVERITY_TOKENS = new Set<string>(["WARN", "ERROR", "CRITICAL"]);
-const LOW_SEVERITY_TOKENS = new Set<string>(["DEBUG", "INFO", "TRACE"]);
+const HIGH_SEVERITY_TOKENS = new Set<string>(["L0", "WARN", "ERROR", "CRITICAL"]);
+const LOW_SEVERITY_TOKENS = new Set<string>(["L1", "L2", "DEBUG", "INFO", "TRACE"]);
 
 export function isHighSeverity(severity: string): boolean {
   const token = severity.toUpperCase();

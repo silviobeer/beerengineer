@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { isHighSeverity } from "../lib/logSeverity";
+import { useLogStream } from "../lib/logStream";
 
 export type LogLine = {
   id?: string;
@@ -15,6 +16,7 @@ export type LogFilter = "alles" | "wichtig";
 export type LogRailProps = {
   logs: LogLine[];
   streamEnded?: boolean;
+  currentRunId?: string | null;
 };
 
 function formatTimestamp(iso: string): string {
@@ -35,22 +37,65 @@ function compareTimestamps(a: string, b: string): number {
   return ta - tb;
 }
 
-export function LogRail({ logs, streamEnded = false }: LogRailProps) {
+export function LogRail({
+  logs,
+  streamEnded = false,
+  currentRunId,
+}: LogRailProps) {
   const [filter, setFilter] = useState<LogFilter>("alles");
+  const [sseLines, setSseLines] = useState<LogLine[]>([]);
+  const stream = useLogStream();
+  const inertMode = currentRunId === null;
+
+  useEffect(() => {
+    setSseLines([]);
+  }, [currentRunId]);
+
+  useEffect(() => {
+    if (inertMode || !stream) return;
+    const unsubscribe = stream.subscribe((event) => {
+      if (event.type !== "log") return;
+      setSseLines((prev) => [...prev, event.data]);
+    });
+    return unsubscribe;
+  }, [stream, inertMode]);
+
+  const combinedLogs = useMemo(
+    () => (sseLines.length === 0 ? logs : [...logs, ...sseLines]),
+    [logs, sseLines],
+  );
 
   const sortedLogs = useMemo(() => {
-    const indexed = logs.map((line, index) => ({ line, index }));
+    const indexed = combinedLogs.map((line, index) => ({ line, index }));
     indexed.sort((a, b) => {
       const t = compareTimestamps(a.line.timestamp, b.line.timestamp);
       return t !== 0 ? t : a.index - b.index;
     });
     return indexed.map((entry) => entry.line);
-  }, [logs]);
+  }, [combinedLogs]);
 
   const visibleLogs = useMemo(() => {
     if (filter === "alles") return sortedLogs;
     return sortedLogs.filter((line) => isHighSeverity(line.severity));
   }, [sortedLogs, filter]);
+
+  if (inertMode) {
+    return (
+      <section
+        data-testid="log-rail"
+        aria-label="Log Rail"
+        className="flex flex-col h-full"
+      >
+        <div
+          data-testid="log-rail-inert"
+          role="status"
+          className="px-3 py-4 text-[var(--color-muted,#888)] font-mono text-xs"
+        >
+          No active run logs
+        </div>
+      </section>
+    );
+  }
 
   const isEmpty = visibleLogs.length === 0;
 
