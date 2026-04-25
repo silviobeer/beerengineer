@@ -125,6 +125,16 @@ async function executeWave(
     ensureWaveBranchReal(realGit, ctx, ctx.project.id, wave.number)
   }
 
+  // Wave-branch merges/abandons must happen one at a time even when story
+  // implementations run in parallel — concurrent `git merge` into the wave
+  // branch races on the same ref. The chain serialises just the git ops while
+  // story implementations and worktree cleanup stay fully concurrent.
+  let waveBranchOpQueue: Promise<void> = Promise.resolve()
+  const enqueueWaveBranchOp = (op: () => void): Promise<void> => {
+    waveBranchOpQueue = waveBranchOpQueue.then(async () => op())
+    return waveBranchOpQueue
+  }
+
   const run = async (story: Pick<UserStory, "id" | "title">) => {
     const resolved = resolveStory(story, storyById)
     let storyWorktreeRoot: string | undefined
@@ -158,11 +168,17 @@ async function executeWave(
       // (ralphRuntime only sim-merges when the story outcome is "passed"). This
       // keeps the two state machines from diverging on anything other than
       // "passed" (e.g. ready_for_review left behind by a crashed cycle).
+      // Serialise via `enqueueWaveBranchOp` so concurrent stories cannot race
+      // on the wave branch.
       if (realGit.enabled && result.implementation.status === "passed") {
-        mergeStoryIntoWaveReal(realGit, ctx, ctx.project.id, wave.number, resolved.id)
+        await enqueueWaveBranchOp(() =>
+          mergeStoryIntoWaveReal(realGit, ctx, ctx.project.id, wave.number, resolved.id),
+        )
       }
       if (realGit.enabled && result.implementation.status === "blocked") {
-        abandonStoryBranchReal(realGit, ctx, ctx.project.id, wave.number, resolved.id)
+        await enqueueWaveBranchOp(() =>
+          abandonStoryBranchReal(realGit, ctx, ctx.project.id, wave.number, resolved.id),
+        )
       }
       return result
     } finally {
@@ -180,7 +196,15 @@ async function executeWave(
     }
   }
 
-  const results = await sequentially(wave.stories, run)
+  // Stories within a wave are independent by plan-construction (the planner
+  // keeps cross-story dependencies in different waves). Default to running
+  // them in parallel — each lives in its own worktree + branch, and the
+  // wave-branch merge step serialises through `enqueueWaveBranchOp` above.
+  // Set BEERENGINEER_SEQUENTIAL_STORIES=1 to force the legacy sequential path.
+  const parallel = process.env.BEERENGINEER_SEQUENTIAL_STORIES !== "1"
+  const results = parallel
+    ? await runStoriesInParallel(wave.stories, run)
+    : await sequentially(wave.stories, run)
 
   const summary = await writeWaveSummary(ctx, wave, ctx.project.id, results)
   stagePresent.ok(
@@ -216,6 +240,26 @@ async function sequentially<T, R>(items: T[], fn: (item: T) => Promise<R>): Prom
   const out: R[] = []
   for (const item of items) out.push(await fn(item))
   return out
+}
+
+/**
+ * Run all stories in a wave concurrently. Failures inside individual stories
+ * are converted to a "blocked" StoryResult so a single bad story cannot abort
+ * the rest of the wave, matching the behaviour of the existing per-story
+ * try/finally + error wrappers in the sequential path.
+ */
+async function runStoriesInParallel(
+  stories: Array<Pick<UserStory, "id" | "title">>,
+  run: (story: Pick<UserStory, "id" | "title">) => Promise<StoryResult>,
+): Promise<StoryResult[]> {
+  const settled = await Promise.allSettled(stories.map(story => run(story)))
+  return settled.map((entry, index) => {
+    if (entry.status === "fulfilled") return entry.value
+    const story = stories[index]
+    const reason = entry.reason instanceof Error ? entry.reason.message : String(entry.reason)
+    stagePresent.warn(`Story ${story.id} threw during parallel execution: ${reason}`)
+    return { storyId: story.id, implementation: blockedPlaceholder(story, reason) }
+  })
 }
 
 function resolveStory(
