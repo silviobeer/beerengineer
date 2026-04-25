@@ -170,9 +170,16 @@ export function resolveMergeConflictsViaLlm(input: {
   })
   const durationMs = Date.now() - startedAt
 
-  const remaining = listConflictedFiles(input.workspaceRoot)
+  // Order matters here. The resolver mutates working-tree files; the index
+  // still records them as unmerged until we `git add`. So:
+  //   1. Check working-tree files for conflict markers (cheap correctness gate).
+  //   2. `git add -A` to take the resolution into the index.
+  //   3. NOW ask git for unmerged paths — only after staging is the index honest.
+  // Inverting (2) and (3) caused every successful resolution to look failed.
   const markerStillIn = conflicted.find(file => fileHasConflictMarkers(input.workspaceRoot, file))
-  const ok = result.status === 0 && remaining.length === 0 && !markerStillIn
+  const addResult = !markerStillIn ? git(["add", "-A"], input.workspaceRoot) : { ok: false, stdout: "", stderr: "skipped: markers still present" }
+  const remaining = addResult.ok ? listConflictedFiles(input.workspaceRoot) : conflicted
+  const ok = result.status === 0 && !markerStillIn && addResult.ok && remaining.length === 0
 
   writeResolverLog(input.logDir, {
     provider: input.harness.provider,
@@ -186,6 +193,8 @@ export function resolveMergeConflictsViaLlm(input: {
     signal: result.signal ?? null,
     stdoutSnippet: (result.stdout ?? "").slice(0, 4000),
     stderrSnippet: (result.stderr ?? "").slice(0, 4000),
+    addOk: addResult.ok,
+    addStderr: addResult.stderr.slice(0, 400),
     remainingAfter: remaining,
     markerStillIn: markerStillIn ?? null,
     ok,
@@ -197,11 +206,14 @@ export function resolveMergeConflictsViaLlm(input: {
       : `${input.harness.provider}-cli-exit-${result.status ?? "unknown"}`
     return { ok: false, reason: `${reason}: ${(result.stderr ?? "").slice(0, 400)}` }
   }
-  if (remaining.length > 0) {
-    return { ok: false, reason: `conflicts remain after resolver: ${remaining.join(", ")}` }
-  }
   if (markerStillIn) {
     return { ok: false, reason: `marker remains in ${markerStillIn}` }
+  }
+  if (!addResult.ok) {
+    return { ok: false, reason: `git add -A failed: ${addResult.stderr.slice(0, 400)}` }
+  }
+  if (remaining.length > 0) {
+    return { ok: false, reason: `conflicts remain after resolver: ${remaining.join(", ")}` }
   }
   return { ok: true, resolvedFiles: conflicted }
 }

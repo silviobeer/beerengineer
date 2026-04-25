@@ -213,11 +213,9 @@ function mergeNoFf(
         logDir: opts.resolverLogDir,
       })
       if (resolution.ok) {
-        const add = runGit(root, ["add", "-A"])
-        if (add.ok) {
-          const commit = runGit(root, ["commit", "--no-edit"])
-          if (commit.ok) return
-        }
+        // Resolver already staged with `git add -A`; just complete the merge.
+        const commit = runGit(root, ["commit", "--no-edit"])
+        if (commit.ok) return
       }
     }
     runGit(root, ["merge", "--abort"])
