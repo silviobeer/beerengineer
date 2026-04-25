@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, within, fireEvent, act } from "@testing-library/react";
+import { render, screen, fireEvent, act } from "@testing-library/react";
 import { ItemDetailView } from "../app/_ui/ItemDetailView";
 import {
   FX_01,
@@ -9,7 +9,7 @@ import {
   unprocessable422,
   success,
 } from "./fixtures";
-import type { ActionResult, ItemAction } from "../app/_engine/types";
+import type { ActionResult } from "../app/_engine/types";
 
 function isDisabled(button: HTMLElement): boolean {
   return (
