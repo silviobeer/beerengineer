@@ -20,6 +20,7 @@ export async function architecture(ctx: WithPrd, llm?: RunLlmConfig): Promise<Ar
       prd: ctx.prd,
       wireframes: ctx.wireframes,
       design: ctx.design,
+      codebase: ctx.codebase,
       revisionCount: 0,
     }),
     stageAgent: createArchitectureStage(ctx.project, llm),
