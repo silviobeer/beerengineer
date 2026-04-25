@@ -8,6 +8,7 @@ export interface WorkspaceContextValue {
   currentKey: string;
   currentWorkspace: Workspace | null;
   isKnownWorkspace: boolean;
+  fetchError: boolean;
 }
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
@@ -15,12 +16,14 @@ const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 interface WorkspaceProviderProps {
   workspaces: Workspace[];
   currentKey: string;
+  fetchError?: boolean;
   children: React.ReactNode;
 }
 
 export function WorkspaceProvider({
   workspaces,
   currentKey,
+  fetchError = false,
   children,
 }: WorkspaceProviderProps) {
   const value = useMemo<WorkspaceContextValue>(() => {
@@ -30,8 +33,9 @@ export function WorkspaceProvider({
       currentKey,
       currentWorkspace: current,
       isKnownWorkspace: current !== null,
+      fetchError,
     };
-  }, [workspaces, currentKey]);
+  }, [workspaces, currentKey, fetchError]);
   return (
     <WorkspaceContext.Provider value={value}>
       {children}

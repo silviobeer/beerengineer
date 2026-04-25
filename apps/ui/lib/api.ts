@@ -91,10 +91,20 @@ interface RawWorkspace {
 }
 
 export async function fetchWorkspaces(): Promise<Workspace[]> {
+  const result = await fetchWorkspacesResult();
+  return result.workspaces;
+}
+
+export interface FetchWorkspacesResult {
+  workspaces: Workspace[];
+  error: boolean;
+}
+
+export async function fetchWorkspacesResult(): Promise<FetchWorkspacesResult> {
   const url = `${ENGINE_URL}/workspaces`;
   try {
     const res = await fetch(url, { cache: "no-store" });
-    if (!res.ok) return [];
+    if (!res.ok) return { workspaces: [], error: true };
     const payload = (await res.json()) as
       | { workspaces?: RawWorkspace[] }
       | RawWorkspace[];
@@ -105,8 +115,8 @@ export async function fetchWorkspaces(): Promise<Workspace[]> {
         out.push({ key: w.key, name: typeof w.name === "string" && w.name.length > 0 ? w.name : w.key });
       }
     }
-    return out;
+    return { workspaces: out, error: false };
   } catch {
-    return [];
+    return { workspaces: [], error: true };
   }
 }

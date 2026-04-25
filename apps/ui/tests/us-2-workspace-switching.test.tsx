@@ -23,11 +23,19 @@ import {
   FIXTURE_MULTI_WORKSPACES,
   FIXTURE_EMPTY_WORKSPACES,
 } from "@/lib/fixtures";
-import { fetchWorkspaces } from "@/lib/api";
+import { fetchWorkspaces, fetchWorkspacesResult } from "@/lib/api";
 
-function renderTopbar(currentKey: string, workspaces = FIXTURE_MULTI_WORKSPACES) {
+function renderTopbar(
+  currentKey: string,
+  workspaces = FIXTURE_MULTI_WORKSPACES,
+  fetchError = false
+) {
   return render(
-    <WorkspaceProvider workspaces={workspaces} currentKey={currentKey}>
+    <WorkspaceProvider
+      workspaces={workspaces}
+      currentKey={currentKey}
+      fetchError={fetchError}
+    >
       <Topbar />
     </WorkspaceProvider>
   );
@@ -107,6 +115,57 @@ describe("US-2: Workspace switcher edge cases", () => {
       expect(arg).not.toContain("/items/");
     });
   });
+
+  describe("TC-2.2b: active workspace indicator", () => {
+    it("active option carries data-active=true; non-active options do not", () => {
+      pathnameMock = "/w/ws-beta";
+      renderTopbar("ws-beta");
+      const combo = screen.getByRole("combobox", {
+        name: /workspace/i,
+      });
+      const options = within(combo).getAllByRole(
+        "option"
+      ) as HTMLOptionElement[];
+      const activeOptions = options.filter(
+        (o) => o.dataset.active === "true"
+      );
+      expect(activeOptions).toHaveLength(1);
+      expect(activeOptions[0]?.value).toBe("ws-beta");
+      expect(activeOptions[0]?.textContent).toBe("Beta Cellar");
+    });
+  });
+
+  describe("TC-2.3d: rapid succession switching", () => {
+    it("each selection drives a router.push call with the latest key", () => {
+      pathnameMock = "/w/ws-alpha";
+      renderTopbar("ws-alpha");
+      const combo = screen.getByRole("combobox", {
+        name: /workspace/i,
+      }) as HTMLSelectElement;
+      fireEvent.change(combo, { target: { value: "ws-beta" } });
+      fireEvent.change(combo, { target: { value: "ws-gamma" } });
+      expect(pushMock).toHaveBeenCalledTimes(2);
+      expect(pushMock.mock.calls[0]?.[0]).toBe("/w/ws-beta");
+      expect(pushMock.mock.calls[1]?.[0]).toBe("/w/ws-gamma");
+    });
+  });
+
+  describe("TC-2.6: GET /workspaces fetch error renders an error state", () => {
+    it("renders the workspace switcher with a visible error indicator and does not crash", () => {
+      pathnameMock = "/w/ws-alpha";
+      renderTopbar("ws-alpha", [], true);
+      expect(screen.getByTestId("topbar")).toBeInTheDocument();
+      expect(
+        screen.getByRole("combobox", { name: /workspace/i })
+      ).toBeInTheDocument();
+      expect(
+        screen.getByTestId("workspace-switcher-error-text")
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(/failed to load workspaces/i)
+      ).toBeInTheDocument();
+    });
+  });
 });
 
 describe("US-2: fetchWorkspaces resilience (TC-2.6)", () => {
@@ -136,5 +195,36 @@ describe("US-2: fetchWorkspaces resilience (TC-2.6)", () => {
       .mockRejectedValue(new Error("network down"));
     const result = await fetchWorkspaces();
     expect(result).toEqual([]);
+  });
+
+  it("fetchWorkspacesResult flags error=true on HTTP 500", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: async () => ({}),
+    } as unknown as Response);
+    const result = await fetchWorkspacesResult();
+    expect(result.error).toBe(true);
+    expect(result.workspaces).toEqual([]);
+  });
+
+  it("fetchWorkspacesResult flags error=true on network reject", async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockRejectedValue(new Error("network down"));
+    const result = await fetchWorkspacesResult();
+    expect(result.error).toBe(true);
+    expect(result.workspaces).toEqual([]);
+  });
+
+  it("fetchWorkspacesResult flags error=false on a legit empty array", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => [],
+    } as unknown as Response);
+    const result = await fetchWorkspacesResult();
+    expect(result.error).toBe(false);
+    expect(result.workspaces).toEqual([]);
   });
 });
