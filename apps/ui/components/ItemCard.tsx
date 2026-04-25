@@ -49,7 +49,10 @@ export function ItemCard({ item, workspaceKey }: ItemCardProps) {
         </p>
       ) : null}
       <div className="mt-2 flex items-center gap-2">
-        <StatusChip state={item.pipelineState} />
+        <StatusChip
+          state={item.pipelineState}
+          currentStage={item.current_stage ?? null}
+        />
       </div>
       {showStepper ? (
         <MiniStepper
