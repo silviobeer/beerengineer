@@ -37,8 +37,14 @@ export function projectWireframes(
 ): WireframeArtifact {
   const screens = artifact.screens.filter(screen => screen.projectIds.includes(projectId))
   const screenIds = new Set(screens.map(screen => screen.id))
+  // Strip the inline wireframe HTML before passing the artifact downstream —
+  // requirements/architecture/planning/execution stages need the structural
+  // info (regions, navigation, screens) but not the rendered HTML, which can
+  // easily inflate the prompt by 30-50KB per screen.
+  const { wireframeHtmlPerScreen: _omit, ...rest } = artifact
+  void _omit
   return {
-    ...artifact,
+    ...rest,
     screens,
     navigation: filterNavForProject(artifact.navigation, projectId, screenIds),
     conceptAmendments: artifact.conceptAmendments?.filter(
@@ -50,8 +56,12 @@ export function projectWireframes(
 // Design tokens are item-wide by contract — no per-project filtering exists
 // or is planned. Kept as a named function so call sites stay symmetric with
 // projectWireframes() and so a future scoping change has a single touch point.
+// Strips mockupHtmlPerScreen so downstream stages do not haul the full
+// hi-fi mockup HTML (often 25KB per screen) through their prompt payload.
 export function projectDesign(artifact: DesignArtifact): DesignArtifact {
-  return artifact
+  const { mockupHtmlPerScreen: _omit, ...rest } = artifact
+  void _omit
+  return rest
 }
 
 export function mergeAmendments(

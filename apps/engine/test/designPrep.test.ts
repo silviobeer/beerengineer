@@ -79,8 +79,13 @@ test("projectWireframes filters screens, navigation, and amendments without muta
   assert.deepEqual(wireframes, original)
 })
 
-test("projectDesign is pass-through", () => {
-  assert.equal(projectDesign(design), design)
+test("projectDesign strips mockupHtmlPerScreen so downstream stages don't haul full HTML", () => {
+  const heavyDesign = { ...design, mockupHtmlPerScreen: { "screen-a": "<html>".padEnd(30000, "x") + "</html>" } }
+  const stripped = projectDesign(heavyDesign)
+  assert.equal((stripped as { mockupHtmlPerScreen?: unknown }).mockupHtmlPerScreen, undefined)
+  // Other fields stay intact.
+  assert.deepEqual(stripped.tokens, design.tokens)
+  assert.deepEqual(stripped.typography, design.typography)
 })
 
 test("mergeAmendments enriches concept for item-wide and project-scoped amendments", () => {
