@@ -12,7 +12,9 @@ describe("ItemCard display (TC-04, TC-05, TC-06, TC-07, TC-08, TC-09, TC-10, TC-
       />
     );
     expect(screen.getByTestId("item-title")).toHaveTextContent("My Title");
-    expect(screen.getByTestId("status-chip")).toHaveTextContent("running");
+    const chip = screen.getByTestId("status-chip");
+    expect(chip.dataset.state).toBe("running");
+    expect(chip).toHaveTextContent(/Running/);
   });
 
   it.each([

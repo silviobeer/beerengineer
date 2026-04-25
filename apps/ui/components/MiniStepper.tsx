@@ -1,38 +1,59 @@
+import { STAGE_KEYS, STAGE_LABELS, type StageKey } from "../lib/types";
+
 interface MiniStepperProps {
-  pipelineState: string;
+  pipelineState?: string;
+  currentStage?: string | null;
 }
 
-const STEPS = ["arch", "plan", "exec", "review"];
+const PIPELINE_STATE_TO_STAGE: Record<string, StageKey> = {
+  idle: "arch",
+  openPrompt: "plan",
+  running: "exec",
+  "run-blocked": "exec",
+  "review-gate-waiting": "review",
+};
 
-function activeIndex(state: string): number {
-  if (state === "running") return 2;
-  if (state === "review-gate-waiting") return 3;
-  if (state === "openPrompt") return 1;
-  if (state === "run-blocked") return 2;
-  return 0;
+function resolveActiveStage(
+  currentStage: string | null | undefined,
+  pipelineState: string | undefined
+): StageKey | null {
+  if (currentStage && (STAGE_KEYS as readonly string[]).includes(currentStage)) {
+    return currentStage as StageKey;
+  }
+  if (pipelineState && PIPELINE_STATE_TO_STAGE[pipelineState]) {
+    return PIPELINE_STATE_TO_STAGE[pipelineState];
+  }
+  return null;
 }
 
-export function MiniStepper({ pipelineState }: MiniStepperProps) {
-  const idx = activeIndex(pipelineState);
+export function MiniStepper({ pipelineState, currentStage }: MiniStepperProps) {
+  const active = resolveActiveStage(currentStage, pipelineState);
   return (
     <div
       data-testid="mini-stepper"
-      data-state={pipelineState}
-      className="flex items-center gap-1 mt-1"
+      data-state={pipelineState ?? ""}
+      data-active-stage={active ?? ""}
+      className="mt-1 flex items-center gap-2 text-[10px] uppercase tracking-wider"
     >
-      {STEPS.map((step, i) => (
-        <span
-          key={step}
-          data-step={step}
-          data-active={i === idx ? "true" : "false"}
-          className={`inline-block h-1.5 w-1.5 rounded-full ${
-            i <= idx ? "bg-emerald-400" : "bg-zinc-700"
-          }`}
-        />
-      ))}
-      <span className="ml-1 text-[10px] text-zinc-500 uppercase tracking-wider">
-        {STEPS[idx]}
-      </span>
+      {STAGE_KEYS.map((key) => {
+        const isActive = key === active;
+        return (
+          <span
+            key={key}
+            data-testid={`mini-stepper-segment-${key}`}
+            data-stage={key}
+            data-active={isActive ? "true" : "false"}
+            className={
+              isActive
+                ? "text-amber-300 font-semibold"
+                : "text-zinc-500 opacity-50"
+            }
+          >
+            {isActive ? "▶ " : ""}
+            {STAGE_LABELS[key]}
+          </span>
+        );
+      })}
     </div>
   );
 }

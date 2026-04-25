@@ -28,7 +28,9 @@ describe("SSE live updates (TC-13..TC-18)", () => {
       />
     );
     const beforeUrl = window.location.href;
-    expect(within(getCard("a") as HTMLElement).getByTestId("status-chip")).toHaveTextContent("idle");
+    expect(
+      within(getCard("a") as HTMLElement).getByTestId("status-chip").dataset.state
+    ).toBe("idle");
 
     act(() => {
       MockEventSource.last()!.emit("message", {
@@ -38,8 +40,8 @@ describe("SSE live updates (TC-13..TC-18)", () => {
     });
 
     expect(
-      within(getCard("a") as HTMLElement).getByTestId("status-chip")
-    ).toHaveTextContent("running");
+      within(getCard("a") as HTMLElement).getByTestId("status-chip").dataset.state
+    ).toBe("running");
     expect(window.location.href).toBe(beforeUrl);
   });
 
@@ -87,13 +89,13 @@ describe("SSE live updates (TC-13..TC-18)", () => {
     );
     // Pre-event snapshot must be the initial state
     expect(
-      within(getCard("a") as HTMLElement).getByTestId("status-chip")
-    ).toHaveTextContent("idle");
+      within(getCard("a") as HTMLElement).getByTestId("status-chip").dataset.state
+    ).toBe("idle");
 
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(
-      within(getCard("a") as HTMLElement).getByTestId("status-chip")
-    ).toHaveTextContent("idle");
+      within(getCard("a") as HTMLElement).getByTestId("status-chip").dataset.state
+    ).toBe("idle");
 
     act(() => {
       MockEventSource.last()!.emit("message", {
@@ -102,8 +104,8 @@ describe("SSE live updates (TC-13..TC-18)", () => {
       });
     });
     expect(
-      within(getCard("a") as HTMLElement).getByTestId("status-chip")
-    ).toHaveTextContent("running");
+      within(getCard("a") as HTMLElement).getByTestId("status-chip").dataset.state
+    ).toBe("running");
   });
 
   it("updates the mini-stepper for an Implementation item on state change", () => {

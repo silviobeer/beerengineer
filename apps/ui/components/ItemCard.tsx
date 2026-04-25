@@ -1,8 +1,9 @@
 import Link from "next/link";
 import type { Item } from "../lib/types";
-import { hasAttentionDot } from "../lib/attention";
+import { hasAttentionDot, hasFailureIndicator } from "../lib/attention";
 import { StatusChip } from "./StatusChip";
 import { AttentionDot } from "./AttentionDot";
+import { FailureIndicator } from "./FailureIndicator";
 import { MiniStepper } from "./MiniStepper";
 
 interface ItemCardProps {
@@ -12,6 +13,7 @@ interface ItemCardProps {
 
 export function ItemCard({ item, workspaceKey }: ItemCardProps) {
   const showAttention = hasAttentionDot(item);
+  const showFailure = !showAttention && hasFailureIndicator(item);
   const showStepper = item.phase === "Implementation";
   const summary = item.summary && item.summary.length > 0 ? item.summary : null;
 
@@ -30,6 +32,7 @@ export function ItemCard({ item, workspaceKey }: ItemCardProps) {
           {item.itemCode}
         </span>
         {showAttention ? <AttentionDot /> : null}
+        {showFailure ? <FailureIndicator /> : null}
       </div>
       <div
         data-testid="item-title"
@@ -40,15 +43,23 @@ export function ItemCard({ item, workspaceKey }: ItemCardProps) {
       {summary !== null ? (
         <p
           data-testid="item-summary"
-          className="mt-1 text-xs text-zinc-400 break-words"
+          className="mt-1 line-clamp-2 overflow-hidden text-xs text-zinc-400"
         >
           {summary}
         </p>
       ) : null}
       <div className="mt-2 flex items-center gap-2">
-        <StatusChip state={item.pipelineState} />
+        <StatusChip
+          state={item.pipelineState}
+          currentStage={item.current_stage ?? null}
+        />
       </div>
-      {showStepper ? <MiniStepper pipelineState={item.pipelineState} /> : null}
+      {showStepper ? (
+        <MiniStepper
+          pipelineState={item.pipelineState}
+          currentStage={item.current_stage ?? null}
+        />
+      ) : null}
     </Link>
   );
 }
