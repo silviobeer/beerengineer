@@ -227,3 +227,61 @@ describe("S-03: WorkspaceSwitcher unit tests", () => {
     expect(options[0]?.textContent).toBe("Alpha");
   });
 });
+
+describe("S-03: WorkspaceSwitcher edge cases", () => {
+  beforeEach(() => {
+    pushMock.mockClear();
+    pathnameMock = "/w/alpha";
+  });
+
+  it("EC-01: active key not in fetched list still renders without crashing and does not select another workspace", () => {
+    pathnameMock = "/w/unknown-key";
+    render(
+      <WorkspaceProvider
+        workspaces={[
+          { key: "alpha", name: "Alpha" },
+          { key: "beta", name: "Beta" },
+        ]}
+        currentKey="unknown-key"
+      >
+        <WorkspaceSwitcher />
+      </WorkspaceProvider>
+    );
+
+    const combo = screen.getByRole("combobox", {
+      name: /workspace/i,
+    }) as HTMLSelectElement;
+    expect(combo).toBeInTheDocument();
+    expect(combo.value).toBe("unknown-key");
+    const options = within(combo).getAllByRole("option") as HTMLOptionElement[];
+    const selected = options.filter((o) => o.value === combo.value);
+    expect(selected).toHaveLength(1);
+    expect(selected[0]?.disabled).toBe(true);
+  });
+
+  it("EC-02: rapid successive option changes drive one router.push per change with the correct key", () => {
+    pathnameMock = "/w/alpha";
+    render(
+      <WorkspaceProvider
+        workspaces={[
+          { key: "alpha", name: "Alpha" },
+          { key: "beta", name: "Beta" },
+          { key: "gamma", name: "Gamma" },
+        ]}
+        currentKey="alpha"
+      >
+        <WorkspaceSwitcher />
+      </WorkspaceProvider>
+    );
+
+    const combo = screen.getByRole("combobox", {
+      name: /workspace/i,
+    }) as HTMLSelectElement;
+    fireEvent.change(combo, { target: { value: "beta" } });
+    fireEvent.change(combo, { target: { value: "gamma" } });
+
+    expect(pushMock).toHaveBeenCalledTimes(2);
+    expect(pushMock.mock.calls[0]?.[0]).toBe("/w/beta");
+    expect(pushMock.mock.calls[1]?.[0]).toBe("/w/gamma");
+  });
+});
