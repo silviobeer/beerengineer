@@ -369,9 +369,12 @@ async function runStoryReview(input: {
 
   const reviewWorkspaceRoot = input.storyContext.worktreeRoot ?? input.llm.workspaceRoot
   // workspace.json lives in the primary workspaceRoot, not in story worktrees.
-  // Reading from `reviewWorkspaceRoot` (the per-story worktree) silently
-  // returns null and the review tools fall through to disabled.
-  const workspaceConfig = await readWorkspaceConfig(input.llm.workspaceRoot)
+  // Note: `executionStageLlmForStory` rewrites `llm.workspaceRoot` to the
+  // per-story worktree before this runs, so reading config from llm here
+  // returns null. We thread `primaryWorkspaceRoot` separately on the story
+  // context for exactly this reason.
+  const configRoot = input.storyContext.primaryWorkspaceRoot ?? input.llm.workspaceRoot
+  const workspaceConfig = await readWorkspaceConfig(configRoot)
   const reviewPolicy = workspaceConfig?.reviewPolicy ?? {
     coderabbit: { enabled: false },
     sonarcloud: workspaceConfig?.sonar ?? { enabled: false },

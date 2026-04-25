@@ -319,6 +319,7 @@ function buildStoryExecutionContext(
       slug: requireField(ctx.itemSlug, "itemSlug"),
       baseBranch: requireField(ctx.baseBranch, "baseBranch"),
     },
+    primaryWorkspaceRoot: ctx.workspaceRoot,
     project: { id: ctx.project.id, name: ctx.project.name },
     conceptSummary: ctx.project.concept.summary,
     story: {

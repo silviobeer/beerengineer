@@ -59,6 +59,9 @@ export type StoryExecutionContext = {
   }
   storyBranch?: string
   worktreeRoot?: string
+  // Path to the primary workspace checkout (where .beerengineer/workspace.json
+  // lives). Distinct from worktreeRoot, which points at the per-story worktree.
+  primaryWorkspaceRoot?: string
   testPlan: StoryTestPlanArtifact
 }
 
