@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
 
 export type ConversationRole = "system" | "operator" | "engine";
 
@@ -53,11 +53,8 @@ export function ConversationPanel({
     ConversationEntry[]
   >([]);
   const [submitting, setSubmitting] = useState(false);
-  const [, startTransition] = useTransition();
 
-  const isReviewGateOpen = openPrompt?.type === "review-gate";
-  const isClarificationOpen = openPrompt?.type === "clarification";
-  const showFreeForm = isClarificationOpen;
+  const showFreeForm = openPrompt?.type === "clarification";
   const trimmed = draft.trim();
   const sendDisabled = trimmed.length === 0 || submitting;
 
@@ -89,17 +86,15 @@ export function ConversationPanel({
         answer: draft,
       });
       const submittedText = draft;
-      startTransition(() => {
-        setAppendedOperatorBubbles((prev) => [
-          ...prev,
-          {
-            id: `local-${openPrompt.promptId}-${prev.length}`,
-            role: "operator",
-            text: submittedText,
-          },
-        ]);
-        setDraft("");
-      });
+      setAppendedOperatorBubbles((prev) => [
+        ...prev,
+        {
+          id: `local-${openPrompt.promptId}-${prev.length}`,
+          role: "operator",
+          text: submittedText,
+        },
+      ]);
+      setDraft("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to submit answer");
     } finally {
