@@ -11,16 +11,32 @@ export type RuntimePolicy =
   | { mode: "safe-workspace-write" }
   | { mode: "unsafe-autonomous-write" }
 
-// Stage agents and reviewers emit one JSON envelope and never use tools.
-// Forcing no-tools on the provider invocation drops --add-dir,
-// --permission-mode, and codex's --sandbox flag, which removes the plan-mode
-// preamble and shrinks first-token latency. The workspace's stageAuthoring /
-// reviewer policy fields are kept in the schema for future use.
-export function stageAuthoringPolicy(_policy: WorkspaceRuntimePolicy): RuntimePolicy {
+// Engineering stages need to inspect the existing codebase (api contracts,
+// existing files, package layout) to produce work that aligns with reality.
+// They get safe-readonly so claude can use Read/Grep tools but cannot mutate
+// anything. Design-prep stages design from the concept and do not need tool
+// access — they emit one JSON envelope per turn and stay on no-tools to keep
+// first-token latency low.
+const TOOL_USING_STAGES = new Set([
+  "requirements",
+  "architecture",
+  "planning",
+  "project-review",
+  "qa",
+  "documentation",
+])
+
+export function stageAuthoringPolicy(_policy: WorkspaceRuntimePolicy, stageId?: string): RuntimePolicy {
+  if (stageId && TOOL_USING_STAGES.has(stageId)) return { mode: "safe-readonly" }
   return { mode: "no-tools" }
 }
 
-export function reviewerPolicy(_policy: WorkspaceRuntimePolicy): RuntimePolicy {
+// Reviewers always read-only inspect the artifact in the payload. Tool-using
+// engineering stages get a reviewer that can also read the codebase so it can
+// catch contract drift the artifact author missed; design-prep reviewers stay
+// no-tools.
+export function reviewerPolicy(_policy: WorkspaceRuntimePolicy, stageId?: string): RuntimePolicy {
+  if (stageId && TOOL_USING_STAGES.has(stageId)) return { mode: "safe-readonly" }
   return { mode: "no-tools" }
 }
 

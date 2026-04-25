@@ -156,7 +156,7 @@ function createHostedStageAdapter<S, A>(stage: StageId, llm: RunLlmConfig): Stag
     throw new Error(`Stage ${stage} requested fake provider via hosted path`)
   }
   const provider = harness.provider as RealProviderId
-  const policy = stageAuthoringPolicy(llm.runtimePolicy)
+  const policy = stageAuthoringPolicy(llm.runtimePolicy, stage)
   logResolution(stage, "coder", harness, policy)
   return new HostedStageAdapter<S, A>({
     stageId: stage,
@@ -173,7 +173,7 @@ function createHostedReviewAdapter<S, A>(stage: StageId, llm: RunLlmConfig): Rev
     throw new Error(`Stage ${stage} requested fake provider via hosted path`)
   }
   const provider = harness.provider as RealProviderId
-  const policy = reviewerPolicy(llm.runtimePolicy)
+  const policy = reviewerPolicy(llm.runtimePolicy, stage)
   logResolution(stage, "reviewer", harness, policy)
   return new HostedReviewAdapter<S, A>({
     stageId: stage,
