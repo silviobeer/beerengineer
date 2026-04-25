@@ -20,3 +20,21 @@ export interface BoardCardDTO {
   column: BoardColumn | string;
   current_stage?: string | null;
 }
+
+export type ConversationRole = "system" | "agent" | "user" | "review-gate";
+
+export interface ConversationEntry {
+  id?: string;
+  type: ConversationRole | string;
+  text: string;
+  promptId?: string;
+  actions?: string[];
+}
+
+export interface ItemDetailDTO {
+  id: string;
+  itemCode?: string;
+  title?: string;
+  activeRunId?: string | null;
+  conversation: ConversationEntry[];
+}
