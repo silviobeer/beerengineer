@@ -54,6 +54,16 @@ Document edge cases that materially affect behavior:
 
 If the concept is still ambiguous, continue clarifying instead of producing a padded PRD.
 
+## Operator Decisions
+
+The payload may include a `decisions` array — durable scope answers from the operator across previous runs of the same item.
+
+- treat each decision as binding for this run
+- do not re-open a closed decision; if it says "X is out of scope", remove X from the PRD entirely instead of trying to rephrase it
+- if a decision conflicts with the concept text or wireframes, the decision wins
+- never re-ask a question whose `id` already appears in `decisions`
+- when revising after review, check decisions before assuming a finding is genuinely open
+
 ## Output Contract
 
 Return an `artifact` object matching `RequirementsArtifact`:

@@ -10,3 +10,9 @@ Revise when dependencies point backwards, stories are duplicated or omitted acro
 Pass when dependencies flow forward, waves are pragmatically parallelizable, and every requirement is covered by at least one planned story.
 
 Block only if the plan conflicts with the architecture in a way execution cannot safely absorb.
+
+The payload may include a `state.decisions` array — operator answers carried over from previous runs of the same item.
+
+- treat each decision as binding ground truth
+- do not flag the absence of waves/stories for capabilities an operator decision has dropped
+- accept a plan that correctly omits dropped scope

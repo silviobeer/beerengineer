@@ -22,6 +22,7 @@ export async function requirements(ctx: ProjectContext, llm?: RunLlmConfig): Pro
       wireframes: ctx.wireframes,
       design: ctx.design,
       codebase: ctx.codebase,
+      decisions: ctx.decisions,
       clarificationCount: 0,
       maxClarifications: 2,
       history: [],

@@ -1,4 +1,5 @@
 import type { Repos, StageLogRow } from "../db/repositories.js"
+import { appendItemDecision } from "./itemDecisions.js"
 import { parseLogData } from "./jsonEnvelope.js"
 
 export type AnswerSource = "cli" | "api" | "webhook"
@@ -45,6 +46,24 @@ export function recordAnswer(
     message: answer,
     data: { promptId, source: input.source },
   })
+
+  // Persist the operator's decision at the workspace level so future runs of
+  // the same item inherit it. Without this, every fresh run rediscovers the
+  // same scope conflicts (e.g. "Cancel Run is out of scope") and re-asks.
+  const run = repos.getRun(input.runId)
+  if (run?.workspace_fs_id) {
+    const stageKey = answered.stage_run_id
+      ? repos.listStageRunsForRun(input.runId).find(sr => sr.id === answered.stage_run_id)?.stage_key ?? null
+      : null
+    appendItemDecision(run.workspace_fs_id, {
+      id: promptId,
+      stage: stageKey,
+      question: answered.prompt,
+      answer,
+      runId: input.runId,
+      answeredAt: new Date(answered.answered_at).toISOString(),
+    })
+  }
 
   const conversation = buildConversation(repos, input.runId)
   if (!conversation) return { ok: false, code: "run_not_found" }

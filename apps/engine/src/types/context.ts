@@ -1,3 +1,4 @@
+import type { ItemDecision } from "../core/itemDecisions.js"
 import type { WorkflowContext } from "../core/workspaceLayout.js"
 import type {
   ArchitectureArtifact,
@@ -30,6 +31,7 @@ export type ProjectContext = WorkflowContext & {
   projectReview?: ProjectReviewArtifact
   documentation?: DocumentationArtifact
   codebase?: CodebaseSnapshot
+  decisions?: ItemDecision[]
 }
 
 export type WithPrd = ProjectContext & { prd: PRD }

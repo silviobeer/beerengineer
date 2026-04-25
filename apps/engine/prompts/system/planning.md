@@ -65,6 +65,14 @@ When a story unlocks multiple later stories, place it as early as practical.
 
 When two stories are logically independent but likely to collide on the same module or shared contract, treat that as a coordination risk instead of assuming easy parallelism.
 
+## Operator Decisions
+
+The payload may include a `decisions` array — durable scope answers from the operator across previous runs of the same item.
+
+- treat each decision as binding for this run
+- do not plan work for a story or capability that an operator decision has dropped
+- never re-open a closed decision; the plan must reflect it
+
 ## Output Contract
 
 Return an `artifact` object matching `ImplementationPlanArtifact`:

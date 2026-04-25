@@ -93,6 +93,7 @@ export async function planning(ctx: WithArchitecture, llm?: RunLlmConfig): Promi
       prd: ctx.prd,
       architectureArtifact: ctx.architecture,
       codebase: ctx.codebase,
+      decisions: ctx.decisions,
       revisionCount: 0,
     }),
     stageAgent: createPlanningStage(ctx.project, llm),

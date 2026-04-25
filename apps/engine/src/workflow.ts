@@ -40,6 +40,7 @@ import type {
 } from "./types.js"
 import { mergeAmendments, projectDesign, projectWireframes } from "./core/designPrep.js"
 import { loadCodebaseSnapshot } from "./core/codebaseSnapshot.js"
+import { loadItemDecisions } from "./core/itemDecisions.js"
 import { stagePresent } from "./core/stagePresentation.js"
 import { ask } from "./sim/human.js"
 import { emitEvent, getActiveRun, withStageLifecycle } from "./core/runContext.js"
@@ -442,6 +443,7 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
           wireframes: wireframes ? projectWireframes(wireframes, project.id) : undefined,
           design: design ? projectDesign(design) : undefined,
           codebase: loadCodebaseSnapshot(options?.workspaceRoot),
+          decisions: loadItemDecisions(context.workspaceId),
         },
         resumePlan ?? undefined,
         options?.llm,

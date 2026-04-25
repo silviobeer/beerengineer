@@ -59,6 +59,14 @@ For `apiNotes`, describe interface patterns and integration boundaries only when
 
 For `constraints`, `risks`, and `openQuestions`, include only items that materially affect the project or planning decisions.
 
+## Operator Decisions
+
+The payload may include a `decisions` array — durable scope answers from the operator across previous runs of the same item.
+
+- treat each decision as binding for this run
+- do not contradict or work around a decision; if it removes a feature, the architecture must reflect the removal
+- never re-open a closed decision; reflect it in the architecture instead
+
 ## Output Contract
 
 Return an `artifact` object matching `ArchitectureArtifact`:
