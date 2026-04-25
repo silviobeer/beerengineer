@@ -1,4 +1,4 @@
-import { fetchWorkspaces } from "@/lib/api";
+import { fetchWorkspacesResult } from "@/lib/api";
 import { WorkspaceProvider } from "@/lib/context/WorkspaceContext";
 import { Topbar } from "@/components/Topbar";
 import { UnknownWorkspaceGuard } from "@/components/UnknownWorkspace";
@@ -13,10 +13,14 @@ export default async function WorkspaceLayout({
   params,
 }: WorkspaceLayoutProps) {
   const { key } = await params;
-  const workspaces = await fetchWorkspaces();
+  const { workspaces, error } = await fetchWorkspacesResult();
   return (
     <div data-testid="workspace-layout">
-      <WorkspaceProvider workspaces={workspaces} currentKey={key}>
+      <WorkspaceProvider
+        workspaces={workspaces}
+        currentKey={key}
+        fetchError={error}
+      >
         <Topbar />
         <UnknownWorkspaceGuard>{children}</UnknownWorkspaceGuard>
       </WorkspaceProvider>

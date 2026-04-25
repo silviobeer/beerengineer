@@ -11,6 +11,8 @@ export const FIXTURE_SINGLE_WORKSPACE: Workspace[] = [
   { key: "ws-solo", name: "Solo Workshop" },
 ];
 
+export const FIXTURE_EMPTY_WORKSPACES: Workspace[] = [];
+
 export function makeItem(overrides: Partial<Item> & { id: string }): Item {
   return {
     itemCode: overrides.itemCode ?? `UI-${overrides.id}`,
