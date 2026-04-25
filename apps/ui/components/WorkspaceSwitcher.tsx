@@ -1,26 +1,32 @@
 "use client";
 
+import { useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useWorkspaceContext } from "@/lib/context/WorkspaceContext";
 
 export function WorkspaceSwitcher() {
-  const { workspaces, currentKey } = useWorkspaceContext();
+  const { workspaces, currentKey, isKnownWorkspace } = useWorkspaceContext();
   const router = useRouter();
+
+  const handleChange = useCallback(
+    (event: React.ChangeEvent<HTMLSelectElement>) => {
+      const newKey = event.target.value;
+      if (newKey && newKey !== currentKey) {
+        router.push(`/w/${encodeURIComponent(newKey)}`);
+      }
+    },
+    [router, currentKey]
+  );
 
   return (
     <select
       data-testid="workspace-switcher"
       aria-label="Workspace"
       value={currentKey}
-      onChange={(event) => {
-        const newKey = event.target.value;
-        if (newKey && newKey !== currentKey) {
-          router.push(`/w/${newKey}`);
-        }
-      }}
+      onChange={handleChange}
       className="border border-zinc-800 bg-zinc-900 px-2 py-1 text-sm text-zinc-100 font-mono"
     >
-      {workspaces.find((w) => w.key === currentKey) ? null : (
+      {isKnownWorkspace ? null : (
         <option value={currentKey} disabled>
           {currentKey}
         </option>
