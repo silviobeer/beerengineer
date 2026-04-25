@@ -11,6 +11,7 @@ import {
   mergeWaveIntoProjectReal,
   removeStoryWorktreeReal,
 } from "../../core/realGit.js"
+import { writeRecoveryRecord } from "../../core/recovery.js"
 import { runStage } from "../../core/stageRuntime.js"
 import { createTestWriterReview, createTestWriterStage, type RunLlmConfig } from "../../llm/registry.js"
 import { stagePresent } from "../../core/stagePresentation.js"
@@ -210,6 +211,18 @@ async function executeWave(
   stagePresent.ok(
     `Wave ${wave.number} complete — merged: ${summary.storiesMerged.length}, blocked: ${summary.storiesBlocked.length}`,
   )
+  if (summary.storiesBlocked.length > 0) {
+    // assertWaveSucceeded throws below — write a stage-scope recovery record
+    // first so resume_run sees a `blocked` recovery instead of a 409.
+    await writeRecoveryRecord(ctx, {
+      status: "blocked",
+      cause: "stage_error",
+      scope: { type: "stage", runId: ctx.runId, stageId: "execution" },
+      summary: `Wave ${wave.id} blocked stories: ${summary.storiesBlocked.join(", ")}.`,
+      detail: `wave=${wave.number} merged=${summary.storiesMerged.length} blocked=${summary.storiesBlocked.length}`,
+      evidencePaths: [layout.executionWaveDir(ctx, wave.number)],
+    })
+  }
   assertWaveSucceeded(wave, summary)
   await mergeWaveBranchIntoProject(ctx, ctx.project.id, wave.number)
   if (realGit.enabled) {

@@ -172,6 +172,43 @@ test("assertWorkspaceRootOnBaseBranch throws when itemWorktreeRoot equals worksp
   }
 })
 
+test("ensureItemBranchReal reclaims item branch from a stale orphan worktree", () => {
+  const root = seedRepo()
+  // Put the orphan worktree outside `root` so it doesn't show up in `git
+  // status` as untracked content (which would make detectRealGitMode bail
+  // before we could exercise the reclaim path).
+  const stalePath = mkdtempSync(join(tmpdir(), "be2-stale-"))
+  try {
+    // Simulate a leftover worktree from a prior failed run that is still
+    // holding the engine's item branch on disk.
+    sh(root, ["branch", "item/demo-item"])
+    rmSync(stalePath, { recursive: true, force: true })
+    sh(root, ["worktree", "add", stalePath, "item/demo-item"])
+
+    const ctx: WorkflowContext = {
+      workspaceId: "reclaim-ws",
+      runId: "reclaim-run",
+      itemSlug: "demo-item",
+      baseBranch: "main",
+      workspaceRoot: root,
+    }
+    const mode = detectRealGitMode(ctx)
+    assert.equal(mode.enabled, true)
+    if (!mode.enabled) return
+
+    // ensureItemBranchReal must succeed even though item/demo-item is
+    // already used by the orphan worktree. The orphan should be removed.
+    assert.equal(ensureItemBranchReal(mode, ctx), "item/demo-item")
+    assert.equal(sh(mode.itemWorktreeRoot!, ["branch", "--show-current"]), "item/demo-item")
+
+    const worktrees = sh(root, ["worktree", "list", "--porcelain"])
+    assert.ok(!worktrees.includes(stalePath), `stale worktree ${stalePath} should have been removed`)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+    rmSync(stalePath, { recursive: true, force: true })
+  }
+})
+
 test("detectRealGitMode falls back when repo is dirty", () => {
   const root = seedRepo()
   try {

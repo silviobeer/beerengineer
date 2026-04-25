@@ -10,6 +10,7 @@ import {
   branchNameWave,
 } from "./repoSimulation.js"
 import { isEngineOwnedBranchName } from "./baseBranch.js"
+import { resolveMergeConflictsViaLlm } from "./mergeResolver.js"
 
 export type RealGitDisabled = { enabled: false; reason: string }
 export type RealGitEnabled = { enabled: true; workspaceRoot: string; baseBranch: string; itemWorktreeRoot: string }
@@ -190,8 +191,20 @@ function mergeNoFf(mode: RealGitEnabled, target: string, source: string, message
   if (ancestor.ok) return
   const merge = runGit(root, ["merge", "--no-ff", "-m", message, source])
   if (!merge.ok) {
+    const stderr = merge.stderr || merge.stdout
+    const looksLikeConflict = /CONFLICT|Automatic merge failed/i.test(stderr)
+    if (looksLikeConflict) {
+      const resolution = resolveMergeConflictsViaLlm({ workspaceRoot: root, mergeMessage: message })
+      if (resolution.ok) {
+        const add = runGit(root, ["add", "-A"])
+        if (add.ok) {
+          const commit = runGit(root, ["commit", "--no-edit"])
+          if (commit.ok) return
+        }
+      }
+    }
     runGit(root, ["merge", "--abort"])
-    throw new Error(`realGit: merge ${source} → ${target} failed: ${merge.stderr || merge.stdout}`)
+    throw new Error(`realGit: merge ${source} → ${target} failed: ${stderr}`)
   }
 }
 
@@ -222,6 +235,20 @@ function ensureManagedWorktree(mode: RealGitEnabled, branch: string, targetPath:
     if (!remove.ok) throw new Error(`realGit: remove stale worktree ${targetPath} failed: ${remove.stderr}`)
   } else if (existsSync(targetPath)) {
     rmSync(targetPath, { recursive: true, force: true })
+  }
+  // git refuses to put a branch in two worktrees, so an orphan worktree
+  // from a prior failed run holding `branch` will block the add. Prune
+  // first; then drop any live worktrees that still hold this branch.
+  runGit(primary, ["worktree", "prune"])
+  for (const entry of listWorktrees(primary)) {
+    if (entry.branch === branch && resolve(entry.path) !== resolve(targetPath)) {
+      const remove = runGit(primary, ["worktree", "remove", "--force", entry.path])
+      if (!remove.ok) {
+        throw new Error(
+          `realGit: cannot reclaim ${branch} from stale worktree ${entry.path}: ${remove.stderr || remove.stdout}`,
+        )
+      }
+    }
   }
   const add = runGit(primary, ["worktree", "add", "--force", targetPath, branch])
   if (!add.ok) throw new Error(`realGit: create worktree ${targetPath} for ${branch} failed: ${add.stderr || add.stdout}`)
