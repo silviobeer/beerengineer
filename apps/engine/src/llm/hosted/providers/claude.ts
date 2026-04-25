@@ -80,6 +80,8 @@ function isToolUseContent(part: ClaudeAssistantContent): part is Extract<ClaudeA
 
 function permissionMode(policy: HostedProviderInvokeInput["runtime"]["policy"]): string | null {
   switch (policy.mode) {
+    case "no-tools":
+      return null
     case "safe-readonly":
       return "plan"
     case "safe-workspace-write":
@@ -90,7 +92,14 @@ function permissionMode(policy: HostedProviderInvokeInput["runtime"]["policy"]):
 }
 
 function buildClaudeCommand(input: HostedProviderInvokeInput): string[] {
-  const command = ["claude", "--print", "--verbose", "--output-format", "stream-json", "--add-dir", input.runtime.workspaceRoot]
+  const command = ["claude", "--print", "--verbose", "--output-format", "stream-json"]
+  // no-tools mode (stage agents + reviewers): emit JSON only, no file access,
+  // no plan-mode preamble. Skipping --add-dir + --permission-mode shaves the
+  // workspace-scan startup cost and avoids the empty-output failure mode that
+  // hits Sonnet on long revise chains.
+  if (input.runtime.policy.mode !== "no-tools") {
+    command.push("--add-dir", input.runtime.workspaceRoot)
+  }
   const mode = permissionMode(input.runtime.policy)
   if (mode) command.push("--permission-mode", mode)
   if (input.runtime.policy.mode === "unsafe-autonomous-write") command.push("--dangerously-skip-permissions")

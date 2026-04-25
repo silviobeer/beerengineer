@@ -6,16 +6,22 @@ import type { WorkspaceRuntimePolicy } from "../types/workspace.js"
  * workspace config.
  */
 export type RuntimePolicy =
+  | { mode: "no-tools" }
   | { mode: "safe-readonly" }
   | { mode: "safe-workspace-write" }
   | { mode: "unsafe-autonomous-write" }
 
-export function stageAuthoringPolicy(policy: WorkspaceRuntimePolicy): RuntimePolicy {
-  return { mode: policy.stageAuthoring }
+// Stage agents and reviewers emit one JSON envelope and never use tools.
+// Forcing no-tools on the provider invocation drops --add-dir,
+// --permission-mode, and codex's --sandbox flag, which removes the plan-mode
+// preamble and shrinks first-token latency. The workspace's stageAuthoring /
+// reviewer policy fields are kept in the schema for future use.
+export function stageAuthoringPolicy(_policy: WorkspaceRuntimePolicy): RuntimePolicy {
+  return { mode: "no-tools" }
 }
 
-export function reviewerPolicy(policy: WorkspaceRuntimePolicy): RuntimePolicy {
-  return { mode: policy.reviewer }
+export function reviewerPolicy(_policy: WorkspaceRuntimePolicy): RuntimePolicy {
+  return { mode: "no-tools" }
 }
 
 export function executionCoderPolicy(policy: WorkspaceRuntimePolicy): RuntimePolicy {

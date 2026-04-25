@@ -81,7 +81,13 @@ function buildCodexCommand(input: HostedProviderInvokeInput, state: CodexStreamS
   // and `--dangerously-bypass-approvals-and-sandbox`. Route the safe-readonly /
   // safe-workspace-write modes through `-c sandbox_mode=<mode>` on resume, which
   // both subcommands accept.
-  if (input.runtime.policy.mode === "safe-readonly") {
+  if (input.runtime.policy.mode === "no-tools") {
+    // Stage agents + reviewers: emit JSON only, no shell. Pin the sandbox to
+    // the strictest mode codex offers so a misbehaving model cannot touch the
+    // filesystem either way.
+    if (isResume) command.push("-c", 'sandbox_mode="read-only"')
+    else command.push("--sandbox", "read-only")
+  } else if (input.runtime.policy.mode === "safe-readonly") {
     if (isResume) command.push("-c", 'sandbox_mode="read-only"')
     else command.push("--sandbox", "read-only")
   } else if (input.runtime.policy.mode === "safe-workspace-write") {
@@ -92,7 +98,8 @@ function buildCodexCommand(input: HostedProviderInvokeInput, state: CodexStreamS
   }
   if (input.runtime.model) command.push("--model", input.runtime.model)
   // `codex exec resume` inherits cwd from the original session and rejects
-  // `--cd`; only pass it on fresh exec.
+  // `--cd`; only pass it on fresh exec. no-tools also benefits from setting cwd
+  // (it still reads stdin → writes JSON, no shell calls), so keep the default.
   if (!isResume) command.push("--cd", input.runtime.workspaceRoot)
   command.push("--output-last-message", state.responsePath, "-")
   return command
