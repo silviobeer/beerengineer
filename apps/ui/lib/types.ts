@@ -19,7 +19,21 @@ export interface BoardCardDTO {
   title: string;
   column: BoardColumn | string;
   current_stage?: string | null;
+  summary?: string | null;
+  phase_status?: string | null;
+  hasOpenPrompt?: boolean;
+  hasReviewGateWaiting?: boolean;
+  hasBlockedRun?: boolean;
 }
+
+export const BOARD_COLUMN_LABELS: Record<BoardColumn, string> = {
+  idea: "Idea",
+  frontend: "Frontend",
+  requirements: "Requirements",
+  implementation: "Implementation",
+  test: "Test",
+  merge: "Merge",
+};
 
 export type ConversationRole = "system" | "agent" | "user" | "review-gate";
 
