@@ -12,7 +12,11 @@ import {
 import { isEngineOwnedBranchName } from "./baseBranch.js"
 import { resolveMergeConflictsViaLlm, type MergeResolverHarness } from "./mergeResolver.js"
 
-export type RealGitMergeOptions = { mergeResolver?: MergeResolverHarness }
+export type RealGitMergeOptions = {
+  mergeResolver?: MergeResolverHarness
+  // Optional: directory to drop merge-resolver telemetry into.
+  resolverLogDir?: string
+}
 
 export type RealGitDisabled = { enabled: false; reason: string }
 export type RealGitEnabled = { enabled: true; workspaceRoot: string; baseBranch: string; itemWorktreeRoot: string }
@@ -206,6 +210,7 @@ function mergeNoFf(
         workspaceRoot: root,
         mergeMessage: message,
         harness: opts.mergeResolver,
+        logDir: opts.resolverLogDir,
       })
       if (resolution.ok) {
         const add = runGit(root, ["add", "-A"])

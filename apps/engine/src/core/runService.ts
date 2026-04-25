@@ -1,5 +1,6 @@
 import { cpSync, existsSync } from "node:fs"
 import { busToWorkflowIO, createBus, type EventBus } from "./bus.js"
+import { appendItemDecision } from "./itemDecisions.js"
 import { withPromptPersistence } from "./promptPersistence.js"
 import { prepareRun, type WorkflowEvent } from "./runOrchestrator.js"
 import { loadResumeReadiness, performResume } from "./resume.js"
@@ -211,6 +212,21 @@ export async function resumeRunInProcess(
     reviewNotes: input.reviewNotes,
     source: "api",
   })
+
+  // A resume summary is an operator scope decision in plain text — persist
+  // it at the workspace level so future runs of the same item respect it,
+  // exactly like clarification answers do via recordAnswer.
+  const run = repos.getRun(input.runId)
+  if (run?.workspace_fs_id) {
+    appendItemDecision(run.workspace_fs_id, {
+      id: `remediation-${remediation.id}`,
+      stage: scope.type === "stage" ? scope.stageId : scope.type === "story" ? `execution/${scope.waveNumber}/${scope.storyId}` : null,
+      question: `[resume_run] Operator unblocked the run with explicit scope guidance.`,
+      answer: input.reviewNotes ? `${summary}\n\nReview notes:\n${input.reviewNotes}` : summary,
+      runId: input.runId,
+      answeredAt: new Date().toISOString(),
+    })
+  }
 
   const io = buildApiIo(repos)
   fireInBackground(io, "resumeRunInProcess", () =>

@@ -189,6 +189,7 @@ async function executeWave(
         await enqueueWaveBranchOp(() =>
           mergeStoryIntoWaveReal(realGit, ctx, ctx.project.id, wave.number, resolved.id, {
             mergeResolver: mergeResolverHarness,
+            resolverLogDir: layout.executionWaveDir(ctx, wave.number),
           }),
         )
       }
@@ -242,7 +243,10 @@ async function executeWave(
   assertWaveSucceeded(wave, summary)
   await mergeWaveBranchIntoProject(ctx, ctx.project.id, wave.number)
   if (realGit.enabled) {
-    mergeWaveIntoProjectReal(realGit, ctx, ctx.project.id, wave.number, { mergeResolver: mergeResolverHarness })
+    mergeWaveIntoProjectReal(realGit, ctx, ctx.project.id, wave.number, {
+      mergeResolver: mergeResolverHarness,
+      resolverLogDir: layout.executionWaveDir(ctx, wave.number),
+    })
   }
   return summary
 }

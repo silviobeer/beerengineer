@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process"
-import { readFileSync } from "node:fs"
-import { join } from "node:path"
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { dirname, join } from "node:path"
 
 import { stagePresent } from "./stagePresentation.js"
 
@@ -110,11 +110,31 @@ function buildCommandForProvider(
  * Disabled when `BEERENGINEER_DISABLE_LLM_MERGE_RESOLVER=1` or when `harness`
  * is undefined (e.g. running with `testingOverride: "fake"`).
  */
+/**
+ * Optional sink for resolver telemetry. The execution stage passes a
+ * directory path; we write `merge-resolver.log.txt` there with the prompt,
+ * stdout, stderr, and the conflicted-file list so a failed run leaves a
+ * trail you can read instead of having to re-run with extra logging.
+ */
+function writeResolverLog(logDir: string | undefined, payload: Record<string, unknown>): void {
+  if (!logDir) return
+  try {
+    mkdirSync(dirname(join(logDir, "merge-resolver.log.txt")), { recursive: true })
+    mkdirSync(logDir, { recursive: true })
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-")
+    const file = join(logDir, `merge-resolver.${stamp}.json`)
+    writeFileSync(file, JSON.stringify(payload, null, 2), "utf8")
+  } catch {
+    // Telemetry must not block resolution.
+  }
+}
+
 export function resolveMergeConflictsViaLlm(input: {
   workspaceRoot: string
   mergeMessage: string
   harness?: MergeResolverHarness
   timeoutMs?: number
+  logDir?: string
 }): MergeResolverResult {
   if (process.env.BEERENGINEER_DISABLE_LLM_MERGE_RESOLVER === "1") {
     return { ok: false, reason: "llm-merge-resolver-disabled" }
@@ -142,26 +162,46 @@ export function resolveMergeConflictsViaLlm(input: {
   )
 
   const timeoutMs = input.timeoutMs ?? 180_000
+  const startedAt = Date.now()
   const result = spawnSync(built.command[0], built.command.slice(1), {
     cwd: input.workspaceRoot,
     encoding: "utf8",
     timeout: timeoutMs,
   })
+  const durationMs = Date.now() - startedAt
+
+  const remaining = listConflictedFiles(input.workspaceRoot)
+  const markerStillIn = conflicted.find(file => fileHasConflictMarkers(input.workspaceRoot, file))
+  const ok = result.status === 0 && remaining.length === 0 && !markerStillIn
+
+  writeResolverLog(input.logDir, {
+    provider: input.harness.provider,
+    model: input.harness.model,
+    workspaceRoot: input.workspaceRoot,
+    mergeMessage: input.mergeMessage,
+    conflicted,
+    command: built.command,
+    durationMs,
+    exitStatus: result.status,
+    signal: result.signal ?? null,
+    stdoutSnippet: (result.stdout ?? "").slice(0, 4000),
+    stderrSnippet: (result.stderr ?? "").slice(0, 4000),
+    remainingAfter: remaining,
+    markerStillIn: markerStillIn ?? null,
+    ok,
+  })
+
   if (result.status !== 0) {
     const reason = result.signal
       ? `${input.harness.provider}-cli-signaled-${result.signal}`
       : `${input.harness.provider}-cli-exit-${result.status ?? "unknown"}`
     return { ok: false, reason: `${reason}: ${(result.stderr ?? "").slice(0, 400)}` }
   }
-
-  const remaining = listConflictedFiles(input.workspaceRoot)
   if (remaining.length > 0) {
     return { ok: false, reason: `conflicts remain after resolver: ${remaining.join(", ")}` }
   }
-  for (const file of conflicted) {
-    if (fileHasConflictMarkers(input.workspaceRoot, file)) {
-      return { ok: false, reason: `marker remains in ${file}` }
-    }
+  if (markerStillIn) {
+    return { ok: false, reason: `marker remains in ${markerStillIn}` }
   }
   return { ok: true, resolvedFiles: conflicted }
 }
