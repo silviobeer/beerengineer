@@ -1,18 +1,21 @@
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
-import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
+
+const here = dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "."),
+      "@": resolve(here, "."),
     },
   },
   test: {
     environment: "happy-dom",
     globals: true,
-    setupFiles: ["./tests/setup.tsx"],
-    include: ["tests/**/*.test.{ts,tsx}"],
+    setupFiles: [resolve(here, "vitest.setup.ts"), resolve(here, "tests/setup.ts")],
+    include: ["app/**/*.test.{ts,tsx}", "tests/**/*.test.{ts,tsx}"],
   },
 });

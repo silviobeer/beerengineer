@@ -1,63 +1,35 @@
-"use client";
-
-import { useMemo } from "react";
-import { PHASES } from "../lib/types";
-import type { Item, Phase } from "../lib/types";
-import { Column } from "./Column";
-import { useBoardSse } from "../lib/use-board-sse";
+import { BoardCard } from "./BoardCard";
+import { KanbanColumn } from "./KanbanColumn";
+import { BOARD_COLUMNS, type BoardCardDTO } from "../lib/types";
 
 interface BoardProps {
-  workspaceKey: string;
-  initialItems: Item[];
-  /**
-   * SSE endpoint URL. When omitted, no live subscription is started
-   * (useful for tests that drive items prop directly).
-   */
-  sseUrl?: string | null;
-  eventSourceFactory?: (url: string) => EventSource;
+  items: BoardCardDTO[];
+  workspaceKey?: string;
 }
 
-export function Board({
-  workspaceKey,
-  initialItems,
-  sseUrl,
-  eventSourceFactory,
-}: BoardProps) {
-  const { items } = useBoardSse({
-    initialItems,
-    url: sseUrl,
-    eventSourceFactory,
-  });
-
-  const byPhase = useMemo(() => {
-    const map: Record<Phase, Item[]> = {
-      Idea: [],
-      Frontend: [],
-      Requirements: [],
-      Implementation: [],
-      Test: [],
-      Merge: [],
-    };
-    for (const it of items) {
-      const bucket = map[it.phase];
-      if (bucket) bucket.push(it);
-    }
-    return map;
-  }, [items]);
-
+export function Board({ items, workspaceKey }: BoardProps) {
   return (
     <div
-      data-testid="board"
-      className="flex gap-3 overflow-x-auto p-3 min-h-screen bg-zinc-950"
+      data-testid="kanban-board"
+      className="grid gap-3 p-3"
+      style={{
+        gridTemplateColumns: `repeat(${BOARD_COLUMNS.length}, minmax(16rem, 1fr))`,
+      }}
     >
-      {PHASES.map((phase) => (
-        <Column
-          key={phase}
-          phase={phase}
-          items={byPhase[phase]}
-          workspaceKey={workspaceKey}
-        />
-      ))}
+      {BOARD_COLUMNS.map((column) => {
+        const columnItems = items.filter((item) => item.column === column);
+        return (
+          <KanbanColumn key={column} column={column}>
+            {columnItems.map((item) => (
+              <BoardCard
+                key={item.id}
+                card={item}
+                workspaceKey={workspaceKey}
+              />
+            ))}
+          </KanbanColumn>
+        );
+      })}
     </div>
   );
 }

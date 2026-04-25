@@ -1,59 +1,80 @@
-import { STAGE_KEYS, STAGE_LABELS, type StageKey } from "../lib/types";
+import { IMPLEMENTATION_STAGES, type ImplementationStage } from "../lib/types";
 
 interface MiniStepperProps {
-  pipelineState?: string;
-  currentStage?: string | null;
+  stage?: string | null;
 }
 
-const PIPELINE_STATE_TO_STAGE: Record<string, StageKey> = {
-  idle: "arch",
-  openPrompt: "plan",
-  running: "exec",
-  "run-blocked": "exec",
-  "review-gate-waiting": "review",
+const SEGMENT_LABELS: Record<ImplementationStage, string> = {
+  arch: "Arch",
+  plan: "Plan",
+  exec: "Exec",
+  review: "Review",
 };
 
-function resolveActiveStage(
-  currentStage: string | null | undefined,
-  pipelineState: string | undefined
-): StageKey | null {
-  if (currentStage && (STAGE_KEYS as readonly string[]).includes(currentStage)) {
-    return currentStage as StageKey;
-  }
-  if (pipelineState && PIPELINE_STATE_TO_STAGE[pipelineState]) {
-    return PIPELINE_STATE_TO_STAGE[pipelineState];
-  }
-  return null;
+const ACTIVE_STYLE: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  padding: "2px 6px",
+  fontSize: "10px",
+  textTransform: "uppercase",
+  letterSpacing: "0.05em",
+  border: "1px solid rgb(52, 211, 153)",
+  backgroundColor: "rgba(16, 185, 129, 0.15)",
+  color: "rgb(110, 231, 183)",
+  fontWeight: 700,
+  fontFamily:
+    "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+};
+
+const INACTIVE_STYLE: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  padding: "2px 6px",
+  fontSize: "10px",
+  textTransform: "uppercase",
+  letterSpacing: "0.05em",
+  border: "1px solid rgb(39, 39, 42)",
+  backgroundColor: "rgb(24, 24, 27)",
+  color: "rgb(113, 113, 122)",
+  fontWeight: 400,
+  fontFamily:
+    "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+};
+
+function isKnownStage(value: unknown): value is ImplementationStage {
+  return (
+    typeof value === "string" &&
+    (IMPLEMENTATION_STAGES as readonly string[]).includes(value)
+  );
 }
 
-export function MiniStepper({ pipelineState, currentStage }: MiniStepperProps) {
-  const active = resolveActiveStage(currentStage, pipelineState);
+export function MiniStepper({ stage }: MiniStepperProps) {
+  const activeStage = isKnownStage(stage) ? stage : null;
+
   return (
-    <div
+    <ol
       data-testid="mini-stepper"
-      data-state={pipelineState ?? ""}
-      data-active-stage={active ?? ""}
-      className="mt-1 flex items-center gap-2 text-[10px] uppercase tracking-wider"
+      role="list"
+      aria-label="Implementation progress"
+      className="flex items-center gap-1"
+      style={{ display: "flex", alignItems: "center", gap: "4px", listStyle: "none", padding: 0, margin: 0 }}
     >
-      {STAGE_KEYS.map((key) => {
-        const isActive = key === active;
+      {IMPLEMENTATION_STAGES.map((segment) => {
+        const active = segment === activeStage;
         return (
-          <span
-            key={key}
-            data-testid={`mini-stepper-segment-${key}`}
-            data-stage={key}
-            data-active={isActive ? "true" : "false"}
-            className={
-              isActive
-                ? "text-amber-300 font-semibold"
-                : "text-zinc-500 opacity-50"
-            }
+          <li
+            key={segment}
+            role="listitem"
+            data-testid={`mini-stepper-segment-${segment}`}
+            data-segment={segment}
+            data-active={active ? "true" : "false"}
+            aria-current={active ? "step" : undefined}
+            style={active ? ACTIVE_STYLE : INACTIVE_STYLE}
           >
-            {isActive ? "▶ " : ""}
-            {STAGE_LABELS[key]}
-          </span>
+            {SEGMENT_LABELS[segment]}
+          </li>
         );
       })}
-    </div>
+    </ol>
   );
 }
