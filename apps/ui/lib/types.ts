@@ -36,3 +36,8 @@ export interface SseStateChangeEvent {
   pipelineState?: PipelineState;
   phase?: Phase;
 }
+
+export interface Workspace {
+  key: string;
+  name: string;
+}
