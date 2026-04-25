@@ -128,7 +128,7 @@ export async function planning(ctx: WithArchitecture, llm?: RunLlmConfig): Promi
       printStageCompletion(run, "planning")
       return artifact
     },
-    maxReviews: 3,
+    maxReviews: 4,
   })
 
   return result
