@@ -92,12 +92,16 @@ function permissionMode(policy: HostedProviderInvokeInput["runtime"]["policy"]):
 }
 
 function buildClaudeCommand(input: HostedProviderInvokeInput): string[] {
-  const command = ["claude", "--print", "--verbose", "--output-format", "stream-json"]
-  // no-tools mode (stage agents + reviewers): emit JSON only, no file access,
-  // no plan-mode preamble. Skipping --add-dir + --permission-mode shaves the
-  // workspace-scan startup cost and avoids the empty-output failure mode that
-  // hits Sonnet on long revise chains.
-  if (input.runtime.policy.mode !== "no-tools") {
+  const noTools = input.runtime.policy.mode === "no-tools"
+  const command = ["claude", "--print"]
+  // Tool-using stages (currently only execution) need stream-json so we can
+  // surface intermediate tool-use events live; no-tools stages get a single
+  // result blob via --output-format=json which is cheaper to parse and avoids
+  // streaming overhead per turn. --verbose is irrelevant for one-shot json.
+  if (noTools) {
+    command.push("--output-format", "json")
+  } else {
+    command.push("--verbose", "--output-format", "stream-json")
     command.push("--add-dir", input.runtime.workspaceRoot)
   }
   const mode = permissionMode(input.runtime.policy)
