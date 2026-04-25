@@ -1,4 +1,4 @@
-import type { BoardCardDTO, BoardColumn } from "./types";
+import type { BoardCardDTO, BoardColumn, ItemDetailDTO } from "./types";
 
 export function implementationCard(
   stage: string | null | undefined,
@@ -20,6 +20,57 @@ export const implementationCardMissingStage = (
   implementationCard(variant === "null" ? null : undefined, {
     id: `card_impl_missing_${variant}`,
   });
+
+export function itemWithActiveRunAndConversation(): ItemDetailDTO {
+  return {
+    id: "item-42",
+    itemCode: "UI-42",
+    title: "Active item",
+    activeRunId: "run-42",
+    conversation: [
+      { id: "e1", type: "system", text: "alpha" },
+      { id: "e2", type: "agent", text: "beta" },
+      { id: "e3", type: "user", text: "gamma" },
+      {
+        id: "e4",
+        type: "review-gate",
+        text: "review-prompt",
+        promptId: "p-7",
+        actions: ["Approve", "Revise"],
+      },
+    ],
+  };
+}
+
+export function itemWithActiveRunEmptyConversation(): ItemDetailDTO {
+  return {
+    id: "item-42",
+    itemCode: "UI-42",
+    title: "Active item",
+    activeRunId: "run-42",
+    conversation: [],
+  };
+}
+
+export function itemWithNoActiveRun(): ItemDetailDTO {
+  return {
+    id: "item-42",
+    itemCode: "UI-42",
+    title: "Inactive item",
+    activeRunId: null,
+    conversation: [],
+  };
+}
+
+export function itemWithDistinctRunId(): ItemDetailDTO {
+  return {
+    id: "item-99",
+    itemCode: "UI-99",
+    title: "Distinct run",
+    activeRunId: "run-99",
+    conversation: [{ id: "e1", type: "user", text: "fixture-message-99" }],
+  };
+}
 
 export function nonImplementationCard(
   column: Exclude<BoardColumn, "implementation">,
