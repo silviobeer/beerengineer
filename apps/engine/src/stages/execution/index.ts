@@ -12,6 +12,7 @@ import {
   removeStoryWorktreeReal,
 } from "../../core/realGit.js"
 import { writeRecoveryRecord } from "../../core/recovery.js"
+import { emitEvent, getActiveRun } from "../../core/runContext.js"
 import { runStage } from "../../core/stageRuntime.js"
 import {
   createTestWriterReview,
@@ -230,14 +231,27 @@ async function executeWave(
   )
   if (summary.storiesBlocked.length > 0) {
     // assertWaveSucceeded throws below — write a stage-scope recovery record
-    // first so resume_run sees a `blocked` recovery instead of a 409.
+    // first so resume_run sees a `blocked` recovery instead of a 409. The
+    // disk record alone is not enough: runOrchestrator's run_blocked handler
+    // is what syncs `runs.recovery_status` in the DB, so emit the event too.
+    const blockedSummary = `Wave ${wave.id} blocked stories: ${summary.storiesBlocked.join(", ")}.`
     await writeRecoveryRecord(ctx, {
       status: "blocked",
       cause: "stage_error",
       scope: { type: "stage", runId: ctx.runId, stageId: "execution" },
-      summary: `Wave ${wave.id} blocked stories: ${summary.storiesBlocked.join(", ")}.`,
+      summary: blockedSummary,
       detail: `wave=${wave.number} merged=${summary.storiesMerged.length} blocked=${summary.storiesBlocked.length}`,
       evidencePaths: [layout.executionWaveDir(ctx, wave.number)],
+    })
+    const active = getActiveRun()
+    emitEvent({
+      type: "run_blocked",
+      runId: ctx.runId,
+      itemId: active?.itemId ?? "unknown-item",
+      title: active?.title ?? active?.itemId ?? "unknown-item",
+      scope: { type: "stage", runId: ctx.runId, stageId: "execution" },
+      cause: "stage_error",
+      summary: blockedSummary,
     })
   }
   assertWaveSucceeded(wave, summary)
