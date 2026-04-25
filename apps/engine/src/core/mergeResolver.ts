@@ -162,12 +162,13 @@ export function resolveMergeConflictsViaLlm(input: {
   )
 
   // Resolver scales with conflict count: a 3-file story merge finishes in
-  // ~30s, but an 8-file wave→project merge needs more headroom because the
-  // model has to read each file, reason about it, and write the resolution.
-  // Empirically: 60s baseline + 60s per file, capped at 15 minutes. Override
-  // with `input.timeoutMs` when needed.
-  const baseTimeoutMs = 60_000 + conflicted.length * 60_000
-  const timeoutMs = input.timeoutMs ?? Math.min(baseTimeoutMs, 900_000)
+  // ~3min, but a 6-file wave→project merge timed out at 7min because the
+  // shared infra files (package.json, vitest.config.ts) plus diverged client
+  // routes (app/w/[key]/page.tsx) need careful per-file reasoning. Empirically:
+  // 90s baseline + 120s per file, capped at 30 minutes. Override with
+  // `input.timeoutMs` when needed.
+  const baseTimeoutMs = 90_000 + conflicted.length * 120_000
+  const timeoutMs = input.timeoutMs ?? Math.min(baseTimeoutMs, 1_800_000)
   const startedAt = Date.now()
   const result = spawnSync(built.command[0], built.command.slice(1), {
     cwd: input.workspaceRoot,
