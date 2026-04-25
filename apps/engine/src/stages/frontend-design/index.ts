@@ -103,7 +103,7 @@ export async function frontendDesign(
     stageAgent: createFrontendDesignStage(llm),
     reviewer: createFrontendDesignReview(llm),
     askUser: ask,
-    maxReviews: 3,
+    maxReviews: 2,
     buildFreshState: ({ revisionFeedback, reviewRound }): FrontendDesignState => ({
       input,
       inputMode: "none",

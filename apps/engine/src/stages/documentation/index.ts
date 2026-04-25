@@ -99,7 +99,7 @@ export async function documentation(ctx: WithProjectReview, llm?: RunLlmConfig):
       printStageCompletion(run, "documentation")
       return artifact
     },
-    maxReviews: 4,
+    maxReviews: 2,
   })
 
   return result

@@ -41,6 +41,6 @@ export async function qa(ctx: ProjectContext, llm?: RunLlmConfig): Promise<void>
     async onApproved(_artifact, run) {
       printStageCompletion(run, "QA")
     },
-    maxReviews: 3,
+    maxReviews: 2,
   })
 }

@@ -36,7 +36,7 @@ export async function visualCompanion(
     stageAgent: createVisualCompanionStage(llm),
     reviewer: createVisualCompanionReview(llm),
     askUser: ask,
-    maxReviews: 3,
+    maxReviews: 2,
     buildFreshState: ({ revisionFeedback, reviewRound }): VisualCompanionState => ({
       input,
       inputMode: "none",

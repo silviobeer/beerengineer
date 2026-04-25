@@ -67,7 +67,7 @@ export async function brainstorm(item: Item, context: WorkflowContext, llm?: Run
       printStageCompletion(run, "brainstorm")
       return artifact.projects.map(project => ({ ...project, hasUi: project.hasUi === true }))
     },
-    maxReviews: 4,
+    maxReviews: 2,
   })
 
   return result

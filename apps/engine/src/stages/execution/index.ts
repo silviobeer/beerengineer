@@ -354,7 +354,7 @@ async function writeStoryTestPlan(
     // Test-writer is a review-heavy step on realistic features. Haiku frequently
     // needs 3+ cycles for the plan to converge (coverage + dedup feedback).
     // Cap at 4 to keep runaway budget bounded while allowing realistic refinement.
-    maxReviews: 4,
+    maxReviews: 3,
   })
 
   return result
