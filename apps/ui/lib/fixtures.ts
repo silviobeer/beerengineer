@@ -1,5 +1,15 @@
-import type { Item, Phase } from "./types";
+import type { Item, Phase, Workspace } from "./types";
 import { PHASES } from "./types";
+
+export const FIXTURE_MULTI_WORKSPACES: Workspace[] = [
+  { key: "ws-alpha", name: "Alpha Brewery" },
+  { key: "ws-beta", name: "Beta Cellar" },
+  { key: "ws-gamma", name: "Gamma Taproom" },
+];
+
+export const FIXTURE_SINGLE_WORKSPACE: Workspace[] = [
+  { key: "ws-solo", name: "Solo Workshop" },
+];
 
 export function makeItem(overrides: Partial<Item> & { id: string }): Item {
   return {
