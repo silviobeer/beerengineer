@@ -18,6 +18,23 @@ export function WorkspaceSwitcher() {
     [router, currentKey]
   );
 
+  if (workspaces.length === 0) {
+    return (
+      <select
+        data-testid="workspace-switcher"
+        aria-label="Workspace"
+        value=""
+        onChange={handleChange}
+        disabled
+        className="border border-zinc-800 bg-zinc-900 px-2 py-1 text-sm text-zinc-100 font-mono"
+      >
+        <option value="" data-testid="workspace-switcher-empty">
+          no workspaces
+        </option>
+      </select>
+    );
+  }
+
   return (
     <select
       data-testid="workspace-switcher"
