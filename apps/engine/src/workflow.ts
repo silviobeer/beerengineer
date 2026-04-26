@@ -22,18 +22,12 @@ import { resolveBaseBranchForItem } from "./core/baseBranch.js"
 import { writeRecoveryRecord, type RecoveryScope } from "./core/recovery.js"
 import { layout } from "./core/workspaceLayout.js"
 import type {
-  ArchitectureArtifact,
   Concept,
   DesignArtifact,
-  DocumentationArtifact,
   Item,
-  PRD,
   ProjectContext,
   Project,
-  ProjectReviewArtifact,
-  ImplementationPlanArtifact,
   ReferenceInput,
-  WaveSummary,
   WireframeArtifact,
   WithDocumentation,
   WorkflowContext,
@@ -47,34 +41,14 @@ import { emitEvent, getActiveRun, withStageLifecycle } from "./core/runContext.j
 import { brainstorm } from "./stages/brainstorm/index.js"
 import { visualCompanion } from "./stages/visual-companion/index.js"
 import { frontendDesign } from "./stages/frontend-design/index.js"
-import { requirements } from "./stages/requirements/index.js"
-import { architecture } from "./stages/architecture/index.js"
-import { planning } from "./stages/planning/index.js"
-import { projectReview } from "./stages/project-review/index.js"
-import { execution } from "./stages/execution/index.js"
-import { qa } from "./stages/qa/index.js"
-import { documentation } from "./stages/documentation/index.js"
-import type { RunLlmConfig } from "./llm/registry.js"
-import type { ExecutionLlmOptions } from "./stages/execution/index.js"
-
-type ExecutionResumeOptions = {
-  waveNumber?: number
-  storyId?: string
-  rerunTestWriter?: boolean
-}
-
-type ProjectResumePlan = {
-  startStage:
-    | "requirements"
-    | "architecture"
-    | "planning"
-    | "execution"
-    | "project-review"
-    | "qa"
-    | "documentation"
-    | "handoff"
-  execution?: ExecutionResumeOptions
-}
+import {
+  PROJECT_STAGE_REGISTRY,
+  assertWithDocumentation,
+  shouldRunProjectStage,
+  type ExecutionResumeOptions,
+  type ProjectResumePlan,
+  type StageLlmOptions,
+} from "./core/projectStageRegistry.js"
 
 type ItemResumePlan = {
   startStage: "brainstorm" | "visual-companion" | "frontend-design" | "projects"
@@ -83,17 +57,6 @@ type ItemResumePlan = {
 type DesignPrepFreeze = {
   projectIds: string[]
 }
-
-const projectStageOrder = [
-  "requirements",
-  "architecture",
-  "planning",
-  "execution",
-  "project-review",
-  "qa",
-  "documentation",
-  "handoff",
-] as const
 
 /**
  * Enumerate files in the item workspace's `references/` directory so the
@@ -118,23 +81,12 @@ function loadItemWorkspaceReferences(context: WorkflowContext): ReferenceInput[]
   }
 }
 
-function shouldRunProjectStage(
-  resume: ProjectResumePlan | undefined,
-  stage: (typeof projectStageOrder)[number],
-): boolean {
-  if (!resume) return true
-  return projectStageOrder.indexOf(stage) >= projectStageOrder.indexOf(resume.startStage)
-}
-
 export type WorkflowResumeInput = {
   scope: RecoveryScope
   currentStage?: string | null
 }
 
-export type WorkflowLlmOptions = {
-  stage?: RunLlmConfig
-  execution?: ExecutionLlmOptions
-}
+export type WorkflowLlmOptions = StageLlmOptions
 
 class BlockedRunError extends Error {
   constructor(message: string) {
@@ -311,31 +263,6 @@ async function assertDesignPrepProjectFreeze(context: WorkflowContext, projects:
   throw new BlockedRunError(summary)
 }
 
-async function loadPrd(context: WorkflowContext): Promise<PRD> {
-  const artifact = await readJson<{ prd: PRD }>(join(layout.stageArtifactsDir(context, "requirements"), "prd.json"))
-  return artifact.prd
-}
-
-async function loadArchitecture(context: WorkflowContext): Promise<ArchitectureArtifact> {
-  return readJson<ArchitectureArtifact>(join(layout.stageArtifactsDir(context, "architecture"), "architecture.json"))
-}
-
-async function loadPlan(context: WorkflowContext): Promise<ImplementationPlanArtifact> {
-  return readJson<ImplementationPlanArtifact>(join(layout.stageArtifactsDir(context, "planning"), "implementation-plan.json"))
-}
-
-async function loadExecutionSummaries(context: WorkflowContext, plan: ImplementationPlanArtifact): Promise<WaveSummary[]> {
-  return Promise.all(plan.plan.waves.map(wave => readJson<WaveSummary>(layout.waveSummaryFile(context, wave.number))))
-}
-
-async function loadProjectReview(context: WorkflowContext): Promise<ProjectReviewArtifact> {
-  return readJson<ProjectReviewArtifact>(join(layout.stageArtifactsDir(context, "project-review"), "project-review.json"))
-}
-
-async function loadDocumentation(context: WorkflowContext): Promise<DocumentationArtifact> {
-  return readJson<DocumentationArtifact>(join(layout.stageArtifactsDir(context, "documentation"), "documentation.json"))
-}
-
 export async function runWorkflow(item: Item, options?: { resume?: WorkflowResumeInput; llm?: WorkflowLlmOptions; workspaceRoot?: string }): Promise<void> {
   const slug = item.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
   const activeRun = getActiveRun()
@@ -483,53 +410,28 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
   }
 }
 
-async function runProject(initialCtx: ProjectContext, resume?: ProjectResumePlan, llm?: WorkflowLlmOptions): Promise<void> {
+/**
+ * Drives the project pipeline by iterating {@link PROJECT_STAGE_REGISTRY}.
+ *
+ * For each registered node we either execute it (with lifecycle wrapping)
+ * or short-circuit to its `resumeFromDisk` loader when the resume plan
+ * tells us to skip ahead. The final `handoff` step lives outside the
+ * registry because it owns a side effect — merging the project branch
+ * into the item branch — that is not a pure stage artifact.
+ */
+async function runProject(
+  initialCtx: ProjectContext,
+  resume?: ProjectResumePlan,
+  llm?: WorkflowLlmOptions,
+): Promise<void> {
   let ctx = initialCtx
   const projectId = ctx.project.id
+  const deps = { llm, resume }
 
-  if (shouldRunProjectStage(resume, "requirements")) {
-    ctx = { ...ctx, prd: await withStageLifecycle("requirements", { projectId }, () => requirements(ctx, llm?.stage)) }
-  } else {
-    ctx = { ...ctx, prd: await loadPrd(ctx) }
-  }
-
-  if (shouldRunProjectStage(resume, "architecture")) {
-    ctx = { ...ctx, architecture: await withStageLifecycle("architecture", { projectId }, () => architecture(assertWithPrd(ctx), llm?.stage)) }
-  } else {
-    ctx = { ...ctx, architecture: await loadArchitecture(ctx) }
-  }
-
-  if (shouldRunProjectStage(resume, "planning")) {
-    ctx = { ...ctx, plan: await withStageLifecycle("planning", { projectId }, () => planning(assertWithArchitecture(ctx), llm?.stage)) }
-  } else {
-    ctx = { ...ctx, plan: await loadPlan(ctx) }
-  }
-
-  if (shouldRunProjectStage(resume, "execution")) {
-    ctx = {
-      ...ctx,
-      executionSummaries: await withStageLifecycle("execution", { projectId }, () =>
-        execution(assertWithPlan(ctx), resume?.execution, llm?.execution),
-      ),
-    }
-  } else {
-    ctx = { ...ctx, executionSummaries: await loadExecutionSummaries(ctx, assertWithPlan(ctx).plan) }
-  }
-
-  if (shouldRunProjectStage(resume, "project-review")) {
-    ctx = { ...ctx, projectReview: await withStageLifecycle("project-review", { projectId }, () => projectReview(assertWithExecution(ctx), llm?.stage)) }
-  } else {
-    ctx = { ...ctx, projectReview: await loadProjectReview(ctx) }
-  }
-
-  if (shouldRunProjectStage(resume, "qa")) {
-    await withStageLifecycle("qa", { projectId }, () => qa(ctx, llm?.stage))
-  }
-
-  if (shouldRunProjectStage(resume, "documentation")) {
-    ctx = { ...ctx, documentation: await withStageLifecycle("documentation", { projectId }, () => documentation(assertWithProjectReview(ctx), llm?.stage)) }
-  } else {
-    ctx = { ...ctx, documentation: await loadDocumentation(ctx) }
+  for (const node of PROJECT_STAGE_REGISTRY) {
+    ctx = shouldRunProjectStage(resume, node.id)
+      ? await withStageLifecycle(node.id, { projectId }, () => node.run(ctx, deps))
+      : await node.resumeFromDisk(ctx)
   }
 
   await mergeProjectBranchIntoItem(ctx, ctx.project.id)
@@ -568,56 +470,3 @@ function normalizeDecision(input: string): "test" | "merge" | "reject" {
   return "test"
 }
 
-function assertWithPrd<T extends ProjectContext>(ctx: T): T & { prd: NonNullable<T["prd"]> } {
-  if (!ctx.prd) throw new Error("Pipeline invariant violated: PRD missing")
-  return ctx as T & { prd: NonNullable<T["prd"]> }
-}
-
-function assertWithArchitecture<T extends ProjectContext>(ctx: T): T & {
-  prd: NonNullable<T["prd"]>
-  architecture: NonNullable<T["architecture"]>
-} {
-  if (!ctx.prd || !ctx.architecture) throw new Error("Pipeline invariant violated: prd/architecture missing")
-  return ctx as never
-}
-
-function assertWithPlan<T extends ProjectContext>(ctx: T): T & {
-  prd: NonNullable<T["prd"]>
-  architecture: NonNullable<T["architecture"]>
-  plan: NonNullable<T["plan"]>
-} {
-  if (!ctx.prd || !ctx.architecture || !ctx.plan) throw new Error("Pipeline invariant violated: plan missing")
-  return ctx as never
-}
-
-function assertWithExecution<T extends ProjectContext>(ctx: T): T & {
-  prd: NonNullable<T["prd"]>
-  architecture: NonNullable<T["architecture"]>
-  plan: NonNullable<T["plan"]>
-  executionSummaries: NonNullable<T["executionSummaries"]>
-} {
-  if (!ctx.prd || !ctx.architecture || !ctx.plan || !ctx.executionSummaries) {
-    throw new Error("Pipeline invariant violated: execution missing")
-  }
-  return ctx as never
-}
-
-function assertWithProjectReview<T extends ProjectContext>(ctx: T): T & {
-  prd: NonNullable<T["prd"]>
-  architecture: NonNullable<T["architecture"]>
-  plan: NonNullable<T["plan"]>
-  executionSummaries: NonNullable<T["executionSummaries"]>
-  projectReview: NonNullable<T["projectReview"]>
-} {
-  if (!ctx.prd || !ctx.architecture || !ctx.plan || !ctx.executionSummaries || !ctx.projectReview) {
-    throw new Error("Pipeline invariant violated: projectReview missing")
-  }
-  return ctx as never
-}
-
-function assertWithDocumentation<T extends ProjectContext>(ctx: T): WithDocumentation {
-  if (!ctx.prd || !ctx.architecture || !ctx.plan || !ctx.executionSummaries || !ctx.projectReview || !ctx.documentation) {
-    throw new Error("Pipeline invariant violated: documentation missing")
-  }
-  return ctx as WithDocumentation
-}
