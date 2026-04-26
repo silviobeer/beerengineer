@@ -7,15 +7,77 @@ what it **writes** to disk. All artifact paths are relative to
 `<workspaceDir>` = `.beerengineer/workspaces/<workspaceId>/` under the
 engine's CWD.
 
+## Pipeline data flow
+
 ```
-master → item/<slug> → proj/...__<projectId>
-                     ↓
-   [item-scoped]                  [project-scoped — runs per project]
-   brainstorm                     requirements → architecture → planning
-   visual-companion (UI items)        ↓
-   frontend-design  (UI items)    test-writer + execution (per story)
-                                  project-review → qa → documentation → handoff
+                ┌────────────────────────────────────────────────────┐
+                │  ITEM-SCOPED PERSISTENT STATE                      │
+                │  workspace.json · decisions.json · repo-state.json │
+                │  (read by every stage; survives across reruns)     │
+                └─────────────────────────┬──────────────────────────┘
+                                          │
+                                          ▼
+                  ┌─────────────────────────────────────────┐
+                  │             ITEM-LEVEL STAGES           │
+   ITEM ─────────▶│ brainstorm     →  concept · projects[]  │
+                  │                                         │
+   (UI items)     │ visual-        →  wireframes ·          │
+                  │ companion         lowfi mockups         │
+                  │                                         │
+   (UI items)     │ frontend-      →  design · design-      │
+                  │ design            preview · tokens.css  │
+                  └─────────────────────┬───────────────────┘
+                                        │  (fan out per project)
+                                        ▼
+                  ┌─────────────────────────────────────────┐
+                  │           PROJECT-LEVEL STAGES          │
+                  │ requirements   →  prd (stories + ACs)   │
+                  │ architecture   →  architecture          │
+                  │ planning       →  plan (waves + stories)│
+                  └─────────────────────┬───────────────────┘
+                                        │  (fan out per wave/story)
+                                        ▼
+                  ┌─────────────────────────────────────────┐
+                  │          EXECUTION  (per story)         │
+                  │ test-writer    →  test-plan             │
+                  │      ↓                                  │
+                  │ coder (Ralph)  →  commits on            │
+                  │                   story/<slug>__...     │
+                  │      ↓                                  │
+                  │ story-review   →  CodeRabbit · Sonar ·  │
+                  │ gate              design-system gate    │
+                  │      ↓                                  │
+                  │ merge story → wave branch               │
+                  │ (LLM resolver runs on conflicts)        │
+                  └─────────────────────┬───────────────────┘
+                                        │  (after all waves complete)
+                                        ▼
+                  ┌─────────────────────────────────────────┐
+                  │         POST-EXECUTION STAGES           │
+                  │ project-review →  findings ·            │
+                  │                   recommendations       │
+                  │ qa             →  qa-report             │
+                  │ documentation  →  README · technical    │
+                  │                   doc · features doc    │
+                  │ handoff        →  candidate branch +    │
+                  │                   operator prompt       │
+                  └─────────────────────────────────────────┘
+                                        │
+                                        ▼
+                  candidate/<runId>__<projectId>__<itemSlug>
+                  (operator: test / merge / reject)
 ```
+
+**Branch hierarchy** (real git):
+```
+master                                            (untouched by engine)
+  └─ item/<slug>                                  (one per item, item worktree)
+       └─ proj/<slug>__<projectId>                (one per project)
+            └─ wave/<slug>__<projectId>__w<n>     (one per wave)
+                 └─ story/<slug>__<projectId>__w<n>__<storyId>  (per-story worktree)
+```
+
+Stories merge `→` waves merge `→` projects merge `→` item; never into master automatically. The candidate branch off the project tip is what the operator promotes.
 
 ## Item-scoped persistent state
 
@@ -80,7 +142,7 @@ sets.
 **Downstream** seeds `ProjectContext.design`. `mockupHtmlPerScreen` is
 **stripped from the per-project context** by `projectDesign()` and
 delivered per-story to the screen-owner only (planned in Part 1c via
-`StoryExecutionContext.mockupHtml`).
+`StoryExecutionContext.mockupHtmlByScreen`).
 
 ## 4. requirements (per project)
 
@@ -158,7 +220,7 @@ delivered per-story to the screen-owner only (planned in Part 1c via
 - `testPlan` (from step 7)
 - `storyBranch` (real-git branch name)
 - `worktreeRoot` (per-story isolated worktree)
-- (planned Part 1.0) `design`, `mockupHtml`, `references`
+- (planned Part 1.0) `design`, `mockupHtmlByScreen`, `references`
 - (planned Part 2c) `setupContract` (for setup-wave stories)
 - prior iterations' `priorAttempts[]` (via `iterationContext`)
 

@@ -28,6 +28,17 @@ Neither requires schema migrations. Both are additive.
 > mechanism (`expectedFiles` / `expectedScripts` / `postChecks`)
 > is unchanged because it already works for both *create* and
 > *extend* deltas.
+>
+> *v4 (2026-04-26).* Incorporated a second codex review. Four fixes vs.
+> v3: (a) setup work no longer mutates the PRD `UserStory` contract —
+> infra tasks live in the implementation plan, not the requirements
+> artifact; (b) screen ownership now depends on explicit `screenIds`
+> metadata instead of substring-matching `screen-1`-style ids out of
+> prose; (c) shared-infra detection now depends on explicit
+> `sharedFiles` metadata emitted by planning so the trigger is
+> machine-checkable; (d) the setup contract now cleanly separates
+> `requiredScripts` from arbitrary `postChecks`, and `mockupHtml` is
+> replaced with a stable `mockupHtmlByScreen` shape.
 
 ---
 
@@ -66,7 +77,7 @@ export type StoryReference = {
 export type StoryExecutionContext = {
   // ... existing fields ...
   design?: DesignArtifact      // tokens / typography / spacing / borders / antiPatterns
-  mockupHtml?: string           // canonical visual reference for the screen this story owns
+  mockupHtmlByScreen?: Record<string, string> // canonical visual reference(s) for screen(s) this story owns
   references?: StoryReference[] // explicit artifacts the coder must consume
 }
 ```
@@ -80,8 +91,8 @@ fill the three optional fields per story.
 `projectDesign()` in `core/designPrep.ts` keeps stripping
 `mockupHtmlPerScreen` from the per-project design (still right — the
 project context is shared by every story and would bloat). The mockup
-travels via `storyContext.mockupHtml` for exactly the screen-owner
-story. Same idea for `storyContext.references`.
+travels via `storyContext.mockupHtmlByScreen` for exactly the
+screen-owner story. Same idea for `storyContext.references`.
 
 The hosted prompt envelope already JSON-stringifies `storyContext` into
 the worker payload, so once the fields exist, the coder sees them
@@ -91,7 +102,7 @@ in 1d.
 
 **Tests.** Unit test on `buildStoryExecutionContext`:
 - design field populated from the project context's design
-- mockupHtml populated only for the screen-owner story
+- mockupHtmlByScreen populated only for the screen-owner story
 - references list contains the design-tokens.css path for setup stories
   (covered fully in Part 2)
 
@@ -174,28 +185,34 @@ produce the same map:
 1. Iterate waves in `plan.waves` order, then stories in
    `wave.stories` order (the planner's declared order, not parallel
    execution order).
-2. For each story, derive the set of screen ids it touches:
-   - First, look at the story's `screens` field if the test-writer or
-     planner emits it.
-   - Else, scan the story's acceptance criteria and title text for any
-     `screenId` from `wireframes.screens` (substring match,
-     case-insensitive).
-   - Else, the story owns no screen and is skipped.
+2. For each planned feature story, derive the set of screen ids it
+   touches from structured metadata, not prose. Add optional
+   `screenIds: string[]` to each `wave.stories[*]` entry in the
+   implementation plan. Source of truth:
+   - First choice: the requirements stage may emit optional
+     story-level `screenIds` metadata if the concept maps cleanly to
+     specific screens.
+   - Else, the planning stage emits `screenIds` per wave story after
+     reconciling PRD stories with `wireframes.screens`.
+   - If no structured mapping can be produced, the story owns no
+     screen and is skipped. Do not substring-match ids like
+     `screen-1` out of titles or AC prose.
 3. The first story (in iteration order) seen for each `screenId`
    becomes that screen's owner. Subsequent stories touching the same
    screen are not owners.
 
 Owner-map result is plumbed once into execution and consumed by
 `buildStoryExecutionContext`. Story whose id matches `owners[screenId]`
-gets `mockupHtml = design.mockupHtmlPerScreen[screenId]` on its
-context; everyone else gets `mockupHtml: undefined`.
+gets `mockupHtmlByScreen[screenId] = design.mockupHtmlPerScreen[screenId]`
+on its context; everyone else gets `mockupHtmlByScreen: undefined`.
 
 **Edge cases.**
 - Story touches multiple screens → owner of any screen it's the
-  earliest for. The context can carry a list (`mockupHtml: string[]`)
-  but in practice each story owns at most one screen and we enforce
-  that with a `console.warn` if a single story is owner of more than
-  one. Cap at three to avoid unbounded payload bloat.
+  earliest for. The context shape is stable:
+  `mockupHtmlByScreen: Record<string, string>`. In practice each story
+  should own at most one screen; log a warning if a single story owns
+  more than one and cap the delivered set at three screens to avoid
+  unbounded payload bloat.
 - Same screen has zero owner (no story matches) → mockup never
   reaches any coder; not a regression vs. today.
 - Resume / replay → the owner map is recomputed deterministically from
@@ -210,15 +227,15 @@ else doesn't pay the token cost.
 **Tests.**
 - `computeScreenOwners` covering: plan-order tie-breaking, multi-wave
   ordering, story-touches-no-screen, story-touches-multiple-screens,
-  empty wireframes input.
-- `buildStoryExecutionContext`: owner story gets `mockupHtml`,
+  empty wireframes input, and missing `screenIds` metadata.
+- `buildStoryExecutionContext`: owner story gets `mockupHtmlByScreen`,
   non-owner story for same screen gets `undefined`.
 
 ### 1c-bis. Keep `projectDesign()` stripping the mockup map
 
 Leave `projectDesign()` as-is — it strips `mockupHtmlPerScreen` so
 the *project-level* `ProjectContext.design` stays small. The mockup
-delivery channel is the new per-story `storyContext.mockupHtml` field
+delivery channel is the new per-story `storyContext.mockupHtmlByScreen` field
 (via 1.0 + 1c), not the project context. No regression vs. today's
 behavior; only owner stories get the bytes.
 
@@ -266,7 +283,7 @@ Where: `apps/engine/src/review/` (next to coderabbit/sonarcloud).
 Add a tiny built-in gate that runs *before* the LLM reviewer, against
 the per-story diff:
 
-- Fail if any newly-added file matches `\b#[0-9a-fA-F]{3,8}\b` outside
+- Fail if any newly-added line matches `\b#[0-9a-fA-F]{3,8}\b` outside
   of `design-tokens.css` and `*.test.tsx`.
 - Fail if any newly-added line contains a Tailwind palette class:
   `\b(bg|text|border|ring|outline|fill|stroke|from|to|via)-(zinc|slate|gray|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-\d{2,3}\b`.
@@ -285,7 +302,7 @@ problem.
 
 ### Part 1 deliverables (TDD order)
 
-1. Extend `StoryExecutionContext` with `design`, `mockupHtml`,
+1. Extend `StoryExecutionContext` with `design`, `mockupHtmlByScreen`,
    `references` + the `StoryReference` type (1.0)
 2. `render/designTokensCss.ts` + snapshot test (1a)
 3. Wire renderer into frontend-design stage's `persistArtifacts` (1a)
@@ -319,9 +336,9 @@ type in `app/_lib/types.ts`; wire a new context provider into
 diff base differs.
 
 **Solution.** Detect "two or more stories in this wave will write to
-the same file" at planning time, lift the conflicting writes into a
-single serial setup wave that runs first, then let the feature
-stories branch from a tree where the shared edits are already
+the same shared file" from explicit plan metadata, lift the conflicting
+writes into a single serial setup wave that runs first, then let the
+feature stories branch from a tree where the shared edits are already
 settled. Brownfield runs that don't trigger this condition are
 unaffected.
 
@@ -330,6 +347,31 @@ unaffected.
 Where: `apps/engine/src/types/domain.ts` (or wherever
 `WaveDefinition` lives) — add an optional `kind: "setup" | "feature"`
 to the wave shape, defaulting to `"feature"`.
+
+This part of the plan **does require a schema extension**. Keep the
+PRD `UserStory` shape user-facing and unchanged. Infra work is modeled
+only in the implementation plan with a new setup-task shape, not as a
+new kind of PRD story:
+
+```ts
+export type SetupTaskDefinition = {
+  id: string
+  title: string
+  sharedFiles: string[]
+  contract: {
+    expectedFiles: string[]
+    requiredScripts: string[]
+    postChecks: string[]
+  }
+  references?: StoryReference[]
+}
+
+export type WaveDefinition = {
+  // existing fields
+  kind?: "setup" | "feature"
+  tasks?: SetupTaskDefinition[] // used only when kind === "setup"
+}
+```
 
 Where: `apps/engine/prompts/system/planning.md` — add a section
 instructing the planner to emit a setup wave whenever a feature wave
@@ -340,10 +382,22 @@ Trigger rule (single source of truth, evaluated per wave):
 > If two or more stories in the wave will edit the same file, lift
 > those edits into a setup wave that runs serially before this one.
 
-"Will edit" is computed from each story's expected file list (the
-planner already considers shared-file collision when deciding wave
-membership; this just elevates the consequence from "warning" to
-"split a setup wave").
+"Will edit" is computed from structured metadata the planner emits per
+wave story:
+
+```ts
+type PlannedWaveStory = {
+  id: string
+  title: string
+  screenIds?: string[]
+  sharedFiles?: string[] // shared/cross-cutting files only
+}
+```
+
+This is the machine-checkable source for setup-wave creation. It is not
+general file-by-file coding instruction; it is narrow collision
+metadata for known shared files (`package.json`, `app/layout.tsx`,
+`vitest.config.ts`, `app/_lib/types.ts`, etc.).
 
 Greenfield is the special case where every shared file is *missing*,
 so every multi-story wave triggers the rule. Brownfield runs that
@@ -373,7 +427,7 @@ work. Concrete examples:
   without re-mounting the provider.
 
 Both shapes pass the same `verifySetupContract` —
-`expectedFiles` / `expectedScripts` / `postChecks` doesn't care
+`expectedFiles` / `requiredScripts` / `postChecks` doesn't care
 whether the file existed before; it only checks the post-state.
 
 ### 2b. Setup wave runs serial, before any feature wave
@@ -421,14 +475,14 @@ abstraction, telemetry, and worktree handling) but:
 
 1. Skips test-writer entirely — no `StoryTestPlanArtifact` is
    produced.
-2. The `storyContext` carries the explicit setup contract instead of
+2. The setup-task context carries the explicit setup contract instead of
    acceptance criteria:
    ```ts
    {
      kind: "setup",
      contract: {
-       expectedFiles: string[]   // list of paths that MUST exist after the story
-       expectedScripts: string[] // npm scripts that must be runnable
+       expectedFiles: string[]   // list of paths that MUST exist after the task
+       requiredScripts: string[] // package.json scripts that MUST exist and run
        postChecks: string[]      // shell commands; all must exit 0
      },
      references: StoryReference[] // see 1.0; e.g. design-tokens.css
@@ -437,9 +491,10 @@ abstraction, telemetry, and worktree handling) but:
 3. Instead of the review tool gate (CodeRabbit / Sonar / design-system),
    success is a deterministic `verifySetupContract()`:
    - every file in `expectedFiles` exists in the story worktree
-   - every script in `expectedScripts` runs to exit 0 (`npm install`,
-     `npm run typecheck`)
+   - every script in `requiredScripts` exists in `package.json` and
+     runs to exit 0 (`typecheck`, `test`, etc.)
    - every command in `postChecks` exits 0
+     (`npm install`, `npm run typecheck`, file-content assertions, etc.)
    - if any fails, the coder gets the failure messages as targeted
      review feedback and we iterate up to the same review cap that
      applies to other execution stories.
@@ -448,21 +503,22 @@ Setup stories are structurally simpler than feature stories — there's
 no "ten stages of cycle" to satisfy. They tend to converge in 1–2
 iterations because the contract is binary: file exists or not.
 
-PRD shape: setup stories ARE present in the PRD, but with a flag
-`kind: "setup"` and a `setupContract` field instead of
-`acceptanceCriteria`. Planning prompt update:
+PRD shape: setup work is **not** present in the PRD. The PRD remains a
+pure user-outcome artifact. The planning artifact is where setup waves
+and setup tasks live. Planning prompt update:
 
 ```md
-When the repo lacks the target stack scaffolding, emit one or more
-setup stories at the head of the plan with kind:"setup". Each setup
-story declares a setupContract { expectedFiles, expectedScripts,
-postChecks } and lists references to artifacts it must consume
-(e.g. design-tokens.css from frontend-design). Setup stories do not
-get acceptance criteria; the contract is the spec.
+When two or more feature stories in the same wave would edit the same
+shared file, emit a setup wave ahead of them with kind:"setup". The
+setup wave contains setup tasks (not PRD stories). Each setup task
+declares `sharedFiles` plus a contract
+{ expectedFiles, requiredScripts, postChecks } and lists references to
+artifacts it must consume (e.g. design-tokens.css from frontend-design).
 ```
 
-Requirements stage gets the same instruction so the PRD it emits
-already includes the setup stories.
+Requirements stage does **not** emit setup work. It may optionally emit
+story-level `screenIds` metadata when screen ownership is obvious, but
+infra decomposition stays in planning.
 
 ### 2d. Feature stories see setup output as fixed ground truth
 
@@ -481,9 +537,9 @@ Closes the "story 1 invents `--bg-base` instead of importing
 
 ### 2e. Setup stories carry references via 1.0
 
-The `references` field added in 1.0 is what setup stories use to
+The `references` field added in 1.0 is what setup tasks use to
 receive the `design-tokens.css` artifact from frontend-design. The
-setup story's `setupContract.expectedFiles` includes
+setup task's `contract.expectedFiles` includes
 `apps/ui/app/design-tokens.css` and its `references` includes one
 entry pointing at the frontend-design output path. The coder copies
 the file; `verifySetupContract` confirms the destination exists.
@@ -511,30 +567,34 @@ the file; `verifySetupContract` confirms the destination exists.
 - Regression: planner outputs whose feature waves don't have
   shared-file collisions skip setup entirely and run unchanged
   through the feature-only path.
+- Unit: setup-wave creation is driven from explicit `sharedFiles`
+  metadata and does not rely on prose-only inference.
 
 ### Part 2 deliverables (TDD order)
 
-1. Type extension: `WaveDefinition.kind`, `UserStory.kind` +
-   `setupContract` (story-level), `StoryReference` already added in
-   1.0
-2. Planner prompt update + requirements prompt update + a fake-LLM
-   that emits a setup wave with a real setup contract
+1. Type extension: `WaveDefinition.kind`, `WaveDefinition.tasks`,
+   `SetupTaskDefinition`, plus optional `screenIds` / `sharedFiles`
+   metadata on planned wave-story entries; `StoryReference` already
+   added in 1.0
+2. Planner prompt update + a fake-LLM that emits a setup wave with a
+   real setup contract and explicit `sharedFiles`
 3. `executeWave`: serial story execution for setup waves; setup
    waves must complete before any feature wave starts
 4. `runSetupStory` + `verifySetupContract` (new, no test-writer
    invocation)
-5. Branch in `runWaveStory` to call `runSetupStory` when
-   `wave.kind === "setup"`
-6. Reference plumbing: setup story's references list the
+5. Branch in `runWaveStory` to call `runSetupStory` for setup tasks
+   when `wave.kind === "setup"`
+6. Reference plumbing: setup task references list the
    `design-tokens.css` artifact path from the active
    frontend-design run
 7. Worker prompt update for feature stories ("setup is done; do not
    re-declare tokens")
 8. Integration test for the full setup→feature sequence
 
-Estimated effort: ~2 days (was 1.5; +0.5 for the setup-bypass code
-path that didn't exist in v1). No schema changes; both `kind` fields
-and `setupContract` are optional.
+Estimated effort: ~2.5 days (was 2; +0.5 for the plan-schema extension
+that makes setup tasks and shared-file detection explicit). This part
+does require schema changes in the implementation-plan artifact, but
+not in persisted DB tables.
 
 ---
 
