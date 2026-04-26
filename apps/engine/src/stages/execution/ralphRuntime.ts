@@ -13,6 +13,7 @@ import {
 import { emitEvent, getActiveRun } from "../../core/runContext.js"
 import { writeRecoveryRecord } from "../../core/recovery.js"
 import { layout, type WorkflowContext } from "../../core/workspaceLayout.js"
+import { resolveRalphLoopConfig } from "../../core/loopConfig.js"
 import type { StageLogEntry } from "../../core/stageRuntime.js"
 import { stagePresent } from "../../core/stagePresentation.js"
 import { readWorkspaceConfig } from "../../core/workspaces.js"
@@ -32,8 +33,12 @@ import type {
   WaveSummary,
 } from "../../types.js"
 
-const MAX_ITERATIONS_PER_CYCLE = 4
-const MAX_REVIEW_CYCLES = 3
+// Loop bounds resolved once at module load: env-overridable so test or
+// stress-run scenarios can dial the cadence without touching code. The
+// historical constants were 4 and 3 — those are the defaults inside
+// resolveRalphLoopConfig().
+const { maxIterationsPerCycle: MAX_ITERATIONS_PER_CYCLE, maxReviewCycles: MAX_REVIEW_CYCLES } =
+  resolveRalphLoopConfig()
 
 export type StoryArtifacts = {
   implementation: StoryImplementationArtifact
