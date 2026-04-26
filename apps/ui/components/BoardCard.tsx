@@ -34,7 +34,7 @@ export function BoardCard({ card, workspaceKey }: BoardCardProps) {
       data-column={card.column}
       data-item-code={card.itemCode ?? ""}
       href={href}
-      className="block border border-zinc-800 bg-zinc-900/60 p-3 text-zinc-100 no-underline relative"
+      className="block border border-zinc-800 bg-zinc-900/60 p-3 pr-6 text-zinc-100 no-underline relative overflow-hidden"
     >
       {showAttention ? (
         <span
@@ -59,12 +59,18 @@ export function BoardCard({ card, workspaceKey }: BoardCardProps) {
           style={{
             fontFamily:
               "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+            wordBreak: "break-all",
+            overflowWrap: "anywhere",
           }}
         >
           {card.itemCode}
         </div>
       ) : null}
-      <div data-testid="board-card-title" className="text-sm break-words">
+      <div
+        data-testid="board-card-title"
+        className="text-sm break-words"
+        style={{ overflowWrap: "anywhere" }}
+      >
         {card.title}
       </div>
       {card.summary ? (

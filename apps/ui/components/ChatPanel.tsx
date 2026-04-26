@@ -101,21 +101,21 @@ export function ChatPanel({ activeRunId, conversation }: ChatPanelProps) {
       <form
         data-testid="chat-form"
         onSubmit={handleSubmit}
-        className="mt-3 flex flex-col gap-2"
+        className="mt-3 flex flex-col gap-2 w-full max-w-full"
       >
         <textarea
           data-testid="chat-textarea"
           aria-label="Message"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          className="border border-zinc-700 bg-zinc-900 p-2 text-sm text-zinc-100"
+          className="border border-zinc-700 bg-zinc-900 p-2 text-sm text-zinc-100 w-full max-w-full block min-h-20 resize-y box-border"
         />
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="submit"
             data-testid="chat-send"
             disabled={pendingMessage}
-            className="border border-zinc-700 px-3 py-1 text-sm text-zinc-100 disabled:opacity-50"
+            className="border border-zinc-700 px-4 py-2 text-sm text-zinc-100 disabled:opacity-50 min-h-10"
           >
             Send
           </button>

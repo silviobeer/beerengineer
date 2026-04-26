@@ -32,7 +32,7 @@ export function WorkspaceSwitcher() {
           value=""
           onChange={handleChange}
           disabled
-          className="border border-zinc-800 bg-zinc-900 px-2 py-1 text-sm text-zinc-100 font-mono"
+          className="border border-zinc-800 bg-zinc-900 px-2 py-2 text-sm text-zinc-100 font-mono min-h-10 max-w-full truncate"
         >
           <option value="" data-testid="workspace-switcher-error">
             workspaces unavailable
@@ -57,7 +57,7 @@ export function WorkspaceSwitcher() {
         value=""
         onChange={handleChange}
         disabled
-        className="border border-zinc-800 bg-zinc-900 px-2 py-1 text-sm text-zinc-100 font-mono"
+        className="border border-zinc-800 bg-zinc-900 px-2 py-2 text-sm text-zinc-100 font-mono min-h-10 max-w-full truncate"
       >
         <option value="" data-testid="workspace-switcher-empty">
           no workspaces
@@ -72,7 +72,7 @@ export function WorkspaceSwitcher() {
       aria-label="Workspace"
       value={currentKey}
       onChange={handleChange}
-      className="border border-zinc-800 bg-zinc-900 px-2 py-1 text-sm text-zinc-100 font-mono"
+      className="border border-zinc-800 bg-zinc-900 px-2 py-2 text-sm text-zinc-100 font-mono min-h-10 max-w-full truncate"
     >
       {isKnownWorkspace ? null : (
         <option value={currentKey} disabled>
