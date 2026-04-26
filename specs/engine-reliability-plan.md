@@ -1,4 +1,4 @@
-# Engine Reliability Plan: Design Fidelity + Wave 0 Setup
+# Engine Reliability Plan: Design Fidelity + Shared-Infra Wave
 
 Two changes, sequenced. Together they should move the typical run from
 "60% functional, design drifted" to "90% functional, design intact" and
@@ -6,14 +6,28 @@ cut wave-merge conflicts to near zero.
 
 Neither requires schema migrations. Both are additive.
 
-> **Revision history.** v2 (2026-04-26): incorporated codex review.
-> Three fixes vs. v1: (a) screen-owner map is now precomputed
-> deterministically before execution starts so parallel stories can't
-> race on "first touch"; (b) added an explicit transport-layer section
-> (1.0) for `design` + `mockupHtml` + `references` because none of those
-> fields exist on `StoryExecutionContext` today; (c) setup-wave stories
-> now bypass the test-writer entirely and run against a structural
-> scaffold contract instead of feature-style ACs.
+> **Revision history.**
+>
+> *v2 (2026-04-26).* Incorporated codex review. Three fixes vs. v1:
+> (a) screen-owner map is now precomputed deterministically before
+> execution starts so parallel stories can't race on "first touch";
+> (b) added an explicit transport-layer section (1.0) for `design` +
+> `mockupHtml` + `references` because none of those fields exist on
+> `StoryExecutionContext` today; (c) setup-wave stories now bypass
+> the test-writer entirely and run against a structural scaffold
+> contract instead of feature-style ACs.
+>
+> *v3 (2026-04-26).* Generalised "Wave 0 / project-setup" to a
+> *shared-infra wave* that's not specific to greenfield. The original
+> trigger ("target stack not scaffolded yet") only fires on
+> greenfield projects; brownfield runs that touch shared files —
+> `package.json`, `design-tokens.css`, `app/layout.tsx`, etc. —
+> still produce the same merge-conflict cascade. Reframed the
+> trigger as "two or more stories will write to the same file";
+> not-yet-scaffolded becomes one specific case. The contract
+> mechanism (`expectedFiles` / `expectedScripts` / `postChecks`)
+> is unchanged because it already works for both *create* and
+> *extend* deltas.
 
 ---
 
@@ -286,14 +300,30 @@ Estimated effort: ~1.5 days. No schema changes.
 
 ---
 
-## Part 2 — Wave 0: project-setup
+## Part 2 — Shared-infra wave (serialise cross-cutting edits)
 
-**Problem.** Every story independently scaffolds `package.json`,
-`vitest.config.ts`, `globals.css`, `app/layout.tsx` etc. The first
-story to land each file defines reality; later stories conflict on it
-(observed: 4 separate runs with 8-file wave→project conflicts on the
-same shared infra) AND inherit whatever tokens story 1 invented. A
-single setup phase that runs ONCE before any feature work fixes both.
+**Problem.** Every story independently writes to shared files —
+`package.json`, `vitest.config.ts`, `globals.css`, `app/layout.tsx`,
+`app/_lib/types.ts` — and the first story to land each file defines
+reality. Later stories conflict on it (observed: 4 separate runs with
+8-file wave→project conflicts on the same shared infra) AND inherit
+whatever shape story 1 invented (e.g. `--bg-base` instead of the
+canonical `--color-bg`).
+
+This isn't a greenfield-only problem. A brownfield project with a
+clean `apps/ui` already in place still hits the same cascade as soon
+as a wave has multiple stories that need to *extend* the same file:
+add a new design token; bump a shared dependency; register a new
+type in `app/_lib/types.ts`; wire a new context provider into
+`app/layout.tsx`. The conflict mechanism is identical — only the
+diff base differs.
+
+**Solution.** Detect "two or more stories in this wave will write to
+the same file" at planning time, lift the conflicting writes into a
+single serial setup wave that runs first, then let the feature
+stories branch from a tree where the shared edits are already
+settled. Brownfield runs that don't trigger this condition are
+unaffected.
 
 ### 2a. Add a `setup` wave kind
 
@@ -302,26 +332,49 @@ Where: `apps/engine/src/types/domain.ts` (or wherever
 to the wave shape, defaulting to `"feature"`.
 
 Where: `apps/engine/prompts/system/planning.md` — add a section
-instructing the planner to emit a `wave 0` with `kind: "setup"`
-when:
+instructing the planner to emit a setup wave whenever a feature wave
+would otherwise have stories that write to the same file.
 
-- The repo state preview shows the target stack hasn't been scaffolded
-  yet (no `apps/ui/package.json`, no `tsconfig.json`, no entry layout).
-- ANY story will write to `apps/ui/app/layout.tsx`,
-  `apps/ui/app/globals.css`, `apps/ui/package.json`,
-  `apps/ui/vitest.config.ts`, `apps/ui/tailwind.config.*`, or any other
-  shared-infra file.
+Trigger rule (single source of truth, evaluated per wave):
 
-The setup wave's stories must be self-contained scaffold tasks (not
-feature work). Examples for this UI rebuild:
+> If two or more stories in the wave will edit the same file, lift
+> those edits into a setup wave that runs serially before this one.
 
-- `S-SETUP-1: Scaffold Next.js 15 app at apps/ui` — writes
+"Will edit" is computed from each story's expected file list (the
+planner already considers shared-file collision when deciding wave
+membership; this just elevates the consequence from "warning" to
+"split a setup wave").
+
+Greenfield is the special case where every shared file is *missing*,
+so every multi-story wave triggers the rule. Brownfield runs that
+don't hit shared-file collisions skip the setup wave entirely and
+run unchanged.
+
+The setup wave's stories perform the cross-cutting edits, not feature
+work. Concrete examples:
+
+*Greenfield (apps/ui doesn't exist yet)*
+- `S-SETUP-1`: Scaffold Next.js 15 app at apps/ui — writes
   `package.json`, `next.config.ts`, `tsconfig.json`, `next-env.d.ts`.
-- `S-SETUP-2: Wire design tokens` — copies the
-  frontend-design `design-tokens.css` artifact into
-  `apps/ui/app/design-tokens.css`, imports it from `app/layout.tsx`.
-- `S-SETUP-3: Configure test infra` — installs vitest +
-  testing-library + jsdom, writes `vitest.config.ts`, `vitest.setup.ts`.
+- `S-SETUP-2`: Wire design tokens — copies the frontend-design
+  `design-tokens.css` artifact into `apps/ui/app/design-tokens.css`,
+  imports it from `app/layout.tsx`.
+- `S-SETUP-3`: Configure test infra — installs vitest +
+  testing-library + jsdom, writes `vitest.config.ts`,
+  `vitest.setup.ts`.
+
+*Brownfield (apps/ui already in place)*
+- `S-SETUP-1`: Extend `app/_lib/types.ts` with the four new domain
+  types this wave's feature stories all consume.
+- `S-SETUP-2`: Add `@playwright/test` + `playwright` to
+  `apps/ui/package.json` devDeps and ship `apps/ui/playwright.config.ts`.
+- `S-SETUP-3`: Register the new `RunStreamProvider` in
+  `apps/ui/app/layout.tsx` so feature stories can `useRunStream()`
+  without re-mounting the provider.
+
+Both shapes pass the same `verifySetupContract` —
+`expectedFiles` / `expectedScripts` / `postChecks` doesn't care
+whether the file existed before; it only checks the post-state.
 
 ### 2b. Setup wave runs serial, before any feature wave
 
@@ -440,16 +493,24 @@ the file; `verifySetupContract` confirms the destination exists.
 - Unit: `executeWave` serialises stories within a `kind: "setup"`
   wave even when `BEERENGINEER_SEQUENTIAL_STORIES` is unset.
 - Unit: `verifySetupContract` covering missing file, failing script,
-  failing post-check, and the all-green path.
-- Integration: a fake-LLM end-to-end run with a planner that emits a
-  setup wave + feature wave; assert (a) the setup wave's
-  `verifySetupContract` runs and passes, (b) the test-writer is NOT
-  invoked for setup stories, (c) the file
-  `apps/ui/app/design-tokens.css` exists in the feature-story
-  worktree, (d) the setup wave finishes before the feature wave
-  starts.
-- Regression: existing planner outputs without a setup wave continue
-  to work unchanged through the feature-only path.
+  failing post-check, and the all-green path. Cover BOTH the
+  *create* case (file doesn't exist beforehand) and the *extend*
+  case (file exists with different content beforehand) — the
+  contract should match either way as long as the post-state holds.
+- Integration (greenfield): fake-LLM run where `apps/ui` doesn't
+  exist; planner emits setup wave that scaffolds it; assert
+  (a) `verifySetupContract` passes, (b) the test-writer is NOT
+  invoked for setup stories, (c) `apps/ui/app/design-tokens.css`
+  exists in the feature-story worktree, (d) the setup wave finishes
+  before the feature wave starts.
+- Integration (brownfield): fake-LLM run where `apps/ui` exists with
+  a stub `app/_lib/types.ts`; planner detects two feature stories
+  both want to extend the same file and emits a setup wave that
+  performs the type additions once; assert the feature stories see
+  the extended file in their worktrees.
+- Regression: planner outputs whose feature waves don't have
+  shared-file collisions skip setup entirely and run unchanged
+  through the feature-only path.
 
 ### Part 2 deliverables (TDD order)
 
