@@ -8,7 +8,7 @@ import {
   branchNameProject,
   branchNameStory,
   branchNameWave,
-} from "./repoSimulation.js"
+} from "./branchNames.js"
 import { isEngineOwnedBranchName } from "./baseBranch.js"
 import { resolveMergeConflictsViaLlm, type MergeResolverHarness } from "./mergeResolver.js"
 
@@ -16,11 +16,12 @@ export type RealGitMergeOptions = {
   mergeResolver?: MergeResolverHarness
   // Optional: directory to drop merge-resolver telemetry into.
   resolverLogDir?: string
+  expectedSharedFiles?: string[]
 }
 
-export type RealGitDisabled = { enabled: false; reason: string }
 export type RealGitEnabled = { enabled: true; workspaceRoot: string; baseBranch: string; itemWorktreeRoot: string }
-export type RealGitMode = RealGitEnabled | RealGitDisabled
+/** @deprecated kept as an alias for callers; always resolves to enabled now. */
+export type RealGitMode = RealGitEnabled
 
 type GitResult = { ok: boolean; stdout: string; stderr: string }
 type WorktreeEntry = { path: string; branch: string | null }
@@ -38,25 +39,40 @@ function runGit(workspaceRoot: string, args: string[]): GitResult {
   }
 }
 
+/**
+ * Resolve the workspace into an enabled {@link RealGitEnabled} mode or
+ * throw with a precise reason. Real-git is mandatory: simulation has been
+ * removed.
+ */
 export function detectRealGitMode(context: WorkflowContext): RealGitMode {
   const workspaceRoot = context.workspaceRoot
-  if (!workspaceRoot) return { enabled: false, reason: "workspaceRoot not set" }
+  if (!workspaceRoot) {
+    throw new Error("realGit: workspaceRoot is required (simulation mode has been removed)")
+  }
 
   const inside = runGit(workspaceRoot, ["rev-parse", "--is-inside-work-tree"])
   if (!inside.ok || inside.stdout !== "true") {
-    return { enabled: false, reason: "workspace is not a git repo" }
+    throw new Error(`realGit: workspace ${workspaceRoot} is not a git repository`)
   }
 
   const baseBranch = context.baseBranch?.trim()
-  if (!baseBranch) return { enabled: false, reason: "base branch could not be resolved" }
+  if (!baseBranch) {
+    throw new Error("realGit: base branch could not be resolved (set context.baseBranch)")
+  }
 
   if (!context.itemSlug?.trim()) {
-    return { enabled: false, reason: "itemSlug is required for real-git mode (item worktree is mandatory)" }
+    throw new Error("realGit: itemSlug is required (item worktree is mandatory)")
   }
 
   const porcelain = runGit(workspaceRoot, ["status", "--porcelain"])
-  if (!porcelain.ok) return { enabled: false, reason: `git status failed: ${porcelain.stderr}` }
-  if (porcelain.stdout.length > 0) return { enabled: false, reason: "workspace has uncommitted changes (dirty repo)" }
+  if (!porcelain.ok) {
+    throw new Error(`realGit: git status failed: ${porcelain.stderr}`)
+  }
+  if (porcelain.stdout.length > 0) {
+    throw new Error(
+      `realGit: workspace ${workspaceRoot} has uncommitted changes (dirty repo); commit or stash before starting`,
+    )
+  }
 
   return {
     enabled: true,
@@ -211,6 +227,7 @@ function mergeNoFf(
         mergeMessage: message,
         harness: opts.mergeResolver,
         logDir: opts.resolverLogDir,
+        expectedSharedFiles: opts.expectedSharedFiles,
       })
       if (resolution.ok) {
         // Resolver already staged with `git add -A`; just complete the merge.

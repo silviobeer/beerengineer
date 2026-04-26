@@ -209,7 +209,7 @@ test("ensureItemBranchReal reclaims item branch from a stale orphan worktree", (
   }
 })
 
-test("detectRealGitMode falls back when repo is dirty", () => {
+test("detectRealGitMode throws when repo is dirty", () => {
   const root = seedRepo()
   try {
     writeFileSync(join(root, "dirty.txt"), "uncommitted\n")
@@ -220,22 +220,18 @@ test("detectRealGitMode falls back when repo is dirty", () => {
       baseBranch: "main",
       workspaceRoot: root,
     }
-    const mode = detectRealGitMode(ctx)
-    assert.equal(mode.enabled, false)
-    if (!mode.enabled) assert.match(mode.reason, /dirty/)
+    assert.throws(() => detectRealGitMode(ctx), /uncommitted changes/)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
 })
 
-test("detectRealGitMode falls back when workspaceRoot is unset", () => {
+test("detectRealGitMode throws when workspaceRoot is unset", () => {
   const ctx: WorkflowContext = { workspaceId: "w", runId: "r", itemSlug: "s", baseBranch: "main" }
-  const mode = detectRealGitMode(ctx)
-  assert.equal(mode.enabled, false)
-  if (!mode.enabled) assert.match(mode.reason, /workspaceRoot/)
+  assert.throws(() => detectRealGitMode(ctx), /workspaceRoot is required/)
 })
 
-test("detectRealGitMode falls back when workspace is not a git repo", () => {
+test("detectRealGitMode throws when workspace is not a git repo", () => {
   const root = mkdtempSync(join(tmpdir(), "be2-realgit-nongit-"))
   try {
     const ctx: WorkflowContext = {
@@ -245,9 +241,7 @@ test("detectRealGitMode falls back when workspace is not a git repo", () => {
       baseBranch: "main",
       workspaceRoot: root,
     }
-    const mode = detectRealGitMode(ctx)
-    assert.equal(mode.enabled, false)
-    if (!mode.enabled) assert.match(mode.reason, /not a git repo/)
+    assert.throws(() => detectRealGitMode(ctx), /not a git repository/)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

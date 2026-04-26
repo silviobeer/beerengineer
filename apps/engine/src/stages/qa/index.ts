@@ -1,7 +1,7 @@
 import { runStage } from "../../core/stageRuntime.js"
 import { printStageCompletion, stageSummary, summaryArtifactFile } from "../../core/stageHelpers.js"
 import { stagePresent } from "../../core/stagePresentation.js"
-import { branchNameProject } from "../../core/repoSimulation.js"
+import { branchNameProject } from "../../core/branchNames.js"
 import { createQaReview, createQaStage, type RunLlmConfig } from "../../llm/registry.js"
 import { renderPrdDigest } from "../../render/artifactDigests.js"
 import { ask } from "../../sim/human.js"

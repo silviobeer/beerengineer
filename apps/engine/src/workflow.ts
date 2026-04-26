@@ -259,22 +259,30 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
     workspaceRoot: options?.workspaceRoot,
   }
 
-  const git = createGitAdapter(context)
-  if (git.mode.enabled) {
-    stagePresent.dim(`→ Real git mode: branches will be created in ${git.mode.workspaceRoot}`)
-  } else if (options?.workspaceRoot && git.mode.reason === "workspace has uncommitted changes (dirty repo)") {
-    const currentBranch = currentGitBranch(options.workspaceRoot)
-    const summary =
-      currentBranch === "main" || currentBranch === "master"
-        ? `Workspace ${options.workspaceRoot} has uncommitted changes on ${currentBranch}. ` +
-          "Strategy violation: main/master must stay clean; item work belongs on isolated item branches."
-        : `Workspace ${options.workspaceRoot} has uncommitted changes. ` +
-          "BeerEngineer requires a clean repo before it creates an isolated item branch."
+  let git
+  try {
+    git = createGitAdapter(context)
+  } catch (error) {
+    const reason = (error as Error).message.replace(/^realGit:\s*/, "")
+    const summary = options?.workspaceRoot
+      ? (() => {
+          const currentBranch = currentGitBranch(options.workspaceRoot)
+          if (reason.includes("uncommitted changes")) {
+            return currentBranch === "main" || currentBranch === "master"
+              ? `Workspace ${options.workspaceRoot} has uncommitted changes on ${currentBranch}. ` +
+                "Strategy violation: main/master must stay clean; item work belongs on isolated item branches."
+              : `Workspace ${options.workspaceRoot} has uncommitted changes. ` +
+                "BeerEngineer requires a clean repo before it creates an isolated item branch."
+          }
+          return `Cannot start run: ${reason}`
+        })()
+      : `Cannot start run: ${reason}`
     stagePresent.warn(summary)
     await blockRunForWorkspaceState(context, summary)
-  } else {
-    stagePresent.dim(`→ Simulated git mode (${git.mode.reason})`)
   }
+  // Above blockRunForWorkspaceState always throws, so `git` is defined here.
+  if (!git) throw new Error("unreachable: git adapter was not constructed")
+  stagePresent.dim(`→ Real git mode: branches will be created in ${git.mode.workspaceRoot}`)
 
   try {
     git.ensureItemBranch()
@@ -365,7 +373,7 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
     stagePresent.ok(`Item "${item.title}" is done ✓`)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    if (git.enabled && (message.startsWith("realGit:") || message.startsWith("branch_gate:"))) {
+    if (message.startsWith("realGit:") || message.startsWith("branch_gate:")) {
       const summary =
         `Run blocked: git branch gate failed for "${item.title}". ` +
         `${message.replace(/^branch_gate:\s*/, "").replace(/^realGit:\s*/, "")}`
@@ -374,18 +382,16 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
     }
     throw error
   } finally {
-    if (git.enabled) {
-      try {
-        const exitBranch = git.exitRunToItemBranch()
-        if (exitBranch) stagePresent.dim(`→ Run exit branch: ${exitBranch}`)
-      } catch (error) {
-        stagePresent.warn(`Run exit branch restore failed: ${(error as Error).message}`)
-      }
-      try {
-        git.assertWorkspaceRootOnBaseBranch("run exit")
-      } catch (error) {
-        stagePresent.warn(`Workspace root invariant failed at run exit: ${(error as Error).message}`)
-      }
+    try {
+      const exitBranch = git.exitRunToItemBranch()
+      stagePresent.dim(`→ Run exit branch: ${exitBranch}`)
+    } catch (error) {
+      stagePresent.warn(`Run exit branch restore failed: ${(error as Error).message}`)
+    }
+    try {
+      git.assertWorkspaceRootOnBaseBranch("run exit")
+    } catch (error) {
+      stagePresent.warn(`Workspace root invariant failed at run exit: ${(error as Error).message}`)
     }
   }
 }

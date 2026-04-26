@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process"
 import { join } from "node:path"
 import { computeScreenOwners, type ScreenOwnerMap } from "../../core/screenOwners.js"
 import { projectDesignGuidance } from "../../core/designPrep.js"
-import { branchNameStory, ensureWaveBranch, mergeWaveBranchIntoProject } from "../../core/repoSimulation.js"
+import { branchNameStory } from "../../core/branchNames.js"
 import { createGitAdapter, type GitAdapter } from "../../core/gitAdapter.js"
 import { writeRecoveryRecord } from "../../core/recovery.js"
 import { emitEvent, getActiveRun } from "../../core/runContext.js"
@@ -148,8 +148,6 @@ async function executeWave(
     ? "(stories eligible for parallel execution inside the wave; currently executed sequentially with isolated worktrees)"
     : "(stories executed sequentially)"
   stagePresent.step(`\nWave ${wave.number} ${tag}: ${waveEntries.map(s => s.id).join(", ")}`)
-  await ensureWaveBranch(ctx, ctx.project.id, wave.number)
-
   git.ensureWaveBranch(ctx.project.id, wave.number)
 
   const mergeResolverHarness: { provider: ResolvedHarness["provider"]; model?: string } | undefined =
@@ -282,7 +280,6 @@ async function executeWave(
     })
   }
   assertWaveSucceeded(wave, summary)
-  await mergeWaveBranchIntoProject(ctx, ctx.project.id, wave.number)
   git.mergeWaveIntoProject(ctx.project.id, wave.number, {
     mergeResolver: mergeResolverHarness,
     resolverLogDir: layout.executionWaveDir(ctx, wave.number),

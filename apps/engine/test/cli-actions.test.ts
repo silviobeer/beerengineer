@@ -10,17 +10,31 @@ import { initDatabase } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
 import { layout } from "../src/core/workspaceLayout.js"
 
+function seedCliRepo(repoRoot: string): void {
+  mkdirSync(repoRoot, { recursive: true })
+  spawnSync("git", ["init", "--initial-branch=main"], { cwd: repoRoot, encoding: "utf8" })
+  spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: repoRoot, encoding: "utf8" })
+  spawnSync("git", ["config", "user.name", "test"], { cwd: repoRoot, encoding: "utf8" })
+  writeFileSync(join(repoRoot, "README.md"), "seed\n")
+  spawnSync("git", ["add", "-A"], { cwd: repoRoot, encoding: "utf8" })
+  spawnSync("git", ["commit", "-m", "seed"], { cwd: repoRoot, encoding: "utf8" })
+  spawnSync("git", ["remote", "add", "origin", "https://github.com/acme/demo.git"], { cwd: repoRoot, encoding: "utf8" })
+  spawnSync("git", ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"], { cwd: repoRoot, encoding: "utf8" })
+}
+
 test("beerengineer item action start_brainstorm runs to completion through the terminal CLI", () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-cli-"))
   const testDir = dirname(fileURLToPath(import.meta.url))
   const engineRoot = resolve(testDir, "..")
   const binPath = resolve(engineRoot, "bin/beerengineer.js")
+  const repoRoot = join(dir, "repo")
+  seedCliRepo(repoRoot)
 
   try {
     const dbPath = join(dir, "workflow.sqlite")
     const db = initDatabase(dbPath)
     const repos = new Repos(db)
-    const ws = repos.upsertWorkspace({ key: "default", name: "Default Workspace" })
+    const ws = repos.upsertWorkspace({ key: "default", name: "Default Workspace", rootPath: repoRoot })
     repos.createItem({ workspaceId: ws.id, code: "ITEM-0001", title: "CLI Workflow", description: "smoke" })
     db.close()
 
@@ -64,13 +78,15 @@ test("beerengineer item action start_implementation resumes from brainstorm arti
   const testDir = dirname(fileURLToPath(import.meta.url))
   const engineRoot = resolve(testDir, "..")
   const binPath = resolve(engineRoot, "bin/beerengineer.js")
+  const repoRoot = join(dir, "repo")
+  seedCliRepo(repoRoot)
   let workspaceIdForCleanup: string | null = null
 
   try {
     const dbPath = join(dir, "workflow.sqlite")
     const db = initDatabase(dbPath)
     const repos = new Repos(db)
-    const ws = repos.upsertWorkspace({ key: "default", name: "Default Workspace" })
+    const ws = repos.upsertWorkspace({ key: "default", name: "Default Workspace", rootPath: repoRoot })
     const item = repos.createItem({
       workspaceId: ws.id,
       code: "ITEM-0001",

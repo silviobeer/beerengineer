@@ -9,7 +9,6 @@ import { spawnSync } from "node:child_process"
 import { runWithWorkflowIO, type WorkflowEvent, type WorkflowIO } from "../src/core/io.js"
 import { runWorkflow } from "../src/workflow.ts"
 import { layout } from "../src/core/workspaceLayout.js"
-import type { SimulatedRepoState } from "../src/types.js"
 import { runWithActiveRun } from "../src/core/runContext.js"
 
 /** Default answers for design-prep stages: 3 clarification no-ops + approve. */
@@ -95,10 +94,28 @@ async function withTmpCwd<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+/**
+ * Initialise a clean real-git workspace at the given root: `git init`,
+ * minimal commit, origin/HEAD pointer at main. Returns the root for
+ * passing as `runWorkflow({...}, { workspaceRoot: root })`. Required now
+ * that simulation has been removed and real-git is mandatory.
+ */
+function seedCleanGitRepo(root: string): void {
+  spawnSync("git", ["init", "--initial-branch=main"], { cwd: root, encoding: "utf8" })
+  spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: root, encoding: "utf8" })
+  spawnSync("git", ["config", "user.name", "test"], { cwd: root, encoding: "utf8" })
+  writeFileSync(join(root, "README.md"), "seed\n")
+  spawnSync("git", ["add", "-A"], { cwd: root, encoding: "utf8" })
+  spawnSync("git", ["commit", "-m", "seed"], { cwd: root, encoding: "utf8" })
+  spawnSync("git", ["remote", "add", "origin", "https://github.com/acme/demo.git"], { cwd: root, encoding: "utf8" })
+  spawnSync("git", ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"], { cwd: root, encoding: "utf8" })
+}
+
 test("runWorkflow runs end-to-end with all review/side loops, producing artifacts", async () => {
   await withTmpCwd(async () => {
     const originalLog = console.log
     console.log = () => {}
+    seedCleanGitRepo(process.cwd())
 
     const { io, events } = makeIO({
       brainstorm: [
@@ -122,7 +139,10 @@ test("runWorkflow runs end-to-end with all review/side loops, producing artifact
 
     try {
       await runWithWorkflowIO(io, () =>
-        runWorkflow({ id: "i-1", title: "Test Workflow", description: "smoke" }),
+        runWorkflow(
+          { id: "i-1", title: "Test Workflow", description: "smoke" },
+          { workspaceRoot: process.cwd() },
+        ),
       )
     } finally {
       console.log = originalLog
@@ -171,26 +191,6 @@ test("runWorkflow runs end-to-end with all review/side loops, producing artifact
     assert.equal(wave1.projectBranch, "proj/test-workflow__p01")
     assert.equal(wave2.storiesMerged.length, 2, "wave 2 should merge both stories")
     assert.equal(wave2.storiesBlocked.length, 0, "wave 2 must not silently block any story")
-
-    const repoState = JSON.parse(
-      await readFile(layout.repoStateWorkspaceFile(ctx.workspaceId), "utf8"),
-    ) as SimulatedRepoState
-    assert.equal(repoState.baseBranch, "main")
-    assert.equal(repoState.itemBranch, "item/test-workflow")
-    assert.equal(repoState.branches.find(branch => branch.name === "story/test-workflow__p01__w2__us-02")?.status, "merged")
-    assert.equal(repoState.branches.find(branch => branch.name === "story/test-workflow__p01__w2__us-03")?.status, "merged")
-    assert.equal(repoState.branches.find(branch => branch.name === "wave/test-workflow__p01__w2")?.commits.length, 2)
-    assert.equal(repoState.branches.find(branch => branch.name === "proj/test-workflow__p01")?.commits.length, 2)
-    assert.equal(repoState.branches.find(branch => branch.name === "item/test-workflow")?.commits.length, 1)
-
-    // handoff file created with merge decision
-    const handoffPath = layout.handoffFile(ctx, "P01")
-    const handoff = JSON.parse(await readFile(handoffPath, "utf8"))
-    assert.equal(handoff.decision, "test")
-    assert.equal(handoff.candidateBranch.status, "open")
-    assert.equal(handoff.candidateBranch.base, "proj/test-workflow__p01")
-    assert.equal(handoff.mergeTargetBranch, "main")
-    assert.match(handoff.candidateBranch.name, /^candidate\//)
 
     // With the event-bus model, stages emit presentation + chat_message
     // events even when no run context is active; the bare IO just captures
@@ -342,6 +342,9 @@ test("runWorkflow blocks dirty engine-owned branches without labeling them as ma
 
 test("runWorkflow blocks resume when design-prep freeze and brainstorm project ids drift", async () => {
   await withTmpCwd(async () => {
+    const repoRoot = join(process.cwd(), "repo")
+    mkdirSync(repoRoot, { recursive: true })
+    seedCleanGitRepo(repoRoot)
     const ctx = { workspaceId: "freeze-item-i-1", runId: "run-freeze" }
     const brainstormDir = layout.stageArtifactsDir(ctx, "brainstorm")
     const visualDir = layout.stageArtifactsDir(ctx, "visual-companion")
@@ -381,7 +384,10 @@ test("runWorkflow blocks resume when design-prep freeze and brainstorm project i
           runWithActiveRun({ runId: ctx.runId, itemId: "I-1", title: "Freeze Item" }, () =>
             runWorkflow(
               { id: "I-1", title: "Freeze Item", description: "freeze" },
-              { resume: { scope: { type: "run", runId: ctx.runId }, currentStage: "projects" } },
+              {
+                workspaceRoot: repoRoot,
+                resume: { scope: { type: "run", runId: ctx.runId }, currentStage: "projects" },
+              },
             ),
           ),
         ),

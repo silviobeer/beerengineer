@@ -2,9 +2,10 @@ import { spawnSync } from "node:child_process"
 import { runStage } from "../../core/stageRuntime.js"
 import { printStageCompletion, stageSummary, summaryArtifactFile } from "../../core/stageHelpers.js"
 import { stagePresent } from "../../core/stagePresentation.js"
-import { branchNameProject } from "../../core/repoSimulation.js"
+import { branchNameProject } from "../../core/branchNames.js"
 import { createProjectReviewReview, createProjectReviewStage, type RunLlmConfig } from "../../llm/registry.js"
 import { shouldIgnoreTransientUntrackedPath } from "../../llm/hosted/execution/coderHarness.js"
+import { renderPlanSummary } from "../../render/artifactDigests.js"
 import { renderProjectReviewMarkdown } from "../../render/projectReview.js"
 import type { ProjectReviewArtifact, ProjectReviewFinding, WithExecution } from "../../types.js"
 import type { ProjectReviewRepoEvidence, ProjectReviewState } from "./types.js"
@@ -106,7 +107,7 @@ export async function projectReview(ctx: WithExecution, llm?: RunLlmConfig): Pro
       projectId: ctx.project.id,
       prd: ctx.prd,
       architecture: ctx.architecture,
-      implementationPlan: ctx.plan,
+      planSummary: renderPlanSummary(ctx.plan),
       executionSummaries: sanitizedExecutionSummaries,
       repoEvidence,
       revisionCount: 0,

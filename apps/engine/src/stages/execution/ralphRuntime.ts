@@ -2,14 +2,10 @@ import { mkdir, readFile, unlink, writeFile } from "node:fs/promises"
 import { spawnSync } from "node:child_process"
 import { join } from "node:path"
 import {
-  abandonBranch,
-  appendBranchCommit,
   branchNameProject,
+  branchNameStory,
   branchNameWave,
-  ensureWaveBranch,
-  ensureStoryBranch,
-  mergeStoryBranchIntoWave,
-} from "../../core/repoSimulation.js"
+} from "../../core/branchNames.js"
 import { emitEvent, getActiveRun } from "../../core/runContext.js"
 import { writeRecoveryRecord } from "../../core/recovery.js"
 import { layout, type WorkflowContext } from "../../core/workspaceLayout.js"
@@ -26,7 +22,6 @@ import { runStoryReviewTools } from "../../review/registry.js"
 import type { CodeRabbitResult, SonarCloudResult } from "../../review/types.js"
 import type {
   Finding,
-  SimulatedBranch,
   StoryCheckResult,
   StoryExecutionContext,
   StoryImplementationArtifact,
@@ -62,6 +57,16 @@ function nowIso(): string {
   return new Date().toISOString()
 }
 
+function requireStoryBranch(storyContext: StoryExecutionContext): string {
+  // The execution stage sets `storyBranch` from `branchNameStory(...)`. If
+  // a caller (e.g. a focused unit test) constructs the context manually,
+  // synthesise the same name so the loop body works without ceremony.
+  return (
+    storyContext.storyBranch ??
+    `story/${storyContext.item.slug}__${storyContext.project.id}__w${storyContext.wave.number}__${storyContext.story.id}`.toLowerCase()
+  )
+}
+
 function fakeChangedFiles(storyId: string): string[] {
   return [
     `src/${storyId.toLowerCase()}/handler.ts`,
@@ -94,13 +99,6 @@ function logEntry(type: StageLogEntry["type"], message: string, data?: Record<st
   return { at: nowIso(), type, message, ...(data ? { data } : {}) }
 }
 
-function requireBranch(implementation: StoryImplementationArtifact): SimulatedBranch {
-  if (!implementation.branch) {
-    throw new Error(`Missing simulated branch for story ${implementation.story.id}`)
-  }
-  return implementation.branch
-}
-
 async function recordStoryBlocked(
   ctx: WorkflowContext,
   storyContext: StoryExecutionContext,
@@ -128,7 +126,7 @@ async function recordStoryBlocked(
       storyId: storyContext.story.id,
     },
     summary,
-    branch: implementation.branch?.name,
+    branch: branchNameStory(ctx, storyContext.project.id, storyContext.wave.number, storyContext.story.id),
     evidencePaths: [
       join(dir, "implementation.json"),
       join(dir, "story-review.json"),
@@ -151,7 +149,7 @@ async function recordStoryBlocked(
       },
       cause,
       summary,
-      branch: implementation.branch?.name,
+      branch: branchNameStory(ctx, storyContext.project.id, storyContext.wave.number, storyContext.story.id),
     })
   }
 }
@@ -341,7 +339,7 @@ async function runStoryReview(input: {
       workspaceRoot: input.storyContext.worktreeRoot ?? process.cwd(),
       artifactsDir: input.artifactsDir,
       baselineSha: null,
-      storyBranch: input.storyContext.storyBranch ?? requireBranch(input.implementation).name,
+      storyBranch: requireStoryBranch(input.storyContext),
       baseBranch: input.storyContext.item.baseBranch,
       changedFiles: input.implementation.changedFiles,
       storyId: input.storyContext.story.id,
@@ -405,7 +403,7 @@ async function runStoryReview(input: {
     workspaceRoot: reviewWorkspaceRoot,
     artifactsDir: input.artifactsDir,
     baselineSha,
-    storyBranch: input.storyContext.storyBranch ?? requireBranch(input.implementation).name,
+    storyBranch: requireStoryBranch(input.storyContext),
     baseBranch,
     changedFiles,
     storyId: input.storyContext.story.id,
@@ -543,6 +541,7 @@ function newImplementation(storyContext: StoryExecutionContext): StoryImplementa
     currentReviewCycle: 0,
     iterations: [],
     coderSessionId: null,
+    mockupDeliveredToSession: false,
     priorAttempts: [],
     changedFiles: [],
     finalSummary: "",
@@ -554,20 +553,11 @@ async function ensureBranchAndStartLog(
   implementation: StoryImplementationArtifact,
 ): Promise<void> {
   if (implementation.iterations.length > 0) return
-  if (!implementation.branch) {
-    implementation.branch = await ensureStoryBranch(
-      ctx.runtimeContext,
-      ctx.storyContext.project.id,
-      ctx.storyContext.wave.number,
-      ctx.storyContext.story.id,
-    )
-    await writeJson(ctx.paths.implementationPath, implementation)
-    await appendLog(ctx.paths.logPath, logEntry("branch_event", `Branch created: ${implementation.branch.name}`, {
-      storyId: ctx.storyContext.story.id,
-      branch: implementation.branch.name,
-      base: implementation.branch.base,
-    }))
-  }
+  const branchName = requireStoryBranch(ctx.storyContext)
+  await appendLog(ctx.paths.logPath, logEntry("branch_event", `Branch ready: ${branchName}`, {
+    storyId: ctx.storyContext.story.id,
+    branch: branchName,
+  }))
   await appendLog(ctx.paths.logPath, logEntry("status_changed", `Story ${ctx.storyContext.story.id} started`, {
     storyId: ctx.storyContext.story.id,
   }))
@@ -647,7 +637,9 @@ async function runOneIteration(
       harness,
       runtimePolicy: executionCoderPolicy(llm.runtimePolicy),
       baselinePath: paths.baselinePath,
-      storyContext,
+      storyContext: implementation.mockupDeliveredToSession
+        ? { ...storyContext, mockupHtmlByScreen: undefined }
+        : storyContext,
       reviewFeedback: isRemediation ? opts.feedback ?? "" : undefined,
       sessionId: implementation.coderSessionId ?? null,
       iterationContext,
@@ -655,6 +647,7 @@ async function runOneIteration(
     coderSummary = coderResult.summary
     changedFilesThisIteration = coderResult.changedFiles
     implementation.coderSessionId = coderResult.sessionId
+    implementation.mockupDeliveredToSession ||= Boolean(storyContext.mockupHtmlByScreen)
     notes = [...notes, ...coderResult.implementationNotes]
     if (coderResult.blockers.length > 0) {
       notes.push(...coderResult.blockers.map(blocker => `[blocker] ${blocker}`))
@@ -699,25 +692,20 @@ async function runOneIteration(
   implementation.changedFiles = Array.from(
     new Set([...implementation.changedFiles, ...changedFilesThisIteration]),
   )
-  implementation.branch = await appendBranchCommit(
-    runtimeContext,
-    requireBranch(implementation).name,
-    isRemediation
-      ? `Apply review feedback for ${storyContext.story.id}`
-      : `Implement ${storyContext.story.id}`,
-    implementation.changedFiles,
-  )
+  const storyBranchName = requireStoryBranch(storyContext)
+  const commitMessage = isRemediation
+    ? `Apply review feedback for ${storyContext.story.id}`
+    : `Implement ${storyContext.story.id}`
   implementation.status = result === "done" ? "ready_for_review" : "in_progress"
   if (result === "done") {
     implementation.finalSummary = "Implementation reached a green state and is ready for story review."
   }
 
   await writeJson(paths.implementationPath, implementation)
-  const lastCommit = requireBranch(implementation).commits[requireBranch(implementation).commits.length - 1]
-  await appendLog(paths.logPath, logEntry("branch_event", `Commit: ${lastCommit.message}`, {
+  await appendLog(paths.logPath, logEntry("branch_event", `Commit: ${commitMessage}`, {
     storyId: storyContext.story.id,
-    branch: requireBranch(implementation).name,
-    commit: lastCommit.message,
+    branch: storyBranchName,
+    commit: commitMessage,
   }))
   await appendLog(paths.logPath, logEntry("iteration", `Iteration ${iterationNumber} (cycle ${opts.reviewCycle}): ${result}`, {
     storyId: storyContext.story.id,
@@ -802,23 +790,17 @@ async function runOneReviewCycle(
     return { kind: "revise", review: storyReview, nextFeedback: storyReview.feedbackSummary.join("; ") }
   }
 
-  if (implementation.branch) {
-    const merge = await mergeStoryBranchIntoWave(
-      runtimeContext,
-      storyContext.project.id,
-      storyContext.wave.number,
-      implementation.branch.name,
-      implementation.changedFiles,
-    )
-    implementation.branch = merge.storyBranch
-    await appendLog(paths.logPath, logEntry("branch_event", `Merged ${merge.storyBranch.name} → ${merge.waveBranch.name}`, {
-      storyId: storyContext.story.id,
-      branch: merge.storyBranch.name,
-      target: merge.waveBranch.name,
-    }))
-  }
+  // Real-git story→wave merge happens in the execution stage's
+  // git.mergeStoryIntoWave call after this function returns "passed".
+  const passedStoryBranch = requireStoryBranch(storyContext)
+  const passedWaveBranch = branchNameWave(runtimeContext, storyContext.project.id, storyContext.wave.number)
+  await appendLog(paths.logPath, logEntry("branch_event", `Story ready to merge: ${passedStoryBranch} → ${passedWaveBranch}`, {
+    storyId: storyContext.story.id,
+    branch: passedStoryBranch,
+    target: passedWaveBranch,
+  }))
   implementation.status = "passed"
-  implementation.finalSummary = `Story implementation and story review both passed, then ${implementation.branch?.name ?? "story branch"} was merged into ${implementation.branch?.base ?? "wave branch"}.`
+  implementation.finalSummary = `Story implementation and story review both passed; ${passedStoryBranch} ready to merge into ${passedWaveBranch}.`
   await writeJson(paths.implementationPath, implementation)
   await appendLog(paths.logPath, logEntry("status_changed", `Story ${storyContext.story.id} passed`, {
     storyId: storyContext.story.id,
@@ -842,13 +824,14 @@ async function blockStory(
   const { runtimeContext, storyContext, paths } = ctx
   implementation.status = "blocked"
   implementation.finalSummary = summary
-  if (implementation.branch) {
-    implementation.branch = await abandonBranch(runtimeContext, implementation.branch.name)
-    await appendLog(paths.logPath, logEntry("branch_event", `Branch abandoned: ${implementation.branch.name}`, {
-      storyId: storyContext.story.id,
-      branch: implementation.branch.name,
-    }))
-  }
+  // Real-git story branch abandon (if any) is handled by the execution
+  // stage via git.abandonStoryBranch when the wave-level merge gate sees
+  // a blocked story; here we just record the blocked status.
+  const abandonedBranch = requireStoryBranch(storyContext)
+  await appendLog(paths.logPath, logEntry("branch_event", `Story blocked: ${abandonedBranch}`, {
+    storyId: storyContext.story.id,
+    branch: abandonedBranch,
+  }))
   await writeJson(paths.implementationPath, implementation)
   await appendLog(paths.logPath, logEntry("status_changed", `Story ${storyContext.story.id} blocked`, {
     storyId: storyContext.story.id,
@@ -945,7 +928,6 @@ export async function writeWaveSummary(
   projectId: string,
   summaries: Array<{ storyId: string; implementation: StoryImplementationArtifact }>,
 ): Promise<WaveSummary> {
-  await ensureWaveBranch(runtimeContext, projectId, wave.number)
   const summary: WaveSummary = {
     waveId: wave.id,
     waveBranch: branchNameWave(runtimeContext, projectId, wave.number),
@@ -954,8 +936,8 @@ export async function writeWaveSummary(
       .filter(({ implementation }) => implementation.status === "passed")
       .map(({ storyId, implementation }) => ({
         storyId,
-        branch: implementation.branch?.name ?? `story/${storyId}`,
-        commitCount: implementation.branch?.commits.length ?? implementation.iterations.length,
+        branch: branchNameStory(runtimeContext, projectId, wave.number, storyId),
+        commitCount: implementation.iterations.length,
         filesIntegrated: implementation.changedFiles,
       })),
     storiesBlocked: summaries
