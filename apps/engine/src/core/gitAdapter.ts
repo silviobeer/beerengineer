@@ -1,7 +1,7 @@
 /**
- * Adapter that wraps the realGit.ts module behind a method-based interface.
+ * Adapter that wraps the git.ts module behind a method-based interface.
  *
- * Why this exists: `realGit.ts` exposes a flat catalog of free functions
+ * Why this exists: `git.ts` exposes a flat catalog of free functions
  * that callers had to thread the resolved mode through. The adapter
  * captures the mode once and exposes intent-level methods so call sites
  * stop touching the underlying free functions.
@@ -13,28 +13,28 @@
 
 import type { WorkflowContext } from "./workspaceLayout.js"
 import {
-  abandonStoryBranchReal,
+  abandonStoryBranch,
   assertWorkspaceRootOnBaseBranch as assertWorkspaceRootOnBaseBranchReal,
-  detectRealGitMode,
-  ensureItemBranchReal,
-  ensureProjectBranchReal,
-  ensureStoryBranchReal,
-  ensureStoryWorktreeReal,
-  ensureWaveBranchReal,
-  exitRunToItemBranchReal,
-  gcManagedStoryWorktreesReal,
-  mergeProjectIntoItemReal,
-  mergeStoryIntoWaveReal,
-  mergeWaveIntoProjectReal,
-  removeStoryWorktreeReal,
+  detectGitMode,
+  ensureItemBranch,
+  ensureProjectBranch,
+  ensureStoryBranch,
+  ensureStoryWorktree,
+  ensureWaveBranch,
+  exitRunToItemBranch,
+  gcManagedStoryWorktrees,
+  mergeProjectIntoItem,
+  mergeStoryIntoWave,
+  mergeWaveIntoProject,
+  removeStoryWorktree,
   type ManagedWorktreeGcResult,
-  type RealGitEnabled,
-  type RealGitMergeOptions,
-} from "./realGit.js"
+  type GitMode,
+  type GitMergeOptions,
+} from "./git.js"
 
 export interface GitAdapter {
   /** Underlying mode descriptor — enabled real-git only. */
-  readonly mode: RealGitEnabled
+  readonly mode: GitMode
   /** Always `true`; preserved for legacy call sites. */
   readonly enabled: true
 
@@ -44,7 +44,7 @@ export interface GitAdapter {
   /** Create the per-project branch (off the item branch). */
   ensureProjectBranch(projectId: string): void
   /** Merge the per-project branch back into the item branch. */
-  mergeProjectIntoItem(projectId: string, opts?: RealGitMergeOptions): void
+  mergeProjectIntoItem(projectId: string, opts?: GitMergeOptions): void
 
   // ---------- wave / story branches ----------
   ensureWaveBranch(projectId: string, waveNumber: number): string
@@ -59,12 +59,12 @@ export interface GitAdapter {
     projectId: string,
     waveNumber: number,
     storyId: string,
-    opts?: RealGitMergeOptions,
+    opts?: GitMergeOptions,
   ): void
   mergeWaveIntoProject(
     projectId: string,
     waveNumber: number,
-    opts?: RealGitMergeOptions,
+    opts?: GitMergeOptions,
   ): void
   abandonStoryBranch(
     projectId: string,
@@ -83,61 +83,61 @@ export interface GitAdapter {
 
 /**
  * Build a {@link GitAdapter} for the given context. Throws if the
- * workspace cannot be resolved into an enabled real-git mode.
+ * workspace cannot be resolved into an enabled git mode.
  */
 export function createGitAdapter(context: WorkflowContext): GitAdapter {
-  return createGitAdapterFromMode(context, detectRealGitMode(context))
+  return createGitAdapterFromMode(context, detectGitMode(context))
 }
 
 export function createGitAdapterFromMode(
   context: WorkflowContext,
-  mode: RealGitEnabled,
+  mode: GitMode,
 ): GitAdapter {
   return {
     mode,
     enabled: true,
 
     ensureItemBranch() {
-      ensureItemBranchReal(mode, context)
+      ensureItemBranch(mode, context)
     },
     ensureProjectBranch(projectId: string) {
-      ensureProjectBranchReal(mode, context, projectId)
+      ensureProjectBranch(mode, context, projectId)
     },
-    mergeProjectIntoItem(projectId: string, opts: RealGitMergeOptions = {}) {
-      mergeProjectIntoItemReal(mode, context, projectId, opts)
+    mergeProjectIntoItem(projectId: string, opts: GitMergeOptions = {}) {
+      mergeProjectIntoItem(mode, context, projectId, opts)
     },
 
     ensureWaveBranch(projectId, waveNumber) {
-      return ensureWaveBranchReal(mode, context, projectId, waveNumber)
+      return ensureWaveBranch(mode, context, projectId, waveNumber)
     },
     ensureStoryBranch(projectId, waveNumber, storyId) {
-      return ensureStoryBranchReal(mode, context, projectId, waveNumber, storyId)
+      return ensureStoryBranch(mode, context, projectId, waveNumber, storyId)
     },
     ensureStoryWorktree(projectId, waveNumber, storyId, worktreeRoot) {
-      return ensureStoryWorktreeReal(mode, context, projectId, waveNumber, storyId, worktreeRoot)
+      return ensureStoryWorktree(mode, context, projectId, waveNumber, storyId, worktreeRoot)
     },
     mergeStoryIntoWave(projectId, waveNumber, storyId, opts = {}) {
-      mergeStoryIntoWaveReal(mode, context, projectId, waveNumber, storyId, opts)
+      mergeStoryIntoWave(mode, context, projectId, waveNumber, storyId, opts)
     },
     mergeWaveIntoProject(projectId, waveNumber, opts = {}) {
-      mergeWaveIntoProjectReal(mode, context, projectId, waveNumber, opts)
+      mergeWaveIntoProject(mode, context, projectId, waveNumber, opts)
     },
     abandonStoryBranch(projectId, waveNumber, storyId) {
-      return abandonStoryBranchReal(mode, context, projectId, waveNumber, storyId)
+      return abandonStoryBranch(mode, context, projectId, waveNumber, storyId)
     },
     removeStoryWorktree(worktreeRoot) {
-      removeStoryWorktreeReal(mode, worktreeRoot)
+      removeStoryWorktree(mode, worktreeRoot)
     },
 
     exitRunToItemBranch() {
-      return exitRunToItemBranchReal(mode, context)
+      return exitRunToItemBranch(mode, context)
     },
     assertWorkspaceRootOnBaseBranch(label: string) {
       assertWorkspaceRootOnBaseBranchReal(mode, label)
     },
 
     gcManagedStoryWorktrees(managedRoot) {
-      return gcManagedStoryWorktreesReal(mode, managedRoot)
+      return gcManagedStoryWorktrees(mode, managedRoot)
     },
   }
 }

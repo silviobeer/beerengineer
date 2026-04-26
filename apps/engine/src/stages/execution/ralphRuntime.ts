@@ -228,7 +228,7 @@ function runGit(args: string[], cwd: string): { ok: boolean; stdout: string; std
 
 // Stages and commits any uncommitted work in the story worktree. The coder
 // agent writes files but does not always commit; without this, story branches
-// stay at the wave-base commit and `mergeStoryIntoWaveReal` becomes a silent
+// stay at the wave-base commit and `mergeStoryIntoWave` becomes a silent
 // no-op that loses the work when the worktree is removed at end-of-wave.
 function commitWorktreeChanges(worktreeRoot: string, message: string): string | null {
   const inside = runGit(["rev-parse", "--is-inside-work-tree"], worktreeRoot)

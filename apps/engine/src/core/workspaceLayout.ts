@@ -8,9 +8,9 @@ export type WorkflowContext = {
   // filesystem paths. Branch/repo helpers require them and will throw.
   itemSlug?: string
   baseBranch?: string
-  // Absolute path of the target workspace on disk. When set, the workflow
-  // operates against a real git repo at this path (base-branch detection,
-  // realGit branch ops); when absent, it falls back to the simulated repo.
+  // Absolute path of the target workspace on disk. The workflow operates
+  // against a real git repo at this path (base-branch detection, branch
+  // ops). Required at run-start time — simulation has been removed.
   workspaceRoot?: string
 }
 

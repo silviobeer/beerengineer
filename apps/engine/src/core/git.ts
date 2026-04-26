@@ -12,16 +12,14 @@ import {
 import { isEngineOwnedBranchName } from "./baseBranch.js"
 import { resolveMergeConflictsViaLlm, type MergeResolverHarness } from "./mergeResolver.js"
 
-export type RealGitMergeOptions = {
+export type GitMergeOptions = {
   mergeResolver?: MergeResolverHarness
   // Optional: directory to drop merge-resolver telemetry into.
   resolverLogDir?: string
   expectedSharedFiles?: string[]
 }
 
-export type RealGitEnabled = { enabled: true; workspaceRoot: string; baseBranch: string; itemWorktreeRoot: string }
-/** @deprecated kept as an alias for callers; always resolves to enabled now. */
-export type RealGitMode = RealGitEnabled
+export type GitMode = { enabled: true; workspaceRoot: string; baseBranch: string; itemWorktreeRoot: string }
 
 type GitResult = { ok: boolean; stdout: string; stderr: string }
 type WorktreeEntry = { path: string; branch: string | null }
@@ -40,37 +38,37 @@ function runGit(workspaceRoot: string, args: string[]): GitResult {
 }
 
 /**
- * Resolve the workspace into an enabled {@link RealGitEnabled} mode or
+ * Resolve the workspace into an enabled {@link GitMode} mode or
  * throw with a precise reason. Real-git is mandatory: simulation has been
  * removed.
  */
-export function detectRealGitMode(context: WorkflowContext): RealGitMode {
+export function detectGitMode(context: WorkflowContext): GitMode {
   const workspaceRoot = context.workspaceRoot
   if (!workspaceRoot) {
-    throw new Error("realGit: workspaceRoot is required (simulation mode has been removed)")
+    throw new Error("git: workspaceRoot is required (simulation mode has been removed)")
   }
 
   const inside = runGit(workspaceRoot, ["rev-parse", "--is-inside-work-tree"])
   if (!inside.ok || inside.stdout !== "true") {
-    throw new Error(`realGit: workspace ${workspaceRoot} is not a git repository`)
+    throw new Error(`git: workspace ${workspaceRoot} is not a git repository`)
   }
 
   const baseBranch = context.baseBranch?.trim()
   if (!baseBranch) {
-    throw new Error("realGit: base branch could not be resolved (set context.baseBranch)")
+    throw new Error("git: base branch could not be resolved (set context.baseBranch)")
   }
 
   if (!context.itemSlug?.trim()) {
-    throw new Error("realGit: itemSlug is required (item worktree is mandatory)")
+    throw new Error("git: itemSlug is required (item worktree is mandatory)")
   }
 
   const porcelain = runGit(workspaceRoot, ["status", "--porcelain"])
   if (!porcelain.ok) {
-    throw new Error(`realGit: git status failed: ${porcelain.stderr}`)
+    throw new Error(`git: git status failed: ${porcelain.stderr}`)
   }
   if (porcelain.stdout.length > 0) {
     throw new Error(
-      `realGit: workspace ${workspaceRoot} has uncommitted changes (dirty repo); commit or stash before starting`,
+      `git: workspace ${workspaceRoot} has uncommitted changes (dirty repo); commit or stash before starting`,
     )
   }
 
@@ -82,7 +80,7 @@ export function detectRealGitMode(context: WorkflowContext): RealGitMode {
   }
 }
 
-function branchWorkspaceRoot(mode: RealGitEnabled): string {
+function branchWorkspaceRoot(mode: GitMode): string {
   return mode.itemWorktreeRoot
 }
 
@@ -91,7 +89,7 @@ function branchWorkspaceRoot(mode: RealGitEnabled): string {
 // `mode.workspaceRoot` on something other than `baseBranch`, we want to fail
 // fast — silently mutating main is the worst possible failure mode.
 export function assertWorkspaceRootOnBaseBranch(
-  mode: RealGitEnabled,
+  mode: GitMode,
   when: string,
 ): void {
   if (resolve(mode.workspaceRoot) === resolve(mode.itemWorktreeRoot)) {
@@ -167,50 +165,50 @@ function collectManagedWorktreePaths(root: string): string[] {
   return out.sort()
 }
 
-function assertActiveBranch(mode: RealGitEnabled, expected: string, reason: string): void {
+function assertActiveBranch(mode: GitMode, expected: string, reason: string): void {
   const actual = currentBranch(branchWorkspaceRoot(mode))
   if (actual !== expected) {
     throw new Error(`branch_gate: expected ${expected} after ${reason}, but HEAD is ${actual || "<detached>"}`)
   }
 }
 
-function ensureBranchFrom(mode: RealGitEnabled, branch: string, from: string): void {
+function ensureBranchFrom(mode: GitMode, branch: string, from: string): void {
   const root = branchWorkspaceRoot(mode)
   if (branchExists(root, branch)) {
     if (currentBranch(root) === branch) return
     const co = runGit(root, ["checkout", branch])
-    if (!co.ok) throw new Error(`realGit: checkout ${branch} failed: ${co.stderr}`)
+    if (!co.ok) throw new Error(`git: checkout ${branch} failed: ${co.stderr}`)
     assertActiveBranch(mode, branch, `checking out existing branch ${branch}`)
     return
   }
   if (!branchExists(root, from)) {
-    throw new Error(`realGit: cannot branch ${branch} from missing base ${from}`)
+    throw new Error(`git: cannot branch ${branch} from missing base ${from}`)
   }
   const create = runGit(root, ["checkout", "-b", branch, from])
-  if (!create.ok) throw new Error(`realGit: create ${branch} from ${from} failed: ${create.stderr}`)
+  if (!create.ok) throw new Error(`git: create ${branch} from ${from} failed: ${create.stderr}`)
   assertActiveBranch(mode, branch, `creating branch ${branch} from ${from}`)
 }
 
-function ensureBranchExistsFrom(mode: RealGitEnabled, branch: string, from: string): void {
+function ensureBranchExistsFrom(mode: GitMode, branch: string, from: string): void {
   const root = branchWorkspaceRoot(mode)
   if (branchExists(root, branch)) return
   if (!branchExists(root, from)) {
-    throw new Error(`realGit: cannot branch ${branch} from missing base ${from}`)
+    throw new Error(`git: cannot branch ${branch} from missing base ${from}`)
   }
   const create = runGit(root, ["branch", branch, from])
-  if (!create.ok) throw new Error(`realGit: create ${branch} from ${from} failed: ${create.stderr}`)
+  if (!create.ok) throw new Error(`git: create ${branch} from ${from} failed: ${create.stderr}`)
 }
 
 function mergeNoFf(
-  mode: RealGitEnabled,
+  mode: GitMode,
   target: string,
   source: string,
   message: string,
-  opts: RealGitMergeOptions = {},
+  opts: GitMergeOptions = {},
 ): void {
   const root = branchWorkspaceRoot(mode)
   const co = runGit(root, ["checkout", target])
-  if (!co.ok) throw new Error(`realGit: checkout ${target} for merge failed: ${co.stderr}`)
+  if (!co.ok) throw new Error(`git: checkout ${target} for merge failed: ${co.stderr}`)
   assertActiveBranch(mode, target, `checking out merge target ${target}`)
   const head = runGit(root, ["rev-parse", "HEAD"]).stdout
   const sourceHead = runGit(root, ["rev-parse", source]).stdout
@@ -236,7 +234,7 @@ function mergeNoFf(
       }
     }
     runGit(root, ["merge", "--abort"])
-    throw new Error(`realGit: merge ${source} → ${target} failed: ${stderr}`)
+    throw new Error(`git: merge ${source} → ${target} failed: ${stderr}`)
   }
 }
 
@@ -245,26 +243,26 @@ function mergeNoFf(
 // whole, and the `from` branch is a ref reachable from any worktree. We
 // deliberately bypass branchWorkspaceRoot so worktree lifecycle never depends
 // on which worktree currently has HEAD.
-function ensureManagedWorktree(mode: RealGitEnabled, branch: string, targetPath: string, from: string): string {
+function ensureManagedWorktree(mode: GitMode, branch: string, targetPath: string, from: string): string {
   const primary = mode.workspaceRoot
   if (!branchExists(primary, branch)) {
     if (!branchExists(primary, from)) {
-      throw new Error(`realGit: cannot branch ${branch} from missing base ${from}`)
+      throw new Error(`git: cannot branch ${branch} from missing base ${from}`)
     }
     const create = runGit(primary, ["branch", branch, from])
-    if (!create.ok) throw new Error(`realGit: create ${branch} from ${from} failed: ${create.stderr}`)
+    if (!create.ok) throw new Error(`git: create ${branch} from ${from} failed: ${create.stderr}`)
   }
   const existing = findWorktreeByPath(primary, targetPath)
   if (existing?.branch === branch) {
     if (currentBranch(targetPath) !== branch) {
       const co = runGit(targetPath, ["checkout", branch])
-      if (!co.ok) throw new Error(`realGit: checkout ${branch} in worktree ${targetPath} failed: ${co.stderr}`)
+      if (!co.ok) throw new Error(`git: checkout ${branch} in worktree ${targetPath} failed: ${co.stderr}`)
     }
     return targetPath
   }
   if (existing) {
     const remove = runGit(primary, ["worktree", "remove", "--force", targetPath])
-    if (!remove.ok) throw new Error(`realGit: remove stale worktree ${targetPath} failed: ${remove.stderr}`)
+    if (!remove.ok) throw new Error(`git: remove stale worktree ${targetPath} failed: ${remove.stderr}`)
   } else if (existsSync(targetPath)) {
     rmSync(targetPath, { recursive: true, force: true })
   }
@@ -277,13 +275,13 @@ function ensureManagedWorktree(mode: RealGitEnabled, branch: string, targetPath:
       const remove = runGit(primary, ["worktree", "remove", "--force", entry.path])
       if (!remove.ok) {
         throw new Error(
-          `realGit: cannot reclaim ${branch} from stale worktree ${entry.path}: ${remove.stderr || remove.stdout}`,
+          `git: cannot reclaim ${branch} from stale worktree ${entry.path}: ${remove.stderr || remove.stdout}`,
         )
       }
     }
   }
   const add = runGit(primary, ["worktree", "add", "--force", targetPath, branch])
-  if (!add.ok) throw new Error(`realGit: create worktree ${targetPath} for ${branch} failed: ${add.stderr || add.stdout}`)
+  if (!add.ok) throw new Error(`git: create worktree ${targetPath} for ${branch} failed: ${add.stderr || add.stdout}`)
   const actual = currentBranch(targetPath)
   if (actual !== branch) {
     throw new Error(`branch_gate: expected worktree ${targetPath} on ${branch}, but HEAD is ${actual || "<detached>"}`)
@@ -291,20 +289,20 @@ function ensureManagedWorktree(mode: RealGitEnabled, branch: string, targetPath:
   return targetPath
 }
 
-export function ensureItemBranchReal(mode: RealGitEnabled, context: WorkflowContext): string {
+export function ensureItemBranch(mode: GitMode, context: WorkflowContext): string {
   const name = branchNameItem(context)
   ensureManagedWorktree(mode, name, mode.itemWorktreeRoot, mode.baseBranch)
   return name
 }
 
-export function ensureProjectBranchReal(mode: RealGitEnabled, context: WorkflowContext, projectId: string): string {
+export function ensureProjectBranch(mode: GitMode, context: WorkflowContext, projectId: string): string {
   const name = branchNameProject(context, projectId)
   ensureBranchFrom(mode, name, branchNameItem(context))
   return name
 }
 
-export function ensureWaveBranchReal(
-  mode: RealGitEnabled,
+export function ensureWaveBranch(
+  mode: GitMode,
   context: WorkflowContext,
   projectId: string,
   waveNumber: number,
@@ -314,8 +312,8 @@ export function ensureWaveBranchReal(
   return name
 }
 
-export function ensureStoryBranchReal(
-  mode: RealGitEnabled,
+export function ensureStoryBranch(
+  mode: GitMode,
   context: WorkflowContext,
   projectId: string,
   waveNumber: number,
@@ -326,8 +324,8 @@ export function ensureStoryBranchReal(
   return name
 }
 
-export function ensureStoryWorktreeReal(
-  mode: RealGitEnabled,
+export function ensureStoryWorktree(
+  mode: GitMode,
   context: WorkflowContext,
   projectId: string,
   waveNumber: number,
@@ -339,61 +337,61 @@ export function ensureStoryWorktreeReal(
   const legacyPath = resolve(layout.executionStoryLegacyWorktreeDir(context, waveNumber, storyId))
   if (legacyPath !== canonicalPath) {
     const legacy = findWorktreeByPath(mode.workspaceRoot, legacyPath)
-    if (legacy?.branch === branch) removeStoryWorktreeReal(mode, legacyPath)
+    if (legacy?.branch === branch) removeStoryWorktree(mode, legacyPath)
   }
   return ensureManagedWorktree(mode, branch, canonicalPath, branchNameWave(context, projectId, waveNumber))
 }
 
-export function mergeStoryIntoWaveReal(
-  mode: RealGitEnabled,
+export function mergeStoryIntoWave(
+  mode: GitMode,
   context: WorkflowContext,
   projectId: string,
   waveNumber: number,
   storyId: string,
-  opts: RealGitMergeOptions = {},
+  opts: GitMergeOptions = {},
 ): void {
   const wave = branchNameWave(context, projectId, waveNumber)
   const story = branchNameStory(context, projectId, waveNumber, storyId)
   mergeNoFf(mode, wave, story, `Merge story ${storyId} into wave ${waveNumber}`, opts)
 }
 
-export function mergeWaveIntoProjectReal(
-  mode: RealGitEnabled,
+export function mergeWaveIntoProject(
+  mode: GitMode,
   context: WorkflowContext,
   projectId: string,
   waveNumber: number,
-  opts: RealGitMergeOptions = {},
+  opts: GitMergeOptions = {},
 ): void {
   const project = branchNameProject(context, projectId)
   const wave = branchNameWave(context, projectId, waveNumber)
   mergeNoFf(mode, project, wave, `Merge wave ${waveNumber} into project ${projectId}`, opts)
 }
 
-export function mergeProjectIntoItemReal(
-  mode: RealGitEnabled,
+export function mergeProjectIntoItem(
+  mode: GitMode,
   context: WorkflowContext,
   projectId: string,
-  opts: RealGitMergeOptions = {},
+  opts: GitMergeOptions = {},
 ): void {
   const item = branchNameItem(context)
   const project = branchNameProject(context, projectId)
   mergeNoFf(mode, item, project, `Merge project ${projectId} into item`, opts)
 }
 
-export function exitRunToItemBranchReal(mode: RealGitEnabled, context: WorkflowContext): string {
+export function exitRunToItemBranch(mode: GitMode, context: WorkflowContext): string {
   const item = branchNameItem(context)
   const root = branchWorkspaceRoot(mode)
   if (!branchExists(root, item)) {
     throw new Error(`branch_gate: cannot exit run because item branch ${item} does not exist`)
   }
   const co = runGit(root, ["checkout", item])
-  if (!co.ok) throw new Error(`realGit: checkout ${item} on run exit failed: ${co.stderr}`)
+  if (!co.ok) throw new Error(`git: checkout ${item} on run exit failed: ${co.stderr}`)
   assertActiveBranch(mode, item, `exiting run to item branch ${item}`)
   return item
 }
 
-export function abandonStoryBranchReal(
-  mode: RealGitEnabled,
+export function abandonStoryBranch(
+  mode: GitMode,
   context: WorkflowContext,
   projectId: string,
   waveNumber: number,
@@ -411,7 +409,7 @@ export function abandonStoryBranchReal(
   // If we're currently on the branch, park the item worktree on the item
   // branch (the natural resting state for item-scoped execution) and only
   // fall back to base when the item branch has not yet been created — for
-  // example when abandonment happens before `ensureItemBranchReal`.
+  // example when abandonment happens before `ensureItemBranch`.
   if (currentBranch(root) === branch) {
     const parkBranch = branchNameItem(context)
     if (branchExists(root, parkBranch)) {
@@ -435,7 +433,7 @@ export function abandonStoryBranchReal(
 // Re-export so callers that only reach for real-git helpers still get a single entry point.
 export { isEngineOwnedBranchName }
 
-export function removeStoryWorktreeReal(mode: RealGitEnabled, worktreeRoot: string): void {
+export function removeStoryWorktree(mode: GitMode, worktreeRoot: string): void {
   const targetPath = resolve(worktreeRoot)
   const existing = findWorktreeByPath(mode.workspaceRoot, targetPath)
   if (!existing) {
@@ -443,10 +441,10 @@ export function removeStoryWorktreeReal(mode: RealGitEnabled, worktreeRoot: stri
     return
   }
   const remove = runGit(mode.workspaceRoot, ["worktree", "remove", "--force", targetPath])
-  if (!remove.ok) throw new Error(`realGit: remove worktree ${targetPath} failed: ${remove.stderr || remove.stdout}`)
+  if (!remove.ok) throw new Error(`git: remove worktree ${targetPath} failed: ${remove.stderr || remove.stdout}`)
 }
 
-export function gcManagedStoryWorktreesReal(mode: RealGitEnabled, managedRoot: string): ManagedWorktreeGcResult {
+export function gcManagedStoryWorktrees(mode: GitMode, managedRoot: string): ManagedWorktreeGcResult {
   const managedPaths = collectManagedWorktreePaths(managedRoot)
   const live = new Map(listWorktrees(mode.workspaceRoot).map(entry => [entry.path, entry]))
   const result: ManagedWorktreeGcResult = { removed: [], kept: [] }
@@ -473,7 +471,7 @@ export function gcManagedStoryWorktreesReal(mode: RealGitEnabled, managedRoot: s
 
   for (const path of managedPaths) {
     if (duplicatePathsToRemove.has(path)) {
-      removeStoryWorktreeReal(mode, path)
+      removeStoryWorktree(mode, path)
       result.removed.push(path)
       continue
     }
@@ -484,7 +482,7 @@ export function gcManagedStoryWorktreesReal(mode: RealGitEnabled, managedRoot: s
       continue
     }
     if (!entry.branch) {
-      removeStoryWorktreeReal(mode, path)
+      removeStoryWorktree(mode, path)
       result.removed.push(path)
       continue
     }
@@ -492,7 +490,7 @@ export function gcManagedStoryWorktreesReal(mode: RealGitEnabled, managedRoot: s
       result.kept.push({ path, reason: `branch ${entry.branch} still exists` })
       continue
     }
-    removeStoryWorktreeReal(mode, path)
+    removeStoryWorktree(mode, path)
     result.removed.push(path)
   }
 

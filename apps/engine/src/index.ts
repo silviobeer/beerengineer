@@ -1622,7 +1622,7 @@ async function runWorkspaceWorktreeGcCommand(key: string | undefined, json = fal
     }
     // GC uses the workspace root for worktree listing/removal regardless of
     // whether the repo is clean or dirty; synthesise an enabled mode directly
-    // so we do not depend on detectRealGitMode's dirty-repo gate.
+    // so we do not depend on detectGitMode's dirty-repo gate.
     const git = createGitAdapterFromMode(gcContext, {
       enabled: true,
       workspaceRoot: rootPath,

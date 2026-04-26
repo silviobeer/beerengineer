@@ -263,7 +263,7 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
   try {
     git = createGitAdapter(context)
   } catch (error) {
-    const reason = (error as Error).message.replace(/^realGit:\s*/, "")
+    const reason = (error as Error).message.replace(/^git:\s*/, "")
     const summary = options?.workspaceRoot
       ? (() => {
           const currentBranch = currentGitBranch(options.workspaceRoot)
@@ -286,7 +286,7 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
 
   try {
     git.ensureItemBranch()
-    git.assertWorkspaceRootOnBaseBranch("after ensureItemBranchReal (run start)")
+    git.assertWorkspaceRootOnBaseBranch("after ensureItemBranch (run start)")
 
     const itemResumePlan = options?.resume ? normalizeItemResume(options.resume) : { startStage: "brainstorm" as const }
     const resumePlan = options?.resume ? normalizeProjectResume(options.resume) : null
@@ -373,10 +373,10 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
     stagePresent.ok(`Item "${item.title}" is done ✓`)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    if (message.startsWith("realGit:") || message.startsWith("branch_gate:")) {
+    if (message.startsWith("git:") || message.startsWith("branch_gate:")) {
       const summary =
         `Run blocked: git branch gate failed for "${item.title}". ` +
-        `${message.replace(/^branch_gate:\s*/, "").replace(/^realGit:\s*/, "")}`
+        `${message.replace(/^branch_gate:\s*/, "").replace(/^git:\s*/, "")}`
       stagePresent.warn(summary)
       await blockRunForWorkspaceState(context, summary)
     }
