@@ -6,7 +6,8 @@ import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { ask, close } from "./sim/human.js"
 import { createCliIO } from "./core/ioCli.js"
-import { detectRealGitMode, gcManagedStoryWorktreesReal, type RealGitEnabled } from "./core/realGit.js"
+import { detectRealGitMode } from "./core/realGit.js"
+import { createGitAdapterFromMode } from "./core/gitAdapter.js"
 import { layout } from "./core/workspaceLayout.js"
 import { latestCompletedRunForItem, workflowWorkspaceId } from "./core/itemWorkspace.js"
 import {
@@ -1613,28 +1614,33 @@ async function runWorkspaceWorktreeGcCommand(key: string | undefined, json = fal
       return 1
     }
 
-    const mode = detectRealGitMode({
+    const gcContext = {
       workspaceId: "gc",
       runId: "gc",
       itemSlug: "gc",
       baseBranch: "main",
       workspaceRoot: rootPath,
-    })
+    }
+    const mode = detectRealGitMode(gcContext)
     if (!mode.enabled && mode.reason !== "workspace has uncommitted changes (dirty repo)") {
       console.error(`  Cannot gc worktrees: ${mode.reason}`)
       return 1
     }
 
     // GC uses the workspace root for worktree listing/removal regardless of
-    // whether the repo was clean or dirty; synthesize a minimal enabled mode
+    // whether the repo was clean or dirty; synthesise a minimal enabled mode
     // so we do not depend on detectRealGitMode's dirty-repo gate.
-    const gcMode: RealGitEnabled = {
+    const git = createGitAdapterFromMode(gcContext, {
       enabled: true,
       workspaceRoot: rootPath,
       baseBranch: "main",
       itemWorktreeRoot: rootPath,
+    })
+    const result = git.gcManagedStoryWorktrees(layout.worktreesRoot())
+    if (!result) {
+      console.error("  gcManagedStoryWorktrees returned null despite enabled mode — adapter invariant violated")
+      return 1
     }
-    const result = gcManagedStoryWorktreesReal(gcMode, layout.worktreesRoot())
 
     if (json) {
       process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)

@@ -14,9 +14,11 @@
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { layout } from "./workspaceLayout.js"
+import type { GitAdapter } from "./gitAdapter.js"
 import { architecture } from "../stages/architecture/index.js"
 import { documentation } from "../stages/documentation/index.js"
 import { execution, type ExecutionLlmOptions } from "../stages/execution/index.js"
+import { handoff } from "../stages/handoff/index.js"
 import { planning } from "../stages/planning/index.js"
 import { projectReview } from "../stages/project-review/index.js"
 import { qa } from "../stages/qa/index.js"
@@ -76,6 +78,8 @@ export type StageLlmOptions = {
 export type StageDeps = {
   llm?: StageLlmOptions
   resume?: ProjectResumePlan
+  /** Git adapter — passed through so stages don't construct their own. */
+  git: GitAdapter
 }
 
 /**
@@ -233,6 +237,7 @@ const executionNode: ProjectStageNode = {
       assertWithPlan(ctx),
       deps.resume?.execution,
       deps.llm?.execution,
+      deps.git,
     ),
   }),
   resumeFromDisk: async ctx => ({
@@ -269,12 +274,19 @@ const documentationNode: ProjectStageNode = {
   resumeFromDisk: async ctx => ({ ...ctx, documentation: await loadDocumentation(ctx) }),
 }
 
+const handoffNode: ProjectStageNode = {
+  id: "handoff",
+  run: async (ctx, deps) => {
+    await handoff(assertWithDocumentation(ctx), deps.git)
+    return ctx
+  },
+  // Handoff produces no context artifact; skipping = no-op.
+  resumeFromDisk: async ctx => ctx,
+}
+
 /**
- * Stages requirements → documentation, in execution order. The trailing
- * `handoff` step is intentionally not in the registry: it owns the
- * cross-stage project-merge side effect and is invoked separately after
- * the loop terminates. Adding it here would conflate "produce artifacts"
- * with "merge branches" — two responsibilities best kept distinct.
+ * The full per-project pipeline in execution order. Adding/removing/
+ * reordering a stage is a registry edit, not a control-flow rewrite.
  */
 export const PROJECT_STAGE_REGISTRY: readonly ProjectStageNode[] = [
   requirementsNode,
@@ -284,4 +296,5 @@ export const PROJECT_STAGE_REGISTRY: readonly ProjectStageNode[] = [
   projectReviewNode,
   qaNode,
   documentationNode,
+  handoffNode,
 ]

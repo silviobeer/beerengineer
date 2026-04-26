@@ -3,13 +3,6 @@ import { readFile } from "node:fs/promises"
 import { spawnSync } from "node:child_process"
 import { join } from "node:path"
 import { randomUUID } from "node:crypto"
-import {
-  branchNameItem,
-  branchNameProject,
-  createCandidateBranch,
-  finalizeCandidateDecision,
-  mergeProjectBranchIntoItem,
-} from "./core/repoSimulation.js"
 import { createGitAdapter, type GitAdapter } from "./core/gitAdapter.js"
 import { resolveBaseBranchForItem } from "./core/baseBranch.js"
 import { writeRecoveryRecord, type RecoveryScope } from "./core/recovery.js"
@@ -22,21 +15,18 @@ import type {
   Project,
   ReferenceInput,
   WireframeArtifact,
-  WithDocumentation,
   WorkflowContext,
 } from "./types.js"
 import { mergeAmendments, projectDesign, projectWireframes } from "./core/designPrep.js"
 import { loadCodebaseSnapshot } from "./core/codebaseSnapshot.js"
 import { loadItemDecisions } from "./core/itemDecisions.js"
 import { stagePresent } from "./core/stagePresentation.js"
-import { ask } from "./sim/human.js"
 import { emitEvent, getActiveRun, withStageLifecycle } from "./core/runContext.js"
 import { brainstorm } from "./stages/brainstorm/index.js"
 import { visualCompanion } from "./stages/visual-companion/index.js"
 import { frontendDesign } from "./stages/frontend-design/index.js"
 import {
   PROJECT_STAGE_REGISTRY,
-  assertWithDocumentation,
   shouldRunProjectStage,
   type ExecutionResumeOptions,
   type ProjectResumePlan,
@@ -405,9 +395,8 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
  *
  * For each registered node we either execute it (with lifecycle wrapping)
  * or short-circuit to its `resumeFromDisk` loader when the resume plan
- * tells us to skip ahead. The final `handoff` step lives outside the
- * registry because it owns a side effect — merging the project branch
- * into the item branch — that is not a pure stage artifact.
+ * tells us to skip ahead. The trailing `handoff` step is the last entry
+ * in the registry; nothing about runProject is special-cased per stage.
  */
 async function runProject(
   initialCtx: ProjectContext,
@@ -417,46 +406,12 @@ async function runProject(
 ): Promise<void> {
   let ctx = initialCtx
   const projectId = ctx.project.id
-  const deps = { llm, resume }
+  const deps = { llm, resume, git }
 
   for (const node of PROJECT_STAGE_REGISTRY) {
     ctx = shouldRunProjectStage(resume, node.id)
       ? await withStageLifecycle(node.id, { projectId }, () => node.run(ctx, deps))
       : await node.resumeFromDisk(ctx)
   }
-
-  await mergeProjectBranchIntoItem(ctx, ctx.project.id)
-  await withStageLifecycle("handoff", { projectId }, () => handoffProject(assertWithDocumentation(ctx), git))
-}
-
-async function handoffProject(ctx: WithDocumentation, git: GitAdapter): Promise<void> {
-  if (git.mode.enabled) {
-    stagePresent.header(`handoff — ${ctx.project.name}`)
-    stagePresent.dim(`→ Item branch: ${branchNameItem(ctx)}`)
-    stagePresent.dim(`→ Project branch: ${branchNameProject(ctx, ctx.project.id)}`)
-    stagePresent.dim(`→ Base branch: ${git.mode.baseBranch}`)
-    stagePresent.ok(`Project ${ctx.project.id} is already merged into ${branchNameItem(ctx)}; handoff complete.`)
-    return
-  }
-
-  const handoff = await createCandidateBranch(ctx, ctx.project, ctx.documentation)
-  stagePresent.header(`handoff — ${ctx.project.name}`)
-  stagePresent.ok(handoff.summary)
-  stagePresent.dim(`→ Candidate: ${handoff.candidateBranch.name}`)
-  stagePresent.dim(`→ Parent: ${handoff.candidateBranch.base}`)
-  stagePresent.dim(`→ Base: ${handoff.mergeTargetBranch}`)
-  handoff.mergeChecklist.forEach(item => stagePresent.dim(`→ ${item}`))
-
-  const decisionRaw = await ask("  Test, merge or reject candidate? [test/merge/reject] > ")
-  const decision = normalizeDecision(decisionRaw)
-  const updated = await finalizeCandidateDecision(ctx, handoff, decision)
-  stagePresent.ok(updated.summary)
-}
-
-function normalizeDecision(input: string): "test" | "merge" | "reject" {
-  const normalized = input.trim().toLowerCase()
-  if (normalized === "merge") return "merge"
-  if (normalized === "reject") return "reject"
-  return "test"
 }
 

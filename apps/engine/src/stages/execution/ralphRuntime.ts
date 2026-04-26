@@ -14,6 +14,7 @@ import { emitEvent, getActiveRun } from "../../core/runContext.js"
 import { writeRecoveryRecord } from "../../core/recovery.js"
 import { layout, type WorkflowContext } from "../../core/workspaceLayout.js"
 import { resolveRalphLoopConfig } from "../../core/loopConfig.js"
+import { runCycledLoop, type CycleOutcome } from "../../core/iterationLoop.js"
 import type { StageLogEntry } from "../../core/stageRuntime.js"
 import { stagePresent } from "../../core/stagePresentation.js"
 import { readWorkspaceConfig } from "../../core/workspaces.js"
@@ -887,51 +888,55 @@ export async function runRalphStory(
   await ensureBranchAndStartLog(loopCtx, implementation)
 
   const initialFeedback = storyReview?.outcome === "revise" ? storyReview.feedbackSummary.join("; ") : undefined
-  let nextFeedback = await consumePendingRemediation(loopCtx, pendingRemediation, initialFeedback)
+  const seedFeedback = await consumePendingRemediation(loopCtx, pendingRemediation, initialFeedback)
 
   const maxIterationsPerCycle = implementation.maxIterations
   const maxReviewCycles = implementation.maxReviewCycles
 
-  for (
-    let reviewCycle = Math.max(implementation.currentReviewCycle, 0);
-    reviewCycle < maxReviewCycles;
-    reviewCycle++
-  ) {
-    implementation.currentReviewCycle = reviewCycle
+  return runCycledLoop<StoryArtifacts>({
+    maxCycles: maxReviewCycles,
+    startCycle: Math.max(implementation.currentReviewCycle, 0),
+    initialFeedback: seedFeedback,
+    runCycle: async ({ cycle: reviewCycle, feedback }): Promise<CycleOutcome<StoryArtifacts>> => {
+      implementation.currentReviewCycle = reviewCycle
 
-    if (implementation.status !== "ready_for_review") {
-      const coderOutcome = await runCoderCycleUntilGreen(loopCtx, implementation, {
-        reviewCycle,
-        maxIterationsPerCycle,
-        maxReviewCycles,
-        feedback: nextFeedback,
-      })
-      if (coderOutcome === "exhausted") {
-        return blockStory(
-          loopCtx,
-          implementation,
-          storyReview,
-          "story_error",
-          `Blocked after ${maxIterationsPerCycle} implementation iterations in review cycle ${reviewCycle + 1} without reaching green.`,
-        )
+      if (implementation.status !== "ready_for_review") {
+        const coderOutcome = await runCoderCycleUntilGreen(loopCtx, implementation, {
+          reviewCycle,
+          maxIterationsPerCycle,
+          maxReviewCycles,
+          feedback,
+        })
+        if (coderOutcome === "exhausted") {
+          // Persist the "story_error" terminal here so the outer loop's
+          // onAllCyclesExhausted handler doesn't double-blame the review limit.
+          const blocked = await blockStory(
+            loopCtx,
+            implementation,
+            storyReview,
+            "story_error",
+            `Blocked after ${maxIterationsPerCycle} implementation iterations in review cycle ${reviewCycle + 1} without reaching green.`,
+          )
+          return { kind: "done", result: blocked }
+        }
       }
-    }
 
-    const cycleResult = await runOneReviewCycle(loopCtx, implementation, reviewCycle)
-    storyReview = cycleResult.review
-    if (cycleResult.kind === "passed") {
-      return { implementation, review: storyReview }
-    }
-    nextFeedback = cycleResult.nextFeedback
-  }
-
-  return blockStory(
-    loopCtx,
-    implementation,
-    storyReview,
-    "review_limit",
-    `Blocked after ${maxReviewCycles} story review cycles because the CodeRabbit/SonarQube gate did not open.`,
-  )
+      const cycleResult = await runOneReviewCycle(loopCtx, implementation, reviewCycle)
+      storyReview = cycleResult.review
+      if (cycleResult.kind === "passed") {
+        return { kind: "done", result: { implementation, review: storyReview } }
+      }
+      return { kind: "continue", nextFeedback: cycleResult.nextFeedback }
+    },
+    onAllCyclesExhausted: () =>
+      blockStory(
+        loopCtx,
+        implementation,
+        storyReview,
+        "review_limit",
+        `Blocked after ${maxReviewCycles} story review cycles because the CodeRabbit/SonarQube gate did not open.`,
+      ),
+  })
 }
 
 export async function writeWaveSummary(

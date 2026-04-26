@@ -5,16 +5,7 @@ import { join } from "node:path"
 import { computeScreenOwners, type ScreenOwnerMap } from "../../core/screenOwners.js"
 import { projectDesignGuidance } from "../../core/designPrep.js"
 import { branchNameStory, ensureWaveBranch, mergeWaveBranchIntoProject } from "../../core/repoSimulation.js"
-import {
-  abandonStoryBranchReal,
-  detectRealGitMode,
-  ensureStoryBranchReal,
-  ensureStoryWorktreeReal,
-  ensureWaveBranchReal,
-  mergeStoryIntoWaveReal,
-  mergeWaveIntoProjectReal,
-  removeStoryWorktreeReal,
-} from "../../core/realGit.js"
+import { createGitAdapter, type GitAdapter } from "../../core/gitAdapter.js"
 import { writeRecoveryRecord } from "../../core/recovery.js"
 import { emitEvent, getActiveRun } from "../../core/runContext.js"
 import { runStage } from "../../core/stageRuntime.js"
@@ -73,7 +64,12 @@ async function readJsonIfExists<T>(path: string): Promise<T | undefined> {
   }
 }
 
-export async function execution(ctx: WithPlan, resume?: ExecutionResumeOptions, llm?: ExecutionLlmOptions): Promise<WaveSummary[]> {
+export async function execution(
+  ctx: WithPlan,
+  resume?: ExecutionResumeOptions,
+  llm?: ExecutionLlmOptions,
+  git: GitAdapter = createGitAdapter(ctx),
+): Promise<WaveSummary[]> {
   stagePresent.header(`execution — ${ctx.project.name}`)
 
   const storyById = new Map(ctx.prd.stories.map(story => [story.id, story]))
@@ -98,7 +94,7 @@ export async function execution(ctx: WithPlan, resume?: ExecutionResumeOptions, 
     }
 
     assertWaveDependenciesSatisfied(wave, completedWaveIds)
-    summaries.push(await executeWave(ctx, wave, storyById, screenOwners, resume, llm))
+    summaries.push(await executeWave(ctx, wave, storyById, screenOwners, git, resume, llm))
     completedWaveIds.add(wave.id)
     if (resume?.waveNumber === wave.number) resume = undefined
   }
@@ -138,6 +134,7 @@ async function executeWave(
   wave: WaveDefinition,
   storyById: Map<string, UserStory>,
   screenOwners: ScreenOwnerMap,
+  git: GitAdapter,
   resume?: ExecutionResumeOptions,
   llm?: ExecutionLlmOptions,
 ): Promise<WaveSummary> {
@@ -153,10 +150,7 @@ async function executeWave(
   stagePresent.step(`\nWave ${wave.number} ${tag}: ${waveEntries.map(s => s.id).join(", ")}`)
   await ensureWaveBranch(ctx, ctx.project.id, wave.number)
 
-  const realGit = detectRealGitMode(ctx)
-  if (realGit.enabled) {
-    ensureWaveBranchReal(realGit, ctx, ctx.project.id, wave.number)
-  }
+  git.ensureWaveBranch(ctx.project.id, wave.number)
 
   const mergeResolverHarness: { provider: ResolvedHarness["provider"]; model?: string } | undefined =
     llm?.executionCoder
@@ -184,25 +178,22 @@ async function executeWave(
     let storyWorktreeRoot: string | undefined
     let result: StoryResult | undefined
     try {
-      storyWorktreeRoot = realGit.enabled
-        ? ensureStoryWorktreeReal(
-            realGit,
-            ctx,
-            ctx.project.id,
-            wave.number,
-            resolved.id,
-            layout.executionStoryWorktreeDir(ctx, wave.number, resolved.id),
-          )
-        : undefined
-      // `ensureStoryWorktreeReal` already creates the story branch if
-      // missing and checks it out inside the worktree. Calling
-      // `ensureStoryBranchReal` here would `git checkout <story>` in the
-      // main workspace, which git refuses because the branch is already
-      // used by the worktree — crashes the run with
-      // "is already used by worktree at …". Only run the main-workspace
-      // checkout when worktrees are disabled.
-      if (realGit.enabled && !storyWorktreeRoot) {
-        ensureStoryBranchReal(realGit, ctx, ctx.project.id, wave.number, resolved.id)
+      storyWorktreeRoot =
+        git.ensureStoryWorktree(
+          ctx.project.id,
+          wave.number,
+          resolved.id,
+          layout.executionStoryWorktreeDir(ctx, wave.number, resolved.id),
+        ) ?? undefined
+      // `ensureStoryWorktree` already creates the story branch if missing
+      // and checks it out inside the worktree. Calling `ensureStoryBranch`
+      // here would `git checkout <story>` in the main workspace, which git
+      // refuses because the branch is already used by the worktree — crashes
+      // the run with "is already used by worktree at …". Only run the
+      // main-workspace checkout when worktrees are disabled (i.e. enabled
+      // but no worktree root was returned).
+      if (git.enabled && !storyWorktreeRoot) {
+        git.ensureStoryBranch(ctx.project.id, wave.number, resolved.id)
       }
       result = await implementStory(ctx, wave, resolved, screenOwners, {
         rerunTestWriter: resume != null && resume.storyId === story.id ? Boolean(resume.rerunTestWriter) : false,
@@ -214,29 +205,29 @@ async function executeWave(
       // "passed" (e.g. ready_for_review left behind by a crashed cycle).
       // Serialise via `enqueueWaveBranchOp` so concurrent stories cannot race
       // on the wave branch.
-      if (realGit.enabled && result.implementation.status === "passed") {
+      if (result.implementation.status === "passed") {
         await enqueueWaveBranchOp(() =>
-          mergeStoryIntoWaveReal(realGit, ctx, ctx.project.id, wave.number, resolved.id, {
+          git.mergeStoryIntoWave(ctx.project.id, wave.number, resolved.id, {
             mergeResolver: mergeResolverHarness,
             resolverLogDir: layout.executionWaveDir(ctx, wave.number),
             expectedSharedFiles,
           }),
         )
       }
-      if (realGit.enabled && result.implementation.status === "blocked") {
+      if (result.implementation.status === "blocked") {
         await enqueueWaveBranchOp(() =>
-          abandonStoryBranchReal(realGit, ctx, ctx.project.id, wave.number, resolved.id),
+          git.abandonStoryBranch(ctx.project.id, wave.number, resolved.id),
         )
       }
       return result
     } finally {
-      if (realGit.enabled && storyWorktreeRoot) {
+      if (storyWorktreeRoot) {
         // Swallow cleanup errors so they cannot mask a primary failure from
         // `implementStory` / branch ops. The primary error carries the real
         // debugging signal; worktree-removal failures are surfaced via logs
-        // and cleaned up by `gcManagedStoryWorktreesReal` on the next run.
+        // and cleaned up by `gcManagedStoryWorktrees` on the next run.
         try {
-          removeStoryWorktreeReal(realGit, storyWorktreeRoot)
+          git.removeStoryWorktree(storyWorktreeRoot)
         } catch (err) {
           stagePresent.dim(`worktree cleanup failed for ${storyWorktreeRoot}: ${(err as Error).message}`)
         }
@@ -292,12 +283,10 @@ async function executeWave(
   }
   assertWaveSucceeded(wave, summary)
   await mergeWaveBranchIntoProject(ctx, ctx.project.id, wave.number)
-  if (realGit.enabled) {
-    mergeWaveIntoProjectReal(realGit, ctx, ctx.project.id, wave.number, {
-      mergeResolver: mergeResolverHarness,
-      resolverLogDir: layout.executionWaveDir(ctx, wave.number),
-    })
-  }
+  git.mergeWaveIntoProject(ctx.project.id, wave.number, {
+    mergeResolver: mergeResolverHarness,
+    resolverLogDir: layout.executionWaveDir(ctx, wave.number),
+  })
   return summary
 }
 
