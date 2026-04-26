@@ -13,9 +13,10 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, within, fireEvent } from "@testing-library/react";
 
+const routerPushMock = vi.fn();
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
-    push: vi.fn(),
+    push: routerPushMock,
     replace: vi.fn(),
     back: vi.fn(),
     forward: vi.fn(),
@@ -258,6 +259,31 @@ describe("S-09 mobile chat panel", () => {
     expect(row.className).toMatch(/flex-wrap/);
   });
 
+  it("AC-S09-04 EC: Send button is rendered even when textarea is empty (TC-10 edge case)", () => {
+    render(<ChatPanel activeRunId="run-1" conversation={[]} />);
+    const send = screen.getByTestId("chat-send") as HTMLButtonElement;
+    expect(send).toBeInTheDocument();
+    // when textarea is empty the form may surface a validation message
+    // but the Send button itself must remain in the layout, not hidden
+    expect(send.offsetParent === null && send.hidden).toBe(false);
+  });
+
+  it("AC-S09-04 EC: clicking Send with an empty textarea surfaces validation, not a network call", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      render(<ChatPanel activeRunId="run-x" conversation={[]} />);
+      const send = screen.getByTestId("chat-send");
+      fireEvent.click(send);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(screen.getByTestId("chat-validation")).toBeInTheDocument();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("AC-S09-04: typing then clicking Send fires the messages POST", async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true });
     vi.stubGlobal("fetch", fetchMock);
@@ -311,6 +337,22 @@ describe("S-09 mobile workspace switcher", () => {
     const select = screen.getByTestId("workspace-switcher");
     expect(select.className).toMatch(/min-h-10/);
     expect(select.className).toMatch(/max-w-full/);
+  });
+
+  it("AC-S09-05: selecting a different workspace navigates to that workspace's route (TC-12)", () => {
+    routerPushMock.mockClear();
+    render(
+      <WorkspaceProvider
+        workspaces={FIXTURE_MULTI_WORKSPACES}
+        currentKey="ws-alpha"
+        fetchError={false}
+      >
+        <WorkspaceSwitcher />
+      </WorkspaceProvider>,
+    );
+    const select = screen.getByTestId("workspace-switcher") as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "ws-beta" } });
+    expect(routerPushMock).toHaveBeenCalledWith("/w/ws-beta");
   });
 
   it("AC-S09-05 EC: with a single workspace the switcher still renders that single option", () => {
