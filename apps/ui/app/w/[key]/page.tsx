@@ -84,7 +84,7 @@ export default async function BoardPage({ params }: BoardPageProps) {
   }
 
   return (
-    <main className="min-h-screen text-zinc-100 bg-zinc-950">
+    <main className="min-h-screen text-zinc-100 bg-zinc-950 overflow-x-hidden">
       <Board items={items ?? []} workspaceKey={key} />
     </main>
   );
