@@ -1,25 +1,40 @@
-import { fetchItem } from "../../../../_engine/server";
-import { ItemDetailClient } from "./ItemDetailClient";
+import ItemDetail from "../../../../components/ItemDetail";
+import type { WorkspaceItem } from "../../../../lib/types";
 
-type PageProps = {
-  params: Promise<{ key: string; id: string }>;
-};
+const ENGINE_URL =
+  process.env.NEXT_PUBLIC_ENGINE_URL ?? process.env.ENGINE_URL ?? "http://localhost:4100";
 
-export default async function ItemDetailPage({ params }: PageProps) {
-  const { id } = await params;
-  let item;
+async function loadItems(workspaceKey: string): Promise<WorkspaceItem[]> {
   try {
-    item = await fetchItem(id);
+    const res = await fetch(`${ENGINE_URL}/items?workspace=${encodeURIComponent(workspaceKey)}`, {
+      cache: "no-store",
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { items?: WorkspaceItem[] };
+    return Array.isArray(data?.items) ? data.items : [];
   } catch {
-    return (
-      <main className="p-6 text-sm text-red-400" role="alert">
-        Failed to load item {id}.
-      </main>
-    );
+    return [];
   }
-  return (
-    <main className="min-h-screen bg-zinc-950 text-zinc-100">
-      <ItemDetailClient item={item} />
-    </main>
-  );
+}
+
+async function loadItem(itemId: string): Promise<WorkspaceItem | null> {
+  try {
+    const res = await fetch(`${ENGINE_URL}/items/${encodeURIComponent(itemId)}`, {
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as WorkspaceItem;
+  } catch {
+    return null;
+  }
+}
+
+export default async function ItemDetailPage({
+  params,
+}: {
+  params: Promise<{ key: string; id: string }>;
+}) {
+  const { key, id } = await params;
+  const [items, item] = await Promise.all([loadItems(key), loadItem(id)]);
+  return <ItemDetail workspaceKey={key} itemId={id} items={items} item={item} />;
 }

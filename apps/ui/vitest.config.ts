@@ -13,9 +13,9 @@ export default defineConfig({
     },
   },
   test: {
-    environment: "happy-dom",
+    environment: "jsdom",
     globals: true,
-    setupFiles: [resolve(here, "vitest.setup.ts"), resolve(here, "tests/setup.ts")],
+    setupFiles: [resolve(here, "vitest.setup.ts")],
     include: ["app/**/*.test.{ts,tsx}", "tests/**/*.test.{ts,tsx}"],
   },
 });
