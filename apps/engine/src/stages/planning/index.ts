@@ -2,6 +2,7 @@ import { runStage } from "../../core/stageRuntime.js"
 import { printStageCompletion, stageSummary, summaryArtifactFile } from "../../core/stageHelpers.js"
 import { stagePresent } from "../../core/stagePresentation.js"
 import { createPlanningReview, createPlanningStage, type RunLlmConfig } from "../../llm/registry.js"
+import { renderArchitectureSummary } from "../../render/artifactDigests.js"
 import { renderPlanMarkdown } from "../../render/plan.js"
 import type { ImplementationPlanArtifact, PRD, WithArchitecture } from "../../types.js"
 import type { ReviewAgentAdapter, ReviewAgentResponse } from "../../core/adapters.js"
@@ -36,6 +37,25 @@ function validatePlanStoryIds(artifact: ImplementationPlanArtifact, prd: PRD): s
       for (const task of setupTasks) {
         if (!task.id || !task.title) {
           issues.push(`Setup wave ${wave.id} contains a task missing \`id\` or \`title\`.`)
+          continue
+        }
+        const contract = (task as { contract?: unknown }).contract as
+          | { expectedFiles?: unknown; requiredScripts?: unknown; postChecks?: unknown }
+          | undefined
+        if (
+          !contract ||
+          !Array.isArray(contract.expectedFiles) ||
+          !Array.isArray(contract.requiredScripts) ||
+          !Array.isArray(contract.postChecks)
+        ) {
+          issues.push(
+            `Setup wave ${wave.id} task "${task.id}" has malformed \`contract\`; required shape is { expectedFiles: string[], requiredScripts: string[], postChecks: string[] }.`,
+          )
+        }
+        if (!Array.isArray((task as { sharedFiles?: unknown }).sharedFiles)) {
+          issues.push(
+            `Setup wave ${wave.id} task "${task.id}" is missing \`sharedFiles: string[]\` (use [] when none).`,
+          )
         }
       }
     } else {
@@ -104,7 +124,7 @@ export async function planning(ctx: WithArchitecture, llm?: RunLlmConfig): Promi
     createInitialState: (): PlanningState => ({
       projectId: ctx.project.id,
       prd: ctx.prd,
-      architectureArtifact: ctx.architecture,
+      architectureSummary: renderArchitectureSummary(ctx.architecture),
       codebase: ctx.codebase,
       decisions: ctx.decisions,
       revisionCount: 0,

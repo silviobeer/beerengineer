@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { spawnSync } from "node:child_process"
 import { join } from "node:path"
 import { computeScreenOwners, type ScreenOwnerMap } from "../../core/screenOwners.js"
+import { projectDesignGuidance } from "../../core/designPrep.js"
 import { branchNameStory, ensureWaveBranch, mergeWaveBranchIntoProject } from "../../core/repoSimulation.js"
 import {
   abandonStoryBranchReal,
@@ -27,6 +28,7 @@ import {
 } from "../../llm/registry.js"
 import { stagePresent } from "../../core/stagePresentation.js"
 import { runCoderHarness } from "../../llm/hosted/execution/coderHarness.js"
+import { renderArchitectureSummary } from "../../render/artifactDigests.js"
 import { renderTestPlanMarkdown } from "../../render/testPlan.js"
 import { runRalphStory, writeWaveSummary, type StoryArtifacts } from "./ralphRuntime.js"
 import { layout } from "../../core/workspaceLayout.js"
@@ -124,6 +126,13 @@ function assertWaveDependenciesSatisfied(
   }
 }
 
+function expectedSharedFilesForWave(wave: WaveDefinition): string[] {
+  const entries = wave.kind === "setup"
+    ? (wave.tasks ?? []).flatMap(task => task.sharedFiles ?? [])
+    : wave.stories.flatMap(story => story.sharedFiles ?? [])
+  return Array.from(new Set(entries)).sort()
+}
+
 async function executeWave(
   ctx: WithArchitecture,
   wave: WaveDefinition,
@@ -156,6 +165,7 @@ async function executeWave(
           return { provider: resolved.provider, model: resolved.model }
         })()
       : undefined
+  const expectedSharedFiles = expectedSharedFilesForWave(wave)
 
   // Wave-branch merges/abandons must happen one at a time even when story
   // implementations run in parallel — concurrent `git merge` into the wave
@@ -209,6 +219,7 @@ async function executeWave(
           mergeStoryIntoWaveReal(realGit, ctx, ctx.project.id, wave.number, resolved.id, {
             mergeResolver: mergeResolverHarness,
             resolverLogDir: layout.executionWaveDir(ctx, wave.number),
+            expectedSharedFiles,
           }),
         )
       }
@@ -401,6 +412,7 @@ export function buildStoryExecutionContext(
   },
 ): StoryExecutionContext {
   const ownerMockups = resolveStoryMockups(ctx, wave, testPlan.story.id, opts.screenOwners)
+  const architectureSummary = renderArchitectureSummary(architecture)
   return {
     kind: opts.kind ?? "feature",
     item: {
@@ -416,15 +428,7 @@ export function buildStoryExecutionContext(
       acceptanceCriteria: testPlan.acceptanceCriteria,
     },
     setupContract: opts.setupContract,
-    architectureSummary: {
-      summary: architecture.architecture.summary,
-      systemShape: architecture.architecture.systemShape,
-      constraints: architecture.architecture.constraints,
-      relevantComponents: architecture.architecture.components.map(component => ({
-        name: component.name,
-        responsibility: component.responsibility,
-      })),
-    },
+    architectureSummary,
     wave: {
       id: wave.id,
       number: wave.number,
@@ -433,7 +437,7 @@ export function buildStoryExecutionContext(
     },
     storyBranch: branchNameStory(ctx, ctx.project.id, wave.number, testPlan.story.id),
     worktreeRoot: opts.worktreeRoot,
-    design: ctx.design,
+    design: opts.kind === "setup" ? ctx.design : projectDesignGuidance(ctx.design),
     mockupHtmlByScreen: ownerMockups,
     references: opts.references,
     testPlan,
@@ -683,6 +687,8 @@ async function writeStoryTestPlan(
       wave,
       story: { id: story.id, title: story.title },
       acceptanceCriteria: acs,
+      design: projectDesignGuidance(ctx.design),
+      architectureSummary: renderArchitectureSummary(ctx.architecture),
       revisionCount: 0,
     }),
     stageAgent: createTestWriterStage(ctx.project, llm),

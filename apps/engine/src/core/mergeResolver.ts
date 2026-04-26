@@ -45,11 +45,19 @@ function fileHasConflictMarkers(root: string, file: string): boolean {
   }
 }
 
-function buildPrompt(message: string, files: string[]): string {
+function buildPrompt(message: string, files: string[], expectedSharedFiles: string[] = []): string {
   return [
     "You are resolving git merge conflicts in a workspace.",
     `The merge message describing this integration is: ${message}`,
     "",
+    ...(expectedSharedFiles.length > 0
+      ? [
+          "The following files are expected to be touched by multiple stories in this wave; treat conflicts on them as union-merges rather than logic conflicts:",
+          ...expectedSharedFiles.map(file => `  - ${file}`),
+          "Conflicts on any other path are unexpected and should be treated as suspicious.",
+          "",
+        ]
+      : []),
     `The following files have conflict markers (<<<<<<<, =======, >>>>>>>):`,
     ...files.map(f => `  - ${f}`),
     "",
@@ -108,16 +116,6 @@ function buildCommandForProvider(
 }
 
 /**
- * Attempt to resolve git merge conflicts in `workspaceRoot` using the
- * configured merge-resolver harness. Returns success when every previously-
- * conflicted file is free of conflict markers AND
- * `git diff --name-only --diff-filter=U` is empty. Caller is responsible for
- * `git add` + `git commit` to finalize the merge after a successful return.
- *
- * Disabled when `BEERENGINEER_DISABLE_LLM_MERGE_RESOLVER=1` or when `harness`
- * is undefined (e.g. running with `testingOverride: "fake"`).
- */
-/**
  * Optional sink for resolver telemetry. The execution stage passes a
  * directory path; we write `merge-resolver.log.txt` there with the prompt,
  * stdout, stderr, and the conflicted-file list so a failed run leaves a
@@ -142,6 +140,7 @@ export function resolveMergeConflictsViaLlm(input: {
   harness?: MergeResolverHarness
   timeoutMs?: number
   logDir?: string
+  expectedSharedFiles?: string[]
 }): MergeResolverResult {
   if (process.env.BEERENGINEER_DISABLE_LLM_MERGE_RESOLVER === "1") {
     return { ok: false, reason: "llm-merge-resolver-disabled" }
@@ -155,7 +154,7 @@ export function resolveMergeConflictsViaLlm(input: {
     return { ok: true, resolvedFiles: [] }
   }
 
-  const prompt = buildPrompt(input.mergeMessage, conflicted)
+  const prompt = buildPrompt(input.mergeMessage, conflicted, input.expectedSharedFiles)
   const built = buildCommandForProvider(
     input.harness.provider,
     input.harness.model,
