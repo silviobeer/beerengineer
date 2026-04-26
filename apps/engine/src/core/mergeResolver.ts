@@ -186,7 +186,10 @@ export function resolveMergeConflictsViaLlm(input: {
   const markerStillIn = conflicted.find(file => fileHasConflictMarkers(input.workspaceRoot, file))
   const addResult = !markerStillIn ? git(["add", "-A"], input.workspaceRoot) : { ok: false, stdout: "", stderr: "skipped: markers still present" }
   const remaining = addResult.ok ? listConflictedFiles(input.workspaceRoot) : conflicted
-  const ok = result.status === 0 && !markerStillIn && addResult.ok && remaining.length === 0
+  // Trust the post-resolution filesystem state, not the CLI exit code. A
+  // sonnet timeout (SIGTERM=143) sometimes lands AFTER the model has written
+  // clean files; rejecting on exit !== 0 throws away a valid resolution.
+  const ok = !markerStillIn && addResult.ok && remaining.length === 0
 
   writeResolverLog(input.logDir, {
     provider: input.harness.provider,
@@ -207,12 +210,6 @@ export function resolveMergeConflictsViaLlm(input: {
     ok,
   })
 
-  if (result.status !== 0) {
-    const reason = result.signal
-      ? `${input.harness.provider}-cli-signaled-${result.signal}`
-      : `${input.harness.provider}-cli-exit-${result.status ?? "unknown"}`
-    return { ok: false, reason: `${reason}: ${(result.stderr ?? "").slice(0, 400)}` }
-  }
   if (markerStillIn) {
     return { ok: false, reason: `marker remains in ${markerStillIn}` }
   }
@@ -222,5 +219,6 @@ export function resolveMergeConflictsViaLlm(input: {
   if (remaining.length > 0) {
     return { ok: false, reason: `conflicts remain after resolver: ${remaining.join(", ")}` }
   }
+  // Filesystem says clean, index says clean — accept regardless of CLI exit.
   return { ok: true, resolvedFiles: conflicted }
 }
