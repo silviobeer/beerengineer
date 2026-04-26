@@ -23,6 +23,13 @@ function git(args: string[], cwd: string): { ok: boolean; stdout: string; stderr
   }
 }
 
+function readPositiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name]
+  if (!raw) return fallback
+  const parsed = Number.parseInt(raw, 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
 function listConflictedFiles(root: string): string[] {
   const result = git(["diff", "--name-only", "--diff-filter=U"], root)
   if (!result.ok) return []
@@ -165,10 +172,14 @@ export function resolveMergeConflictsViaLlm(input: {
   // ~3min, but a 6-file wave→project merge timed out at 7min because the
   // shared infra files (package.json, vitest.config.ts) plus diverged client
   // routes (app/w/[key]/page.tsx) need careful per-file reasoning. Empirically:
-  // 90s baseline + 120s per file, capped at 30 minutes. Override with
-  // `input.timeoutMs` when needed.
-  const baseTimeoutMs = 90_000 + conflicted.length * 120_000
-  const timeoutMs = input.timeoutMs ?? Math.min(baseTimeoutMs, 1_800_000)
+  // 90s baseline + 120s per file, capped at 30 minutes. Override per call via
+  // `input.timeoutMs`, or per environment via the BEERENGINEER_MERGE_RESOLVER_*
+  // env vars below — useful for bumping budgets without recompiling.
+  const baselineMs = readPositiveIntEnv("BEERENGINEER_MERGE_RESOLVER_BASE_MS", 90_000)
+  const perFileMs = readPositiveIntEnv("BEERENGINEER_MERGE_RESOLVER_PER_FILE_MS", 120_000)
+  const capMs = readPositiveIntEnv("BEERENGINEER_MERGE_RESOLVER_CAP_MS", 1_800_000)
+  const computedTimeoutMs = Math.min(baselineMs + conflicted.length * perFileMs, capMs)
+  const timeoutMs = input.timeoutMs ?? computedTimeoutMs
   const startedAt = Date.now()
   const result = spawnSync(built.command[0], built.command.slice(1), {
     cwd: input.workspaceRoot,

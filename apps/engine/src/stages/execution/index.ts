@@ -262,6 +262,13 @@ async function executeWave(
       evidencePaths: [layout.executionWaveDir(ctx, wave.number)],
     })
     const active = getActiveRun()
+    if (!active) {
+      // run_blocked needs an itemId for triage. If we ever land here, the
+      // event will surface as "unknown-item" — log loudly so it's not silent.
+      stagePresent.dim(
+        `run_blocked emitted without active run context for runId=${ctx.runId} wave=${wave.number}; event will appear as unknown-item`,
+      )
+    }
     emitEvent({
       type: "run_blocked",
       runId: ctx.runId,
