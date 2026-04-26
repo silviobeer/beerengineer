@@ -1,4 +1,4 @@
-import type { AcceptanceCriterion } from "./domain.js"
+import type { AcceptanceCriterion, DesignArtifact, StoryReference } from "./domain.js"
 import type { Severity } from "./review.js"
 import type { SimulatedBranch } from "./repo.js"
 
@@ -28,6 +28,7 @@ export type StoryTestPlanArtifact = {
 }
 
 export type StoryExecutionContext = {
+  kind?: "feature" | "setup"
   item: {
     slug: string
     baseBranch: string
@@ -41,6 +42,11 @@ export type StoryExecutionContext = {
     id: string
     title: string
     acceptanceCriteria: AcceptanceCriterion[]
+  }
+  setupContract?: {
+    expectedFiles: string[]
+    requiredScripts: string[]
+    postChecks: string[]
   }
   architectureSummary: {
     summary: string
@@ -62,6 +68,9 @@ export type StoryExecutionContext = {
   // Path to the primary workspace checkout (where .beerengineer/workspace.json
   // lives). Distinct from worktreeRoot, which points at the per-story worktree.
   primaryWorkspaceRoot?: string
+  design?: DesignArtifact
+  mockupHtmlByScreen?: Record<string, string>
+  references?: StoryReference[]
   testPlan: StoryTestPlanArtifact
 }
 
@@ -155,6 +164,15 @@ export type StoryReviewArtifact = {
           status: "failed"
           reason: string
           exitCode?: number
+        }
+    designSystem:
+      | {
+          status: "ran"
+          passed: boolean
+        }
+      | {
+          status: "skipped"
+          reason: string
         }
   }
   outcome: "pass" | "revise" | "pass-unreviewed" | "pass-tool-failure" | "pass-partial"

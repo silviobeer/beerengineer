@@ -12,6 +12,12 @@ function artifactMode(state: DocumentationState): DocumentationArtifact["mode"] 
 
 function buildTechnicalSections(project: Project, state: DocumentationState): DocumentationSection[] {
   const mergedStories = state.executionSummaries.flatMap(wave => wave.storiesMerged)
+  const waveSummary = state.implementationPlan.plan.waves.map(wave => {
+    const entries = wave.kind === "setup"
+      ? (wave.tasks ?? []).map(task => task.id)
+      : wave.stories.map(story => story.id)
+    return `Wave ${wave.number}: ${wave.goal} (${entries.join(", ")}).`
+  })
   const sections: DocumentationSection[] = [
     {
       heading: "System Overview",
@@ -24,9 +30,7 @@ function buildTechnicalSections(project: Project, state: DocumentationState): Do
       heading: "Implementation Waves",
       content: [
         `The implementation plan shipped ${state.implementationPlan.plan.waves.length} wave(s).`,
-        ...state.implementationPlan.plan.waves.map(
-          wave => `Wave ${wave.number}: ${wave.goal} (${wave.stories.map(story => story.id).join(", ")}).`,
-        ),
+        ...waveSummary,
       ].join(" "),
     },
     {

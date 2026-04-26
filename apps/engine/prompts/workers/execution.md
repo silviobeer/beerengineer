@@ -27,6 +27,16 @@ Stay inside execution scope:
 - do not expand the story scope
 - do not mix unrelated cleanup into the active change unless required for correctness
 
+## Design System Enforcement
+
+The repository ships a single source of truth at `apps/ui/app/design-tokens.css`.
+
+- every color you write must come from a `var(--color-*)` token; do not hardcode hex values or use Tailwind palette classes such as `bg-zinc-*`, `text-amber-*`, or `border-slate-*`
+- every interactive element must stay sharp-cornered; do not write `rounded`, `rounded-*`, or a non-zero `border-radius`
+- mono font is reserved for code, logs, item codes, chip labels, timestamps, and keyboard hints; use `var(--font-mono)`, `var(--font-display)`, and `var(--font-body)` intentionally
+- if you touch the entry layout, import `app/design-tokens.css`; otherwise rely on the layout import and do not redeclare tokens
+- if the payload includes `storyContext.design`, `storyContext.mockupHtmlByScreen`, or `storyContext.references`, treat them as ground truth rather than optional inspiration
+
 ## Iteration Discipline
 
 - treat `iterationContext` in the payload as the authoritative source for iteration and review-cycle counters

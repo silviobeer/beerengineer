@@ -5,6 +5,7 @@ export type FindingSource =
   | "coderabbit"
   | "sonar"
   | "sonarqube"
+  | "design-system"
   | "qa-llm"
   | "project-review-llm"
 

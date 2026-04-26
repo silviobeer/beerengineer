@@ -41,9 +41,11 @@ export type StoryArtifacts = {
 }
 
 type StoryReviewRun = {
+  designSystemFindings: Finding[]
   coderabbitFindings: Finding[]
   sonarFindings: Finding[]
   combinedFindings: Finding[]
+  designSystem: StoryReviewArtifact["gate"]["designSystem"]
   coderabbit: StoryReviewArtifact["gate"]["coderabbit"]
   sonar: StoryReviewArtifact["gate"]["sonar"]
   failedBecause: string[]
@@ -154,6 +156,7 @@ function buildReviewArtifact(
   result: StoryReviewRun,
 ): StoryReviewArtifact {
   const reviewers = [
+    { source: "design-system" as const, findings: result.designSystemFindings },
     { source: "coderabbit" as const, findings: result.coderabbitFindings },
     { source: "sonarqube" as const, findings: result.sonarFindings },
   ].map(reviewer => ({
@@ -172,6 +175,7 @@ function buildReviewArtifact(
     gate: {
       status: result.outcome.startsWith("pass") ? "pass" : "fail",
       failedBecause: result.failedBecause,
+      designSystem: result.designSystem,
       coderabbit: result.coderabbit,
       sonar: result.sonar,
     },
@@ -183,14 +187,15 @@ function buildReviewArtifact(
 function buildFeedbackSummary(result: StoryReviewRun): string[] {
   const summary: string[] = []
   const toolStatusLine = (
-    tool: "coderabbit" | "sonar",
-    value: StoryReviewArtifact["gate"]["coderabbit"] | StoryReviewArtifact["gate"]["sonar"],
+    tool: "design-system" | "coderabbit" | "sonar",
+    value: StoryReviewArtifact["gate"]["designSystem"] | StoryReviewArtifact["gate"]["coderabbit"] | StoryReviewArtifact["gate"]["sonar"],
   ): string => {
     if (value.status === "ran") {
       return `[tool-status] ${tool}: ran (${value.passed ? "pass" : "fail"})`
     }
     return `[tool-status] ${tool}: ${value.status} (${value.reason})`
   }
+  summary.push(toolStatusLine("design-system", result.designSystem))
   summary.push(toolStatusLine("coderabbit", result.coderabbit))
   summary.push(toolStatusLine("sonar", result.sonar))
   for (const reason of result.failedBecause) summary.push(`[gate] ${reason}`)
@@ -302,15 +307,16 @@ function sonarGate(result: SonarCloudResult): StoryReviewArtifact["gate"]["sonar
 }
 
 function reviewOutcome(
+  designSystem: StoryReviewArtifact["gate"]["designSystem"],
   coderabbit: StoryReviewArtifact["gate"]["coderabbit"],
   sonar: StoryReviewArtifact["gate"]["sonar"],
   failedBecause: string[],
 ): StoryReviewArtifact["outcome"] {
-  const ranTools = [coderabbit, sonar].filter(tool => tool.status === "ran")
-  const skippedTools = [coderabbit, sonar].filter(tool => tool.status === "skipped")
+  const ranTools = [designSystem, coderabbit, sonar].filter(tool => tool.status === "ran")
+  const skippedTools = [designSystem, coderabbit, sonar].filter(tool => tool.status === "skipped")
   const failedTools = [coderabbit, sonar].filter(tool => tool.status === "failed")
   if (failedBecause.length > 0) return "revise"
-  if (ranTools.length === 0 && skippedTools.length === 2) return "pass-unreviewed"
+  if (ranTools.length === 0 && skippedTools.length === 3) return "pass-unreviewed"
   if (ranTools.length === 0 && failedTools.length === 2) return "pass-tool-failure"
   if (skippedTools.length > 0 || failedTools.length > 0) return "pass-partial"
   return "pass"
@@ -340,9 +346,13 @@ async function runStoryReview(input: {
       },
       forceFake: true,
     })
+    const designSystem = review.designSystem
     const coderabbit = coderabbitGate(review.coderabbit)
     const sonar = sonarGate(review.sonarcloud)
     const failedBecause: string[] = []
+    if (designSystem.status === "ran" && !designSystem.passed) {
+      failedBecause.push("Design-system gate found hardcoded colors or rounded styles.")
+    }
     if (coderabbit.status === "ran" && !coderabbit.passed) {
       failedBecause.push("CodeRabbit still reports critical or high-severity review issues.")
     }
@@ -357,13 +367,15 @@ async function runStoryReview(input: {
       )
     }
     return {
+      designSystemFindings: review.designSystem.findings,
       coderabbitFindings: review.coderabbit.findings,
       sonarFindings: review.sonarcloud.findings,
-      combinedFindings: dedupeFindings([...review.coderabbit.findings, ...review.sonarcloud.findings]),
+      combinedFindings: dedupeFindings([...review.designSystem.findings, ...review.coderabbit.findings, ...review.sonarcloud.findings]),
+      designSystem,
       coderabbit,
       sonar,
       failedBecause,
-      outcome: reviewOutcome(coderabbit, sonar, failedBecause),
+      outcome: reviewOutcome(designSystem, coderabbit, sonar, failedBecause),
     }
   }
 
@@ -395,13 +407,18 @@ async function runStoryReview(input: {
     reviewPolicy,
   })
 
+  const designSystemFindings = review.designSystem.findings
   const coderabbitFindings = review.coderabbit.findings
   const sonarFindings = review.sonarcloud.findings
-  const combinedFindings = dedupeFindings([...coderabbitFindings, ...sonarFindings])
+  const combinedFindings = dedupeFindings([...designSystemFindings, ...coderabbitFindings, ...sonarFindings])
   const failedBecause: string[] = []
+  const designSystem = review.designSystem
   const coderabbit = coderabbitGate(review.coderabbit)
   const sonar = sonarGate(review.sonarcloud)
 
+  if (designSystem.status === "ran" && !designSystem.passed) {
+    failedBecause.push("Design-system gate found hardcoded colors or rounded styles.")
+  }
   if (coderabbit.status === "ran" && !coderabbit.passed) {
     failedBecause.push("CodeRabbit still reports critical or high-severity review issues.")
   }
@@ -417,13 +434,15 @@ async function runStoryReview(input: {
   }
 
   return {
+    designSystemFindings,
     coderabbitFindings,
     sonarFindings,
     combinedFindings,
+    designSystem,
     coderabbit,
     sonar,
     failedBecause,
-    outcome: reviewOutcome(coderabbit, sonar, failedBecause),
+    outcome: reviewOutcome(designSystem, coderabbit, sonar, failedBecause),
   }
 }
 

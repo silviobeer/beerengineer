@@ -3,8 +3,9 @@
 > Hand me an idea. Hold your beer.
 
 A multi-stage agent pipeline that drives a product concept through
-**brainstorm → design → requirements → architecture → planning →
-execution → QA**, using Claude Code in conjunction with Codex.
+**brainstorm → visual-companion → frontend-design → requirements →
+architecture → planning → execution → project-review → QA →
+documentation**, using Claude Code in conjunction with Codex.
 CLI-first, HTTP/SSE API, optional Next.js UI.
 
 ![status](https://img.shields.io/badge/status-experimental-orange)
@@ -27,11 +28,16 @@ stream over SSE for live UIs.
 - **Staged agents** — brainstorm, visual-companion, frontend-design,
   requirements, architecture, planning, execution, project-review,
   QA, documentation
+- **Design fidelity controls** — frontend-design emits
+  `design-tokens.css`, execution receives owner-scoped mockup HTML, and
+  story review rejects hardcoded palette drift and rounded corners
 - **Claude Code + Codex** as the underlying agent runtimes
 - **CLI-first** (`beerengineer …`), with an **HTTP/SSE API** on port
   4100 for any external consumer (UIs, webhooks, custom tooling)
 - **Per-workspace git worktrees** — each run lives on its own branch,
   merges back via PR
+- **Shared-infra setup waves** — planning can serialize cross-cutting
+  file edits before feature stories branch in parallel
 - **Review integrations** — CodeRabbit + SonarCloud wired into the
   per-story quality gate
 - **Telegram notifications** — run started/failed/needs-answer events

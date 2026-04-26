@@ -2,6 +2,7 @@ import { parallelReview } from "../core/parallelReview.js"
 import { crReview, sonarReview } from "../sim/llm.js"
 import { reviewCycleArtifactsDir, writeArtifactJson, writeArtifactText } from "./artifacts.js"
 import { runCodeRabbitReview } from "./coderabbit.js"
+import { runDesignSystemGate } from "./designSystemGate.js"
 import { runSonarCloudReview } from "./sonarcloud.js"
 import type {
   CodeRabbitResult,
@@ -66,12 +67,19 @@ export async function runStoryReviewTools(input: ReviewScope): Promise<ReviewToo
     ? injectedAdapters ?? { coderabbit: runFakeCodeRabbit, sonarcloud: runFakeSonar }
     : { coderabbit: runCodeRabbitReview, sonarcloud: runSonarCloudReview }
 
-  const [coderabbit, sonarcloud] = await parallelReview<CodeRabbitResult | SonarCloudResult>("Parallel Review: CodeRabbit + SonarQube...", [
+  const [designSystem, coderabbit, sonarcloud] = await parallelReview<
+    ReviewToolRegistryResult["designSystem"] | CodeRabbitResult | SonarCloudResult
+  >("Parallel Review: design gate + CodeRabbit + SonarQube...", [
+    () => runDesignSystemGate(input),
     () => adapters.coderabbit(input),
     () => adapters.sonarcloud(input),
   ])
 
   const artifactsDir = reviewCycleArtifactsDir(input.artifactsDir, input.reviewCycle)
-  await writeArtifactJson(artifactsDir, "review-tools-summary.json", { coderabbit, sonarcloud })
-  return { coderabbit: coderabbit as CodeRabbitResult, sonarcloud: sonarcloud as SonarCloudResult }
+  await writeArtifactJson(artifactsDir, "review-tools-summary.json", { designSystem, coderabbit, sonarcloud })
+  return {
+    designSystem: designSystem as ReviewToolRegistryResult["designSystem"],
+    coderabbit: coderabbit as CodeRabbitResult,
+    sonarcloud: sonarcloud as SonarCloudResult,
+  }
 }

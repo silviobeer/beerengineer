@@ -186,6 +186,14 @@ export type UserStory = {
   acceptanceCriteria: AcceptanceCriterion[]
 }
 
+export type StoryReference = {
+  kind: "file" | "snippet" | "note"
+  name: string
+  path?: string
+  content?: string
+  instruction?: string
+}
+
 export type PRD = {
   stories: UserStory[]
 }
@@ -221,9 +229,23 @@ export type WaveDefinition = {
   id: string
   number: number
   goal: string
+  kind?: "setup" | "feature"
   stories: Array<{
     id: string
     title: string
+    screenIds?: string[]
+    sharedFiles?: string[]
+  }>
+  tasks?: Array<{
+    id: string
+    title: string
+    sharedFiles: string[]
+    contract: {
+      expectedFiles: string[]
+      requiredScripts: string[]
+      postChecks: string[]
+    }
+    references?: StoryReference[]
   }>
   internallyParallelizable: boolean
   dependencies: string[]

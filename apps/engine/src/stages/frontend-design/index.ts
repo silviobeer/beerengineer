@@ -9,6 +9,7 @@ import { runStageWithUserReview } from "../../core/stageWithUserReview.js"
 import { layout } from "../../core/workspaceLayout.js"
 import { createFrontendDesignReview, createFrontendDesignStage, type RunLlmConfig } from "../../llm/registry.js"
 import { renderDesignPreview } from "../../render/designPreview.js"
+import { renderDesignTokensCss } from "../../render/designTokensCss.js"
 import { renderMockupFile, renderMockupSitemap } from "../../render/mockupFile.js"
 import { ask } from "../../sim/human.js"
 import type { DesignArtifact, WireframeArtifact, WorkflowContext } from "../../types.js"
@@ -135,6 +136,12 @@ export async function frontendDesign(
             label: "Design JSON",
             fileName: "design.json",
             content: JSON.stringify(enrichedArtifact, null, 2),
+          },
+          {
+            kind: "txt" as const,
+            label: "Design Tokens CSS",
+            fileName: "design-tokens.css",
+            content: renderDesignTokensCss(enrichedArtifact),
           },
           {
             kind: "txt" as const,
