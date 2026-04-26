@@ -10,14 +10,7 @@ import {
   finalizeCandidateDecision,
   mergeProjectBranchIntoItem,
 } from "./core/repoSimulation.js"
-import {
-  assertWorkspaceRootOnBaseBranch,
-  detectRealGitMode,
-  exitRunToItemBranchReal,
-  ensureItemBranchReal,
-  ensureProjectBranchReal,
-  mergeProjectIntoItemReal,
-} from "./core/realGit.js"
+import { createGitAdapter, type GitAdapter } from "./core/gitAdapter.js"
 import { resolveBaseBranchForItem } from "./core/baseBranch.js"
 import { writeRecoveryRecord, type RecoveryScope } from "./core/recovery.js"
 import { layout } from "./core/workspaceLayout.js"
@@ -276,10 +269,10 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
     workspaceRoot: options?.workspaceRoot,
   }
 
-  const realGit = detectRealGitMode(context)
-  if (realGit.enabled) {
-    stagePresent.dim(`→ Real git mode: branches will be created in ${realGit.workspaceRoot}`)
-  } else if (options?.workspaceRoot && realGit.reason === "workspace has uncommitted changes (dirty repo)") {
+  const git = createGitAdapter(context)
+  if (git.mode.enabled) {
+    stagePresent.dim(`→ Real git mode: branches will be created in ${git.mode.workspaceRoot}`)
+  } else if (options?.workspaceRoot && git.mode.reason === "workspace has uncommitted changes (dirty repo)") {
     const currentBranch = currentGitBranch(options.workspaceRoot)
     const summary =
       currentBranch === "main" || currentBranch === "master"
@@ -290,14 +283,12 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
     stagePresent.warn(summary)
     await blockRunForWorkspaceState(context, summary)
   } else {
-    stagePresent.dim(`→ Simulated git mode (${realGit.reason})`)
+    stagePresent.dim(`→ Simulated git mode (${git.mode.reason})`)
   }
 
   try {
-    if (realGit.enabled) {
-      ensureItemBranchReal(realGit, context)
-      assertWorkspaceRootOnBaseBranch(realGit, "after ensureItemBranchReal (run start)")
-    }
+    git.ensureItemBranch()
+    git.assertWorkspaceRootOnBaseBranch("after ensureItemBranchReal (run start)")
 
     const itemResumePlan = options?.resume ? normalizeItemResume(options.resume) : { startStage: "brainstorm" as const }
     const resumePlan = options?.resume ? normalizeProjectResume(options.resume) : null
@@ -358,7 +349,7 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
     }
 
     for (const project of projects) {
-      if (realGit.enabled) ensureProjectBranchReal(realGit, context, project.id)
+      git.ensureProjectBranch(project.id)
       const conceptAmendments = [
         ...(wireframes?.conceptAmendments ?? []),
         ...(design?.conceptAmendments ?? []),
@@ -372,20 +363,19 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
           codebase: loadCodebaseSnapshot(options?.workspaceRoot),
           decisions: loadItemDecisions(context.workspaceId),
         },
+        git,
         resumePlan ?? undefined,
         options?.llm,
       )
-      if (realGit.enabled) {
-        mergeProjectIntoItemReal(realGit, context, project.id)
-        assertWorkspaceRootOnBaseBranch(realGit, `after merging project ${project.id} into item`)
-      }
+      git.mergeProjectIntoItem(project.id)
+      git.assertWorkspaceRootOnBaseBranch(`after merging project ${project.id} into item`)
     }
 
     stagePresent.header("DONE")
     stagePresent.ok(`Item "${item.title}" is done ✓`)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    if (realGit.enabled && (message.startsWith("realGit:") || message.startsWith("branch_gate:"))) {
+    if (git.enabled && (message.startsWith("realGit:") || message.startsWith("branch_gate:"))) {
       const summary =
         `Run blocked: git branch gate failed for "${item.title}". ` +
         `${message.replace(/^branch_gate:\s*/, "").replace(/^realGit:\s*/, "")}`
@@ -394,15 +384,15 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
     }
     throw error
   } finally {
-    if (realGit.enabled) {
+    if (git.enabled) {
       try {
-        const exitBranch = exitRunToItemBranchReal(realGit, context)
-        stagePresent.dim(`→ Run exit branch: ${exitBranch}`)
+        const exitBranch = git.exitRunToItemBranch()
+        if (exitBranch) stagePresent.dim(`→ Run exit branch: ${exitBranch}`)
       } catch (error) {
         stagePresent.warn(`Run exit branch restore failed: ${(error as Error).message}`)
       }
       try {
-        assertWorkspaceRootOnBaseBranch(realGit, "run exit")
+        git.assertWorkspaceRootOnBaseBranch("run exit")
       } catch (error) {
         stagePresent.warn(`Workspace root invariant failed at run exit: ${(error as Error).message}`)
       }
@@ -421,6 +411,7 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
  */
 async function runProject(
   initialCtx: ProjectContext,
+  git: GitAdapter,
   resume?: ProjectResumePlan,
   llm?: WorkflowLlmOptions,
 ): Promise<void> {
@@ -435,16 +426,15 @@ async function runProject(
   }
 
   await mergeProjectBranchIntoItem(ctx, ctx.project.id)
-  await withStageLifecycle("handoff", { projectId }, () => handoffProject(assertWithDocumentation(ctx)))
+  await withStageLifecycle("handoff", { projectId }, () => handoffProject(assertWithDocumentation(ctx), git))
 }
 
-async function handoffProject(ctx: WithDocumentation): Promise<void> {
-  const realGit = detectRealGitMode(ctx)
-  if (realGit.enabled) {
+async function handoffProject(ctx: WithDocumentation, git: GitAdapter): Promise<void> {
+  if (git.mode.enabled) {
     stagePresent.header(`handoff — ${ctx.project.name}`)
     stagePresent.dim(`→ Item branch: ${branchNameItem(ctx)}`)
     stagePresent.dim(`→ Project branch: ${branchNameProject(ctx, ctx.project.id)}`)
-    stagePresent.dim(`→ Base branch: ${realGit.baseBranch}`)
+    stagePresent.dim(`→ Base branch: ${git.mode.baseBranch}`)
     stagePresent.ok(`Project ${ctx.project.id} is already merged into ${branchNameItem(ctx)}; handoff complete.`)
     return
   }
