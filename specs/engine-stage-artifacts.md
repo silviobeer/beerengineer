@@ -9,63 +9,103 @@ engine's CWD.
 
 ## Pipeline data flow
 
+Reads on the left of the slash, writes on the right. Item-scoped state
+(workspace.json, decisions.json, repo-state.json) is implicit input to
+every stage and isn't repeated below.
+
 ```
-                ┌────────────────────────────────────────────────────┐
-                │  ITEM-SCOPED PERSISTENT STATE                      │
-                │  workspace.json · decisions.json · repo-state.json │
-                │  (read by every stage; survives across reruns)     │
-                └─────────────────────────┬──────────────────────────┘
-                                          │
-                                          ▼
-                  ┌─────────────────────────────────────────┐
-                  │             ITEM-LEVEL STAGES           │
-   ITEM ─────────▶│ brainstorm     →  concept · projects[]  │
-                  │                                         │
-   (UI items)     │ visual-        →  wireframes ·          │
-                  │ companion         lowfi mockups         │
-                  │                                         │
-   (UI items)     │ frontend-      →  design · design-      │
-                  │ design            preview · tokens.css  │
-                  └─────────────────────┬───────────────────┘
-                                        │  (fan out per project)
-                                        ▼
-                  ┌─────────────────────────────────────────┐
-                  │           PROJECT-LEVEL STAGES          │
-                  │ requirements   →  prd (stories + ACs)   │
-                  │ architecture   →  architecture          │
-                  │ planning       →  plan (waves + stories)│
-                  └─────────────────────┬───────────────────┘
-                                        │  (fan out per wave/story)
-                                        ▼
-                  ┌─────────────────────────────────────────┐
-                  │          EXECUTION  (per story)         │
-                  │ test-writer    →  test-plan             │
-                  │      ↓                                  │
-                  │ coder (Ralph)  →  commits on            │
-                  │                   story/<slug>__...     │
-                  │      ↓                                  │
-                  │ story-review   →  CodeRabbit · Sonar ·  │
-                  │ gate              design-system gate    │
-                  │      ↓                                  │
-                  │ merge story → wave branch               │
-                  │ (LLM resolver runs on conflicts)        │
-                  └─────────────────────┬───────────────────┘
-                                        │  (after all waves complete)
-                                        ▼
-                  ┌─────────────────────────────────────────┐
-                  │         POST-EXECUTION STAGES           │
-                  │ project-review →  findings ·            │
-                  │                   recommendations       │
-                  │ qa             →  qa-report             │
-                  │ documentation  →  README · technical    │
-                  │                   doc · features doc    │
-                  │ handoff        →  candidate branch +    │
-                  │                   operator prompt       │
-                  └─────────────────────────────────────────┘
-                                        │
-                                        ▼
-                  candidate/<runId>__<projectId>__<itemSlug>
-                  (operator: test / merge / reject)
+  item · decisions
+        │
+        ▼
+  ┌────────────────────────────────────────────────────────────────┐
+  │ brainstorm                                                     │
+  │   reads:  item, decisions                                      │
+  │   writes: concept · projects[]                                 │
+  └─────────────────────────────┬──────────────────────────────────┘
+                                │
+                                ▼
+  ┌────────────────────────────────────────────────────────────────┐
+  │ visual-companion              (UI items only)                  │
+  │   reads:  concept, projects, item-refs                         │
+  │   writes: wireframes · lowfi mockups (HTML)                    │
+  └─────────────────────────────┬──────────────────────────────────┘
+                                │
+                                ▼
+  ┌────────────────────────────────────────────────────────────────┐
+  │ frontend-design               (UI items only)                  │
+  │   reads:  concept, projects, wireframes, item-refs             │
+  │   writes: design · design-preview · design-tokens.css          │
+  └─────────────────────────────┬──────────────────────────────────┘
+                                │  fan out per project
+                                ▼
+  ┌────────────────────────────────────────────────────────────────┐
+  │ requirements                                                   │
+  │   reads:  concept, wireframes, design, codebase, decisions     │
+  │   writes: prd (stories + ACs)                                  │
+  └─────────────────────────────┬──────────────────────────────────┘
+                                │
+                                ▼
+  ┌────────────────────────────────────────────────────────────────┐
+  │ architecture                                                   │
+  │   reads:  prd, wireframes, design, codebase, decisions         │
+  │   writes: architecture                                         │
+  └─────────────────────────────┬──────────────────────────────────┘
+                                │
+                                ▼
+  ┌────────────────────────────────────────────────────────────────┐
+  │ planning                                                       │
+  │   reads:  prd, architecture, codebase, decisions               │
+  │   writes: plan (waves + stories)                               │
+  └─────────────────────────────┬──────────────────────────────────┘
+                                │  fan out per wave / per story
+                                ▼
+  ┌────────────────────────────────────────────────────────────────┐
+  │ test-writer                                                    │
+  │   reads:  story, architecture-summary, wave                    │
+  │   writes: test-plan                                            │
+  └─────────────────────────────┬──────────────────────────────────┘
+                                │
+                                ▼
+  ┌────────────────────────────────────────────────────────────────┐
+  │ coder (Ralph + worker)                                         │
+  │   reads:  story, test-plan, architecture-summary,              │
+  │          design, mockupHtmlByScreen (owner only), references   │
+  │   writes: commits on story branch · implementation.json ·      │
+  │          story-review.json · review-tool-artifacts/            │
+  └─────────────────────────────┬──────────────────────────────────┘
+                                │  merge story → wave → project
+                                │  (LLM resolver kicks in on conflicts)
+                                ▼
+  ┌────────────────────────────────────────────────────────────────┐
+  │ project-review                                                 │
+  │   reads:  prd, architecture, plan, execution-summaries         │
+  │   writes: project-review (findings · recommendations)          │
+  └─────────────────────────────┬──────────────────────────────────┘
+                                │
+                                ▼
+  ┌────────────────────────────────────────────────────────────────┐
+  │ qa                                                             │
+  │   reads:  project-review, merged project branch                │
+  │   writes: qa-report                                            │
+  └─────────────────────────────┬──────────────────────────────────┘
+                                │
+                                ▼
+  ┌────────────────────────────────────────────────────────────────┐
+  │ documentation                                                  │
+  │   reads:  prd, architecture, plan, project-review              │
+  │   writes: README · technical-doc · features-doc (committed)    │
+  └─────────────────────────────┬──────────────────────────────────┘
+                                │
+                                ▼
+  ┌────────────────────────────────────────────────────────────────┐
+  │ handoff                                                        │
+  │   reads:  full project context                                 │
+  │   writes: candidate branch · handoff manifest                  │
+  └─────────────────────────────┬──────────────────────────────────┘
+                                │
+                                ▼
+                candidate/<runId>__<projectId>__<itemSlug>
+                operator answers: test / merge / reject
 ```
 
 **Branch hierarchy** (real git):
@@ -189,7 +229,7 @@ delivered per-story to the screen-owner only (planned in Part 1c via
 **Writes** to `stages/planning/artifacts/`
 - `implementation-plan.json` → `ImplementationPlanArtifact` `{ project, conceptSummary, architectureSummary, plan: { summary, assumptions, sequencingNotes, dependencies, risks, waves[] } }`
   - each `wave` `{ id, number, goal, stories[], parallel, dependencies, exitCriteria }`
-  - (planned Part 2a) `kind?: "setup" | "feature"`
+  - each `wave` may carry `kind?: "setup" | "feature"` (default `feature`); a wave whose `kind` is `setup` triggers serialised execution and the dedicated setup path described in the reliability plan
 - `implementation-plan.md`
 - `summary.md`
 
@@ -215,13 +255,17 @@ delivered per-story to the screen-owner only (planned in Part 1c via
 
 ## 8. execution coder (Ralph + worker)
 
-**Reads** (`StoryExecutionContext` extended)
-- everything test-writer reads
+**Reads** (`StoryExecutionContext` — see `apps/engine/src/types/execution.ts`)
+- everything test-writer reads, plus:
 - `testPlan` (from step 7)
 - `storyBranch` (real-git branch name)
 - `worktreeRoot` (per-story isolated worktree)
-- (planned Part 1.0) `design`, `mockupHtmlByScreen`, `references`
-- (planned Part 2c) `setupContract` (for setup-wave stories)
+- `primaryWorkspaceRoot` (the main repo checkout where `workspace.json` lives — distinct from the per-story worktree, used for review-policy lookup)
+- `kind` (`"feature"` default, `"setup"` routes to the dedicated setup-story path)
+- `setupContract` (only when `kind === "setup"`) — `{ expectedFiles[], requiredScripts[], postChecks[] }`
+- `design` (the project-level `DesignArtifact`)
+- `mockupHtmlByScreen` (only on the screen-owner story, per Part 1c)
+- `references` — `StoryReference[]` of explicit artifacts the coder must consume verbatim (e.g. the design-tokens.css path for setup stories)
 - prior iterations' `priorAttempts[]` (via `iterationContext`)
 
 **Writes** to `stages/execution/waves/wave-<n>/stories/<storyId>/ralph/`
@@ -233,6 +277,7 @@ delivered per-story to the screen-owner only (planned in Part 1c via
   - `coderabbit.raw.txt`
   - `sonar-scan.raw.txt`
   - `sonar-gate.raw.json`
+  - `design-system.raw.txt` (Part 1e — programmatic gate for hardcoded colors / Tailwind palette / non-zero radius)
   - `review-tools-summary.json`
 - `merge-resolver.<timestamp>.json` (post-fix Part 3) — when a wave-merge needs LLM resolution
 - `log.jsonl`
