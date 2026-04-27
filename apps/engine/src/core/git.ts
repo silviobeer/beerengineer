@@ -38,7 +38,52 @@ function runGit(workspaceRoot: string, args: string[]): GitResult {
 }
 
 /**
- * Resolve the workspace into an enabled {@link GitMode} mode or
+ * Result of inspecting a workspace for run-readiness, expressed as
+ * structured data. Single source of truth for both the throwing path
+ * ({@link detectGitMode}) and non-throwing CLI preflight, so the two
+ * always agree on whether the workspace is runnable.
+ */
+export type WorkspaceInspection =
+  | { kind: "ok"; currentBranch: string }
+  | { kind: "not-a-repo" }
+  | { kind: "git-status-failed"; stderr: string }
+  | { kind: "dirty"; currentBranch: string; trackedCount: number; untrackedCount: number }
+
+/**
+ * Probe the workspace at `workspaceRoot` and report whether it can host a
+ * fresh run. No throws, no formatting — pure data the caller composes.
+ */
+export function inspectWorkspaceState(workspaceRoot: string): WorkspaceInspection {
+  const inside = runGit(workspaceRoot, ["rev-parse", "--is-inside-work-tree"])
+  if (!inside.ok || inside.stdout !== "true") {
+    return { kind: "not-a-repo" }
+  }
+  const status = runGit(workspaceRoot, ["status", "--porcelain", "--branch"])
+  if (!status.ok) {
+    return { kind: "git-status-failed", stderr: status.stderr }
+  }
+  const lines = status.stdout.split(/\r?\n/).filter(Boolean)
+  const branchLine = lines.find(line => line.startsWith("## ")) ?? "## unknown"
+  const currentBranch = branchLine
+    .replace(/^##\s+/, "")
+    .split("...")[0]!
+    .split(/\s+\[/)[0]!
+    .trim()
+  const changed = lines.filter(line => !line.startsWith("## "))
+  if (changed.length === 0) {
+    return { kind: "ok", currentBranch }
+  }
+  const untrackedCount = changed.filter(line => line.startsWith("?? ")).length
+  return {
+    kind: "dirty",
+    currentBranch,
+    trackedCount: changed.length - untrackedCount,
+    untrackedCount,
+  }
+}
+
+/**
+ * Resolve the workspace into an enabled {@link GitMode} or
  * throw with a precise reason. Real-git is mandatory: simulation has been
  * removed.
  */
@@ -46,11 +91,6 @@ export function detectGitMode(context: WorkflowContext): GitMode {
   const workspaceRoot = context.workspaceRoot
   if (!workspaceRoot) {
     throw new Error("git: workspaceRoot is required (simulation mode has been removed)")
-  }
-
-  const inside = runGit(workspaceRoot, ["rev-parse", "--is-inside-work-tree"])
-  if (!inside.ok || inside.stdout !== "true") {
-    throw new Error(`git: workspace ${workspaceRoot} is not a git repository`)
   }
 
   const baseBranch = context.baseBranch?.trim()
@@ -62,21 +102,23 @@ export function detectGitMode(context: WorkflowContext): GitMode {
     throw new Error("git: itemSlug is required (item worktree is mandatory)")
   }
 
-  const porcelain = runGit(workspaceRoot, ["status", "--porcelain"])
-  if (!porcelain.ok) {
-    throw new Error(`git: git status failed: ${porcelain.stderr}`)
-  }
-  if (porcelain.stdout.length > 0) {
-    throw new Error(
-      `git: workspace ${workspaceRoot} has uncommitted changes (dirty repo); commit or stash before starting`,
-    )
-  }
-
-  return {
-    enabled: true,
-    workspaceRoot,
-    baseBranch,
-    itemWorktreeRoot: layout.itemWorktreeDir(context),
+  const inspection = inspectWorkspaceState(workspaceRoot)
+  switch (inspection.kind) {
+    case "not-a-repo":
+      throw new Error(`git: workspace ${workspaceRoot} is not a git repository`)
+    case "git-status-failed":
+      throw new Error(`git: git status failed: ${inspection.stderr}`)
+    case "dirty":
+      throw new Error(
+        `git: workspace ${workspaceRoot} has uncommitted changes (dirty repo); commit or stash before starting`,
+      )
+    case "ok":
+      return {
+        enabled: true,
+        workspaceRoot,
+        baseBranch,
+        itemWorktreeRoot: layout.itemWorktreeDir(context),
+      }
   }
 }
 

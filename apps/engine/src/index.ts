@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 
-import { spawn, spawnSync } from "node:child_process"
+import { spawn } from "node:child_process"
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { ask, close } from "./sim/human.js"
 import { createCliIO } from "./core/ioCli.js"
 import { createGitAdapterFromMode } from "./core/gitAdapter.js"
+import { inspectWorkspaceState } from "./core/git.js"
 import { layout } from "./core/workspaceLayout.js"
 import { latestCompletedRunForItem, workflowWorkspaceId } from "./core/itemWorkspace.js"
 import {
@@ -1012,15 +1013,17 @@ async function runChatListCommand(workspaceKey: string | undefined, all = false,
 
 function gitState(rootPath: string | null): string {
   if (!rootPath) return "none"
-  const inside = runGit(rootPath, ["rev-parse", "--is-inside-work-tree"])
-  if (!inside.ok || inside.stdout !== "true") return "none"
-  const status = runGit(rootPath, ["status", "--porcelain", "--branch"])
-  if (!status.ok) return "unknown"
-  const lines = status.stdout.split(/\r?\n/).filter(Boolean)
-  const branchLine = lines.find(line => line.startsWith("## ")) ?? "## unknown"
-  const branch = parseStatusBranch(branchLine)
-  const changed = lines.filter(line => !line.startsWith("## "))
-  return `${branch} / ${changed.length === 0 ? "clean" : "dirty"}`
+  const inspection = inspectWorkspaceState(rootPath)
+  switch (inspection.kind) {
+    case "not-a-repo":
+      return "none"
+    case "git-status-failed":
+      return "unknown"
+    case "ok":
+      return `${inspection.currentBranch} / clean`
+    case "dirty":
+      return `${inspection.currentBranch} / dirty`
+  }
 }
 
 async function runStatusCommand(workspaceKey: string | undefined, all = false, json = false): Promise<number> {
@@ -1819,44 +1822,23 @@ function printResumeBlockedOutput(
   )
 }
 
-function runGit(rootPath: string, args: string[]): { ok: boolean; stdout: string; stderr: string } {
-  const result = spawnSync("git", args, { cwd: rootPath, encoding: "utf8" })
-  return {
-    ok: result.status === 0,
-    stdout: (result.stdout ?? "").trim(),
-    stderr: (result.stderr ?? "").trim(),
-  }
-}
-
-function parseStatusBranch(line: string): string {
-  return line
-    .replace(/^##\s+/, "")
-    .split("...")[0]!
-    .split(/\s+\[/)[0]!
-    .trim()
-}
-
+/**
+ * Render the dirty-repo preflight error using the structured workspace
+ * inspection from core/git.ts. Single source of truth for "is this
+ * workspace runnable?" — same probe detectGitMode uses, just formatted
+ * for the CLI instead of thrown.
+ */
 function printDirtyRepoPreflight(rootPath: string): number {
-  const inside = runGit(rootPath, ["rev-parse", "--is-inside-work-tree"])
-  if (!inside.ok || inside.stdout !== "true") return 0
+  const inspection = inspectWorkspaceState(rootPath)
+  if (inspection.kind !== "dirty") return 0
 
-  const status = runGit(rootPath, ["status", "--porcelain", "--branch"])
-  if (!status.ok) return 0
-
-  const lines = status.stdout.split(/\r?\n/).filter(Boolean)
-  const branchLine = lines.find(line => line.startsWith("## ")) ?? "## unknown"
-  const branchName = parseStatusBranch(branchLine)
-  const changed = lines.filter(line => !line.startsWith("## "))
-  if (changed.length === 0) return 0
-
-  const tracked = changed.filter(line => !line.startsWith("?? ")).length
-  const untracked = changed.filter(line => line.startsWith("?? ")).length
-  const onBaseBranch = branchName === "main" || branchName === "master"
+  const onBaseBranch = inspection.currentBranch === "main" || inspection.currentBranch === "master"
+  const total = inspection.trackedCount + inspection.untrackedCount
 
   console.error("  Git preflight failed: workspace repo is dirty.")
   console.error(`  Root:   ${rootPath}`)
-  console.error(`  Branch: ${branchName || branchLine.slice(3)}`)
-  console.error(`  Changed files: ${changed.length} (${tracked} tracked, ${untracked} untracked)`)
+  console.error(`  Branch: ${inspection.currentBranch || "<unknown>"}`)
+  console.error(`  Changed files: ${total} (${inspection.trackedCount} tracked, ${inspection.untrackedCount} untracked)`)
   if (onBaseBranch) {
     console.error("  Strategy violation: uncommitted work is sitting on main/master.")
     console.error("  BeerEngineer expects main/master to stay clean; item work must happen on item/* branches.")
