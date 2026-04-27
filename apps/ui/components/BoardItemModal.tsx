@@ -11,6 +11,7 @@ import {
 import { MiniStepper } from "./MiniStepper";
 import { BoardCardActions } from "./BoardCardActions";
 import { ItemChat } from "./ItemChat";
+import { ItemMessages } from "./ItemMessages";
 
 interface BoardItemModalProps {
   card: BoardCardDTO;
@@ -120,6 +121,13 @@ export function BoardItemModal({ card, workspaceKey, onClose }: BoardItemModalPr
               Conversation
             </h3>
             <ItemChat itemId={card.id} />
+          </div>
+
+          <div className="pt-3 border-t border-zinc-800">
+            <h3 className="text-xs uppercase tracking-wider text-zinc-500 mb-2">
+              Messages
+            </h3>
+            <ItemMessages itemId={card.id} />
           </div>
 
           <div className="pt-2 border-t border-zinc-800">
