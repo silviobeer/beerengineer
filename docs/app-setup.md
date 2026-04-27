@@ -132,17 +132,17 @@ Stdout is one JSON event per line. Two modes:
 `workflow_started` handshake that documents the reply protocol inline:
 
 ```json
-{"type":"workflow_started","version":1,"protocol":{"wake_on":["prompt_requested"],"reply":"{\"type\":\"prompt_answered\",\"promptId\":\"…\",\"answer\":\"…\"}","terminal_events":["run_finished","run_blocked","run_failed","cli_finished"]}}
+{"type":"workflow_started","version":1,"protocol":{"wake_on":["prompt_requested"],"reply":"{\"type\":\"prompt_answered\",\"promptId\":\"<from prompt_requested>\",\"answer\":\"<your answer>\"}","terminal_events":["run_finished","run_blocked","run_failed","cli_finished"]}}
 ```
 
-After the handshake, only events the agent must react to are emitted:
+After the handshake, only events on the agent allowlist are emitted:
 `prompt_requested`, `prompt_answered`, `run_started`, `run_finished`,
 `run_blocked`, `run_failed`. Lifecycle chatter (`chat_message`,
 `presentation`, `log`, `stage_started`, …) is suppressed — the agent
 just filters on `type === "prompt_requested"`. Each open prompt also
 prints a compact stderr signpost `⏸  beerengineer waiting on prompt
-[p-…]: <text>` so shell wrappers that don't parse stdout still see
-where the run is blocked.
+[p-…]: <text>` (prompt text truncated at 120 chars) so shell wrappers
+that don't parse stdout still see where the run is blocked.
 
 **Firehose mode (`--verbose`).** Stdout mirrors every bus event for
 debugging or replay.
@@ -151,11 +151,15 @@ The harness reads `prompt_requested` events from stdout and replies on
 stdin with one JSON line per answer:
 
 ```json
-{"type":"prompt_answered","promptId":"<id>","answer":"<text>"}
+{"type":"prompt_answered","promptId":"<from prompt_requested>","answer":"<your answer>"}
 ```
 
 Human-readable output goes to stderr in both modes. The run terminates
 with `{"type":"cli_finished","runId":"…"}`.
+
+The allowlist and handshake live in
+`apps/engine/src/core/renderers/ndjson.ts`; the `--json` / `--verbose`
+flag handling is in `apps/engine/src/index.ts`.
 
 ## Tests
 
@@ -167,13 +171,14 @@ with `{"type":"cli_finished","runId":"…"}`.
 ## Test pyramid (engine)
 
 - **Engine unit tests** — `apps/engine/test/*.test.ts`, run under
-  `node:test --import tsx`. Currently ~236 tests covering: stage→board
-  column mapping, bus-subscriber lifecycle, pending-prompt round-trip,
-  `AsyncLocalStorage` isolation across parallel runs, real-git branch
-  operations including `abandonStoryBranch`, base-branch resolution,
-  API-route integration (`apiIntegration.test.ts`), the Ralph runtime,
-  the hosted-CLI adapter (retry + JSON recovery), the cross-process
-  bridge, and resume-with-remediation.
+  `node:test --import tsx`. Several hundred tests across ~45 files
+  covering: stage→board column mapping, bus-subscriber lifecycle,
+  pending-prompt round-trip, `AsyncLocalStorage` isolation across
+  parallel runs, real-git branch operations including
+  `abandonStoryBranch`, base-branch resolution, API-route integration
+  (`apiIntegration.test.ts`), the Ralph runtime
+  (`ralphRuntime.test.ts`), the hosted-CLI adapter (retry + JSON
+  recovery), the cross-process bridge, and resume-with-remediation.
 - **UI E2E** — none today. The previous Playwright suite under
   `apps/ui/tests/e2e/` was removed with the UI teardown
   (see [`ui-design-notes.md`](./ui-design-notes.md)). End-to-end tests
