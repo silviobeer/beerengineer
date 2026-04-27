@@ -365,8 +365,9 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
         resumePlan ?? undefined,
         options?.llm,
       )
-      git.mergeProjectIntoItem(project.id)
-      git.assertWorkspaceRootOnBaseBranch(`after merging project ${project.id} into item`)
+      // Project→item merge + post-merge invariant check happen inside the
+      // handoff stage so they land under withStageLifecycle("handoff", …)
+      // and any merge failure surfaces in the right recovery scope.
     }
 
     stagePresent.header("DONE")

@@ -60,10 +60,16 @@ function nowIso(): string {
 function requireStoryBranch(storyContext: StoryExecutionContext): string {
   // The execution stage sets `storyBranch` from `branchNameStory(...)`. If
   // a caller (e.g. a focused unit test) constructs the context manually,
-  // synthesise the same name so the loop body works without ceremony.
-  return (
-    storyContext.storyBranch ??
-    `story/${storyContext.item.slug}__${storyContext.project.id}__w${storyContext.wave.number}__${storyContext.story.id}`.toLowerCase()
+  // route the fallback through the same canonical helper so the slugified
+  // result matches what real-git uses — hand-rolling the name here would
+  // diverge for ids containing spaces, slashes, or other non-[a-z0-9]
+  // characters.
+  if (storyContext.storyBranch) return storyContext.storyBranch
+  return branchNameStory(
+    { itemSlug: storyContext.item.slug } as WorkflowContext,
+    storyContext.project.id,
+    storyContext.wave.number,
+    storyContext.story.id,
   )
 }
 
