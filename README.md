@@ -143,6 +143,15 @@ Common env vars:
 - `BEERENGINEER_UI_ORIGIN` — allowed CORS origin
 - `HOST`, `PORT` — API bind (default `127.0.0.1:4100`)
 - `SONAR_TOKEN`, `TELEGRAM_BOT_TOKEN`, … — integrations
+- `BEERENGINEER_MAX_ITERATIONS_PER_CYCLE` — Ralph implementation
+  iterations per review cycle (default `4`)
+- `BEERENGINEER_MAX_REVIEW_CYCLES` — Ralph review cycles before
+  declaring a story blocked (default `3`)
+- `BEERENGINEER_MERGE_RESOLVER_BASE_MS`,
+  `BEERENGINEER_MERGE_RESOLVER_PER_FILE_MS`,
+  `BEERENGINEER_MERGE_RESOLVER_CAP_MS` — merge-resolver timeouts
+- `BEERENGINEER_FORCE_FAKE_LLM=1` — force every stage to use its
+  offline fake adapter (test mode)
 
 ## Development
 
@@ -163,8 +172,11 @@ runs against a real project hit real edge cases.
 
 ## Deeper reading
 
-Detailed design notes and implementation history (in German):
-[`docs/NOTES.de.md`](docs/NOTES.de.md).
+- [`docs/engine-architecture.md`](docs/engine-architecture.md) —
+  registry-driven pipeline, `GitAdapter`, iteration loop, file map,
+  how to add a stage.
+- [`docs/NOTES.de.md`](docs/NOTES.de.md) — design notes and
+  implementation history (in German).
 
 ## License
 
