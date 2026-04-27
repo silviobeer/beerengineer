@@ -63,7 +63,9 @@ export function BoardItemModal({ card, workspaceKey, onClose }: BoardItemModalPr
             {card.itemCode ? (
               <span className="text-xs text-zinc-400 font-mono">{card.itemCode}</span>
             ) : null}
-            <h2 className="text-lg font-semibold break-words">{card.title}</h2>
+            <h2 className="text-lg font-semibold font-display tracking-tight break-words">
+              {card.title}
+            </h2>
           </div>
           <button
             type="button"

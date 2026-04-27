@@ -22,6 +22,9 @@ interface MiniStepperProps {
   ariaLabel?: string;
 }
 
+const STEPPER_FONT =
+  "var(--font-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+
 const ACTIVE_STYLE: React.CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
@@ -29,12 +32,11 @@ const ACTIVE_STYLE: React.CSSProperties = {
   fontSize: "10px",
   textTransform: "uppercase",
   letterSpacing: "0.05em",
-  border: "1px solid rgb(52, 211, 153)",
-  backgroundColor: "rgba(16, 185, 129, 0.15)",
-  color: "rgb(110, 231, 183)",
+  border: "1px solid #5fb6c2",
+  backgroundColor: "rgba(14, 90, 101, 0.35)",
+  color: "#9fd8e0",
   fontWeight: 700,
-  fontFamily:
-    "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+  fontFamily: STEPPER_FONT,
 };
 
 const INACTIVE_STYLE: React.CSSProperties = {
@@ -44,12 +46,11 @@ const INACTIVE_STYLE: React.CSSProperties = {
   fontSize: "10px",
   textTransform: "uppercase",
   letterSpacing: "0.05em",
-  border: "1px solid rgb(39, 39, 42)",
-  backgroundColor: "rgb(24, 24, 27)",
-  color: "rgb(113, 113, 122)",
+  border: "1px solid #1a2f33",
+  backgroundColor: "#122024",
+  color: "#6b8084",
   fontWeight: 400,
-  fontFamily:
-    "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+  fontFamily: STEPPER_FONT,
 };
 
 function isKnownStage(value: unknown, stages: ReadonlyArray<string>): value is string {

@@ -21,7 +21,7 @@ interface BoardCardProps {
   onOpen?: (card: BoardCardDTO) => void;
 }
 
-const ATTENTION_GOLD = "rgb(234, 179, 8)";
+const ATTENTION_GOLD = "#d4a843";
 
 function hasAttention(card: BoardCardDTO): boolean {
   // A live SSE update is authoritative when present (true OR false).
