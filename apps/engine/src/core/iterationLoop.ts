@@ -14,14 +14,21 @@
  * generalise too deeply (every stage's "state" is different).
  */
 
+/** Why the loop terminated without a `done` outcome. */
+export type ExhaustionReason =
+  /** Loop ran the configured `maxCycles` without a terminal cycle. */
+  | { kind: "max-cycles-reached"; lastCycle: number }
+  /** A cycle reported `{ kind: "exhausted", reason }` and short-circuited. */
+  | { kind: "cycle-exhausted"; lastCycle: number; reason: string }
+
 /** What a single cycle reports back to the loop. */
 export type CycleOutcome<R> =
   /** Terminal: the loop should exit and return this result. */
   | { kind: "done"; result: R }
   /** Continue to the next cycle, optionally with feedback that seeds the next iteration. */
   | { kind: "continue"; nextFeedback?: string }
-  /** Cycle gave up without reaching a terminal state — fall through to `onAllCyclesExhausted`. */
-  | { kind: "exhausted" }
+  /** Cycle gave up without reaching a terminal state — short-circuit to `onAllCyclesExhausted`. */
+  | { kind: "exhausted"; reason: string }
 
 export type CycleConfig<R> = {
   /** Hard upper bound on cycles. */
@@ -41,10 +48,14 @@ export type CycleConfig<R> = {
   }) => Promise<CycleOutcome<R>>
   /**
    * Called when the loop runs out of cycles without a `done` outcome,
-   * or when a cycle reports `exhausted`. Must produce the loop's
-   * terminal result (typically a "blocked" record).
+   * or when a cycle reports `exhausted`. The {@link ExhaustionReason}
+   * argument lets the handler discriminate between "ran all cycles
+   * without success" and "a single cycle gave up early" so it can
+   * attribute the cause correctly (e.g. story_error vs review_limit
+   * in Ralph). Must produce the loop's terminal result (typically a
+   * "blocked" record).
    */
-  onAllCyclesExhausted: () => Promise<R>
+  onAllCyclesExhausted: (reason: ExhaustionReason) => Promise<R>
 }
 
 /**
@@ -53,20 +64,30 @@ export type CycleConfig<R> = {
  * Termination semantics:
  *   - `done`      → return result.
  *   - `continue`  → advance cycle, carry `nextFeedback` to next call.
- *   - `exhausted` → stop early; return `onAllCyclesExhausted()`.
- *   - cycles > maxCycles → return `onAllCyclesExhausted()`.
+ *   - `exhausted` → stop early; return `onAllCyclesExhausted({ kind:
+ *     "cycle-exhausted", lastCycle, reason })`.
+ *   - cycles > maxCycles → return `onAllCyclesExhausted({ kind:
+ *     "max-cycles-reached", lastCycle })`.
  */
 export async function runCycledLoop<R>(config: CycleConfig<R>): Promise<R> {
   let feedback: string | undefined = config.initialFeedback
+  let lastCycle = (config.startCycle ?? 0) - 1
   for (
     let cycle = config.startCycle ?? 0;
     cycle < config.maxCycles;
     cycle++
   ) {
+    lastCycle = cycle
     const outcome = await config.runCycle({ cycle, feedback })
     if (outcome.kind === "done") return outcome.result
-    if (outcome.kind === "exhausted") return config.onAllCyclesExhausted()
+    if (outcome.kind === "exhausted") {
+      return config.onAllCyclesExhausted({
+        kind: "cycle-exhausted",
+        lastCycle: cycle,
+        reason: outcome.reason,
+      })
+    }
     feedback = outcome.nextFeedback
   }
-  return config.onAllCyclesExhausted()
+  return config.onAllCyclesExhausted({ kind: "max-cycles-reached", lastCycle })
 }

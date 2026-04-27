@@ -29,12 +29,13 @@ import type {
   WaveSummary,
 } from "../../types.js"
 
-// Loop bounds resolved once at module load: env-overridable so test or
-// stress-run scenarios can dial the cadence without touching code. The
-// historical constants were 4 and 3 — those are the defaults inside
-// resolveRalphLoopConfig().
-const { maxIterationsPerCycle: MAX_ITERATIONS_PER_CYCLE, maxReviewCycles: MAX_REVIEW_CYCLES } =
-  resolveRalphLoopConfig()
+// Loop bounds are resolved once *per story* (inside newImplementation),
+// not at module load. This keeps env-var changes between runs effective
+// without restarting the engine, and lets tests set
+// BEERENGINEER_MAX_ITERATIONS_PER_CYCLE / BEERENGINEER_MAX_REVIEW_CYCLES
+// before invoking runRalphStory and have the override actually take
+// effect. The historical defaults (4 and 3) live in
+// RALPH_LOOP_DEFAULTS inside core/loopConfig.ts.
 
 export type StoryArtifacts = {
   implementation: StoryImplementationArtifact
@@ -542,8 +543,10 @@ function newImplementation(storyContext: StoryExecutionContext): StoryImplementa
     mode: "ralph-wiggum",
     status: "in_progress",
     implementationGoal: storyContext.testPlan.testPlan.summary,
-    maxIterations: MAX_ITERATIONS_PER_CYCLE,
-    maxReviewCycles: MAX_REVIEW_CYCLES,
+    ...(() => {
+      const cfg = resolveRalphLoopConfig()
+      return { maxIterations: cfg.maxIterationsPerCycle, maxReviewCycles: cfg.maxReviewCycles }
+    })(),
     currentReviewCycle: 0,
     iterations: [],
     coderSessionId: null,
@@ -897,16 +900,15 @@ export async function runRalphStory(
           feedback,
         })
         if (coderOutcome === "exhausted") {
-          // Persist the "story_error" terminal here so the outer loop's
-          // onAllCyclesExhausted handler doesn't double-blame the review limit.
-          const blocked = await blockStory(
-            loopCtx,
-            implementation,
-            storyReview,
-            "story_error",
-            `Blocked after ${maxIterationsPerCycle} implementation iterations in review cycle ${reviewCycle + 1} without reaching green.`,
-          )
-          return { kind: "done", result: blocked }
+          // Inner per-iteration loop ran out of budget without reaching
+          // green. Hand off to onAllCyclesExhausted with a "story_error"
+          // reason so the terminal block carries the right cause —
+          // distinct from running out of *review* cycles, which becomes
+          // a "review_limit" block.
+          return {
+            kind: "exhausted",
+            reason: `story_error:${maxIterationsPerCycle}-iterations:cycle-${reviewCycle + 1}`,
+          }
         }
       }
 
@@ -917,14 +919,27 @@ export async function runRalphStory(
       }
       return { kind: "continue", nextFeedback: cycleResult.nextFeedback }
     },
-    onAllCyclesExhausted: () =>
-      blockStory(
+    onAllCyclesExhausted: async exhaustion => {
+      if (exhaustion.kind === "cycle-exhausted") {
+        // Inner-loop exhaustion: per-cycle iteration budget was spent.
+        return blockStory(
+          loopCtx,
+          implementation,
+          storyReview,
+          "story_error",
+          `Blocked after ${maxIterationsPerCycle} implementation iterations in review cycle ${exhaustion.lastCycle + 1} without reaching green.`,
+        )
+      }
+      // Outer-loop exhaustion: review-cycle budget was spent without the
+      // review gate ever opening.
+      return blockStory(
         loopCtx,
         implementation,
         storyReview,
         "review_limit",
         `Blocked after ${maxReviewCycles} story review cycles because the CodeRabbit/SonarQube gate did not open.`,
-      ),
+      )
+    },
   })
 }
 

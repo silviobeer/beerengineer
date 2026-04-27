@@ -1,8 +1,10 @@
 import { describe, it, beforeEach, afterEach } from "node:test"
 import assert from "node:assert/strict"
 import {
+  RALPH_LOOP_CAPS,
   RALPH_LOOP_DEFAULTS,
   resolveRalphLoopConfig,
+  _resetLoopConfigWarnings,
 } from "../src/core/loopConfig.ts"
 
 describe("resolveRalphLoopConfig", () => {
@@ -52,5 +54,42 @@ describe("resolveRalphLoopConfig", () => {
     process.env.BEERENGINEER_MAX_ITERATIONS_PER_CYCLE = "abc"
     process.env.BEERENGINEER_MAX_REVIEW_CYCLES = "-3"
     assert.deepEqual(resolveRalphLoopConfig(), RALPH_LOOP_DEFAULTS)
+  })
+
+  it("clamps env values above the sanity caps to the cap (with stderr warning)", () => {
+    _resetLoopConfigWarnings()
+    process.env.BEERENGINEER_MAX_ITERATIONS_PER_CYCLE = "999999"
+    process.env.BEERENGINEER_MAX_REVIEW_CYCLES = String(RALPH_LOOP_CAPS.maxReviewCycles + 5)
+    const originalWrite = process.stderr.write.bind(process.stderr)
+    const warnings: string[] = []
+    process.stderr.write = ((chunk: unknown) => {
+      warnings.push(typeof chunk === "string" ? chunk : String(chunk))
+      return true
+    }) as typeof process.stderr.write
+    try {
+      const cfg = resolveRalphLoopConfig()
+      assert.equal(cfg.maxIterationsPerCycle, RALPH_LOOP_CAPS.maxIterationsPerCycle)
+      assert.equal(cfg.maxReviewCycles, RALPH_LOOP_CAPS.maxReviewCycles)
+    } finally {
+      process.stderr.write = originalWrite
+    }
+    assert.ok(
+      warnings.some(line => line.includes("BEERENGINEER_MAX_ITERATIONS_PER_CYCLE=999999")),
+      "expected a stderr warning naming the offending env var",
+    )
+  })
+
+  it("clamps explicit override values above the cap", () => {
+    _resetLoopConfigWarnings()
+    const originalWrite = process.stderr.write.bind(process.stderr)
+    process.stderr.write = (() => true) as typeof process.stderr.write
+    try {
+      const cfg = resolveRalphLoopConfig({
+        maxIterationsPerCycle: RALPH_LOOP_CAPS.maxIterationsPerCycle + 100,
+      })
+      assert.equal(cfg.maxIterationsPerCycle, RALPH_LOOP_CAPS.maxIterationsPerCycle)
+    } finally {
+      process.stderr.write = originalWrite
+    }
   })
 })
