@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { BoardCard } from "./BoardCard";
+import { BoardItemModal } from "./BoardItemModal";
 import { KanbanColumn } from "./KanbanColumn";
 import { BOARD_COLUMNS, type BoardCardDTO } from "../lib/types";
 import { useSSE } from "../app/lib/sse/SSEContext";
@@ -13,6 +14,7 @@ interface BoardProps {
 
 export function Board({ items, workspaceKey }: BoardProps) {
   const { itemState } = useSSE();
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const liveItems = useMemo<BoardCardDTO[]>(() => {
     return items.map((item) => {
@@ -28,6 +30,20 @@ export function Board({ items, workspaceKey }: BoardProps) {
       };
     });
   }, [items, itemState]);
+
+  const onOpen = useCallback((card: BoardCardDTO) => {
+    setSelectedId(card.id);
+  }, []);
+  const onClose = useCallback(() => {
+    setSelectedId(null);
+  }, []);
+
+  // Re-derive the selected card from the live items map so the modal stays
+  // in sync with SSE updates while it is open.
+  const selectedCard = useMemo<BoardCardDTO | null>(() => {
+    if (!selectedId) return null;
+    return liveItems.find((it) => it.id === selectedId) ?? null;
+  }, [liveItems, selectedId]);
 
   return (
     <div
@@ -50,12 +66,20 @@ export function Board({ items, workspaceKey }: BoardProps) {
                   key={item.id}
                   card={item}
                   workspaceKey={workspaceKey}
+                  onOpen={onOpen}
                 />
               ))}
             </KanbanColumn>
           );
         })}
       </div>
+      {selectedCard && workspaceKey ? (
+        <BoardItemModal
+          card={selectedCard}
+          workspaceKey={workspaceKey}
+          onClose={onClose}
+        />
+      ) : null}
     </div>
   );
 }

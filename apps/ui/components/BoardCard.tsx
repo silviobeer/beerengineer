@@ -1,4 +1,5 @@
-import Link from "next/link";
+"use client";
+
 import type { BoardCardDTO } from "../lib/types";
 import {
   DESIGN_PREP_STAGES,
@@ -12,6 +13,12 @@ import { BoardCardActions } from "./BoardCardActions";
 interface BoardCardProps {
   card: BoardCardDTO;
   workspaceKey?: string;
+  /**
+   * Click handler — when provided, the card body becomes a button that opens
+   * a modal in the board owner. Falls back to a deep-link anchor if absent
+   * (used in tests / standalone renders).
+   */
+  onOpen?: (card: BoardCardDTO) => void;
 }
 
 const ATTENTION_GOLD = "rgb(234, 179, 8)";
@@ -33,9 +40,20 @@ function buildHref(card: BoardCardDTO, workspaceKey?: string): string {
   return `/items/${encodeURIComponent(id)}`;
 }
 
-export function BoardCard({ card, workspaceKey }: BoardCardProps) {
+export function BoardCard({ card, workspaceKey, onOpen }: BoardCardProps) {
   const showAttention = hasAttention(card);
   const href = buildHref(card, workspaceKey);
+
+  // When the parent supplies onOpen we render the body as a button (modal
+  // trigger). Otherwise we render an anchor pointing at the deep-link page,
+  // so standalone tests / direct renders still navigate.
+  const Body: React.ElementType = onOpen ? "button" : "a";
+  const bodyProps = onOpen
+    ? {
+        type: "button" as const,
+        onClick: () => onOpen(card),
+      }
+    : { href };
 
   return (
     <article
@@ -61,10 +79,10 @@ export function BoardCard({ card, workspaceKey }: BoardCardProps) {
           }}
         />
       ) : null}
-      <Link
-        href={href}
+      <Body
+        {...bodyProps}
         data-testid="board-card-link"
-        className="block text-zinc-100 no-underline"
+        className="block w-full text-left text-zinc-100 no-underline bg-transparent border-0 p-0 cursor-pointer"
       >
         {card.itemCode ? (
           <div
@@ -130,7 +148,7 @@ export function BoardCard({ card, workspaceKey }: BoardCardProps) {
             />
           </div>
         ) : null}
-      </Link>
+      </Body>
       <BoardCardActions card={card} />
     </article>
   );
