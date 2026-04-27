@@ -1,12 +1,39 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { LogRail } from "./LogRail";
-import type { LogEntry } from "../lib/logs";
 
 interface ItemMessagesProps {
   itemId: string;
 }
+
+/**
+ * Engine messaging tiers (apps/engine/src/core/messagingLevel.ts).
+ *  L0 — full debug (tool_result, llm_thinking, llm_tokens)
+ *  L1 — milestones + operational detail (phase_started, prompt_answered,
+ *       agent_message, user_message, loop_iteration, tool_called,
+ *       item_column_changed, …)
+ *  L2 — milestones only (run_started/finished/failed/blocked,
+ *       prompt_requested, project_created, …)
+ *
+ * Engine filter semantics: `?level=N` returns events whose `level >= N`.
+ * Lower query level → more events.
+ */
+type MessagingLevel = 0 | 1 | 2;
+const LEVEL_LABELS: Record<MessagingLevel, string> = {
+  2: "L2 · milestones",
+  1: "L1 · operational",
+  0: "L0 · debug",
+};
+const LEVEL_BADGE: Record<MessagingLevel, string> = {
+  2: "L2",
+  1: "L1",
+  0: "L0",
+};
+const LEVEL_BADGE_CLASS: Record<MessagingLevel, string> = {
+  2: "border-emerald-700 bg-emerald-900/30 text-emerald-300",
+  1: "border-amber-700 bg-amber-900/20 text-amber-300",
+  0: "border-zinc-700 bg-zinc-900 text-zinc-400",
+};
 
 interface EngineRun {
   id: string;
@@ -56,17 +83,12 @@ function pickText(env: EngineMessageEntry): string {
   return env.type;
 }
 
-function toLogEntry(env: EngineMessageEntry): LogEntry {
-  return {
-    id: env.id,
-    // The engine emits level 0 (debug), 1 (operational), 2 (milestone).
-    // The outer logs filter treats level 0 as "wichtig"; that's not what we
-    // want — milestones (2) are the headline. Invert: 2 → 0, 1 → 1, else 2.
-    // Net effect: "wichtig" (level 0 in the filter) shows engine milestones.
-    level: env.level === 2 ? 0 : env.level === 1 ? 1 : 2,
-    message: pickText(env),
-    ts: env.ts,
-  };
+function formatTime(ts: string): string {
+  try {
+    return new Date(ts).toLocaleTimeString();
+  } catch {
+    return ts;
+  }
 }
 
 export function ItemMessages({ itemId }: ItemMessagesProps) {
@@ -74,9 +96,14 @@ export function ItemMessages({ itemId }: ItemMessagesProps) {
   const [entries, setEntries] = useState<EngineMessageEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  // Default to L1 — milestones + operational detail. Most useful tier for an
+  // operator skimming what's happening; matches `beerengineer runs tail`'s
+  // default of level 1.
+  const [level, setLevel] = useState<MessagingLevel>(1);
   const seenIdsRef = useRef<Set<string>>(new Set());
 
-  // Resolve the latest run + backfill messages.
+  // Resolve the latest run + backfill messages. Always backfills at L0 so the
+  // client can switch levels without re-fetching; we filter locally below.
   useEffect(() => {
     let cancelled = false;
     seenIdsRef.current = new Set();
@@ -167,7 +194,10 @@ export function ItemMessages({ itemId }: ItemMessagesProps) {
     };
   }, [runId]);
 
-  const logs = useMemo<LogEntry[]>(() => entries.map(toLogEntry), [entries]);
+  const visible = useMemo<EngineMessageEntry[]>(
+    () => entries.filter((e) => e.level >= level),
+    [entries, level]
+  );
 
   if (!loaded) {
     return (
@@ -191,9 +221,71 @@ export function ItemMessages({ itemId }: ItemMessagesProps) {
     );
   }
   return (
-    <div data-testid="item-messages" className="h-72 max-h-72">
-      <LogRail logs={logs} />
-    </div>
+    <section data-testid="item-messages" aria-label="Run message stream" className="border border-zinc-800 bg-zinc-950">
+      <header
+        data-testid="item-messages-toolbar"
+        role="toolbar"
+        aria-label="Messaging level filter"
+        className="flex items-center gap-1 border-b border-zinc-800 bg-zinc-900 px-2 py-1"
+      >
+        {([2, 1, 0] as const).map((value) => {
+          const active = value === level;
+          return (
+            <button
+              key={value}
+              type="button"
+              data-testid={`item-messages-level-${value}`}
+              data-active={active ? "true" : "false"}
+              aria-pressed={active}
+              onClick={() => setLevel(value)}
+              className={
+                active
+                  ? "px-2 py-0.5 text-[11px] uppercase tracking-wider border border-emerald-400 bg-emerald-500/15 text-emerald-300 font-mono cursor-pointer"
+                  : "px-2 py-0.5 text-[11px] uppercase tracking-wider border border-zinc-800 bg-zinc-900 text-zinc-400 font-mono cursor-pointer hover:text-zinc-200"
+              }
+            >
+              {LEVEL_LABELS[value]}
+            </button>
+          );
+        })}
+        <span className="ml-auto text-[10px] text-zinc-500 font-mono">
+          {visible.length} / {entries.length}
+        </span>
+      </header>
+      <div data-testid="item-messages-scroll" className="h-64 max-h-64 overflow-y-auto">
+        {visible.length === 0 ? (
+          <p data-testid="item-messages-empty" className="px-3 py-2 text-xs text-zinc-500">
+            No messages at this level.
+          </p>
+        ) : (
+          <ul className="divide-y divide-zinc-900">
+            {visible.map((entry) => {
+              const lvl = (entry.level === 0 || entry.level === 1 || entry.level === 2
+                ? entry.level
+                : 0) as MessagingLevel;
+              return (
+                <li
+                  key={entry.id}
+                  data-testid="item-messages-entry"
+                  data-level={entry.level}
+                  data-type={entry.type}
+                  className="flex gap-2 px-3 py-1 font-mono text-xs text-zinc-200"
+                >
+                  <span
+                    className={`inline-flex shrink-0 items-center px-1.5 text-[10px] uppercase tracking-wider border ${LEVEL_BADGE_CLASS[lvl]}`}
+                  >
+                    {LEVEL_BADGE[lvl]}
+                  </span>
+                  <span className="shrink-0 text-zinc-500">{formatTime(entry.ts)}</span>
+                  <span className="shrink-0 text-zinc-400">{entry.type}</span>
+                  <span className="break-words text-zinc-200">{pickText(entry)}</span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    </section>
   );
 }
 
