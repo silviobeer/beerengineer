@@ -376,7 +376,12 @@ The tradeoff:
 | Runtime | Auth source                                            | Billing                                  |
 | ------- | ------------------------------------------------------ | ---------------------------------------- |
 | `cli`   | Local CLI session (`claude login`, `codex login`)      | Subscription bundled with the CLI        |
-| `sdk`   | API key in the env: `ANTHROPIC_API_KEY` for `claude:sdk` | Per-token, billed against your API key |
+| `sdk`   | API key in the **process env**: `ANTHROPIC_API_KEY` for `claude:sdk`, `OPENAI_API_KEY` for `codex:sdk` | Per-token, billed against your API key |
+
+> The engine reads SDK keys from `process.env` only. Workspace
+> `.env.local` discovery is **not yet implemented** for LLM API keys
+> (it does work for `SONAR_TOKEN`). Export the key before invoking the
+> engine, or wait for the loader to land.
 
 `resolveHarness` does **not** silently fall back to CLI when an SDK
 profile is selected without the right key — it throws with

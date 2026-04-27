@@ -150,12 +150,12 @@ async function executeWave(
   git.ensureWaveBranch(ctx.project.id, wave.number)
 
   const mergeResolverHarness:
-    | { harness: "claude" | "codex" | "opencode" | "fake"; model?: string }
+    | { harness: "claude" | "codex" | "opencode" | "fake"; runtime?: "cli" | "sdk"; model?: string }
     | undefined = llm?.executionCoder
     ? (() => {
         const resolved = resolveMergeResolverHarness(llm.executionCoder!)
         if (resolved.kind === "fake") return { harness: "fake" as const }
-        return { harness: resolved.harness, model: resolved.model }
+        return { harness: resolved.harness, runtime: resolved.runtime, model: resolved.model }
       })()
     : undefined
   const expectedSharedFiles = expectedSharedFilesForWave(wave)

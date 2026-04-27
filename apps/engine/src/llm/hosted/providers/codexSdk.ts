@@ -104,7 +104,8 @@ const SDK_MISSING_MESSAGE =
 function ensureApiKey(): void {
   if (!process.env.OPENAI_API_KEY) {
     throw new Error(
-      "codex:sdk requires OPENAI_API_KEY in the environment (process env or workspace .env.local).",
+      "codex:sdk requires OPENAI_API_KEY in the process environment. " +
+        "Workspace .env.local discovery is not yet implemented — export the variable before invoking the engine.",
     )
   }
 }

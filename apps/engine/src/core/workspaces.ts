@@ -7,6 +7,24 @@ import { createInterface } from "node:readline/promises"
 import { stdin as input, stdout as output } from "node:process"
 import type { Repos, WorkspaceRow as DbWorkspaceRow } from "../db/repositories.js"
 import { isKnownModel } from "./harness/models.js"
+import presetsJson from "./harness/presets.json" with { type: "json" }
+
+type PresetRoleEntry = { harness: KnownHarness; runtime?: "cli" | "sdk" }
+type PresetEntry = {
+  coder: PresetRoleEntry
+  reviewer: PresetRoleEntry
+  "merge-resolver"?: PresetRoleEntry
+}
+const PRESETS = (presetsJson as { presets: Record<string, PresetEntry> }).presets
+
+function pairsFromPreset(presetKey: string): Array<{ harness: KnownHarness; runtime: "cli" | "sdk" }> {
+  const preset = PRESETS[presetKey]
+  if (!preset) return []
+  const roles: Array<PresetRoleEntry | undefined> = [preset.coder, preset.reviewer, preset["merge-resolver"]]
+  return roles
+    .filter((r): r is PresetRoleEntry => Boolean(r))
+    .map(r => ({ harness: r.harness, runtime: r.runtime ?? "cli" }))
+}
 import type { AppConfig, SetupReport } from "../setup/types.js"
 import {
   DEFAULT_WORKSPACE_RUNTIME_POLICY,
@@ -744,6 +762,8 @@ function isValidHarnessProfile(raw: unknown): raw is HarnessProfile {
     case "codex-only":
     case "claude-only":
     case "fast":
+    case "claude-sdk-first":
+    case "codex-sdk-first":
     case "opencode-china":
     case "opencode-euro":
       return true
@@ -884,34 +904,21 @@ function rolePairsForProfile(
   profile: HarnessProfile,
 ): Array<{ harness: KnownHarness; runtime: "cli" | "sdk" }> {
   switch (profile.mode) {
+    // Read all preset-backed modes directly from presets.json so the
+    // validator can never drift from the actual preset content (this used
+    // to bite us — `claude-sdk-first` had a merge-resolver SDK entry that
+    // validation skipped because it only listed coder + reviewer).
     case "codex-first":
     case "fast":
-      return [
-        { harness: "codex", runtime: "cli" },
-        { harness: "claude", runtime: "cli" },
-      ]
     case "claude-first":
-      return [
-        { harness: "claude", runtime: "cli" },
-        { harness: "codex", runtime: "cli" },
-      ]
     case "codex-only":
-      return [{ harness: "codex", runtime: "cli" }]
     case "claude-only":
-      return [{ harness: "claude", runtime: "cli" }]
     case "claude-sdk-first":
-      return [
-        { harness: "claude", runtime: "sdk" },
-        { harness: "codex", runtime: "cli" },
-      ]
     case "codex-sdk-first":
-      return [
-        { harness: "codex", runtime: "sdk" },
-        { harness: "claude", runtime: "cli" },
-      ]
-    case "opencode":
     case "opencode-china":
     case "opencode-euro":
+      return pairsFromPreset(profile.mode)
+    case "opencode":
       return [{ harness: "opencode", runtime: "cli" }]
     case "self": {
       const pairs: Array<{ harness: KnownHarness; runtime: "cli" | "sdk" }> = [
@@ -960,6 +967,22 @@ export function validateHarnessProfile(profile: HarnessProfile, appReport: Setup
       error: {
         code: "profile_references_unavailable_runtime",
         detail: `Harness profile requests runtime(s) that are not implemented: ${labels.join(", ")}.`,
+      },
+    }
+  }
+
+  // The merge-resolver runs synchronously inside the git adapter and only
+  // dispatches to CLI adapters today. Catch a `merge-resolver: sdk` choice
+  // here instead of at conflict-resolution time, which is far worse UX.
+  if (profile.mode === "self" && profile.roles["merge-resolver"]?.runtime === "sdk") {
+    return {
+      ok: false,
+      warnings,
+      error: {
+        code: "profile_references_unavailable_runtime",
+        detail:
+          "Harness profile sets merge-resolver runtime to sdk, which is not implemented (the resolver is sync; SDK adapters are async). " +
+          'Set merge-resolver to runtime: "cli" — coder/reviewer SDK runtimes are unaffected.',
       },
     }
   }

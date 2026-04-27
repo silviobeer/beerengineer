@@ -57,12 +57,12 @@
     "claude-sdk-first": {
       "coder": { "harness": "claude", "provider": "anthropic", "model": "claude-sonnet-4-6", "runtime": "sdk" },
       "reviewer": { "harness": "codex", "provider": "openai", "model": "gpt-5.4", "runtime": "cli" },
-      "merge-resolver": { "harness": "claude", "provider": "anthropic", "model": "claude-sonnet-4-6", "runtime": "sdk" }
+      "merge-resolver": { "harness": "claude", "provider": "anthropic", "model": "claude-sonnet-4-6", "runtime": "cli" }
     },
     "codex-sdk-first": {
       "coder": { "harness": "codex", "provider": "openai", "model": "gpt-5.4", "runtime": "sdk" },
       "reviewer": { "harness": "claude", "provider": "anthropic", "model": "claude-sonnet-4-6", "runtime": "cli" },
-      "merge-resolver": { "harness": "codex", "provider": "openai", "model": "gpt-5.4", "runtime": "sdk" }
+      "merge-resolver": { "harness": "codex", "provider": "openai", "model": "gpt-5.4", "runtime": "cli" }
     },
     "opencode-china": {
       "coder": { "harness": "opencode", "provider": "openrouter", "model": "qwen/qwen3.5-coder" },

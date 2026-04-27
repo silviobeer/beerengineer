@@ -11,6 +11,16 @@ export type MergeResolverHarness = {
    * can pass a no-op resolver through without ceremony.
    */
   harness: "claude" | "codex" | "opencode" | "fake"
+  /**
+   * Invocation runtime. The resolver is currently CLI-only because
+   * `resolveMergeConflictsViaLlm` runs synchronously inside the sync
+   * `GitAdapter.mergeStoryIntoWave` path. Profiles that select
+   * `runtime: "sdk"` for the merge-resolver role are rejected with a
+   * clear error rather than silently degrading to CLI — the operator
+   * either accepts CLI for merge-resolver or waits for the async
+   * conversion to land.
+   */
+  runtime?: "cli" | "sdk"
   model?: string
 }
 
@@ -151,6 +161,14 @@ export function resolveMergeConflictsViaLlm(input: {
   }
   if (!input.harness) {
     return { ok: false, reason: "merge-resolver: no harness configured" }
+  }
+  if (input.harness.runtime === "sdk") {
+    return {
+      ok: false,
+      reason:
+        `merge-resolver: ${input.harness.harness}:sdk is not implemented (the resolver runs synchronously inside the git adapter; SDK adapters are async). ` +
+        `Configure the merge-resolver role to runtime: "cli" — the SDK runtime for coder/reviewer is unaffected.`,
+    }
   }
 
   const conflicted = listConflictedFiles(input.workspaceRoot)

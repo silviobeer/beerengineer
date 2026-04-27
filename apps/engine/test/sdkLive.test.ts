@@ -101,7 +101,14 @@ test("claude:sdk fails fast with a clear error when ANTHROPIC_API_KEY is missing
         },
         session: null,
       }),
-      /ANTHROPIC_API_KEY/,
+      (err: Error) => {
+        assert.match(err.message, /ANTHROPIC_API_KEY/)
+        // Regression: the error used to claim `.env.local` was a supported
+        // discovery path. It isn't (the loader doesn't exist yet), so the
+        // message must not promise it.
+        assert.match(err.message, /not yet implemented/)
+        return true
+      },
     )
   } finally {
     if (previous !== undefined) process.env.ANTHROPIC_API_KEY = previous
@@ -124,7 +131,11 @@ test("codex:sdk fails fast with a clear error when OPENAI_API_KEY is missing", {
         },
         session: null,
       }),
-      /OPENAI_API_KEY/,
+      (err: Error) => {
+        assert.match(err.message, /OPENAI_API_KEY/)
+        assert.match(err.message, /not yet implemented/)
+        return true
+      },
     )
   } finally {
     if (previous !== undefined) process.env.OPENAI_API_KEY = previous
