@@ -144,6 +144,59 @@ view of the existing codebase; they treat documented claims as
 hypotheses to reconcile against the artifact they're producing, not as
 ground truth.
 
+### Frontend fingerprint — `core/frontendSnapshot.ts`
+
+A **lazily-loaded sub-snapshot** that fills the gap between "package.json
+says it's React" and "what does the existing UI actually look like?".
+Attached to `CodebaseSnapshot.frontend` only when **`itemHasUi === true`**
+(determined post-brainstorm from the `hasUi` flag on the project split).
+Items that produce no UI never pay for it.
+
+The fingerprint carries four things:
+
+- **`detectedRoots`** — workspace-relative paths whose `package.json`
+  declares a known frontend framework dep. The workspace root counts if
+  it has the deps directly; we also probe direct subdirs of `apps/` and
+  `packages/` (covers monorepo layouts like `apps/ui/`), and the
+  conventional non-monorepo `frontend/` and `web/` paths.
+- **`framework`** — best-effort detection from deps:
+  `next` (preferred over `react`), `angular`, `vue`, `svelte`,
+  or plain `react`. `undefined` if none match.
+- **`stylingSystem`** — best-effort detection: `tailwind` (`tailwindcss`
+  dep), `styled-components`, `emotion`, or a structural fallback to
+  `css-modules` if any `*.module.css` is found in the first detected
+  root.
+- **`configFiles`** — content of probed FE config / theme / layout
+  files when present, each capped at 32 KB. Probe list (per detected
+  root): `tailwind.config.{ts,js,mjs,cjs}`, `postcss.config.*`,
+  `next.config.*`, `vite.config.*`, `app/globals.css`,
+  `src/app/globals.css`, `styles/globals.css`,
+  `app/layout.{tsx,jsx}`, `src/app/layout.{tsx,jsx}`, `theme.{ts,js}`,
+  `tokens.{ts,js}`, `design-tokens.css`. Missing files are silently
+  skipped.
+- **`componentTree`** — workspace-relative shallow listing (depth 3,
+  capped at ~200 entries total) under `components/`, `src/components/`,
+  `app/`, `src/app/`, `pages/`, `src/pages/` for each detected root.
+  Names only, no content. Lets a designer see "there's a
+  `apps/ui/components/Button.tsx` and `apps/ui/app/page.tsx`" without
+  paying for content.
+
+**Curation principle.** Same as the main snapshot: probe a fixed list of
+known paths, skip silently when absent, never walk arbitrary trees.
+Adding a new file to the probe list is a one-line edit; nothing parses
+ASTs or interprets the code semantically. If a project uses an
+unconventional layout (e.g. `unocss` instead of Tailwind, or a custom
+build system), the probes miss; the agent then falls back to the
+deps-derived `framework` field and the regular `treeSummary`.
+
+**What it deliberately does not do:**
+
+- Walk arbitrary frontend trees (would explode on large repos).
+- Parse component ASTs or extract prop types (fragile, expensive).
+- Render screenshots (out of scope; happens in mockup-rendering).
+- Resolve nested `AGENTS.md` files (handled by the live filesystem when
+  agents have tool access).
+
 ### References store — `core/referencesStore.ts`
 
 Resolves design-prep input references (wireframes, figma links, local
@@ -415,8 +468,8 @@ and the markdown files in `apps/engine/prompts/{system,reviewers,workers}/`.
 | Stage | Inputs (beyond the global context) | Output artifact | Stage prompt | Reviewer prompt | Notes |
 |---|---|---|---|---|---|
 | `brainstorm` | item title + description + codebase snapshot | Concept (summary, problem, users, constraints) + `Project[]` split | `prompts/system/brainstorm.md` — Senior Product Strategist scoping the item | `prompts/reviewers/brainstorm.md` — checks concept clarity, success criteria, `hasUi` flag | Item-level; produces the per-project split. Snapshot is the only code-awareness on `no-tools`. |
-| `visual-companion` | concept + projects + design references + codebase snapshot | `WireframeArtifact` (screens, navigation, `wireframeHtmlPerScreen`) | `prompts/system/visual-companion.md` — Senior UX Designer producing low-fi wireframes | `prompts/reviewers/visual-companion.md` — coverage, region mapping, lo-fi compliance | Design-prep, `no-tools`; only runs when projects have UI |
-| `frontend-design` | wireframes + design references + codebase snapshot | `DesignArtifact` (tokens, typography, spacing, mockups, anti-patterns) | `prompts/system/frontend-design.md` — Senior Visual Designer building the item-wide language | `prompts/reviewers/frontend-design.md` — token completeness, contrast, CSS-var usage | Design-prep, `no-tools`; mockups required when wireframes exist |
+| `visual-companion` | concept + projects + design references + codebase snapshot **incl. frontend fingerprint** | `WireframeArtifact` (screens, navigation, `wireframeHtmlPerScreen`) | `prompts/system/visual-companion.md` — Senior UX Designer producing low-fi wireframes | `prompts/reviewers/visual-companion.md` — coverage, region mapping, lo-fi compliance | Design-prep, `no-tools`; only runs when projects have UI; sees `codebase.frontend` (detected framework, configs, component tree) |
+| `frontend-design` | wireframes + design references + codebase snapshot **incl. frontend fingerprint** | `DesignArtifact` (tokens, typography, spacing, mockups, anti-patterns) | `prompts/system/frontend-design.md` — Senior Visual Designer building the item-wide language | `prompts/reviewers/frontend-design.md` — token completeness, contrast, CSS-var usage | Design-prep, `no-tools`; sees existing tokens/globals.css/layouts via `codebase.frontend.configFiles` |
 | `requirements` | concept + (optional) wireframes/design + codebase snapshot | `RequirementsArtifact` (PRD with `UserStory[]` + ACs) | `prompts/system/requirements.md` — Senior PM eliciting testable PRD | `prompts/reviewers/requirements.md` — story independence, AC testability | Tool-using → `safe-readonly`; carries snapshot |
 | `architecture` | PRD + (optional) wireframes/design + codebase snapshot | `ArchitectureArtifact` (components, decisions, risks, AC→component map) | `prompts/system/architecture.md` — Staff Solution Architect grounded in repo | `prompts/reviewers/architecture.md` — boundary clarity, decision consistency | Tool-using → `safe-readonly`; emits decision binding |
 | `planning` | PRD + architecture + codebase snapshot | `ImplementationPlanArtifact` (waves, story groups, dependencies, exit criteria) | `prompts/system/planning.md` — TPM sequencing waves with explicit deps | `prompts/reviewers/planning.md` — forward-flow deps, parallel safety, story coverage | Tool-using → `safe-readonly` |
@@ -430,6 +483,7 @@ and the markdown files in `apps/engine/prompts/{system,reviewers,workers}/`.
 
 - Every call also receives the matching `*Context` envelope from § *Payload context fields*: stage calls get `stageContext`, review calls get `reviewContext`, execution calls get `iterationContext`. The agent must trust these over its own session memory.
 - Every LLM-using stage receives the **codebase snapshot** assembled by `core/codebaseSnapshot.ts` so brownfield context is visible from turn 1. Engineering stages use it as a *warm-up* (they still hold tools); design-prep stages (`brainstorm`, `visual-companion`, `frontend-design`) use it as their *only* view of the existing code, since they run on `no-tools`.
+- For UI items, the snapshot additionally carries a **frontend fingerprint** (`codebase.frontend`) — detected framework, styling system, FE config files, and a shallow component tree. Loaded lazily after brainstorm produces the `hasUi` flag; non-UI items never pay for it. See § *Frontend fingerprint* above.
 - The **prompt envelope** wrapping every call (prompt file + canonical instructions + payload JSON) is built by `buildHostedPrompt(...)` in `llm/hosted/promptEnvelope.ts`. Stage rows above describe the *body*; the envelope shape is identical across stages and documented in § *Mental model*.
 - `execution` is the only stage that owns its own runtime (Ralph). The "stage prompt" for `execution` is the worker prompt (`prompts/workers/execution.md`); the per-story `test-writer` provides the test plan and feedback for the inner review cycle.
 

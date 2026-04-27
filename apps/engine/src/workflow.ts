@@ -19,6 +19,7 @@ import type {
 } from "./types.js"
 import { mergeAmendments, projectDesign, projectWireframes } from "./core/designPrep.js"
 import { loadCodebaseSnapshot } from "./core/codebaseSnapshot.js"
+import { loadFrontendSnapshot } from "./core/frontendSnapshot.js"
 import { loadItemDecisions } from "./core/itemDecisions.js"
 import { stagePresent } from "./core/stagePresentation.js"
 import { emitEvent, getActiveRun, withStageLifecycle } from "./core/runContext.js"
@@ -312,6 +313,14 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
     }
     const itemConcept = await loadConcept(context)
     const itemHasUi = projects.some(project => project.hasUi === true)
+    // Frontend fingerprint is only useful for UI items, and it's only known
+    // to be needed *after* brainstorm produced the project split with their
+    // hasUi flags. Load lazily here, then enrich the codebase snapshot so
+    // every downstream stage (visual-companion, frontend-design, the
+    // per-project pipeline) sees it through the same `ctx.codebase` channel.
+    const itemSnapshot = itemHasUi && codebaseSnapshot
+      ? { ...codebaseSnapshot, frontend: loadFrontendSnapshot(options?.workspaceRoot) }
+      : codebaseSnapshot
     // If we were asked to skip directly to projects but the seeded artifacts
     // aren't actually present (legacy run, partial seed), fall back to running
     // the corresponding design-prep stage instead of crashing on ENOENT.
@@ -333,7 +342,7 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
         ? undefined
         : shouldRunVisualCompanion
         ? await withStageLifecycle("visual-companion", {}, () =>
-            visualCompanion(context, { itemConcept, projects, references: designPrepReferences }, options?.llm?.stage, codebaseSnapshot),
+            visualCompanion(context, { itemConcept, projects, references: designPrepReferences }, options?.llm?.stage, itemSnapshot),
           )
         : await loadWireframes(context)
     const design =
@@ -341,7 +350,7 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
         ? undefined
         : shouldRunFrontendDesign
         ? await withStageLifecycle("frontend-design", {}, () =>
-            frontendDesign(context, { itemConcept, projects, wireframes, references: designPrepReferences }, options?.llm?.stage, codebaseSnapshot),
+            frontendDesign(context, { itemConcept, projects, wireframes, references: designPrepReferences }, options?.llm?.stage, itemSnapshot),
           )
         : await loadDesign(context)
     if (activeRun) {
@@ -371,7 +380,7 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
           project: { ...project, concept: mergeAmendments(project.concept, conceptAmendments, project.id) },
           wireframes: wireframes ? projectWireframes(wireframes, project.id) : undefined,
           design: design ? projectDesign(design) : undefined,
-          codebase: codebaseSnapshot,
+          codebase: itemSnapshot,
           decisions: loadItemDecisions(context.workspaceId),
         },
         git,
