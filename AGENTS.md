@@ -6,11 +6,17 @@
 >
 > **Nested AGENTS.md files are supported by the convention** — the
 > nearest one wins. This file is the repo-wide baseline. The closer
-> the file, the more specific the guidance. Today there is also
-> [`docs/AGENTS.md`](./docs/AGENTS.md) (docs-folder navigation). If
-> `apps/engine/` or `apps/ui/` ever grow distinct conventions, drop
-> a dedicated `AGENTS.md` into that subtree and it will override this
-> file for everything underneath.
+> the file, the more specific the guidance. Today there are four:
+> repo-root (this file), [`docs/AGENTS.md`](./docs/AGENTS.md) for the
+> cross-cutting docs folder,
+> [`apps/engine/docs/AGENTS.md`](./apps/engine/docs/AGENTS.md) for the
+> engine subtree, and
+> [`apps/ui/docs/AGENTS.md`](./apps/ui/docs/AGENTS.md) for the UI
+> subtree. Each app also has its own `CLAUDE.md`
+> ([engine](./apps/engine/CLAUDE.md), [ui](./apps/ui/CLAUDE.md)) for
+> durable rules. Drop a new `AGENTS.md` into any subtree that grows
+> distinct conventions and it will override this file for everything
+> underneath.
 
 ---
 
@@ -30,8 +36,9 @@ local Next.js UI, a SQLite database. No cloud login.
 ```
 apps/engine/        Long-running TypeScript engine (CLI + HTTP API).
                     Owns the pipeline, stages, LLM dispatch, git, DB.
-apps/ui/            Next.js UI (rebuild in progress; see ui-design-notes.md).
-docs/               Project docs. Start at docs/AGENTS.md for navigation.
+apps/ui/            Next.js operator console. Has its own docs/ subtree —
+                    start at apps/ui/docs/AGENTS.md when working there.
+docs/               Engine + cross-cutting docs. Start at docs/AGENTS.md.
 specs/              Implementation plans, refactor plans, and feature specs.
 skills/             Skill bundles (cli-operator-harness, …).
 README.md           Project entry point for humans.
@@ -44,12 +51,17 @@ package.json        npm workspaces; engine + ui live under apps/.
 
 | Task | Start at |
 |---|---|
-| Engine internals (stages, git, LLM, runtime) | `apps/engine/src/` + [`docs/engine-architecture.md`](./docs/engine-architecture.md) |
-| LLM call shape, prompt envelope, harness/runtime config | [`docs/context-and-llm-config.md`](./docs/context-and-llm-config.md) |
-| HTTP API contract | [`docs/api-contract.md`](./docs/api-contract.md) (prose) + `apps/engine/src/api/openapi.json` (machine) |
-| Setup / harness JSON protocol / test pyramid | [`docs/app-setup.md`](./docs/app-setup.md) |
-| User-facing setup walkthrough | [`docs/setup-for-dummies.md`](./docs/setup-for-dummies.md) |
-| Doc folder conventions / which doc owns what | [`docs/AGENTS.md`](./docs/AGENTS.md) |
+| Engine features + architecture | [`apps/engine/docs/`](./apps/engine/docs/) (start at [`AGENTS.md`](./apps/engine/docs/AGENTS.md)) |
+| Engine internals (stages, git, LLM, runtime) | `apps/engine/src/` + [`apps/engine/docs/engine-architecture.md`](./apps/engine/docs/engine-architecture.md) |
+| LLM call shape, prompt envelope, harness/runtime config | [`apps/engine/docs/context-and-llm-config.md`](./apps/engine/docs/context-and-llm-config.md) |
+| Setup / harness JSON protocol / test pyramid | [`apps/engine/docs/app-setup.md`](./apps/engine/docs/app-setup.md) |
+| User-facing setup walkthrough | [`apps/engine/docs/setup-for-dummies.md`](./apps/engine/docs/setup-for-dummies.md) |
+| Durable rules for engine work | [`apps/engine/CLAUDE.md`](./apps/engine/CLAUDE.md) |
+| HTTP API contract (cross-cutting) | [`docs/api-contract.md`](./docs/api-contract.md) (prose) + `apps/engine/src/api/openapi.json` (machine) |
+| Messaging-level taxonomy (cross-cutting) | [`docs/messaging-levels.md`](./docs/messaging-levels.md) |
+| Cross-cutting doc-folder conventions | [`docs/AGENTS.md`](./docs/AGENTS.md) |
+| UI features, architecture, design tokens | [`apps/ui/docs/`](./apps/ui/docs/) (start at [`AGENTS.md`](./apps/ui/docs/AGENTS.md)) |
+| Durable rules for UI work | [`apps/ui/CLAUDE.md`](./apps/ui/CLAUDE.md) |
 | Implementation / refactor plans | `specs/` |
 | Prompt files (one per stage) | `apps/engine/prompts/{system,reviewers,workers}/` |
 
@@ -78,7 +90,7 @@ npm run dev:ui                                    # Next.js on :3000
   (`reset --hard`, force-push, branch deletion, `--no-verify`, …). The
   default branch is `master`.
 - **Real git is mandatory in the engine.** There is no simulated mode;
-  preconditions throw. See [`engine-architecture.md`](./docs/engine-architecture.md) §
+  preconditions throw. See [`engine-architecture.md`](./apps/engine/docs/engine-architecture.md) §
   *Why real-git is mandatory*.
 - **Prompts are markdown files**, not inline strings. Edit
   `apps/engine/prompts/<kind>/<id>.md`; the loader caches in-process so

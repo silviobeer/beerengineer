@@ -1,1 +1,107 @@
 @import "tailwindcss";
+
+/* ─────────────────────────────────────────────────────────────────────
+   BeerEngineer — Design Tokens
+   See specs/4_design/design-language.md for the rationale.
+   Inspired by beerventures (Petrol / Gold / Lime / warm cream),
+   inverted into a dark operator console.
+   ───────────────────────────────────────────────────────────────────── */
+
+@theme {
+  /* Fonts — variables come from next/font in apps/ui/lib/fonts.ts */
+  --font-sans: var(--font-sans), "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-display), "Space Grotesk", ui-sans-serif, sans-serif;
+  --font-mono: var(--font-mono), "JetBrains Mono", ui-monospace, SFMono-Regular,
+    Menlo, Monaco, Consolas, monospace;
+
+  /* Neutrals — overrides Tailwind's default zinc palette so existing
+     bg-zinc-950 / border-zinc-800 / text-zinc-400 etc. utilities use
+     our warm petrol-tinted dark scale automatically. */
+  --color-zinc-50: #faf8f3;
+  --color-zinc-100: #f0ebe0;
+  --color-zinc-200: #d5dbdc;
+  --color-zinc-300: #b5c0c2;
+  --color-zinc-400: #8fa0a4;
+  --color-zinc-500: #6b8084;
+  --color-zinc-600: #3f5a60;
+  --color-zinc-700: #2a4348;
+  --color-zinc-800: #1a2f33;
+  --color-zinc-900: #122024;
+  --color-zinc-950: #0b1517;
+
+  /* Active / OK — overrides emerald scale. Emerald becomes brand petrol. */
+  --color-emerald-300: #9fd8e0;
+  --color-emerald-400: #5fb6c2;
+  --color-emerald-500: #2c95a4;
+  --color-emerald-600: #1d7a87;
+  --color-emerald-700: #0e5a65;
+  --color-emerald-800: #08454e;
+  --color-emerald-900: #062c32;
+
+  /* Attention / Warning — overrides amber scale. Amber becomes brand gold. */
+  --color-amber-300: #e8c168;
+  --color-amber-400: #d4a843;
+  --color-amber-500: #b8913a;
+  --color-amber-600: #997830;
+  --color-amber-700: #7a5e20;
+  --color-amber-800: #574115;
+  --color-amber-900: #3a2c0e;
+
+  /* Brand semantic tokens — for new components. */
+  --color-petrol: #005a65;
+  --color-petrol-bright: #2c95a4;
+  --color-gold: #d4a843;
+  --color-gold-hover: #b8913a;
+  --color-lime: #e0ee6e;
+  --color-coral: #c4603d;
+}
+
+/* ─── Legacy CSS variables (kept for any inline-styled consumers) ─── */
+:root,
+html.dark,
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg-base: #0b1517;
+  --bg-panel: #122024;
+  --border-subtle: #1a2f33;
+  --text-primary: #f0ebe0;
+  --text-muted: #8fa0a4;
+  --accent-attention: #d4a843;
+  --accent-live: #e0ee6e;
+}
+
+/* ─── Base ─── */
+html,
+body {
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+}
+
+body {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Reading-friendly mono — used wherever font-mono utility is applied */
+.font-mono,
+[class*="font-mono"] {
+  font-feature-settings: "ss01", "cv01";
+}
+
+/* ─── Accessibility ─── */
+:focus-visible {
+  outline: 2px solid var(--color-gold);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

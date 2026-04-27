@@ -191,7 +191,7 @@ Common env vars:
 
 For the full picture of harness profiles, runtime policies, prompt
 contracts, and how context flows into every LLM call, see
-[`docs/context-and-llm-config.md`](docs/context-and-llm-config.md).
+[`apps/engine/docs/context-and-llm-config.md`](apps/engine/docs/context-and-llm-config.md).
 
 ## Development
 
@@ -220,18 +220,40 @@ configuration.
 
 ## Deeper reading
 
-- [`docs/engine-architecture.md`](docs/engine-architecture.md) —
+**Engine:**
+
+- [`apps/engine/docs/PROJECT.md`](apps/engine/docs/PROJECT.md) — feature
+  catalog (stages, runtimes, integrations, persistence).
+- [`apps/engine/docs/TECHNICAL.md`](apps/engine/docs/TECHNICAL.md) —
+  architecture map, source layout, cross-cutting decisions, gotchas.
+- [`apps/engine/docs/engine-architecture.md`](apps/engine/docs/engine-architecture.md) —
   registry-driven pipeline, `GitAdapter`, iteration loop, file map,
   how to add a stage.
-- [`docs/context-and-llm-config.md`](docs/context-and-llm-config.md) —
+- [`apps/engine/docs/context-and-llm-config.md`](apps/engine/docs/context-and-llm-config.md) —
   context assembly (prompt envelope, codebase snapshot, conversation
   log) and LLM configuration (harness profile, runtime policy,
   presets, env vars).
-- [`docs/setup-for-dummies.md`](docs/setup-for-dummies.md) —
+- [`apps/engine/docs/setup-for-dummies.md`](apps/engine/docs/setup-for-dummies.md) —
   user-facing setup walkthrough.
-- [`docs/architecture-plan.md`](docs/architecture-plan.md) — historical
-  refactor plan (shipped) explaining how the current single-source-of-
-  truth API architecture came to be.
+- [`apps/engine/docs/architecture-plan.md`](apps/engine/docs/architecture-plan.md) —
+  historical refactor plan (shipped) explaining how the current
+  single-source-of-truth API architecture came to be.
+
+**UI:**
+
+- [`apps/ui/README.md`](apps/ui/README.md) — quick start, tech stack.
+- [`apps/ui/docs/PROJECT.md`](apps/ui/docs/PROJECT.md) — feature catalog.
+- [`apps/ui/docs/TECHNICAL.md`](apps/ui/docs/TECHNICAL.md) — architecture,
+  SSE wiring, theming, gotchas.
+- [`apps/ui/docs/api-for-designers.md`](apps/ui/docs/api-for-designers.md) —
+  designer-friendly view of the engine API.
+
+**Cross-cutting:**
+
+- [`docs/api-contract.md`](docs/api-contract.md) — HTTP API prose
+  contract (companion to `apps/engine/src/api/openapi.json`).
+- [`docs/messaging-levels.md`](docs/messaging-levels.md) — L0/L1/L2
+  taxonomy and event-to-level mapping.
 
 ## License
 
