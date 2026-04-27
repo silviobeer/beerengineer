@@ -85,6 +85,6 @@ export function mergeAmendments(
   return {
     ...concept,
     summary: mergeConceptText(concept.summary, relevant),
-    constraints: [...concept.constraints, ...relevant.map(amendment => amendment.description)],
+    constraints: [...(Array.isArray(concept.constraints) ? concept.constraints : []), ...relevant.map(amendment => amendment.description)],
   }
 }

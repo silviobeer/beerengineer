@@ -189,7 +189,8 @@ test("registerWorkspace persists preflight and writes quality config once GitHub
     assert.match(coderabbit, /profile: chill/)
     const gitignore = readFileSync(join(path, ".gitignore"), "utf8")
     assert.match(gitignore, /\.env\.local/)
-    assert.match(gitignore, /\.beerengineer\/runs\//)
+    assert.match(gitignore, /\.beerengineer\/workspaces\//)
+    assert.match(gitignore, /\.beerengineer\/worktrees\//)
 
     const dbWorkspace = repos.getWorkspaceByKey("demo")
     assert.equal(dbWorkspace?.sonar_enabled, 1)

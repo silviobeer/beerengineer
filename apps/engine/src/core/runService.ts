@@ -51,7 +51,8 @@ function buildApiIo(repos: Repos): WorkflowIO & { bus: EventBus } {
 function fireInBackground(io: WorkflowIO & { bus?: EventBus }, label: string, task: () => Promise<void>): void {
   task()
     .catch(err => {
-      process.stderr.write(`[runService:${label}] ${(err as Error).message}\n`)
+      const e = err as Error
+      process.stderr.write(`[runService:${label}] ${e.message}\n${e.stack ?? ""}\n`)
     })
     .finally(() => {
       io.close?.()

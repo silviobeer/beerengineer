@@ -70,7 +70,35 @@ function summarizeCodexEvent(event: CodexStreamEvent, state: CodexStreamState): 
   }
 }
 
-function buildCodexCommand(input: HostedProviderInvokeInput, state: CodexStreamState, tempDir: string): string[] {
+/**
+ * Operator opt-in: when set to a truthy value, codex's built-in OS sandbox is
+ * skipped for `safe-readonly` and `safe-workspace-write` policies. The CLI
+ * runs with `--full-auto --dangerously-bypass-approvals-and-sandbox` instead.
+ *
+ * Why this exists: codex's `--sandbox <mode>` relies on host primitives
+ * (Linux landlock + seccomp). On hosts where those primitives are missing or
+ * broken — e.g. unprivileged containers, certain distro/kernel combos, or
+ * hosts whose seccomp policy strips the syscalls codex needs — every shell
+ * call inside the sandbox is silently rejected. The model then reports
+ * "execution environment rejected every local command invocation" and
+ * cannot inspect the repo or run tests. Setting this env var trades the
+ * OS-level sandbox for trust in the host (BeerEngineer2 already runs codex
+ * in the registered worktree the operator owns). `no-tools` policy still
+ * pins to `read-only` since it never needs shell access at all.
+ *
+ * Truthy: `1`, `true`, `yes` (case-insensitive). Anything else is false.
+ */
+export function codexSandboxBypassEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env.BEERENGINEER_CODEX_SANDBOX_BYPASS?.trim().toLowerCase()
+  return raw === "1" || raw === "true" || raw === "yes"
+}
+
+export function buildCodexCommand(
+  input: HostedProviderInvokeInput,
+  state: CodexStreamState,
+  tempDir: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
   state.tempDir = tempDir
   state.responsePath = join(tempDir, "last-message.txt")
   const command = ["codex", "exec"]
@@ -81,20 +109,33 @@ function buildCodexCommand(input: HostedProviderInvokeInput, state: CodexStreamS
   // and `--dangerously-bypass-approvals-and-sandbox`. Route the safe-readonly /
   // safe-workspace-write modes through `-c sandbox_mode=<mode>` on resume, which
   // both subcommands accept.
+  const bypass = codexSandboxBypassEnabled(env)
   if (input.runtime.policy.mode === "no-tools") {
     // Stage agents + reviewers: emit JSON only, no shell. Pin the sandbox to
     // the strictest mode codex offers so a misbehaving model cannot touch the
-    // filesystem either way.
+    // filesystem either way. The bypass env var deliberately does not weaken
+    // this — no-tools never needs shell access.
     if (isResume) command.push("-c", 'sandbox_mode="read-only"')
     else command.push("--sandbox", "read-only")
   } else if (input.runtime.policy.mode === "safe-readonly") {
-    if (isResume) command.push("-c", 'sandbox_mode="read-only"')
+    if (bypass) // codex enforces mutual exclusion between --full-auto and
+// --dangerously-bypass-approvals-and-sandbox. The bypass flag alone
+// already implies --full-auto's behaviour (skip approvals, no sandbox).
+command.push("--dangerously-bypass-approvals-and-sandbox")
+    else if (isResume) command.push("-c", 'sandbox_mode="read-only"')
     else command.push("--sandbox", "read-only")
   } else if (input.runtime.policy.mode === "safe-workspace-write") {
-    if (isResume) command.push("-c", 'sandbox_mode="workspace-write"')
+    if (bypass) // codex enforces mutual exclusion between --full-auto and
+// --dangerously-bypass-approvals-and-sandbox. The bypass flag alone
+// already implies --full-auto's behaviour (skip approvals, no sandbox).
+command.push("--dangerously-bypass-approvals-and-sandbox")
+    else if (isResume) command.push("-c", 'sandbox_mode="workspace-write"')
     else command.push("--sandbox", "workspace-write")
   } else {
-    command.push("--full-auto", "--dangerously-bypass-approvals-and-sandbox")
+    // codex enforces mutual exclusion between --full-auto and
+// --dangerously-bypass-approvals-and-sandbox. The bypass flag alone
+// already implies --full-auto's behaviour (skip approvals, no sandbox).
+command.push("--dangerously-bypass-approvals-and-sandbox")
   }
   if (input.runtime.model) command.push("--model", input.runtime.model)
   // `codex exec resume` inherits cwd from the original session and rejects

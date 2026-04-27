@@ -617,6 +617,10 @@ function resolveGithubAuthToken(): string | null {
   if (explicit) return explicit
   const generic = process.env.GITHUB_TOKEN?.trim()
   if (generic) return generic
+  // Probe `gh --version` first so hosts without the CLI fail fast and
+  // silently — running `gh auth token` on a missing binary writes spurious
+  // ENOENT noise to stderr.
+  if (!commandSucceeds("gh", ["--version"])) return null
   const gh = spawnSync("gh", ["auth", "token"], { encoding: "utf8" })
   if (gh.status === 0 && gh.stdout.trim()) return gh.stdout.trim()
   return null

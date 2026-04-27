@@ -1,6 +1,12 @@
 import { dirname } from "node:path"
 import { mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs"
 
+export function decideTerminalUpdateStatus({ warningKeys, degraded }) {
+  if (Array.isArray(warningKeys) && warningKeys.length > 0) return "succeeded-with-warning"
+  if (degraded) return "succeeded-degraded"
+  return "succeeded"
+}
+
 export function readinessWarnings(status) {
   const readiness = status?.readiness
   if (!readiness || typeof readiness !== "object") return []

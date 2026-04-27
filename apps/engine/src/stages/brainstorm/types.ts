@@ -40,7 +40,19 @@ export function coerceToStringArray(value: unknown): string[] {
  * concept and every project concept.
  */
 export function normalizeBrainstormArtifact(raw: BrainstormArtifact): BrainstormArtifact {
-  function normalizeConcept<T extends { users: string[]; constraints: string[] }>(c: T): T {
+  function normalizeConcept<T extends { users: string[]; constraints: string[] }>(c: T | string | null | undefined): T {
+    // Real LLMs occasionally return the entire concept object as a single
+    // string. Spreading a string yields character-indexed keys (`{0:"A",
+    // 1:" ", …}`), which then poison every downstream consumer that expects
+    // a real Concept. Treat that as `summary` and synthesize the rest.
+    if (typeof c === "string" || c == null) {
+      return {
+        summary: typeof c === "string" ? c : "",
+        problem: "",
+        users: [],
+        constraints: [],
+      } as unknown as T
+    }
     return { ...c, users: coerceToStringArray(c.users), constraints: coerceToStringArray(c.constraints) }
   }
   return {

@@ -140,3 +140,29 @@ test("normalizeBrainstormArtifact: already-valid artifact passes through untouch
   assert.deepStrictEqual(normalized.concept.constraints, valid.concept.constraints)
   assert.deepStrictEqual(normalized.projects[0].concept.constraints, valid.projects[0].concept.constraints)
 })
+
+test("normalizeBrainstormArtifact: project concept returned as a bare string is reshaped, not character-spread", () => {
+  // Reproduces the codex-first run failure: project.concept came back as a
+  // single string. Spreading it via `{...c}` produced `{0:"A", 1:" ", ...,
+  // users:[], constraints:[]}`, which broke downstream consumers expecting
+  // a real Concept object.
+  const raw = {
+    concept: { summary: "x", problem: "p", users: [], constraints: [] },
+    projects: [
+      {
+        id: "P01",
+        name: "Demo",
+        description: "d",
+        hasUi: true,
+        concept: "A narrowly scoped internal demo." as unknown as BrainstormArtifact["projects"][number]["concept"],
+      },
+    ],
+  } as unknown as BrainstormArtifact
+  const normalized = normalizeBrainstormArtifact(raw)
+  assert.strictEqual(normalized.projects[0].concept.summary, "A narrowly scoped internal demo.")
+  assert.deepStrictEqual(normalized.projects[0].concept.users, [])
+  assert.deepStrictEqual(normalized.projects[0].concept.constraints, [])
+  for (const key of Object.keys(normalized.projects[0].concept)) {
+    assert.ok(Number.isNaN(Number(key)), `unexpected numeric key in concept: ${key}`)
+  }
+})

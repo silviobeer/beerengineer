@@ -53,9 +53,13 @@ const SONAR_PROPERTIES_FILE = "sonar-project.properties"
 const GITIGNORE_FILE = ".gitignore"
 const SONAR_WORKFLOW_FILE = ".github/workflows/sonar.yml"
 const CODERABBIT_CONFIG_FILE = ".coderabbit.yaml"
+// Post-rooting layout: persisted run state lives under
+// `.beerengineer/workspaces/<fsId>/...` and managed worktrees under
+// `.beerengineer/worktrees/<fsId>/...`. `workspace.json` stays tracked.
 const BEERENGINEER_GITIGNORE_ENTRIES = [
   ".env.local",
-  ".beerengineer/runs/",
+  ".beerengineer/workspaces/",
+  ".beerengineer/worktrees/",
   ".beerengineer/cache/",
 ]
 

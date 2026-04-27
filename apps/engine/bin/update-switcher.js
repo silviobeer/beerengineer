@@ -5,7 +5,16 @@ import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSyn
 import { request as httpRequest } from "node:http"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
-import { claimUpdateLock, pointManagedInstallPointer, swapManagedInstallPointers, validateRestartedUpdateStatus } from "./update-switcher-lib.js"
+import { claimUpdateLock, decideTerminalUpdateStatus, pointManagedInstallPointer, swapManagedInstallPointers, validateRestartedUpdateStatus } from "./update-switcher-lib.js"
+
+let cachedBetterSqlite3 = null
+
+async function loadBetterSqlite3(meta) {
+  if (cachedBetterSqlite3) return cachedBetterSqlite3
+  const mod = join(meta.stagedRoot, "node_modules", "better-sqlite3")
+  cachedBetterSqlite3 = (await import(`file://${mod}/lib/index.js`)).default
+  return cachedBetterSqlite3
+}
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, "utf8"))
@@ -139,8 +148,7 @@ function appendUpdateLog(meta, event, detail = {}) {
 }
 
 async function verifyDatabaseState(meta) {
-  const mod = join(meta.stagedRoot, "node_modules", "better-sqlite3")
-  const BetterSqlite3 = (await import(`file://${mod}/lib/index.js`)).default
+  const BetterSqlite3 = await loadBetterSqlite3(meta)
   const db = new BetterSqlite3(meta.dbPath, { readonly: true })
   try {
     db.prepare("SELECT 1").get()
@@ -202,8 +210,7 @@ function invokeBackupHelper(meta, metadataPath) {
 
 async function updateAttempt(meta, update) {
   try {
-    const mod = join(meta.stagedRoot, "node_modules", "better-sqlite3")
-    const BetterSqlite3 = (await import(`file://${mod}/lib/index.js`)).default
+    const BetterSqlite3 = await loadBetterSqlite3(meta)
     const db = new BetterSqlite3(meta.dbPath)
     const result = db.prepare(
       `UPDATE update_attempts
@@ -274,6 +281,13 @@ async function main() {
     degraded = await waitForShutdown(meta.api.pidFile, pid, 30_000)
     appendUpdateLog(meta, "engine_stopped", { pid, degraded })
   }
+
+  // Pre-load better-sqlite3 from the staged tree before any pointer swap so
+  // post-swap dynamic imports hit the ESM cache. On Windows the staged tree
+  // is renamed into install/current; the original file:// path no longer
+  // exists, but the in-memory module reference is reusable.
+  await loadBetterSqlite3(meta)
+  appendUpdateLog(meta, "better_sqlite3_preloaded")
 
   const backup = await invokeBackupHelper(meta, metadataPath)
   appendUpdateLog(meta, "backup_created", { backupDir: backup.backupDir })
@@ -416,11 +430,7 @@ async function main() {
     process.exit(1)
   }
   await updateAttempt(meta, {
-    status: warningKeys.length > 0
-      ? "succeeded-with-warning"
-      : degraded
-      ? "succeeded-degraded"
-      : "succeeded",
+    status: decideTerminalUpdateStatus({ warningKeys, degraded }),
     backupDir: backup.backupDir,
     metadata: {
       backup: backup.manifest,
@@ -432,11 +442,7 @@ async function main() {
     },
   })
   appendUpdateLog(meta, "switcher_completed", {
-    terminalStatus: warningKeys.length > 0
-      ? "succeeded-with-warning"
-      : degraded
-      ? "succeeded-degraded"
-      : "succeeded",
+    terminalStatus: decideTerminalUpdateStatus({ warningKeys, degraded }),
   })
   releaseLock(meta.updateLockPath, meta.operationId)
   } catch (err) {

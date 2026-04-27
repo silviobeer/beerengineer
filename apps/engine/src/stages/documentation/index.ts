@@ -12,11 +12,22 @@ import {
 import { buildDocFiles } from "../../render/documentation.js"
 import type { DocumentationArtifact, WithProjectReview } from "../../types.js"
 import type { DocumentationState } from "./types.js"
+import { layout, type WorkflowContext } from "../../core/workspaceLayout.js"
 
 type ExistingDocs = DocumentationState["existingDocs"]
 
-function projectDocsDir(workspaceRoot: string): string {
-  return join(workspaceRoot, "docs")
+/**
+ * The documentation stage writes operator-facing docs (`technical-doc.md`,
+ * `features-doc.md`, `README.compact.md`) into the **item worktree** so they
+ * land on the item branch as commits — not into the main repo's working
+ * tree. The handoff stage's merge of item → main is what brings the docs
+ * onto main; before that, the docs need to live on the item branch.
+ *
+ * Earlier this resolved to `<workspaceRoot>/docs/`, which left the files
+ * untracked in the operator's main checkout and never made it into git.
+ */
+function projectDocsDir(ctx: WorkflowContext): string {
+  return join(layout.itemWorktreeDir(ctx), "docs")
 }
 
 async function readOptional(path: string): Promise<string | undefined> {
@@ -27,8 +38,8 @@ async function readOptional(path: string): Promise<string | undefined> {
   }
 }
 
-async function loadExistingDocs(workspaceRoot: string): Promise<ExistingDocs> {
-  const dir = projectDocsDir(workspaceRoot)
+async function loadExistingDocs(ctx: WorkflowContext): Promise<ExistingDocs> {
+  const dir = projectDocsDir(ctx)
   return {
     technicalDoc: await readOptional(join(dir, "technical-doc.md")),
     featuresDoc: await readOptional(join(dir, "features-doc.md")),
@@ -36,8 +47,8 @@ async function loadExistingDocs(workspaceRoot: string): Promise<ExistingDocs> {
   }
 }
 
-async function writeProjectDocs(workspaceRoot: string, artifact: DocumentationArtifact): Promise<void> {
-  const dir = projectDocsDir(workspaceRoot)
+async function writeProjectDocs(ctx: WorkflowContext, artifact: DocumentationArtifact): Promise<void> {
+  const dir = projectDocsDir(ctx)
   await mkdir(dir, { recursive: true })
   for (const file of buildDocFiles(artifact)) {
     await writeFile(join(dir, file.fileName), file.content)
@@ -46,9 +57,8 @@ async function writeProjectDocs(workspaceRoot: string, artifact: DocumentationAr
 
 export async function documentation(ctx: WithProjectReview, llm?: RunLlmConfig): Promise<DocumentationArtifact> {
   stagePresent.header(`documentation — ${ctx.project.name}`)
-  const workspaceRoot = ctx.workspaceRoot!
 
-  const existingDocs = await loadExistingDocs(workspaceRoot)
+  const existingDocs = await loadExistingDocs(ctx)
 
   const { result } = await runStage({
     stageId: "documentation",
@@ -71,7 +81,7 @@ export async function documentation(ctx: WithProjectReview, llm?: RunLlmConfig):
     reviewer: createDocumentationReview(llm),
     askUser: async () => "",
     async persistArtifacts(run, artifact) {
-      await writeProjectDocs(workspaceRoot, artifact)
+      await writeProjectDocs(ctx, artifact)
       return [
         {
           kind: "json",

@@ -4,7 +4,22 @@ import { existsSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, readlinkSy
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { claimUpdateLock, pointManagedInstallPointer, swapManagedInstallPointers, validateRestartedUpdateStatus } from "../bin/update-switcher-lib.js"
+import { claimUpdateLock, decideTerminalUpdateStatus, pointManagedInstallPointer, swapManagedInstallPointers, validateRestartedUpdateStatus } from "../bin/update-switcher-lib.js"
+
+test("decideTerminalUpdateStatus marks degraded when hard-kill was needed and no warnings", () => {
+  assert.equal(decideTerminalUpdateStatus({ warningKeys: [], degraded: true }), "succeeded-degraded")
+})
+
+test("decideTerminalUpdateStatus prefers succeeded-with-warning over degraded when both apply", () => {
+  assert.equal(
+    decideTerminalUpdateStatus({ warningKeys: ["sonarOk"], degraded: true }),
+    "succeeded-with-warning",
+  )
+})
+
+test("decideTerminalUpdateStatus reports succeeded for the clean path", () => {
+  assert.equal(decideTerminalUpdateStatus({ warningKeys: [], degraded: false }), "succeeded")
+})
 
 test("validateRestartedUpdateStatus accepts the expected version with core readiness ok and returns warning integrations", () => {
   const result = validateRestartedUpdateStatus(
