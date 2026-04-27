@@ -70,6 +70,7 @@ function baseDefinition(opts: {
     stageAgentLabel: "Agent",
     reviewerLabel: "Reviewer",
     workspaceId: "ws-noninteractive",
+    workspaceRoot: process.cwd(),
     runId: "run-noninteractive",
     createInitialState: (): State => ({ calls: [] }),
     stageAgent: opts.stageAgent,

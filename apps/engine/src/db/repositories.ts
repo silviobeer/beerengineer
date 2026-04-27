@@ -154,6 +154,25 @@ export type NotificationDeliveryRow = {
   updated_at: number
 }
 
+export type UpdateAttemptRow = {
+  operation_id: string
+  idempotency_key: string | null
+  kind: string
+  status: string
+  from_version: string | null
+  target_version: string | null
+  db_path: string | null
+  db_path_source: string | null
+  legacy_db_shadow: number
+  install_root: string | null
+  backup_dir: string | null
+  error_message: string | null
+  metadata_json: string | null
+  created_at: number
+  updated_at: number
+  completed_at: number | null
+}
+
 export class Repos {
   constructor(private readonly db: Db) {}
 
@@ -956,6 +975,98 @@ export class Repos {
          LIMIT ?`
       )
       .all(limit) as NotificationDeliveryRow[]
+  }
+
+  upsertUpdateAttempt(input: {
+    operationId: string
+    idempotencyKey?: string | null
+    kind: string
+    status: string
+    fromVersion?: string | null
+    targetVersion?: string | null
+    dbPath?: string | null
+    dbPathSource?: string | null
+    legacyDbShadow?: boolean
+    installRoot?: string | null
+    backupDir?: string | null
+    errorMessage?: string | null
+    metadataJson?: string | null
+    completedAt?: number | null
+  }): UpdateAttemptRow {
+    const existing = this.getUpdateAttempt(input.operationId)
+    const timestamp = now()
+    const row: UpdateAttemptRow = {
+      operation_id: input.operationId,
+      idempotency_key: input.idempotencyKey ?? existing?.idempotency_key ?? null,
+      kind: input.kind,
+      status: input.status,
+      from_version: input.fromVersion ?? existing?.from_version ?? null,
+      target_version: input.targetVersion ?? existing?.target_version ?? null,
+      db_path: input.dbPath ?? existing?.db_path ?? null,
+      db_path_source: input.dbPathSource ?? existing?.db_path_source ?? null,
+      legacy_db_shadow: input.legacyDbShadow === undefined
+        ? existing?.legacy_db_shadow ?? 0
+        : input.legacyDbShadow ? 1 : 0,
+      install_root: input.installRoot ?? existing?.install_root ?? null,
+      backup_dir: input.backupDir ?? existing?.backup_dir ?? null,
+      error_message: input.errorMessage ?? existing?.error_message ?? null,
+      metadata_json: input.metadataJson ?? existing?.metadata_json ?? null,
+      created_at: existing?.created_at ?? timestamp,
+      updated_at: timestamp,
+      completed_at: input.completedAt === undefined ? existing?.completed_at ?? null : input.completedAt,
+    }
+    this.db
+      .prepare(
+        `INSERT INTO update_attempts (
+           operation_id, idempotency_key, kind, status, from_version, target_version,
+           db_path, db_path_source, legacy_db_shadow, install_root, backup_dir,
+           error_message, metadata_json, created_at, updated_at, completed_at
+         ) VALUES (
+           @operation_id, @idempotency_key, @kind, @status, @from_version, @target_version,
+           @db_path, @db_path_source, @legacy_db_shadow, @install_root, @backup_dir,
+           @error_message, @metadata_json, @created_at, @updated_at, @completed_at
+         )
+         ON CONFLICT(operation_id) DO UPDATE SET
+           idempotency_key = excluded.idempotency_key,
+           kind = excluded.kind,
+           status = excluded.status,
+           from_version = excluded.from_version,
+           target_version = excluded.target_version,
+           db_path = excluded.db_path,
+           db_path_source = excluded.db_path_source,
+           legacy_db_shadow = excluded.legacy_db_shadow,
+           install_root = excluded.install_root,
+           backup_dir = excluded.backup_dir,
+           error_message = excluded.error_message,
+           metadata_json = excluded.metadata_json,
+           updated_at = excluded.updated_at,
+           completed_at = excluded.completed_at`
+      )
+      .run(row)
+    return this.getUpdateAttempt(input.operationId)!
+  }
+
+  getUpdateAttempt(operationId: string): UpdateAttemptRow | undefined {
+    return this.db
+      .prepare("SELECT * FROM update_attempts WHERE operation_id = ?")
+      .get(operationId) as UpdateAttemptRow | undefined
+  }
+
+  getUpdateAttemptByIdempotencyKey(idempotencyKey: string): UpdateAttemptRow | undefined {
+    return this.db
+      .prepare("SELECT * FROM update_attempts WHERE idempotency_key = ?")
+      .get(idempotencyKey) as UpdateAttemptRow | undefined
+  }
+
+  listUpdateAttempts(limit = 20): UpdateAttemptRow[] {
+    const clamped = Math.max(1, Math.min(limit, 200))
+    return this.db
+      .prepare(
+        `SELECT * FROM update_attempts
+         ORDER BY created_at DESC
+         LIMIT ?`
+      )
+      .all(clamped) as UpdateAttemptRow[]
   }
 
   answerPendingPrompt(id: string, answer: string): PendingPromptRow | undefined {

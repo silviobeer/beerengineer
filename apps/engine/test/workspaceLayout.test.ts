@@ -4,12 +4,16 @@ import { sep } from "node:path"
 
 import { layout, type WorkflowContext } from "../src/core/workspaceLayout.js"
 
-const ctx: WorkflowContext = { workspaceId: "demo-ws-1", runId: "2026-04-22T08-00-00-000Z" }
+const ctx: WorkflowContext = {
+  workspaceId: "demo-ws-1",
+  workspaceRoot: "/tmp/demo-root",
+  runId: "2026-04-22T08-00-00-000Z",
+}
 
 test("workspaceDir and workspaceFile include workspace id under .beerengineer/workspaces", () => {
-  const dir = layout.workspaceDir(ctx.workspaceId)
+  const dir = layout.workspaceDir(ctx)
   assert.ok(dir.endsWith(`.beerengineer${sep}workspaces${sep}demo-ws-1`))
-  assert.equal(layout.workspaceFile(ctx.workspaceId), `${dir}${sep}workspace.json`)
+  assert.equal(layout.workspaceFile(ctx), `${dir}${sep}workspace.json`)
 })
 
 test("runDir and runFile nest under workspace/runs/<runId>", () => {
@@ -32,7 +36,7 @@ test("stageArtifactsDir, stageRunFile, stageLogFile sit inside stageDir", () => 
 
 test("repoState and handoff helpers produce deterministic paths", () => {
   assert.ok(
-    layout.repoStateWorkspaceFile(ctx.workspaceId).endsWith(`demo-ws-1${sep}repo-state.json`),
+    layout.repoStateWorkspaceFile(ctx).endsWith(`demo-ws-1${sep}repo-state.json`),
   )
   assert.ok(layout.repoStateRunFile(ctx).endsWith(`${ctx.runId}${sep}repo-state.json`))
   const handoffDir = layout.handoffDir(ctx)

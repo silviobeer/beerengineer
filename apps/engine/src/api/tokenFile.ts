@@ -25,6 +25,10 @@ function defaultTokenPath(): string {
   return join(base, "beerengineer", "api.token")
 }
 
+export function resolveApiTokenFilePath(): string {
+  return defaultTokenPath()
+}
+
 export function writeApiTokenFile(token: string): string {
   const path = defaultTokenPath()
   mkdirSync(dirname(path), { recursive: true })

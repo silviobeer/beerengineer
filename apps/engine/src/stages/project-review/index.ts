@@ -102,6 +102,7 @@ export async function projectReview(ctx: WithExecution, llm?: RunLlmConfig): Pro
     stageAgentLabel: "Project-Review-Verifier",
     reviewerLabel: "Project-Review-Gate",
     workspaceId: ctx.workspaceId,
+    workspaceRoot: ctx.workspaceRoot!,
     runId: ctx.runId,
     createInitialState: (): ProjectReviewState => ({
       projectId: ctx.project.id,

@@ -102,6 +102,7 @@ export async function frontendDesign(
     stageAgentLabel: "Visual Designer",
     reviewerLabel: "Design Review",
     workspaceId: context.workspaceId,
+    workspaceRoot: context.workspaceRoot!,
     baseRunId: context.runId,
     stageAgent: createFrontendDesignStage(llm),
     reviewer: createFrontendDesignReview(llm),

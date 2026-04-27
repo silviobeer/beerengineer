@@ -57,6 +57,7 @@ export type StageArtifactContent = {
 export type StageRun<TState, TArtifact> = {
   id: string
   workspaceId: string
+  workspaceRoot: string
   runId: string
   workspaceDir: string
   runDir: string
@@ -83,6 +84,7 @@ export type StageDefinition<TState, TArtifact, TResult> = {
   stageAgentLabel: string
   reviewerLabel: string
   workspaceId: string
+  workspaceRoot: string
   runId: string
   createInitialState(): TState
   stageAgent: StageAgentAdapter<TState, TArtifact>
@@ -152,10 +154,10 @@ async function writeWorkspaceRecord(
   stageId: string,
   status: StageStatus,
 ): Promise<void> {
-  const dir = layout.workspaceDir(ctx.workspaceId)
+  const dir = layout.workspaceDir(ctx)
   await mkdir(dir, { recursive: true })
   await writeFile(
-    layout.workspaceFile(ctx.workspaceId),
+    layout.workspaceFile(ctx),
     JSON.stringify(
       {
         id: ctx.workspaceId,
@@ -195,7 +197,7 @@ export async function persistWorkflowRunState(
 }
 
 async function persistRun<TState, TArtifact>(run: StageRun<TState, TArtifact>): Promise<void> {
-  const ctx: WorkflowContext = { workspaceId: run.workspaceId, runId: run.runId }
+  const ctx: WorkflowContext = { workspaceId: run.workspaceId, workspaceRoot: run.workspaceRoot, runId: run.runId }
   await mkdir(run.stageDir, { recursive: true })
   await writeFile(layout.stageRunFile(ctx, run.stage), JSON.stringify(run, null, 2))
   await writeFile(
@@ -236,16 +238,21 @@ function setStatus<TState, TArtifact>(run: StageRun<TState, TArtifact>, status: 
 export function createStageRun<TState, TArtifact>(
   definition: Pick<
     StageDefinition<TState, TArtifact, unknown>,
-    "stageId" | "workspaceId" | "runId" | "createInitialState"
+    "stageId" | "workspaceId" | "workspaceRoot" | "runId" | "createInitialState"
   >,
 ): StageRun<TState, TArtifact> {
-  const ctx: WorkflowContext = { workspaceId: definition.workspaceId, runId: definition.runId }
+  const ctx: WorkflowContext = {
+    workspaceId: definition.workspaceId,
+    workspaceRoot: definition.workspaceRoot,
+    runId: definition.runId,
+  }
   const startedAt = nowIso()
   return {
     id: startedAt.replace(/[:.]/g, "-"),
     workspaceId: ctx.workspaceId,
+    workspaceRoot: ctx.workspaceRoot!,
     runId: ctx.runId,
-    workspaceDir: layout.workspaceDir(ctx.workspaceId),
+    workspaceDir: layout.workspaceDir(ctx),
     runDir: layout.runDir(ctx),
     stage: definition.stageId,
     stageDir: layout.stageDir(ctx, definition.stageId),
@@ -309,7 +316,7 @@ async function recordStageBlocked<TState, TArtifact>(
   summary: string,
   extra?: { detail?: string; findings?: Array<{ source: string; severity: string; message: string }> },
 ): Promise<void> {
-  const ctx: WorkflowContext = { workspaceId: run.workspaceId, runId: run.runId }
+  const ctx: WorkflowContext = { workspaceId: run.workspaceId, workspaceRoot: run.workspaceRoot, runId: run.runId }
   const record = await writeRecoveryRecord(ctx, {
     status: cause === "system_error" ? "failed" : "blocked",
     cause,

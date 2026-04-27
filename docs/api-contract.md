@@ -27,6 +27,17 @@ consumed by tooling.
 
 - `GET /health` → `{ ok: true }`
 - `GET /setup/status` (existing)
+- `GET /update/status` — read-only updater status snapshot (current version, DB path source/warnings, managed install paths, preflight summary, cached latest release if present, whether an update is available, the latest managed backup manifest if any, readiness/auth summary for engine/DB/GitHub/LLM/Sonar, and the latest persisted attempt)
+- `GET /update/preflight` — fast updater probe `{ idle, activeRuns, lockHeld, lockStale, pid, httpPort }`
+- `POST /update/check` — hits GitHub and returns current vs latest release metadata. Read-only despite being `POST`; intended to bypass caches and refresh the 60s on-disk release cache.
+- `POST /update/apply` — stages the selected GitHub release under the managed install root, writes the prepared switcher script/payload, records a queued apply attempt, and returns `202` before any shutdown begins. When the engine is already running from a managed `install/current`, it then marks the attempt `in-flight`, spawns the detached switcher, shuts itself down, and lets the switcher own backup/swap/restart/rollback. In unmanaged dev-checkout installs, the prepared attempt remains queued. `Idempotency-Key` is supported for in-flight retries: the same queued/in-flight operation is replayed as the original `202` body instead of staging a second update.
+- Optional integrity gate: when `BEERENGINEER_UPDATE_EXPECTED_TARBALL_SHA256` is set in the updater process environment, the downloaded GitHub tarball must match that SHA-256 or the update fails closed before unpack/install.
+- Tarball downloads also fail closed if the redirect chain leaves the trusted host set for the selected release source. Managed updates accept the initial tarball host plus GitHub's standard `codeload.github.com` host, and they record the final tarball URL alongside the SHA-256 in update-attempt metadata for audit.
+- Post-restart validation is stricter than bare `/health`: the detached switcher also requires `GET /update/status` to succeed, report the expected target version, and report `readiness.engineStarted = ok` plus `readiness.dbOk = ok`. If that contract is not met, the update is treated as a rollback-worthy core failure rather than a warning-only success.
+- `POST /update/shutdown` — token-protected graceful engine shutdown. Requires `{ operationId }` matching the held update lock and returns `202 { operationId, state: "shutting_down" }` before the process exits.
+- `POST /update/rollback` — currently reserved. It returns `409 { error: "post-migration-rollback-unsupported", code: "post-migration-rollback-unsupported" }`.
+- `GET /update/history` — recent persisted update attempts plus recent managed backup manifests
+  Terminal states now include `succeeded`, `succeeded-with-warning`, `succeeded-degraded`, `failed-rolled-back`, `failed-no-rollback`, and `aborted-dry-run`.
 
 ### Workspaces
 

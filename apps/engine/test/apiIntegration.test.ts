@@ -1,6 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { createServer } from "node:http"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { spawn, type ChildProcess } from "node:child_process"
@@ -8,6 +9,7 @@ import { spawn, type ChildProcess } from "node:child_process"
 import { initDatabase } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
 import { layout } from "../src/core/workspaceLayout.js"
+import { createDatabaseBackup } from "../src/core/updateMode.js"
 
 async function waitForHealth(base: string, timeoutMs = 5000): Promise<void> {
   const start = Date.now()
@@ -169,6 +171,115 @@ test("GET /setup/status returns the doctor report contract", async () => {
   } finally {
     await stopServer(proc)
     rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("update endpoints expose status, preflight, and latest GitHub release info", async () => {
+  const dbPath = tmpDbPath()
+  const dataDir = mkdtempSync(join(tmpdir(), "be2-update-api-data-"))
+  const releaseServer = createServer((req, res) => {
+    if (req.url === "/repos/demo/beerengineer/releases/latest") {
+      res.writeHead(200, { "content-type": "application/json" })
+      res.end(JSON.stringify({
+        tag_name: "v9.9.9",
+        tarball_url: "https://example.test/demo/beerengineer/tarball/v9.9.9",
+        html_url: "https://example.test/demo/beerengineer/releases/tag/v9.9.9",
+        published_at: "2026-04-27T00:00:00.000Z",
+      }))
+      return
+    }
+    res.writeHead(404)
+    res.end("not found")
+  })
+  await new Promise<void>(resolve => releaseServer.listen(0, "127.0.0.1", () => resolve()))
+  const releasePort = (releaseServer.address() as { port: number }).port
+
+  const db = initDatabase(dbPath)
+  const repos = new Repos(db)
+  const ws = repos.upsertWorkspace({ key: "demo", name: "Demo", rootPath: join(tmpdir(), "be2-update-api-workspace") })
+  const item = repos.createItem({ workspaceId: ws.id, title: "Active item", description: "run" })
+  repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title })
+  db.close()
+
+  const { proc, base } = startServer({
+    BEERENGINEER_UI_DB_PATH: dbPath,
+    BEERENGINEER_DATA_DIR: dataDir,
+    BEERENGINEER_UPDATE_GITHUB_REPO: "demo/beerengineer",
+    BEERENGINEER_UPDATE_GITHUB_API_BASE_URL: `http://127.0.0.1:${releasePort}`,
+  })
+  try {
+    await waitForHealth(base)
+
+    const statusRes = await fetch(`${base}/update/status`)
+    assert.equal(statusRes.status, 200)
+    const status = await statusRes.json() as {
+      preflight: { idle: boolean; activeRuns: number; lockHeld: boolean; pid: number | null }
+      install: { root: string }
+      dbPathSource: string
+      latestRelease: null | { tag: string }
+      readiness: {
+        engineStarted: string
+        dbOk: string
+        githubOk: string
+        anthropicOk: string
+        openaiOk: string
+        sonarOk: string
+      }
+    }
+    assert.equal(status.preflight.idle, true)
+    assert.equal(status.preflight.activeRuns, 0)
+    assert.equal(status.preflight.lockHeld, false)
+    assert.equal(status.dbPathSource, "env")
+    assert.equal(status.install.root, join(dataDir, "install"))
+    assert.equal(typeof status.preflight.pid, "number")
+    assert.equal(status.latestRelease, null)
+    assert.equal(status.readiness.engineStarted, "ok")
+    assert.equal(status.readiness.dbOk, "ok")
+    assert.equal(status.readiness.githubOk, "ok")
+
+    const preflightRes = await fetch(`${base}/update/preflight`)
+    assert.equal(preflightRes.status, 200)
+    const preflight = await preflightRes.json() as { idle: boolean; activeRuns: number; httpPort: number }
+    assert.equal(preflight.idle, true)
+    assert.equal(preflight.activeRuns, 0)
+    assert.equal(typeof preflight.httpPort, "number")
+
+    const checkRes = await fetch(`${base}/update/check`, {
+      method: "POST",
+      headers: authHeaders({ "content-type": "application/json" }),
+      body: "{}",
+    })
+    assert.equal(checkRes.status, 200)
+    const check = await checkRes.json() as {
+      updateAvailable: boolean
+      githubRepo: string
+      latestRelease: { tag: string }
+    }
+    assert.equal(check.githubRepo, "demo/beerengineer")
+    assert.equal(check.latestRelease.tag, "v9.9.9")
+    assert.equal(check.updateAvailable, true)
+
+    const statusAfterRes = await fetch(`${base}/update/status`)
+    assert.equal(statusAfterRes.status, 200)
+    const statusAfter = await statusAfterRes.json() as {
+      latestRelease: { tag: string } | null
+      updateAvailable: boolean | null
+    }
+    assert.equal(statusAfter.latestRelease?.tag, "v9.9.9")
+    assert.equal(statusAfter.updateAvailable, true)
+
+    const historyRes = await fetch(`${base}/update/history`)
+    assert.equal(historyRes.status, 200)
+    const history = await historyRes.json() as {
+      attempts: Array<{ kind: string; status: string; targetVersion: string | null }>
+    }
+    assert.equal(history.attempts[0]?.kind, "check")
+    assert.equal(history.attempts[0]?.status, "succeeded")
+    assert.equal(history.attempts[0]?.targetVersion, "9.9.9")
+  } finally {
+    await stopServer(proc)
+    await new Promise<void>(resolve => releaseServer.close(() => resolve()))
+    rmSync(dataDir, { recursive: true, force: true })
   }
 })
 
@@ -457,7 +568,8 @@ test("POST /items/:id/actions/:action returns 409 on invalid transition", async 
   const dbPath = tmpDbPath()
   const db = initDatabase(dbPath)
   const repos = new Repos(db)
-  const ws = repos.upsertWorkspace({ key: "t", name: "T" })
+  const workspaceRoot = mkdtempSync(join(tmpdir(), "be2-api-workspace-"))
+  const ws = repos.upsertWorkspace({ key: "t", name: "T", rootPath: workspaceRoot })
   const item = repos.createItem({ workspaceId: ws.id, title: "t", description: "" })
   repos.setItemColumn(item.id, "done", "completed")
   db.close()
@@ -513,6 +625,355 @@ test("POST /items/:id/actions/:action promotes brainstorm to requirements and pe
   }
 })
 
+test("update status exposes the latest managed backup manifest", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-api-update-backup-"))
+  const dbPath = join(dir, "db.sqlite")
+  const dataDir = join(dir, "data")
+  mkdirSync(dataDir, { recursive: true })
+  const db = initDatabase(dbPath)
+  db.close()
+  createDatabaseBackup(
+    { dataDir } as { dataDir: string },
+    {
+      operationId: "backup-op",
+      fromVersion: "0.1.0",
+      targetVersion: "0.2.0",
+      db: { path: dbPath, source: "override", warnings: [] },
+    },
+  )
+
+  const { proc, base } = startServer({
+    BEERENGINEER_UI_DB_PATH: dbPath,
+    BEERENGINEER_DATA_DIR: dataDir,
+  })
+  try {
+    await waitForHealth(base)
+    const res = await fetch(`${base}/update/status`, { headers: authHeaders() })
+    assert.equal(res.status, 200)
+    const body = await res.json() as {
+      lastBackup: null | { operationId: string; fromVersion: string; targetVersion: string; files: Array<{ name: string }> }
+    }
+    assert.equal(body.lastBackup?.operationId, "backup-op")
+    assert.equal(body.lastBackup?.fromVersion, "0.1.0")
+    assert.equal(body.lastBackup?.targetVersion, "0.2.0")
+    assert.ok(body.lastBackup?.files.some(file => file.name === "beerengineer.sqlite"))
+  } finally {
+    await stopServer(proc)
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("POST /update/shutdown accepts a matching operation lock and exits the server cleanly", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-api-update-shutdown-"))
+  const dbPath = join(dir, "db.sqlite")
+  const dataDir = join(dir, "data")
+  const pidFile = join(dir, "engine.pid")
+  mkdirSync(dataDir, { recursive: true })
+  initDatabase(dbPath).close()
+
+  const { proc, base } = startServer({
+    BEERENGINEER_UI_DB_PATH: dbPath,
+    BEERENGINEER_DATA_DIR: dataDir,
+    BEERENGINEER_ENGINE_PID_FILE: pidFile,
+  })
+  try {
+    await waitForHealth(base)
+    const statusRes = await fetch(`${base}/update/status`, { headers: authHeaders() })
+    assert.equal(statusRes.status, 200)
+    const status = await statusRes.json() as { preflight: { pid: number | null } }
+    assert.ok(typeof status.preflight.pid === "number")
+    writeFileSync(join(dataDir, "update.lock"), JSON.stringify({
+      operationId: "shutdown-op",
+      pid: status.preflight.pid,
+      startedAt: Date.now(),
+      host: "127.0.0.1",
+    }, null, 2))
+
+    const res = await fetch(`${base}/update/shutdown`, {
+      method: "POST",
+      headers: authHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({ operationId: "shutdown-op" }),
+    })
+    assert.equal(res.status, 202)
+    const body = await res.json() as { operationId: string; state: string }
+    assert.equal(body.operationId, "shutdown-op")
+    assert.equal(body.state, "shutting_down")
+
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("server did not exit after shutdown request")), 5000)
+      proc.once("exit", () => {
+        clearTimeout(timer)
+        resolve()
+      })
+    })
+    assert.equal(proc.exitCode, 0)
+    assert.equal(existsSync(pidFile), false)
+  } finally {
+    await stopServer(proc)
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("POST /update/apply stages a release and records a queued apply attempt", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-api-update-apply-"))
+  const dbPath = join(dir, "db.sqlite")
+  const dataDir = join(dir, "data")
+  const releaseRoot = join(dir, "beerengineer-release")
+  const tarballPath = join(dir, "release.tar.gz")
+  mkdirSync(dataDir, { recursive: true })
+  mkdirSync(join(releaseRoot, "apps", "engine", "bin"), { recursive: true })
+  mkdirSync(join(releaseRoot, "apps", "ui"), { recursive: true })
+  writeFileSync(join(releaseRoot, "package.json"), JSON.stringify({
+    name: "beerengineer-release",
+    version: "9.9.9",
+    private: true,
+    workspaces: ["apps/*"],
+  }, null, 2))
+  writeFileSync(join(releaseRoot, "apps", "engine", "package.json"), JSON.stringify({
+    name: "@beerengineer2/engine",
+    version: "9.9.9",
+    private: true,
+    type: "module",
+    bin: { beerengineer: "./bin/beerengineer.js" },
+  }, null, 2))
+  writeFileSync(join(releaseRoot, "apps", "engine", "bin", "beerengineer.js"), "#!/usr/bin/env node\nconsole.log('ok')\n", "utf8")
+  writeFileSync(join(releaseRoot, "apps", "ui", "package.json"), JSON.stringify({
+    name: "@beerengineer2/ui",
+    version: "9.9.9",
+    private: true,
+  }, null, 2))
+  const tar = spawn(process.platform === "win32" ? "tar.exe" : "tar", ["-czf", tarballPath, "-C", dir, "beerengineer-release"])
+  await new Promise<void>((resolve, reject) => {
+    tar.once("exit", code => code === 0 ? resolve() : reject(new Error(`tar exited ${code}`)))
+    tar.once("error", reject)
+  })
+  initDatabase(dbPath).close()
+
+  const releaseServer = createServer((req, res) => {
+    if (req.url === "/repos/demo/beerengineer/releases/tags/v9.9.9") {
+      res.writeHead(200, { "content-type": "application/json" })
+      res.end(JSON.stringify({
+        tag_name: "v9.9.9",
+        tarball_url: `http://127.0.0.1:${releasePort}/demo/beerengineer/tarball/v9.9.9`,
+        html_url: "https://example.test/demo/beerengineer/releases/tag/v9.9.9",
+        published_at: "2026-04-27T00:00:00.000Z",
+      }))
+      return
+    }
+    if (req.url === "/demo/beerengineer/tarball/v9.9.9") {
+      res.writeHead(200, { "content-type": "application/gzip" })
+      res.end(readFileSync(tarballPath))
+      return
+    }
+    res.writeHead(404)
+    res.end("not found")
+  })
+  await new Promise<void>(resolve => releaseServer.listen(0, "127.0.0.1", () => resolve()))
+  const releasePort = (releaseServer.address() as { port: number }).port
+
+  const { proc, base } = startServer({
+    BEERENGINEER_UI_DB_PATH: dbPath,
+    BEERENGINEER_DATA_DIR: dataDir,
+    BEERENGINEER_UPDATE_GITHUB_REPO: "demo/beerengineer",
+    BEERENGINEER_UPDATE_GITHUB_API_BASE_URL: `http://127.0.0.1:${releasePort}`,
+  })
+  try {
+    await waitForHealth(base)
+    const res = await fetch(`${base}/update/apply`, {
+      method: "POST",
+      headers: authHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({ version: "v9.9.9" }),
+    })
+    assert.equal(res.status, 202)
+    const body = await res.json() as {
+      operationId: string
+      state: string
+      stagedRoot: string
+      switcherPath: string
+      targetRelease: { tag: string }
+    }
+    assert.equal(body.state, "queued")
+    assert.equal(body.targetRelease.tag, "v9.9.9")
+    assert.equal(existsSync(body.stagedRoot), true)
+    assert.equal(existsSync(body.switcherPath), true)
+
+    const historyRes = await fetch(`${base}/update/history`, { headers: authHeaders() })
+    assert.equal(historyRes.status, 200)
+    const history = await historyRes.json() as {
+      attempts: Array<{ operationId: string; kind: string; status: string }>
+      backups: Array<{ operationId: string }>
+    }
+    const attempt = history.attempts.find(entry => entry.operationId === body.operationId)
+    assert.equal(attempt?.kind, "apply")
+    assert.equal(attempt?.status, "queued")
+    assert.equal(Array.isArray(history.backups), true)
+  } finally {
+    await stopServer(proc)
+    await new Promise<void>(resolve => releaseServer.close(() => resolve()))
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("POST /update/apply replays the same queued operation for a repeated Idempotency-Key and /update/rollback returns 409", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-api-update-idempotency-"))
+  const dbPath = join(dir, "db.sqlite")
+  const dataDir = join(dir, "data")
+  const releaseRoot = join(dir, "beerengineer-release")
+  const tarballPath = join(dir, "release.tar.gz")
+  mkdirSync(dataDir, { recursive: true })
+  mkdirSync(join(releaseRoot, "apps", "engine", "bin"), { recursive: true })
+  mkdirSync(join(releaseRoot, "apps", "ui"), { recursive: true })
+  writeFileSync(join(releaseRoot, "package.json"), JSON.stringify({
+    name: "beerengineer-release",
+    version: "9.9.9",
+    private: true,
+    workspaces: ["apps/*"],
+  }, null, 2))
+  writeFileSync(join(releaseRoot, "apps", "engine", "package.json"), JSON.stringify({
+    name: "@beerengineer2/engine",
+    version: "9.9.9",
+    private: true,
+    type: "module",
+    bin: { beerengineer: "./bin/beerengineer.js" },
+  }, null, 2))
+  writeFileSync(join(releaseRoot, "apps", "engine", "bin", "beerengineer.js"), "#!/usr/bin/env node\nconsole.log('ok')\n", "utf8")
+  writeFileSync(join(releaseRoot, "apps", "ui", "package.json"), JSON.stringify({
+    name: "@beerengineer2/ui",
+    version: "9.9.9",
+    private: true,
+  }, null, 2))
+  const tar = spawn(process.platform === "win32" ? "tar.exe" : "tar", ["-czf", tarballPath, "-C", dir, "beerengineer-release"])
+  await new Promise<void>((resolve, reject) => {
+    tar.once("exit", code => code === 0 ? resolve() : reject(new Error(`tar exited ${code}`)))
+    tar.once("error", reject)
+  })
+  initDatabase(dbPath).close()
+
+  const releaseServer = createServer((req, res) => {
+    if (req.url === "/repos/demo/beerengineer/releases/tags/v9.9.9") {
+      res.writeHead(200, { "content-type": "application/json" })
+      res.end(JSON.stringify({
+        tag_name: "v9.9.9",
+        tarball_url: `http://127.0.0.1:${releasePort}/demo/beerengineer/tarball/v9.9.9`,
+        html_url: "https://example.test/demo/beerengineer/releases/tag/v9.9.9",
+        published_at: "2026-04-27T00:00:00.000Z",
+      }))
+      return
+    }
+    if (req.url === "/demo/beerengineer/tarball/v9.9.9") {
+      res.writeHead(200, { "content-type": "application/gzip" })
+      res.end(readFileSync(tarballPath))
+      return
+    }
+    res.writeHead(404)
+    res.end("not found")
+  })
+  await new Promise<void>(resolve => releaseServer.listen(0, "127.0.0.1", () => resolve()))
+  const releasePort = (releaseServer.address() as { port: number }).port
+
+  const { proc, base } = startServer({
+    BEERENGINEER_UI_DB_PATH: dbPath,
+    BEERENGINEER_DATA_DIR: dataDir,
+    BEERENGINEER_UPDATE_GITHUB_REPO: "demo/beerengineer",
+    BEERENGINEER_UPDATE_GITHUB_API_BASE_URL: `http://127.0.0.1:${releasePort}`,
+  })
+  try {
+    await waitForHealth(base)
+    const headers = authHeaders({
+      "content-type": "application/json",
+      "idempotency-key": "idem-1",
+    })
+    const firstRes = await fetch(`${base}/update/apply`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ version: "v9.9.9" }),
+    })
+    assert.equal(firstRes.status, 202)
+    const first = await firstRes.json() as { operationId: string; stagedRoot: string; state: string }
+
+    const secondRes = await fetch(`${base}/update/apply`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ version: "v9.9.9" }),
+    })
+    assert.equal(secondRes.status, 202)
+    const second = await secondRes.json() as { operationId: string; stagedRoot: string; state: string }
+    assert.equal(second.operationId, first.operationId)
+    assert.equal(second.stagedRoot, first.stagedRoot)
+    assert.equal(second.state, "queued")
+
+    const historyRes = await fetch(`${base}/update/history`, { headers: authHeaders() })
+    const history = await historyRes.json() as { attempts: Array<{ operationId: string }>; backups: Array<{ operationId: string }> }
+    assert.equal(history.attempts.filter(entry => entry.operationId === first.operationId).length, 1)
+    assert.equal(Array.isArray(history.backups), true)
+
+    const rollbackRes = await fetch(`${base}/update/rollback`, {
+      method: "POST",
+      headers: authHeaders({ "content-type": "application/json" }),
+      body: "{}",
+    })
+    assert.equal(rollbackRes.status, 409)
+    const rollback = await rollbackRes.json() as { code: string }
+    assert.equal(rollback.code, "post-migration-rollback-unsupported")
+  } finally {
+    await stopServer(proc)
+    await new Promise<void>(resolve => releaseServer.close(() => resolve()))
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("POST /update/apply fails closed when the tarball redirect leaves the trusted host set", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-api-update-redirect-"))
+  const dbPath = join(dir, "db.sqlite")
+  const dataDir = join(dir, "data")
+  mkdirSync(dataDir, { recursive: true })
+  initDatabase(dbPath).close()
+
+  const releaseServer = createServer((req, res) => {
+    if (req.url === "/repos/demo/beerengineer/releases/tags/v9.9.9") {
+      res.writeHead(200, { "content-type": "application/json" })
+      res.end(JSON.stringify({
+        tag_name: "v9.9.9",
+        tarball_url: `http://127.0.0.1:${releasePort}/demo/beerengineer/tarball/v9.9.9`,
+        html_url: "https://example.test/demo/beerengineer/releases/tag/v9.9.9",
+        published_at: "2026-04-27T00:00:00.000Z",
+      }))
+      return
+    }
+    if (req.url === "/demo/beerengineer/tarball/v9.9.9") {
+      res.writeHead(302, { location: "http://malicious.example.invalid/payload.tar.gz" })
+      res.end()
+      return
+    }
+    res.writeHead(404)
+    res.end("not found")
+  })
+  await new Promise<void>(resolve => releaseServer.listen(0, "127.0.0.1", () => resolve()))
+  const releasePort = (releaseServer.address() as { port: number }).port
+
+  const { proc, base } = startServer({
+    BEERENGINEER_UI_DB_PATH: dbPath,
+    BEERENGINEER_DATA_DIR: dataDir,
+    BEERENGINEER_UPDATE_GITHUB_REPO: "demo/beerengineer",
+    BEERENGINEER_UPDATE_GITHUB_API_BASE_URL: `http://127.0.0.1:${releasePort}`,
+  })
+  try {
+    await waitForHealth(base)
+    const res = await fetch(`${base}/update/apply`, {
+      method: "POST",
+      headers: authHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({ version: "v9.9.9" }),
+    })
+    assert.equal(res.status, 500)
+    const body = await res.json() as { error: string }
+    assert.match(body.error, /update_download_failed:untrusted_redirect_host:malicious\.example\.invalid/)
+  } finally {
+    await stopServer(proc)
+    await new Promise<void>(resolve => releaseServer.close(() => resolve()))
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test("POST /runs/:id/answer accepts answers for cli-owned runs", async () => {
   const dbPath = tmpDbPath()
   const db = initDatabase(dbPath)
@@ -548,15 +1009,16 @@ test("design-prep artifact endpoints expose item views and raw artifact files", 
   const dbPath = tmpDbPath()
   const db = initDatabase(dbPath)
   const repos = new Repos(db)
-  const ws = repos.upsertWorkspace({ key: "t", name: "T" })
+  const workspaceRoot = mkdtempSync(join(tmpdir(), "be2-api-workspace-"))
+  const ws = repos.upsertWorkspace({ key: "t", name: "T", rootPath: workspaceRoot })
   const item = repos.createItem({ workspaceId: ws.id, title: "Design Prep", description: "" })
   const workspaceId = `design-prep-${item.id.toLowerCase()}`
   const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "cli", workspaceFsId: workspaceId })
   repos.updateRun(run.id, { status: "completed" })
   db.close()
 
-  const wireframesDir = layout.stageArtifactsDir({ workspaceId, runId: run.id }, "visual-companion")
-  const designDir = layout.stageArtifactsDir({ workspaceId, runId: run.id }, "frontend-design")
+  const wireframesDir = layout.stageArtifactsDir({ workspaceId, workspaceRoot, runId: run.id }, "visual-companion")
+  const designDir = layout.stageArtifactsDir({ workspaceId, workspaceRoot, runId: run.id }, "frontend-design")
   mkdirSync(wireframesDir, { recursive: true })
   mkdirSync(designDir, { recursive: true })
   writeFileSync(join(wireframesDir, "wireframes.json"), JSON.stringify({

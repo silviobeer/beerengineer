@@ -337,6 +337,7 @@ test("frontend-design runStage: LLM HTML written verbatim — mockups/dashboard.
       stageAgentLabel: "Visual Designer",
       reviewerLabel: "Design Review",
       workspaceId: "ws-fd-llm-html",
+      workspaceRoot: process.cwd(),
       runId: "run-fd-llm-html",
       createInitialState: makeFrontendDesignState(stubWireframes),
       stageAgent: new FakeFrontendDesignStageAdapter(),
@@ -416,6 +417,7 @@ test("frontend-design runStage: without wireframes — no mockups/ directory wri
       stageAgentLabel: "Visual Designer",
       reviewerLabel: "Design Review",
       workspaceId: "ws-fd-no-mockup",
+      workspaceRoot: process.cwd(),
       runId: "run-fd-no-mockup",
       createInitialState: () => ({
         input: {

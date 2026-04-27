@@ -12,6 +12,7 @@ import { projectStageLogRow } from "../../core/messagingProjection.js"
 import { resumeRunInProcess, startRunFromIdea } from "../../core/runService.js"
 import { json, readJson } from "../http.js"
 import { layout } from "../../core/workspaceLayout.js"
+import { resolveWorkflowContextForRun } from "../../core/workflowContextResolver.js"
 
 function contentTypeFor(path: string): string {
   switch (extname(path).toLowerCase()) {
@@ -64,7 +65,7 @@ export async function handleGetArtifactFile(
   const revMatch = runId.match(/^(.+)-rev(\d+)$/)
   const lookupId = revMatch ? revMatch[1] : runId
   const run = repos.getRun(lookupId)
-  if (!run || !run.workspace_fs_id) return json(res, 404, { error: "run not found", code: "not_found" })
+  if (!run) return json(res, 404, { error: "run not found", code: "not_found" })
   // Decode once — the regex in the router yields the raw URL segment, which
   // may still contain percent-escapes (e.g. %2e for "." inside a segment).
   let decoded: string
@@ -74,7 +75,9 @@ export async function handleGetArtifactFile(
     return json(res, 400, { error: "invalid_path", code: "bad_request" })
   }
   if (decoded.includes("\0")) return json(res, 400, { error: "invalid_path", code: "bad_request" })
-  const base = resolvePath(layout.runDir({ workspaceId: run.workspace_fs_id, runId }))
+  const ctx = resolveWorkflowContextForRun(repos, run, { runIdOverride: runId })
+  if (!ctx) return json(res, 404, { error: "artifact root unreachable", code: "not_found" })
+  const base = resolvePath(layout.runDir(ctx))
   const full = resolvePath(base, decoded)
   if (full !== base && !full.startsWith(base + sep)) {
     return json(res, 400, { error: "invalid_path", code: "bad_request" })

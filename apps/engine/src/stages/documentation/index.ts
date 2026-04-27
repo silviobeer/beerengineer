@@ -15,8 +15,8 @@ import type { DocumentationState } from "./types.js"
 
 type ExistingDocs = DocumentationState["existingDocs"]
 
-function projectDocsDir(): string {
-  return join(process.cwd(), "docs")
+function projectDocsDir(workspaceRoot: string): string {
+  return join(workspaceRoot, "docs")
 }
 
 async function readOptional(path: string): Promise<string | undefined> {
@@ -27,8 +27,8 @@ async function readOptional(path: string): Promise<string | undefined> {
   }
 }
 
-async function loadExistingDocs(): Promise<ExistingDocs> {
-  const dir = projectDocsDir()
+async function loadExistingDocs(workspaceRoot: string): Promise<ExistingDocs> {
+  const dir = projectDocsDir(workspaceRoot)
   return {
     technicalDoc: await readOptional(join(dir, "technical-doc.md")),
     featuresDoc: await readOptional(join(dir, "features-doc.md")),
@@ -36,8 +36,8 @@ async function loadExistingDocs(): Promise<ExistingDocs> {
   }
 }
 
-async function writeProjectDocs(artifact: DocumentationArtifact): Promise<void> {
-  const dir = projectDocsDir()
+async function writeProjectDocs(workspaceRoot: string, artifact: DocumentationArtifact): Promise<void> {
+  const dir = projectDocsDir(workspaceRoot)
   await mkdir(dir, { recursive: true })
   for (const file of buildDocFiles(artifact)) {
     await writeFile(join(dir, file.fileName), file.content)
@@ -46,14 +46,16 @@ async function writeProjectDocs(artifact: DocumentationArtifact): Promise<void> 
 
 export async function documentation(ctx: WithProjectReview, llm?: RunLlmConfig): Promise<DocumentationArtifact> {
   stagePresent.header(`documentation — ${ctx.project.name}`)
+  const workspaceRoot = ctx.workspaceRoot!
 
-  const existingDocs = await loadExistingDocs()
+  const existingDocs = await loadExistingDocs(workspaceRoot)
 
   const { result } = await runStage({
     stageId: "documentation",
     stageAgentLabel: "LLM-9 (Documentation)",
     reviewerLabel: "Documentation-Review-LLM",
     workspaceId: ctx.workspaceId,
+    workspaceRoot: ctx.workspaceRoot!,
     runId: ctx.runId,
     createInitialState: (): DocumentationState => ({
       projectId: ctx.project.id,
@@ -69,7 +71,7 @@ export async function documentation(ctx: WithProjectReview, llm?: RunLlmConfig):
     reviewer: createDocumentationReview(llm),
     askUser: async () => "",
     async persistArtifacts(run, artifact) {
-      await writeProjectDocs(artifact)
+      await writeProjectDocs(workspaceRoot, artifact)
       return [
         {
           kind: "json",

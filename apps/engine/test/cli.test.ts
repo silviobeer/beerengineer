@@ -33,6 +33,43 @@ test("parseArgs recognizes help, doctor, start ui, workflow, item action, and un
   assert.deepEqual(parseArgs(["--doctor"]), { kind: "doctor", json: false, group: undefined })
   assert.deepEqual(parseArgs(["doctor", "--json", "--group", "core"]), { kind: "doctor", json: true, group: "core" })
   assert.deepEqual(parseArgs(["setup", "--no-interactive"]), { kind: "setup", group: undefined, noInteractive: true })
+  assert.deepEqual(parseArgs(["update", "--check", "--json"]), {
+    kind: "update",
+    check: true,
+    json: true,
+    dryRun: false,
+    rollback: false,
+    version: undefined,
+    allowLegacyDbShadow: false,
+  })
+  assert.deepEqual(parseArgs(["update", "--json"]), {
+    kind: "update",
+    check: false,
+    json: true,
+    dryRun: false,
+    rollback: false,
+    version: undefined,
+    allowLegacyDbShadow: false,
+  })
+  assert.deepEqual(parseArgs(["update", "--rollback", "--json"]), {
+    kind: "update",
+    check: false,
+    json: true,
+    dryRun: false,
+    rollback: true,
+    version: undefined,
+    allowLegacyDbShadow: false,
+  })
+  assert.deepEqual(parseArgs(["update", "--dry-run", "--version", "v9.9.9", "--allow-legacy-db-shadow"]), {
+    kind: "update",
+    check: false,
+    json: false,
+    dryRun: true,
+    rollback: false,
+    version: "v9.9.9",
+    allowLegacyDbShadow: true,
+  })
+  assert.deepEqual(parseArgs(["start"]), { kind: "start-engine" })
   assert.deepEqual(parseArgs(["notifications", "test", "telegram"]), { kind: "notifications-test", channel: "telegram" })
   assert.deepEqual(parseArgs(["workspace", "preview", "/tmp/demo", "--json"]), { kind: "workspace-preview", path: "/tmp/demo", json: true })
   assert.deepEqual(parseArgs(["workspace", "add", "--path", "/tmp/demo", "--profile", "fast", "--sonar", "--no-git", "--no-interactive"]), {
@@ -396,15 +433,23 @@ test("item wireframes and item design print artifact info and support --json", (
     const dbPath = join(dir, "artifacts.sqlite")
     const db = initDatabase(dbPath)
     const repos = new Repos(db)
-    const ws = repos.upsertWorkspace({ key: "default", name: "Default Workspace" })
+    const repoRoot = join(dir, "repo")
+    mkdirSync(repoRoot, { recursive: true })
+    const ws = repos.upsertWorkspace({ key: "default", name: "Default Workspace", rootPath: repoRoot })
     const item = repos.createItem({ workspaceId: ws.id, code: "ITEM-0001", title: "Artifact Item", description: "artifacts" })
-    const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "cli" })
-    repos.updateRun(run.id, { status: "completed", workspace_fs_id: "artifact-item-" + item.id.toLowerCase() })
+    const workspaceId = `artifact-item-${item.id.toLowerCase()}`
+    const run = repos.createRun({
+      workspaceId: ws.id,
+      itemId: item.id,
+      title: item.title,
+      owner: "cli",
+      workspaceFsId: workspaceId,
+    })
+    repos.updateRun(run.id, { status: "completed" })
     db.close()
 
-    const workspaceId = `artifact-item-${item.id.toLowerCase()}`
-    const wireframesDir = layout.stageArtifactsDir({ workspaceId, runId: run.id }, "visual-companion")
-    const designDir = layout.stageArtifactsDir({ workspaceId, runId: run.id }, "frontend-design")
+    const wireframesDir = layout.stageArtifactsDir({ workspaceId, workspaceRoot: repoRoot, runId: run.id }, "visual-companion")
+    const designDir = layout.stageArtifactsDir({ workspaceId, workspaceRoot: repoRoot, runId: run.id }, "frontend-design")
     mkdirSync(wireframesDir, { recursive: true })
     mkdirSync(designDir, { recursive: true })
     writeFileSync(join(wireframesDir, "wireframes.json"), JSON.stringify({
@@ -442,6 +487,458 @@ test("item wireframes and item design print artifact info and support --json", (
     assert.equal(design.status, 0, design.stderr)
     assert.match(design.stdout, /design-preview:/)
   } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("update --check prints machine-readable release info", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-update-"))
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
+  const dbPath = join(dir, "update.sqlite")
+  const dataDir = join(dir, "data")
+  mkdirSync(dataDir, { recursive: true })
+  const server = createServer((req, res) => {
+    if (req.url === "/repos/demo/beerengineer/releases/latest") {
+      res.writeHead(200, { "content-type": "application/json" })
+      res.end(JSON.stringify({
+        tag_name: "v9.9.9",
+        tarball_url: "https://example.test/demo/beerengineer/tarball/v9.9.9",
+        html_url: "https://example.test/demo/beerengineer/releases/tag/v9.9.9",
+        published_at: "2026-04-27T00:00:00.000Z",
+      }))
+      return
+    }
+    res.writeHead(404)
+    res.end("not found")
+  })
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()))
+  const port = (server.address() as { port: number }).port
+
+  try {
+    const child = spawn(process.execPath, [binPath, "update", "--check", "--json"], {
+      cwd: engineRoot,
+      env: {
+        ...process.env,
+        BEERENGINEER_UI_DB_PATH: dbPath,
+        BEERENGINEER_DATA_DIR: dataDir,
+        BEERENGINEER_UPDATE_GITHUB_REPO: "demo/beerengineer",
+        BEERENGINEER_UPDATE_GITHUB_API_BASE_URL: `http://127.0.0.1:${port}`,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    })
+    const stdoutChunks: Buffer[] = []
+    const stderrChunks: Buffer[] = []
+    child.stdout?.on("data", chunk => stdoutChunks.push(Buffer.from(chunk)))
+    child.stderr?.on("data", chunk => stderrChunks.push(Buffer.from(chunk)))
+    const exitCode = await new Promise<number | null>(resolve => child.once("exit", code => resolve(code)))
+    const stdout = Buffer.concat(stdoutChunks).toString("utf8")
+    const stderr = Buffer.concat(stderrChunks).toString("utf8")
+    assert.equal(exitCode, 0, stderr)
+    const parsed = JSON.parse(stdout) as {
+      status: { install: { root: string } }
+      check: { updateAvailable: boolean; latestRelease: { tag: string } }
+    }
+    assert.equal(parsed.check.latestRelease.tag, "v9.9.9")
+    assert.equal(parsed.check.updateAvailable, true)
+    assert.equal(parsed.status.install.root, join(dataDir, "install"))
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()))
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("update --dry-run reclaims a stale lock and reports stage results", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-update-dry-run-"))
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
+  const dbPath = join(dir, "update.sqlite")
+  const dataDir = join(dir, "data")
+  const releaseRoot = join(dir, "beerengineer-release")
+  const tarballPath = join(dir, "release.tar.gz")
+  mkdirSync(dataDir, { recursive: true })
+  mkdirSync(join(releaseRoot, "apps", "engine", "bin"), { recursive: true })
+  mkdirSync(join(releaseRoot, "apps", "ui"), { recursive: true })
+  writeFileSync(join(releaseRoot, "package.json"), JSON.stringify({
+    name: "beerengineer-release",
+    version: "9.9.9",
+    private: true,
+    workspaces: ["apps/*"],
+  }, null, 2))
+  writeFileSync(join(releaseRoot, "apps", "engine", "package.json"), JSON.stringify({
+    name: "@beerengineer2/engine",
+    version: "9.9.9",
+    private: true,
+    type: "module",
+    bin: {
+      beerengineer: "./bin/beerengineer.js",
+    },
+  }, null, 2))
+  writeFileSync(join(releaseRoot, "apps", "engine", "bin", "beerengineer.js"), "#!/usr/bin/env node\nconsole.log('ok')\n", "utf8")
+  writeFileSync(join(releaseRoot, "apps", "ui", "package.json"), JSON.stringify({
+    name: "@beerengineer2/ui",
+    version: "9.9.9",
+    private: true,
+  }, null, 2))
+  const tarResult = spawnSync("tar", ["-czf", tarballPath, "-C", dir, "beerengineer-release"], { encoding: "utf8" })
+  assert.equal(tarResult.status, 0, tarResult.stderr)
+  writeFileSync(join(dataDir, "update.lock"), JSON.stringify({
+    operationId: "stale-op",
+    pid: 999999,
+    startedAt: Date.now() - 3 * 60 * 60 * 1000,
+    host: "test-host",
+  }, null, 2))
+  const server = createServer((req, res) => {
+    if (req.url === "/repos/demo/beerengineer/releases/tags/v9.9.9") {
+      res.writeHead(200, { "content-type": "application/json" })
+      res.end(JSON.stringify({
+        tag_name: "v9.9.9",
+        tarball_url: `http://127.0.0.1:${port}/demo/beerengineer/tarball/v9.9.9`,
+        html_url: "https://example.test/demo/beerengineer/releases/tag/v9.9.9",
+        published_at: "2026-04-27T00:00:00.000Z",
+      }))
+      return
+    }
+    if (req.url === "/demo/beerengineer/tarball/v9.9.9") {
+      const body = readFileSync(tarballPath)
+      res.writeHead(200, { "content-type": "application/gzip" })
+      res.end(body)
+      return
+    }
+    res.writeHead(404)
+    res.end("not found")
+  })
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()))
+  const port = (server.address() as { port: number }).port
+
+  try {
+    const child = spawn(process.execPath, [binPath, "update", "--dry-run", "--json", "--version", "v9.9.9"], {
+      cwd: engineRoot,
+      env: {
+        ...process.env,
+        BEERENGINEER_UI_DB_PATH: dbPath,
+        BEERENGINEER_DATA_DIR: dataDir,
+        BEERENGINEER_UPDATE_GITHUB_REPO: "demo/beerengineer",
+        BEERENGINEER_UPDATE_GITHUB_API_BASE_URL: `http://127.0.0.1:${port}`,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    })
+    const stdoutChunks: Buffer[] = []
+    const stderrChunks: Buffer[] = []
+    child.stdout?.on("data", chunk => stdoutChunks.push(Buffer.from(chunk)))
+    child.stderr?.on("data", chunk => stderrChunks.push(Buffer.from(chunk)))
+    const exitCode = await new Promise<number | null>(resolve => child.once("exit", code => resolve(code)))
+    const stdout = Buffer.concat(stdoutChunks).toString("utf8")
+    const stderr = Buffer.concat(stderrChunks).toString("utf8")
+    assert.equal(exitCode, 0, stderr)
+    const parsed = JSON.parse(stdout) as {
+      dryRun: {
+        status: string
+        reclaimedLock: boolean
+        targetRelease: { tag: string }
+        stages: Array<{ name: string; status: string }>
+        warnings: string[]
+      }
+    }
+    assert.equal(parsed.dryRun.status, "aborted-dry-run")
+    assert.equal(parsed.dryRun.reclaimedLock, true)
+    assert.equal(parsed.dryRun.targetRelease.tag, "v9.9.9")
+    assert.ok(parsed.dryRun.stages.length >= 8)
+    assert.deepEqual(parsed.dryRun.stages.map(stage => stage.status), parsed.dryRun.stages.map(() => "pass"))
+    assert.ok(parsed.dryRun.stages.some(stage => stage.name === "download"))
+    assert.ok(parsed.dryRun.stages.some(stage => stage.name === "install"))
+    assert.ok(parsed.dryRun.warnings.includes("stale-update-lock-reclaimed"))
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()))
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("update --dry-run fails closed when BEERENGINEER_UPDATE_EXPECTED_TARBALL_SHA256 does not match", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-update-sha-"))
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
+  const dbPath = join(dir, "update.sqlite")
+  const dataDir = join(dir, "data")
+  const releaseRoot = join(dir, "beerengineer-release")
+  const tarballPath = join(dir, "release.tar.gz")
+  mkdirSync(dataDir, { recursive: true })
+  mkdirSync(join(releaseRoot, "apps", "engine", "bin"), { recursive: true })
+  mkdirSync(join(releaseRoot, "apps", "ui"), { recursive: true })
+  writeFileSync(join(releaseRoot, "package.json"), JSON.stringify({
+    name: "beerengineer-release",
+    version: "9.9.9",
+    private: true,
+    workspaces: ["apps/*"],
+  }, null, 2))
+  writeFileSync(join(releaseRoot, "apps", "engine", "package.json"), JSON.stringify({
+    name: "@beerengineer2/engine",
+    version: "9.9.9",
+    private: true,
+    type: "module",
+    bin: {
+      beerengineer: "./bin/beerengineer.js",
+    },
+  }, null, 2))
+  writeFileSync(join(releaseRoot, "apps", "engine", "bin", "beerengineer.js"), "#!/usr/bin/env node\nconsole.log('ok')\n", "utf8")
+  writeFileSync(join(releaseRoot, "apps", "ui", "package.json"), JSON.stringify({
+    name: "@beerengineer2/ui",
+    version: "9.9.9",
+    private: true,
+  }, null, 2))
+  const tarResult = spawnSync("tar", ["-czf", tarballPath, "-C", dir, "beerengineer-release"], { encoding: "utf8" })
+  assert.equal(tarResult.status, 0, tarResult.stderr)
+
+  const server = createServer((req, res) => {
+    if (req.url === "/repos/demo/beerengineer/releases/tags/v9.9.9") {
+      res.writeHead(200, { "content-type": "application/json" })
+      res.end(JSON.stringify({
+        tag_name: "v9.9.9",
+        tarball_url: `http://127.0.0.1:${port}/demo/beerengineer/tarball/v9.9.9`,
+        html_url: "https://example.test/demo/beerengineer/releases/tag/v9.9.9",
+        published_at: "2026-04-27T00:00:00.000Z",
+      }))
+      return
+    }
+    if (req.url === "/demo/beerengineer/tarball/v9.9.9") {
+      res.writeHead(200, { "content-type": "application/gzip" })
+      res.end(readFileSync(tarballPath))
+      return
+    }
+    res.writeHead(404)
+    res.end("not found")
+  })
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()))
+  const port = (server.address() as { port: number }).port
+
+  try {
+    const child = spawn(process.execPath, [binPath, "update", "--dry-run", "--json", "--version", "v9.9.9"], {
+      cwd: engineRoot,
+      env: {
+        ...process.env,
+        BEERENGINEER_UI_DB_PATH: dbPath,
+        BEERENGINEER_DATA_DIR: dataDir,
+        BEERENGINEER_UPDATE_GITHUB_REPO: "demo/beerengineer",
+        BEERENGINEER_UPDATE_GITHUB_API_BASE_URL: `http://127.0.0.1:${port}`,
+        BEERENGINEER_UPDATE_EXPECTED_TARBALL_SHA256: "deadbeef",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    })
+    const stdoutChunks: Buffer[] = []
+    child.stdout?.on("data", chunk => stdoutChunks.push(Buffer.from(chunk)))
+    const exitCode = await new Promise<number | null>(resolve => child.once("exit", code => resolve(code)))
+    assert.equal(exitCode, 1)
+    const parsed = JSON.parse(Buffer.concat(stdoutChunks).toString("utf8")) as {
+      dryRun?: { status: string; stages: Array<{ name: string; status: string; detail: string }> }
+      error?: string
+    }
+    if (parsed.error) {
+      assert.match(parsed.error, /update_validate_failed:tarball_sha256_mismatch:/)
+    } else {
+      assert.equal(parsed.dryRun?.status, "failed")
+      assert.ok(parsed.dryRun?.stages.some(stage =>
+        stage.status === "fail" &&
+        stage.detail.includes("update_validate_failed:tarball_sha256_mismatch:")
+      ))
+    }
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()))
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("update --dry-run fails closed when the tarball redirect leaves the trusted host set", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-update-redirect-"))
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
+  const dbPath = join(dir, "update.sqlite")
+  const dataDir = join(dir, "data")
+  mkdirSync(dataDir, { recursive: true })
+
+  const server = createServer((req, res) => {
+    if (req.url === "/repos/demo/beerengineer/releases/tags/v9.9.9") {
+      res.writeHead(200, { "content-type": "application/json" })
+      res.end(JSON.stringify({
+        tag_name: "v9.9.9",
+        tarball_url: `http://127.0.0.1:${port}/demo/beerengineer/tarball/v9.9.9`,
+        html_url: "https://example.test/demo/beerengineer/releases/tag/v9.9.9",
+        published_at: "2026-04-27T00:00:00.000Z",
+      }))
+      return
+    }
+    if (req.url === "/demo/beerengineer/tarball/v9.9.9") {
+      res.writeHead(302, { location: "http://malicious.example.invalid/payload.tar.gz" })
+      res.end()
+      return
+    }
+    res.writeHead(404)
+    res.end("not found")
+  })
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()))
+  const port = (server.address() as { port: number }).port
+
+  try {
+    const child = spawn(process.execPath, [binPath, "update", "--dry-run", "--json", "--version", "v9.9.9"], {
+      cwd: engineRoot,
+      env: {
+        ...process.env,
+        BEERENGINEER_UI_DB_PATH: dbPath,
+        BEERENGINEER_DATA_DIR: dataDir,
+        BEERENGINEER_UPDATE_GITHUB_REPO: "demo/beerengineer",
+        BEERENGINEER_UPDATE_GITHUB_API_BASE_URL: `http://127.0.0.1:${port}`,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    })
+    const stdoutChunks: Buffer[] = []
+    child.stdout?.on("data", chunk => stdoutChunks.push(Buffer.from(chunk)))
+    const exitCode = await new Promise<number | null>(resolve => child.once("exit", code => resolve(code)))
+    assert.equal(exitCode, 1)
+    const parsed = JSON.parse(Buffer.concat(stdoutChunks).toString("utf8")) as {
+      dryRun?: { status: string; stages: Array<{ status: string; detail: string }> }
+      error?: string
+    }
+    if (parsed.error) {
+      assert.match(parsed.error, /update_download_failed:untrusted_redirect_host:malicious\.example\.invalid/)
+    } else {
+      assert.equal(parsed.dryRun?.status, "failed")
+      assert.ok(parsed.dryRun?.stages.some(stage =>
+        stage.status === "fail" &&
+        stage.detail.includes("update_download_failed:untrusted_redirect_host:malicious.example.invalid")
+      ))
+    }
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()))
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("update --rollback returns the reserved unsupported response in json mode", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-update-rollback-"))
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
+  const dbPath = join(dir, "update.sqlite")
+  const dataDir = join(dir, "data")
+  mkdirSync(dataDir, { recursive: true })
+
+  try {
+    const child = spawn(process.execPath, [binPath, "update", "--rollback", "--json"], {
+      cwd: engineRoot,
+      env: {
+        ...process.env,
+        BEERENGINEER_UI_DB_PATH: dbPath,
+        BEERENGINEER_DATA_DIR: dataDir,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    })
+    const stdoutChunks: Buffer[] = []
+    const stderrChunks: Buffer[] = []
+    child.stdout?.on("data", chunk => stdoutChunks.push(Buffer.from(chunk)))
+    child.stderr?.on("data", chunk => stderrChunks.push(Buffer.from(chunk)))
+    const exitCode = await new Promise<number | null>(resolve => child.once("exit", code => resolve(code)))
+    const stdout = Buffer.concat(stdoutChunks).toString("utf8")
+    const stderr = Buffer.concat(stderrChunks).toString("utf8")
+    assert.equal(exitCode, 1, stderr)
+    const parsed = JSON.parse(stdout) as { error: string; code: string }
+    assert.equal(parsed.error, "post-migration-rollback-unsupported")
+    assert.equal(parsed.code, "post-migration-rollback-unsupported")
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("update prepares a staged apply attempt and returns machine-readable metadata", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-update-apply-"))
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
+  const dbPath = join(dir, "update.sqlite")
+  const dataDir = join(dir, "data")
+  const releaseRoot = join(dir, "beerengineer-release")
+  const tarballPath = join(dir, "release.tar.gz")
+  mkdirSync(dataDir, { recursive: true })
+  mkdirSync(join(releaseRoot, "apps", "engine", "bin"), { recursive: true })
+  mkdirSync(join(releaseRoot, "apps", "ui"), { recursive: true })
+  writeFileSync(join(releaseRoot, "package.json"), JSON.stringify({
+    name: "beerengineer-release",
+    version: "9.9.9",
+    private: true,
+    workspaces: ["apps/*"],
+  }, null, 2))
+  writeFileSync(join(releaseRoot, "apps", "engine", "package.json"), JSON.stringify({
+    name: "@beerengineer2/engine",
+    version: "9.9.9",
+    private: true,
+    type: "module",
+    bin: {
+      beerengineer: "./bin/beerengineer.js",
+    },
+  }, null, 2))
+  writeFileSync(join(releaseRoot, "apps", "engine", "bin", "beerengineer.js"), "#!/usr/bin/env node\nconsole.log('ok')\n", "utf8")
+  writeFileSync(join(releaseRoot, "apps", "ui", "package.json"), JSON.stringify({
+    name: "@beerengineer2/ui",
+    version: "9.9.9",
+    private: true,
+  }, null, 2))
+  const tarResult = spawnSync("tar", ["-czf", tarballPath, "-C", dir, "beerengineer-release"], { encoding: "utf8" })
+  assert.equal(tarResult.status, 0, tarResult.stderr)
+
+  const server = createServer((req, res) => {
+    if (req.url === "/repos/demo/beerengineer/releases/tags/v9.9.9") {
+      res.writeHead(200, { "content-type": "application/json" })
+      res.end(JSON.stringify({
+        tag_name: "v9.9.9",
+        tarball_url: `http://127.0.0.1:${port}/demo/beerengineer/tarball/v9.9.9`,
+        html_url: "https://example.test/demo/beerengineer/releases/tag/v9.9.9",
+        published_at: "2026-04-27T00:00:00.000Z",
+      }))
+      return
+    }
+    if (req.url === "/demo/beerengineer/tarball/v9.9.9") {
+      const body = readFileSync(tarballPath)
+      res.writeHead(200, { "content-type": "application/gzip" })
+      res.end(body)
+      return
+    }
+    res.writeHead(404)
+    res.end("not found")
+  })
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()))
+  const port = (server.address() as { port: number }).port
+
+  try {
+    const child = spawn(process.execPath, [binPath, "update", "--json", "--version", "v9.9.9"], {
+      cwd: engineRoot,
+      env: {
+        ...process.env,
+        BEERENGINEER_UI_DB_PATH: dbPath,
+        BEERENGINEER_DATA_DIR: dataDir,
+        BEERENGINEER_UPDATE_GITHUB_REPO: "demo/beerengineer",
+        BEERENGINEER_UPDATE_GITHUB_API_BASE_URL: `http://127.0.0.1:${port}`,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    })
+    const stdoutChunks: Buffer[] = []
+    const stderrChunks: Buffer[] = []
+    child.stdout?.on("data", chunk => stdoutChunks.push(Buffer.from(chunk)))
+    child.stderr?.on("data", chunk => stderrChunks.push(Buffer.from(chunk)))
+    const exitCode = await new Promise<number | null>(resolve => child.once("exit", code => resolve(code)))
+    const stdout = Buffer.concat(stdoutChunks).toString("utf8")
+    const stderr = Buffer.concat(stderrChunks).toString("utf8")
+    assert.equal(exitCode, 0, stderr)
+    const parsed = JSON.parse(stdout) as {
+      apply: { state: string; targetRelease: { tag: string }; stagedRoot: string; switcherPath: string }
+    }
+    assert.equal(parsed.apply.state, "queued")
+    assert.equal(parsed.apply.targetRelease.tag, "v9.9.9")
+    assert.equal(existsSync(parsed.apply.stagedRoot), true)
+    assert.equal(existsSync(parsed.apply.switcherPath), true)
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()))
     rmSync(dir, { recursive: true, force: true })
   }
 })

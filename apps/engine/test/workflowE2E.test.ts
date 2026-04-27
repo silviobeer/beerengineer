@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { readFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -149,9 +149,9 @@ test("runWorkflow runs end-to-end with all review/side loops, producing artifact
     }
 
     // brainstorm produced concept + projects
-    const ctx = { workspaceId: "test-workflow-i-1", runId: "" }
-    const wsDir = layout.workspaceDir(ctx.workspaceId)
-    const wsJson = JSON.parse(await readFile(layout.workspaceFile(ctx.workspaceId), "utf8"))
+    const ctx = { workspaceId: "test-workflow-i-1", workspaceRoot: process.cwd(), runId: "" }
+    const wsDir = layout.workspaceDir(ctx)
+    const wsJson = JSON.parse(await readFile(layout.workspaceFile(ctx), "utf8"))
     ctx.runId = wsJson.currentRunId
     assert.ok(ctx.runId, "workspace.json must record currentRunId")
 
@@ -205,8 +205,57 @@ test("runWorkflow runs end-to-end with all review/side loops, producing artifact
     )
 
     // workspace.json currentStage is the last stage we ran (handoff)
-    const finalWs = JSON.parse(await readFile(layout.workspaceFile(ctx.workspaceId), "utf8"))
+    const finalWs = JSON.parse(await readFile(layout.workspaceFile(ctx), "utf8"))
     assert.equal(finalWs.status, "approved", "last stage status propagated to workspace")
+  })
+})
+
+test("runWorkflow writes documentation docs under workspaceRoot even when cwd differs", async () => {
+  await withTmpCwd(async () => {
+    const operatorCwd = process.cwd()
+    const workspaceRoot = join(operatorCwd, "workspace")
+    mkdirSync(workspaceRoot, { recursive: true })
+    seedCleanGitRepo(workspaceRoot)
+
+    const { io } = makeIO({
+      brainstorm: ["Todo app", "Solo users", "Web only", "approve"],
+      requirements: ["approve", "approve", "approve"],
+      qa: "approve",
+      handoff: "done",
+    })
+
+    await runWithWorkflowIO(io, async () => {
+      await runWithActiveRun(
+        {
+          workspaceId: "docs-rooting-i-1",
+          runId: "run-docs-rooting",
+          itemSlug: "docs-rooting",
+          workspaceRoot,
+          owner: "cli",
+          authoritative: false,
+        },
+        async () => {
+          await runWorkflow(
+            {
+              id: "i-1",
+              title: "Docs Rooting",
+              workspaceId: "docs-rooting-i-1",
+              description: "verify docs are rooted to the workspace",
+            },
+            { workspaceRoot },
+          )
+        },
+      )
+    })
+
+    assert.equal(existsSync(join(workspaceRoot, "docs", "technical-doc.md")), true)
+    assert.equal(existsSync(join(workspaceRoot, "docs", "features-doc.md")), true)
+    assert.equal(existsSync(join(workspaceRoot, "docs", "README.compact.md")), true)
+    assert.equal(existsSync(join(workspaceRoot, "docs", "known-issues.md")), true)
+    assert.equal(existsSync(join(operatorCwd, "docs", "technical-doc.md")), false)
+    assert.equal(existsSync(join(operatorCwd, "docs", "features-doc.md")), false)
+    assert.equal(existsSync(join(operatorCwd, "docs", "README.compact.md")), false)
+    assert.equal(existsSync(join(operatorCwd, "docs", "known-issues.md")), false)
   })
 })
 
@@ -345,7 +394,7 @@ test("runWorkflow blocks resume when design-prep freeze and brainstorm project i
     const repoRoot = join(process.cwd(), "repo")
     mkdirSync(repoRoot, { recursive: true })
     seedCleanGitRepo(repoRoot)
-    const ctx = { workspaceId: "freeze-item-i-1", runId: "run-freeze" }
+    const ctx = { workspaceId: "freeze-item-i-1", workspaceRoot: repoRoot, runId: "run-freeze" }
     const brainstormDir = layout.stageArtifactsDir(ctx, "brainstorm")
     const visualDir = layout.stageArtifactsDir(ctx, "visual-companion")
     mkdirSync(brainstormDir, { recursive: true })

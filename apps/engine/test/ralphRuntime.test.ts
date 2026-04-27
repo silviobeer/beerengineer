@@ -10,7 +10,9 @@ import { layout } from "../src/core/workspaceLayout.js"
 import { resetTestReviewAdapters, setTestReviewAdapters } from "../src/review/registry.js"
 import type { StoryExecutionContext, StoryTestPlanArtifact } from "../src/types.js"
 
-const ctx = { workspaceId: "ws-ralph", runId: "run-ralph", itemSlug: "ralph-item", baseBranch: "main" }
+function makeCtx(root: string) {
+  return { workspaceId: "ws-ralph", workspaceRoot: root, runId: "run-ralph", itemSlug: "ralph-item", baseBranch: "main" as const }
+}
 
 function testPlan(storyId: string): StoryTestPlanArtifact {
   return {
@@ -71,6 +73,7 @@ async function withTmpCwd<T>(fn: () => Promise<T>): Promise<T> {
 
 test("runRalphStory goes through 3 review cycles, ending in passed + merged branch", async () => {
   await withTmpCwd(async () => {
+    const ctx = makeCtx(process.cwd())
     const result: StoryArtifacts = await runRalphStory(storyContext("US-10"), ctx)
 
     assert.equal(result.implementation.status, "passed")
@@ -122,6 +125,7 @@ test("runRalphStory goes through 3 review cycles, ending in passed + merged bran
 
 test("runRalphStory resumes from persisted state (no duplicate work)", async () => {
   await withTmpCwd(async () => {
+    const ctx = makeCtx(process.cwd())
     await runRalphStory(storyContext("US-20"), ctx)
     const dir = layout.executionRalphDir(ctx, 1, "US-20")
     const firstImpl = JSON.parse(await readFile(join(dir, "implementation.json"), "utf8"))
@@ -137,6 +141,7 @@ test("runRalphStory resumes from persisted state (no duplicate work)", async () 
 
 test("runRalphStory records pass-partial when one tool passes and the other is skipped", async () => {
   await withTmpCwd(async () => {
+    const ctx = makeCtx(process.cwd())
     setTestReviewAdapters({
       coderabbit: async () => ({
         status: "skipped",
@@ -179,6 +184,7 @@ test("runRalphStory records pass-partial when one tool passes and the other is s
 
 test("writeWaveSummary classifies stories by status", async () => {
   await withTmpCwd(async () => {
+    const ctx = makeCtx(process.cwd())
     const summary = await writeWaveSummary(ctx, { id: "W-X", number: 7 }, "P01", [
       {
         storyId: "S1",

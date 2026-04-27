@@ -1,4 +1,4 @@
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 
 export type WorkflowContext = {
   workspaceId: string
@@ -14,6 +14,8 @@ export type WorkflowContext = {
   workspaceRoot?: string
 }
 
+type WorkspaceScopedContext = Pick<WorkflowContext, "workspaceId" | "workspaceRoot">
+
 function sanitizeSegment(segment: string): string {
   return segment.replace(/[^a-z0-9/-]/gi, "-").toLowerCase()
 }
@@ -27,20 +29,32 @@ function requireItemSlug(ctx: WorkflowContext): string {
   return sanitizeSegment(ctx.itemSlug)
 }
 
-function root(): string {
-  return join(process.cwd(), ".beerengineer", "workspaces")
+function requireWorkspaceRoot(workspaceRoot: string | undefined): string {
+  const normalized = workspaceRoot?.trim()
+  if (!normalized) {
+    throw new Error("workspace layout requires WorkflowContext.workspaceRoot for persisted artefacts")
+  }
+  return resolve(normalized)
 }
 
-function worktreesRoot(): string {
-  return join(process.cwd(), ".beerengineer", "worktrees")
+function artefactsRoot(workspaceRoot: string): string {
+  return join(requireWorkspaceRoot(workspaceRoot), ".beerengineer")
 }
 
-function workspaceDir(workspaceId: string): string {
-  return join(root(), workspaceId)
+function root(workspaceRoot: string): string {
+  return join(artefactsRoot(workspaceRoot), "workspaces")
+}
+
+function worktreesRoot(workspaceRoot: string): string {
+  return join(artefactsRoot(workspaceRoot), "worktrees")
+}
+
+function workspaceDir(ctx: WorkspaceScopedContext): string {
+  return join(root(requireWorkspaceRoot(ctx.workspaceRoot)), ctx.workspaceId)
 }
 
 function runDir(ctx: WorkflowContext): string {
-  return join(workspaceDir(ctx.workspaceId), "runs", ctx.runId)
+  return join(workspaceDir(ctx), "runs", ctx.runId)
 }
 
 function stageDir(ctx: WorkflowContext, stageId: string): string {
@@ -48,10 +62,15 @@ function stageDir(ctx: WorkflowContext, stageId: string): string {
 }
 
 export const layout = {
+  artefactsRoot,
+  workspaceRoot: requireWorkspaceRoot,
   workspaceDir,
   worktreesRoot,
-  workspaceFile(workspaceId: string): string {
-    return join(workspaceDir(workspaceId), "workspace.json")
+  workspaceConfigFile(workspaceRoot: string): string {
+    return join(artefactsRoot(workspaceRoot), "workspace.json")
+  },
+  workspaceFile(ctx: WorkspaceScopedContext): string {
+    return join(workspaceDir(ctx), "workspace.json")
   },
   runDir,
   runFile(ctx: WorkflowContext): string {
@@ -67,8 +86,8 @@ export const layout = {
   stageArtifactsDir(ctx: WorkflowContext, stageId: string): string {
     return join(stageDir(ctx, stageId), "artifacts")
   },
-  repoStateWorkspaceFile(workspaceId: string): string {
-    return join(workspaceDir(workspaceId), "repo-state.json")
+  repoStateWorkspaceFile(ctx: WorkspaceScopedContext): string {
+    return join(workspaceDir(ctx), "repo-state.json")
   },
   repoStateRunFile(ctx: WorkflowContext): string {
     return join(runDir(ctx), "repo-state.json")
@@ -80,7 +99,7 @@ export const layout = {
     return join(layout.handoffDir(ctx), `${projectId.toLowerCase()}-merge-handoff.json`)
   },
   itemWorktreeRootDir(ctx: WorkflowContext): string {
-    return join(worktreesRoot(), ctx.workspaceId, "items", requireItemSlug(ctx))
+    return join(worktreesRoot(requireWorkspaceRoot(ctx.workspaceRoot)), ctx.workspaceId, "items", requireItemSlug(ctx))
   },
   itemWorktreeDir(ctx: WorkflowContext): string {
     return join(layout.itemWorktreeRootDir(ctx), "worktree")

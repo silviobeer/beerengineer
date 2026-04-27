@@ -85,7 +85,7 @@ silently falls back to CLI.
 |---|---|
 | CodeRabbit CLI | per-story code review |
 | `sonar-scanner` + `sonarqube-cli` | SonarCloud quality gate |
-| GitHub CLI (`gh`) | PR creation, repo operations |
+| GitHub CLI (`gh`) | recommended for PR creation, repo operations, and GitHub-authenticated tooling |
 | Telegram bot | push notifications |
 
 ## Quick start
@@ -95,7 +95,7 @@ git clone https://github.com/silviobeer/beerengineer.git
 cd beerengineer
 npm install
 
-# One-time config (config + SQLite DB in ~/.config, ~/.local/share)
+# One-time app setup (config + SQLite DB under env-paths app dirs)
 npm exec --workspace=@beerengineer2/engine beerengineer -- setup
 
 # Register the project you want the engine to work on
@@ -107,6 +107,13 @@ npm exec --workspace=@beerengineer2/engine beerengineer -- \
 # Run the default workflow — you'll get prompted for an idea
 npm exec --workspace=@beerengineer2/engine beerengineer
 ```
+
+Notes:
+
+- Keep both `node` and `npm` on `PATH`; the engine and installer flows assume both exist.
+- Workspace artefacts now live under the registered repo root:
+  `/path/to/your/project/.beerengineer/`.
+- Make sure `.beerengineer/` is ignored by git in every registered workspace.
 
 Alternatively, start the HTTP API and drive from another tool:
 
@@ -129,6 +136,11 @@ beerengineer runs watch <runId>    # live event stream
 beerengineer item action --item <id> --action <name>
 beerengineer doctor                # health check
 beerengineer setup                 # re-run setup
+beerengineer start                 # start the engine HTTP API
+beerengineer update                # stage an update; managed installs continue through swap/restart
+beerengineer update --check        # GitHub release check
+beerengineer update --dry-run      # lock-aware update preflight
+beerengineer update --rollback     # reserved; returns rollback unsupported
 ```
 
 Full CLI help: `beerengineer --help`.
@@ -161,9 +173,10 @@ Full CLI help: `beerengineer --help`.
 ## Configuration
 
 - Config file: `$XDG_CONFIG_HOME/beerengineer-nodejs/config.json`
-- Data dir: `$XDG_DATA_HOME/beerengineer-nodejs/` (SQLite + WAL)
+- Data dir: `$XDG_DATA_HOME/beerengineer-nodejs/` (SQLite + WAL, plus app-level state)
 - API token file: `$XDG_STATE_HOME/beerengineer/api.token`
-- Per-workspace: `.beerengineer/workspace.json` in the target repo
+- Per-workspace config: `<workspace>/.beerengineer/workspace.json`
+- Per-workspace run/worktree artefacts: `<workspace>/.beerengineer/`
 
 Common env vars:
 

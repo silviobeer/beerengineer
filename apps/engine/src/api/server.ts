@@ -1,8 +1,10 @@
 import { createServer } from "node:http"
 import { URL, fileURLToPath } from "node:url"
 import { randomBytes } from "node:crypto"
-import { readFileSync } from "node:fs"
-import { dirname, resolve as resolvePath } from "node:path"
+import { existsSync, readFileSync } from "node:fs"
+import { dirname, join, resolve as resolvePath } from "node:path"
+import type { Socket } from "node:net"
+import { spawn } from "node:child_process"
 import { initDatabase } from "../db/connection.js"
 import { Repos } from "../db/repositories.js"
 import { createItemActionsService, type ItemActionEvent } from "../core/itemActions.js"
@@ -41,13 +43,23 @@ import {
   handleWorkspaceRemove,
 } from "./routes/workspaces.js"
 import { handleSetupStatus } from "./routes/setup.js"
+import {
+  handleUpdateApply,
+  handleUpdateCheck,
+  handleUpdateHistory,
+  handleUpdatePreflight,
+  handleUpdateShutdown,
+  handleUpdateStatus,
+} from "./routes/update.js"
 import { handleNotificationDeliveries, handleNotificationTest } from "./routes/notifications.js"
 import { handleTelegramChatToolWebhook } from "../notifications/chattool/webhooks/telegram.js"
 import { handleRunEvents } from "./sse/runStream.js"
 import { createBoardStream } from "./sse/boardStream.js"
 import { seedIfEmpty } from "./seed.js"
 import { writeApiTokenFile } from "./tokenFile.js"
+import { removeEnginePidFile, writeEnginePidFile } from "./pidFile.js"
 import { markOrphanedRunsFailed } from "../core/orphanRecovery.js"
+import { markPreparedUpdateInFlight, releaseUpdateLock, type UpdateApplyResult } from "../core/updateMode.js"
 
 const PORT = Number(process.env.PORT ?? 4100)
 const HOST = process.env.HOST ?? "127.0.0.1"
@@ -72,6 +84,47 @@ const repos = new Repos(db)
 
 const itemActions = createItemActionsService(repos)
 const board = createBoardStream(repos, db)
+const sockets = new Set<Socket>()
+let shutdownInFlight = false
+
+function startPreparedApplyExecution(prepared: UpdateApplyResult): void {
+  try {
+    if (!existsSync(prepared.switcherPath)) {
+      throw new Error("prepared_switcher_missing")
+    }
+    const managedCurrent = join(loadEffectiveConfig().dataDir, "install", "current", "apps", "engine", "bin", "update-backup.js")
+    if (!existsSync(managedCurrent)) {
+      console.error("[update] leaving apply attempt queued; managed install/current is not active yet")
+      return
+    }
+    const marked = markPreparedUpdateInFlight(repos, prepared.operationId)
+    if (!marked) {
+      throw new Error("update_attempt_not_queued")
+    }
+    const child = spawn(prepared.switcherPath, [], {
+      detached: true,
+      stdio: "ignore",
+      env: process.env,
+    })
+    child.unref()
+    void gracefulShutdown(`update:${prepared.operationId}`)
+  } catch (err) {
+    releaseUpdateLock(loadEffectiveConfig(), prepared.operationId)
+    repos.upsertUpdateAttempt({
+      operationId: prepared.operationId,
+      kind: "apply",
+      status: "failed-no-rollback",
+      errorMessage: (err as Error).message,
+      completedAt: Date.now(),
+      metadataJson: JSON.stringify({
+        switcherPath: prepared.switcherPath,
+        metadataPath: prepared.metadataPath,
+        failedDuring: "engine_handoff",
+      }),
+    })
+    console.error(`[update] apply execution handoff failed: ${(err as Error).message}`)
+  }
+}
 
 // `itemActions` emits `item_column_changed` directly — it doesn't touch
 // `stage_logs`. Lifecycle events (run_started, stage_started, …) are handled
@@ -88,7 +141,7 @@ itemActions.on("event", (ev: ItemActionEvent) => {
   }
 })
 
-function loadEffectiveConfig(): AppConfig | null {
+function loadEffectiveConfig(): AppConfig {
   const overrides = resolveOverrides()
   return (resolveMergedConfig(readConfigFile(resolveConfigPath(overrides)), overrides) as AppConfig | null)
     ?? defaultAppConfig()
@@ -114,6 +167,9 @@ const server = createServer(async (req, res) => {
 
   const url = new URL(req.url, `http://${HOST}:${PORT}`)
   const path = url.pathname
+  ;(req as typeof req & { repos?: Repos; appConfig?: AppConfig }).repos = repos
+  ;(req as typeof req & { repos?: Repos; appConfig?: AppConfig }).appConfig = loadEffectiveConfig()
+  ;(req as typeof req & { executePreparedApply?: (prepared: UpdateApplyResult) => void }).executePreparedApply = startPreparedApplyExecution
 
   // Inbound webhooks authenticate via a channel-specific secret header
   // (Telegram sends `x-telegram-bot-api-secret-token`), not the engine's
@@ -138,6 +194,22 @@ const server = createServer(async (req, res) => {
 
     // ---- Setup ---------------------------------------------------------------
     if (path === "/setup/status" && req.method === "GET") return handleSetupStatus(url, res)
+    if (path === "/update/status" && req.method === "GET") return handleUpdateStatus(repos, (req as typeof req & { appConfig: AppConfig }).appConfig, res, { pid: process.pid })
+    if (path === "/update/preflight" && req.method === "GET") return handleUpdatePreflight(repos, (req as typeof req & { appConfig: AppConfig }).appConfig, res, { pid: process.pid })
+    if (path === "/update/check" && req.method === "POST") return handleUpdateCheck(req, res)
+    if (path === "/update/apply" && req.method === "POST") return handleUpdateApply(req, res)
+    if (path === "/update/history" && req.method === "GET") {
+      return handleUpdateHistory(repos, (req as typeof req & { appConfig: AppConfig }).appConfig, res)
+    }
+    if (path === "/update/rollback" && req.method === "POST") {
+      return json(res, 409, {
+        error: "post-migration-rollback-unsupported",
+        code: "post-migration-rollback-unsupported",
+      })
+    }
+    if (path === "/update/shutdown" && req.method === "POST") {
+      return handleUpdateShutdown(req, res, { requestShutdown: operationId => void gracefulShutdown(`update:${operationId}`) })
+    }
 
     // ---- Notifications -------------------------------------------------------
     const notificationTestMatch = path.match(/^\/notifications\/test\/([^/]+)$/)
@@ -221,8 +293,47 @@ const server = createServer(async (req, res) => {
   }
 })
 
+server.on("connection", socket => {
+  sockets.add(socket)
+  socket.on("close", () => sockets.delete(socket))
+})
+
+async function gracefulShutdown(reason: string): Promise<void> {
+  if (shutdownInFlight) return
+  shutdownInFlight = true
+  console.error(`[engine] graceful shutdown requested: ${reason}`)
+  server.close(async closeErr => {
+    if (closeErr) console.error("[engine] server close error:", closeErr.message)
+    try {
+      db.pragma("wal_checkpoint(TRUNCATE)")
+    } catch (err) {
+      console.error("[engine] wal checkpoint during shutdown failed:", (err as Error).message)
+    }
+    try {
+      db.close()
+    } catch (err) {
+      console.error("[engine] db close during shutdown failed:", (err as Error).message)
+    }
+    removeEnginePidFile()
+    process.exit(closeErr ? 1 : 0)
+  })
+  setTimeout(() => {
+    sockets.forEach(socket => socket.destroy())
+  }, 10_000).unref()
+}
+
+process.on("SIGTERM", () => void gracefulShutdown("sigterm"))
+process.on("SIGINT", () => void gracefulShutdown("sigint"))
+
 server.listen(PORT, HOST, () => {
   console.log(`beerengineer2 engine listening on http://${HOST}:${PORT}`)
+  const pidPath = writeEnginePidFile({
+    pid: process.pid,
+    host: HOST,
+    port: PORT,
+    startedAt: new Date().toISOString(),
+  })
+  console.error(`[engine] wrote pid file to ${pidPath}`)
   if (!API_TOKEN_WAS_PROVIDED) {
     const tokenPath = writeApiTokenFile(API_TOKEN)
     console.error(`[engine] BEERENGINEER_API_TOKEN=${API_TOKEN}`)

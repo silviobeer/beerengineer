@@ -120,6 +120,7 @@ export async function planning(ctx: WithArchitecture, llm?: RunLlmConfig): Promi
     stageAgentLabel: "LLM-5 (Planning)",
     reviewerLabel: "Planning-Review-LLM",
     workspaceId: ctx.workspaceId,
+    workspaceRoot: ctx.workspaceRoot!,
     runId: ctx.runId,
     createInitialState: (): PlanningState => ({
       projectId: ctx.project.id,

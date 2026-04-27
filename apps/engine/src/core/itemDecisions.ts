@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 
-import { layout } from "./workspaceLayout.js"
+import { layout, type WorkflowContext } from "./workspaceLayout.js"
 
 export type ItemDecision = {
   id: string
@@ -17,12 +17,12 @@ type DecisionsFile = {
   decisions: ItemDecision[]
 }
 
-function decisionsPath(workspaceId: string): string {
-  return join(layout.workspaceDir(workspaceId), "decisions.json")
+function decisionsPath(ctx: Pick<WorkflowContext, "workspaceId" | "workspaceRoot">): string {
+  return join(layout.workspaceDir(ctx), "decisions.json")
 }
 
-function readFile(workspaceId: string): DecisionsFile | null {
-  const path = decisionsPath(workspaceId)
+function readFile(ctx: Pick<WorkflowContext, "workspaceId" | "workspaceRoot">): DecisionsFile | null {
+  const path = decisionsPath(ctx)
   if (!existsSync(path)) return null
   try {
     const raw = JSON.parse(readFileSync(path, "utf8")) as Partial<DecisionsFile>
@@ -33,22 +33,22 @@ function readFile(workspaceId: string): DecisionsFile | null {
   }
 }
 
-function writeFileSafe(workspaceId: string, content: DecisionsFile): void {
-  const path = decisionsPath(workspaceId)
+function writeFileSafe(ctx: Pick<WorkflowContext, "workspaceId" | "workspaceRoot">, content: DecisionsFile): void {
+  const path = decisionsPath(ctx)
   mkdirSync(dirname(path), { recursive: true })
   writeFileSync(path, JSON.stringify(content, null, 2), "utf8")
 }
 
-export function loadItemDecisions(workspaceId: string | undefined | null): ItemDecision[] {
-  if (!workspaceId) return []
-  return readFile(workspaceId)?.decisions ?? []
+export function loadItemDecisions(ctx: Pick<WorkflowContext, "workspaceId" | "workspaceRoot"> | undefined | null): ItemDecision[] {
+  if (!ctx?.workspaceId || !ctx.workspaceRoot) return []
+  return readFile(ctx)?.decisions ?? []
 }
 
 // Decisions are append-only; the same prompt id is treated as an update
 // (operator changed their mind) so we keep the most recent answer.
-export function appendItemDecision(workspaceId: string, decision: ItemDecision): void {
-  const current = readFile(workspaceId) ?? { schemaVersion: 1 as const, decisions: [] }
+export function appendItemDecision(ctx: Pick<WorkflowContext, "workspaceId" | "workspaceRoot">, decision: ItemDecision): void {
+  const current = readFile(ctx) ?? { schemaVersion: 1 as const, decisions: [] }
   const filtered = current.decisions.filter(d => d.id !== decision.id)
   filtered.push(decision)
-  writeFileSafe(workspaceId, { schemaVersion: 1, decisions: filtered })
+  writeFileSafe(ctx, { schemaVersion: 1, decisions: filtered })
 }

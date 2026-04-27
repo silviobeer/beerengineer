@@ -276,7 +276,8 @@ test("attachDbSync remaps logical project ids when different items reuse the sam
 test("API prompt answers and artifact writes are persisted through the bus subscribers", async () => {
   const db = tmpDb()
   const repos = new Repos(db)
-  const ws = repos.upsertWorkspace({ key: "test", name: "Test" })
+  const workspaceRoot = mkdtempSync(join(tmpdir(), "be2-dbsync-api-"))
+  const ws = repos.upsertWorkspace({ key: "test", name: "Test", rootPath: workspaceRoot })
   const item = repos.createItem({ workspaceId: ws.id, title: "T", description: "D" })
   const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "T" })
   const session = createApiIOSession(repos)
@@ -294,6 +295,7 @@ test("API prompt answers and artifact writes are persisted through the bus subsc
       const stageRuntimeRun = createStageRun({
         stageId: "requirements",
         workspaceId: "ws-1",
+        workspaceRoot,
         runId: run.id,
         createInitialState: () => ({}),
       })
@@ -503,7 +505,7 @@ test("prepareRun keeps an existing item's workspace instead of forcing default",
 })
 
 test("persistWorkflowRunState keeps run.json and workspace.json aligned with run completion", async () => {
-  const ctx = { workspaceId: "ws-runstate", runId: "run-runstate" }
+  const ctx = { workspaceId: "ws-runstate", workspaceRoot: mkdtempSync(join(tmpdir(), "be2-dbsync-")), runId: "run-runstate" }
 
   await persistWorkflowRunState(ctx, "handoff", "completed")
 
@@ -511,7 +513,7 @@ test("persistWorkflowRunState keeps run.json and workspace.json aligned with run
     currentStage: string
     status: string
   }
-  const workspaceFile = JSON.parse(readFileSync(layout.workspaceFile(ctx.workspaceId), "utf8")) as {
+  const workspaceFile = JSON.parse(readFileSync(layout.workspaceFile(ctx), "utf8")) as {
     currentStage: string
     status: string
   }

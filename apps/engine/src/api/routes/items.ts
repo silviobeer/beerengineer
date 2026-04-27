@@ -3,9 +3,10 @@ import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import type { Repos } from "../../db/repositories.js"
 import { isItemAction, lookupTransition, type ItemActionsService } from "../../core/itemActions.js"
-import { latestCompletedRunForItem, workflowWorkspaceId } from "../../core/itemWorkspace.js"
+import { latestCompletedRunForItem } from "../../core/itemWorkspace.js"
 import { startRunForItem } from "../../core/runService.js"
 import { layout } from "../../core/workspaceLayout.js"
+import { resolveWorkflowContextForRun } from "../../core/workflowContextResolver.js"
 import { json, readJson } from "../http.js"
 import type { DesignArtifact, WireframeArtifact } from "../../types.js"
 
@@ -39,7 +40,9 @@ export function handleGetItemWireframes(repos: Repos, res: ServerResponse, itemI
   if (!item) return json(res, 404, { error: "item_not_found", code: "not_found" })
   const run = latestCompletedRunForItem(repos, item.id)
   if (!run) return json(res, 404, { error: "no_completed_run", code: "not_found" })
-  const base = layout.stageArtifactsDir({ workspaceId: workflowWorkspaceId(item), runId: run.id }, "visual-companion")
+  const ctx = resolveWorkflowContextForRun(repos, run)
+  if (!ctx) return json(res, 404, { error: "artefact_root_unreachable", code: "not_found" })
+  const base = layout.stageArtifactsDir(ctx, "visual-companion")
   const dataPath = join(base, "wireframes.json")
   if (!existsSync(dataPath)) return json(res, 404, { error: "no_design_prep", code: "not_found" })
   const artifact = JSON.parse(readFileSync(dataPath, "utf8")) as WireframeArtifact
@@ -63,7 +66,9 @@ export function handleGetItemDesign(repos: Repos, res: ServerResponse, itemId: s
   if (!item) return json(res, 404, { error: "item_not_found", code: "not_found" })
   const run = latestCompletedRunForItem(repos, item.id)
   if (!run) return json(res, 404, { error: "no_completed_run", code: "not_found" })
-  const base = layout.stageArtifactsDir({ workspaceId: workflowWorkspaceId(item), runId: run.id }, "frontend-design")
+  const ctx = resolveWorkflowContextForRun(repos, run)
+  if (!ctx) return json(res, 404, { error: "artefact_root_unreachable", code: "not_found" })
+  const base = layout.stageArtifactsDir(ctx, "frontend-design")
   const dataPath = join(base, "design.json")
   if (!existsSync(dataPath)) return json(res, 404, { error: "no_design_prep", code: "not_found" })
   const artifact = JSON.parse(readFileSync(dataPath, "utf8")) as DesignArtifact

@@ -19,7 +19,8 @@ function makeItem(
   column: "idea" | "brainstorm" | "frontend" | "requirements" | "implementation" | "done",
   phase: "draft" | "running" | "review_required" | "completed" | "failed"
 ) {
-  const ws = repos.upsertWorkspace({ key: "t", name: "T" })
+  const root = mkdtempSync(join(tmpdir(), "be2-itemactions-root-"))
+  const ws = repos.upsertWorkspace({ key: "t", name: "T", rootPath: root })
   const item = repos.createItem({ workspaceId: ws.id, title: "t", description: "d" })
   repos.setItemColumn(item.id, column, phase)
   return repos.getItem(item.id)!
@@ -219,18 +220,23 @@ test("start-run action records column change and returns needs_spawn without cre
 })
 
 test("resume_run requires remediation details when the latest resumable run has recovery state", async () => {
-  const prev = process.cwd()
-  const dir = mkdtempSync(join(tmpdir(), "be2-itemactions-cwd-"))
-  process.chdir(dir)
   const db = tmpDb()
   const repos = new Repos(db)
   const item = makeItem(repos, "implementation", "failed")
   const service = createItemActionsService(repos)
   try {
-    const run = repos.createRun({ workspaceId: item.workspace_id, itemId: item.id, title: item.title, owner: "api" })
+    const workspace = repos.getWorkspace(item.workspace_id)!
+    const workspaceFsId = `t-${item.id.toLowerCase()}`
+    const run = repos.createRun({
+      workspaceId: item.workspace_id,
+      itemId: item.id,
+      title: item.title,
+      owner: "api",
+      workspaceFsId,
+    })
     repos.updateRun(run.id, { status: "failed" })
     repos.setRunRecovery(run.id, { status: "blocked", scope: "story", scopeRef: "1/US-01", summary: "blocked" })
-    const ctx = { workspaceId: `t-${item.id.toLowerCase()}`, runId: run.id }
+    const ctx = { workspaceId: workspaceFsId, workspaceRoot: workspace.root_path!, runId: run.id }
     await import("node:fs/promises").then(fs =>
       fs.mkdir(layout.runDir(ctx), { recursive: true }).then(() =>
         fs.writeFile(layout.runFile(ctx), JSON.stringify({ id: run.id }, null, 2)),
@@ -246,23 +252,27 @@ test("resume_run requires remediation details when the latest resumable run has 
   } finally {
     service.dispose()
     db.close()
-    process.chdir(prev)
   }
 })
 
 test("resume_run records remediation and returns needs_spawn with runId + remediationId", async () => {
-  const prev = process.cwd()
-  const dir = mkdtempSync(join(tmpdir(), "be2-itemactions-resume-"))
-  process.chdir(dir)
   const db = tmpDb()
   const repos = new Repos(db)
   const item = makeItem(repos, "implementation", "failed")
   const service = createItemActionsService(repos)
   try {
-    const run = repos.createRun({ workspaceId: item.workspace_id, itemId: item.id, title: item.title, owner: "api" })
+    const workspace = repos.getWorkspace(item.workspace_id)!
+    const workspaceFsId = `t-${item.id.toLowerCase()}`
+    const run = repos.createRun({
+      workspaceId: item.workspace_id,
+      itemId: item.id,
+      title: item.title,
+      owner: "api",
+      workspaceFsId,
+    })
     repos.updateRun(run.id, { status: "failed" })
     repos.setRunRecovery(run.id, { status: "blocked", scope: "run", scopeRef: null, summary: "blocked" })
-    const ctx = { workspaceId: `t-${item.id.toLowerCase()}`, runId: run.id }
+    const ctx = { workspaceId: workspaceFsId, workspaceRoot: workspace.root_path!, runId: run.id }
     await import("node:fs/promises").then(fs =>
       fs.mkdir(layout.runDir(ctx), { recursive: true }).then(() =>
         fs.writeFile(layout.runFile(ctx), JSON.stringify({ id: run.id }, null, 2)),
@@ -282,6 +292,5 @@ test("resume_run records remediation and returns needs_spawn with runId + remedi
   } finally {
     service.dispose()
     db.close()
-    process.chdir(prev)
   }
 })

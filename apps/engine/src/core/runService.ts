@@ -6,6 +6,7 @@ import { prepareRun, type WorkflowEvent } from "./runOrchestrator.js"
 import { loadResumeReadiness, performResume } from "./resume.js"
 import { getRegisteredWorkspace } from "./workspaces.js"
 import { layout } from "./workspaceLayout.js"
+import { resolveWorkflowContextForItemRun, resolveWorkflowContextForRun } from "./workflowContextResolver.js"
 import type { Repos, ItemRow, RunRow, ExternalRemediationRow } from "../db/repositories.js"
 import type { WorkflowIO } from "./io.js"
 import type { WorkflowResumeInput } from "../workflow.js"
@@ -57,37 +58,42 @@ function fireInBackground(io: WorkflowIO & { bus?: EventBus }, label: string, ta
     })
 }
 
-function workflowFsId(item: Pick<ItemRow, "id" | "title">): string {
-  const slug = item.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
-  return slug ? `${slug}-${item.id.toLowerCase()}` : item.id.toLowerCase()
-}
-
-function hasStageArtifacts(item: Pick<ItemRow, "id" | "title">, runId: string, stageId: string): boolean {
-  return existsSync(layout.stageDir({ workspaceId: workflowFsId(item), runId }, stageId))
+function hasStageArtifacts(
+  repos: Repos,
+  item: Pick<ItemRow, "id" | "workspace_id">,
+  runId: string,
+  stageId: string,
+): boolean {
+  const run = repos.getRun(runId)
+  const ctx = run ? resolveWorkflowContextForItemRun(repos, item, run) : null
+  return ctx ? existsSync(layout.stageDir(ctx, stageId)) : false
 }
 
 function latestRunWithStageArtifacts(
   repos: Repos,
-  item: Pick<ItemRow, "id" | "title">,
+  item: Pick<ItemRow, "id" | "workspace_id">,
   stageId: string,
 ): RunRow | undefined {
   return repos
     .listRuns()
     .filter(run => run.item_id === item.id)
     .sort((a, b) => b.created_at - a.created_at)
-    .find(run => hasStageArtifacts(item, run.id, stageId))
+    .find(run => hasStageArtifacts(repos, item, run.id, stageId))
 }
 
 function seedStageFromPreviousRun(
-  item: Pick<ItemRow, "id" | "title">,
-  sourceRunId: string,
-  targetRunId: string,
+  repos: Repos,
+  item: Pick<ItemRow, "workspace_id">,
+  sourceRun: RunRow,
+  targetRun: RunRow,
   stageId: string,
 ): boolean {
-  const workspaceId = workflowFsId(item)
-  const sourceStageDir = layout.stageDir({ workspaceId, runId: sourceRunId }, stageId)
+  const sourceCtx = resolveWorkflowContextForItemRun(repos, item, sourceRun)
+  const targetCtx = resolveWorkflowContextForItemRun(repos, item, targetRun)
+  if (!sourceCtx || !targetCtx) return false
+  const sourceStageDir = layout.stageDir(sourceCtx, stageId)
   if (!existsSync(sourceStageDir)) return false
-  cpSync(sourceStageDir, layout.stageDir({ workspaceId, runId: targetRunId }, stageId), {
+  cpSync(sourceStageDir, layout.stageDir(targetCtx, stageId), {
     recursive: true,
   })
   return true
@@ -201,7 +207,10 @@ export function startRunForItem(
     // artifacts to seed.
     const brainstormRequired = seedStages.includes("brainstorm")
     for (const stageId of seedStages) {
-      const seeded = seedStageFromPreviousRun(item, sourceRun.id, prepared.runId, stageId)
+      const targetRun = repos.getRun(prepared.runId)
+      const seeded = targetRun
+        ? seedStageFromPreviousRun(repos, item, sourceRun, targetRun, stageId)
+        : false
       if (!seeded && stageId === "brainstorm" && brainstormRequired) {
         return { ok: false, status: 409, error: "seed_failed" }
       }
@@ -260,8 +269,9 @@ export async function resumeRunInProcess(
   // it at the workspace level so future runs of the same item respect it,
   // exactly like clarification answers do via recordAnswer.
   const run = repos.getRun(input.runId)
-  if (run?.workspace_fs_id) {
-    appendItemDecision(run.workspace_fs_id, {
+  const ctx = run ? resolveWorkflowContextForRun(repos, run) : null
+  if (ctx) {
+    appendItemDecision(ctx, {
       id: `remediation-${remediation.id}`,
       stage: scope.type === "stage" ? scope.stageId : scope.type === "story" ? `execution/${scope.waveNumber}/${scope.storyId}` : null,
       question: `[resume_run] Operator unblocked the run with explicit scope guidance.`,

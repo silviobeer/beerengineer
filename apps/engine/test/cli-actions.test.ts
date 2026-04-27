@@ -94,7 +94,13 @@ test("beerengineer item action start_implementation resumes from brainstorm arti
       description: "resume from brainstorm",
     })
     repos.setItemColumn(item.id, "requirements", "draft")
-    const seedRun = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "cli" })
+    const seedRun = repos.createRun({
+      workspaceId: ws.id,
+      itemId: item.id,
+      title: item.title,
+      owner: "cli",
+      workspaceFsId: `cli-implementation-${item.id.toLowerCase()}`,
+    })
     db.close()
 
     const workspaceId = `cli-implementation-${item.id.toLowerCase()}`
@@ -102,8 +108,8 @@ test("beerengineer item action start_implementation resumes from brainstorm arti
     const previousCwd = process.cwd()
     try {
       process.chdir(engineRoot)
-      const brainstormDir = layout.stageArtifactsDir({ workspaceId, runId: seedRun.id }, "brainstorm")
-      rmSync(layout.workspaceDir(workspaceId), { recursive: true, force: true })
+      const brainstormDir = layout.stageArtifactsDir({ workspaceId, workspaceRoot: repoRoot, runId: seedRun.id }, "brainstorm")
+      rmSync(layout.workspaceDir({ workspaceId, workspaceRoot: repoRoot }), { recursive: true, force: true })
       mkdirSync(brainstormDir, { recursive: true })
       writeFileSync(
         join(brainstormDir, "projects.json"),
@@ -161,7 +167,7 @@ test("beerengineer item action start_implementation resumes from brainstorm arti
     const previousCwd = process.cwd()
     try {
       process.chdir(engineRoot)
-      if (workspaceIdForCleanup) rmSync(layout.workspaceDir(workspaceIdForCleanup), { recursive: true, force: true })
+      if (workspaceIdForCleanup) rmSync(layout.workspaceDir({ workspaceId: workspaceIdForCleanup, workspaceRoot: repoRoot }), { recursive: true, force: true })
     } finally {
       process.chdir(previousCwd)
     }

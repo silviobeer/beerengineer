@@ -6,6 +6,12 @@ import { fileURLToPath } from "node:url"
 import { REQUIRED_MIGRATION_LEVEL, getConfiguredDataDirOrNull } from "../setup/config.js"
 
 export type Db = Database.Database
+export type ResolvedDbPathSource = "override" | "env" | "configured" | "legacy"
+export type ResolvedDbPathInfo = {
+  path: string
+  source: ResolvedDbPathSource
+  warnings: string[]
+}
 
 const legacyDbPath = () => resolve(homedir(), ".local", "share", "beerengineer", "beerengineer.sqlite")
 
@@ -22,34 +28,42 @@ const legacyDbPath = () => resolve(homedir(), ".local", "share", "beerengineer",
  * When tier 3 is used and the legacy DB file also exists the function emits an
  * ambiguity warning but does not auto-migrate — that is a manual decision.
  */
-export function resolveDbPath(override?: string | null): string {
+export function resolveDbPathInfo(override?: string | null): ResolvedDbPathInfo {
   // Tier 1: explicit override (tests inject a tmp path here).
-  if (override != null) return override
+  if (override != null) return { path: override, source: "override", warnings: [] }
 
   // Tier 2: env var (used by some test harnesses and the UI server).
-  if (process.env.BEERENGINEER_UI_DB_PATH) return process.env.BEERENGINEER_UI_DB_PATH
+  if (process.env.BEERENGINEER_UI_DB_PATH) {
+    return { path: process.env.BEERENGINEER_UI_DB_PATH, source: "env", warnings: [] }
+  }
 
   // Tier 3: read the setup config that `beerengineer setup` writes.
   const configuredDataDir = getConfiguredDataDirOrNull()
   if (configuredDataDir != null) {
     const configuredDb = resolve(configuredDataDir, "beerengineer.sqlite")
     const legacy = legacyDbPath()
+    const warnings: string[] = []
     // Warn when both files exist so the user knows they may be looking at stale data.
     if (existsSync(configuredDb) && existsSync(legacy) && configuredDb !== legacy) {
+      warnings.push(`legacy-db-shadow:${legacy}`)
       process.stderr.write(
         `[engine] WARNING: both the configured DB (${configuredDb}) and the legacy DB (${legacy}) exist. ` +
         `The engine will use the configured path. If you have data in the legacy location, ` +
         `copy it manually before removing the old file.\n`,
       )
     }
-    return configuredDb
+    return { path: configuredDb, source: "configured", warnings }
   }
 
   // Tier 4: no config found — fall back to the legacy hard-coded path.
   process.stderr.write(
     "[engine] db path fell back to legacy location — run beerengineer setup\n",
   )
-  return legacyDbPath()
+  return { path: legacyDbPath(), source: "legacy", warnings: [] }
+}
+
+export function resolveDbPath(override?: string | null): string {
+  return resolveDbPathInfo(override).path
 }
 
 export function openDatabase(dbPath?: string | null): Db {
@@ -72,6 +86,7 @@ export function applySchema(db: Db): void {
   migrateStageRunsSessionColumns(db)
   migrateNotificationDeliveriesTable(db)
   migrateItemsCurrentStageColumn(db)
+  migrateUpdateAttemptsColumns(db)
   stampMigrationLevel(db)
 }
 
@@ -197,4 +212,14 @@ function migrateItemsCurrentStageColumn(db: Db): void {
   const cols = db.prepare("PRAGMA table_info(items)").all() as Array<{ name: string }>
   if (cols.some(c => c.name === "current_stage")) return
   db.exec("ALTER TABLE items ADD COLUMN current_stage TEXT")
+}
+
+function migrateUpdateAttemptsColumns(db: Db): void {
+  const cols = db.prepare("PRAGMA table_info(update_attempts)").all() as Array<{ name: string }>
+  const has = (name: string) => cols.some(c => c.name === name)
+  if (!has("idempotency_key")) db.exec("ALTER TABLE update_attempts ADD COLUMN idempotency_key TEXT")
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS update_attempts_idempotency_key_idx
+    ON update_attempts(idempotency_key)
+  `)
 }

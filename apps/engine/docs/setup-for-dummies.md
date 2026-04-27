@@ -37,8 +37,8 @@ will tell you what's missing.
 **Non-negotiable:**
 
 - Node.js ≥ 22 (get it from https://nodejs.org/ or use `nvm`)
+- `npm` on your `PATH` as well as `node`
 - Git
-- GitHub CLI (`gh`) — and you have to be logged in: `gh auth login`
 
 **At least one AI harness (two recommended):**
 
@@ -55,6 +55,7 @@ Each one needs its own auth (API key or login flow). Check each tool's docs.
 
 **Nice to have (optional, strongly recommended):**
 
+- GitHub CLI (`gh`) — useful for repo operations and any GitHub-authenticated flows
 - `coderabbit` (CLI for CodeRabbit code review)
 - `sonar-scanner` (official SonarQube/SonarCloud scanner)
 - `sonarqube-cli` (community wrapper)
@@ -108,8 +109,9 @@ Assured in the SonarQube Cloud UI.
 
 ## Step 1 — Install BeerEngineer2 itself
 
-You have the BeerEngineer2 source at `~/projects/beerengineer2/`. Install it
-as a global command so your terminal can find `beerengineer`:
+You have the BeerEngineer2 source from GitHub at
+`~/projects/beerengineer2/`. Install it as a global command so your terminal
+can find `beerengineer`:
 
 ```
 cd ~/projects/beerengineer2
@@ -124,6 +126,20 @@ beerengineer --help
 
 You should see a help message. If you get "command not found", your global
 npm bin directory isn't on your `PATH` — fix that before continuing.
+
+Current update model: `beerengineer update --check` is the read-only release
+check, `beerengineer update --dry-run` is the safe preflight, and
+`beerengineer update` is the managed apply path. It stages the GitHub release,
+prepares the detached switcher metadata, and, when the engine is already
+running from BeerEngineer's managed `install/current` tree, shuts down, backs
+up the DB, switches installs, restarts, and rolls back automatically if the
+new engine never becomes healthy. If you're still running BeerEngineer from an
+unmanaged dev checkout, it stops at the queued/staged state on purpose.
+
+`beerengineer update --rollback` is reserved only. It returns
+`post-migration-rollback-unsupported`, because rolling back after the newer
+version has started still means restoring the pre-update SQLite backup
+manually.
 
 **If you're using BeerEngineer2 to work on BeerEngineer2 itself: use Tier 3
 from day one.**
@@ -314,6 +330,7 @@ Hit `y` at the end, and BeerEngineer creates:
 ```
 ~/projects/my-new-app/
   .beerengineer/workspace.json       ← your config, committed to git
+  .beerengineer/                     ← run artefacts, worktrees, cache
   .gitignore                          ← pre-populated
   sonar-project.properties            ← only if you enabled sonar
 ```
@@ -335,7 +352,9 @@ Path: ~/projects/existing-thing
 ```
 
 BeerEngineer won't overwrite your files. It adds `.beerengineer/workspace.json`
-(and optionally `sonar-project.properties`) and registers the folder. If
+(and optionally `sonar-project.properties`) and registers the folder. Run
+artefacts for that workspace also live under the same repo-local
+`.beerengineer/` tree, so make sure `.beerengineer/` stays ignored in git. If
 it's not a git repo yet, it'll offer to run `git init` — you can say no,
 BeerEngineer still registers it.
 
@@ -421,7 +440,8 @@ Your npm global bin isn't on `PATH`. Run `npm config get prefix` — add
 
 **`doctor` says a tool is installed but "misconfigured"**
 It's installed but not authed. Run the tool's own auth command
-(`gh auth login`, `claude auth login`, etc.). Then press `r` to re-check.
+(`claude auth login`, `codex login`, `gh auth login`, etc.). Then press `r`
+to re-check.
 
 **Dev server on `127.0.0.1:3100` is stuck / returns 000**
 The engine process probably hung. `pkill -f "next-server"` and `pkill -f
@@ -442,7 +462,7 @@ try again.
 
 ## TL;DR
 
-1. Install prerequisites (Node, git, gh + login, at least one AI harness + login, at least one browser agent).
+1. Install prerequisites (Node + npm, git, at least one AI harness + login, at least one browser agent; `gh` recommended).
 2. `npm i -g ~/projects/beerengineer2/apps/engine`
 3. `beerengineer setup` — keep pressing `r` until required groups are green.
 4. `beerengineer workspace add` — or `beerengineer workspace add --path ~/projects/my-app`.

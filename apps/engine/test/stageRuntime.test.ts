@@ -75,6 +75,7 @@ function baseDefinition(overrides: {
     stageAgentLabel: "Tester",
     reviewerLabel: "Reviewer",
     workspaceId: "ws-1",
+    workspaceRoot: process.cwd(),
     runId: "run-1",
     createInitialState: makeState,
     stageAgent: overrides.stageAgent,
@@ -136,7 +137,7 @@ test("runtime persists structured stage and reviewer session state", async () =>
     assert.equal(run.stageAgentTurnCount, 3)
     assert.equal(run.stageAgentSessionId, "stage-3")
     assert.equal(run.reviewerSessionId, "review-1")
-    const stageFile = JSON.parse(await readFile(layout.stageRunFile({ workspaceId: "ws-1", runId: "run-1" }, "testing"), "utf8"))
+    const stageFile = JSON.parse(await readFile(layout.stageRunFile({ workspaceId: "ws-1", workspaceRoot: process.cwd(), runId: "run-1" }, "testing"), "utf8"))
     assert.equal(stageFile.stageAgentTurnCount, 3)
     assert.equal(stageFile.stageAgentSessionId, "stage-3")
     assert.equal(stageFile.reviewerSessionId, "review-1")
@@ -259,8 +260,8 @@ test("blocked review persists blocked status to workspace, run, and stage files"
       /unrecoverable/,
     )
 
-    const ctx = { workspaceId: "ws-1", runId: "run-1" }
-    const wsFile = JSON.parse(await readFile(layout.workspaceFile(ctx.workspaceId), "utf8"))
+    const ctx = { workspaceId: "ws-1", workspaceRoot: process.cwd(), runId: "run-1" }
+    const wsFile = JSON.parse(await readFile(layout.workspaceFile(ctx), "utf8"))
     assert.equal(wsFile.status, "blocked")
     assert.equal(wsFile.currentStage, "testing")
 
@@ -282,8 +283,8 @@ test("persistence writes workspace.json, run.json, stage run.json and log.jsonl"
     const reviewer = new ScriptedReviewer([{ kind: "pass" }])
     await runStage(baseDefinition({ stageAgent: stage, reviewer }))
 
-    const ctx = { workspaceId: "ws-1", runId: "run-1" }
-    const wsFile = JSON.parse(await readFile(layout.workspaceFile(ctx.workspaceId), "utf8"))
+    const ctx = { workspaceId: "ws-1", workspaceRoot: process.cwd(), runId: "run-1" }
+    const wsFile = JSON.parse(await readFile(layout.workspaceFile(ctx), "utf8"))
     assert.equal(wsFile.id, "ws-1")
     assert.equal(wsFile.currentStage, "testing")
     assert.equal(wsFile.status, "approved")

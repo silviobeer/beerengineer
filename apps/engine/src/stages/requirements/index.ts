@@ -17,6 +17,7 @@ export async function requirements(ctx: ProjectContext, llm?: RunLlmConfig): Pro
     stageAgentLabel: "LLM-3 (Requirements)",
     reviewerLabel: "Review-LLM",
     workspaceId: ctx.workspaceId,
+    workspaceRoot: ctx.workspaceRoot!,
     runId: ctx.runId,
     createInitialState: (): RequirementsState => ({
       concept: ctx.project.concept,

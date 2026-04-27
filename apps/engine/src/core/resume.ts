@@ -7,6 +7,7 @@ import { runWithWorkflowIO, type WorkflowIO } from "./io.js"
 import { runWithActiveRun } from "./runContext.js"
 import { layout, type WorkflowContext } from "./workspaceLayout.js"
 import { persistWorkflowRunState } from "./stageRuntime.js"
+import { resolveWorkflowContextForRun } from "./workflowContextResolver.js"
 import type { EventBus } from "./bus.js"
 import type { ExternalRemediationRow, Repos, RunRow } from "../db/repositories.js"
 import { attachRunSubscribers, resolveWorkflowLlmOptions } from "./runSubscribers.js"
@@ -34,37 +35,10 @@ async function runFileMatchesRun(ctx: WorkflowContext, runId: string): Promise<b
   }
 }
 
-async function inferWorkspaceDir(run: RunRow): Promise<WorkflowContext | null> {
-  // Preferred: the fs-workspace-id was persisted when the run was created.
-  if (run.workspace_fs_id) {
-    const ctx: WorkflowContext = { workspaceId: run.workspace_fs_id, runId: run.id }
-    if (await runFileMatchesRun(ctx, run.id)) return ctx
-  }
-
-  // Legacy: runs created before the workspace_fs_id column existed. Derive
-  // from the title and probe the expected location first.
-  const slug = run.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
-  const derived: WorkflowContext = {
-    workspaceId: slug ? `${slug}-${run.item_id.toLowerCase()}` : run.item_id.toLowerCase(),
-    runId: run.id,
-  }
-  if (await runFileMatchesRun(derived, run.id)) return derived
-
-  // Last resort: the title may have been renamed since the run started. Scan
-  // every workspace dir for the matching run.json.
-  const { readdir } = await import("node:fs/promises")
-  const root = layout.workspaceDir("")
-  try {
-    const entries = await readdir(root, { withFileTypes: true })
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue
-      const ctx: WorkflowContext = { workspaceId: entry.name, runId: run.id }
-      if (await runFileMatchesRun(ctx, run.id)) return ctx
-    }
-  } catch {
-    return null
-  }
-  return null
+async function inferWorkspaceDir(repos: Repos, run: RunRow): Promise<WorkflowContext | null> {
+  const ctx = resolveWorkflowContextForRun(repos, run)
+  if (!ctx) return null
+  return (await runFileMatchesRun(ctx, run.id)) ? ctx : null
 }
 
 export async function loadResumeReadiness(
@@ -78,7 +52,7 @@ export async function loadResumeReadiness(
   }
   if (!run.recovery_status) return { kind: "no_recovery", run }
 
-  const ctx = await inferWorkspaceDir(run)
+  const ctx = await inferWorkspaceDir(repos, run)
   if (!ctx) return { kind: "no_recovery", run }
 
   const scopeType = run.recovery_scope
@@ -235,7 +209,7 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
             )
             const finalRun = input.repos.getRun(run.id)
             await persistWorkflowRunState(
-              { workspaceId: run.workspace_id, runId: run.id },
+              ctx,
               finalRun?.current_stage ?? "handoff",
               "completed",
             )
@@ -243,7 +217,7 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
           } catch (err) {
             const finalRun = input.repos.getRun(run.id)
             await persistWorkflowRunState(
-              { workspaceId: run.workspace_id, runId: run.id },
+              ctx,
               finalRun?.current_stage ?? run.current_stage ?? "execution",
               "failed",
             )

@@ -559,7 +559,7 @@ export function prepareRun(
             const finalRun = repos.getRun(runRow.id)
             if (finalRun?.recovery_status === "blocked") return
             await persistWorkflowRunState(
-              { workspaceId, runId: runRow.id },
+              { workspaceId, runId: runRow.id, workspaceRoot: workspaceRow?.root_path ?? undefined },
               finalRun?.current_stage ?? "handoff",
               "completed",
             )
@@ -569,7 +569,7 @@ export function prepareRun(
             const finalRun = repos.getRun(runRow.id)
             if (finalRun?.recovery_status !== "blocked") {
               await persistWorkflowRunState(
-                { workspaceId, runId: runRow.id },
+                { workspaceId, runId: runRow.id, workspaceRoot: workspaceRow?.root_path ?? undefined },
                 finalRun?.current_stage ?? "execution",
                 "failed",
               )

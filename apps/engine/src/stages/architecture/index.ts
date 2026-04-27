@@ -15,6 +15,7 @@ export async function architecture(ctx: WithPrd, llm?: RunLlmConfig): Promise<Ar
     stageAgentLabel: "LLM-4 (Architecture)",
     reviewerLabel: "Architecture-Review-LLM",
     workspaceId: ctx.workspaceId,
+    workspaceRoot: ctx.workspaceRoot!,
     runId: ctx.runId,
     createInitialState: (): ArchitectureState => ({
       projectId: ctx.project.id,

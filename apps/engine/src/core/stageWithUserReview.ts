@@ -21,6 +21,7 @@ export type UserReviewGateOptions<S extends RevisableState, A, R> = {
   stageAgentLabel: string
   reviewerLabel: string
   workspaceId: string
+  workspaceRoot: string
   baseRunId: string
   stageAgent: StageAgentAdapter<S, A>
   reviewer: ReviewAgentAdapter<S, A>
@@ -62,6 +63,7 @@ export async function runStageWithUserReview<S extends RevisableState, A, R>(
       stageAgentLabel: opts.stageAgentLabel,
       reviewerLabel: opts.reviewerLabel,
       workspaceId: opts.workspaceId,
+      workspaceRoot: opts.workspaceRoot,
       runId: reviewRound === 0 ? opts.baseRunId : `${opts.baseRunId}-rev${reviewRound}`,
       createInitialState: () => {
         if (priorState) {

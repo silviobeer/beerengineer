@@ -59,7 +59,7 @@ type DesignPrepFreeze = {
  * `inputMode: "none"` by default.
  */
 function loadItemWorkspaceReferences(context: WorkflowContext): ReferenceInput[] {
-  const workspaceDir = layout.workspaceDir(context.workspaceId)
+  const workspaceDir = layout.workspaceDir(context)
   const refsDir = join(workspaceDir, "references")
   if (!existsSync(refsDir)) return []
   try {
@@ -410,7 +410,7 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
           wireframes: wireframes ? projectWireframes(wireframes, project.id) : undefined,
           design: design ? projectDesign(design) : undefined,
           codebase: itemSnapshot,
-          decisions: loadItemDecisions(context.workspaceId),
+          decisions: loadItemDecisions(context),
         },
         git,
         resumePlan ?? undefined,
@@ -472,4 +472,3 @@ async function runProject(
       : await node.resumeFromDisk(ctx)
   }
 }
-

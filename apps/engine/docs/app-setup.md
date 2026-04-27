@@ -2,6 +2,9 @@
 
 BeerEngineer now has a dedicated app-level setup flow for machine readiness.
 
+This setup model assumes you installed BeerEngineer from a GitHub checkout of
+this repo and are running the engine locally from that install.
+
 > **Audience:** operators / developers running the engine, not first-time
 > users. For the user-facing walkthrough (interactive setup, registering
 > a workspace, picking a harness profile, optional Telegram), start with
@@ -24,6 +27,23 @@ npm exec --workspace=@beerengineer2/engine beerengineer -- notifications test te
 - `setup --group notifications` re-runs only the notification setup flow and guides you through `publicBaseUrl`, the Telegram bot-token env var name, and the default chat id.
 - `notifications test telegram` sends a smoke-test message through the configured Telegram bot/chat, using the same engine delivery path as real run events.
 - `GET /setup/status` returns the same JSON contract as `doctor --json`. Passing `?group=` with an unknown id responds `400 { "error": "unknown_group" }`; the CLI equivalent exits with code 2.
+- `beerengineer update --check` is now available as a read-only GitHub release check. It does not install or restart anything; it reports the current version, latest release, DB-path source, and managed install root.
+- `GET /update/status` now also reports a readiness summary for engine startup, DB access, GitHub updater access, the configured LLM auth path, and Sonar when any registered workspace has Sonar enabled.
+- Managed update completion now distinguishes a healthy install from a healthy-but-partially-misconfigured one: after restart the detached switcher probes `GET /update/status`, and `GET /update/history` may therefore end in `succeeded-with-warning` when the new engine is up but a configured non-core integration auth check is failing.
+- Successful restart now means more than `/health = 200`: the detached switcher also requires `GET /update/status` to succeed, confirm the expected target version, and report core readiness (`engineStarted` and `dbOk`) as `ok`. If that check fails, BeerEngineer treats it as a core restart failure and rolls back instead of reporting a warning-only success.
+- If you want a stricter integrity gate than shape validation + audit logging, export `BEERENGINEER_UPDATE_EXPECTED_TARBALL_SHA256=<hex>` before `beerengineer update` or `beerengineer update --dry-run`. BeerEngineer will fail closed if the downloaded GitHub tarball hash differs.
+- Managed tarball downloads now also fail closed if a redirect leaves the trusted host set for the selected release source. In normal GitHub release flow that still allows the initial tarball host and GitHub's `codeload.github.com` redirect target, and the final tarball URL is stored in update-attempt metadata for audit.
+- `beerengineer update --dry-run` now exercises the safe preflight path: it validates idle state, acquires/releases the update lock, resolves the target GitHub release (latest by default, or `--version <tag>`), downloads the GitHub source tarball, unpacks and validates the release shape, runs `npm install` in a temporary staged copy under the managed install root, checks managed update directories, and confirms the switcher-script location is writable. It still stops before shutdown or install swap, so successful dry-runs are recorded as `aborted-dry-run`.
+- `beerengineer update` now performs the same release staging work as the dry-run, keeps the staged tree, writes a prepared switcher script/payload under `<dataDir>/install/.switcher/`, and records a queued apply attempt in SQLite. When the active engine is already running from the managed `install/current` tree, the engine then marks the attempt `in-flight`, shuts down cleanly, lets the detached switcher create the DB backup, flips `install/current`, restarts, and rolls back automatically if the restarted engine never becomes healthy. When you're still running from an unmanaged dev checkout, BeerEngineer leaves the prepared attempt queued instead of attempting a broken swap.
+- `beerengineer update --rollback` is intentionally reserved, not implemented. It returns `post-migration-rollback-unsupported`, matching `POST /update/rollback`, because successful-start downgrades still require restoring the pre-update SQLite backup manually.
+- `POST /update/rollback` is intentionally not a real rollback flow yet; it returns `409 post-migration-rollback-unsupported`. Manual rollback still means restoring the pre-update SQLite backup yourself.
+- `beerengineer start` is now the stable engine entrypoint for managed restart flows. It launches the local HTTP API server the same way the future updater switcher will.
+
+Operator prerequisites for a GitHub-based local install:
+
+- `node` and `npm` must both be on `PATH`
+- Git is required
+- `gh` is recommended, not mandatory; BeerEngineer can still run without it
 
 Known group ids: `core`, `vcs.github`, `llm.anthropic`, `llm.openai`, `llm.opencode`, `browser-agent`, `review`, `notifications`.
 
@@ -106,6 +126,28 @@ Supported env overrides:
 - `BEERENGINEER_TELEGRAM_DEFAULT_CHAT_ID`
 - `BEERENGINEER_TELEGRAM_API_BASE_URL`
 - `BEERENGINEER_BROWSER_ENABLED`
+
+## Storage model
+
+BeerEngineer keeps app-level state and workspace-level state separate:
+
+- app config lives under the OS-specific config dir from `env-paths`
+- the SQLite DB lives under the OS-specific data dir from `env-paths`
+- updater backups live under `<dataDir>/backups/update/` with a `manifest.json`
+  per backup
+- the running engine writes a PID file under the app state dir (or
+  `BEERENGINEER_ENGINE_PID_FILE` when overridden) so the updater can wait for
+  shutdown before any install swap
+- each registered workspace keeps its own workflow artefacts under
+  `<workspaceRoot>/.beerengineer/`
+- the repo-local workspace contract file remains
+  `<workspaceRoot>/.beerengineer/workspace.json`
+
+Operational rule: every registered workspace should ignore `.beerengineer/`
+in git so run artefacts and managed worktrees never enter version control.
+
+`GET /update/status` now also reports the latest persisted backup manifest as
+`lastBackup` when at least one managed update backup exists.
 
 ## Notifications
 

@@ -19,6 +19,9 @@
       "name": "Setup"
     },
     {
+      "name": "Update"
+    },
+    {
       "name": "Workspaces"
     },
     {
@@ -135,6 +138,210 @@
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
+          }
+        }
+      }
+    },
+    "/update/status": {
+      "get": {
+        "tags": [
+          "Update"
+        ],
+        "summary": "Read-only updater status snapshot.",
+        "responses": {
+          "200": {
+            "description": "Current updater status, install paths, DB-path source, cached latest release, update-available flag, latest managed backup manifest if any, readiness/auth summary, and preflight summary.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/update/preflight": {
+      "get": {
+        "tags": [
+          "Update"
+        ],
+        "summary": "Fast updater preflight probe.",
+        "responses": {
+          "200": {
+            "description": "Whether the engine is idle and whether the update lock is held.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/update/check": {
+      "post": {
+        "tags": [
+          "Update"
+        ],
+        "summary": "Check the newest GitHub release against the current install and refresh the on-disk cache.",
+        "security": [
+          {
+            "csrfToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Release metadata for the latest GitHub release.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "GitHub check failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/update/apply": {
+      "post": {
+        "tags": [
+          "Update"
+        ],
+        "summary": "Stage a GitHub release for update apply and queue the managed swap flow.",
+        "security": [
+          {
+            "csrfToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Optional retry key. When the same apply request is already queued or in flight, the server replays the original 202 body instead of staging a second update."
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Release staged and apply attempt recorded. Managed installs continue asynchronously through shutdown/swap/restart after the response is flushed; unmanaged dev-checkout installs remain queued.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Update preflight refused the apply request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/update/rollback": {
+      "post": {
+        "tags": [
+          "Update"
+        ],
+        "summary": "Reserved rollback endpoint.",
+        "security": [
+          {
+            "csrfToken": []
+          }
+        ],
+        "responses": {
+          "409": {
+            "description": "Post-migration automatic rollback is not supported through this endpoint.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/update/shutdown": {
+      "post": {
+        "tags": [
+          "Update"
+        ],
+        "summary": "Gracefully shut the engine down for an in-flight update operation.",
+        "security": [
+          {
+            "csrfToken": []
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Shutdown accepted; the engine will stop after flushing the response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "409": {
+            "description": "The provided operation id does not match the held update lock.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/update/history": {
+      "get": {
+        "tags": [
+          "Update"
+        ],
+        "summary": "List recent persisted update attempts, newest first.",
+        "responses": {
+          "200": {
+            "description": "Recent updater attempts and managed backup manifests, including succeeded-with-warning when restart health is good but non-core integration readiness failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
           }
         }
       }

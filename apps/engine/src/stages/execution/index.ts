@@ -669,6 +669,7 @@ async function writeStoryTestPlan(
     stageAgentLabel: "LLM-6a (Test Writer)",
     reviewerLabel: "Test-Review-LLM",
     workspaceId: ctx.workspaceId,
+    workspaceRoot: ctx.workspaceRoot!,
     runId: ctx.runId,
     createInitialState: (): TestWriterState => ({
       projectId: ctx.project.id,

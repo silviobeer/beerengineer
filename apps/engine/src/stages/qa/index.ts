@@ -21,6 +21,7 @@ export async function qa(ctx: ProjectContext, llm?: RunLlmConfig): Promise<void>
     stageAgentLabel: "QA-Fixer",
     reviewerLabel: "LLM-8 (QA-Review)",
     workspaceId: ctx.workspaceId,
+    workspaceRoot: ctx.workspaceRoot!,
     runId: ctx.runId,
     createInitialState: (): QaState => ({
       projectId: ctx.project.id,

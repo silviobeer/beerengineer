@@ -58,7 +58,14 @@ export function inspectWorkspaceState(workspaceRoot: string): WorkspaceInspectio
   if (!inside.ok || inside.stdout !== "true") {
     return { kind: "not-a-repo" }
   }
-  const status = runGit(workspaceRoot, ["status", "--porcelain", "--branch"])
+  const status = runGit(workspaceRoot, [
+    "status",
+    "--porcelain",
+    "--branch",
+    "--",
+    ".",
+    ":(exclude).beerengineer",
+  ])
   if (!status.ok) {
     return { kind: "git-status-failed", stderr: status.stderr }
   }

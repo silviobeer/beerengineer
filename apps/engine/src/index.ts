@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process"
+import { randomUUID } from "node:crypto"
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -9,7 +10,8 @@ import { createCliIO } from "./core/ioCli.js"
 import { createGitAdapterFromMode } from "./core/gitAdapter.js"
 import { inspectWorkspaceState } from "./core/git.js"
 import { layout } from "./core/workspaceLayout.js"
-import { latestCompletedRunForItem, workflowWorkspaceId } from "./core/itemWorkspace.js"
+import { latestCompletedRunForItem } from "./core/itemWorkspace.js"
+import { resolveWorkflowContextForItemRun, resolveWorkflowContextForRun } from "./core/workflowContextResolver.js"
 import {
   backfillWorkspaceConfigs,
   getRegisteredWorkspace,
@@ -29,6 +31,8 @@ import { projectStageLogRow, type MessageEntry } from "./core/messagingProjectio
 import { messagingLevelFromQuery, shouldDeliverAtLevel, type MessagingLevel } from "./core/messagingLevel.js"
 import { renderMessageEntry, terminalExitCodeForEntry } from "./core/messageRendering.js"
 import { tailStageLogs } from "./api/sse/tailStageLogs.js"
+import { readApiTokenFile } from "./api/tokenFile.js"
+import { readEnginePidFile } from "./api/pidFile.js"
 import {
   KNOWN_GROUP_IDS,
   readConfigFile,
@@ -42,6 +46,7 @@ import type { AppConfig } from "./setup/types.js"
 import type { HarnessProfile, RegisterWorkspaceInput } from "./types/workspace.js"
 import { sendTelegramTestNotification } from "./notifications/command.js"
 import type { DesignArtifact, WireframeArtifact } from "./types.js"
+import { buildUpdateStatus, markPreparedUpdateInFlight, prepareUpdateApply, runUpdateCheck, runUpdateDryRun } from "./core/updateMode.js"
 
 export type ResumeFlags = {
   summary?: string
@@ -53,8 +58,18 @@ export type ResumeFlags = {
 
 type Command =
   | { kind: "help" }
+  | { kind: "start-engine" }
   | { kind: "doctor"; json?: boolean; group?: string }
   | { kind: "setup"; group?: string; noInteractive?: boolean }
+  | {
+      kind: "update"
+      check?: boolean
+      json?: boolean
+      dryRun?: boolean
+      rollback?: boolean
+      version?: string
+      allowLegacyDbShadow?: boolean
+    }
   | { kind: "notifications-test"; channel: "telegram" }
   | { kind: "start-ui" }
   | { kind: "workflow"; json?: boolean; workspaceKey?: string; verbose?: boolean }
@@ -153,6 +168,17 @@ export function parseArgs(argv: string[]): Command {
   if (first === "--help" || first === "-h" || first === "help") return { kind: "help" }
   if (first === "--doctor" || first === "doctor") return { kind: "doctor", json, group }
   if (first === "setup") return { kind: "setup", group, noInteractive: argv.includes("--no-interactive") }
+  if (first === "update") {
+    return {
+      kind: "update",
+      check: argv.includes("--check"),
+      json,
+      dryRun: argv.includes("--dry-run"),
+      rollback: argv.includes("--rollback"),
+      version: readFlag(argv, "--version"),
+      allowLegacyDbShadow: argv.includes("--allow-legacy-db-shadow"),
+    }
+  }
   if (first === "notifications" && second === "test" && argv[2] === "telegram") return { kind: "notifications-test", channel: "telegram" }
   if (first === "status") return { kind: "status", workspaceKey, json, all }
   if (first === "workspace" && second === "preview") return { kind: "workspace-preview", path: argv[2], json }
@@ -228,6 +254,7 @@ export function parseArgs(argv: string[]): Command {
   if (first === "item" && second === "open") return { kind: "item-open", itemRef: argv[2], workspaceKey }
   if (first === "item" && second === "wireframes") return { kind: "item-wireframes", itemRef: argv[2], workspaceKey, open: argv.includes("--open"), json }
   if (first === "item" && second === "design") return { kind: "item-design", itemRef: argv[2], workspaceKey, open: argv.includes("--open"), json }
+  if (first === "start" && second === undefined) return { kind: "start-engine" }
   if (first === "start" && second === "ui") return { kind: "start-ui" }
   if (first === "item" && second === "action") {
     const itemRef = readFlag(argv, "--item")
@@ -260,6 +287,7 @@ function printHelp(): void {
     "    beerengineer                                         Run the default workflow",
     "    beerengineer --json                                  Harness mode: NDJSON events on stdout, prompt answers on stdin",
     "    beerengineer run --json                              Same as `beerengineer --json`",
+    "    beerengineer start                                   Start the local engine HTTP API (http://127.0.0.1:4100)",
     "    beerengineer start ui                                Start the local UI dev server (http://127.0.0.1:3100)",
     "    beerengineer status [--all] [--json]                Workspace status overview",
     "    beerengineer items [--all] [--compact]              List items",
@@ -269,6 +297,10 @@ function printHelp(): void {
     "                                                         Perform an item action",
     "    beerengineer doctor [--json] [--group <id>]          Run machine diagnostics",
     "    beerengineer setup [--group <id>] [--no-interactive] Provision app config/data/DB and retry checks",
+    "    beerengineer update [--json] [--version <tag>]       Stage and queue an update apply attempt",
+    "    beerengineer update --check [--json]                 Check the newest GitHub release against the current install",
+    "    beerengineer update --dry-run [--json]               Run update preflight checks without shutting the engine down",
+    "    beerengineer update --rollback [--json]              Reserved; returns post-migration rollback unsupported",
     "    beerengineer notifications test telegram             Send a Telegram test notification",
     "    beerengineer workspace preview <path> [--json]       Preview workspace registration",
     "    beerengineer workspace add [--path <p>] [flags]      Register a workspace",
@@ -559,14 +591,19 @@ export function resolveItemReference(
   return { kind: "found", item: byCode[0] }
 }
 
-function readArtifactJson<T>(item: Pick<ItemRow, "id" | "title">, runId: string, stageId: string, fileName: string): T | null {
-  const path = join(layout.stageArtifactsDir({ workspaceId: workflowWorkspaceId(item), runId }, stageId), fileName)
+function readArtifactJson<T>(repos: Repos, runId: string, stageId: string, fileName: string): T | null {
+  const run = repos.getRun(runId)
+  const ctx = run ? resolveWorkflowContextForRun(repos, run) : null
+  if (!ctx) return null
+  const path = join(layout.stageArtifactsDir(ctx, stageId), fileName)
   if (!existsSync(path)) return null
   return JSON.parse(readFileSync(path, "utf8")) as T
 }
 
-function artifactPath(item: Pick<ItemRow, "id" | "title">, runId: string, stageId: string, fileName: string): string {
-  return join(layout.stageArtifactsDir({ workspaceId: workflowWorkspaceId(item), runId }, stageId), fileName)
+function artifactPath(repos: Repos, runId: string, stageId: string, fileName: string): string | null {
+  const run = repos.getRun(runId)
+  const ctx = run ? resolveWorkflowContextForRun(repos, run) : null
+  return ctx ? join(layout.stageArtifactsDir(ctx, stageId), fileName) : null
 }
 
 export async function runDoctor(options: { json?: boolean; group?: string } = {}): Promise<number> {
@@ -1161,14 +1198,14 @@ async function runItemWireframesCommand(
       else console.error(`  no completed run for ${item.code}`)
       return 3
     }
-    const artifact = readArtifactJson<WireframeArtifact>(item, run.id, "visual-companion", "wireframes.json")
+    const artifact = readArtifactJson<WireframeArtifact>(repos, run.id, "visual-companion", "wireframes.json")
     if (!artifact) {
       const payload = { ok: false, code: 3, reason: `no design-prep artifacts for ${item.code} (hasUi=false)` }
       if (json) process.stdout.write(`${JSON.stringify(payload)}\n`)
       else console.error(`  no design-prep artifacts for ${item.code} (hasUi=false)`)
       return 3
     }
-    const screenMapPath = artifactPath(item, run.id, "visual-companion", "screen-map.html")
+    const screenMapPath = artifactPath(repos, run.id, "visual-companion", "screen-map.html")
     if (json) {
       process.stdout.write(`${JSON.stringify({
         itemId: item.id,
@@ -1179,7 +1216,7 @@ async function runItemWireframesCommand(
           id: screen.id,
           name: screen.name,
           projectIds: screen.projectIds,
-          path: artifactPath(item, run.id, "visual-companion", `${screen.id}.html`),
+          path: artifactPath(repos, run.id, "visual-companion", `${screen.id}.html`),
         })),
       })}\n`)
       if (open) openBrowser(`file://${screenMapPath}`)
@@ -1187,7 +1224,7 @@ async function runItemWireframesCommand(
     }
     console.log("  screen  projects  purpose  file")
     artifact.screens.forEach(screen => {
-      console.log(`  ${screen.id}  ${screen.projectIds.join(",")}  ${truncate(screen.purpose, 30)}  ${artifactPath(item, run.id, "visual-companion", `${screen.id}.html`)}`)
+      console.log(`  ${screen.id}  ${screen.projectIds.join(",")}  ${truncate(screen.purpose, 30)}  ${artifactPath(repos, run.id, "visual-companion", `${screen.id}.html`)}`)
     })
     console.log(`  screen-map: ${screenMapPath}`)
     if (open) openBrowser(`file://${screenMapPath}`)
@@ -1226,14 +1263,14 @@ async function runItemDesignCommand(
       else console.error(`  no completed run for ${item.code}`)
       return 3
     }
-    const artifact = readArtifactJson<DesignArtifact>(item, run.id, "frontend-design", "design.json")
+    const artifact = readArtifactJson<DesignArtifact>(repos, run.id, "frontend-design", "design.json")
     if (!artifact) {
       const payload = { ok: false, code: 3, reason: `no design-prep artifacts for ${item.code} (hasUi=false)` }
       if (json) process.stdout.write(`${JSON.stringify(payload)}\n`)
       else console.error(`  no design-prep artifacts for ${item.code} (hasUi=false)`)
       return 3
     }
-    const previewPath = artifactPath(item, run.id, "frontend-design", "design-preview.html")
+    const previewPath = artifactPath(repos, run.id, "frontend-design", "design-preview.html")
     if (json) {
       process.stdout.write(`${JSON.stringify({ itemId: item.id, runId: run.id, ...artifact, previewPath })}\n`)
       if (open) openBrowser(`file://${previewPath}`)
@@ -1636,7 +1673,7 @@ async function runWorkspaceWorktreeGcCommand(key: string | undefined, json = fal
       baseBranch: "main",
       itemWorktreeRoot: rootPath,
     })
-    const result = git.gcManagedStoryWorktrees(layout.worktreesRoot())
+    const result = git.gcManagedStoryWorktrees(layout.worktreesRoot(rootPath))
 
     if (json) {
       process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
@@ -1693,7 +1730,13 @@ export function startUi(): Promise<number> {
   openBrowser(uiUrl)
 
   return new Promise((resolvePromise) => {
-    const forward = (signal: NodeJS.Signals) => child.kill(signal)
+    const forceTimer = (): void => {
+      setTimeout(() => child.kill("SIGKILL"), 1500).unref?.()
+    }
+    const forward = (signal: NodeJS.Signals) => {
+      child.kill(signal)
+      forceTimer()
+    }
     const cleanup = () => {
       process.off("SIGINT", forward)
       process.off("SIGTERM", forward)
@@ -1707,6 +1750,40 @@ export function startUi(): Promise<number> {
     child.on("error", (err) => {
       cleanup()
       console.error(`  Failed to start UI: ${err.message}`)
+      resolvePromise(1)
+    })
+  })
+}
+
+export function startEngine(): Promise<number> {
+  const serverEntry = resolve(dirname(fileURLToPath(import.meta.url)), "api", "server.ts")
+  console.log(`  Starting engine API from ${serverEntry}`)
+  const child = spawn(process.execPath, ["--import", "tsx", serverEntry], {
+    stdio: "inherit",
+    env: process.env,
+  })
+
+  return new Promise((resolvePromise) => {
+    const forceTimer = (): void => {
+      setTimeout(() => child.kill("SIGKILL"), 1500).unref?.()
+    }
+    const forward = (signal: NodeJS.Signals) => {
+      child.kill(signal)
+      forceTimer()
+    }
+    const cleanup = () => {
+      process.off("SIGINT", forward)
+      process.off("SIGTERM", forward)
+    }
+    process.on("SIGINT", forward)
+    process.on("SIGTERM", forward)
+    child.on("exit", code => {
+      cleanup()
+      resolvePromise(code ?? 0)
+    })
+    child.on("error", err => {
+      cleanup()
+      console.error(`  Failed to start engine: ${err.message}`)
       resolvePromise(1)
     })
   })
@@ -1862,26 +1939,30 @@ function preflightCliBranchingStart(repos: Repos, workspaceId: string): number {
   return printDirtyRepoPreflight(rootPath)
 }
 
-function hasStageArtifacts(item: Pick<ItemRow, "id" | "title">, runId: string, stageId: string): boolean {
-  return existsSync(layout.stageDir({ workspaceId: workflowWorkspaceId(item), runId }, stageId))
+function hasStageArtifacts(repos: Repos, item: Pick<ItemRow, "workspace_id">, runId: string, stageId: string): boolean {
+  const run = repos.getRun(runId)
+  const ctx = run ? resolveWorkflowContextForItemRun(repos, item, run) : null
+  return ctx ? existsSync(layout.stageDir(ctx, stageId)) : false
 }
 
 function latestRunWithStageArtifacts(
   repos: Repos,
-  item: Pick<ItemRow, "id" | "title">,
+  item: Pick<ItemRow, "id" | "workspace_id">,
   stageId: string,
 ): { id: string } | undefined {
   return repos
     .listRuns()
     .filter(run => run.item_id === item.id)
     .sort((a, b) => b.created_at - a.created_at)
-    .find(run => hasStageArtifacts(item, run.id, stageId))
+    .find(run => hasStageArtifacts(repos, item, run.id, stageId))
 }
 
-function seedStageFromPreviousRun(item: ItemRow, sourceRunId: string, targetRunId: string, stageId: string): boolean {
-  const workspaceId = workflowWorkspaceId(item)
-  const sourceCtx = { workspaceId, runId: sourceRunId }
-  const targetCtx = { workspaceId, runId: targetRunId }
+function seedStageFromPreviousRun(repos: Repos, item: ItemRow, sourceRunId: string, targetRunId: string, stageId: string): boolean {
+  const sourceRun = repos.getRun(sourceRunId)
+  const targetRun = repos.getRun(targetRunId)
+  const sourceCtx = sourceRun ? resolveWorkflowContextForItemRun(repos, item, sourceRun) : null
+  const targetCtx = targetRun ? resolveWorkflowContextForItemRun(repos, item, targetRun) : null
+  if (!sourceCtx || !targetCtx) return false
   const sourceStageDir = layout.stageDir(sourceCtx, stageId)
   if (!existsSync(sourceStageDir)) return false
   cpSync(sourceStageDir, layout.stageDir(targetCtx, stageId), { recursive: true })
@@ -1960,12 +2041,12 @@ const handleStartImplementationOrRerunDesignPrep: CliItemActionHandler = async c
         },
       },
     )
-    if (!seedStageFromPreviousRun(ctx.item, sourceRun.id, prepared.runId, "brainstorm")) {
+    if (!seedStageFromPreviousRun(ctx.repos, ctx.item, sourceRun.id, prepared.runId, "brainstorm")) {
       console.error("  Cannot start implementation: failed to seed brainstorm artifacts into the new run.")
       return 1
     }
-    seedStageFromPreviousRun(ctx.item, sourceRun.id, prepared.runId, "visual-companion")
-    seedStageFromPreviousRun(ctx.item, sourceRun.id, prepared.runId, "frontend-design")
+    seedStageFromPreviousRun(ctx.repos, ctx.item, sourceRun.id, prepared.runId, "visual-companion")
+    seedStageFromPreviousRun(ctx.repos, ctx.item, sourceRun.id, prepared.runId, "frontend-design")
     await prepared.start()
     console.log(`  ${ctx.action} applied`)
     console.log(`  run-id: ${prepared.runId}`)
@@ -2000,7 +2081,7 @@ const handleStartVisualCompanion: CliItemActionHandler = async ctx => {
         },
       },
     )
-    if (!seedStageFromPreviousRun(ctx.item, sourceRun.id, prepared.runId, "brainstorm")) {
+    if (!seedStageFromPreviousRun(ctx.repos, ctx.item, sourceRun.id, prepared.runId, "brainstorm")) {
       console.error("  Cannot start visual-companion: failed to seed brainstorm artifacts into the new run.")
       return 1
     }
@@ -2038,11 +2119,11 @@ const handleStartFrontendDesign: CliItemActionHandler = async ctx => {
         },
       },
     )
-    if (!seedStageFromPreviousRun(ctx.item, sourceRun.id, prepared.runId, "brainstorm")) {
+    if (!seedStageFromPreviousRun(ctx.repos, ctx.item, sourceRun.id, prepared.runId, "brainstorm")) {
       console.error("  Cannot start frontend-design: failed to seed brainstorm artifacts into the new run.")
       return 1
     }
-    seedStageFromPreviousRun(ctx.item, sourceRun.id, prepared.runId, "visual-companion")
+    seedStageFromPreviousRun(ctx.repos, ctx.item, sourceRun.id, prepared.runId, "visual-companion")
     await prepared.start()
     console.log(`  ${ctx.action} applied`)
     console.log(`  run-id: ${prepared.runId}`)
@@ -2239,6 +2320,241 @@ export async function runItemAction(itemRef: string, action: string, resumeFlags
   }
 }
 
+async function runUpdateCommand(cmd: Extract<Command, { kind: "update" }>): Promise<number> {
+  const config = loadEffectiveConfig()
+  if (!config) {
+    console.error("  App config is unavailable. Run beerengineer setup first.")
+    return 2
+  }
+  const db = initDatabase()
+  try {
+    const repos = new Repos(db)
+    const status = buildUpdateStatus(repos, config)
+    if (cmd.rollback) {
+      const payload = {
+        status,
+        error: "post-migration-rollback-unsupported",
+        code: "post-migration-rollback-unsupported",
+      }
+      if (cmd.json) {
+        process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`)
+      } else {
+        console.error("  Manual rollback is not supported after migrations have run.")
+        console.error("  Restore the pre-update backup manually instead.")
+        console.error("  code:             post-migration-rollback-unsupported")
+      }
+      return 1
+    }
+    if (cmd.dryRun) {
+      try {
+        const dryRun = await runUpdateDryRun(repos, config, {
+          version: cmd.version,
+          allowLegacyDbShadow: cmd.allowLegacyDbShadow,
+        })
+        const nextStatus = buildUpdateStatus(repos, config, { latestRelease: dryRun.targetRelease })
+        if (cmd.json) {
+          process.stdout.write(`${JSON.stringify({ status: nextStatus, dryRun }, null, 2)}\n`)
+          return dryRun.status === "aborted-dry-run" ? 0 : 1
+        }
+        console.log(`  dry-run status:   ${dryRun.status}`)
+        console.log(`  current version:  ${dryRun.currentVersion}`)
+        console.log(`  target release:   ${dryRun.targetRelease.tag}`)
+        console.log(`  update repo:      ${dryRun.githubRepo}`)
+        console.log(`  install root:     ${nextStatus.install.root}`)
+        if (dryRun.warnings.length > 0) {
+          console.log(`  warnings:         ${dryRun.warnings.join(", ")}`)
+        }
+        dryRun.stages.forEach(stage => {
+          console.log(`  ${stage.name.padEnd(16)} ${stage.status.toUpperCase()}  ${stage.detail}`)
+        })
+        return dryRun.status === "aborted-dry-run" ? 0 : 1
+      } catch (err) {
+        if (cmd.json) {
+          process.stdout.write(`${JSON.stringify({ status, error: (err as Error).message }, null, 2)}\n`)
+        } else {
+          console.error(`  Update dry-run failed: ${(err as Error).message}`)
+        }
+        return 1
+      }
+    }
+    if (!cmd.check) {
+      try {
+        const remote = await maybeSubmitRemoteUpdateApply(config, cmd)
+        const apply = remote?.apply ?? await prepareUpdateApply(repos, config, {
+          version: cmd.version,
+          allowLegacyDbShadow: cmd.allowLegacyDbShadow,
+        })
+        const execution = remote?.execution ?? await maybeStartPreparedUpdateExecution(repos, config, apply.operationId, apply.switcherPath)
+        if (cmd.json) {
+          process.stdout.write(`${JSON.stringify({ status: buildUpdateStatus(repos, config, { latestRelease: apply.targetRelease }), apply, execution }, null, 2)}\n`)
+          return 0
+        }
+        console.log(`  apply state:      ${apply.state}`)
+        console.log(`  operation id:     ${apply.operationId}`)
+        console.log(`  current version:  ${apply.currentVersion}`)
+        console.log(`  target release:   ${apply.targetRelease.tag}`)
+        console.log(`  update repo:      ${apply.githubRepo}`)
+        console.log(`  staged root:      ${apply.stagedRoot}`)
+        console.log(`  switcher script:  ${apply.switcherPath}`)
+        if (apply.warnings.length > 0) {
+          console.log(`  warnings:         ${apply.warnings.join(", ")}`)
+        }
+        if (execution.started) {
+          console.log("  shutdown:         accepted")
+          console.log("  executor:         started")
+        } else {
+          console.log(`  executor:         not started (${execution.reason})`)
+          console.log("  The release has been staged and recorded, but no live local engine was available for automatic shutdown.")
+        }
+        return 0
+      } catch (err) {
+        if (cmd.json) {
+          process.stdout.write(`${JSON.stringify({ status, error: (err as Error).message }, null, 2)}\n`)
+        } else {
+          console.error(`  Update apply preparation failed: ${(err as Error).message}`)
+        }
+        return 1
+      }
+    }
+    const operationId = randomUUID()
+    try {
+      const check = await runUpdateCheck(config, { version: cmd.version })
+      repos.upsertUpdateAttempt({
+        operationId,
+        kind: "check",
+        status: "succeeded",
+        fromVersion: check.currentVersion,
+        targetVersion: check.latestRelease.version,
+        dbPath: status.dbPath,
+        dbPathSource: status.dbPathSource,
+        legacyDbShadow: status.warnings.some(w => w.startsWith("legacy-db-shadow:")),
+        installRoot: status.install.root,
+        metadataJson: JSON.stringify({ checkedAt: check.checkedAt, githubRepo: check.githubRepo }),
+        completedAt: Date.now(),
+      })
+      if (cmd.json) {
+        process.stdout.write(`${JSON.stringify({ status: buildUpdateStatus(repos, config, { latestRelease: check.latestRelease }), check }, null, 2)}\n`)
+        return 0
+      }
+      console.log(`  current version: ${check.currentVersion}`)
+      console.log(`  latest release:  ${check.latestRelease.tag}`)
+      console.log(`  update repo:     ${check.githubRepo}`)
+      console.log(`  published:       ${check.latestRelease.publishedAt ?? "unknown"}`)
+      console.log(`  available:       ${check.updateAvailable ? "yes" : "no"}`)
+      if (status.warnings.length > 0) {
+        console.log(`  warnings:        ${status.warnings.join(", ")}`)
+      }
+      console.log(`  db path:         ${status.dbPath} (${status.dbPathSource})`)
+      console.log(`  install root:    ${status.install.root}`)
+      console.log(`  release url:     ${check.latestRelease.url}`)
+      return 0
+    } catch (err) {
+      repos.upsertUpdateAttempt({
+        operationId,
+        kind: "check",
+        status: "failed",
+        fromVersion: status.currentVersion,
+        dbPath: status.dbPath,
+        dbPathSource: status.dbPathSource,
+        legacyDbShadow: status.warnings.some(w => w.startsWith("legacy-db-shadow:")),
+        installRoot: status.install.root,
+        errorMessage: (err as Error).message,
+        completedAt: Date.now(),
+      })
+      if (cmd.json) {
+        process.stdout.write(`${JSON.stringify({ status, error: (err as Error).message }, null, 2)}\n`)
+      } else {
+        console.error(`  Update check failed: ${(err as Error).message}`)
+      }
+      return 1
+    }
+  } finally {
+    db.close()
+  }
+}
+
+async function maybeStartPreparedUpdateExecution(
+  repos: Repos,
+  config: AppConfig,
+  operationId: string,
+  switcherPath: string,
+): Promise<{ started: boolean; reason: string }> {
+  const pid = readEnginePidFile()
+  if (pid && pid.port === config.enginePort) {
+    return { started: false, reason: "engine_running_use_api_apply" }
+  }
+  if (!existsSync(join(config.dataDir, "install", "current", "apps", "engine", "bin", "update-backup.js"))) {
+    return { started: false, reason: "managed_current_missing" }
+  }
+  if (!markPreparedUpdateInFlight(repos, operationId)) {
+    return { started: false, reason: "update_attempt_not_queued" }
+  }
+  const child = spawn(switcherPath, [], {
+    detached: true,
+    stdio: "ignore",
+    env: process.env,
+  })
+  child.unref()
+  return { started: true, reason: "local_executor_started" }
+}
+
+async function maybeSubmitRemoteUpdateApply(
+  config: AppConfig,
+  cmd: Extract<Command, { kind: "update" }>,
+): Promise<null | {
+  apply: {
+    operationId: string
+    state: string
+    currentVersion: string
+    targetRelease: { tag: string; version: string; publishedAt: string | null; tarballUrl: string; url: string }
+    githubRepo: string
+    stagedRoot: string
+    switcherPath: string
+    metadataPath: string
+    warnings: string[]
+  }
+  execution: { started: boolean; reason: string }
+}> {
+  const pid = readEnginePidFile()
+  if (!pid || pid.port !== config.enginePort) return null
+  if (!existsSync(join(config.dataDir, "install", "current", "apps", "engine", "bin", "update-backup.js"))) {
+    return null
+  }
+  const token = process.env.BEERENGINEER_API_TOKEN ?? readApiTokenFile()
+  if (!token) return null
+  const response = await fetch(`http://127.0.0.1:${config.enginePort}/update/apply`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-beerengineer-token": token,
+    },
+    body: JSON.stringify({
+      version: cmd.version,
+      allowLegacyDbShadow: cmd.allowLegacyDbShadow === true,
+    }),
+  }).catch(() => null)
+  if (!response) return null
+  if (response.status !== 202) {
+    const body = await response.json().catch(() => ({ error: `http_${response.status}` })) as { error?: string }
+    throw new Error(body.error || `update_apply_failed:http_${response.status}`)
+  }
+  const apply = await response.json() as {
+    operationId: string
+    state: string
+    currentVersion: string
+    targetRelease: { tag: string; version: string; publishedAt: string | null; tarballUrl: string; url: string }
+    githubRepo: string
+    stagedRoot: string
+    switcherPath: string
+    metadataPath: string
+    warnings: string[]
+  }
+  return {
+    apply,
+    execution: { started: true, reason: "engine_handoff_requested" },
+  }
+}
+
 /**
  * Validate a setup-group name (shared by `doctor` and `setup`). Returns
  * the exit code to use, or `null` to proceed.
@@ -2271,6 +2587,7 @@ type CommandHandlers = {
  * needed.
  */
 const COMMAND_REGISTRY: CommandHandlers = {
+  "start-engine": async () => startEngine(),
   doctor: async cmd => {
     const exit = validateGroup(cmd.group)
     if (exit !== null) return exit
@@ -2281,6 +2598,7 @@ const COMMAND_REGISTRY: CommandHandlers = {
     if (exit !== null) return exit
     return runSetupCommand({ group: cmd.group, noInteractive: cmd.noInteractive })
   },
+  update: cmd => runUpdateCommand(cmd),
   "notifications-test": cmd => runNotificationsTestCommand(cmd.channel),
   "workspace-preview": cmd => runWorkspacePreviewCommand(cmd.path, cmd.json),
   "workspace-add": cmd => runWorkspaceAddCommand(cmd),

@@ -119,7 +119,13 @@ test("performResume resumes a blocked story from execution without rerunning pri
     const repos = new Repos(db)
     const ws = repos.upsertWorkspace({ key: "t", name: "T", rootPath: repoRoot })
     const item = repos.createItem({ workspaceId: ws.id, title: "Test Workflow", description: "smoke" })
-    const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "api" })
+    const run = repos.createRun({
+      workspaceId: ws.id,
+      itemId: item.id,
+      title: item.title,
+      owner: "api",
+      workspaceFsId: `test-workflow-${item.id.toLowerCase()}`,
+    })
 
     try {
       const initial = makeWorkflowIO()
@@ -131,8 +137,10 @@ test("performResume resumes a blocked story from execution without rerunning pri
           ),
         ),
       )
+      sh(repoRoot, ["add", "-A"])
+      sh(repoRoot, ["commit", "-m", "capture generated docs"])
 
-      const ctx = { workspaceId: `test-workflow-${item.id.toLowerCase()}`, runId: run.id }
+      const ctx = { workspaceId: `test-workflow-${item.id.toLowerCase()}`, workspaceRoot: repoRoot, runId: run.id }
       const implementationPath = join(layout.executionRalphDir(ctx, 2, "US-02"), "implementation.json")
       const implementation = JSON.parse(await readFile(implementationPath, "utf8")) as StoryImplementationArtifact
       implementation.status = "blocked"
@@ -247,10 +255,16 @@ test("performResume preserves workspaceRoot so resume stays in real git mode", a
     const repos = new Repos(db)
     const ws = repos.upsertWorkspace({ key: "t", name: "T", rootPath: repoRoot })
     const item = repos.createItem({ workspaceId: ws.id, title: "Resume Git Mode", description: "smoke" })
-    const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "api" })
+    const run = repos.createRun({
+      workspaceId: ws.id,
+      itemId: item.id,
+      title: item.title,
+      owner: "api",
+      workspaceFsId: `resume-git-mode-${item.id.toLowerCase()}`,
+    })
 
     try {
-      const ctx = { workspaceId: `resume-git-mode-${item.id.toLowerCase()}`, runId: run.id }
+      const ctx = { workspaceId: `resume-git-mode-${item.id.toLowerCase()}`, workspaceRoot: repoRoot, runId: run.id }
       mkdirSync(layout.runDir(ctx), { recursive: true })
       await writeFile(layout.runFile(ctx), `${JSON.stringify({ id: run.id }, null, 2)}\n`)
       await writeRecoveryRecord(ctx, {

@@ -172,3 +172,28 @@ CREATE INDEX IF NOT EXISTS notification_deliveries_channel_created_idx
 -- migrateNotificationDeliveriesTable() after the ALTER TABLE ADD COLUMN runs
 -- for pre-existing DBs. Keeping them there (not here) lets the migration run
 -- in the right order: columns first, then indexes that depend on them.
+
+-- Durable audit trail for updater operations. The first shipped updater slice
+-- mainly uses this as a status/history foundation.
+CREATE TABLE IF NOT EXISTS update_attempts (
+  operation_id TEXT PRIMARY KEY,
+  idempotency_key TEXT,
+  kind TEXT NOT NULL,
+  status TEXT NOT NULL,
+  from_version TEXT,
+  target_version TEXT,
+  db_path TEXT,
+  db_path_source TEXT,
+  legacy_db_shadow INTEGER NOT NULL DEFAULT 0,
+  install_root TEXT,
+  backup_dir TEXT,
+  error_message TEXT,
+  metadata_json TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  completed_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS update_attempts_created_idx
+  ON update_attempts(created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS update_attempts_idempotency_key_idx
+  ON update_attempts(idempotency_key);

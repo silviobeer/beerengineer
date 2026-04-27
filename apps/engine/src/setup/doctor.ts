@@ -9,6 +9,7 @@ import { initDatabase } from "../db/connection.js"
 import { Repos } from "../db/repositories.js"
 import { createFrontendDesignReview, createFrontendDesignStage, createVisualCompanionReview, createVisualCompanionStage } from "../llm/registry.js"
 import { layout } from "../core/workspaceLayout.js"
+import { resolveWorkflowContextForRun } from "../core/workflowContextResolver.js"
 
 type ToolProbe = {
   ok: boolean
@@ -285,7 +286,9 @@ async function runCoreChecks(configPath: string, configState: ReturnType<typeof 
     const runs = repos.listRuns().filter(run => run.workspace_fs_id)
     const hasUiRun = runs.some(run => {
       try {
-        const projectsPath = layout.stageArtifactsDir({ workspaceId: run.workspace_fs_id!, runId: run.id }, "brainstorm")
+        const ctx = resolveWorkflowContextForRun(repos, run)
+        if (!ctx) return false
+        const projectsPath = layout.stageArtifactsDir(ctx, "brainstorm")
         const projects = JSON.parse(readFileSync(`${projectsPath}/projects.json`, "utf8")) as Array<{ hasUi?: boolean }>
         return projects.some(project => project.hasUi === true)
       } catch {

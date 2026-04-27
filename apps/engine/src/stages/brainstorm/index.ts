@@ -31,6 +31,7 @@ export async function brainstorm(
     stageAgentLabel: "LLM-1 (Brainstorm)",
     reviewerLabel: "Review-LLM",
     workspaceId: context.workspaceId,
+    workspaceRoot: context.workspaceRoot!,
     runId: context.runId,
     createInitialState: (): BrainstormState => ({
       item,

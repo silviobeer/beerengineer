@@ -34,6 +34,7 @@ export async function visualCompanion(
     stageAgentLabel: "UX Designer",
     reviewerLabel: "UX Review",
     workspaceId: context.workspaceId,
+    workspaceRoot: context.workspaceRoot!,
     baseRunId: context.runId,
     stageAgent: createVisualCompanionStage(llm),
     reviewer: createVisualCompanionReview(llm),
