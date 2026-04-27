@@ -190,8 +190,9 @@ runs against a real project hit real edge cases.
   presets, env vars).
 - [`docs/setup-for-dummies.md`](docs/setup-for-dummies.md) —
   user-facing setup walkthrough.
-- [`docs/NOTES.de.md`](docs/NOTES.de.md) — design notes and
-  implementation history (in German).
+- [`docs/architecture-plan.md`](docs/architecture-plan.md) — historical
+  refactor plan (shipped) explaining how the current single-source-of-
+  truth API architecture came to be.
 
 ## License
 

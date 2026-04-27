@@ -12,8 +12,8 @@
 ## Why this doc exists
 
 Two concerns are load-bearing for every run but used to live scattered
-across code comments, [`docs/NOTES.de.md`](./NOTES.de.md) (German), and
-side comments in [`docs/engine-architecture.md`](./engine-architecture.md):
+across code comments and side comments in
+[`docs/engine-architecture.md`](./engine-architecture.md):
 
 1. **Context management** — what gets sent to the LLM on every turn, where
    it comes from, and how it survives recovery / resume / review cycles.
