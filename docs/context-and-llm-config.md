@@ -107,8 +107,16 @@ A pre-loaded compact view of the workspace, attached to the payload of
 engineering stages so they don't grep their way to the api contract on
 every call:
 
-- Top-level files: `README.md`, `package.json`, `tsconfig.json` (each
-  bounded to **32 KB**, larger files are truncated with a marker).
+- Top-level files: `README.md`, `AGENTS.md`, `package.json`,
+  `tsconfig.json` (each bounded to **32 KB**, larger files are
+  truncated with a marker). `AGENTS.md` carries the workspace's house
+  rules for AI coding agents per the [agents.md](https://agents.md)
+  convention; pre-loading it means engineering stages follow those
+  rules on turn 1 instead of discovering them via tool calls.
+  Nested `AGENTS.md` files (one per subtree) are intentionally not
+  walked — the convention's "nearest wins" rule is left to the live
+  filesystem, since stage agents have at least `safe-readonly` tool
+  access and can read a closer file when working in a subtree.
 - Tree summary: 2 levels deep, sorted, with these directories skipped:
   `.git`, `node_modules`, `.next`, `.turbo`, `.bg-shell`,
   `.beerengineer`, `dist`, `build`, `coverage`, `.cache`, `.vscode`.

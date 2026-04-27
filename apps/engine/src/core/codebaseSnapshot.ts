@@ -2,7 +2,15 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs"
 import { join, relative } from "node:path"
 import type { CodebaseSnapshot } from "../types/context.js"
 
-const TOP_LEVEL_FILE_NAMES = ["README.md", "package.json", "tsconfig.json"]
+// `AGENTS.md` follows the agents.md convention (https://agents.md). When
+// present at the workspace root it carries the project's house rules for
+// AI coding agents — preferred libraries, commit conventions, "do not"s.
+// Surfacing it here means engineering stages see it on turn 1 instead of
+// having to discover it via tool calls. Nested AGENTS.md files (one per
+// subtree) are deliberately not walked: the convention is "nearest wins",
+// which we leave to the live filesystem since stage agents have read-only
+// tool access and can read a closer file when working in a subtree.
+const TOP_LEVEL_FILE_NAMES = ["README.md", "AGENTS.md", "package.json", "tsconfig.json"]
 const SPEC_PATH_HINTS = [
   "apps/engine/src/api/openapi.json",
   "spec/api-contract.md",
