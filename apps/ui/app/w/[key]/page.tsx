@@ -1,5 +1,5 @@
 import { Board } from "@/components/Board";
-import type { BoardCardDTO } from "@/lib/types";
+import { virtualBoardColumn, type BoardCardDTO } from "@/lib/types";
 
 interface BoardApiItem {
   id?: string;
@@ -39,17 +39,21 @@ function engineUrl(): string {
 
 function toBoardCard(item: BoardApiItem): BoardCardDTO {
   const id = item.itemId ?? item.id ?? item.itemCode ?? "";
+  const engineColumn = item.phase ?? item.column ?? "idea";
+  const currentStage = item.current_stage ?? item.currentStage ?? null;
   return {
     id,
     itemCode: item.itemCode,
     title: item.title ?? "",
     summary: item.summary ?? null,
-    column: item.phase ?? item.column ?? "idea",
+    // Re-route handoff cards to the virtual `merge` column. See
+    // virtualBoardColumn for the rule.
+    column: virtualBoardColumn(engineColumn, currentStage),
     phase_status: item.phase_status ?? item.phaseStatus ?? null,
     hasOpenPrompt: Boolean(item.hasOpenPrompt),
     hasReviewGateWaiting: Boolean(item.hasReviewGateWaiting),
     hasBlockedRun: Boolean(item.hasBlockedRun),
-    current_stage: item.current_stage ?? item.currentStage ?? null,
+    current_stage: currentStage,
   };
 }
 

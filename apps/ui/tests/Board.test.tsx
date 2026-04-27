@@ -32,10 +32,11 @@ const COLUMN_LABEL_ORDER = [
   "Frontend",
   "Requirements",
   "Implementation",
+  "Merge",
   "Done",
 ];
 
-const STEPPER_LABELS = ["Arch", "Plan", "Exec", "Review"];
+const STEPPER_LABELS = ["Arch", "Plan", "Exec", "Review", "QA", "Doc"];
 
 function getColumnByLabel(label: string): HTMLElement {
   const columns = screen.getAllByTestId("kanban-column");
@@ -49,10 +50,10 @@ function getColumnByLabel(label: string): HTMLElement {
 }
 
 describe("Board layout (S-01)", () => {
-  it("TC-01: renders exactly six columns", () => {
+  it("TC-01: renders exactly seven columns (idea, brainstorm, frontend, requirements, implementation, merge, done)", () => {
     renderBoard(fullBoardItems());
     const columns = screen.getAllByTestId("kanban-column");
-    expect(columns).toHaveLength(6);
+    expect(columns).toHaveLength(7);
   });
 
   it("TC-02: columns appear in prescribed order", () => {
@@ -200,14 +201,14 @@ describe("Attention dot (S-01)", () => {
 });
 
 describe("Mini-Stepper visibility on board (S-01)", () => {
-  it("TC-14: Mini-Stepper is present on Implementation cards with all four labels", () => {
+  it("TC-14: Mini-Stepper is present on Implementation cards with all six labels (Merge is its own column, not a stepper segment)", () => {
     render(<BoardCard card={implementationCardWithStage("plan")} />);
     const stepper = screen.getByTestId("mini-stepper");
     for (const label of STEPPER_LABELS) {
       expect(within(stepper).getByText(label)).toBeInTheDocument();
     }
     const segments = within(stepper).getAllByRole("listitem");
-    expect(segments).toHaveLength(4);
+    expect(segments).toHaveLength(6);
   });
 
   it("TC-15: exactly one segment has a unique computed-style fingerprint", () => {
@@ -289,10 +290,10 @@ describe("Empty columns (S-01)", () => {
     expect(within(body).queryAllByTestId("board-card")).toHaveLength(0);
   });
 
-  it("TC-18: all six columns present with empty card-list when board has no items", () => {
+  it("TC-18: all seven columns present with empty card-list when board has no items", () => {
     renderBoard(emptyBoardItems());
     const columns = screen.getAllByTestId("kanban-column");
-    expect(columns).toHaveLength(6);
+    expect(columns).toHaveLength(7);
     for (const column of columns) {
       expect(within(column).getByTestId("kanban-column-header")).toBeInTheDocument();
       const body = within(column).getByTestId("kanban-column-body");

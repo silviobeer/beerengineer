@@ -1,5 +1,11 @@
 import Link from "next/link";
-import type { Item } from "../lib/types";
+import {
+  DESIGN_PREP_STAGES,
+  DESIGN_PREP_STAGE_LABELS,
+  IMPLEMENTATION_STAGES,
+  IMPLEMENTATION_STAGE_LABELS,
+  type Item,
+} from "../lib/types";
 import { hasAttentionDot, hasFailureIndicator } from "../lib/attention";
 import { StatusChip } from "./StatusChip";
 import { AttentionDot } from "./AttentionDot";
@@ -14,7 +20,12 @@ interface ItemCardProps {
 export function ItemCard({ item, workspaceKey }: ItemCardProps) {
   const showAttention = hasAttentionDot(item);
   const showFailure = !showAttention && hasFailureIndicator(item);
-  const showStepper = item.phase === "Implementation";
+  const stepperKind: "implementation" | "frontend" | null =
+    item.phase === "Implementation"
+      ? "implementation"
+      : item.phase === "Frontend"
+      ? "frontend"
+      : null;
   const summary = item.summary && item.summary.length > 0 ? item.summary : null;
 
   return (
@@ -54,10 +65,21 @@ export function ItemCard({ item, workspaceKey }: ItemCardProps) {
           currentStage={item.current_stage ?? null}
         />
       </div>
-      {showStepper ? (
+      {stepperKind === "implementation" ? (
         <MiniStepper
           pipelineState={item.pipelineState}
           currentStage={item.current_stage ?? null}
+          stages={IMPLEMENTATION_STAGES}
+          labels={IMPLEMENTATION_STAGE_LABELS}
+          ariaLabel="Implementation progress"
+        />
+      ) : stepperKind === "frontend" ? (
+        <MiniStepper
+          pipelineState={item.pipelineState}
+          currentStage={item.current_stage ?? null}
+          stages={DESIGN_PREP_STAGES}
+          labels={DESIGN_PREP_STAGE_LABELS}
+          ariaLabel="Design-prep progress"
         />
       ) : null}
     </Link>

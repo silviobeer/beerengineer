@@ -6,19 +6,21 @@ import { makeItem } from "@/lib/fixtures";
 import { STAGE_KEYS } from "@/lib/types";
 
 describe("MiniStepper segments (AC-1.5)", () => {
-  it("renders four labeled segments in order: Arch, Plan, Exec, Review", () => {
-    render(<MiniStepper currentStage="plan" />);
+  it("renders six labeled segments in order: Arch, Plan, Exec, Review, QA, Doc", () => {
+    render(<MiniStepper currentStage="planning" />);
     const stepper = screen.getByTestId("mini-stepper");
     const segments = within(stepper).getAllByTestId(/mini-stepper-segment-/);
-    expect(segments).toHaveLength(4);
+    expect(segments).toHaveLength(6);
     expect(segments.map((s) => s.dataset.segment)).toEqual([
       "arch",
       "plan",
       "exec",
       "review",
+      "qa",
+      "doc",
     ]);
     const labels = segments.map((s) => s.textContent?.replace(/^▶\s*/, ""));
-    expect(labels).toEqual(["Arch", "Plan", "Exec", "Review"]);
+    expect(labels).toEqual(["Arch", "Plan", "Exec", "Review", "QA", "Doc"]);
   });
 
   it.each(STAGE_KEYS.map((k) => [k]))(
@@ -62,14 +64,17 @@ describe("MiniStepper segments (AC-1.5)", () => {
       render(<MiniStepper currentStage="deploy" />)
     ).not.toThrow();
     const segments = screen.getAllByTestId(/mini-stepper-segment-/);
-    expect(segments).toHaveLength(4);
+    expect(segments).toHaveLength(6);
     for (const seg of segments) {
       expect(seg.dataset.active).toBe("false");
     }
   });
 
-  it("does not render Mini-Stepper for non-Implementation column cards (TC-1.5d)", () => {
-    const phases = ["Idea", "Frontend", "Requirements", "Test", "Merge"] as const;
+  it("does not render Mini-Stepper for non-pipeline column cards (TC-1.5d)", () => {
+    // Stepper renders for `Implementation` (arch/plan/exec/review) and
+    // `Frontend` (visual/design). Other columns have no sub-stages worth
+    // showing, so the stepper stays hidden.
+    const phases = ["Idea", "Requirements", "Test", "Merge"] as const;
     for (const phase of phases) {
       const { unmount } = render(
         <ItemCard
@@ -79,6 +84,74 @@ describe("MiniStepper segments (AC-1.5)", () => {
       );
       expect(screen.queryByTestId("mini-stepper")).not.toBeInTheDocument();
       unmount();
+    }
+  });
+
+  it("renders Mini-Stepper for Frontend phase with design-prep segments", () => {
+    render(
+      <ItemCard
+        item={makeItem({
+          id: "fe-x",
+          phase: "Frontend",
+          pipelineState: "running",
+          current_stage: "visual-companion",
+        })}
+        workspaceKey="demo"
+      />
+    );
+    expect(screen.getByTestId("mini-stepper")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("mini-stepper-segment-visual-companion").dataset.active
+    ).toBe("true");
+    expect(
+      screen.getByTestId("mini-stepper-segment-frontend-design").dataset.active
+    ).toBe("false");
+  });
+
+  it("Implementation stepper lights up the right segment for full engine stage names (qa, documentation get their own segments; handoff isn't a stepper segment, it's the Merge column)", () => {
+    const cases: Array<[string, "arch" | "plan" | "exec" | "review" | "qa" | "doc"]> = [
+      ["requirements", "arch"],
+      ["architecture", "arch"],
+      ["planning", "plan"],
+      ["execution", "exec"],
+      ["project-review", "review"],
+      ["qa", "qa"],
+      ["documentation", "doc"],
+    ];
+    for (const [stageKey, expectedSegment] of cases) {
+      const { unmount } = render(
+        <ItemCard
+          item={makeItem({
+            id: `impl-${stageKey}`,
+            phase: "Implementation",
+            pipelineState: "running",
+            current_stage: stageKey,
+          })}
+          workspaceKey="demo"
+        />
+      );
+      expect(
+        screen.getByTestId(`mini-stepper-segment-${expectedSegment}`).dataset.active,
+      ).toBe("true");
+      unmount();
+    }
+  });
+
+  it("handoff stage does not light any implementation stepper segment (item belongs to the Merge column instead)", () => {
+    render(
+      <ItemCard
+        item={makeItem({
+          id: "impl-handoff",
+          phase: "Implementation",
+          pipelineState: "running",
+          current_stage: "handoff",
+        })}
+        workspaceKey="demo"
+      />
+    );
+    const segments = screen.getAllByTestId(/mini-stepper-segment-/);
+    for (const seg of segments) {
+      expect(seg.dataset.active).toBe("false");
     }
   });
 

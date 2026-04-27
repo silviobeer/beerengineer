@@ -57,6 +57,7 @@ function toUiEntry(e: EngineConversationEntry): ConversationEntry {
       id: e.id,
       promptId: e.promptId,
       text: e.text,
+      createdAt: e.createdAt,
     });
   }
   return {
@@ -64,15 +65,20 @@ function toUiEntry(e: EngineConversationEntry): ConversationEntry {
     type: e.actor,
     text: e.text,
     promptId: e.kind === "answer" ? e.promptId : undefined,
+    createdAt: e.createdAt,
   };
 }
 
 function chatEntryToUi(e: ChatEntry): ConversationEntry {
+  // SSE entries don't carry the engine timestamp; use the wall clock at
+  // arrival as a best-effort substitute so the bubble still shows a time.
+  const createdAt = new Date().toISOString();
   if (e.kind === "question" && e.promptId) {
     return promptEntry({
       id: e.id ?? `prompt-${e.promptId}`,
       promptId: e.promptId,
       text: e.content,
+      createdAt,
     });
   }
   return {
@@ -80,6 +86,7 @@ function chatEntryToUi(e: ChatEntry): ConversationEntry {
     type: e.role === "assistant" ? "agent" : e.role === "user" ? "user" : "system",
     text: e.content,
     promptId: e.kind === "answer" ? e.promptId : undefined,
+    createdAt,
   };
 }
 
@@ -91,6 +98,7 @@ function promptEntry(input: {
   id: string;
   promptId: string;
   text: string;
+  createdAt?: string;
 }): ConversationEntry {
   if (isReviewGatePrompt(input.text)) {
     return {
@@ -98,6 +106,7 @@ function promptEntry(input: {
       type: "review-gate",
       text: input.text,
       promptId: input.promptId,
+      createdAt: input.createdAt,
       actions: [
         { label: "Approve", value: "approve" },
         { label: "Revise", value: "revise:" },
@@ -109,6 +118,7 @@ function promptEntry(input: {
     type: "agent",
     text: input.text,
     promptId: input.promptId,
+    createdAt: input.createdAt,
   };
 }
 
@@ -220,6 +230,7 @@ export function ItemChat({ itemId }: ItemChatProps) {
         id: `prompt-${promptId}`,
         promptId,
         text: openPrompt.text,
+        createdAt: openPrompt.createdAt,
       }),
     ];
   }, [entries, openPrompt]);

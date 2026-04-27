@@ -4,7 +4,7 @@ import { useCallback, useMemo, useState } from "react";
 import { BoardCard } from "./BoardCard";
 import { BoardItemModal } from "./BoardItemModal";
 import { KanbanColumn } from "./KanbanColumn";
-import { BOARD_COLUMNS, type BoardCardDTO } from "../lib/types";
+import { BOARD_COLUMNS, virtualBoardColumn, type BoardCardDTO } from "../lib/types";
 import { useSSE } from "../app/lib/sse/SSEContext";
 
 interface BoardProps {
@@ -20,11 +20,15 @@ export function Board({ items, workspaceKey }: BoardProps) {
     return items.map((item) => {
       const live = itemState[item.id];
       if (!live) return item;
+      const engineColumn = live.column ?? item.column;
+      const currentStage = live.currentStage ?? item.current_stage;
       return {
         ...item,
-        column: live.column ?? item.column,
+        // Re-derive the virtual `merge` column from the SSE-merged stage so
+        // the live board reacts to handoff transitions without a re-fetch.
+        column: virtualBoardColumn(engineColumn, currentStage),
         phase_status: live.phaseStatus ?? item.phase_status,
-        current_stage: live.currentStage ?? item.current_stage,
+        current_stage: currentStage,
         // Pass attention through as-is so BoardCard can clear stale SSR flags.
         liveAttention: live.attention ?? null,
       };

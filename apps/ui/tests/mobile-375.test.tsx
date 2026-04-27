@@ -55,7 +55,7 @@ describe("S-09 mobile board layout", () => {
     render(<SSETestProvider><Board items={fullBoardItems()} workspaceKey="alpha" /></SSETestProvider>);
     const scroll = screen.getByTestId("kanban-board-scroll");
     const columns = within(scroll).getAllByTestId("kanban-column");
-    expect(columns).toHaveLength(6);
+    expect(columns).toHaveLength(7);
     for (const c of columns) {
       expect(scroll.contains(c)).toBe(true);
     }

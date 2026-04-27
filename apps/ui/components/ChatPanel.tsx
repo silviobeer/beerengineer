@@ -1,7 +1,18 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { ConversationAction, ConversationEntry } from "../lib/types";
+
+function formatTimestamp(iso: string | undefined): string | null {
+  if (!iso) return null;
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return null;
+  const d = new Date(ms);
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  const ss = String(d.getSeconds()).padStart(2, "0");
+  return `${hh}:${mm}:${ss}`;
+}
 
 interface ChatPanelProps {
   activeRunId?: string | null;
@@ -9,7 +20,7 @@ interface ChatPanelProps {
 }
 
 const SPEAKER_LABELS: Record<string, string> = {
-  system: "S:",
+  system: "System:",
   agent: "Beerengineer:",
   user: "You:",
   "review-gate": "Beerengineer:",
@@ -23,9 +34,26 @@ export function ChatPanel({ activeRunId, conversation }: ChatPanelProps) {
   const [pendingMessage, setPendingMessage] = useState(false);
   const [answeredPromptIds, setAnsweredPromptIds] = useState<string[]>([]);
 
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const lastMessageCountRef = useRef(0);
+
   useEffect(() => {
     setAnsweredPromptIds([]);
   }, [activeRunId]);
+
+  // Auto-scroll to bottom when a new message arrives, but only when the user
+  // is already near the bottom — preserves manual scroll-back to read history.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const grew = conversation.length > lastMessageCountRef.current;
+    lastMessageCountRef.current = conversation.length;
+    if (!grew) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distanceFromBottom < 80) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [conversation]);
 
   if (!activeRunId) {
     return (
@@ -96,20 +124,26 @@ export function ChatPanel({ activeRunId, conversation }: ChatPanelProps) {
           No messages yet.
         </p>
       ) : (
-        <ul data-testid="chat-history" className="space-y-2">
-          {conversation.map((entry, index) => (
-            <ConversationEntryView
-              key={entry.id ?? index}
-              entry={entry}
-              onAction={handleAction}
-              disabled={
-                pendingAnswer ||
-                (typeof entry.promptId === "string" &&
-                  answeredPromptIds.includes(entry.promptId))
-              }
-            />
-          ))}
-        </ul>
+        <div
+          ref={scrollRef}
+          data-testid="chat-scroll"
+          className="overflow-y-auto max-h-[60vh] pr-2 border border-zinc-800 bg-zinc-950/40"
+        >
+          <ul data-testid="chat-history" className="space-y-3 p-3">
+            {conversation.map((entry, index) => (
+              <ConversationEntryView
+                key={entry.id ?? index}
+                entry={entry}
+                onAction={handleAction}
+                disabled={
+                  pendingAnswer ||
+                  (typeof entry.promptId === "string" &&
+                    answeredPromptIds.includes(entry.promptId))
+                }
+              />
+            ))}
+          </ul>
+        </div>
       )}
       <form
         data-testid="chat-form"
@@ -169,20 +203,54 @@ function ConversationEntryView({ entry, onAction, disabled }: ConversationEntryV
   const label = SPEAKER_LABELS[entry.type];
   const isReviewGate = entry.type === "review-gate";
   const actions = normalizeActions(entry.actions);
+  const timestamp = formatTimestamp(entry.createdAt);
+  // Visually separate user messages from agent / system / review-gate by
+  // tinting the bubble's left edge. Indent the message body so the speaker
+  // and timestamp form a clear header line above it.
+  const accent =
+    entry.type === "user"
+      ? "border-l-2 border-emerald-500/60"
+      : entry.type === "system"
+      ? "border-l-2 border-zinc-700"
+      : entry.type === "review-gate"
+      ? "border-l-2 border-amber-500/60"
+      : "border-l-2 border-zinc-600";
   return (
     <li
       data-testid="chat-entry"
       data-entry-type={entry.type}
-      className="text-sm text-zinc-100"
+      className={`text-sm text-zinc-100 py-2 pl-3 pr-2 ${accent}`}
     >
-      {label ? (
-        <span data-testid="chat-entry-label" className="mr-1 font-mono text-zinc-400">
-          {label}
-        </span>
-      ) : null}
-      <span data-testid="chat-entry-text">{entry.text}</span>
+      <div
+        data-testid="chat-entry-header"
+        className="flex items-baseline gap-2 mb-1"
+      >
+        {timestamp ? (
+          <span
+            data-testid="chat-entry-time"
+            className="font-mono text-[10px] text-zinc-500 tabular-nums"
+            title={entry.createdAt}
+          >
+            {timestamp}
+          </span>
+        ) : null}
+        {label ? (
+          <span
+            data-testid="chat-entry-label"
+            className="font-mono text-xs uppercase tracking-wider text-zinc-400"
+          >
+            {label}
+          </span>
+        ) : null}
+      </div>
+      <div
+        data-testid="chat-entry-text"
+        className="pl-3 whitespace-pre-wrap break-words leading-relaxed"
+      >
+        {entry.text}
+      </div>
       {isReviewGate && actions.length > 0 && entry.promptId ? (
-        <div data-testid="review-gate-actions" className="mt-1 flex gap-2">
+        <div data-testid="review-gate-actions" className="mt-2 ml-3 flex gap-2">
           {actions.map((action) => (
             <button
               key={action.label}

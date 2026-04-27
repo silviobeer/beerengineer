@@ -13,13 +13,13 @@ function renderBoard(items: ReturnType<typeof fullBoardItems>) {
 }
 
 describe("Board layout (TC-01, TC-02, TC-19, TC-20)", () => {
-  it("renders exactly six column headers", () => {
+  it("renders exactly seven column headers", () => {
     renderBoard(fullBoardItems());
     const headers = screen.getAllByTestId("kanban-column-header");
-    expect(headers).toHaveLength(6);
+    expect(headers).toHaveLength(7);
   });
 
-  it("renders the six columns in left-to-right order: Idea, Brainstorm, Frontend, Requirements, Implementation, Done", () => {
+  it("renders the seven columns in left-to-right order: Idea, Brainstorm, Frontend, Requirements, Implementation, Merge, Done", () => {
     renderBoard(fullBoardItems());
     const headers = screen.getAllByTestId("kanban-column-header");
     expect(headers.map((h) => h.textContent?.trim())).toEqual([
@@ -28,6 +28,7 @@ describe("Board layout (TC-01, TC-02, TC-19, TC-20)", () => {
       "Frontend",
       "Requirements",
       "Implementation",
+      "Merge",
       "Done",
     ]);
   });
@@ -43,10 +44,10 @@ describe("Board layout (TC-01, TC-02, TC-19, TC-20)", () => {
     expect(within(body).queryAllByTestId("board-card")).toHaveLength(0);
   });
 
-  it("keeps all six columns in the DOM when there are zero items", () => {
+  it("keeps all seven columns in the DOM when there are zero items", () => {
     renderBoard(emptyBoardItems());
     const cols = screen.getAllByTestId("kanban-column");
-    expect(cols).toHaveLength(6);
+    expect(cols).toHaveLength(7);
     for (const col of cols) {
       expect(col).toBeInTheDocument();
     }

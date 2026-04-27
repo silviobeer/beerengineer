@@ -116,7 +116,7 @@ describe("ChatPanel rendering (US-5)", () => {
     ];
     render(<ChatPanel activeRunId="run-42" conversation={conversation} />);
     const entries = screen.getAllByTestId("chat-entry");
-    expect(within(entries[0]).getByTestId("chat-entry-label")).toHaveTextContent("S:");
+    expect(within(entries[0]).getByTestId("chat-entry-label")).toHaveTextContent("System:");
     expect(within(entries[1]).getByTestId("chat-entry-label")).toHaveTextContent(
       "Beerengineer:"
     );
@@ -129,7 +129,7 @@ describe("ChatPanel rendering (US-5)", () => {
     ];
     render(<ChatPanel activeRunId="run-42" conversation={conversation} />);
     const entry = screen.getByTestId("chat-entry");
-    expect(within(entry).queryByText(/^(S:|You:|Beerengineer:)$/)).toBeNull();
+    expect(within(entry).queryByText(/^(System:|You:|Beerengineer:)$/)).toBeNull();
   });
 
   it("TC-5.2: review-gate entry renders inline action buttons after the prompt text", () => {

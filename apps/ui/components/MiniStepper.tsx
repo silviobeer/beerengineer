@@ -1,6 +1,9 @@
 import {
+  DESIGN_PREP_STAGES,
   IMPLEMENTATION_STAGES,
   IMPLEMENTATION_STAGE_LABELS,
+  mapEngineStageToDesignPrepSegment,
+  mapEngineStageToImplementationSegment,
   type ImplementationStage,
 } from "../lib/types";
 
@@ -70,7 +73,18 @@ export function MiniStepper({
   ariaLabel = "Implementation progress",
 }: MiniStepperProps) {
   const resolvedStage = stage ?? currentStage ?? null;
-  const activeStage = isKnownStage(resolvedStage, stages) ? resolvedStage : null;
+  // The engine emits full stageKeys (`architecture`, `execution`,
+  // `visual-companion`, …) but the implementation stepper uses 4 collapsed
+  // segments (`arch`/`plan`/`exec`/`review`). Normalize through the
+  // appropriate mapper based on the segment list the caller passed; for
+  // unknown lists, fall back to direct matching (no transform).
+  const normalizedStage =
+    stages === IMPLEMENTATION_STAGES
+      ? (mapEngineStageToImplementationSegment(resolvedStage) ?? resolvedStage)
+      : stages === DESIGN_PREP_STAGES
+      ? (mapEngineStageToDesignPrepSegment(resolvedStage) ?? resolvedStage)
+      : resolvedStage;
+  const activeStage = isKnownStage(normalizedStage, stages) ? normalizedStage : null;
 
   return (
     <ol
