@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { BoardCardDTO } from "../lib/types";
 import {
   DESIGN_PREP_STAGES,
@@ -60,7 +61,7 @@ export function BoardCard({ card, workspaceKey }: BoardCardProps) {
           }}
         />
       ) : null}
-      <a
+      <Link
         href={href}
         data-testid="board-card-link"
         className="block text-zinc-100 no-underline"
@@ -129,7 +130,7 @@ export function BoardCard({ card, workspaceKey }: BoardCardProps) {
             />
           </div>
         ) : null}
-      </a>
+      </Link>
       <BoardCardActions card={card} />
     </article>
   );
