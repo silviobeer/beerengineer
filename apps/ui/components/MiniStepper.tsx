@@ -10,6 +10,10 @@ interface MiniStepperProps {
    * matching segment, or none when the stage is null/unknown.
    */
   stage?: string | null;
+  /** Legacy alias kept for older call sites. */
+  currentStage?: string | null;
+  /** Legacy alias used by older tests and cards. */
+  pipelineState?: string;
   /**
    * Sub-stage keys, in display order. Defaults to the implementation set
    * (`arch | plan | exec | review`) so existing call sites keep working.
@@ -59,17 +63,21 @@ function isKnownStage(value: unknown, stages: ReadonlyArray<string>): value is s
 
 export function MiniStepper({
   stage,
+  currentStage,
+  pipelineState,
   stages = IMPLEMENTATION_STAGES,
   labels = IMPLEMENTATION_STAGE_LABELS,
   ariaLabel = "Implementation progress",
 }: MiniStepperProps) {
-  const activeStage = isKnownStage(stage, stages) ? stage : null;
+  const resolvedStage = stage ?? currentStage ?? null;
+  const activeStage = isKnownStage(resolvedStage, stages) ? resolvedStage : null;
 
   return (
     <ol
       data-testid="mini-stepper"
       role="list"
       aria-label={ariaLabel}
+      data-state={pipelineState ?? ""}
       className="flex items-center gap-1"
       style={{ display: "flex", alignItems: "center", gap: "4px", listStyle: "none", padding: 0, margin: 0 }}
     >

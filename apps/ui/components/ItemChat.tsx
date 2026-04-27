@@ -52,19 +52,63 @@ function engineUrl(): string {
 }
 
 function toUiEntry(e: EngineConversationEntry): ConversationEntry {
+  if (e.kind === "question" && e.promptId) {
+    return promptEntry({
+      id: e.id,
+      promptId: e.promptId,
+      text: e.text,
+    });
+  }
   return {
     id: e.id,
     type: e.actor,
     text: e.text,
-    promptId: e.promptId,
+    promptId: e.kind === "answer" ? e.promptId : undefined,
   };
 }
 
 function chatEntryToUi(e: ChatEntry): ConversationEntry {
+  if (e.kind === "question" && e.promptId) {
+    return promptEntry({
+      id: e.id ?? `prompt-${e.promptId}`,
+      promptId: e.promptId,
+      text: e.content,
+    });
+  }
   return {
     id: e.id,
     type: e.role === "assistant" ? "agent" : e.role === "user" ? "user" : "system",
     text: e.content,
+    promptId: e.kind === "answer" ? e.promptId : undefined,
+  };
+}
+
+function isReviewGatePrompt(text: string): boolean {
+  return /approve/i.test(text) && /revise:\s*</i.test(text);
+}
+
+function promptEntry(input: {
+  id: string;
+  promptId: string;
+  text: string;
+}): ConversationEntry {
+  if (isReviewGatePrompt(input.text)) {
+    return {
+      id: input.id,
+      type: "review-gate",
+      text: input.text,
+      promptId: input.promptId,
+      actions: [
+        { label: "Approve", value: "approve" },
+        { label: "Revise", value: "revise:" },
+      ],
+    };
+  }
+  return {
+    id: input.id,
+    type: "agent",
+    text: input.text,
+    promptId: input.promptId,
   };
 }
 
@@ -142,6 +186,20 @@ export function ItemChat({ itemId }: ItemChatProps) {
     if (!runId) return;
     const unsub = registerConversationListener((entry: ChatEntry) => {
       if (entry.runId !== runId) return;
+      if (entry.kind === "question" && entry.promptId) {
+        setOpenPrompt({
+          promptId: entry.promptId,
+          runId,
+          stageKey: null,
+          text: entry.content,
+          createdAt: new Date().toISOString(),
+        });
+      }
+      if (entry.kind === "answer" && entry.promptId) {
+        setOpenPrompt((prev) =>
+          prev?.promptId === entry.promptId ? null : prev,
+        );
+      }
       const ui = chatEntryToUi(entry);
       if (ui.id && seenIdsRef.current.has(ui.id)) return;
       if (ui.id) seenIdsRef.current.add(ui.id);
@@ -156,13 +214,14 @@ export function ItemChat({ itemId }: ItemChatProps) {
     if (!openPrompt) return entries;
     const promptId = openPrompt.promptId;
     if (entries.some((e) => e.promptId === promptId)) return entries;
-    const promptEntry: ConversationEntry = {
-      id: `prompt-${promptId}`,
-      type: "system",
-      text: openPrompt.text,
-      promptId,
-    };
-    return [...entries, promptEntry];
+    return [
+      ...entries,
+      promptEntry({
+        id: `prompt-${promptId}`,
+        promptId,
+        text: openPrompt.text,
+      }),
+    ];
   }, [entries, openPrompt]);
 
   if (!loaded) {

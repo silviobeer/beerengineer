@@ -108,12 +108,17 @@ export const BOARD_COLUMN_LABELS: Record<BoardColumn, string> = {
 
 export type ConversationRole = "system" | "agent" | "user" | "review-gate";
 
+export interface ConversationAction {
+  label: string;
+  value: string;
+}
+
 export interface ConversationEntry {
   id?: string;
   type: ConversationRole | string;
   text: string;
   promptId?: string;
-  actions?: string[];
+  actions?: Array<string | ConversationAction>;
 }
 
 export interface ItemDetailDTO {

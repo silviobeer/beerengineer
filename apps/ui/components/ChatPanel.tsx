@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
-import type { ConversationEntry } from "../lib/types";
+import { useEffect, useState, type FormEvent } from "react";
+import type { ConversationAction, ConversationEntry } from "../lib/types";
 
 interface ChatPanelProps {
   activeRunId?: string | null;
@@ -21,6 +21,11 @@ export function ChatPanel({ activeRunId, conversation }: ChatPanelProps) {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [pendingAnswer, setPendingAnswer] = useState(false);
   const [pendingMessage, setPendingMessage] = useState(false);
+  const [answeredPromptIds, setAnsweredPromptIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    setAnsweredPromptIds([]);
+  }, [activeRunId]);
 
   if (!activeRunId) {
     return (
@@ -44,6 +49,10 @@ export function ChatPanel({ activeRunId, conversation }: ChatPanelProps) {
       });
       if (!res.ok) {
         setSubmitError("Failed to send answer.");
+      } else {
+        setAnsweredPromptIds((prev) =>
+          prev.includes(promptId) ? prev : [...prev, promptId]
+        );
       }
     } catch {
       setSubmitError("Failed to send answer.");
@@ -93,7 +102,11 @@ export function ChatPanel({ activeRunId, conversation }: ChatPanelProps) {
               key={entry.id ?? index}
               entry={entry}
               onAction={handleAction}
-              disabled={pendingAnswer}
+              disabled={
+                pendingAnswer ||
+                (typeof entry.promptId === "string" &&
+                  answeredPromptIds.includes(entry.promptId))
+              }
             />
           ))}
         </ul>
@@ -141,9 +154,21 @@ interface ConversationEntryViewProps {
   disabled: boolean;
 }
 
+function normalizeActions(
+  actions: Array<string | ConversationAction> | undefined
+): ConversationAction[] {
+  if (!actions) return [];
+  return actions.map((action) =>
+    typeof action === "string"
+      ? { label: action, value: action }
+      : action
+  );
+}
+
 function ConversationEntryView({ entry, onAction, disabled }: ConversationEntryViewProps) {
   const label = SPEAKER_LABELS[entry.type];
   const isReviewGate = entry.type === "review-gate";
+  const actions = normalizeActions(entry.actions);
   return (
     <li
       data-testid="chat-entry"
@@ -156,19 +181,19 @@ function ConversationEntryView({ entry, onAction, disabled }: ConversationEntryV
         </span>
       ) : null}
       <span data-testid="chat-entry-text">{entry.text}</span>
-      {isReviewGate && entry.actions && entry.promptId ? (
+      {isReviewGate && actions.length > 0 && entry.promptId ? (
         <div data-testid="review-gate-actions" className="mt-1 flex gap-2">
-          {entry.actions.map((action) => (
+          {actions.map((action) => (
             <button
-              key={action}
+              key={action.label}
               type="button"
               data-testid="review-gate-action"
-              data-action={action}
+              data-action={action.value}
               disabled={disabled}
-              onClick={() => onAction(entry.promptId as string, action)}
+              onClick={() => onAction(entry.promptId as string, action.value)}
               className="border border-zinc-700 px-2 py-1 text-xs text-zinc-100 disabled:opacity-50"
             >
-              {action}
+              {action.label}
             </button>
           ))}
         </div>

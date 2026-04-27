@@ -107,6 +107,16 @@ function toChatEntry(env: Envelope, eventType: string): ChatEntry | null {
     runId: env.runId ?? "",
     role,
     content,
+    kind:
+      eventType === "prompt_requested"
+        ? "question"
+        : eventType === "prompt_answered"
+          ? "answer"
+          : "message",
+    promptId:
+      typeof payload.promptId === "string" && payload.promptId.length > 0
+        ? payload.promptId
+        : undefined,
   };
 }
 

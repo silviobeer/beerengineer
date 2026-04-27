@@ -12,12 +12,12 @@ export type BoardProps = {
 
 export function Board({ workspaceKey, items }: BoardProps) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
-  const cardRefs = useRef<Map<string, HTMLAnchorElement | null>>(new Map());
+  const cardRefs = useRef<Map<string, HTMLDivElement | null>>(new Map());
 
   const attentionCount = countAttention(items);
 
   const setCardRef = useCallback((id: string) => {
-    return (node: HTMLAnchorElement | null) => {
+    return (node: HTMLDivElement | null) => {
       if (node) {
         cardRefs.current.set(id, node);
       } else {
@@ -48,12 +48,15 @@ export function Board({ workspaceKey, items }: BoardProps) {
         className="flex-1 overflow-auto p-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3"
       >
         {items.map((item) => (
-          <BoardCard
-            key={item.id}
-            ref={setCardRef(item.id)}
-            item={item}
-            workspaceKey={workspaceKey}
-          />
+          <div key={item.id} ref={setCardRef(item.id)}>
+            <BoardCard
+              itemId={item.id}
+              itemCode={item.itemCode}
+              title={item.title}
+              summary={item.summary}
+              showMiniStepper={item.currentColumn === "implementation"}
+            />
+          </div>
         ))}
       </div>
     </div>

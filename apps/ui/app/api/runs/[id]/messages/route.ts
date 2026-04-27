@@ -11,5 +11,9 @@ export async function POST(
   } catch {
     body = {};
   }
-  return proxyEngineMutation(`/runs/${encodeURIComponent(id)}/messages`, body);
+  const normalized =
+    body && typeof body === "object" && typeof (body as { message?: unknown }).message === "string"
+      ? { text: (body as { message: string }).message }
+      : body;
+  return proxyEngineMutation(`/runs/${encodeURIComponent(id)}/messages`, normalized);
 }

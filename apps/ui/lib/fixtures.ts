@@ -265,7 +265,10 @@ export function itemWithActiveRunAndConversation(): ItemDetailDTO {
         type: "review-gate",
         text: "review-prompt",
         promptId: "p-7",
-        actions: ["Approve", "Revise"],
+        actions: [
+          { label: "Approve", value: "approve" },
+          { label: "Revise", value: "revise:" },
+        ],
       },
     ],
   };

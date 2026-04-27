@@ -1,40 +1,17 @@
-import ItemDetail from "../../../../components/ItemDetail";
-import type { WorkspaceItem } from "../../../../lib/types";
-
-const ENGINE_URL =
-  process.env.NEXT_PUBLIC_ENGINE_URL ?? process.env.ENGINE_URL ?? "http://localhost:4100";
-
-async function loadItems(workspaceKey: string): Promise<WorkspaceItem[]> {
-  try {
-    const res = await fetch(`${ENGINE_URL}/items?workspace=${encodeURIComponent(workspaceKey)}`, {
-      cache: "no-store",
-    });
-    if (!res.ok) return [];
-    const data = (await res.json()) as { items?: WorkspaceItem[] };
-    return Array.isArray(data?.items) ? data.items : [];
-  } catch {
-    return [];
-  }
-}
-
-async function loadItem(itemId: string): Promise<WorkspaceItem | null> {
-  try {
-    const res = await fetch(`${ENGINE_URL}/items/${encodeURIComponent(itemId)}`, {
-      cache: "no-store",
-    });
-    if (!res.ok) return null;
-    return (await res.json()) as WorkspaceItem;
-  } catch {
-    return null;
-  }
-}
+import { notFound } from "next/navigation";
+import { fetchItem } from "../../../../_engine/server";
+import { ItemDetailClient } from "./ItemDetailClient";
 
 export default async function ItemDetailPage({
   params,
 }: {
   params: Promise<{ key: string; id: string }>;
 }) {
-  const { key, id } = await params;
-  const [items, item] = await Promise.all([loadItems(key), loadItem(id)]);
-  return <ItemDetail workspaceKey={key} itemId={id} items={items} item={item} />;
+  const { id } = await params;
+  try {
+    const item = await fetchItem(id);
+    return <ItemDetailClient item={item} />;
+  } catch {
+    notFound();
+  }
 }

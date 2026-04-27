@@ -172,7 +172,7 @@ describe("ChatPanel review-gate actions", () => {
     expect(last.url).toBe("/api/runs/run-42/answer");
     expect(last.init?.method).toBe("POST");
     const body = JSON.parse(String(last.init?.body));
-    expect(body).toEqual({ promptId: "p-7", answer: "Approve" });
+    expect(body).toEqual({ promptId: "p-7", answer: "approve" });
   });
 
   it("TC-5.3b: no speculative bubble appears before the answer fetch resolves", async () => {
@@ -188,6 +188,38 @@ describe("ChatPanel review-gate actions", () => {
     await act(async () => {
       resolvePending();
     });
+  });
+
+  it("TC-5.3c: clicking Revise sends an engine-valid revise answer", async () => {
+    const item = itemWithActiveRunAndConversation();
+    const { calls } = installMockFetch({ defaultStatus: 200 });
+    const user = userEvent.setup();
+    render(
+      <ChatPanel activeRunId={item.activeRunId} conversation={item.conversation} />
+    );
+    await user.click(screen.getByRole("button", { name: "Revise" }));
+    await waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(1));
+    const last = calls.at(-1)!;
+    const body = JSON.parse(String(last.init?.body));
+    expect(body).toEqual({ promptId: "p-7", answer: "revise:" });
+  });
+
+  it("TC-5.3d: answered review-gate buttons become inert immediately after a successful answer POST", async () => {
+    const item = itemWithActiveRunAndConversation();
+    const { calls } = installMockFetch({ defaultStatus: 200 });
+    const user = userEvent.setup();
+    render(
+      <ChatPanel activeRunId={item.activeRunId} conversation={item.conversation} />
+    );
+    const approve = screen.getByRole("button", { name: "Approve" });
+    const revise = screen.getByRole("button", { name: "Revise" });
+    await user.click(approve);
+    await waitFor(() => expect(calls.length).toBe(1));
+    expect(approve).toBeDisabled();
+    expect(revise).toBeDisabled();
+    await user.click(approve);
+    await user.click(revise);
+    expect(calls).toHaveLength(1);
   });
 });
 

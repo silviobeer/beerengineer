@@ -16,6 +16,8 @@ export type ChatEntry = {
   runId: string;
   role: "user" | "assistant" | "system" | string;
   content: string;
+  kind?: "message" | "question" | "answer";
+  promptId?: string;
 };
 
 export type LogEntry = {
