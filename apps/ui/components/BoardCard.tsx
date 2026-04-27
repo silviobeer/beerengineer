@@ -15,7 +15,7 @@ function hasAttention(card: BoardCardDTO): boolean {
 }
 
 function buildHref(card: BoardCardDTO, workspaceKey?: string): string {
-  const id = card.itemCode ?? card.id;
+  const id = card.id || card.itemCode || "";
   if (workspaceKey) {
     return `/w/${encodeURIComponent(workspaceKey)}/items/${encodeURIComponent(id)}`;
   }

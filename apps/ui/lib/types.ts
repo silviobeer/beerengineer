@@ -55,11 +55,10 @@ export interface Workspace {
 
 export const BOARD_COLUMNS = [
   "idea",
-  "frontend",
+  "brainstorm",
   "requirements",
   "implementation",
-  "test",
-  "merge",
+  "done",
 ] as const;
 
 export type BoardColumn = (typeof BOARD_COLUMNS)[number];
@@ -83,11 +82,10 @@ export interface BoardCardDTO {
 
 export const BOARD_COLUMN_LABELS: Record<BoardColumn, string> = {
   idea: "Idea",
-  frontend: "Frontend",
+  brainstorm: "Brainstorm",
   requirements: "Requirements",
   implementation: "Implementation",
-  test: "Test",
-  merge: "Merge",
+  done: "Done",
 };
 
 export type ConversationRole = "system" | "agent" | "user" | "review-gate";

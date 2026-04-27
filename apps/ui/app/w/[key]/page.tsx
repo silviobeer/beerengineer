@@ -3,20 +3,29 @@ import type { BoardCardDTO } from "@/lib/types";
 
 interface BoardApiItem {
   id?: string;
+  itemId?: string;
   itemCode?: string;
   title?: string;
   summary?: string | null;
   phase?: string;
   column?: string;
   phase_status?: string | null;
+  phaseStatus?: string | null;
   hasOpenPrompt?: boolean;
   hasReviewGateWaiting?: boolean;
   hasBlockedRun?: boolean;
   current_stage?: string | null;
 }
 
+interface BoardApiColumn {
+  key?: string;
+  title?: string;
+  cards?: BoardApiItem[];
+}
+
 interface BoardApiResponse {
   items?: BoardApiItem[];
+  columns?: BoardApiColumn[];
 }
 
 function engineUrl(): string {
@@ -28,14 +37,14 @@ function engineUrl(): string {
 }
 
 function toBoardCard(item: BoardApiItem): BoardCardDTO {
-  const id = item.id ?? item.itemCode ?? "";
+  const id = item.itemId ?? item.id ?? item.itemCode ?? "";
   return {
     id,
     itemCode: item.itemCode,
     title: item.title ?? "",
     summary: item.summary ?? null,
     column: item.phase ?? item.column ?? "idea",
-    phase_status: item.phase_status ?? null,
+    phase_status: item.phase_status ?? item.phaseStatus ?? null,
     hasOpenPrompt: Boolean(item.hasOpenPrompt),
     hasReviewGateWaiting: Boolean(item.hasReviewGateWaiting),
     hasBlockedRun: Boolean(item.hasBlockedRun),
@@ -55,7 +64,17 @@ async function fetchBoard(
       return { items: null, error: `engine responded ${res.status}` };
     }
     const data = (await res.json()) as BoardApiResponse;
-    const items = Array.isArray(data.items) ? data.items.map(toBoardCard) : [];
+    const flatItems = Array.isArray(data.items)
+      ? data.items
+      : Array.isArray(data.columns)
+        ? data.columns.flatMap((col) =>
+            (col.cards ?? []).map((card) => ({
+              ...card,
+              phase: card.phase ?? card.column ?? col.key,
+            })),
+          )
+        : [];
+    const items = flatItems.map(toBoardCard);
     return { items, error: null };
   } catch (err) {
     const message = err instanceof Error ? err.message : "network error";
