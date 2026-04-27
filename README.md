@@ -5,7 +5,9 @@
 A multi-stage agent pipeline that drives a product concept through
 **brainstorm → visual-companion → frontend-design → requirements →
 architecture → planning → execution → project-review → QA →
-documentation**, using Claude Code in conjunction with Codex.
+documentation**, using Claude Code and/or Codex as the underlying
+agent runtimes — **either via the CLI (subscription-bundled) or
+in-process via the vendor SDK (per-token, API-key billed)**.
 CLI-first, HTTP/SSE API, optional Next.js UI.
 
 ![status](https://img.shields.io/badge/status-experimental-orange)
@@ -31,7 +33,13 @@ stream over SSE for live UIs.
 - **Design fidelity controls** — frontend-design emits
   `design-tokens.css`, execution receives owner-scoped mockup HTML, and
   story review rejects hardcoded palette drift and rounded corners
-- **Claude Code + Codex** as the underlying agent runtimes
+- **Pluggable LLM runtimes** — pick Claude Code or Codex per role
+  (coder / reviewer / merge-resolver), and pick **CLI** (subprocess,
+  uses your local CLI subscription) or **SDK** (in-process, billed
+  per-token to your API key) per role. Ships five real
+  `(harness, runtime)` adapters: `claude:cli`, `claude:sdk`,
+  `codex:cli`, `codex:sdk`, `opencode:cli`. Presets cover the common
+  combinations; `self` mode mixes harnesses + runtimes per role
 - **CLI-first** (`beerengineer …`), with an **HTTP/SSE API** on port
   4100 for any external consumer (UIs, webhooks, custom tooling)
 - **Per-workspace git worktrees** — each run lives on its own branch,
@@ -51,11 +59,30 @@ stream over SSE for live UIs.
 |---|---|
 | Node.js 22+ | engine + tests |
 | Git 2.30+ | worktrees, branch management |
-| Claude Code CLI | `npm i -g @anthropic-ai/claude-code` |
+| **At least one** LLM runtime — see below | drives every stage |
+
+### Pick your LLM runtimes
+
+You only need the rows that match the harness profile you'll actually
+use. Most operators set up just one or two of these:
+
+| Profile preset | What you need | Auth + billing |
+|---|---|---|
+| `claude-first` / `claude-only` | `claude` CLI (`npm i -g @anthropic-ai/claude-code`) | `claude login`; bundled with your Claude subscription |
+| `codex-first` / `codex-only` / `fast` | `codex` CLI (OpenAI Codex CLI) | `codex login`; bundled with your Codex subscription |
+| `claude-sdk-first` | `ANTHROPIC_API_KEY` env var | per-token API billing on the Anthropic API |
+| `codex-sdk-first` | `OPENAI_API_KEY` env var | per-token API billing on the OpenAI API |
+| `self` (mix per role) | any combination of the above | each role is billed by its own runtime |
+
+The SDK adapters wrap `@anthropic-ai/claude-agent-sdk` /
+`@openai/codex-sdk` and run the agent loop in-process — no subprocess
+spawn per turn, richer streaming events, and direct per-call billing
+visibility. Doctor will refuse to start a workspace whose profile
+selects an SDK runtime without the matching env key set; it never
+silently falls back to CLI.
 
 | Optional | |
 |---|---|
-| Codex CLI | for Codex-backed stages |
 | CodeRabbit CLI | per-story code review |
 | `sonar-scanner` + `sonarqube-cli` | SonarCloud quality gate |
 | GitHub CLI (`gh`) | PR creation, repo operations |
@@ -117,7 +144,7 @@ Full CLI help: `beerengineer --help`.
 ┌─────────────────────────┐
 │   @beerengineer2/engine │
 │   ┌───────────────────┐ │
-│   │  Stage Runtime    │ │  ←  Claude Code + Codex agents
+│   │  Stage Runtime    │ │  ←  Claude / Codex (CLI or SDK)
 │   │  Run Orchestrator │ │
 │   └───────────────────┘ │
 │   ┌───────────────────┐ │
@@ -143,7 +170,11 @@ Common env vars:
 - `BEERENGINEER_API_TOKEN` — override the generated CSRF token
 - `BEERENGINEER_UI_ORIGIN` — allowed CORS origin
 - `HOST`, `PORT` — API bind (default `127.0.0.1:4100`)
+- `ANTHROPIC_API_KEY` — required when any role uses `claude:sdk`
+- `OPENAI_API_KEY` — required when any role uses `codex:sdk`
 - `SONAR_TOKEN`, `TELEGRAM_BOT_TOKEN`, … — integrations
+- `BEERENGINEER_SDK_LIVE=1` — opt in to the live SDK smoke tests
+  (skipped by default; runs real paid API calls)
 - `BEERENGINEER_MAX_ITERATIONS_PER_CYCLE` — Ralph implementation
   iterations per review cycle (default `4`)
 - `BEERENGINEER_MAX_REVIEW_CYCLES` — Ralph review cycles before
