@@ -16,7 +16,7 @@ function tmpDb() {
 
 function makeItem(
   repos: Repos,
-  column: "idea" | "brainstorm" | "requirements" | "implementation" | "done",
+  column: "idea" | "brainstorm" | "frontend" | "requirements" | "implementation" | "done",
   phase: "draft" | "running" | "review_required" | "completed" | "failed"
 ) {
   const ws = repos.upsertWorkspace({ key: "t", name: "T" })
@@ -29,7 +29,7 @@ function makeItem(
 // "start-run" (service records intent + returns needs_spawn), or "resume".
 const MATRIX_CASES: Array<{
   action: ItemAction
-  column: "idea" | "brainstorm" | "requirements" | "implementation" | "done"
+  column: "idea" | "brainstorm" | "frontend" | "requirements" | "implementation" | "done"
   phase: "draft" | "running" | "review_required" | "completed" | "failed"
   expect: "reject" | { column: string; phaseStatus: string } | "start-run" | "resume"
 }> = [
@@ -40,9 +40,33 @@ const MATRIX_CASES: Array<{
   { action: "start_brainstorm", column: "implementation", phase: "review_required", expect: "reject" },
   { action: "start_brainstorm", column: "done", phase: "completed", expect: "reject" },
 
+  // Manual design-prep entry. Only reachable from a settled brainstorm or
+  // from inside the frontend column (e.g. "redo wireframes").
+  { action: "start_visual_companion", column: "idea", phase: "draft", expect: "reject" },
+  { action: "start_visual_companion", column: "brainstorm", phase: "running", expect: "reject" },
+  { action: "start_visual_companion", column: "brainstorm", phase: "completed", expect: "start-run" },
+  { action: "start_visual_companion", column: "brainstorm", phase: "review_required", expect: "start-run" },
+  { action: "start_visual_companion", column: "frontend", phase: "running", expect: "reject" },
+  { action: "start_visual_companion", column: "frontend", phase: "review_required", expect: "start-run" },
+  { action: "start_visual_companion", column: "frontend", phase: "completed", expect: "start-run" },
+  { action: "start_visual_companion", column: "requirements", phase: "draft", expect: "reject" },
+  { action: "start_visual_companion", column: "done", phase: "completed", expect: "reject" },
+
+  // Frontend-design only legal once visual-companion has settled. The
+  // service relies on runService to verify wireframes exist; the matrix
+  // gate is purely on column/phase.
+  { action: "start_frontend_design", column: "brainstorm", phase: "completed", expect: "reject" },
+  { action: "start_frontend_design", column: "frontend", phase: "running", expect: "reject" },
+  { action: "start_frontend_design", column: "frontend", phase: "review_required", expect: "start-run" },
+  { action: "start_frontend_design", column: "frontend", phase: "completed", expect: "start-run" },
+  { action: "start_frontend_design", column: "requirements", phase: "draft", expect: "reject" },
+
   { action: "promote_to_requirements", column: "idea", phase: "draft", expect: "reject" },
   { action: "promote_to_requirements", column: "brainstorm", phase: "running", expect: { column: "requirements", phaseStatus: "draft" } },
   { action: "promote_to_requirements", column: "brainstorm", phase: "completed", expect: { column: "requirements", phaseStatus: "draft" } },
+  // Promote also exits the frontend column post-design.
+  { action: "promote_to_requirements", column: "frontend", phase: "review_required", expect: { column: "requirements", phaseStatus: "draft" } },
+  { action: "promote_to_requirements", column: "frontend", phase: "completed", expect: { column: "requirements", phaseStatus: "draft" } },
   { action: "promote_to_requirements", column: "requirements", phase: "draft", expect: "reject" },
   { action: "promote_to_requirements", column: "implementation", phase: "running", expect: "reject" },
   { action: "promote_to_requirements", column: "done", phase: "completed", expect: "reject" },

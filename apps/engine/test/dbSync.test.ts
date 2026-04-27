@@ -521,3 +521,120 @@ test("persistWorkflowRunState keeps run.json and workspace.json aligned with run
   assert.equal(workspaceFile.currentStage, "handoff")
   assert.equal(workspaceFile.status, "approved")
 })
+
+test("attachDbSync sets items.current_stage on stage_started and clears it on run_finished (sole live run)", () => {
+  const db = tmpDb()
+  const repos = new Repos(db)
+  const ws = repos.upsertWorkspace({ key: "test", name: "Test" })
+  const item = repos.createItem({ workspaceId: ws.id, title: "T", description: "D" })
+  const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "T" })
+  const { bus } = makeBusIO()
+  try {
+    attachDbSync(bus, repos, { runId: run.id, itemId: item.id })
+    bus.emit({ type: "run_started", runId: run.id, itemId: item.id, title: "T" })
+    bus.emit({ type: "stage_started", runId: run.id, stageRunId: "s1", stageKey: "execution" })
+    assert.equal(repos.getItem(item.id)?.current_stage, "execution",
+      "stage_started must mirror stageKey onto items.current_stage")
+    bus.emit({ type: "run_finished", runId: run.id, itemId: item.id, title: "T", status: "completed" })
+    assert.equal(repos.getItem(item.id)?.current_stage, null,
+      "run_finished on the sole live run must clear items.current_stage")
+  } finally {
+    db.close()
+  }
+})
+
+test("attachDbSync clears items.current_stage on run_failed (sole live run)", () => {
+  const db = tmpDb()
+  const repos = new Repos(db)
+  const ws = repos.upsertWorkspace({ key: "test", name: "Test" })
+  const item = repos.createItem({ workspaceId: ws.id, title: "T", description: "D" })
+  const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "T" })
+  const { bus } = makeBusIO()
+  try {
+    attachDbSync(bus, repos, { runId: run.id, itemId: item.id })
+    bus.emit({ type: "run_started", runId: run.id, itemId: item.id, title: "T" })
+    bus.emit({ type: "stage_started", runId: run.id, stageRunId: "s1", stageKey: "architecture" })
+    assert.equal(repos.getItem(item.id)?.current_stage, "architecture")
+    bus.emit({
+      type: "run_failed",
+      runId: run.id,
+      itemId: item.id,
+      title: "T",
+      scope: { type: "run", runId: run.id },
+      cause: "system_error",
+      summary: "boom",
+    })
+    assert.equal(repos.getItem(item.id)?.current_stage, null,
+      "run_failed on the sole live run must clear items.current_stage even when column/phase stay put")
+    // Per Option A: failed runs do NOT mutate column/phase.
+    assert.equal(repos.getItem(item.id)?.current_column, "implementation",
+      "run_failed must not roll back column projection from the prior stage_started")
+  } finally {
+    db.close()
+  }
+})
+
+test("attachDbSync clears items.current_stage on run_blocked (sole live run)", () => {
+  const db = tmpDb()
+  const repos = new Repos(db)
+  const ws = repos.upsertWorkspace({ key: "test", name: "Test" })
+  const item = repos.createItem({ workspaceId: ws.id, title: "T", description: "D" })
+  const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "T" })
+  const { bus } = makeBusIO()
+  try {
+    attachDbSync(bus, repos, { runId: run.id, itemId: item.id })
+    bus.emit({ type: "run_started", runId: run.id, itemId: item.id, title: "T" })
+    bus.emit({ type: "stage_started", runId: run.id, stageRunId: "s1", stageKey: "planning" })
+    assert.equal(repos.getItem(item.id)?.current_stage, "planning")
+    bus.emit({
+      type: "run_blocked",
+      runId: run.id,
+      itemId: item.id,
+      title: "T",
+      scope: { type: "run", runId: run.id },
+      cause: "user_intervention",
+      summary: "needs human",
+    })
+    assert.equal(repos.getItem(item.id)?.current_stage, null,
+      "run_blocked on the sole live run must clear items.current_stage so the stepper does not lie")
+  } finally {
+    db.close()
+  }
+})
+
+test("attachDbSync does NOT clear items.current_stage when a sibling run is still live", () => {
+  const db = tmpDb()
+  const repos = new Repos(db)
+  const ws = repos.upsertWorkspace({ key: "test", name: "Test" })
+  const item = repos.createItem({ workspaceId: ws.id, title: "T", description: "D" })
+  // Phase 1: only the main run exists. It is authoritative and writes
+  // items.current_stage = "execution" via stage_started.
+  const main = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "T" })
+  const { bus: mainBus } = makeBusIO()
+  attachDbSync(mainBus, repos, { runId: main.id, itemId: item.id })
+  mainBus.emit({ type: "stage_started", runId: main.id, stageRunId: "m1", stageKey: "execution" })
+  assert.equal(repos.getItem(item.id)?.current_stage, "execution",
+    "main run must set current_stage while it is the sole live run")
+
+  // Phase 2: a side run starts (e.g. rerun_design_prep) and then fails.
+  // Its run_failed handler must NOT clear items.current_stage because
+  // main is still alive and owns the projection.
+  const side = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "T" })
+  const { bus: sideBus } = makeBusIO()
+  try {
+    attachDbSync(sideBus, repos, { runId: side.id, itemId: item.id })
+    sideBus.emit({
+      type: "run_failed",
+      runId: side.id,
+      itemId: item.id,
+      title: "T",
+      scope: { type: "run", runId: side.id },
+      cause: "system_error",
+      summary: "side died",
+    })
+    assert.equal(repos.getItem(item.id)?.current_stage, "execution",
+      "side-run failure must not clobber items.current_stage when a sibling run is still live")
+  } finally {
+    db.close()
+  }
+})

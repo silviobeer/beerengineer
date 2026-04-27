@@ -308,8 +308,9 @@ function printHelp(): void {
     "    beerengineer --help                                  Show this help",
     "",
     "  Item actions:",
-    "    start_brainstorm  promote_to_requirements  start_implementation",
-    "    rerun_design_prep  resume_run  mark_done",
+    "    start_brainstorm  start_visual_companion  start_frontend_design",
+    "    promote_to_requirements  start_implementation  rerun_design_prep",
+    "    resume_run  mark_done",
     "",
     "  Resume flags (for --action resume_run on a blocked run):",
     "    --remediation-summary <text>   Required. What you fixed outside BeerEngineer2.",
@@ -1974,6 +1975,83 @@ const handleStartImplementationOrRerunDesignPrep: CliItemActionHandler = async c
   }
 }
 
+const handleStartVisualCompanion: CliItemActionHandler = async ctx => {
+  const exit = startRunPrelude(ctx)
+  if (exit !== 0) return exit
+  const sourceRun = latestRunWithStageArtifacts(ctx.repos, ctx.item, "brainstorm")
+  if (!sourceRun) {
+    console.error("  Cannot start visual-companion: no prior brainstorm artifacts found.")
+    console.error("  Run start_brainstorm first, then retry start_visual_companion.")
+    return 1
+  }
+  const io = createCliIO(ctx.repos)
+  try {
+    const prepared = prepareRun(
+      { id: ctx.item.id, title: ctx.item.title, description: ctx.item.description },
+      ctx.repos,
+      io,
+      {
+        owner: "cli",
+        itemId: ctx.item.id,
+        resume: {
+          scope: { type: "run", runId: "pending" },
+          currentStage: "visual-companion",
+          manualStage: "visual-companion",
+        },
+      },
+    )
+    if (!seedStageFromPreviousRun(ctx.item, sourceRun.id, prepared.runId, "brainstorm")) {
+      console.error("  Cannot start visual-companion: failed to seed brainstorm artifacts into the new run.")
+      return 1
+    }
+    await prepared.start()
+    console.log(`  ${ctx.action} applied`)
+    console.log(`  run-id: ${prepared.runId}`)
+    return 0
+  } finally {
+    io.close?.()
+  }
+}
+
+const handleStartFrontendDesign: CliItemActionHandler = async ctx => {
+  const exit = startRunPrelude(ctx)
+  if (exit !== 0) return exit
+  const sourceRun = latestRunWithStageArtifacts(ctx.repos, ctx.item, "visual-companion")
+  if (!sourceRun) {
+    console.error("  Cannot start frontend-design: no prior visual-companion artifacts found.")
+    console.error("  Run start_visual_companion first, then retry start_frontend_design.")
+    return 1
+  }
+  const io = createCliIO(ctx.repos)
+  try {
+    const prepared = prepareRun(
+      { id: ctx.item.id, title: ctx.item.title, description: ctx.item.description },
+      ctx.repos,
+      io,
+      {
+        owner: "cli",
+        itemId: ctx.item.id,
+        resume: {
+          scope: { type: "run", runId: "pending" },
+          currentStage: "frontend-design",
+          manualStage: "frontend-design",
+        },
+      },
+    )
+    if (!seedStageFromPreviousRun(ctx.item, sourceRun.id, prepared.runId, "brainstorm")) {
+      console.error("  Cannot start frontend-design: failed to seed brainstorm artifacts into the new run.")
+      return 1
+    }
+    seedStageFromPreviousRun(ctx.item, sourceRun.id, prepared.runId, "visual-companion")
+    await prepared.start()
+    console.log(`  ${ctx.action} applied`)
+    console.log(`  run-id: ${prepared.runId}`)
+    return 0
+  } finally {
+    io.close?.()
+  }
+}
+
 const handleResumeRun: CliItemActionHandler = async ctx => {
   const active =
     ctx.repos.latestActiveRunForItem(ctx.item.id) ?? ctx.repos.latestRecoverableRunForItem(ctx.item.id)
@@ -2116,6 +2194,8 @@ async function runDefaultItemAction(
  */
 const CLI_ITEM_ACTION_HANDLERS: Partial<Record<ItemAction, CliItemActionHandler>> = {
   start_brainstorm: handleStartBrainstorm,
+  start_visual_companion: handleStartVisualCompanion,
+  start_frontend_design: handleStartFrontendDesign,
   start_implementation: handleStartImplementationOrRerunDesignPrep,
   rerun_design_prep: handleStartImplementationOrRerunDesignPrep,
   resume_run: handleResumeRun,

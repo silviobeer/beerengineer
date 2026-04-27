@@ -79,6 +79,24 @@ export function attachDbSync(
     )
   }
 
+  /**
+   * True when this run had no live sibling at the moment of a terminal/blocking
+   * event. Mirrors `isAuthoritative` but **does not** apply the "failed never
+   * authoritative" rule — `current_stage` clears on every terminal state of
+   * the sole live run, including failure.
+   *
+   * `items.current_stage` semantically tracks the stage actively being driven.
+   * When the run that owned the stage dies (completed, failed, or blocked) and
+   * no sibling is alive to take over, the answer to "what stage is live?" is
+   * "none". The mini-stepper should not keep highlighting a dead stage.
+   */
+  const wasSoleLiveRun = (): boolean => {
+    const allRuns = repos.listRunsForItem(ctx.itemId)
+    return !allRuns.some(
+      r => r.id !== ctx.runId && (r.status === "running" || r.status === "blocked")
+    )
+  }
+
   const persist = (event: WorkflowEvent): void => {
     switch (event.type) {
       case "run_started": {
@@ -264,10 +282,16 @@ export function attachDbSync(
         // Passing event.status tells isAuthoritative what this run is becoming,
         // so a run that is completing as "failed" correctly suppresses item writes.
         const authoritative = isAuthoritative(event.status)
+        // current_stage clears on terminal events of the sole live run regardless
+        // of whether column/phase writes are authoritative — a dead run owns no
+        // stage even if it died by failing.
+        const soleLive = wasSoleLiveRun()
         repos.updateRun(event.runId, { status: event.status })
         const { column, phaseStatus } = mapStageToColumn("documentation", event.status)
         if (authoritative) {
           repos.setItemColumn(ctx.itemId, column, phaseStatus)
+        }
+        if (soleLive) {
           repos.setItemCurrentStage(ctx.itemId, null)
         }
         track(repos.appendLog({
@@ -337,7 +361,18 @@ export function attachDbSync(
       }
       case "run_blocked":
       case "run_failed": {
+        // Snapshot live-sibling state *before* mutating this run's status, so
+        // a run going to "blocked" doesn't see itself as a live sibling. The
+        // sibling check excludes ctx.runId anyway, but reading first is the
+        // intent-preserving order.
+        const soleLive = wasSoleLiveRun()
         repos.updateRun(event.runId, { status: event.type === "run_blocked" ? "blocked" : "failed" })
+        if (soleLive) {
+          // Dead/paused sole run owns no live stage. Column/phase stays put
+          // (failed runs intentionally don't mutate them per Option A); only
+          // current_stage clears so the mini-stepper doesn't lie.
+          repos.setItemCurrentStage(ctx.itemId, null)
+        }
         const scope = event.scope
         const scopeRefVal =
           scope.type === "stage"
