@@ -179,6 +179,14 @@ surfaces bugs and ergonomic issues faster than any synthetic test
 harness — several engine fixes landed this week purely because real
 runs against a real project hit real edge cases.
 
+## For AI coding agents
+
+Read [`AGENTS.md`](AGENTS.md) before making changes. The repo follows
+the [agents.md](https://agents.md) convention: nested `AGENTS.md` files
+are supported, the nearest one wins, and 20+ AI coding tools (Claude
+Code, Codex, Cursor, Copilot, JetBrains Junie, …) pick them up without
+configuration.
+
 ## Deeper reading
 
 - [`docs/engine-architecture.md`](docs/engine-architecture.md) —

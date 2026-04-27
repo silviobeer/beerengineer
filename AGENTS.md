@@ -3,6 +3,14 @@
 > Read this before touching the repo. Filename follows the
 > [agents.md](https://agents.md) convention; it applies to every AI
 > coding agent (Claude Code, Codex, Cursor, …), not just one vendor.
+>
+> **Nested AGENTS.md files are supported by the convention** — the
+> nearest one wins. This file is the repo-wide baseline. The closer
+> the file, the more specific the guidance. Today there is also
+> [`docs/AGENTS.md`](./docs/AGENTS.md) (docs-folder navigation). If
+> `apps/engine/` or `apps/ui/` ever grow distinct conventions, drop
+> a dedicated `AGENTS.md` into that subtree and it will override this
+> file for everything underneath.
 
 ---
 
