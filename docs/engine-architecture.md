@@ -49,6 +49,17 @@ brainstorm → visual-companion → frontend-design → (per-project pipeline) �
 `brainstorm` is the only mandatory item-level stage. `visual-companion`
 and `frontend-design` run only when at least one project has a UI.
 
+The **brainstorm stage owns the item branch + worktree creation**: its
+first action is `git.ensureItemBranch()` followed by
+`git.assertWorkspaceRootOnBaseBranch(...)`. Stages own their side
+effects; `runWorkflow` doesn't perform git operations on its behalf.
+
+The resume-past-brainstorm path (when artifacts already exist) is the
+single exception: `runWorkflow` performs an idempotent
+`git.ensureItemBranch()` itself, in case the operator nuked
+`.beerengineer/` between runs. This is a recovery safety net, not the
+fresh-run path.
+
 ## Core abstractions
 
 ### `ProjectStageNode`

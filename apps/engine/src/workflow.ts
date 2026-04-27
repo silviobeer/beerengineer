@@ -285,15 +285,22 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
   stagePresent.dim(`→ Real git mode: branches will be created in ${git.mode.workspaceRoot}`)
 
   try {
-    git.ensureItemBranch()
-    git.assertWorkspaceRootOnBaseBranch("after ensureItemBranch (run start)")
-
     const itemResumePlan = options?.resume ? normalizeItemResume(options.resume) : { startStage: "brainstorm" as const }
     const resumePlan = options?.resume ? normalizeProjectResume(options.resume) : null
-    const projects =
-      itemResumePlan.startStage === "brainstorm"
-        ? await withStageLifecycle("brainstorm", {}, () => brainstorm(item, context, options?.llm?.stage))
-        : await loadProjects(context)
+    let projects: Project[]
+    if (itemResumePlan.startStage === "brainstorm") {
+      // Fresh-run path: brainstorm owns the item-branch + worktree creation.
+      projects = await withStageLifecycle("brainstorm", {}, () =>
+        brainstorm(item, context, git, options?.llm?.stage),
+      )
+    } else {
+      // Resume past brainstorm: brainstorm won't run, so re-establish the
+      // item worktree here in case the operator nuked .beerengineer/ between
+      // runs. ensureItemBranch is idempotent against a healthy worktree.
+      git.ensureItemBranch()
+      git.assertWorkspaceRootOnBaseBranch("after ensureItemBranch (resume past brainstorm)")
+      projects = await loadProjects(context)
+    }
     if (itemResumePlan.startStage === "projects") {
       await assertDesignPrepProjectFreeze(context, projects)
     }

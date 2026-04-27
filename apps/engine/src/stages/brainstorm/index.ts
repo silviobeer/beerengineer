@@ -5,11 +5,23 @@ import { stagePresent } from "../../core/stagePresentation.js"
 import { renderConceptMarkdown } from "../../render/concept.js"
 import { ask } from "../../sim/human.js"
 import { createBrainstormReview, createBrainstormStage, type RunLlmConfig } from "../../llm/registry.js"
+import type { GitAdapter } from "../../core/gitAdapter.js"
 import type { BrainstormState } from "./types.js"
 import { normalizeBrainstormArtifact } from "./types.js"
 
-export async function brainstorm(item: Item, context: WorkflowContext, llm?: RunLlmConfig): Promise<Project[]> {
+export async function brainstorm(
+  item: Item,
+  context: WorkflowContext,
+  git: GitAdapter,
+  llm?: RunLlmConfig,
+): Promise<Project[]> {
   stagePresent.header("brainstorm")
+  // Brainstorm is the first stage of a fresh run — it owns the creation of
+  // the item branch + worktree that every subsequent stage operates against.
+  // Both calls are idempotent: re-running brainstorm against an existing
+  // worktree just reattaches HEAD to the item branch.
+  git.ensureItemBranch()
+  git.assertWorkspaceRootOnBaseBranch("brainstorm: after ensureItemBranch")
   stagePresent.step("Interactive session via LLM adapter + stage runtime\n")
 
   const { result } = await runStage({
