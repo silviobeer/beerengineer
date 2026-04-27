@@ -1,7 +1,7 @@
-import type { ProviderId } from "./types.js"
+import type { InvocationRuntime, ProviderId } from "./types.js"
 import type { ReviewAgentAdapter, StageAgentAdapter } from "../core/adapters.js"
 import { emitEvent, getActiveRun } from "../core/runContext.js"
-import type { HarnessProfile, HarnessRole, WorkspaceRuntimePolicy } from "../types/workspace.js"
+import type { HarnessProfile, HarnessRole, KnownHarness, WorkspaceRuntimePolicy } from "../types/workspace.js"
 import { reviewerPolicy, stageAuthoringPolicy, type RuntimePolicy } from "./runtimePolicy.js"
 import presetsJson from "../core/harness/presets.json" with { type: "json" }
 
@@ -42,12 +42,25 @@ import { HostedReviewAdapter, HostedStageAdapter } from "./hosted/hostedCliAdapt
 export type { RuntimePolicy } from "./runtimePolicy.js"
 export { executionCoderPolicy } from "./runtimePolicy.js"
 
-export type ResolvedHarness = {
-  harness: ProviderId
-  provider: ProviderId
-  model?: string
-  workspaceRoot: string
-}
+/**
+ * Outcome of `resolveHarness`. Three orthogonal axes:
+ *   - `harness`  → agent runtime brand (claude | codex | opencode)
+ *   - `provider` → API vendor (anthropic | openai | openrouter | …)
+ *   - `runtime`  → invocation mechanism (cli | sdk)
+ *
+ * The fake variant is split into its own arm so provider/runtime dispatch in
+ * the hosted layer never has to special-case it.
+ */
+export type ResolvedHarness =
+  | { kind: "fake"; workspaceRoot: string }
+  | {
+      kind: "hosted"
+      harness: KnownHarness
+      provider: string
+      runtime: InvocationRuntime
+      model?: string
+      workspaceRoot: string
+    }
 
 export type RunLlmConfig = {
   workspaceRoot: string
@@ -71,7 +84,12 @@ export type StageId =
 
 type RealProviderId = Exclude<ProviderId, "fake">
 
-function toProviderId(harness: "claude" | "codex" | "opencode"): RealProviderId {
+/**
+ * Map the harness brand id (`KnownHarness`) used in workspace config and
+ * presets to the legacy `ProviderId` value still consumed by a few external
+ * call sites (mergeResolver telemetry, etc.).
+ */
+export function harnessToLegacyProviderId(harness: KnownHarness): RealProviderId {
   switch (harness) {
     case "claude":
       return "claude-code"
@@ -91,7 +109,13 @@ type AdapterFactoryInput = {
   testingOverride?: "fake"
 }
 
-type PresetRoleEntry = { harness: "claude" | "codex" | "opencode"; provider: string; model?: string }
+type PresetRoleEntry = {
+  harness: KnownHarness
+  provider: string
+  model?: string
+  /** Defaults to "cli" when absent. */
+  runtime?: InvocationRuntime
+}
 type PresetEntry = {
   coder: PresetRoleEntry
   reviewer: PresetRoleEntry
@@ -107,19 +131,19 @@ function resolveFromPreset(presetKey: string, role: HarnessRole, stage: StageId,
   // Roles new to the schema (e.g. "merge-resolver") may be absent from older
   // preset files. Fall back to the coder role so mainline runs keep working.
   const entry = preset[role] ?? preset.coder
-  const provider = toProviderId(entry.harness)
-  if (provider === "opencode") {
+  if (entry.harness === "opencode") {
     throw new Error(`Preset "${presetKey}" resolves to opencode for role "${role}", which is not implemented yet`)
   }
+  const runtime: InvocationRuntime = entry.runtime ?? "cli"
   // Execution stage writes real code and needs the strongest coder model,
   // while design-prep / requirements / planning stages are text generation
   // where a faster mid-tier model is plenty. Upgrade Sonnet -> Opus just for
   // execution-coder on Claude-family presets.
   let model = entry.model
-  if (stage === "execution" && role === "coder" && provider === "claude-code" && model === "claude-sonnet-4-6") {
+  if (stage === "execution" && role === "coder" && entry.harness === "claude" && model === "claude-sonnet-4-6") {
     model = "claude-opus-4-7"
   }
-  return { harness: provider, provider, model, workspaceRoot }
+  return { kind: "hosted", harness: entry.harness, provider: entry.provider, runtime, model, workspaceRoot }
 }
 
 /**
@@ -134,7 +158,7 @@ export function resolveMergeResolverHarness(llm: RunLlmConfig): ResolvedHarness 
 
 export function resolveHarness(input: AdapterFactoryInput): ResolvedHarness {
   if (input.testingOverride === "fake" || process.env.BEERENGINEER_FORCE_FAKE_LLM === "1") {
-    return { harness: "fake", provider: "fake", workspaceRoot: input.workspaceRoot }
+    return { kind: "fake", workspaceRoot: input.workspaceRoot }
   }
   switch (input.harnessProfile.mode) {
     case "claude-only":
@@ -142,19 +166,31 @@ export function resolveHarness(input: AdapterFactoryInput): ResolvedHarness {
     case "codex-only":
     case "codex-first":
     case "fast":
+    case "claude-sdk-first":
+    case "codex-sdk-first":
       return resolveFromPreset(input.harnessProfile.mode, input.role, input.stage, input.workspaceRoot)
     case "opencode":
     case "opencode-china":
     case "opencode-euro":
       throw new Error(`Harness profile mode "${input.harnessProfile.mode}" is not implemented yet`)
     case "self": {
-      const roles = input.harnessProfile.roles as Record<string, { harness: "claude" | "codex" | "opencode"; model?: string }>
+      const roles = input.harnessProfile.roles as Record<
+        string,
+        { harness: KnownHarness; provider?: string; model?: string; runtime?: InvocationRuntime }
+      >
       const selected = roles[input.role] ?? roles.coder
-      const provider = toProviderId(selected.harness)
-      if (provider === "opencode") {
+      if (selected.harness === "opencode") {
         throw new Error('Harness profile resolves to "opencode", which is not implemented yet')
       }
-      return { harness: provider, provider, model: selected.model, workspaceRoot: input.workspaceRoot }
+      const runtime: InvocationRuntime = selected.runtime ?? "cli"
+      return {
+        kind: "hosted",
+        harness: selected.harness,
+        provider: selected.provider ?? "",
+        runtime,
+        model: selected.model,
+        workspaceRoot: input.workspaceRoot,
+      }
     }
   }
 }
@@ -162,24 +198,33 @@ export function resolveHarness(input: AdapterFactoryInput): ResolvedHarness {
 function logResolution(stage: StageId, role: HarnessRole, harness: ResolvedHarness, policy: RuntimePolicy): void {
   const run = getActiveRun()
   if (!run) return
+  if (harness.kind === "fake") {
+    emitEvent({
+      type: "log",
+      runId: run.runId,
+      message: `llm.resolve stage=${stage} role=${role} provider=fake policy=${policy.mode}`,
+    })
+    return
+  }
   emitEvent({
     type: "log",
     runId: run.runId,
-    message: `llm.resolve stage=${stage} role=${role} provider=${harness.provider} model=${harness.model ?? "default"} policy=${policy.mode}`,
+    message: `llm.resolve stage=${stage} role=${role} harness=${harness.harness} runtime=${harness.runtime} provider=${harness.provider} model=${harness.model ?? "default"} policy=${policy.mode}`,
   })
 }
 
 function createHostedStageAdapter<S, A>(stage: StageId, llm: RunLlmConfig): StageAgentAdapter<S, A> {
   const harness = resolveHarness({ ...llm, role: "coder", stage })
-  if (harness.provider === "fake") {
+  if (harness.kind === "fake") {
     throw new Error(`Stage ${stage} requested fake provider via hosted path`)
   }
-  const provider = harness.provider as RealProviderId
   const policy = stageAuthoringPolicy(llm.runtimePolicy, stage)
   logResolution(stage, "coder", harness, policy)
   return new HostedStageAdapter<S, A>({
     stageId: stage,
-    provider,
+    harness: harness.harness,
+    runtime: harness.runtime,
+    provider: harness.provider,
     model: harness.model,
     workspaceRoot: llm.workspaceRoot,
     runtimePolicy: policy,
@@ -188,15 +233,16 @@ function createHostedStageAdapter<S, A>(stage: StageId, llm: RunLlmConfig): Stag
 
 function createHostedReviewAdapter<S, A>(stage: StageId, llm: RunLlmConfig): ReviewAgentAdapter<S, A> {
   const harness = resolveHarness({ ...llm, role: "reviewer", stage })
-  if (harness.provider === "fake") {
+  if (harness.kind === "fake") {
     throw new Error(`Stage ${stage} requested fake provider via hosted path`)
   }
-  const provider = harness.provider as RealProviderId
   const policy = reviewerPolicy(llm.runtimePolicy, stage)
   logResolution(stage, "reviewer", harness, policy)
   return new HostedReviewAdapter<S, A>({
     stageId: stage,
-    provider,
+    harness: harness.harness,
+    runtime: harness.runtime,
+    provider: harness.provider,
     model: harness.model,
     workspaceRoot: llm.workspaceRoot,
     runtimePolicy: policy,

@@ -14,7 +14,6 @@ import {
   createTestWriterStage,
   resolveHarness,
   resolveMergeResolverHarness,
-  type ResolvedHarness,
   type RunLlmConfig,
 } from "../../llm/registry.js"
 import { stagePresent } from "../../core/stagePresentation.js"
@@ -150,13 +149,15 @@ async function executeWave(
   stagePresent.step(`\nWave ${wave.number} ${tag}: ${waveEntries.map(s => s.id).join(", ")}`)
   git.ensureWaveBranch(ctx.project.id, wave.number)
 
-  const mergeResolverHarness: { provider: ResolvedHarness["provider"]; model?: string } | undefined =
-    llm?.executionCoder
-      ? (() => {
-          const resolved = resolveMergeResolverHarness(llm.executionCoder!)
-          return { provider: resolved.provider, model: resolved.model }
-        })()
-      : undefined
+  const mergeResolverHarness:
+    | { harness: "claude" | "codex" | "opencode" | "fake"; model?: string }
+    | undefined = llm?.executionCoder
+    ? (() => {
+        const resolved = resolveMergeResolverHarness(llm.executionCoder!)
+        if (resolved.kind === "fake") return { harness: "fake" as const }
+        return { harness: resolved.harness, model: resolved.model }
+      })()
+    : undefined
   const expectedSharedFiles = expectedSharedFilesForWave(wave)
 
   // Wave-branch merges/abandons must happen one at a time even when story

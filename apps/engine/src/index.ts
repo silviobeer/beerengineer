@@ -602,6 +602,8 @@ function parseHarnessProfile(input: { profile?: string; profileJson?: string }, 
     case "codex-only":
     case "claude-only":
     case "fast":
+    case "claude-sdk-first":
+    case "codex-sdk-first":
       return { mode: input.profile }
     default:
       throw new Error(`Unsupported --profile value: ${input.profile}`)

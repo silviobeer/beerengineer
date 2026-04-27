@@ -5,8 +5,12 @@ import { dirname, join } from "node:path"
 import { stagePresent } from "./stagePresentation.js"
 
 export type MergeResolverHarness = {
-  // Provider id matches `ResolvedHarness.provider` for stage agents.
-  provider: "claude-code" | "codex" | "opencode" | "fake"
+  /**
+   * Harness brand. Matches `ResolvedHarness.harness` from the LLM registry
+   * for the hosted variant; "fake" is allowed so the testing-override path
+   * can pass a no-op resolver through without ceremony.
+   */
+  harness: "claude" | "codex" | "opencode" | "fake"
   model?: string
 }
 
@@ -74,13 +78,13 @@ function buildPrompt(message: string, files: string[], expectedSharedFiles: stri
 }
 
 function buildCommandForProvider(
-  provider: MergeResolverHarness["provider"],
+  harness: MergeResolverHarness["harness"],
   model: string | undefined,
   workspaceRoot: string,
   prompt: string,
 ): { ok: true; command: string[] } | { ok: false; reason: string } {
-  switch (provider) {
-    case "claude-code": {
+  switch (harness) {
+    case "claude": {
       const command = [
         "claude",
         "--print",
@@ -156,7 +160,7 @@ export function resolveMergeConflictsViaLlm(input: {
 
   const prompt = buildPrompt(input.mergeMessage, conflicted, input.expectedSharedFiles)
   const built = buildCommandForProvider(
-    input.harness.provider,
+    input.harness.harness,
     input.harness.model,
     input.workspaceRoot,
     prompt,
@@ -164,7 +168,7 @@ export function resolveMergeConflictsViaLlm(input: {
   if (!built.ok) return built
 
   stagePresent.dim(
-    `merge-resolver: ${input.harness.provider}${input.harness.model ? `/${input.harness.model}` : ""} on ${conflicted.length} conflicted file${conflicted.length === 1 ? "" : "s"}`,
+    `merge-resolver: ${input.harness.harness}${input.harness.model ? `/${input.harness.model}` : ""} on ${conflicted.length} conflicted file${conflicted.length === 1 ? "" : "s"}`,
   )
 
   // Resolver scales with conflict count: a 3-file story merge finishes in
@@ -202,7 +206,7 @@ export function resolveMergeConflictsViaLlm(input: {
   const ok = !markerStillIn && addResult.ok && remaining.length === 0
 
   writeResolverLog(input.logDir, {
-    provider: input.harness.provider,
+    harness: input.harness.harness,
     model: input.harness.model,
     workspaceRoot: input.workspaceRoot,
     mergeMessage: input.mergeMessage,

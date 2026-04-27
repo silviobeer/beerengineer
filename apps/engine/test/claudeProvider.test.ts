@@ -56,7 +56,9 @@ cat "${sampleFixturePath}"
         invokeClaude({
           prompt: "hello",
           runtime: {
-            provider: "claude-code",
+            harness: "claude",
+            runtime: "cli",
+            provider: "anthropic",
             workspaceRoot: dir,
             policy: { mode: "safe-workspace-write" },
             model: "claude-haiku-4-5",
@@ -102,7 +104,9 @@ printf '%s\n' '{"type":"assistant","message":{"id":"msg-text","role":"assistant"
     const result = await invokeClaude({
       prompt: "hello",
       runtime: {
-        provider: "claude-code",
+        harness: "claude",
+        runtime: "cli",
+        provider: "anthropic",
         workspaceRoot: dir,
         policy: { mode: "safe-readonly" },
       },
@@ -157,7 +161,9 @@ EOF
         invokeClaude({
           prompt: "hello",
           runtime: {
-            provider: "claude-code",
+            harness: "claude",
+            runtime: "cli",
+            provider: "anthropic",
             workspaceRoot: dir,
             policy: { mode: "safe-workspace-write" },
           },

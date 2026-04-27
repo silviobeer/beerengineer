@@ -1,8 +1,23 @@
 import type { ReviewContext, StageAgentInput, StageContext } from "../../core/adapters.js"
 import type { RuntimePolicy } from "../registry.js"
+import type { InvocationRuntime } from "../types.js"
+import type { KnownHarness } from "../../types/workspace.js"
 import { loadPrompt, PromptLoadError, type PromptKind } from "../prompts/loader.js"
 
+/**
+ * Hosted dispatch identifier — the agent runtime brand. Distinct from the
+ * legacy `ProviderId` (which used "claude-code"). Kept aligned with
+ * `KnownHarness` so the same value flows from workspace config through to
+ * the (harness, runtime) dispatch.
+ */
+export type HostedHarness = KnownHarness
+
+/**
+ * @deprecated Use `HostedHarness`. Retained for the few external call sites
+ * (mergeResolver telemetry) that still log the legacy provider id.
+ */
 export type HostedProviderId = "claude-code" | "codex" | "opencode"
+
 export type HostedPromptKind = "stage" | "review" | "execution"
 
 export type IterationContext = {
@@ -17,17 +32,29 @@ export type IterationContext = {
   }>
 }
 
-export type HostedCliRequest = {
+/**
+ * Runtime block carried with every hosted invocation. The dispatch boundary in
+ * `hostedCliAdapter.ts` keys off `(harness, runtime)`; `provider` is the API
+ * vendor (anthropic, openai) and only used for telemetry.
+ */
+export type HostedRuntime = {
+  harness: HostedHarness
+  runtime: InvocationRuntime
+  provider?: string
+  model?: string
+  workspaceRoot: string
+  policy: RuntimePolicy
+}
+
+export type HostedRequest = {
   kind: HostedPromptKind
-  runtime: {
-    provider: HostedProviderId
-    model?: string
-    workspaceRoot: string
-    policy: RuntimePolicy
-  }
+  runtime: HostedRuntime
   prompt: string
   payload: unknown
 }
+
+/** @deprecated Use `HostedRequest`. */
+export type HostedCliRequest = HostedRequest
 
 type PromptSchema = {
   promptKind: PromptKind
@@ -95,28 +122,36 @@ function withPayload<T>(payload: T, context: Record<string, unknown>): T & Recor
   return { ...(payload as Record<string, unknown>), ...context } as T & Record<string, unknown>
 }
 
-/**
- * Assemble a hosted prompt. `promptId` is the per-stage system/reviewer file
- * name (or a fixed id for worker prompts like "execution"). `action` appears
- * as its own line so stage-specific phrasing ("Revise the stage output
- * using the supplied review feedback.") remains visible.
- */
-export function buildHostedPrompt(params: {
+type HostedPromptBuildInput = {
   kind: HostedPromptKind
   promptId: string
-  provider: HostedProviderId
+  harness: HostedHarness
+  runtime: InvocationRuntime
   model?: string
   runtimePolicy: RuntimePolicy
   action?: string
   identityLines?: readonly string[]
   payload: Record<string, unknown>
-}): string {
+}
+
+/**
+ * Assemble a hosted prompt. `promptId` is the per-stage system/reviewer file
+ * name (or a fixed id for worker prompts like "execution"). `action` appears
+ * as its own line so stage-specific phrasing ("Revise the stage output
+ * using the supplied review feedback.") remains visible.
+ *
+ * The prompt body is identical across CLI and SDK runtimes — only the
+ * invocation mechanism differs. The `Provider` line still names the harness
+ * brand because the prompt files reference "claude" / "codex" by name.
+ */
+export function buildHostedPrompt(params: HostedPromptBuildInput): string {
   const schema = SCHEMAS[params.kind]
   const lines: string[] = [loadPromptWithFallback(schema, params.promptId), ...schema.instructions]
   if (params.action) lines.push(params.action)
   if (params.identityLines) lines.push(...params.identityLines)
   lines.push(
-    `Provider: ${params.provider}`,
+    `Provider: ${params.harness}`,
+    `Runtime: ${params.runtime}`,
     `Model: ${params.model ?? "default"}`,
     `Runtime policy: ${JSON.stringify(params.runtimePolicy)}`,
     `Payload:\n${JSON.stringify(params.payload, null, 2)}`,
@@ -126,7 +161,8 @@ export function buildHostedPrompt(params: {
 
 export function buildStagePrompt<S>(input: {
   stageId: string
-  provider: HostedProviderId
+  harness: HostedHarness
+  runtime: InvocationRuntime
   model?: string
   runtimePolicy: RuntimePolicy
   request: StageAgentInput<S>
@@ -141,7 +177,8 @@ export function buildStagePrompt<S>(input: {
   return buildHostedPrompt({
     kind: "stage",
     promptId: input.stageId,
-    provider: input.provider,
+    harness: input.harness,
+    runtime: input.runtime,
     model: input.model,
     runtimePolicy: input.runtimePolicy,
     action,
@@ -152,7 +189,8 @@ export function buildStagePrompt<S>(input: {
 
 export function buildReviewPrompt<S, A>(input: {
   stageId: string
-  provider: HostedProviderId
+  harness: HostedHarness
+  runtime: InvocationRuntime
   model?: string
   runtimePolicy: RuntimePolicy
   request: { artifact: A; state: S; reviewContext?: ReviewContext }
@@ -160,7 +198,8 @@ export function buildReviewPrompt<S, A>(input: {
   return buildHostedPrompt({
     kind: "review",
     promptId: input.stageId,
-    provider: input.provider,
+    harness: input.harness,
+    runtime: input.runtime,
     model: input.model,
     runtimePolicy: input.runtimePolicy,
     identityLines: [`Stage: ${input.stageId}`],
@@ -169,7 +208,8 @@ export function buildReviewPrompt<S, A>(input: {
 }
 
 export function buildExecutionPrompt(input: {
-  provider: HostedProviderId
+  harness: HostedHarness
+  runtime: InvocationRuntime
   model?: string
   runtimePolicy: RuntimePolicy
   storyId: string
@@ -180,7 +220,8 @@ export function buildExecutionPrompt(input: {
   return buildHostedPrompt({
     kind: "execution",
     promptId: "execution",
-    provider: input.provider,
+    harness: input.harness,
+    runtime: input.runtime,
     model: input.model,
     runtimePolicy: input.runtimePolicy,
     identityLines: [`Story: ${input.storyId}`, `Action: ${input.action}`],

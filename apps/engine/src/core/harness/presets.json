@@ -54,6 +54,16 @@
       "reviewer": { "harness": "claude", "provider": "anthropic", "model": "claude-haiku-4-5" },
       "merge-resolver": { "harness": "claude", "provider": "anthropic", "model": "claude-haiku-4-5" }
     },
+    "claude-sdk-first": {
+      "coder": { "harness": "claude", "provider": "anthropic", "model": "claude-sonnet-4-6", "runtime": "sdk" },
+      "reviewer": { "harness": "codex", "provider": "openai", "model": "gpt-5.4", "runtime": "cli" },
+      "merge-resolver": { "harness": "claude", "provider": "anthropic", "model": "claude-sonnet-4-6", "runtime": "sdk" }
+    },
+    "codex-sdk-first": {
+      "coder": { "harness": "codex", "provider": "openai", "model": "gpt-5.4", "runtime": "sdk" },
+      "reviewer": { "harness": "claude", "provider": "anthropic", "model": "claude-sonnet-4-6", "runtime": "cli" },
+      "merge-resolver": { "harness": "codex", "provider": "openai", "model": "gpt-5.4", "runtime": "sdk" }
+    },
     "opencode-china": {
       "coder": { "harness": "opencode", "provider": "openrouter", "model": "qwen/qwen3.5-coder" },
       "reviewer": { "harness": "opencode", "provider": "openrouter", "model": "deepseek/deepseek-v3.2" },

@@ -4,4 +4,14 @@ reviews:
   auto_review:
     enabled: true
     drafts: false
+  # The SDK adapter trio is thin glue around vendor type defs
+  # (@anthropic-ai/claude-agent-sdk, @openai/codex-sdk). CodeRabbit feedback
+  # on these tends to flag idioms that match the vendor's documented
+  # contract — false-positive churn the operator can't act on without
+  # forking the SDK. Real verification lives in apps/engine/test/sdkLive.test.ts.
+  path_filters:
+    - "!apps/engine/src/llm/hosted/providers/claudeSdk.ts"
+    - "!apps/engine/src/llm/hosted/providers/codexSdk.ts"
+    - "!apps/engine/src/llm/hosted/providers/_sdkSession.ts"
+    - "!apps/engine/test/sdkLive.test.ts"
 language: en-US

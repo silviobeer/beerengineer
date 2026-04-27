@@ -27,6 +27,33 @@ npm exec --workspace=@beerengineer2/engine beerengineer -- notifications test te
 
 Known group ids: `core`, `vcs.github`, `llm.anthropic`, `llm.openai`, `llm.opencode`, `browser-agent`, `review`, `notifications`.
 
+### LLM auth: CLI vs SDK
+
+The engine supports two invocation runtimes per harness role:
+
+- **CLI runtimes** (`claude:cli`, `codex:cli`) rely on the local agent
+  CLI's auth state — i.e. you've previously run `claude login` /
+  `codex login`. No API key is needed in the engine environment.
+- **SDK runtimes** (`claude:sdk`, `codex:sdk`) require a real API key
+  in the process environment:
+  - `claude:sdk` → `ANTHROPIC_API_KEY`
+  - `codex:sdk`  → `OPENAI_API_KEY`
+
+  `doctor` flags missing keys when a workspace's harness profile
+  selects an SDK-backed role. The engine refuses to silently fall back
+  to CLI when SDK was requested — it throws
+  `profile_references_unavailable_runtime` so the operator sees the
+  mismatch immediately.
+
+  **Billing note.** SDK profiles bill **per-token** against the API
+  key. CLI profiles bill against the local subscription bundle.
+  Switching a coder role from `cli` to `sdk` can change the invoice
+  shape — read `docs/context-and-llm-config.md` § *CLI vs SDK runtime*
+  before flipping a production workspace.
+
+  `opencode:sdk` is rejected at validation time — there's no
+  comparable opencode agent SDK shipping today.
+
 ## Config
 
 Default config path is OS-aware via `env-paths` and resolves to `config.json` under the app config directory.

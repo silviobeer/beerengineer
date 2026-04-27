@@ -1,5 +1,5 @@
-import type { HostedCliExecutionResult, HostedProviderInvokeInput } from "../providerRuntime.js"
+import type { HostedInvocationResult, HostedProviderInvokeInput } from "../providerRuntime.js"
 
-export async function invokeOpenCode(input: HostedProviderInvokeInput): Promise<HostedCliExecutionResult> {
-  throw new Error(`Provider "${input.runtime.provider}" is not implemented yet`)
+export async function invokeOpenCode(input: HostedProviderInvokeInput): Promise<HostedInvocationResult> {
+  throw new Error(`Harness "${input.runtime.harness}" is not implemented yet`)
 }

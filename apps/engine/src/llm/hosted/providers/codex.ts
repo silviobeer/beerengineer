@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { sanitizePreviewValue } from "../../../core/messagePreview.js"
-import type { HostedCliExecutionResult, HostedProviderInvokeInput } from "../providerRuntime.js"
+import type { HostedInvocationResult, HostedProviderInvokeInput } from "../providerRuntime.js"
 import { invokeProviderCli, type ProviderDriver } from "./_invoke.js"
 import { emitHostedThinking, emitHostedTokens, emitHostedToolCalled, emitHostedToolResult, makeJsonLineStreamCallback } from "./_stream.js"
 
@@ -134,7 +134,7 @@ function parseUsage(stdout: string): { sessionId: string | null; cachedInputToke
  * writes to a file path. We pre-allocate it before the driver builds the
  * command and clean it up in `afterEach`.
  */
-export async function invokeCodex(input: HostedProviderInvokeInput): Promise<HostedCliExecutionResult> {
+export async function invokeCodex(input: HostedProviderInvokeInput): Promise<HostedInvocationResult> {
   const tempDir = await mkdtemp(join(tmpdir(), "beerengineer-codex-"))
   const driver: ProviderDriver<CodexStreamState> = {
     tag: "codex",
@@ -157,7 +157,7 @@ export async function invokeCodex(input: HostedProviderInvokeInput): Promise<Hos
         ...raw,
         command,
         outputText,
-        session: { provider: activeInput.runtime.provider, sessionId: usage.sessionId ?? activeInput.session?.sessionId ?? null },
+        session: { harness: activeInput.runtime.harness, sessionId: usage.sessionId ?? activeInput.session?.sessionId ?? null },
         cacheStats: {
           cachedInputTokens: usage.cachedInputTokens,
           totalInputTokens: usage.totalInputTokens,

@@ -1,7 +1,8 @@
 import type { ReviewAgentAdapter, ReviewContext, StageAgentAdapter, StageAgentInput } from "../../core/adapters.js"
 import { emitEvent, getActiveRun } from "../../core/runContext.js"
 import type { RuntimePolicy } from "../registry.js"
-import type { HostedCliRequest, HostedProviderId } from "./promptEnvelope.js"
+import type { InvocationRuntime } from "../types.js"
+import type { HostedHarness, HostedRequest } from "./promptEnvelope.js"
 import { buildReviewPrompt, buildStagePrompt } from "./promptEnvelope.js"
 import {
   mapReviewEnvelopeToResponse,
@@ -9,31 +10,51 @@ import {
   type HostedReviewOutputEnvelope,
   type HostedStageOutputEnvelope,
 } from "./outputEnvelope.js"
-import type { HostedCliExecutionResult, HostedProviderInvokeInput, HostedSession } from "./providerRuntime.js"
+import type { HostedInvocationResult, HostedProviderInvokeInput, HostedSession } from "./providerRuntime.js"
 import { invokeClaude } from "./providers/claude.js"
 import { invokeCodex } from "./providers/codex.js"
 import { invokeOpenCode } from "./providers/opencode.js"
+import { invokeClaudeSdk } from "./providers/claudeSdk.js"
+import { invokeCodexSdk } from "./providers/codexSdk.js"
 
 export type HostedProviderAdapter = {
-  invoke(input: HostedProviderInvokeInput): Promise<HostedCliExecutionResult>
+  invoke(input: HostedProviderInvokeInput): Promise<HostedInvocationResult>
 }
 
-function providerAdapter(provider: HostedProviderId): HostedProviderAdapter {
-  switch (provider) {
-    case "claude-code":
+/**
+ * Dispatch a hosted invocation by `(harness, runtime)`. The two axes are
+ * intentionally orthogonal: `harness` is the agent runtime brand
+ * (claude/codex/opencode) and `runtime` is the invocation mechanism
+ * (cli vs in-process SDK). `opencode:sdk` is rejected at validation time, so
+ * it never lands here — we throw if it does to flag the contract violation.
+ */
+function invokerFor(harness: HostedHarness, runtime: InvocationRuntime): HostedProviderAdapter {
+  switch (`${harness}:${runtime}` as const) {
+    case "claude:cli":
       return { invoke: invokeClaude }
-    case "codex":
+    case "claude:sdk":
+      return { invoke: invokeClaudeSdk }
+    case "codex:cli":
       return { invoke: invokeCodex }
-    case "opencode":
+    case "codex:sdk":
+      return { invoke: invokeCodexSdk }
+    case "opencode:cli":
       return { invoke: invokeOpenCode }
+    case "opencode:sdk":
+      throw new Error("opencode:sdk is not supported — pick a CLI-backed opencode profile or another harness")
+    default: {
+      const exhaustive: never = `${harness}:${runtime}` as never
+      throw new Error(`Unknown harness/runtime combination: ${exhaustive as string}`)
+    }
   }
 }
 
 export async function invokeHostedCli(
-  request: HostedCliRequest,
+  request: HostedRequest,
   session?: HostedSession | null,
-): Promise<HostedCliExecutionResult> {
-  const result = await providerAdapter(request.runtime.provider).invoke({
+): Promise<HostedInvocationResult> {
+  const { harness, runtime } = request.runtime
+  const result = await invokerFor(harness, runtime).invoke({
     prompt: request.prompt,
     runtime: request.runtime,
     session,
@@ -43,7 +64,7 @@ export async function invokeHostedCli(
     emitEvent({
       type: "log",
       runId: active.runId,
-      message: `llm.invocation provider=${request.runtime.provider} session=${result.session.sessionId && session?.sessionId ? "resumed" : "started"} cachedTokens=${result.cacheStats?.cachedInputTokens ?? 0} totalTokens=${result.cacheStats?.totalInputTokens ?? 0}`,
+      message: `llm.invocation harness=${harness} runtime=${runtime} session=${result.session.sessionId && session?.sessionId ? "resumed" : "started"} cachedTokens=${result.cacheStats?.cachedInputTokens ?? 0} totalTokens=${result.cacheStats?.totalInputTokens ?? 0}`,
     })
   }
   return result
@@ -103,20 +124,22 @@ function extractOutermostJsonObject(text: string): string | null {
 
 type HostedAdapterInput = {
   stageId: string
-  provider: HostedProviderId
+  harness: HostedHarness
+  runtime: InvocationRuntime
+  provider: string
   model?: string
   workspaceRoot: string
   runtimePolicy: RuntimePolicy
 }
 
 /**
- * Invoke the hosted CLI and parse the response as a JSON envelope. If the
+ * Invoke the hosted runtime and parse the response as a JSON envelope. If the
  * first invocation returns non-JSON, re-invoke once with a hardening hint
  * appended to the prompt. Session ids are threaded through both turns so
  * provider-native conversation state keeps working.
  */
 async function invokeAndParse<Env>(params: {
-  request: HostedCliRequest
+  request: HostedRequest
   session: HostedSession
   parse: (raw: Record<string, unknown>) => Env
   retryHint: string
@@ -147,7 +170,7 @@ export class HostedStageAdapter<S, A> implements StageAgentAdapter<S, A> {
   private session: HostedSession
 
   constructor(private readonly input: HostedAdapterInput) {
-    this.session = { provider: input.provider, sessionId: null }
+    this.session = { harness: input.harness, sessionId: null }
   }
 
   getSessionId(): string | null {
@@ -155,11 +178,13 @@ export class HostedStageAdapter<S, A> implements StageAgentAdapter<S, A> {
   }
 
   setSessionId(sessionId: string | null): void {
-    this.session = { provider: this.input.provider, sessionId }
+    this.session = { harness: this.input.harness, sessionId }
   }
 
   async step(request: StageAgentInput<S>) {
-    const runtime = {
+    const runtime: HostedRequest["runtime"] = {
+      harness: this.input.harness,
+      runtime: this.input.runtime,
       provider: this.input.provider,
       model: this.input.model,
       workspaceRoot: this.input.workspaceRoot,
@@ -167,7 +192,8 @@ export class HostedStageAdapter<S, A> implements StageAgentAdapter<S, A> {
     }
     const prompt = buildStagePrompt({
       stageId: this.input.stageId,
-      provider: this.input.provider,
+      harness: this.input.harness,
+      runtime: this.input.runtime,
       model: this.input.model,
       runtimePolicy: this.input.runtimePolicy,
       request,
@@ -187,7 +213,7 @@ export class HostedReviewAdapter<S, A> implements ReviewAgentAdapter<S, A> {
   private session: HostedSession
 
   constructor(private readonly input: HostedAdapterInput) {
-    this.session = { provider: input.provider, sessionId: null }
+    this.session = { harness: input.harness, sessionId: null }
   }
 
   getSessionId(): string | null {
@@ -195,12 +221,14 @@ export class HostedReviewAdapter<S, A> implements ReviewAgentAdapter<S, A> {
   }
 
   setSessionId(sessionId: string | null): void {
-    this.session = { provider: this.input.provider, sessionId }
+    this.session = { harness: this.input.harness, sessionId }
   }
 
   async review(request?: { artifact: A; state: S; reviewContext?: ReviewContext }) {
     if (!request) throw new Error("Hosted review adapter requires a review payload")
-    const runtime = {
+    const runtime: HostedRequest["runtime"] = {
+      harness: this.input.harness,
+      runtime: this.input.runtime,
       provider: this.input.provider,
       model: this.input.model,
       workspaceRoot: this.input.workspaceRoot,
@@ -208,7 +236,8 @@ export class HostedReviewAdapter<S, A> implements ReviewAgentAdapter<S, A> {
     }
     const prompt = buildReviewPrompt({
       stageId: this.input.stageId,
-      provider: this.input.provider,
+      harness: this.input.harness,
+      runtime: this.input.runtime,
       model: this.input.model,
       runtimePolicy: this.input.runtimePolicy,
       request,

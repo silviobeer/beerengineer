@@ -289,41 +289,100 @@ When a run resumes, it does not replay LLM calls. Instead:
 
 ### Harness profile
 
-`HarnessProfile` (`apps/engine/src/types/workspace.ts:31-52`) selects
-the per-role agent stack. Roles are `coder`, `reviewer`,
-`merge-resolver`.
+`HarnessProfile` (`apps/engine/src/types/workspace.ts`) selects the
+per-role agent stack. Roles are `coder`, `reviewer`, `merge-resolver`.
 
 ```ts
 type HarnessProfile =
   | { mode: "claude-first" | "claude-only" | "codex-first" | "codex-only"
-      | "fast" | "opencode-china" | "opencode-euro" }
+      | "fast" | "claude-sdk-first"
+      | "opencode-china" | "opencode-euro" }
   | { mode: "opencode"; roles: { coder: RoleModelRef; reviewer: RoleModelRef } }
-  | { mode: "self";     roles: { coder: SelfHarnessRoleRef; reviewer: SelfHarnessRoleRef } }
+  | {
+      mode: "self"
+      roles: {
+        coder: SelfHarnessRoleRef
+        reviewer: SelfHarnessRoleRef
+        "merge-resolver"?: SelfHarnessRoleRef
+      }
+    }
+
+type SelfHarnessRoleRef = RoleModelRef & {
+  harness: KnownHarness          // "claude" | "codex" | "opencode"
+  runtime?: InvocationRuntime    // "cli" | "sdk", defaults to "cli"
+}
 ```
 
-Modes that name a preset key (`claude-first`, `codex-first`, …) resolve
-through `presets.json`. `self` mode is the power-user escape hatch:
+Three orthogonal axes flow from this:
+
+- **harness** — agent runtime brand (claude, codex, opencode)
+- **provider** — API vendor (anthropic, openai, openrouter, …)
+- **runtime** — invocation mechanism (`cli` shells out to the local
+  agent CLI; `sdk` runs the agent loop in-process via the vendor SDK)
+
+Modes that name a preset key (`claude-first`, `codex-first`,
+`claude-sdk-first`, …) resolve through `presets.json`. `self` mode is
+the power-user escape hatch and supports per-role runtime mixing,
+including an explicit `merge-resolver` slot:
 
 ```json
 {
   "harnessProfile": {
     "mode": "self",
     "roles": {
-      "coder":    { "harness": "claude", "provider": "anthropic", "model": "claude-opus-4-7" },
-      "reviewer": { "harness": "codex",  "provider": "openai",    "model": "gpt-5.4" }
+      "coder":          { "harness": "claude", "provider": "anthropic", "model": "claude-opus-4-7",  "runtime": "sdk" },
+      "reviewer":       { "harness": "codex",  "provider": "openai",    "model": "gpt-5.4",          "runtime": "cli" },
+      "merge-resolver": { "harness": "claude", "provider": "anthropic", "model": "claude-sonnet-4-6","runtime": "cli" }
     }
   }
 }
 ```
 
-The merge-resolver role falls back to the `coder` entry when no
-`merge-resolver` is declared (see `resolveFromPreset` in
-`llm/registry.ts:108-109`).
+When `merge-resolver` is omitted, the registry falls back to the
+`coder` entry (`resolveFromPreset` in `llm/registry.ts`).
 
-> **Status, as of this writing:** `mode = "opencode" / "opencode-china" / "opencode-euro"`
-> resolve to providers that are not yet implemented in
-> `llm/hosted/providers/`; `resolveHarness` throws for them. The presets
-> exist so the schema is stable.
+> **Status, as of this writing:**
+> - `mode = "opencode" / "opencode-china" / "opencode-euro"` resolve to
+>   providers that are not yet implemented in `llm/hosted/providers/`;
+>   `resolveHarness` throws for them. The presets exist so the schema is stable.
+> - `claude:sdk` runs on `@anthropic-ai/claude-agent-sdk`; `codex:sdk`
+>   runs on `@openai/codex-sdk`. Both are real adapters — operators
+>   pick them via the `claude-sdk-first` / `codex-sdk-first` presets
+>   (or per-role `runtime: "sdk"` in `self` mode).
+> - `opencode:sdk` is rejected at validation time — there's no
+>   comparable opencode agent SDK to wrap.
+
+#### CLI vs SDK runtime — what the operator picks up
+
+Choosing the SDK runtime for a role buys:
+
+- programmatic control over tool execution (gate writes per call, not per process)
+- richer streaming events (token-level deltas, structured tool-call objects)
+  without parsing CLI stdout
+- faster cold-start in long-running engine processes (no subprocess spawn per turn)
+- direct billing visibility per call via API usage data
+- foundation for later features (custom tools, MCP wiring, multi-region routing)
+  that the CLI does not expose
+
+The tradeoff:
+
+- API key management instead of relying on a local CLI auth session
+- direct per-token billing instead of subscription-bundled CLI usage
+- more code surface owned by this engine (tool execution loop, history replay)
+  instead of the CLI
+
+**Auth & billing — read this before flipping a role to `sdk`:**
+
+| Runtime | Auth source                                            | Billing                                  |
+| ------- | ------------------------------------------------------ | ---------------------------------------- |
+| `cli`   | Local CLI session (`claude login`, `codex login`)      | Subscription bundled with the CLI        |
+| `sdk`   | API key in the env: `ANTHROPIC_API_KEY` for `claude:sdk` | Per-token, billed against your API key |
+
+`resolveHarness` does **not** silently fall back to CLI when an SDK
+profile is selected without the right key — it throws with
+`profile_references_unavailable_runtime` so the operator sees the
+mismatch up front. Defaults stay CLI everywhere; SDK profiles are
+opt-in via preset choice or a `runtime: "sdk"` field in `self` mode.
 
 ### Available presets
 
@@ -335,9 +394,20 @@ From `apps/engine/src/core/harness/presets.json`:
 | `claude-only`   | claude / claude-opus-4-7    | claude / claude-sonnet-4-6| claude / claude-sonnet-4-6  |
 | `codex-first`   | codex / gpt-5.4             | claude / claude-sonnet-4-6| codex / gpt-5.4             |
 | `codex-only`    | codex / gpt-5.4             | codex / gpt-4o            | codex / gpt-5.4             |
-| `fast`          | codex / gpt-4o              | claude / claude-haiku-4-5 | claude / claude-haiku-4-5   |
-| `opencode-china`| opencode / qwen3.5-coder    | opencode / deepseek-v3.2  | opencode / qwen3.5-coder    |
-| `opencode-euro` | opencode / codestral-2501   | opencode / mistral-large  | opencode / codestral-2501   |
+| `fast`              | codex / gpt-4o              | claude / claude-haiku-4-5 | claude / claude-haiku-4-5   |
+| `claude-sdk-first`  | claude:sdk / claude-sonnet-4-6 | codex / gpt-5.4         | claude:sdk / claude-sonnet-4-6 |
+| `codex-sdk-first`   | codex:sdk / gpt-5.4         | claude / claude-sonnet-4-6 | codex:sdk / gpt-5.4        |
+| `opencode-china`    | opencode / qwen3.5-coder    | opencode / deepseek-v3.2  | opencode / qwen3.5-coder    |
+| `opencode-euro`     | opencode / codestral-2501   | opencode / mistral-large  | opencode / codestral-2501   |
+
+Both SDK-backed presets keep the **reviewer** on the opposite vendor's
+CLI on purpose: the runtime axis gets exercised on the heavier coder
+role without doubling per-token cost on review. To use them:
+
+```json
+{ "harnessProfile": { "mode": "claude-sdk-first" } }   // needs ANTHROPIC_API_KEY
+{ "harnessProfile": { "mode": "codex-sdk-first"  } }   // needs OPENAI_API_KEY
+```
 
 **Special case** in `resolveFromPreset` (`llm/registry.ts:118-121`): the
 `execution` stage on a Claude-family preset is auto-upgraded from
@@ -406,26 +476,48 @@ unreferenced files rot. See `apps/engine/prompts/README.md`.
 
 ### Provider runtime: retry, streaming, sessions
 
-Lives in `llm/hosted/providers/`:
+Lives in `llm/hosted/providers/`. The dispatch boundary in
+`llm/hosted/hostedCliAdapter.ts` keys off `(harness, runtime)` and
+routes to one of:
 
-- `_invoke.ts` owns the retry + unknown-session shell. Per-provider
-  `ProviderDriver` plug-ins customise argv, stream parsing and finalize
-  behavior; the shell owns discipline.
+- `claude.ts` — claude CLI subprocess, `--print --verbose
+  --output-format stream-json`, `--model <id>` if set. Server-side
+  session reuse via `--resume <id>`; a session-unknown message
+  triggers one fresh-session retry.
+- `claudeSdk.ts` — `@anthropic-ai/claude-agent-sdk` in-process. Maps
+  engine `RuntimePolicy` modes to Agent SDK permission modes (table
+  inside the file). When the SDK does not expose a clean equivalent
+  for a policy, it picks the **stricter** option, never broader. Falls
+  back to local message-history replay (`_sdkSession.ts`) when no
+  server-side session handle is returned. Lazily imports the SDK
+  package so CLI-only workspaces never need the dep.
+- `codex.ts` — codex CLI subprocess, `--json`, `--model <id>`.
+- `codexSdk.ts` — `@openai/codex-sdk` in-process. Wraps the same
+  `codex` CLI surface (sandboxed exec, JSONL events, session resume
+  via `~/.codex/sessions`). Maps engine `RuntimePolicy` modes to
+  `sandboxMode` (`read-only` / `workspace-write` / `danger-full-access`)
+  and pins `approvalPolicy: "never"` so non-interactive runs don't
+  block. Lazily imports the SDK package so CLI-only workspaces never
+  need the dep.
+- `opencode.ts` — wired but throws `not implemented yet`.
+
+Cross-cutting helpers:
+
+- `_invoke.ts` owns the retry + unknown-session shell for CLI runtimes.
+  Per-provider `ProviderDriver` plug-ins customise argv, stream parsing
+  and finalize behavior; the shell owns discipline.
 - `_retry.ts` classifies failures as transient (SIGTERM/SIGKILL exit
   codes 137/143, empty stdout+stderr on non-zero exit, `ECONNRESET`,
   `ETIMEDOUT`, "network error"…) and supplies the retry delay schedule
   from `BEERENGINEER_HOSTED_RETRY_DELAYS_MS` (default `[2000, 8000]`).
 - `_stream.ts` emits live progress events (`emitHostedThinking`,
   `emitHostedTokens`, `emitHostedToolCalled`, `emitHostedToolResult`,
-  retry markers) so the CLI / UI can render the agent's progress in
-  real time.
-- `claude.ts` invokes the `claude` CLI with `--print --verbose
-  --output-format stream-json` and `--model <id>` when a model is set.
-  Sessions are reused across calls; a session-unknown message triggers
-  one fresh-session retry.
-- `codex.ts` invokes the `codex` CLI with `--json` and `--model <id>`.
-- `opencode.ts` is wired but most preset modes that resolve to it
-  currently throw `not implemented yet`.
+  retry markers) — both CLI and SDK adapters feed this.
+- `_sdkSession.ts` is the local-history replay helper used by SDK
+  adapters when the SDK does not expose a server-side conversation
+  handle. The cost is bandwidth, not correctness — payload context
+  (`stageContext` / `reviewContext` / `iterationContext`) remains
+  authoritative.
 
 ### Fake mode
 

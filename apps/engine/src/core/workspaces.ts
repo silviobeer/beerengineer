@@ -853,6 +853,10 @@ function harnessesForProfile(profile: HarnessProfile): KnownHarness[] {
       return ["codex"]
     case "claude-only":
       return ["claude"]
+    case "claude-sdk-first":
+      return ["claude", "codex"]
+    case "codex-sdk-first":
+      return ["codex", "claude"]
     case "opencode":
     case "opencode-china":
     case "opencode-euro":
@@ -871,10 +875,98 @@ function collectAvailableHarnesses(report: SetupReport): Set<KnownHarness> {
   return available
 }
 
+/**
+ * Per-role `(harness, runtime)` pairs the profile actually uses. Drives both
+ * the CLI-availability check (skipped for SDK roles, which only need an API
+ * key) and the SDK key check below.
+ */
+function rolePairsForProfile(
+  profile: HarnessProfile,
+): Array<{ harness: KnownHarness; runtime: "cli" | "sdk" }> {
+  switch (profile.mode) {
+    case "codex-first":
+    case "fast":
+      return [
+        { harness: "codex", runtime: "cli" },
+        { harness: "claude", runtime: "cli" },
+      ]
+    case "claude-first":
+      return [
+        { harness: "claude", runtime: "cli" },
+        { harness: "codex", runtime: "cli" },
+      ]
+    case "codex-only":
+      return [{ harness: "codex", runtime: "cli" }]
+    case "claude-only":
+      return [{ harness: "claude", runtime: "cli" }]
+    case "claude-sdk-first":
+      return [
+        { harness: "claude", runtime: "sdk" },
+        { harness: "codex", runtime: "cli" },
+      ]
+    case "codex-sdk-first":
+      return [
+        { harness: "codex", runtime: "sdk" },
+        { harness: "claude", runtime: "cli" },
+      ]
+    case "opencode":
+    case "opencode-china":
+    case "opencode-euro":
+      return [{ harness: "opencode", runtime: "cli" }]
+    case "self": {
+      const pairs: Array<{ harness: KnownHarness; runtime: "cli" | "sdk" }> = [
+        { harness: profile.roles.coder.harness, runtime: profile.roles.coder.runtime ?? "cli" },
+        { harness: profile.roles.reviewer.harness, runtime: profile.roles.reviewer.runtime ?? "cli" },
+      ]
+      const mr = profile.roles["merge-resolver"]
+      if (mr) pairs.push({ harness: mr.harness, runtime: mr.runtime ?? "cli" })
+      return pairs
+    }
+  }
+}
+
+/**
+ * Required env-var key for an `(harness, sdk)` pair. CLI runtimes return
+ * null (auth lives in the local CLI session). Used by doctor / validation
+ * to surface a missing key with the dedicated
+ * `profile_references_unavailable_runtime` error.
+ */
+function sdkApiKeyEnv(harness: KnownHarness): string | null {
+  switch (harness) {
+    case "claude":
+      return "ANTHROPIC_API_KEY"
+    case "codex":
+      return "OPENAI_API_KEY"
+    case "opencode":
+      return null
+  }
+}
+
 export function validateHarnessProfile(profile: HarnessProfile, appReport: SetupReport): ValidationResult {
   const warnings: string[] = []
+
+  const pairs = rolePairsForProfile(profile)
+
+  // Reject combinations that have no implementation regardless of env state.
+  // `opencode:sdk` is the only such combo today; `codex:sdk` ships via
+  // `@openai/codex-sdk` and is validated only against the missing-key check
+  // below.
+  const hardRejects = pairs.filter(p => p.harness === "opencode" && p.runtime === "sdk")
+  if (hardRejects.length > 0) {
+    const labels = Array.from(new Set(hardRejects.map(p => `${p.harness}:${p.runtime}`)))
+    return {
+      ok: false,
+      warnings,
+      error: {
+        code: "profile_references_unavailable_runtime",
+        detail: `Harness profile requests runtime(s) that are not implemented: ${labels.join(", ")}.`,
+      },
+    }
+  }
+
+  // CLI roles still need the local CLI installed + authed.
   const available = collectAvailableHarnesses(appReport)
-  const required = harnessesForProfile(profile)
+  const required = Array.from(new Set(pairs.filter(p => p.runtime === "cli").map(p => p.harness)))
   const missing = required.filter(harness => !available.has(harness))
   if (missing.length > 0) {
     return {
@@ -883,6 +975,26 @@ export function validateHarnessProfile(profile: HarnessProfile, appReport: Setup
       error: {
         code: "profile_references_unavailable_harness",
         detail: `Harness profile requires unavailable harnesses: ${Array.from(new Set(missing)).join(", ")}`,
+      },
+    }
+  }
+
+  // SDK roles need the matching API key in process env. We deliberately do
+  // NOT silently fall back to CLI — operators picking SDK want SDK semantics
+  // (per-token billing, in-process tool gating) and need to see this clearly.
+  const missingKeys: string[] = []
+  for (const pair of pairs) {
+    if (pair.runtime !== "sdk") continue
+    const env = sdkApiKeyEnv(pair.harness)
+    if (env && !process.env[env]) missingKeys.push(`${pair.harness}:sdk requires ${env}`)
+  }
+  if (missingKeys.length > 0) {
+    return {
+      ok: false,
+      warnings,
+      error: {
+        code: "profile_references_unavailable_runtime",
+        detail: `Harness profile selects an SDK runtime without the required API key: ${Array.from(new Set(missingKeys)).join("; ")}`,
       },
     }
   }
@@ -1278,17 +1390,21 @@ export async function promptForWorkspaceAddDefaults(config: AppConfig): Promise<
     console.log("    3) codex-only")
     console.log("    4) claude-only")
     console.log("    5) fast")
-    console.log("    6) opencode-china  (qwen + deepseek via OpenRouter)")
-    console.log("    7) opencode-euro   (mistral via OpenRouter)")
-    const choice = await promptLine(rl, "Pick [1-7] or [d]efault", "d")
+    console.log("    6) claude-sdk-first  (Claude Agent SDK; needs ANTHROPIC_API_KEY, bills per-token)")
+    console.log("    7) codex-sdk-first   (Codex SDK; needs OPENAI_API_KEY, bills per-token)")
+    console.log("    8) opencode-china    (qwen + deepseek via OpenRouter)")
+    console.log("    9) opencode-euro     (mistral via OpenRouter)")
+    const choice = await promptLine(rl, "Pick [1-9] or [d]efault", "d")
     const profileMap: Record<string, HarnessProfile> = {
       "1": { mode: "codex-first" },
       "2": { mode: "claude-first" },
       "3": { mode: "codex-only" },
       "4": { mode: "claude-only" },
       "5": { mode: "fast" },
-      "6": { mode: "opencode-china" },
-      "7": { mode: "opencode-euro" },
+      "6": { mode: "claude-sdk-first" },
+      "7": { mode: "codex-sdk-first" },
+      "8": { mode: "opencode-china" },
+      "9": { mode: "opencode-euro" },
       d: config.llm.defaultHarnessProfile,
     }
     const profile = profileMap[choice.toLowerCase()] ?? config.llm.defaultHarnessProfile

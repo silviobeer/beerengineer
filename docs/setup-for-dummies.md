@@ -287,7 +287,22 @@ You'll get an interactive flow:
    - `codex-first` — Codex does the work, Claude reviews
    - `claude-only` / `codex-only` — single harness
    - `fast` — gpt-4o coder + Haiku reviewer for quick iteration
-   - `opencode` / `self` — power users, pick models per role
+   - `claude-sdk-first` — same shape as `claude-first`, but Claude runs
+     **in-process via the Anthropic Agent SDK** instead of the `claude`
+     CLI. Requires `ANTHROPIC_API_KEY` in your environment; bills
+     **per-token** against that key instead of your Claude
+     subscription. Pick this if you want richer streaming events,
+     per-call tool gating, or you're scripting against the engine in a
+     long-lived process where subprocess spawn cost matters.
+   - `codex-sdk-first` — analogous to `claude-sdk-first`, but for
+     Codex. Requires `OPENAI_API_KEY`; runs in-process via the
+     `@openai/codex-sdk` package; per-token billing against that key.
+   - `opencode` / `self` — power users, pick models per role. `self`
+     mode also supports an explicit `runtime: "cli" | "sdk"` field per
+     role (defaults to `"cli"`), so you can mix e.g. an SDK coder with
+     a CLI reviewer.
+   - **Note:** `opencode:sdk` is rejected — there's no comparable
+     opencode agent SDK shipping today.
    - For the full preset table, the schema of `self` mode, runtime-policy
      options (tool access), and tuning env vars, see
      [`context-and-llm-config.md`](./context-and-llm-config.md).

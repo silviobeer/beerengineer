@@ -1,4 +1,4 @@
-import type { HostedCliExecutionResult, HostedProviderInvokeInput } from "../providerRuntime.js"
+import type { HostedInvocationResult, HostedProviderInvokeInput } from "../providerRuntime.js"
 import { sanitizePreviewValue } from "../../../core/messagePreview.js"
 import { invokeProviderCli, type ProviderDriver } from "./_invoke.js"
 import {
@@ -281,7 +281,7 @@ const claudeDriver: ProviderDriver<ClaudeStreamState> = {
       ...raw,
       command,
       outputText,
-      session: { provider: input.runtime.provider, sessionId: state.sessionId ?? input.session?.sessionId ?? null },
+      session: { harness: input.runtime.harness, sessionId: state.sessionId ?? input.session?.sessionId ?? null },
       cacheStats: {
         cachedInputTokens: state.usage?.cache_read_input_tokens ?? 0,
         totalInputTokens: state.usage?.input_tokens ?? 0,
@@ -290,6 +290,6 @@ const claudeDriver: ProviderDriver<ClaudeStreamState> = {
   },
 }
 
-export async function invokeClaude(input: HostedProviderInvokeInput): Promise<HostedCliExecutionResult> {
+export async function invokeClaude(input: HostedProviderInvokeInput): Promise<HostedInvocationResult> {
   return invokeProviderCli(claudeDriver, input)
 }
