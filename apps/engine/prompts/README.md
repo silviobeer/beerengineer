@@ -2,7 +2,7 @@
 
 Prompt files for hosted LLM stages live here.
 
-> See [`docs/context-and-llm-config.md`](../../../docs/context-and-llm-config.md)
+> See [`context-and-llm-config.md`](../docs/context-and-llm-config.md)
 > for the full picture (prompt envelope, payload contracts, runtime
 > policy, env-var overrides). This file covers the prompt-folder rules.
 

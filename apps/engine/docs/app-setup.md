@@ -48,7 +48,7 @@ The engine supports two invocation runtimes per harness role:
   **Billing note.** SDK profiles bill **per-token** against the API
   key. CLI profiles bill against the local subscription bundle.
   Switching a coder role from `cli` to `sdk` can change the invoice
-  shape — read `docs/context-and-llm-config.md` § *CLI vs SDK runtime*
+  shape — read [`context-and-llm-config.md`](./context-and-llm-config.md) § *CLI vs SDK runtime*
   before flipping a production workspace.
 
   `opencode:sdk` is rejected at validation time — there's no
