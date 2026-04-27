@@ -2157,100 +2157,120 @@ export async function runItemAction(itemRef: string, action: string, resumeFlags
   }
 }
 
+/**
+ * Validate a setup-group name (shared by `doctor` and `setup`). Returns
+ * the exit code to use, or `null` to proceed.
+ */
+function validateGroup(group: string | undefined): number | null {
+  if (group && !isKnownGroupId(group)) {
+    console.error(`  Unknown setup group: ${group}`)
+    return 2
+  }
+  return null
+}
+
+/**
+ * Per-command handler type — each maps a typed `Command` variant to its
+ * exit code. Variants without an entry must be handled inline in
+ * {@link main} (the special cases: `help`, `unknown`, `workflow`, which
+ * have non-trivial control flow that doesn't fit a return-an-exit-code
+ * shape).
+ */
+type CommandHandlers = {
+  [K in Command["kind"]]?: (cmd: Extract<Command, { kind: K }>) => Promise<number>
+}
+
+/**
+ * Single source of truth for CLI command dispatch. Each entry returns an
+ * exit code; {@link main} `process.exit()`s with the result.
+ *
+ * Adding a new command: add a `Command` variant in the discriminated
+ * union, parse it in `parseArgs`, and add an entry here. No switch edit
+ * needed.
+ */
+const COMMAND_REGISTRY: CommandHandlers = {
+  doctor: async cmd => {
+    const exit = validateGroup(cmd.group)
+    if (exit !== null) return exit
+    return runDoctor({ json: cmd.json, group: cmd.group })
+  },
+  setup: async cmd => {
+    const exit = validateGroup(cmd.group)
+    if (exit !== null) return exit
+    return runSetupCommand({ group: cmd.group, noInteractive: cmd.noInteractive })
+  },
+  "notifications-test": cmd => runNotificationsTestCommand(cmd.channel),
+  "workspace-preview": cmd => runWorkspacePreviewCommand(cmd.path, cmd.json),
+  "workspace-add": cmd => runWorkspaceAddCommand(cmd),
+  "workspace-list": cmd => runWorkspaceListCommand(cmd.json),
+  "workspace-get": cmd => runWorkspaceGetCommand(cmd.key, cmd.json),
+  "workspace-items": cmd => runWorkspaceItemsCommand(cmd.key, cmd.json),
+  "workspace-use": cmd => runWorkspaceUseCommand(cmd.key),
+  "workspace-remove": cmd =>
+    runWorkspaceRemoveCommand(cmd.key, cmd.purge, cmd.json, cmd.yes, cmd.noInteractive),
+  "workspace-open": cmd => runWorkspaceOpenCommand(cmd.key),
+  "workspace-backfill": cmd => runWorkspaceBackfillCommand(cmd.json),
+  "workspace-worktree-gc": cmd => runWorkspaceWorktreeGcCommand(cmd.key, cmd.json),
+  status: cmd => runStatusCommand(cmd.workspaceKey, cmd.all, cmd.json),
+  "chat-list": cmd => runChatListCommand(cmd.workspaceKey, cmd.all, cmd.json, cmd.compact),
+  chats: cmd => runChatListCommand(cmd.workspaceKey, cmd.all, cmd.json, cmd.compact),
+  "chat-send": cmd => runChatSendCommand(cmd),
+  "chat-answer": cmd => runChatAnswerCommand(cmd),
+  items: cmd => runItemsCommand(cmd.workspaceKey, cmd.all, cmd.json, cmd.compact),
+  "item-get": cmd => runItemGetCommand(cmd.itemRef, cmd.workspaceKey, cmd.json),
+  "item-open": cmd => runItemOpenCommand(cmd.itemRef, cmd.workspaceKey),
+  "item-wireframes": cmd =>
+    runItemWireframesCommand(cmd.itemRef, cmd.workspaceKey, cmd.open, cmd.json),
+  "item-design": cmd => runItemDesignCommand(cmd.itemRef, cmd.workspaceKey, cmd.open, cmd.json),
+  "run-list": cmd => runRunListCommand(cmd.workspaceKey, cmd.all, cmd.json, cmd.compact),
+  runs: cmd => runRunListCommand(cmd.workspaceKey, cmd.all, cmd.json, cmd.compact),
+  "run-get": cmd => runRunGetCommand(cmd.runId, cmd.json),
+  "run-open": cmd => runRunOpenCommand(cmd.runId),
+  "run-tail": cmd => runRunTailCommand(cmd),
+  "run-messages": cmd => runRunMessagesCommand(cmd),
+  "run-watch": cmd => runRunWatchCommand(cmd),
+  "start-ui": () => startUi(),
+  "item-action": cmd => runItemAction(cmd.itemRef, cmd.action, cmd.resume),
+}
+
 export async function main(argv = process.argv.slice(2)): Promise<void> {
   const cmd = parseArgs(argv)
 
-  switch (cmd.kind) {
-    case "help":
-      printHelp()
-      return
-    case "doctor":
-      if (cmd.group && !isKnownGroupId(cmd.group)) {
-        console.error(`  Unknown setup group: ${cmd.group}`)
-        process.exit(2)
-      }
-      process.exit(await runDoctor({ json: cmd.json, group: cmd.group }))
-    case "setup":
-      if (cmd.group && !isKnownGroupId(cmd.group)) {
-        console.error(`  Unknown setup group: ${cmd.group}`)
-        process.exit(2)
-      }
-      process.exit(await runSetupCommand({ group: cmd.group, noInteractive: cmd.noInteractive }))
-    case "notifications-test":
-      process.exit(await runNotificationsTestCommand(cmd.channel))
-    case "workspace-preview":
-      process.exit(await runWorkspacePreviewCommand(cmd.path, cmd.json))
-    case "workspace-add":
-      process.exit(await runWorkspaceAddCommand(cmd))
-    case "workspace-list":
-      process.exit(await runWorkspaceListCommand(cmd.json))
-    case "workspace-get":
-      process.exit(await runWorkspaceGetCommand(cmd.key, cmd.json))
-    case "workspace-items":
-      process.exit(await runWorkspaceItemsCommand(cmd.key, cmd.json))
-    case "workspace-use":
-      process.exit(await runWorkspaceUseCommand(cmd.key))
-    case "workspace-remove":
-      process.exit(await runWorkspaceRemoveCommand(cmd.key, cmd.purge, cmd.json, cmd.yes, cmd.noInteractive))
-    case "workspace-open":
-      process.exit(await runWorkspaceOpenCommand(cmd.key))
-    case "workspace-backfill":
-      process.exit(await runWorkspaceBackfillCommand(cmd.json))
-    case "workspace-worktree-gc":
-      process.exit(await runWorkspaceWorktreeGcCommand(cmd.key, cmd.json))
-    case "status":
-      process.exit(await runStatusCommand(cmd.workspaceKey, cmd.all, cmd.json))
-    case "chat-list":
-    case "chats":
-      process.exit(await runChatListCommand(cmd.workspaceKey, cmd.all, cmd.json, cmd.compact))
-    case "chat-send":
-      process.exit(await runChatSendCommand(cmd))
-    case "chat-answer":
-      process.exit(await runChatAnswerCommand(cmd))
-    case "items":
-      process.exit(await runItemsCommand(cmd.workspaceKey, cmd.all, cmd.json, cmd.compact))
-    case "item-get":
-      process.exit(await runItemGetCommand(cmd.itemRef, cmd.workspaceKey, cmd.json))
-    case "item-open":
-      process.exit(await runItemOpenCommand(cmd.itemRef, cmd.workspaceKey))
-    case "item-wireframes":
-      process.exit(await runItemWireframesCommand(cmd.itemRef, cmd.workspaceKey, cmd.open, cmd.json))
-    case "item-design":
-      process.exit(await runItemDesignCommand(cmd.itemRef, cmd.workspaceKey, cmd.open, cmd.json))
-    case "run-list":
-    case "runs":
-      process.exit(await runRunListCommand(cmd.workspaceKey, cmd.all, cmd.json, cmd.compact))
-    case "run-get":
-      process.exit(await runRunGetCommand(cmd.runId, cmd.json))
-    case "run-open":
-      process.exit(await runRunOpenCommand(cmd.runId))
-    case "run-tail":
-      process.exit(await runRunTailCommand(cmd))
-    case "run-messages":
-      process.exit(await runRunMessagesCommand(cmd))
-    case "run-watch":
-      process.exit(await runRunWatchCommand(cmd))
-    case "start-ui":
-      process.exit(await startUi())
-    case "item-action":
-      process.exit(await runItemAction(cmd.itemRef, cmd.action, cmd.resume))
-    case "unknown":
-      console.error(`  Unknown command: ${cmd.token}`)
-      printHelp()
-      process.exit(1)
-    case "workflow":
-      try {
-        await runInteractiveWorkflow({ json: cmd.json, workspaceKey: cmd.workspaceKey })
-      } catch (err) {
-        if (cmd.json) {
-          process.stderr.write(`${JSON.stringify({ type: "cli_error", message: (err as Error).message })}\n`)
-        } else {
-          console.error("\n  FEHLER:", (err as Error).message)
-        }
-        process.exit(1)
-      }
-      return
+  // Special cases: variants whose exit semantics don't fit "return an exit
+  // code" — `help` returns void after printing, `unknown` exits 1, and
+  // `workflow` has its own try/catch with mode-specific error rendering.
+  if (cmd.kind === "help") {
+    printHelp()
+    return
   }
+  if (cmd.kind === "unknown") {
+    console.error(`  Unknown command: ${cmd.token}`)
+    printHelp()
+    process.exit(1)
+  }
+  if (cmd.kind === "workflow") {
+    try {
+      await runInteractiveWorkflow({ json: cmd.json, workspaceKey: cmd.workspaceKey })
+    } catch (err) {
+      if (cmd.json) {
+        process.stderr.write(`${JSON.stringify({ type: "cli_error", message: (err as Error).message })}\n`)
+      } else {
+        console.error("\n  FEHLER:", (err as Error).message)
+      }
+      process.exit(1)
+    }
+    return
+  }
+
+  const handler = COMMAND_REGISTRY[cmd.kind]
+  if (!handler) {
+    console.error(`  No handler registered for command kind: ${cmd.kind}`)
+    process.exit(1)
+  }
+  // Cast required: TS can't narrow `cmd` against the registry's mapped-type
+  // value through indexed access. The discriminated union still guarantees
+  // the runtime type matches the handler's parameter type.
+  process.exit(await (handler as (c: Command) => Promise<number>)(cmd))
 }
 
 const isEntrypoint = process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(process.argv[1])
