@@ -382,6 +382,37 @@ every `createStageAdapter(...)` / `createReviewAdapter(...)` call.
 
 ---
 
+## Part C — Per-stage LLM call sheet
+
+For every LLM-using stage, this table captures the inputs the engine
+hands the agent, the artifact shape the agent must return, the prompt
+template the call uses, and any review-side constraints. Source of truth:
+the `<Stage>Artifact` types in `apps/engine/src/stages/<stage>/types.ts`
+and the markdown files in `apps/engine/prompts/{system,reviewers,workers}/`.
+
+| Stage | Inputs (beyond the global context) | Output artifact | Stage prompt | Reviewer prompt | Notes |
+|---|---|---|---|---|---|
+| `brainstorm` | item title + description | Concept (summary, problem, users, constraints) + `Project[]` split | `prompts/system/brainstorm.md` — Senior Product Strategist scoping the item | `prompts/reviewers/brainstorm.md` — checks concept clarity, success criteria, `hasUi` flag | Item-level; produces the per-project split |
+| `visual-companion` | concept + projects + design references | `WireframeArtifact` (screens, navigation, `wireframeHtmlPerScreen`) | `prompts/system/visual-companion.md` — Senior UX Designer producing low-fi wireframes | `prompts/reviewers/visual-companion.md` — coverage, region mapping, lo-fi compliance | Design-prep, `no-tools`; only runs when projects have UI |
+| `frontend-design` | wireframes + design references | `DesignArtifact` (tokens, typography, spacing, mockups, anti-patterns) | `prompts/system/frontend-design.md` — Senior Visual Designer building the item-wide language | `prompts/reviewers/frontend-design.md` — token completeness, contrast, CSS-var usage | Design-prep, `no-tools`; mockups required when wireframes exist |
+| `requirements` | concept + (optional) wireframes/design + codebase snapshot | `RequirementsArtifact` (PRD with `UserStory[]` + ACs) | `prompts/system/requirements.md` — Senior PM eliciting testable PRD | `prompts/reviewers/requirements.md` — story independence, AC testability | Tool-using → `safe-readonly`; carries snapshot |
+| `architecture` | PRD + (optional) wireframes/design + codebase snapshot | `ArchitectureArtifact` (components, decisions, risks, AC→component map) | `prompts/system/architecture.md` — Staff Solution Architect grounded in repo | `prompts/reviewers/architecture.md` — boundary clarity, decision consistency | Tool-using → `safe-readonly`; emits decision binding |
+| `planning` | PRD + architecture + codebase snapshot | `ImplementationPlanArtifact` (waves, story groups, dependencies, exit criteria) | `prompts/system/planning.md` — TPM sequencing waves with explicit deps | `prompts/reviewers/planning.md` — forward-flow deps, parallel safety, story coverage | Tool-using → `safe-readonly` |
+| `test-writer` | wave + story + ACs + architecture summary | `StoryTestPlanArtifact` (testCases, fixtures, edge cases) | `prompts/system/test-writer.md` — Staff Test Engineer authoring per-story test plans | `prompts/reviewers/test-writer.md` — AC coverage, falsifiability | Per-story; spawned by `execution` |
+| `execution` (coder) | story + test plan + architecture + iterationContext + codebase | `CoderHarnessOutput` (`{ summary, testsRun[], implementationNotes[], blockers[] }`) | `prompts/workers/execution.md` — implementation worker with file-write access | n/a (Ralph reviewer is the test-writer review feeding back as `feedback` field) | Tool-using → `safe-workspace-write` (default) or `unsafe-autonomous-write`; runs inside Ralph loop with `iterationContext` |
+| `project-review` | concept + PRD + architecture + plan + execution summaries | `ProjectReviewArtifact` (overallStatus, findings, recommendations) | `prompts/system/project-review.md` — Engineering Manager checking cross-artifact consistency | `prompts/reviewers/project-review.md` (falls back to `_default.md` if absent) | Tool-using → `safe-readonly` |
+| `qa` | merged project branch + PRD digest + project-review findings | `QaArtifact` (`accepted`, `loops`, `findings[]`) | `prompts/system/qa.md` — QA Lead doing adversarial verification | `prompts/reviewers/qa.md` (falls back to `_default.md`) | Tool-using → `safe-readonly`; runs against the post-merge branch |
+| `documentation` | all upstream artifacts + execution summaries + repo evidence | `DocumentationArtifact` (`technicalDoc`, `featuresDoc`, compact README) | `prompts/system/documentation.md` — Senior Technical Writer | `prompts/reviewers/documentation.md` (falls back to `_default.md`) | Tool-using → `safe-readonly` |
+
+**Global rules every row implicitly assumes:**
+
+- Every call also receives the matching `*Context` envelope from § *Payload context fields*: stage calls get `stageContext`, review calls get `reviewContext`, execution calls get `iterationContext`. The agent must trust these over its own session memory.
+- Engineering stages (`requirements`, `architecture`, `planning`, `project-review`, `qa`, `documentation`) additionally receive the **codebase snapshot** assembled by `core/codebaseSnapshot.ts` so they don't re-grep on every turn.
+- The **prompt envelope** wrapping every call (prompt file + canonical instructions + payload JSON) is built by `buildHostedPrompt(...)` in `llm/hosted/promptEnvelope.ts`. Stage rows above describe the *body*; the envelope shape is identical across stages and documented in § *Mental model*.
+- `execution` is the only stage that owns its own runtime (Ralph). The "stage prompt" for `execution` is the worker prompt (`prompts/workers/execution.md`); the per-story `test-writer` provides the test plan and feedback for the inner review cycle.
+
+---
+
 ## Cross-references
 
 - High-level architecture, stage registry, `StageDeps`, `runCycledLoop`:

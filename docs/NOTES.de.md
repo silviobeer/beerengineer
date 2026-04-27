@@ -1474,6 +1474,13 @@ apps/engine/src/
   index.ts                  Entry Point (CLI main + parseArgs)
 ```
 
+> **Hinweis (2026-04-27):** Die per-Stage-Beschreibungen unten (`brainstorm`,
+> `requirements`, `architecture`, …) sind historisch und teils ueberholt.
+> Die aktuelle, kanonische Per-Stage-I/O-Tabelle (Inputs, Output-Artifact,
+> System-Prompt, Reviewer-Prompt, Tool-Policy) lebt in
+> [`context-and-llm-config.md`](./context-and-llm-config.md) § *Per-stage
+> LLM call sheet*. Die Notizen hier bleiben fuer den Architektur-Kontext.
+
 ### `src/types.ts`
 
 ```
