@@ -87,6 +87,10 @@ apps/ui/
 │   ├── fixtures.ts            Test fixtures
 │   ├── fonts.ts               next/font wiring (Inter / Space Grotesk / JetBrains Mono)
 │   ├── logs.ts, statusLabel.ts, types.ts, use-board-sse.ts
+├── tests/                     Vitest + jsdom test suite
+│   ├── sseTestHarness.tsx     <SSETestProvider> + noopSSEContext for useSSE() consumers
+│   └── *.test.ts(x)           one file per behaviour
+├── vitest.setup.ts            global next/font/google mock + cleanup
 └── docs/                      THIS FOLDER
 ```
 
@@ -166,11 +170,19 @@ npm test --workspace=@beerengineer2/ui          # Vitest + jsdom
 npm run typecheck --workspace=@beerengineer2/ui
 ```
 
-Tests under `apps/ui/tests/` exercise the component tree against fake
-EventSources (`app/lib/sse/mockEventSource.ts`) and fixtures
-(`lib/fixtures.ts`). Some legacy tests still drive `app/components/Board.tsx`
-and `app/_ui/ItemDetailView.tsx` — they predate the modal pivot and are
-known to fail on type-check; do not extend them.
+Tests under `apps/ui/tests/` exercise the active component tree against
+fixtures (`lib/fixtures.ts`) and an SSE test harness
+(`tests/sseTestHarness.tsx`). The harness exports `<SSETestProvider>` +
+`noopSSEContext` so any test that renders `<Board>` (or anything else
+calling `useSSE()`) wraps it in a stub provider with a populated
+`itemState` map — no real EventSource is opened. The `next/font/google`
+loader is also mocked globally in `vitest.setup.ts` so importing
+`app/layout` in tests doesn't fetch from Google Fonts.
+
+Legacy tests under `app/components/__tests__/` were deleted in
+`a4ecb08`; the source files in `app/components/**` and `app/_ui/**`
+are scheduled for removal once the few remaining test references in
+`apps/ui/tests/*` migrate to the active tree.
 
 ## Dependencies
 

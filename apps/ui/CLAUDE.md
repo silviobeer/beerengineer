@@ -41,6 +41,7 @@ Durable rules for AI agents editing the UI subtree. Read
   Use the Tailwind utilities `font-sans` / `font-display` / `font-mono`.
 
 <!-- UI-TESTING -->
-- **Vitest + jsdom** under `apps/ui/tests/`. Some legacy tests drive
-  `app/components/**` and currently fail on type-check; that's pre-existing.
-  New tests target the active tree.
+- **Vitest + jsdom** under `apps/ui/tests/`. Wrap any `<Board>` (or other
+  `useSSE()` consumer) render in `<SSETestProvider>` from
+  `tests/sseTestHarness.tsx`. `next/font/google` is mocked globally in
+  `vitest.setup.ts`. Target the active tree only.
