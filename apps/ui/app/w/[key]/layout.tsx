@@ -6,11 +6,17 @@ import { SSEConnectionManager } from "@/app/lib/sse/SSEContext";
 
 interface WorkspaceLayoutProps {
   children: React.ReactNode;
+  /**
+   * Parallel slot for the intercepting `@modal/(.)items/[id]` route.
+   * `default.tsx` in the slot returns null when no overlay is active.
+   */
+  modal: React.ReactNode;
   params: Promise<{ key: string }>;
 }
 
 export default async function WorkspaceLayout({
   children,
+  modal,
   params,
 }: WorkspaceLayoutProps) {
   const { key } = await params;
@@ -25,6 +31,7 @@ export default async function WorkspaceLayout({
         <SSEConnectionManager workspaceKey={key}>
           <Topbar />
           <UnknownWorkspaceGuard>{children}</UnknownWorkspaceGuard>
+          {modal}
         </SSEConnectionManager>
       </WorkspaceProvider>
     </div>
