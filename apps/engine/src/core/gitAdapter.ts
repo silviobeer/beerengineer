@@ -26,11 +26,15 @@ import {
   mergeProjectIntoItem,
   mergeStoryIntoWave,
   mergeWaveIntoProject,
+  rebaseStoryOntoWave,
   removeStoryWorktree,
   type ManagedWorktreeGcResult,
   type GitMode,
   type GitMergeOptions,
+  type RebaseStoryResult,
 } from "./git.js"
+
+export type { RebaseStoryResult } from "./git.js"
 
 export interface GitAdapter {
   /** Underlying mode descriptor — enabled real-git only. */
@@ -66,6 +70,17 @@ export interface GitAdapter {
     waveNumber: number,
     opts?: GitMergeOptions,
   ): void
+  /**
+   * Rebase a story branch onto its wave HEAD inside the story worktree.
+   * Used by the parallel-stories runtime to keep in-flight stories aligned
+   * with newly merged siblings. Returns `{ ok: false, reason }` on conflict
+   * — caller decides whether to abandon the story.
+   */
+  rebaseStoryOntoWave(
+    projectId: string,
+    waveNumber: number,
+    storyId: string,
+  ): RebaseStoryResult
   abandonStoryBranch(
     projectId: string,
     waveNumber: number,
@@ -134,6 +149,9 @@ export function createGitAdapterFromMode(
     },
     mergeWaveIntoProject(projectId, waveNumber, opts = {}) {
       mergeWaveIntoProject(mode, context, projectId, waveNumber, opts)
+    },
+    rebaseStoryOntoWave(projectId, waveNumber, storyId) {
+      return rebaseStoryOntoWave(mode, context, projectId, waveNumber, storyId)
     },
     abandonStoryBranch(projectId, waveNumber, storyId) {
       return abandonStoryBranch(mode, context, projectId, waveNumber, storyId)

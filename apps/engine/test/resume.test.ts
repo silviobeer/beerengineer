@@ -141,17 +141,20 @@ test("performResume resumes a blocked story from execution without rerunning pri
       sh(repoRoot, ["commit", "-m", "capture generated docs"])
 
       const ctx = { workspaceId: `test-workflow-${item.id.toLowerCase()}`, workspaceRoot: repoRoot, runId: run.id }
-      const implementationPath = join(layout.executionRalphDir(ctx, 2, "US-02"), "implementation.json")
+      // Wave numbering: setup wave at W1 (Fix 4) shifts the original
+      // "expansion" feature wave to W3. US-02 now lives in W3 alongside
+      // US-03; W2 covers the single-story core wave (US-01).
+      const implementationPath = join(layout.executionRalphDir(ctx, 3, "US-02"), "implementation.json")
       const implementation = JSON.parse(await readFile(implementationPath, "utf8")) as StoryImplementationArtifact
       implementation.status = "blocked"
       implementation.finalSummary = "Blocked pending external remediation."
       await writeFile(implementationPath, `${JSON.stringify(implementation, null, 2)}\n`)
 
-      const blockedStoryBranch = `story/test-workflow__p01__w2__us-02`
+      const blockedStoryBranch = `story/test-workflow__p01__w3__us-02`
       await writeRecoveryRecord(ctx, {
         status: "blocked",
         cause: "review_block",
-        scope: { type: "story", runId: run.id, waveNumber: 2, storyId: "US-02" },
+        scope: { type: "story", runId: run.id, waveNumber: 3, storyId: "US-02" },
         summary: "Blocked pending external remediation.",
         branch: blockedStoryBranch,
         evidencePaths: [implementationPath],
@@ -159,14 +162,14 @@ test("performResume resumes a blocked story from execution without rerunning pri
       repos.setRunRecovery(run.id, {
         status: "blocked",
         scope: "story",
-        scopeRef: "2/US-02",
+        scopeRef: "3/US-02",
         summary: "Blocked pending external remediation.",
       })
 
       const remediation = repos.createExternalRemediation({
         runId: run.id,
         scope: "story",
-        scopeRef: "2/US-02",
+        scopeRef: "3/US-02",
         summary: "Patched the story branch to address the blocked review findings.",
         branch: blockedStoryBranch,
         source: "api",

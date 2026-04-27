@@ -36,6 +36,7 @@ export type WorkflowEvent =
   | ({ type: "run_failed"; runId: string; scope: RecoveryEventScope; cause: string; summary: string } & WorkflowEventMeta)
   | ({ type: "external_remediation_recorded"; runId: string; remediationId: string; scope: RecoveryEventScope; summary: string; branch?: string } & WorkflowEventMeta)
   | ({ type: "run_resumed"; runId: string; remediationId: string; scope: RecoveryEventScope } & WorkflowEventMeta)
+  | ({ type: "wave_serialized"; runId: string; waveId: string; waveNumber: number; stories: string[]; overlappingFiles: string[]; cause: "shared_file_overlap" | "missing_shared_files" } & WorkflowEventMeta)
 
 export type WorkflowIO = {
   /** Ask the operator a question and await a textual answer. */

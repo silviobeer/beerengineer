@@ -2,6 +2,7 @@ import { runStage } from "../../core/stageRuntime.js"
 import { printStageCompletion, stageSummary, summaryArtifactFile } from "../../core/stageHelpers.js"
 import { stagePresent } from "../../core/stagePresentation.js"
 import { createPlanningReview, createPlanningStage, type RunLlmConfig } from "../../llm/registry.js"
+import { enforceWaveParallelism } from "../../core/planValidator.js"
 import { renderArchitectureSummary } from "../../render/artifactDigests.js"
 import { renderPlanMarkdown } from "../../render/plan.js"
 import type { ImplementationPlanArtifact, PRD, WithArchitecture } from "../../types.js"
@@ -155,6 +156,17 @@ export async function planning(ctx: WithArchitecture, llm?: RunLlmConfig): Promi
     },
     async onApproved(artifact, run) {
       stagePresent.ok("Planning review: implementation plan is ready.")
+      // Post-validate: downgrade `internallyParallelizable: true` to
+      // false on any wave whose stories share files (or fail to declare
+      // sharedFiles, treated as overlap-unknown). Mutates `artifact` in
+      // place; emits canonical `wave_serialized` events for audit.
+      const decisions = enforceWaveParallelism(artifact, { runId: ctx.runId })
+      for (const decision of decisions) {
+        const reasonText = decision.cause === "missing_shared_files"
+          ? `wave ${decision.waveId}: forced sequential because stories did not declare sharedFiles (overlap unknown)`
+          : `wave ${decision.waveId}: forced sequential due to shared-file overlap on ${decision.overlappingFiles.join(", ")}`
+        stagePresent.warn(reasonText)
+      }
       const waves = Array.isArray(artifact.plan?.waves) ? artifact.plan.waves : []
       waves.forEach(wave => {
         const tag = wave.kind === "setup"

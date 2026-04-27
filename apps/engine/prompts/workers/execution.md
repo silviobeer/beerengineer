@@ -37,6 +37,28 @@ The repository ships a single source of truth at `apps/ui/app/design-tokens.css`
 - if you touch the entry layout, import `app/design-tokens.css`; otherwise rely on the layout import and do not redeclare tokens
 - if the payload includes `storyContext.design`, `storyContext.mockupHtmlByScreen`, or `storyContext.references`, treat them as ground truth rather than optional inspiration
 
+## Project Scaffold (do not modify)
+
+The plan starts with a `kind: "setup"` wave (`W1`) that owns the project's
+build/test scaffold and the shared design tokens. Files declared in W1's
+`tasks[*].sharedFiles` — typically `package.json`, `package-lock.json`,
+`tsconfig.json`, `.gitignore`, the canonical `src/` and `tests/` layout,
+and `apps/ui/app/design-tokens.css` — are **owned by the setup wave**.
+
+Working rules for stories that come after the setup wave:
+
+- do not regenerate, replace, or wholesale-rewrite any of the scaffold files
+- you MAY perform additive JSON edits to `package.json` (e.g. add ONE new
+  dev-dependency or ONE new script) when the test plan requires it; never
+  drop existing dependencies, scripts, or fields
+- never overwrite `design-tokens.css`; consume it via the existing entry
+  import (the layout already imports `app/design-tokens.css`)
+- if your story genuinely needs a wholesale change to a scaffold file,
+  stop and escalate — that is a planning issue, not a story-level fix
+- the wave-merge step assumes your story's diff against the scaffold is
+  additive and non-conflicting; broad rewrites here are the root cause
+  of merge-conflict cascades inside a wave
+
 ## Iteration Discipline
 
 - treat `iterationContext` in the payload as the authoritative source for iteration and review-cycle counters

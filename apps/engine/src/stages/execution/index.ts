@@ -56,6 +56,25 @@ function requireField<T>(value: T | undefined, name: string): T {
   return value
 }
 
+/**
+ * Parse the BEERENGINEER_EXECUTION_PARALLEL_STORIES feature flag.
+ * Truthy values: `1`, `true`, `yes` (case-insensitive). Anything else
+ * (including missing/empty) is treated as falsy → sequential execution.
+ *
+ * Sequential is the safe default: it eliminates merge-conflict cascades
+ * when multiple stories in a parallel-eligible wave both touch the same
+ * infrastructure file (package.json, design-tokens.css, package-lock.json,
+ * tsconfig, etc.). Operators enable parallel mode only when paired with
+ * the rebase-on-merge runtime (Fix 2) and a planner that has scrubbed
+ * shared-file collisions via the post-validator (Fix 3).
+ */
+export function parallelStoriesFlagEnabled(): boolean {
+  const raw = process.env.BEERENGINEER_EXECUTION_PARALLEL_STORIES
+  if (typeof raw !== "string") return false
+  const normalized = raw.trim().toLowerCase()
+  return normalized === "1" || normalized === "true" || normalized === "yes"
+}
+
 async function readJsonIfExists<T>(path: string): Promise<T | undefined> {
   try {
     return JSON.parse(await readFile(path, "utf8")) as T
@@ -143,10 +162,18 @@ async function executeWave(
     : wave.stories
   // A wave is a serial integration boundary. `internallyParallelizable`
   // means only that its stories are dependency-independent and may execute
-  // concurrently inside the wave once the runtime supports that mode.
-  const tag = wave.internallyParallelizable
-    ? "(stories eligible for parallel execution inside the wave; currently executed sequentially with isolated worktrees)"
-    : "(stories executed sequentially)"
+  // concurrently inside the wave once the operator opts in via the
+  // BEERENGINEER_EXECUTION_PARALLEL_STORIES feature flag. Default is
+  // sequential — the safe path that prevents merge-conflict cascades when
+  // multiple stories touch overlapping infra files (package.json,
+  // design-tokens.css, etc.) within the same wave.
+  const parallelEligible = wave.kind !== "setup" && wave.internallyParallelizable
+  const parallelEnabled = parallelEligible && parallelStoriesFlagEnabled()
+  const tag = !parallelEligible
+    ? "(stories executed sequentially)"
+    : parallelEnabled
+    ? "(stories executed in parallel — BEERENGINEER_EXECUTION_PARALLEL_STORIES is enabled)"
+    : "(stories eligible for parallel execution but executed sequentially by default)"
   stagePresent.step(`\nWave ${wave.number} ${tag}: ${waveEntries.map(s => s.id).join(", ")}`)
   git.ensureWaveBranch(ctx.project.id, wave.number)
 
@@ -235,13 +262,14 @@ async function executeWave(
     }
   }
 
-  // Stories within a wave are independent by plan-construction (the planner
-  // keeps cross-story dependencies in different waves). Default to running
-  // them in parallel — each lives in its own worktree + branch, and the
-  // wave-branch merge step serialises through `enqueueWaveBranchOp` above.
-  // Set BEERENGINEER_SEQUENTIAL_STORIES=1 to force the legacy sequential path.
-  const parallel = wave.kind !== "setup" && process.env.BEERENGINEER_SEQUENTIAL_STORIES !== "1"
-  const results = parallel
+  // Stories within a wave run sequentially by default. Each story branches
+  // from the *current* wave HEAD (after prior story merges), so a later
+  // story sees earlier stories' commits — preventing scaffold-vs-scaffold
+  // merge-conflict cascades when multiple stories touch the same infra
+  // files. The legacy parallel path (Promise.allSettled) is opt-in via
+  // BEERENGINEER_EXECUTION_PARALLEL_STORIES. The wave-branch merge step
+  // serialises through `enqueueWaveBranchOp` regardless of mode.
+  const results = parallelEnabled
     ? await runStoriesInParallel(waveEntries, run)
     : await sequentially(waveEntries, run)
 
@@ -455,14 +483,23 @@ function setupTaskReferences(
 ): StoryReference[] | undefined {
   const references = [...(explicitReferences ?? [])]
   const designTokensPath = join(layout.stageArtifactsDir(ctx, "frontend-design"), "design-tokens.css")
-  if (existsSync(designTokensPath) && storyId.toLowerCase().includes("design")) {
+  // Setup tasks own scaffold files. When the frontend-design stage has
+  // produced design-tokens.css, expose it to *every* setup task so the
+  // scaffold worker can copy it once into the worktree. Previously the
+  // reference was only added for design-named stories, which let later
+  // feature stories re-derive their own tokens and collide on merge.
+  const alreadyAttached = references.some(ref => ref.name === "design-tokens.css")
+  if (existsSync(designTokensPath) && !alreadyAttached) {
     references.push({
       kind: "file",
       name: "design-tokens.css",
       path: designTokensPath,
-      instruction: "Copy this file to apps/ui/app/design-tokens.css and import it from the UI layout.",
+      instruction: "Copy this file to apps/ui/app/design-tokens.css and import it from the UI layout. Subsequent feature stories must consume this file unmodified.",
     })
   }
+  // Reference `storyId` so tooling that diffs reference sets per task can
+  // tell two tasks apart even when they both pull the same design tokens.
+  void storyId
   return references.length > 0 ? references : undefined
 }
 

@@ -404,6 +404,67 @@ export function mergeStoryIntoWave(
   mergeNoFf(mode, wave, story, `Merge story ${storyId} into wave ${waveNumber}`, opts)
 }
 
+export type RebaseStoryResult =
+  | { ok: true }
+  | { ok: false; reason: string }
+
+/**
+ * Rebase the story branch onto the current wave HEAD inside the story's
+ * worktree. Used by the parallel-stories runtime (Fix 2) so a story
+ * sees its sibling's merged scaffold before its next ralph iteration.
+ *
+ * On conflict, the rebase is aborted and `ok: false` is returned with a
+ * `rebase_conflict_on:<paths>` reason — never auto-resolved by the LLM,
+ * because the parallel path is already a riskier mode and the merge
+ * resolver is the right tool for *integration*, not for in-flight
+ * rebases that may still be mid-implementation.
+ *
+ * The story worktree is required: `git rebase` needs a working tree on
+ * the story branch. Returns `{ ok: false, reason: "worktree_missing" }`
+ * if the story doesn't have a managed worktree (which means the parallel
+ * runtime path was misconfigured).
+ */
+export function rebaseStoryOntoWave(
+  mode: GitMode,
+  context: WorkflowContext,
+  projectId: string,
+  waveNumber: number,
+  storyId: string,
+): RebaseStoryResult {
+  const storyBranch = branchNameStory(context, projectId, waveNumber, storyId)
+  const waveBranch = branchNameWave(context, projectId, waveNumber)
+  const primary = mode.workspaceRoot
+  if (!branchExists(primary, storyBranch)) {
+    return { ok: false, reason: "story_branch_missing" }
+  }
+  if (!branchExists(primary, waveBranch)) {
+    return { ok: false, reason: "wave_branch_missing" }
+  }
+  // Locate the worktree currently holding the story branch. Rebase has to
+  // run inside that worktree because git refuses to touch a branch checked
+  // out elsewhere.
+  const worktree = listWorktrees(primary).find(entry => entry.branch === storyBranch)
+  if (!worktree) {
+    return { ok: false, reason: "worktree_missing" }
+  }
+  // Fast-path: nothing to rebase if the story is already up-to-date with
+  // wave HEAD (story has wave-tip as ancestor or vice versa with no story
+  // commits). `git rebase` would no-op, but skipping the spawn keeps logs
+  // quiet on the common "wave didn't move" case.
+  const ancestor = runGit(worktree.path, ["merge-base", "--is-ancestor", waveBranch, storyBranch])
+  if (ancestor.ok) return { ok: true }
+  const rebase = runGit(worktree.path, ["rebase", waveBranch])
+  if (rebase.ok) return { ok: true }
+  // Capture conflicting paths before aborting; once we abort, the index
+  // resets and `diff --name-only --diff-filter=U` returns nothing.
+  const conflictPaths = runGit(worktree.path, ["diff", "--name-only", "--diff-filter=U"])
+  const paths = conflictPaths.ok && conflictPaths.stdout
+    ? conflictPaths.stdout.split(/\r?\n/).filter(Boolean).join(",")
+    : "<unknown>"
+  runGit(worktree.path, ["rebase", "--abort"])
+  return { ok: false, reason: `rebase_conflict_on:${paths}` }
+}
+
 export function mergeWaveIntoProject(
   mode: GitMode,
   context: WorkflowContext,

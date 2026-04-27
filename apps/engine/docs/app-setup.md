@@ -126,6 +126,31 @@ Supported env overrides:
 - `BEERENGINEER_TELEGRAM_DEFAULT_CHAT_ID`
 - `BEERENGINEER_TELEGRAM_API_BASE_URL`
 - `BEERENGINEER_BROWSER_ENABLED`
+- `BEERENGINEER_EXECUTION_PARALLEL_STORIES` — operator opt-in. When
+  truthy (`1`, `true`, `yes`; case-insensitive), stories within a wave
+  marked `internallyParallelizable: true` execute concurrently via
+  `Promise.allSettled` plus per-story worktrees. The DEFAULT (missing /
+  empty / any other value) is sequential: each story branches off the
+  *current* wave HEAD, so a later story sees earlier sibling commits.
+  Sequential is the safe path — it eliminates merge-conflict cascades
+  when multiple stories scaffold overlapping infra files
+  (`package.json`, `package-lock.json`, `design-tokens.css`, etc.).
+  Enable parallel mode only after confirming the planner's
+  post-validator (`core/planValidator.ts`) has scrubbed shared-file
+  collisions out of the affected waves. The legacy
+  `BEERENGINEER_SEQUENTIAL_STORIES` env var is no longer consulted —
+  sequential is the default and parallel is opt-in.
+- `BEERENGINEER_CODEX_SANDBOX_BYPASS` — operator opt-in. When truthy (`1`,
+  `true`, `yes`), codex runs with `--full-auto
+  --dangerously-bypass-approvals-and-sandbox` for `safe-readonly` and
+  `safe-workspace-write` runtime policies instead of `--sandbox <mode>`.
+  Use this on hosts where codex's built-in OS sandbox (Linux landlock +
+  seccomp) is missing or non-functional and the implementer agent reports
+  "execution environment rejected every local command invocation". The
+  `no-tools` policy is not affected — it stays pinned to `--sandbox
+  read-only` because it never needs shell access. Do not enable this on
+  shared/untrusted hosts; it removes the OS-level guardrail in exchange for
+  trust in the registered worktree.
 
 ## Storage model
 

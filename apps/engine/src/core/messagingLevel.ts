@@ -28,6 +28,7 @@ export type CanonicalMessageType =
   | "external_remediation_recorded"
   | "item_column_changed"
   | "presentation"
+  | "wave_serialized"
 
 export type LevelInfo = {
   level: MessagingLevel
@@ -104,6 +105,12 @@ export function levelOf(event: WorkflowEvent): LevelInfo {
       }
     case "presentation":
       return { level: 0, force: false, type: "presentation" }
+    case "wave_serialized":
+      // Operator-relevant: we changed the planner's parallelism decision.
+      // Stakeholder doesn't need it (no run-state implication), but an
+      // operator watching at L1 should see why a parallel-eligible wave
+      // ended up running sequentially.
+      return { level: 1, force: false, type: "wave_serialized" }
     default: {
       const exhaustive: never = event
       return exhaustive

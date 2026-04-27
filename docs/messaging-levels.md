@@ -77,6 +77,7 @@ Applied to the existing `WorkflowEvent` union (`apps/engine/src/core/io.ts`):
 | `log` — warn\|error | L1 | |
 | `log` — info / debug | L0 | |
 | `presentation` | L0 | Decorative, CLI-only. |
+| `wave_serialized` | L1 | Planner post-validator downgraded a `internallyParallelizable: true` wave to sequential because its stories share files (or fail to declare `sharedFiles` so overlap cannot be ruled out). Operator-relevant; no run-state implication. |
 
 New synthetic events (added to `WorkflowEvent`, emitted from existing call sites, optional for L0/L1 consumers):
 
@@ -229,6 +230,7 @@ To insulate clients from incidental renames in `WorkflowEvent`, messages expose 
 | `llm_tokens` | `llm_tokens` |
 | `artifact_written` | `artifact_written` |
 | `log` | `log` |
+| `wave_serialized` | `wave_serialized` |
 
 The projection is a single function in `core/messagingProjection.ts` that maps a `StageLogRow` to a `MessageEntry`. Live consumers may still observe a local `WorkflowEvent` before persistence, but externally visible payloads come from the same projection contract.
 

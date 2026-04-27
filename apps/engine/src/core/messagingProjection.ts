@@ -234,6 +234,16 @@ function eventFromStageLog(row: StageLogRow): WorkflowEvent | null {
         remediationId: typeof data.remediationId === "string" ? data.remediationId : "",
         scope: parseRecoveryScope(data.scope, row.run_id),
       }
+    case "wave_serialized":
+      return {
+        type: "wave_serialized",
+        runId: row.run_id,
+        waveId: typeof data.waveId === "string" ? data.waveId : "",
+        waveNumber: typeof data.waveNumber === "number" ? data.waveNumber : 0,
+        stories: Array.isArray(data.stories) ? data.stories.filter((value): value is string => typeof value === "string") : [],
+        overlappingFiles: Array.isArray(data.overlappingFiles) ? data.overlappingFiles.filter((value): value is string => typeof value === "string") : [],
+        cause: data.cause === "missing_shared_files" ? "missing_shared_files" : "shared_file_overlap",
+      }
     default:
       return null
   }

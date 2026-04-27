@@ -98,6 +98,13 @@ For setup waves:
 - each `contract` MUST be `{ expectedFiles: string[], requiredScripts: string[], postChecks: string[] }`
 - setup tasks are implementation-plan-only shared-infra work; they are not PRD stories
 
+Mandatory project-scaffold setup wave (W1):
+- EVERY plan MUST start with `kind: "setup"` as `W1` (`number: 1`, `id: "W1"`, `dependencies: []`).
+- W1 owns the project scaffold: `package.json` (with chosen test/build/lint scripts), `package-lock.json`, `tsconfig.json` (when TypeScript is in use), `.gitignore` baselines, the test runner config, and the canonical source layout (`src/`, `tests/`, etc).
+- W1 also OWNS the copy of `design-tokens.css` into the worktree (e.g. `apps/ui/app/design-tokens.css`). Do not let later stories re-derive design tokens.
+- Every later feature wave MUST list its `dependencies` as including `W1` (transitively or directly).
+- Feature stories MUST NOT include any of W1's `sharedFiles` in their own `sharedFiles`. The scaffold is owned by setup; stories add to it via additive JSON edits (e.g. one new dev-dependency, one new script) only.
+
 Shared-infra wave rule:
 - if two or more feature stories in the same wave would edit the same shared file, emit a setup wave before that feature wave
 - add `sharedFiles?: string[]` to each feature-wave story for machine-checkable collision metadata

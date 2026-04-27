@@ -249,12 +249,21 @@ test("planning stage produces two waves with explicit story-level parallelism se
   assert.equal(out.kind, "artifact")
   if (out.kind === "artifact") {
     const waves = out.artifact.plan.waves
-    assert.equal(waves.length, 2)
+    // Plans now start with a kind:"setup" wave (Fix 4), then the two
+    // feature waves the original behaviour delivered.
+    assert.equal(waves.length, 3)
+    assert.equal(waves[0].kind, "setup")
     assert.equal(waves[0].internallyParallelizable, false)
-    assert.equal(waves[0].stories.length, 1)
-    assert.equal(waves[1].internallyParallelizable, true)
+    assert.equal(waves[0].stories.length, 0)
+    assert.ok(Array.isArray(waves[0].tasks) && waves[0].tasks.length > 0)
+    assert.equal(waves[1].kind, "feature")
+    assert.equal(waves[1].internallyParallelizable, false)
+    assert.equal(waves[1].stories.length, 1)
     assert.deepEqual(waves[1].dependencies, ["W1"])
-    assert.equal(waves[1].stories.length, 2)
+    assert.equal(waves[2].kind, "feature")
+    assert.equal(waves[2].internallyParallelizable, true)
+    assert.deepEqual(waves[2].dependencies, ["W2"])
+    assert.equal(waves[2].stories.length, 2)
   }
   assert.equal((await review.review()).kind, "revise")
   assert.equal((await review.review()).kind, "pass")

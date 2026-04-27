@@ -168,9 +168,14 @@ test("runWorkflow runs end-to-end with all review/side loops, producing artifact
     const plan = JSON.parse(
       await readFile(join(layout.stageArtifactsDir(ctx, "planning"), "implementation-plan.json"), "utf8"),
     )
-    assert.equal(plan.plan.waves.length, 2)
-    assert.equal(plan.plan.waves[0].stories.length, 1)
-    assert.equal(plan.plan.waves[1].internallyParallelizable, true)
+    // Plans now lead with a kind:"setup" scaffold wave (Fix 4) so the
+    // total count is 3: setup + two feature waves. The first feature
+    // wave delivers a single story sequentially; the second is the
+    // parallel-eligible expansion wave.
+    assert.equal(plan.plan.waves.length, 3)
+    assert.equal(plan.plan.waves[0].kind, "setup")
+    assert.equal(plan.plan.waves[1].stories.length, 1)
+    assert.equal(plan.plan.waves[2].internallyParallelizable, true)
 
     const qaReport = JSON.parse(
       await readFile(join(layout.stageArtifactsDir(ctx, "qa"), "qa-report.json"), "utf8"),
@@ -182,15 +187,20 @@ test("runWorkflow runs end-to-end with all review/side loops, producing artifact
     )
     assert.equal(doc.project.id, "P01")
 
-    // wave summaries exist — every story must reach a terminal status
+    // wave summaries exist — every story must reach a terminal status.
+    // Wave 1 is now the kind:"setup" scaffold wave (one task), wave 2
+    // is the first feature wave (US-01 sequentially), wave 3 is the
+    // expansion wave (US-02 + US-03 in parallel).
     const wave1 = JSON.parse(await readFile(layout.waveSummaryFile(ctx, 1), "utf8"))
     const wave2 = JSON.parse(await readFile(layout.waveSummaryFile(ctx, 2), "utf8"))
-    assert.equal(wave1.storiesMerged.length, 1, "wave 1 (sequential) should merge US-01")
-    assert.equal(wave1.storiesBlocked.length, 0)
+    const wave3 = JSON.parse(await readFile(layout.waveSummaryFile(ctx, 3), "utf8"))
+    assert.equal(wave1.storiesBlocked.length, 0, "wave 1 (setup) must not block any task")
     assert.equal(wave1.waveBranch, "wave/test-workflow__p01__w1")
     assert.equal(wave1.projectBranch, "proj/test-workflow__p01")
-    assert.equal(wave2.storiesMerged.length, 2, "wave 2 should merge both stories")
-    assert.equal(wave2.storiesBlocked.length, 0, "wave 2 must not silently block any story")
+    assert.equal(wave2.storiesMerged.length, 1, "wave 2 (sequential) should merge US-01")
+    assert.equal(wave2.storiesBlocked.length, 0)
+    assert.equal(wave3.storiesMerged.length, 2, "wave 3 should merge both stories")
+    assert.equal(wave3.storiesBlocked.length, 0, "wave 3 must not silently block any story")
 
     // With the event-bus model, stages emit presentation + chat_message
     // events even when no run context is active; the bare IO just captures
@@ -210,7 +220,7 @@ test("runWorkflow runs end-to-end with all review/side loops, producing artifact
   })
 })
 
-test("runWorkflow writes documentation docs under workspaceRoot even when cwd differs", async () => {
+test("runWorkflow writes documentation docs into the item worktree (item branch), not the operator's main workspace root", async () => {
   await withTmpCwd(async () => {
     const operatorCwd = process.cwd()
     const workspaceRoot = join(operatorCwd, "workspace")
@@ -248,10 +258,30 @@ test("runWorkflow writes documentation docs under workspaceRoot even when cwd di
       )
     })
 
-    assert.equal(existsSync(join(workspaceRoot, "docs", "technical-doc.md")), true)
-    assert.equal(existsSync(join(workspaceRoot, "docs", "features-doc.md")), true)
-    assert.equal(existsSync(join(workspaceRoot, "docs", "README.compact.md")), true)
-    assert.equal(existsSync(join(workspaceRoot, "docs", "known-issues.md")), true)
+    // Docs land under the item worktree (item branch) so the handoff stage's
+    // merge of item → main brings them onto main as committed history. They
+    // must NOT leak into the operator's main checkout (workspaceRoot/docs/)
+    // or the launch-time cwd as untracked files.
+    const itemWorktreeDocs = join(
+      workspaceRoot,
+      ".beerengineer",
+      "worktrees",
+      "docs-rooting-i-1",
+      "items",
+      "docs-rooting",
+      "worktree",
+      "docs",
+    )
+    assert.equal(existsSync(join(itemWorktreeDocs, "technical-doc.md")), true)
+    assert.equal(existsSync(join(itemWorktreeDocs, "features-doc.md")), true)
+    assert.equal(existsSync(join(itemWorktreeDocs, "README.compact.md")), true)
+    assert.equal(existsSync(join(itemWorktreeDocs, "known-issues.md")), true)
+    // Regression guards: never write docs into the operator's main checkout
+    // or the launch-time cwd.
+    assert.equal(existsSync(join(workspaceRoot, "docs", "technical-doc.md")), false)
+    assert.equal(existsSync(join(workspaceRoot, "docs", "features-doc.md")), false)
+    assert.equal(existsSync(join(workspaceRoot, "docs", "README.compact.md")), false)
+    assert.equal(existsSync(join(workspaceRoot, "docs", "known-issues.md")), false)
     assert.equal(existsSync(join(operatorCwd, "docs", "technical-doc.md")), false)
     assert.equal(existsSync(join(operatorCwd, "docs", "features-doc.md")), false)
     assert.equal(existsSync(join(operatorCwd, "docs", "README.compact.md")), false)
