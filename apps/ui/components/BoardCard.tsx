@@ -1,5 +1,12 @@
 import type { BoardCardDTO } from "../lib/types";
+import {
+  DESIGN_PREP_STAGES,
+  DESIGN_PREP_STAGE_LABELS,
+  IMPLEMENTATION_STAGES,
+  IMPLEMENTATION_STAGE_LABELS,
+} from "../lib/types";
 import { MiniStepper } from "./MiniStepper";
+import { BoardCardActions } from "./BoardCardActions";
 
 interface BoardCardProps {
   card: BoardCardDTO;
@@ -26,18 +33,16 @@ function buildHref(card: BoardCardDTO, workspaceKey?: string): string {
 }
 
 export function BoardCard({ card, workspaceKey }: BoardCardProps) {
-  const isImplementation = card.column === "implementation";
   const showAttention = hasAttention(card);
   const href = buildHref(card, workspaceKey);
 
   return (
-    <a
+    <article
       data-testid="board-card"
       data-card-id={card.id}
       data-column={card.column}
       data-item-code={card.itemCode ?? ""}
-      href={href}
-      className="block border border-zinc-800 bg-zinc-900/60 p-3 pr-6 text-zinc-100 no-underline relative overflow-hidden"
+      className="border border-zinc-800 bg-zinc-900/60 p-3 pr-6 text-zinc-100 relative overflow-hidden"
     >
       {showAttention ? (
         <span
@@ -55,55 +60,77 @@ export function BoardCard({ card, workspaceKey }: BoardCardProps) {
           }}
         />
       ) : null}
-      {card.itemCode ? (
-        <div
-          data-testid="board-card-code"
-          className="text-xs text-zinc-400"
-          style={{
-            fontFamily:
-              "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-            wordBreak: "break-all",
-            overflowWrap: "anywhere",
-          }}
-        >
-          {card.itemCode}
-        </div>
-      ) : null}
-      <div
-        data-testid="board-card-title"
-        className="text-sm break-words"
-        style={{ overflowWrap: "anywhere" }}
+      <a
+        href={href}
+        data-testid="board-card-link"
+        className="block text-zinc-100 no-underline"
       >
-        {card.title}
-      </div>
-      {card.summary ? (
+        {card.itemCode ? (
+          <div
+            data-testid="board-card-code"
+            className="text-xs text-zinc-400"
+            style={{
+              fontFamily:
+                "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+              wordBreak: "break-all",
+              overflowWrap: "anywhere",
+            }}
+          >
+            {card.itemCode}
+          </div>
+        ) : null}
         <div
-          data-testid="board-card-summary"
-          className="text-xs text-zinc-400 mt-1"
-          style={{
-            display: "-webkit-box",
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: "vertical",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-          }}
+          data-testid="board-card-title"
+          className="text-sm break-words"
+          style={{ overflowWrap: "anywhere" }}
         >
-          {card.summary}
+          {card.title}
         </div>
-      ) : null}
-      {card.phase_status ? (
-        <span
-          data-testid="board-card-status-chip"
-          className="inline-flex items-center px-1.5 py-0.5 mt-2 text-[10px] uppercase tracking-wider border border-zinc-700 bg-zinc-800 text-zinc-300"
-        >
-          {card.phase_status}
-        </span>
-      ) : null}
-      {isImplementation ? (
-        <div className="mt-2">
-          <MiniStepper stage={card.current_stage} />
-        </div>
-      ) : null}
-    </a>
+        {card.summary ? (
+          <div
+            data-testid="board-card-summary"
+            className="text-xs text-zinc-400 mt-1"
+            style={{
+              display: "-webkit-box",
+              WebkitLineClamp: 2,
+              WebkitBoxOrient: "vertical",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            {card.summary}
+          </div>
+        ) : null}
+        {card.phase_status ? (
+          <span
+            data-testid="board-card-status-chip"
+            className="inline-flex items-center px-1.5 py-0.5 mt-2 text-[10px] uppercase tracking-wider border border-zinc-700 bg-zinc-800 text-zinc-300"
+          >
+            {card.phase_status}
+          </span>
+        ) : null}
+        {card.column === "implementation" ? (
+          <div className="mt-2">
+            <MiniStepper
+              stage={card.current_stage}
+              stages={IMPLEMENTATION_STAGES}
+              labels={IMPLEMENTATION_STAGE_LABELS}
+              ariaLabel="Implementation progress"
+            />
+          </div>
+        ) : null}
+        {card.column === "frontend" ? (
+          <div className="mt-2">
+            <MiniStepper
+              stage={card.current_stage}
+              stages={DESIGN_PREP_STAGES}
+              labels={DESIGN_PREP_STAGE_LABELS}
+              ariaLabel="Design-prep progress"
+            />
+          </div>
+        ) : null}
+      </a>
+      <BoardCardActions card={card} />
+    </article>
   );
 }

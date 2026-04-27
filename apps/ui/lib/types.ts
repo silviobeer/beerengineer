@@ -56,6 +56,7 @@ export interface Workspace {
 export const BOARD_COLUMNS = [
   "idea",
   "brainstorm",
+  "frontend",
   "requirements",
   "implementation",
   "done",
@@ -64,8 +65,22 @@ export const BOARD_COLUMNS = [
 export type BoardColumn = (typeof BOARD_COLUMNS)[number];
 
 export const IMPLEMENTATION_STAGES = ["arch", "plan", "exec", "review"] as const;
-
 export type ImplementationStage = (typeof IMPLEMENTATION_STAGES)[number];
+export const IMPLEMENTATION_STAGE_LABELS: Record<ImplementationStage, string> = {
+  arch: "Arch",
+  plan: "Plan",
+  exec: "Exec",
+  review: "Review",
+};
+
+// Engine emits these stageKeys for the design-prep block. The frontend
+// column's mini-stepper highlights the segment that matches `current_stage`.
+export const DESIGN_PREP_STAGES = ["visual-companion", "frontend-design"] as const;
+export type DesignPrepStage = (typeof DESIGN_PREP_STAGES)[number];
+export const DESIGN_PREP_STAGE_LABELS: Record<DesignPrepStage, string> = {
+  "visual-companion": "Visual",
+  "frontend-design": "Design",
+};
 
 export interface BoardCardDTO {
   id: string;
@@ -85,6 +100,7 @@ export interface BoardCardDTO {
 export const BOARD_COLUMN_LABELS: Record<BoardColumn, string> = {
   idea: "Idea",
   brainstorm: "Brainstorm",
+  frontend: "Frontend",
   requirements: "Requirements",
   implementation: "Implementation",
   done: "Done",

@@ -1,15 +1,26 @@
-import { IMPLEMENTATION_STAGES, type ImplementationStage } from "../lib/types";
+import {
+  IMPLEMENTATION_STAGES,
+  IMPLEMENTATION_STAGE_LABELS,
+  type ImplementationStage,
+} from "../lib/types";
 
 interface MiniStepperProps {
+  /**
+   * Engine stageKey of the active sub-stage. The stepper highlights the
+   * matching segment, or none when the stage is null/unknown.
+   */
   stage?: string | null;
+  /**
+   * Sub-stage keys, in display order. Defaults to the implementation set
+   * (`arch | plan | exec | review`) so existing call sites keep working.
+   * Pass `DESIGN_PREP_STAGES` for the frontend column.
+   */
+  stages?: ReadonlyArray<string>;
+  /** Labels keyed by stage. Defaults to the implementation labels. */
+  labels?: Record<string, string>;
+  /** Used for the aria-label on the <ol>. */
+  ariaLabel?: string;
 }
-
-const SEGMENT_LABELS: Record<ImplementationStage, string> = {
-  arch: "Arch",
-  plan: "Plan",
-  exec: "Exec",
-  review: "Review",
-};
 
 const ACTIVE_STYLE: React.CSSProperties = {
   display: "inline-flex",
@@ -41,25 +52,27 @@ const INACTIVE_STYLE: React.CSSProperties = {
     "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
 };
 
-function isKnownStage(value: unknown): value is ImplementationStage {
-  return (
-    typeof value === "string" &&
-    (IMPLEMENTATION_STAGES as readonly string[]).includes(value)
-  );
+function isKnownStage(value: unknown, stages: ReadonlyArray<string>): value is string {
+  return typeof value === "string" && stages.includes(value);
 }
 
-export function MiniStepper({ stage }: MiniStepperProps) {
-  const activeStage = isKnownStage(stage) ? stage : null;
+export function MiniStepper({
+  stage,
+  stages = IMPLEMENTATION_STAGES,
+  labels = IMPLEMENTATION_STAGE_LABELS,
+  ariaLabel = "Implementation progress",
+}: MiniStepperProps) {
+  const activeStage = isKnownStage(stage, stages) ? stage : null;
 
   return (
     <ol
       data-testid="mini-stepper"
       role="list"
-      aria-label="Implementation progress"
+      aria-label={ariaLabel}
       className="flex items-center gap-1"
       style={{ display: "flex", alignItems: "center", gap: "4px", listStyle: "none", padding: 0, margin: 0 }}
     >
-      {IMPLEMENTATION_STAGES.map((segment) => {
+      {stages.map((segment) => {
         const active = segment === activeStage;
         return (
           <li
@@ -71,10 +84,15 @@ export function MiniStepper({ stage }: MiniStepperProps) {
             aria-current={active ? "step" : undefined}
             style={active ? ACTIVE_STYLE : INACTIVE_STYLE}
           >
-            {SEGMENT_LABELS[segment]}
+            {labels[segment] ?? segment}
           </li>
         );
       })}
     </ol>
   );
 }
+
+// Re-export so existing imports of ImplementationStage from this module still
+// resolve through it; the canonical home is lib/types but BoardCard already
+// imports from here in some test files.
+export type { ImplementationStage };

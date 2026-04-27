@@ -15,6 +15,7 @@ interface BoardApiItem {
   hasReviewGateWaiting?: boolean;
   hasBlockedRun?: boolean;
   current_stage?: string | null;
+  currentStage?: string | null;
 }
 
 interface BoardApiColumn {
@@ -48,7 +49,7 @@ function toBoardCard(item: BoardApiItem): BoardCardDTO {
     hasOpenPrompt: Boolean(item.hasOpenPrompt),
     hasReviewGateWaiting: Boolean(item.hasReviewGateWaiting),
     hasBlockedRun: Boolean(item.hasBlockedRun),
-    current_stage: item.current_stage ?? null,
+    current_stage: item.current_stage ?? item.currentStage ?? null,
   };
 }
 
