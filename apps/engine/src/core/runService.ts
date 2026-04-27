@@ -128,16 +128,30 @@ export function startRunFromIdea(
 /**
  * `POST /items/:id/actions/start_brainstorm` — start a fresh run for an
  * existing item.
+ *
+ * Manual design-prep actions (`start_visual_companion`,
+ * `start_frontend_design`) reuse this entry point. Each seeds the prior
+ * stages it depends on into the new run *before* spawning, so the workflow's
+ * strict manual-mode gate never has to fall back to artifact regeneration.
  */
+export type StartRunAction =
+  | "start_brainstorm"
+  | "start_visual_companion"
+  | "start_frontend_design"
+  | "start_implementation"
+  | "rerun_design_prep"
+
 export function startRunForItem(
   repos: Repos,
-  input: { itemId: string; action: "start_brainstorm" | "start_implementation" | "rerun_design_prep" },
+  input: { itemId: string; action: StartRunAction },
 ): StartRunResult {
   const item = repos.getItem(input.itemId)
   if (!item) return { ok: false, status: 404, error: "item_not_found" }
 
   let sourceRun: RunRow | undefined
   let resume: WorkflowResumeInput | undefined
+  let seedStages: ReadonlyArray<string> = []
+
   if (input.action === "start_implementation" || input.action === "rerun_design_prep") {
     sourceRun = latestRunWithStageArtifacts(repos, item, "brainstorm")
     if (!sourceRun) {
@@ -147,6 +161,29 @@ export function startRunForItem(
       scope: { type: "run", runId: "pending" },
       currentStage: input.action === "rerun_design_prep" ? "visual-companion" : "projects",
     }
+    seedStages = ["brainstorm", "visual-companion", "frontend-design"]
+  } else if (input.action === "start_visual_companion") {
+    sourceRun = latestRunWithStageArtifacts(repos, item, "brainstorm")
+    if (!sourceRun) {
+      return { ok: false, status: 409, error: "no_brainstorm_artifacts" }
+    }
+    resume = {
+      scope: { type: "run", runId: "pending" },
+      currentStage: "visual-companion",
+      manualStage: "visual-companion",
+    }
+    seedStages = ["brainstorm"]
+  } else if (input.action === "start_frontend_design") {
+    sourceRun = latestRunWithStageArtifacts(repos, item, "visual-companion")
+    if (!sourceRun) {
+      return { ok: false, status: 409, error: "no_visual_companion_artifacts" }
+    }
+    resume = {
+      scope: { type: "run", runId: "pending" },
+      currentStage: "frontend-design",
+      manualStage: "frontend-design",
+    }
+    seedStages = ["brainstorm", "visual-companion"]
   }
 
   const io = buildApiIo(repos)
@@ -157,12 +194,18 @@ export function startRunForItem(
     { owner: "api", itemId: item.id, resume },
   )
 
-  if ((input.action === "start_implementation" || input.action === "rerun_design_prep") && sourceRun) {
-    if (!seedStageFromPreviousRun(item, sourceRun.id, prepared.runId, "brainstorm")) {
-      return { ok: false, status: 409, error: "seed_failed" }
+  if (sourceRun && seedStages.length > 0) {
+    // Brainstorm is the only stage required by every downstream branch,
+    // so absent seed there is fatal. The other stages are best-effort —
+    // a manual `start_visual_companion` legitimately has no prior visual
+    // artifacts to seed.
+    const brainstormRequired = seedStages.includes("brainstorm")
+    for (const stageId of seedStages) {
+      const seeded = seedStageFromPreviousRun(item, sourceRun.id, prepared.runId, stageId)
+      if (!seeded && stageId === "brainstorm" && brainstormRequired) {
+        return { ok: false, status: 409, error: "seed_failed" }
+      }
     }
-    seedStageFromPreviousRun(item, sourceRun.id, prepared.runId, "visual-companion")
-    seedStageFromPreviousRun(item, sourceRun.id, prepared.runId, "frontend-design")
   }
 
   fireInBackground(io, `startRunForItem:${input.action}`, prepared.start)

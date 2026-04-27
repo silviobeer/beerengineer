@@ -36,6 +36,15 @@ import {
 
 type ItemResumePlan = {
   startStage: "brainstorm" | "visual-companion" | "frontend-design" | "projects"
+  /**
+   * When set, the item-level loop runs *only* the named stage and skips the
+   * other design-prep stage. Manual-progression actions
+   * (start_visual_companion / start_frontend_design) populate this so the
+   * engine never auto-chains visual → design or back-fills missing artifacts.
+   * Recovery and rerun_design_prep leave this undefined and keep the existing
+   * non-strict behavior (run a stage if its artifact is missing).
+   */
+  manualStage?: "visual-companion" | "frontend-design"
 }
 
 type DesignPrepFreeze = {
@@ -68,6 +77,12 @@ function loadItemWorkspaceReferences(context: WorkflowContext): ReferenceInput[]
 export type WorkflowResumeInput = {
   scope: RecoveryScope
   currentStage?: string | null
+  /**
+   * Manual-mode signal from the item-action service. When set, the workflow
+   * runs *only* the named design-prep stage and skips the sibling, regardless
+   * of artifact presence. See {@link ItemResumePlan.manualStage}.
+   */
+  manualStage?: "visual-companion" | "frontend-design"
 }
 
 export type WorkflowLlmOptions = StageLlmOptions
@@ -159,15 +174,16 @@ function normalizeItemResume(input: WorkflowResumeInput): ItemResumePlan {
   const scope = input.scope
   const stageId = scope.type === "stage" ? scope.stageId : scope.type === "run" ? input.currentStage ?? "" : "projects"
   const topStage = stageId.split("/")[0]
+  const manualStage = input.manualStage
   switch (topStage) {
     case "brainstorm":
-      return { startStage: "brainstorm" }
+      return { startStage: "brainstorm", manualStage }
     case "visual-companion":
-      return { startStage: "visual-companion" }
+      return { startStage: "visual-companion", manualStage }
     case "frontend-design":
-      return { startStage: "frontend-design" }
+      return { startStage: "frontend-design", manualStage }
     default:
-      return { startStage: "projects" }
+      return { startStage: "projects", manualStage }
   }
 }
 
@@ -326,15 +342,28 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
     // the corresponding design-prep stage instead of crashing on ENOENT.
     const wireframesFileExists = existsSync(join(layout.stageArtifactsDir(context, "visual-companion"), "wireframes.json"))
     const designFileExists = existsSync(join(layout.stageArtifactsDir(context, "frontend-design"), "design.json"))
+    // Manual-mode actions (start_visual_companion / start_frontend_design)
+    // run *only* the targeted stage and skip the sibling; runService seeds
+    // any required prior artifacts before this point. Without manualStage we
+    // keep the existing non-strict logic so `rerun_design_prep` and resumes
+    // still backfill missing artifacts.
+    const isManualVisual = itemResumePlan.manualStage === "visual-companion"
+    const isManualFrontend = itemResumePlan.manualStage === "frontend-design"
     const shouldRunVisualCompanion = itemHasUi && (
-      itemResumePlan.startStage === "brainstorm" ||
-      itemResumePlan.startStage === "visual-companion" ||
-      !wireframesFileExists
+      isManualVisual ||
+      (!itemResumePlan.manualStage && (
+        itemResumePlan.startStage === "brainstorm" ||
+        itemResumePlan.startStage === "visual-companion" ||
+        !wireframesFileExists
+      ))
     )
     const shouldRunFrontendDesign = itemHasUi && (
-      shouldRunVisualCompanion ||
-      itemResumePlan.startStage === "frontend-design" ||
-      !designFileExists
+      isManualFrontend ||
+      (!itemResumePlan.manualStage && (
+        shouldRunVisualCompanion ||
+        itemResumePlan.startStage === "frontend-design" ||
+        !designFileExists
+      ))
     )
     const designPrepReferences = loadItemWorkspaceReferences(context)
     const wireframes =

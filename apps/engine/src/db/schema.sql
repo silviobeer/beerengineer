@@ -19,6 +19,9 @@ CREATE TABLE IF NOT EXISTS workspaces (
 --   idea | brainstorm | requirements | implementation | done
 -- phase_status values:
 --   draft | running | review_required | completed | failed
+-- current_stage mirrors the engine stageKey of the *authoritative* run (the
+-- one with no live siblings) and is null when no stage is active. /board
+-- reads from this column directly; never join `runs` for stage projection.
 CREATE TABLE IF NOT EXISTS items (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id),
@@ -27,6 +30,7 @@ CREATE TABLE IF NOT EXISTS items (
   description TEXT NOT NULL,
   current_column TEXT NOT NULL DEFAULT 'idea',
   phase_status TEXT NOT NULL DEFAULT 'draft',
+  current_stage TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   UNIQUE(workspace_id, code)

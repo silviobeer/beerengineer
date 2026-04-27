@@ -4,7 +4,7 @@ import { runWithWorkflowIO, type WorkflowEvent, type WorkflowIO } from "./io.js"
 import { runWithActiveRun } from "./runContext.js"
 import { createBus, busToWorkflowIO, type EventBus } from "./bus.js"
 import { persistWorkflowRunState } from "./stageRuntime.js"
-import type { Repos } from "../db/repositories.js"
+import type { ItemRow, Repos } from "../db/repositories.js"
 import type { WorkflowResumeInput } from "../workflow.js"
 import { attachRunSubscribers, resolveWorkflowLlmOptions } from "./runSubscribers.js"
 import { mapStageToColumn } from "./boardColumns.js"
@@ -109,7 +109,10 @@ export function attachDbSync(
         stageRunIds.set(event.stageKey, stageRun.id)
         repos.updateRun(event.runId, { current_stage: event.stageKey })
         const { column, phaseStatus } = mapStageToColumn(event.stageKey, "running")
-        if (isAuthoritative()) repos.setItemColumn(ctx.itemId, column, phaseStatus)
+        if (isAuthoritative()) {
+          repos.setItemColumn(ctx.itemId, column, phaseStatus)
+          repos.setItemCurrentStage(ctx.itemId, event.stageKey)
+        }
         track(repos.appendLog({
           runId: event.runId,
           stageRunId: stageRun.id,
@@ -263,7 +266,10 @@ export function attachDbSync(
         const authoritative = isAuthoritative(event.status)
         repos.updateRun(event.runId, { status: event.status })
         const { column, phaseStatus } = mapStageToColumn("documentation", event.status)
-        if (authoritative) repos.setItemColumn(ctx.itemId, column, phaseStatus)
+        if (authoritative) {
+          repos.setItemColumn(ctx.itemId, column, phaseStatus)
+          repos.setItemCurrentStage(ctx.itemId, null)
+        }
         track(repos.appendLog({
           runId: event.runId,
           eventType: "run_finished",
@@ -280,8 +286,8 @@ export function attachDbSync(
       case "item_column_changed": {
         repos.setItemColumn(
           event.itemId,
-          event.column as "idea" | "brainstorm" | "requirements" | "implementation" | "done",
-          event.phaseStatus as "draft" | "running" | "review_required" | "completed" | "failed"
+          event.column as ItemRow["current_column"],
+          event.phaseStatus as ItemRow["phase_status"]
         )
         return
       }

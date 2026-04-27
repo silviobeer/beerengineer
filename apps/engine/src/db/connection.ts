@@ -71,6 +71,7 @@ export function applySchema(db: Db): void {
   migrateRunsFsWorkspaceIdColumn(db)
   migrateStageRunsSessionColumns(db)
   migrateNotificationDeliveriesTable(db)
+  migrateItemsCurrentStageColumn(db)
   stampMigrationLevel(db)
 }
 
@@ -185,4 +186,15 @@ function migrateNotificationDeliveriesTable(db: Db): void {
     CREATE INDEX IF NOT EXISTS notification_deliveries_run_prompt_idx
     ON notification_deliveries(run_id, prompt_id)
   `)
+}
+
+/**
+ * Add `current_stage` to an older `items` table. The board mini-stepper reads
+ * this directly; null means "no live stage". Authoritative writes only — see
+ * runOrchestrator's isAuthoritative gate.
+ */
+function migrateItemsCurrentStageColumn(db: Db): void {
+  const cols = db.prepare("PRAGMA table_info(items)").all() as Array<{ name: string }>
+  if (cols.some(c => c.name === "current_stage")) return
+  db.exec("ALTER TABLE items ADD COLUMN current_stage TEXT")
 }

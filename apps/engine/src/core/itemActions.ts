@@ -4,6 +4,8 @@ import { loadResumeReadiness } from "./resume.js"
 
 export type ItemAction =
   | "start_brainstorm"
+  | "start_visual_companion"
+  | "start_frontend_design"
   | "promote_to_requirements"
   | "start_implementation"
   | "rerun_design_prep"
@@ -12,6 +14,8 @@ export type ItemAction =
 
 export const ITEM_ACTIONS: readonly ItemAction[] = [
   "start_brainstorm",
+  "start_visual_companion",
+  "start_frontend_design",
   "promote_to_requirements",
   "start_implementation",
   "rerun_design_prep",
@@ -78,20 +82,39 @@ const MATRIX: Record<ItemAction, Record<string, Transition>> = {
   start_brainstorm: {
     "idea/draft": { kind: "start-run", column: "brainstorm" }
   },
+  start_visual_companion: {
+    // Manually opt into design-prep after brainstorm has produced its concept.
+    "brainstorm/completed": { kind: "start-run", column: "frontend" },
+    "brainstorm/review_required": { kind: "start-run", column: "frontend" },
+    // Also reachable from inside the frontend column (e.g. "redo wireframes").
+    "frontend/review_required": { kind: "start-run", column: "frontend" },
+    "frontend/completed": { kind: "start-run", column: "frontend" }
+  },
+  start_frontend_design: {
+    // Frontend-design needs a completed visual-companion to seed wireframes.
+    // The action service itself doesn't gate on `current_stage`; runService
+    // verifies that visual-companion artifacts exist before spawning.
+    "frontend/review_required": { kind: "start-run", column: "frontend" },
+    "frontend/completed": { kind: "start-run", column: "frontend" }
+  },
   promote_to_requirements: {
-    "brainstorm/*": { kind: "state", to: { column: "requirements", phase: "draft" } }
+    "brainstorm/*": { kind: "state", to: { column: "requirements", phase: "draft" } },
+    // Skip-design or post-design promotion both land in requirements/draft.
+    "frontend/*": { kind: "state", to: { column: "requirements", phase: "draft" } }
   },
   start_implementation: {
     "requirements/*": { kind: "start-run", column: "implementation" }
   },
   rerun_design_prep: {
-    "brainstorm/*": { kind: "start-run", column: "brainstorm" },
-    "requirements/*": { kind: "start-run", column: "brainstorm" },
-    "implementation/*": { kind: "start-run", column: "brainstorm" },
-    "done/*": { kind: "start-run", column: "brainstorm" },
+    "brainstorm/*": { kind: "start-run", column: "frontend" },
+    "frontend/*": { kind: "start-run", column: "frontend" },
+    "requirements/*": { kind: "start-run", column: "frontend" },
+    "implementation/*": { kind: "start-run", column: "frontend" },
+    "done/*": { kind: "start-run", column: "frontend" },
   },
   resume_run: {
     "brainstorm/*": { kind: "resume" },
+    "frontend/*": { kind: "resume" },
     "requirements/*": { kind: "resume" },
     "implementation/running": { kind: "resume" },
     "implementation/failed": { kind: "resume" }
