@@ -220,6 +220,8 @@ configuration.
 
 ## Deeper reading
 
+**Engine + cross-cutting:**
+
 - [`docs/engine-architecture.md`](docs/engine-architecture.md) —
   registry-driven pipeline, `GitAdapter`, iteration loop, file map,
   how to add a stage.
@@ -232,6 +234,15 @@ configuration.
 - [`docs/architecture-plan.md`](docs/architecture-plan.md) — historical
   refactor plan (shipped) explaining how the current single-source-of-
   truth API architecture came to be.
+
+**UI:**
+
+- [`apps/ui/README.md`](apps/ui/README.md) — quick start, tech stack.
+- [`apps/ui/docs/PROJECT.md`](apps/ui/docs/PROJECT.md) — feature catalog.
+- [`apps/ui/docs/TECHNICAL.md`](apps/ui/docs/TECHNICAL.md) — architecture,
+  SSE wiring, theming, gotchas.
+- [`apps/ui/docs/api-for-designers.md`](apps/ui/docs/api-for-designers.md) —
+  designer-friendly view of the engine API.
 
 ## License
 

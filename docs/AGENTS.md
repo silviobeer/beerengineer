@@ -1,9 +1,10 @@
 # AGENTS.md — docs/ navigation for AI agents
 
 > A guide for AI coding agents (Claude Code, Codex, …) working in this
-> repository. Read this first when you need information from `docs/`;
-> it tells you which file owns which topic so you don't grep nine
-> files for one fact.
+> repository. This folder owns **engine + cross-cutting** documentation.
+> UI-specific docs live in [`apps/ui/docs/`](../apps/ui/docs/) (start at
+> [`apps/ui/docs/AGENTS.md`](../apps/ui/docs/AGENTS.md) when working
+> there).
 >
 > Filename follows the [agents.md](https://agents.md) convention.
 
@@ -14,14 +15,13 @@
 | If you need to know… | Open |
 |---|---|
 | What endpoints the engine exposes, request/response shapes | [`api-contract.md`](./api-contract.md) |
-| The same endpoints summarised by use-case (designer view) | [`api-for-designers.md`](./api-for-designers.md) |
 | `doctor` / `setup` commands, `--json` harness protocol, test pyramid | [`app-setup.md`](./app-setup.md) |
 | How a user registers a workspace + picks a harness profile (walkthrough) | [`setup-for-dummies.md`](./setup-for-dummies.md) |
 | Pipeline overview, `ProjectStageNode`, `GitAdapter`, `runCycledLoop`, file map, how to add a stage | [`engine-architecture.md`](./engine-architecture.md) |
 | Prompt envelope, codebase snapshot, conversation projection, `*Context` payloads, harness profiles, runtime policy, presets, env vars, **per-stage LLM I/O table** | [`context-and-llm-config.md`](./context-and-llm-config.md) |
 | `MessageEntry` projection, level taxonomy (L0/L1/L2), event-to-level mapping, chattool dispatcher | [`messaging-levels.md`](./messaging-levels.md) |
-| UI design intent (no UI code lives in the repo today) | [`ui-design-notes.md`](./ui-design-notes.md) |
 | Why the engine HTTP API is the single source of truth (historical, shipped) | [`architecture-plan.md`](./architecture-plan.md) |
+| Anything UI: features, architecture, design tokens, designer-friendly API view | [`apps/ui/docs/`](../apps/ui/docs/) |
 
 ---
 

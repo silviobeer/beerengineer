@@ -1,54 +1,44 @@
 # @beerengineer2/ui
 
-Skeleton for the rebuilt BeerEngineer frontend. **The implementation is driven
-by the CLI stage pipeline** (brainstorm → visual-companion → frontend-design →
-requirements → architecture → planning → execution → project-review → qa →
-documentation). Do not hand-author
-features here outside that pipeline.
+> Next.js 15 operator console for BeerEngineer. Watch and steer pipeline runs;
+> chat with the agent; trigger stage actions. Talks to the engine over HTTP +
+> SSE only — never imports engine code.
 
-## Boundary (hard rule)
-
-- `apps/ui` **must not** import from `@beerengineer2/engine`, `apps/engine/*`,
-  or any engine-internal module. The only allowed coupling is over HTTP/SSE
-  against the engine API (default `http://localhost:4100`).
-- The API contract lives in `spec/api-contract.md` and
-  `apps/engine/src/api/openapi.json` (served at `GET /openapi.json`).
-- The engine and CLI must remain fully functional with `apps/ui` removed.
-
-## Stack (provisional — revisit in the architecture stage)
-
-- Next.js 15 (App Router)
-- React 19
-- Tailwind CSS v4 (CSS-first config via `@theme`)
-- TypeScript, strict
-
-No data-fetching library, no state manager, no component library yet. Those
-are decisions for the architecture stage.
-
-## Running
+## Quick start
 
 ```bash
-npm install                     # from repo root — hydrates apps/ui/node_modules
-npm run dev:ui                  # Next dev server on :3000
+npm install                       # from repo root — hydrates apps/ui/node_modules
+npm run dev:ui                    # Next dev on :3100 (engine must be on :4100)
 ENGINE_URL=http://localhost:4100 npm run dev:ui
 ```
 
-The engine API must be running separately (`npm run start:api` from repo
-root). UI ↔ engine talk over HTTP/SSE only.
+The engine runs separately: `npm run start:api` (or `npm run dev:engine`) from
+the repo root. UI ↔ engine talk over HTTP + SSE only.
 
-## Layout
+## Tech stack
 
-```
-apps/ui/
-├── app/                 # App Router pages, layouts, route handlers
-│   ├── globals.css      # Tailwind entry (@import "tailwindcss")
-│   ├── layout.tsx
-│   └── page.tsx
-├── next.config.ts
-├── postcss.config.mjs
-├── tsconfig.json
-└── package.json
-```
+- **Next.js 15** (App Router, Server Components, Server Actions)
+- **React 19**, TypeScript strict
+- **Tailwind CSS v4** — CSS-first config via `@theme` in `app/globals.css`
+- **next/font** — Inter / Space Grotesk / JetBrains Mono
+- **Vitest + @testing-library/react** — `npm test --workspace=@beerengineer2/ui`
 
-Future proxy/SSE-forwarding helpers (if needed to front the engine with CSRF
-or cookie handling) belong under `app/api/**` — not reaching into engine code.
+No data-fetching library, no state manager, no component library — all UI
+state is local React state + a single SSE provider.
+
+## Boundary (hard rule)
+
+`apps/ui` **must not** import from `@beerengineer2/engine`, `apps/engine/*`,
+or any engine-internal module. Coupling is HTTP/SSE only. The engine and CLI
+must remain fully functional with `apps/ui` removed. The contract lives in
+[`docs/api-contract.md`](../../docs/api-contract.md) and `apps/engine/src/api/openapi.json`.
+
+## Docs
+
+- [`docs/PROJECT.md`](./docs/PROJECT.md) — features the UI ships today
+- [`docs/TECHNICAL.md`](./docs/TECHNICAL.md) — architecture, file map, SSE, theming
+- [`docs/design-language.md`](./docs/design-language.md) — colors, fonts, anti-patterns
+- [`docs/api-for-designers.md`](./docs/api-for-designers.md) — engine API, designer view
+- [`docs/ui-design-notes.md`](./docs/ui-design-notes.md) — original design intent
+- [`CLAUDE.md`](./CLAUDE.md) — durable rules for AI agents working on the UI
+- [`docs/AGENTS.md`](./docs/AGENTS.md) — local doc navigation
