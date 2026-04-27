@@ -2,6 +2,7 @@ import { fetchWorkspacesResult } from "@/lib/api";
 import { WorkspaceProvider } from "@/lib/context/WorkspaceContext";
 import { Topbar } from "@/components/Topbar";
 import { UnknownWorkspaceGuard } from "@/components/UnknownWorkspace";
+import { SSEConnectionManager } from "@/app/lib/sse/SSEContext";
 
 interface WorkspaceLayoutProps {
   children: React.ReactNode;
@@ -21,8 +22,10 @@ export default async function WorkspaceLayout({
         currentKey={key}
         fetchError={error}
       >
-        <Topbar />
-        <UnknownWorkspaceGuard>{children}</UnknownWorkspaceGuard>
+        <SSEConnectionManager workspaceKey={key}>
+          <Topbar />
+          <UnknownWorkspaceGuard>{children}</UnknownWorkspaceGuard>
+        </SSEConnectionManager>
       </WorkspaceProvider>
     </div>
   );
