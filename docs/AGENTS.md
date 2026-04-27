@@ -49,6 +49,8 @@
 - **Don't duplicate.** If a topic already has a canonical home in the
   table above, link to it instead of restating. The whole point of this
   layout is one fact, one file.
+- **Plans do not belong in `docs/`.** Implementation plans, refactor
+  plans, and feature specs belong in `/specs/`.
 - **Update this index when you add a doc.** Either add a row to the
   Quick map or refuse to add the doc — there is no third option.
 - **No regenerated stubs in `docs/`.** The documentation stage of the

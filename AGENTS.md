@@ -32,6 +32,7 @@ apps/engine/        Long-running TypeScript engine (CLI + HTTP API).
                     Owns the pipeline, stages, LLM dispatch, git, DB.
 apps/ui/            Next.js UI (rebuild in progress; see ui-design-notes.md).
 docs/               Project docs. Start at docs/AGENTS.md for navigation.
+specs/              Implementation plans, refactor plans, and feature specs.
 skills/             Skill bundles (cli-operator-harness, …).
 README.md           Project entry point for humans.
 package.json        npm workspaces; engine + ui live under apps/.
@@ -49,6 +50,7 @@ package.json        npm workspaces; engine + ui live under apps/.
 | Setup / harness JSON protocol / test pyramid | [`docs/app-setup.md`](./docs/app-setup.md) |
 | User-facing setup walkthrough | [`docs/setup-for-dummies.md`](./docs/setup-for-dummies.md) |
 | Doc folder conventions / which doc owns what | [`docs/AGENTS.md`](./docs/AGENTS.md) |
+| Implementation / refactor plans | `specs/` |
 | Prompt files (one per stage) | `apps/engine/prompts/{system,reviewers,workers}/` |
 
 ---
@@ -83,6 +85,9 @@ npm run dev:ui                                    # Next.js on :3000
   edits need an engine restart.
 - **Don't add docs to `docs/` without updating `docs/AGENTS.md`.** The
   index is the contract.
+- **Plans belong in `specs/`, not `docs/`.** Implementation plans,
+  refactor plans, and feature specs should always be written under
+  `specs/`.
 
 ---
 
