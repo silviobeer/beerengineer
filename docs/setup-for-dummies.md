@@ -285,7 +285,11 @@ You'll get an interactive flow:
    - `claude-first` — Claude does the work, Codex reviews *(recommended default)*
    - `codex-first` — Codex does the work, Claude reviews
    - `claude-only` / `codex-only` — single harness
+   - `fast` — gpt-4o coder + Haiku reviewer for quick iteration
    - `opencode` / `self` — power users, pick models per role
+   - For the full preset table, the schema of `self` mode, runtime-policy
+     options (tool access), and tuning env vars, see
+     [`context-and-llm-config.md`](./context-and-llm-config.md).
 4. Sonar? — yes/no; if yes, enter project key + organization
 5. Git? — `git init` + initial commit for you
 

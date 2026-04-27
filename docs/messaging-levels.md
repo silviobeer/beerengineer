@@ -1,6 +1,6 @@
 # Messaging Levels — Spec
 
-Follow-on to `spec/architecture.md`, `spec/api-contract.md`, `spec/telegram-refactor.md`, `spec/cli-navigation-and-harness-ux-plan.md`. Defines a tiered verbosity model over the existing `WorkflowEvent` bus so CLI, API, and chat connectors can each subscribe to the granularity that fits their channel.
+Follow-on to [`architecture-plan.md`](./architecture-plan.md) and [`api-contract.md`](./api-contract.md). (Earlier companions `spec/telegram-refactor.md` and `spec/cli-navigation-and-harness-ux-plan.md` have been retired — their decisions are absorbed here and in the engine code.) Defines a tiered verbosity model over the existing `WorkflowEvent` bus so CLI, API, and chat connectors can each subscribe to the granularity that fits their channel.
 
 This revision intentionally tightens the architecture around **one canonical message projection**. The engine bus remains the write-time source of truth, and `stage_logs` remains the persisted event store, but every read-side consumer in this plan (SSE, history, CLI, chattool adapters, future UI) goes through the same `MessageEntry` projection instead of each consumer re-deriving its own event semantics.
 

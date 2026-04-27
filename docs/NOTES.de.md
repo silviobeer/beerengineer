@@ -4,6 +4,9 @@
 > die Engine. Aktueller Stand der Architektur lebt in
 > [`docs/engine-architecture.md`](engine-architecture.md) — registry-
 > getriebene Pipeline, `GitAdapter`, `runCycledLoop`, `LLM_STAGE_REGISTRY`.
+> Context-Management und LLM-Konfiguration (Prompt-Envelope, Codebase-
+> Snapshot, Harness-Presets, Runtime-Policy, env-Variablen) leben in
+> [`docs/context-and-llm-config.md`](context-and-llm-config.md).
 > Wesentliche Änderungen seit dieser Datei zuletzt komplett geschrieben
 > wurde:
 >

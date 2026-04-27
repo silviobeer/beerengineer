@@ -1,6 +1,6 @@
 # Engine API Contract
 
-Target shape for `apps/engine/src/api`. Companion to `spec/architecture.md`.
+Target shape for `apps/engine/src/api`. Companion to [`architecture-plan.md`](./architecture-plan.md).
 
 The Engine API is the canonical surface for all clients (UI, CLI, future webhooks). CLI-local ergonomics (`workspace use`, `item open`, `run open`, terminal rendering) are not part of this contract.
 
@@ -90,11 +90,11 @@ before the UI teardown; clients use `/answer` and `/conversation` instead.
 Follow-on to the conversation endpoint. Where `/conversation` returns the
 operator-facing transcript (messages, questions, answers only), `/messages`
 returns the full event log projected through `MessageEntry` with level
-filtering — the shape defined in `spec/messaging-levels.md`.
+filtering — the shape defined in `docs/messaging-levels.md`.
 
 - `GET /runs/:id/messages?level=&since=&limit=`
   - `level` ∈ `0 | 1 | 2` (or `L0 | L1 | L2`). Default `2`. See
-    `spec/messaging-levels.md` §1 for the detail-rank semantics.
+    `docs/messaging-levels.md` §1 for the detail-rank semantics.
   - `since` is the stable `MessageEntry.id` cursor. Omit for head of log.
   - `limit` ≤ 500, default 200.
   - Server-side scan is capped at `MESSAGES_ENDPOINT_MAX_SCAN` rows per
@@ -215,7 +215,7 @@ No `client.surface` / `client.channel`. If audit is needed, log the HTTP source 
   ts: string                 // ISO
   runId: string
   stageRunId: string | null
-  type: CanonicalMessageType // see spec/messaging-levels.md §5
+  type: CanonicalMessageType // see docs/messaging-levels.md §5
   level: 0 | 1 | 2
   force: boolean             // true → delivered regardless of subscribed level
   payload: Record<string, unknown>  // event-shape-specific; mirrors WorkflowEvent
@@ -240,8 +240,9 @@ Local-only commands (outside this contract): `workspace use`, compact rendering.
 
 ### UI
 
-No UI ships today (`apps/ui` was removed 2026-04-24 ahead of a rebuild — see
-`specs/ui-rebuild-plan.md`). Any future UI is one HTTP client among many and
+No UI ships today (`apps/ui` was removed 2026-04-24 ahead of a rebuild;
+see [`ui-design-notes.md`](./ui-design-notes.md) for design intent). Any
+future UI is one HTTP client among many and
 gets no privileged access; the machine-readable contract lives at
 `GET /openapi.json`.
 
@@ -256,7 +257,7 @@ same service that backs `POST /runs/:id/answer`.
 
 ## Audit — UI teardown, Step 1 (2026-04-24)
 
-Companion to `specs/ui-rebuild-plan.md` §Steps.1. Captures the actual engine
+Companion to the (now-retired) UI rebuild plan §Steps.1. Captures the actual engine
 surface the current `apps/ui` consumes before the UI is deleted, so the next
 UI has a real baseline and the contract doesn't silently shed behavior.
 
@@ -321,7 +322,7 @@ These read-paths **die with the UI** — the next UI must not open the engine
 DB. They are therefore **implicit contract gaps**: read endpoints the UI has
 been substituting for via a side-channel. See "Gaps for the next UI" below.
 
-### Endpoints listed in `specs/ui-rebuild-plan.md` §Steps.1 that the UI does NOT use over HTTP
+### Endpoints listed in the (now-retired) UI rebuild plan §Steps.1 that the UI does NOT use over HTTP
 
 The plan enumerates these as "actual route shapes the UI uses today"; the
 audit shows they are not hit by the browser or by SSR code:
@@ -363,7 +364,7 @@ If the new UI must not open `~/.local/state/beerengineer/*.sqlite` directly
   flags, stage runs) that `live-board.ts` assembles client-side. Either the
   items endpoint grows richer response payloads, or a dedicated board endpoint
   lands. Explicitly out of scope for this teardown — flagged as a follow-up
-  contract task. (See `specs/ui-rebuild-plan.md` Open Question 2.)
+  contract task. (See the (now-retired) UI rebuild plan Open Question 2.)
 - **Inbox / pending prompts view.** Same story as board. No HTTP equivalent
   today. Flagged as a follow-up.
 - **Setup / doctor projection.** `GET /setup/status` covers this; no gap.

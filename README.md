@@ -128,7 +128,8 @@ Full CLI help: `beerengineer --help`.
 
 - `apps/engine` — CLI + HTTP API (the product)
 - `apps/ui` — optional Next.js 15 consumer (in rebuild)
-- `spec/` — OpenAPI + architecture specs (contract source of truth)
+- `docs/api-contract.md` — Engine HTTP API contract (authoritative prose
+  companion to `apps/engine/src/api/openapi.json`)
 
 ## Configuration
 
@@ -152,6 +153,14 @@ Common env vars:
   `BEERENGINEER_MERGE_RESOLVER_CAP_MS` — merge-resolver timeouts
 - `BEERENGINEER_FORCE_FAKE_LLM=1` — force every stage to use its
   offline fake adapter (test mode)
+- `BEERENGINEER_PROMPTS_DIR` — load prompt files from a different
+  directory (absolute, or relative to `cwd`)
+- `BEERENGINEER_HOSTED_RETRY_DELAYS_MS` — comma-separated retry delays
+  for hosted CLI invocations (default `2000,8000`)
+
+For the full picture of harness profiles, runtime policies, prompt
+contracts, and how context flows into every LLM call, see
+[`docs/context-and-llm-config.md`](docs/context-and-llm-config.md).
 
 ## Development
 
@@ -175,6 +184,12 @@ runs against a real project hit real edge cases.
 - [`docs/engine-architecture.md`](docs/engine-architecture.md) —
   registry-driven pipeline, `GitAdapter`, iteration loop, file map,
   how to add a stage.
+- [`docs/context-and-llm-config.md`](docs/context-and-llm-config.md) —
+  context assembly (prompt envelope, codebase snapshot, conversation
+  log) and LLM configuration (harness profile, runtime policy,
+  presets, env vars).
+- [`docs/setup-for-dummies.md`](docs/setup-for-dummies.md) —
+  user-facing setup walkthrough.
 - [`docs/NOTES.de.md`](docs/NOTES.de.md) — design notes and
   implementation history (in German).
 

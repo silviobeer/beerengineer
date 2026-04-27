@@ -176,7 +176,17 @@ Defaults: `4` iterations per cycle, `3` review cycles. Override via env:
 - `BEERENGINEER_MAX_ITERATIONS_PER_CYCLE`
 - `BEERENGINEER_MAX_REVIEW_CYCLES`
 
-Resolved once at module load in `apps/engine/src/core/loopConfig.ts`.
+Resolved per story in `apps/engine/src/core/loopConfig.ts`. See
+[`context-and-llm-config.md`](./context-and-llm-config.md) § *Iteration loop*
+for how feedback is threaded across cycles via the payload's
+`iterationContext`.
+
+### Context & LLM configuration
+
+How prompts are assembled, what the payload carries, how operators pick
+providers / models / runtime policy, and which env vars tune retries
+and loop bounds — all live in their own reference:
+[`context-and-llm-config.md`](./context-and-llm-config.md).
 
 ## Why real-git is mandatory
 

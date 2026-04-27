@@ -2,9 +2,9 @@
 
 **Status (2026-04-24):** This is *design intent* for the UI rebuild. The
 first UI existed 2026-04-22 → 2026-04-24 in `apps/ui/` and was then torn
-down (see `specs/ui-rebuild-plan.md`). No UI code exists in the tree today.
-This document sums up which design decisions from that first pass are
-worth carrying into the rebuild, and which ones died with it.
+down. No UI code exists in the tree today. This document sums up which
+design decisions from that first pass are worth carrying into the rebuild,
+and which ones died with it.
 
 For the API side — *what endpoints exist and what they return* — start with
 [`api-for-designers.md`](./api-for-designers.md). That doc is the
@@ -13,8 +13,7 @@ surface.
 
 Authoritative sources when things drift:
 
-- Engine contract: `spec/api-contract.md` + live spec at `GET /openapi.json`
-- UI teardown rationale: `specs/ui-rebuild-plan.md`
+- Engine contract: [`api-contract.md`](./api-contract.md) + live spec at `GET /openapi.json`
 - This document: UX shell, routing, design-system principles
 
 ---
@@ -230,7 +229,7 @@ Most of the prerequisites are now satisfied.
 
 - **Inbox aggregate.** `GET /workspaces/:key/pending-prompts` or
   `GET /runs?workspace=&status=needs_answer`. The filter parameters are
-  documented in `spec/api-contract.md` but today's `handleListRuns`
+  documented in `docs/api-contract.md` but today's `handleListRuns`
   ignores them.
 - **Richer `BoardCardDTO`.** Currently `meta` = `phase` + `projects` count.
   Likely wanted for a polished board: pending-prompts count per item,
@@ -247,7 +246,7 @@ Most of the prerequisites are now satisfied.
 
 - Changing the 5-column board taxonomy before a concrete screen demands it.
   (See the "Soll-Zustand 7 Spalten" discussion in the commit log /
-  `spec/api-contract.md` audit: the columns are also the item-lifecycle
+  `docs/api-contract.md` audit: the columns are also the item-lifecycle
   state machine that gates action transitions; changing them is not a
   display-only edit.)
 - Swagger UI hosting. Paste `openapi.json` into any external viewer.
@@ -256,8 +255,7 @@ Most of the prerequisites are now satisfied.
 
 One ordering that minimises rework:
 
-1. **Pick a stack.** Not in this document's scope — separate decision
-   (see `specs/ui-rebuild-plan.md` Open Questions §3).
+1. **Pick a stack.** Not in this document's scope — separate decision.
 2. **`/setup` + `RegisterWorkspaceForm`.** The form is well-specified and
    the endpoints are stable. Good first screen to shake out the stack.
 3. **`/w/[key]` board.** `GET /board?workspace=` gives you the DTO

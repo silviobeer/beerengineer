@@ -2,7 +2,7 @@
 
 Scope: refactor CLI / UI / Engine so the Engine HTTP API is the single source of truth. Replaces the previous five-document plan (`cli-api-ui-refactoring-plan.md`, `conversation-model-plan.md`, `conversation-json-schema.md`, `chattool-integration-plan.md`, `engine-api-route-design.md`).
 
-See `spec/api-contract.md` for routes and JSON schemas.
+See [`api-contract.md`](./api-contract.md) for routes and JSON schemas.
 
 ---
 
