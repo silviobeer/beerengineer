@@ -81,10 +81,9 @@ describe("BoardCard stepper visibility (US-02)", () => {
 
   it.each<Exclude<BoardColumn, "implementation">>([
     "idea",
-    "frontend",
+    "brainstorm",
     "requirements",
-    "test",
-    "merge",
+    "done",
   ])(
     "TC-12: BoardCard in non-Implementation column '%s' does not render any segment label",
     (column) => {

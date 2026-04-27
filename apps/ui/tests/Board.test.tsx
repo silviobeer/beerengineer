@@ -251,7 +251,7 @@ describe("Mini-Stepper visibility on board (S-01)", () => {
   });
 
   it("TC-16: Mini-Stepper absent on cards in non-Implementation columns", () => {
-    const items = (["idea", "frontend", "requirements", "test", "merge"] as const).map(
+    const items = (["idea", "brainstorm", "requirements", "done"] as const).map(
       (col) => nonImplementationCard(col)
     );
     render(<Board items={items} />);

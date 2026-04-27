@@ -1,6 +1,10 @@
+"use client";
+
+import { useMemo } from "react";
 import { BoardCard } from "./BoardCard";
 import { KanbanColumn } from "./KanbanColumn";
 import { BOARD_COLUMNS, type BoardCardDTO } from "../lib/types";
+import { useSSE } from "../app/lib/sse/SSEContext";
 
 interface BoardProps {
   items: BoardCardDTO[];
@@ -8,6 +12,24 @@ interface BoardProps {
 }
 
 export function Board({ items, workspaceKey }: BoardProps) {
+  const { itemState } = useSSE();
+
+  const liveItems = useMemo<BoardCardDTO[]>(() => {
+    return items.map((item) => {
+      const live = itemState[item.id];
+      if (!live) return item;
+      return {
+        ...item,
+        column: live.column ?? item.column,
+        phase_status: live.phaseStatus ?? item.phase_status,
+        current_stage: live.currentStage ?? item.current_stage,
+        hasOpenPrompt: live.attention === true ? true : item.hasOpenPrompt,
+        hasReviewGateWaiting: item.hasReviewGateWaiting,
+        hasBlockedRun: live.attention === true ? true : item.hasBlockedRun,
+      };
+    });
+  }, [items, itemState]);
+
   return (
     <div
       data-testid="kanban-board-scroll"
@@ -21,7 +43,7 @@ export function Board({ items, workspaceKey }: BoardProps) {
         }}
       >
         {BOARD_COLUMNS.map((column) => {
-          const columnItems = items.filter((item) => item.column === column);
+          const columnItems = liveItems.filter((item) => item.column === column);
           return (
             <KanbanColumn key={column} column={column}>
               {columnItems.map((item) => (

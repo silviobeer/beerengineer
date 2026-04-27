@@ -50,6 +50,25 @@ function defaultFactory(url: string): EventSourceLike {
   return new Ctor(url);
 }
 
+function engineBase(): string {
+  const fromEnv =
+    (typeof process !== "undefined" &&
+      (process.env?.NEXT_PUBLIC_ENGINE_URL ||
+        process.env?.ENGINE_URL)) ||
+    "http://127.0.0.1:4100";
+  return String(fromEnv).replace(/\/$/, "");
+}
+
+const STAGE_TO_STEP: Record<string, number> = {
+  architecture: 1,
+  arch: 1,
+  planning: 2,
+  plan: 2,
+  execution: 3,
+  exec: 3,
+  review: 4,
+};
+
 function parseData(raw: unknown): unknown {
   if (typeof raw === "string") {
     try {
@@ -116,28 +135,113 @@ export function SSEConnectionManager({
     for (const cb of itemListeners.current) cb({ ...update } as ItemState);
   }, []);
 
-  // Workspace SSE
+  // Workspace SSE — engine canonical event vocabulary.
   useEffect(() => {
     let es: EventSourceLike | null = null;
     try {
-      es = factoryRef.current(`/events?workspace=${encodeURIComponent(workspaceKey)}`);
+      es = factoryRef.current(
+        `${engineBase()}/events?workspace=${encodeURIComponent(workspaceKey)}&level=1`,
+      );
     } catch {
       goOffline();
       return;
     }
     const sourceRef = es;
 
-    const onState = (e: MessageEvent) => {
-      const data = parseData(e.data);
-      if (!data || typeof data !== "object" || !("id" in data)) return;
-      applyItemUpdate(data as Partial<ItemState> & { id: string });
+    const itemIdOf = (data: unknown): string | null => {
+      if (!data || typeof data !== "object") return null;
+      const top = (data as { itemId?: unknown }).itemId;
+      if (typeof top === "string" && top.length > 0) return top;
+      const payload = (data as { payload?: { itemId?: unknown } }).payload;
+      const nested = payload?.itemId;
+      return typeof nested === "string" && nested.length > 0 ? nested : null;
     };
+    const runIdOf = (data: unknown): string | null => {
+      if (!data || typeof data !== "object") return null;
+      const top = (data as { runId?: unknown }).runId;
+      return typeof top === "string" && top.length > 0 ? top : null;
+    };
+
+    // item_column_changed is a bare payload: { itemId, from, to, phaseStatus }
+    const onColumnChanged = (e: MessageEvent) => {
+      const data = parseData(e.data) as
+        | { itemId?: string; to?: string; phaseStatus?: string }
+        | null;
+      if (!data?.itemId || !data.to) return;
+      applyItemUpdate({
+        id: data.itemId,
+        column: data.to,
+        phaseStatus: data.phaseStatus,
+      });
+    };
+
+    const onAttentionOn = (e: MessageEvent) => {
+      const data = parseData(e.data);
+      const id = itemIdOf(data);
+      if (!id) return;
+      applyItemUpdate({ id, attention: true, runId: runIdOf(data) ?? undefined });
+    };
+
+    const onAttentionOff = (e: MessageEvent) => {
+      const data = parseData(e.data);
+      const id = itemIdOf(data);
+      if (!id) return;
+      applyItemUpdate({ id, attention: false, runId: runIdOf(data) ?? undefined });
+    };
+
+    // phase_started: payload.stageKey identifies the implementation stage.
+    const onPhaseStarted = (e: MessageEvent) => {
+      const data = parseData(e.data);
+      const id = itemIdOf(data);
+      if (!id) return;
+      const stageKey = (data as { payload?: { stageKey?: unknown } } | null)
+        ?.payload?.stageKey;
+      const update: Partial<ItemState> & { id: string } = {
+        id,
+        runId: runIdOf(data) ?? undefined,
+      };
+      if (typeof stageKey === "string") {
+        update.currentStage = stageKey;
+        const step = STAGE_TO_STEP[stageKey.toLowerCase()];
+        if (step) update.step = step;
+      }
+      applyItemUpdate(update);
+    };
+
+    const dispatchChat = (e: MessageEvent) => {
+      const data = parseData(e.data);
+      if (!data || typeof data !== "object") return;
+      const entry = data as ChatEntry;
+      for (const cb of conversationListeners.current) cb(entry);
+    };
+    const dispatchLog = (e: MessageEvent) => {
+      const data = parseData(e.data);
+      if (!data || typeof data !== "object") return;
+      const entry = data as LogEntry;
+      for (const cb of logListeners.current) cb(entry);
+    };
+
     const onErr = () => goOffline();
     const onClose = () => goOffline();
 
-    sourceRef.addEventListener("state-change", onState);
-    sourceRef.addEventListener("item-changed", onState);
-    sourceRef.onmessage = onState;
+    // Item placement.
+    sourceRef.addEventListener("item_column_changed", onColumnChanged);
+    // Attention flips.
+    sourceRef.addEventListener("prompt_requested", onAttentionOn);
+    sourceRef.addEventListener("run_blocked", onAttentionOn);
+    sourceRef.addEventListener("prompt_answered", onAttentionOff);
+    sourceRef.addEventListener("run_resumed", onAttentionOff);
+    sourceRef.addEventListener("run_finished", onAttentionOff);
+    sourceRef.addEventListener("run_failed", onAttentionOff);
+    sourceRef.addEventListener("run_started", onAttentionOff);
+    // Stepper progression.
+    sourceRef.addEventListener("phase_started", onPhaseStarted);
+    // Workspace-level chat / log feeds (consumed by detail page).
+    sourceRef.addEventListener("agent_message", dispatchChat);
+    sourceRef.addEventListener("user_message", dispatchChat);
+    sourceRef.addEventListener("artifact_written", dispatchLog);
+    sourceRef.addEventListener("log", dispatchLog);
+
     sourceRef.onerror = onErr;
     sourceRef.onclose = onClose;
 
@@ -150,13 +254,15 @@ export function SSEConnectionManager({
     };
   }, [workspaceKey, applyItemUpdate, goOffline]);
 
-  // Run SSE
+  // Run-scoped SSE — same canonical vocabulary as workspace SSE.
   useEffect(() => {
     if (!runId) return;
     if (isOfflineRef.current) return;
     let es: EventSourceLike | null = null;
     try {
-      es = factoryRef.current(`/runs/${encodeURIComponent(runId)}/events`);
+      es = factoryRef.current(
+        `${engineBase()}/runs/${encodeURIComponent(runId)}/events`,
+      );
     } catch {
       goOffline();
       return;
@@ -178,11 +284,12 @@ export function SSEConnectionManager({
     const onErr = () => goOffline();
     const onClose = () => goOffline();
 
-    sourceRef.addEventListener("chat", dispatchChat);
-    sourceRef.addEventListener("answer_recorded", dispatchChat);
-    sourceRef.addEventListener("prompt_opened", dispatchChat);
+    sourceRef.addEventListener("agent_message", dispatchChat);
+    sourceRef.addEventListener("user_message", dispatchChat);
+    sourceRef.addEventListener("prompt_requested", dispatchChat);
+    sourceRef.addEventListener("prompt_answered", dispatchChat);
+    sourceRef.addEventListener("artifact_written", dispatchLog);
     sourceRef.addEventListener("log", dispatchLog);
-    sourceRef.addEventListener("message_appended", dispatchLog);
     sourceRef.onerror = onErr;
     sourceRef.onclose = onClose;
 
