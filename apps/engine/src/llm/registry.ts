@@ -204,109 +204,131 @@ function createHostedReviewAdapter<S, A>(stage: StageId, llm: RunLlmConfig): Rev
 }
 
 /**
- * Per-stage adapter table. Each entry owns the fake-adapter constructors for
- * its stage; the hosted path is stage-agnostic and handled by the two
- * `createHostedXxxAdapter` helpers above.
+ * Single source of truth for per-stage LLM adapter wiring.
  *
- * Adding a new stage:
- *   1. Add its StageId to the union.
- *   2. Add an entry here mapping to the Fake* classes.
- *   3. Add the narrow `createXxxStage/Review` exports below if the stage
- *      needs extra construction args (e.g. a Project).
+ * Each entry owns the fake-adapter constructors for its stage. The hosted
+ * path is stage-agnostic and shared via {@link createHostedStageAdapter}
+ * / {@link createHostedReviewAdapter} above.
+ *
+ * Adding a new LLM-using stage means:
+ *   1. Add its StageId to the union (in `./types`).
+ *   2. Add one entry to this registry.
+ *   3. (Optional) Add a narrow `createXxxStage/Review` export at the
+ *      bottom for type-narrow consumer use; it's a one-liner.
+ *
+ * Replaces the previous FAKE_STAGES table + 18 hand-rolled factory
+ * functions: one place to register a stage, generic helpers to create
+ * adapters, narrow exports that delegate via the helpers.
  */
-type FakeStageFactory<S, A> = (...args: never[]) => StageAgentAdapter<S, A>
-type FakeReviewFactory<S, A> = () => ReviewAgentAdapter<S, A>
-
-const FAKE_STAGES: {
-  brainstorm: { stage: FakeStageFactory<BrainstormState, BrainstormArtifact>; review: FakeReviewFactory<BrainstormState, BrainstormArtifact> }
-  "visual-companion": { stage: FakeStageFactory<VisualCompanionState, WireframeArtifact>; review: FakeReviewFactory<VisualCompanionState, WireframeArtifact> }
-  "frontend-design": { stage: FakeStageFactory<FrontendDesignState, DesignArtifact>; review: FakeReviewFactory<FrontendDesignState, DesignArtifact> }
-  requirements: { stage: FakeStageFactory<RequirementsState, RequirementsArtifact>; review: FakeReviewFactory<RequirementsState, RequirementsArtifact> }
-  architecture: { stage: (project: Project) => StageAgentAdapter<ArchitectureState, ArchitectureArtifact>; review: FakeReviewFactory<ArchitectureState, ArchitectureArtifact> }
-  planning: { stage: (project: Project) => StageAgentAdapter<PlanningState, ImplementationPlanArtifact>; review: FakeReviewFactory<PlanningState, ImplementationPlanArtifact> }
-  documentation: { stage: (project: Project) => StageAgentAdapter<DocumentationState, DocumentationArtifact>; review: FakeReviewFactory<DocumentationState, DocumentationArtifact> }
-  "project-review": { stage: (project: Project) => StageAgentAdapter<ProjectReviewState, ProjectReviewArtifact>; review: FakeReviewFactory<ProjectReviewState, ProjectReviewArtifact> }
-  "test-writer": { stage: (project: Project) => StageAgentAdapter<TestWriterState, StoryTestPlanArtifact>; review: FakeReviewFactory<TestWriterState, StoryTestPlanArtifact> }
-  qa: { stage: FakeStageFactory<QaState, QaArtifact>; review: FakeReviewFactory<QaState, QaArtifact> }
-} = {
-  brainstorm:      { stage: () => new FakeBrainstormStageAdapter(),    review: () => new FakeBrainstormReviewAdapter() },
-  "visual-companion": { stage: () => new FakeVisualCompanionStageAdapter(), review: () => new FakeVisualCompanionReviewAdapter() },
-  "frontend-design": { stage: () => new FakeFrontendDesignStageAdapter(), review: () => new FakeFrontendDesignReviewAdapter() },
-  requirements:    { stage: () => new FakeRequirementsStageAdapter(),  review: () => new FakeRequirementsReviewAdapter() },
-  architecture:    { stage: p => new FakeArchitectureStageAdapter(p),  review: () => new FakeArchitectureReviewAdapter() },
-  planning:        { stage: p => new FakePlanningStageAdapter(p),      review: () => new FakePlanningReviewAdapter() },
-  documentation:   { stage: p => new FakeDocumentationStageAdapter(p), review: () => new FakeDocumentationReviewAdapter() },
-  "project-review":{ stage: p => new FakeProjectReviewStageAdapter(p), review: () => new FakeProjectReviewReviewAdapter() },
-  "test-writer":   { stage: p => new FakeTestWriterStageAdapter(p),    review: () => new FakeTestWriterReviewAdapter() },
-  qa:              { stage: () => new FakeQaStageAdapter(),            review: () => new FakeQaReviewAdapter() },
+type LlmStageEntry<S, A> = {
+  fakeStage: (project?: Project) => StageAgentAdapter<S, A>
+  fakeReview: () => ReviewAgentAdapter<S, A>
 }
 
-export function createBrainstormStage(_project: Project | undefined, llm?: RunLlmConfig): StageAgentAdapter<BrainstormState, BrainstormArtifact> {
-  return llm ? createHostedStageAdapter("brainstorm", llm) : FAKE_STAGES.brainstorm.stage()
-}
-export function createBrainstormReview(llm?: RunLlmConfig): ReviewAgentAdapter<BrainstormState, BrainstormArtifact> {
-  return llm ? createHostedReviewAdapter("brainstorm", llm) : FAKE_STAGES.brainstorm.review()
+// `any` here is unavoidable: the registry holds adapters with stage-specific
+// (S, A) types under one keyed object. Variance prevents expressing this with
+// `unknown`. The narrow factory exports below cast back to the correct type
+// using stage-specific generics, restoring type safety at the consumer boundary.
+type AnyEntry = LlmStageEntry<any, any> // eslint-disable-line @typescript-eslint/no-explicit-any
+
+/**
+ * StageIds with LLM stage/review adapters. The "execution" stage has no
+ * stage-agent adapter — it owns the Ralph runtime (loop + coder harness)
+ * and a per-story test-writer agent (under "test-writer") instead.
+ */
+export type LlmStageId = Exclude<StageId, "execution">
+
+const LLM_STAGE_REGISTRY: Record<LlmStageId, AnyEntry> = {
+  brainstorm:      { fakeStage: () => new FakeBrainstormStageAdapter(),    fakeReview: () => new FakeBrainstormReviewAdapter() },
+  "visual-companion": { fakeStage: () => new FakeVisualCompanionStageAdapter(), fakeReview: () => new FakeVisualCompanionReviewAdapter() },
+  "frontend-design": { fakeStage: () => new FakeFrontendDesignStageAdapter(), fakeReview: () => new FakeFrontendDesignReviewAdapter() },
+  requirements:    { fakeStage: () => new FakeRequirementsStageAdapter(),  fakeReview: () => new FakeRequirementsReviewAdapter() },
+  architecture:    { fakeStage: p => new FakeArchitectureStageAdapter(p!),  fakeReview: () => new FakeArchitectureReviewAdapter() },
+  planning:        { fakeStage: p => new FakePlanningStageAdapter(p!),      fakeReview: () => new FakePlanningReviewAdapter() },
+  documentation:   { fakeStage: p => new FakeDocumentationStageAdapter(p!), fakeReview: () => new FakeDocumentationReviewAdapter() },
+  "project-review":{ fakeStage: p => new FakeProjectReviewStageAdapter(p!), fakeReview: () => new FakeProjectReviewReviewAdapter() },
+  "test-writer":   { fakeStage: p => new FakeTestWriterStageAdapter(p!),    fakeReview: () => new FakeTestWriterReviewAdapter() },
+  qa:              { fakeStage: () => new FakeQaStageAdapter(),            fakeReview: () => new FakeQaReviewAdapter() },
 }
 
-export function createVisualCompanionStage(llm?: RunLlmConfig): StageAgentAdapter<VisualCompanionState, WireframeArtifact> {
-  return llm ? createHostedStageAdapter("visual-companion", llm) : FAKE_STAGES["visual-companion"].stage()
-}
-export function createVisualCompanionReview(llm?: RunLlmConfig): ReviewAgentAdapter<VisualCompanionState, WireframeArtifact> {
-  return llm ? createHostedReviewAdapter("visual-companion", llm) : FAKE_STAGES["visual-companion"].review()
-}
-
-export function createFrontendDesignStage(llm?: RunLlmConfig): StageAgentAdapter<FrontendDesignState, DesignArtifact> {
-  return llm ? createHostedStageAdapter("frontend-design", llm) : FAKE_STAGES["frontend-design"].stage()
-}
-export function createFrontendDesignReview(llm?: RunLlmConfig): ReviewAgentAdapter<FrontendDesignState, DesignArtifact> {
-  return llm ? createHostedReviewAdapter("frontend-design", llm) : FAKE_STAGES["frontend-design"].review()
-}
-
-export function createRequirementsStage(llm?: RunLlmConfig): StageAgentAdapter<RequirementsState, RequirementsArtifact> {
-  return llm ? createHostedStageAdapter("requirements", llm) : FAKE_STAGES.requirements.stage()
-}
-export function createRequirementsReview(llm?: RunLlmConfig): ReviewAgentAdapter<RequirementsState, RequirementsArtifact> {
-  return llm ? createHostedReviewAdapter("requirements", llm) : FAKE_STAGES.requirements.review()
+/**
+ * Generic stage-adapter constructor — picks the hosted path when an
+ * `llm` config is supplied, otherwise falls back to the fake adapter
+ * registered for {@link stageId}. Caller-supplied generics narrow the
+ * return type.
+ */
+export function createStageAdapter<S, A>(
+  stageId: LlmStageId,
+  llm: RunLlmConfig | undefined,
+  project?: Project,
+): StageAgentAdapter<S, A> {
+  if (llm) return createHostedStageAdapter<S, A>(stageId, llm)
+  return LLM_STAGE_REGISTRY[stageId].fakeStage(project) as StageAgentAdapter<S, A>
 }
 
-export function createArchitectureStage(project: Project, llm?: RunLlmConfig): StageAgentAdapter<ArchitectureState, ArchitectureArtifact> {
-  return llm ? createHostedStageAdapter("architecture", llm) : FAKE_STAGES.architecture.stage(project)
-}
-export function createArchitectureReview(llm?: RunLlmConfig): ReviewAgentAdapter<ArchitectureState, ArchitectureArtifact> {
-  return llm ? createHostedReviewAdapter("architecture", llm) : FAKE_STAGES.architecture.review()
-}
-
-export function createPlanningStage(project: Project, llm?: RunLlmConfig): StageAgentAdapter<PlanningState, ImplementationPlanArtifact> {
-  return llm ? createHostedStageAdapter("planning", llm) : FAKE_STAGES.planning.stage(project)
-}
-export function createPlanningReview(llm?: RunLlmConfig): ReviewAgentAdapter<PlanningState, ImplementationPlanArtifact> {
-  return llm ? createHostedReviewAdapter("planning", llm) : FAKE_STAGES.planning.review()
+/**
+ * Generic review-adapter constructor — symmetric to
+ * {@link createStageAdapter}, for the reviewer role.
+ */
+export function createReviewAdapter<S, A>(
+  stageId: LlmStageId,
+  llm: RunLlmConfig | undefined,
+): ReviewAgentAdapter<S, A> {
+  if (llm) return createHostedReviewAdapter<S, A>(stageId, llm)
+  return LLM_STAGE_REGISTRY[stageId].fakeReview() as ReviewAgentAdapter<S, A>
 }
 
-export function createDocumentationStage(project: Project, llm?: RunLlmConfig): StageAgentAdapter<DocumentationState, DocumentationArtifact> {
-  return llm ? createHostedStageAdapter("documentation", llm) : FAKE_STAGES.documentation.stage(project)
-}
-export function createDocumentationReview(llm?: RunLlmConfig): ReviewAgentAdapter<DocumentationState, DocumentationArtifact> {
-  return llm ? createHostedReviewAdapter("documentation", llm) : FAKE_STAGES.documentation.review()
-}
+// ---------- narrow factory exports ----------
+// Each is a one-liner over the generics above; kept so consumer modules
+// can import a strongly-typed factory per stage without supplying type
+// arguments at the call site.
 
-export function createProjectReviewStage(project: Project, llm?: RunLlmConfig): StageAgentAdapter<ProjectReviewState, ProjectReviewArtifact> {
-  return llm ? createHostedStageAdapter("project-review", llm) : FAKE_STAGES["project-review"].stage(project)
-}
-export function createProjectReviewReview(llm?: RunLlmConfig): ReviewAgentAdapter<ProjectReviewState, ProjectReviewArtifact> {
-  return llm ? createHostedReviewAdapter("project-review", llm) : FAKE_STAGES["project-review"].review()
-}
+export const createBrainstormStage = (_project: Project | undefined, llm?: RunLlmConfig) =>
+  createStageAdapter<BrainstormState, BrainstormArtifact>("brainstorm", llm)
+export const createBrainstormReview = (llm?: RunLlmConfig) =>
+  createReviewAdapter<BrainstormState, BrainstormArtifact>("brainstorm", llm)
 
-export function createTestWriterStage(project: Project, llm?: RunLlmConfig): StageAgentAdapter<TestWriterState, StoryTestPlanArtifact> {
-  return llm ? createHostedStageAdapter("test-writer", llm) : FAKE_STAGES["test-writer"].stage(project)
-}
-export function createTestWriterReview(llm?: RunLlmConfig): ReviewAgentAdapter<TestWriterState, StoryTestPlanArtifact> {
-  return llm ? createHostedReviewAdapter("test-writer", llm) : FAKE_STAGES["test-writer"].review()
-}
+export const createVisualCompanionStage = (llm?: RunLlmConfig) =>
+  createStageAdapter<VisualCompanionState, WireframeArtifact>("visual-companion", llm)
+export const createVisualCompanionReview = (llm?: RunLlmConfig) =>
+  createReviewAdapter<VisualCompanionState, WireframeArtifact>("visual-companion", llm)
 
-export function createQaStage(llm?: RunLlmConfig): StageAgentAdapter<QaState, QaArtifact> {
-  return llm ? createHostedStageAdapter("qa", llm) : FAKE_STAGES.qa.stage()
-}
-export function createQaReview(llm?: RunLlmConfig): ReviewAgentAdapter<QaState, QaArtifact> {
-  return llm ? createHostedReviewAdapter("qa", llm) : FAKE_STAGES.qa.review()
-}
+export const createFrontendDesignStage = (llm?: RunLlmConfig) =>
+  createStageAdapter<FrontendDesignState, DesignArtifact>("frontend-design", llm)
+export const createFrontendDesignReview = (llm?: RunLlmConfig) =>
+  createReviewAdapter<FrontendDesignState, DesignArtifact>("frontend-design", llm)
+
+export const createRequirementsStage = (llm?: RunLlmConfig) =>
+  createStageAdapter<RequirementsState, RequirementsArtifact>("requirements", llm)
+export const createRequirementsReview = (llm?: RunLlmConfig) =>
+  createReviewAdapter<RequirementsState, RequirementsArtifact>("requirements", llm)
+
+export const createArchitectureStage = (project: Project, llm?: RunLlmConfig) =>
+  createStageAdapter<ArchitectureState, ArchitectureArtifact>("architecture", llm, project)
+export const createArchitectureReview = (llm?: RunLlmConfig) =>
+  createReviewAdapter<ArchitectureState, ArchitectureArtifact>("architecture", llm)
+
+export const createPlanningStage = (project: Project, llm?: RunLlmConfig) =>
+  createStageAdapter<PlanningState, ImplementationPlanArtifact>("planning", llm, project)
+export const createPlanningReview = (llm?: RunLlmConfig) =>
+  createReviewAdapter<PlanningState, ImplementationPlanArtifact>("planning", llm)
+
+export const createDocumentationStage = (project: Project, llm?: RunLlmConfig) =>
+  createStageAdapter<DocumentationState, DocumentationArtifact>("documentation", llm, project)
+export const createDocumentationReview = (llm?: RunLlmConfig) =>
+  createReviewAdapter<DocumentationState, DocumentationArtifact>("documentation", llm)
+
+export const createProjectReviewStage = (project: Project, llm?: RunLlmConfig) =>
+  createStageAdapter<ProjectReviewState, ProjectReviewArtifact>("project-review", llm, project)
+export const createProjectReviewReview = (llm?: RunLlmConfig) =>
+  createReviewAdapter<ProjectReviewState, ProjectReviewArtifact>("project-review", llm)
+
+export const createTestWriterStage = (project: Project, llm?: RunLlmConfig) =>
+  createStageAdapter<TestWriterState, StoryTestPlanArtifact>("test-writer", llm, project)
+export const createTestWriterReview = (llm?: RunLlmConfig) =>
+  createReviewAdapter<TestWriterState, StoryTestPlanArtifact>("test-writer", llm)
+
+export const createQaStage = (llm?: RunLlmConfig) =>
+  createStageAdapter<QaState, QaArtifact>("qa", llm)
+export const createQaReview = (llm?: RunLlmConfig) =>
+  createReviewAdapter<QaState, QaArtifact>("qa", llm)
