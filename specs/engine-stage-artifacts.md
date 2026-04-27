@@ -61,7 +61,7 @@ every stage and isn't repeated below.
                                 ▼
   ┌────────────────────────────────────────────────────────────────┐
   │ test-writer                                                    │
-  │   reads:  story, architecture-summary, wave                    │
+  │   reads:  story, architecture-summary, wave, design antiPatterns │
   │   writes: test-plan                                            │
   └─────────────────────────────┬──────────────────────────────────┘
                                 │
@@ -69,7 +69,8 @@ every stage and isn't repeated below.
   ┌────────────────────────────────────────────────────────────────┐
   │ coder (Ralph + worker)                                         │
   │   reads:  story, test-plan, architecture-summary,              │
-  │          design, mockupHtmlByScreen (owner only), references   │
+  │          design guidance, mockupHtmlByScreen (owner only,      │
+  │          iteration 1), references                              │
   │   writes: commits on story branch · implementation.json ·      │
   │          story-review.json · review-tool-artifacts/            │
   └─────────────────────────────┬──────────────────────────────────┘
@@ -78,21 +79,23 @@ every stage and isn't repeated below.
                                 ▼
   ┌────────────────────────────────────────────────────────────────┐
   │ project-review                                                 │
-  │   reads:  prd, architecture, plan, execution-summaries         │
+  │   reads:  full prd, full architecture, plan-summary,           │
+  │          execution-summaries                                   │
   │   writes: project-review (findings · recommendations)          │
   └─────────────────────────────┬──────────────────────────────────┘
                                 │
                                 ▼
   ┌────────────────────────────────────────────────────────────────┐
   │ qa                                                             │
-  │   reads:  project-review, merged project branch                │
+  │   reads:  prd-digest, project-review, merged project branch    │
   │   writes: qa-report                                            │
   └─────────────────────────────┬──────────────────────────────────┘
                                 │
                                 ▼
   ┌────────────────────────────────────────────────────────────────┐
   │ documentation                                                  │
-  │   reads:  prd, architecture, plan, project-review              │
+  │   reads:  prd-digest, architecture-summary, plan-summary,      │
+  │          project-review                                        │
   │   writes: README · technical-doc · features-doc (committed)    │
   └─────────────────────────────┬──────────────────────────────────┘
                                 │
@@ -212,7 +215,7 @@ delivered per-story to the screen-owner only (planned in Part 1c via
 - `ProjectContext.decisions`
 
 **Writes** to `stages/architecture/artifacts/`
-- `architecture.json` → `ArchitectureArtifact` `{ projectId, summary, systemShape, constraints, components[], dataFlow, decisions[] }`
+- `architecture.json` → `ArchitectureArtifact` `{ project, concept, prdSummary, architecture: { summary, systemShape, components[], dataModelNotes[], apiNotes[], deploymentNotes[], constraints[], decisions[], risks[], openQuestions[] } }`
 - `architecture.md`
 - `summary.md`
 
@@ -222,7 +225,7 @@ delivered per-story to the screen-owner only (planned in Part 1c via
 
 **Reads**
 - `ProjectContext.prd`
-- `ProjectContext.architecture`
+- `ProjectContext.architecture` (project-review keeps the full artifact; planning receives a distilled `architectureSummary`)
 - `ProjectContext.codebase`
 - `ProjectContext.decisions`
 
@@ -242,8 +245,9 @@ delivered per-story to the screen-owner only (planned in Part 1c via
 - `project` `{ id, name }`
 - `conceptSummary` (string from project.concept.summary)
 - `story` `{ id, title, acceptanceCriteria[] }`
-- `architectureSummary` `{ summary, systemShape, constraints, relevantComponents[] }`
+- `architectureSummary` `{ summary, systemShape, constraints, relevantComponents[], decisions[] }`
 - `wave` `{ id, number, goal, dependencies }`
+- `design` `{ antiPatterns[] }` (negative-test guidance mirrored from the design-system gate)
 
 **Writes** to `stages/execution/waves/wave-<n>/stories/<storyId>/test-writer/`
 - `test-plan.json` → `StoryTestPlanArtifact` `{ story, testPlan: { testCases[], coverage, edgeCases, assumptions } }`
@@ -263,14 +267,17 @@ delivered per-story to the screen-owner only (planned in Part 1c via
 - `primaryWorkspaceRoot` (the main repo checkout where `workspace.json` lives — distinct from the per-story worktree, used for review-policy lookup)
 - `kind` (`"feature"` default, `"setup"` routes to the dedicated setup-story path)
 - `setupContract` (only when `kind === "setup"`) — `{ expectedFiles[], requiredScripts[], postChecks[] }`
-- `design` (the project-level `DesignArtifact`)
-- `mockupHtmlByScreen` (only on the screen-owner story, per Part 1c)
+- `design`
+  - feature stories: `{ tone, antiPatterns }`
+  - setup stories that materialise shared assets: full `DesignArtifact`
+- `mockupHtmlByScreen` (only on the screen-owner story, and only on the first coder-session delivery)
 - `references` — `StoryReference[]` of explicit artifacts the coder must consume verbatim (e.g. the design-tokens.css path for setup stories)
 - prior iterations' `priorAttempts[]` (via `iterationContext`)
 
 **Writes** to `stages/execution/waves/wave-<n>/stories/<storyId>/ralph/`
 - `coder-baseline.json` (git baseline before iteration)
 - `implementation.json` → `StoryImplementationArtifact` per-iteration log + status
+  - includes persisted coder-session delivery state (`mockupDeliveredToSession`) so later iterations stop re-shipping mockup HTML
 - `story-review-cycle-<n>.json` (per review cycle)
 - `story-review.json` (final review gate verdict)
 - `review-tool-artifacts/cycle-<n>/`
@@ -280,6 +287,7 @@ delivered per-story to the screen-owner only (planned in Part 1c via
   - `design-system.raw.txt` (Part 1e — programmatic gate for hardcoded colors / Tailwind palette / non-zero radius)
   - `review-tools-summary.json`
 - `merge-resolver.<timestamp>.json` (post-fix Part 3) — when a wave-merge needs LLM resolution
+  - resolver prompt includes `expectedSharedFiles[]` hints from planning metadata so expected shared-file conflicts are treated as union merges
 - `log.jsonl`
 
 **Real-git side effects** (the actual code):

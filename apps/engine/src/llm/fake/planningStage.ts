@@ -9,7 +9,7 @@ function buildArtifact(project: Project, state: PlanningState): ImplementationPl
       name: project.name,
     },
     conceptSummary: project.concept.summary,
-    architectureSummary: state.architectureArtifact.architecture.summary,
+    architectureSummary: state.architectureSummary.summary,
     plan: {
       summary: "Implementation plan with a base wave and an expansion wave.",
       assumptions: ["PRD and architecture are stable enough"],

@@ -159,7 +159,8 @@ test("buildStoryExecutionContext injects design and only the owner mockup", () =
     screenOwners: owners,
   })
 
-  assert.equal(storyContext.design?.tokens.light.primary, "#005a65")
+  assert.equal(storyContext.design?.tone, "Petrol and gold")
+  assert.deepEqual(storyContext.architectureSummary.decisions, [])
   assert.deepEqual(storyContext.mockupHtmlByScreen, {
     dashboard: "<!doctype html><html><body>dashboard</body></html>",
   })

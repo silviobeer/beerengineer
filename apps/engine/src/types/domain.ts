@@ -198,6 +198,46 @@ export type PRD = {
   stories: UserStory[]
 }
 
+export type ArchitectureDecision = {
+  id: string
+  summary: string
+  rationale?: string
+}
+
+export type ArchitectureSummary = {
+  summary: string
+  systemShape: string
+  constraints: string[]
+  relevantComponents: Array<{
+    name: string
+    responsibility: string
+  }>
+  decisions: ArchitectureDecision[]
+}
+
+export type PrdDigest = {
+  projectId?: string
+  storyCount: number
+  acCountByStory: Record<string, number>
+  criticalAcs: Array<{
+    storyId: string
+    acId: string
+    text: string
+  }>
+}
+
+export type PlanSummary = {
+  waveCount: number
+  waves: Array<{
+    id: string
+    kind: "setup" | "feature"
+    goal: string
+    storyIds: string[]
+    exitCriteria: string[]
+  }>
+  risks: string[]
+}
+
 export type ArchitectureArtifact = {
   project: {
     id: string
@@ -220,6 +260,7 @@ export type ArchitectureArtifact = {
     apiNotes: string[]
     deploymentNotes: string[]
     constraints: string[]
+    decisions?: ArchitectureDecision[]
     risks: string[]
     openQuestions: string[]
   }

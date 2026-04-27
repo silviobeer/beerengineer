@@ -26,6 +26,13 @@ function buildArtifact(project: Project, state: ArchitectureState): Architecture
       apiNotes: ["CRUD endpoints", "Filterable list API"],
       deploymentNotes: ["Web-first", "Simple deployment for small teams"],
       constraints: project.concept.constraints,
+      decisions: [
+        {
+          id: "ARCH-01",
+          summary: "Keep workflow state changes behind the backend boundary.",
+          rationale: "Preserves one validation path and avoids duplicating business rules in the UI.",
+        },
+      ],
       risks: ["Scope too broad", "Unclear data flows"],
       openQuestions: state.lastReviewFeedback ? [state.lastReviewFeedback] : [],
     },

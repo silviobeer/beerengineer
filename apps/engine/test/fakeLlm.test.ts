@@ -234,7 +234,17 @@ test("planning stage produces two waves with explicit story-level parallelism se
       acceptanceCriteria: [],
     })),
   }
-  const state = { prd: prd3, architectureArtifact: { architecture: { summary: "A" } }, revisionCount: 0 } as never
+  const state = {
+    prd: prd3,
+    architectureSummary: {
+      summary: "A",
+      systemShape: "shape",
+      constraints: [],
+      relevantComponents: [],
+      decisions: [],
+    },
+    revisionCount: 0,
+  } as never
   const out = await stage.step({ kind: "begin", state })
   assert.equal(out.kind, "artifact")
   if (out.kind === "artifact") {
@@ -326,12 +336,12 @@ test("project-review stage: first run emits findings; after revision with feedba
     revisionCount: number
     lastReviewFeedback?: string
     executionSummaries: Array<{ waveId: string; storiesMerged: unknown[]; storiesBlocked: string[] }>
-    implementationPlan: { plan: { waves: unknown[] } }
+    planSummary: { waveCount: number }
     prd: PRD
   } = {
     revisionCount: 0,
     executionSummaries: [{ waveId: "W1", storiesMerged: [{}], storiesBlocked: [] }],
-    implementationPlan: { plan: { waves: [{}] } },
+    planSummary: { waveCount: 1 },
     prd,
   }
 
@@ -354,8 +364,12 @@ test("project-review stage: first run emits findings; after revision with feedba
 test("documentation reviewer enforces Known Risks when project-review findings exist", async () => {
   const review = new FakeDocumentationReviewAdapter()
   const stateWithFindings = {
-    project,
-    prd,
+    prdDigest: {
+      projectId: project.id,
+      storyCount: 1,
+      acCountByStory: { "US-01": 1 },
+      criticalAcs: [{ storyId: "US-01", acId: "AC-01", text: "works" }],
+    },
     projectReview: {
       project: { id: "P01", name: "P" },
       scope: "project-wide-code-review" as const,
@@ -387,7 +401,15 @@ test("documentation reviewer enforces Known Risks when project-review findings e
 
 test("documentation reviewer flags missing stories in features doc and oversized README", async () => {
   const review = new FakeDocumentationReviewAdapter()
-  const state = { project, prd, projectReview: { findings: [] } } as never
+  const state = {
+    prdDigest: {
+      projectId: project.id,
+      storyCount: 1,
+      acCountByStory: { "US-01": 1 },
+      criticalAcs: [{ storyId: "US-01", acId: "AC-01", text: "works" }],
+    },
+    projectReview: { findings: [] },
+  } as never
 
   const tooLongReadme = {
     project: { id: "P01", name: "P" },
@@ -425,45 +447,31 @@ test("documentation stage produces artifact covering the PRD stories", async () 
   const stage = new FakeDocumentationStageAdapter(project)
   const state = {
     projectId: project.id,
-    prd,
-    architecture: {
-      project: { id: project.id, name: project.name, description: project.description },
-      concept,
-      prdSummary: { storyCount: 1, storyIds: ["US-01"] },
-      architecture: {
-        summary: "sum",
-        systemShape: "shape",
-        components: [],
-        dataModelNotes: [],
-        apiNotes: [],
-        deploymentNotes: [],
-        constraints: [],
-        risks: [],
-        openQuestions: [],
-      },
+    prdDigest: {
+      projectId: project.id,
+      storyCount: 1,
+      acCountByStory: { "US-01": 1 },
+      criticalAcs: [{ storyId: "US-01", acId: "AC-01", text: "works" }],
     },
-    implementationPlan: {
-      project: { id: project.id, name: project.name },
-      conceptSummary: "sum",
-      architectureSummary: "sum",
-      plan: {
-        summary: "p",
-        assumptions: [],
-        sequencingNotes: [],
-        dependencies: [],
-        risks: [],
-        waves: [
-          {
-            id: "W1",
-            number: 1,
-            goal: "g",
-            stories: [{ id: "US-01", title: "t" }],
-            internallyParallelizable: false,
-            dependencies: [],
-            exitCriteria: [],
-          },
-        ],
-      },
+    architectureSummary: {
+      summary: "sum",
+      systemShape: "shape",
+      constraints: [],
+      relevantComponents: [],
+      decisions: [],
+    },
+    planSummary: {
+      waveCount: 1,
+      waves: [
+        {
+          id: "W1",
+          kind: "feature" as const,
+          goal: "g",
+          storyIds: ["US-01"],
+          exitCriteria: [],
+        },
+      ],
+      risks: [],
     },
     executionSummaries: [
       {

@@ -9,13 +9,13 @@ Project-wide core architecture for UI, API, and data storage. System shape: Mono
 The implementation plan shipped 2 wave(s). Wave 1: Deliver core workflow (US-01). Wave 2: Finish overview and edit features (US-02, US-03).
 
 ## Reliability Controls
-Frontend-design now persists `design-tokens.css` alongside `design.json` and `design-preview.html`. Execution precomputes screen ownership from planning metadata, injects project design plus owner-only mockup HTML into `StoryExecutionContext`, and supports setup waves with explicit shared-file contracts. Story review runs a built-in design-system gate before external review tools to catch hardcoded hex colors, Tailwind palette classes, and rounded corners.
+Frontend-design persists `design-tokens.css` alongside `design.json` and `design-preview.html`. Execution precomputes screen ownership from planning metadata, injects architecture decisions plus project design guidance into `StoryExecutionContext`, limits owner-only mockup HTML to the first coder-session delivery, and supports setup waves with explicit shared-file contracts. Real-git conflict resolution also reuses planning `sharedFiles[]` metadata to treat expected shared-file conflicts as union merges before escalating unexpected conflicts to deeper reasoning.
 
 ## Execution Outcome
 3 story branches reached a passed state. No blocked stories remain in execution.
 
 ## Architecture Decisions
-Frontend: Core workflow and list views; Backend: Validation, persistence, and workflow logic; Storage: Durable storage of entries and status
+Architecture summaries now carry explicit decision entries downstream so execution and documentation do not have to rediscover cross-cutting choices from prose alone.
 
 ## Real Git Worktree Model
 Real-Git runs keep the primary workspace on the base branch. Item work happens

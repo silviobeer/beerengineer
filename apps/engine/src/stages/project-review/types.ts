@@ -1,6 +1,6 @@
 import type {
   ArchitectureArtifact,
-  ImplementationPlanArtifact,
+  PlanSummary,
   PRD,
   ProjectReviewArtifact,
   ProjectReviewFinding,
@@ -22,7 +22,7 @@ export type ProjectReviewState = {
   projectId: string
   prd: PRD
   architecture: ArchitectureArtifact
-  implementationPlan: ImplementationPlanArtifact
+  planSummary: PlanSummary
   executionSummaries: WaveSummary[]
   repoEvidence?: ProjectReviewRepoEvidence
   revisionCount: number

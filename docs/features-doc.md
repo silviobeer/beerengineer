@@ -9,7 +9,7 @@ US-01: User sees the core workflow as a guided input form; US-02: User sees an o
 Wave 1 delivers Deliver core workflow; Wave 2 delivers Finish overview and edit features
 
 ## Reliability Features
-Execution now ships design tokens and owner-scoped mockup references directly to the coder, and setup waves can serialize shared infrastructure work before feature stories run.
+Execution now ships architecture decisions plus design guidance (`tone`, `antiPatterns`) directly to the coder, limits owner-scoped mockup HTML to the first coder-session delivery, and lets setup waves serialize shared infrastructure work before feature stories run.
 
 ## Scope Notes
 The shipped scope is complete for the planned stories, with low-risk technical cleanup remaining.

@@ -88,22 +88,40 @@ shape choice, and the rough cost.
 
 ### A. Add `architectureDecisions[]` to `architectureSummary` (highest leverage; under-informing fix)
 
-**Change.** Extend `architectureSummary` (used in
-`StoryExecutionContext` and proposed for planning) to carry the
-architecture's decisions list:
+**Change.** Extend `ArchitectureArtifact` first so the architecture
+stage emits a small structured decisions list, then extend
+`architectureSummary` (used in `StoryExecutionContext` and proposed
+for planning) to carry that list downstream:
 
 ```ts
+type ArchitectureDecision = {
+  id: string
+  summary: string
+  rationale?: string
+}
+
+type ArchitectureArtifact = {
+  // ... existing fields ...
+  architecture: {
+    // ... existing fields ...
+    decisions?: ArchitectureDecision[] // NEW
+  }
+}
+
 architectureSummary: {
   summary: string
   systemShape: string
   constraints: string[]
   relevantComponents: Array<{ name; responsibility }>
-  decisions: Array<{ id; summary; rationale? }>  // NEW
+  decisions: ArchitectureDecision[]  // NEW
 }
 ```
 
-The decisions are already present on `ArchitectureArtifact.decisions`;
-this just stops dropping them on the way down to the coder.
+Today the architecture artifact does **not** expose a decisions field,
+so this is a real contract extension at the architecture stage, not
+just a projection tweak at execution time. The optimization is still
+worth doing; the implementation cost is simply a bit higher than
+"copy an existing field".
 
 **Why.** S-07 re-invented an `SSEConnectionManager` because the
 "use the centralized RunStreamProvider" decision never reached the
@@ -116,9 +134,10 @@ saved across runs, fewer "agent re-invents what arch decided" bugs.
 costs ~500-2000 tokens, dwarfed by the architecture-summary surface
 they're joining.
 
-**Cost.** ~1 hour. Type extension, copy from
-`architecture.json` into `architectureSummary` at construction.
-Snapshot test on `buildStoryExecutionContext`.
+**Cost.** ~half day. Add the field to the architecture artifact
+contract, emit it from the architecture stage, then copy it into
+`architectureSummary` at construction. Snapshot test on
+`buildStoryExecutionContext`.
 
 ### B. Drop `design.tokens` from feature-story payloads
 
@@ -146,8 +165,13 @@ the CSS file the coder imports.
 
 **Change.** `RealGitMergeOptions` gains
 `expectedSharedFiles?: string[]`. The wave-merge step in
-`executeWave` populates it from the planning artifact's
-`wave.stories[*].sharedFiles[]` union. The resolver prompt prepends:
+`executeWave` populates it from the planning artifact's shared-file
+metadata:
+
+- feature waves: union of `wave.stories[*].sharedFiles[]`
+- setup waves: union of `wave.tasks[*].sharedFiles[]`
+
+The resolver prompt prepends:
 
 > The following files are expected to be touched by multiple
 > stories in this wave; treat conflicts on them as union-merges
@@ -170,12 +194,24 @@ post-state markers and `git diff --diff-filter=U`. If the planner's
 
 ### D. Don't re-ship `mockupHtmlByScreen` on iterations 2+
 
-**Change.** `IterationContext` gains
-`mockupAlreadyShownToSession?: boolean`. Set to true once the
-screen-owner story's iteration 1 has been emitted. On
-subsequent iterations, omit `mockupHtmlByScreen` from the payload
-(the coder session has already seen it; the file the coder wrote
-is now the canonical interpretation).
+**Change.** Add persisted per-story state recording whether the owner
+mockup has already been sent to the current coder session. On
+subsequent iterations, omit `mockupHtmlByScreen` from the execution
+payload (the coder session has already seen it; the file the coder
+wrote is now the canonical interpretation).
+
+One possible shape:
+
+```ts
+StoryImplementationArtifact = {
+  // ... existing fields ...
+  mockupDeliveredToSession?: boolean
+}
+```
+
+`IterationContext` may mirror that as
+`mockupAlreadyShownToSession?: boolean` for prompt/debug visibility,
+but the gating decision should not rely on `IterationContext` alone.
 
 **Why.** Mockup HTML is ~25KB. Owner stories often go through
 2-4 iterations under cycle-cap conditions. Re-shipping wastes
@@ -186,8 +222,12 @@ otherwise compress.
 (`coderSessionId` persists across iterations). The session already
 has the mockup in its history.
 
-**Cost.** ~1 hour. State on `StoryImplementationArtifact`; gate in
-`buildStoryExecutionContext`.
+**Cost.** ~1-2 hours. Persist the state on
+`StoryImplementationArtifact`; gate the final coder payload at the
+execution/coder-harness seam, or thread the persisted state explicitly
+into `buildStoryExecutionContext`. Do not assume the current
+`buildStoryExecutionContext` signature can infer iteration/session
+state by itself.
 
 ### E. Generalise `architectureSummary`; introduce `prdDigest` + `planSummary`
 
@@ -197,7 +237,7 @@ has the mockup in its history.
   (already exists; ensure decisions[] is included per item A).
 - `renderPrdDigest(prd): PrdDigest` — `{ projectId, storyCount,
   acCountByStory: Record<storyId, number>, criticalAcs: AcRef[] }`.
-  "Critical" = `priority === "must-have"` AC.
+  "Critical" = `priority === "must"` AC.
 - `renderPlanSummary(plan): PlanSummary` — `{ waveCount,
   waves: Array<{id, kind, goal, storyIds, exitCriteria}>,
   risks }`.

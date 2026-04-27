@@ -6,6 +6,7 @@ import type {
   NavigationFlow,
   WireframeArtifact,
 } from "../types/domain.js"
+import type { DesignGuidance } from "../types/execution.js"
 
 function mergeConceptText(base: string, amendments: Amendment[]): string {
   if (amendments.length === 0) return base
@@ -64,6 +65,14 @@ export function projectDesign(artifact: DesignArtifact): DesignArtifact {
   return rest
 }
 
+export function projectDesignGuidance(artifact: DesignArtifact | undefined): DesignGuidance | undefined {
+  if (!artifact) return undefined
+  return {
+    tone: artifact.tone,
+    antiPatterns: artifact.antiPatterns,
+  }
+}
+
 export function mergeAmendments(
   concept: Concept,
   amendments: Amendment[] | undefined,
@@ -79,4 +88,3 @@ export function mergeAmendments(
     constraints: [...concept.constraints, ...relevant.map(amendment => amendment.description)],
   }
 }
-
