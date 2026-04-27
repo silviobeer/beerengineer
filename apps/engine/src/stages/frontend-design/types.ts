@@ -1,5 +1,6 @@
 import type { ChatMessage } from "../../llm/types.js"
 import type { DesignArtifact, ReferenceInput, WireframeArtifact } from "../../types/domain.js"
+import type { CodebaseSnapshot } from "../../types/context.js"
 import type { DesignPrepInput } from "../visual-companion/types.js"
 
 export type FrontendDesignInput = DesignPrepInput & {
@@ -19,6 +20,9 @@ export type FrontendDesignState = {
   pendingRevisionFeedback?: string
   /** How many user review rounds have completed (approve/revise). */
   userReviewRound: number
+  /** Brownfield context snapshot — top-level files + tree summary for the
+   *  workspace. Optional because greenfield items have nothing to surface. */
+  codebase?: CodebaseSnapshot
 }
 
 export type { DesignArtifact }

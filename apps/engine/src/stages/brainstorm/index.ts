@@ -6,6 +6,7 @@ import { renderConceptMarkdown } from "../../render/concept.js"
 import { ask } from "../../sim/human.js"
 import { createBrainstormReview, createBrainstormStage, type RunLlmConfig } from "../../llm/registry.js"
 import type { GitAdapter } from "../../core/gitAdapter.js"
+import type { CodebaseSnapshot } from "../../types/context.js"
 import type { BrainstormState } from "./types.js"
 import { normalizeBrainstormArtifact } from "./types.js"
 
@@ -14,6 +15,7 @@ export async function brainstorm(
   context: WorkflowContext,
   git: GitAdapter,
   llm?: RunLlmConfig,
+  codebase?: CodebaseSnapshot,
 ): Promise<Project[]> {
   stagePresent.header("brainstorm")
   // Brainstorm is the first stage of a fresh run — it owns the creation of
@@ -35,6 +37,7 @@ export async function brainstorm(
       questionsAsked: 0,
       targetQuestions: 3,
       history: [],
+      codebase,
     }),
     stageAgent: createBrainstormStage(undefined, llm),
     reviewer: createBrainstormReview(llm),

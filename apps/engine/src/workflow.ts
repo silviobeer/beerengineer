@@ -287,11 +287,17 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
   try {
     const itemResumePlan = options?.resume ? normalizeItemResume(options.resume) : { startStage: "brainstorm" as const }
     const resumePlan = options?.resume ? normalizeProjectResume(options.resume) : null
+    // Load the workspace snapshot once per item. Brownfield context (existing
+    // README, AGENTS.md, prior docs/, top-level config files, tree summary)
+    // is the same for every stage of this item; reading it N times — once per
+    // project — was the previous behavior. Loaded here so brainstorm /
+    // visual-companion / frontend-design also receive it.
+    const codebaseSnapshot = loadCodebaseSnapshot(options?.workspaceRoot)
     let projects: Project[]
     if (itemResumePlan.startStage === "brainstorm") {
       // Fresh-run path: brainstorm owns the item-branch + worktree creation.
       projects = await withStageLifecycle("brainstorm", {}, () =>
-        brainstorm(item, context, git, options?.llm?.stage),
+        brainstorm(item, context, git, options?.llm?.stage, codebaseSnapshot),
       )
     } else {
       // Resume past brainstorm: brainstorm won't run, so re-establish the
@@ -327,7 +333,7 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
         ? undefined
         : shouldRunVisualCompanion
         ? await withStageLifecycle("visual-companion", {}, () =>
-            visualCompanion(context, { itemConcept, projects, references: designPrepReferences }, options?.llm?.stage),
+            visualCompanion(context, { itemConcept, projects, references: designPrepReferences }, options?.llm?.stage, codebaseSnapshot),
           )
         : await loadWireframes(context)
     const design =
@@ -335,7 +341,7 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
         ? undefined
         : shouldRunFrontendDesign
         ? await withStageLifecycle("frontend-design", {}, () =>
-            frontendDesign(context, { itemConcept, projects, wireframes, references: designPrepReferences }, options?.llm?.stage),
+            frontendDesign(context, { itemConcept, projects, wireframes, references: designPrepReferences }, options?.llm?.stage, codebaseSnapshot),
           )
         : await loadDesign(context)
     if (activeRun) {
@@ -365,7 +371,7 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
           project: { ...project, concept: mergeAmendments(project.concept, conceptAmendments, project.id) },
           wireframes: wireframes ? projectWireframes(wireframes, project.id) : undefined,
           design: design ? projectDesign(design) : undefined,
-          codebase: loadCodebaseSnapshot(options?.workspaceRoot),
+          codebase: codebaseSnapshot,
           decisions: loadItemDecisions(context.workspaceId),
         },
         git,

@@ -13,6 +13,7 @@ import { renderDesignTokensCss } from "../../render/designTokensCss.js"
 import { renderMockupFile, renderMockupSitemap } from "../../render/mockupFile.js"
 import { ask } from "../../sim/human.js"
 import type { DesignArtifact, WireframeArtifact, WorkflowContext } from "../../types.js"
+import type { CodebaseSnapshot } from "../../types/context.js"
 import type { FrontendDesignInput, FrontendDesignState } from "./types.js"
 
 function buildDesignSummary(artifact: DesignArtifact): string {
@@ -87,6 +88,7 @@ export async function frontendDesign(
   context: WorkflowContext,
   input: FrontendDesignInput,
   llm?: RunLlmConfig,
+  codebase?: CodebaseSnapshot,
 ): Promise<DesignArtifact> {
   stagePresent.header("frontend-design")
 
@@ -114,6 +116,7 @@ export async function frontendDesign(
       maxClarifications: 3,
       pendingRevisionFeedback: revisionFeedback,
       userReviewRound: reviewRound,
+      codebase,
     }),
     async persistArtifacts(run, artifact): Promise<StageArtifactContent[]> {
         const sourceFiles = resolveReferences(context, "design", input.references)

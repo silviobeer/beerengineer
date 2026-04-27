@@ -1,5 +1,6 @@
 import type { ChatMessage } from "../../llm/types.js"
 import type { Concept, Item, Project } from "../../types.js"
+import type { CodebaseSnapshot } from "../../types/context.js"
 
 export type BrainstormArtifact = {
   concept: Concept & { hasUi: boolean }
@@ -53,4 +54,5 @@ export type BrainstormState = {
   questionsAsked: number
   targetQuestions: number
   history: ChatMessage[]
+  codebase?: CodebaseSnapshot
 }

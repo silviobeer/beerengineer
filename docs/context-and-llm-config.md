@@ -104,19 +104,29 @@ why, even after a process restart.
 ### Codebase snapshot — `core/codebaseSnapshot.ts`
 
 A pre-loaded compact view of the workspace, attached to the payload of
-engineering stages so they don't grep their way to the api contract on
-every call:
+**every LLM-using stage** so they don't grep their way to the api
+contract on every call. Loaded once per item by `runWorkflow`, then
+threaded into design-prep (`brainstorm` / `visual-companion` /
+`frontend-design`), engineering stages, and the execution coder.
 
 - Top-level files: `README.md`, `AGENTS.md`, `package.json`,
   `tsconfig.json` (each bounded to **32 KB**, larger files are
   truncated with a marker). `AGENTS.md` carries the workspace's house
   rules for AI coding agents per the [agents.md](https://agents.md)
-  convention; pre-loading it means engineering stages follow those
-  rules on turn 1 instead of discovering them via tool calls.
-  Nested `AGENTS.md` files (one per subtree) are intentionally not
-  walked — the convention's "nearest wins" rule is left to the live
-  filesystem, since stage agents have at least `safe-readonly` tool
-  access and can read a closer file when working in a subtree.
+  convention; pre-loading it means stages follow those rules on turn 1
+  instead of discovering them via tool calls. Nested `AGENTS.md` files
+  (one per subtree) are intentionally not walked — the convention's
+  "nearest wins" rule is left to the live filesystem, since engineering
+  stage agents have at least `safe-readonly` tool access and can read a
+  closer file when working in a subtree.
+- Workspace docs (when present): `docs/AGENTS.md`,
+  `docs/architecture.md`, `docs/api-contract.md`,
+  `docs/technical-doc.md`, `docs/features-doc.md`,
+  `docs/README.compact.md`. These are typically produced by the
+  documentation stage of a previous run, so a brownfield brainstorm /
+  requirements / architecture pass sees what the project already
+  claims to be (shipped features, stated tech choices, house style)
+  instead of starting from a tree listing alone.
 - Tree summary: 2 levels deep, sorted, with these directories skipped:
   `.git`, `node_modules`, `.next`, `.turbo`, `.bg-shell`,
   `.beerengineer`, `dist`, `build`, `coverage`, `.cache`, `.vscode`.
@@ -126,9 +136,13 @@ every call:
   the snapshot loader for backwards compatibility with workspaces that
   still use them; the canonical engine doc is now `docs/api-contract.md`).
 
-The snapshot is a *warm-up*, not a substitute for tools — stage agents
-that need deeper inspection still use Read/Grep, gated by the runtime
-policy (see Part B).
+The snapshot is a *warm-up*, not a substitute for tools. Engineering
+stages still use Read/Grep when they need deeper inspection (gated by
+the runtime policy — see Part B). Design-prep stages stay on
+`no-tools` for first-token latency, so the snapshot is their **only**
+view of the existing codebase; they treat documented claims as
+hypotheses to reconcile against the artifact they're producing, not as
+ground truth.
 
 ### References store — `core/referencesStore.ts`
 
@@ -400,9 +414,9 @@ and the markdown files in `apps/engine/prompts/{system,reviewers,workers}/`.
 
 | Stage | Inputs (beyond the global context) | Output artifact | Stage prompt | Reviewer prompt | Notes |
 |---|---|---|---|---|---|
-| `brainstorm` | item title + description | Concept (summary, problem, users, constraints) + `Project[]` split | `prompts/system/brainstorm.md` — Senior Product Strategist scoping the item | `prompts/reviewers/brainstorm.md` — checks concept clarity, success criteria, `hasUi` flag | Item-level; produces the per-project split |
-| `visual-companion` | concept + projects + design references | `WireframeArtifact` (screens, navigation, `wireframeHtmlPerScreen`) | `prompts/system/visual-companion.md` — Senior UX Designer producing low-fi wireframes | `prompts/reviewers/visual-companion.md` — coverage, region mapping, lo-fi compliance | Design-prep, `no-tools`; only runs when projects have UI |
-| `frontend-design` | wireframes + design references | `DesignArtifact` (tokens, typography, spacing, mockups, anti-patterns) | `prompts/system/frontend-design.md` — Senior Visual Designer building the item-wide language | `prompts/reviewers/frontend-design.md` — token completeness, contrast, CSS-var usage | Design-prep, `no-tools`; mockups required when wireframes exist |
+| `brainstorm` | item title + description + codebase snapshot | Concept (summary, problem, users, constraints) + `Project[]` split | `prompts/system/brainstorm.md` — Senior Product Strategist scoping the item | `prompts/reviewers/brainstorm.md` — checks concept clarity, success criteria, `hasUi` flag | Item-level; produces the per-project split. Snapshot is the only code-awareness on `no-tools`. |
+| `visual-companion` | concept + projects + design references + codebase snapshot | `WireframeArtifact` (screens, navigation, `wireframeHtmlPerScreen`) | `prompts/system/visual-companion.md` — Senior UX Designer producing low-fi wireframes | `prompts/reviewers/visual-companion.md` — coverage, region mapping, lo-fi compliance | Design-prep, `no-tools`; only runs when projects have UI |
+| `frontend-design` | wireframes + design references + codebase snapshot | `DesignArtifact` (tokens, typography, spacing, mockups, anti-patterns) | `prompts/system/frontend-design.md` — Senior Visual Designer building the item-wide language | `prompts/reviewers/frontend-design.md` — token completeness, contrast, CSS-var usage | Design-prep, `no-tools`; mockups required when wireframes exist |
 | `requirements` | concept + (optional) wireframes/design + codebase snapshot | `RequirementsArtifact` (PRD with `UserStory[]` + ACs) | `prompts/system/requirements.md` — Senior PM eliciting testable PRD | `prompts/reviewers/requirements.md` — story independence, AC testability | Tool-using → `safe-readonly`; carries snapshot |
 | `architecture` | PRD + (optional) wireframes/design + codebase snapshot | `ArchitectureArtifact` (components, decisions, risks, AC→component map) | `prompts/system/architecture.md` — Staff Solution Architect grounded in repo | `prompts/reviewers/architecture.md` — boundary clarity, decision consistency | Tool-using → `safe-readonly`; emits decision binding |
 | `planning` | PRD + architecture + codebase snapshot | `ImplementationPlanArtifact` (waves, story groups, dependencies, exit criteria) | `prompts/system/planning.md` — TPM sequencing waves with explicit deps | `prompts/reviewers/planning.md` — forward-flow deps, parallel safety, story coverage | Tool-using → `safe-readonly` |
@@ -415,7 +429,7 @@ and the markdown files in `apps/engine/prompts/{system,reviewers,workers}/`.
 **Global rules every row implicitly assumes:**
 
 - Every call also receives the matching `*Context` envelope from § *Payload context fields*: stage calls get `stageContext`, review calls get `reviewContext`, execution calls get `iterationContext`. The agent must trust these over its own session memory.
-- Engineering stages (`requirements`, `architecture`, `planning`, `project-review`, `qa`, `documentation`) additionally receive the **codebase snapshot** assembled by `core/codebaseSnapshot.ts` so they don't re-grep on every turn.
+- Every LLM-using stage receives the **codebase snapshot** assembled by `core/codebaseSnapshot.ts` so brownfield context is visible from turn 1. Engineering stages use it as a *warm-up* (they still hold tools); design-prep stages (`brainstorm`, `visual-companion`, `frontend-design`) use it as their *only* view of the existing code, since they run on `no-tools`.
 - The **prompt envelope** wrapping every call (prompt file + canonical instructions + payload JSON) is built by `buildHostedPrompt(...)` in `llm/hosted/promptEnvelope.ts`. Stage rows above describe the *body*; the envelope shape is identical across stages and documented in § *Mental model*.
 - `execution` is the only stage that owns its own runtime (Ralph). The "stage prompt" for `execution` is the worker prompt (`prompts/workers/execution.md`); the per-story `test-writer` provides the test plan and feedback for the inner review cycle.
 

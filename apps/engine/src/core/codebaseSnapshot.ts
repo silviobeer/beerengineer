@@ -11,6 +11,19 @@ import type { CodebaseSnapshot } from "../types/context.js"
 // which we leave to the live filesystem since stage agents have read-only
 // tool access and can read a closer file when working in a subtree.
 const TOP_LEVEL_FILE_NAMES = ["README.md", "AGENTS.md", "package.json", "tsconfig.json"]
+// Workspace docs (often produced by a previous run's documentation stage).
+// Including them in the snapshot lets brownfield brainstorm / requirements /
+// architecture see what the project already claims to be — what features
+// shipped, the stated tech choices, the house style — instead of starting
+// from a tree listing alone.
+const WORKSPACE_DOC_FILE_NAMES = [
+  "docs/AGENTS.md",
+  "docs/architecture.md",
+  "docs/api-contract.md",
+  "docs/technical-doc.md",
+  "docs/features-doc.md",
+  "docs/README.compact.md",
+]
 const SPEC_PATH_HINTS = [
   "apps/engine/src/api/openapi.json",
   "spec/api-contract.md",
@@ -76,7 +89,7 @@ function walkTree(root: string, current: string, depth: number, out: string[]): 
 export function loadCodebaseSnapshot(workspaceRoot: string | undefined): CodebaseSnapshot | undefined {
   if (!workspaceRoot || !existsSync(workspaceRoot)) return undefined
   const topLevelFiles: Array<{ path: string; content: string }> = []
-  for (const name of TOP_LEVEL_FILE_NAMES) {
+  for (const name of [...TOP_LEVEL_FILE_NAMES, ...WORKSPACE_DOC_FILE_NAMES]) {
     const full = join(workspaceRoot, name)
     const content = readBoundedFile(full)
     if (content !== undefined) topLevelFiles.push({ path: name, content })

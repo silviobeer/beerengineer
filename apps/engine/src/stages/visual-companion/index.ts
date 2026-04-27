@@ -10,6 +10,7 @@ import { createVisualCompanionReview, createVisualCompanionStage, type RunLlmCon
 import { renderWireframeFiles } from "../../render/wireframes.js"
 import { ask } from "../../sim/human.js"
 import type { WorkflowContext, WireframeArtifact } from "../../types.js"
+import type { CodebaseSnapshot } from "../../types/context.js"
 import type { DesignPrepInput, VisualCompanionState } from "./types.js"
 
 function buildScreenSummary(artifact: WireframeArtifact): string {
@@ -24,6 +25,7 @@ export async function visualCompanion(
   context: WorkflowContext,
   input: DesignPrepInput,
   llm?: RunLlmConfig,
+  codebase?: CodebaseSnapshot,
 ): Promise<WireframeArtifact> {
   stagePresent.header("visual-companion")
 
@@ -46,6 +48,7 @@ export async function visualCompanion(
       maxClarifications: 3,
       pendingRevisionFeedback: revisionFeedback,
       userReviewRound: reviewRound,
+      codebase,
     }),
     async persistArtifacts(run, artifact): Promise<StageArtifactContent[]> {
       const sourceFiles = resolveReferences(context, "wireframes", input.references)
