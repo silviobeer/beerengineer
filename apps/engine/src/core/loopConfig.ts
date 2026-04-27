@@ -49,6 +49,27 @@ function readPositiveIntEnv(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
 }
 
+/**
+ * Normalise an override value through the same "positive integer or
+ * fall back" filter env-var inputs go through. Returns `undefined` for
+ * non-positive / non-finite / non-integer values so the caller can
+ * fall back to the env-derived value instead of accepting nonsense
+ * like `0` or `-3` and forcing immediate exhaustion.
+ */
+function normalizePositiveIntOverride(value: number | undefined, name: string): number | undefined {
+  if (value === undefined) return undefined
+  if (!Number.isFinite(value) || !Number.isInteger(value) || value <= 0) {
+    if (!warnedFor.has(`override-invalid:${name}`)) {
+      warnedFor.add(`override-invalid:${name}`)
+      process.stderr.write(
+        `[loopConfig] override ${name}=${value} is not a positive integer; ignoring and falling back to env/default\n`,
+      )
+    }
+    return undefined
+  }
+  return value
+}
+
 const warnedFor = new Set<string>()
 function clampWithWarning(value: number, cap: number, source: string, name: string): number {
   if (value <= cap) return value
@@ -99,20 +120,32 @@ export function resolveRalphLoopConfig(override?: Partial<LoopConfig>): LoopConf
       "BEERENGINEER_MAX_REVIEW_CYCLES",
     ),
   }
+  // Normalise overrides through the same positive-int guard env inputs use,
+  // *then* upper-clamp through RALPH_LOOP_CAPS. A negative or zero override
+  // would otherwise force immediate exhaustion and surface as a confusing
+  // "blocked at cycle -1 of 0" recovery state.
+  const overrideIter = normalizePositiveIntOverride(
+    override?.maxIterationsPerCycle,
+    "maxIterationsPerCycle",
+  )
+  const overrideCycles = normalizePositiveIntOverride(
+    override?.maxReviewCycles,
+    "maxReviewCycles",
+  )
   return {
     maxIterationsPerCycle:
-      override?.maxIterationsPerCycle !== undefined
+      overrideIter !== undefined
         ? clampWithWarning(
-            override.maxIterationsPerCycle,
+            overrideIter,
             RALPH_LOOP_CAPS.maxIterationsPerCycle,
             "override",
             "maxIterationsPerCycle",
           )
         : fromEnv.maxIterationsPerCycle,
     maxReviewCycles:
-      override?.maxReviewCycles !== undefined
+      overrideCycles !== undefined
         ? clampWithWarning(
-            override.maxReviewCycles,
+            overrideCycles,
             RALPH_LOOP_CAPS.maxReviewCycles,
             "override",
             "maxReviewCycles",

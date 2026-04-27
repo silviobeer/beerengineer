@@ -139,12 +139,13 @@ test("performResume resumes a blocked story from execution without rerunning pri
       implementation.finalSummary = "Blocked pending external remediation."
       await writeFile(implementationPath, `${JSON.stringify(implementation, null, 2)}\n`)
 
+      const blockedStoryBranch = `story/test-workflow__p01__w2__us-02`
       await writeRecoveryRecord(ctx, {
         status: "blocked",
         cause: "review_block",
         scope: { type: "story", runId: run.id, waveNumber: 2, storyId: "US-02" },
         summary: "Blocked pending external remediation.",
-        branch: implementation.branch?.name,
+        branch: blockedStoryBranch,
         evidencePaths: [implementationPath],
       })
       repos.setRunRecovery(run.id, {
@@ -159,7 +160,7 @@ test("performResume resumes a blocked story from execution without rerunning pri
         scope: "story",
         scopeRef: "2/US-02",
         summary: "Patched the story branch to address the blocked review findings.",
-        branch: implementation.branch?.name ?? null,
+        branch: blockedStoryBranch,
         source: "api",
       })
 

@@ -1,6 +1,12 @@
-import type { AcceptanceCriterion, DesignArtifact, StoryReference } from "./domain.js"
+import type {
+  AcceptanceCriterion,
+  ArchitectureSummary,
+  DesignArtifact,
+  StoryReference,
+} from "./domain.js"
 import type { Severity } from "./review.js"
-import type { SimulatedBranch } from "./repo.js"
+
+export type DesignGuidance = Pick<DesignArtifact, "tone" | "antiPatterns">
 
 export type StoryTestPlanArtifact = {
   project: {
@@ -48,15 +54,7 @@ export type StoryExecutionContext = {
     requiredScripts: string[]
     postChecks: string[]
   }
-  architectureSummary: {
-    summary: string
-    systemShape: string
-    constraints: string[]
-    relevantComponents: Array<{
-      name: string
-      responsibility: string
-    }>
-  }
+  architectureSummary: ArchitectureSummary
   wave: {
     id: string
     number: number
@@ -68,7 +66,7 @@ export type StoryExecutionContext = {
   // Path to the primary workspace checkout (where .beerengineer/workspace.json
   // lives). Distinct from worktreeRoot, which points at the per-story worktree.
   primaryWorkspaceRoot?: string
-  design?: DesignArtifact
+  design?: DesignGuidance | DesignArtifact
   mockupHtmlByScreen?: Record<string, string>
   references?: StoryReference[]
   testPlan: StoryTestPlanArtifact
@@ -101,6 +99,7 @@ export type StoryImplementationArtifact = {
     notes: string[]
   }>
   coderSessionId?: string | null
+  mockupDeliveredToSession?: boolean
   priorAttempts?: Array<{
     iteration: number
     summary: string
@@ -108,7 +107,6 @@ export type StoryImplementationArtifact = {
   }>
   changedFiles: string[]
   finalSummary: string
-  branch?: SimulatedBranch
 }
 
 export type StoryReviewArtifact = {
