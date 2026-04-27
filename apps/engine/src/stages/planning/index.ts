@@ -2,6 +2,7 @@ import { runStage } from "../../core/stageRuntime.js"
 import { printStageCompletion, stageSummary, summaryArtifactFile } from "../../core/stageHelpers.js"
 import { stagePresent } from "../../core/stagePresentation.js"
 import { createPlanningReview, createPlanningStage, type RunLlmConfig } from "../../llm/registry.js"
+import { renderArchitectureSummary } from "../../render/artifactDigests.js"
 import { renderPlanMarkdown } from "../../render/plan.js"
 import type { ImplementationPlanArtifact, PRD, WithArchitecture } from "../../types.js"
 import type { ReviewAgentAdapter, ReviewAgentResponse } from "../../core/adapters.js"
@@ -26,24 +27,56 @@ function validatePlanStoryIds(artifact: ImplementationPlanArtifact, prd: PRD): s
     idsBefore.add(wave.id)
   }
   for (const wave of waves) {
+    const kind = wave.kind ?? "feature"
     const storyList = Array.isArray(wave.stories) ? wave.stories : []
-    if (storyList.length === 0) {
-      issues.push(`Wave ${wave.id ?? wave.number ?? "?"} has zero stories. Every wave must contain at least one PRD story.`)
-    }
-    for (const ref of storyList) {
-      const id = (ref as { id?: string })?.id
-      const title = (ref as { title?: string })?.title
-      if (!id || typeof id !== "string") {
-        issues.push(`Wave ${wave.number} contains a story without an \`id\` (shape must be {id, title}).`)
-        continue
+    const setupTasks = Array.isArray(wave.tasks) ? wave.tasks : []
+    if (kind === "setup") {
+      if (setupTasks.length === 0) {
+        issues.push(`Setup wave ${wave.id ?? wave.number ?? "?"} has zero tasks. Setup waves must use \`tasks\` with at least one setup task.`)
       }
-      if (!prdIds.has(id)) {
-        issues.push(`Wave ${wave.number} references story id "${id}"${title ? ` ("${title}")` : ""} that is not in the PRD. Only PRD story ids are allowed.`)
+      for (const task of setupTasks) {
+        if (!task.id || !task.title) {
+          issues.push(`Setup wave ${wave.id} contains a task missing \`id\` or \`title\`.`)
+          continue
+        }
+        const contract = (task as { contract?: unknown }).contract as
+          | { expectedFiles?: unknown; requiredScripts?: unknown; postChecks?: unknown }
+          | undefined
+        if (
+          !contract ||
+          !Array.isArray(contract.expectedFiles) ||
+          !Array.isArray(contract.requiredScripts) ||
+          !Array.isArray(contract.postChecks)
+        ) {
+          issues.push(
+            `Setup wave ${wave.id} task "${task.id}" has malformed \`contract\`; required shape is { expectedFiles: string[], requiredScripts: string[], postChecks: string[] }.`,
+          )
+        }
+        if (!Array.isArray((task as { sharedFiles?: unknown }).sharedFiles)) {
+          issues.push(
+            `Setup wave ${wave.id} task "${task.id}" is missing \`sharedFiles: string[]\` (use [] when none).`,
+          )
+        }
       }
-      if (seen.has(id)) {
-        issues.push(`Story id "${id}" appears in more than one wave; each PRD story must appear exactly once.`)
+    } else {
+      if (storyList.length === 0) {
+        issues.push(`Wave ${wave.id ?? wave.number ?? "?"} has zero stories. Every feature wave must contain at least one PRD story.`)
       }
-      seen.add(id)
+      for (const ref of storyList) {
+        const id = (ref as { id?: string })?.id
+        const title = (ref as { title?: string })?.title
+        if (!id || typeof id !== "string") {
+          issues.push(`Wave ${wave.number} contains a story without an \`id\` (shape must be {id, title}).`)
+          continue
+        }
+        if (!prdIds.has(id)) {
+          issues.push(`Wave ${wave.number} references story id "${id}"${title ? ` ("${title}")` : ""} that is not in the PRD. Only PRD story ids are allowed.`)
+        }
+        if (seen.has(id)) {
+          issues.push(`Story id "${id}" appears in more than one wave; each PRD story must appear exactly once.`)
+        }
+        seen.add(id)
+      }
     }
     for (const dep of wave.dependencies ?? []) {
       if (typeof dep !== "string" || !/^W\d+$/.test(dep)) {
@@ -91,7 +124,9 @@ export async function planning(ctx: WithArchitecture, llm?: RunLlmConfig): Promi
     createInitialState: (): PlanningState => ({
       projectId: ctx.project.id,
       prd: ctx.prd,
-      architectureArtifact: ctx.architecture,
+      architectureSummary: renderArchitectureSummary(ctx.architecture),
+      codebase: ctx.codebase,
+      decisions: ctx.decisions,
       revisionCount: 0,
     }),
     stageAgent: createPlanningStage(ctx.project, llm),
@@ -121,9 +156,15 @@ export async function planning(ctx: WithArchitecture, llm?: RunLlmConfig): Promi
       stagePresent.ok("Planning review: implementation plan is ready.")
       const waves = Array.isArray(artifact.plan?.waves) ? artifact.plan.waves : []
       waves.forEach(wave => {
-        const tag = wave.internallyParallelizable ? "(stories can run in parallel)" : "(stories run sequentially)"
-        const stories = Array.isArray(wave.stories) ? wave.stories : []
-        stagePresent.chat(`Wave ${wave.number} ${tag}`, stories.map(story => story.title).join(", "))
+        const tag = wave.kind === "setup"
+          ? "(shared infra setup)"
+          : wave.internallyParallelizable
+          ? "(stories can run in parallel)"
+          : "(stories run sequentially)"
+        const entries = wave.kind === "setup"
+          ? (Array.isArray(wave.tasks) ? wave.tasks : [])
+          : (Array.isArray(wave.stories) ? wave.stories : [])
+        stagePresent.chat(`Wave ${wave.number} ${tag}`, entries.map(story => story.title).join(", "))
       })
       printStageCompletion(run, "planning")
       return artifact

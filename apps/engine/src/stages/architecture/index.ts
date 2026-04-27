@@ -1,6 +1,7 @@
 import { runStage } from "../../core/stageRuntime.js"
 import { printStageCompletion, stageSummary, summaryArtifactFile } from "../../core/stageHelpers.js"
 import { stagePresent } from "../../core/stagePresentation.js"
+import { projectDesignGuidance } from "../../core/designPrep.js"
 import { createArchitectureReview, createArchitectureStage, type RunLlmConfig } from "../../llm/registry.js"
 import { renderArchitectureMarkdown } from "../../render/architecture.js"
 import type { ArchitectureArtifact, WithPrd } from "../../types.js"
@@ -19,7 +20,9 @@ export async function architecture(ctx: WithPrd, llm?: RunLlmConfig): Promise<Ar
       projectId: ctx.project.id,
       prd: ctx.prd,
       wireframes: ctx.wireframes,
-      design: ctx.design,
+      design: projectDesignGuidance(ctx.design),
+      codebase: ctx.codebase,
+      decisions: ctx.decisions,
       revisionCount: 0,
     }),
     stageAgent: createArchitectureStage(ctx.project, llm),

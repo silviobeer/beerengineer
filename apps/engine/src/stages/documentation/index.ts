@@ -4,6 +4,11 @@ import { runStage } from "../../core/stageRuntime.js"
 import { printStageCompletion, stageSummary, summaryArtifactFile } from "../../core/stageHelpers.js"
 import { stagePresent } from "../../core/stagePresentation.js"
 import { createDocumentationReview, createDocumentationStage, type RunLlmConfig } from "../../llm/registry.js"
+import {
+  renderArchitectureSummary,
+  renderPlanSummary,
+  renderPrdDigest,
+} from "../../render/artifactDigests.js"
 import { buildDocFiles } from "../../render/documentation.js"
 import type { DocumentationArtifact, WithProjectReview } from "../../types.js"
 import type { DocumentationState } from "./types.js"
@@ -52,9 +57,9 @@ export async function documentation(ctx: WithProjectReview, llm?: RunLlmConfig):
     runId: ctx.runId,
     createInitialState: (): DocumentationState => ({
       projectId: ctx.project.id,
-      prd: ctx.prd,
-      architecture: ctx.architecture,
-      implementationPlan: ctx.plan,
+      prdDigest: renderPrdDigest(ctx.prd, ctx.project.id),
+      architectureSummary: renderArchitectureSummary(ctx.architecture),
+      planSummary: renderPlanSummary(ctx.plan),
       executionSummaries: ctx.executionSummaries,
       projectReview: ctx.projectReview,
       revisionCount: 0,
@@ -99,7 +104,7 @@ export async function documentation(ctx: WithProjectReview, llm?: RunLlmConfig):
       printStageCompletion(run, "documentation")
       return artifact
     },
-    maxReviews: 4,
+    maxReviews: 3,
   })
 
   return result

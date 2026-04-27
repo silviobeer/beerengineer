@@ -47,6 +47,7 @@ import { handleRunEvents } from "./sse/runStream.js"
 import { createBoardStream } from "./sse/boardStream.js"
 import { seedIfEmpty } from "./seed.js"
 import { writeApiTokenFile } from "./tokenFile.js"
+import { markOrphanedRunsFailed } from "../core/orphanRecovery.js"
 
 const PORT = Number(process.env.PORT ?? 4100)
 const HOST = process.env.HOST ?? "127.0.0.1"
@@ -94,6 +95,13 @@ function loadEffectiveConfig(): AppConfig | null {
 }
 
 seedIfEmpty(db, repos)
+
+// On every fresh process start, any run still in status='running' has no live
+// worker — the previous process died mid-flight. Mark them failed so
+// POST /runs/:id/resume accepts them without a manual DB patch.
+markOrphanedRunsFailed(repos).catch(err => {
+  console.error("[orphanRecovery] startup scan failed:", (err as Error).message)
+})
 
 const server = createServer(async (req, res) => {
   if (!req.url || !req.method) return json(res, 400, { error: "bad request" })

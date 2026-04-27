@@ -12,21 +12,22 @@ function artifactMode(state: DocumentationState): DocumentationArtifact["mode"] 
 
 function buildTechnicalSections(project: Project, state: DocumentationState): DocumentationSection[] {
   const mergedStories = state.executionSummaries.flatMap(wave => wave.storiesMerged)
+  const waveSummary = state.planSummary.waves.map((wave, index) => {
+    return `Wave ${index + 1}: ${wave.goal} (${wave.storyIds.join(", ")}).`
+  })
   const sections: DocumentationSection[] = [
     {
       heading: "System Overview",
       content: [
-        state.architecture.architecture.summary,
-        `System shape: ${state.architecture.architecture.systemShape}.`,
+        state.architectureSummary.summary,
+        `System shape: ${state.architectureSummary.systemShape}.`,
       ].join(" "),
     },
     {
       heading: "Implementation Waves",
       content: [
-        `The implementation plan shipped ${state.implementationPlan.plan.waves.length} wave(s).`,
-        ...state.implementationPlan.plan.waves.map(
-          wave => `Wave ${wave.number}: ${wave.goal} (${wave.stories.map(story => story.id).join(", ")}).`,
-        ),
+        `The implementation plan shipped ${state.planSummary.waveCount} wave(s).`,
+        ...waveSummary,
       ].join(" "),
     },
     {
@@ -40,8 +41,12 @@ function buildTechnicalSections(project: Project, state: DocumentationState): Do
     },
     {
       heading: "Architecture Decisions",
-      content: state.architecture.architecture.components
-        .map(component => `${component.name}: ${component.responsibility}`)
+      content: state.architectureSummary.decisions.length > 0
+        ? state.architectureSummary.decisions
+          .map(decision => `${decision.id}: ${decision.summary}`)
+          .join("; ")
+        : state.architectureSummary.relevantComponents
+          .map(component => `${component.name}: ${component.responsibility}`)
         .join("; "),
     },
   ]
@@ -64,15 +69,20 @@ function buildTechnicalSections(project: Project, state: DocumentationState): Do
 }
 
 function buildFeatureSections(state: DocumentationState): DocumentationSection[] {
+  const implementedFeatures = state.prdDigest.criticalAcs.length > 0
+    ? state.prdDigest.criticalAcs.map(ac => `${ac.storyId}/${ac.acId}: ${ac.text}`).join("; ")
+    : Object.entries(state.prdDigest.acCountByStory)
+      .map(([storyId, acCount]) => `${storyId}: ${acCount} acceptance criteria`)
+      .join("; ")
   const sections: DocumentationSection[] = [
     {
       heading: "Implemented Features",
-      content: state.prd.stories.map(story => `${story.id}: ${story.title}`).join("; "),
+      content: implementedFeatures,
     },
     {
       heading: "Supported User Flows",
-      content: state.implementationPlan.plan.waves
-        .map(wave => `Wave ${wave.number} delivers ${wave.goal}`)
+      content: state.planSummary.waves
+        .map((wave, index) => `Wave ${index + 1} delivers ${wave.goal}`)
         .join("; "),
     },
     {
@@ -115,7 +125,7 @@ function buildReadmeSections(project: Project, state: DocumentationState): Docum
     },
     {
       heading: "Status",
-      content: `Implemented stories: ${state.prd.stories.map(story => story.id).join(", ")}. Review status: ${state.projectReview.overallStatus}.`,
+      content: `Implemented stories: ${Object.keys(state.prdDigest.acCountByStory).join(", ")}. Review status: ${state.projectReview.overallStatus}.`,
     },
   ]
 }

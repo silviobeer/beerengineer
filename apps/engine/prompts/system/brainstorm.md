@@ -54,8 +54,8 @@ If the user is still clarifying or the concept is not yet stable, continue the d
 
 Return an `artifact` object matching `BrainstormArtifact`:
 
-- `concept`: `{ summary, problem, users, constraints }`
-- `projects`: array of `{ id, name, description, concept }`
+- `concept`: `{ summary, problem, users, constraints, hasUi: boolean }`
+- `projects`: array of `{ id, name, description, concept, hasUi: boolean }`
 
 Rules:
 - include at least one project
@@ -63,3 +63,23 @@ Rules:
 - make every project a coherent implementation slice, not a vague phase label
 - keep the artifact tightly aligned to what the user actually validated during the discussion
 - state constraints concretely; avoid filler like "TBD" or generic placeholders unless the uncertainty itself is an explicit constraint
+- `users` MUST be a JSON array of strings — one entry per user group. Do NOT collapse multiple users into one string.
+- `constraints` MUST be a JSON array of strings — one constraint per element. Do NOT combine all constraints into a single string. Split multi-part constraints into separate array items.
+
+### `hasUi` rules — read carefully
+
+Set `hasUi: true` on a project (and on `concept`) when the project description mentions **any** of the following, even once:
+
+- screens, pages, views, routes, or URLs (e.g. `/w/[key]`, `/dashboard`)
+- UI components, primitives, or widgets (e.g. Button, Panel, ChatMessage, StepperMini, StatusChip)
+- frontend frameworks or libraries (React, Next.js, Vue, Angular, Svelte, Tailwind, CSS, SCSS)
+- user-visible interactions (click, hover, form, drag, drop, keyboard shortcut)
+- visual design or layout concepts (layout, typography, color, dark mode, responsive)
+- client-side state or rendering (useState, SSE/EventSource, live update, streaming UI)
+- browser APIs or Web platform APIs used for display
+
+Set `hasUi: false` **only** when the project is purely a backend service, CLI tool, data pipeline, library, or infrastructure component with no user-facing browser interface.
+
+**When in doubt, default to `hasUi: true`.** A false negative (skipping design-prep for a UI project) causes more damage than a false positive (running design-prep for a project that turns out to need minimal UI).
+
+The top-level `concept.hasUi` must be `true` if **any** project has `hasUi: true`.

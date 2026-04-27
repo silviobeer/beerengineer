@@ -261,3 +261,81 @@ test("readWorkspaceConfig upgrades schemaVersion 1 files with default runtime po
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+// Regression: readWorkspaceConfig used to return null for workspaces written
+// with claude-sdk-first / codex-sdk-first because isValidHarnessProfile's
+// allowlist hadn't been updated. That broke previewWorkspace, openWorkspace,
+// and any restart/resume flow that reloads the saved config.
+for (const mode of ["claude-sdk-first", "codex-sdk-first"] as const) {
+  test(`readWorkspaceConfig round-trips workspaces persisted with ${mode}`, async () => {
+    const dir = mkdtempSync(join(tmpdir(), `be2-workspaces-${mode}-`))
+    try {
+      const root = join(dir, "ws")
+      mkdirSync(join(root, ".beerengineer"), { recursive: true })
+      writeFileSync(
+        join(root, ".beerengineer", "workspace.json"),
+        JSON.stringify({
+          schemaVersion: 2,
+          key: "ws",
+          name: "ws",
+          harnessProfile: { mode },
+          runtimePolicy: {
+            stageAuthoring: "safe-readonly",
+            reviewer: "safe-readonly",
+            coderExecution: "safe-workspace-write",
+          },
+          sonar: { enabled: false },
+          reviewPolicy: { coderabbit: { enabled: false }, sonarcloud: { enabled: false } },
+          createdAt: 123,
+        }, null, 2),
+      )
+
+      const config = await import("../src/core/workspaces.js").then(mod => mod.readWorkspaceConfig(root))
+      assert.ok(config, `readWorkspaceConfig should not return null for ${mode}`)
+      assert.equal(config?.harnessProfile.mode, mode)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+}
+
+// Regression: a self-mode profile that asked for `merge-resolver: sdk` used
+// to validate fine and only fail at conflict-resolution time, where the
+// resolver is sync and only dispatches to CLI adapters. Validation now
+// rejects it up front.
+test("validateHarnessProfile rejects self mode with merge-resolver: sdk", async () => {
+  const { validateHarnessProfile } = await import("../src/core/workspaces.js")
+  const result = validateHarnessProfile(
+    {
+      mode: "self",
+      roles: {
+        coder: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6", runtime: "sdk" },
+        reviewer: { harness: "codex", provider: "openai", model: "gpt-5.4", runtime: "cli" },
+        "merge-resolver": { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6", runtime: "sdk" },
+      },
+    },
+    { groups: [] } as never,
+  )
+  assert.equal(result.ok, false)
+  assert.equal(result.error?.code, "profile_references_unavailable_runtime")
+  assert.match(result.error?.detail ?? "", /merge-resolver/)
+})
+
+// Regression: merge resolver used to silently fall back to CLI when called
+// with runtime: "sdk". Now it reports a clear, actionable failure.
+test("resolveMergeConflictsViaLlm refuses sdk runtime with an actionable reason", async () => {
+  const { resolveMergeConflictsViaLlm } = await import("../src/core/mergeResolver.js")
+  const dir = mkdtempSync(join(tmpdir(), "be2-merge-resolver-sdk-"))
+  try {
+    const result = resolveMergeConflictsViaLlm({
+      workspaceRoot: dir,
+      mergeMessage: "test",
+      harness: { harness: "claude", runtime: "sdk", model: "claude-sonnet-4-6" },
+    })
+    assert.equal(result.ok, false)
+    assert.match(result.reason, /sdk is not implemented/)
+    assert.match(result.reason, /merge-resolver/)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

@@ -1,18 +1,18 @@
 import type {
-  ArchitectureArtifact,
+  ArchitectureSummary,
   DocumentationArtifact,
   DocumentationSection,
-  ImplementationPlanArtifact,
-  PRD,
+  PlanSummary,
+  PrdDigest,
   ProjectReviewArtifact,
   WaveSummary,
 } from "../../types.js"
 
 export type DocumentationState = {
   projectId: string
-  prd: PRD
-  architecture: ArchitectureArtifact
-  implementationPlan: ImplementationPlanArtifact
+  prdDigest: PrdDigest
+  architectureSummary: ArchitectureSummary
+  planSummary: PlanSummary
   executionSummaries: WaveSummary[]
   projectReview: ProjectReviewArtifact
   revisionCount: number

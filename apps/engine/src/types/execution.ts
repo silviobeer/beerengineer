@@ -1,6 +1,12 @@
-import type { AcceptanceCriterion } from "./domain.js"
+import type {
+  AcceptanceCriterion,
+  ArchitectureSummary,
+  DesignArtifact,
+  StoryReference,
+} from "./domain.js"
 import type { Severity } from "./review.js"
-import type { SimulatedBranch } from "./repo.js"
+
+export type DesignGuidance = Pick<DesignArtifact, "tone" | "antiPatterns">
 
 export type StoryTestPlanArtifact = {
   project: {
@@ -28,6 +34,7 @@ export type StoryTestPlanArtifact = {
 }
 
 export type StoryExecutionContext = {
+  kind?: "feature" | "setup"
   item: {
     slug: string
     baseBranch: string
@@ -42,15 +49,12 @@ export type StoryExecutionContext = {
     title: string
     acceptanceCriteria: AcceptanceCriterion[]
   }
-  architectureSummary: {
-    summary: string
-    systemShape: string
-    constraints: string[]
-    relevantComponents: Array<{
-      name: string
-      responsibility: string
-    }>
+  setupContract?: {
+    expectedFiles: string[]
+    requiredScripts: string[]
+    postChecks: string[]
   }
+  architectureSummary: ArchitectureSummary
   wave: {
     id: string
     number: number
@@ -59,6 +63,12 @@ export type StoryExecutionContext = {
   }
   storyBranch?: string
   worktreeRoot?: string
+  // Path to the primary workspace checkout (where .beerengineer/workspace.json
+  // lives). Distinct from worktreeRoot, which points at the per-story worktree.
+  primaryWorkspaceRoot?: string
+  design?: DesignGuidance | DesignArtifact
+  mockupHtmlByScreen?: Record<string, string>
+  references?: StoryReference[]
   testPlan: StoryTestPlanArtifact
 }
 
@@ -89,6 +99,7 @@ export type StoryImplementationArtifact = {
     notes: string[]
   }>
   coderSessionId?: string | null
+  mockupDeliveredToSession?: boolean
   priorAttempts?: Array<{
     iteration: number
     summary: string
@@ -96,7 +107,6 @@ export type StoryImplementationArtifact = {
   }>
   changedFiles: string[]
   finalSummary: string
-  branch?: SimulatedBranch
 }
 
 export type StoryReviewArtifact = {
@@ -152,6 +162,15 @@ export type StoryReviewArtifact = {
           status: "failed"
           reason: string
           exitCode?: number
+        }
+    designSystem:
+      | {
+          status: "ran"
+          passed: boolean
+        }
+      | {
+          status: "skipped"
+          reason: string
         }
   }
   outcome: "pass" | "revise" | "pass-unreviewed" | "pass-tool-failure" | "pass-partial"

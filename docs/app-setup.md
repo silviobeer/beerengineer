@@ -2,6 +2,13 @@
 
 BeerEngineer now has a dedicated app-level setup flow for machine readiness.
 
+> **Audience:** operators / developers running the engine, not first-time
+> users. For the user-facing walkthrough (interactive setup, registering
+> a workspace, picking a harness profile, optional Telegram), start with
+> [`setup-for-dummies.md`](./setup-for-dummies.md). This file is the
+> reference for the underlying `doctor` / `setup` commands the
+> walkthrough invokes.
+
 ## Commands
 
 ```bash
@@ -19,6 +26,33 @@ npm exec --workspace=@beerengineer2/engine beerengineer -- notifications test te
 - `GET /setup/status` returns the same JSON contract as `doctor --json`. Passing `?group=` with an unknown id responds `400 { "error": "unknown_group" }`; the CLI equivalent exits with code 2.
 
 Known group ids: `core`, `vcs.github`, `llm.anthropic`, `llm.openai`, `llm.opencode`, `browser-agent`, `review`, `notifications`.
+
+### LLM auth: CLI vs SDK
+
+The engine supports two invocation runtimes per harness role:
+
+- **CLI runtimes** (`claude:cli`, `codex:cli`) rely on the local agent
+  CLI's auth state — i.e. you've previously run `claude login` /
+  `codex login`. No API key is needed in the engine environment.
+- **SDK runtimes** (`claude:sdk`, `codex:sdk`) require a real API key
+  in the process environment:
+  - `claude:sdk` → `ANTHROPIC_API_KEY`
+  - `codex:sdk`  → `OPENAI_API_KEY`
+
+  `doctor` flags missing keys when a workspace's harness profile
+  selects an SDK-backed role. The engine refuses to silently fall back
+  to CLI when SDK was requested — it throws
+  `profile_references_unavailable_runtime` so the operator sees the
+  mismatch immediately.
+
+  **Billing note.** SDK profiles bill **per-token** against the API
+  key. CLI profiles bill against the local subscription bundle.
+  Switching a coder role from `cli` to `sdk` can change the invoice
+  shape — read `docs/context-and-llm-config.md` § *CLI vs SDK runtime*
+  before flipping a production workspace.
+
+  `opencode:sdk` is rejected at validation time — there's no
+  comparable opencode agent SDK shipping today.
 
 ## Config
 
@@ -109,9 +143,70 @@ idempotent `ALTER TABLE` migrations and bumps the version; a newer DB opened by 
 older binary is left untouched. When introducing level 2+, add a real
 `migrate(from, to)` runner keyed off `user_version` instead of stamping the constant.
 
+## Harness JSON protocol (driving the engine programmatically)
+
+For agents (Claude Code, Codex, custom wrappers) that drive the engine
+non-interactively:
+
+```bash
+beerengineer --json [--workspace <key>] [--verbose]
+beerengineer run --json [--workspace <key>] [--verbose]
+```
+
+Stdout is one JSON event per line. Two modes:
+
+**Agent mode (default, no `--verbose`).** The first line is a one-shot
+`workflow_started` handshake that documents the reply protocol inline:
+
+```json
+{"type":"workflow_started","version":1,"protocol":{"wake_on":["prompt_requested"],"reply":"{\"type\":\"prompt_answered\",\"promptId\":\"<from prompt_requested>\",\"answer\":\"<your answer>\"}","terminal_events":["run_finished","run_blocked","run_failed","cli_finished"]}}
+```
+
+After the handshake, only events on the agent allowlist are emitted:
+`prompt_requested`, `prompt_answered`, `run_started`, `run_finished`,
+`run_blocked`, `run_failed`. Lifecycle chatter (`chat_message`,
+`presentation`, `log`, `stage_started`, …) is suppressed — the agent
+just filters on `type === "prompt_requested"`. Each open prompt also
+prints a compact stderr signpost `⏸  beerengineer waiting on prompt
+[p-…]: <text>` (prompt text truncated at 120 chars) so shell wrappers
+that don't parse stdout still see where the run is blocked.
+
+**Firehose mode (`--verbose`).** Stdout mirrors every bus event for
+debugging or replay.
+
+The harness reads `prompt_requested` events from stdout and replies on
+stdin with one JSON line per answer:
+
+```json
+{"type":"prompt_answered","promptId":"<from prompt_requested>","answer":"<your answer>"}
+```
+
+Human-readable output goes to stderr in both modes. The run terminates
+with `{"type":"cli_finished","runId":"…"}`.
+
+The allowlist and handshake live in
+`apps/engine/src/core/renderers/ndjson.ts`; the `--json` / `--verbose`
+flag handling is in `apps/engine/src/index.ts`.
+
 ## Tests
 
 - Fast unit tests run by default: `npm test --workspace=@beerengineer2/engine`.
 - The end-to-end CLI smoke test (`start_brainstorm runs to completion`) is gated behind
   `BE2_RUN_SLOW_TESTS=1` because it drives scripted stdin through the real workflow and
   is sensitive to prompt-count changes.
+
+## Test pyramid (engine)
+
+- **Engine unit tests** — `apps/engine/test/*.test.ts`, run under
+  `node:test --import tsx`. Several hundred tests across ~45 files
+  covering: stage→board column mapping, bus-subscriber lifecycle,
+  pending-prompt round-trip, `AsyncLocalStorage` isolation across
+  parallel runs, real-git branch operations including
+  `abandonStoryBranch`, base-branch resolution, API-route integration
+  (`apiIntegration.test.ts`), the Ralph runtime
+  (`ralphRuntime.test.ts`), the hosted-CLI adapter (retry + JSON
+  recovery), the cross-process bridge, and resume-with-remediation.
+- **UI E2E** — none today. The previous Playwright suite under
+  `apps/ui/tests/e2e/` was removed with the UI teardown
+  (see [`ui-design-notes.md`](./ui-design-notes.md)). End-to-end tests
+  return with the UI rebuild.

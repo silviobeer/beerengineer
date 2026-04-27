@@ -65,6 +65,14 @@ When a story unlocks multiple later stories, place it as early as practical.
 
 When two stories are logically independent but likely to collide on the same module or shared contract, treat that as a coordination risk instead of assuming easy parallelism.
 
+## Operator Decisions
+
+The payload may include a `decisions` array — durable scope answers from the operator across previous runs of the same item.
+
+- treat each decision as binding for this run
+- do not plan work for a story or capability that an operator decision has dropped
+- never re-open a closed decision; the plan must reflect it
+
 ## Output Contract
 
 Return an `artifact` object matching `ImplementationPlanArtifact`:
@@ -74,14 +82,26 @@ Return an `artifact` object matching `ImplementationPlanArtifact`:
 - `architectureSummary`: string
 - `plan`: `{ summary, assumptions, sequencingNotes, dependencies, risks, waves }`
 
-For each wave:
-- use `{ id, number, goal, stories, parallel, dependencies, exitCriteria }`
+For each feature wave:
+- use `{ id, number, kind, goal, stories, dependencies, exitCriteria, internallyParallelizable }`
 - `id` MUST be `"W<number>"` (e.g., `"W1"`, `"W2"`, …); `number` MUST match
+- `kind` should be `"feature"` unless the wave is a shared-infra setup wave
 - `stories` MUST be `Array<{ id: string, title: string }>` — never `Array<string>` and never wrapped shapes
 - every `stories[*].id` MUST be the exact `id` of an existing story in the supplied PRD; do NOT invent new stories, do NOT omit the `id`, do NOT synthesize scaffold or placeholder stories
 - every `stories[*].title` must match the corresponding PRD story's title
 - every project story must appear in exactly one wave
 - `dependencies` MUST be `Array<string>` containing ONLY existing wave ids of EARLIER waves (e.g., `["W1"]`). Never prose, never story ids, never wrapped shapes. An empty array `[]` means no prerequisite waves.
+
+For setup waves:
+- emit `{ id, number, kind: "setup", goal, stories: [], tasks, dependencies, exitCriteria, internallyParallelizable: false }`
+- `tasks` MUST be `Array<{ id, title, sharedFiles, contract, references? }>`
+- each `contract` MUST be `{ expectedFiles: string[], requiredScripts: string[], postChecks: string[] }`
+- setup tasks are implementation-plan-only shared-infra work; they are not PRD stories
+
+Shared-infra wave rule:
+- if two or more feature stories in the same wave would edit the same shared file, emit a setup wave before that feature wave
+- add `sharedFiles?: string[]` to each feature-wave story for machine-checkable collision metadata
+- add `screenIds?: string[]` to feature-wave stories when you can map the story to specific UI screens
 
 Rules:
 - dependencies must flow forward only

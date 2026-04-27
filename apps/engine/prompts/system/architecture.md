@@ -59,6 +59,14 @@ For `apiNotes`, describe interface patterns and integration boundaries only when
 
 For `constraints`, `risks`, and `openQuestions`, include only items that materially affect the project or planning decisions.
 
+## Operator Decisions
+
+The payload may include a `decisions` array — durable scope answers from the operator across previous runs of the same item.
+
+- treat each decision as binding for this run
+- do not contradict or work around a decision; if it removes a feature, the architecture must reflect the removal
+- never re-open a closed decision; reflect it in the architecture instead
+
 ## Output Contract
 
 Return an `artifact` object matching `ArchitectureArtifact`:
@@ -66,7 +74,8 @@ Return an `artifact` object matching `ArchitectureArtifact`:
 - `project`: `{ id, name, description }`
 - `concept`: `{ summary, problem, users, constraints }`
 - `prdSummary`: `{ storyCount, storyIds }` — `storyIds` MUST be the exact ids from the supplied PRD; do NOT invent ids, do NOT add placeholder or scaffold ids
-- `architecture`: `{ summary, systemShape, components, dataModelNotes, apiNotes, deploymentNotes, constraints, risks, openQuestions }`
+- `architecture`: `{ summary, systemShape, components, dataModelNotes, apiNotes, deploymentNotes, constraints, risks, openQuestions, decisions }`
+- `architecture.decisions`: `Array<{ id, summary, rationale? }>` — the cross-cutting choices a downstream coder must respect (e.g. "use the centralized RunStreamProvider, do not mount EventSource per component"). Emit between three and ten such decisions; each must be project-wide, not story-local. These are read by every story coder via `architectureSummary.decisions[]` and prevent the agent from re-inventing what's already been decided.
 
 Rules:
 - `components` entries must each have one clear responsibility

@@ -1,19 +1,24 @@
-import { readFile } from "node:fs/promises"
+import { existsSync, readFileSync } from "node:fs"
+import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { spawnSync } from "node:child_process"
 import { join } from "node:path"
-import { branchNameStory, ensureWaveBranch, mergeWaveBranchIntoProject } from "../../core/repoSimulation.js"
-import {
-  abandonStoryBranchReal,
-  detectRealGitMode,
-  ensureStoryBranchReal,
-  ensureStoryWorktreeReal,
-  ensureWaveBranchReal,
-  mergeStoryIntoWaveReal,
-  mergeWaveIntoProjectReal,
-  removeStoryWorktreeReal,
-} from "../../core/realGit.js"
+import { computeScreenOwners, type ScreenOwnerMap } from "../../core/screenOwners.js"
+import { projectDesignGuidance } from "../../core/designPrep.js"
+import { branchNameStory } from "../../core/branchNames.js"
+import { createGitAdapter, type GitAdapter } from "../../core/gitAdapter.js"
+import { writeRecoveryRecord } from "../../core/recovery.js"
+import { emitEvent, getActiveRun } from "../../core/runContext.js"
 import { runStage } from "../../core/stageRuntime.js"
-import { createTestWriterReview, createTestWriterStage, type RunLlmConfig } from "../../llm/registry.js"
+import {
+  createTestWriterReview,
+  createTestWriterStage,
+  resolveHarness,
+  resolveMergeResolverHarness,
+  type RunLlmConfig,
+} from "../../llm/registry.js"
 import { stagePresent } from "../../core/stagePresentation.js"
+import { runCoderHarness } from "../../llm/hosted/execution/coderHarness.js"
+import { renderArchitectureSummary } from "../../render/artifactDigests.js"
 import { renderTestPlanMarkdown } from "../../render/testPlan.js"
 import { runRalphStory, writeWaveSummary, type StoryArtifacts } from "./ralphRuntime.js"
 import { layout } from "../../core/workspaceLayout.js"
@@ -21,6 +26,7 @@ import type { StoryTestPlanArtifact, TestWriterState } from "./types.js"
 import type {
   AcceptanceCriterion,
   ArchitectureArtifact,
+  StoryReference,
   StoryExecutionContext,
   StoryImplementationArtifact,
   UserStory,
@@ -57,14 +63,25 @@ async function readJsonIfExists<T>(path: string): Promise<T | undefined> {
   }
 }
 
-export async function execution(ctx: WithPlan, resume?: ExecutionResumeOptions, llm?: ExecutionLlmOptions): Promise<WaveSummary[]> {
+export async function execution(
+  ctx: WithPlan,
+  resume?: ExecutionResumeOptions,
+  llm?: ExecutionLlmOptions,
+  git: GitAdapter = createGitAdapter(ctx),
+): Promise<WaveSummary[]> {
   stagePresent.header(`execution — ${ctx.project.name}`)
 
   const storyById = new Map(ctx.prd.stories.map(story => [story.id, story]))
+  const screenOwners = computeScreenOwners(ctx.prd, ctx.plan, ctx.wireframes)
+  const orderedWaves = [...ctx.plan.plan.waves].sort((left, right) => {
+    const leftRank = left.kind === "setup" ? 0 : 1
+    const rightRank = right.kind === "setup" ? 0 : 1
+    return leftRank - rightRank || left.number - right.number
+  })
 
   const summaries: WaveSummary[] = []
   const completedWaveIds = new Set<string>()
-  for (const wave of ctx.plan.plan.waves) {
+  for (const wave of orderedWaves) {
     if (resume?.waveNumber && wave.number < resume.waveNumber) {
       const persisted = await readJsonIfExists<WaveSummary>(layout.waveSummaryFile(ctx, wave.number))
       if (!persisted) {
@@ -76,7 +93,7 @@ export async function execution(ctx: WithPlan, resume?: ExecutionResumeOptions, 
     }
 
     assertWaveDependenciesSatisfied(wave, completedWaveIds)
-    summaries.push(await executeWave(ctx, wave, storyById, resume, llm))
+    summaries.push(await executeWave(ctx, wave, storyById, screenOwners, git, resume, llm))
     completedWaveIds.add(wave.id)
     if (resume?.waveNumber === wave.number) resume = undefined
   }
@@ -104,53 +121,80 @@ function assertWaveDependenciesSatisfied(
   }
 }
 
+function expectedSharedFilesForWave(wave: WaveDefinition): string[] {
+  const entries = wave.kind === "setup"
+    ? (wave.tasks ?? []).flatMap(task => task.sharedFiles ?? [])
+    : wave.stories.flatMap(story => story.sharedFiles ?? [])
+  return Array.from(new Set(entries)).sort()
+}
+
 async function executeWave(
   ctx: WithArchitecture,
   wave: WaveDefinition,
   storyById: Map<string, UserStory>,
+  screenOwners: ScreenOwnerMap,
+  git: GitAdapter,
   resume?: ExecutionResumeOptions,
   llm?: ExecutionLlmOptions,
 ): Promise<WaveSummary> {
+  const waveEntries: Array<Pick<UserStory, "id" | "title">> = wave.kind === "setup"
+    ? (wave.tasks ?? []).map(task => ({ id: task.id, title: task.title }))
+    : wave.stories
   // A wave is a serial integration boundary. `internallyParallelizable`
   // means only that its stories are dependency-independent and may execute
   // concurrently inside the wave once the runtime supports that mode.
   const tag = wave.internallyParallelizable
     ? "(stories eligible for parallel execution inside the wave; currently executed sequentially with isolated worktrees)"
     : "(stories executed sequentially)"
-  stagePresent.step(`\nWave ${wave.number} ${tag}: ${wave.stories.map(s => s.id).join(", ")}`)
-  await ensureWaveBranch(ctx, ctx.project.id, wave.number)
+  stagePresent.step(`\nWave ${wave.number} ${tag}: ${waveEntries.map(s => s.id).join(", ")}`)
+  git.ensureWaveBranch(ctx.project.id, wave.number)
 
-  const realGit = detectRealGitMode(ctx)
-  if (realGit.enabled) {
-    ensureWaveBranchReal(realGit, ctx, ctx.project.id, wave.number)
+  const mergeResolverHarness:
+    | { harness: "claude" | "codex" | "opencode" | "fake"; runtime?: "cli" | "sdk"; model?: string }
+    | undefined = llm?.executionCoder
+    ? (() => {
+        const resolved = resolveMergeResolverHarness(llm.executionCoder!)
+        if (resolved.kind === "fake") return { harness: "fake" as const }
+        return { harness: resolved.harness, runtime: resolved.runtime, model: resolved.model }
+      })()
+    : undefined
+  const expectedSharedFiles = expectedSharedFilesForWave(wave)
+
+  // Wave-branch merges/abandons must happen one at a time even when story
+  // implementations run in parallel — concurrent `git merge` into the wave
+  // branch races on the same ref. The chain serialises just the git ops while
+  // story implementations and worktree cleanup stay fully concurrent.
+  let waveBranchOpQueue: Promise<void> = Promise.resolve()
+  const enqueueWaveBranchOp = (op: () => void): Promise<void> => {
+    waveBranchOpQueue = waveBranchOpQueue.then(async () => op())
+    return waveBranchOpQueue
   }
 
   const run = async (story: Pick<UserStory, "id" | "title">) => {
-    const resolved = resolveStory(story, storyById)
+    const resolved = wave.kind === "setup"
+      ? { id: story.id, title: story.title, acceptanceCriteria: [] }
+      : resolveStory(story, storyById)
     let storyWorktreeRoot: string | undefined
     let result: StoryResult | undefined
     try {
-      storyWorktreeRoot = realGit.enabled
-        ? ensureStoryWorktreeReal(
-            realGit,
-            ctx,
-            ctx.project.id,
-            wave.number,
-            resolved.id,
-            layout.executionStoryWorktreeDir(ctx, wave.number, resolved.id),
-          )
-        : undefined
-      // `ensureStoryWorktreeReal` already creates the story branch if
-      // missing and checks it out inside the worktree. Calling
-      // `ensureStoryBranchReal` here would `git checkout <story>` in the
-      // main workspace, which git refuses because the branch is already
-      // used by the worktree — crashes the run with
-      // "is already used by worktree at …". Only run the main-workspace
-      // checkout when worktrees are disabled.
-      if (realGit.enabled && !storyWorktreeRoot) {
-        ensureStoryBranchReal(realGit, ctx, ctx.project.id, wave.number, resolved.id)
+      storyWorktreeRoot =
+        git.ensureStoryWorktree(
+          ctx.project.id,
+          wave.number,
+          resolved.id,
+          layout.executionStoryWorktreeDir(ctx, wave.number, resolved.id),
+        ) ?? undefined
+      // `ensureStoryWorktree` already creates the story branch if missing
+      // and checks it out inside the worktree. Calling `ensureStoryBranch`
+      // here would `git checkout <story>` in the main workspace, which git
+      // refuses because the branch is already used by the worktree — crashes
+      // the run with "is already used by worktree at …". Only run the
+      // main-workspace checkout when worktrees are disabled (i.e. enabled
+      // but no worktree root was returned).
+      if (git.enabled && !storyWorktreeRoot) {
+        git.ensureStoryBranch(ctx.project.id, wave.number, resolved.id)
       }
-      result = await implementStory(ctx, wave, resolved, {
+      result = await implementStory(ctx, wave, resolved, screenOwners, {
         rerunTestWriter: resume != null && resume.storyId === story.id ? Boolean(resume.rerunTestWriter) : false,
         worktreeRoot: storyWorktreeRoot,
       }, llm)
@@ -158,21 +202,31 @@ async function executeWave(
       // (ralphRuntime only sim-merges when the story outcome is "passed"). This
       // keeps the two state machines from diverging on anything other than
       // "passed" (e.g. ready_for_review left behind by a crashed cycle).
-      if (realGit.enabled && result.implementation.status === "passed") {
-        mergeStoryIntoWaveReal(realGit, ctx, ctx.project.id, wave.number, resolved.id)
+      // Serialise via `enqueueWaveBranchOp` so concurrent stories cannot race
+      // on the wave branch.
+      if (result.implementation.status === "passed") {
+        await enqueueWaveBranchOp(() =>
+          git.mergeStoryIntoWave(ctx.project.id, wave.number, resolved.id, {
+            mergeResolver: mergeResolverHarness,
+            resolverLogDir: layout.executionWaveDir(ctx, wave.number),
+            expectedSharedFiles,
+          }),
+        )
       }
-      if (realGit.enabled && result.implementation.status === "blocked") {
-        abandonStoryBranchReal(realGit, ctx, ctx.project.id, wave.number, resolved.id)
+      if (result.implementation.status === "blocked") {
+        await enqueueWaveBranchOp(() =>
+          git.abandonStoryBranch(ctx.project.id, wave.number, resolved.id),
+        )
       }
       return result
     } finally {
-      if (realGit.enabled && storyWorktreeRoot) {
+      if (storyWorktreeRoot) {
         // Swallow cleanup errors so they cannot mask a primary failure from
         // `implementStory` / branch ops. The primary error carries the real
         // debugging signal; worktree-removal failures are surfaced via logs
-        // and cleaned up by `gcManagedStoryWorktreesReal` on the next run.
+        // and cleaned up by `gcManagedStoryWorktrees` on the next run.
         try {
-          removeStoryWorktreeReal(realGit, storyWorktreeRoot)
+          git.removeStoryWorktree(storyWorktreeRoot)
         } catch (err) {
           stagePresent.dim(`worktree cleanup failed for ${storyWorktreeRoot}: ${(err as Error).message}`)
         }
@@ -180,17 +234,57 @@ async function executeWave(
     }
   }
 
-  const results = await sequentially(wave.stories, run)
+  // Stories within a wave are independent by plan-construction (the planner
+  // keeps cross-story dependencies in different waves). Default to running
+  // them in parallel — each lives in its own worktree + branch, and the
+  // wave-branch merge step serialises through `enqueueWaveBranchOp` above.
+  // Set BEERENGINEER_SEQUENTIAL_STORIES=1 to force the legacy sequential path.
+  const parallel = wave.kind !== "setup" && process.env.BEERENGINEER_SEQUENTIAL_STORIES !== "1"
+  const results = parallel
+    ? await runStoriesInParallel(waveEntries, run)
+    : await sequentially(waveEntries, run)
 
   const summary = await writeWaveSummary(ctx, wave, ctx.project.id, results)
   stagePresent.ok(
     `Wave ${wave.number} complete — merged: ${summary.storiesMerged.length}, blocked: ${summary.storiesBlocked.length}`,
   )
-  assertWaveSucceeded(wave, summary)
-  await mergeWaveBranchIntoProject(ctx, ctx.project.id, wave.number)
-  if (realGit.enabled) {
-    mergeWaveIntoProjectReal(realGit, ctx, ctx.project.id, wave.number)
+  if (summary.storiesBlocked.length > 0) {
+    // assertWaveSucceeded throws below — write a stage-scope recovery record
+    // first so resume_run sees a `blocked` recovery instead of a 409. The
+    // disk record alone is not enough: runOrchestrator's run_blocked handler
+    // is what syncs `runs.recovery_status` in the DB, so emit the event too.
+    const blockedSummary = `Wave ${wave.id} blocked stories: ${summary.storiesBlocked.join(", ")}.`
+    await writeRecoveryRecord(ctx, {
+      status: "blocked",
+      cause: "stage_error",
+      scope: { type: "stage", runId: ctx.runId, stageId: "execution" },
+      summary: blockedSummary,
+      detail: `wave=${wave.number} merged=${summary.storiesMerged.length} blocked=${summary.storiesBlocked.length}`,
+      evidencePaths: [layout.executionWaveDir(ctx, wave.number)],
+    })
+    const active = getActiveRun()
+    if (!active) {
+      // run_blocked needs an itemId for triage. If we ever land here, the
+      // event will surface as "unknown-item" — log loudly so it's not silent.
+      stagePresent.dim(
+        `run_blocked emitted without active run context for runId=${ctx.runId} wave=${wave.number}; event will appear as unknown-item`,
+      )
+    }
+    emitEvent({
+      type: "run_blocked",
+      runId: ctx.runId,
+      itemId: active?.itemId ?? "unknown-item",
+      title: active?.title ?? active?.itemId ?? "unknown-item",
+      scope: { type: "stage", runId: ctx.runId, stageId: "execution" },
+      cause: "stage_error",
+      summary: blockedSummary,
+    })
   }
+  assertWaveSucceeded(wave, summary)
+  git.mergeWaveIntoProject(ctx.project.id, wave.number, {
+    mergeResolver: mergeResolverHarness,
+    resolverLogDir: layout.executionWaveDir(ctx, wave.number),
+  })
   return summary
 }
 
@@ -218,6 +312,26 @@ async function sequentially<T, R>(items: T[], fn: (item: T) => Promise<R>): Prom
   return out
 }
 
+/**
+ * Run all stories in a wave concurrently. Failures inside individual stories
+ * are converted to a "blocked" StoryResult so a single bad story cannot abort
+ * the rest of the wave, matching the behaviour of the existing per-story
+ * try/finally + error wrappers in the sequential path.
+ */
+async function runStoriesInParallel(
+  stories: Array<Pick<UserStory, "id" | "title">>,
+  run: (story: Pick<UserStory, "id" | "title">) => Promise<StoryResult>,
+): Promise<StoryResult[]> {
+  const settled = await Promise.allSettled(stories.map(story => run(story)))
+  return settled.map((entry, index) => {
+    if (entry.status === "fulfilled") return entry.value
+    const story = stories[index]
+    const reason = entry.reason instanceof Error ? entry.reason.message : String(entry.reason)
+    stagePresent.warn(`Story ${story.id} threw during parallel execution: ${reason}`)
+    return { storyId: story.id, implementation: blockedPlaceholder(story, reason) }
+  })
+}
+
 function resolveStory(
   ref: Pick<UserStory, "id" | "title">,
   storyById: Map<string, UserStory>,
@@ -233,10 +347,15 @@ async function implementStory(
   ctx: WithArchitecture,
   wave: WaveDefinition,
   story: UserStory,
+  screenOwners: ScreenOwnerMap,
   opts: { rerunTestWriter?: boolean; worktreeRoot?: string } = {},
   llm?: ExecutionLlmOptions,
 ): Promise<StoryResult> {
   stagePresent.step(`  Story ${story.id}: ${story.title}`)
+
+  if (wave.kind === "setup") {
+    return runSetupStory(ctx, wave, story, screenOwners, opts, llm)
+  }
 
   const persistedImplementation = await readJsonIfExists<StoryImplementationArtifact>(
     join(layout.executionRalphDir(ctx, wave.number, story.id), "implementation.json"),
@@ -252,7 +371,10 @@ async function implementStory(
     ? (await readJsonIfExists<StoryTestPlanArtifact>(testPlanPath)) ?? await writeStoryTestPlan(ctx, wave, story, storyStageLlm)
     : await writeStoryTestPlan(ctx, wave, story, storyStageLlm)
   stagePresent.dim(`  Test plan: ${testPlan.testPlan.testCases.map(tc => tc.id).join(", ")}`)
-  const storyContext = buildStoryExecutionContext(ctx, wave, ctx.architecture, testPlan, opts.worktreeRoot)
+  const storyContext = buildStoryExecutionContext(ctx, wave, ctx.architecture, testPlan, {
+    worktreeRoot: opts.worktreeRoot,
+    screenOwners,
+  })
   const executionLlm = executionStageLlmForStory(llm?.executionCoder, opts.worktreeRoot)
   const result: StoryArtifacts = await runRalphStory(storyContext, ctx, executionLlm)
   stagePresent.dim(`  Status: ${result.implementation.status}`)
@@ -263,18 +385,28 @@ export function executionStageLlmForStory(llm: RunLlmConfig | undefined, worktre
   return llm && worktreeRoot ? { ...llm, workspaceRoot: worktreeRoot } : llm
 }
 
-function buildStoryExecutionContext(
+export function buildStoryExecutionContext(
   ctx: WithArchitecture,
   wave: WaveDefinition,
   architecture: ArchitectureArtifact,
   testPlan: StoryTestPlanArtifact,
-  worktreeRoot?: string,
+  opts: {
+    worktreeRoot?: string
+    screenOwners: ScreenOwnerMap
+    kind?: "feature" | "setup"
+    setupContract?: StoryExecutionContext["setupContract"]
+    references?: StoryReference[]
+  },
 ): StoryExecutionContext {
+  const ownerMockups = resolveStoryMockups(ctx, wave, testPlan.story.id, opts.screenOwners)
+  const architectureSummary = renderArchitectureSummary(architecture)
   return {
+    kind: opts.kind ?? "feature",
     item: {
       slug: requireField(ctx.itemSlug, "itemSlug"),
       baseBranch: requireField(ctx.baseBranch, "baseBranch"),
     },
+    primaryWorkspaceRoot: ctx.workspaceRoot,
     project: { id: ctx.project.id, name: ctx.project.name },
     conceptSummary: ctx.project.concept.summary,
     story: {
@@ -282,15 +414,8 @@ function buildStoryExecutionContext(
       title: testPlan.story.title,
       acceptanceCriteria: testPlan.acceptanceCriteria,
     },
-    architectureSummary: {
-      summary: architecture.architecture.summary,
-      systemShape: architecture.architecture.systemShape,
-      constraints: architecture.architecture.constraints,
-      relevantComponents: architecture.architecture.components.map(component => ({
-        name: component.name,
-        responsibility: component.responsibility,
-      })),
-    },
+    setupContract: opts.setupContract,
+    architectureSummary,
     wave: {
       id: wave.id,
       number: wave.number,
@@ -298,9 +423,231 @@ function buildStoryExecutionContext(
       dependencies: wave.dependencies,
     },
     storyBranch: branchNameStory(ctx, ctx.project.id, wave.number, testPlan.story.id),
-    worktreeRoot,
+    worktreeRoot: opts.worktreeRoot,
+    design: opts.kind === "setup" ? ctx.design : projectDesignGuidance(ctx.design),
+    mockupHtmlByScreen: ownerMockups,
+    references: opts.references,
     testPlan,
   }
+}
+
+function resolveStoryMockups(
+  ctx: WithArchitecture,
+  wave: WaveDefinition,
+  storyId: string,
+  owners: ScreenOwnerMap,
+): Record<string, string> | undefined {
+  const mockups = ctx.design?.mockupHtmlPerScreen
+  if (!mockups) return undefined
+  const plannedStory = wave.stories.find(entry => entry.id === storyId)
+  const ownedScreens = (plannedStory?.screenIds ?? [])
+    .filter(screenId => owners[screenId] === storyId && mockups[screenId])
+    .slice(0, 3)
+  if (ownedScreens.length === 0) return undefined
+  return Object.fromEntries(ownedScreens.map(screenId => [screenId, mockups[screenId]!]))
+}
+
+function setupTaskReferences(
+  ctx: WithArchitecture,
+  storyId: string,
+  explicitReferences: StoryReference[] | undefined,
+): StoryReference[] | undefined {
+  const references = [...(explicitReferences ?? [])]
+  const designTokensPath = join(layout.stageArtifactsDir(ctx, "frontend-design"), "design-tokens.css")
+  if (existsSync(designTokensPath) && storyId.toLowerCase().includes("design")) {
+    references.push({
+      kind: "file",
+      name: "design-tokens.css",
+      path: designTokensPath,
+      instruction: "Copy this file to apps/ui/app/design-tokens.css and import it from the UI layout.",
+    })
+  }
+  return references.length > 0 ? references : undefined
+}
+
+function setupTaskForWave(wave: WaveDefinition, storyId: string) {
+  return wave.tasks?.find(task => task.id === storyId)
+}
+
+function setupTestPlan(
+  ctx: WithArchitecture,
+  story: UserStory,
+  contract: NonNullable<StoryExecutionContext["setupContract"]>,
+): StoryTestPlanArtifact {
+  return {
+    project: { id: ctx.project.id, name: ctx.project.name },
+    story: { id: story.id, title: story.title },
+    acceptanceCriteria: [],
+    testPlan: {
+      summary: `Satisfy setup contract for ${story.id}.`,
+      testCases: [],
+      fixtures: contract.expectedFiles,
+      edgeCases: contract.postChecks,
+      assumptions: contract.requiredScripts,
+    },
+  }
+}
+
+function runShell(command: string, cwd: string): { ok: boolean; output: string } {
+  const result = spawnSync("bash", ["-lc", command], { cwd, encoding: "utf8" })
+  return {
+    ok: result.status === 0,
+    output: [result.stdout, result.stderr].filter(Boolean).join("\n").trim(),
+  }
+}
+
+function verifySetupContract(
+  workspaceRoot: string,
+  contract: NonNullable<StoryExecutionContext["setupContract"]>,
+): string[] {
+  const failures: string[] = []
+  for (const expectedFile of contract.expectedFiles) {
+    if (!existsSync(join(workspaceRoot, expectedFile))) {
+      failures.push(`missing expected file: ${expectedFile}`)
+    }
+  }
+
+  if (contract.requiredScripts.length > 0) {
+    const packageJsonPath = join(workspaceRoot, "package.json")
+    if (!existsSync(packageJsonPath)) {
+      failures.push("missing package.json required to verify setup scripts")
+    } else {
+      const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as { scripts?: Record<string, string> }
+      for (const script of contract.requiredScripts) {
+        if (!packageJson.scripts?.[script]) {
+          failures.push(`missing required package.json script: ${script}`)
+          continue
+        }
+        const run = runShell(`npm run ${script}`, workspaceRoot)
+        if (!run.ok) {
+          failures.push(`script failed: npm run ${script}${run.output ? `\n${run.output}` : ""}`)
+        }
+      }
+    }
+  }
+
+  for (const postCheck of contract.postChecks) {
+    const run = runShell(postCheck, workspaceRoot)
+    if (!run.ok) {
+      failures.push(`post-check failed: ${postCheck}${run.output ? `\n${run.output}` : ""}`)
+    }
+  }
+  return failures
+}
+
+async function runSetupStory(
+  ctx: WithArchitecture,
+  wave: WaveDefinition,
+  story: UserStory,
+  screenOwners: ScreenOwnerMap,
+  opts: { worktreeRoot?: string },
+  llm?: ExecutionLlmOptions,
+): Promise<StoryResult> {
+  const persistedImplementation = await readJsonIfExists<StoryImplementationArtifact>(
+    join(layout.executionRalphDir(ctx, wave.number, story.id), "implementation.json"),
+  )
+  if (persistedImplementation?.status === "passed") {
+    return { storyId: story.id, implementation: persistedImplementation }
+  }
+  const task = setupTaskForWave(wave, story.id)
+  if (!task) throw new Error(`Setup wave ${wave.id} is missing task metadata for ${story.id}`)
+
+  const testPlan = setupTestPlan(ctx, story, task.contract)
+  const storyContext = buildStoryExecutionContext(ctx, wave, ctx.architecture, testPlan, {
+    worktreeRoot: opts.worktreeRoot,
+    screenOwners,
+    kind: "setup",
+    setupContract: task.contract,
+    references: setupTaskReferences(ctx, story.id, task.references),
+  })
+  const workspaceRoot = storyContext.worktreeRoot ?? process.cwd()
+  const executionLlm = executionStageLlmForStory(llm?.executionCoder, opts.worktreeRoot)
+  const implementation: StoryImplementationArtifact = {
+    story: { id: story.id, title: story.title },
+    mode: "ralph-wiggum",
+    status: "in_progress",
+    implementationGoal: storyContext.testPlan.testPlan.summary,
+    maxIterations: 3,
+    maxReviewCycles: 3,
+    currentReviewCycle: 0,
+    iterations: [],
+    coderSessionId: null,
+    priorAttempts: [],
+    changedFiles: [],
+    finalSummary: "",
+  }
+  const dir = layout.executionRalphDir(ctx, wave.number, story.id)
+  const implementationPath = join(dir, "implementation.json")
+  const baselinePath = join(dir, "coder-baseline.json")
+  await mkdir(dir, { recursive: true })
+
+  for (let attempt = 1; attempt <= implementation.maxReviewCycles; attempt++) {
+    let changedFiles: string[] = []
+    let notes: string[] = []
+    let summary = `Setup attempt ${attempt} completed.`
+    if (executionLlm) {
+      const coderResult = await runCoderHarness({
+        harness: resolveHarness({
+          workspaceRoot: executionLlm.workspaceRoot,
+          harnessProfile: executionLlm.harnessProfile,
+          runtimePolicy: executionLlm.runtimePolicy,
+          role: "coder",
+          stage: "execution",
+        }),
+        runtimePolicy: executionLlm.runtimePolicy,
+        baselinePath,
+        storyContext,
+        sessionId: implementation.coderSessionId ?? null,
+        iterationContext: {
+          iteration: attempt,
+          maxIterations: implementation.maxIterations,
+          reviewCycle: attempt,
+          maxReviewCycles: implementation.maxReviewCycles,
+          priorAttempts: implementation.priorAttempts ?? [],
+        },
+      })
+      implementation.coderSessionId = coderResult.sessionId
+      changedFiles = coderResult.changedFiles
+      notes = coderResult.implementationNotes
+      summary = coderResult.summary
+    }
+
+    const failures = verifySetupContract(workspaceRoot, task.contract)
+    implementation.changedFiles = Array.from(new Set([...implementation.changedFiles, ...changedFiles]))
+    implementation.iterations.push({
+      number: attempt,
+      reviewCycle: attempt - 1,
+      action: "Apply setup contract",
+      checks: [{
+        name: "setup-contract",
+        kind: "review-gate",
+        status: failures.length === 0 ? "pass" : "fail",
+        summary: failures.length === 0 ? "Setup contract satisfied." : failures.join("; "),
+      }],
+      result: failures.length === 0 ? "done" : "review_feedback_applied",
+      notes: [...notes, ...failures],
+    })
+    implementation.priorAttempts?.push({
+      iteration: attempt,
+      summary,
+      outcome: failures.length === 0 ? "passed" : "failed",
+    })
+    implementation.currentReviewCycle = attempt - 1
+    if (failures.length === 0) {
+      implementation.status = "passed"
+      implementation.finalSummary = "Setup contract satisfied."
+      break
+    }
+    implementation.finalSummary = failures.join("; ")
+  }
+
+  if (implementation.status !== "passed") {
+    implementation.status = "blocked"
+    implementation.finalSummary ||= "Setup contract did not converge within the review cap."
+  }
+  await writeFile(implementationPath, `${JSON.stringify(implementation, null, 2)}\n`)
+  stagePresent.dim(`  Status: ${implementation.status}`)
+  return { storyId: story.id, implementation }
 }
 
 async function writeStoryTestPlan(
@@ -327,6 +674,8 @@ async function writeStoryTestPlan(
       wave,
       story: { id: story.id, title: story.title },
       acceptanceCriteria: acs,
+      design: projectDesignGuidance(ctx.design),
+      architectureSummary: renderArchitectureSummary(ctx.architecture),
       revisionCount: 0,
     }),
     stageAgent: createTestWriterStage(ctx.project, llm),

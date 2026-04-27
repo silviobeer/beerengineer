@@ -106,9 +106,18 @@ async function writeWorkspaceConfig(root: string): Promise<void> {
 
 test("performResume resumes a blocked story from execution without rerunning prior stages", async () => {
   await withTmpCwd(async () => {
+    const repoRoot = join(process.cwd(), "repo")
+    mkdirSync(repoRoot, { recursive: true })
+    sh(repoRoot, ["init", "--initial-branch=main"])
+    sh(repoRoot, ["config", "user.email", "test@example.invalid"])
+    sh(repoRoot, ["config", "user.name", "test"])
+    await writeFile(join(repoRoot, "README.md"), "seed\n")
+    sh(repoRoot, ["add", "-A"])
+    sh(repoRoot, ["commit", "-m", "seed"])
+
     const db = initDatabase(join(process.cwd(), "test.sqlite"))
     const repos = new Repos(db)
-    const ws = repos.upsertWorkspace({ key: "t", name: "T" })
+    const ws = repos.upsertWorkspace({ key: "t", name: "T", rootPath: repoRoot })
     const item = repos.createItem({ workspaceId: ws.id, title: "Test Workflow", description: "smoke" })
     const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "api" })
 
@@ -116,7 +125,10 @@ test("performResume resumes a blocked story from execution without rerunning pri
       const initial = makeWorkflowIO()
       await runWithWorkflowIO(initial.io, () =>
         runWithActiveRun({ runId: run.id, itemId: item.id }, () =>
-          runWorkflow({ id: item.id, title: item.title, description: item.description }),
+          runWorkflow(
+            { id: item.id, title: item.title, description: item.description },
+            { workspaceRoot: repoRoot },
+          ),
         ),
       )
 
@@ -127,12 +139,13 @@ test("performResume resumes a blocked story from execution without rerunning pri
       implementation.finalSummary = "Blocked pending external remediation."
       await writeFile(implementationPath, `${JSON.stringify(implementation, null, 2)}\n`)
 
+      const blockedStoryBranch = `story/test-workflow__p01__w2__us-02`
       await writeRecoveryRecord(ctx, {
         status: "blocked",
         cause: "review_block",
         scope: { type: "story", runId: run.id, waveNumber: 2, storyId: "US-02" },
         summary: "Blocked pending external remediation.",
-        branch: implementation.branch?.name,
+        branch: blockedStoryBranch,
         evidencePaths: [implementationPath],
       })
       repos.setRunRecovery(run.id, {
@@ -147,7 +160,7 @@ test("performResume resumes a blocked story from execution without rerunning pri
         scope: "story",
         scopeRef: "2/US-02",
         summary: "Patched the story branch to address the blocked review findings.",
-        branch: implementation.branch?.name ?? null,
+        branch: blockedStoryBranch,
         source: "api",
       })
 

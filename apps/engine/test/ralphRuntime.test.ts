@@ -90,11 +90,9 @@ test("runRalphStory goes through 3 review cycles, ending in passed + merged bran
     assert.equal(cycleBuckets.get(1), 1, "cycle 1 remediation turns green in 1")
     assert.equal(cycleBuckets.get(2), 1, "cycle 2 remediation turns green in 1")
 
-    // Branch was created, committed to, and merged
-    assert.ok(result.implementation.branch)
-    assert.equal(result.implementation.branch?.status, "merged")
-    assert.equal(result.implementation.branch?.name, "story/ralph-item__p01__w1__us-10")
-    assert.ok((result.implementation.branch?.commits.length ?? 0) >= 4)
+    // Real-git merge story→wave happens in the execution stage outside
+    // runRalphStory. The simulated `implementation.branch` field has been
+    // removed; story success is now signalled solely by `status === "passed"`.
 
     // Persisted artifacts
     const dir = layout.executionRalphDir(ctx, 1, "US-10")

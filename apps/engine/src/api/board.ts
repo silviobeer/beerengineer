@@ -1,10 +1,11 @@
 import type { Repos } from "../db/repositories.js"
 import type { Db } from "../db/connection.js"
 
-const orderedColumns = ["idea", "brainstorm", "requirements", "implementation", "done"] as const
+const orderedColumns = ["idea", "brainstorm", "frontend", "requirements", "implementation", "done"] as const
 const columnTitles: Record<(typeof orderedColumns)[number], string> = {
   idea: "Idea",
   brainstorm: "Brainstorm",
+  frontend: "Frontend",
   requirements: "Requirements",
   implementation: "Implementation",
   done: "Done"
@@ -17,6 +18,8 @@ export type BoardCardDTO = {
   summary: string
   column: (typeof orderedColumns)[number]
   phaseStatus: string
+  /** Engine stageKey of the authoritative run, null when no live stage. */
+  currentStage: string | null
   meta: Array<{ label: string; value: string }>
 }
 
@@ -45,7 +48,7 @@ export function getBoard(db: Db, workspaceKey?: string | null): BoardDTO {
 
   const items = db
     .prepare(
-      `SELECT id, workspace_id, code, title, description, current_column, phase_status
+      `SELECT id, workspace_id, code, title, description, current_column, phase_status, current_stage
        FROM items WHERE workspace_id = ? ORDER BY created_at ASC`
     )
     .all(workspace.id) as Array<{
@@ -56,6 +59,7 @@ export function getBoard(db: Db, workspaceKey?: string | null): BoardDTO {
       description: string
       current_column: (typeof orderedColumns)[number]
       phase_status: string
+      current_stage: string | null
     }>
 
   const projectCounts = new Map<string, number>()
@@ -82,6 +86,7 @@ export function getBoard(db: Db, workspaceKey?: string | null): BoardDTO {
           summary: i.description,
           column: i.current_column,
           phaseStatus: i.phase_status,
+          currentStage: i.current_stage ?? null,
           meta: [
             { label: "phase", value: i.phase_status },
             { label: "projects", value: String(projectCounts.get(i.id) ?? 0) }

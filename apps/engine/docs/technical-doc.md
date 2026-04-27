@@ -12,7 +12,7 @@ The implementation plan shipped 2 wave(s). Wave 1: Deliver core workflow (US-01)
 3 story branches reached a passed state. No blocked stories remain in execution.
 
 ## Architecture Decisions
-Frontend: Core workflow and list views; Backend: Validation, persistence, and workflow logic; Storage: Durable storage of entries and status
+ARCH-01: Keep workflow state changes behind the backend boundary.
 
 ## Known Risks
 low maintainability: Shared helper logic appears duplicated in multiple modules.

@@ -2,6 +2,67 @@ import type { StageAgentAdapter, StageAgentInput, StageAgentResponse } from "../
 import type { Screen, WireframeArtifact } from "../../types/domain.js"
 import type { VisualCompanionState } from "../../stages/visual-companion/types.js"
 
+const CLARIFICATION_QUESTIONS = [
+  "Do you already have wireframes or mockups you'd like to reference?",
+  "Which screens are highest priority — dashboard, settings, or something else?",
+  "Any accessibility or responsive-breakpoint constraints we should plan for?",
+]
+
+function pickQuestion(state: VisualCompanionState): string {
+  return CLARIFICATION_QUESTIONS[state.clarificationCount % CLARIFICATION_QUESTIONS.length]
+}
+
+function buildScreenHtml(screenId: string, screenName: string, purpose: string): string {
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>${screenName} — Wireframe</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body { font-family: monospace; background: #f5f5f5; padding: 20px; }
+      .frame { border: 2px solid #333; background: white; max-width: 900px; margin: 0 auto; }
+      .box { border: 1px dashed #999; padding: 8px; margin: 4px; background: #fafafa; }
+      .label { font-size: 11px; color: #666; text-transform: uppercase; letter-spacing: 0.08em; }
+      .placeholder { background: #eee; padding: 12px; text-align: center; color: #999; }
+      .row { display: flex; gap: 4px; }
+      .col { flex: 1; }
+      h3 { padding: 8px; background: #333; color: white; font-size: 14px; letter-spacing: 0.08em; }
+    </style>
+  </head>
+  <body>
+    <div class="frame">
+      <h3>${screenName.toUpperCase()}</h3>
+      <div class="box">
+        <span class="label">purpose</span>
+        <p class="placeholder">[ ${purpose} ]</p>
+      </div>
+      <div class="box">
+        <span class="label">screen-id: ${screenId}</span>
+        <div class="row">
+          <div class="col box"><p class="placeholder">[ Region: Header ]</p></div>
+        </div>
+        <div class="row">
+          <div class="col box"><p class="placeholder">[ Region: Main Content ]</p></div>
+          <div class="col box"><p class="placeholder">[ Region: Sidebar ]</p></div>
+        </div>
+        <div class="row">
+          <div class="col box"><p class="placeholder">[ Region: Footer ]</p></div>
+        </div>
+      </div>
+      <div class="box">
+        <span class="label">states</span>
+        <div class="row">
+          <div class="col box"><p class="placeholder">[ Normal ]</p></div>
+          <div class="col box"><p class="placeholder">[ Empty ]</p></div>
+          <div class="col box"><p class="placeholder">[ Loading ]</p></div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>`
+}
+
 function buildArtifact(state: VisualCompanionState): WireframeArtifact {
   const uiProjects = state.input.projects.filter(project => project.hasUi)
   const screens: Screen[] = uiProjects.map((project, index) => ({
@@ -24,6 +85,12 @@ function buildArtifact(state: VisualCompanionState): WireframeArtifact {
       { id: "support", region: "aside", kind: "list", label: "Secondary tools" },
     ],
   }))
+
+  const wireframeHtmlPerScreen: Record<string, string> = {}
+  for (const screen of screens) {
+    wireframeHtmlPerScreen[screen.id] = buildScreenHtml(screen.id, screen.name, screen.purpose)
+  }
+
   return {
     screens,
     navigation: {
@@ -38,20 +105,50 @@ function buildArtifact(state: VisualCompanionState): WireframeArtifact {
     },
     inputMode: state.inputMode,
     conceptAmendments: [],
+    wireframeHtmlPerScreen,
   }
 }
 
 export class FakeVisualCompanionStageAdapter implements StageAgentAdapter<VisualCompanionState, WireframeArtifact> {
   async step(input: StageAgentInput<VisualCompanionState>): Promise<StageAgentResponse<WireframeArtifact>> {
+    const state = input.state
+
     if (input.kind === "begin") {
-      return { kind: "message", message: "Do you already have wireframes or mockups?" }
+      // If a revision feedback is pending from the user review gate, acknowledge
+      // and go straight to a new artifact on the next user-message. For begin,
+      // we still ask the first clarification question but include the feedback
+      // context in the message so the real LLM adapter can see it too.
+      if (state.pendingRevisionFeedback) {
+        return {
+          kind: "message",
+          message: `Noted: "${state.pendingRevisionFeedback}". Let me address that — ${pickQuestion(state)}`,
+        }
+      }
+      return { kind: "message", message: pickQuestion(state) }
     }
+
     if (input.kind === "user-message") {
       const reply = String(input.userMessage ?? "").trim()
-      input.state.history.push({ role: "user", text: reply })
-      input.state.inputMode = /^no\b/i.test(reply) || reply === "" ? "none" : "references"
-      return { kind: "artifact", artifact: buildArtifact(input.state) }
+      state.history.push({ role: "user", text: reply })
+      state.clarificationCount++
+
+      // Ask follow-up questions until we reach maxClarifications
+      if (state.clarificationCount < state.maxClarifications) {
+        return { kind: "message", message: pickQuestion(state) }
+      }
+
+      // Enough context — produce the artifact
+      state.inputMode = /^no\b/i.test(state.history[0]?.text ?? "") || state.history.length === 0
+        ? "none"
+        : "references"
+      return { kind: "artifact", artifact: buildArtifact(state) }
     }
-    return { kind: "artifact", artifact: buildArtifact(input.state) }
+
+    // review-feedback: LLM reviewer asked for a revision — produce updated artifact
+    if (input.kind === "review-feedback") {
+      return { kind: "artifact", artifact: buildArtifact(state) }
+    }
+
+    return { kind: "artifact", artifact: buildArtifact(state) }
   }
 }

@@ -1,7 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises"
 import { spawnSync } from "node:child_process"
 import type { StoryExecutionContext } from "../../../types.js"
-import type { HostedCliRequest, HostedProviderId, IterationContext } from "../promptEnvelope.js"
+import type { HostedRequest, IterationContext } from "../promptEnvelope.js"
 import { buildExecutionPrompt } from "../promptEnvelope.js"
 import { invokeHostedCli, parseJsonObject } from "../hostedCliAdapter.js"
 import type { HostedSession } from "../providerRuntime.js"
@@ -81,22 +81,28 @@ export async function runCoderHarness(input: {
   sessionId?: string | null
   iterationContext?: IterationContext
 }): Promise<CoderHarnessOutput & { changedFiles: string[]; sessionId: string | null }> {
-  if (input.harness.provider === "fake" || input.harness.provider === "opencode") {
-    throw new Error(`Unsupported execution harness ${input.harness.provider}`)
+  if (input.harness.kind === "fake") {
+    throw new Error("Unsupported execution harness: fake")
   }
-  const provider = input.harness.provider as HostedProviderId
-  const baseline = await ensureGitBaseline(input.harness.workspaceRoot, input.baselinePath)
-  const request: HostedCliRequest = {
+  if (input.harness.harness === "opencode") {
+    throw new Error("Unsupported execution harness: opencode")
+  }
+  const { harness, runtime, provider, model, workspaceRoot } = input.harness
+  const baseline = await ensureGitBaseline(workspaceRoot, input.baselinePath)
+  const request: HostedRequest = {
     kind: "execution",
     runtime: {
+      harness,
+      runtime,
       provider,
-      model: input.harness.model,
-      workspaceRoot: input.harness.workspaceRoot,
+      model,
+      workspaceRoot,
       policy: input.runtimePolicy,
     },
     prompt: buildExecutionPrompt({
-      provider,
-      model: input.harness.model,
+      harness,
+      runtime,
+      model,
       runtimePolicy: input.runtimePolicy,
       storyId: input.storyContext.story.id,
       action: input.reviewFeedback ? "fix" : "implement",
@@ -113,7 +119,7 @@ export async function runCoderHarness(input: {
   }
   const result = await invokeHostedCli(
     request,
-    { provider, sessionId: input.sessionId ?? null } satisfies HostedSession,
+    { harness, sessionId: input.sessionId ?? null } satisfies HostedSession,
   )
   const parsed = parseJsonObject(result.outputText) as CoderHarnessOutput
   return {

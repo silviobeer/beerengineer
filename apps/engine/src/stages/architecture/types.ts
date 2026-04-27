@@ -1,10 +1,17 @@
-import type { ArchitectureArtifact, DesignArtifact, PRD, WireframeArtifact } from "../../types.js"
+import type { ItemDecision } from "../../core/itemDecisions.js"
+import type { ArchitectureArtifact, PRD, WireframeArtifact } from "../../types.js"
+import type { CodebaseSnapshot } from "../../types/context.js"
 
 export type ArchitectureState = {
   projectId: string
   prd: PRD
   wireframes?: WireframeArtifact
-  design?: DesignArtifact
+  design?: {
+    tone: string
+    antiPatterns: string[]
+  }
+  codebase?: CodebaseSnapshot
+  decisions?: ItemDecision[]
   revisionCount: number
   lastReviewFeedback?: string
 }

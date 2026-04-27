@@ -9,7 +9,7 @@ The authoritative technical contract lives in two places:
 - **`GET /openapi.json`** — machine-readable spec (OpenAPI 3.1.0). Paste
   into [editor.swagger.io](https://editor.swagger.io) or any OpenAPI tool
   to explore interactively. Also served directly by the running engine.
-- **`spec/api-contract.md`** — prose companion with invariants.
+- **`docs/api-contract.md`** — prose companion with invariants.
 
 This file is the designer-friendly summary. When the two disagree, the
 OpenAPI file wins.
@@ -196,7 +196,7 @@ If you design a screen that needs any of these, flag it — we'll add the endpoi
 ## When something feels off
 
 - If the OpenAPI says one thing and the engine does another, the engine wins — file it and we'll fix the spec.
-- If the prose in `spec/api-contract.md` contradicts the OpenAPI, the OpenAPI wins.
+- If the prose in `docs/api-contract.md` contradicts the OpenAPI, the OpenAPI wins.
 - If a response shape seems thinner than your screen needs, don't work around it with multiple round-trips. Ask for a richer field — one round-trip with the right shape is better than five with the wrong one.
 
-Questions → the engine team, or open an issue against `specs/ui-rebuild-plan.md`.
+Questions → the engine team.

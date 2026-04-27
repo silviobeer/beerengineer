@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 
-import { spawn, spawnSync } from "node:child_process"
+import { spawn } from "node:child_process"
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { ask, close } from "./sim/human.js"
 import { createCliIO } from "./core/ioCli.js"
-import { detectRealGitMode, gcManagedStoryWorktreesReal, type RealGitEnabled } from "./core/realGit.js"
+import { createGitAdapterFromMode } from "./core/gitAdapter.js"
+import { inspectWorkspaceState } from "./core/git.js"
 import { layout } from "./core/workspaceLayout.js"
 import { latestCompletedRunForItem, workflowWorkspaceId } from "./core/itemWorkspace.js"
 import {
@@ -23,6 +24,7 @@ import { initDatabase } from "./db/connection.js"
 import { Repos } from "./db/repositories.js"
 import { prepareRun, runWorkflowWithSync } from "./core/runOrchestrator.js"
 import type { ItemRow } from "./db/repositories.js"
+import type { ItemAction } from "./core/itemActions.js"
 import { projectStageLogRow, type MessageEntry } from "./core/messagingProjection.js"
 import { messagingLevelFromQuery, shouldDeliverAtLevel, type MessagingLevel } from "./core/messagingLevel.js"
 import { renderMessageEntry, terminalExitCodeForEntry } from "./core/messageRendering.js"
@@ -258,7 +260,7 @@ function printHelp(): void {
     "    beerengineer                                         Run the default workflow",
     "    beerengineer --json                                  Harness mode: NDJSON events on stdout, prompt answers on stdin",
     "    beerengineer run --json                              Same as `beerengineer --json`",
-    "    beerengineer start ui                                [unavailable — UI rebuild pending, see specs/ui-rebuild-plan.md]",
+    "    beerengineer start ui                                Start the local UI dev server (http://127.0.0.1:3100)",
     "    beerengineer status [--all] [--json]                Workspace status overview",
     "    beerengineer items [--all] [--compact]              List items",
     "    beerengineer chats [--all] [--compact]              List open chats",
@@ -600,6 +602,8 @@ function parseHarnessProfile(input: { profile?: string; profileJson?: string }, 
     case "codex-only":
     case "claude-only":
     case "fast":
+    case "claude-sdk-first":
+    case "codex-sdk-first":
       return { mode: input.profile }
     default:
       throw new Error(`Unsupported --profile value: ${input.profile}`)
@@ -1012,15 +1016,17 @@ async function runChatListCommand(workspaceKey: string | undefined, all = false,
 
 function gitState(rootPath: string | null): string {
   if (!rootPath) return "none"
-  const inside = runGit(rootPath, ["rev-parse", "--is-inside-work-tree"])
-  if (!inside.ok || inside.stdout !== "true") return "none"
-  const status = runGit(rootPath, ["status", "--porcelain", "--branch"])
-  if (!status.ok) return "unknown"
-  const lines = status.stdout.split(/\r?\n/).filter(Boolean)
-  const branchLine = lines.find(line => line.startsWith("## ")) ?? "## unknown"
-  const branch = parseStatusBranch(branchLine)
-  const changed = lines.filter(line => !line.startsWith("## "))
-  return `${branch} / ${changed.length === 0 ? "clean" : "dirty"}`
+  const inspection = inspectWorkspaceState(rootPath)
+  switch (inspection.kind) {
+    case "not-a-repo":
+      return "none"
+    case "git-status-failed":
+      return "unknown"
+    case "ok":
+      return `${inspection.currentBranch} / clean`
+    case "dirty":
+      return `${inspection.currentBranch} / dirty`
+  }
 }
 
 async function runStatusCommand(workspaceKey: string | undefined, all = false, json = false): Promise<number> {
@@ -1613,28 +1619,23 @@ async function runWorkspaceWorktreeGcCommand(key: string | undefined, json = fal
       return 1
     }
 
-    const mode = detectRealGitMode({
+    const gcContext = {
       workspaceId: "gc",
       runId: "gc",
       itemSlug: "gc",
       baseBranch: "main",
       workspaceRoot: rootPath,
-    })
-    if (!mode.enabled && mode.reason !== "workspace has uncommitted changes (dirty repo)") {
-      console.error(`  Cannot gc worktrees: ${mode.reason}`)
-      return 1
     }
-
     // GC uses the workspace root for worktree listing/removal regardless of
-    // whether the repo was clean or dirty; synthesize a minimal enabled mode
-    // so we do not depend on detectRealGitMode's dirty-repo gate.
-    const gcMode: RealGitEnabled = {
+    // whether the repo is clean or dirty; synthesise an enabled mode directly
+    // so we do not depend on detectGitMode's dirty-repo gate.
+    const git = createGitAdapterFromMode(gcContext, {
       enabled: true,
       workspaceRoot: rootPath,
       baseBranch: "main",
       itemWorktreeRoot: rootPath,
-    }
-    const result = gcManagedStoryWorktreesReal(gcMode, layout.worktreesRoot())
+    })
+    const result = git.gcManagedStoryWorktrees(layout.worktreesRoot())
 
     if (json) {
       process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
@@ -1715,9 +1716,10 @@ async function runInteractiveWorkflow(opts: { json?: boolean; workspaceKey?: str
     return runJsonWorkflow({ workspaceKey: opts.workspaceKey })
   }
 
-  console.log("\n  ╔════════════════════════════════════════╗")
-  console.log("  ║   BeerEngineer2 — Simulation            ║")
-  console.log("  ╚════════════════════════════════════════╝\n")
+  console.log("\n  ╔══════════════════════════════════════════════════╗")
+  console.log("  ║   beerengineer_                                  ║")
+  console.log("  ║   Hand me an idea. Hold your beer.               ║")
+  console.log("  ╚══════════════════════════════════════════════════╝\n")
 
   // Collect the idea *before* we enter the workflow IO scope — `ask()` is used
   // by the orchestrator for mid-run prompts and would otherwise try to persist
@@ -1823,44 +1825,23 @@ function printResumeBlockedOutput(
   )
 }
 
-function runGit(rootPath: string, args: string[]): { ok: boolean; stdout: string; stderr: string } {
-  const result = spawnSync("git", args, { cwd: rootPath, encoding: "utf8" })
-  return {
-    ok: result.status === 0,
-    stdout: (result.stdout ?? "").trim(),
-    stderr: (result.stderr ?? "").trim(),
-  }
-}
-
-function parseStatusBranch(line: string): string {
-  return line
-    .replace(/^##\s+/, "")
-    .split("...")[0]!
-    .split(/\s+\[/)[0]!
-    .trim()
-}
-
+/**
+ * Render the dirty-repo preflight error using the structured workspace
+ * inspection from core/git.ts. Single source of truth for "is this
+ * workspace runnable?" — same probe detectGitMode uses, just formatted
+ * for the CLI instead of thrown.
+ */
 function printDirtyRepoPreflight(rootPath: string): number {
-  const inside = runGit(rootPath, ["rev-parse", "--is-inside-work-tree"])
-  if (!inside.ok || inside.stdout !== "true") return 0
+  const inspection = inspectWorkspaceState(rootPath)
+  if (inspection.kind !== "dirty") return 0
 
-  const status = runGit(rootPath, ["status", "--porcelain", "--branch"])
-  if (!status.ok) return 0
-
-  const lines = status.stdout.split(/\r?\n/).filter(Boolean)
-  const branchLine = lines.find(line => line.startsWith("## ")) ?? "## unknown"
-  const branchName = parseStatusBranch(branchLine)
-  const changed = lines.filter(line => !line.startsWith("## "))
-  if (changed.length === 0) return 0
-
-  const tracked = changed.filter(line => !line.startsWith("?? ")).length
-  const untracked = changed.filter(line => line.startsWith("?? ")).length
-  const onBaseBranch = branchName === "main" || branchName === "master"
+  const onBaseBranch = inspection.currentBranch === "main" || inspection.currentBranch === "master"
+  const total = inspection.trackedCount + inspection.untrackedCount
 
   console.error("  Git preflight failed: workspace repo is dirty.")
   console.error(`  Root:   ${rootPath}`)
-  console.error(`  Branch: ${branchName || branchLine.slice(3)}`)
-  console.error(`  Changed files: ${changed.length} (${tracked} tracked, ${untracked} untracked)`)
+  console.error(`  Branch: ${inspection.currentBranch || "<unknown>"}`)
+  console.error(`  Changed files: ${total} (${inspection.trackedCount} tracked, ${inspection.untrackedCount} untracked)`)
   if (onBaseBranch) {
     console.error("  Strategy violation: uncommitted work is sitting on main/master.")
     console.error("  BeerEngineer expects main/master to stay clean; item work must happen on item/* branches.")
@@ -1906,12 +1887,250 @@ function seedStageFromPreviousRun(item: ItemRow, sourceRunId: string, targetRunI
   return true
 }
 
+/**
+ * Context passed to every CLI item-action handler. Each handler gets the
+ * resolved item, the action token, the repos handle, the original
+ * itemRef (for error messages), and any resume flags the user passed.
+ */
+type CliItemActionContext = {
+  item: ItemRow
+  action: ItemAction
+  repos: Repos
+  itemRef: string
+  resumeFlags?: ResumeFlags
+}
+
+type CliItemActionHandler = (ctx: CliItemActionContext) => Promise<number>
+
+/** Shared transition + preflight prelude for handlers that start a fresh run. */
+function startRunPrelude(ctx: CliItemActionContext): number {
+  const transition = lookupTransitionSync(ctx.action, ctx.item.current_column, ctx.item.phase_status)
+  if (transition.kind !== "start-run") {
+    console.error(`  Invalid transition: ${ctx.action} from ${ctx.item.current_column}/${ctx.item.phase_status}`)
+    return 1
+  }
+  return preflightCliBranchingStart(ctx.repos, ctx.item.workspace_id)
+}
+
+type ItemActionsModule = typeof import("./core/itemActions.js")
+let lookupTransitionSync: ItemActionsModule["lookupTransition"]
+let createItemActionsService: ItemActionsModule["createItemActionsService"]
+
+const handleStartBrainstorm: CliItemActionHandler = async ctx => {
+  const exit = startRunPrelude(ctx)
+  if (exit !== 0) return exit
+  const io = createCliIO(ctx.repos)
+  try {
+    const runId = await runWorkflowWithSync(
+      { id: ctx.item.id, title: ctx.item.title, description: ctx.item.description },
+      ctx.repos,
+      io,
+      { owner: "cli", itemId: ctx.item.id },
+    )
+    console.log(`  ${ctx.action} applied`)
+    console.log(`  run-id: ${runId}`)
+    return 0
+  } finally {
+    io.close?.()
+  }
+}
+
+const handleStartImplementationOrRerunDesignPrep: CliItemActionHandler = async ctx => {
+  const exit = startRunPrelude(ctx)
+  if (exit !== 0) return exit
+  const sourceRun = latestRunWithStageArtifacts(ctx.repos, ctx.item, "brainstorm")
+  if (!sourceRun) {
+    console.error("  Cannot start implementation: no prior brainstorm artifacts found for this item.")
+    console.error("  Run start_brainstorm first, then retry start_implementation.")
+    return 1
+  }
+  const io = createCliIO(ctx.repos)
+  try {
+    const prepared = prepareRun(
+      { id: ctx.item.id, title: ctx.item.title, description: ctx.item.description },
+      ctx.repos,
+      io,
+      {
+        owner: "cli",
+        itemId: ctx.item.id,
+        resume: {
+          scope: { type: "run", runId: "pending" },
+          currentStage: ctx.action === "rerun_design_prep" ? "visual-companion" : "projects",
+        },
+      },
+    )
+    if (!seedStageFromPreviousRun(ctx.item, sourceRun.id, prepared.runId, "brainstorm")) {
+      console.error("  Cannot start implementation: failed to seed brainstorm artifacts into the new run.")
+      return 1
+    }
+    seedStageFromPreviousRun(ctx.item, sourceRun.id, prepared.runId, "visual-companion")
+    seedStageFromPreviousRun(ctx.item, sourceRun.id, prepared.runId, "frontend-design")
+    await prepared.start()
+    console.log(`  ${ctx.action} applied`)
+    console.log(`  run-id: ${prepared.runId}`)
+    return 0
+  } finally {
+    io.close?.()
+  }
+}
+
+const handleResumeRun: CliItemActionHandler = async ctx => {
+  const active =
+    ctx.repos.latestActiveRunForItem(ctx.item.id) ?? ctx.repos.latestRecoverableRunForItem(ctx.item.id)
+  const resumeRunId = active?.id
+  let resumePayload: { summary: string; branch?: string; commitSha?: string; reviewNotes?: string } | undefined
+  if (active?.recovery_status) {
+    const isTty = Boolean(process.stdin.isTTY && process.stdout.isTTY) && ctx.resumeFlags?.yes !== true
+    const collected = await collectRemediationFlags(ctx.resumeFlags ?? {}, isTty)
+    if (!collected || !collected.summary) {
+      printResumeBlockedOutput(active.id, {
+        summary: active.recovery_summary,
+        scope: active.recovery_scope,
+        scopeRef: active.recovery_scope_ref,
+      }, ctx.itemRef)
+      console.error("  Missing --remediation-summary (required for non-interactive resume).")
+      return 75
+    }
+    resumePayload = {
+      summary: collected.summary,
+      branch: collected.branch,
+      commitSha: collected.commit,
+      reviewNotes: collected.notes,
+    }
+  }
+
+  // CLI-specific resume_run: the shared service runs performResume
+  // asynchronously over an API IO session; the CLI needs synchronous
+  // execution so the operator sees the outcome before returning.
+  if (resumePayload && resumeRunId) {
+    const { loadResumeReadiness, performResume } = await import("./core/resume.js")
+    const readiness = await loadResumeReadiness(ctx.repos, resumeRunId)
+    if (readiness.kind === "not_found") {
+      console.error(`  Item not found: ${ctx.itemRef}`)
+      return 1
+    }
+    if (readiness.kind === "not_resumable") {
+      console.error(`  Not resumable: ${readiness.reason}`)
+      return 2
+    }
+    if (readiness.kind === "no_recovery") {
+      console.error(`  Invalid transition: ${ctx.action} from ${ctx.item.current_column}/${ctx.item.phase_status}`)
+      return 1
+    }
+
+    const scopeRef =
+      readiness.record.scope.type === "stage"
+        ? readiness.record.scope.stageId
+        : readiness.record.scope.type === "story"
+        ? `${readiness.record.scope.waveNumber}/${readiness.record.scope.storyId}`
+        : null
+    const remediation = ctx.repos.createExternalRemediation({
+      runId: resumeRunId,
+      scope: readiness.record.scope.type,
+      scopeRef,
+      summary: resumePayload.summary,
+      branch: resumePayload.branch,
+      commitSha: resumePayload.commitSha,
+      reviewNotes: resumePayload.reviewNotes,
+      source: "cli",
+    })
+
+    const io = createCliIO(ctx.repos)
+    try {
+      console.log(`  ${ctx.action} applied`)
+      console.log(`  run-id: ${resumeRunId}`)
+      console.log(`  remediation-id: ${remediation.id}`)
+      await performResume({ repos: ctx.repos, io, runId: resumeRunId, remediation })
+      const refreshed = ctx.repos.getRun(resumeRunId)
+      if (refreshed?.recovery_status === "blocked") {
+        printResumeBlockedOutput(resumeRunId, {
+          summary: refreshed.recovery_summary,
+          scope: refreshed.recovery_scope,
+          scopeRef: refreshed.recovery_scope_ref,
+        }, ctx.itemRef)
+      }
+      return 0
+    } finally {
+      io.close?.()
+    }
+  }
+
+  return runDefaultItemAction(ctx, resumePayload)
+}
+
+/**
+ * Fallback handler: any action without a CLI-specific override goes through
+ * the shared {@link createItemActionsService}, which wires the standard
+ * (API-style) IO and lifecycle.
+ */
+async function runDefaultItemAction(
+  ctx: CliItemActionContext,
+  resumePayload?: { summary: string; branch?: string; commitSha?: string; reviewNotes?: string },
+): Promise<number> {
+  const service = createItemActionsService(ctx.repos)
+  try {
+    const result = await service.perform(
+      ctx.item.id,
+      ctx.action,
+      resumePayload ? { resume: resumePayload } : undefined,
+    )
+    if (!result.ok) {
+      if (result.status === 404) console.error(`  Item not found: ${ctx.itemRef}`)
+      else if (result.status === 422) {
+        console.error(`  Missing remediation summary (pass --remediation-summary).`)
+        return 75
+      } else if (result.error === "not_resumable" || result.error === "resume_in_progress") {
+        console.error(`  Not resumable: ${result.error}`)
+        return 2
+      } else {
+        console.error(`  Invalid transition: ${result.action} from ${result.current.column}/${result.current.phaseStatus}`)
+      }
+      return 1
+    }
+    console.log(`  ${ctx.action} applied`)
+    if (result.kind === "needs_spawn" && result.runId) console.log(`  run-id: ${result.runId}`)
+    if (result.kind === "needs_spawn" && result.remediationId) console.log(`  remediation-id: ${result.remediationId}`)
+    if (result.kind === "needs_spawn" && result.runId) {
+      const refreshed = ctx.repos.getRun(result.runId)
+      if (refreshed?.recovery_status === "blocked") {
+        printResumeBlockedOutput(result.runId, {
+          summary: refreshed.recovery_summary,
+          scope: refreshed.recovery_scope,
+          scopeRef: refreshed.recovery_scope_ref,
+        }, ctx.itemRef)
+      }
+    }
+    return 0
+  } finally {
+    service.dispose()
+  }
+}
+
+/**
+ * CLI-specific item-action registry. Each entry overrides the default
+ * (shared service) handler with one that runs synchronously in the
+ * terminal — owner=cli, stdio IO, blocks until the run ends.
+ *
+ * Adding a CLI-specific override is a one-line registry edit; actions
+ * not in this map fall through to {@link runDefaultItemAction}.
+ */
+const CLI_ITEM_ACTION_HANDLERS: Partial<Record<ItemAction, CliItemActionHandler>> = {
+  start_brainstorm: handleStartBrainstorm,
+  start_implementation: handleStartImplementationOrRerunDesignPrep,
+  rerun_design_prep: handleStartImplementationOrRerunDesignPrep,
+  resume_run: handleResumeRun,
+}
+
 export async function runItemAction(itemRef: string, action: string, resumeFlags?: ResumeFlags): Promise<number> {
-  const { createItemActionsService, isItemAction, lookupTransition } = await import("./core/itemActions.js")
-  if (!isItemAction(action)) {
+  const itemActions = await import("./core/itemActions.js")
+  if (!itemActions.isItemAction(action)) {
     console.error(`  Unknown action: ${action}`)
     return 1
   }
+  // Late-bind the helpers shared by handlers so the registry can declare
+  // them at module load without requiring async imports at every call.
+  lookupTransitionSync = itemActions.lookupTransition
+  createItemActionsService = itemActions.createItemActionsService
   const db = initDatabase()
   const repos = new Repos(db)
   try {
@@ -1926,294 +2145,134 @@ export async function runItemAction(itemRef: string, action: string, resumeFlags
       resolved.matches.forEach(match => console.error(`    ${match.id}`))
       return 1
     }
-    const item = resolved.item
-
-    // CLI-specific start_brainstorm: the shared ItemActionsService fires runs
-    // as owner=api with SSE-backed IO. The CLI needs owner=cli with stdio IO
-    // and synchronous execution so the terminal blocks until the run ends.
-    // We reuse lookupTransition so the guard rules stay single-sourced.
-    if (action === "start_brainstorm") {
-      const transition = lookupTransition(action, item.current_column, item.phase_status)
-      if (transition.kind !== "start-run") {
-        console.error(`  Invalid transition: ${action} from ${item.current_column}/${item.phase_status}`)
-        return 1
-      }
-      const preflightExit = preflightCliBranchingStart(repos, item.workspace_id)
-      if (preflightExit !== 0) return preflightExit
-      const io = createCliIO(repos)
-      try {
-        const runId = await runWorkflowWithSync(
-          { id: item.id, title: item.title, description: item.description },
-          repos,
-          io,
-          { owner: "cli", itemId: item.id }
-        )
-        console.log(`  ${action} applied`)
-        console.log(`  run-id: ${runId}`)
-        return 0
-      } finally {
-        io.close?.()
-      }
+    const ctx: CliItemActionContext = {
+      item: resolved.item,
+      action,
+      repos,
+      itemRef,
+      resumeFlags,
     }
-
-    if (action === "start_implementation" || action === "rerun_design_prep") {
-      const transition = lookupTransition(action, item.current_column, item.phase_status)
-      if (transition.kind !== "start-run") {
-        console.error(`  Invalid transition: ${action} from ${item.current_column}/${item.phase_status}`)
-        return 1
-      }
-      const preflightExit = preflightCliBranchingStart(repos, item.workspace_id)
-      if (preflightExit !== 0) return preflightExit
-      const sourceRun = latestRunWithStageArtifacts(repos, item, "brainstorm")
-      if (!sourceRun) {
-        console.error("  Cannot start implementation: no prior brainstorm artifacts found for this item.")
-        console.error("  Run start_brainstorm first, then retry start_implementation.")
-        return 1
-      }
-      const io = createCliIO(repos)
-      try {
-        const prepared = prepareRun(
-          { id: item.id, title: item.title, description: item.description },
-          repos,
-          io,
-          {
-            owner: "cli",
-            itemId: item.id,
-            resume: { scope: { type: "run", runId: "pending" }, currentStage: action === "rerun_design_prep" ? "visual-companion" : "projects" },
-          },
-        )
-        if (!seedStageFromPreviousRun(item, sourceRun.id, prepared.runId, "brainstorm")) {
-          console.error("  Cannot start implementation: failed to seed brainstorm artifacts into the new run.")
-          return 1
-        }
-        seedStageFromPreviousRun(item, sourceRun.id, prepared.runId, "visual-companion")
-        seedStageFromPreviousRun(item, sourceRun.id, prepared.runId, "frontend-design")
-        await prepared.start()
-        console.log(`  ${action} applied`)
-        console.log(`  run-id: ${prepared.runId}`)
-        return 0
-      } finally {
-        io.close?.()
-      }
-    }
-
-    // For resume_run, preflight-check whether the active run actually has a
-    // recovery record. If it does, collect remediation fields before calling
-    // perform() so we can fail fast in non-TTY mode with exit 75.
-    let resumePayload: { summary: string; branch?: string; commitSha?: string; reviewNotes?: string } | undefined
-    let resumeRunId: string | undefined
-    if (action === "resume_run") {
-      const active = repos.latestActiveRunForItem(item.id) ?? repos.latestRecoverableRunForItem(item.id)
-      resumeRunId = active?.id
-      if (active?.recovery_status) {
-        const isTty = Boolean(process.stdin.isTTY && process.stdout.isTTY) && resumeFlags?.yes !== true
-        const collected = await collectRemediationFlags(resumeFlags ?? {}, isTty)
-        if (!collected || !collected.summary) {
-          printResumeBlockedOutput(active.id, {
-            summary: active.recovery_summary,
-            scope: active.recovery_scope,
-            scopeRef: active.recovery_scope_ref,
-          }, itemRef)
-          console.error("  Missing --remediation-summary (required for non-interactive resume).")
-          return 75
-        }
-        resumePayload = {
-          summary: collected.summary,
-          branch: collected.branch,
-          commitSha: collected.commit,
-          reviewNotes: collected.notes
-        }
-      }
-    }
-
-    // CLI-specific resume_run: same reasoning as start_brainstorm — the service
-    // runs performResume asynchronously over an API IO session; the CLI needs
-    // synchronous execution so the operator sees the outcome before returning.
-    if (action === "resume_run" && resumePayload && resumeRunId) {
-      const { loadResumeReadiness, performResume } = await import("./core/resume.js")
-      const readiness = await loadResumeReadiness(repos, resumeRunId)
-      if (readiness.kind === "not_found") {
-        console.error(`  Item not found: ${itemRef}`)
-        return 1
-      }
-      if (readiness.kind === "not_resumable") {
-        console.error(`  Not resumable: ${readiness.reason}`)
-        return 2
-      }
-      if (readiness.kind === "no_recovery") {
-        console.error(`  Invalid transition: ${action} from ${item.current_column}/${item.phase_status}`)
-        return 1
-      }
-
-      const scopeRef =
-        readiness.record.scope.type === "stage"
-          ? readiness.record.scope.stageId
-          : readiness.record.scope.type === "story"
-          ? `${readiness.record.scope.waveNumber}/${readiness.record.scope.storyId}`
-          : null
-      const remediation = repos.createExternalRemediation({
-        runId: resumeRunId,
-        scope: readiness.record.scope.type,
-        scopeRef,
-        summary: resumePayload.summary,
-        branch: resumePayload.branch,
-        commitSha: resumePayload.commitSha,
-        reviewNotes: resumePayload.reviewNotes,
-        source: "cli"
-      })
-
-      const io = createCliIO(repos)
-      try {
-        console.log(`  ${action} applied`)
-        console.log(`  run-id: ${resumeRunId}`)
-        console.log(`  remediation-id: ${remediation.id}`)
-        await performResume({ repos, io, runId: resumeRunId, remediation })
-        const refreshed = repos.getRun(resumeRunId)
-        if (refreshed?.recovery_status === "blocked") {
-          printResumeBlockedOutput(resumeRunId, {
-            summary: refreshed.recovery_summary,
-            scope: refreshed.recovery_scope,
-            scopeRef: refreshed.recovery_scope_ref,
-          }, itemRef)
-        }
-        return 0
-      } finally {
-        io.close?.()
-      }
-    }
-
-    const service = createItemActionsService(repos)
-    const result = await service.perform(item.id, action, resumePayload ? { resume: resumePayload } : undefined)
-    if (!result.ok) {
-      if (result.status === 404) console.error(`  Item not found: ${itemRef}`)
-      else if (result.status === 422) {
-        console.error(`  Missing remediation summary (pass --remediation-summary).`)
-        service.dispose()
-        return 75
-      } else if (result.error === "not_resumable" || result.error === "resume_in_progress") {
-        console.error(`  Not resumable: ${result.error}`)
-        service.dispose()
-        return 2
-      } else {
-        console.error(`  Invalid transition: ${result.action} from ${result.current.column}/${result.current.phaseStatus}`)
-      }
-      service.dispose()
-      return 1
-    }
-    console.log(`  ${action} applied`)
-    if (result.kind === "needs_spawn" && result.runId) console.log(`  run-id: ${result.runId}`)
-    if (result.kind === "needs_spawn" && result.remediationId) console.log(`  remediation-id: ${result.remediationId}`)
-    if (result.kind === "needs_spawn" && result.runId) {
-      const refreshed = repos.getRun(result.runId)
-      if (refreshed?.recovery_status === "blocked") {
-        printResumeBlockedOutput(result.runId, {
-          summary: refreshed.recovery_summary,
-          scope: refreshed.recovery_scope,
-          scopeRef: refreshed.recovery_scope_ref,
-        }, itemRef)
-      }
-    }
-    service.dispose()
-    return 0
+    const handler = CLI_ITEM_ACTION_HANDLERS[action] ?? runDefaultItemAction
+    return await handler(ctx)
   } finally {
     db.close()
   }
 }
 
+/**
+ * Validate a setup-group name (shared by `doctor` and `setup`). Returns
+ * the exit code to use, or `null` to proceed.
+ */
+function validateGroup(group: string | undefined): number | null {
+  if (group && !isKnownGroupId(group)) {
+    console.error(`  Unknown setup group: ${group}`)
+    return 2
+  }
+  return null
+}
+
+/**
+ * Per-command handler type — each maps a typed `Command` variant to its
+ * exit code. Variants without an entry must be handled inline in
+ * {@link main} (the special cases: `help`, `unknown`, `workflow`, which
+ * have non-trivial control flow that doesn't fit a return-an-exit-code
+ * shape).
+ */
+type CommandHandlers = {
+  [K in Command["kind"]]?: (cmd: Extract<Command, { kind: K }>) => Promise<number>
+}
+
+/**
+ * Single source of truth for CLI command dispatch. Each entry returns an
+ * exit code; {@link main} `process.exit()`s with the result.
+ *
+ * Adding a new command: add a `Command` variant in the discriminated
+ * union, parse it in `parseArgs`, and add an entry here. No switch edit
+ * needed.
+ */
+const COMMAND_REGISTRY: CommandHandlers = {
+  doctor: async cmd => {
+    const exit = validateGroup(cmd.group)
+    if (exit !== null) return exit
+    return runDoctor({ json: cmd.json, group: cmd.group })
+  },
+  setup: async cmd => {
+    const exit = validateGroup(cmd.group)
+    if (exit !== null) return exit
+    return runSetupCommand({ group: cmd.group, noInteractive: cmd.noInteractive })
+  },
+  "notifications-test": cmd => runNotificationsTestCommand(cmd.channel),
+  "workspace-preview": cmd => runWorkspacePreviewCommand(cmd.path, cmd.json),
+  "workspace-add": cmd => runWorkspaceAddCommand(cmd),
+  "workspace-list": cmd => runWorkspaceListCommand(cmd.json),
+  "workspace-get": cmd => runWorkspaceGetCommand(cmd.key, cmd.json),
+  "workspace-items": cmd => runWorkspaceItemsCommand(cmd.key, cmd.json),
+  "workspace-use": cmd => runWorkspaceUseCommand(cmd.key),
+  "workspace-remove": cmd =>
+    runWorkspaceRemoveCommand(cmd.key, cmd.purge, cmd.json, cmd.yes, cmd.noInteractive),
+  "workspace-open": cmd => runWorkspaceOpenCommand(cmd.key),
+  "workspace-backfill": cmd => runWorkspaceBackfillCommand(cmd.json),
+  "workspace-worktree-gc": cmd => runWorkspaceWorktreeGcCommand(cmd.key, cmd.json),
+  status: cmd => runStatusCommand(cmd.workspaceKey, cmd.all, cmd.json),
+  "chat-list": cmd => runChatListCommand(cmd.workspaceKey, cmd.all, cmd.json, cmd.compact),
+  chats: cmd => runChatListCommand(cmd.workspaceKey, cmd.all, cmd.json, cmd.compact),
+  "chat-send": cmd => runChatSendCommand(cmd),
+  "chat-answer": cmd => runChatAnswerCommand(cmd),
+  items: cmd => runItemsCommand(cmd.workspaceKey, cmd.all, cmd.json, cmd.compact),
+  "item-get": cmd => runItemGetCommand(cmd.itemRef, cmd.workspaceKey, cmd.json),
+  "item-open": cmd => runItemOpenCommand(cmd.itemRef, cmd.workspaceKey),
+  "item-wireframes": cmd =>
+    runItemWireframesCommand(cmd.itemRef, cmd.workspaceKey, cmd.open, cmd.json),
+  "item-design": cmd => runItemDesignCommand(cmd.itemRef, cmd.workspaceKey, cmd.open, cmd.json),
+  "run-list": cmd => runRunListCommand(cmd.workspaceKey, cmd.all, cmd.json, cmd.compact),
+  runs: cmd => runRunListCommand(cmd.workspaceKey, cmd.all, cmd.json, cmd.compact),
+  "run-get": cmd => runRunGetCommand(cmd.runId, cmd.json),
+  "run-open": cmd => runRunOpenCommand(cmd.runId),
+  "run-tail": cmd => runRunTailCommand(cmd),
+  "run-messages": cmd => runRunMessagesCommand(cmd),
+  "run-watch": cmd => runRunWatchCommand(cmd),
+  "start-ui": () => startUi(),
+  "item-action": cmd => runItemAction(cmd.itemRef, cmd.action, cmd.resume),
+}
+
 export async function main(argv = process.argv.slice(2)): Promise<void> {
   const cmd = parseArgs(argv)
 
-  switch (cmd.kind) {
-    case "help":
-      printHelp()
-      return
-    case "doctor":
-      if (cmd.group && !isKnownGroupId(cmd.group)) {
-        console.error(`  Unknown setup group: ${cmd.group}`)
-        process.exit(2)
-      }
-      process.exit(await runDoctor({ json: cmd.json, group: cmd.group }))
-    case "setup":
-      if (cmd.group && !isKnownGroupId(cmd.group)) {
-        console.error(`  Unknown setup group: ${cmd.group}`)
-        process.exit(2)
-      }
-      process.exit(await runSetupCommand({ group: cmd.group, noInteractive: cmd.noInteractive }))
-    case "notifications-test":
-      process.exit(await runNotificationsTestCommand(cmd.channel))
-    case "workspace-preview":
-      process.exit(await runWorkspacePreviewCommand(cmd.path, cmd.json))
-    case "workspace-add":
-      process.exit(await runWorkspaceAddCommand(cmd))
-    case "workspace-list":
-      process.exit(await runWorkspaceListCommand(cmd.json))
-    case "workspace-get":
-      process.exit(await runWorkspaceGetCommand(cmd.key, cmd.json))
-    case "workspace-items":
-      process.exit(await runWorkspaceItemsCommand(cmd.key, cmd.json))
-    case "workspace-use":
-      process.exit(await runWorkspaceUseCommand(cmd.key))
-    case "workspace-remove":
-      process.exit(await runWorkspaceRemoveCommand(cmd.key, cmd.purge, cmd.json, cmd.yes, cmd.noInteractive))
-    case "workspace-open":
-      process.exit(await runWorkspaceOpenCommand(cmd.key))
-    case "workspace-backfill":
-      process.exit(await runWorkspaceBackfillCommand(cmd.json))
-    case "workspace-worktree-gc":
-      process.exit(await runWorkspaceWorktreeGcCommand(cmd.key, cmd.json))
-    case "status":
-      process.exit(await runStatusCommand(cmd.workspaceKey, cmd.all, cmd.json))
-    case "chat-list":
-    case "chats":
-      process.exit(await runChatListCommand(cmd.workspaceKey, cmd.all, cmd.json, cmd.compact))
-    case "chat-send":
-      process.exit(await runChatSendCommand(cmd))
-    case "chat-answer":
-      process.exit(await runChatAnswerCommand(cmd))
-    case "items":
-      process.exit(await runItemsCommand(cmd.workspaceKey, cmd.all, cmd.json, cmd.compact))
-    case "item-get":
-      process.exit(await runItemGetCommand(cmd.itemRef, cmd.workspaceKey, cmd.json))
-    case "item-open":
-      process.exit(await runItemOpenCommand(cmd.itemRef, cmd.workspaceKey))
-    case "item-wireframes":
-      process.exit(await runItemWireframesCommand(cmd.itemRef, cmd.workspaceKey, cmd.open, cmd.json))
-    case "item-design":
-      process.exit(await runItemDesignCommand(cmd.itemRef, cmd.workspaceKey, cmd.open, cmd.json))
-    case "run-list":
-    case "runs":
-      process.exit(await runRunListCommand(cmd.workspaceKey, cmd.all, cmd.json, cmd.compact))
-    case "run-get":
-      process.exit(await runRunGetCommand(cmd.runId, cmd.json))
-    case "run-open":
-      process.exit(await runRunOpenCommand(cmd.runId))
-    case "run-tail":
-      process.exit(await runRunTailCommand(cmd))
-    case "run-messages":
-      process.exit(await runRunMessagesCommand(cmd))
-    case "run-watch":
-      process.exit(await runRunWatchCommand(cmd))
-    case "start-ui":
-      process.exit(await startUi())
-    case "item-action":
-      process.exit(await runItemAction(cmd.itemRef, cmd.action, cmd.resume))
-    case "unknown":
-      console.error(`  Unknown command: ${cmd.token}`)
-      printHelp()
-      process.exit(1)
-    case "workflow":
-      try {
-        await runInteractiveWorkflow({ json: cmd.json, workspaceKey: cmd.workspaceKey })
-      } catch (err) {
-        if (cmd.json) {
-          process.stderr.write(`${JSON.stringify({ type: "cli_error", message: (err as Error).message })}\n`)
-        } else {
-          console.error("\n  FEHLER:", (err as Error).message)
-        }
-        process.exit(1)
-      }
-      return
+  // Special cases: variants whose exit semantics don't fit "return an exit
+  // code" — `help` returns void after printing, `unknown` exits 1, and
+  // `workflow` has its own try/catch with mode-specific error rendering.
+  if (cmd.kind === "help") {
+    printHelp()
+    return
   }
+  if (cmd.kind === "unknown") {
+    console.error(`  Unknown command: ${cmd.token}`)
+    printHelp()
+    process.exit(1)
+  }
+  if (cmd.kind === "workflow") {
+    try {
+      await runInteractiveWorkflow({ json: cmd.json, workspaceKey: cmd.workspaceKey })
+    } catch (err) {
+      if (cmd.json) {
+        process.stderr.write(`${JSON.stringify({ type: "cli_error", message: (err as Error).message })}\n`)
+      } else {
+        console.error("\n  FEHLER:", (err as Error).message)
+      }
+      process.exit(1)
+    }
+    return
+  }
+
+  const handler = COMMAND_REGISTRY[cmd.kind]
+  if (!handler) {
+    console.error(`  No handler registered for command kind: ${cmd.kind}`)
+    process.exit(1)
+  }
+  // Cast required: TS can't narrow `cmd` against the registry's mapped-type
+  // value through indexed access. The discriminated union still guarantees
+  // the runtime type matches the handler's parameter type.
+  process.exit(await (handler as (c: Command) => Promise<number>)(cmd))
 }
 
 const isEntrypoint = process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(process.argv[1])

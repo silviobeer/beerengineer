@@ -1,113 +1,91 @@
-import { existsSync } from "node:fs"
+import { existsSync, readdirSync } from "node:fs"
 import { readFile } from "node:fs/promises"
 import { spawnSync } from "node:child_process"
 import { join } from "node:path"
 import { randomUUID } from "node:crypto"
-import {
-  branchNameItem,
-  branchNameProject,
-  createCandidateBranch,
-  finalizeCandidateDecision,
-  mergeProjectBranchIntoItem,
-} from "./core/repoSimulation.js"
-import {
-  detectRealGitMode,
-  exitRunToItemBranchReal,
-  ensureItemBranchReal,
-  ensureProjectBranchReal,
-  mergeProjectIntoItemReal,
-} from "./core/realGit.js"
+import { createGitAdapter, type GitAdapter } from "./core/gitAdapter.js"
 import { resolveBaseBranchForItem } from "./core/baseBranch.js"
 import { writeRecoveryRecord, type RecoveryScope } from "./core/recovery.js"
 import { layout } from "./core/workspaceLayout.js"
 import type {
-  ArchitectureArtifact,
   Concept,
   DesignArtifact,
-  DocumentationArtifact,
   Item,
-  PRD,
   ProjectContext,
   Project,
-  ProjectReviewArtifact,
-  ImplementationPlanArtifact,
-  WaveSummary,
+  ReferenceInput,
   WireframeArtifact,
-  WithDocumentation,
   WorkflowContext,
 } from "./types.js"
 import { mergeAmendments, projectDesign, projectWireframes } from "./core/designPrep.js"
+import { loadCodebaseSnapshot } from "./core/codebaseSnapshot.js"
+import { loadFrontendSnapshot } from "./core/frontendSnapshot.js"
+import { loadItemDecisions } from "./core/itemDecisions.js"
 import { stagePresent } from "./core/stagePresentation.js"
-import { ask } from "./sim/human.js"
 import { emitEvent, getActiveRun, withStageLifecycle } from "./core/runContext.js"
 import { brainstorm } from "./stages/brainstorm/index.js"
 import { visualCompanion } from "./stages/visual-companion/index.js"
 import { frontendDesign } from "./stages/frontend-design/index.js"
-import { requirements } from "./stages/requirements/index.js"
-import { architecture } from "./stages/architecture/index.js"
-import { planning } from "./stages/planning/index.js"
-import { projectReview } from "./stages/project-review/index.js"
-import { execution } from "./stages/execution/index.js"
-import { qa } from "./stages/qa/index.js"
-import { documentation } from "./stages/documentation/index.js"
-import type { RunLlmConfig } from "./llm/registry.js"
-import type { ExecutionLlmOptions } from "./stages/execution/index.js"
-
-type ExecutionResumeOptions = {
-  waveNumber?: number
-  storyId?: string
-  rerunTestWriter?: boolean
-}
-
-type ProjectResumePlan = {
-  startStage:
-    | "requirements"
-    | "architecture"
-    | "planning"
-    | "execution"
-    | "project-review"
-    | "qa"
-    | "documentation"
-    | "handoff"
-  execution?: ExecutionResumeOptions
-}
+import {
+  PROJECT_STAGE_REGISTRY,
+  shouldRunProjectStage,
+  type ExecutionResumeOptions,
+  type ProjectResumePlan,
+  type StageLlmOptions,
+} from "./core/projectStageRegistry.js"
 
 type ItemResumePlan = {
   startStage: "brainstorm" | "visual-companion" | "frontend-design" | "projects"
+  /**
+   * When set, the item-level loop runs *only* the named stage and skips the
+   * other design-prep stage. Manual-progression actions
+   * (start_visual_companion / start_frontend_design) populate this so the
+   * engine never auto-chains visual → design or back-fills missing artifacts.
+   * Recovery and rerun_design_prep leave this undefined and keep the existing
+   * non-strict behavior (run a stage if its artifact is missing).
+   */
+  manualStage?: "visual-companion" | "frontend-design"
 }
 
 type DesignPrepFreeze = {
   projectIds: string[]
 }
 
-const projectStageOrder = [
-  "requirements",
-  "architecture",
-  "planning",
-  "execution",
-  "project-review",
-  "qa",
-  "documentation",
-  "handoff",
-] as const
-
-function shouldRunProjectStage(
-  resume: ProjectResumePlan | undefined,
-  stage: (typeof projectStageOrder)[number],
-): boolean {
-  if (!resume) return true
-  return projectStageOrder.indexOf(stage) >= projectStageOrder.indexOf(resume.startStage)
+/**
+ * Enumerate files in the item workspace's `references/` directory so the
+ * design-prep stages (visual-companion, frontend-design) can see images,
+ * PDFs, and other reference material the operator dropped there. Returns
+ * an empty array if the directory is missing — stages interpret that as
+ * `inputMode: "none"` by default.
+ */
+function loadItemWorkspaceReferences(context: WorkflowContext): ReferenceInput[] {
+  const workspaceDir = layout.workspaceDir(context.workspaceId)
+  const refsDir = join(workspaceDir, "references")
+  if (!existsSync(refsDir)) return []
+  try {
+    return readdirSync(refsDir)
+      .filter(name => !name.startsWith("."))
+      .map(name => ({
+        value: join(refsDir, name),
+        description: name,
+      }))
+  } catch {
+    return []
+  }
 }
 
 export type WorkflowResumeInput = {
   scope: RecoveryScope
   currentStage?: string | null
+  /**
+   * Manual-mode signal from the item-action service. When set, the workflow
+   * runs *only* the named design-prep stage and skips the sibling, regardless
+   * of artifact presence. See {@link ItemResumePlan.manualStage}.
+   */
+  manualStage?: "visual-companion" | "frontend-design"
 }
 
-export type WorkflowLlmOptions = {
-  stage?: RunLlmConfig
-  execution?: ExecutionLlmOptions
-}
+export type WorkflowLlmOptions = StageLlmOptions
 
 class BlockedRunError extends Error {
   constructor(message: string) {
@@ -196,15 +174,16 @@ function normalizeItemResume(input: WorkflowResumeInput): ItemResumePlan {
   const scope = input.scope
   const stageId = scope.type === "stage" ? scope.stageId : scope.type === "run" ? input.currentStage ?? "" : "projects"
   const topStage = stageId.split("/")[0]
+  const manualStage = input.manualStage
   switch (topStage) {
     case "brainstorm":
-      return { startStage: "brainstorm" }
+      return { startStage: "brainstorm", manualStage }
     case "visual-companion":
-      return { startStage: "visual-companion" }
+      return { startStage: "visual-companion", manualStage }
     case "frontend-design":
-      return { startStage: "frontend-design" }
+      return { startStage: "frontend-design", manualStage }
     default:
-      return { startStage: "projects" }
+      return { startStage: "projects", manualStage }
   }
 }
 
@@ -284,31 +263,6 @@ async function assertDesignPrepProjectFreeze(context: WorkflowContext, projects:
   throw new BlockedRunError(summary)
 }
 
-async function loadPrd(context: WorkflowContext): Promise<PRD> {
-  const artifact = await readJson<{ prd: PRD }>(join(layout.stageArtifactsDir(context, "requirements"), "prd.json"))
-  return artifact.prd
-}
-
-async function loadArchitecture(context: WorkflowContext): Promise<ArchitectureArtifact> {
-  return readJson<ArchitectureArtifact>(join(layout.stageArtifactsDir(context, "architecture"), "architecture.json"))
-}
-
-async function loadPlan(context: WorkflowContext): Promise<ImplementationPlanArtifact> {
-  return readJson<ImplementationPlanArtifact>(join(layout.stageArtifactsDir(context, "planning"), "implementation-plan.json"))
-}
-
-async function loadExecutionSummaries(context: WorkflowContext, plan: ImplementationPlanArtifact): Promise<WaveSummary[]> {
-  return Promise.all(plan.plan.waves.map(wave => readJson<WaveSummary>(layout.waveSummaryFile(context, wave.number))))
-}
-
-async function loadProjectReview(context: WorkflowContext): Promise<ProjectReviewArtifact> {
-  return readJson<ProjectReviewArtifact>(join(layout.stageArtifactsDir(context, "project-review"), "project-review.json"))
-}
-
-async function loadDocumentation(context: WorkflowContext): Promise<DocumentationArtifact> {
-  return readJson<DocumentationArtifact>(join(layout.stageArtifactsDir(context, "documentation"), "documentation.json"))
-}
-
 export async function runWorkflow(item: Item, options?: { resume?: WorkflowResumeInput; llm?: WorkflowLlmOptions; workspaceRoot?: string }): Promise<void> {
   const slug = item.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
   const activeRun = getActiveRun()
@@ -322,58 +276,102 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
     workspaceRoot: options?.workspaceRoot,
   }
 
-  const realGit = detectRealGitMode(context)
-  if (realGit.enabled) {
-    stagePresent.dim(`→ Real git mode: branches will be created in ${realGit.workspaceRoot}`)
-  } else if (options?.workspaceRoot && realGit.reason === "workspace has uncommitted changes (dirty repo)") {
-    const currentBranch = currentGitBranch(options.workspaceRoot)
-    const summary =
-      currentBranch === "main" || currentBranch === "master"
-        ? `Workspace ${options.workspaceRoot} has uncommitted changes on ${currentBranch}. ` +
-          "Strategy violation: main/master must stay clean; item work belongs on isolated item branches."
-        : `Workspace ${options.workspaceRoot} has uncommitted changes. ` +
-          "BeerEngineer requires a clean repo before it creates an isolated item branch."
+  let git
+  try {
+    git = createGitAdapter(context)
+  } catch (error) {
+    const reason = (error as Error).message.replace(/^git:\s*/, "")
+    const summary = options?.workspaceRoot
+      ? (() => {
+          const currentBranch = currentGitBranch(options.workspaceRoot)
+          if (reason.includes("uncommitted changes")) {
+            return currentBranch === "main" || currentBranch === "master"
+              ? `Workspace ${options.workspaceRoot} has uncommitted changes on ${currentBranch}. ` +
+                "Strategy violation: main/master must stay clean; item work belongs on isolated item branches."
+              : `Workspace ${options.workspaceRoot} has uncommitted changes. ` +
+                "BeerEngineer requires a clean repo before it creates an isolated item branch."
+          }
+          return `Cannot start run: ${reason}`
+        })()
+      : `Cannot start run: ${reason}`
     stagePresent.warn(summary)
     await blockRunForWorkspaceState(context, summary)
-  } else {
-    stagePresent.dim(`→ Simulated git mode (${realGit.reason})`)
   }
+  // Above blockRunForWorkspaceState always throws, so `git` is defined here.
+  if (!git) throw new Error("unreachable: git adapter was not constructed")
+  stagePresent.dim(`→ Real git mode: branches will be created in ${git.mode.workspaceRoot}`)
 
   try {
-    if (realGit.enabled) ensureItemBranchReal(realGit, context)
-
     const itemResumePlan = options?.resume ? normalizeItemResume(options.resume) : { startStage: "brainstorm" as const }
     const resumePlan = options?.resume ? normalizeProjectResume(options.resume) : null
-    const projects =
-      itemResumePlan.startStage === "brainstorm"
-        ? await withStageLifecycle("brainstorm", {}, () => brainstorm(item, context, options?.llm?.stage))
-        : await loadProjects(context)
+    // Load the workspace snapshot once per item. Brownfield context (existing
+    // README, AGENTS.md, prior docs/, top-level config files, tree summary)
+    // is the same for every stage of this item; reading it N times — once per
+    // project — was the previous behavior. Loaded here so brainstorm /
+    // visual-companion / frontend-design also receive it.
+    const codebaseSnapshot = loadCodebaseSnapshot(options?.workspaceRoot)
+    let projects: Project[]
+    if (itemResumePlan.startStage === "brainstorm") {
+      // Fresh-run path: brainstorm owns the item-branch + worktree creation.
+      projects = await withStageLifecycle("brainstorm", {}, () =>
+        brainstorm(item, context, git, options?.llm?.stage, codebaseSnapshot),
+      )
+    } else {
+      // Resume past brainstorm: brainstorm won't run, so re-establish the
+      // item worktree here in case the operator nuked .beerengineer/ between
+      // runs. ensureItemBranch is idempotent against a healthy worktree.
+      git.ensureItemBranch()
+      git.assertWorkspaceRootOnBaseBranch("after ensureItemBranch (resume past brainstorm)")
+      projects = await loadProjects(context)
+    }
     if (itemResumePlan.startStage === "projects") {
       await assertDesignPrepProjectFreeze(context, projects)
     }
     const itemConcept = await loadConcept(context)
     const itemHasUi = projects.some(project => project.hasUi === true)
+    // Frontend fingerprint is only useful for UI items, and it's only known
+    // to be needed *after* brainstorm produced the project split with their
+    // hasUi flags. Load lazily here, then enrich the codebase snapshot so
+    // every downstream stage (visual-companion, frontend-design, the
+    // per-project pipeline) sees it through the same `ctx.codebase` channel.
+    const itemSnapshot = itemHasUi && codebaseSnapshot
+      ? { ...codebaseSnapshot, frontend: loadFrontendSnapshot(options?.workspaceRoot) }
+      : codebaseSnapshot
     // If we were asked to skip directly to projects but the seeded artifacts
     // aren't actually present (legacy run, partial seed), fall back to running
     // the corresponding design-prep stage instead of crashing on ENOENT.
     const wireframesFileExists = existsSync(join(layout.stageArtifactsDir(context, "visual-companion"), "wireframes.json"))
     const designFileExists = existsSync(join(layout.stageArtifactsDir(context, "frontend-design"), "design.json"))
+    // Manual-mode actions (start_visual_companion / start_frontend_design)
+    // run *only* the targeted stage and skip the sibling; runService seeds
+    // any required prior artifacts before this point. Without manualStage we
+    // keep the existing non-strict logic so `rerun_design_prep` and resumes
+    // still backfill missing artifacts.
+    const isManualVisual = itemResumePlan.manualStage === "visual-companion"
+    const isManualFrontend = itemResumePlan.manualStage === "frontend-design"
     const shouldRunVisualCompanion = itemHasUi && (
-      itemResumePlan.startStage === "brainstorm" ||
-      itemResumePlan.startStage === "visual-companion" ||
-      !wireframesFileExists
+      isManualVisual ||
+      (!itemResumePlan.manualStage && (
+        itemResumePlan.startStage === "brainstorm" ||
+        itemResumePlan.startStage === "visual-companion" ||
+        !wireframesFileExists
+      ))
     )
     const shouldRunFrontendDesign = itemHasUi && (
-      shouldRunVisualCompanion ||
-      itemResumePlan.startStage === "frontend-design" ||
-      !designFileExists
+      isManualFrontend ||
+      (!itemResumePlan.manualStage && (
+        shouldRunVisualCompanion ||
+        itemResumePlan.startStage === "frontend-design" ||
+        !designFileExists
+      ))
     )
+    const designPrepReferences = loadItemWorkspaceReferences(context)
     const wireframes =
       !itemHasUi
         ? undefined
         : shouldRunVisualCompanion
         ? await withStageLifecycle("visual-companion", {}, () =>
-            visualCompanion(context, { itemConcept, projects, references: [] }, options?.llm?.stage),
+            visualCompanion(context, { itemConcept, projects, references: designPrepReferences }, options?.llm?.stage, itemSnapshot),
           )
         : await loadWireframes(context)
     const design =
@@ -381,7 +379,7 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
         ? undefined
         : shouldRunFrontendDesign
         ? await withStageLifecycle("frontend-design", {}, () =>
-            frontendDesign(context, { itemConcept, projects, wireframes, references: [] }, options?.llm?.stage),
+            frontendDesign(context, { itemConcept, projects, wireframes, references: designPrepReferences }, options?.llm?.stage, itemSnapshot),
           )
         : await loadDesign(context)
     if (activeRun) {
@@ -400,7 +398,7 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
     }
 
     for (const project of projects) {
-      if (realGit.enabled) ensureProjectBranchReal(realGit, context, project.id)
+      git.ensureProjectBranch(project.id)
       const conceptAmendments = [
         ...(wireframes?.conceptAmendments ?? []),
         ...(design?.conceptAmendments ?? []),
@@ -411,172 +409,67 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
           project: { ...project, concept: mergeAmendments(project.concept, conceptAmendments, project.id) },
           wireframes: wireframes ? projectWireframes(wireframes, project.id) : undefined,
           design: design ? projectDesign(design) : undefined,
+          codebase: itemSnapshot,
+          decisions: loadItemDecisions(context.workspaceId),
         },
+        git,
         resumePlan ?? undefined,
         options?.llm,
       )
-      if (realGit.enabled) mergeProjectIntoItemReal(realGit, context, project.id)
+      // Project→item merge + post-merge invariant check happen inside the
+      // handoff stage so they land under withStageLifecycle("handoff", …)
+      // and any merge failure surfaces in the right recovery scope.
     }
 
     stagePresent.header("DONE")
     stagePresent.ok(`Item "${item.title}" is done ✓`)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    if (realGit.enabled && (message.startsWith("realGit:") || message.startsWith("branch_gate:"))) {
+    if (message.startsWith("git:") || message.startsWith("branch_gate:")) {
       const summary =
         `Run blocked: git branch gate failed for "${item.title}". ` +
-        `${message.replace(/^branch_gate:\s*/, "").replace(/^realGit:\s*/, "")}`
+        `${message.replace(/^branch_gate:\s*/, "").replace(/^git:\s*/, "")}`
       stagePresent.warn(summary)
       await blockRunForWorkspaceState(context, summary)
     }
     throw error
   } finally {
-    if (realGit.enabled) {
-      try {
-        const exitBranch = exitRunToItemBranchReal(realGit, context)
-        stagePresent.dim(`→ Run exit branch: ${exitBranch}`)
-      } catch (error) {
-        stagePresent.warn(`Run exit branch restore failed: ${(error as Error).message}`)
-      }
+    try {
+      const exitBranch = git.exitRunToItemBranch()
+      stagePresent.dim(`→ Run exit branch: ${exitBranch}`)
+    } catch (error) {
+      stagePresent.warn(`Run exit branch restore failed: ${(error as Error).message}`)
+    }
+    try {
+      git.assertWorkspaceRootOnBaseBranch("run exit")
+    } catch (error) {
+      stagePresent.warn(`Workspace root invariant failed at run exit: ${(error as Error).message}`)
     }
   }
 }
 
-async function runProject(initialCtx: ProjectContext, resume?: ProjectResumePlan, llm?: WorkflowLlmOptions): Promise<void> {
+/**
+ * Drives the project pipeline by iterating {@link PROJECT_STAGE_REGISTRY}.
+ *
+ * For each registered node we either execute it (with lifecycle wrapping)
+ * or short-circuit to its `resumeFromDisk` loader when the resume plan
+ * tells us to skip ahead. The trailing `handoff` step is the last entry
+ * in the registry; nothing about runProject is special-cased per stage.
+ */
+async function runProject(
+  initialCtx: ProjectContext,
+  git: GitAdapter,
+  resume?: ProjectResumePlan,
+  llm?: WorkflowLlmOptions,
+): Promise<void> {
   let ctx = initialCtx
   const projectId = ctx.project.id
+  const deps = { llm, resume, git }
 
-  if (shouldRunProjectStage(resume, "requirements")) {
-    ctx = { ...ctx, prd: await withStageLifecycle("requirements", { projectId }, () => requirements(ctx, llm?.stage)) }
-  } else {
-    ctx = { ...ctx, prd: await loadPrd(ctx) }
+  for (const node of PROJECT_STAGE_REGISTRY) {
+    ctx = shouldRunProjectStage(resume, node.id)
+      ? await withStageLifecycle(node.id, { projectId }, () => node.run(ctx, deps))
+      : await node.resumeFromDisk(ctx)
   }
-
-  if (shouldRunProjectStage(resume, "architecture")) {
-    ctx = { ...ctx, architecture: await withStageLifecycle("architecture", { projectId }, () => architecture(assertWithPrd(ctx), llm?.stage)) }
-  } else {
-    ctx = { ...ctx, architecture: await loadArchitecture(ctx) }
-  }
-
-  if (shouldRunProjectStage(resume, "planning")) {
-    ctx = { ...ctx, plan: await withStageLifecycle("planning", { projectId }, () => planning(assertWithArchitecture(ctx), llm?.stage)) }
-  } else {
-    ctx = { ...ctx, plan: await loadPlan(ctx) }
-  }
-
-  if (shouldRunProjectStage(resume, "execution")) {
-    ctx = {
-      ...ctx,
-      executionSummaries: await withStageLifecycle("execution", { projectId }, () =>
-        execution(assertWithPlan(ctx), resume?.execution, llm?.execution),
-      ),
-    }
-  } else {
-    ctx = { ...ctx, executionSummaries: await loadExecutionSummaries(ctx, assertWithPlan(ctx).plan) }
-  }
-
-  if (shouldRunProjectStage(resume, "project-review")) {
-    ctx = { ...ctx, projectReview: await withStageLifecycle("project-review", { projectId }, () => projectReview(assertWithExecution(ctx), llm?.stage)) }
-  } else {
-    ctx = { ...ctx, projectReview: await loadProjectReview(ctx) }
-  }
-
-  if (shouldRunProjectStage(resume, "qa")) {
-    await withStageLifecycle("qa", { projectId }, () => qa(ctx, llm?.stage))
-  }
-
-  if (shouldRunProjectStage(resume, "documentation")) {
-    ctx = { ...ctx, documentation: await withStageLifecycle("documentation", { projectId }, () => documentation(assertWithProjectReview(ctx), llm?.stage)) }
-  } else {
-    ctx = { ...ctx, documentation: await loadDocumentation(ctx) }
-  }
-
-  await mergeProjectBranchIntoItem(ctx, ctx.project.id)
-  await withStageLifecycle("handoff", { projectId }, () => handoffProject(assertWithDocumentation(ctx)))
 }
 
-async function handoffProject(ctx: WithDocumentation): Promise<void> {
-  const realGit = detectRealGitMode(ctx)
-  if (realGit.enabled) {
-    stagePresent.header(`handoff — ${ctx.project.name}`)
-    stagePresent.dim(`→ Item branch: ${branchNameItem(ctx)}`)
-    stagePresent.dim(`→ Project branch: ${branchNameProject(ctx, ctx.project.id)}`)
-    stagePresent.dim(`→ Base branch: ${realGit.baseBranch}`)
-    stagePresent.ok(`Project ${ctx.project.id} is already merged into ${branchNameItem(ctx)}; handoff complete.`)
-    return
-  }
-
-  const handoff = await createCandidateBranch(ctx, ctx.project, ctx.documentation)
-  stagePresent.header(`handoff — ${ctx.project.name}`)
-  stagePresent.ok(handoff.summary)
-  stagePresent.dim(`→ Candidate: ${handoff.candidateBranch.name}`)
-  stagePresent.dim(`→ Parent: ${handoff.candidateBranch.base}`)
-  stagePresent.dim(`→ Base: ${handoff.mergeTargetBranch}`)
-  handoff.mergeChecklist.forEach(item => stagePresent.dim(`→ ${item}`))
-
-  const decisionRaw = await ask("  Test, merge or reject candidate? [test/merge/reject] > ")
-  const decision = normalizeDecision(decisionRaw)
-  const updated = await finalizeCandidateDecision(ctx, handoff, decision)
-  stagePresent.ok(updated.summary)
-}
-
-function normalizeDecision(input: string): "test" | "merge" | "reject" {
-  const normalized = input.trim().toLowerCase()
-  if (normalized === "merge") return "merge"
-  if (normalized === "reject") return "reject"
-  return "test"
-}
-
-function assertWithPrd<T extends ProjectContext>(ctx: T): T & { prd: NonNullable<T["prd"]> } {
-  if (!ctx.prd) throw new Error("Pipeline invariant violated: PRD missing")
-  return ctx as T & { prd: NonNullable<T["prd"]> }
-}
-
-function assertWithArchitecture<T extends ProjectContext>(ctx: T): T & {
-  prd: NonNullable<T["prd"]>
-  architecture: NonNullable<T["architecture"]>
-} {
-  if (!ctx.prd || !ctx.architecture) throw new Error("Pipeline invariant violated: prd/architecture missing")
-  return ctx as never
-}
-
-function assertWithPlan<T extends ProjectContext>(ctx: T): T & {
-  prd: NonNullable<T["prd"]>
-  architecture: NonNullable<T["architecture"]>
-  plan: NonNullable<T["plan"]>
-} {
-  if (!ctx.prd || !ctx.architecture || !ctx.plan) throw new Error("Pipeline invariant violated: plan missing")
-  return ctx as never
-}
-
-function assertWithExecution<T extends ProjectContext>(ctx: T): T & {
-  prd: NonNullable<T["prd"]>
-  architecture: NonNullable<T["architecture"]>
-  plan: NonNullable<T["plan"]>
-  executionSummaries: NonNullable<T["executionSummaries"]>
-} {
-  if (!ctx.prd || !ctx.architecture || !ctx.plan || !ctx.executionSummaries) {
-    throw new Error("Pipeline invariant violated: execution missing")
-  }
-  return ctx as never
-}
-
-function assertWithProjectReview<T extends ProjectContext>(ctx: T): T & {
-  prd: NonNullable<T["prd"]>
-  architecture: NonNullable<T["architecture"]>
-  plan: NonNullable<T["plan"]>
-  executionSummaries: NonNullable<T["executionSummaries"]>
-  projectReview: NonNullable<T["projectReview"]>
-} {
-  if (!ctx.prd || !ctx.architecture || !ctx.plan || !ctx.executionSummaries || !ctx.projectReview) {
-    throw new Error("Pipeline invariant violated: projectReview missing")
-  }
-  return ctx as never
-}
-
-function assertWithDocumentation<T extends ProjectContext>(ctx: T): WithDocumentation {
-  if (!ctx.prd || !ctx.architecture || !ctx.plan || !ctx.executionSummaries || !ctx.projectReview || !ctx.documentation) {
-    throw new Error("Pipeline invariant violated: documentation missing")
-  }
-  return ctx as WithDocumentation
-}

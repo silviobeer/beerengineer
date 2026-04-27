@@ -2350,6 +2350,7 @@
             "enum": [
               "idea",
               "brainstorm",
+              "frontend",
               "requirements",
               "implementation",
               "done"
@@ -2395,6 +2396,7 @@
             "enum": [
               "idea",
               "brainstorm",
+              "frontend",
               "requirements",
               "implementation",
               "done"
@@ -2402,6 +2404,13 @@
           },
           "phaseStatus": {
             "type": "string"
+          },
+          "currentStage": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Engine stage key for the item's authoritative run, or null when no live stage. Drives the mini-stepper on the board."
           },
           "meta": {
             "type": "array",

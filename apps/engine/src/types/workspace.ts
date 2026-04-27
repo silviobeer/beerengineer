@@ -1,6 +1,13 @@
-export type HarnessRole = "coder" | "reviewer"
+export type HarnessRole = "coder" | "reviewer" | "merge-resolver"
 
 export type KnownHarness = "claude" | "codex" | "opencode"
+
+/**
+ * Invocation mechanism for a harness. `cli` runs the local agent CLI as a
+ * subprocess; `sdk` runs the agent loop in-process via the vendor SDK. The
+ * choice is independent of harness brand and API vendor.
+ */
+export type InvocationRuntime = "cli" | "sdk"
 
 export type RuntimePolicyMode =
   | "safe-readonly"
@@ -26,6 +33,8 @@ export type RoleModelRef = {
 
 export type SelfHarnessRoleRef = RoleModelRef & {
   harness: KnownHarness
+  /** Defaults to "cli" when absent. SDK runtimes require an API key. */
+  runtime?: InvocationRuntime
 }
 
 export type HarnessProfile =
@@ -34,6 +43,8 @@ export type HarnessProfile =
   | { mode: "codex-only" }
   | { mode: "claude-only" }
   | { mode: "fast" }
+  | { mode: "claude-sdk-first" }
+  | { mode: "codex-sdk-first" }
   | { mode: "opencode-china" }
   | { mode: "opencode-euro" }
   | {
@@ -48,6 +59,12 @@ export type HarnessProfile =
       roles: {
         coder: SelfHarnessRoleRef
         reviewer: SelfHarnessRoleRef
+        /**
+         * Optional. When absent, merge-resolver work uses the coder slot.
+         * Already supported by the registry/preset path; surfaced here so
+         * self-mode operators can mix harnesses or runtimes per role.
+         */
+        "merge-resolver"?: SelfHarnessRoleRef
       }
     }
 
@@ -71,7 +88,7 @@ export type WorkspaceReviewPolicy = {
 }
 
 export type WorkspacePreview = {
-  schemaVersion: 2
+  schemaVersion: WorkspaceSchemaVersion
   path: string
   exists: boolean
   isDirectory: boolean
@@ -147,8 +164,16 @@ export type RegisterWorkspaceInput = {
   }
 }
 
+/**
+ * Workspace config schema. v2 was the CLI-only baseline. v3 adds an optional
+ * per-role `runtime` field on self-mode profiles. Configs without any runtime
+ * field load as v2 unchanged; the v3 stamp is only applied when a runtime
+ * field is actually present (see `core/workspaces.ts`).
+ */
+export type WorkspaceSchemaVersion = 2 | 3
+
 export type WorkspaceConfigFile = {
-  schemaVersion: 2
+  schemaVersion: WorkspaceSchemaVersion
   key: string
   name: string
   harnessProfile: HarnessProfile
@@ -160,7 +185,7 @@ export type WorkspaceConfigFile = {
 }
 
 export type WorkspaceRow = {
-  schemaVersion: 2
+  schemaVersion: WorkspaceSchemaVersion
   key: string
   name: string
   rootPath: string
@@ -179,6 +204,7 @@ export type RegisterErrorCode =
   | "path_not_directory"
   | "key_conflict"
   | "profile_references_unavailable_harness"
+  | "profile_references_unavailable_runtime"
   | "scaffold_failed"
   | "git_init_failed"
   | "workspace_config_invalid"
@@ -207,7 +233,7 @@ export type ValidationResult = {
   ok: boolean
   warnings: string[]
   error?: {
-    code: Extract<RegisterErrorCode, "profile_references_unavailable_harness">
+    code: Extract<RegisterErrorCode, "profile_references_unavailable_harness" | "profile_references_unavailable_runtime">
     detail: string
   }
 }

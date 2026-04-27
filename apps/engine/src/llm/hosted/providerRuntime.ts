@@ -1,12 +1,18 @@
 import { spawn } from "node:child_process"
-import type { HostedCliRequest, HostedProviderId } from "./promptEnvelope.js"
+import type { HostedHarness, HostedRequest } from "./promptEnvelope.js"
 
 export type HostedSession = {
-  provider: HostedProviderId
+  harness: HostedHarness
   sessionId: string | null
+  /**
+   * SDK runtimes that lack a server-side session handle replay the local
+   * message history on every step. CLI runtimes ignore this field. See
+   * `providers/_sdkSession.ts`.
+   */
+  messages?: import("../types.js").ChatMessage[]
 }
 
-export type HostedCliExecutionResult = {
+export type HostedInvocationResult = {
   stdout: string
   stderr: string
   exitCode: number
@@ -19,10 +25,13 @@ export type HostedCliExecutionResult = {
   }
 }
 
+/** @deprecated Use `HostedInvocationResult`. */
+export type HostedCliExecutionResult = HostedInvocationResult
+
 export type HostedProviderInvokeInput = {
   prompt: string
   session?: HostedSession | null
-  runtime: HostedCliRequest["runtime"]
+  runtime: HostedRequest["runtime"]
 }
 
 export type SpawnCommandOptions = {

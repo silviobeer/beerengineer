@@ -9,22 +9,35 @@ import { spawnSync } from "node:child_process"
 import { runWithWorkflowIO, type WorkflowEvent, type WorkflowIO } from "../src/core/io.js"
 import { runWorkflow } from "../src/workflow.ts"
 import { layout } from "../src/core/workspaceLayout.js"
-import type { SimulatedRepoState } from "../src/types.js"
 import { runWithActiveRun } from "../src/core/runContext.js"
+
+/** Default answers for design-prep stages: 3 clarification no-ops + approve. */
+const DEFAULT_VISUAL_COMPANION_ANSWERS = ["no existing mockups", "dashboard first", "WCAG AA required", "approve"]
+const DEFAULT_FRONTEND_DESIGN_ANSWERS = ["no design system", "professional", "no brand constraints", "approve"]
 
 function makeIO(answers: {
   brainstorm: string[]
-  visualCompanion: string
-  frontendDesign: string
+  /** Clarification answers for visual-companion, followed by the user-review reply ("approve" / "revise: …").
+   *  Defaults to 3 no-op clarification answers + "approve". */
+  visualCompanion?: string[]
+  /** Clarification answers for frontend-design, followed by the user-review reply ("approve" / "revise: …").
+   *  Defaults to 3 no-op clarification answers + "approve". */
+  frontendDesign?: string[]
   requirements: string[]
   qa: string
   handoff: string
 }): { io: WorkflowIO; events: WorkflowEvent[]; promptLog: string[] } {
   const events: WorkflowEvent[] = []
   const promptLog: string[] = []
+  const vcAnswers = answers.visualCompanion ?? DEFAULT_VISUAL_COMPANION_ANSWERS
+  const fdAnswers = answers.frontendDesign ?? DEFAULT_FRONTEND_DESIGN_ANSWERS
   // The runtime prompt text is always "  you > "; use the preceding showMessage flow
-  // via a counter-based mapping: brainstorm uses 4 asks, requirements 3, qa 1, handoff 1.
+  // via a counter-based mapping: brainstorm uses 4 asks, visual-companion uses
+  // maxClarifications+1 asks (3 clarifications + 1 user-review), frontend-design likewise,
+  // requirements uses 3 asks, qa 1, handoff 1.
   let brainstormIdx = 0
+  let visualCompanionIdx = 0
+  let frontendDesignIdx = 0
   let requirementsIdx = 0
   let phase: "brainstorm" | "visual-companion" | "frontend-design" | "requirements" | "qa" | "handoff" = "brainstorm"
   let brainstormAsks = 0
@@ -41,12 +54,14 @@ function makeIO(answers: {
         return answer
       }
       if (phase === "visual-companion") {
-        phase = "frontend-design"
-        return answers.visualCompanion
+        const answer = vcAnswers[visualCompanionIdx++] ?? "approve"
+        if (visualCompanionIdx >= vcAnswers.length) phase = "frontend-design"
+        return answer
       }
       if (phase === "frontend-design") {
-        phase = "requirements"
-        return answers.frontendDesign
+        const answer = fdAnswers[frontendDesignIdx++] ?? "approve"
+        if (frontendDesignIdx >= fdAnswers.length) phase = "requirements"
+        return answer
       }
       if (phase === "requirements") {
         const answer = answers.requirements[requirementsIdx++] ?? "ok"
@@ -79,10 +94,28 @@ async function withTmpCwd<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+/**
+ * Initialise a clean real-git workspace at the given root: `git init`,
+ * minimal commit, origin/HEAD pointer at main. Returns the root for
+ * passing as `runWorkflow({...}, { workspaceRoot: root })`. Required now
+ * that simulation has been removed and real-git is mandatory.
+ */
+function seedCleanGitRepo(root: string): void {
+  spawnSync("git", ["init", "--initial-branch=main"], { cwd: root, encoding: "utf8" })
+  spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: root, encoding: "utf8" })
+  spawnSync("git", ["config", "user.name", "test"], { cwd: root, encoding: "utf8" })
+  writeFileSync(join(root, "README.md"), "seed\n")
+  spawnSync("git", ["add", "-A"], { cwd: root, encoding: "utf8" })
+  spawnSync("git", ["commit", "-m", "seed"], { cwd: root, encoding: "utf8" })
+  spawnSync("git", ["remote", "add", "origin", "https://github.com/acme/demo.git"], { cwd: root, encoding: "utf8" })
+  spawnSync("git", ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"], { cwd: root, encoding: "utf8" })
+}
+
 test("runWorkflow runs end-to-end with all review/side loops, producing artifacts", async () => {
   await withTmpCwd(async () => {
     const originalLog = console.log
     console.log = () => {}
+    seedCleanGitRepo(process.cwd())
 
     const { io, events } = makeIO({
       brainstorm: [
@@ -91,8 +124,10 @@ test("runWorkflow runs end-to-end with all review/side loops, producing artifact
         "Constraint: single-node, no cloud access.",
         "Yes, constraints are stable enough.",
       ],
-      visualCompanion: "no",
-      frontendDesign: "no",
+      // 3 clarification answers + 1 user-review approval
+      visualCompanion: ["no existing mockups", "dashboard first", "WCAG AA required", "approve"],
+      // 3 clarification answers + 1 user-review approval
+      frontendDesign: ["no design system", "professional", "no brand constraints", "approve"],
       requirements: [
         "Focus: core workflow as input form.",
         "Status badges per entry.",
@@ -104,7 +139,10 @@ test("runWorkflow runs end-to-end with all review/side loops, producing artifact
 
     try {
       await runWithWorkflowIO(io, () =>
-        runWorkflow({ id: "i-1", title: "Test Workflow", description: "smoke" }),
+        runWorkflow(
+          { id: "i-1", title: "Test Workflow", description: "smoke" },
+          { workspaceRoot: process.cwd() },
+        ),
       )
     } finally {
       console.log = originalLog
@@ -153,26 +191,6 @@ test("runWorkflow runs end-to-end with all review/side loops, producing artifact
     assert.equal(wave1.projectBranch, "proj/test-workflow__p01")
     assert.equal(wave2.storiesMerged.length, 2, "wave 2 should merge both stories")
     assert.equal(wave2.storiesBlocked.length, 0, "wave 2 must not silently block any story")
-
-    const repoState = JSON.parse(
-      await readFile(layout.repoStateWorkspaceFile(ctx.workspaceId), "utf8"),
-    ) as SimulatedRepoState
-    assert.equal(repoState.baseBranch, "main")
-    assert.equal(repoState.itemBranch, "item/test-workflow")
-    assert.equal(repoState.branches.find(branch => branch.name === "story/test-workflow__p01__w2__us-02")?.status, "merged")
-    assert.equal(repoState.branches.find(branch => branch.name === "story/test-workflow__p01__w2__us-03")?.status, "merged")
-    assert.equal(repoState.branches.find(branch => branch.name === "wave/test-workflow__p01__w2")?.commits.length, 2)
-    assert.equal(repoState.branches.find(branch => branch.name === "proj/test-workflow__p01")?.commits.length, 2)
-    assert.equal(repoState.branches.find(branch => branch.name === "item/test-workflow")?.commits.length, 1)
-
-    // handoff file created with merge decision
-    const handoffPath = layout.handoffFile(ctx, "P01")
-    const handoff = JSON.parse(await readFile(handoffPath, "utf8"))
-    assert.equal(handoff.decision, "test")
-    assert.equal(handoff.candidateBranch.status, "open")
-    assert.equal(handoff.candidateBranch.base, "proj/test-workflow__p01")
-    assert.equal(handoff.mergeTargetBranch, "main")
-    assert.match(handoff.candidateBranch.name, /^candidate\//)
 
     // With the event-bus model, stages emit presentation + chat_message
     // events even when no run context is active; the bare IO just captures
@@ -324,6 +342,9 @@ test("runWorkflow blocks dirty engine-owned branches without labeling them as ma
 
 test("runWorkflow blocks resume when design-prep freeze and brainstorm project ids drift", async () => {
   await withTmpCwd(async () => {
+    const repoRoot = join(process.cwd(), "repo")
+    mkdirSync(repoRoot, { recursive: true })
+    seedCleanGitRepo(repoRoot)
     const ctx = { workspaceId: "freeze-item-i-1", runId: "run-freeze" }
     const brainstormDir = layout.stageArtifactsDir(ctx, "brainstorm")
     const visualDir = layout.stageArtifactsDir(ctx, "visual-companion")
@@ -363,7 +384,10 @@ test("runWorkflow blocks resume when design-prep freeze and brainstorm project i
           runWithActiveRun({ runId: ctx.runId, itemId: "I-1", title: "Freeze Item" }, () =>
             runWorkflow(
               { id: "I-1", title: "Freeze Item", description: "freeze" },
-              { resume: { scope: { type: "run", runId: ctx.runId }, currentStage: "projects" } },
+              {
+                workspaceRoot: repoRoot,
+                resume: { scope: { type: "run", runId: ctx.runId }, currentStage: "projects" },
+              },
             ),
           ),
         ),

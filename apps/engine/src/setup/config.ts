@@ -133,6 +133,8 @@ export function validateHarnessProfileShape(input: unknown): HarnessProfile {
     input.mode === "codex-only" ||
     input.mode === "claude-only" ||
     input.mode === "fast" ||
+    input.mode === "claude-sdk-first" ||
+    input.mode === "codex-sdk-first" ||
     input.mode === "opencode-china" ||
     input.mode === "opencode-euro"
   ) {
@@ -163,17 +165,54 @@ export function validateHarnessProfileShape(input: unknown): HarnessProfile {
     }
     const isHarness = (value: unknown): value is "claude" | "codex" | "opencode" =>
       value === "claude" || value === "codex" || value === "opencode"
+    const isRuntime = (value: unknown): value is "cli" | "sdk" | undefined =>
+      value === undefined || value === "cli" || value === "sdk"
     if (!isHarness(roles.coder.harness) || !isHarness(roles.reviewer.harness)) {
       throw new Error("self roles must define a valid harness")
+    }
+    if (!isRuntime(roles.coder.runtime) || !isRuntime(roles.reviewer.runtime)) {
+      throw new Error('self roles "runtime" must be "cli" or "sdk" when set')
     }
     if (typeof roles.coder.provider !== "string" || typeof roles.coder.model !== "string" || typeof roles.reviewer.provider !== "string" || typeof roles.reviewer.model !== "string") {
       throw new Error("self roles must define provider and model")
     }
+    const mergeResolver = isObject(roles["merge-resolver"]) ? roles["merge-resolver"] : undefined
+    if (mergeResolver) {
+      if (!isHarness(mergeResolver.harness)) {
+        throw new Error("self roles[merge-resolver] must define a valid harness")
+      }
+      if (!isRuntime(mergeResolver.runtime)) {
+        throw new Error('self roles[merge-resolver] "runtime" must be "cli" or "sdk" when set')
+      }
+      if (typeof mergeResolver.provider !== "string" || typeof mergeResolver.model !== "string") {
+        throw new Error("self roles[merge-resolver] must define provider and model")
+      }
+    }
     return {
       mode: "self",
       roles: {
-        coder: { harness: roles.coder.harness, provider: roles.coder.provider, model: roles.coder.model },
-        reviewer: { harness: roles.reviewer.harness, provider: roles.reviewer.provider, model: roles.reviewer.model },
+        coder: {
+          harness: roles.coder.harness,
+          provider: roles.coder.provider,
+          model: roles.coder.model,
+          ...(roles.coder.runtime ? { runtime: roles.coder.runtime } : {}),
+        },
+        reviewer: {
+          harness: roles.reviewer.harness,
+          provider: roles.reviewer.provider,
+          model: roles.reviewer.model,
+          ...(roles.reviewer.runtime ? { runtime: roles.reviewer.runtime } : {}),
+        },
+        ...(mergeResolver
+          ? {
+              "merge-resolver": {
+                harness: mergeResolver.harness as "claude" | "codex" | "opencode",
+                provider: mergeResolver.provider as string,
+                model: mergeResolver.model as string,
+                ...(mergeResolver.runtime ? { runtime: mergeResolver.runtime as "cli" | "sdk" } : {}),
+              },
+            }
+          : {}),
       },
     }
   }
@@ -394,4 +433,22 @@ export function writeConfigFile(configPath: string, config: AppConfig): void {
 
 export function resolveConfiguredDbPath(config: Pick<AppConfig, "dataDir">): string {
   return resolve(config.dataDir, "beerengineer.sqlite")
+}
+
+/**
+ * Returns the `dataDir` from the effective on-disk config, or `null` when the
+ * config file is absent or unreadable.  Connection logic uses this to resolve
+ * the DB path without importing the full merged-config machinery.
+ *
+ * Honors `BEERENGINEER_CONFIG_PATH` and `BEERENGINEER_DATA_DIR` so that test
+ * harnesses can redirect both the config file and the data directory without
+ * calling the full setup flow.
+ */
+export function getConfiguredDataDirOrNull(): string | null {
+  // BEERENGINEER_DATA_DIR is the most direct override — respect it first.
+  if (process.env.BEERENGINEER_DATA_DIR) return process.env.BEERENGINEER_DATA_DIR
+  const configPath = process.env.BEERENGINEER_CONFIG_PATH ?? defaultConfigPath()
+  const state = readConfigFile(configPath)
+  if (state.kind === "ok") return state.config.dataDir
+  return null
 }

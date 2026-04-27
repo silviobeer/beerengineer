@@ -22,8 +22,9 @@ export type ItemRow = {
   code: string
   title: string
   description: string
-  current_column: "idea" | "brainstorm" | "requirements" | "implementation" | "done"
+  current_column: "idea" | "brainstorm" | "frontend" | "requirements" | "implementation" | "done"
   phase_status: "draft" | "running" | "review_required" | "completed" | "failed"
+  current_stage: string | null
   created_at: number
   updated_at: number
 }
@@ -301,6 +302,17 @@ export class Repos {
       .get(itemId) as RunRow | undefined
   }
 
+  /**
+   * Returns all runs for a given item ordered newest-first (by created_at).
+   * Used by the DB-sync layer to determine whether a given run is still the
+   * authoritative run for item state updates.
+   */
+  listRunsForItem(itemId: string): RunRow[] {
+    return this.db
+      .prepare("SELECT * FROM runs WHERE item_id = ? ORDER BY created_at DESC")
+      .all(itemId) as RunRow[]
+  }
+
   createItem(input: {
     workspaceId: string
     code?: string
@@ -317,6 +329,7 @@ export class Repos {
       description: input.description,
       current_column: "idea",
       phase_status: "draft",
+      current_stage: null,
       created_at: now(),
       updated_at: now()
     }
@@ -335,6 +348,17 @@ export class Repos {
         "UPDATE items SET current_column = ?, phase_status = ?, updated_at = ? WHERE id = ?"
       )
       .run(column, phaseStatus, now(), itemId)
+  }
+
+  /**
+   * Mirror the engine's stageKey for the *authoritative* run onto the item
+   * row. `null` means the item has no live stage. Callers must gate this on
+   * runOrchestrator's `isAuthoritative()` — never write from a side-run.
+   */
+  setItemCurrentStage(itemId: string, currentStage: string | null): void {
+    this.db
+      .prepare("UPDATE items SET current_stage = ?, updated_at = ? WHERE id = ?")
+      .run(currentStage, now(), itemId)
   }
 
   createProject(input: { id?: string; itemId: string; code: string; name: string; summary?: string; status?: string; position?: number }): ProjectRow {
@@ -527,6 +551,16 @@ export class Repos {
 
   listRuns(): RunRow[] {
     return this.db.prepare("SELECT * FROM runs ORDER BY created_at DESC").all() as RunRow[]
+  }
+
+  /**
+   * Return every run currently in `status='running'`. Used at startup to
+   * identify orphaned runs (workers that died with the previous process).
+   */
+  listRunningRuns(): RunRow[] {
+    return this.db
+      .prepare("SELECT * FROM runs WHERE status = 'running' ORDER BY created_at ASC")
+      .all() as RunRow[]
   }
 
   createStageRun(input: { id?: string; runId: string; stageKey: string; projectId?: string | null }): StageRunRow {

@@ -2,17 +2,15 @@ import { mkdir, readFile, unlink, writeFile } from "node:fs/promises"
 import { spawnSync } from "node:child_process"
 import { join } from "node:path"
 import {
-  abandonBranch,
-  appendBranchCommit,
   branchNameProject,
+  branchNameStory,
   branchNameWave,
-  ensureWaveBranch,
-  ensureStoryBranch,
-  mergeStoryBranchIntoWave,
-} from "../../core/repoSimulation.js"
+} from "../../core/branchNames.js"
 import { emitEvent, getActiveRun } from "../../core/runContext.js"
 import { writeRecoveryRecord } from "../../core/recovery.js"
 import { layout, type WorkflowContext } from "../../core/workspaceLayout.js"
+import { resolveRalphLoopConfig } from "../../core/loopConfig.js"
+import { runCycledLoop, type CycleOutcome } from "../../core/iterationLoop.js"
 import type { StageLogEntry } from "../../core/stageRuntime.js"
 import { stagePresent } from "../../core/stagePresentation.js"
 import { readWorkspaceConfig } from "../../core/workspaces.js"
@@ -24,7 +22,6 @@ import { runStoryReviewTools } from "../../review/registry.js"
 import type { CodeRabbitResult, SonarCloudResult } from "../../review/types.js"
 import type {
   Finding,
-  SimulatedBranch,
   StoryCheckResult,
   StoryExecutionContext,
   StoryImplementationArtifact,
@@ -32,8 +29,13 @@ import type {
   WaveSummary,
 } from "../../types.js"
 
-const MAX_ITERATIONS_PER_CYCLE = 4
-const MAX_REVIEW_CYCLES = 3
+// Loop bounds are resolved once *per story* (inside newImplementation),
+// not at module load. This keeps env-var changes between runs effective
+// without restarting the engine, and lets tests set
+// BEERENGINEER_MAX_ITERATIONS_PER_CYCLE / BEERENGINEER_MAX_REVIEW_CYCLES
+// before invoking runRalphStory and have the override actually take
+// effect. The historical defaults (4 and 3) live in
+// RALPH_LOOP_DEFAULTS inside core/loopConfig.ts.
 
 export type StoryArtifacts = {
   implementation: StoryImplementationArtifact
@@ -41,9 +43,11 @@ export type StoryArtifacts = {
 }
 
 type StoryReviewRun = {
+  designSystemFindings: Finding[]
   coderabbitFindings: Finding[]
   sonarFindings: Finding[]
   combinedFindings: Finding[]
+  designSystem: StoryReviewArtifact["gate"]["designSystem"]
   coderabbit: StoryReviewArtifact["gate"]["coderabbit"]
   sonar: StoryReviewArtifact["gate"]["sonar"]
   failedBecause: string[]
@@ -52,6 +56,22 @@ type StoryReviewRun = {
 
 function nowIso(): string {
   return new Date().toISOString()
+}
+
+function requireStoryBranch(storyContext: StoryExecutionContext): string {
+  // The execution stage sets `storyBranch` from `branchNameStory(...)`. If
+  // a caller (e.g. a focused unit test) constructs the context manually,
+  // route the fallback through the same canonical helper so the slugified
+  // result matches what real-git uses — hand-rolling the name here would
+  // diverge for ids containing spaces, slashes, or other non-[a-z0-9]
+  // characters.
+  if (storyContext.storyBranch) return storyContext.storyBranch
+  return branchNameStory(
+    { itemSlug: storyContext.item.slug } as WorkflowContext,
+    storyContext.project.id,
+    storyContext.wave.number,
+    storyContext.story.id,
+  )
 }
 
 function fakeChangedFiles(storyId: string): string[] {
@@ -86,13 +106,6 @@ function logEntry(type: StageLogEntry["type"], message: string, data?: Record<st
   return { at: nowIso(), type, message, ...(data ? { data } : {}) }
 }
 
-function requireBranch(implementation: StoryImplementationArtifact): SimulatedBranch {
-  if (!implementation.branch) {
-    throw new Error(`Missing simulated branch for story ${implementation.story.id}`)
-  }
-  return implementation.branch
-}
-
 async function recordStoryBlocked(
   ctx: WorkflowContext,
   storyContext: StoryExecutionContext,
@@ -120,7 +133,7 @@ async function recordStoryBlocked(
       storyId: storyContext.story.id,
     },
     summary,
-    branch: implementation.branch?.name,
+    branch: branchNameStory(ctx, storyContext.project.id, storyContext.wave.number, storyContext.story.id),
     evidencePaths: [
       join(dir, "implementation.json"),
       join(dir, "story-review.json"),
@@ -143,7 +156,7 @@ async function recordStoryBlocked(
       },
       cause,
       summary,
-      branch: implementation.branch?.name,
+      branch: branchNameStory(ctx, storyContext.project.id, storyContext.wave.number, storyContext.story.id),
     })
   }
 }
@@ -154,6 +167,7 @@ function buildReviewArtifact(
   result: StoryReviewRun,
 ): StoryReviewArtifact {
   const reviewers = [
+    { source: "design-system" as const, findings: result.designSystemFindings },
     { source: "coderabbit" as const, findings: result.coderabbitFindings },
     { source: "sonarqube" as const, findings: result.sonarFindings },
   ].map(reviewer => ({
@@ -172,6 +186,7 @@ function buildReviewArtifact(
     gate: {
       status: result.outcome.startsWith("pass") ? "pass" : "fail",
       failedBecause: result.failedBecause,
+      designSystem: result.designSystem,
       coderabbit: result.coderabbit,
       sonar: result.sonar,
     },
@@ -183,14 +198,15 @@ function buildReviewArtifact(
 function buildFeedbackSummary(result: StoryReviewRun): string[] {
   const summary: string[] = []
   const toolStatusLine = (
-    tool: "coderabbit" | "sonar",
-    value: StoryReviewArtifact["gate"]["coderabbit"] | StoryReviewArtifact["gate"]["sonar"],
+    tool: "design-system" | "coderabbit" | "sonar",
+    value: StoryReviewArtifact["gate"]["designSystem"] | StoryReviewArtifact["gate"]["coderabbit"] | StoryReviewArtifact["gate"]["sonar"],
   ): string => {
     if (value.status === "ran") {
       return `[tool-status] ${tool}: ran (${value.passed ? "pass" : "fail"})`
     }
     return `[tool-status] ${tool}: ${value.status} (${value.reason})`
   }
+  summary.push(toolStatusLine("design-system", result.designSystem))
   summary.push(toolStatusLine("coderabbit", result.coderabbit))
   summary.push(toolStatusLine("sonar", result.sonar))
   for (const reason of result.failedBecause) summary.push(`[gate] ${reason}`)
@@ -208,9 +224,36 @@ function dedupeFindings(findings: Finding[]): Finding[] {
   })
 }
 
-function runGit(args: string[], cwd: string): { ok: boolean; stdout: string } {
+function runGit(args: string[], cwd: string): { ok: boolean; stdout: string; stderr: string } {
   const result = spawnSync("git", args, { cwd, encoding: "utf8" })
-  return { ok: result.status === 0, stdout: result.stdout?.trim() ?? "" }
+  return {
+    ok: result.status === 0,
+    stdout: result.stdout?.trim() ?? "",
+    stderr: result.stderr?.trim() ?? "",
+  }
+}
+
+// Stages and commits any uncommitted work in the story worktree. The coder
+// agent writes files but does not always commit; without this, story branches
+// stay at the wave-base commit and `mergeStoryIntoWave` becomes a silent
+// no-op that loses the work when the worktree is removed at end-of-wave.
+function commitWorktreeChanges(worktreeRoot: string, message: string): string | null {
+  const inside = runGit(["rev-parse", "--is-inside-work-tree"], worktreeRoot)
+  if (!inside.ok || inside.stdout !== "true") return null
+  const status = runGit(["status", "--porcelain"], worktreeRoot)
+  if (!status.ok || !status.stdout) return null
+  const add = runGit(["add", "-A"], worktreeRoot)
+  if (!add.ok) {
+    stagePresent.warn(`commit-worktree: git add failed in ${worktreeRoot}: ${add.stderr}`)
+    return null
+  }
+  const commit = runGit(["commit", "-m", message], worktreeRoot)
+  if (!commit.ok) {
+    stagePresent.warn(`commit-worktree: git commit failed in ${worktreeRoot}: ${commit.stderr || commit.stdout}`)
+    return null
+  }
+  const sha = runGit(["rev-parse", "HEAD"], worktreeRoot)
+  return sha.ok ? sha.stdout : null
 }
 
 function listUntrackedFiles(workspaceRoot: string): string[] {
@@ -275,15 +318,16 @@ function sonarGate(result: SonarCloudResult): StoryReviewArtifact["gate"]["sonar
 }
 
 function reviewOutcome(
+  designSystem: StoryReviewArtifact["gate"]["designSystem"],
   coderabbit: StoryReviewArtifact["gate"]["coderabbit"],
   sonar: StoryReviewArtifact["gate"]["sonar"],
   failedBecause: string[],
 ): StoryReviewArtifact["outcome"] {
-  const ranTools = [coderabbit, sonar].filter(tool => tool.status === "ran")
-  const skippedTools = [coderabbit, sonar].filter(tool => tool.status === "skipped")
+  const ranTools = [designSystem, coderabbit, sonar].filter(tool => tool.status === "ran")
+  const skippedTools = [designSystem, coderabbit, sonar].filter(tool => tool.status === "skipped")
   const failedTools = [coderabbit, sonar].filter(tool => tool.status === "failed")
   if (failedBecause.length > 0) return "revise"
-  if (ranTools.length === 0 && skippedTools.length === 2) return "pass-unreviewed"
+  if (ranTools.length === 0 && skippedTools.length === 3) return "pass-unreviewed"
   if (ranTools.length === 0 && failedTools.length === 2) return "pass-tool-failure"
   if (skippedTools.length > 0 || failedTools.length > 0) return "pass-partial"
   return "pass"
@@ -302,7 +346,7 @@ async function runStoryReview(input: {
       workspaceRoot: input.storyContext.worktreeRoot ?? process.cwd(),
       artifactsDir: input.artifactsDir,
       baselineSha: null,
-      storyBranch: input.storyContext.storyBranch ?? requireBranch(input.implementation).name,
+      storyBranch: requireStoryBranch(input.storyContext),
       baseBranch: input.storyContext.item.baseBranch,
       changedFiles: input.implementation.changedFiles,
       storyId: input.storyContext.story.id,
@@ -313,9 +357,13 @@ async function runStoryReview(input: {
       },
       forceFake: true,
     })
+    const designSystem = review.designSystem
     const coderabbit = coderabbitGate(review.coderabbit)
     const sonar = sonarGate(review.sonarcloud)
     const failedBecause: string[] = []
+    if (designSystem.status === "ran" && !designSystem.passed) {
+      failedBecause.push("Design-system gate found hardcoded colors or rounded styles.")
+    }
     if (coderabbit.status === "ran" && !coderabbit.passed) {
       failedBecause.push("CodeRabbit still reports critical or high-severity review issues.")
     }
@@ -330,18 +378,26 @@ async function runStoryReview(input: {
       )
     }
     return {
+      designSystemFindings: review.designSystem.findings,
       coderabbitFindings: review.coderabbit.findings,
       sonarFindings: review.sonarcloud.findings,
-      combinedFindings: dedupeFindings([...review.coderabbit.findings, ...review.sonarcloud.findings]),
+      combinedFindings: dedupeFindings([...review.designSystem.findings, ...review.coderabbit.findings, ...review.sonarcloud.findings]),
+      designSystem,
       coderabbit,
       sonar,
       failedBecause,
-      outcome: reviewOutcome(coderabbit, sonar, failedBecause),
+      outcome: reviewOutcome(designSystem, coderabbit, sonar, failedBecause),
     }
   }
 
   const reviewWorkspaceRoot = input.storyContext.worktreeRoot ?? input.llm.workspaceRoot
-  const workspaceConfig = await readWorkspaceConfig(reviewWorkspaceRoot)
+  // workspace.json lives in the primary workspaceRoot, not in story worktrees.
+  // Note: `executionStageLlmForStory` rewrites `llm.workspaceRoot` to the
+  // per-story worktree before this runs, so reading config from llm here
+  // returns null. We thread `primaryWorkspaceRoot` separately on the story
+  // context for exactly this reason.
+  const configRoot = input.storyContext.primaryWorkspaceRoot ?? input.llm.workspaceRoot
+  const workspaceConfig = await readWorkspaceConfig(configRoot)
   const reviewPolicy = workspaceConfig?.reviewPolicy ?? {
     coderabbit: { enabled: false },
     sonarcloud: workspaceConfig?.sonar ?? { enabled: false },
@@ -354,7 +410,7 @@ async function runStoryReview(input: {
     workspaceRoot: reviewWorkspaceRoot,
     artifactsDir: input.artifactsDir,
     baselineSha,
-    storyBranch: input.storyContext.storyBranch ?? requireBranch(input.implementation).name,
+    storyBranch: requireStoryBranch(input.storyContext),
     baseBranch,
     changedFiles,
     storyId: input.storyContext.story.id,
@@ -362,13 +418,18 @@ async function runStoryReview(input: {
     reviewPolicy,
   })
 
+  const designSystemFindings = review.designSystem.findings
   const coderabbitFindings = review.coderabbit.findings
   const sonarFindings = review.sonarcloud.findings
-  const combinedFindings = dedupeFindings([...coderabbitFindings, ...sonarFindings])
+  const combinedFindings = dedupeFindings([...designSystemFindings, ...coderabbitFindings, ...sonarFindings])
   const failedBecause: string[] = []
+  const designSystem = review.designSystem
   const coderabbit = coderabbitGate(review.coderabbit)
   const sonar = sonarGate(review.sonarcloud)
 
+  if (designSystem.status === "ran" && !designSystem.passed) {
+    failedBecause.push("Design-system gate found hardcoded colors or rounded styles.")
+  }
   if (coderabbit.status === "ran" && !coderabbit.passed) {
     failedBecause.push("CodeRabbit still reports critical or high-severity review issues.")
   }
@@ -384,13 +445,15 @@ async function runStoryReview(input: {
   }
 
   return {
+    designSystemFindings,
     coderabbitFindings,
     sonarFindings,
     combinedFindings,
+    designSystem,
     coderabbit,
     sonar,
     failedBecause,
-    outcome: reviewOutcome(coderabbit, sonar, failedBecause),
+    outcome: reviewOutcome(designSystem, coderabbit, sonar, failedBecause),
   }
 }
 
@@ -480,11 +543,14 @@ function newImplementation(storyContext: StoryExecutionContext): StoryImplementa
     mode: "ralph-wiggum",
     status: "in_progress",
     implementationGoal: storyContext.testPlan.testPlan.summary,
-    maxIterations: MAX_ITERATIONS_PER_CYCLE,
-    maxReviewCycles: MAX_REVIEW_CYCLES,
+    ...(() => {
+      const cfg = resolveRalphLoopConfig()
+      return { maxIterations: cfg.maxIterationsPerCycle, maxReviewCycles: cfg.maxReviewCycles }
+    })(),
     currentReviewCycle: 0,
     iterations: [],
     coderSessionId: null,
+    mockupDeliveredToSession: false,
     priorAttempts: [],
     changedFiles: [],
     finalSummary: "",
@@ -496,20 +562,11 @@ async function ensureBranchAndStartLog(
   implementation: StoryImplementationArtifact,
 ): Promise<void> {
   if (implementation.iterations.length > 0) return
-  if (!implementation.branch) {
-    implementation.branch = await ensureStoryBranch(
-      ctx.runtimeContext,
-      ctx.storyContext.project.id,
-      ctx.storyContext.wave.number,
-      ctx.storyContext.story.id,
-    )
-    await writeJson(ctx.paths.implementationPath, implementation)
-    await appendLog(ctx.paths.logPath, logEntry("branch_event", `Branch created: ${implementation.branch.name}`, {
-      storyId: ctx.storyContext.story.id,
-      branch: implementation.branch.name,
-      base: implementation.branch.base,
-    }))
-  }
+  const branchName = requireStoryBranch(ctx.storyContext)
+  await appendLog(ctx.paths.logPath, logEntry("branch_event", `Branch ready: ${branchName}`, {
+    storyId: ctx.storyContext.story.id,
+    branch: branchName,
+  }))
   await appendLog(ctx.paths.logPath, logEntry("status_changed", `Story ${ctx.storyContext.story.id} started`, {
     storyId: ctx.storyContext.story.id,
   }))
@@ -589,7 +646,9 @@ async function runOneIteration(
       harness,
       runtimePolicy: executionCoderPolicy(llm.runtimePolicy),
       baselinePath: paths.baselinePath,
-      storyContext,
+      storyContext: implementation.mockupDeliveredToSession
+        ? { ...storyContext, mockupHtmlByScreen: undefined }
+        : storyContext,
       reviewFeedback: isRemediation ? opts.feedback ?? "" : undefined,
       sessionId: implementation.coderSessionId ?? null,
       iterationContext,
@@ -597,11 +656,21 @@ async function runOneIteration(
     coderSummary = coderResult.summary
     changedFilesThisIteration = coderResult.changedFiles
     implementation.coderSessionId = coderResult.sessionId
+    implementation.mockupDeliveredToSession ||= Boolean(storyContext.mockupHtmlByScreen)
     notes = [...notes, ...coderResult.implementationNotes]
     if (coderResult.blockers.length > 0) {
       notes.push(...coderResult.blockers.map(blocker => `[blocker] ${blocker}`))
     }
     stagePresent.dim(`    → ${coderSummary}`)
+    if (storyContext.worktreeRoot) {
+      const commitMessage = isRemediation
+        ? `Apply review feedback for ${storyContext.story.id} (iteration ${iterationNumber})`
+        : `Implement ${storyContext.story.id} (iteration ${iterationNumber})`
+      const sha = commitWorktreeChanges(storyContext.worktreeRoot, commitMessage)
+      if (sha) {
+        stagePresent.dim(`    → committed ${storyContext.story.id} iteration ${iterationNumber}: ${sha.slice(0, 8)}`)
+      }
+    }
   } else if (isRemediation) {
     await llm6bFix(opts.feedback ?? "")
   } else {
@@ -632,25 +701,20 @@ async function runOneIteration(
   implementation.changedFiles = Array.from(
     new Set([...implementation.changedFiles, ...changedFilesThisIteration]),
   )
-  implementation.branch = await appendBranchCommit(
-    runtimeContext,
-    requireBranch(implementation).name,
-    isRemediation
-      ? `Apply review feedback for ${storyContext.story.id}`
-      : `Implement ${storyContext.story.id}`,
-    implementation.changedFiles,
-  )
+  const storyBranchName = requireStoryBranch(storyContext)
+  const commitMessage = isRemediation
+    ? `Apply review feedback for ${storyContext.story.id}`
+    : `Implement ${storyContext.story.id}`
   implementation.status = result === "done" ? "ready_for_review" : "in_progress"
   if (result === "done") {
     implementation.finalSummary = "Implementation reached a green state and is ready for story review."
   }
 
   await writeJson(paths.implementationPath, implementation)
-  const lastCommit = requireBranch(implementation).commits[requireBranch(implementation).commits.length - 1]
-  await appendLog(paths.logPath, logEntry("branch_event", `Commit: ${lastCommit.message}`, {
+  await appendLog(paths.logPath, logEntry("branch_event", `Commit: ${commitMessage}`, {
     storyId: storyContext.story.id,
-    branch: requireBranch(implementation).name,
-    commit: lastCommit.message,
+    branch: storyBranchName,
+    commit: commitMessage,
   }))
   await appendLog(paths.logPath, logEntry("iteration", `Iteration ${iterationNumber} (cycle ${opts.reviewCycle}): ${result}`, {
     storyId: storyContext.story.id,
@@ -735,23 +799,17 @@ async function runOneReviewCycle(
     return { kind: "revise", review: storyReview, nextFeedback: storyReview.feedbackSummary.join("; ") }
   }
 
-  if (implementation.branch) {
-    const merge = await mergeStoryBranchIntoWave(
-      runtimeContext,
-      storyContext.project.id,
-      storyContext.wave.number,
-      implementation.branch.name,
-      implementation.changedFiles,
-    )
-    implementation.branch = merge.storyBranch
-    await appendLog(paths.logPath, logEntry("branch_event", `Merged ${merge.storyBranch.name} → ${merge.waveBranch.name}`, {
-      storyId: storyContext.story.id,
-      branch: merge.storyBranch.name,
-      target: merge.waveBranch.name,
-    }))
-  }
+  // Real-git story→wave merge happens in the execution stage's
+  // git.mergeStoryIntoWave call after this function returns "passed".
+  const passedStoryBranch = requireStoryBranch(storyContext)
+  const passedWaveBranch = branchNameWave(runtimeContext, storyContext.project.id, storyContext.wave.number)
+  await appendLog(paths.logPath, logEntry("branch_event", `Story ready to merge: ${passedStoryBranch} → ${passedWaveBranch}`, {
+    storyId: storyContext.story.id,
+    branch: passedStoryBranch,
+    target: passedWaveBranch,
+  }))
   implementation.status = "passed"
-  implementation.finalSummary = `Story implementation and story review both passed, then ${implementation.branch?.name ?? "story branch"} was merged into ${implementation.branch?.base ?? "wave branch"}.`
+  implementation.finalSummary = `Story implementation and story review both passed; ${passedStoryBranch} ready to merge into ${passedWaveBranch}.`
   await writeJson(paths.implementationPath, implementation)
   await appendLog(paths.logPath, logEntry("status_changed", `Story ${storyContext.story.id} passed`, {
     storyId: storyContext.story.id,
@@ -775,13 +833,14 @@ async function blockStory(
   const { runtimeContext, storyContext, paths } = ctx
   implementation.status = "blocked"
   implementation.finalSummary = summary
-  if (implementation.branch) {
-    implementation.branch = await abandonBranch(runtimeContext, implementation.branch.name)
-    await appendLog(paths.logPath, logEntry("branch_event", `Branch abandoned: ${implementation.branch.name}`, {
-      storyId: storyContext.story.id,
-      branch: implementation.branch.name,
-    }))
-  }
+  // Real-git story branch abandon (if any) is handled by the execution
+  // stage via git.abandonStoryBranch when the wave-level merge gate sees
+  // a blocked story; here we just record the blocked status.
+  const abandonedBranch = requireStoryBranch(storyContext)
+  await appendLog(paths.logPath, logEntry("branch_event", `Story blocked: ${abandonedBranch}`, {
+    storyId: storyContext.story.id,
+    branch: abandonedBranch,
+  }))
   await writeJson(paths.implementationPath, implementation)
   await appendLog(paths.logPath, logEntry("status_changed", `Story ${storyContext.story.id} blocked`, {
     storyId: storyContext.story.id,
@@ -821,51 +880,67 @@ export async function runRalphStory(
   await ensureBranchAndStartLog(loopCtx, implementation)
 
   const initialFeedback = storyReview?.outcome === "revise" ? storyReview.feedbackSummary.join("; ") : undefined
-  let nextFeedback = await consumePendingRemediation(loopCtx, pendingRemediation, initialFeedback)
+  const seedFeedback = await consumePendingRemediation(loopCtx, pendingRemediation, initialFeedback)
 
   const maxIterationsPerCycle = implementation.maxIterations
   const maxReviewCycles = implementation.maxReviewCycles
 
-  for (
-    let reviewCycle = Math.max(implementation.currentReviewCycle, 0);
-    reviewCycle < maxReviewCycles;
-    reviewCycle++
-  ) {
-    implementation.currentReviewCycle = reviewCycle
+  return runCycledLoop<StoryArtifacts>({
+    maxCycles: maxReviewCycles,
+    startCycle: Math.max(implementation.currentReviewCycle, 0),
+    initialFeedback: seedFeedback,
+    runCycle: async ({ cycle: reviewCycle, feedback }): Promise<CycleOutcome<StoryArtifacts>> => {
+      implementation.currentReviewCycle = reviewCycle
 
-    if (implementation.status !== "ready_for_review") {
-      const coderOutcome = await runCoderCycleUntilGreen(loopCtx, implementation, {
-        reviewCycle,
-        maxIterationsPerCycle,
-        maxReviewCycles,
-        feedback: nextFeedback,
-      })
-      if (coderOutcome === "exhausted") {
+      if (implementation.status !== "ready_for_review") {
+        const coderOutcome = await runCoderCycleUntilGreen(loopCtx, implementation, {
+          reviewCycle,
+          maxIterationsPerCycle,
+          maxReviewCycles,
+          feedback,
+        })
+        if (coderOutcome === "exhausted") {
+          // Inner per-iteration loop ran out of budget without reaching
+          // green. Hand off to onAllCyclesExhausted with a "story_error"
+          // reason so the terminal block carries the right cause —
+          // distinct from running out of *review* cycles, which becomes
+          // a "review_limit" block.
+          return {
+            kind: "exhausted",
+            reason: `story_error:${maxIterationsPerCycle}-iterations:cycle-${reviewCycle + 1}`,
+          }
+        }
+      }
+
+      const cycleResult = await runOneReviewCycle(loopCtx, implementation, reviewCycle)
+      storyReview = cycleResult.review
+      if (cycleResult.kind === "passed") {
+        return { kind: "done", result: { implementation, review: storyReview } }
+      }
+      return { kind: "continue", nextFeedback: cycleResult.nextFeedback }
+    },
+    onAllCyclesExhausted: async exhaustion => {
+      if (exhaustion.kind === "cycle-exhausted") {
+        // Inner-loop exhaustion: per-cycle iteration budget was spent.
         return blockStory(
           loopCtx,
           implementation,
           storyReview,
           "story_error",
-          `Blocked after ${maxIterationsPerCycle} implementation iterations in review cycle ${reviewCycle + 1} without reaching green.`,
+          `Blocked after ${maxIterationsPerCycle} implementation iterations in review cycle ${exhaustion.lastCycle + 1} without reaching green.`,
         )
       }
-    }
-
-    const cycleResult = await runOneReviewCycle(loopCtx, implementation, reviewCycle)
-    storyReview = cycleResult.review
-    if (cycleResult.kind === "passed") {
-      return { implementation, review: storyReview }
-    }
-    nextFeedback = cycleResult.nextFeedback
-  }
-
-  return blockStory(
-    loopCtx,
-    implementation,
-    storyReview,
-    "review_limit",
-    `Blocked after ${maxReviewCycles} story review cycles because the CodeRabbit/SonarQube gate did not open.`,
-  )
+      // Outer-loop exhaustion: review-cycle budget was spent without the
+      // review gate ever opening.
+      return blockStory(
+        loopCtx,
+        implementation,
+        storyReview,
+        "review_limit",
+        `Blocked after ${maxReviewCycles} story review cycles because the CodeRabbit/SonarQube gate did not open.`,
+      )
+    },
+  })
 }
 
 export async function writeWaveSummary(
@@ -874,7 +949,6 @@ export async function writeWaveSummary(
   projectId: string,
   summaries: Array<{ storyId: string; implementation: StoryImplementationArtifact }>,
 ): Promise<WaveSummary> {
-  await ensureWaveBranch(runtimeContext, projectId, wave.number)
   const summary: WaveSummary = {
     waveId: wave.id,
     waveBranch: branchNameWave(runtimeContext, projectId, wave.number),
@@ -883,8 +957,8 @@ export async function writeWaveSummary(
       .filter(({ implementation }) => implementation.status === "passed")
       .map(({ storyId, implementation }) => ({
         storyId,
-        branch: implementation.branch?.name ?? `story/${storyId}`,
-        commitCount: implementation.branch?.commits.length ?? implementation.iterations.length,
+        branch: branchNameStory(runtimeContext, projectId, wave.number, storyId),
+        commitCount: implementation.iterations.length,
         filesIntegrated: implementation.changedFiles,
       })),
     storiesBlocked: summaries

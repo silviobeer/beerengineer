@@ -1,11 +1,11 @@
 /**
  * Project the engine's stage taxonomy onto the fixed board column set.
- *   idea | brainstorm | requirements | implementation | done
+ *   idea | brainstorm | frontend | requirements | implementation | done
  * Phase-status values:
  *   draft | running | review_required | completed | failed
  */
 
-export type BoardColumn = "idea" | "brainstorm" | "requirements" | "implementation" | "done"
+export type BoardColumn = "idea" | "brainstorm" | "frontend" | "requirements" | "implementation" | "done"
 export type BoardPhaseStatus = "draft" | "running" | "review_required" | "completed" | "failed"
 
 export function mapStageToColumn(
@@ -17,9 +17,10 @@ export function mapStageToColumn(
   if (!stageKey) return { column: "idea", phaseStatus: "draft" }
   switch (stageKey) {
     case "brainstorm":
+      return { column: "brainstorm", phaseStatus }
     case "visual-companion":
     case "frontend-design":
-      return { column: "brainstorm", phaseStatus }
+      return { column: "frontend", phaseStatus }
     case "requirements":
       return { column: "requirements", phaseStatus }
     case "architecture":

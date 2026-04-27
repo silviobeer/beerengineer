@@ -1,4 +1,4 @@
-import { spawnCommand, type HostedCliExecutionResult, type HostedProviderInvokeInput, type HostedSession } from "../providerRuntime.js"
+import { spawnCommand, type HostedInvocationResult, type HostedProviderInvokeInput, type HostedSession } from "../providerRuntime.js"
 import { isTransientFailure, isTransientSpawnError, sleep, transientRetryDelaysMs } from "./_retry.js"
 import { emitRetryMarker } from "./_stream.js"
 
@@ -24,7 +24,7 @@ export type ProviderDriver<State> = {
     raw: Awaited<ReturnType<typeof spawnCommand>>
     command: string[]
     state: State
-  }): Promise<HostedCliExecutionResult>
+  }): Promise<HostedInvocationResult>
   /** Optional cleanup invoked after every attempt (whether success or
    *  throw), used by providers that allocate temp dirs / files. */
   afterEach?(params: { input: HostedProviderInvokeInput; state: State }): Promise<void>
@@ -38,10 +38,10 @@ export type ProviderDriver<State> = {
 export async function invokeProviderCli<State>(
   driver: ProviderDriver<State>,
   input: HostedProviderInvokeInput,
-): Promise<HostedCliExecutionResult> {
+): Promise<HostedInvocationResult> {
   const retryDelays = transientRetryDelaysMs()
 
-  const attempt = async (pass: number, activeInput: HostedProviderInvokeInput): Promise<HostedCliExecutionResult> => {
+  const attempt = async (pass: number, activeInput: HostedProviderInvokeInput): Promise<HostedInvocationResult> => {
     const command = driver.buildCommand(activeInput)
     const state = driver.createStreamState()
     const finishAttempt = async (): Promise<void> => {
@@ -67,7 +67,7 @@ export async function invokeProviderCli<State>(
       const combined = `${raw.stdout}\n${raw.stderr}`
       if (activeInput.session?.sessionId && driver.unknownSession(combined)) {
         await finishAttempt()
-        const freshSession: HostedSession = { provider: activeInput.runtime.provider, sessionId: null }
+        const freshSession: HostedSession = { harness: activeInput.runtime.harness, sessionId: null }
         return attempt(pass, { ...activeInput, session: freshSession })
       }
       if (isTransientFailure(raw.exitCode, raw.stdout, raw.stderr) && pass < retryDelays.length) {
@@ -79,7 +79,7 @@ export async function invokeProviderCli<State>(
         return attempt(pass + 1, activeInput)
       }
       await finishAttempt()
-      throw new Error(`${activeInput.runtime.provider} exited with code ${raw.exitCode}: ${combined.trim() || "no output"}`)
+      throw new Error(`${activeInput.runtime.harness} exited with code ${raw.exitCode}: ${combined.trim() || "no output"}`)
     }
 
     try {

@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { sanitizePreviewValue } from "../../../core/messagePreview.js"
-import type { HostedCliExecutionResult, HostedProviderInvokeInput } from "../providerRuntime.js"
+import type { HostedInvocationResult, HostedProviderInvokeInput } from "../providerRuntime.js"
 import { invokeProviderCli, type ProviderDriver } from "./_invoke.js"
 import { emitHostedThinking, emitHostedTokens, emitHostedToolCalled, emitHostedToolResult, makeJsonLineStreamCallback } from "./_stream.js"
 
@@ -74,13 +74,34 @@ function buildCodexCommand(input: HostedProviderInvokeInput, state: CodexStreamS
   state.tempDir = tempDir
   state.responsePath = join(tempDir, "last-message.txt")
   const command = ["codex", "exec"]
-  if (input.session?.sessionId) command.push("resume", input.session.sessionId)
+  const isResume = !!input.session?.sessionId
+  if (isResume) command.push("resume", input.session!.sessionId!)
   command.push("--skip-git-repo-check", "--json")
-  if (input.runtime.policy.mode === "safe-readonly") command.push("--sandbox", "read-only")
-  else if (input.runtime.policy.mode === "safe-workspace-write") command.push("--sandbox", "workspace-write")
-  else command.push("--full-auto", "--dangerously-bypass-approvals-and-sandbox")
+  // `codex exec resume` does not accept `--sandbox <mode>` — only `--full-auto`
+  // and `--dangerously-bypass-approvals-and-sandbox`. Route the safe-readonly /
+  // safe-workspace-write modes through `-c sandbox_mode=<mode>` on resume, which
+  // both subcommands accept.
+  if (input.runtime.policy.mode === "no-tools") {
+    // Stage agents + reviewers: emit JSON only, no shell. Pin the sandbox to
+    // the strictest mode codex offers so a misbehaving model cannot touch the
+    // filesystem either way.
+    if (isResume) command.push("-c", 'sandbox_mode="read-only"')
+    else command.push("--sandbox", "read-only")
+  } else if (input.runtime.policy.mode === "safe-readonly") {
+    if (isResume) command.push("-c", 'sandbox_mode="read-only"')
+    else command.push("--sandbox", "read-only")
+  } else if (input.runtime.policy.mode === "safe-workspace-write") {
+    if (isResume) command.push("-c", 'sandbox_mode="workspace-write"')
+    else command.push("--sandbox", "workspace-write")
+  } else {
+    command.push("--full-auto", "--dangerously-bypass-approvals-and-sandbox")
+  }
   if (input.runtime.model) command.push("--model", input.runtime.model)
-  command.push("--cd", input.runtime.workspaceRoot, "--output-last-message", state.responsePath, "-")
+  // `codex exec resume` inherits cwd from the original session and rejects
+  // `--cd`; only pass it on fresh exec. no-tools also benefits from setting cwd
+  // (it still reads stdin → writes JSON, no shell calls), so keep the default.
+  if (!isResume) command.push("--cd", input.runtime.workspaceRoot)
+  command.push("--output-last-message", state.responsePath, "-")
   return command
 }
 
@@ -113,7 +134,7 @@ function parseUsage(stdout: string): { sessionId: string | null; cachedInputToke
  * writes to a file path. We pre-allocate it before the driver builds the
  * command and clean it up in `afterEach`.
  */
-export async function invokeCodex(input: HostedProviderInvokeInput): Promise<HostedCliExecutionResult> {
+export async function invokeCodex(input: HostedProviderInvokeInput): Promise<HostedInvocationResult> {
   const tempDir = await mkdtemp(join(tmpdir(), "beerengineer-codex-"))
   const driver: ProviderDriver<CodexStreamState> = {
     tag: "codex",
@@ -136,7 +157,7 @@ export async function invokeCodex(input: HostedProviderInvokeInput): Promise<Hos
         ...raw,
         command,
         outputText,
-        session: { provider: activeInput.runtime.provider, sessionId: usage.sessionId ?? activeInput.session?.sessionId ?? null },
+        session: { harness: activeInput.runtime.harness, sessionId: usage.sessionId ?? activeInput.session?.sessionId ?? null },
         cacheStats: {
           cachedInputTokens: usage.cachedInputTokens,
           totalInputTokens: usage.totalInputTokens,

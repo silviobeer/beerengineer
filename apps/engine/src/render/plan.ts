@@ -13,8 +13,10 @@ export function renderPlanMarkdown(artifact: ImplementationPlanArtifact): string
     ...(waves.length === 0
       ? ["_No waves were emitted._", ""]
       : waves.flatMap(wave => [
-          `### Wave ${wave.number ?? "?"}: ${wave.goal ?? "(no goal)"}`,
-          ...(Array.isArray(wave.stories) ? wave.stories : []).map(story => `- ${story.id} ${story.title}`),
+          `### Wave ${wave.number ?? "?"}: ${wave.goal ?? "(no goal)"}${wave.kind === "setup" ? " [setup]" : ""}`,
+          ...(wave.kind === "setup"
+            ? (Array.isArray(wave.tasks) ? wave.tasks : []).map(task => `- ${task.id} ${task.title}`)
+            : (Array.isArray(wave.stories) ? wave.stories : []).map(story => `- ${story.id} ${story.title}`)),
           "",
         ])),
   ].join("\n")

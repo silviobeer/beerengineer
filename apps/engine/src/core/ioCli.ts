@@ -4,6 +4,7 @@ import { withPromptPersistence } from "./promptPersistence.js"
 import { attachHumanCliRenderer } from "./renderers/humanCli.js"
 import type { WorkflowIO } from "./io.js"
 import type { Repos } from "../db/repositories.js"
+import { NON_INTERACTIVE_NO_ANSWER_SENTINEL } from "./constants.js"
 
 export type CliIOOptions = {
   /** Replace the default humanCli terminal renderer (e.g. with an NDJSON
@@ -80,7 +81,21 @@ export function createCliIO(repos?: Repos, opts: CliIOOptions = {}): WorkflowIO 
           return
         }
         if (stdinEnded) {
-          resolveAnswer("")
+          // stdin closed with no queued answer for this prompt.
+          // Resolving with "" would silently feed an empty answer to the
+          // stage agent, causing incorrect behaviour (e.g. the
+          // visual-companion stage proceeds as if the user said "no
+          // references" when in fact no human was present at the terminal).
+          //
+          // Instead we resolve with a special sentinel that busToWorkflowIO's
+          // ask() path (bus.request) will surface back to stageRuntime.
+          // stageRuntime then passes this to definition.askUser; since we
+          // cannot reject bus.request() (it only resolves), we encode the
+          // error into the answer value and rely on the stage's own handling.
+          //
+          // The sentinel is detected in stageRuntime via the exported helper
+          // `isNonInteractiveNoAnswer`.
+          resolveAnswer(NON_INTERACTIVE_NO_ANSWER_SENTINEL)
           return
         }
         pendingAnswers.push(resolveAnswer)
@@ -99,8 +114,11 @@ export function createCliIO(repos?: Repos, opts: CliIOOptions = {}): WorkflowIO 
     })
     stdinLineReader.on("close", () => {
       stdinEnded = true
+      // Resolve any answers that arrived before stdin closed with the
+      // non-interactive sentinel so stageRuntime can throw a descriptive
+      // error instead of silently proceeding with an empty answer.
       while (pendingAnswers.length > 0) {
-        pendingAnswers.shift()?.("")
+        pendingAnswers.shift()?.(NON_INTERACTIVE_NO_ANSWER_SENTINEL)
       }
     })
   }

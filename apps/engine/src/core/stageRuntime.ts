@@ -10,6 +10,7 @@ import type {
 import { emitEvent, getActiveRun } from "./runContext.js"
 import { writeRecoveryRecord, type RecoveryCause } from "./recovery.js"
 import { layout, type WorkflowContext } from "./workspaceLayout.js"
+import { NON_INTERACTIVE_NO_ANSWER_SENTINEL } from "./constants.js"
 
 export type StageStatus =
   | "not_started"
@@ -393,6 +394,13 @@ async function runStageBody<TState, TArtifact, TResult>(
       // event above, so the CLI can safely suppress duplicate echo when it
       // sees the same text come back through `prompt_requested`.
       const userMessage = await definition.askUser(response.message)
+      if (userMessage === NON_INTERACTIVE_NO_ANSWER_SENTINEL) {
+        throw new Error(
+          `Stage "${run.stage}" emitted a prompt but this is a non-interactive run with no stdin answers queued. ` +
+          "Pipe answers via stdin (one per line), use the API (POST /runs/:id/answer) after the run " +
+          "emits a pending_prompt event, or provide all required inputs up-front (e.g. --references)."
+        )
+      }
       pushLog(run, { type: "user_message", message: userMessage })
       run.userTurnCount++
       setStatus(run, "chat_in_progress")

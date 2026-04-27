@@ -6,7 +6,7 @@ import { join } from "node:path"
 import { spawnSync } from "node:child_process"
 
 import { collectProjectReviewRepoEvidence } from "../src/stages/project-review/index.js"
-import { branchNameProject } from "../src/core/repoSimulation.js"
+import { branchNameProject } from "../src/core/branchNames.js"
 import type { WithExecution } from "../src/types.js"
 
 function git(cwd: string, ...args: string[]): void {

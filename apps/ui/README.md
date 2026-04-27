@@ -2,7 +2,8 @@
 
 Skeleton for the rebuilt BeerEngineer frontend. **The implementation is driven
 by the CLI stage pipeline** (brainstorm → visual-companion → frontend-design →
-requirements → architecture → planning → executing). Do not hand-author
+requirements → architecture → planning → execution → project-review → qa →
+documentation). Do not hand-author
 features here outside that pipeline.
 
 ## Boundary (hard rule)

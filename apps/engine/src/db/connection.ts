@@ -1,16 +1,55 @@
 import Database from "better-sqlite3"
-import { mkdirSync, readFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync } from "node:fs"
 import { dirname, resolve } from "node:path"
 import { homedir } from "node:os"
 import { fileURLToPath } from "node:url"
-import { REQUIRED_MIGRATION_LEVEL } from "../setup/config.js"
+import { REQUIRED_MIGRATION_LEVEL, getConfiguredDataDirOrNull } from "../setup/config.js"
 
 export type Db = Database.Database
 
-const defaultDbPath = () => resolve(homedir(), ".local", "share", "beerengineer", "beerengineer.sqlite")
+const legacyDbPath = () => resolve(homedir(), ".local", "share", "beerengineer", "beerengineer.sqlite")
 
+/**
+ * Resolve the SQLite database path using a four-tier priority order:
+ *
+ *   1. Explicit `override` argument — used by tests and direct callers.
+ *   2. `BEERENGINEER_UI_DB_PATH` environment variable.
+ *   3. `dataDir` from the on-disk setup config (`~/.config/beerengineer-nodejs/config.json`
+ *      on Linux, or wherever `env-paths` places it).
+ *   4. Legacy hard-coded `~/.local/share/beerengineer/beerengineer.sqlite` — emits a
+ *      warning to stderr so the user knows to run `beerengineer setup`.
+ *
+ * When tier 3 is used and the legacy DB file also exists the function emits an
+ * ambiguity warning but does not auto-migrate — that is a manual decision.
+ */
 export function resolveDbPath(override?: string | null): string {
-  return override ?? process.env.BEERENGINEER_UI_DB_PATH ?? defaultDbPath()
+  // Tier 1: explicit override (tests inject a tmp path here).
+  if (override != null) return override
+
+  // Tier 2: env var (used by some test harnesses and the UI server).
+  if (process.env.BEERENGINEER_UI_DB_PATH) return process.env.BEERENGINEER_UI_DB_PATH
+
+  // Tier 3: read the setup config that `beerengineer setup` writes.
+  const configuredDataDir = getConfiguredDataDirOrNull()
+  if (configuredDataDir != null) {
+    const configuredDb = resolve(configuredDataDir, "beerengineer.sqlite")
+    const legacy = legacyDbPath()
+    // Warn when both files exist so the user knows they may be looking at stale data.
+    if (existsSync(configuredDb) && existsSync(legacy) && configuredDb !== legacy) {
+      process.stderr.write(
+        `[engine] WARNING: both the configured DB (${configuredDb}) and the legacy DB (${legacy}) exist. ` +
+        `The engine will use the configured path. If you have data in the legacy location, ` +
+        `copy it manually before removing the old file.\n`,
+      )
+    }
+    return configuredDb
+  }
+
+  // Tier 4: no config found — fall back to the legacy hard-coded path.
+  process.stderr.write(
+    "[engine] db path fell back to legacy location — run beerengineer setup\n",
+  )
+  return legacyDbPath()
 }
 
 export function openDatabase(dbPath?: string | null): Db {
@@ -32,6 +71,7 @@ export function applySchema(db: Db): void {
   migrateRunsFsWorkspaceIdColumn(db)
   migrateStageRunsSessionColumns(db)
   migrateNotificationDeliveriesTable(db)
+  migrateItemsCurrentStageColumn(db)
   stampMigrationLevel(db)
 }
 
@@ -146,4 +186,15 @@ function migrateNotificationDeliveriesTable(db: Db): void {
     CREATE INDEX IF NOT EXISTS notification_deliveries_run_prompt_idx
     ON notification_deliveries(run_id, prompt_id)
   `)
+}
+
+/**
+ * Add `current_stage` to an older `items` table. The board mini-stepper reads
+ * this directly; null means "no live stage". Authoritative writes only — see
+ * runOrchestrator's isAuthoritative gate.
+ */
+function migrateItemsCurrentStageColumn(db: Db): void {
+  const cols = db.prepare("PRAGMA table_info(items)").all() as Array<{ name: string }>
+  if (cols.some(c => c.name === "current_stage")) return
+  db.exec("ALTER TABLE items ADD COLUMN current_stage TEXT")
 }

@@ -20,11 +20,11 @@ export class FakeDocumentationReviewAdapter
     }
 
     const featureSection = input.artifact.featuresDoc.sections.find(section => section.heading === "Implemented Features")
-    const missingStories = input.state.prd.stories.filter(
-      story => !featureSection?.content.includes(story.id),
+    const missingStories = Object.keys(input.state.prdDigest.acCountByStory).filter(
+      storyId => !featureSection?.content.includes(storyId),
     )
     if (missingStories.length > 0) {
-      failures.push(`Features doc is missing stories: ${missingStories.map(story => story.id).join(", ")}.`)
+      failures.push(`Features doc is missing stories: ${missingStories.join(", ")}.`)
     }
 
     if (failures.length > 0) {

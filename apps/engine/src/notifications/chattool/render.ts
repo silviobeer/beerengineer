@@ -89,6 +89,7 @@ export function messageRoleForEntry(entry: MessageEntry): "summary" | "prompt" |
   if (entry.type === "prompt_requested") return "prompt"
   if (
     entry.type === "run_started" ||
+    entry.type === "phase_started" ||
     entry.type === "phase_completed" ||
     entry.type === "phase_failed" ||
     entry.type === "run_finished"
@@ -142,11 +143,23 @@ export function describeChatMessage(entry: MessageEntry, repos?: Repos): ChatToo
         ]),
         promptId: null,
       }
+    case "phase_started":
+      return {
+        text: joinTelegramLines([
+          `${presentation.icon} BeerEngineer stage started`,
+          "",
+          `Stage: ${s(entry.payload.stageKey)}`,
+          `Run ${shortRunId(entry.runId)}`,
+          "",
+          `${s(entry.payload.stageKey)} is up — working on it.`,
+        ]),
+        promptId: null,
+      }
     case "phase_completed":
     case "phase_failed":
       return {
         text: joinTelegramLines([
-          `${presentation.icon} BeerEngineer stage completed`,
+          `${presentation.icon} BeerEngineer stage ${entry.type === "phase_failed" ? "failed" : "completed"}`,
           "",
           `Stage: ${s(entry.payload.stageKey)}`,
           "",

@@ -100,14 +100,28 @@ export async function handleItemActionNamed(
     return json(res, 400, {
       error: "bad_request",
       code: "bad_request",
-      valid: ["start_brainstorm", "promote_to_requirements", "start_implementation", "rerun_design_prep", "mark_done"],
+      valid: [
+        "start_brainstorm",
+        "start_visual_companion",
+        "start_frontend_design",
+        "promote_to_requirements",
+        "start_implementation",
+        "rerun_design_prep",
+        "mark_done",
+      ],
     })
   }
   // Consume the body even though these actions currently have no request
   // fields; that keeps the route future-proof for action-specific payloads.
   await readJson(req).catch(() => ({}))
 
-  if (action === "start_brainstorm" || action === "start_implementation" || action === "rerun_design_prep") {
+  if (
+    action === "start_brainstorm" ||
+    action === "start_visual_companion" ||
+    action === "start_frontend_design" ||
+    action === "start_implementation" ||
+    action === "rerun_design_prep"
+  ) {
     const item = repos.getItem(itemId)
     if (!item) return json(res, 404, { error: "item_not_found", code: "not_found" })
     const transition = lookupTransition(action, item.current_column, item.phase_status)

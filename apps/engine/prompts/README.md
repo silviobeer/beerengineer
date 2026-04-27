@@ -2,6 +2,10 @@
 
 Prompt files for hosted LLM stages live here.
 
+> See [`docs/context-and-llm-config.md`](../../../docs/context-and-llm-config.md)
+> for the full picture (prompt envelope, payload contracts, runtime
+> policy, env-var overrides). This file covers the prompt-folder rules.
+
 Layout:
 - `system/<stage-id>.md` — hosted stage prompts, one per stage id.
 - `reviewers/<stage-id>.md` — hosted reviewer prompts, one per stage id. Missing files fall back to `reviewers/_default.md`.

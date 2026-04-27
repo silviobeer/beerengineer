@@ -5,10 +5,25 @@ import { stagePresent } from "../../core/stagePresentation.js"
 import { renderConceptMarkdown } from "../../render/concept.js"
 import { ask } from "../../sim/human.js"
 import { createBrainstormReview, createBrainstormStage, type RunLlmConfig } from "../../llm/registry.js"
+import type { GitAdapter } from "../../core/gitAdapter.js"
+import type { CodebaseSnapshot } from "../../types/context.js"
 import type { BrainstormState } from "./types.js"
+import { normalizeBrainstormArtifact } from "./types.js"
 
-export async function brainstorm(item: Item, context: WorkflowContext, llm?: RunLlmConfig): Promise<Project[]> {
+export async function brainstorm(
+  item: Item,
+  context: WorkflowContext,
+  git: GitAdapter,
+  llm?: RunLlmConfig,
+  codebase?: CodebaseSnapshot,
+): Promise<Project[]> {
   stagePresent.header("brainstorm")
+  // Brainstorm is the first stage of a fresh run — it owns the creation of
+  // the item branch + worktree that every subsequent stage operates against.
+  // Both calls are idempotent: re-running brainstorm against an existing
+  // worktree just reattaches HEAD to the item branch.
+  git.ensureItemBranch()
+  git.assertWorkspaceRootOnBaseBranch("brainstorm: after ensureItemBranch")
   stagePresent.step("Interactive session via LLM adapter + stage runtime\n")
 
   const { result } = await runStage({
@@ -22,11 +37,15 @@ export async function brainstorm(item: Item, context: WorkflowContext, llm?: Run
       questionsAsked: 0,
       targetQuestions: 3,
       history: [],
+      codebase,
     }),
     stageAgent: createBrainstormStage(undefined, llm),
     reviewer: createBrainstormReview(llm),
     askUser: ask,
     async persistArtifacts(run, artifact) {
+      // Coerce string-typed array fields that real LLMs may serialise as a
+      // single string (e.g. run fb199f59 crash: constraints was a string).
+      artifact = normalizeBrainstormArtifact(artifact)
       const hasUi = artifact.projects.some(project => project.hasUi === true)
       return [
         {
@@ -63,7 +82,7 @@ export async function brainstorm(item: Item, context: WorkflowContext, llm?: Run
       printStageCompletion(run, "brainstorm")
       return artifact.projects.map(project => ({ ...project, hasUi: project.hasUi === true }))
     },
-    maxReviews: 4,
+    maxReviews: 2,
   })
 
   return result

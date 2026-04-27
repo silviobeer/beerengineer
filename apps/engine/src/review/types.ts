@@ -61,6 +61,12 @@ export type SonarCloudResult = {
 }
 
 export type ReviewToolRegistryResult = {
+  designSystem: {
+    status: "ran" | "skipped"
+    passed: boolean
+    findings: Finding<"design-system">[]
+    summary?: string
+  }
   coderabbit: CodeRabbitResult
   sonarcloud: SonarCloudResult
 }

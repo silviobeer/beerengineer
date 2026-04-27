@@ -8,6 +8,23 @@ export type TestWriterState = {
     title: string
   }
   acceptanceCriteria: AcceptanceCriterion[]
+  design?: {
+    antiPatterns: string[]
+  }
+  architectureSummary?: {
+    summary: string
+    systemShape: string
+    constraints: string[]
+    relevantComponents: Array<{
+      name: string
+      responsibility: string
+    }>
+    decisions: Array<{
+      id: string
+      summary: string
+      rationale?: string
+    }>
+  }
   revisionCount: number
   lastReviewFeedback?: string
 }

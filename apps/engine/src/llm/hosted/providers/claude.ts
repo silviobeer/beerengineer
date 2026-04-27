@@ -1,4 +1,4 @@
-import type { HostedCliExecutionResult, HostedProviderInvokeInput } from "../providerRuntime.js"
+import type { HostedInvocationResult, HostedProviderInvokeInput } from "../providerRuntime.js"
 import { sanitizePreviewValue } from "../../../core/messagePreview.js"
 import { invokeProviderCli, type ProviderDriver } from "./_invoke.js"
 import {
@@ -80,6 +80,8 @@ function isToolUseContent(part: ClaudeAssistantContent): part is Extract<ClaudeA
 
 function permissionMode(policy: HostedProviderInvokeInput["runtime"]["policy"]): string | null {
   switch (policy.mode) {
+    case "no-tools":
+      return null
     case "safe-readonly":
       return "plan"
     case "safe-workspace-write":
@@ -90,7 +92,18 @@ function permissionMode(policy: HostedProviderInvokeInput["runtime"]["policy"]):
 }
 
 function buildClaudeCommand(input: HostedProviderInvokeInput): string[] {
-  const command = ["claude", "--print", "--verbose", "--output-format", "stream-json", "--add-dir", input.runtime.workspaceRoot]
+  const noTools = input.runtime.policy.mode === "no-tools"
+  const command = ["claude", "--print"]
+  // Tool-using stages (currently only execution) need stream-json so we can
+  // surface intermediate tool-use events live; no-tools stages get a single
+  // result blob via --output-format=json which is cheaper to parse and avoids
+  // streaming overhead per turn. --verbose is irrelevant for one-shot json.
+  if (noTools) {
+    command.push("--output-format", "json")
+  } else {
+    command.push("--verbose", "--output-format", "stream-json")
+    command.push("--add-dir", input.runtime.workspaceRoot)
+  }
   const mode = permissionMode(input.runtime.policy)
   if (mode) command.push("--permission-mode", mode)
   if (input.runtime.policy.mode === "unsafe-autonomous-write") command.push("--dangerously-skip-permissions")
@@ -268,7 +281,7 @@ const claudeDriver: ProviderDriver<ClaudeStreamState> = {
       ...raw,
       command,
       outputText,
-      session: { provider: input.runtime.provider, sessionId: state.sessionId ?? input.session?.sessionId ?? null },
+      session: { harness: input.runtime.harness, sessionId: state.sessionId ?? input.session?.sessionId ?? null },
       cacheStats: {
         cachedInputTokens: state.usage?.cache_read_input_tokens ?? 0,
         totalInputTokens: state.usage?.input_tokens ?? 0,
@@ -277,6 +290,6 @@ const claudeDriver: ProviderDriver<ClaudeStreamState> = {
   },
 }
 
-export async function invokeClaude(input: HostedProviderInvokeInput): Promise<HostedCliExecutionResult> {
+export async function invokeClaude(input: HostedProviderInvokeInput): Promise<HostedInvocationResult> {
   return invokeProviderCli(claudeDriver, input)
 }

@@ -28,7 +28,7 @@ function primaryFinding(project: Project, state: ProjectReviewState): ProjectRev
     }
   }
 
-  const selector = (hashProjectId(project.id) + state.implementationPlan.plan.waves.length + state.prd.stories.length) % 2
+  const selector = (hashProjectId(project.id) + state.planSummary.waveCount + state.prd.stories.length) % 2
   if (selector === 0) {
     return {
       id: "PR-ARCH-01",
@@ -36,7 +36,7 @@ function primaryFinding(project: Project, state: ProjectReviewState): ProjectRev
       severity: "high",
       category: "architecture",
       message: "Business rules are duplicated across route and service boundaries.",
-      evidence: `Project ${project.id} spans ${state.implementationPlan.plan.waves.length} waves across ${totalMergedStories(state)} merged stories, but the architecture still describes a single validation boundary.`,
+      evidence: `Project ${project.id} spans ${state.planSummary.waveCount} waves across ${totalMergedStories(state)} merged stories, but the architecture still describes a single validation boundary.`,
       recommendation: "Consolidate domain validation in the service layer and keep transport handlers thin.",
     }
   }
