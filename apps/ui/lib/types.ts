@@ -78,6 +78,8 @@ export interface BoardCardDTO {
   hasOpenPrompt?: boolean;
   hasReviewGateWaiting?: boolean;
   hasBlockedRun?: boolean;
+  /** Live override from SSE; when defined, wins over the static flags. */
+  liveAttention?: boolean | null;
 }
 
 export const BOARD_COLUMN_LABELS: Record<BoardColumn, string> = {

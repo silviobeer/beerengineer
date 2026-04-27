@@ -9,6 +9,9 @@ interface BoardCardProps {
 const ATTENTION_GOLD = "rgb(234, 179, 8)";
 
 function hasAttention(card: BoardCardDTO): boolean {
+  // A live SSE update is authoritative when present (true OR false).
+  if (card.liveAttention === true) return true;
+  if (card.liveAttention === false) return false;
   return Boolean(
     card.hasOpenPrompt || card.hasReviewGateWaiting || card.hasBlockedRun
   );

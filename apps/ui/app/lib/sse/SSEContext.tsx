@@ -69,6 +69,71 @@ const STAGE_TO_STEP: Record<string, number> = {
   review: 4,
 };
 
+/**
+ * Engine SSE envelopes (`MessageEntry`) carry their interesting fields under
+ * `payload`; the top level only has `id`, `ts`, `runId`, `type`, `level`.
+ * Normalize into the DTO shapes consumers actually read.
+ */
+type Envelope = {
+  id?: string;
+  ts?: string;
+  runId?: string;
+  type?: string;
+  level?: number;
+  payload?: Record<string, unknown>;
+};
+
+function toChatEntry(env: Envelope, eventType: string): ChatEntry | null {
+  const payload = env.payload ?? {};
+  const role =
+    typeof payload.role === "string"
+      ? payload.role
+      : eventType === "agent_message"
+        ? "assistant"
+        : eventType === "user_message" || eventType === "prompt_answered"
+          ? "user"
+          : "system";
+  const content =
+    typeof payload.message === "string"
+      ? payload.message
+      : typeof payload.prompt === "string"
+        ? payload.prompt
+        : typeof payload.answer === "string"
+          ? payload.answer
+          : "";
+  if (!content && eventType !== "prompt_requested") return null;
+  return {
+    id: env.id,
+    runId: env.runId ?? "",
+    role,
+    content,
+  };
+}
+
+function severityFromLevel(level?: number): string {
+  if (level === 0) return "debug";
+  if (level === 2) return "milestone";
+  return "info";
+}
+
+function toLogEntry(env: Envelope, eventType: string): LogEntry | null {
+  const payload = env.payload ?? {};
+  let message =
+    typeof payload.message === "string"
+      ? payload.message
+      : eventType === "artifact_written" && typeof payload.path === "string"
+        ? `wrote ${payload.path}`
+        : "";
+  if (!message) return null;
+  return {
+    id: env.id,
+    runId: env.runId ?? "",
+    severity: severityFromLevel(env.level),
+    timestamp: env.ts ?? new Date().toISOString(),
+    message,
+  };
+}
+
 function parseData(raw: unknown): unknown {
   if (typeof raw === "string") {
     try {
@@ -109,9 +174,6 @@ export function SSEConnectionManager({
   const [isOffline, setIsOffline] = useState(false);
   const [runId, setRunIdState] = useState<string | null>(initialRunId);
 
-  const isOfflineRef = useRef(isOffline);
-  isOfflineRef.current = isOffline;
-
   const conversationListeners = useRef(new Set<ConversationListener>());
   const logListeners = useRef(new Set<LogListener>());
   const itemListeners = useRef(new Set<ItemEventListener>());
@@ -119,9 +181,11 @@ export function SSEConnectionManager({
   const goOffline = useCallback(() => {
     setIsOffline(true);
   }, []);
+  const goOnline = useCallback(() => {
+    setIsOffline(false);
+  }, []);
 
   const applyItemUpdate = useCallback((update: Partial<ItemState> & { id: string }) => {
-    if (isOfflineRef.current) return;
     setItemState((prev) => {
       const existing = prev[update.id] ?? { id: update.id };
       const next: ItemState = { ...existing };
@@ -208,20 +272,23 @@ export function SSEConnectionManager({
       applyItemUpdate(update);
     };
 
-    const dispatchChat = (e: MessageEvent) => {
+    const dispatchChat = (eventType: string) => (e: MessageEvent) => {
       const data = parseData(e.data);
       if (!data || typeof data !== "object") return;
-      const entry = data as ChatEntry;
+      const entry = toChatEntry(data as Envelope, eventType);
+      if (!entry) return;
       for (const cb of conversationListeners.current) cb(entry);
     };
-    const dispatchLog = (e: MessageEvent) => {
+    const dispatchLog = (eventType: string) => (e: MessageEvent) => {
       const data = parseData(e.data);
       if (!data || typeof data !== "object") return;
-      const entry = data as LogEntry;
+      const entry = toLogEntry(data as Envelope, eventType);
+      if (!entry) return;
       for (const cb of logListeners.current) cb(entry);
     };
 
     const onErr = () => goOffline();
+    const onOpen = () => goOnline();
     const onClose = () => goOffline();
 
     // Item placement.
@@ -237,11 +304,12 @@ export function SSEConnectionManager({
     // Stepper progression.
     sourceRef.addEventListener("phase_started", onPhaseStarted);
     // Workspace-level chat / log feeds (consumed by detail page).
-    sourceRef.addEventListener("agent_message", dispatchChat);
-    sourceRef.addEventListener("user_message", dispatchChat);
-    sourceRef.addEventListener("artifact_written", dispatchLog);
-    sourceRef.addEventListener("log", dispatchLog);
+    sourceRef.addEventListener("agent_message", dispatchChat("agent_message"));
+    sourceRef.addEventListener("user_message", dispatchChat("user_message"));
+    sourceRef.addEventListener("artifact_written", dispatchLog("artifact_written"));
+    sourceRef.addEventListener("log", dispatchLog("log"));
 
+    sourceRef.onopen = onOpen;
     sourceRef.onerror = onErr;
     sourceRef.onclose = onClose;
 
@@ -252,16 +320,17 @@ export function SSEConnectionManager({
         /* ignore */
       }
     };
-  }, [workspaceKey, applyItemUpdate, goOffline]);
+  }, [workspaceKey, applyItemUpdate, goOffline, goOnline]);
 
   // Run-scoped SSE — same canonical vocabulary as workspace SSE.
+  // Default engine level is 2 (milestones-only); request level=1 so we get
+  // chat / phase / artifact frames the detail page actually consumes.
   useEffect(() => {
     if (!runId) return;
-    if (isOfflineRef.current) return;
     let es: EventSourceLike | null = null;
     try {
       es = factoryRef.current(
-        `${engineBase()}/runs/${encodeURIComponent(runId)}/events`,
+        `${engineBase()}/runs/${encodeURIComponent(runId)}/events?level=1`,
       );
     } catch {
       goOffline();
@@ -269,27 +338,31 @@ export function SSEConnectionManager({
     }
     const sourceRef = es;
 
-    const dispatchChat = (e: MessageEvent) => {
+    const dispatchChat = (eventType: string) => (e: MessageEvent) => {
       const data = parseData(e.data);
       if (!data || typeof data !== "object") return;
-      const entry = data as ChatEntry;
+      const entry = toChatEntry(data as Envelope, eventType);
+      if (!entry) return;
       for (const cb of conversationListeners.current) cb(entry);
     };
-    const dispatchLog = (e: MessageEvent) => {
+    const dispatchLog = (eventType: string) => (e: MessageEvent) => {
       const data = parseData(e.data);
       if (!data || typeof data !== "object") return;
-      const entry = data as LogEntry;
+      const entry = toLogEntry(data as Envelope, eventType);
+      if (!entry) return;
       for (const cb of logListeners.current) cb(entry);
     };
     const onErr = () => goOffline();
+    const onOpen = () => goOnline();
     const onClose = () => goOffline();
 
-    sourceRef.addEventListener("agent_message", dispatchChat);
-    sourceRef.addEventListener("user_message", dispatchChat);
-    sourceRef.addEventListener("prompt_requested", dispatchChat);
-    sourceRef.addEventListener("prompt_answered", dispatchChat);
-    sourceRef.addEventListener("artifact_written", dispatchLog);
-    sourceRef.addEventListener("log", dispatchLog);
+    sourceRef.addEventListener("agent_message", dispatchChat("agent_message"));
+    sourceRef.addEventListener("user_message", dispatchChat("user_message"));
+    sourceRef.addEventListener("prompt_requested", dispatchChat("prompt_requested"));
+    sourceRef.addEventListener("prompt_answered", dispatchChat("prompt_answered"));
+    sourceRef.addEventListener("artifact_written", dispatchLog("artifact_written"));
+    sourceRef.addEventListener("log", dispatchLog("log"));
+    sourceRef.onopen = onOpen;
     sourceRef.onerror = onErr;
     sourceRef.onclose = onClose;
 
@@ -300,7 +373,7 @@ export function SSEConnectionManager({
         /* ignore */
       }
     };
-  }, [runId, goOffline]);
+  }, [runId, goOffline, goOnline]);
 
   const setRunId = useCallback((next: string | null) => {
     setRunIdState(next);

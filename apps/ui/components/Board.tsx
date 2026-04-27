@@ -23,9 +23,8 @@ export function Board({ items, workspaceKey }: BoardProps) {
         column: live.column ?? item.column,
         phase_status: live.phaseStatus ?? item.phase_status,
         current_stage: live.currentStage ?? item.current_stage,
-        hasOpenPrompt: live.attention === true ? true : item.hasOpenPrompt,
-        hasReviewGateWaiting: item.hasReviewGateWaiting,
-        hasBlockedRun: live.attention === true ? true : item.hasBlockedRun,
+        // Pass attention through as-is so BoardCard can clear stale SSR flags.
+        liveAttention: live.attention ?? null,
       };
     });
   }, [items, itemState]);
