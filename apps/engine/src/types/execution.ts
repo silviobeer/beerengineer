@@ -116,7 +116,7 @@ export type StoryReviewArtifact = {
   }
   reviewCycle: number
   reviewers: Array<{
-    source: "coderabbit" | "sonarqube"
+    source: "coderabbit" | "sonarqube" | "design-system"
     status: "pass" | "revise"
     findings: Array<{
       severity: Severity

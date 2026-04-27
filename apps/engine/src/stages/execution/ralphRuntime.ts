@@ -288,6 +288,15 @@ async function collectReviewChangedFiles(workspaceRoot: string, baselinePath: st
   return Array.from(new Set([...tracked.split(/\r?\n/).map(line => line.trim()).filter(Boolean), ...untrackedDelta])).sort()
 }
 
+function designSystemGate(
+  result: { status: "ran" | "skipped"; passed: boolean; summary?: string },
+): StoryReviewArtifact["gate"]["designSystem"] {
+  if (result.status === "ran") {
+    return { status: "ran", passed: result.passed }
+  }
+  return { status: "skipped", reason: result.summary ?? "design-system-skipped" }
+}
+
 function coderabbitGate(result: CodeRabbitResult): StoryReviewArtifact["gate"]["coderabbit"] {
   switch (result.status) {
     case "ran":
@@ -357,7 +366,7 @@ async function runStoryReview(input: {
       },
       forceFake: true,
     })
-    const designSystem = review.designSystem
+    const designSystem = designSystemGate(review.designSystem)
     const coderabbit = coderabbitGate(review.coderabbit)
     const sonar = sonarGate(review.sonarcloud)
     const failedBecause: string[] = []
@@ -423,7 +432,7 @@ async function runStoryReview(input: {
   const sonarFindings = review.sonarcloud.findings
   const combinedFindings = dedupeFindings([...designSystemFindings, ...coderabbitFindings, ...sonarFindings])
   const failedBecause: string[] = []
-  const designSystem = review.designSystem
+  const designSystem = designSystemGate(review.designSystem)
   const coderabbit = coderabbitGate(review.coderabbit)
   const sonar = sonarGate(review.sonarcloud)
 

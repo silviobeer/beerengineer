@@ -12,6 +12,7 @@ import { runStage } from "../../core/stageRuntime.js"
 import {
   createTestWriterReview,
   createTestWriterStage,
+  executionCoderPolicy,
   resolveHarness,
   resolveMergeResolverHarness,
   type RunLlmConfig,
@@ -594,7 +595,7 @@ async function runSetupStory(
           role: "coder",
           stage: "execution",
         }),
-        runtimePolicy: executionLlm.runtimePolicy,
+        runtimePolicy: executionCoderPolicy(executionLlm.runtimePolicy),
         baselinePath,
         storyContext,
         sessionId: implementation.coderSessionId ?? null,
