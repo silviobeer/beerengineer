@@ -56,18 +56,18 @@ describe("ItemDetailPage server component (TC-04: real GET /items/:id round-trip
     expect(screen.getAllByRole("button")).toHaveLength(5);
   });
 
-  it("renders an inline error region when GET /items/:id fails", async () => {
+  it("calls notFound() when GET /items/:id fails", async () => {
     globalThis.fetch = (async () =>
       new Response("oops", { status: 500 })) as unknown as typeof fetch;
 
-    const element = await ItemDetailPage({
-      params: Promise.resolve({ key: "ws", id: "item-missing" }),
-    });
-    render(element as React.ReactElement);
-
-    const alert = screen.getByRole("alert");
-    expect(alert.textContent ?? "").toMatch(/Failed to load item/);
-    expect(alert.textContent ?? "").toMatch(/item-missing/);
+    // The legacy detail page now delegates to Next's notFound() instead of
+    // rendering its own inline error region. notFound() throws a sentinel
+    // that App Router intercepts to render the 404 boundary.
+    await expect(
+      ItemDetailPage({
+        params: Promise.resolve({ key: "ws", id: "item-missing" }),
+      }),
+    ).rejects.toThrow(/NEXT_HTTP_ERROR_FALLBACK/);
   });
 
   it("normalizes snake_case fields (allowed_actions, current_run_id, item_code)", async () => {

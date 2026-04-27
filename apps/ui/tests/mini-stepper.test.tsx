@@ -11,7 +11,7 @@ describe("MiniStepper segments (AC-1.5)", () => {
     const stepper = screen.getByTestId("mini-stepper");
     const segments = within(stepper).getAllByTestId(/mini-stepper-segment-/);
     expect(segments).toHaveLength(4);
-    expect(segments.map((s) => s.dataset.stage)).toEqual([
+    expect(segments.map((s) => s.dataset.segment)).toEqual([
       "arch",
       "plan",
       "exec",
@@ -36,17 +36,25 @@ describe("MiniStepper segments (AC-1.5)", () => {
     }
   );
 
-  it("dims inactive segments and not the active one", () => {
+  it("marks only the active segment as active and the rest as inactive", () => {
     render(<MiniStepper currentStage="exec" />);
     const archSeg = screen.getByTestId("mini-stepper-segment-arch");
     const planSeg = screen.getByTestId("mini-stepper-segment-plan");
     const execSeg = screen.getByTestId("mini-stepper-segment-exec");
     const reviewSeg = screen.getByTestId("mini-stepper-segment-review");
 
-    expect(archSeg.className).toMatch(/opacity-50/);
-    expect(planSeg.className).toMatch(/opacity-50/);
-    expect(reviewSeg.className).toMatch(/opacity-50/);
-    expect(execSeg.className).not.toMatch(/opacity-50/);
+    // The active segment renders with a unique petrol-tinted style (border,
+    // background, color, font-weight); inactive ones render dim. The
+    // discriminator is `data-active`, set by the component on each segment.
+    expect(archSeg.dataset.active).toBe("false");
+    expect(planSeg.dataset.active).toBe("false");
+    expect(reviewSeg.dataset.active).toBe("false");
+    expect(execSeg.dataset.active).toBe("true");
+    // The rendered styles must actually differ between active and inactive,
+    // so screen-readers and sighted users get the same affordance.
+    const activeStyle = window.getComputedStyle(execSeg);
+    const inactiveStyle = window.getComputedStyle(archSeg);
+    expect(activeStyle.backgroundColor).not.toBe(inactiveStyle.backgroundColor);
   });
 
   it("renders all four segments with none highlighted when currentStage is unknown (TC-EC-2)", () => {

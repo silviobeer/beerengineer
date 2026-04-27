@@ -38,10 +38,11 @@ import {
   FIXTURE_SINGLE_WORKSPACE,
 } from "@/lib/fixtures";
 import type { BoardCardDTO } from "@/lib/types";
+import { SSETestProvider } from "./sseTestHarness";
 
 describe("S-09 mobile board layout", () => {
   it("AC-S09-01: board has a horizontally scrollable wrapper around the column grid", () => {
-    render(<Board items={fullBoardItems()} workspaceKey="alpha" />);
+    render(<SSETestProvider><Board items={fullBoardItems()} workspaceKey="alpha" /></SSETestProvider>);
     const scroll = screen.getByTestId("kanban-board-scroll");
     expect(scroll.className).toMatch(/overflow-x-auto/);
     const grid = within(scroll).getByTestId("kanban-board");
@@ -51,7 +52,7 @@ describe("S-09 mobile board layout", () => {
   });
 
   it("AC-S09-01: every kanban column is in the DOM and reachable as a child of the scroll container", () => {
-    render(<Board items={fullBoardItems()} workspaceKey="alpha" />);
+    render(<SSETestProvider><Board items={fullBoardItems()} workspaceKey="alpha" /></SSETestProvider>);
     const scroll = screen.getByTestId("kanban-board-scroll");
     const columns = within(scroll).getAllByTestId("kanban-column");
     expect(columns).toHaveLength(6);
@@ -61,7 +62,7 @@ describe("S-09 mobile board layout", () => {
   });
 
   it("AC-S09-01: the first column is the first child of the grid (visible at scrollLeft=0)", () => {
-    render(<Board items={fullBoardItems()} workspaceKey="alpha" />);
+    render(<SSETestProvider><Board items={fullBoardItems()} workspaceKey="alpha" /></SSETestProvider>);
     const grid = screen.getByTestId("kanban-board");
     const firstCol = within(grid).getAllByTestId("kanban-column")[0];
     expect(firstCol.getAttribute("data-column")).toBe("idea");

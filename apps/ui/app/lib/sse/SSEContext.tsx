@@ -31,7 +31,8 @@ type SSEContextValue = {
   registerItemListener: (cb: ItemEventListener) => () => void;
 };
 
-const SSEContext = createContext<SSEContextValue | null>(null);
+export const SSEContext = createContext<SSEContextValue | null>(null);
+export type { SSEContextValue };
 
 export function useSSE(): SSEContextValue {
   const ctx = useContext(SSEContext);

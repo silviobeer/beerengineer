@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render } from "@testing-library/react";
 import RootLayout from "@/app/layout";
 import { Board } from "@/components/Board";
-import { fullBoardFixture } from "@/lib/fixtures";
+import { fullBoardItems } from "@/lib/fixtures";
+import { SSETestProvider } from "./sseTestHarness";
 import { renderToStaticMarkup } from "react-dom/server";
 
 describe("Dark mode is not overridden by OS light preference (TC-24)", () => {
@@ -41,7 +42,9 @@ describe("Dark mode is not overridden by OS light preference (TC-24)", () => {
 
   it("Board does not render any light-mode class or data-theme on its tree", () => {
     const { container } = render(
-      <Board workspaceKey="demo" initialItems={fullBoardFixture} sseUrl={null} />
+      <SSETestProvider>
+        <Board items={fullBoardItems()} workspaceKey="demo" />
+      </SSETestProvider>
     );
     expect(container.querySelector('[data-theme="light"]')).toBeNull();
     expect(container.querySelector('.light')).toBeNull();

@@ -1,47 +1,51 @@
 import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { Board } from "@/components/Board";
-import { fullBoardFixture, emptyBoardFixture } from "@/lib/fixtures";
+import { emptyBoardItems, fullBoardItems } from "@/lib/fixtures";
+import { SSETestProvider } from "./sseTestHarness";
+
+function renderBoard(items: ReturnType<typeof fullBoardItems>) {
+  return render(
+    <SSETestProvider>
+      <Board items={items} />
+    </SSETestProvider>,
+  );
+}
 
 describe("Board layout (TC-01, TC-02, TC-19, TC-20)", () => {
   it("renders exactly six column headers", () => {
-    render(
-      <Board workspaceKey="demo" initialItems={fullBoardFixture} sseUrl={null} />
-    );
-    const headers = screen.getAllByTestId("column-header");
+    renderBoard(fullBoardItems());
+    const headers = screen.getAllByTestId("kanban-column-header");
     expect(headers).toHaveLength(6);
   });
 
-  it("renders the six columns in left-to-right order: Idea, Frontend, Requirements, Implementation, Test, Merge", () => {
-    render(
-      <Board workspaceKey="demo" initialItems={fullBoardFixture} sseUrl={null} />
-    );
-    const headers = screen.getAllByTestId("column-header");
-    expect(headers.map((h) => h.textContent)).toEqual([
+  it("renders the six columns in left-to-right order: Idea, Brainstorm, Frontend, Requirements, Implementation, Done", () => {
+    renderBoard(fullBoardItems());
+    const headers = screen.getAllByTestId("kanban-column-header");
+    expect(headers.map((h) => h.textContent?.trim())).toEqual([
       "Idea",
+      "Brainstorm",
       "Frontend",
       "Requirements",
       "Implementation",
-      "Test",
-      "Merge",
+      "Done",
     ]);
   });
 
-  it("renders an empty placeholder when a column has no items", () => {
-    const onlyIdea = fullBoardFixture.filter((i) => i.phase === "Idea");
-    render(<Board workspaceKey="demo" initialItems={onlyIdea} sseUrl={null} />);
+  it("renders an empty body when a column has no items", () => {
+    const onlyIdea = fullBoardItems().filter((c) => c.column === "idea");
+    renderBoard(onlyIdea);
     const frontendCol = screen
-      .getAllByTestId("board-column")
-      .find((el) => el.dataset.phase === "Frontend")!;
+      .getAllByTestId("kanban-column")
+      .find((el) => el.dataset.column === "frontend")!;
     expect(frontendCol).toBeInTheDocument();
-    expect(frontendCol.textContent).toContain("No items");
+    const body = within(frontendCol).getByTestId("kanban-column-body");
+    expect(within(body).queryAllByTestId("board-card")).toHaveLength(0);
   });
 
   it("keeps all six columns in the DOM when there are zero items", () => {
-    render(
-      <Board workspaceKey="demo" initialItems={emptyBoardFixture} sseUrl={null} />
-    );
-    const cols = screen.getAllByTestId("board-column");
+    renderBoard(emptyBoardItems());
+    const cols = screen.getAllByTestId("kanban-column");
     expect(cols).toHaveLength(6);
     for (const col of cols) {
       expect(col).toBeInTheDocument();

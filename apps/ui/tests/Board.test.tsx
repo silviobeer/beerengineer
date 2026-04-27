@@ -16,14 +16,23 @@ import {
   BOARD_COLUMN_LABELS,
   type BoardColumn,
 } from "@/lib/types";
+import { SSETestProvider } from "./sseTestHarness";
+
+function renderBoard(items: ReturnType<typeof fullBoardItems>) {
+  return render(
+    <SSETestProvider>
+      <Board items={items} />
+    </SSETestProvider>
+  );
+}
 
 const COLUMN_LABEL_ORDER = [
   "Idea",
+  "Brainstorm",
   "Frontend",
   "Requirements",
   "Implementation",
-  "Test",
-  "Merge",
+  "Done",
 ];
 
 const STEPPER_LABELS = ["Arch", "Plan", "Exec", "Review"];
@@ -41,13 +50,13 @@ function getColumnByLabel(label: string): HTMLElement {
 
 describe("Board layout (S-01)", () => {
   it("TC-01: renders exactly six columns", () => {
-    render(<Board items={fullBoardItems()} />);
+    renderBoard(fullBoardItems());
     const columns = screen.getAllByTestId("kanban-column");
     expect(columns).toHaveLength(6);
   });
 
   it("TC-02: columns appear in prescribed order", () => {
-    render(<Board items={fullBoardItems()} />);
+    renderBoard(fullBoardItems());
     const headers = screen
       .getAllByTestId("kanban-column-header")
       .map((el) => el.textContent?.trim());
@@ -101,7 +110,7 @@ describe("BoardCard content (S-01)", () => {
 
 describe("Item placement (S-01)", () => {
   it("TC-07: items land in the column matching their phase", () => {
-    render(<Board items={fullBoardItems()} />);
+    renderBoard(fullBoardItems());
     for (const item of fullBoardItems()) {
       const column = getColumnByLabel(BOARD_COLUMN_LABELS[item.column as BoardColumn]);
       expect(within(column).getByText(item.title)).toBeInTheDocument();
@@ -121,7 +130,7 @@ describe("Item placement (S-01)", () => {
       implementationCardWithStage("plan"),
       implementationCardWithStage("exec"),
     ];
-    render(<Board items={items} />);
+    render(<SSETestProvider><Board items={items} /></SSETestProvider>);
     const impl = getColumnByLabel("Implementation");
     for (const item of items) {
       expect(
@@ -169,10 +178,13 @@ describe("Attention dot (S-01)", () => {
     const m = bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
     expect(m).not.toBeNull();
     const [, r, g, b] = m!.map(Number);
-    expect(r).toBeGreaterThan(200);
+    // Brand gold #D4A843 ≈ rgb(212, 168, 67). Loose bounds: warm, midtone, low blue.
+    expect(r).toBeGreaterThan(180);
     expect(g).toBeGreaterThanOrEqual(140);
     expect(g).toBeLessThanOrEqual(200);
-    expect(b).toBeLessThan(50);
+    expect(b).toBeLessThanOrEqual(80);
+    expect(r).toBeGreaterThan(g);
+    expect(g).toBeGreaterThan(b);
   });
 
   it("EC: attention-dot appears exactly once when all flags are true", () => {
@@ -254,7 +266,7 @@ describe("Mini-Stepper visibility on board (S-01)", () => {
     const items = (["idea", "brainstorm", "requirements", "done"] as const).map(
       (col) => nonImplementationCard(col)
     );
-    render(<Board items={items} />);
+    render(<SSETestProvider><Board items={items} /></SSETestProvider>);
     for (const item of items) {
       const card = screen.getByText(item.title).closest("[data-testid='board-card']");
       expect(card).not.toBeNull();
@@ -267,18 +279,18 @@ describe("Mini-Stepper visibility on board (S-01)", () => {
 
 describe("Empty columns (S-01)", () => {
   it("TC-17: empty column is not removed from layout and header is visible", () => {
-    const items = fullBoardItems().filter((item) => item.column !== "test");
-    render(<Board items={items} />);
-    const test = getColumnByLabel("Test");
-    expect(test).toBeInTheDocument();
-    expect(within(test).getByText("Test")).toBeInTheDocument();
-    const body = within(test).getByTestId("kanban-column-body");
+    const items = fullBoardItems().filter((item) => item.column !== "done");
+    render(<SSETestProvider><Board items={items} /></SSETestProvider>);
+    const done = getColumnByLabel("Done");
+    expect(done).toBeInTheDocument();
+    expect(within(done).getByText("Done")).toBeInTheDocument();
+    const body = within(done).getByTestId("kanban-column-body");
     expect(body).toBeInTheDocument();
     expect(within(body).queryAllByTestId("board-card")).toHaveLength(0);
   });
 
   it("TC-18: all six columns present with empty card-list when board has no items", () => {
-    render(<Board items={emptyBoardItems()} />);
+    renderBoard(emptyBoardItems());
     const columns = screen.getAllByTestId("kanban-column");
     expect(columns).toHaveLength(6);
     for (const column of columns) {
@@ -290,6 +302,10 @@ describe("Empty columns (S-01)", () => {
 });
 
 describe("Card navigation target (S-01)", () => {
+  // BoardCard renders the body as an <a> when no onOpen is supplied (the
+  // default for direct-render tests). When the parent passes onOpen, the
+  // body becomes a <button>; that path is exercised through Board's modal
+  // trigger and is covered by the modal tests, not here.
   it("TC-19: card subtree has exactly one interactive target", () => {
     const { container } = render(
       <BoardCard card={fullBoardItems()[0]} workspaceKey="alpha" />
@@ -304,26 +320,13 @@ describe("Card navigation target (S-01)", () => {
       )
     );
     const set = new Set<Element>();
-    if (
-      card.tagName.toLowerCase() === "a" &&
-      (card as HTMLAnchorElement).hasAttribute("href")
-    ) {
-      set.add(card);
-    }
-    if (
-      card.matches(
-        "button, input, select, textarea, [role='button'], [role='link'], [role='checkbox'], [role='menuitem'], [role='option'], [role='tab'], [role='switch']"
-      )
-    ) {
-      set.add(card);
-    }
     semantic.forEach((el) => set.add(el));
     ariaInteractive.forEach((el) => set.add(el));
     expect(set.size).toBe(1);
     const only = [...set][0];
     expect(only.tagName.toLowerCase()).toBe("a");
     expect((only as HTMLAnchorElement).getAttribute("href")).toContain(
-      "UI-IDEA"
+      "card_idea"
     );
   });
 
@@ -331,7 +334,7 @@ describe("Card navigation target (S-01)", () => {
     render(
       <BoardCard card={fullBoardItems()[0]} workspaceKey="alpha" />
     );
-    const card = screen.getByTestId("board-card") as HTMLAnchorElement;
+    const link = screen.getByTestId("board-card-link") as HTMLAnchorElement;
     const code = screen.getByTestId("board-card-code");
     const title = screen.getByTestId("board-card-title");
     const chip = screen.getByTestId("board-card-status-chip");
@@ -351,17 +354,17 @@ describe("Card navigation target (S-01)", () => {
       }
       expect(foundAnchor).toBe(true);
     }
-    expect(card.getAttribute("href")).toContain("UI-IDEA");
+    expect(link.getAttribute("href")).toContain("card_idea");
   });
 
-  it("TC-21: card root is the navigation anchor with the item-detail href", () => {
+  it("TC-21: card body anchor carries the item-detail href", () => {
     render(
       <BoardCard card={fullBoardItems()[0]} workspaceKey="alpha" />
     );
-    const card = screen.getByTestId("board-card");
-    expect(card.tagName.toLowerCase()).toBe("a");
-    const href = (card as HTMLAnchorElement).getAttribute("href") ?? "";
-    expect(href).toContain("UI-IDEA");
+    const link = screen.getByTestId("board-card-link");
+    expect(link.tagName.toLowerCase()).toBe("a");
+    const href = (link as HTMLAnchorElement).getAttribute("href") ?? "";
+    expect(href).toContain("card_idea");
     expect(href).toContain("alpha");
   });
 });

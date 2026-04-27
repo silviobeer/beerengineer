@@ -1,184 +1,126 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import { act } from "react";
+import { describe, it, expect } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { Board } from "@/components/Board";
-import { makeItem, implementationItemFixture } from "@/lib/fixtures";
-import {
-  MockEventSource,
-  makeMockEventSourceFactory,
-} from "./MockEventSource";
+import { fullBoardItems, implementationCardWithStage } from "@/lib/fixtures";
+import type { ItemState } from "@/app/lib/sse/types";
+import { SSETestProvider, noopSSEContext } from "./sseTestHarness";
 
-beforeEach(() => {
-  MockEventSource.reset();
-});
+/**
+ * The active Board derives its live state from `useSSE().itemState` —
+ * not from a self-owned EventSource. These tests exercise the overlay
+ * by populating the SSEContext directly and asserting the Board picks
+ * up the values. End-to-end SSE wiring (workspace stream, run-scoped
+ * stream, reconnect) is verified manually against the running engine.
+ */
 
-function getCard(itemId: string) {
-  return document.querySelector(`[data-item-id="${itemId}"]`)!;
+function getCard(itemId: string): HTMLElement {
+  const card = document.querySelector(`[data-card-id="${itemId}"]`);
+  if (!card) throw new Error(`card not found: ${itemId}`);
+  return card as HTMLElement;
 }
 
-describe("SSE live updates (TC-13..TC-18)", () => {
-  it("updates the status chip when an SSE state-change event arrives", () => {
-    const items = [makeItem({ id: "a", pipelineState: "idle" })];
+function buildContext(itemState: Record<string, ItemState>) {
+  return { ...noopSSEContext, itemState };
+}
+
+describe("SSE live overlay (Board reads itemState from SSEContext)", () => {
+  it("overlays a column change so the card moves to the new column", () => {
+    const items = fullBoardItems();
+    const ideaCard = items.find((i) => i.column === "idea")!;
     render(
-      <Board
-        workspaceKey="demo"
-        initialItems={items}
-        sseUrl="/events"
-        eventSourceFactory={makeMockEventSourceFactory()}
-      />
+      <SSETestProvider
+        value={buildContext({
+          [ideaCard.id]: { column: "implementation" },
+        })}
+      >
+        <Board items={items} />
+      </SSETestProvider>,
     );
-    const beforeUrl = window.location.href;
-    expect(
-      within(getCard("a") as HTMLElement).getByTestId("status-chip").dataset.state
-    ).toBe("idle");
-
-    act(() => {
-      MockEventSource.last()!.emit("message", {
-        itemId: "a",
-        pipelineState: "running",
-      });
-    });
-
-    expect(
-      within(getCard("a") as HTMLElement).getByTestId("status-chip").dataset.state
-    ).toBe("running");
-    expect(window.location.href).toBe(beforeUrl);
+    const implColumn = screen
+      .getAllByTestId("kanban-column")
+      .find((col) => col.dataset.column === "implementation")!;
+    expect(within(implColumn).getByText(ideaCard.title)).toBeInTheDocument();
   });
 
-  it("toggles attention-dot for the affected card only", () => {
-    const items = [
-      makeItem({ id: "a", pipelineState: "idle" }),
-      makeItem({ id: "b", pipelineState: "idle" }),
-    ];
+  it("overlays attention=true on a card without intrinsic flags", () => {
+    const items = fullBoardItems();
+    const card = items[0];
     render(
-      <Board
-        workspaceKey="demo"
-        initialItems={items}
-        sseUrl="/events"
-        eventSourceFactory={makeMockEventSourceFactory()}
-      />
+      <SSETestProvider
+        value={buildContext({ [card.id]: { attention: true } })}
+      >
+        <Board items={items} />
+      </SSETestProvider>,
     );
     expect(
-      within(getCard("a") as HTMLElement).queryByTestId("attention-dot")
-    ).not.toBeInTheDocument();
-
-    act(() => {
-      MockEventSource.last()!.emit("message", {
-        itemId: "a",
-        pipelineState: "openPrompt",
-      });
-    });
-
-    expect(
-      within(getCard("a") as HTMLElement).getByTestId("attention-dot")
+      within(getCard(card.id)).queryByTestId("attention-dot"),
     ).toBeInTheDocument();
+  });
+
+  it("overlays attention=false to clear a stale attention dot", () => {
+    const items = [
+      {
+        ...fullBoardItems()[0],
+        hasOpenPrompt: true,
+      },
+    ];
+    render(
+      <SSETestProvider
+        value={buildContext({ [items[0].id]: { attention: false } })}
+      >
+        <Board items={items} />
+      </SSETestProvider>,
+    );
     expect(
-      within(getCard("b") as HTMLElement).queryByTestId("attention-dot")
+      within(getCard(items[0].id)).queryByTestId("attention-dot"),
     ).not.toBeInTheDocument();
   });
 
-  it("does not show speculative state before the SSE event arrives", async () => {
-    const items = [makeItem({ id: "a", pipelineState: "idle" })];
+  it("overlays currentStage so the implementation stepper highlights the new stage", () => {
+    const items = [implementationCardWithStage("arch")];
     render(
-      <Board
-        workspaceKey="demo"
-        initialItems={items}
-        sseUrl="/events"
-        eventSourceFactory={makeMockEventSourceFactory()}
-      />
+      <SSETestProvider
+        value={buildContext({
+          [items[0].id]: { currentStage: "exec" },
+        })}
+      >
+        <Board items={items} />
+      </SSETestProvider>,
     );
-    // Pre-event snapshot must be the initial state
-    expect(
-      within(getCard("a") as HTMLElement).getByTestId("status-chip").dataset.state
-    ).toBe("idle");
-
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(
-      within(getCard("a") as HTMLElement).getByTestId("status-chip").dataset.state
-    ).toBe("idle");
-
-    act(() => {
-      MockEventSource.last()!.emit("message", {
-        itemId: "a",
-        pipelineState: "running",
-      });
-    });
-    expect(
-      within(getCard("a") as HTMLElement).getByTestId("status-chip").dataset.state
-    ).toBe("running");
+    const exec = screen.getByTestId("mini-stepper-segment-exec");
+    expect(exec.dataset.active).toBe("true");
   });
 
-  it("updates the mini-stepper for an Implementation item on state change", () => {
-    render(
-      <Board
-        workspaceKey="demo"
-        initialItems={[implementationItemFixture]}
-        sseUrl="/events"
-        eventSourceFactory={makeMockEventSourceFactory()}
-      />
-    );
-    const cardEl = getCard(implementationItemFixture.id) as HTMLElement;
-    const stepperBefore = within(cardEl).getByTestId("mini-stepper");
-    const beforeText = stepperBefore.textContent ?? "";
-    expect(stepperBefore.dataset.state).toBe("idle");
-
-    act(() => {
-      MockEventSource.last()!.emit("message", {
-        itemId: implementationItemFixture.id,
-        pipelineState: "running",
-      });
-    });
-
-    const stepperAfter = within(cardEl).getByTestId("mini-stepper");
-    expect(stepperAfter.dataset.state).toBe("running");
-    expect(stepperAfter.textContent).not.toBe(beforeText);
+  it("ignores itemState entries for unknown card ids without throwing", () => {
+    const items = fullBoardItems();
+    expect(() =>
+      render(
+        <SSETestProvider
+          value={buildContext({ "ghost-id": { attention: true } })}
+        >
+          <Board items={items} />
+        </SSETestProvider>,
+      ),
+    ).not.toThrow();
+    // Original cards still render.
+    for (const item of items) {
+      expect(getCard(item.id)).toBeInTheDocument();
+    }
   });
 
-  it("ignores SSE events for unknown itemIds without throwing or creating phantom cards", () => {
-    const items = [
-      makeItem({ id: "a" }),
-      makeItem({ id: "b" }),
-    ];
+  it("does not show speculative state when itemState is empty", () => {
+    const items = fullBoardItems();
     render(
-      <Board
-        workspaceKey="demo"
-        initialItems={items}
-        sseUrl="/events"
-        eventSourceFactory={makeMockEventSourceFactory()}
-      />
+      <SSETestProvider value={buildContext({})}>
+        <Board items={items} />
+      </SSETestProvider>,
     );
-    const before = screen.getAllByTestId("item-card").length;
-
-    expect(() => {
-      act(() => {
-        MockEventSource.last()!.emit("message", {
-          itemId: "ghost",
-          pipelineState: "running",
-        });
-      });
-    }).not.toThrow();
-
-    expect(screen.getAllByTestId("item-card").length).toBe(before);
-  });
-
-  it("converges on the last event when multiple rapid events arrive for the same item", () => {
-    const items = [makeItem({ id: "a", pipelineState: "idle" })];
-    render(
-      <Board
-        workspaceKey="demo"
-        initialItems={items}
-        sseUrl="/events"
-        eventSourceFactory={makeMockEventSourceFactory()}
-      />
-    );
-    act(() => {
-      const es = MockEventSource.last()!;
-      es.emit("message", { itemId: "a", pipelineState: "stateA" });
-      es.emit("message", { itemId: "a", pipelineState: "stateB" });
-      es.emit("message", { itemId: "a", pipelineState: "stateC" });
-    });
-    expect(
-      within(getCard("a") as HTMLElement).getByTestId("status-chip")
-    ).toHaveTextContent("stateC");
+    // Each card lands in its declared column; nothing has been moved.
+    for (const item of items) {
+      const col = screen
+        .getAllByTestId("kanban-column")
+        .find((c) => c.dataset.column === item.column)!;
+      expect(within(col).getByText(item.title)).toBeInTheDocument();
+    }
   });
 });
