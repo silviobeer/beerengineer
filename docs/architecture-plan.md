@@ -1,5 +1,12 @@
 # BeerEngineer — Architecture Plan
 
+> **Status: ✓ shipped (2026-04-27).** All four phases of this plan landed.
+> The current architecture is described in
+> [`engine-architecture.md`](./engine-architecture.md); the live API
+> contract is [`api-contract.md`](./api-contract.md). This file is kept
+> as the historical record explaining *why* the engine is shaped the
+> way it is.
+
 Scope: refactor CLI / UI / Engine so the Engine HTTP API is the single source of truth. Replaces the previous five-document plan (`cli-api-ui-refactoring-plan.md`, `conversation-model-plan.md`, `conversation-json-schema.md`, `chattool-integration-plan.md`, `engine-api-route-design.md`).
 
 See [`api-contract.md`](./api-contract.md) for routes and JSON schemas.

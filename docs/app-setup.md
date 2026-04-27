@@ -2,6 +2,13 @@
 
 BeerEngineer now has a dedicated app-level setup flow for machine readiness.
 
+> **Audience:** operators / developers running the engine, not first-time
+> users. For the user-facing walkthrough (interactive setup, registering
+> a workspace, picking a harness profile, optional Telegram), start with
+> [`setup-for-dummies.md`](./setup-for-dummies.md). This file is the
+> reference for the underlying `doctor` / `setup` commands the
+> walkthrough invokes.
+
 ## Commands
 
 ```bash

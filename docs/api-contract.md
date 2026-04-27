@@ -215,12 +215,17 @@ No `client.surface` / `client.channel`. If audit is needed, log the HTTP source 
   ts: string                 // ISO
   runId: string
   stageRunId: string | null
-  type: CanonicalMessageType // see docs/messaging-levels.md §5
+  type: CanonicalMessageType // see messaging-levels.md §5
   level: 0 | 1 | 2
   force: boolean             // true → delivered regardless of subscribed level
   payload: Record<string, unknown>  // event-shape-specific; mirrors WorkflowEvent
 }
 ```
+
+> The full event-to-level mapping, the `CanonicalMessageType` vocabulary,
+> and the cumulative-level / force-through semantics live in
+> [`messaging-levels.md`](./messaging-levels.md). This contract carries
+> the wire shape only.
 
 ### Error body
 

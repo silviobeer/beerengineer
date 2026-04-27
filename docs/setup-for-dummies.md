@@ -1,8 +1,9 @@
 # BeerEngineer2 — setup, the plain-English version
 
-This is the short, skimmable version of the setup plans. If you want the
-architectural rationale, go read `app-setup-plan.md` and
-`workspace-setup-plan.md`. If you just want to get it running, stay here.
+This is the short, skimmable version. If you want the underlying CLI
+reference (the `doctor` / `setup` / `notifications test` commands this
+walkthrough invokes), see [`app-setup.md`](./app-setup.md). If you just
+want to get it running, stay here.
 
 ## What BeerEngineer2 is, in one paragraph
 
