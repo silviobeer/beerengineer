@@ -24,6 +24,7 @@ import { initDatabase } from "./db/connection.js"
 import { Repos } from "./db/repositories.js"
 import { prepareRun, runWorkflowWithSync } from "./core/runOrchestrator.js"
 import type { ItemRow } from "./db/repositories.js"
+import type { ItemAction } from "./core/itemActions.js"
 import { projectStageLogRow, type MessageEntry } from "./core/messagingProjection.js"
 import { messagingLevelFromQuery, shouldDeliverAtLevel, type MessagingLevel } from "./core/messagingLevel.js"
 import { renderMessageEntry, terminalExitCodeForEntry } from "./core/messageRendering.js"
@@ -1884,12 +1885,250 @@ function seedStageFromPreviousRun(item: ItemRow, sourceRunId: string, targetRunI
   return true
 }
 
+/**
+ * Context passed to every CLI item-action handler. Each handler gets the
+ * resolved item, the action token, the repos handle, the original
+ * itemRef (for error messages), and any resume flags the user passed.
+ */
+type CliItemActionContext = {
+  item: ItemRow
+  action: ItemAction
+  repos: Repos
+  itemRef: string
+  resumeFlags?: ResumeFlags
+}
+
+type CliItemActionHandler = (ctx: CliItemActionContext) => Promise<number>
+
+/** Shared transition + preflight prelude for handlers that start a fresh run. */
+function startRunPrelude(ctx: CliItemActionContext): number {
+  const transition = lookupTransitionSync(ctx.action, ctx.item.current_column, ctx.item.phase_status)
+  if (transition.kind !== "start-run") {
+    console.error(`  Invalid transition: ${ctx.action} from ${ctx.item.current_column}/${ctx.item.phase_status}`)
+    return 1
+  }
+  return preflightCliBranchingStart(ctx.repos, ctx.item.workspace_id)
+}
+
+type ItemActionsModule = typeof import("./core/itemActions.js")
+let lookupTransitionSync: ItemActionsModule["lookupTransition"]
+let createItemActionsService: ItemActionsModule["createItemActionsService"]
+
+const handleStartBrainstorm: CliItemActionHandler = async ctx => {
+  const exit = startRunPrelude(ctx)
+  if (exit !== 0) return exit
+  const io = createCliIO(ctx.repos)
+  try {
+    const runId = await runWorkflowWithSync(
+      { id: ctx.item.id, title: ctx.item.title, description: ctx.item.description },
+      ctx.repos,
+      io,
+      { owner: "cli", itemId: ctx.item.id },
+    )
+    console.log(`  ${ctx.action} applied`)
+    console.log(`  run-id: ${runId}`)
+    return 0
+  } finally {
+    io.close?.()
+  }
+}
+
+const handleStartImplementationOrRerunDesignPrep: CliItemActionHandler = async ctx => {
+  const exit = startRunPrelude(ctx)
+  if (exit !== 0) return exit
+  const sourceRun = latestRunWithStageArtifacts(ctx.repos, ctx.item, "brainstorm")
+  if (!sourceRun) {
+    console.error("  Cannot start implementation: no prior brainstorm artifacts found for this item.")
+    console.error("  Run start_brainstorm first, then retry start_implementation.")
+    return 1
+  }
+  const io = createCliIO(ctx.repos)
+  try {
+    const prepared = prepareRun(
+      { id: ctx.item.id, title: ctx.item.title, description: ctx.item.description },
+      ctx.repos,
+      io,
+      {
+        owner: "cli",
+        itemId: ctx.item.id,
+        resume: {
+          scope: { type: "run", runId: "pending" },
+          currentStage: ctx.action === "rerun_design_prep" ? "visual-companion" : "projects",
+        },
+      },
+    )
+    if (!seedStageFromPreviousRun(ctx.item, sourceRun.id, prepared.runId, "brainstorm")) {
+      console.error("  Cannot start implementation: failed to seed brainstorm artifacts into the new run.")
+      return 1
+    }
+    seedStageFromPreviousRun(ctx.item, sourceRun.id, prepared.runId, "visual-companion")
+    seedStageFromPreviousRun(ctx.item, sourceRun.id, prepared.runId, "frontend-design")
+    await prepared.start()
+    console.log(`  ${ctx.action} applied`)
+    console.log(`  run-id: ${prepared.runId}`)
+    return 0
+  } finally {
+    io.close?.()
+  }
+}
+
+const handleResumeRun: CliItemActionHandler = async ctx => {
+  const active =
+    ctx.repos.latestActiveRunForItem(ctx.item.id) ?? ctx.repos.latestRecoverableRunForItem(ctx.item.id)
+  const resumeRunId = active?.id
+  let resumePayload: { summary: string; branch?: string; commitSha?: string; reviewNotes?: string } | undefined
+  if (active?.recovery_status) {
+    const isTty = Boolean(process.stdin.isTTY && process.stdout.isTTY) && ctx.resumeFlags?.yes !== true
+    const collected = await collectRemediationFlags(ctx.resumeFlags ?? {}, isTty)
+    if (!collected || !collected.summary) {
+      printResumeBlockedOutput(active.id, {
+        summary: active.recovery_summary,
+        scope: active.recovery_scope,
+        scopeRef: active.recovery_scope_ref,
+      }, ctx.itemRef)
+      console.error("  Missing --remediation-summary (required for non-interactive resume).")
+      return 75
+    }
+    resumePayload = {
+      summary: collected.summary,
+      branch: collected.branch,
+      commitSha: collected.commit,
+      reviewNotes: collected.notes,
+    }
+  }
+
+  // CLI-specific resume_run: the shared service runs performResume
+  // asynchronously over an API IO session; the CLI needs synchronous
+  // execution so the operator sees the outcome before returning.
+  if (resumePayload && resumeRunId) {
+    const { loadResumeReadiness, performResume } = await import("./core/resume.js")
+    const readiness = await loadResumeReadiness(ctx.repos, resumeRunId)
+    if (readiness.kind === "not_found") {
+      console.error(`  Item not found: ${ctx.itemRef}`)
+      return 1
+    }
+    if (readiness.kind === "not_resumable") {
+      console.error(`  Not resumable: ${readiness.reason}`)
+      return 2
+    }
+    if (readiness.kind === "no_recovery") {
+      console.error(`  Invalid transition: ${ctx.action} from ${ctx.item.current_column}/${ctx.item.phase_status}`)
+      return 1
+    }
+
+    const scopeRef =
+      readiness.record.scope.type === "stage"
+        ? readiness.record.scope.stageId
+        : readiness.record.scope.type === "story"
+        ? `${readiness.record.scope.waveNumber}/${readiness.record.scope.storyId}`
+        : null
+    const remediation = ctx.repos.createExternalRemediation({
+      runId: resumeRunId,
+      scope: readiness.record.scope.type,
+      scopeRef,
+      summary: resumePayload.summary,
+      branch: resumePayload.branch,
+      commitSha: resumePayload.commitSha,
+      reviewNotes: resumePayload.reviewNotes,
+      source: "cli",
+    })
+
+    const io = createCliIO(ctx.repos)
+    try {
+      console.log(`  ${ctx.action} applied`)
+      console.log(`  run-id: ${resumeRunId}`)
+      console.log(`  remediation-id: ${remediation.id}`)
+      await performResume({ repos: ctx.repos, io, runId: resumeRunId, remediation })
+      const refreshed = ctx.repos.getRun(resumeRunId)
+      if (refreshed?.recovery_status === "blocked") {
+        printResumeBlockedOutput(resumeRunId, {
+          summary: refreshed.recovery_summary,
+          scope: refreshed.recovery_scope,
+          scopeRef: refreshed.recovery_scope_ref,
+        }, ctx.itemRef)
+      }
+      return 0
+    } finally {
+      io.close?.()
+    }
+  }
+
+  return runDefaultItemAction(ctx, resumePayload)
+}
+
+/**
+ * Fallback handler: any action without a CLI-specific override goes through
+ * the shared {@link createItemActionsService}, which wires the standard
+ * (API-style) IO and lifecycle.
+ */
+async function runDefaultItemAction(
+  ctx: CliItemActionContext,
+  resumePayload?: { summary: string; branch?: string; commitSha?: string; reviewNotes?: string },
+): Promise<number> {
+  const service = createItemActionsService(ctx.repos)
+  try {
+    const result = await service.perform(
+      ctx.item.id,
+      ctx.action,
+      resumePayload ? { resume: resumePayload } : undefined,
+    )
+    if (!result.ok) {
+      if (result.status === 404) console.error(`  Item not found: ${ctx.itemRef}`)
+      else if (result.status === 422) {
+        console.error(`  Missing remediation summary (pass --remediation-summary).`)
+        return 75
+      } else if (result.error === "not_resumable" || result.error === "resume_in_progress") {
+        console.error(`  Not resumable: ${result.error}`)
+        return 2
+      } else {
+        console.error(`  Invalid transition: ${result.action} from ${result.current.column}/${result.current.phaseStatus}`)
+      }
+      return 1
+    }
+    console.log(`  ${ctx.action} applied`)
+    if (result.kind === "needs_spawn" && result.runId) console.log(`  run-id: ${result.runId}`)
+    if (result.kind === "needs_spawn" && result.remediationId) console.log(`  remediation-id: ${result.remediationId}`)
+    if (result.kind === "needs_spawn" && result.runId) {
+      const refreshed = ctx.repos.getRun(result.runId)
+      if (refreshed?.recovery_status === "blocked") {
+        printResumeBlockedOutput(result.runId, {
+          summary: refreshed.recovery_summary,
+          scope: refreshed.recovery_scope,
+          scopeRef: refreshed.recovery_scope_ref,
+        }, ctx.itemRef)
+      }
+    }
+    return 0
+  } finally {
+    service.dispose()
+  }
+}
+
+/**
+ * CLI-specific item-action registry. Each entry overrides the default
+ * (shared service) handler with one that runs synchronously in the
+ * terminal — owner=cli, stdio IO, blocks until the run ends.
+ *
+ * Adding a CLI-specific override is a one-line registry edit; actions
+ * not in this map fall through to {@link runDefaultItemAction}.
+ */
+const CLI_ITEM_ACTION_HANDLERS: Partial<Record<ItemAction, CliItemActionHandler>> = {
+  start_brainstorm: handleStartBrainstorm,
+  start_implementation: handleStartImplementationOrRerunDesignPrep,
+  rerun_design_prep: handleStartImplementationOrRerunDesignPrep,
+  resume_run: handleResumeRun,
+}
+
 export async function runItemAction(itemRef: string, action: string, resumeFlags?: ResumeFlags): Promise<number> {
-  const { createItemActionsService, isItemAction, lookupTransition } = await import("./core/itemActions.js")
-  if (!isItemAction(action)) {
+  const itemActions = await import("./core/itemActions.js")
+  if (!itemActions.isItemAction(action)) {
     console.error(`  Unknown action: ${action}`)
     return 1
   }
+  // Late-bind the helpers shared by handlers so the registry can declare
+  // them at module load without requiring async imports at every call.
+  lookupTransitionSync = itemActions.lookupTransition
+  createItemActionsService = itemActions.createItemActionsService
   const db = initDatabase()
   const repos = new Repos(db)
   try {
@@ -1904,195 +2143,15 @@ export async function runItemAction(itemRef: string, action: string, resumeFlags
       resolved.matches.forEach(match => console.error(`    ${match.id}`))
       return 1
     }
-    const item = resolved.item
-
-    // CLI-specific start_brainstorm: the shared ItemActionsService fires runs
-    // as owner=api with SSE-backed IO. The CLI needs owner=cli with stdio IO
-    // and synchronous execution so the terminal blocks until the run ends.
-    // We reuse lookupTransition so the guard rules stay single-sourced.
-    if (action === "start_brainstorm") {
-      const transition = lookupTransition(action, item.current_column, item.phase_status)
-      if (transition.kind !== "start-run") {
-        console.error(`  Invalid transition: ${action} from ${item.current_column}/${item.phase_status}`)
-        return 1
-      }
-      const preflightExit = preflightCliBranchingStart(repos, item.workspace_id)
-      if (preflightExit !== 0) return preflightExit
-      const io = createCliIO(repos)
-      try {
-        const runId = await runWorkflowWithSync(
-          { id: item.id, title: item.title, description: item.description },
-          repos,
-          io,
-          { owner: "cli", itemId: item.id }
-        )
-        console.log(`  ${action} applied`)
-        console.log(`  run-id: ${runId}`)
-        return 0
-      } finally {
-        io.close?.()
-      }
+    const ctx: CliItemActionContext = {
+      item: resolved.item,
+      action,
+      repos,
+      itemRef,
+      resumeFlags,
     }
-
-    if (action === "start_implementation" || action === "rerun_design_prep") {
-      const transition = lookupTransition(action, item.current_column, item.phase_status)
-      if (transition.kind !== "start-run") {
-        console.error(`  Invalid transition: ${action} from ${item.current_column}/${item.phase_status}`)
-        return 1
-      }
-      const preflightExit = preflightCliBranchingStart(repos, item.workspace_id)
-      if (preflightExit !== 0) return preflightExit
-      const sourceRun = latestRunWithStageArtifacts(repos, item, "brainstorm")
-      if (!sourceRun) {
-        console.error("  Cannot start implementation: no prior brainstorm artifacts found for this item.")
-        console.error("  Run start_brainstorm first, then retry start_implementation.")
-        return 1
-      }
-      const io = createCliIO(repos)
-      try {
-        const prepared = prepareRun(
-          { id: item.id, title: item.title, description: item.description },
-          repos,
-          io,
-          {
-            owner: "cli",
-            itemId: item.id,
-            resume: { scope: { type: "run", runId: "pending" }, currentStage: action === "rerun_design_prep" ? "visual-companion" : "projects" },
-          },
-        )
-        if (!seedStageFromPreviousRun(item, sourceRun.id, prepared.runId, "brainstorm")) {
-          console.error("  Cannot start implementation: failed to seed brainstorm artifacts into the new run.")
-          return 1
-        }
-        seedStageFromPreviousRun(item, sourceRun.id, prepared.runId, "visual-companion")
-        seedStageFromPreviousRun(item, sourceRun.id, prepared.runId, "frontend-design")
-        await prepared.start()
-        console.log(`  ${action} applied`)
-        console.log(`  run-id: ${prepared.runId}`)
-        return 0
-      } finally {
-        io.close?.()
-      }
-    }
-
-    // For resume_run, preflight-check whether the active run actually has a
-    // recovery record. If it does, collect remediation fields before calling
-    // perform() so we can fail fast in non-TTY mode with exit 75.
-    let resumePayload: { summary: string; branch?: string; commitSha?: string; reviewNotes?: string } | undefined
-    let resumeRunId: string | undefined
-    if (action === "resume_run") {
-      const active = repos.latestActiveRunForItem(item.id) ?? repos.latestRecoverableRunForItem(item.id)
-      resumeRunId = active?.id
-      if (active?.recovery_status) {
-        const isTty = Boolean(process.stdin.isTTY && process.stdout.isTTY) && resumeFlags?.yes !== true
-        const collected = await collectRemediationFlags(resumeFlags ?? {}, isTty)
-        if (!collected || !collected.summary) {
-          printResumeBlockedOutput(active.id, {
-            summary: active.recovery_summary,
-            scope: active.recovery_scope,
-            scopeRef: active.recovery_scope_ref,
-          }, itemRef)
-          console.error("  Missing --remediation-summary (required for non-interactive resume).")
-          return 75
-        }
-        resumePayload = {
-          summary: collected.summary,
-          branch: collected.branch,
-          commitSha: collected.commit,
-          reviewNotes: collected.notes
-        }
-      }
-    }
-
-    // CLI-specific resume_run: same reasoning as start_brainstorm — the service
-    // runs performResume asynchronously over an API IO session; the CLI needs
-    // synchronous execution so the operator sees the outcome before returning.
-    if (action === "resume_run" && resumePayload && resumeRunId) {
-      const { loadResumeReadiness, performResume } = await import("./core/resume.js")
-      const readiness = await loadResumeReadiness(repos, resumeRunId)
-      if (readiness.kind === "not_found") {
-        console.error(`  Item not found: ${itemRef}`)
-        return 1
-      }
-      if (readiness.kind === "not_resumable") {
-        console.error(`  Not resumable: ${readiness.reason}`)
-        return 2
-      }
-      if (readiness.kind === "no_recovery") {
-        console.error(`  Invalid transition: ${action} from ${item.current_column}/${item.phase_status}`)
-        return 1
-      }
-
-      const scopeRef =
-        readiness.record.scope.type === "stage"
-          ? readiness.record.scope.stageId
-          : readiness.record.scope.type === "story"
-          ? `${readiness.record.scope.waveNumber}/${readiness.record.scope.storyId}`
-          : null
-      const remediation = repos.createExternalRemediation({
-        runId: resumeRunId,
-        scope: readiness.record.scope.type,
-        scopeRef,
-        summary: resumePayload.summary,
-        branch: resumePayload.branch,
-        commitSha: resumePayload.commitSha,
-        reviewNotes: resumePayload.reviewNotes,
-        source: "cli"
-      })
-
-      const io = createCliIO(repos)
-      try {
-        console.log(`  ${action} applied`)
-        console.log(`  run-id: ${resumeRunId}`)
-        console.log(`  remediation-id: ${remediation.id}`)
-        await performResume({ repos, io, runId: resumeRunId, remediation })
-        const refreshed = repos.getRun(resumeRunId)
-        if (refreshed?.recovery_status === "blocked") {
-          printResumeBlockedOutput(resumeRunId, {
-            summary: refreshed.recovery_summary,
-            scope: refreshed.recovery_scope,
-            scopeRef: refreshed.recovery_scope_ref,
-          }, itemRef)
-        }
-        return 0
-      } finally {
-        io.close?.()
-      }
-    }
-
-    const service = createItemActionsService(repos)
-    const result = await service.perform(item.id, action, resumePayload ? { resume: resumePayload } : undefined)
-    if (!result.ok) {
-      if (result.status === 404) console.error(`  Item not found: ${itemRef}`)
-      else if (result.status === 422) {
-        console.error(`  Missing remediation summary (pass --remediation-summary).`)
-        service.dispose()
-        return 75
-      } else if (result.error === "not_resumable" || result.error === "resume_in_progress") {
-        console.error(`  Not resumable: ${result.error}`)
-        service.dispose()
-        return 2
-      } else {
-        console.error(`  Invalid transition: ${result.action} from ${result.current.column}/${result.current.phaseStatus}`)
-      }
-      service.dispose()
-      return 1
-    }
-    console.log(`  ${action} applied`)
-    if (result.kind === "needs_spawn" && result.runId) console.log(`  run-id: ${result.runId}`)
-    if (result.kind === "needs_spawn" && result.remediationId) console.log(`  remediation-id: ${result.remediationId}`)
-    if (result.kind === "needs_spawn" && result.runId) {
-      const refreshed = repos.getRun(result.runId)
-      if (refreshed?.recovery_status === "blocked") {
-        printResumeBlockedOutput(result.runId, {
-          summary: refreshed.recovery_summary,
-          scope: refreshed.recovery_scope,
-          scopeRef: refreshed.recovery_scope_ref,
-        }, itemRef)
-      }
-    }
-    service.dispose()
-    return 0
+    const handler = CLI_ITEM_ACTION_HANDLERS[action] ?? runDefaultItemAction
+    return await handler(ctx)
   } finally {
     db.close()
   }
