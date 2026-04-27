@@ -145,6 +145,45 @@ beerengineer update --rollback     # reserved; returns rollback unsupported
 
 Full CLI help: `beerengineer --help`.
 
+## Updating safely
+
+`beerengineer update` installs the latest non-draft, non-prerelease GitHub
+release into a managed install root (`<dataDir>/install/...`). The user's
+editable repo is never touched.
+
+Before any version switch the updater:
+
+- refuses to proceed unless the engine is idle (no active workflow runs and no
+  held update lock)
+- creates a timestamped SQLite backup under `<dataDir>/backups/update/` with a
+  `manifest.json` (source path, resolved DB-path source, SHA-256, byte sizes,
+  operationId)
+
+If the restarted engine fails its post-update health check, the switcher rolls
+back to the previous install pointer and starts the previous version against
+the still-untouched original DB. **Automatic rollback is only available until
+the new version completes `applySchema`** — once it does, `user_version` may
+have advanced and SQLite has no automatic downgrade path. From that point on,
+restoring the pre-update SQLite backup is a manual operator action; see
+`apps/engine/docs/app-setup.md`.
+
+Useful flags:
+
+- `--check` — read-only GitHub release check (60s on-disk cache)
+- `--dry-run` — full preflight (lock acquire/release, tarball download +
+  validation, npm install in a temp staged tree, switcher writeability) with
+  no shutdown or pointer swap
+- `--version <tag>` — install a specific release tag instead of latest
+- `--allow-legacy-db-shadow` — required when both the configured DB and the
+  legacy `~/.local/share/beerengineer/beerengineer.sqlite` exist; proceeds
+  against the already-resolved active DB
+- `--rollback` — reserved; currently returns
+  `post-migration-rollback-unsupported`
+
+The previous worktree-based update flow (cloning a pinned tool checkout under
+`~/.beerengineer-tool/`) is still supported for developers but is no longer
+the recommended operator path — use `beerengineer update` for managed hosts.
+
 ## Architecture
 
 ```
