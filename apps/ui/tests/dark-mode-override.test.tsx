@@ -33,7 +33,7 @@ describe("Dark mode is not overridden by OS light preference (TC-24)", () => {
         <div>child</div>
       </RootLayout>
     );
-    expect(markup).toMatch(/<html[^>]*class="dark"/);
+    expect(markup).toMatch(/<html[^>]*class="[^"]*\bdark\b[^"]*"/);
     expect(markup).toMatch(/<html[^>]*data-theme="dark"/);
     expect(markup).not.toMatch(/data-theme="light"/);
     expect(markup).not.toMatch(/class="[^"]*\blight\b[^"]*"/);

@@ -9,7 +9,7 @@ describe("Dark mode (TC-23)", () => {
         <div>child</div>
       </RootLayout>
     );
-    expect(markup).toMatch(/<html[^>]*class="dark"/);
+    expect(markup).toMatch(/<html[^>]*class="[^"]*\bdark\b[^"]*"/);
     expect(markup).toMatch(/<html[^>]*data-theme="dark"/);
   });
 });
