@@ -84,6 +84,19 @@ export interface GitAdapter {
 /**
  * Build a {@link GitAdapter} for the given context. Throws if the
  * workspace cannot be resolved into an enabled git mode.
+ *
+ * **Lifecycle**: an adapter instance is constructed once per
+ * `runWorkflow` invocation and threaded through every stage. The
+ * resolved {@link GitMode} (workspaceRoot, baseBranch, itemWorktreeRoot)
+ * is captured at construction; the adapter does NOT re-probe the
+ * filesystem on each method call. If anything outside the engine
+ * mutates the underlying repository's state mid-run (e.g. an operator
+ * checks out a different branch in the primary worktree), the captured
+ * mode goes stale. {@link GitAdapter#assertWorkspaceRootOnBaseBranch}
+ * exists to detect and fail fast on the most dangerous variant of that.
+ *
+ * Tests should construct via {@link createGitAdapterFromMode} so they
+ * can supply a synthetic mode without a real filesystem probe.
  */
 export function createGitAdapter(context: WorkflowContext): GitAdapter {
   return createGitAdapterFromMode(context, detectGitMode(context))

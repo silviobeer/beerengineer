@@ -85,6 +85,20 @@ export type StageDeps = {
 /**
  * Generic node contract — uniform across every stage. The registry can
  * grow without the orchestrator learning new shapes.
+ *
+ * **`resumeFromDisk` invariant**: when {@link shouldRunProjectStage}
+ * decides to skip a node (i.e. the resume plan starts past this node),
+ * its `resumeFromDisk(ctx)` is called instead of `run`. Implementations
+ * MUST be safe to call whenever the orchestrator might skip the node —
+ * which is "any time `index(node) < index(resume.startStage)`". In
+ * practice that means: only nodes whose persisted artifact will already
+ * exist at every legal `startStage` may have a non-trivial
+ * `resumeFromDisk`. Void stages (qa, handoff) return the context
+ * unchanged.
+ *
+ * Adding a new stage to the front of the registry without honouring this
+ * invariant will cause resume to throw ENOENT loading a never-persisted
+ * artifact.
  */
 export interface ProjectStageNode {
   readonly id: ProjectStageId
@@ -276,6 +290,14 @@ const documentationNode: ProjectStageNode = {
 
 const handoffNode: ProjectStageNode = {
   id: "handoff",
+  // Handoff is the only stage that takes the GitAdapter as a positional
+  // argument rather than reading it implicitly from `deps.git` inside its
+  // own body. Most stages operate on persisted artifacts and never touch
+  // git directly; handoff actively performs `git.mergeProjectIntoItem(...)`
+  // and `git.assertWorkspaceRootOnBaseBranch(...)`, so making the
+  // dependency explicit at the call site keeps its contract honest. The
+  // registry wrapper threads `deps.git` in; the function signature itself
+  // makes the git use visible to anyone reading stages/handoff/index.ts.
   run: async (ctx, deps) => {
     await handoff(assertWithDocumentation(ctx), deps.git)
     return ctx
