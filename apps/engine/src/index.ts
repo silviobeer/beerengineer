@@ -260,7 +260,7 @@ function printHelp(): void {
     "    beerengineer                                         Run the default workflow",
     "    beerengineer --json                                  Harness mode: NDJSON events on stdout, prompt answers on stdin",
     "    beerengineer run --json                              Same as `beerengineer --json`",
-    "    beerengineer start ui                                [unavailable — UI rebuild pending, see specs/ui-rebuild-plan.md]",
+    "    beerengineer start ui                                Start the local UI dev server (http://127.0.0.1:3100)",
     "    beerengineer status [--all] [--json]                Workspace status overview",
     "    beerengineer items [--all] [--compact]              List items",
     "    beerengineer chats [--all] [--compact]              List open chats",
