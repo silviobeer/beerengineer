@@ -1,5 +1,34 @@
 # BeerEngineer2 — Prototyp-Dokumentation
 
+> **Status (2026-04-27).** Diese Datei ist *historische Design-Notiz* für
+> die Engine. Aktueller Stand der Architektur lebt in
+> [`docs/engine-architecture.md`](engine-architecture.md) — registry-
+> getriebene Pipeline, `GitAdapter`, `runCycledLoop`, `LLM_STAGE_REGISTRY`.
+> Wesentliche Änderungen seit dieser Datei zuletzt komplett geschrieben
+> wurde:
+>
+> 1. **Simulated-Git-Mode entfernt.** Real-Git ist jetzt zwingend; das
+>    `repoSimulation`-Modul samt `SimulatedBranch` / `SimulatedRepoState`
+>    ist gelöscht. Die unten beschriebenen Fallback-Pfade existieren
+>    nicht mehr — `detectGitMode` wirft mit präziser Begründung.
+> 2. **`realGit.ts` → `git.ts`.** Funktionen verlieren das `Real`-Suffix
+>    (`ensureItemBranchReal` → `ensureItemBranch` usw.). Alles geht über
+>    den `GitAdapter` (`core/gitAdapter.ts`).
+> 3. **Stage-Registry.** `runProject` ist jetzt eine generische Schleife
+>    über `PROJECT_STAGE_REGISTRY` (`core/projectStageRegistry.ts`).
+>    Das alte if-Cascade-`workflow.ts`-Snippet weiter unten ist durch
+>    eine Registrierung ersetzt — siehe Architektur-Doc.
+> 4. **Branch-Naming zentralisiert.** Reine Helper in
+>    `core/branchNames.ts`; das alte `repoSimulation`-Modul liefert
+>    keine Namen mehr.
+> 5. **Loop-Konstanten konfigurierbar.** `BEERENGINEER_MAX_ITERATIONS_PER_CYCLE`
+>    / `BEERENGINEER_MAX_REVIEW_CYCLES` mit Sanity-Caps in
+>    `core/loopConfig.ts`.
+>
+> Die unteren Abschnitte beschreiben weiterhin den ursprünglichen
+> Designstand und sind nützlich zum Nachvollziehen, *warum* die Engine
+> so aussieht, wie sie aussieht.
+
 > **UI-Teardown (2026-04-24).** Das frühere `apps/ui` ist entfernt und wird
 > auf Basis eines stabilen, dokumentierten API-Vertrags (`spec/api-contract.md`
 > + `apps/engine/src/api/openapi.json`, served at `GET /openapi.json`) neu
@@ -339,9 +368,16 @@ dieses Toggle existiert aktuell kein oeffentlicher Setter im SonarCloud-API.
 
 ### Real-Git-Modus
 
-Wenn der Run gegen eine registrierte Workspace laeuft (`--workspace <key>`),
-das Repo clean ist und die Base-Branch aufloesbar ist, arbeitet die Execution-
-Stage mit *echten* git-Branches statt nur mit dem simulierten JSON-Repo.
+> **Update 2026-04-27**: Real-Git ist jetzt der einzige Modus. Der unten
+> beschriebene "Fallback auf simulated-repo-Modus" existiert nicht mehr —
+> `detectGitMode` wirft mit präziser Begründung statt zurückzufallen, und
+> `runWorkflow` übersetzt den Throw in den bekannten dirty-repo-Recovery-
+> Pfad. Der Rest dieses Abschnitts (Branch-Schema, Worktree-Layout,
+> Base-Branch-Auflösung) gilt unverändert.
+
+Bei einem Run gegen eine registrierte Workspace (`--workspace <key>`)
+arbeitet die Execution-Stage mit echten git-Branches. Voraussetzungen:
+sauberes Repo, auflösbare Base-Branch, gesetzter `itemSlug`.
 Schema (siehe `specs/git-branch-strategy.md`):
 
 ```
@@ -356,12 +392,14 @@ Schema (siehe `specs/git-branch-strategy.md`):
   `.beerengineer/worktrees/<workspace>/items/<item>/stories/<run>-<story>/worktree`.
 - Nach erfolgreichem Story-Abschluss: `git merge --no-ff` in die Wave-Branch.
 - Am Wave-Ende: Wave → Project. Am Project-Ende: Project → Item.
-- Die Base-Branch wird nie automatisch gemerged — der Handoff/Candidate-Schritt
-  bleibt explizit.
+- Die Base-Branch wird nie automatisch gemerged — der Handoff-Schritt
+  bleibt explizit (Project→Item-Merge passiert jetzt *innerhalb* der
+  Handoff-Stage, unter `withStageLifecycle("handoff", …)`).
 
-Fallback auf simulated-repo-Modus, wenn eine der Vorbedingungen verletzt ist
-(kein git-Repo, dirty tree, keine Base-Branch, kein `workspaceRoot`). Der Grund
-wird beim Run-Start als Presentation-Event geloggt.
+Verletzte Vorbedingung (kein git-Repo, dirty tree, keine Base-Branch,
+kein `workspaceRoot`, kein `itemSlug`) → `detectGitMode` wirft, und
+`runWorkflow` übersetzt den Fehler in den bekannten dirty-repo-Recovery-
+Pfad mit operator-freundlicher Meldung. Kein Sim-Fallback mehr.
 
 #### Base-Branch-Aufloesung (Reihenfolge)
 
@@ -379,9 +417,12 @@ noch auf `story/...` / `wave/...` parken):
 5. `main` als letzter Fallback
 
 Wichtig: die Engine mutiert den primaeren Checkout nicht mehr fuer Item-Arbeit.
-`ensureItemBranchReal` erstellt die Item-Branch aus der Base-Ref und bindet sie
-an den Item-Worktree; Project/Wave/Story-Branches werden innerhalb dieses
-Worktree-Kontexts bewegt.
+`git.ensureItemBranch()` (über den `GitAdapter`) erstellt die Item-Branch aus
+der Base-Ref und bindet sie an den Item-Worktree; Project/Wave/Story-Branches
+werden innerhalb dieses Worktree-Kontexts bewegt. Seit dem Brainstorm-Refactor
+ist `ensureItemBranch` Teil der Brainstorm-Stage selbst — nur der
+Resume-past-brainstorm-Pfad ruft es zusätzlich aus `runWorkflow` auf, falls
+der Operator `.beerengineer/` zwischen Runs gelöscht hat.
 
 ### Harness-Modus (NDJSON)
 
@@ -900,19 +941,20 @@ Ein Workspace kann mehrere Runs haben. Ein Run enthaelt die Stage-Ausfuehrungen 
 
 ## Git-Strategie
 
-Die Branch-Hierarchie ist fuenfstufig und in beiden Modi (simuliert + real-git)
-identisch benannt. Die Namen werden zentral in `core/repoSimulation.ts` via
-`joinBranch(kind, ...segments)` gebildet (S2-Refactor):
+Die Branch-Hierarchie ist fuenfstufig. Die Namen werden zentral in
+`core/branchNames.ts` via `joinBranch(kind, ...segments)` gebildet
+(reine Helper, keine Simulation mehr — `core/repoSimulation.ts` ist
+gelöscht):
 
 - `base`                                                             = User-Default (`main`/`master`/…, ueber `resolveBaseBranchForItem` aufgeloest)
 - `item/<slug>`                                                      = pro Item
 - `proj/<slug>__<projectId>`                                         = pro Project
 - `wave/<slug>__<projectId>__w<N>`                                   = pro Wave
 - `story/<slug>__<projectId>__w<N>__<storyId>`                       = pro Story
-- `candidate/<runId>__<slug>__<projectId>`                           = finaler Kandidat (nur Sim-Modus)
+- `candidate/<runId>__<slug>__<projectId>`                           = (historisch — gehörte zum Sim-Handoff, der mit der Simulation entfernt wurde)
 
-Der Ablauf im Real-Git-Modus (`detectRealGitMode` schaltet ihn an, sobald der
-Workspace ein sauberes Repo ist):
+Der Ablauf (`detectGitMode` validiert die Vorbedingungen und wirft
+sonst — Real-Git ist Pflicht):
 
 1. `runWorkflow` laesst den primaeren Workspace auf der Base-Branch und legt
    `item/<slug>` in einem langlebigen Item-Worktree unter
@@ -1636,14 +1678,17 @@ Trigger `approved` startet den Ralph-Loop fuer diese Story.
 | SonarQube-Quality-Gate nicht gruen | Gate = `fail`, `failedBecause += "Sonar gate failed"` |
 | beides ok | Gate = `pass` → Story `passed` |
 
-**Branch-Trigger** (im Ralph-Loop, via `repoSimulation`):
+**Branch-Trigger** (im Ralph-Loop, via `GitAdapter` aus
+`core/gitAdapter.ts` — die alten `appendBranchCommit` /
+`mergeStoryBranchIntoProject` / `abandonBranch`-Calls aus
+`repoSimulation` gibt es nicht mehr; echte git-Ops machen das jetzt):
 
 | Ereignis | Branch-Aktion |
 |---|---|
-| erste Iteration einer Story | `ensureStoryBranch(story/<proj>-<story>)` |
-| jede Iteration | `appendBranchCommit(...)` |
-| Story-Status → `passed` | `mergeStoryBranchIntoProject(story/* → proj/<project>)` |
-| Story-Status → `blocked` | `abandonBranch(story/<proj>-<story>)` |
+| pro Story (Worktree-Setup) | `git.ensureStoryWorktree(...)` (mit Story-Branch-Erzeugung intern) |
+| Iteration committed | echter `git commit` durch den Coder im Story-Worktree |
+| Story-Status → `passed` | `git.mergeStoryIntoWave(...)` (no-ff, in den Item-Worktree) |
+| Story-Status → `blocked` | `git.abandonStoryBranch(...)` (Branch nach `refs/beerengineer/abandoned/` umparkiert) |
 
 **Wave-Exit-Trigger:** alle Stories der Wave haben finalen Status `passed` oder `blocked` — dann schreibt die Stage `wave-summary.json`.
 
@@ -1716,6 +1761,29 @@ Sonst `pass` → `approved`.
 
 ### `src/workflow.ts`
 
+> **Update 2026-04-27**: das alte Aufrufketten-Snippet ist Geschichte.
+> `runProject` ist jetzt eine generische Schleife über
+> `PROJECT_STAGE_REGISTRY` aus `core/projectStageRegistry.ts`:
+>
+> ```typescript
+> async function runProject(initialCtx, git, resume?, llm?) {
+>   let ctx = initialCtx
+>   const deps = { llm, resume, git }
+>   for (const node of PROJECT_STAGE_REGISTRY) {
+>     ctx = shouldRunProjectStage(resume, node.id)
+>       ? await withStageLifecycle(node.id, { projectId }, () => node.run(ctx, deps))
+>       : await node.resumeFromDisk(ctx)
+>   }
+> }
+> ```
+>
+> Eine neue Stage = ein Eintrag in der Registry, kein Edit am Orchestrator.
+> Brainstorm/Design-Prep liegen vor der Schleife (item-level), Handoff
+> ist die letzte Registrierung (führt den Project→Item-Merge selbst durch
+> und steht damit unter `withStageLifecycle("handoff", …)`).
+
+Historisch (Stand vor dem Registry-Refactor):
+
 ```typescript
 export async function runWorkflow(item: Item): Promise<void> {
   const context = { workspaceId: `<slug>-<item-id>`, runId: "<iso-ts>" }
@@ -1735,13 +1803,10 @@ async function runProject(project: Project, context: WorkflowContext, designPrep
   const projectReviewArtifact = await projectReview(project, prd, architectureArtifact, implementationPlan, executionSummaries, context)
   await qa(project)
   await documentation(project, prd, architectureArtifact, implementationPlan, executionSummaries, projectReviewArtifact, context)
-  // danach: Kandidaten-Branch erzeugen und Benutzerentscheidung fuer Merge zu main einholen
 }
 ```
 
 `workspaceId` kombiniert den Titel-Slug mit `item.id`, damit zwei Items mit gleichem Titel nicht in denselben Workspace schreiben.
-
-Nur Aufrufketten. Keine Logik. Neue Stage = eine Zeile.
 
 ---
 
