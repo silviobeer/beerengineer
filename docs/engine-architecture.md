@@ -133,9 +133,10 @@ export function createStageAdapter<S, A>(stageId, llm?, project?): StageAgentAda
 export function createReviewAdapter<S, A>(stageId, llm?): ReviewAgentAdapter<S, A>
 ```
 
-One table, two helpers. When `llm` is supplied, the hosted (Claude/
-Codex/etc.) adapter is used; otherwise the fake constructor registered
-for the stage runs. The 18 narrow `createXxxStage` / `createXxxReview`
+One table, two helpers. When `llm` is supplied, the hosted adapter
+chosen by `(harness, runtime)` dispatch (claude:cli / claude:sdk /
+codex:cli / codex:sdk / opencode:cli) is used; otherwise the fake
+constructor registered for the stage runs. The 18 narrow `createXxxStage` / `createXxxReview`
 exports are one-liners over the generics, kept so consumer modules can
 import a strongly-typed factory per stage without supplying type
 arguments at the call site.
@@ -245,9 +246,10 @@ apps/engine/src/
 │   ├── adapters.ts                 ← StageAgentAdapter / ReviewAgentAdapter
 │   └── stageRuntime.ts             ← runStage (per-stage shell loop)
 ├── llm/
-│   ├── registry.ts                 ← LLM_STAGE_REGISTRY + create helpers
+│   ├── registry.ts                 ← LLM_STAGE_REGISTRY + (harness, runtime) resolution
 │   ├── fake/                       ← per-stage offline adapters
-│   └── hosted/                     ← Claude/Codex adapters
+│   └── hosted/                     ← Claude/Codex adapters (CLI + SDK)
+│       └── providers/{claude,claudeSdk,codex,codexSdk,opencode}.ts
 └── stages/
     ├── brainstorm/                 ← stage modules: each owns its own state/artifact types
     ├── visual-companion/
