@@ -27,10 +27,11 @@ export function tailStageLogs(
   opts: TailOptions,
   onRow: (row: TailRow) => void,
 ): { stop(): void; pollOnce(): void } {
-  let cursor =
-    opts.sinceId
-      ? (repos.getStageLogCursorById(opts.sinceId, opts.scope.kind === "run" ? opts.scope.runId : undefined)?.log_rowid ?? 0)
-      : 0
+  const runId = opts.scope.kind === "run" ? opts.scope.runId : undefined
+  const initialCursor = opts.sinceId
+    ? repos.getStageLogCursorById(opts.sinceId, runId)?.log_rowid ?? 0
+    : 0
+  let cursor = initialCursor
   let stopped = false
 
   const pollOnce = (): void => {

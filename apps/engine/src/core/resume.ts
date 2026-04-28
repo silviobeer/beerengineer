@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { runWorkflow } from "../workflow.js"
+import type { WorkflowResumeInput } from "../workflow.js"
 import type { StoryImplementationArtifact } from "../types.js"
 import { readRecoveryRecord, type RecoveryRecord } from "./recovery.js"
 import { runWithWorkflowIO, type WorkflowIO } from "./io.js"
@@ -160,17 +161,17 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
     const bus = input.io.bus
     const detach = attachRunSubscribers(bus, input.repos, { runId: run.id, itemId: run.item_id }, { onItemColumnChanged: input.onItemColumnChanged })
 
-    const eventScope =
-      record.scope.type === "story"
-        ? {
-            type: "story" as const,
-            runId: run.id,
-            waveNumber: record.scope.waveNumber,
-            storyId: record.scope.storyId,
-          }
-        : record.scope.type === "stage"
-        ? { type: "stage" as const, runId: run.id, stageId: record.scope.stageId }
-        : { type: "run" as const, runId: run.id }
+    let eventScope: WorkflowResumeInput["scope"] = { type: "run", runId: run.id }
+    if (record.scope.type === "story") {
+      eventScope = {
+        type: "story",
+        runId: run.id,
+        waveNumber: record.scope.waveNumber,
+        storyId: record.scope.storyId,
+      }
+    } else if (record.scope.type === "stage") {
+      eventScope = { type: "stage", runId: run.id, stageId: record.scope.stageId }
+    }
 
     if (record.scope.type === "story") {
       await prepareStoryScopeForResume(

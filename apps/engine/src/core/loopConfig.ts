@@ -133,24 +133,22 @@ export function resolveRalphLoopConfig(override?: Partial<LoopConfig>): LoopConf
     "maxReviewCycles",
   )
   return {
-    maxIterationsPerCycle:
-      overrideIter !== undefined
-        ? clampWithWarning(
-            overrideIter,
-            RALPH_LOOP_CAPS.maxIterationsPerCycle,
-            "override",
-            "maxIterationsPerCycle",
-          )
-        : fromEnv.maxIterationsPerCycle,
-    maxReviewCycles:
-      overrideCycles !== undefined
-        ? clampWithWarning(
-            overrideCycles,
-            RALPH_LOOP_CAPS.maxReviewCycles,
-            "override",
-            "maxReviewCycles",
-          )
-        : fromEnv.maxReviewCycles,
+    maxIterationsPerCycle: overrideIter === undefined
+      ? fromEnv.maxIterationsPerCycle
+      : clampWithWarning(
+          overrideIter,
+          RALPH_LOOP_CAPS.maxIterationsPerCycle,
+          "override",
+          "maxIterationsPerCycle",
+        ),
+    maxReviewCycles: overrideCycles === undefined
+      ? fromEnv.maxReviewCycles
+      : clampWithWarning(
+          overrideCycles,
+          RALPH_LOOP_CAPS.maxReviewCycles,
+          "override",
+          "maxReviewCycles",
+        ),
   }
 }
 

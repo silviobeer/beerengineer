@@ -100,8 +100,9 @@ export async function visualCompanion(
     },
     buildGatePrompt: ({ artifact }) => {
       const summary = buildScreenSummary(artifact)
+      const screenLabel = artifact.screens.length === 1 ? "screen" : "screens"
       return (
-        `Wireframe summary (${artifact.screens.length} screen${artifact.screens.length !== 1 ? "s" : ""}):\n` +
+        `Wireframe summary (${artifact.screens.length} ${screenLabel}):\n` +
         `${summary}\n\n` +
         `Type "approve" to commit, or "revise: <feedback>" to adjust.`
       )

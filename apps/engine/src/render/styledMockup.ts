@@ -421,6 +421,7 @@ ${antiPatternCss}
  */
 export function renderMockupIndex(screens: Screen[], runId: string, publicBaseUrl: string): string {
   const base = publicBaseUrl.replace(/\/$/, "")
+  const screenLabel = screens.length === 1 ? "screen" : "screens"
   const links = screens.map(screen => {
     const url = `${base}/runs/${runId}/artifacts/stages/frontend-design/artifacts/mockups/${screen.id}.html`
     return `<li><a href="${escapeHtml(url)}" class="mockup-link">${escapeHtml(screen.name)}</a><span class="screen-purpose"> — ${escapeHtml(screen.purpose)}</span></li>`
@@ -441,7 +442,7 @@ export function renderMockupIndex(screens: Screen[], runId: string, publicBaseUr
     </style>
   </head>
   <body>
-    <h1>Styled Mockups (${screens.length} screen${screens.length !== 1 ? "s" : ""})</h1>
+    <h1>Styled Mockups (${screens.length} ${screenLabel})</h1>
     <ul>
     ${links}
     </ul>

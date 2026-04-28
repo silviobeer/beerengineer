@@ -171,11 +171,12 @@ async function executeWave(
   // design-tokens.css, etc.) within the same wave.
   const parallelEligible = wave.kind !== "setup" && wave.internallyParallelizable
   const parallelEnabled = parallelEligible && parallelStoriesFlagEnabled()
-  const tag = !parallelEligible
-    ? "(stories executed sequentially)"
-    : parallelEnabled
-    ? "(stories executed in parallel — BEERENGINEER_EXECUTION_PARALLEL_STORIES is enabled)"
-    : "(stories eligible for parallel execution but executed sequentially by default)"
+  let tag = "(stories executed sequentially)"
+  if (parallelEligible) {
+    tag = parallelEnabled
+      ? "(stories executed in parallel — BEERENGINEER_EXECUTION_PARALLEL_STORIES is enabled)"
+      : "(stories eligible for parallel execution but executed sequentially by default)"
+  }
   stagePresent.step(`\nWave ${wave.number} ${tag}: ${waveEntries.map(s => s.id).join(", ")}`)
   git.ensureWaveBranch(ctx.project.id, wave.number)
 
@@ -183,7 +184,9 @@ async function executeWave(
     | { harness: "claude" | "codex" | "opencode" | "fake"; runtime?: "cli" | "sdk"; model?: string }
     | undefined = llm?.executionCoder
     ? (() => {
-        const resolved = resolveMergeResolverHarness(llm.executionCoder!)
+        const executionCoder = llm.executionCoder
+        if (executionCoder === undefined) return undefined
+        const resolved = resolveMergeResolverHarness(executionCoder)
         if (resolved.kind === "fake") return { harness: "fake" as const }
         return { harness: resolved.harness, runtime: resolved.runtime, model: resolved.model }
       })()
@@ -402,9 +405,9 @@ async function implementStory(
 
   const testPlanPath = join(layout.executionTestWriterDir(ctx, wave.number, story.id), "test-plan.json")
   const storyStageLlm = executionStageLlmForStory(llm?.stage, opts.worktreeRoot)
-  const testPlan = !opts.rerunTestWriter
-    ? (await readJsonIfExists<StoryTestPlanArtifact>(testPlanPath)) ?? await writeStoryTestPlan(ctx, wave, story, storyStageLlm)
-    : await writeStoryTestPlan(ctx, wave, story, storyStageLlm)
+  const testPlan = opts.rerunTestWriter
+    ? await writeStoryTestPlan(ctx, wave, story, storyStageLlm)
+    : (await readJsonIfExists<StoryTestPlanArtifact>(testPlanPath)) ?? await writeStoryTestPlan(ctx, wave, story, storyStageLlm)
   stagePresent.dim(`  Test plan: ${testPlan.testPlan.testCases.map(tc => tc.id).join(", ")}`)
   const storyContext = buildStoryExecutionContext(ctx, wave, ctx.architecture, testPlan, {
     worktreeRoot: opts.worktreeRoot,
@@ -479,7 +482,12 @@ function resolveStoryMockups(
     .filter(screenId => owners[screenId] === storyId && mockups[screenId])
     .slice(0, 3)
   if (ownedScreens.length === 0) return undefined
-  return Object.fromEntries(ownedScreens.map(screenId => [screenId, mockups[screenId]!]))
+  return Object.fromEntries(
+    ownedScreens.flatMap(screenId => {
+      const mockup = mockups[screenId]
+      return mockup === undefined ? [] : [[screenId, mockup] as const]
+    }),
+  )
 }
 
 function setupTaskReferences(
@@ -557,9 +565,7 @@ function verifySetupContract(
 
   if (contract.requiredScripts.length > 0) {
     const packageJsonPath = join(workspaceRoot, "package.json")
-    if (!existsSync(packageJsonPath)) {
-      failures.push("missing package.json required to verify setup scripts")
-    } else {
+    if (existsSync(packageJsonPath)) {
       const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as { scripts?: Record<string, string> }
       for (const script of contract.requiredScripts) {
         if (!packageJson.scripts?.[script]) {
@@ -571,6 +577,8 @@ function verifySetupContract(
           failures.push(`script failed: npm run ${script}${run.output ? `\n${run.output}` : ""}`)
         }
       }
+    } else {
+      failures.push("missing package.json required to verify setup scripts")
     }
   }
 

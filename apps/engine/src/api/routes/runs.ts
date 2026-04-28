@@ -139,12 +139,9 @@ export function handleGetMessages(repos: Repos, url: URL, res: ServerResponse, r
     if (batch.length < limit * 4) break
   }
 
-  const nextSince =
-    entries.length === limit
-      ? entries[entries.length - 1]?.id ?? null
-      : hitScanCap
-      ? cursor
-      : null
+  let nextSince: string | null = null
+  if (entries.length === limit) nextSince = entries[entries.length - 1]?.id ?? null
+  else if (hitScanCap) nextSince = cursor
 
   json(res, 200, {
     runId,

@@ -12,8 +12,9 @@ export function mapStageToColumn(
   stageKey: string | undefined,
   outcome: "running" | "completed" | "failed",
 ): { column: BoardColumn; phaseStatus: BoardPhaseStatus } {
-  const phaseStatus: BoardPhaseStatus =
-    outcome === "running" ? "running" : outcome === "failed" ? "failed" : "completed"
+  let phaseStatus: BoardPhaseStatus = "completed"
+  if (outcome === "running") phaseStatus = "running"
+  else if (outcome === "failed") phaseStatus = "failed"
   if (!stageKey) return { column: "idea", phaseStatus: "draft" }
   switch (stageKey) {
     case "brainstorm":

@@ -167,12 +167,9 @@ export function buildStagePrompt<S>(input: {
   runtimePolicy: RuntimePolicy
   request: StageAgentInput<S>
 }): string {
-  const action =
-    input.request.kind === "begin"
-      ? "Start the stage from the provided state."
-      : input.request.kind === "user-message"
-      ? "Respond to the user and continue the stage."
-      : "Revise the stage output using the supplied review feedback."
+  let action = "Revise the stage output using the supplied review feedback."
+  if (input.request.kind === "begin") action = "Start the stage from the provided state."
+  else if (input.request.kind === "user-message") action = "Respond to the user and continue the stage."
   const stageContext: StageContext | null = input.request.stageContext ?? null
   return buildHostedPrompt({
     kind: "stage",

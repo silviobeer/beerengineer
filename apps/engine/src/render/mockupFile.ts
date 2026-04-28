@@ -62,6 +62,7 @@ export function renderMockupSitemap(
   publicBaseUrl: string,
 ): string {
   const base = publicBaseUrl.replace(/\/$/, "")
+  const screenLabel = screens.length === 1 ? "screen" : "screens"
   const items = screens.map(screen => {
     const url = `${base}/runs/${runId}/artifacts/stages/frontend-design/artifacts/mockups/${screen.id}.html`
     return `
@@ -116,7 +117,7 @@ export function renderMockupSitemap(
   </head>
   <body>
     <h1>Mockups Sitemap</h1>
-    <p class="subtitle">${screens.length} screen${screens.length !== 1 ? "s" : ""} — click to open each mockup</p>
+    <p class="subtitle">${screens.length} ${screenLabel} — click to open each mockup</p>
     <ul>
       ${items}
     </ul>

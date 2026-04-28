@@ -559,12 +559,9 @@ async function isUiReachable(url: string): Promise<boolean> {
 function openBrowser(url: string): void {
   if (process.env.BEERENGINEER_DISABLE_BROWSER_OPEN === "1") return
   const platform = process.platform
-  const command =
-    platform === "darwin"
-      ? { cmd: "open", args: [url] }
-      : platform === "win32"
-      ? { cmd: "cmd", args: ["/c", "start", "", url] }
-      : { cmd: "xdg-open", args: [url] }
+  let command = { cmd: "xdg-open", args: [url] }
+  if (platform === "darwin") command = { cmd: "open", args: [url] }
+  else if (platform === "win32") command = { cmd: "cmd", args: ["/c", "start", "", url] }
 
   try {
     const child = spawn(command.cmd, command.args, {
@@ -628,7 +625,7 @@ function loadEffectiveConfig(): AppConfig | null {
   const overrides = resolveOverrides()
   const configPath = resolveConfigPath(overrides)
   const state = readConfigFile(configPath)
-  return resolveMergedConfig(state, overrides) as AppConfig | null
+  return resolveMergedConfig(state, overrides)
 }
 
 function parseHarnessProfile(input: { profile?: string; profileJson?: string }, config: AppConfig): HarnessProfile {
@@ -665,7 +662,8 @@ function printPreview(preview: Awaited<ReturnType<typeof previewWorkspace>>): vo
   console.log(`    greenfield:       ${preview.isGreenfield}`)
   console.log(`    writable:         ${preview.isWritable}`)
   console.log(`    allowed root:     ${preview.isInsideAllowedRoot}`)
-  console.log(`    git repo:         ${preview.isGitRepo}${preview.defaultBranch ? ` (${preview.defaultBranch})` : ""}`)
+  const defaultBranchSuffix = preview.defaultBranch ? ` (${preview.defaultBranch})` : ""
+  console.log(`    git repo:         ${preview.isGitRepo}${defaultBranchSuffix}`)
   console.log(`    registered:       ${preview.isRegistered}`)
   if (preview.detectedStack) console.log(`    detected stack:   ${preview.detectedStack}`)
   if (preview.existingFiles.length > 0) console.log(`    top-level files:  ${preview.existingFiles.join(", ")}`)
@@ -788,11 +786,14 @@ async function runWorkspaceAddCommand(cmd: Extract<Command, { kind: "workspace-a
       console.log("\n  Next steps")
     }
     if (result.workspace.sonarEnabled) {
+      const tokenDetail = result.sonarReadiness.details?.token
+      const configDetail = result.sonarReadiness.details?.config
+      const coverageDetail = result.sonarReadiness.details?.coverage
       console.log("    Local Sonar readiness")
       console.log(`    - scanner: ${result.sonarReadiness.scanner}`)
-      console.log(`    - token: ${result.sonarReadiness.token}${result.sonarReadiness.details?.token ? ` (${result.sonarReadiness.details.token})` : ""}`)
-      console.log(`    - config: ${result.sonarReadiness.config}${result.sonarReadiness.details?.config ? ` (${result.sonarReadiness.details.config})` : ""}`)
-      console.log(`    - coverage: ${result.sonarReadiness.coverage}${result.sonarReadiness.details?.coverage ? ` (${result.sonarReadiness.details.coverage})` : ""}`)
+      console.log(`    - token: ${result.sonarReadiness.token}${tokenDetail ? ` (${tokenDetail})` : ""}`)
+      console.log(`    - config: ${result.sonarReadiness.config}${configDetail ? ` (${configDetail})` : ""}`)
+      console.log(`    - coverage: ${result.sonarReadiness.coverage}${coverageDetail ? ` (${coverageDetail})` : ""}`)
     }
     if (result.sonarProjectUrl || result.ghCreateCommand) {
       console.log("    CodeRabbit")
@@ -908,7 +909,8 @@ async function runWorkspaceRemoveCommand(
     if (result.purgeSkipped) {
       console.log(`  Removed workspace ${key} (purge skipped: ${result.purgeSkipped.reason} for ${result.purgeSkipped.path})`)
     } else {
-      console.log(`  Removed workspace ${key}${purge && result.purgedPath ? ` and purged ${result.purgedPath}` : ""}`)
+      const purgeSuffix = purge && result.purgedPath ? ` and purged ${result.purgedPath}` : ""
+      console.log(`  Removed workspace ${key}${purgeSuffix}`)
     }
     return 0
   } finally {
@@ -977,7 +979,10 @@ async function runItemsCommand(workspaceKey: string | undefined, all = false, js
   try {
     const repos = new Repos(db)
     const selectedWorkspace = all ? null : resolveSelectedWorkspace(repos, workspaceKey)
-    const workspaces = all ? repos.listWorkspaces() : selectedWorkspace ? [selectedWorkspace] : []
+    let workspaces = repos.listWorkspaces()
+    if (!all) {
+      workspaces = selectedWorkspace ? [selectedWorkspace] : []
+    }
     if (workspaces.length === 0) {
       console.error("  No workspace selected.")
       return 1
@@ -1002,7 +1007,8 @@ async function runItemsCommand(workspaceKey: string | undefined, all = false, js
       process.stdout.write(`${JSON.stringify(rows, null, 2)}\n`)
       return 0
     }
-    console.log(all ? "  Items across all workspaces" : `  Items for workspace ${workspaces[0]!.key}`)
+    const heading = all ? "  Items across all workspaces" : `  Items for workspace ${workspaces[0]?.key ?? "(unknown)"}`
+    console.log(heading)
     printItemRows(rows, compact)
     return 0
   } finally {
@@ -1025,7 +1031,8 @@ function printChatRows(
   if (compact) {
     console.log("  workspace  item      title                           stage/status             prompt")
     rows.forEach(row => {
-      console.log(`  ${(row.workspaceKey ?? "").padEnd(9)} ${row.itemCode} ${truncate(row.itemTitle, 60)}  ${`${row.stage} / ${row.status}`.padEnd(24)}  ${truncate(row.prompt, 70)}`)
+      const stageStatus = `${row.stage} / ${row.status}`
+      console.log(`  ${(row.workspaceKey ?? "").padEnd(9)} ${row.itemCode} ${truncate(row.itemTitle, 60)}  ${stageStatus.padEnd(24)}  ${truncate(row.prompt, 70)}`)
     })
     return
   }
@@ -1094,11 +1101,10 @@ async function runStatusCommand(workspaceKey: string | undefined, all = false, j
         const runs = repos.listRuns().filter(run => run.workspace_id === workspace.id)
         const chats = promptRows.filter(prompt => prompt.workspace_id === workspace.id)
         const latestRun = runs.sort((a, b) => b.created_at - a.created_at)[0]
-        const state =
-          chats.length > 0 ? "needs_answer" :
-          runs.some(run => run.recovery_status === "blocked") ? "blocked" :
-          runs.some(run => run.status === "running") ? "running" :
-          "idle"
+        let state = "idle"
+        if (chats.length > 0) state = "needs_answer"
+        else if (runs.some(run => run.recovery_status === "blocked")) state = "blocked"
+        else if (runs.some(run => run.status === "running")) state = "running"
         return {
           workspace: workspace.key,
           state,
@@ -1129,11 +1135,10 @@ async function runStatusCommand(workspaceKey: string | undefined, all = false, j
     const runs = repos.listRuns().filter(run => run.workspace_id === workspace.id)
     const openPrompts = repos.listOpenPrompts({ workspaceId: workspace.id })
     const latestRun = runs.sort((a, b) => b.created_at - a.created_at)[0]
-    const state =
-      openPrompts.length > 0 ? "needs_answer" :
-      runs.some(run => run.recovery_status === "blocked") ? "blocked" :
-      runs.some(run => run.status === "running") ? "running" :
-      "idle"
+    let state = "idle"
+    if (openPrompts.length > 0) state = "needs_answer"
+    else if (runs.some(run => run.recovery_status === "blocked")) state = "blocked"
+    else if (runs.some(run => run.status === "running")) state = "running"
     if (json) {
       process.stdout.write(`${JSON.stringify({ workspace: workspace.key, state, itemCount: items.length, runCount: runs.length, chatCount: openPrompts.length }, null, 2)}\n`)
       return 0
@@ -1239,7 +1244,8 @@ async function runItemWireframesCommand(
     }
     console.log("  screen  projects  purpose  file")
     artifact.screens.forEach(screen => {
-      console.log(`  ${screen.id}  ${screen.projectIds.join(",")}  ${truncate(screen.purpose, 30)}  ${artifactPath(repos, run.id, "visual-companion", `${screen.id}.html`)}`)
+      const mockupPath = artifactPath(repos, run.id, "visual-companion", `${screen.id}.html`)
+      console.log(`  ${screen.id}  ${screen.projectIds.join(",")}  ${truncate(screen.purpose, 30)}  ${mockupPath}`)
     })
     console.log(`  screen-map: ${screenMapPath}`)
     if (open) openBrowser(`file://${screenMapPath}`)
@@ -1401,10 +1407,9 @@ async function runChatAnswerCommand(cmd: Extract<Command, { kind: "chat-answer" 
   const db = initDatabase()
   try {
     const repos = new Repos(db)
-    const prompt =
-      cmd.promptId ? repos.getPendingPrompt(cmd.promptId) :
-      cmd.runId ? repos.getOpenPrompt(cmd.runId) :
-      undefined
+    let prompt
+    if (cmd.promptId) prompt = repos.getPendingPrompt(cmd.promptId)
+    else if (cmd.runId) prompt = repos.getOpenPrompt(cmd.runId)
     if (!prompt || prompt.answered_at) {
       console.error("  Open prompt not found.")
       return EXIT_USAGE
@@ -2312,12 +2317,11 @@ const handleResumeRun: CliItemActionHandler = async ctx => {
       return 1
     }
 
-    const scopeRef =
-      readiness.record.scope.type === "stage"
-        ? readiness.record.scope.stageId
-        : readiness.record.scope.type === "story"
-        ? `${readiness.record.scope.waveNumber}/${readiness.record.scope.storyId}`
-        : null
+    let scopeRef: string | null = null
+    if (readiness.record.scope.type === "stage") scopeRef = readiness.record.scope.stageId
+    else if (readiness.record.scope.type === "story") {
+      scopeRef = `${readiness.record.scope.waveNumber}/${readiness.record.scope.storyId}`
+    }
     const remediation = ctx.repos.createExternalRemediation({
       runId: resumeRunId,
       scope: readiness.record.scope.type,

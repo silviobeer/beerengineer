@@ -178,7 +178,7 @@ export const fullBoardFixture: Item[] = PHASES.flatMap((phase, phaseIdx) => [
     id: `${phaseIdx}a`,
     itemCode: `UI-${phaseIdx}A`,
     title: `${phase} Item A`,
-    phase: phase as Phase,
+    phase,
     pipelineState: "idle",
     summary: `Summary for ${phase} A`,
   }),
@@ -186,7 +186,7 @@ export const fullBoardFixture: Item[] = PHASES.flatMap((phase, phaseIdx) => [
     id: `${phaseIdx}b`,
     itemCode: `UI-${phaseIdx}B`,
     title: `${phase} Item B`,
-    phase: phase as Phase,
+    phase,
     pipelineState: "idle",
     summary: `Summary for ${phase} B`,
   }),
@@ -223,7 +223,7 @@ export const noSummaryFixture: Item[] = PHASES.map((phase, idx) =>
     id: `nosum-${idx}`,
     itemCode: `UI-NS${idx}`,
     title: `No summary ${phase}`,
-    phase: phase as Phase,
+    phase,
     summary: null,
   })
 );

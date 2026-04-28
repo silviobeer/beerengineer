@@ -255,12 +255,11 @@ export function createItemActionsService(repos: Repos): ItemActionsService {
       return { ok: false, status: 422, error: "remediation_required", action }
     }
 
-    const scopeRef =
-      readiness.record.scope.type === "stage"
-        ? readiness.record.scope.stageId
-        : readiness.record.scope.type === "story"
-        ? `${readiness.record.scope.waveNumber}/${readiness.record.scope.storyId}`
-        : null
+    let scopeRef: string | null = null
+    if (readiness.record.scope.type === "stage") scopeRef = readiness.record.scope.stageId
+    else if (readiness.record.scope.type === "story") {
+      scopeRef = `${readiness.record.scope.waveNumber}/${readiness.record.scope.storyId}`
+    }
     const remediation: ExternalRemediationRow = repos.createExternalRemediation({
       runId: active.id,
       scope: readiness.record.scope.type,

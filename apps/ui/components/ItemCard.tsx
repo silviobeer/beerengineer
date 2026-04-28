@@ -48,14 +48,14 @@ export function ItemCard({ item, workspaceKey }: Readonly<ItemCardProps>) {
       >
         {item.title}
       </div>
-      {summary !== null ? (
+      {summary === null ? null : (
         <p
           data-testid="item-summary"
           className="mt-1 line-clamp-2 overflow-hidden text-xs text-zinc-400"
         >
           {summary}
         </p>
-      ) : null}
+      )}
       <div className="mt-2 flex items-center gap-2">
         <StatusChip
           state={item.pipelineState}

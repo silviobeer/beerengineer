@@ -172,11 +172,12 @@ async function collectGlobMatches(iterator: AsyncIterable<string>): Promise<stri
 }
 
 async function listWorkspacePackageFiles(root: string, rawWorkspaces: unknown): Promise<string[]> {
-  const patterns = Array.isArray(rawWorkspaces)
-    ? rawWorkspaces.filter((value): value is string => typeof value === "string")
-    : rawWorkspaces && typeof rawWorkspaces === "object" && Array.isArray((rawWorkspaces as { packages?: unknown }).packages)
-    ? (rawWorkspaces as { packages: unknown[] }).packages.filter((value): value is string => typeof value === "string")
-    : []
+  let patterns: string[] = []
+  if (Array.isArray(rawWorkspaces)) {
+    patterns = rawWorkspaces.filter((value): value is string => typeof value === "string")
+  } else if (rawWorkspaces && typeof rawWorkspaces === "object" && Array.isArray((rawWorkspaces as { packages?: unknown }).packages)) {
+    patterns = (rawWorkspaces as { packages: unknown[] }).packages.filter((value): value is string => typeof value === "string")
+  }
   const files = new Set<string>()
   for (const pattern of patterns) {
     for (const match of await collectGlobMatches(glob(pattern.replace(/\/?$/, "/package.json"), { cwd: root }))) {
@@ -517,7 +518,8 @@ async function persistSonarTokenToEnvLocal(root: string, token: string): Promise
   }
   const lines = existing.split(/\r?\n/).filter(line => !/^SONAR_TOKEN\s*=/.test(line))
   const trimmed = lines.filter((line, idx) => !(idx === lines.length - 1 && line === "")).join("\n")
-  const next = `${trimmed ? `${trimmed}\n` : ""}SONAR_TOKEN=${token}\n`
+  const prefix = trimmed ? `${trimmed}\n` : ""
+  const next = `${prefix}SONAR_TOKEN=${token}\n`
   await writeFile(envLocalPath, next)
 }
 
@@ -657,10 +659,13 @@ async function findSonarQualityGateId(
       token,
       timeoutMs: 5000,
     })
-    if (!response.ok) return undefined
-    const body = await response.json() as { qualitygates?: Array<{ name?: string; id?: string | number }> }
-    const hit = (body.qualitygates ?? []).find(g => g.name === gateName)
-    return hit?.id !== undefined ? String(hit.id) : undefined
+    if (response.ok) {
+      const body = await response.json() as { qualitygates?: Array<{ name?: string; id?: string | number }> }
+      const hit = (body.qualitygates ?? []).find(g => g.name === gateName)
+      if (hit?.id === undefined) return undefined
+      return String(hit.id)
+    }
+    return undefined
   } catch {
     return undefined
   }
@@ -811,16 +816,21 @@ export async function runWorkspacePreflight(
   const sonarValid = sonarToken.value ? await validateSonarToken(sonarToken.value, sonarHost) : undefined
   const localSonarReadiness = await validateSonarProperties(root, await loadWorkspaceSonarProperties(root))
   const scannerReadiness = probeSonarScanner(root)
+  let sonarTokenStatus: "ok" | "invalid" | "missing" = "missing"
+  if (sonarToken.value) {
+    sonarTokenStatus = sonarValid ? "ok" : "invalid"
+  }
   const sonarReadiness = mergeSonarReadiness(localSonarReadiness, {
     scanner: scannerReadiness.scanner,
-    token: sonarToken.value ? (sonarValid ? "ok" : "invalid") : "missing",
+    token: sonarTokenStatus,
     details: {
       ...scannerReadiness.details,
-      token: sonarToken.value
-        ? sonarValid
+      token: (() => {
+        if (!sonarToken.value) return "SONAR_TOKEN was not found in env or .env.local"
+        return sonarValid
           ? `SONAR_TOKEN validated against ${sonarHost}`
           : `SONAR_TOKEN failed validation against ${sonarHost}`
-        : "SONAR_TOKEN was not found in env or .env.local",
+      })(),
     },
   })
   let sonarStatus: WorkspacePreflightReport["sonar"]["status"]
@@ -1023,7 +1033,7 @@ function normalizeReviewPolicy(
     coderabbit: {
       // CodeRabbit CLI runs locally on a diff — no GitHub App required.
       // Default to enabled when the CLI is present; honor explicit opt-out.
-      enabled: coderabbitExplicit === false ? false : coderabbitExplicit === true ? true : coderabbitCliAvailable,
+      enabled: coderabbitExplicit === false ? false : (coderabbitExplicit === true || coderabbitCliAvailable),
     },
     // Always recompute sonarcloud from the freshly validated config passed in
     // as `legacySonar`. Previously we preferred `policy?.sonarcloud` from the
@@ -1652,11 +1662,12 @@ export async function registerWorkspace(input: RegisterWorkspaceInput, deps: Reg
   })
   const workspace = previewFromDbRow(dbRow)
   const ghOwner = preflight.report.gh.user ?? preflight.report.github.owner
-  const ghCommand = preflight.report.github.status !== "ok"
-    ? ghOwner
+  let ghCommand: string | undefined
+  if (preflight.report.github.status !== "ok") {
+    ghCommand = ghOwner
       ? `gh repo create ${ghOwner}/${key} --private --source=. --remote=origin --push`
       : `gh repo create ${key} --private --source=. --remote=origin --push`
-    : undefined
+  }
   const coderabbitInstallUrl = preflight.report.github.owner
     ? generateCodeRabbitInstallUrl()
     : undefined
@@ -1732,14 +1743,14 @@ export async function removeWorkspace(
     } else if (!opts.allowedRoots || opts.allowedRoots.length === 0) {
       // Refuse to rm -rf if the caller didn't supply an allowlist.
       purgeSkipped = { reason: "allowed_roots_required", path: row.root_path }
-    } else if (!(await isInsideAllowedRootRealpath(row.root_path, opts.allowedRoots))) {
+    } else if (await isInsideAllowedRootRealpath(row.root_path, opts.allowedRoots)) {
+      await rm(row.root_path, { recursive: true, force: true })
+      purgedPath = row.root_path
+    } else {
       // The stored root_path may have been moved, replaced by a symlink,
       // or the allowedRoots config may have changed since registration.
       // In all of those cases we refuse to purge rather than chase the link.
       purgeSkipped = { reason: "path_outside_allowed_roots", path: row.root_path }
-    } else {
-      await rm(row.root_path, { recursive: true, force: true })
-      purgedPath = row.root_path
     }
   }
   repos.removeWorkspaceByKey(key)

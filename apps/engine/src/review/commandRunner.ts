@@ -29,7 +29,18 @@ export function runCommand(
 ): Promise<CommandRunResult> {
   const timeoutMs = opts.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS
   return new Promise(resolve => {
-    const child = spawn(command[0]!, command.slice(1), {
+    const [commandName, ...args] = command
+    if (!commandName) {
+      resolve({
+        ok: false,
+        exitCode: 1,
+        stdout: "",
+        stderr: "missing command",
+        combinedOutput: "missing command",
+      })
+      return
+    }
+    const child = spawn(commandName, args, {
       cwd,
       env: { ...process.env, ...opts.env },
       stdio: ["ignore", "pipe", "pipe"],

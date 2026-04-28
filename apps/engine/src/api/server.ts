@@ -144,7 +144,7 @@ itemActions.on("event", (ev: ItemActionEvent) => {
 
 function loadEffectiveConfig(): AppConfig {
   const overrides = resolveOverrides()
-  return (resolveMergedConfig(readConfigFile(resolveConfigPath(overrides)), overrides) as AppConfig | null)
+  return resolveMergedConfig(readConfigFile(resolveConfigPath(overrides)), overrides)
     ?? defaultAppConfig()
 }
 

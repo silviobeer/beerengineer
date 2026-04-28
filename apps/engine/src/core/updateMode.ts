@@ -457,7 +457,8 @@ export function createDatabaseBackup(
 
   const files: Array<{ name: string; bytes: number }> = []
   for (const name of ["beerengineer.sqlite", "beerengineer.sqlite-wal", "beerengineer.sqlite-shm"]) {
-    const src = name === "beerengineer.sqlite" ? opts.db.path : `${opts.db.path}${name === "beerengineer.sqlite" ? "" : name.slice("beerengineer.sqlite".length)}`
+    let src = opts.db.path
+    if (name !== "beerengineer.sqlite") src = `${opts.db.path}${name.slice("beerengineer.sqlite".length)}`
     if (!existsSync(src)) continue
     const dest = join(backupDir, name)
     copyFileSync(src, dest)
@@ -641,7 +642,9 @@ function integrationReady(state: boolean): UpdateReadinessState {
 
 function buildUpdateReadiness(repos: Repos, config: AppConfig, opts: { pid?: number | null } = {}): UpdateStatus["readiness"] {
   const pid = opts.pid ?? null
-  const engineStarted = pid !== null ? integrationReady(true) : integrationReady(Boolean(readEnginePidFile()))
+  const engineStarted = pid === null
+    ? integrationReady(Boolean(readEnginePidFile()))
+    : integrationReady(true)
   let dbOk: UpdateReadinessState = "failed"
   try {
     const db = new Database(resolveDbPathInfo().path, { readonly: true, fileMustExist: true })
@@ -821,7 +824,7 @@ async function requestBuffer(
         resolvePromise({ body: Buffer.concat(chunks), finalUrl: url.toString() })
       })
     })
-    req.on("error", err => reject(new Error(`update_check_failed:${(err as Error).message}`)))
+    req.on("error", err => reject(new Error(`update_check_failed:${err.message}`)))
     req.end()
   })
 }
@@ -885,7 +888,7 @@ function extractTarball(prepared: PreparedRelease): string {
   }
   const entries = readdirSync(prepared.extractedRoot, { withFileTypes: true }).filter(entry => entry.isDirectory())
   if (entries.length !== 1) throw new Error("update_extract_failed:unexpected_tarball_layout")
-  return join(prepared.extractedRoot, entries[0]!.name)
+  return join(prepared.extractedRoot, entries[0].name)
 }
 
 function validateExtractedRelease(root: string, release: UpdateCheckResult["latestRelease"]): { binPath: string } {

@@ -235,13 +235,14 @@ function validateConfig(input: unknown): AppConfig {
   if (typeof config.enginePort !== "number" || !Number.isInteger(config.enginePort) || config.enginePort <= 0) {
     throw new Error("enginePort must be a positive integer")
   }
-  const publicBaseUrl = config.publicBaseUrl === undefined
-    ? undefined
-    : typeof config.publicBaseUrl === "string"
-    ? normalizePublicBaseUrl(config.publicBaseUrl)
-    : (() => {
-        throw new Error("publicBaseUrl must be a string when set")
-      })()
+  let publicBaseUrl: string | undefined
+  if (config.publicBaseUrl === undefined) {
+    publicBaseUrl = undefined
+  } else if (typeof config.publicBaseUrl === "string") {
+    publicBaseUrl = normalizePublicBaseUrl(config.publicBaseUrl)
+  } else {
+    throw new Error("publicBaseUrl must be a string when set")
+  }
   if (!config.llm || typeof config.llm !== "object") throw new Error("llm config is required")
   if (!parseProvider(config.llm.provider)) throw new Error("llm.provider must be anthropic, openai, or opencode")
   if (typeof config.llm.model !== "string" || config.llm.model.length === 0) {
@@ -258,52 +259,61 @@ function validateConfig(input: unknown): AppConfig {
   if (telegram !== undefined && !isObject(telegram)) {
     throw new Error("notifications.telegram must be an object when set")
   }
-  const telegramEnabled =
-    telegram?.enabled === undefined
-      ? undefined
-      : typeof telegram.enabled === "boolean"
-      ? telegram.enabled
-      : (() => {
-          throw new Error("notifications.telegram.enabled must be a boolean when set")
-        })()
-  const telegramBotTokenEnv =
-    telegram?.botTokenEnv === undefined
-      ? undefined
-      : normalizeOptionalString(telegram.botTokenEnv) ?? (() => {
-          throw new Error("notifications.telegram.botTokenEnv must be a non-empty string when set")
-        })()
-  const telegramDefaultChatId =
-    telegram?.defaultChatId === undefined
-      ? undefined
-      : normalizeOptionalString(telegram.defaultChatId) ?? (() => {
-          throw new Error("notifications.telegram.defaultChatId must be a non-empty string when set")
-        })()
-  const telegramLevel =
-    telegram?.level === undefined
-      ? undefined
-      : telegram.level === 0 || telegram.level === 1 || telegram.level === 2
-      ? telegram.level
-      : (() => {
-          throw new Error("notifications.telegram.level must be 0, 1, or 2 when set")
-        })()
+  let telegramEnabled: boolean | undefined
+  if (telegram?.enabled === undefined) {
+    telegramEnabled = undefined
+  } else if (typeof telegram.enabled === "boolean") {
+    telegramEnabled = telegram.enabled
+  } else {
+    throw new Error("notifications.telegram.enabled must be a boolean when set")
+  }
+  let telegramBotTokenEnv: string | undefined
+  if (telegram?.botTokenEnv === undefined) {
+    telegramBotTokenEnv = undefined
+  } else {
+    telegramBotTokenEnv = normalizeOptionalString(telegram.botTokenEnv)
+    if (!telegramBotTokenEnv) {
+      throw new Error("notifications.telegram.botTokenEnv must be a non-empty string when set")
+    }
+  }
+  let telegramDefaultChatId: string | undefined
+  if (telegram?.defaultChatId === undefined) {
+    telegramDefaultChatId = undefined
+  } else {
+    telegramDefaultChatId = normalizeOptionalString(telegram.defaultChatId)
+    if (!telegramDefaultChatId) {
+      throw new Error("notifications.telegram.defaultChatId must be a non-empty string when set")
+    }
+  }
+  let telegramLevel: 0 | 1 | 2 | undefined
+  if (telegram?.level === undefined) {
+    telegramLevel = undefined
+  } else if (telegram.level === 0 || telegram.level === 1 || telegram.level === 2) {
+    telegramLevel = telegram.level
+  } else {
+    throw new Error("notifications.telegram.level must be 0, 1, or 2 when set")
+  }
   const telegramInbound = telegram?.inbound
   if (telegramInbound !== undefined && !isObject(telegramInbound)) {
     throw new Error("notifications.telegram.inbound must be an object when set")
   }
-  const telegramInboundEnabled =
-    telegramInbound?.enabled === undefined
-      ? undefined
-      : typeof telegramInbound.enabled === "boolean"
-      ? telegramInbound.enabled
-      : (() => {
-          throw new Error("notifications.telegram.inbound.enabled must be a boolean when set")
-        })()
-  const telegramWebhookSecretEnv =
-    telegramInbound?.webhookSecretEnv === undefined
-      ? undefined
-      : normalizeOptionalString(telegramInbound.webhookSecretEnv) ?? (() => {
-          throw new Error("notifications.telegram.inbound.webhookSecretEnv must be a non-empty string when set")
-        })()
+  let telegramInboundEnabled: boolean | undefined
+  if (telegramInbound?.enabled === undefined) {
+    telegramInboundEnabled = undefined
+  } else if (typeof telegramInbound.enabled === "boolean") {
+    telegramInboundEnabled = telegramInbound.enabled
+  } else {
+    throw new Error("notifications.telegram.inbound.enabled must be a boolean when set")
+  }
+  let telegramWebhookSecretEnv: string | undefined
+  if (telegramInbound?.webhookSecretEnv === undefined) {
+    telegramWebhookSecretEnv = undefined
+  } else {
+    telegramWebhookSecretEnv = normalizeOptionalString(telegramInbound.webhookSecretEnv)
+    if (!telegramWebhookSecretEnv) {
+      throw new Error("notifications.telegram.inbound.webhookSecretEnv must be a non-empty string when set")
+    }
+  }
   return {
     schemaVersion: CONFIG_SCHEMA_VERSION,
     dataDir: config.dataDir,

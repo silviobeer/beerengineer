@@ -707,7 +707,11 @@ async function runOneIteration(
   ;(implementation.priorAttempts ??= []).push({
     iteration: iterationNumber,
     summary: coderSummary ?? (result === "done" ? "Implementation reached green." : "Implementation still failing checks."),
-    outcome: result === "done" ? "passed" : result === "tests_failed" ? "failed" : "blocked",
+    outcome: (() => {
+      if (result === "done") return "passed"
+      if (result === "tests_failed") return "failed"
+      return "blocked"
+    })(),
   })
   implementation.changedFiles = Array.from(
     new Set([...implementation.changedFiles, ...changedFilesThisIteration]),

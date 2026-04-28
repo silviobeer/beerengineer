@@ -185,9 +185,9 @@ export function resolveMergeConflictsViaLlm(input: {
   )
   if (!built.ok) return built
 
-  stagePresent.dim(
-    `merge-resolver: ${input.harness.harness}${input.harness.model ? `/${input.harness.model}` : ""} on ${conflicted.length} conflicted file${conflicted.length === 1 ? "" : "s"}`,
-  )
+  const modelSuffix = input.harness.model ? `/${input.harness.model}` : ""
+  const fileLabel = conflicted.length === 1 ? "file" : "files"
+  stagePresent.dim(`merge-resolver: ${input.harness.harness}${modelSuffix} on ${conflicted.length} conflicted ${fileLabel}`)
 
   // Resolver scales with conflict count: a 3-file story merge finishes in
   // ~3min, but a 6-file wave→project merge timed out at 7min because the
@@ -216,12 +216,15 @@ export function resolveMergeConflictsViaLlm(input: {
   //   3. NOW ask git for unmerged paths — only after staging is the index honest.
   // Inverting (2) and (3) caused every successful resolution to look failed.
   const markerStillIn = conflicted.find(file => fileHasConflictMarkers(input.workspaceRoot, file))
-  const addResult = !markerStillIn ? git(["add", "-A"], input.workspaceRoot) : { ok: false, stdout: "", stderr: "skipped: markers still present" }
+  const addResult = markerStillIn
+    ? { ok: false, stdout: "", stderr: "skipped: markers still present" }
+    : git(["add", "-A"], input.workspaceRoot)
   const remaining = addResult.ok ? listConflictedFiles(input.workspaceRoot) : conflicted
+  const noConflictMarkersRemain = markerStillIn === undefined
   // Trust the post-resolution filesystem state, not the CLI exit code. A
   // sonnet timeout (SIGTERM=143) sometimes lands AFTER the model has written
   // clean files; rejecting on exit !== 0 throws away a valid resolution.
-  const ok = !markerStillIn && addResult.ok && remaining.length === 0
+  const ok = noConflictMarkersRemain && addResult.ok && remaining.length === 0
 
   writeResolverLog(input.logDir, {
     harness: input.harness.harness,

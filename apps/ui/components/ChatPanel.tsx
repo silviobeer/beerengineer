@@ -75,12 +75,12 @@ export function ChatPanel({ activeRunId, conversation }: Readonly<ChatPanelProps
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ promptId, answer: action }),
       });
-      if (!res.ok) {
-        setSubmitError("Failed to send answer.");
-      } else {
+      if (res.ok) {
         setAnsweredPromptIds((prev) =>
           prev.includes(promptId) ? prev : [...prev, promptId]
         );
+      } else {
+        setSubmitError("Failed to send answer.");
       }
     } catch {
       setSubmitError("Failed to send answer.");

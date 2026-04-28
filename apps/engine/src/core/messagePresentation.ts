@@ -147,11 +147,10 @@ export function presentMessageEntry(entry: MessageEntry): MessagePresentation {
     default: {
       // Switch is exhaustive over CanonicalMessageType; this branch only
       // fires if a new canonical type is added without a presentation case.
-      const exhaustive = entry as MessageEntry
       return {
         icon: "·",
-        label: String(exhaustive.type).replaceAll("_", " "),
-        detail: payloadString(exhaustive.payload.rawType),
+        label: String(entry.type).replaceAll("_", " "),
+        detail: payloadString(entry.payload.rawType),
       }
     }
   }

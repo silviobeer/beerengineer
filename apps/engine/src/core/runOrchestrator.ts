@@ -405,12 +405,9 @@ export function attachDbSync(
           repos.setItemCurrentStage(ctx.itemId, null)
         }
         const scope = event.scope
-        const scopeRefVal =
-          scope.type === "stage"
-            ? scope.stageId
-            : scope.type === "story"
-            ? `${scope.waveNumber}/${scope.storyId}`
-            : null
+        let scopeRefVal: string | null = null
+        if (scope.type === "stage") scopeRefVal = scope.stageId
+        else if (scope.type === "story") scopeRefVal = `${scope.waveNumber}/${scope.storyId}`
         repos.setRunRecovery(event.runId, {
           status: event.type === "run_blocked" ? "blocked" : "failed",
           scope: scope.type,

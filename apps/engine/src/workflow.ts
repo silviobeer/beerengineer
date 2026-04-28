@@ -159,7 +159,9 @@ function normalizeExecutionResume(stageId: string): ExecutionResumeOptions | und
 
 function normalizeProjectResume(input: WorkflowResumeInput): ProjectResumePlan | null {
   const scope = input.scope
-  const stageId = scope.type === "stage" ? scope.stageId : scope.type === "run" ? input.currentStage ?? "" : "execution"
+  let stageId = "execution"
+  if (scope.type === "stage") stageId = scope.stageId
+  else if (scope.type === "run") stageId = input.currentStage ?? ""
   const topStage = stageId.split("/")[0]
 
   switch (topStage) {
@@ -173,14 +175,16 @@ function normalizeProjectResume(input: WorkflowResumeInput): ProjectResumePlan |
     case "documentation":
     case "handoff":
       return { startStage: topStage }
-    case "execution":
+    case "execution": {
+      let executionScope = normalizeExecutionResume(stageId)
+      if (scope.type === "story") {
+        executionScope = { waveNumber: scope.waveNumber, storyId: scope.storyId }
+      }
       return {
         startStage: "execution",
-        execution:
-          scope.type === "story"
-            ? { waveNumber: scope.waveNumber, storyId: scope.storyId }
-            : normalizeExecutionResume(stageId),
+        execution: executionScope,
       }
+    }
     default:
       return null
   }
@@ -188,7 +192,9 @@ function normalizeProjectResume(input: WorkflowResumeInput): ProjectResumePlan |
 
 function normalizeItemResume(input: WorkflowResumeInput): ItemResumePlan {
   const scope = input.scope
-  const stageId = scope.type === "stage" ? scope.stageId : scope.type === "run" ? input.currentStage ?? "" : "projects"
+  let stageId = "projects"
+  if (scope.type === "stage") stageId = scope.stageId
+  else if (scope.type === "run") stageId = input.currentStage ?? ""
   const topStage = stageId.split("/")[0]
   const manualStage = input.manualStage
   switch (topStage) {
@@ -394,22 +400,22 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
       ))
     )
     const designPrepReferences = loadItemWorkspaceReferences(context)
-    const wireframes =
-      !itemHasUi
-        ? undefined
-        : shouldRunVisualCompanion
+    let wireframes: WireframeArtifact | undefined
+    if (itemHasUi) {
+      wireframes = shouldRunVisualCompanion
         ? await withStageLifecycle("visual-companion", {}, () =>
             visualCompanion(context, { itemConcept, projects, references: designPrepReferences }, options?.llm?.stage, itemSnapshot),
           )
         : await loadWireframes(context)
-    const design =
-      !itemHasUi
-        ? undefined
-        : shouldRunFrontendDesign
+    }
+    let design: DesignArtifact | undefined
+    if (itemHasUi) {
+      design = shouldRunFrontendDesign
         ? await withStageLifecycle("frontend-design", {}, () =>
             frontendDesign(context, { itemConcept, projects, wireframes, references: designPrepReferences }, options?.llm?.stage, itemSnapshot),
           )
         : await loadDesign(context)
+    }
     if (activeRun) {
       projects.forEach((project, index) => {
         emitEvent({

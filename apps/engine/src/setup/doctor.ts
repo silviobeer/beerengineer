@@ -43,20 +43,20 @@ const TOOL_TIMEOUT_MS = 3_000
 
 function remedyForTool(tool: string): CheckResult["remedy"] | undefined {
   const platform = process.platform
-  const ghRemedy =
-    platform === "darwin"
-      ? { hint: "Install GitHub CLI with Homebrew.", command: "brew install gh" }
-      : platform === "win32"
-        ? { hint: "Install GitHub CLI with winget.", command: "winget install GitHub.cli" }
-        : { hint: "Install GitHub CLI from the official docs.", url: "https://cli.github.com/" }
-  const sonarScannerRemedy =
-    platform === "darwin"
-      ? { hint: "Install sonar-scanner with Homebrew.", command: "brew install sonar-scanner" }
-      : { hint: "Install sonar-scanner from SonarSource docs.", url: "https://docs.sonarsource.com/sonarqube-cloud/advanced-setup/analysis-scanner-configuration/" }
-  const sonarInstallCommand =
-    platform === "win32"
-      ? "irm https://raw.githubusercontent.com/SonarSource/sonarqube-cli/refs/heads/master/user-scripts/install.ps1 | iex"
-      : "curl -o- https://raw.githubusercontent.com/SonarSource/sonarqube-cli/refs/heads/master/user-scripts/install.sh | bash"
+  let ghRemedy: CheckResult["remedy"]
+  if (platform === "darwin") {
+    ghRemedy = { hint: "Install GitHub CLI with Homebrew.", command: "brew install gh" }
+  } else if (platform === "win32") {
+    ghRemedy = { hint: "Install GitHub CLI with winget.", command: "winget install GitHub.cli" }
+  } else {
+    ghRemedy = { hint: "Install GitHub CLI from the official docs.", url: "https://cli.github.com/" }
+  }
+  const sonarScannerRemedy: CheckResult["remedy"] = platform === "darwin"
+    ? { hint: "Install sonar-scanner with Homebrew.", command: "brew install sonar-scanner" }
+    : { hint: "Install sonar-scanner from SonarSource docs.", url: "https://docs.sonarsource.com/sonarqube-cloud/advanced-setup/analysis-scanner-configuration/" }
+  const sonarInstallCommand = platform === "win32"
+    ? "irm https://raw.githubusercontent.com/SonarSource/sonarqube-cli/refs/heads/master/user-scripts/install.ps1 | iex"
+    : "curl -o- https://raw.githubusercontent.com/SonarSource/sonarqube-cli/refs/heads/master/user-scripts/install.sh | bash"
   const hints: Record<string, CheckResult["remedy"]> = {
     gh: ghRemedy,
     claude: { hint: "Install Claude Code globally with npm.", command: "npm i -g @anthropic-ai/claude-code" },
@@ -246,15 +246,15 @@ async function runCoreChecks(configPath: string, configState: ReturnType<typeof 
 
   checks.push(createCheck("core.config", "config file", "ok", configPath))
 
-  if (!existsSync(config.dataDir)) {
-    checks.push(createCheck("core.dataDir", "configured data dir", "missing", config.dataDir))
-  } else {
+  if (existsSync(config.dataDir)) {
     try {
       accessSync(config.dataDir, constants.W_OK)
       checks.push(createCheck("core.dataDir", "configured data dir", "ok", config.dataDir))
     } catch (err) {
       checks.push(createCheck("core.dataDir", "configured data dir", "misconfigured", `${config.dataDir}: ${(err as Error).message}`))
     }
+  } else {
+    checks.push(createCheck("core.dataDir", "configured data dir", "missing", config.dataDir))
   }
 
   const dbPath = resolveConfiguredDbPath(config)
@@ -485,15 +485,7 @@ async function runNotificationChecks(config: AppConfig | null): Promise<CheckRes
 
   const checks: CheckResult[] = []
   const baseUrl = config.publicBaseUrl?.trim()
-  if (!baseUrl) {
-    checks.push(createCheck(
-      "notifications.public-base-url",
-      "Public base URL",
-      "missing",
-      "Missing publicBaseUrl. Telegram links need a Tailscale-reachable absolute URL.",
-      { remedy: { hint: "Set publicBaseUrl to the externally reachable UI address, for example http://100.x.y.z:3100." } },
-    ))
-  } else {
+  if (baseUrl) {
     try {
       const normalized = normalizePublicBaseUrl(baseUrl)
       checks.push(createCheck("notifications.public-base-url", "Public base URL", "ok", normalized))
@@ -506,6 +498,14 @@ async function runNotificationChecks(config: AppConfig | null): Promise<CheckRes
         { remedy: { hint: "Use an absolute http(s) URL that is reachable over Tailscale and not localhost.", command: "BEERENGINEER_PUBLIC_BASE_URL=http://100.x.y.z:3100" } },
       ))
     }
+  } else {
+    checks.push(createCheck(
+      "notifications.public-base-url",
+      "Public base URL",
+      "missing",
+      "Missing publicBaseUrl. Telegram links need a Tailscale-reachable absolute URL.",
+      { remedy: { hint: "Set publicBaseUrl to the externally reachable UI address, for example http://100.x.y.z:3100." } },
+    ))
   }
 
   const telegramEnabled = config.notifications?.telegram?.enabled === true
@@ -538,7 +538,9 @@ async function runNotificationChecks(config: AppConfig | null): Promise<CheckRes
     `L${config.notifications?.telegram?.level ?? 2}`,
   ))
 
-  if (!tokenEnv) {
+  if (tokenEnv) {
+    checks.push(createCheck("notifications.telegram.bot-token-env", "Telegram bot token env var", "ok", tokenEnv))
+  } else {
     checks.push(createCheck(
       "notifications.telegram.bot-token-env",
       "Telegram bot token env var",
@@ -546,8 +548,6 @@ async function runNotificationChecks(config: AppConfig | null): Promise<CheckRes
       "Missing notifications.telegram.botTokenEnv",
       { remedy: { hint: "Store the Telegram bot token in an env var and record that env var name in config." } },
     ))
-  } else {
-    checks.push(createCheck("notifications.telegram.bot-token-env", "Telegram bot token env var", "ok", tokenEnv))
   }
 
   const tokenPresent = tokenEnv ? Boolean(process.env[tokenEnv]) : false
@@ -579,10 +579,12 @@ async function runNotificationChecks(config: AppConfig | null): Promise<CheckRes
   ))
 
   const webhookSecretEnv = config.notifications?.telegram?.inbound?.webhookSecretEnv?.trim()
-  const webhookSecretEnvStatus: SetupStatus = inboundEnabled ? (webhookSecretEnv ? "ok" : "missing") : "skipped"
-  const webhookSecretEnvDetail = inboundEnabled
-    ? webhookSecretEnv ?? "Missing notifications.telegram.inbound.webhookSecretEnv"
-    : "Telegram inbound replies are disabled in config"
+  let webhookSecretEnvStatus: SetupStatus = "skipped"
+  let webhookSecretEnvDetail = "Telegram inbound replies are disabled in config"
+  if (inboundEnabled) {
+    webhookSecretEnvStatus = webhookSecretEnv ? "ok" : "missing"
+    webhookSecretEnvDetail = webhookSecretEnv ?? "Missing notifications.telegram.inbound.webhookSecretEnv"
+  }
   checks.push(createCheck(
     "notifications.telegram.inbound.webhook-secret-env",
     "Telegram webhook secret env var",
@@ -594,12 +596,12 @@ async function runNotificationChecks(config: AppConfig | null): Promise<CheckRes
   ))
 
   const webhookSecretPresent = webhookSecretEnv ? Boolean(process.env[webhookSecretEnv]) : false
-  const webhookSecretPresentStatus: SetupStatus =
-    inboundEnabled && webhookSecretEnv
-      ? (webhookSecretPresent ? "ok" : "missing")
-      : inboundEnabled
-        ? "missing"
-        : "skipped"
+  let webhookSecretPresentStatus: SetupStatus = "skipped"
+  if (inboundEnabled && webhookSecretEnv) {
+    webhookSecretPresentStatus = webhookSecretPresent ? "ok" : "missing"
+  } else if (inboundEnabled) {
+    webhookSecretPresentStatus = "missing"
+  }
   let webhookSecretPresentDetail = "Telegram inbound replies are disabled in config"
   if (inboundEnabled && webhookSecretEnv) {
     webhookSecretPresentDetail = webhookSecretPresent

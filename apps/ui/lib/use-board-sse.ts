@@ -16,11 +16,18 @@ function reducer(state: Item[], action: Action): Item[] {
       const idx = state.findIndex((i) => i.id === itemId);
       if (idx === -1) return state;
       const next = state.slice();
-      next[idx] = {
-        ...next[idx],
-        ...(pipelineState !== undefined ? { pipelineState } : {}),
-        ...(phase !== undefined ? { phase } : {}),
-      };
+      const nextItem = { ...next[idx] };
+      if (pipelineState === undefined) {
+        // No state patch for this field.
+      } else {
+        nextItem.pipelineState = pipelineState;
+      }
+      if (phase === undefined) {
+        // No phase patch for this field.
+      } else {
+        nextItem.phase = phase;
+      }
+      next[idx] = nextItem;
       return next;
     }
     default:

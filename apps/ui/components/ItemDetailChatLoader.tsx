@@ -10,7 +10,7 @@ interface ItemDetailChatLoaderProps {
 
 function resolveItemUrl(itemId: string): string {
   const base =
-    typeof process !== "undefined" ? process.env.NEXT_PUBLIC_ENGINE_URL : undefined;
+    typeof process === "undefined" ? undefined : process.env.NEXT_PUBLIC_ENGINE_URL;
   return base ? `${base.replace(/\/$/, "")}/items/${itemId}` : `/items/${itemId}`;
 }
 

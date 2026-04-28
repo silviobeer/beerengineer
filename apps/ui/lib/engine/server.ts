@@ -45,15 +45,15 @@ function normalizeItem(fallbackId: string, raw: Record<string, unknown>): ItemDe
     phase_status: pickString(raw, ["phase_status", "phaseStatus"]) ?? "",
     current_stage: pickString(raw, ["current_stage", "currentStage"]) ?? null,
     currentRunId: pickString(raw, ["currentRunId", "current_run_id"]) ?? null,
-    allowedActions: Array.isArray(raw.allowedActions)
-      ? (raw.allowedActions as unknown[]).filter(
-          (a): a is string => typeof a === "string",
-        )
-      : Array.isArray((raw as { allowed_actions?: unknown }).allowed_actions)
-      ? ((raw as { allowed_actions: unknown[] }).allowed_actions).filter(
-          (a): a is string => typeof a === "string",
-        )
-      : [],
+    allowedActions: (() => {
+      if (Array.isArray(raw.allowedActions)) {
+        return (raw.allowedActions as unknown[]).filter((a): a is string => typeof a === "string")
+      }
+      if (Array.isArray((raw as { allowed_actions?: unknown }).allowed_actions)) {
+        return ((raw as { allowed_actions: unknown[] }).allowed_actions).filter((a): a is string => typeof a === "string")
+      }
+      return []
+    })(),
   };
 }
 

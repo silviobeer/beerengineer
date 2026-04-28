@@ -249,12 +249,9 @@ export async function resumeRunInProcess(
   }
 
   const scope = readiness.record.scope
-  const scopeRef =
-    scope.type === "stage"
-      ? scope.stageId
-      : scope.type === "story"
-      ? `${scope.waveNumber}/${scope.storyId}`
-      : null
+  let scopeRef: string | null = null
+  if (scope.type === "stage") scopeRef = scope.stageId
+  else if (scope.type === "story") scopeRef = `${scope.waveNumber}/${scope.storyId}`
 
   const remediation: ExternalRemediationRow = repos.createExternalRemediation({
     runId: input.runId,
@@ -273,9 +270,12 @@ export async function resumeRunInProcess(
   const run = repos.getRun(input.runId)
   const ctx = run ? resolveWorkflowContextForRun(repos, run) : null
   if (ctx) {
+    let decisionStage: string | null = null
+    if (scope.type === "stage") decisionStage = scope.stageId
+    else if (scope.type === "story") decisionStage = `execution/${scope.waveNumber}/${scope.storyId}`
     appendItemDecision(ctx, {
       id: `remediation-${remediation.id}`,
-      stage: scope.type === "stage" ? scope.stageId : scope.type === "story" ? `execution/${scope.waveNumber}/${scope.storyId}` : null,
+      stage: decisionStage,
       question: `[resume_run] Operator unblocked the run with explicit scope guidance.`,
       answer: input.reviewNotes ? `${summary}\n\nReview notes:\n${input.reviewNotes}` : summary,
       runId: input.runId,

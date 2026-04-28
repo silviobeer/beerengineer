@@ -76,8 +76,9 @@ function findOverlappingFiles(wave: WaveDefinition): { stories: string[]; overla
   const ids = stories.map(s => s.id)
   for (let i = 0; i < ids.length; i++) {
     for (let j = i + 1; j < ids.length; j++) {
-      const a = filesByStory.get(ids[i]!)!
-      const b = filesByStory.get(ids[j]!)!
+      const a = filesByStory.get(ids[i])
+      const b = filesByStory.get(ids[j])
+      if (!a || !b) continue
       for (const f of a) if (b.has(f)) overlap.add(f)
     }
   }

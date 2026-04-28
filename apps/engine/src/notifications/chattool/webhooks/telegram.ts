@@ -84,14 +84,14 @@ export async function handleTelegramChatToolWebhook(
 
   const result = handleChatToolInbound(repos, "telegram", update)
   if (!result.ok) {
-    const message =
-      result.error === "prompt_not_open" || result.error === "prompt_mismatch"
-        ? "That prompt was already answered."
-        : result.error === "empty_answer"
-        ? "Empty answers are ignored."
-        : result.error === "run_not_found"
-        ? "That run no longer exists."
-        : "Reply to a beerengineer_ prompt to answer it."
+    let message = "Reply to a beerengineer_ prompt to answer it."
+    if (result.error === "prompt_not_open" || result.error === "prompt_mismatch") {
+      message = "That prompt was already answered."
+    } else if (result.error === "empty_answer") {
+      message = "Empty answers are ignored."
+    } else if (result.error === "run_not_found") {
+      message = "That run no longer exists."
+    }
     await softReply(resolved.botToken, update.channelRef, message, deps.send)
     return plainOk(res)
   }

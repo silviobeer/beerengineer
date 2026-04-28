@@ -28,13 +28,10 @@ function parseAgentOutput(output: string): {
     try {
       const event = JSON.parse(line) as Record<string, unknown>
       if (event.type === "finding") {
-        const message = typeof event.codegenInstructions === "string"
-          ? event.codegenInstructions
-          : typeof event.message === "string"
-          ? event.message
-          : typeof event.fileName === "string"
-          ? `Review finding in ${event.fileName}`
-          : "CodeRabbit reported a finding."
+        let message = "CodeRabbit reported a finding."
+        if (typeof event.codegenInstructions === "string") message = event.codegenInstructions
+        else if (typeof event.message === "string") message = event.message
+        else if (typeof event.fileName === "string") message = `Review finding in ${event.fileName}`
         findings.push({
           source: "coderabbit",
           severity: normalizeSeverity(typeof event.severity === "string" ? event.severity : "info"),

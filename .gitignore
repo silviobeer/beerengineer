@@ -45,6 +45,9 @@ desktop.ini
 out/
 build/
 
+# SonarCloud scanner artifacts
+.scannerwork/
+
 # Plan / spec scratch — skill outputs (writing-plans, requirements-engineer, …)
 # may regenerate these folders during runs. Keep them local-only; canonical
 # engine docs live under docs/.

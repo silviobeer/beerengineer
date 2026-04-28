@@ -71,10 +71,11 @@ export function inspectWorkspaceState(workspaceRoot: string): WorkspaceInspectio
   }
   const lines = status.stdout.split(/\r?\n/).filter(Boolean)
   const branchLine = lines.find(line => line.startsWith("## ")) ?? "## unknown"
-  const currentBranch = branchLine
+  const branchParts = branchLine
     .replace(/^##\s+/, "")
-    .split("...")[0]!
-    .split(/\s+\[/)[0]!
+    .split("...")
+  const currentBranch = (branchParts[0] ?? "unknown")
+    .split(/\s+\[/)[0]
     .trim()
   const changed = lines.filter(line => !line.startsWith("## "))
   if (changed.length === 0) {

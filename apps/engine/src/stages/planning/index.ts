@@ -169,14 +169,12 @@ export async function planning(ctx: WithArchitecture, llm?: RunLlmConfig): Promi
       }
       const waves = Array.isArray(artifact.plan?.waves) ? artifact.plan.waves : []
       waves.forEach(wave => {
-        const tag = wave.kind === "setup"
-          ? "(shared infra setup)"
-          : wave.internallyParallelizable
-          ? "(stories can run in parallel)"
-          : "(stories run sequentially)"
-        const entries = wave.kind === "setup"
-          ? (Array.isArray(wave.tasks) ? wave.tasks : [])
-          : (Array.isArray(wave.stories) ? wave.stories : [])
+        let tag = "(stories run sequentially)"
+        if (wave.kind === "setup") tag = "(shared infra setup)"
+        else if (wave.internallyParallelizable) tag = "(stories can run in parallel)"
+        let entries: Array<{ title: string }> = []
+        if (wave.kind === "setup") entries = Array.isArray(wave.tasks) ? wave.tasks : []
+        else entries = Array.isArray(wave.stories) ? wave.stories : []
         stagePresent.chat(`Wave ${wave.number} ${tag}`, entries.map(story => story.title).join(", "))
       })
       printStageCompletion(run, "planning")

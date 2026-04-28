@@ -197,7 +197,10 @@ export class Repos {
         description: input.description ?? existing.description,
         root_path: input.rootPath ?? existing.root_path,
         harness_profile_json: input.harnessProfileJson ?? existing.harness_profile_json,
-        sonar_enabled: input.sonarEnabled === undefined ? existing.sonar_enabled : input.sonarEnabled ? 1 : 0,
+        sonar_enabled: (() => {
+          if (input.sonarEnabled === undefined) return existing.sonar_enabled
+          return input.sonarEnabled ? 1 : 0
+        })(),
         last_opened_at: input.lastOpenedAt === undefined ? existing.last_opened_at : input.lastOpenedAt,
         updated_at: now(),
       }
@@ -1007,9 +1010,10 @@ export class Repos {
       target_version: input.targetVersion ?? existing?.target_version ?? null,
       db_path: input.dbPath ?? existing?.db_path ?? null,
       db_path_source: input.dbPathSource ?? existing?.db_path_source ?? null,
-      legacy_db_shadow: input.legacyDbShadow === undefined
-        ? existing?.legacy_db_shadow ?? 0
-        : input.legacyDbShadow ? 1 : 0,
+      legacy_db_shadow: (() => {
+        if (input.legacyDbShadow === undefined) return existing?.legacy_db_shadow ?? 0
+        return input.legacyDbShadow ? 1 : 0
+      })(),
       install_root: input.installRoot ?? existing?.install_root ?? null,
       backup_dir: input.backupDir ?? existing?.backup_dir ?? null,
       error_message: input.errorMessage ?? existing?.error_message ?? null,
