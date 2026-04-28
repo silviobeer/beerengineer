@@ -1,3 +1,5 @@
+import type { SonarReadiness } from "../setup/types.js"
+
 export type HarnessRole = "coder" | "reviewer" | "merge-resolver"
 
 export type KnownHarness = "claude" | "codex" | "opencode"
@@ -143,6 +145,7 @@ export type WorkspaceGhPreflight = WorkspacePreflightCheck & {
 export type WorkspaceSonarPreflight = WorkspacePreflightCheck & {
   tokenSource?: "env" | ".env.local"
   tokenValid?: boolean
+  readiness?: SonarReadiness
 }
 
 export type WorkspaceCoderabbitPreflight = WorkspacePreflightCheck
@@ -233,6 +236,7 @@ export type RegisterResult =
       actions: string[]
       warnings: string[]
       preflight: WorkspacePreflightReport
+      sonarReadiness: SonarReadiness
       sonarProjectUrl?: string
       sonarMcpSnippet?: string
       ghCreateCommand?: string

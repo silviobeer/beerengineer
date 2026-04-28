@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from "node:fs"
+import { chmodSync, mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { spawnSync } from "node:child_process"
@@ -139,6 +139,17 @@ test("registerWorkspace persists preflight and writes quality config once GitHub
     }
     const path = join(dir, "demo")
     mkdirSync(path, { recursive: true })
+    mkdirSync(join(path, "apps", "engine"), { recursive: true })
+    writeFileSync(
+      join(path, "package.json"),
+      JSON.stringify({
+        name: "demo",
+        private: true,
+        scripts: {
+          coverage: "npm run coverage --workspaces --if-present",
+        },
+      }, null, 2),
+    )
     const gitInit = await initGit(path, { defaultBranch: "main", initialCommit: false })
     assert.equal(gitInit.ok, true)
     const remoteAdd = spawnSync("git", ["remote", "add", "origin", "git@github.com:acme/demo.git"], { cwd: path, encoding: "utf8" })
@@ -191,6 +202,7 @@ test("registerWorkspace persists preflight and writes quality config once GitHub
     assert.match(sonarProperties, /sonar.projectKey=acme_demo/)
     assert.match(sonarProperties, /sonar.organization=acme/)
     assert.match(sonarProperties, /sonar\.sources=apps/)
+    assert.match(sonarProperties, /sonar\.javascript\.lcov\.reportPaths=coverage\/\*\*\/lcov\.info/)
     assert.match(sonarProperties, /sonar\.test\.inclusions=\*\*\/\*\.test\.ts,\*\*\/\*\.spec\.ts,\*\*\/\*\.test\.tsx,\*\*\/\*\.spec\.tsx/)
     const sonarWorkflow = readFileSync(join(path, ".github", "workflows", "sonar.yml"), "utf8")
     assert.match(sonarWorkflow, /SonarCloud Scan/)
@@ -212,6 +224,103 @@ test("registerWorkspace persists preflight and writes quality config once GitHub
   }
 })
 
+test("registerWorkspace omits LCOV import when no JS/TS coverage producer is detected", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-workspaces-"))
+  const db = initDatabase(join(dir, "db.sqlite"))
+  try {
+    const repos = new Repos(db)
+    const config = {
+      ...defaultAppConfig(),
+      allowedRoots: [dir],
+      llm: {
+        ...defaultAppConfig().llm,
+        defaultSonarOrganization: "acme",
+      },
+    }
+    const path = join(dir, "demo-no-coverage")
+    mkdirSync(join(path, "apps", "api"), { recursive: true })
+    writeFileSync(
+      join(path, "package.json"),
+      JSON.stringify({
+        name: "demo-no-coverage",
+        private: true,
+      }, null, 2),
+    )
+    const gitInit = await initGit(path, { defaultBranch: "main", initialCommit: false })
+    assert.equal(gitInit.ok, true)
+    const remoteAdd = spawnSync("git", ["remote", "add", "origin", "git@github.com:acme/demo-no-coverage.git"], { cwd: path, encoding: "utf8" })
+    assert.equal(remoteAdd.status, 0)
+
+    const result = await registerWorkspace(
+      {
+        path,
+        harnessProfile: { mode: "fast" },
+        sonar: { enabled: true },
+      },
+      { repos, config, appReport: readyReport() },
+    )
+    assert.equal(result.ok, true)
+    if (!result.ok) return
+
+    const sonarProperties = readFileSync(join(path, "sonar-project.properties"), "utf8")
+    assert.doesNotMatch(sonarProperties, /sonar\.javascript\.lcov\.reportPaths=/)
+    assert.equal(result.sonarReadiness.coverage, "not-configured")
+  } finally {
+    db.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("runWorkspacePreflight falls back to Basic auth after Bearer 401 for self-hosted sonar", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-workspaces-"))
+  const prevToken = process.env.SONAR_TOKEN
+  const prevFetch = globalThis.fetch
+  process.env.SONAR_TOKEN = "test-token"
+  const authHeaders: string[] = []
+  globalThis.fetch = (async (input, init) => {
+    authHeaders.push(String((init?.headers as Record<string, string> | undefined)?.authorization ?? ""))
+    const url = String(input)
+    if (url.includes("/api/authentication/validate")) {
+      if (authHeaders.length === 1) return new Response("unauthorized", { status: 401 })
+      return new Response(JSON.stringify({ valid: true }), { status: 200, headers: { "content-type": "application/json" } })
+    }
+    return new Response("ok", { status: 200 })
+  }) as typeof fetch
+
+  try {
+    const report = await runWorkspacePreflight(dir, { sonarHostUrl: "https://sonarqube.example.com", sonarEnabled: true })
+    assert.equal(report.report.sonar.status, "missing")
+    assert.equal(report.report.sonar.tokenValid, true)
+    assert.equal(authHeaders[0], "Bearer test-token")
+    assert.match(authHeaders[1] ?? "", /^Basic /)
+  } finally {
+    globalThis.fetch = prevFetch
+    if (prevToken === undefined) delete process.env.SONAR_TOKEN
+    else process.env.SONAR_TOKEN = prevToken
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("runWorkspacePreflight reports scanner readiness from PATH", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-workspaces-"))
+  const stubBin = join(dir, "bin")
+  mkdirSync(stubBin, { recursive: true })
+  writeFileSync(join(stubBin, "sonar-scanner"), "#!/bin/sh\necho 'SonarScanner 9.9.0'\n", "utf8")
+  chmodSync(join(stubBin, "sonar-scanner"), 0o755)
+  const prevPath = process.env.PATH
+  process.env.PATH = `${stubBin}:${prevPath ?? ""}`
+
+  try {
+    const report = await runWorkspacePreflight(dir)
+    assert.equal(report.report.sonar.readiness?.scanner, "ok")
+    assert.match(report.report.sonar.readiness?.details?.scanner ?? "", /SonarScanner 9\.9\.0/)
+  } finally {
+    if (prevPath === undefined) delete process.env.PATH
+    else process.env.PATH = prevPath
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test("generateSonarMcpSnippet emits Codex TOML for cloud and self-hosted sonar", () => {
   const cloud = generateSonarMcpSnippet({
     enabled: true,
@@ -221,9 +330,10 @@ test("generateSonarMcpSnippet emits Codex TOML for cloud and self-hosted sonar",
   assert.equal(
     cloud,
     [
+      "# See https://docs.sonarsource.com/sonarqube-mcp-server/quickstart-guide/codex-cli",
       "[mcp_servers.sonarqube]",
       'command = "docker"',
-      'args = ["run", "--rm", "-i", "--init", "--pull=always", "-e", "SONARQUBE_TOKEN", "-e", "SONARQUBE_ORG"]',
+      'args = ["run", "--rm", "-i", "--init", "--pull=always", "-e", "SONARQUBE_TOKEN", "-e", "SONARQUBE_ORG", "mcp/sonarqube"]',
       'env = { "SONARQUBE_TOKEN" = "<YourSonarQubeUserToken>", "SONARQUBE_ORG" = "acme" }',
     ].join("\n"),
   )
@@ -235,10 +345,27 @@ test("generateSonarMcpSnippet emits Codex TOML for cloud and self-hosted sonar",
   assert.equal(
     selfHosted,
     [
+      "# See https://docs.sonarsource.com/sonarqube-mcp-server/quickstart-guide/codex-cli",
       "[mcp_servers.sonarqube]",
       'command = "docker"',
-      'args = ["run", "--rm", "-i", "--init", "--pull=always", "-e", "SONARQUBE_TOKEN", "-e", "SONARQUBE_URL"]',
+      'args = ["run", "--rm", "-i", "--init", "--pull=always", "-e", "SONARQUBE_TOKEN", "-e", "SONARQUBE_URL", "mcp/sonarqube"]',
       'env = { "SONARQUBE_TOKEN" = "<YourSonarQubeUserToken>", "SONARQUBE_URL" = "https://sonarqube.example.com" }',
+    ].join("\n"),
+  )
+
+  const usCloud = generateSonarMcpSnippet({
+    enabled: true,
+    organization: "acme",
+    hostUrl: "https://sonarqube.us",
+  })
+  assert.equal(
+    usCloud,
+    [
+      "# See https://docs.sonarsource.com/sonarqube-mcp-server/quickstart-guide/codex-cli",
+      "[mcp_servers.sonarqube]",
+      'command = "docker"',
+      'args = ["run", "--rm", "-i", "--init", "--pull=always", "-e", "SONARQUBE_TOKEN", "-e", "SONARQUBE_ORG", "-e", "SONARQUBE_URL", "mcp/sonarqube"]',
+      'env = { "SONARQUBE_TOKEN" = "<YourSonarQubeUserToken>", "SONARQUBE_ORG" = "acme", "SONARQUBE_URL" = "https://sonarqube.us" }',
     ].join("\n"),
   )
 

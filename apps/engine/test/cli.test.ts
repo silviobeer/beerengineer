@@ -1160,7 +1160,7 @@ test("workspace add/register/open/remove work end-to-end through the CLI", () =>
     assert.equal(add.status, 0, `${add.stdout ?? ""}\n${add.stderr ?? ""}`)
     assert.match(add.stdout ?? "", /Registered as "demo-app" \(key: demo-app\)\./)
     assert.match(add.stdout ?? "", /SonarCloud config generation skipped until a GitHub origin remote is configured/)
-    assert.match(add.stdout ?? "", /SONAR_TOKEN is not configured yet; CI and local scans will remain incomplete/)
+    assert.match(add.stdout ?? "", /SONAR_TOKEN is not configured yet; local scans and project provisioning will remain incomplete/)
     assert.match(add.stdout ?? "", /Optional: install the CLI with npm i -g @coderabbit\/cli/)
     assert.match(add.stdout ?? "", /beerengineer_ will skip CodeRabbit review for the workspace/)
     assert.ok(existsSync(join(workspacePath, ".beerengineer", "workspace.json")))

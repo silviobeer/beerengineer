@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process"
-import { access, mkdir, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises"
+import { access, glob, mkdir, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises"
 import { constants } from "node:fs"
 import { randomBytes } from "node:crypto"
 import { basename, dirname, relative, resolve, sep } from "node:path"
@@ -25,7 +25,7 @@ function pairsFromPreset(presetKey: string): Array<{ harness: KnownHarness; runt
     .filter((r): r is PresetRoleEntry => Boolean(r))
     .map(r => ({ harness: r.harness, runtime: r.runtime ?? "cli" }))
 }
-import type { AppConfig, SetupReport } from "../setup/types.js"
+import type { AppConfig, SetupReport, SonarReadiness } from "../setup/types.js"
 import {
   DEFAULT_WORKSPACE_RUNTIME_POLICY,
 } from "../types/workspace.js"
@@ -63,6 +63,18 @@ const BEERENGINEER_GITIGNORE_ENTRIES = [
   ".beerengineer/worktrees/",
   ".beerengineer/cache/",
 ]
+const SONAR_GENERATOR_ROOTS = ["apps", "packages", "services", "libs", "src", "lib"] as const
+const SONAR_DEFAULT_TEST_INCLUSIONS = "**/*.test.ts,**/*.spec.ts,**/*.test.tsx,**/*.spec.tsx"
+const SONAR_DEFAULT_EXCLUSIONS = "**/node_modules/**,**/dist/**,**/.next/**"
+const SONAR_DEFAULT_LCOV_PATH = "coverage/**/lcov.info"
+
+type SonarProperties = Record<string, string>
+
+type CoverageProducerDetection = {
+  stack: "js-ts" | "unknown"
+  hasProducer: boolean
+  reasons: string[]
+}
 
 function toJson(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`
@@ -106,6 +118,234 @@ async function pathExists(path: string): Promise<boolean> {
     return true
   } catch {
     return false
+  }
+}
+
+function splitCsv(value: string | undefined): string[] {
+  return (value ?? "")
+    .split(",")
+    .map(entry => entry.trim())
+    .filter(Boolean)
+}
+
+function hasGlobMagic(value: string): boolean {
+  return /[*?[{\]]/.test(value)
+}
+
+function parseSonarProperties(raw: string): SonarProperties {
+  const props: SonarProperties = {}
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith("#")) continue
+    const idx = trimmed.indexOf("=")
+    if (idx <= 0) continue
+    props[trimmed.slice(0, idx).trim()] = trimmed.slice(idx + 1).trim()
+  }
+  return props
+}
+
+async function expandWorkspacePattern(root: string, pattern: string): Promise<string[]> {
+  if (!pattern.trim()) return []
+  if (!hasGlobMagic(pattern)) {
+    const absolute = resolve(root, pattern)
+    return await pathExists(absolute) ? [absolute] : []
+  }
+  const matches = await collectGlobMatches(glob(pattern, {
+    cwd: root,
+    exclude: path => path.includes(`${sep}node_modules${sep}`),
+  }))
+  return matches.map(match => resolve(root, match))
+}
+
+async function readJsonIfPresent<T>(path: string): Promise<T | null> {
+  try {
+    return JSON.parse(await readFile(path, "utf8")) as T
+  } catch {
+    return null
+  }
+}
+
+async function collectGlobMatches(iterator: AsyncIterable<string>): Promise<string[]> {
+  const matches: string[] = []
+  for await (const match of iterator) matches.push(match)
+  return matches
+}
+
+async function listWorkspacePackageFiles(root: string, rawWorkspaces: unknown): Promise<string[]> {
+  const patterns = Array.isArray(rawWorkspaces)
+    ? rawWorkspaces.filter((value): value is string => typeof value === "string")
+    : rawWorkspaces && typeof rawWorkspaces === "object" && Array.isArray((rawWorkspaces as { packages?: unknown }).packages)
+    ? (rawWorkspaces as { packages: unknown[] }).packages.filter((value): value is string => typeof value === "string")
+    : []
+  const files = new Set<string>()
+  for (const pattern of patterns) {
+    for (const match of await collectGlobMatches(glob(pattern.replace(/\/?$/, "/package.json"), { cwd: root }))) {
+      files.add(resolve(root, match))
+    }
+  }
+  return Array.from(files)
+}
+
+type PackageJsonShape = {
+  workspaces?: unknown
+  scripts?: Record<string, string>
+  dependencies?: Record<string, string>
+  devDependencies?: Record<string, string>
+}
+
+function packageLooksLikeCoverageProducer(pkg: PackageJsonShape | null): string[] {
+  if (!pkg) return []
+  const hits: string[] = []
+  const scripts = pkg.scripts ?? {}
+  const deps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) }
+  for (const [name, script] of Object.entries(scripts)) {
+    const lower = script.toLowerCase()
+    if (name === "coverage") hits.push(`script:${name}`)
+    if (/\b(c8|vitest)\b/.test(lower)) hits.push(`script:${name}`)
+    if (lower.includes("--coverage")) hits.push(`script:${name}`)
+  }
+  if (deps.c8) hits.push("dependency:c8")
+  if (deps.vitest) hits.push("dependency:vitest")
+  return Array.from(new Set(hits))
+}
+
+async function detectCoverageProducer(root: string): Promise<CoverageProducerDetection> {
+  const rootPkgPath = resolve(root, "package.json")
+  if (!(await pathExists(rootPkgPath))) {
+    return { stack: "unknown", hasProducer: false, reasons: [] }
+  }
+
+  const rootPkg = await readJsonIfPresent<PackageJsonShape>(rootPkgPath)
+  const reasons = new Set(packageLooksLikeCoverageProducer(rootPkg))
+  for (const file of await listWorkspacePackageFiles(root, rootPkg?.workspaces)) {
+    const pkg = await readJsonIfPresent<PackageJsonShape>(file)
+    for (const hit of packageLooksLikeCoverageProducer(pkg)) reasons.add(`${relative(root, file)}:${hit}`)
+  }
+
+  return {
+    stack: "js-ts",
+    hasProducer: reasons.size > 0,
+    reasons: Array.from(reasons),
+  }
+}
+
+async function detectSonarSourceRoots(root: string): Promise<string[]> {
+  const roots: string[] = []
+  for (const candidate of SONAR_GENERATOR_ROOTS) {
+    if (await pathExists(resolve(root, candidate))) roots.push(candidate)
+  }
+  return roots
+}
+
+async function loadWorkspaceSonarProperties(root: string): Promise<SonarProperties | null> {
+  try {
+    return parseSonarProperties(await readFile(sonarPropertiesPath(root), "utf8"))
+  } catch {
+    return null
+  }
+}
+
+async function validateSonarProperties(root: string, props: SonarProperties | null): Promise<SonarReadiness> {
+  const warnings: string[] = []
+  const details: NonNullable<SonarReadiness["details"]> = {}
+  const coverageProducer = await detectCoverageProducer(root)
+
+  if (!props) {
+    const readiness: SonarReadiness = {
+      scanner: "unknown",
+      token: "unknown",
+      config: "missing",
+      coverage: coverageProducer.stack === "js-ts" ? "not-configured" : "unknown",
+      warnings,
+      details: { config: `${SONAR_PROPERTIES_FILE} is missing` },
+    }
+    return readiness
+  }
+
+  const sourceEntries = splitCsv(props["sonar.sources"])
+  if (sourceEntries.length === 0) {
+    details.config = 'Missing required "sonar.sources"'
+  } else {
+    const missing: string[] = []
+    for (const entry of sourceEntries) {
+      const matches = await expandWorkspacePattern(root, entry)
+      if (matches.length === 0) missing.push(entry)
+    }
+    if (missing.length > 0) {
+      details.config = `Source path${missing.length > 1 ? "s" : ""} not found: ${missing.join(", ")}`
+    }
+  }
+
+  for (const key of ["sonar.tests", "sonar.test.inclusions", "sonar.exclusions", "sonar.test.exclusions", "sonar.coverage.exclusions"] as const) {
+    for (const entry of splitCsv(props[key])) {
+      const matches = await expandWorkspacePattern(root, entry)
+      if (matches.length === 0 && key.includes("exclusions") && !hasGlobMagic(entry)) {
+        warnings.push(`${key} entry matches nothing: ${entry}`)
+      }
+    }
+  }
+
+  const lcovEntries = splitCsv(props["sonar.javascript.lcov.reportPaths"])
+  let coverage: SonarReadiness["coverage"]
+  if (lcovEntries.length === 0) {
+    if (coverageProducer.stack === "js-ts") {
+      coverage = "not-configured"
+      details.coverage = coverageProducer.hasProducer
+        ? "Coverage producer detected, but Sonar LCOV import is not configured."
+        : "No LCOV import configured."
+    } else {
+      coverage = "unknown"
+      details.coverage = "Coverage detection is stack-specific and was not inferred."
+    }
+  } else {
+    const lcovMatches = await Promise.all(lcovEntries.map(entry => expandWorkspacePattern(root, entry)))
+    const existingFiles = lcovMatches.flat()
+    if (existingFiles.length > 0) {
+      coverage = "ok"
+      details.coverage = `LCOV artifact${existingFiles.length > 1 ? "s" : ""} present`
+    } else if (coverageProducer.stack === "js-ts" && coverageProducer.hasProducer) {
+      coverage = "artifact-missing"
+      details.coverage = `Coverage command detected, but ${lcovEntries.join(", ")} has not been generated yet`
+    } else if (coverageProducer.stack === "js-ts") {
+      coverage = "producer-missing"
+      details.coverage = "Coverage import configured but no JS/TS coverage producer was detected"
+      warnings.push("Coverage import configured but no coverage command was detected")
+    } else {
+      coverage = "unknown"
+      details.coverage = "Coverage import configured, but no matching artifact exists yet"
+    }
+  }
+
+  return {
+    scanner: "unknown",
+    token: "unknown",
+    config: details.config ? "invalid" : "ok",
+    coverage,
+    warnings,
+    details,
+  }
+}
+
+function mergeSonarReadiness(base: SonarReadiness, extra: Partial<SonarReadiness>): SonarReadiness {
+  return {
+    scanner: extra.scanner ?? base.scanner,
+    token: extra.token ?? base.token,
+    config: extra.config ?? base.config,
+    coverage: extra.coverage ?? base.coverage,
+    warnings: Array.from(new Set([...base.warnings, ...(extra.warnings ?? [])])),
+    details: { ...(base.details ?? {}), ...(extra.details ?? {}) },
+  }
+}
+
+function probeSonarScanner(root: string): Pick<SonarReadiness, "scanner" | "details"> {
+  const scanner = runCommand("sonar-scanner", ["--version"], root)
+  return {
+    scanner: scanner.ok ? "ok" : "missing",
+    details: {
+      scanner: scanner.ok
+        ? scanner.stdout.split(/\r?\n/)[0] || "sonar-scanner available"
+        : scanner.stderr || "sonar-scanner is not available on PATH",
+    },
   }
 }
 
@@ -281,12 +521,46 @@ async function persistSonarTokenToEnvLocal(root: string, token: string): Promise
   await writeFile(envLocalPath, next)
 }
 
-async function validateSonarToken(token: string): Promise<boolean> {
+function sonarBearerAuthHeader(token: string): Record<string, string> {
+  return { authorization: `Bearer ${token}` }
+}
+
+function sonarBasicAuthHeader(token: string): Record<string, string> {
+  const auth = Buffer.from(`${token}:`).toString("base64")
+  return { authorization: `Basic ${auth}` }
+}
+
+async function fetchSonarWithAuth(
+  url: URL | string,
+  init: Omit<RequestInit, "signal"> & { token: string; timeoutMs?: number },
+): Promise<Response> {
+  const { token, headers, timeoutMs = 5000, ...rest } = init
+  const bearer = await fetch(url, {
+    ...rest,
+    signal: AbortSignal.timeout(timeoutMs),
+    headers: {
+      ...headers,
+      ...sonarBearerAuthHeader(token),
+    },
+  })
+  if (bearer.status !== 401) return bearer
+  // Give the compatibility fallback its own timeout budget instead of reusing
+  // the Bearer attempt's signal, which may already be close to expiry.
+  return fetch(url, {
+    ...rest,
+    signal: AbortSignal.timeout(timeoutMs),
+    headers: {
+      ...headers,
+      ...sonarBasicAuthHeader(token),
+    },
+  })
+}
+
+async function validateSonarToken(token: string, host = SONAR_DEFAULT_HOST): Promise<boolean> {
   try {
-    const auth = Buffer.from(`${token}:`).toString("base64")
-    const response = await fetch(`${SONAR_DEFAULT_HOST}/api/authentication/validate`, {
-      headers: { authorization: `Basic ${auth}` },
-      signal: AbortSignal.timeout(5000),
+    const response = await fetchSonarWithAuth(`${host}/api/authentication/validate`, {
+      token,
+      timeoutMs: 5000,
     })
     if (!response.ok) return false
     const body = await response.json() as { valid?: boolean }
@@ -298,13 +572,12 @@ async function validateSonarToken(token: string): Promise<boolean> {
 
 async function sonarProjectExists(token: string, organization: string, projectKey: string, host = SONAR_DEFAULT_HOST): Promise<boolean> {
   try {
-    const auth = Buffer.from(`${token}:`).toString("base64")
     const url = new URL(`${host}/api/projects/search`)
     url.searchParams.set("organization", organization)
     url.searchParams.set("projects", projectKey)
-    const response = await fetch(url, {
-      headers: { authorization: `Basic ${auth}` },
-      signal: AbortSignal.timeout(5000),
+    const response = await fetchSonarWithAuth(url, {
+      token,
+      timeoutMs: 5000,
     })
     if (!response.ok) return false
     const body = await response.json() as { components?: unknown[] }
@@ -331,16 +604,15 @@ async function createSonarProject(
     if (await sonarProjectExists(token, organization, projectKey, host)) {
       return { ok: true, created: false, reason: "already-exists" }
     }
-    const auth = Buffer.from(`${token}:`).toString("base64")
     const url = new URL(`${host}/api/projects/create`)
     url.searchParams.set("organization", organization)
     url.searchParams.set("project", projectKey)
     url.searchParams.set("name", name)
     url.searchParams.set("visibility", visibility)
-    const response = await fetch(url, {
+    const response = await fetchSonarWithAuth(url, {
+      token,
       method: "POST",
-      headers: { authorization: `Basic ${auth}` },
-      signal: AbortSignal.timeout(8000),
+      timeoutMs: 8000,
     })
     if (response.ok) return { ok: true, created: true }
     const detail = await response.text().catch(() => "")
@@ -357,13 +629,12 @@ async function sonarPost(
   host = SONAR_DEFAULT_HOST,
 ): Promise<{ ok: boolean; status: number; detail: string }> {
   try {
-    const auth = Buffer.from(`${token}:`).toString("base64")
     const url = new URL(`${host}${path}`)
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v)
-    const response = await fetch(url, {
+    const response = await fetchSonarWithAuth(url, {
+      token,
       method: "POST",
-      headers: { authorization: `Basic ${auth}` },
-      signal: AbortSignal.timeout(8000),
+      timeoutMs: 8000,
     })
     if (response.ok) return { ok: true, status: response.status, detail: "" }
     const detail = (await response.text().catch(() => "")).slice(0, 200)
@@ -380,12 +651,11 @@ async function findSonarQualityGateId(
   host = SONAR_DEFAULT_HOST,
 ): Promise<string | undefined> {
   try {
-    const auth = Buffer.from(`${token}:`).toString("base64")
     const url = new URL(`${host}/api/qualitygates/list`)
     url.searchParams.set("organization", organization)
-    const response = await fetch(url, {
-      headers: { authorization: `Basic ${auth}` },
-      signal: AbortSignal.timeout(5000),
+    const response = await fetchSonarWithAuth(url, {
+      token,
+      timeoutMs: 5000,
     })
     if (!response.ok) return undefined
     const body = await response.json() as { qualitygates?: Array<{ name?: string; id?: string | number }> }
@@ -519,7 +789,10 @@ async function ensureGitRepo(root: string, defaultBranch = "main"): Promise<{ ok
   return { ok: true, actions }
 }
 
-export async function runWorkspacePreflight(root: string): Promise<{ report: WorkspacePreflightReport }> {
+export async function runWorkspacePreflight(
+  root: string,
+  options: { sonarHostUrl?: string; sonarEnabled?: boolean } = {},
+): Promise<{ report: WorkspacePreflightReport }> {
   const gitProbe = runGit(["rev-parse", "--is-inside-work-tree"], root)
   const defaultBranch = gitProbe.ok ? resolveGitDefaultBranch(root) : null
   const remoteProbe = gitProbe.ok ? runGit(["remote", "get-url", "origin"], root) : { ok: false, stdout: "", stderr: "" }
@@ -534,7 +807,44 @@ export async function runWorkspacePreflight(root: string): Promise<{ report: Wor
   }
 
   const sonarToken = await detectSonarToken(root)
-  const sonarValid = sonarToken.value ? await validateSonarToken(sonarToken.value) : undefined
+  const sonarHost = options.sonarHostUrl ?? SONAR_DEFAULT_HOST
+  const sonarValid = sonarToken.value ? await validateSonarToken(sonarToken.value, sonarHost) : undefined
+  const localSonarReadiness = await validateSonarProperties(root, await loadWorkspaceSonarProperties(root))
+  const scannerReadiness = probeSonarScanner(root)
+  const sonarReadiness = mergeSonarReadiness(localSonarReadiness, {
+    scanner: scannerReadiness.scanner,
+    token: sonarToken.value ? (sonarValid ? "ok" : "invalid") : "missing",
+    details: {
+      ...scannerReadiness.details,
+      token: sonarToken.value
+        ? sonarValid
+          ? `SONAR_TOKEN validated against ${sonarHost}`
+          : `SONAR_TOKEN failed validation against ${sonarHost}`
+        : "SONAR_TOKEN was not found in env or .env.local",
+    },
+  })
+  let sonarStatus: WorkspacePreflightReport["sonar"]["status"]
+  if (!sonarToken.value) {
+    sonarStatus = options.sonarEnabled || localSonarReadiness.config !== "missing" ? "missing" : "skipped"
+  } else if (!options.sonarEnabled && localSonarReadiness.config === "missing") {
+    sonarStatus = sonarValid ? "ok" : "invalid"
+  } else if (sonarValid && localSonarReadiness.config === "ok") {
+    sonarStatus = "ok"
+  } else if (localSonarReadiness.config === "missing") {
+    sonarStatus = "missing"
+  } else {
+    sonarStatus = "invalid"
+  }
+  let sonarDetail: string | undefined
+  if (localSonarReadiness.config === "invalid") {
+    sonarDetail = localSonarReadiness.details?.config
+  } else if (sonarToken.value && sonarValid) {
+    sonarDetail = sonarReadiness.details?.coverage
+  } else if (sonarToken.value) {
+    sonarDetail = "SONAR_TOKEN failed Sonar validation"
+  } else {
+    sonarDetail = "SONAR_TOKEN was not found in env or .env.local"
+  }
 
   const coderabbitCli = runCommand("coderabbit", ["--version"], root)
   const crCli = coderabbitCli.ok ? coderabbitCli : runCommand("cr", ["--version"], root)
@@ -568,17 +878,13 @@ export async function runWorkspacePreflight(root: string): Promise<{ report: Wor
             status: ghVersion.ok ? "missing" : "skipped",
             detail: ghVersion.ok ? (ghStatus.stderr || "gh auth status failed") : "GitHub CLI is not available",
           },
-      sonar: sonarToken.value
-        ? {
-            status: sonarValid ? "ok" : "invalid",
-            tokenSource: sonarToken.source,
-            tokenValid: sonarValid,
-            detail: sonarValid ? undefined : "SONAR_TOKEN failed SonarCloud validation",
-          }
-        : {
-            status: "missing",
-            detail: "SONAR_TOKEN was not found in env or .env.local",
-          },
+      sonar: {
+        status: sonarStatus,
+        tokenSource: sonarToken.source,
+        tokenValid: sonarValid,
+        readiness: sonarReadiness,
+        detail: sonarDetail,
+      },
       coderabbit: crCli.ok
         ? {
             status: "ok",
@@ -593,16 +899,32 @@ export async function runWorkspacePreflight(root: string): Promise<{ report: Wor
   }
 }
 
-function renderSonarProperties(owner: string, repo: string): string {
-  return [
+async function buildGeneratedSonarProperties(root: string, owner: string, repo: string): Promise<{
+  content?: string
+  warnings: string[]
+}> {
+  const sourceRoots = await detectSonarSourceRoots(root)
+  if (sourceRoots.length === 0) {
+    return {
+      warnings: [
+        "Sonar config generation skipped: no supported source roots were detected. Add sonar-project.properties manually if your repo uses a non-standard layout.",
+      ],
+    }
+  }
+
+  const coverageProducer = await detectCoverageProducer(root)
+  const lines = [
     `sonar.projectKey=${owner}_${repo}`,
     `sonar.organization=${owner}`,
-    "sonar.sources=apps",
+    `sonar.sources=${sourceRoots.join(",")}`,
     "sonar.tests=.",
-    "sonar.test.inclusions=**/*.test.ts,**/*.spec.ts,**/*.test.tsx,**/*.spec.tsx",
-    "sonar.exclusions=**/node_modules/**,**/dist/**,**/.next/**",
-    "sonar.javascript.lcov.reportPaths=coverage/engine/lcov.info,coverage/ui/lcov.info",
-  ].join("\n") + "\n"
+    `sonar.test.inclusions=${SONAR_DEFAULT_TEST_INCLUSIONS}`,
+    `sonar.exclusions=${SONAR_DEFAULT_EXCLUSIONS}`,
+  ]
+  if (coverageProducer.stack === "js-ts" && coverageProducer.hasProducer) {
+    lines.push(`sonar.javascript.lcov.reportPaths=${SONAR_DEFAULT_LCOV_PATH}`)
+  }
+  return { content: `${lines.join("\n")}\n`, warnings: [] }
 }
 
 function renderSonarWorkflow(): string {
@@ -676,12 +998,13 @@ function previewFromDbRow(row: DbWorkspaceRow): WorkspaceRow {
 
 function normalizeSonarConfig(config: SonarConfig | undefined, key: string, defaultOrg?: string): SonarConfig {
   if (!config?.enabled) return { enabled: false }
+  const region = config.region ?? "eu"
   return {
     enabled: true,
     projectKey: config.projectKey ?? key,
     organization: config.organization ?? defaultOrg,
-    hostUrl: config.hostUrl ?? SONAR_DEFAULT_HOST,
-    region: config.region ?? "eu",
+    hostUrl: config.hostUrl ?? (region === "us" ? "https://sonarqube.us" : SONAR_DEFAULT_HOST),
+    region,
     planTier: config.planTier ?? "unknown",
     baseBranch: config.baseBranch,
     scanTimeoutMs: config.scanTimeoutMs,
@@ -849,8 +1172,16 @@ export async function writeWorkspaceConfig(root: string, config: WorkspaceConfig
   await writeFile(workspaceConfigPath(root), toJson(config), "utf8")
 }
 
-export async function writeSonarProperties(root: string, owner: string, repo: string): Promise<boolean> {
-  return writeFileIfMissing(sonarPropertiesPath(root), renderSonarProperties(owner, repo))
+export async function writeSonarProperties(root: string, owner: string, repo: string): Promise<{
+  changed: boolean
+  warnings: string[]
+}> {
+  if (await pathExists(sonarPropertiesPath(root))) return { changed: false, warnings: [] }
+  const generated = await buildGeneratedSonarProperties(root, owner, repo)
+  if (!generated.content) return { changed: false, warnings: generated.warnings }
+  await mkdir(dirname(sonarPropertiesPath(root)), { recursive: true })
+  await writeFile(sonarPropertiesPath(root), generated.content, "utf8")
+  return { changed: true, warnings: generated.warnings }
 }
 
 export function generateSonarProjectUrl(name: string, sonar: SonarConfig): string | undefined {
@@ -874,15 +1205,19 @@ export function generateSonarMcpSnippet(sonar: SonarConfig): string | undefined 
   const args = ["run", "--rm", "-i", "--init", "--pull=always", "-e", "SONARQUBE_TOKEN"]
   const env: string[] = ['"SONARQUBE_TOKEN" = "<YourSonarQubeUserToken>"']
 
-  if (host === SONAR_DEFAULT_HOST) {
+  const isCloudHost = host === SONAR_DEFAULT_HOST || host === "https://sonarqube.us"
+  if (isCloudHost) {
     args.push("-e", "SONARQUBE_ORG")
     env.push(`"SONARQUBE_ORG" = "${sonar.organization ?? "<YourOrganizationName>"}"`)
-  } else {
+  }
+  if (host !== SONAR_DEFAULT_HOST) {
     args.push("-e", "SONARQUBE_URL")
     env.push(`"SONARQUBE_URL" = "${host}"`)
   }
 
+  args.push("mcp/sonarqube")
   return [
+    "# See https://docs.sonarsource.com/sonarqube-mcp-server/quickstart-guide/codex-cli",
     "[mcp_servers.sonarqube]",
     'command = "docker"',
     `args = [${args.map(value => JSON.stringify(value)).join(", ")}]`,
@@ -1181,7 +1516,10 @@ export async function registerWorkspace(input: RegisterWorkspaceInput, deps: Reg
     }
   }
 
-  let preflight = await runWorkspacePreflight(path)
+  let preflight = await runWorkspacePreflight(path, {
+    sonarHostUrl: requestedSonar?.hostUrl,
+    sonarEnabled: requestedSonar?.enabled ?? preview.hasSonarProperties,
+  })
 
   if (
     input.github?.create &&
@@ -1194,7 +1532,10 @@ export async function registerWorkspace(input: RegisterWorkspaceInput, deps: Reg
     const ghResult = runCommand("gh", ["repo", "create", slug, visibility, "--source=.", "--remote=origin", "--push"], path)
     if (ghResult.ok) {
       actions.push(`gh repo create ${slug}`)
-      preflight = await runWorkspacePreflight(path)
+      preflight = await runWorkspacePreflight(path, {
+        sonarHostUrl: requestedSonar?.hostUrl,
+        sonarEnabled: requestedSonar?.enabled ?? preview.hasSonarProperties,
+      })
     } else {
       actions.push(`! gh repo create ${slug} failed: ${ghResult.stderr || ghResult.stdout || "unknown error"}`)
     }
@@ -1216,11 +1557,6 @@ export async function registerWorkspace(input: RegisterWorkspaceInput, deps: Reg
   if (requestedSonar?.enabled && !githubReady) {
     warnings.push("SonarCloud config generation skipped until a GitHub origin remote is configured")
   }
-  if (preflight.report.sonar.status === "invalid") {
-    warnings.push("SONAR_TOKEN is present but failed SonarCloud validation")
-  } else if (requestedSonar?.enabled && preflight.report.sonar.status !== "ok") {
-    warnings.push("SONAR_TOKEN is not configured yet; CI and local scans will remain incomplete")
-  }
   if (preflight.report.gh.status !== "ok") {
     warnings.push("GitHub CLI is not authenticated; repo creation and secret sync remain manual")
   }
@@ -1239,15 +1575,21 @@ export async function registerWorkspace(input: RegisterWorkspaceInput, deps: Reg
   await writeWorkspaceConfig(path, workspaceConfig)
   actions.push(`wrote ${WORKSPACE_CONFIG_DIR}/${WORKSPACE_CONFIG_FILE}`)
 
-  if (githubReady) {
+  if (githubReady && sonar.enabled) {
     const owner = preflight.report.github.owner!
     const repo = preflight.report.github.repo!
-    if (await writeSonarProperties(path, owner, repo)) {
+    const sonarWrite = await writeSonarProperties(path, owner, repo)
+    if (sonarWrite.changed) {
       actions.push(`wrote ${SONAR_PROPERTIES_FILE}`)
     }
+    warnings.push(...sonarWrite.warnings)
     if (await writeFileIfMissing(sonarWorkflowPath(path), renderSonarWorkflow())) {
       actions.push(`wrote ${SONAR_WORKFLOW_FILE}`)
     }
+    preflight = await runWorkspacePreflight(path, {
+      sonarHostUrl: sonar.hostUrl,
+      sonarEnabled: sonar.enabled,
+    })
     // Create the SonarCloud project if the token can talk to the API and the
     // project doesn't yet exist. Non-fatal — scanner runs later will fail
     // cleanly if creation was refused (wrong permissions, org mismatch, etc.).
@@ -1318,6 +1660,30 @@ export async function registerWorkspace(input: RegisterWorkspaceInput, deps: Reg
   const coderabbitInstallUrl = preflight.report.github.owner
     ? generateCodeRabbitInstallUrl()
     : undefined
+  const sonarReadiness = preflight.report.sonar.readiness ?? {
+    scanner: "unknown",
+    token: "unknown",
+    config: "missing",
+    coverage: "unknown",
+    warnings: [],
+  } satisfies SonarReadiness
+  if (requestedSonar?.enabled && sonarReadiness.token === "invalid") {
+    warnings.push("SONAR_TOKEN is present but failed Sonar validation")
+  } else if (requestedSonar?.enabled && sonarReadiness.token === "missing") {
+    warnings.push("SONAR_TOKEN is not configured yet; local scans and project provisioning will remain incomplete")
+  }
+  if (requestedSonar?.enabled && sonarReadiness.config === "invalid" && sonarReadiness.details?.config) {
+    warnings.push(`Sonar config invalid: ${sonarReadiness.details.config}`)
+  }
+  if (requestedSonar?.enabled && sonarReadiness.config === "missing") {
+    warnings.push("Sonar config was not generated; add sonar-project.properties manually for this workspace layout")
+  }
+  if (sonarReadiness.coverage === "producer-missing") {
+    warnings.push("Coverage import configured but no coverage command was detected")
+  } else if (sonarReadiness.coverage === "artifact-missing" && sonarReadiness.details?.coverage) {
+    warnings.push(sonarReadiness.details.coverage)
+  }
+  warnings.push(...sonarReadiness.warnings)
 
   return {
     ok: true,
@@ -1326,6 +1692,7 @@ export async function registerWorkspace(input: RegisterWorkspaceInput, deps: Reg
     actions,
     warnings,
     preflight: preflight.report,
+    sonarReadiness,
     sonarProjectUrl: generateSonarProjectUrl(name, sonar),
     sonarMcpSnippet: generateSonarMcpSnippet(sonar),
     ghCreateCommand: ghCommand,
