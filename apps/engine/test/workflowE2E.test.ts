@@ -8,6 +8,7 @@ import { spawnSync } from "node:child_process"
 
 import { runWithWorkflowIO, type WorkflowEvent, type WorkflowIO } from "../src/core/io.js"
 import { runWorkflow } from "../src/workflow.ts"
+import { assignPort } from "../src/core/portAllocator.js"
 import { layout } from "../src/core/workspaceLayout.js"
 import { runWithActiveRun } from "../src/core/runContext.js"
 
@@ -25,7 +26,7 @@ function makeIO(answers: {
   frontendDesign?: string[]
   requirements: string[]
   qa: string
-  handoff: string
+  mergeGate: string
 }): { io: WorkflowIO; events: WorkflowEvent[]; promptLog: string[] } {
   const events: WorkflowEvent[] = []
   const promptLog: string[] = []
@@ -34,18 +35,18 @@ function makeIO(answers: {
   // The runtime prompt text is always "  you > "; use the preceding showMessage flow
   // via a counter-based mapping: brainstorm uses 4 asks, visual-companion uses
   // maxClarifications+1 asks (3 clarifications + 1 user-review), frontend-design likewise,
-  // requirements uses 3 asks, qa 1, handoff 1.
+  // requirements uses 3 asks, qa 1, merge-gate 1.
   let brainstormIdx = 0
   let visualCompanionIdx = 0
   let frontendDesignIdx = 0
   let requirementsIdx = 0
-  let phase: "brainstorm" | "visual-companion" | "frontend-design" | "requirements" | "qa" | "handoff" = "brainstorm"
+  let phase: "brainstorm" | "visual-companion" | "frontend-design" | "requirements" | "qa" | "merge-gate" = "brainstorm"
   let brainstormAsks = 0
   let requirementsAsks = 0
   const io: WorkflowIO = {
     async ask(prompt) {
       promptLog.push(prompt)
-      if (prompt.startsWith("  Test, merge")) return answers.handoff
+      if (prompt.startsWith("Promote ")) return answers.mergeGate
       // phase progression by ask count
       if (phase === "brainstorm") {
         const answer = answers.brainstorm[brainstormIdx++] ?? "ok"
@@ -70,10 +71,10 @@ function makeIO(answers: {
         return answer
       }
       if (phase === "qa") {
-        phase = "handoff"
+        phase = "merge-gate"
         return answers.qa
       }
-      return answers.handoff
+      return answers.mergeGate
     },
     emit(event) {
       events.push(event)
@@ -134,7 +135,7 @@ test("runWorkflow runs end-to-end with all review/side loops, producing artifact
         "US-02 clearer: filter by status.",
       ],
       qa: "accept",
-      handoff: "test",
+      mergeGate: "promote",
     })
 
     try {
@@ -220,6 +221,64 @@ test("runWorkflow runs end-to-end with all review/side loops, producing artifact
   })
 })
 
+test("runWorkflow blocks with a dedicated cause when the worktree port pool is exhausted", async () => {
+  await withTmpCwd(async () => {
+    seedCleanGitRepo(process.cwd())
+    const previousDbPath = process.env.BEERENGINEER_UI_DB_PATH
+    process.env.BEERENGINEER_UI_DB_PATH = join(mkdtempSync(join(tmpdir(), "be2-workflow-ports-db-")), "test.sqlite")
+    mkdirSync(join(process.cwd(), ".beerengineer"), { recursive: true })
+    writeFileSync(
+      join(process.cwd(), ".beerengineer", "workspace.json"),
+      JSON.stringify({ worktreePortPool: { start: 3500, end: 3500 } }, null, 2),
+    )
+
+    const occupied = mkdtempSync(join(tmpdir(), "be2-occupied-port-"))
+    assert.equal(assignPort(occupied, "item/occupied", process.cwd()), 3500)
+
+    const { io, events } = makeIO({
+      brainstorm: [
+        "User needs structured workflow.",
+        "Target audience: solo-operator teams.",
+        "Constraint: single-node, no cloud access.",
+        "Yes, constraints are stable enough.",
+      ],
+      requirements: [
+        "Focus: core workflow as input form.",
+        "Status badges per entry.",
+        "US-02 clearer: filter by status.",
+      ],
+      qa: "accept",
+      mergeGate: "promote",
+    })
+
+    try {
+      await assert.rejects(
+        () =>
+          runWithWorkflowIO(io, () =>
+            runWithActiveRun({ runId: "run-ports", itemId: "item-ports", title: "Port Exhaustion" }, () =>
+              runWorkflow(
+                { id: "item-ports", title: "Port Exhaustion", description: "pool exhaustion" },
+                { workspaceRoot: process.cwd() },
+              ),
+            ),
+          ),
+        /no preview port is available/i,
+      )
+
+      const blocked = events.find(event => event.type === "run_blocked")
+      assert.ok(blocked, "expected run_blocked event")
+      if (blocked?.type === "run_blocked") {
+        assert.equal(blocked.cause, "worktree_port_pool_exhausted")
+        assert.match(blocked.summary, /no preview port is available/i)
+      }
+      assert.equal(events.some(event => event.type === "run_finished"), false)
+    } finally {
+      if (previousDbPath === undefined) delete process.env.BEERENGINEER_UI_DB_PATH
+      else process.env.BEERENGINEER_UI_DB_PATH = previousDbPath
+    }
+  })
+})
+
 test("runWorkflow writes documentation docs into the item worktree (item branch), not the operator's main workspace root", async () => {
   await withTmpCwd(async () => {
     const operatorCwd = process.cwd()
@@ -231,7 +290,7 @@ test("runWorkflow writes documentation docs into the item worktree (item branch)
       brainstorm: ["Todo app", "Solo users", "Web only", "approve"],
       requirements: ["approve", "approve", "approve"],
       qa: "approve",
-      handoff: "done",
+      mergeGate: "promote",
     })
 
     await runWithWorkflowIO(io, async () => {
@@ -492,7 +551,7 @@ test("runWorkflow skips interactive handoff in real git mode after merging proje
       "Need tests.",
     ],
     qa: "accept",
-    handoff: "reject",
+    mergeGate: "cancel",
   })
 
   try {

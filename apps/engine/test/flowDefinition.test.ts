@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import {
   PROJECT_FLOW,
   ITEM_FLOW,
+  itemFlowEdges,
   projectFlowEdges,
 } from "../src/core/flowDefinition.ts"
 import {
@@ -43,5 +44,22 @@ describe("flowDefinition", () => {
   it("item flow declares brainstorm as the root", () => {
     const root = ITEM_FLOW.find(n => n.dependsOn.length === 0)
     assert.equal(root?.id, "brainstorm")
+  })
+
+  it("item flow surfaces merge-gate after per-project handoff", () => {
+    const mergeGate = ITEM_FLOW.find(n => n.id === "merge-gate")
+    assert.ok(mergeGate)
+    assert.deepEqual(mergeGate.dependsOn, ["handoff"])
+  })
+
+  it("item flow edges reference known nodes or the project handoff boundary", () => {
+    const itemIds = new Set(ITEM_FLOW.map(n => n.id))
+    for (const { from, to } of itemFlowEdges()) {
+      assert.ok(
+        itemIds.has(from) || from === "handoff",
+        `unknown item-flow edge source: ${from}`,
+      )
+      assert.ok(itemIds.has(to), `unknown item-flow edge target: ${to}`)
+    }
   })
 })

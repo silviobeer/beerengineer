@@ -73,6 +73,35 @@ test("workspace config overrides the default port pool", () => {
   assert.ok(port === 3500 || port === 3501)
 })
 
+test("assignPort applies the worktree-port schema on a fresh openDatabase-only DB", () => {
+  const freshRoot = mkdtempSync(join(tmpdir(), "be2-portalloc-fresh-"))
+  const freshDbPath = join(freshRoot, "fresh.sqlite")
+  process.env.BEERENGINEER_UI_DB_PATH = freshDbPath
+  const worktree = join(freshRoot, "fresh-worktree")
+  mkdirSync(worktree, { recursive: true })
+
+  const port = assignPort(worktree, "item/fresh")
+
+  assert.equal(typeof port, "number")
+  assert.equal(lookupPort(worktree), port)
+})
+
+test("assignPort throws a dedicated error when the pool is exhausted", () => {
+  const configDir = join(rootDir, ".beerengineer")
+  mkdirSync(configDir, { recursive: true })
+  writeFileSync(
+    join(configDir, "workspace.json"),
+    JSON.stringify({ worktreePortPool: { start: 3500, end: 3500 } }, null, 2),
+  )
+  const worktreeA = join(rootDir, "pool-a")
+  const worktreeB = join(rootDir, "pool-b")
+  mkdirSync(worktreeA, { recursive: true })
+  mkdirSync(worktreeB, { recursive: true })
+
+  assert.equal(assignPort(worktreeA, "item/a", rootDir), 3500)
+  assert.throws(() => assignPort(worktreeB, "item/b", rootDir), /worktree_port_pool_exhausted/)
+})
+
 test("pruneMissingWorktreeAssignments removes orphaned rows", () => {
   const missing = join(rootDir, "missing-worktree")
   assert.equal(existsSync(missing), false)

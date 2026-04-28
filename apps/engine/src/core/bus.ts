@@ -31,6 +31,8 @@ export type EventBus = {
   close(): void
 }
 
+export type BusWorkflowIO = WorkflowIO & { bus: EventBus }
+
 let counter = 0
 function newPromptId(): string {
   counter += 1
@@ -108,9 +110,13 @@ export function createBus(): EventBus {
  * bus's request/answer cycle; `emit` is a thin pass-through. The returned
  * io also exposes `.bus` so orchestrators can attach subscribers.
  */
-export function busToWorkflowIO(bus: EventBus): WorkflowIO & { bus: EventBus } {
+export function hasEventBus(io: WorkflowIO): io is BusWorkflowIO {
+  return "bus" in io
+}
+
+export function busToWorkflowIO(bus: EventBus): BusWorkflowIO {
   return {
-    ask: (prompt: string, opts?: { actions?: PromptAction[] }) => bus.request(prompt, opts),
+    ask: (prompt: string, opts?: { promptId?: string; actions?: PromptAction[] }) => bus.request(prompt, opts),
     emit: (event: WorkflowEvent) => bus.emit(event),
     close: () => bus.close(),
     bus,

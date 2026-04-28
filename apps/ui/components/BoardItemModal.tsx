@@ -26,7 +26,9 @@ interface PreviewInfo {
   previewPort: number;
   previewUrl: string;
   running?: boolean;
-  status?: "started" | "already_running" | "stopped";
+  managed?: boolean;
+  pid?: number | null;
+  status?: "started" | "already_running" | "stopped" | "already_stopped";
   logPath?: string;
   launch?: {
     command: string;
@@ -92,6 +94,11 @@ export function BoardItemModal({ card, workspaceKey, onClose }: BoardItemModalPr
   const itemBranch = `item/${card.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || card.id.toLowerCase()}`;
   const effectivePreviewUrl = preview?.previewUrl ?? card.previewUrl;
   const effectiveBranch = preview?.branch ?? itemBranch;
+  const isPreviewLive = preview?.running || preview?.status === "already_running";
+  const previewErrorMessage =
+    previewError === "preview_running_but_unmanaged"
+      ? "Preview is running but was not started by BeerEngineer. Stop it manually in that worktree."
+      : previewError;
 
   const handleStartPreview = () => {
     setPreviewError(null);
@@ -110,6 +117,27 @@ export function BoardItemModal({ card, workspaceKey, onClose }: BoardItemModalPr
         setPreview(body as PreviewInfo);
       } catch (err) {
         setPreviewError(err instanceof Error ? err.message : "preview_start_failed");
+      }
+    });
+  };
+
+  const handleStopPreview = () => {
+    setPreviewError(null);
+    startPreviewTransition(async () => {
+      try {
+        const res = await fetch(`/api/items/${encodeURIComponent(card.id)}/preview/stop`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        });
+        const body = await res.json().catch(() => ({} as PreviewInfo & { error?: string }));
+        if (!res.ok) {
+          setPreviewError((body as { error?: string }).error ?? `engine_${res.status}`);
+          return;
+        }
+        setPreview(body as PreviewInfo);
+      } catch (err) {
+        setPreviewError(err instanceof Error ? err.message : "preview_stop_failed");
       }
     });
   };
@@ -215,19 +243,19 @@ export function BoardItemModal({ card, workspaceKey, onClose }: BoardItemModalPr
               {effectivePreviewUrl ? (
                 <div className="font-mono">
                   {effectivePreviewUrl}
-                  {preview?.status === "already_running" || preview?.running ? "  # running" : ""}
+                  {isPreviewLive ? "  # running" : ""}
                 </div>
               ) : null}
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={handleStartPreview}
+                  onClick={isPreviewLive ? handleStopPreview : handleStartPreview}
                   disabled={isPreviewPending}
                   className="px-2 py-1 text-[11px] uppercase tracking-wider border border-zinc-700 bg-zinc-800 text-zinc-200 hover:bg-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                 >
-                  {preview?.running || preview?.status === "already_running" ? "Preview running" : "Start localhost"}
+                  {isPreviewLive ? "Stop localhost" : "Start localhost"}
                 </button>
-                {effectivePreviewUrl ? (
+                {effectivePreviewUrl && isPreviewLive ? (
                   <a
                     href={effectivePreviewUrl}
                     target="_blank"
@@ -241,8 +269,8 @@ export function BoardItemModal({ card, workspaceKey, onClose }: BoardItemModalPr
               {preview?.logPath ? (
                 <div className="font-mono text-zinc-500">log: {preview.logPath}</div>
               ) : null}
-              {previewError ? (
-                <div className="text-red-400">{previewError}</div>
+              {previewErrorMessage ? (
+                <div className="text-red-400">{previewErrorMessage}</div>
               ) : null}
             </div>
           ) : null}

@@ -13,10 +13,12 @@ its API; the CLI is the other. Everything below ships today.
 
 `src/stages/` + `src/workflow.ts` + `prompts/{system,reviewers,workers}/`
 
-The default workflow walks an item through ten stages:
+The default workflow walks an item through the design-prep and project stages,
+then stops at an item-level promotion gate:
 
 `brainstorm → visual-companion → frontend-design → requirements →
-architecture → planning → execution → project-review → qa → documentation`
+architecture → planning → execution → project-review → qa → documentation →
+handoff → merge-gate`
 
 - Each stage has a worker prompt, a reviewer prompt, and a system prompt.
 - Stage runtimes wrap calls in `withStageLifecycle` which emits canonical
@@ -25,6 +27,8 @@ architecture → planning → execution → project-review → qa → documentat
   [`engine-architecture.md`](./engine-architecture.md) for adding a stage.
 - Two design-prep stages (`visual-companion`, `frontend-design`) are
   manually triggered by item actions; everything else auto-chains.
+- `handoff` is still per-project project→item consolidation; `merge-gate`
+  is the item-level operator pause before item→base merge.
 
 ## Run orchestration
 
@@ -37,6 +41,9 @@ architecture → planning → execution → project-review → qa → documentat
   the sole live run for that item. Sibling runs go silent.
 - Recovery on restart: orphan runs are auto-marked failed with a
   resume-ready payload.
+- Managed item/story worktrees receive preview ports and can be launched via
+  `preview.command` in `.beerengineer/workspace.json` or a root
+  `package.json` `scripts.dev` fallback.
 
 ## CLI
 

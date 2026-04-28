@@ -115,7 +115,8 @@ test("parseArgs recognizes help, doctor, start ui, workflow, item action, and un
   assert.deepEqual(parseArgs(["chats", "--all", "--json"]), { kind: "chats", workspaceKey: undefined, json: true, all: true, compact: false })
   assert.deepEqual(parseArgs(["item", "get", "ITEM-0001", "--workspace", "demo", "--json"]), { kind: "item-get", itemRef: "ITEM-0001", workspaceKey: "demo", json: true })
   assert.deepEqual(parseArgs(["item", "open", "ITEM-0001", "--workspace", "demo"]), { kind: "item-open", itemRef: "ITEM-0001", workspaceKey: "demo" })
-  assert.deepEqual(parseArgs(["item", "preview", "ITEM-0001", "--workspace", "demo", "--start", "--open", "--json"]), { kind: "item-preview", itemRef: "ITEM-0001", workspaceKey: "demo", start: true, open: true, json: true })
+  assert.deepEqual(parseArgs(["item", "preview", "ITEM-0001", "--workspace", "demo", "--start", "--open", "--json"]), { kind: "item-preview", itemRef: "ITEM-0001", workspaceKey: "demo", start: true, stop: false, open: true, json: true })
+  assert.deepEqual(parseArgs(["item", "preview", "ITEM-0001", "--workspace", "demo", "--stop", "--json"]), { kind: "item-preview", itemRef: "ITEM-0001", workspaceKey: "demo", start: false, stop: true, open: false, json: true })
   assert.deepEqual(parseArgs(["item", "wireframes", "ITEM-0001", "--workspace", "demo", "--open", "--json"]), { kind: "item-wireframes", itemRef: "ITEM-0001", workspaceKey: "demo", open: true, json: true })
   assert.deepEqual(parseArgs(["item", "design", "ITEM-0001", "--workspace", "demo"]), { kind: "item-design", itemRef: "ITEM-0001", workspaceKey: "demo", open: false, json: false })
   assert.deepEqual(parseArgs(["run", "list", "--workspace", "demo", "--json"]), { kind: "run-list", workspaceKey: "demo", json: true, all: false, compact: false })
@@ -493,7 +494,7 @@ test("item wireframes and item design print artifact info and support --json", (
   }
 })
 
-test("item preview prints and starts the item worktree preview", async () => {
+test("item preview prints and starts and stops the item worktree preview", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-cli-preview-"))
   const testDir = dirname(fileURLToPath(import.meta.url))
   const engineRoot = resolve(testDir, "..")
@@ -536,7 +537,7 @@ test("item preview prints and starts the item worktree preview", async () => {
           coderExecution: "safe-workspace-write",
         },
         preview: {
-          command: `node -e "require('node:fs').writeFileSync('preview-started.txt', process.env.PORT || '')"`,
+          command: `${process.execPath} -e "const fs=require('node:fs');const http=require('node:http');const port=Number(process.env.PORT);http.createServer((_,res)=>res.end('ok')).listen(port, process.env.BEERENGINEER_PREVIEW_HOST, () => { fs.writeFileSync('preview-started.txt', String(port)); setTimeout(() => process.exit(0), 1500); });"`,
         },
         sonar: { enabled: false },
         reviewPolicy: { coderabbit: { enabled: false }, sonarcloud: { enabled: false } },
@@ -560,6 +561,15 @@ test("item preview prints and starts the item worktree preview", async () => {
       await new Promise(resolve => setTimeout(resolve, 20))
     }
     assert.equal(readFileSync(markerPath, "utf8"), String(body.previewPort))
+
+    const stopped = spawnSync(process.execPath, [binPath, "item", "preview", "ITEM-0001", "--stop", "--json"], {
+      cwd: engineRoot,
+      encoding: "utf8",
+      env: { ...process.env, BEERENGINEER_UI_DB_PATH: dbPath, BEERENGINEER_DISABLE_BROWSER_OPEN: "1" },
+    })
+    assert.equal(stopped.status, 0, stopped.stderr)
+    const stopBody = JSON.parse(stopped.stdout) as { status: string }
+    assert.equal(stopBody.status, "stopped")
   } finally {
     if (previousDbPath === undefined) delete process.env.BEERENGINEER_UI_DB_PATH
     else process.env.BEERENGINEER_UI_DB_PATH = previousDbPath

@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http"
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import type { Repos } from "../../db/repositories.js"
-import { isPortListening, resolvePreviewLaunchSpec, startPreviewServer } from "../../core/previewLauncher.js"
+import { isPortListening, readManagedPreviewPid, resolvePreviewLaunchSpec, startPreviewServer, stopPreviewServer } from "../../core/previewLauncher.js"
 import { resolveItemPreviewContext } from "../../core/itemPreview.js"
 import { isItemAction, lookupTransition, type ItemActionsService } from "../../core/itemActions.js"
 import { latestCompletedRunForItem } from "../../core/itemWorkspace.js"
@@ -43,9 +43,12 @@ export function handleGetItemPreview(repos: Repos, res: ServerResponse, itemId: 
     if (!context.ok) return json(res, 404, context)
     const launch = resolvePreviewLaunchSpec(context.worktreePath)
     const running = await isPortListening(context.previewHost, context.previewPort)
+    const pid = readManagedPreviewPid(context.worktreePath)
     json(res, 200, {
       ...context,
       running,
+      managed: pid != null,
+      pid,
       launch: launch
         ? {
             command: launch.command,
@@ -73,11 +76,41 @@ export async function handleStartItemPreview(
       running: true,
       status: started.status,
       logPath: started.logPath,
+      managed: started.pid != null,
+      pid: started.pid,
       launch: {
         command: started.launch.command,
         cwd: started.launch.cwd,
         source: started.launch.source,
       },
+    })
+  } catch (error) {
+    return json(res, 409, {
+      error: (error as Error).message,
+      code: (error as Error).message,
+    })
+  }
+}
+
+export async function handleStopItemPreview(
+  repos: Repos,
+  req: IncomingMessage,
+  res: ServerResponse,
+  itemId: string,
+): Promise<void> {
+  await readJson(req).catch(() => ({}))
+  const context = resolveItemPreviewContext(repos, itemId)
+  if (!context.ok) return json(res, 404, context)
+  try {
+    const stopped = await stopPreviewServer(context)
+    return json(res, 200, {
+      ...context,
+      running: false,
+      managed: false,
+      status: stopped.status,
+      logPath: stopped.logPath,
+      pid: null,
+      launch: null,
     })
   } catch (error) {
     return json(res, 409, {

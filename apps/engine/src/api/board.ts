@@ -1,4 +1,5 @@
 import type { Repos } from "../db/repositories.js"
+import { itemSlug } from "../core/itemIdentity.js"
 import type { Db } from "../db/connection.js"
 import { previewUrlForWorktree } from "../core/portAllocator.js"
 import { layout } from "../core/workspaceLayout.js"
@@ -14,18 +15,13 @@ const columnTitles: Record<(typeof orderedColumns)[number], string> = {
   done: "Done"
 }
 
-function slugifyTitle(title: string, fallback: string): string {
-  const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
-  return slug || fallback.toLowerCase()
-}
-
 function itemWorktreePath(rootPath: string | null, workspaceFsId: string | null, itemTitle: string, itemId: string): string | null {
   if (!rootPath || !workspaceFsId) return null
-  const itemSlug = slugifyTitle(itemTitle, itemId)
+  const slug = itemSlug({ id: itemId, title: itemTitle })
   return layout.itemWorktreeDir({
     workspaceId: workspaceFsId,
     workspaceRoot: rootPath,
-    itemSlug,
+    itemSlug: slug,
     runId: workspaceFsId,
   })
 }
@@ -126,11 +122,13 @@ export function getBoard(db: Db, workspaceKey?: string | null): BoardDTO {
   const openPromptsByRun = new Map<string, { actions_json: string | null }>()
   const promptRows = db
     .prepare(
-      `SELECT run_id, actions_json
-       FROM pending_prompts
-       WHERE answered_at IS NULL`
+      `SELECT p.run_id, p.actions_json
+       FROM pending_prompts p
+       JOIN runs r ON r.id = p.run_id
+       WHERE p.answered_at IS NULL
+         AND r.workspace_id = ?`
     )
-    .all() as Array<{ run_id: string; actions_json: string | null }>
+    .all(workspace.id) as Array<{ run_id: string; actions_json: string | null }>
   for (const row of promptRows) {
     if (!openPromptsByRun.has(row.run_id)) openPromptsByRun.set(row.run_id, row)
   }

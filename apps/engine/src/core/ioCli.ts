@@ -57,6 +57,11 @@ export function createCliIO(repos?: Repos, opts: CliIOOptions = {}): WorkflowIO 
     if (Number.isInteger(idx) && idx >= 1 && idx <= actions.length) {
       return actions[idx - 1]!.value
     }
+    const folded = trimmed.toLowerCase()
+    const byValue = actions.find(action => action.value.toLowerCase() === folded)
+    if (byValue) return byValue.value
+    const byLabel = actions.find(action => action.label.toLowerCase() === folded)
+    if (byLabel) return byLabel.value
     return trimmed
   }
 

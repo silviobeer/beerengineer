@@ -40,14 +40,16 @@ The same data, expressed declaratively for tooling, lives in
 cross-check test (`apps/engine/test/flowDefinition.test.ts`) prevents
 the executable registry and the data descriptor from drifting.
 
-### Per-item flow (design-prep)
+### Per-item flow
 
 ```
-brainstorm → visual-companion → frontend-design → (per-project pipeline) ×N
+brainstorm → visual-companion → frontend-design → (per-project pipeline) ×N → merge-gate
 ```
 
 `brainstorm` is the only mandatory item-level stage. `visual-companion`
 and `frontend-design` run only when at least one project has a UI.
+`merge-gate` runs once after every project has completed `handoff`; it is the
+operator-controlled item→base promotion boundary.
 
 The **brainstorm stage owns the item branch + worktree creation**: its
 first action is `git.ensureItemBranch()` followed by
@@ -59,6 +61,13 @@ single exception: `runWorkflow` performs an idempotent
 `git.ensureItemBranch()` itself, in case the operator nuked
 `.beerengineer/` between runs. This is a recovery safety net, not the
 fresh-run path.
+
+During item-worktree creation, the engine also assigns a preview port from the
+workspace's local pool. Managed subprocesses receive `PORT`,
+`BEERENGINEER_PREVIEW_PORT`, `BEERENGINEER_PREVIEW_HOST`, and
+`BEERENGINEER_PREVIEW_URL`, and operator-facing preview launch uses either
+`workspace.json -> preview.command` or a root `package.json` `scripts.dev`
+fallback.
 
 ## Core abstractions
 

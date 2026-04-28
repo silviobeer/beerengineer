@@ -1,6 +1,6 @@
 import type { Repos, StageLogRow } from "../db/repositories.js"
 import { appendItemDecision } from "./itemDecisions.js"
-import type { PromptAction } from "./io.js"
+import { parsePromptActions, type PromptAction } from "./io.js"
 import { parseLogData } from "./jsonEnvelope.js"
 import { resolveWorkflowContextForRun } from "./workflowContextResolver.js"
 
@@ -140,19 +140,6 @@ function actorFromChat(source: string | undefined, role: string | undefined): Co
   if (role === "user") return "user"
   if (source === "stage-agent" || source === "reviewer") return "agent"
   return "system"
-}
-
-function parsePromptActions(value: unknown): PromptAction[] | undefined {
-  if (!Array.isArray(value)) return undefined
-  const actions = value
-    .filter((entry): entry is PromptAction => {
-      return typeof entry === "object" &&
-        entry !== null &&
-        typeof (entry as { label?: unknown }).label === "string" &&
-        typeof (entry as { value?: unknown }).value === "string"
-    })
-    .map(entry => ({ label: entry.label, value: entry.value }))
-  return actions.length > 0 ? actions : undefined
 }
 
 /**

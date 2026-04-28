@@ -32,6 +32,7 @@ export function mapStageToColumn(
     case "handoff":
       return { column: "implementation", phaseStatus }
     case "merge-gate":
+      if (outcome === "running") return { column: "merge", phaseStatus: "review_required" }
       if (outcome === "completed") return { column: "done", phaseStatus: "completed" }
       if (outcome === "failed") return { column: "merge", phaseStatus: "review_required" }
       return { column: "merge", phaseStatus }

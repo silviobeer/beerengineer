@@ -10,6 +10,19 @@ export type PromptAction = {
   value: string
 }
 
+export function parsePromptActions(value: unknown): PromptAction[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const actions = value
+    .filter((entry): entry is PromptAction => {
+      return typeof entry === "object" &&
+        entry !== null &&
+        typeof (entry as { label?: unknown }).label === "string" &&
+        typeof (entry as { value?: unknown }).value === "string"
+    })
+    .map(entry => ({ label: entry.label, value: entry.value }))
+  return actions.length > 0 ? actions : undefined
+}
+
 export type RecoveryEventScope =
   | { type: "run"; runId: string }
   | { type: "stage"; runId: string; stageId: string }
@@ -56,7 +69,7 @@ export type WorkflowEvent =
 
 export type WorkflowIO = {
   /** Ask the operator a question and await a textual answer. */
-  ask(prompt: string, opts?: { actions?: PromptAction[] }): Promise<string>
+  ask(prompt: string, opts?: { promptId?: string; actions?: PromptAction[] }): Promise<string>
   /** Emit a structured workflow event. */
   emit(event: WorkflowEvent): void
   /** Optional: called on terminal cleanup (e.g. close readline). */

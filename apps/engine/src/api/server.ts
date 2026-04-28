@@ -17,7 +17,7 @@ import {
 } from "../setup/config.js"
 import type { AppConfig } from "../setup/types.js"
 import { json, requireCsrfToken, setCors } from "./http.js"
-import { handleGetItem, handleGetItemDesign, handleGetItemPreview, handleGetItemWireframes, handleItemActionNamed, handleListItems, handleStartItemPreview } from "./routes/items.js"
+import { handleGetItem, handleGetItemDesign, handleGetItemPreview, handleGetItemWireframes, handleItemActionNamed, handleListItems, handleStartItemPreview, handleStopItemPreview } from "./routes/items.js"
 import {
   handleAnswer,
   handleGetArtifactFile,
@@ -252,7 +252,9 @@ const server = createServer(async (req, res) => {
     const itemDesignMatch = path.match(/^\/items\/([^/]+)\/design$/)
     if (itemDesignMatch && req.method === "GET") return handleGetItemDesign(repos, res, itemDesignMatch[1])
     const itemPreviewStartMatch = path.match(/^\/items\/([^/]+)\/preview\/start$/)
+    const itemPreviewStopMatch = path.match(/^\/items\/([^/]+)\/preview\/stop$/)
     if (itemPreviewStartMatch && req.method === "POST") return handleStartItemPreview(repos, req, res, itemPreviewStartMatch[1])
+    if (itemPreviewStopMatch && req.method === "POST") return handleStopItemPreview(repos, req, res, itemPreviewStopMatch[1])
     const itemPreviewMatch = path.match(/^\/items\/([^/]+)\/preview$/)
     if (itemPreviewMatch && req.method === "GET") return handleGetItemPreview(repos, res, itemPreviewMatch[1])
     const itemMatch = path.match(/^\/items\/([^/]+)$/)

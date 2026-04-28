@@ -8,6 +8,7 @@ export type RecoveryCause =
   | "story_error"
   | "stage_error"
   | "system_error"
+  | "worktree_port_pool_exhausted"
   | "merge_gate_cancelled"
   | "merge_gate_failed"
 

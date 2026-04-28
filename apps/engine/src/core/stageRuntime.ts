@@ -9,6 +9,7 @@ import type {
 } from "./adapters.js"
 import { emitEvent, getActiveRun } from "./runContext.js"
 import { writeRecoveryRecord, type RecoveryCause } from "./recovery.js"
+import { isWorktreePortPoolExhaustedError } from "./portAllocator.js"
 import { layout, type WorkflowContext } from "./workspaceLayout.js"
 import { NON_INTERACTIVE_NO_ANSWER_SENTINEL } from "./constants.js"
 
@@ -365,7 +366,10 @@ export async function runStage<TState, TArtifact, TResult>(
     if (run.status !== "blocked" && run.status !== "failed") {
       setStatus(run, "failed")
       await persistRun(run)
-      await recordStageBlocked(run, "system_error", (err as Error).message)
+      const cause: RecoveryCause = isWorktreePortPoolExhaustedError(err)
+        ? "worktree_port_pool_exhausted"
+        : "system_error"
+      await recordStageBlocked(run, cause, (err as Error).message)
     }
     throw err
   }

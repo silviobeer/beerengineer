@@ -3,6 +3,7 @@ import type { Item } from "../types.js"
 import { runWithWorkflowIO, type WorkflowEvent, type WorkflowIO } from "./io.js"
 import { runWithActiveRun } from "./runContext.js"
 import { createBus, busToWorkflowIO, type EventBus } from "./bus.js"
+import { workflowWorkspaceId } from "./itemIdentity.js"
 import { persistWorkflowRunState } from "./stageRuntime.js"
 import type { ItemRow, Repos } from "../db/repositories.js"
 import type { WorkflowResumeInput } from "../workflow.js"
@@ -586,8 +587,7 @@ export function prepareRun(
   // The engine derives the on-disk workspace dir from the item title +
   // item_id. Persist it so resume doesn't have to re-derive from a mutable
   // title or scan every workspace directory.
-  const slug = item.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
-  const workspaceFsId = slug ? `${slug}-${itemRow.id.toLowerCase()}` : itemRow.id.toLowerCase()
+  const workspaceFsId = workflowWorkspaceId(itemRow)
   const runRow = repos.createRun({
     workspaceId,
     itemId: itemRow.id,

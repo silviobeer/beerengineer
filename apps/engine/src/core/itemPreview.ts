@@ -1,12 +1,8 @@
 import type { Repos } from "../db/repositories.js"
+import { itemSlug } from "./itemIdentity.js"
 import { previewHost } from "./previewHost.js"
 import { previewUrlForWorktree } from "./portAllocator.js"
 import { layout } from "./workspaceLayout.js"
-
-function slugifyTitle(title: string, fallback: string): string {
-  const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
-  return slug || fallback.toLowerCase()
-}
 
 export type ItemPreviewContext =
   | {
@@ -27,11 +23,11 @@ export function resolveItemPreviewContext(repos: Repos, itemId: string): ItemPre
   if (!latestRun?.workspace_fs_id || !workspace?.root_path) {
     return { ok: false, error: "item_worktree_not_found", code: "not_found" }
   }
-  const itemSlug = slugifyTitle(item.title, item.id)
+  const slug = itemSlug(item)
   const worktreePath = layout.itemWorktreeDir({
     workspaceId: latestRun.workspace_fs_id,
     workspaceRoot: workspace.root_path,
-    itemSlug,
+    itemSlug: slug,
     runId: latestRun.workspace_fs_id,
   })
   const previewUrl = previewUrlForWorktree(worktreePath)
@@ -45,7 +41,7 @@ export function resolveItemPreviewContext(repos: Repos, itemId: string): ItemPre
   }
   return {
     ok: true,
-    branch: `item/${itemSlug}`,
+    branch: `item/${slug}`,
     worktreePath,
     previewHost: previewHost(),
     previewPort,

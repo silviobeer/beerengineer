@@ -1079,7 +1079,7 @@ test("design-prep artifact endpoints expose item views and raw artifact files", 
   }
 })
 
-test("item preview endpoints expose launch info and can start the local preview command", async () => {
+test("item preview endpoints expose launch info and can start and stop the local preview command", async () => {
   const dbPath = tmpDbPath()
   const previousDbPath = process.env.BEERENGINEER_UI_DB_PATH
   process.env.BEERENGINEER_UI_DB_PATH = dbPath
@@ -1112,7 +1112,7 @@ test("item preview endpoints expose launch info and can start the local preview 
         coderExecution: "safe-workspace-write",
       },
       preview: {
-        command: `node -e "require('node:fs').writeFileSync('preview-started.txt', process.env.PORT || '')"`,
+        command: `${process.execPath} -e "const fs=require('node:fs');const http=require('node:http');const port=Number(process.env.PORT);http.createServer((_,res)=>res.end('ok')).listen(port, process.env.BEERENGINEER_PREVIEW_HOST, () => { fs.writeFileSync('preview-started.txt', String(port)); setTimeout(() => process.exit(0), 1500); });"`,
       },
       sonar: { enabled: false },
       reviewPolicy: { coderabbit: { enabled: false }, sonarcloud: { enabled: false } },
@@ -1127,10 +1127,11 @@ test("item preview endpoints expose launch info and can start the local preview 
 
     const previewRes = await fetch(`${base}/items/${item.id}/preview`)
     assert.equal(previewRes.status, 200)
-    const previewBody = await previewRes.json() as { previewUrl: string; launch: { command: string; source: string } | null; running: boolean }
+    const previewBody = await previewRes.json() as { previewUrl: string; launch: { command: string; source: string } | null; running: boolean; managed: boolean }
     assert.match(previewBody.previewUrl, /^http:\/\/127\.0\.0\.1:/)
     assert.equal(previewBody.launch?.source, "workspace-config")
     assert.equal(previewBody.running, false)
+    assert.equal(previewBody.managed, false)
 
     const startRes = await fetch(`${base}/items/${item.id}/preview/start`, {
       method: "POST",
@@ -1138,9 +1139,10 @@ test("item preview endpoints expose launch info and can start the local preview 
       body: "{}",
     })
     assert.equal(startRes.status, 200)
-    const startBody = await startRes.json() as { status: string; previewPort: number; logPath: string }
+    const startBody = await startRes.json() as { status: string; previewPort: number; logPath: string; managed: boolean }
     assert.equal(startBody.status, "started")
     assert.match(startBody.logPath, /\.beerengineer-preview\.log$/)
+    assert.equal(startBody.managed, true)
 
     const markerPath = join(worktreePath, "preview-started.txt")
     for (let i = 0; i < 30; i++) {
@@ -1148,6 +1150,17 @@ test("item preview endpoints expose launch info and can start the local preview 
       await new Promise(resolve => setTimeout(resolve, 20))
     }
     assert.equal(readFileSync(markerPath, "utf8"), String(startBody.previewPort))
+
+    const stopRes = await fetch(`${base}/items/${item.id}/preview/stop`, {
+      method: "POST",
+      headers: authHeaders({ "content-type": "application/json" }),
+      body: "{}",
+    })
+    assert.equal(stopRes.status, 200)
+    const stopBody = await stopRes.json() as { status: string; running: boolean; managed: boolean }
+    assert.equal(stopBody.status, "stopped")
+    assert.equal(stopBody.running, false)
+    assert.equal(stopBody.managed, false)
   } finally {
     if (previousDbPath === undefined) delete process.env.BEERENGINEER_UI_DB_PATH
     else process.env.BEERENGINEER_UI_DB_PATH = previousDbPath

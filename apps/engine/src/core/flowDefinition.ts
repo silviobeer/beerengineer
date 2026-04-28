@@ -44,8 +44,9 @@ export type FlowNode = {
 }
 
 /**
- * Item-level flow: design-prep stages that run once per item, before any
- * project pipeline starts. Mirrors the if-cascade in `runWorkflow`.
+ * Item-level flow: stages that run once per item. The design-prep stages run
+ * before the per-project pipeline; `merge-gate` runs once after every project
+ * has completed `handoff`.
  */
 export const ITEM_FLOW: ReadonlyArray<FlowNode> = [
   {
@@ -68,6 +69,14 @@ export const ITEM_FLOW: ReadonlyArray<FlowNode> = [
     label: "Frontend design",
     produces: ["design"],
     dependsOn: ["brainstorm", "visual-companion"],
+  },
+  {
+    id: "merge-gate",
+    kind: "item",
+    label: "Merge gate",
+    produces: [],
+    dependsOn: ["handoff"],
+    voidStage: true,
   },
 ] as const
 

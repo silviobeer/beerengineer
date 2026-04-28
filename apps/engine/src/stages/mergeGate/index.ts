@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { branchNameItem } from "../../core/branchNames.js"
+import { hasEventBus } from "../../core/bus.js"
 import type { GitAdapter } from "../../core/gitAdapter.js"
 import { getWorkflowIO } from "../../core/io.js"
 import type { RecoveryCause, RecoveryScope } from "../../core/recovery.js"
@@ -26,7 +27,11 @@ export async function mergeGate(
 ): Promise<void> {
   const activeRun = getActiveRun()
   if (!activeRun) {
-    git.assertWorkspaceRootOnBaseBranch("before merge-gate")
+    // `merge-gate` is only reachable under an active run in production.
+    // Keep the legacy direct-runWorkflow test path working, but make the
+    // compatibility contract explicit rather than silently looking like the
+    // normal operator-gated path.
+    git.assertWorkspaceRootOnBaseBranch("before merge-gate (test-only direct workflow path)")
     git.mergeItemIntoBase()
     return
   }
@@ -41,17 +46,8 @@ export async function mergeGate(
 
   stagePresent.header("MERGE")
   stagePresent.step(`Awaiting promotion of ${itemBranch} into ${git.mode.baseBranch}`)
-  emitEvent({
-    type: "item_column_changed",
-    runId: activeRun.runId,
-    itemId: activeRun.itemId,
-    column: "merge",
-    phaseStatus: "review_required",
-  })
 
-  const io = getWorkflowIO() as ReturnType<typeof getWorkflowIO> & {
-    bus?: { request: (promptText: string, opts?: { promptId?: string; runId?: string; stageRunId?: string | null; actions?: typeof actions }) => Promise<string> }
-  }
+  const io = getWorkflowIO()
   const promptId = randomUUID()
   emitEvent({
     type: "merge_gate_open",
@@ -61,14 +57,14 @@ export async function mergeGate(
     baseBranch: git.mode.baseBranch,
     gatePromptId: promptId,
   })
-  const answerPromise = io.bus
+  const answerPromise = hasEventBus(io)
     ? io.bus.request(prompt, {
         promptId,
         runId: activeRun.runId,
         stageRunId: activeRun.stageRunId ?? null,
         actions: [...actions],
       })
-    : io.ask(prompt, { actions: [...actions] })
+    : io.ask(prompt, { promptId, actions: [...actions] })
   const answer = (await answerPromise).trim()
 
   if (answer === "cancel") {
@@ -84,6 +80,17 @@ export async function mergeGate(
       `Operator postponed merge of ${itemBranch} into ${git.mode.baseBranch}`,
       {
         cause: "merge_gate_cancelled",
+        scope: { type: "stage", runId: activeRun.runId, stageId: "merge-gate" },
+        branch: itemBranch,
+      },
+    )
+  }
+  if (answer !== "promote") {
+    await blockRun(
+      context,
+      `Merge gate received unsupported answer for ${itemBranch}: ${answer || "<empty>"}`,
+      {
+        cause: "merge_gate_failed",
         scope: { type: "stage", runId: activeRun.runId, stageId: "merge-gate" },
         branch: itemBranch,
       },

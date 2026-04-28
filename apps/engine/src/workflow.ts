@@ -23,7 +23,7 @@ import { loadFrontendSnapshot } from "./core/frontendSnapshot.js"
 import { loadItemDecisions } from "./core/itemDecisions.js"
 import { stagePresent } from "./core/stagePresentation.js"
 import { emitEvent, getActiveRun, withStageLifecycle } from "./core/runContext.js"
-import { assignPort } from "./core/portAllocator.js"
+import { assignPort, isWorktreePortPoolExhaustedError } from "./core/portAllocator.js"
 import { brainstorm } from "./stages/brainstorm/index.js"
 import { visualCompanion } from "./stages/visual-companion/index.js"
 import { frontendDesign } from "./stages/frontend-design/index.js"
@@ -36,6 +36,7 @@ import {
   type StageLlmOptions,
 } from "./core/projectStageRegistry.js"
 import { branchNameItem } from "./core/branchNames.js"
+import { itemSlug, workflowWorkspaceId } from "./core/itemIdentity.js"
 
 type ItemResumePlan = {
   startStage: "brainstorm" | "visual-companion" | "frontend-design" | "projects" | "merge-gate"
@@ -281,14 +282,14 @@ async function assertDesignPrepProjectFreeze(context: WorkflowContext, projects:
 }
 
 export async function runWorkflow(item: Item, options?: { resume?: WorkflowResumeInput; llm?: WorkflowLlmOptions; workspaceRoot?: string }): Promise<void> {
-  const slug = item.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
+  const slug = itemSlug(item)
   const activeRun = getActiveRun()
   const { branch: baseBranch, source: baseBranchSource } = resolveBaseBranchForItem(item.baseBranch, options?.workspaceRoot)
   stagePresent.dim(`→ Base branch: ${baseBranch} (source: ${baseBranchSource})`)
   const context: WorkflowContext = {
-    workspaceId: slug ? `${slug}-${item.id.toLowerCase()}` : item.id.toLowerCase(),
+    workspaceId: workflowWorkspaceId(item),
     runId: activeRun?.runId ?? `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`,
-    itemSlug: slug || item.id.toLowerCase(),
+    itemSlug: slug,
     baseBranch,
     workspaceRoot: options?.workspaceRoot,
   }
@@ -456,6 +457,17 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
     stagePresent.ok(`Item "${item.title}" is done ✓`)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
+    if (isWorktreePortPoolExhaustedError(error)) {
+      const summary =
+        `Run blocked: no preview port is available for "${item.title}". ` +
+        "Expand BEERENGINEER_WORKTREE_PORT_POOL or the workspace worktreePortPool setting."
+      stagePresent.warn(summary)
+      await blockRunForWorkspaceState(context, summary, {
+        cause: "worktree_port_pool_exhausted",
+        detail: `Port allocation failed for item branch ${branchNameItem(context)}.`,
+        branch: branchNameItem(context),
+      })
+    }
     if (message.startsWith("git:") || message.startsWith("branch_gate:")) {
       const summary =
         `Run blocked: git branch gate failed for "${item.title}". ` +

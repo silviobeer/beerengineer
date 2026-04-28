@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs"
 import { resolve } from "node:path"
-import { openDatabase } from "../db/connection.js"
+import { applySchema, openDatabase, resolveDbPath } from "../db/connection.js"
 import { previewUrlForPort } from "./previewHost.js"
 
 type Pool = { start: number; end: number }
@@ -13,6 +13,19 @@ type AssignmentRow = {
 }
 
 const DEFAULT_POOL = "3200-3399"
+const schemaReadyDbPaths = new Set<string>()
+
+export class WorktreePortPoolExhaustedError extends Error {
+  constructor() {
+    super("worktree_port_pool_exhausted")
+    this.name = "WorktreePortPoolExhaustedError"
+  }
+}
+
+export function isWorktreePortPoolExhaustedError(error: unknown): error is WorktreePortPoolExhaustedError {
+  return error instanceof WorktreePortPoolExhaustedError ||
+    ((error as { message?: unknown })?.message === "worktree_port_pool_exhausted")
+}
 
 function parsePool(raw: string): Pool {
   const match = /^(\d+)-(\d+)$/.exec(raw.trim())
@@ -51,8 +64,13 @@ function hashBranch(branch: string): number {
 }
 
 export function assignPort(worktreePath: string, branch: string, workspaceRoot?: string): number {
-  const db = openDatabase()
+  const dbPath = resolveDbPath()
+  const db = openDatabase(dbPath)
   try {
+    if (!schemaReadyDbPaths.has(dbPath)) {
+      applySchema(db)
+      schemaReadyDbPaths.add(dbPath)
+    }
     const pool = readWorkspacePool(workspaceRoot)
     const size = pool.end - pool.start + 1
     const path = resolve(worktreePath)
@@ -73,7 +91,7 @@ export function assignPort(worktreePath: string, branch: string, workspaceRoot?:
           // unique port collision, try next
         }
       }
-      throw new Error("worktree_port_pool_exhausted")
+      throw new WorktreePortPoolExhaustedError()
     })
     return txn()
   } finally {

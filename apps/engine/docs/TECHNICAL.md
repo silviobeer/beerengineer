@@ -145,6 +145,14 @@ Deep dive: [`app-setup.md`](./app-setup.md). User walkthrough:
 output is the machine-readable harness contract used by `beerengineer`
 itself for self-checks.
 
+Recent additions to that contract:
+
+- item-scoped `merge-gate` after project handoff, surfaced on the board as the
+  real `merge` column
+- per-worktree preview port allocation
+- optional `workspace.json -> preview.command` to let CLI/UI start the local
+  preview explicitly from an item worktree
+
 ## Testing
 
 ```bash

@@ -42,6 +42,8 @@ test("mapStageToColumn projects engine stages to board columns", () => {
   assert.equal(mapStageToColumn("execution", "running").column, "implementation")
   assert.equal(mapStageToColumn("qa", "running").column, "implementation")
   assert.equal(mapStageToColumn("documentation", "completed").column, "implementation")
+  assert.equal(mapStageToColumn("merge-gate", "running").column, "merge")
+  assert.equal(mapStageToColumn("merge-gate", "running").phaseStatus, "review_required")
   assert.equal(mapStageToColumn("merge-gate", "completed").column, "done")
   assert.equal(mapStageToColumn("merge-gate", "failed").column, "merge")
   assert.equal(mapStageToColumn("merge-gate", "failed").phaseStatus, "review_required")

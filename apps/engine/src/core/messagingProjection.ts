@@ -1,3 +1,4 @@
+import { parsePromptActions } from "./io.js"
 import { parseLogData } from "./jsonEnvelope.js"
 import type { StageLogRow } from "../db/repositories.js"
 import type { WorkflowEvent } from "./io.js"
@@ -71,16 +72,7 @@ function eventFromStageLog(row: StageLogRow): WorkflowEvent | null {
         runId: row.run_id,
         promptId: typeof data.promptId === "string" ? data.promptId : "",
         prompt: typeof data.prompt === "string" ? data.prompt : row.message,
-        actions: Array.isArray(data.actions)
-          ? data.actions
-              .filter((entry): entry is { label: string; value: string } => {
-                return typeof entry === "object" &&
-                  entry !== null &&
-                  typeof (entry as { label?: unknown }).label === "string" &&
-                  typeof (entry as { value?: unknown }).value === "string"
-              })
-              .map(entry => ({ label: entry.label, value: entry.value }))
-          : undefined,
+        actions: parsePromptActions(data.actions),
         stageRunId: row.stage_run_id ?? null,
       }
     case "prompt_answered":

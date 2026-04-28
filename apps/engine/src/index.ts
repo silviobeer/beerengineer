@@ -12,7 +12,7 @@ import { inspectWorkspaceState } from "./core/git.js"
 import { layout } from "./core/workspaceLayout.js"
 import { latestCompletedRunForItem } from "./core/itemWorkspace.js"
 import { resolveItemPreviewContext } from "./core/itemPreview.js"
-import { isPortListening, resolvePreviewLaunchSpec, startPreviewServer } from "./core/previewLauncher.js"
+import { isPortListening, resolvePreviewLaunchSpec, startPreviewServer, stopPreviewServer } from "./core/previewLauncher.js"
 import { resolveWorkflowContextForItemRun, resolveWorkflowContextForRun } from "./core/workflowContextResolver.js"
 import {
   backfillWorkspaceConfigs,
@@ -114,7 +114,7 @@ type Command =
   | { kind: "runs"; workspaceKey?: string; json?: boolean; all?: boolean; compact?: boolean }
   | { kind: "item-get"; itemRef?: string; workspaceKey?: string; json?: boolean }
   | { kind: "item-open"; itemRef?: string; workspaceKey?: string }
-  | { kind: "item-preview"; itemRef?: string; workspaceKey?: string; start?: boolean; open?: boolean; json?: boolean }
+  | { kind: "item-preview"; itemRef?: string; workspaceKey?: string; start?: boolean; stop?: boolean; open?: boolean; json?: boolean }
   | { kind: "item-wireframes"; itemRef?: string; workspaceKey?: string; open?: boolean; json?: boolean }
   | { kind: "item-design"; itemRef?: string; workspaceKey?: string; open?: boolean; json?: boolean }
   | { kind: "run-list"; workspaceKey?: string; json?: boolean; all?: boolean; compact?: boolean }
@@ -255,7 +255,7 @@ export function parseArgs(argv: string[]): Command {
   }
   if (first === "item" && second === "get") return { kind: "item-get", itemRef: argv[2], workspaceKey, json }
   if (first === "item" && second === "open") return { kind: "item-open", itemRef: argv[2], workspaceKey }
-  if (first === "item" && second === "preview") return { kind: "item-preview", itemRef: argv[2], workspaceKey, start: argv.includes("--start"), open: argv.includes("--open"), json }
+  if (first === "item" && second === "preview") return { kind: "item-preview", itemRef: argv[2], workspaceKey, start: argv.includes("--start"), stop: argv.includes("--stop"), open: argv.includes("--open"), json }
   if (first === "item" && second === "wireframes") return { kind: "item-wireframes", itemRef: argv[2], workspaceKey, open: argv.includes("--open"), json }
   if (first === "item" && second === "design") return { kind: "item-design", itemRef: argv[2], workspaceKey, open: argv.includes("--open"), json }
   if (first === "start" && second === undefined) return { kind: "start-engine" }
@@ -324,7 +324,7 @@ function printHelp(): void {
     "    beerengineer workspace gc-worktrees <key> [--json]   Remove orphaned BeerEngineer story worktrees",
     "    beerengineer item get <id|code> [--workspace <key>]  Show one item",
     "    beerengineer item open <id|code> [--workspace <key>] Open one item in the UI",
-    "    beerengineer item preview <id|code> [--start] [--open] [--workspace <key>] [--json]",
+    "    beerengineer item preview <id|code> [--start|--stop] [--open] [--workspace <key>] [--json]",
     "                                                         Show or start the item-branch local preview",
     "    beerengineer item wireframes <id|code> [--open] [--workspace <key>] [--json]",
     "                                                         Show/open wireframe artifacts",
@@ -1638,10 +1638,14 @@ async function runItemOpenCommand(itemRef: string | undefined, workspaceKey: str
 async function runItemPreviewCommand(
   itemRef: string | undefined,
   workspaceKey: string | undefined,
-  opts: { start?: boolean; open?: boolean; json?: boolean },
+  opts: { start?: boolean; stop?: boolean; open?: boolean; json?: boolean },
 ): Promise<number> {
   if (!itemRef) {
     console.error("  Missing item reference: beerengineer item preview <id|code>")
+    return 2
+  }
+  if (opts.start && opts.stop) {
+    console.error("  Use either --start or --stop, not both")
     return 2
   }
   const db = initDatabase()
@@ -1658,13 +1662,25 @@ async function runItemPreviewCommand(
       return 1
     }
     const launch = resolvePreviewLaunchSpec(preview.worktreePath)
-    let status: "started" | "already_running" | "stopped" = "stopped"
+    let status: "started" | "already_running" | "stopped" | "already_stopped" = "stopped"
     let logPath: string | undefined
+    let pid: number | null = null
     if (opts.start) {
       try {
         const started = await startPreviewServer(preview)
         status = started.status
         logPath = started.logPath
+        pid = started.pid
+      } catch (error) {
+        console.error(`  ${(error as Error).message}`)
+        return 1
+      }
+    } else if (opts.stop) {
+      try {
+        const stopped = await stopPreviewServer(preview)
+        status = stopped.status
+        logPath = stopped.logPath
+        pid = null
       } catch (error) {
         console.error(`  ${(error as Error).message}`)
         return 1
@@ -1682,6 +1698,7 @@ async function runItemPreviewCommand(
       previewPort: preview.previewPort,
       previewUrl: preview.previewUrl,
       status,
+      pid,
       launch: launch
         ? {
             command: launch.command,
@@ -1708,7 +1725,7 @@ async function runItemPreviewCommand(
       }
       console.log(`  log:          ${payload.logPath}`)
     }
-    if (opts.open) openBrowser(preview.previewUrl)
+    if (opts.open && (status === "started" || status === "already_running")) openBrowser(preview.previewUrl)
     return 0
   } finally {
     db.close()
@@ -2731,7 +2748,7 @@ const COMMAND_REGISTRY: CommandHandlers = {
   items: cmd => runItemsCommand(cmd.workspaceKey, cmd.all, cmd.json, cmd.compact),
   "item-get": cmd => runItemGetCommand(cmd.itemRef, cmd.workspaceKey, cmd.json),
   "item-open": cmd => runItemOpenCommand(cmd.itemRef, cmd.workspaceKey),
-  "item-preview": cmd => runItemPreviewCommand(cmd.itemRef, cmd.workspaceKey, { start: cmd.start, open: cmd.open, json: cmd.json }),
+  "item-preview": cmd => runItemPreviewCommand(cmd.itemRef, cmd.workspaceKey, { start: cmd.start, stop: cmd.stop, open: cmd.open, json: cmd.json }),
   "item-wireframes": cmd =>
     runItemWireframesCommand(cmd.itemRef, cmd.workspaceKey, cmd.open, cmd.json),
   "item-design": cmd => runItemDesignCommand(cmd.itemRef, cmd.workspaceKey, cmd.open, cmd.json),

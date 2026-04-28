@@ -1640,6 +1640,42 @@
         }
       }
     },
+    "/items/{id}/preview/stop": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ItemId"
+        }
+      ],
+      "post": {
+        "tags": [
+          "Items"
+        ],
+        "summary": "Stop the local preview command for an item's managed worktree.",
+        "security": [
+          {
+            "csrfToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Preview stop accepted or already stopped.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemPreview"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
     "/notifications/deliveries": {
       "get": {
         "tags": [
@@ -2775,12 +2811,26 @@
           "running": {
             "type": "boolean"
           },
+          "managed": {
+            "type": "boolean"
+          },
+          "pid": {
+            "oneOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "status": {
             "type": "string",
             "enum": [
               "started",
               "already_running",
-              "stopped"
+              "stopped",
+              "already_stopped"
             ]
           },
           "logPath": {
