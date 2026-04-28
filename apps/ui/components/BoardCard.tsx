@@ -11,14 +11,14 @@ import { MiniStepper } from "./MiniStepper";
 import { BoardCardActions } from "./BoardCardActions";
 
 interface BoardCardProps {
-  card: BoardCardDTO;
-  workspaceKey?: string;
+  readonly card: BoardCardDTO;
+  readonly workspaceKey?: string;
   /**
    * Click handler — when provided, the card body becomes a button that opens
    * a modal in the board owner. Falls back to a deep-link anchor if absent
    * (used in tests / standalone renders).
    */
-  onOpen?: (card: BoardCardDTO) => void;
+  readonly onOpen?: (card: BoardCardDTO) => void;
 }
 
 const ATTENTION_GOLD = "#d4a843";

@@ -14,9 +14,9 @@ import { ItemChat } from "./ItemChat";
 import { ItemMessages } from "./ItemMessages";
 
 interface BoardItemModalProps {
-  card: BoardCardDTO;
-  workspaceKey: string;
-  onClose: () => void;
+  readonly card: BoardCardDTO;
+  readonly workspaceKey: string;
+  readonly onClose: () => void;
 }
 
 interface PreviewInfo {

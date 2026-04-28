@@ -9,8 +9,6 @@ export const PHASES = [
 
 export type Phase = (typeof PHASES)[number];
 
-export type PipelineState = string;
-
 // Implementation stepper segments. Mirror of IMPLEMENTATION_STAGES below;
 // kept as the legacy alias used by older tests/components. Edit both lists
 // in lockstep.
@@ -31,7 +29,7 @@ export interface Item {
   title: string;
   summary?: string | null;
   phase: Phase;
-  pipelineState: PipelineState;
+  pipelineState: string;
   current_stage?: string | null;
 }
 
@@ -42,7 +40,7 @@ export interface BoardData {
 
 export interface SseStateChangeEvent {
   itemId: string;
-  pipelineState?: PipelineState;
+  pipelineState?: string;
   phase?: Phase;
 }
 
@@ -173,8 +171,6 @@ export const BOARD_COLUMN_LABELS: Record<BoardColumn, string> = {
   done: "Done",
 };
 
-export type ConversationRole = string;
-
 export interface ConversationAction {
   label: string;
   value: string;
@@ -182,7 +178,7 @@ export interface ConversationAction {
 
 export interface ConversationEntry {
   id?: string;
-  type: ConversationRole;
+  type: string;
   text: string;
   promptId?: string;
   actions?: Array<string | ConversationAction>;

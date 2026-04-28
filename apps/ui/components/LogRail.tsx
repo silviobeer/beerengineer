@@ -11,8 +11,8 @@ import {
 import { LogLine } from "./LogLine";
 
 interface LogRailProps {
-  logs: readonly LogEntry[];
-  initialFilter?: LogFilter;
+  readonly logs: readonly LogEntry[];
+  readonly initialFilter?: LogFilter;
 }
 
 export function LogRail({ logs, initialFilter = "alles" }: Readonly<LogRailProps>) {

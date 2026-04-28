@@ -7,7 +7,7 @@ import type { ChatEntry } from "@/lib/sse/types";
 import { ChatPanel } from "./ChatPanel";
 
 interface ItemChatProps {
-  itemId: string;
+  readonly itemId: string;
 }
 
 interface EngineRun {
@@ -84,9 +84,12 @@ function chatEntryToUi(e: ChatEntry): ConversationEntry {
       createdAt,
     });
   }
+  let type: ConversationEntry["type"] = "system";
+  if (e.role === "assistant") type = "agent";
+  else if (e.role === "user") type = "user";
   return {
     id: e.id,
-    type: e.role === "assistant" ? "agent" : e.role === "user" ? "user" : "system",
+    type,
     text: e.content,
     promptId: e.kind === "answer" ? e.promptId : undefined,
     createdAt,

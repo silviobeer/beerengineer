@@ -206,7 +206,7 @@ function readEnvFileValue(raw: string, key: string): string | undefined {
   for (const line of raw.split(/\r?\n/)) {
     const trimmed = line.trim()
     if (!trimmed || trimmed.startsWith("#")) continue
-    const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/)
+    const match = /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(trimmed)
     if (!match || match[1] !== key) continue
     const value = match[2].trim()
     return value.replaceAll(/^['"]|['"]$/g, "")
@@ -217,9 +217,9 @@ function readEnvFileValue(raw: string, key: string): string | undefined {
 function parseGitHubRemote(remoteUrl: string): { owner: string; repo: string } | null {
   // Repo capture rejects `/` to avoid mis-parsing URLs like
   // https://github.com/owner/repo/tree/main as repo="repo/tree/main".
-  const ssh = remoteUrl.match(/^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/)
+  const ssh = /^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/.exec(remoteUrl)
   if (ssh) return { owner: ssh[1], repo: ssh[2] }
-  const https = remoteUrl.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/)
+  const https = /^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/.exec(remoteUrl)
   if (https) return { owner: https[1], repo: https[2] }
   return null
 }
@@ -236,7 +236,7 @@ function resolveGitDefaultBranch(root: string): string | null {
 
   const remoteShow = runGit(["remote", "show", "origin"], root)
   if (remoteShow.ok) {
-    const match = remoteShow.stdout.match(/^\s*HEAD branch:\s+(.+)$/m)
+    const match = /^\s*HEAD branch:\s+(.+)$/m.exec(remoteShow.stdout)
     const branch = match?.[1]?.trim()
     if (branch) return branch
   }
@@ -275,7 +275,7 @@ async function persistSonarTokenToEnvLocal(root: string, token: string): Promise
   } catch {
     // file doesn't exist yet — fine
   }
-  const lines = existing.split(/\r?\n/).filter(line => !line.match(/^SONAR_TOKEN\s*=/))
+  const lines = existing.split(/\r?\n/).filter(line => !/^SONAR_TOKEN\s*=/.test(line))
   const trimmed = lines.filter((line, idx) => !(idx === lines.length - 1 && line === "")).join("\n")
   const next = `${trimmed ? `${trimmed}\n` : ""}SONAR_TOKEN=${token}\n`
   await writeFile(envLocalPath, next)

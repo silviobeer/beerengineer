@@ -1,7 +1,7 @@
 import { severityLabel, type LogEntry } from "../lib/logs";
 
 interface LogLineProps {
-  entry: LogEntry;
+  readonly entry: LogEntry;
 }
 
 export function LogLine({ entry }: Readonly<LogLineProps>) {

@@ -2,9 +2,9 @@ import type { Item, Phase } from "../lib/types";
 import { ItemCard } from "./ItemCard";
 
 interface ColumnProps {
-  phase: Phase;
-  items: Item[];
-  workspaceKey: string;
+  readonly phase: Phase;
+  readonly items: Item[];
+  readonly workspaceKey: string;
 }
 
 export function Column({ phase, items, workspaceKey }: Readonly<ColumnProps>) {

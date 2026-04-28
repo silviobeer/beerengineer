@@ -34,7 +34,7 @@ export function resolveItemPreviewContext(repos: Repos, itemId: string): ItemPre
   if (!previewUrl) {
     return { ok: false, error: "item_worktree_not_found", code: "not_found" }
   }
-  const match = previewUrl.match(/:(\d+)$/)
+  const match = /:(\d+)$/.exec(previewUrl)
   const previewPort = match ? Number(match[1]) : NaN
   if (!Number.isFinite(previewPort)) {
     return { ok: false, error: "item_worktree_not_found", code: "not_found" }

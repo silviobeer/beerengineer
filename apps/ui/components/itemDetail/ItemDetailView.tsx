@@ -5,8 +5,8 @@ import { ItemDetailHeader } from "./ItemDetailHeader";
 import { ItemDetailToolbar } from "./ItemDetailToolbar";
 
 type Props = {
-  item: ItemDetailDTO;
-  onAction: (action: ItemAction) => Promise<ActionResult>;
+  readonly item: ItemDetailDTO;
+  readonly onAction: (action: ItemAction) => Promise<ActionResult>;
 };
 
 export function ItemDetailView({ item, onAction }: Readonly<Props>): React.ReactElement {

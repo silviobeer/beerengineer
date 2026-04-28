@@ -5,7 +5,7 @@ import type { ItemDetailDTO } from "../lib/types";
 import { ChatPanel } from "./ChatPanel";
 
 interface ItemDetailChatLoaderProps {
-  itemId: string;
+  readonly itemId: string;
 }
 
 function resolveItemUrl(itemId: string): string {

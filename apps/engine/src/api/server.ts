@@ -214,7 +214,7 @@ const server = createServer(async (req, res) => {
     }
 
     // ---- Notifications -------------------------------------------------------
-    const notificationTestMatch = path.match(/^\/notifications\/test\/([^/]+)$/)
+    const notificationTestMatch = /^\/notifications\/test\/([^/]+)$/.exec(path)
     if (notificationTestMatch && req.method === "POST") {
       return handleNotificationTest(repos, loadEffectiveConfig, res, notificationTestMatch[1])
     }
@@ -230,7 +230,7 @@ const server = createServer(async (req, res) => {
     if (path === "/workspaces" && req.method === "POST") return handleWorkspaceAdd(repos, loadEffectiveConfig, req, res)
     if (path === "/workspaces/backfill" && req.method === "POST") return handleWorkspaceBackfill(repos, res)
 
-    const workspaceMatch = path.match(/^\/workspaces\/([^/]+)(?:\/(open))?$/)
+    const workspaceMatch = /^\/workspaces\/([^/]+)(?:\/(open))?$/.exec(path)
     if (workspaceMatch) {
       const [, key, sub] = workspaceMatch
       if (!sub && req.method === "GET") return handleWorkspaceGet(repos, res, key)
@@ -243,32 +243,32 @@ const server = createServer(async (req, res) => {
 
     // ---- Items ---------------------------------------------------------------
     if (path === "/items" && req.method === "GET") return handleListItems(repos, url, res)
-    const itemActionNamed = path.match(/^\/items\/([^/]+)\/actions\/([^/]+)$/)
+    const itemActionNamed = /^\/items\/([^/]+)\/actions\/([^/]+)$/.exec(path)
     if (itemActionNamed && req.method === "POST") {
       return handleItemActionNamed(itemActions, repos, req, res, itemActionNamed[1], itemActionNamed[2], payload => board.broadcastItemColumnChanged(payload))
     }
-    const itemWireframesMatch = path.match(/^\/items\/([^/]+)\/wireframes$/)
+    const itemWireframesMatch = /^\/items\/([^/]+)\/wireframes$/.exec(path)
     if (itemWireframesMatch && req.method === "GET") return handleGetItemWireframes(repos, res, itemWireframesMatch[1])
-    const itemDesignMatch = path.match(/^\/items\/([^/]+)\/design$/)
+    const itemDesignMatch = /^\/items\/([^/]+)\/design$/.exec(path)
     if (itemDesignMatch && req.method === "GET") return handleGetItemDesign(repos, res, itemDesignMatch[1])
-    const itemPreviewStartMatch = path.match(/^\/items\/([^/]+)\/preview\/start$/)
-    const itemPreviewStopMatch = path.match(/^\/items\/([^/]+)\/preview\/stop$/)
+    const itemPreviewStartMatch = /^\/items\/([^/]+)\/preview\/start$/.exec(path)
+    const itemPreviewStopMatch = /^\/items\/([^/]+)\/preview\/stop$/.exec(path)
     if (itemPreviewStartMatch && req.method === "POST") return handleStartItemPreview(repos, req, res, itemPreviewStartMatch[1])
     if (itemPreviewStopMatch && req.method === "POST") return handleStopItemPreview(repos, req, res, itemPreviewStopMatch[1])
-    const itemPreviewMatch = path.match(/^\/items\/([^/]+)\/preview$/)
+    const itemPreviewMatch = /^\/items\/([^/]+)\/preview$/.exec(path)
     if (itemPreviewMatch && req.method === "GET") return handleGetItemPreview(repos, res, itemPreviewMatch[1])
-    const itemMatch = path.match(/^\/items\/([^/]+)$/)
+    const itemMatch = /^\/items\/([^/]+)$/.exec(path)
     if (itemMatch && req.method === "GET") return handleGetItem(repos, res, itemMatch[1])
 
-    const runArtifactsFileMatch = path.match(/^\/runs\/([^/]+)\/artifacts\/(.+)$/)
+    const runArtifactsFileMatch = /^\/runs\/([^/]+)\/artifacts\/(.+)$/.exec(path)
     if (runArtifactsFileMatch && req.method === "GET") {
       return handleGetArtifactFile(repos, res, runArtifactsFileMatch[1], runArtifactsFileMatch[2])
     }
-    const runArtifactsMatch = path.match(/^\/runs\/([^/]+)\/artifacts$/)
+    const runArtifactsMatch = /^\/runs\/([^/]+)\/artifacts$/.exec(path)
     if (runArtifactsMatch && req.method === "GET") return handleGetArtifacts(repos, res, runArtifactsMatch[1])
 
     // ---- Run-scoped subresources --------------------------------------------
-    const runMatch = path.match(/^\/runs\/([^/]+)(?:\/(tree|events|messages|resume|recovery|conversation|answer))?$/)
+    const runMatch = /^\/runs\/([^/]+)(?:\/(tree|events|messages|resume|recovery|conversation|answer))?$/.exec(path)
     if (runMatch) {
       const [, runId, sub] = runMatch
       if (!sub && req.method === "GET") return handleGetRun(repos, res, runId)

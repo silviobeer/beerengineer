@@ -43,29 +43,32 @@ const TOOL_TIMEOUT_MS = 3_000
 
 function remedyForTool(tool: string): CheckResult["remedy"] | undefined {
   const platform = process.platform
-  const hints: Record<string, CheckResult["remedy"]> = {
-    gh:
-      platform === "darwin"
-        ? { hint: "Install GitHub CLI with Homebrew.", command: "brew install gh" }
-        : platform === "win32"
+  const ghRemedy =
+    platform === "darwin"
+      ? { hint: "Install GitHub CLI with Homebrew.", command: "brew install gh" }
+      : platform === "win32"
         ? { hint: "Install GitHub CLI with winget.", command: "winget install GitHub.cli" }
-        : { hint: "Install GitHub CLI from the official docs.", url: "https://cli.github.com/" },
+        : { hint: "Install GitHub CLI from the official docs.", url: "https://cli.github.com/" }
+  const sonarScannerRemedy =
+    platform === "darwin"
+      ? { hint: "Install sonar-scanner with Homebrew.", command: "brew install sonar-scanner" }
+      : { hint: "Install sonar-scanner from SonarSource docs.", url: "https://docs.sonarsource.com/sonarqube-cloud/advanced-setup/analysis-scanner-configuration/" }
+  const sonarInstallCommand =
+    platform === "win32"
+      ? "irm https://raw.githubusercontent.com/SonarSource/sonarqube-cli/refs/heads/master/user-scripts/install.ps1 | iex"
+      : "curl -o- https://raw.githubusercontent.com/SonarSource/sonarqube-cli/refs/heads/master/user-scripts/install.sh | bash"
+  const hints: Record<string, CheckResult["remedy"]> = {
+    gh: ghRemedy,
     claude: { hint: "Install Claude Code globally with npm.", command: "npm i -g @anthropic-ai/claude-code" },
     codex: { hint: "Install Codex globally with npm.", command: "npm i -g @openai/codex" },
     opencode: { hint: "Install OpenCode per the official install docs.", url: "https://opencode.ai/docs/install" },
     playwright: { hint: "Install Playwright CLI and browser binaries from the official docs.", url: "https://playwright.dev/docs/intro" },
     "agent-browser": { hint: "Install agent-browser per the official repository.", url: "https://github.com/vercel-labs/agent-browser" },
     coderabbit: { hint: "Install CodeRabbit CLI globally with npm.", command: "npm i -g @coderabbit/cli" },
-    "sonar-scanner":
-      platform === "darwin"
-        ? { hint: "Install sonar-scanner with Homebrew.", command: "brew install sonar-scanner" }
-        : { hint: "Install sonar-scanner from SonarSource docs.", url: "https://docs.sonarsource.com/sonarqube-cloud/advanced-setup/analysis-scanner-configuration/" },
+    "sonar-scanner": sonarScannerRemedy,
     sonar: {
       hint: "Install sonarqube-cli from SonarSource (installs the `sonar` binary).",
-      command:
-        platform === "win32"
-          ? "irm https://raw.githubusercontent.com/SonarSource/sonarqube-cli/refs/heads/master/user-scripts/install.ps1 | iex"
-          : "curl -o- https://raw.githubusercontent.com/SonarSource/sonarqube-cli/refs/heads/master/user-scripts/install.sh | bash",
+      command: sonarInstallCommand,
     },
   }
   return hints[tool]
@@ -160,7 +163,9 @@ function summarizeOverall(groups: GroupResult[]): SetupReport["overall"] {
 }
 
 function formatGroupTitle(group: GroupResult): string {
-  const suffix = group.level === "required" ? "required" : group.level === "recommended" ? "recommended" : "optional"
+  let suffix = "optional"
+  if (group.level === "required") suffix = "required"
+  else if (group.level === "recommended") suffix = "recommended"
   return `${group.label} (${suffix})`
 }
 
@@ -210,26 +215,32 @@ async function runCoreChecks(configPath: string, configState: ReturnType<typeof 
   ))
 
   if (configState.kind === "missing") {
-    checks.push(createCheck("core.config", "config file", "uninitialized", `missing at ${configPath}`))
-    checks.push(createCheck("core.dataDir", "configured data dir", "uninitialized", "config has not been initialized"))
-    checks.push(createCheck("core.db", "configured database", "uninitialized", "config has not been initialized"))
-    checks.push(createCheck("core.migrations", "database migration level", "uninitialized", "config has not been initialized"))
+    checks.push(
+      createCheck("core.config", "config file", "uninitialized", `missing at ${configPath}`),
+      createCheck("core.dataDir", "configured data dir", "uninitialized", "config has not been initialized"),
+      createCheck("core.db", "configured database", "uninitialized", "config has not been initialized"),
+      createCheck("core.migrations", "database migration level", "uninitialized", "config has not been initialized"),
+    )
     return checks
   }
 
   if (configState.kind === "invalid") {
-    checks.push(createCheck("core.config", "config file", "misconfigured", `${configPath}: ${configState.error}`))
-    checks.push(createCheck("core.dataDir", "configured data dir", "skipped", "config is invalid"))
-    checks.push(createCheck("core.db", "configured database", "skipped", "config is invalid"))
-    checks.push(createCheck("core.migrations", "database migration level", "skipped", "config is invalid"))
+    checks.push(
+      createCheck("core.config", "config file", "misconfigured", `${configPath}: ${configState.error}`),
+      createCheck("core.dataDir", "configured data dir", "skipped", "config is invalid"),
+      createCheck("core.db", "configured database", "skipped", "config is invalid"),
+      createCheck("core.migrations", "database migration level", "skipped", "config is invalid"),
+    )
     return checks
   }
 
   if (!config) {
-    checks.push(createCheck("core.config", "config file", "unknown", `${configPath}: effective config could not be resolved`))
-    checks.push(createCheck("core.dataDir", "configured data dir", "skipped", "effective config is unavailable"))
-    checks.push(createCheck("core.db", "configured database", "skipped", "effective config is unavailable"))
-    checks.push(createCheck("core.migrations", "database migration level", "skipped", "effective config is unavailable"))
+    checks.push(
+      createCheck("core.config", "config file", "unknown", `${configPath}: effective config could not be resolved`),
+      createCheck("core.dataDir", "configured data dir", "skipped", "effective config is unavailable"),
+      createCheck("core.db", "configured database", "skipped", "effective config is unavailable"),
+      createCheck("core.migrations", "database migration level", "skipped", "effective config is unavailable"),
+    )
     return checks
   }
 
@@ -507,13 +518,16 @@ async function runNotificationChecks(config: AppConfig | null): Promise<CheckRes
 
   const tokenEnv = config.notifications?.telegram?.botTokenEnv?.trim()
   if (!telegramEnabled) {
-    checks.push(createCheck("notifications.telegram.level", "Telegram message level", "skipped", "Telegram notifications are disabled in config"))
-    checks.push(createCheck("notifications.telegram.bot-token-env", "Telegram bot token env var", "skipped", "Telegram notifications are disabled in config"))
-    checks.push(createCheck("notifications.telegram.bot-token-present", "Telegram bot token present", "skipped", "Telegram notifications are disabled in config"))
-    checks.push(createCheck("notifications.telegram.default-chat-id", "Telegram default chat id", "skipped", "Telegram notifications are disabled in config"))
-    checks.push(createCheck("notifications.telegram.inbound.enabled", "Telegram inbound replies enabled", "skipped", "Telegram notifications are disabled in config"))
-    checks.push(createCheck("notifications.telegram.inbound.webhook-secret-env", "Telegram webhook secret env var", "skipped", "Telegram notifications are disabled in config"))
-    checks.push(createCheck("notifications.telegram.inbound.webhook-secret-present", "Telegram webhook secret present", "skipped", "Telegram notifications are disabled in config"))
+    const disabledDetail = "Telegram notifications are disabled in config"
+    checks.push(
+      createCheck("notifications.telegram.level", "Telegram message level", "skipped", disabledDetail),
+      createCheck("notifications.telegram.bot-token-env", "Telegram bot token env var", "skipped", disabledDetail),
+      createCheck("notifications.telegram.bot-token-present", "Telegram bot token present", "skipped", disabledDetail),
+      createCheck("notifications.telegram.default-chat-id", "Telegram default chat id", "skipped", disabledDetail),
+      createCheck("notifications.telegram.inbound.enabled", "Telegram inbound replies enabled", "skipped", disabledDetail),
+      createCheck("notifications.telegram.inbound.webhook-secret-env", "Telegram webhook secret env var", "skipped", disabledDetail),
+      createCheck("notifications.telegram.inbound.webhook-secret-present", "Telegram webhook secret present", "skipped", disabledDetail),
+    )
     return checks
   }
 
@@ -552,7 +566,7 @@ async function runNotificationChecks(config: AppConfig | null): Promise<CheckRes
     "notifications.telegram.default-chat-id",
     "Telegram default chat id",
     chatId ? "ok" : "missing",
-    chatId ? chatId : "Missing notifications.telegram.defaultChatId",
+    chatId ?? "Missing notifications.telegram.defaultChatId",
     chatId ? {} : { remedy: { hint: "Record the chat id that should receive beerengineer_ notifications." } },
   ))
 
@@ -565,32 +579,40 @@ async function runNotificationChecks(config: AppConfig | null): Promise<CheckRes
   ))
 
   const webhookSecretEnv = config.notifications?.telegram?.inbound?.webhookSecretEnv?.trim()
+  const webhookSecretEnvStatus: SetupStatus = inboundEnabled ? (webhookSecretEnv ? "ok" : "missing") : "skipped"
+  const webhookSecretEnvDetail = inboundEnabled
+    ? webhookSecretEnv ?? "Missing notifications.telegram.inbound.webhookSecretEnv"
+    : "Telegram inbound replies are disabled in config"
   checks.push(createCheck(
     "notifications.telegram.inbound.webhook-secret-env",
     "Telegram webhook secret env var",
-    inboundEnabled ? (webhookSecretEnv ? "ok" : "missing") : "skipped",
-    inboundEnabled
-      ? webhookSecretEnv ?? "Missing notifications.telegram.inbound.webhookSecretEnv"
-      : "Telegram inbound replies are disabled in config",
+    webhookSecretEnvStatus,
+    webhookSecretEnvDetail,
     inboundEnabled && !webhookSecretEnv
       ? { remedy: { hint: "Store the Telegram webhook secret in an env var and record that env var name in config." } }
       : {},
   ))
 
   const webhookSecretPresent = webhookSecretEnv ? Boolean(process.env[webhookSecretEnv]) : false
+  const webhookSecretPresentStatus: SetupStatus =
+    inboundEnabled && webhookSecretEnv
+      ? (webhookSecretPresent ? "ok" : "missing")
+      : inboundEnabled
+        ? "missing"
+        : "skipped"
+  let webhookSecretPresentDetail = "Telegram inbound replies are disabled in config"
+  if (inboundEnabled && webhookSecretEnv) {
+    webhookSecretPresentDetail = webhookSecretPresent
+      ? `${webhookSecretEnv} is set`
+      : `${webhookSecretEnv} is not set in this shell`
+  } else if (inboundEnabled) {
+    webhookSecretPresentDetail = "Webhook secret env var is not configured"
+  }
   checks.push(createCheck(
     "notifications.telegram.inbound.webhook-secret-present",
     "Telegram webhook secret present",
-    inboundEnabled
-      ? (webhookSecretEnv ? (webhookSecretPresent ? "ok" : "missing") : "missing")
-      : "skipped",
-    inboundEnabled
-      ? webhookSecretEnv
-        ? webhookSecretPresent
-          ? `${webhookSecretEnv} is set`
-          : `${webhookSecretEnv} is not set in this shell`
-        : "Webhook secret env var is not configured"
-      : "Telegram inbound replies are disabled in config",
+    webhookSecretPresentStatus,
+    webhookSecretPresentDetail,
     inboundEnabled && webhookSecretEnv && !webhookSecretPresent
       ? { remedy: { hint: "Export the Telegram webhook secret before starting the engine.", command: buildTelegramWebhookSecretExportCommand(webhookSecretEnv) } }
       : {},
@@ -850,53 +872,59 @@ async function maybeConfigureTelegramInteractive(configPath: string, config: App
     }
 
     while (true) {
-      const currentLevel = next.notifications!.telegram!.level ?? 2
+      const configuredTelegram = next.notifications?.telegram
+      if (!configuredTelegram) throw new Error("Telegram config missing during interactive setup")
+      const currentLevel = configuredTelegram.level ?? 2
       const levelAnswer = (await rl.question(`  Telegram message level [${currentLevel}] (0=debug, 1=ops, 2=milestones): `)).trim()
       const candidate = levelAnswer || String(currentLevel)
       if (candidate === "0" || candidate === "1" || candidate === "2") {
-        next.notifications!.telegram!.level = Number(candidate) as 0 | 1 | 2
+        configuredTelegram.level = Number(candidate) as 0 | 1 | 2
         break
       }
       console.log("  Telegram message level must be 0, 1, or 2.")
     }
 
     while (true) {
-      const currentTelegram = next.notifications!.telegram!
+      const currentTelegram = next.notifications?.telegram
+      if (!currentTelegram) throw new Error("Telegram config missing during interactive setup")
       const chatIdAnswer = (await rl.question(`  Telegram chat id [${currentTelegram.defaultChatId ?? ""}]: `)).trim()
       const chatId = chatIdAnswer || currentTelegram.defaultChatId
       if (chatId) {
-        next.notifications!.telegram!.defaultChatId = chatId
+        currentTelegram.defaultChatId = chatId
         break
       }
       console.log("  Telegram chat id is required when notifications are enabled.")
     }
 
-    const inboundAnswer = (await rl.question(`  Enable Telegram inbound prompt replies? [${next.notifications!.telegram!.inbound?.enabled ? "Y/n" : "y/N"}] `)).trim().toLowerCase()
+    const configuredTelegram = next.notifications?.telegram
+    if (!configuredTelegram) throw new Error("Telegram config missing during interactive setup")
+    const inboundAnswer = (await rl.question(`  Enable Telegram inbound prompt replies? [${configuredTelegram.inbound?.enabled ? "Y/n" : "y/N"}] `)).trim().toLowerCase()
     const inboundEnabled =
       inboundAnswer === ""
-        ? next.notifications!.telegram!.inbound?.enabled === true
+        ? configuredTelegram.inbound?.enabled === true
         : inboundAnswer === "y" || inboundAnswer === "yes"
-    next.notifications!.telegram!.inbound = {
-      ...next.notifications!.telegram!.inbound,
+    configuredTelegram.inbound = {
+      ...configuredTelegram.inbound,
       enabled: inboundEnabled,
     }
 
     if (inboundEnabled) {
       const secretEnvAnswer =
-        (await rl.question(`  Telegram webhook secret env var [${next.notifications!.telegram!.inbound?.webhookSecretEnv ?? "TELEGRAM_WEBHOOK_SECRET"}]: `)).trim()
-      next.notifications!.telegram!.inbound!.webhookSecretEnv =
-        secretEnvAnswer || next.notifications!.telegram!.inbound!.webhookSecretEnv || "TELEGRAM_WEBHOOK_SECRET"
+        (await rl.question(`  Telegram webhook secret env var [${configuredTelegram.inbound?.webhookSecretEnv ?? "TELEGRAM_WEBHOOK_SECRET"}]: `)).trim()
+      const configuredInbound = configuredTelegram.inbound
+      if (!configuredInbound) throw new Error("Telegram inbound config missing during interactive setup")
+      configuredInbound.webhookSecretEnv = secretEnvAnswer || configuredInbound.webhookSecretEnv || "TELEGRAM_WEBHOOK_SECRET"
     }
 
     writeConfigFile(configPath, next)
     console.log("")
     console.log("  Next steps:")
-    console.log(`    ${buildTelegramExportCommand(next.notifications!.telegram!.botTokenEnv ?? "TELEGRAM_BOT_TOKEN")}`)
-    if (next.notifications!.telegram!.inbound?.enabled && next.notifications!.telegram!.inbound?.webhookSecretEnv) {
-      console.log(`    ${buildTelegramWebhookSecretExportCommand(next.notifications!.telegram!.inbound!.webhookSecretEnv!)}`)
+    console.log(`    ${buildTelegramExportCommand(configuredTelegram.botTokenEnv ?? "TELEGRAM_BOT_TOKEN")}`)
+    if (configuredTelegram.inbound?.enabled && configuredTelegram.inbound?.webhookSecretEnv) {
+      console.log(`    ${buildTelegramWebhookSecretExportCommand(configuredTelegram.inbound.webhookSecretEnv)}`)
     }
     console.log(`    publicBaseUrl is set to ${next.publicBaseUrl}`)
-    console.log(`    Telegram level is L${next.notifications!.telegram!.level ?? 2}`)
+    console.log(`    Telegram level is L${configuredTelegram.level ?? 2}`)
     console.log("    Start the UI on the same host/port so Telegram links stay reachable over Tailscale.")
     console.log("")
     return next

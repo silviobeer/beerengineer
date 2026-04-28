@@ -69,16 +69,17 @@ async function fetchBoard(
       return { items: null, error: `engine responded ${res.status}` };
     }
     const data = (await res.json()) as BoardApiResponse;
-    const flatItems = Array.isArray(data.items)
-      ? data.items
-      : Array.isArray(data.columns)
-        ? data.columns.flatMap((col) =>
-            (col.cards ?? []).map((card) => ({
-              ...card,
-              phase: card.phase ?? card.column ?? col.key,
-            })),
-          )
-        : [];
+    let flatItems: BoardApiItem[] = [];
+    if (Array.isArray(data.items)) {
+      flatItems = data.items;
+    } else if (Array.isArray(data.columns)) {
+      flatItems = data.columns.flatMap((col) =>
+        (col.cards ?? []).map((card) => ({
+          ...card,
+          phase: card.phase ?? card.column ?? col.key,
+        })),
+      );
+    }
     const items = flatItems.map(toBoardCard);
     return { items, error: null };
   } catch (err) {

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 interface ItemMessagesProps {
-  itemId: string;
+  readonly itemId: string;
 }
 
 /**

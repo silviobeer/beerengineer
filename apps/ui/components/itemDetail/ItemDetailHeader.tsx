@@ -1,10 +1,10 @@
 import { statusChipText } from "@/lib/statusChip";
 
 type Props = {
-  itemCode: string;
-  title: string;
-  phaseStatus: string;
-  currentStage: string | null;
+  readonly itemCode: string;
+  readonly title: string;
+  readonly phaseStatus: string;
+  readonly currentStage: string | null;
 };
 
 export function ItemDetailHeader({

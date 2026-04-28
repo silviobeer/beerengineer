@@ -13,19 +13,16 @@ import { FailureIndicator } from "./FailureIndicator";
 import { MiniStepper } from "./MiniStepper";
 
 interface ItemCardProps {
-  item: Item;
-  workspaceKey: string;
+  readonly item: Item;
+  readonly workspaceKey: string;
 }
 
 export function ItemCard({ item, workspaceKey }: Readonly<ItemCardProps>) {
   const showAttention = hasAttentionDot(item);
   const showFailure = !showAttention && hasFailureIndicator(item);
-  const stepperKind: "implementation" | "frontend" | null =
-    item.phase === "Implementation"
-      ? "implementation"
-      : item.phase === "Frontend"
-      ? "frontend"
-      : null;
+  let stepperKind: "implementation" | "frontend" | null = null;
+  if (item.phase === "Implementation") stepperKind = "implementation";
+  else if (item.phase === "Frontend") stepperKind = "frontend";
   const summary = item.summary && item.summary.length > 0 ? item.summary : null;
 
   return (
@@ -65,7 +62,7 @@ export function ItemCard({ item, workspaceKey }: Readonly<ItemCardProps>) {
           currentStage={item.current_stage ?? null}
         />
       </div>
-      {stepperKind === "implementation" ? (
+      {stepperKind === "implementation" && (
         <MiniStepper
           pipelineState={item.pipelineState}
           currentStage={item.current_stage ?? null}
@@ -73,7 +70,8 @@ export function ItemCard({ item, workspaceKey }: Readonly<ItemCardProps>) {
           labels={IMPLEMENTATION_STAGE_LABELS}
           ariaLabel="Implementation progress"
         />
-      ) : stepperKind === "frontend" ? (
+      )}
+      {stepperKind === "frontend" && (
         <MiniStepper
           pipelineState={item.pipelineState}
           currentStage={item.current_stage ?? null}
@@ -81,7 +79,7 @@ export function ItemCard({ item, workspaceKey }: Readonly<ItemCardProps>) {
           labels={DESIGN_PREP_STAGE_LABELS}
           ariaLabel="Design-prep progress"
         />
-      ) : null}
+      )}
     </Link>
   );
 }

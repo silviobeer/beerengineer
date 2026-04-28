@@ -1,8 +1,6 @@
-export type ItemStatus = string;
-
 export type ItemState = {
   id: string;
-  status?: ItemStatus;
+  status?: string;
   column?: string;
   phaseStatus?: string;
   currentStage?: string | null;

@@ -74,7 +74,7 @@ function parseJsonObject(text: string): Record<string, unknown> {
   const trimmed = text.trim()
   const candidates: string[] = []
   candidates.push(trimmed)
-  const fence = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)
+  const fence = /```(?:json)?\s*([\s\S]*?)```/i.exec(trimmed)
   if (fence?.[1]) candidates.push(fence[1].trim())
   const outermost = extractOutermostJsonObject(trimmed)
   if (outermost) candidates.push(outermost)

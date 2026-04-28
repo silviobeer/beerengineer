@@ -5,8 +5,8 @@ import {
 } from "../lib/types";
 
 interface KanbanColumnProps {
-  column: BoardColumn;
-  children?: ReactNode;
+  readonly column: BoardColumn;
+  readonly children?: ReactNode;
 }
 
 export function KanbanColumn({ column, children }: Readonly<KanbanColumnProps>) {

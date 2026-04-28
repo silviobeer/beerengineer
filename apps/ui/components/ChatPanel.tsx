@@ -15,8 +15,8 @@ function formatTimestamp(iso: string | undefined): string | null {
 }
 
 interface ChatPanelProps {
-  activeRunId?: string | null;
-  conversation: ConversationEntry[];
+  readonly activeRunId?: string | null;
+  readonly conversation: ConversationEntry[];
 }
 
 const SPEAKER_LABELS: Record<string, string> = {
@@ -183,9 +183,9 @@ export function ChatPanel({ activeRunId, conversation }: Readonly<ChatPanelProps
 }
 
 interface ConversationEntryViewProps {
-  entry: ConversationEntry;
-  onAction: (promptId: string, action: string) => void;
-  disabled: boolean;
+  readonly entry: ConversationEntry;
+  readonly onAction: (promptId: string, action: string) => void;
+  readonly disabled: boolean;
 }
 
 function normalizeActions(
@@ -207,14 +207,10 @@ function ConversationEntryView({ entry, onAction, disabled }: Readonly<Conversat
   // Visually separate user messages from agent / system / review-gate by
   // tinting the bubble's left edge. Indent the message body so the speaker
   // and timestamp form a clear header line above it.
-  const accent =
-    entry.type === "user"
-      ? "border-l-2 border-emerald-500/60"
-      : entry.type === "system"
-      ? "border-l-2 border-zinc-700"
-      : entry.type === "review-gate"
-      ? "border-l-2 border-amber-500/60"
-      : "border-l-2 border-zinc-600";
+  let accent = "border-l-2 border-zinc-600";
+  if (entry.type === "user") accent = "border-l-2 border-emerald-500/60";
+  else if (entry.type === "system") accent = "border-l-2 border-zinc-700";
+  else if (entry.type === "review-gate") accent = "border-l-2 border-amber-500/60";
   return (
     <li
       data-testid="chat-entry"

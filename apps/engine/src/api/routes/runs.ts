@@ -62,7 +62,7 @@ export async function handleGetArtifactFile(
   // `<baseRunId>-rev<N>` while the DB still only stores `<baseRunId>`. Accept
   // the revise-suffixed form by looking up the base run row but keeping the
   // derived runId for the disk path.
-  const revMatch = runId.match(/^(.+)-rev(\d+)$/)
+  const revMatch = /^(.+)-rev(\d+)$/.exec(runId)
   const lookupId = revMatch ? revMatch[1] : runId
   const run = repos.getRun(lookupId)
   if (!run) return json(res, 404, { error: "run not found", code: "not_found" })

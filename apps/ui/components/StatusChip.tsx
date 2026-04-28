@@ -1,8 +1,8 @@
 import { deriveStatusLabel } from "../lib/statusLabel";
 
 interface StatusChipProps {
-  state: string;
-  currentStage?: string | null;
+  readonly state: string;
+  readonly currentStage?: string | null;
 }
 
 export function StatusChip({ state, currentStage }: Readonly<StatusChipProps>) {

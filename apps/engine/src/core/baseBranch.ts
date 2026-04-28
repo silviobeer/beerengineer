@@ -24,7 +24,7 @@ function resolveGitDefaultBranch(workspaceRoot: string): string | null {
     encoding: "utf8",
   })
   if (remoteShow.status === 0) {
-    const match = remoteShow.stdout.match(/^\s*HEAD branch:\s+(.+)$/m)
+    const match = /^\s*HEAD branch:\s+(.+)$/m.exec(remoteShow.stdout)
     const branch = match?.[1]?.trim()
     if (branch) return branch
   }

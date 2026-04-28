@@ -8,8 +8,8 @@ import { BOARD_COLUMNS, type BoardCardDTO } from "../lib/types";
 import { useSSE } from "@/lib/sse/SSEContext";
 
 interface BoardProps {
-  items: BoardCardDTO[];
-  workspaceKey?: string;
+  readonly items: BoardCardDTO[];
+  readonly workspaceKey?: string;
 }
 
 export function Board({ items, workspaceKey }: Readonly<BoardProps>) {

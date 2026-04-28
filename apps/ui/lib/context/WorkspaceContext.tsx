@@ -14,10 +14,10 @@ export interface WorkspaceContextValue {
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 
 interface WorkspaceProviderProps {
-  workspaces: Workspace[];
-  currentKey: string;
-  fetchError?: boolean;
-  children: React.ReactNode;
+  readonly workspaces: Workspace[];
+  readonly currentKey: string;
+  readonly fetchError?: boolean;
+  readonly children: React.ReactNode;
 }
 
 export function WorkspaceProvider({

@@ -12,21 +12,21 @@ interface MiniStepperProps {
    * Engine stageKey of the active sub-stage. The stepper highlights the
    * matching segment, or none when the stage is null/unknown.
    */
-  stage?: string | null;
+  readonly stage?: string | null;
   /** Legacy alias kept for older call sites. */
-  currentStage?: string | null;
+  readonly currentStage?: string | null;
   /** Legacy alias used by older tests and cards. */
-  pipelineState?: string;
+  readonly pipelineState?: string;
   /**
    * Sub-stage keys, in display order. Defaults to the implementation set
    * (`arch | plan | exec | review`) so existing call sites keep working.
    * Pass `DESIGN_PREP_STAGES` for the frontend column.
    */
-  stages?: ReadonlyArray<string>;
+  readonly stages?: ReadonlyArray<string>;
   /** Labels keyed by stage. Defaults to the implementation labels. */
-  labels?: Record<string, string>;
+  readonly labels?: Record<string, string>;
   /** Used for the aria-label on the <ol>. */
-  ariaLabel?: string;
+  readonly ariaLabel?: string;
 }
 
 const STEPPER_FONT =
@@ -78,12 +78,12 @@ export function MiniStepper({
   // segments (`arch`/`plan`/`exec`/`review`). Normalize through the
   // appropriate mapper based on the segment list the caller passed; for
   // unknown lists, fall back to direct matching (no transform).
-  const normalizedStage =
-    stages === IMPLEMENTATION_STAGES
-      ? (mapEngineStageToImplementationSegment(resolvedStage) ?? resolvedStage)
-      : stages === DESIGN_PREP_STAGES
-      ? (mapEngineStageToDesignPrepSegment(resolvedStage) ?? resolvedStage)
-      : resolvedStage;
+  let normalizedStage = resolvedStage;
+  if (stages === IMPLEMENTATION_STAGES) {
+    normalizedStage = mapEngineStageToImplementationSegment(resolvedStage) ?? resolvedStage;
+  } else if (stages === DESIGN_PREP_STAGES) {
+    normalizedStage = mapEngineStageToDesignPrepSegment(resolvedStage) ?? resolvedStage;
+  }
   const activeStage = isKnownStage(normalizedStage, stages) ? normalizedStage : null;
 
   return (

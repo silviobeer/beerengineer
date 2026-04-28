@@ -27,9 +27,11 @@ export function deriveBoardPhase(args: {
   currentStage?: string | null;
 }): Phase {
   const stage = args.currentStage ?? "";
-  if (stage && STAGE_TO_PHASE[stage]) return STAGE_TO_PHASE[stage]!;
+  const stagePhase = stage ? STAGE_TO_PHASE[stage] : undefined;
+  if (stagePhase) return stagePhase;
   const col = args.column ?? "";
-  if (col && COLUMN_TO_PHASE[col]) return COLUMN_TO_PHASE[col]!;
+  const columnPhase = col ? COLUMN_TO_PHASE[col] : undefined;
+  if (columnPhase) return columnPhase;
   return "Idea";
 }
 

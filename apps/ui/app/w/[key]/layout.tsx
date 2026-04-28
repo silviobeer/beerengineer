@@ -5,8 +5,8 @@ import { UnknownWorkspaceGuard } from "@/components/UnknownWorkspace";
 import { SSEConnectionManager } from "@/lib/sse/SSEContext";
 
 interface WorkspaceLayoutProps {
-  children: React.ReactNode;
-  params: Promise<{ key: string }>;
+  readonly children: React.ReactNode;
+  readonly params: Promise<{ key: string }>;
 }
 
 export default async function WorkspaceLayout({

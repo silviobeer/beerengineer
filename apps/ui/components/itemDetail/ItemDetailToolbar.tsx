@@ -12,8 +12,8 @@ const BUTTONS: { action: ItemAction; label: string }[] = [
 ];
 
 type Props = {
-  allowedActions: string[];
-  onAction: (action: ItemAction) => Promise<ActionResult>;
+  readonly allowedActions: string[];
+  readonly onAction: (action: ItemAction) => Promise<ActionResult>;
 };
 
 export function ItemDetailToolbar({ allowedActions, onAction }: Readonly<Props>): React.ReactElement {

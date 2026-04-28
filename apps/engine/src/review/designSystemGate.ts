@@ -105,7 +105,7 @@ export async function runDesignSystemGate(input: ReviewScope): Promise<{
         message: `design-system-violation: ${line.file}:${line.line} used a hardcoded hex color — replace it with a design token.`,
       })
     }
-    const paletteMatch = line.content.match(TAILWIND_PALETTE)
+    const paletteMatch = TAILWIND_PALETTE.exec(line.content)
     if (paletteMatch) {
       findings.push({
         source: "design-system",
@@ -113,7 +113,7 @@ export async function runDesignSystemGate(input: ReviewScope): Promise<{
         message: `design-system-violation: ${line.file}:${line.line} used Tailwind palette class '${paletteMatch[0]}' — replace it with a design token.`,
       })
     }
-    const roundedMatch = line.content.match(ROUNDED)
+    const roundedMatch = ROUNDED.exec(line.content)
     if (roundedMatch) {
       findings.push({
         source: "design-system",

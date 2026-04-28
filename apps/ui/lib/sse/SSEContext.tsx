@@ -86,34 +86,27 @@ type Envelope = {
 
 function toChatEntry(env: Envelope, eventType: string): ChatEntry | null {
   const payload = env.payload ?? {};
-  const role =
-    typeof payload.role === "string"
-      ? payload.role
-      : eventType === "agent_message"
-        ? "assistant"
-        : eventType === "user_message" || eventType === "prompt_answered"
-          ? "user"
-          : "system";
-  const content =
-    typeof payload.message === "string"
-      ? payload.message
-      : typeof payload.prompt === "string"
-        ? payload.prompt
-        : typeof payload.answer === "string"
-          ? payload.answer
-          : "";
+  let role = "system";
+  if (typeof payload.role === "string") role = payload.role;
+  else if (eventType === "agent_message") role = "assistant";
+  else if (eventType === "user_message" || eventType === "prompt_answered") role = "user";
+
+  let content = "";
+  if (typeof payload.message === "string") content = payload.message;
+  else if (typeof payload.prompt === "string") content = payload.prompt;
+  else if (typeof payload.answer === "string") content = payload.answer;
   if (!content && eventType !== "prompt_requested") return null;
+
+  let kind: "message" | "question" | "answer" = "message";
+  if (eventType === "prompt_requested") kind = "question";
+  else if (eventType === "prompt_answered") kind = "answer";
+
   return {
     id: env.id,
     runId: env.runId ?? "",
     role,
     content,
-    kind:
-      eventType === "prompt_requested"
-        ? "question"
-        : eventType === "prompt_answered"
-          ? "answer"
-          : "message",
+    kind,
     promptId:
       typeof payload.promptId === "string" && payload.promptId.length > 0
         ? payload.promptId
@@ -129,12 +122,9 @@ function severityFromLevel(level?: number): string {
 
 function toLogEntry(env: Envelope, eventType: string): LogEntry | null {
   const payload = env.payload ?? {};
-  let message =
-    typeof payload.message === "string"
-      ? payload.message
-      : eventType === "artifact_written" && typeof payload.path === "string"
-        ? `wrote ${payload.path}`
-        : "";
+  let message = "";
+  if (typeof payload.message === "string") message = payload.message;
+  else if (eventType === "artifact_written" && typeof payload.path === "string") message = `wrote ${payload.path}`;
   if (!message) return null;
   return {
     id: env.id,
@@ -157,11 +147,11 @@ function parseData(raw: unknown): unknown {
 }
 
 export type SSEConnectionManagerProps = {
-  workspaceKey: string;
-  initialItems?: ItemState[];
-  initialRunId?: string | null;
-  eventSourceFactory?: EventSourceFactory;
-  children: ReactNode;
+  readonly workspaceKey: string;
+  readonly initialItems?: ItemState[];
+  readonly initialRunId?: string | null;
+  readonly eventSourceFactory?: EventSourceFactory;
+  readonly children: ReactNode;
 };
 
 export function SSEConnectionManager({
