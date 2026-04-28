@@ -409,6 +409,35 @@ test("validateWireframeArtifact passes when wireframeHtmlPerScreen is absent (op
   assert.doesNotThrow(() => validateWireframeArtifact(validArtifact))
 })
 
+test("validateWireframeArtifact accepts navigation flow label as a legacy alias for trigger", () => {
+  const artifact = {
+    ...validArtifact,
+    navigation: {
+      entryPoints: [{ screenId: "home", projectId: "P1" }],
+      flows: [{ from: "home", to: "home", label: "Refresh board" }],
+    },
+    wireframeHtmlPerScreen: {
+      home: "<!doctype html><html><head></head><body>[ Home ]</body></html>",
+    },
+  } as unknown as WireframeArtifact
+  assert.doesNotThrow(() => validateWireframeArtifact(artifact))
+})
+
+test("validateWireframeArtifact throws when navigation flow trigger and label are both missing", () => {
+  const artifact = {
+    ...validArtifact,
+    navigation: {
+      entryPoints: [{ screenId: "home", projectId: "P1" }],
+      flows: [{ from: "home", to: "home" }],
+    },
+  } as unknown as WireframeArtifact
+  let thrown: Error | undefined
+  try { validateWireframeArtifact(artifact) } catch (e) { thrown = e as Error }
+  assert.ok(thrown, "Expected validateWireframeArtifact to throw")
+  assert.match(thrown!.message, /navigation\.flows\[0\]/)
+  assert.match(thrown!.message, /trigger/)
+})
+
 test("validateWireframeArtifact throws when wireframeHtmlPerScreen is an empty object", () => {
   const artifact = { ...validArtifact, wireframeHtmlPerScreen: {} } as WireframeArtifact
   let thrown: Error | undefined
@@ -491,6 +520,23 @@ test("renderWireframeFiles includes sitemap.html with links to every screen", ()
   const sitemap = files.find(f => f.fileName === "screen-map.html")
   assert.ok(sitemap, "Expected screen-map.html in output")
   assert.ok(sitemap!.content.includes("home.html"), "Sitemap must link to home.html")
+})
+
+test("renderWireframeFiles uses navigation flow label when trigger is absent", () => {
+  const artifact = {
+    ...validArtifact,
+    navigation: {
+      entryPoints: [{ screenId: "home", projectId: "P1" }],
+      flows: [{ from: "home", to: "home", label: "See overview" }],
+    },
+    wireframeHtmlPerScreen: {
+      home: "<!doctype html><html><body>[ Home ]</body></html>",
+    },
+  } as unknown as WireframeArtifact
+  const files = renderWireframeFiles(artifact)
+  const sitemap = files.find(f => f.fileName === "screen-map.html")
+  assert.ok(sitemap, "Expected screen-map.html in output")
+  assert.ok(sitemap!.content.includes("See overview -> home"), "Sitemap must render the legacy flow label")
 })
 
 test("renderWireframeFiles falls back to procedural renderer when wireframeHtmlPerScreen is absent", () => {

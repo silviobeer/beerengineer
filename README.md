@@ -12,6 +12,10 @@ CLI-first, HTTP/SSE API, optional Next.js UI.
 
 ![status](https://img.shields.io/badge/status-experimental-orange)
 
+Current state: still a bit buggy, especially the UI. For now, the
+recommended way to use beerengineer is via the CLI, ideally through an
+agent harness.
+
 ---
 
 ## What it does

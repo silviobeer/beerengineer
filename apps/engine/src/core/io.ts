@@ -43,7 +43,7 @@ export type WorkflowEvent =
       actions?: PromptAction[]
       stageRunId?: string | null
     } & WorkflowEventMeta)
-  | ({ type: "prompt_answered"; runId: string; promptId: string; answer: string } & WorkflowEventMeta)
+  | ({ type: "prompt_answered"; runId: string; promptId: string; answer: string; source?: "bridge" | "local" } & WorkflowEventMeta)
   | ({ type: "loop_iteration"; runId: string; stageRunId?: string | null; n: number; phase: "begin" | "user-message" | "review-feedback" | "review"; stageKey?: string | null } & WorkflowEventMeta)
   | ({ type: "review_feedback"; runId: string; stageRunId?: string | null; stageKey?: string | null; cycle: number; feedback: string } & WorkflowEventMeta)
   | ({ type: "tool_called"; runId: string; stageRunId?: string | null; name: string; argsPreview?: string; provider?: string } & WorkflowEventMeta)

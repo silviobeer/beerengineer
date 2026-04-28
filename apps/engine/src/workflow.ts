@@ -102,6 +102,12 @@ async function readJson<T>(path: string): Promise<T> {
   return JSON.parse(await readFile(path, "utf8")) as T
 }
 
+const stageArtifactPath = (context: WorkflowContext, stage: string, file: string) =>
+  join(layout.stageArtifactsDir(context, stage), file)
+
+const loadStageArtifact = <T>(context: WorkflowContext, stage: string, file: string) =>
+  readJson<T>(stageArtifactPath(context, stage, file))
+
 async function blockRunForWorkspaceState(
   context: WorkflowContext,
   summary: string,
@@ -196,28 +202,19 @@ function normalizeItemResume(input: WorkflowResumeInput): ItemResumePlan {
   if (scope.type === "stage") stageId = scope.stageId
   else if (scope.type === "run") stageId = input.currentStage ?? ""
   const topStage = stageId.split("/")[0]
-  const manualStage = input.manualStage
-  switch (topStage) {
-    case "brainstorm":
-      return { startStage: "brainstorm", manualStage }
-    case "visual-companion":
-      return { startStage: "visual-companion", manualStage }
-    case "frontend-design":
-      return { startStage: "frontend-design", manualStage }
-    case "merge-gate":
-      return { startStage: "merge-gate", manualStage }
-    default:
-      return { startStage: "projects", manualStage }
-  }
+  const startStage = (
+    ["brainstorm", "visual-companion", "frontend-design", "merge-gate"] as const
+  ).find(stage => stage === topStage) ?? "projects"
+  return { startStage, manualStage: input.manualStage }
 }
 
 async function loadProjects(context: WorkflowContext): Promise<Project[]> {
-  return readJson<Project[]>(join(layout.stageArtifactsDir(context, "brainstorm"), "projects.json"))
+  return loadStageArtifact<Project[]>(context, "brainstorm", "projects.json")
 }
 
 async function loadConcept(context: WorkflowContext): Promise<Concept & { hasUi?: boolean }> {
   try {
-    return await readJson<Concept & { hasUi?: boolean }>(join(layout.stageArtifactsDir(context, "brainstorm"), "concept.json"))
+    return await loadStageArtifact<Concept & { hasUi?: boolean }>(context, "brainstorm", "concept.json")
   } catch {
     const projects = await loadProjects(context)
     const fallback = projects[0]?.concept ?? {
@@ -230,17 +227,15 @@ async function loadConcept(context: WorkflowContext): Promise<Concept & { hasUi?
   }
 }
 
-async function loadWireframes(context: WorkflowContext): Promise<WireframeArtifact> {
-  return readJson<WireframeArtifact>(join(layout.stageArtifactsDir(context, "visual-companion"), "wireframes.json"))
-}
+const loadWireframes = (context: WorkflowContext) =>
+  loadStageArtifact<WireframeArtifact>(context, "visual-companion", "wireframes.json")
 
-async function loadDesign(context: WorkflowContext): Promise<DesignArtifact> {
-  return readJson<DesignArtifact>(join(layout.stageArtifactsDir(context, "frontend-design"), "design.json"))
-}
+const loadDesign = (context: WorkflowContext) =>
+  loadStageArtifact<DesignArtifact>(context, "frontend-design", "design.json")
 
 async function loadDesignPrepFreeze(context: WorkflowContext): Promise<DesignPrepFreeze | null> {
   try {
-    return await readJson<DesignPrepFreeze>(join(layout.stageArtifactsDir(context, "visual-companion"), "project-freeze.json"))
+    return await loadStageArtifact<DesignPrepFreeze>(context, "visual-companion", "project-freeze.json")
   } catch {
     return null
   }
@@ -305,7 +300,9 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
   stagePresent.dim(`→ Real git mode: branches will be created in ${git.mode.workspaceRoot}`)
 
   try {
-    const itemResumePlan = options?.resume ? normalizeItemResume(options.resume) : { startStage: "brainstorm" as const }
+    const itemResumePlan = options?.resume
+      ? normalizeItemResume(options.resume)
+      : { startStage: "brainstorm" as const }
     const resumePlan = options?.resume ? normalizeProjectResume(options.resume) : null
     // Load the workspace snapshot once per item. Brownfield context (existing
     // README, AGENTS.md, prior docs/, top-level config files, tree summary)
@@ -320,9 +317,7 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
     emitWorkflowPreviewPort(context, activeRun)
     const itemConcept = await loadConcept(context)
     const itemHasUi = projects.some(project => project.hasUi === true)
-    const itemSnapshot = itemHasUi
-      ? buildItemSnapshotWithUi(codebaseSnapshot, options?.workspaceRoot)
-      : buildItemSnapshotWithoutUi(codebaseSnapshot)
+    const itemSnapshot = buildItemSnapshot(codebaseSnapshot, itemHasUi, options?.workspaceRoot)
     const { wireframes, design } = await resolveDesignPrepArtifacts(
       context,
       itemResumePlan,
@@ -368,15 +363,11 @@ async function resolveWorkflowProjects(
   codebaseSnapshot: ReturnType<typeof loadCodebaseSnapshot>,
 ): Promise<Project[]> {
   if (itemResumePlan.startStage === "brainstorm") {
-    return await withStageLifecycle(
-      "brainstorm",
-      () => brainstorm(item, context, git, stageLlm, codebaseSnapshot),
-      {},
-    )
+    return withStageLifecycle("brainstorm", () => brainstorm(item, context, git, stageLlm, codebaseSnapshot), {})
   }
   git.ensureItemBranch()
   git.assertWorkspaceRootOnBaseBranch("after ensureItemBranch (resume past brainstorm)")
-  return await loadProjects(context)
+  return loadProjects(context)
 }
 
 function emitWorkflowPreviewPort(
@@ -401,22 +392,22 @@ async function resolveDesignPrepArtifacts(
   itemConcept: Concept & { hasUi?: boolean },
   projects: Project[],
   stageLlm: WorkflowLlmOptions["stage"] | undefined,
-  itemSnapshot: ReturnType<typeof buildItemSnapshotWithoutUi>,
+  itemSnapshot: ReturnType<typeof buildItemSnapshot>,
 ): Promise<{ wireframes: WireframeArtifact | undefined; design: DesignArtifact | undefined }> {
   if (!itemHasUi) return { wireframes: undefined, design: undefined }
-  const designPrepPlan = buildDesignPrepPlan(context, itemResumePlan, itemHasUi)
-  const designPrepReferences = loadItemWorkspaceReferences(context)
-  const wireframes = designPrepPlan.shouldRunVisualCompanion
+  const { shouldRunVisualCompanion, shouldRunFrontendDesign } = buildDesignPrepPlan(context, itemResumePlan)
+  const references = loadItemWorkspaceReferences(context)
+  const wireframes = shouldRunVisualCompanion
     ? await withStageLifecycle(
         "visual-companion",
-        () => visualCompanion(context, { itemConcept, projects, references: designPrepReferences }, stageLlm, itemSnapshot),
+        () => visualCompanion(context, { itemConcept, projects, references }, stageLlm, itemSnapshot),
         {},
       )
     : await loadWireframes(context)
-  const design = designPrepPlan.shouldRunFrontendDesign
+  const design = shouldRunFrontendDesign
     ? await withStageLifecycle(
         "frontend-design",
-        () => frontendDesign(context, { itemConcept, projects, wireframes, references: designPrepReferences }, stageLlm, itemSnapshot),
+        () => frontendDesign(context, { itemConcept, projects, wireframes, references }, stageLlm, itemSnapshot),
         {},
       )
     : await loadDesign(context)
@@ -449,26 +440,28 @@ async function runWorkflowProjects(
     git: ReturnType<typeof createGitAdapter>
     wireframes: WireframeArtifact | undefined
     design: DesignArtifact | undefined
-    itemSnapshot: ReturnType<typeof buildItemSnapshotWithoutUi>
+    itemSnapshot: ReturnType<typeof buildItemSnapshot>
     resumePlan: ReturnType<typeof normalizeProjectResume> | null
     llm: WorkflowLlmOptions | undefined
   },
 ): Promise<void> {
   const { context, projects, git, wireframes, design, itemSnapshot, resumePlan, llm } = options
+  const conceptAmendments = [
+    ...(wireframes?.conceptAmendments ?? []),
+    ...(design?.conceptAmendments ?? []),
+  ]
+  const projectDesignArtifact = design ? projectDesign(design) : undefined
+  const decisions = loadItemDecisions(context)
   for (const project of projects) {
     git.ensureProjectBranch(project.id)
-    const conceptAmendments = [
-      ...(wireframes?.conceptAmendments ?? []),
-      ...(design?.conceptAmendments ?? []),
-    ]
     await runProject(
       {
         ...context,
         project: { ...project, concept: mergeAmendments(project.concept, conceptAmendments, project.id) },
         wireframes: wireframes ? projectWireframes(wireframes, project.id) : undefined,
-        design: design ? projectDesign(design) : undefined,
+        design: projectDesignArtifact,
         codebase: itemSnapshot,
-        decisions: loadItemDecisions(context),
+        decisions,
       },
       git,
       resumePlan ?? undefined,
@@ -528,53 +521,42 @@ async function ensureWorkflowGitAdapter(context: WorkflowContext, workspaceRoot?
 function workflowGitFailureSummary(reason: string, workspaceRoot?: string): string {
   if (!workspaceRoot) return `Cannot start run: ${reason}`
   const currentBranch = currentGitBranch(workspaceRoot)
-  if (!reason.includes("uncommitted changes")) {
-    return `Cannot start run: ${reason}`
-  }
+  if (!reason.includes("uncommitted changes")) return `Cannot start run: ${reason}`
   return currentBranch === "main" || currentBranch === "master"
     ? `Workspace ${workspaceRoot} has uncommitted changes on ${currentBranch}. Strategy violation: main/master must stay clean; item work belongs on isolated item branches.`
     : `Workspace ${workspaceRoot} has uncommitted changes. beerengineer_ requires a clean repo before it creates an isolated item branch.`
 }
 
-function buildItemSnapshotWithUi(
+const buildItemSnapshot = (
   codebaseSnapshot: ReturnType<typeof loadCodebaseSnapshot>,
+  includeUi: boolean,
   workspaceRoot?: string,
-) {
-  return codebaseSnapshot
-    ? { ...codebaseSnapshot, frontend: loadFrontendSnapshot(workspaceRoot) }
-    : codebaseSnapshot
-}
-
-function buildItemSnapshotWithoutUi(
-  codebaseSnapshot: ReturnType<typeof loadCodebaseSnapshot>,
-) {
-  return codebaseSnapshot
+) => {
+  if (!codebaseSnapshot || !includeUi) return codebaseSnapshot
+  return { ...codebaseSnapshot, frontend: loadFrontendSnapshot(workspaceRoot) }
 }
 
 function buildDesignPrepPlan(
   context: WorkflowContext,
   itemResumePlan: ReturnType<typeof normalizeItemResume>,
-  itemHasUi: boolean,
 ) {
-  const wireframesFileExists = existsSync(join(layout.stageArtifactsDir(context, "visual-companion"), "wireframes.json"))
-  const designFileExists = existsSync(join(layout.stageArtifactsDir(context, "frontend-design"), "design.json"))
+  const wireframesFileExists = existsSync(stageArtifactPath(context, "visual-companion", "wireframes.json"))
+  const designFileExists = existsSync(stageArtifactPath(context, "frontend-design", "design.json"))
   const isManualVisual = itemResumePlan.manualStage === "visual-companion"
   const isManualFrontend = itemResumePlan.manualStage === "frontend-design"
-  const shouldRunVisualCompanion = itemHasUi && (
-    isManualVisual ||
-    (!itemResumePlan.manualStage && (
+  const shouldRunVisualCompanion = isManualVisual || (
+    !itemResumePlan.manualStage && (
       itemResumePlan.startStage === "brainstorm" ||
       itemResumePlan.startStage === "visual-companion" ||
       !wireframesFileExists
-    ))
+    )
   )
-  const shouldRunFrontendDesign = itemHasUi && (
-    isManualFrontend ||
-    (!itemResumePlan.manualStage && (
+  const shouldRunFrontendDesign = isManualFrontend || (
+    !itemResumePlan.manualStage && (
       shouldRunVisualCompanion ||
       itemResumePlan.startStage === "frontend-design" ||
       !designFileExists
-    ))
+    )
   )
   return { shouldRunVisualCompanion, shouldRunFrontendDesign }
 }

@@ -26,6 +26,7 @@ interface EngineConversationEntry {
   text: string;
   createdAt: string;
   promptId?: string;
+  answerTo?: string;
   actions?: Array<{ label: string; value: string }>;
 }
 
@@ -67,7 +68,7 @@ function toUiEntry(e: EngineConversationEntry): ConversationEntry {
     id: e.id,
     type: e.actor,
     text: e.text,
-    promptId: e.kind === "answer" ? e.promptId : undefined,
+    promptId: e.kind === "answer" ? (e.answerTo ?? e.promptId) : undefined,
     createdAt: e.createdAt,
   };
 }
@@ -156,6 +157,23 @@ export function ItemChat({ itemId }: Readonly<ItemChatProps>) {
   // Track which entry IDs we already have so SSE inserts don't duplicate the
   // initial-fetch snapshot.
   const seenIdsRef = useRef<Set<string>>(new Set());
+  const entriesRef = useRef<ConversationEntry[]>([]);
+
+  useEffect(() => {
+    entriesRef.current = entries;
+  }, [entries]);
+
+  const adoptConversation = (conv: EngineConversationResponse) => {
+    const nextEntries = conv.entries.map(toUiEntry);
+    seenIdsRef.current = new Set(
+      nextEntries
+        .map((entry) => entry.id)
+        .filter((entryId): entryId is string => typeof entryId === "string" && entryId.length > 0)
+    );
+    entriesRef.current = nextEntries;
+    setEntries(nextEntries);
+    setOpenPrompt(conv.openPrompt);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -188,13 +206,8 @@ export function ItemChat({ itemId }: Readonly<ItemChatProps>) {
         if (!convRes.ok) throw new Error(`conv_${convRes.status}`);
         const conv = (await convRes.json()) as EngineConversationResponse;
         if (cancelled) return;
-        const initial = conv.entries.map(toUiEntry);
-        for (const e of initial) {
-          if (e.id) seenIdsRef.current.add(e.id);
-        }
         setRunId(latest.id);
-        setEntries(initial);
-        setOpenPrompt(conv.openPrompt);
+        adoptConversation(conv);
         setLoaded(true);
       } catch (err) {
         if (!cancelled) {
@@ -228,9 +241,24 @@ export function ItemChat({ itemId }: Readonly<ItemChatProps>) {
         );
       }
       const ui = chatEntryToUi(entry);
+      if (
+        !ui.id &&
+        entriesRef.current.some(
+          (existing) =>
+            existing.type === ui.type &&
+            existing.text === ui.text &&
+            existing.promptId === ui.promptId
+        )
+      ) {
+        return;
+      }
       if (ui.id && seenIdsRef.current.has(ui.id)) return;
       if (ui.id) seenIdsRef.current.add(ui.id);
-      setEntries((prev) => [...prev, ui]);
+      setEntries((prev) => {
+        const next = [...prev, ui];
+        entriesRef.current = next;
+        return next;
+      });
     });
     return unsub;
   }, [runId, registerConversationListener]);
@@ -267,7 +295,13 @@ export function ItemChat({ itemId }: Readonly<ItemChatProps>) {
       </p>
     );
   }
-  return <ChatPanel activeRunId={runId} conversation={conversation} />;
+  return (
+    <ChatPanel
+      activeRunId={runId}
+      conversation={conversation}
+      onConversationSync={adoptConversation}
+    />
+  );
 }
 
 export default ItemChat;

@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { BoardCard } from "./BoardCard";
 import { BoardItemModal } from "./BoardItemModal";
 import { KanbanColumn } from "./KanbanColumn";
@@ -14,7 +15,10 @@ interface BoardProps {
 
 export function Board({ items, workspaceKey }: Readonly<BoardProps>) {
   const { itemState } = useSSE();
+  const router = useRouter();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [isRefreshing, startTransition] = useTransition();
+  const pendingUnknownIdsRef = useRef<Set<string>>(new Set());
 
   const liveItems = useMemo<BoardCardDTO[]>(() => {
     return items.map((item) => {
@@ -31,6 +35,26 @@ export function Board({ items, workspaceKey }: Readonly<BoardProps>) {
       };
     });
   }, [items, itemState]);
+
+  useEffect(() => {
+    if (isRefreshing) return;
+
+    const knownIds = new Set(items.map(item => item.id));
+    const unknownIds = Object.keys(itemState).filter(id => !knownIds.has(id));
+    if (unknownIds.length === 0) {
+      pendingUnknownIdsRef.current.clear();
+      return;
+    }
+
+    const nextUnknownKey = unknownIds.slice().sort().join(",");
+    const previousUnknownKey = Array.from(pendingUnknownIdsRef.current).sort().join(",");
+    if (nextUnknownKey === previousUnknownKey) return;
+
+    pendingUnknownIdsRef.current = new Set(unknownIds);
+    startTransition(() => {
+      router.refresh();
+    });
+  }, [itemState, items, isRefreshing, router]);
 
   const onOpen = useCallback((card: BoardCardDTO) => {
     setSelectedId(card.id);

@@ -12,6 +12,85 @@ import { ask } from "../../sim/human.js"
 import type { WorkflowContext, WireframeArtifact } from "../../types.js"
 import type { CodebaseSnapshot } from "../../types/context.js"
 import type { DesignPrepInput, VisualCompanionState } from "./types.js"
+import type { StageAgentAdapter, StageAgentInput, StageAgentResponse } from "../../core/adapters.js"
+
+const MODE_QUESTION =
+  "Do you already have wireframes or mockups you'd like to reference? Reply with exactly `none` or `references`."
+const REFERENCE_DETAILS_QUESTION =
+  "Share the references, mockups, or links we should consider before drafting wireframes."
+const PRIORITY_QUESTION =
+  "Which screens or flows are highest priority for the first pass?"
+const CONSTRAINTS_QUESTION =
+  "Any accessibility, responsive, or interaction constraints we should honor before drafting wireframes?"
+
+export function parseClarificationModeReply(reply: string): "none" | "references" | null {
+  const trimmed = reply.trim().toLowerCase()
+  if (trimmed === "none" || trimmed === "references") return trimmed
+  return null
+}
+
+export function nextClarificationQuestion(state: VisualCompanionState): string | null {
+  if (state.clarificationCount === 0) return MODE_QUESTION
+  if (state.inputMode === "references") {
+    if (state.clarificationCount === 1) return REFERENCE_DETAILS_QUESTION
+    if (state.clarificationCount === 2) return PRIORITY_QUESTION
+    if (state.clarificationCount === 3) return CONSTRAINTS_QUESTION
+    return null
+  }
+  if (state.clarificationCount === 1) return PRIORITY_QUESTION
+  if (state.clarificationCount === 2) return CONSTRAINTS_QUESTION
+  return null
+}
+
+function withClarificationGate(
+  delegate: StageAgentAdapter<VisualCompanionState, WireframeArtifact>,
+): StageAgentAdapter<VisualCompanionState, WireframeArtifact> {
+  return {
+    async step(input: StageAgentInput<VisualCompanionState>): Promise<StageAgentResponse<WireframeArtifact>> {
+      const state = input.state
+      if (input.kind === "review-feedback") {
+        return delegate.step(input)
+      }
+
+      if (state.clarificationCount < state.maxClarifications) {
+        if (input.kind === "begin") {
+          const prefix = state.pendingRevisionFeedback
+            ? `Noted: "${state.pendingRevisionFeedback}". `
+            : ""
+          return { kind: "message", message: `${prefix}${nextClarificationQuestion(state) ?? MODE_QUESTION}` }
+        }
+
+        const reply = input.userMessage.trim()
+        if (state.clarificationCount === 0) {
+          const mode = parseClarificationModeReply(reply)
+          if (!mode) {
+            return {
+              kind: "message",
+              message:
+                "Reply with exactly `none` or `references`. If you choose `references`, the next answer can contain the actual links or mockups.",
+            }
+          }
+          state.inputMode = mode
+          state.maxClarifications = mode === "references" ? 4 : 3
+        }
+        state.history.push({ role: "user", text: reply })
+        state.clarificationCount++
+        const nextQuestion = nextClarificationQuestion(state)
+        if (nextQuestion) {
+          return { kind: "message", message: nextQuestion }
+        }
+      }
+
+      return delegate.step(input)
+    },
+    getSessionId() {
+      return delegate.getSessionId?.() ?? null
+    },
+    setSessionId(sessionId) {
+      delegate.setSessionId?.(sessionId)
+    },
+  }
+}
 
 function buildScreenSummary(artifact: WireframeArtifact): string {
   const lines = artifact.screens.map(screen => {
@@ -36,7 +115,7 @@ export async function visualCompanion(
     workspaceId: context.workspaceId,
     workspaceRoot: context.workspaceRoot!,
     baseRunId: context.runId,
-    stageAgent: createVisualCompanionStage(llm),
+    stageAgent: withClarificationGate(createVisualCompanionStage(llm)),
     reviewer: createVisualCompanionReview(llm),
     askUser: ask,
     maxReviews: 2,

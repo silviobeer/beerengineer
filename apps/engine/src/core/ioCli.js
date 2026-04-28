@@ -1,0 +1,145 @@
+import * as readline from "node:readline";
+import { createBus, busToWorkflowIO } from "./bus.js";
+import { withPromptPersistence } from "./promptPersistence.js";
+import { attachHumanCliRenderer } from "./renderers/humanCli.js";
+import { NON_INTERACTIVE_NO_ANSWER_SENTINEL } from "./constants.js";
+/**
+ * CLI adapter. Builds an in-process event bus and attaches the terminal
+ * renderer. When a human is at the terminal, `readline` resolves
+ * `prompt_requested` events by emitting `prompt_answered` back onto the bus —
+ * which lets every other subscriber (DB sync, prompt persistence, SSE bridge)
+ * see the answer as a first-class event.
+ *
+ * When `repos` is supplied, `withPromptPersistence` is attached as a
+ * subscriber so every `prompt_requested` is mirrored into the shared
+ * `pending_prompts` table (making CLI-owned runs visible to the UI). The
+ * cross-process answer routing — re-emitting `prompt_answered` that the
+ * API wrote into `stage_logs` — is attached by `prepareRun` in the
+ * orchestrator, because that's where runId is known.
+ */
+export function createCliIO(repos, opts = {}) {
+    const bus = createBus();
+    const detachRenderer = opts.renderer
+        ? opts.renderer(bus)
+        : attachHumanCliRenderer(bus);
+    const detachPersistence = repos ? withPromptPersistence(bus, repos) : () => { };
+    const interactivePrompting = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+    const rl = opts.externalPromptResolver || !interactivePrompting
+        ? null
+        : readline.createInterface({ input: process.stdin, output: process.stdout });
+    let stdinLineReader = null;
+    let stdinEnded = false;
+    const queuedAnswers = [];
+    const pendingAnswers = [];
+    const normalizeAnswer = (answer, actions) => {
+        const trimmed = answer.trim();
+        if (!actions || trimmed.length === 0)
+            return trimmed;
+        const idx = Number(trimmed);
+        if (Number.isInteger(idx) && idx >= 1 && idx <= actions.length) {
+            const action = actions[idx - 1];
+            if (action !== undefined)
+                return action.value;
+        }
+        const folded = trimmed.toLowerCase();
+        const byValue = actions.find(action => action.value.toLowerCase() === folded);
+        if (byValue)
+            return byValue.value;
+        const byLabel = actions.find(action => action.label.toLowerCase() === folded);
+        if (byLabel)
+            return byLabel.value;
+        return trimmed;
+    };
+    const detachPromptResolver = opts.externalPromptResolver
+        ? () => { }
+        : bus.subscribe(event => {
+            if (event.type !== "prompt_requested")
+                return;
+            const resolveAnswer = (answer) => {
+                bus.emit({
+                    type: "prompt_answered",
+                    runId: event.runId,
+                    promptId: event.promptId,
+                    answer: normalizeAnswer(answer, event.actions),
+                });
+            };
+            if (rl) {
+                if (event.actions && event.actions.length > 0) {
+                    const choices = event.actions
+                        .map((action, index) => `${index + 1}) ${action.label}`)
+                        .join(", ");
+                    process.stdout.write(`  choices: ${choices}\n`);
+                }
+                // Interactive TTY. The agent's message text already reached the
+                // terminal via `attachHumanCliRenderer`'s `chat_message` line; we
+                // just need a short answer cue here. The full prompt text is
+                // carried by the bus event (and persisted verbatim by
+                // `withPromptPersistence`) so the UI and transcript projection
+                // still see meaningful content.
+                rl.question("  > ", resolveAnswer);
+                return;
+            }
+            // Non-interactive stdin is treated as a queued stream of newline-
+            // delimited answers so the CLI can be tested and scripted via pipes.
+            if (queuedAnswers.length > 0) {
+                resolveAnswer(queuedAnswers.shift() ?? "");
+                return;
+            }
+            if (stdinEnded) {
+                // stdin closed with no queued answer for this prompt.
+                // Resolving with "" would silently feed an empty answer to the
+                // stage agent, causing incorrect behaviour (e.g. the
+                // visual-companion stage proceeds as if the user said "no
+                // references" when in fact no human was present at the terminal).
+                //
+                // Instead we resolve with a special sentinel that busToWorkflowIO's
+                // ask() path (bus.request) will surface back to stageRuntime.
+                // stageRuntime then passes this to definition.askUser; since we
+                // cannot reject bus.request() (it only resolves), we encode the
+                // error into the answer value and rely on the stage's own handling.
+                //
+                // The sentinel is detected in stageRuntime via the exported helper
+                // `isNonInteractiveNoAnswer`.
+                resolveAnswer(NON_INTERACTIVE_NO_ANSWER_SENTINEL);
+                return;
+            }
+            pendingAnswers.push(resolveAnswer);
+        });
+    if (!opts.externalPromptResolver && !interactivePrompting) {
+        stdinLineReader = readline.createInterface({
+            input: process.stdin,
+            crlfDelay: Infinity,
+            terminal: false,
+        });
+        stdinLineReader.on("line", line => {
+            const pending = pendingAnswers.shift();
+            if (pending)
+                pending(line);
+            else
+                queuedAnswers.push(line);
+        });
+        stdinLineReader.on("close", () => {
+            stdinEnded = true;
+            // Resolve any answers that arrived before stdin closed with the
+            // non-interactive sentinel so stageRuntime can throw a descriptive
+            // error instead of silently proceeding with an empty answer.
+            while (pendingAnswers.length > 0) {
+                pendingAnswers.shift()?.(NON_INTERACTIVE_NO_ANSWER_SENTINEL);
+            }
+        });
+    }
+    const io = busToWorkflowIO(bus);
+    const originalClose = io.close;
+    return {
+        ...io,
+        bus,
+        close() {
+            detachPromptResolver();
+            detachRenderer();
+            detachPersistence();
+            stdinLineReader?.close();
+            rl?.close();
+            originalClose?.();
+        },
+    };
+}

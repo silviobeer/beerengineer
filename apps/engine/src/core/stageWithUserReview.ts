@@ -1,3 +1,4 @@
+import { NON_INTERACTIVE_NO_ANSWER_SENTINEL } from "./constants.js"
 import { stagePresent } from "./stagePresentation.js"
 import { runStage, type StageArtifactContent, type StageDefinition, type StageRun } from "./stageRuntime.js"
 import type { ReviewAgentAdapter, StageAgentAdapter } from "./adapters.js"
@@ -89,26 +90,37 @@ export async function runStageWithUserReview<S extends RevisableState, A, R>(
 
     const { result: artifact, run } = await runStage<S, A, A>(definition)
 
-    const userReply = (await opts.askUser(opts.buildGatePrompt({ artifact, run }))).trim()
+    while (true) {
+      const userReply = (await opts.askUser(opts.buildGatePrompt({ artifact, run }))).trim()
 
-    if (/^approve$/i.test(userReply)) {
-      return await opts.onUserApprove({ artifact, run })
-    }
-
-    if (/^revise:/i.test(userReply)) {
-      userReviewRound++
-      if (userReviewRound > maxRounds) {
+      if (userReply === NON_INTERACTIVE_NO_ANSWER_SENTINEL) {
         throw new Error(
-          `${opts.stageId}: post-artifact review cap reached (${maxRounds} rounds). ` +
-          "Approve the artifact or restart the stage with updated references.",
+          `Stage "${opts.stageId}" reached the post-artifact review gate in a non-interactive run with no queued answer. ` +
+          "Resume the run from the UI or API so the review gate emits a pending_prompt event, " +
+          "then answer with \"approve\" or \"revise: <feedback>\".",
         )
       }
-      pendingRevisionFeedback = userReply.replace(/^revise:\s*/i, "").trim()
-      stagePresent.step(`User revision round ${userReviewRound}: ${pendingRevisionFeedback}`)
-      continue
-    }
 
-    stagePresent.warn(`Unrecognised reply "${userReply}" — treating as approve.`)
-    return await opts.onUserApprove({ artifact, run })
+      if (/^approve$/i.test(userReply)) {
+        return await opts.onUserApprove({ artifact, run })
+      }
+
+      if (/^revise:/i.test(userReply)) {
+        userReviewRound++
+        if (userReviewRound > maxRounds) {
+          throw new Error(
+            `${opts.stageId}: post-artifact review cap reached (${maxRounds} rounds). ` +
+            "Approve the artifact or restart the stage with updated references.",
+          )
+        }
+        pendingRevisionFeedback = userReply.replace(/^revise:\s*/i, "").trim()
+        stagePresent.step(`User revision round ${userReviewRound}: ${pendingRevisionFeedback}`)
+        break
+      }
+
+      stagePresent.warn(
+        `Unrecognised reply "${userReply}". Reply with exactly "approve" or "revise: <feedback>".`,
+      )
+    }
   }
 }

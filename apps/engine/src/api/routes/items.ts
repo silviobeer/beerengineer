@@ -5,7 +5,7 @@ import type { Repos } from "../../db/repositories.js"
 import { isPortListening, readManagedPreviewPid, resolvePreviewLaunchSpec, startPreviewServer, stopPreviewServer } from "../../core/previewLauncher.js"
 import { resolveItemPreviewContext } from "../../core/itemPreview.js"
 import { isItemAction, lookupTransition, type ItemActionsService } from "../../core/itemActions.js"
-import { latestCompletedRunForItem } from "../../core/itemWorkspace.js"
+import { latestCompletedRunForItem, latestRunForItemWithStageArtifact } from "../../core/itemWorkspace.js"
 import { resumeRunInProcess, startRunForItem, type StartRunAction } from "../../core/runService.js"
 import { layout } from "../../core/workspaceLayout.js"
 import { resolveWorkflowContextForRun } from "../../core/workflowContextResolver.js"
@@ -227,8 +227,8 @@ export async function handleStopItemPreview(
 export function handleGetItemWireframes(repos: Repos, res: ServerResponse, itemId: string): void {
   const item = repos.getItem(itemId)
   if (!item) return json(res, 404, { error: "item_not_found", code: "not_found" })
-  const run = latestCompletedRunForItem(repos, item.id)
-  if (!run) return json(res, 404, { error: "no_completed_run", code: "not_found" })
+  const run = latestRunForItemWithStageArtifact(repos, item.id, "visual-companion", "wireframes.json")
+  if (!run) return json(res, 404, { error: "no_design_prep", code: "not_found" })
   const ctx = resolveWorkflowContextForRun(repos, run)
   if (!ctx) return json(res, 404, { error: "artefact_root_unreachable", code: "not_found" })
   const base = layout.stageArtifactsDir(ctx, "visual-companion")
@@ -253,8 +253,8 @@ export function handleGetItemWireframes(repos: Repos, res: ServerResponse, itemI
 export function handleGetItemDesign(repos: Repos, res: ServerResponse, itemId: string): void {
   const item = repos.getItem(itemId)
   if (!item) return json(res, 404, { error: "item_not_found", code: "not_found" })
-  const run = latestCompletedRunForItem(repos, item.id)
-  if (!run) return json(res, 404, { error: "no_completed_run", code: "not_found" })
+  const run = latestRunForItemWithStageArtifact(repos, item.id, "frontend-design", "design.json")
+  if (!run) return json(res, 404, { error: "no_design_prep", code: "not_found" })
   const ctx = resolveWorkflowContextForRun(repos, run)
   if (!ctx) return json(res, 404, { error: "artefact_root_unreachable", code: "not_found" })
   const base = layout.stageArtifactsDir(ctx, "frontend-design")

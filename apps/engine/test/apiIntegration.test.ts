@@ -1451,3 +1451,93 @@ test("POST /runs/:id/messages appends a canonical user message through the API w
     await stopServer(proc)
   }
 })
+
+test("item design-prep endpoints return artifacts from the latest in-progress run when files already exist", async () => {
+  const dbPath = tmpDbPath()
+  const workspaceRoot = mkdtempSync(join(tmpdir(), "be2-api-live-artifacts-"))
+  const db = initDatabase(dbPath)
+  const repos = new Repos(db)
+  const ws = repos.upsertWorkspace({ key: "live", name: "Live", rootPath: workspaceRoot })
+  const item = repos.createItem({
+    workspaceId: ws.id,
+    title: "live design prep",
+    description: "",
+    currentColumn: "frontend",
+    phaseStatus: "running",
+    currentStage: "frontend-design",
+  })
+  const completedRun = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "completed", workspaceFsId: ws.id })
+  const completedCreatedAt = completedRun.created_at
+  while (Date.now() === completedCreatedAt) {
+    // Keep the next run's created_at strictly newer so latest-run ordering is deterministic.
+  }
+  const runningRun = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "running", workspaceFsId: ws.id })
+  repos.updateRun(completedRun.id, { status: "completed", current_stage: "frontend-design" })
+  repos.updateRun(runningRun.id, { status: "running", current_stage: "frontend-design" })
+  db.close()
+
+  const completedCtx = { workspaceId: ws.id, workspaceRoot, runId: completedRun.id }
+  const runningCtx = { workspaceId: ws.id, workspaceRoot, runId: runningRun.id }
+  mkdirSync(layout.stageArtifactsDir(completedCtx, "visual-companion"), { recursive: true })
+  mkdirSync(layout.stageArtifactsDir(completedCtx, "frontend-design"), { recursive: true })
+  mkdirSync(layout.stageArtifactsDir(runningCtx, "visual-companion"), { recursive: true })
+  mkdirSync(layout.stageArtifactsDir(runningCtx, "frontend-design"), { recursive: true })
+
+  writeFileSync(join(layout.stageArtifactsDir(completedCtx, "visual-companion"), "wireframes.json"), JSON.stringify({
+    inputMode: "none",
+    screens: [{ id: "old", name: "Old", purpose: "Old", projectIds: ["P01"], layout: { kind: "single-column", regions: [{ id: "main", label: "Main" }] }, elements: [] }],
+    navigation: { entryPoints: [{ screenId: "old", projectId: "P01" }], flows: [] },
+  }))
+  writeFileSync(join(layout.stageArtifactsDir(completedCtx, "visual-companion"), "screen-map.html"), "<html>old-map</html>")
+  writeFileSync(join(layout.stageArtifactsDir(completedCtx, "visual-companion"), "old.html"), "<html>old</html>")
+  writeFileSync(join(layout.stageArtifactsDir(completedCtx, "frontend-design"), "design.json"), JSON.stringify({
+    inputMode: "none",
+    tokens: { light: { primary: "#000", secondary: "#111", accent: "#222", background: "#fff", surface: "#f7f7f7", textPrimary: "#111", textMuted: "#666", success: "#0a0", warning: "#aa0", error: "#a00", info: "#00a" } },
+    typography: { display: { family: "OldFont", weight: "700", usage: "Display" }, body: { family: "OldBody", weight: "500", usage: "Body" }, scale: { md: "1rem" } },
+    spacing: { baseUnit: "8px", sectionPadding: "32px", cardPadding: "16px", contentMaxWidth: "1200px" },
+    borders: { buttons: "999px", cards: "16px", badges: "999px" },
+    shadows: { sm: "0 1px 2px rgba(0,0,0,0.1)" },
+    tone: "Old tone",
+    antiPatterns: ["generic defaults"],
+  }))
+  writeFileSync(join(layout.stageArtifactsDir(completedCtx, "frontend-design"), "design-preview.html"), "<html>old-preview</html>")
+
+  writeFileSync(join(layout.stageArtifactsDir(runningCtx, "visual-companion"), "wireframes.json"), JSON.stringify({
+    inputMode: "none",
+    screens: [{ id: "live", name: "Live", purpose: "Live", projectIds: ["P01"], layout: { kind: "single-column", regions: [{ id: "main", label: "Main" }] }, elements: [] }],
+    navigation: { entryPoints: [{ screenId: "live", projectId: "P01" }], flows: [] },
+  }))
+  writeFileSync(join(layout.stageArtifactsDir(runningCtx, "visual-companion"), "screen-map.html"), "<html>live-map</html>")
+  writeFileSync(join(layout.stageArtifactsDir(runningCtx, "visual-companion"), "live.html"), "<html>live</html>")
+  writeFileSync(join(layout.stageArtifactsDir(runningCtx, "frontend-design"), "design.json"), JSON.stringify({
+    inputMode: "none",
+    tokens: { light: { primary: "#123456", secondary: "#111", accent: "#abcdef", background: "#fff", surface: "#f7f7f7", textPrimary: "#111", textMuted: "#666", success: "#0a0", warning: "#aa0", error: "#a00", info: "#00a" } },
+    typography: { display: { family: "LiveFont", weight: "700", usage: "Display" }, body: { family: "LiveBody", weight: "500", usage: "Body" }, scale: { md: "1rem" } },
+    spacing: { baseUnit: "8px", sectionPadding: "32px", cardPadding: "16px", contentMaxWidth: "1200px" },
+    borders: { buttons: "999px", cards: "16px", badges: "999px" },
+    shadows: { sm: "0 1px 2px rgba(0,0,0,0.1)" },
+    tone: "Live tone",
+    antiPatterns: ["generic defaults"],
+  }))
+  writeFileSync(join(layout.stageArtifactsDir(runningCtx, "frontend-design"), "design-preview.html"), "<html>live-preview</html>")
+
+  const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
+  try {
+    await waitForHealth(base)
+
+    const itemWireframes = await fetch(`${base}/items/${item.id}/wireframes`)
+    assert.equal(itemWireframes.status, 200)
+    const wfBody = await itemWireframes.json() as { runId: string; artifact: { screens: Array<{ id: string }> } }
+    assert.equal(wfBody.runId, runningRun.id)
+    assert.equal(wfBody.artifact.screens[0]?.id, "live")
+
+    const itemDesign = await fetch(`${base}/items/${item.id}/design`)
+    assert.equal(itemDesign.status, 200)
+    const designBody = await itemDesign.json() as { runId: string; artifact: { tone: string } }
+    assert.equal(designBody.runId, runningRun.id)
+    assert.equal(designBody.artifact.tone, "Live tone")
+  } finally {
+    await stopServer(proc)
+    rmSync(workspaceRoot, { recursive: true, force: true })
+  }
+})

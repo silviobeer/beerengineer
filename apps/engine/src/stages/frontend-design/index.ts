@@ -15,6 +15,85 @@ import { ask } from "../../sim/human.js"
 import type { DesignArtifact, WireframeArtifact, WorkflowContext } from "../../types.js"
 import type { CodebaseSnapshot } from "../../types/context.js"
 import type { FrontendDesignInput, FrontendDesignState } from "./types.js"
+import type { StageAgentAdapter, StageAgentInput, StageAgentResponse } from "../../core/adapters.js"
+
+const MODE_QUESTION =
+  "Do you already have a design system, brand direction, or reference apps we should align with? Reply with exactly `none` or `references`."
+const REFERENCE_DETAILS_QUESTION =
+  "Share the design system, brand references, or example apps we should align with before producing the first artifact."
+const TONE_QUESTION =
+  "What visual tone or product preference should guide the first design pass?"
+const CONSTRAINTS_QUESTION =
+  "Any hard constraints on color, typography, density, accessibility, or responsiveness before we produce the first artifact?"
+
+export function parseClarificationModeReply(reply: string): "none" | "references" | null {
+  const trimmed = reply.trim().toLowerCase()
+  if (trimmed === "none" || trimmed === "references") return trimmed
+  return null
+}
+
+export function nextClarificationQuestion(state: FrontendDesignState): string | null {
+  if (state.clarificationCount === 0) return MODE_QUESTION
+  if (state.inputMode === "references") {
+    if (state.clarificationCount === 1) return REFERENCE_DETAILS_QUESTION
+    if (state.clarificationCount === 2) return TONE_QUESTION
+    if (state.clarificationCount === 3) return CONSTRAINTS_QUESTION
+    return null
+  }
+  if (state.clarificationCount === 1) return TONE_QUESTION
+  if (state.clarificationCount === 2) return CONSTRAINTS_QUESTION
+  return null
+}
+
+function withClarificationGate(
+  delegate: StageAgentAdapter<FrontendDesignState, DesignArtifact>,
+): StageAgentAdapter<FrontendDesignState, DesignArtifact> {
+  return {
+    async step(input: StageAgentInput<FrontendDesignState>): Promise<StageAgentResponse<DesignArtifact>> {
+      const state = input.state
+      if (input.kind === "review-feedback") {
+        return delegate.step(input)
+      }
+
+      if (state.clarificationCount < state.maxClarifications) {
+        if (input.kind === "begin") {
+          const prefix = state.pendingRevisionFeedback
+            ? `Noted: "${state.pendingRevisionFeedback}". `
+            : ""
+          return { kind: "message", message: `${prefix}${nextClarificationQuestion(state) ?? MODE_QUESTION}` }
+        }
+
+        const reply = input.userMessage.trim()
+        if (state.clarificationCount === 0) {
+          const mode = parseClarificationModeReply(reply)
+          if (!mode) {
+            return {
+              kind: "message",
+              message:
+                "Reply with exactly `none` or `references`. If you choose `references`, the next answer can contain the actual design systems, apps, or links.",
+            }
+          }
+          state.inputMode = mode
+          state.maxClarifications = mode === "references" ? 4 : 3
+        }
+        state.history.push({ role: "user", text: reply })
+        state.clarificationCount++
+        const nextQuestion = nextClarificationQuestion(state)
+        if (nextQuestion) {
+          return { kind: "message", message: nextQuestion }
+        }
+      }
+
+      return delegate.step(input)
+    },
+    getSessionId() {
+      return delegate.getSessionId?.() ?? null
+    },
+    setSessionId(sessionId) {
+      delegate.setSessionId?.(sessionId)
+    },
+  }
+}
 
 function buildDesignSummary(artifact: DesignArtifact): string {
   const palette = artifact.tokens.light
@@ -104,7 +183,7 @@ export async function frontendDesign(
     workspaceId: context.workspaceId,
     workspaceRoot: context.workspaceRoot!,
     baseRunId: context.runId,
-    stageAgent: createFrontendDesignStage(llm),
+    stageAgent: withClarificationGate(createFrontendDesignStage(llm)),
     reviewer: createFrontendDesignReview(llm),
     askUser: ask,
     maxReviews: 2,

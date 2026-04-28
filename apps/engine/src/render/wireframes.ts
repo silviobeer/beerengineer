@@ -19,6 +19,7 @@ export function validateWireframeArtifact(artifact: WireframeArtifact): void {
     )
   }
   artifact.screens.forEach((screen, index) => validateWireframeScreen(screen, index))
+  validateWireframeNavigation(artifact)
   validateWireframeHtmlPerScreen(artifact.wireframeHtmlPerScreen)
 }
 
@@ -74,6 +75,74 @@ function validateWireframeElements(screen: Screen, index: number): void {
     )
   }
   screen.elements.forEach((element, elementIndex) => validateWireframeElement(screen, index, element, elementIndex))
+}
+
+function validateWireframeNavigation(artifact: WireframeArtifact): void {
+  if (!artifact.navigation || typeof artifact.navigation !== "object") {
+    throw new TypeError(
+      "Invalid wireframe artifact from LLM: navigation is missing or not an object. " +
+      "The LLM must return navigation.entryPoints and navigation.flows.",
+    )
+  }
+  if (!Array.isArray(artifact.navigation.entryPoints)) {
+    throw new TypeError(
+      "Invalid wireframe artifact from LLM: navigation.entryPoints is not an array.",
+    )
+  }
+  if (!Array.isArray(artifact.navigation.flows)) {
+    throw new TypeError(
+      "Invalid wireframe artifact from LLM: navigation.flows is not an array.",
+    )
+  }
+
+  const knownScreenIds = new Set(artifact.screens.map(screen => screen.id))
+  artifact.navigation.entryPoints.forEach((entryPoint, index) => {
+    if (!entryPoint || typeof entryPoint !== "object") {
+      throw new TypeError(
+        `Invalid wireframe artifact from LLM: navigation.entryPoints[${index}] is not an object.`,
+      )
+    }
+    requireWireframeString(
+      entryPoint.screenId,
+      `Invalid wireframe artifact from LLM: navigation.entryPoints[${index}] is missing required string field "screenId".`,
+    )
+    requireWireframeString(
+      entryPoint.projectId,
+      `Invalid wireframe artifact from LLM: navigation.entryPoints[${index}] is missing required string field "projectId".`,
+    )
+    if (!knownScreenIds.has(entryPoint.screenId)) {
+      throw new Error(
+        `Invalid wireframe artifact from LLM: navigation.entryPoints[${index}] references unknown screenId "${entryPoint.screenId}".`,
+      )
+    }
+  })
+
+  artifact.navigation.flows.forEach((flow, index) => {
+    if (!flow || typeof flow !== "object") {
+      throw new TypeError(
+        `Invalid wireframe artifact from LLM: navigation.flows[${index}] is not an object.`,
+      )
+    }
+    requireWireframeString(
+      flow.from,
+      `Invalid wireframe artifact from LLM: navigation.flows[${index}] is missing required string field "from".`,
+    )
+    requireWireframeString(
+      flow.to,
+      `Invalid wireframe artifact from LLM: navigation.flows[${index}] is missing required string field "to".`,
+    )
+    requireWireframeFlowTrigger(flow, index)
+    if (!knownScreenIds.has(flow.from)) {
+      throw new Error(
+        `Invalid wireframe artifact from LLM: navigation.flows[${index}] references unknown "from" screenId "${flow.from}".`,
+      )
+    }
+    if (!knownScreenIds.has(flow.to)) {
+      throw new Error(
+        `Invalid wireframe artifact from LLM: navigation.flows[${index}] references unknown "to" screenId "${flow.to}".`,
+      )
+    }
+  })
 }
 
 function validateWireframeElement(
@@ -138,6 +207,23 @@ function requireWireframeString(value: unknown, message: string): asserts value 
   if (typeof value !== "string" || value.length === 0) {
     throw new Error(message)
   }
+}
+
+function wireframeFlowTrigger(flow: { trigger?: unknown; label?: unknown }): string {
+  if (typeof flow.trigger === "string" && flow.trigger.length > 0) return flow.trigger
+  if (typeof flow.label === "string" && flow.label.length > 0) return flow.label
+  return ""
+}
+
+function requireWireframeFlowTrigger(
+  flow: { trigger?: unknown; label?: unknown },
+  index: number,
+): void {
+  if (wireframeFlowTrigger(flow).length > 0) return
+  throw new Error(
+    `Invalid wireframe artifact from LLM: navigation.flows[${index}] is missing required string field "trigger". ` +
+    'Legacy alias "label" is accepted when present, but at least one of them must be a non-empty string.',
+  )
 }
 
 function escapeHtml(value: string): string {
@@ -235,7 +321,7 @@ export function renderScreenMap(artifact: WireframeArtifact): string {
   const screens = artifact.screens.map(screen => {
     const flows = artifact.navigation.flows
       .filter(flow => flow.from === screen.id)
-      .map(flow => `<li>${escapeHtml(flow.trigger)} -> ${escapeHtml(flow.to)}</li>`)
+      .map(flow => `<li>${escapeHtml(wireframeFlowTrigger(flow))} -> ${escapeHtml(flow.to)}</li>`)
       .join("")
     const link = `<a href="${escapeHtml(screen.id)}.html">${escapeHtml(screen.name)}</a>`
     return `<article class="screen">

@@ -166,13 +166,55 @@ describe("ChatPanel review-gate actions", () => {
     render(
       <ChatPanel activeRunId={item.activeRunId} conversation={item.conversation} />
     );
-    await user.click(screen.getByRole("button", { name: "Approve" }));
+    await user.click(screen.getByTestId("chat-review-approve"));
     await waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(1));
     const last = calls.at(-1)!;
     expect(last.url).toBe("/api/runs/run-42/answer");
     expect(last.init?.method).toBe("POST");
     const body = JSON.parse(String(last.init?.body));
     expect(body).toEqual({ promptId: "p-7", answer: "approve" });
+  });
+
+  it("TC-5.3a.extra: active review banner is rendered for an open review gate", () => {
+    const item = itemWithActiveRunAndConversation();
+    render(
+      <ChatPanel activeRunId={item.activeRunId} conversation={item.conversation} />
+    );
+    expect(screen.getByTestId("chat-review-gate-banner")).toBeInTheDocument();
+    expect(screen.getByTestId("chat-review-feedback")).toBeInTheDocument();
+    expect(screen.getByTestId("chat-review-approve")).toBeInTheDocument();
+    expect(screen.getByTestId("chat-review-revise")).toBeInTheDocument();
+  });
+
+  it("TC-5.3a.targets: review banner promotes mockup URLs into review targets", () => {
+    const conversation: ConversationEntry[] = [
+      {
+        id: "r1",
+        type: "review-gate",
+        promptId: "p-1",
+        text:
+          'Design summary\n\nHigh-fidelity mockups (open in browser):\n' +
+          '  http://localhost:4100/runs/run-42/artifacts/stages/frontend-design/artifacts/mockups/home.html\n' +
+          '  http://localhost:4100/runs/run-42/artifacts/stages/frontend-design/artifacts/mockups/workflow.html\n\n' +
+          'Type "approve" to commit, or "revise: <feedback>" to adjust.',
+        actions: [
+          { label: "Approve", value: "approve" },
+          { label: "Revise", value: "revise:" },
+        ],
+      },
+    ];
+
+    render(<ChatPanel activeRunId="run-42" conversation={conversation} />);
+
+    expect(screen.getAllByTestId("chat-review-target")).toHaveLength(2);
+    expect(screen.getByTestId("chat-review-open-link")).toHaveAttribute(
+      "href",
+      "/api/runs/run-42/artifacts/stages/frontend-design/artifacts/mockups/home.html"
+    );
+    expect(screen.getByTestId("chat-review-iframe")).toHaveAttribute(
+      "src",
+      "/api/runs/run-42/artifacts/stages/frontend-design/artifacts/mockups/home.html"
+    );
   });
 
   it("TC-5.3b: no speculative bubble appears before the answer fetch resolves", async () => {
@@ -183,25 +225,38 @@ describe("ChatPanel review-gate actions", () => {
       <ChatPanel activeRunId={item.activeRunId} conversation={item.conversation} />
     );
     const beforeCount = screen.getAllByTestId("chat-entry").length;
-    await user.click(screen.getByRole("button", { name: "Approve" }));
+    await user.click(screen.getByTestId("chat-review-approve"));
     expect(screen.getAllByTestId("chat-entry")).toHaveLength(beforeCount);
     await act(async () => {
       resolvePending();
     });
   });
 
-  it("TC-5.3c: clicking Revise sends an engine-valid revise answer", async () => {
+  it("TC-5.3c: clicking Revise without feedback does not send and shows validation", async () => {
     const item = itemWithActiveRunAndConversation();
     const { calls } = installMockFetch({ defaultStatus: 200 });
     const user = userEvent.setup();
     render(
       <ChatPanel activeRunId={item.activeRunId} conversation={item.conversation} />
     );
-    await user.click(screen.getByRole("button", { name: "Revise" }));
+    await user.click(screen.getByTestId("chat-review-revise"));
+    expect(calls).toHaveLength(0);
+    expect(screen.getByTestId("chat-review-validation")).toBeInTheDocument();
+  });
+
+  it("TC-5.3c.extra: banner revise sends engine-valid feedback answer", async () => {
+    const item = itemWithActiveRunAndConversation();
+    const { calls } = installMockFetch({ defaultStatus: 200 });
+    const user = userEvent.setup();
+    render(
+      <ChatPanel activeRunId={item.activeRunId} conversation={item.conversation} />
+    );
+    await user.type(screen.getByTestId("chat-review-feedback"), "tighten spacing");
+    await user.click(screen.getByTestId("chat-review-revise"));
     await waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(1));
     const last = calls.at(-1)!;
     const body = JSON.parse(String(last.init?.body));
-    expect(body).toEqual({ promptId: "p-7", answer: "revise:" });
+    expect(body).toEqual({ promptId: "p-7", answer: "revise: tighten spacing" });
   });
 
   it("TC-5.3d: answered review-gate buttons become inert immediately after a successful answer POST", async () => {
@@ -211,8 +266,8 @@ describe("ChatPanel review-gate actions", () => {
     render(
       <ChatPanel activeRunId={item.activeRunId} conversation={item.conversation} />
     );
-    const approve = screen.getByRole("button", { name: "Approve" });
-    const revise = screen.getByRole("button", { name: "Revise" });
+    const approve = screen.getByTestId("chat-review-approve");
+    const revise = screen.getByTestId("chat-review-revise");
     await user.click(approve);
     await waitFor(() => expect(calls.length).toBe(1));
     expect(approve).toBeDisabled();
@@ -233,6 +288,71 @@ describe("ChatPanel free-form messages", () => {
     expect(screen.getByTestId("chat-send")).toBeInTheDocument();
   });
 
+  it("TC-5.4a.extra: open non-review prompt turns the composer into a prompt-answer form", async () => {
+    const { calls } = installMockFetch({ defaultStatus: 200 });
+    const user = userEvent.setup();
+    const conversation: ConversationEntry[] = [
+      { id: "q1", type: "agent", promptId: "p-1", text: "Which screens are highest priority?" },
+    ];
+    render(<ChatPanel activeRunId="run-42" conversation={conversation} />);
+    expect(screen.getByTestId("chat-prompt-banner")).toBeInTheDocument();
+    expect(screen.getByTestId("chat-send")).toHaveTextContent("Answer Prompt");
+    await user.type(screen.getByTestId("chat-textarea"), "Home and workflow");
+    await user.click(screen.getByTestId("chat-send"));
+    await waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(1));
+    const last = calls.at(-1)!;
+    expect(last.url).toBe("/api/runs/run-42/answer");
+    expect(JSON.parse(String(last.init?.body))).toEqual({
+      promptId: "p-1",
+      answer: "Home and workflow",
+    });
+  });
+
+  it("TC-5.4a.sync: successful prompt answer adopts returned conversation immediately", async () => {
+    const synced = vi.fn();
+    const { calls } = installMockFetch({
+      defaultStatus: 200,
+      defaultBody: {
+        runId: "run-42",
+        updatedAt: "2026-04-28T15:00:00.000Z",
+        entries: [
+          {
+            id: "a-1",
+            runId: "run-42",
+            stageKey: "visual-companion",
+            kind: "answer",
+            actor: "user",
+            text: "none",
+            createdAt: "2026-04-28T15:00:00.000Z",
+            answerTo: "p-1",
+          },
+        ],
+        openPrompt: null,
+      },
+    });
+    const user = userEvent.setup();
+    const conversation: ConversationEntry[] = [
+      { id: "q1", type: "agent", promptId: "p-1", text: "Which screens are highest priority?" },
+    ];
+    render(
+      <ChatPanel
+        activeRunId="run-42"
+        conversation={conversation}
+        onConversationSync={synced}
+      />
+    );
+    await user.type(screen.getByTestId("chat-textarea"), "none");
+    await user.click(screen.getByTestId("chat-send"));
+    await waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(1));
+    expect(synced).toHaveBeenCalledTimes(1);
+    expect(synced).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "run-42",
+        openPrompt: null,
+      })
+    );
+  });
+
   it("TC-5.4b: typing and clicking Send POSTs to /api/runs/:id/messages with body", async () => {
     const { calls } = installMockFetch({ defaultStatus: 200 });
     const user = userEvent.setup();
@@ -243,7 +363,7 @@ describe("ChatPanel free-form messages", () => {
     const last = calls.at(-1)!;
     expect(last.url).toBe("/api/runs/run-42/messages");
     expect(last.init?.method).toBe("POST");
-    expect(JSON.parse(String(last.init?.body))).toEqual({ message: "Hello engine" });
+    expect(JSON.parse(String(last.init?.body))).toEqual({ text: "Hello engine" });
   });
 
   it("TC-5.5a: empty textarea on Send shows validation hint and sends no request", async () => {
@@ -326,7 +446,7 @@ describe("ChatPanel error handling", () => {
     const before = screen.getAllByTestId("chat-entry").length;
     const textarea = screen.getByTestId("chat-textarea") as HTMLTextAreaElement;
     await user.type(textarea, "draft-text");
-    await user.click(screen.getByRole("button", { name: "Approve" }));
+    await user.click(screen.getByTestId("chat-review-approve"));
     await waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(1));
     expect(screen.getAllByTestId("chat-entry")).toHaveLength(before);
     expect(textarea.value).toBe("draft-text");
@@ -383,7 +503,7 @@ describe("ChatPanel error handling", () => {
     const before = screen.getAllByTestId("chat-entry").length;
     const textarea = screen.getByTestId("chat-textarea") as HTMLTextAreaElement;
     await user.type(textarea, "draft-while-approve");
-    await user.click(screen.getByRole("button", { name: "Approve" }));
+    await user.click(screen.getByTestId("chat-review-approve"));
     await waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(1));
     expect(screen.getAllByTestId("chat-entry")).toHaveLength(before);
     expect(textarea.value).toBe("draft-while-approve");

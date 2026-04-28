@@ -1,6 +1,6 @@
 import type { EventBus } from "./bus.js"
 import { attachCrossProcessBridge } from "./crossProcessBridge.js"
-import { attachDbSync } from "./runOrchestrator.js"
+import { attachDbSync } from "./dbSync.js"
 import { readWorkspaceConfig } from "./workspaces.js"
 import type { Repos, WorkspaceRow } from "../db/repositories.js"
 import { attachChatToolNotifications } from "../notifications/chattool/index.js"

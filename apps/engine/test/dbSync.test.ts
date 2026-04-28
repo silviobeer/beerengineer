@@ -114,6 +114,42 @@ test("attachDbSync persists synthetic messaging-level events", () => {
   }
 })
 
+test("attachDbSync does not persist bridged prompt_answered events a second time", () => {
+  const db = tmpDb()
+  const repos = new Repos(db)
+  const ws = repos.upsertWorkspace({ key: "test", name: "Test" })
+  const item = repos.createItem({ workspaceId: ws.id, title: "T", description: "D" })
+  const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "T" })
+  const { bus } = makeBusIO()
+
+  try {
+    attachDbSync(bus, repos, { runId: run.id, itemId: item.id })
+    repos.appendLog({
+      runId: run.id,
+      eventType: "prompt_answered",
+      message: "references",
+      data: { promptId: "p-1", answer: "references", source: "api" },
+    })
+
+    bus.emit({
+      type: "prompt_answered",
+      runId: run.id,
+      promptId: "p-1",
+      answer: "references",
+      source: "bridge",
+    })
+
+    const promptAnsweredLogs = repos
+      .listLogsForRun(run.id)
+      .filter(log => log.event_type === "prompt_answered")
+
+    assert.equal(promptAnsweredLogs.length, 1)
+    assert.equal(promptAnsweredLogs[0]?.message, "references")
+  } finally {
+    db.close()
+  }
+})
+
 test("pending prompts round-trip via repos", () => {
   const db = tmpDb()
   const repos = new Repos(db)

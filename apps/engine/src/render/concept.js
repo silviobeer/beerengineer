@@ -1,0 +1,44 @@
+function stringifyListValue(value) {
+    if (typeof value === "string")
+        return value;
+    if (value == null)
+        return "";
+    if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint")
+        return String(value);
+    const serialized = JSON.stringify(value);
+    return serialized ?? "";
+}
+function toStringList(value) {
+    if (Array.isArray(value))
+        return value.map(stringifyListValue);
+    if (value == null)
+        return [];
+    if (typeof value === "string")
+        return value.split(/\r?\n/).map(s => s.replace(/^[-*]\s*/, "").trim()).filter(Boolean);
+    if (typeof value === "object")
+        return Object.values(value).map(stringifyListValue);
+    return typeof value === "number" || typeof value === "boolean" || typeof value === "bigint" ? [String(value)] : [];
+}
+export function renderConceptMarkdown(concept) {
+    const users = toStringList(concept.users);
+    const constraints = toStringList(concept.constraints);
+    return [
+        "# Concept",
+        "",
+        "## Summary",
+        concept.summary ?? "",
+        "",
+        "## Problem",
+        concept.problem ?? "",
+        "",
+        "## Users",
+        ...users.map(user => `- ${user}`),
+        "",
+        "## Constraints",
+        ...constraints.map(constraint => `- ${constraint}`),
+        "",
+        "## UI Signal",
+        concept.hasUi ? "UI-bearing item" : "No UI identified",
+        "",
+    ].join("\n");
+}

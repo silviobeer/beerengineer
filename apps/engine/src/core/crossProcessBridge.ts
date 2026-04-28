@@ -73,5 +73,6 @@ function rehydrate(row: StageLogRow): WorkflowEvent | null {
     runId: row.run_id,
     promptId,
     answer: row.message,
+    source: "bridge",
   }
 }
