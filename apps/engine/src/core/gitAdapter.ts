@@ -23,6 +23,7 @@ import {
   ensureWaveBranch,
   exitRunToItemBranch,
   gcManagedStoryWorktrees,
+  mergeItemIntoBase,
   mergeProjectIntoItem,
   mergeStoryIntoWave,
   mergeWaveIntoProject,
@@ -49,6 +50,8 @@ export interface GitAdapter {
   ensureProjectBranch(projectId: string): void
   /** Merge the per-project branch back into the item branch. */
   mergeProjectIntoItem(projectId: string, opts?: GitMergeOptions): void
+  /** Merge the per-item branch back into the base branch. */
+  mergeItemIntoBase(): { mergeSha: string }
 
   // ---------- wave / story branches ----------
   ensureWaveBranch(projectId: string, waveNumber: number): string
@@ -133,6 +136,9 @@ export function createGitAdapterFromMode(
     },
     mergeProjectIntoItem(projectId: string, opts: GitMergeOptions = {}) {
       mergeProjectIntoItem(mode, context, projectId, opts)
+    },
+    mergeItemIntoBase() {
+      return mergeItemIntoBase(mode, context)
     },
 
     ensureWaveBranch(projectId, waveNumber) {

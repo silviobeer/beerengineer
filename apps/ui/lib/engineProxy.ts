@@ -30,3 +30,17 @@ export async function proxyEngineMutation(
     },
   });
 }
+
+export async function proxyEngineGet(path: string): Promise<Response> {
+  const upstream = await fetch(`${engineBaseUrl()}${path}`, {
+    method: "GET",
+    cache: "no-store",
+  });
+  const text = await upstream.text();
+  return new Response(text, {
+    status: upstream.status,
+    headers: {
+      "Content-Type": upstream.headers.get("Content-Type") ?? "application/json",
+    },
+  });
+}

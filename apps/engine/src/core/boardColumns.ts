@@ -1,11 +1,11 @@
 /**
  * Project the engine's stage taxonomy onto the fixed board column set.
- *   idea | brainstorm | frontend | requirements | implementation | done
+ *   idea | brainstorm | frontend | requirements | implementation | merge | done
  * Phase-status values:
  *   draft | running | review_required | completed | failed
  */
 
-export type BoardColumn = "idea" | "brainstorm" | "frontend" | "requirements" | "implementation" | "done"
+export type BoardColumn = "idea" | "brainstorm" | "frontend" | "requirements" | "implementation" | "merge" | "done"
 export type BoardPhaseStatus = "draft" | "running" | "review_required" | "completed" | "failed"
 
 export function mapStageToColumn(
@@ -28,10 +28,13 @@ export function mapStageToColumn(
     case "execution":
     case "project-review":
     case "qa":
-      return { column: "implementation", phaseStatus }
     case "documentation":
     case "handoff":
-      return { column: outcome === "completed" ? "done" : "implementation", phaseStatus }
+      return { column: "implementation", phaseStatus }
+    case "merge-gate":
+      if (outcome === "completed") return { column: "done", phaseStatus: "completed" }
+      if (outcome === "failed") return { column: "merge", phaseStatus: "review_required" }
+      return { column: "merge", phaseStatus }
     default:
       return { column: "implementation", phaseStatus }
   }

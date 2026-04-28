@@ -171,7 +171,7 @@ export function attachDbSync(
           stageRunId: event.stageRunId ?? null,
           eventType: "prompt_requested",
           message: event.prompt,
-          data: { promptId: event.promptId, prompt: event.prompt }
+          data: { promptId: event.promptId, prompt: event.prompt, actions: event.actions }
         }))
         return
       }
@@ -287,7 +287,8 @@ export function attachDbSync(
         // stage even if it died by failing.
         const soleLive = wasSoleLiveRun()
         repos.updateRun(event.runId, { status: event.status })
-        const { column, phaseStatus } = mapStageToColumn("documentation", event.status)
+        const item = repos.getItem(ctx.itemId)
+        const { column, phaseStatus } = mapStageToColumn(item?.current_stage ?? "documentation", event.status)
         if (authoritative) {
           repos.setItemColumn(ctx.itemId, column, phaseStatus)
         }
@@ -419,6 +420,60 @@ export function attachDbSync(
         }))
         return
       }
+      case "merge_gate_open": {
+        track(repos.appendLog({
+          runId: event.runId,
+          eventType: "merge_gate_open",
+          message: `merge gate opened for ${event.itemBranch}`,
+          data: {
+            itemId: event.itemId,
+            itemBranch: event.itemBranch,
+            baseBranch: event.baseBranch,
+            gatePromptId: event.gatePromptId,
+          },
+        }))
+        return
+      }
+      case "merge_gate_cancelled": {
+        track(repos.appendLog({
+          runId: event.runId,
+          eventType: "merge_gate_cancelled",
+          message: `merge gate cancelled for ${event.itemBranch}`,
+          data: {
+            itemId: event.itemId,
+            itemBranch: event.itemBranch,
+            baseBranch: event.baseBranch,
+          },
+        }))
+        return
+      }
+      case "merge_completed": {
+        track(repos.appendLog({
+          runId: event.runId,
+          eventType: "merge_completed",
+          message: `merged ${event.itemBranch} into ${event.baseBranch}`,
+          data: {
+            itemId: event.itemId,
+            itemBranch: event.itemBranch,
+            baseBranch: event.baseBranch,
+            mergeSha: event.mergeSha,
+          },
+        }))
+        return
+      }
+      case "worktree_port_assigned": {
+        track(repos.appendLog({
+          runId: event.runId ?? ctx.runId,
+          eventType: "worktree_port_assigned",
+          message: `${event.branch} -> ${event.port}`,
+          data: {
+            branch: event.branch,
+            worktreePath: event.worktreePath,
+            port: event.port,
+          },
+        }))
+        return
+      }
       case "chat_message": {
         track(repos.appendLog({
           runId: event.runId,
@@ -447,6 +502,21 @@ export function attachDbSync(
           data: {
             kind: event.kind,
             meta: event.meta,
+          },
+        }))
+        return
+      }
+      case "wave_serialized": {
+        track(repos.appendLog({
+          runId: event.runId,
+          eventType: "wave_serialized",
+          message: `wave ${event.waveNumber} serialized`,
+          data: {
+            waveId: event.waveId,
+            waveNumber: event.waveNumber,
+            stories: event.stories,
+            overlappingFiles: event.overlappingFiles,
+            cause: event.cause,
           },
         }))
         return

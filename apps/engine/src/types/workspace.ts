@@ -87,6 +87,20 @@ export type WorkspaceReviewPolicy = {
   sonarcloud: SonarConfig
 }
 
+export type WorkspacePreviewConfig = {
+  /**
+   * Shell command used to start the local preview/dev server from an item
+   * worktree. Example: `pnpm dev` or
+   * `npm run dev -- --host "$BEERENGINEER_PREVIEW_HOST"`.
+   */
+  command: string
+  /**
+   * Optional relative working directory inside the worktree where the command
+   * should run. Defaults to the worktree root.
+   */
+  cwd?: string
+}
+
 export type WorkspacePreview = {
   schemaVersion: WorkspaceSchemaVersion
   path: string
@@ -178,6 +192,7 @@ export type WorkspaceConfigFile = {
   name: string
   harnessProfile: HarnessProfile
   runtimePolicy: WorkspaceRuntimePolicy
+  preview?: WorkspacePreviewConfig
   sonar: SonarConfig
   reviewPolicy: WorkspaceReviewPolicy
   preflight?: WorkspacePreflightReport

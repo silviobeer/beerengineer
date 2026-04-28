@@ -55,8 +55,9 @@ Workspace status (counts, latest run) is returned as part of `GET /workspaces/:k
 
 - `GET /items?workspace=:key&status=&column=&limit=&cursor=`
 - `GET /items/:id`
+- `GET /items/:id/preview`
 - `POST /items/:id/actions/:action`
-  - `:action` ∈ `start_brainstorm | start_implementation | rerun_design_prep | promote_to_requirements | mark_done`
+  - `:action` ∈ `start_brainstorm | start_implementation | rerun_design_prep | promote_to_requirements | promote_to_base | cancel_promotion | mark_done`
   - Request: `{}` (action-specific fields may be added per action; document them in the handler, not generically).
 
 No generic `POST /items/:id/actions` with an action string in the body. Explicit routes only.
@@ -74,7 +75,7 @@ No generic `POST /items/:id/actions` with an action string in the body. Explicit
   - Request: `{ summary, branch?, commit?, reviewNotes? }`
   - Response: `{ runId, status }`
 
-`GET /runs/:id` response includes `openPrompt` when `status === 'needs_answer'`, so UIs that only show "is it waiting on me?" don't need a second call.
+`GET /runs/:id` response includes `openPrompt` when the run is waiting on operator input, so UIs that only show "is it waiting on me?" don't need a second call. Prompt objects may also carry structured `actions` for button-style responses.
 
 ### Conversation (run-scoped)
 
@@ -159,7 +160,7 @@ No channel-binding CRUD.
 
 ### Board
 
-- `GET /board?workspace=:key` — columns + cards aggregate for a workspace.
+- `GET /board?workspace=:key` — columns + cards aggregate for a workspace. Columns are `idea | brainstorm | frontend | requirements | implementation | merge | done`.
 
 ### Spec
 
@@ -182,6 +183,7 @@ No channel-binding CRUD.
   createdAt: string             // ISO
   promptId?: string             // present iff kind === 'question'
   answerTo?: string             // promptId answered by this entry; present iff kind === 'answer'
+  actions?: Array<{ label: string, value: string }>
 }
 ```
 
@@ -202,8 +204,35 @@ Not present (intentionally): `requiresResponse`, `status`, `source`, `meta`, `ac
   stageKey: string | null
   text: string
   createdAt: string
+  actions?: Array<{ label: string, value: string }>
 }
 ```
+
+### Item preview
+
+```ts
+{
+  branch: string
+  worktreePath: string
+  previewHost: string
+  previewPort: number
+  previewUrl: string
+  running?: boolean
+  status?: "started" | "already_running" | "stopped"
+  logPath?: string
+  launch?: {
+    command: string
+    cwd: string
+    source: "workspace-config" | "package-json"
+  } | null
+}
+```
+
+- `GET /items/:id/preview` returns the assigned preview URL plus the resolved
+  launch command, if one is configured or inferable.
+- `POST /items/:id/preview/start` starts that command inside the item worktree
+  with `PORT`, `BEERENGINEER_PREVIEW_PORT`, `BEERENGINEER_PREVIEW_HOST`, and
+  `BEERENGINEER_PREVIEW_URL` injected into the child environment.
 
 Computed as: last `question` entry in `entries` with no matching `answer` (i.e. no later entry with `answerTo === this.promptId`). `null` if none.
 

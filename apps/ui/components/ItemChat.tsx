@@ -26,6 +26,7 @@ interface EngineConversationEntry {
   text: string;
   createdAt: string;
   promptId?: string;
+  actions?: Array<{ label: string; value: string }>;
 }
 
 interface EngineOpenPrompt {
@@ -34,6 +35,7 @@ interface EngineOpenPrompt {
   stageKey: string | null;
   text: string;
   createdAt: string;
+  actions?: Array<{ label: string; value: string }>;
 }
 
 interface EngineConversationResponse {
@@ -58,6 +60,7 @@ function toUiEntry(e: EngineConversationEntry): ConversationEntry {
       promptId: e.promptId,
       text: e.text,
       createdAt: e.createdAt,
+      actions: e.actions,
     });
   }
   return {
@@ -99,7 +102,18 @@ function promptEntry(input: {
   promptId: string;
   text: string;
   createdAt?: string;
+  actions?: Array<{ label: string; value: string }>;
 }): ConversationEntry {
+  if (input.actions && input.actions.length > 0) {
+    return {
+      id: input.id,
+      type: "review-gate",
+      text: input.text,
+      promptId: input.promptId,
+      createdAt: input.createdAt,
+      actions: input.actions,
+    };
+  }
   if (isReviewGatePrompt(input.text)) {
     return {
       id: input.id,
@@ -231,6 +245,7 @@ export function ItemChat({ itemId }: ItemChatProps) {
         promptId,
         text: openPrompt.text,
         createdAt: openPrompt.createdAt,
+        actions: openPrompt.actions,
       }),
     ];
   }, [entries, openPrompt]);

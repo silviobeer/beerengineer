@@ -29,6 +29,10 @@ export type CanonicalMessageType =
   | "item_column_changed"
   | "presentation"
   | "wave_serialized"
+  | "merge_gate_open"
+  | "merge_gate_cancelled"
+  | "merge_completed"
+  | "worktree_port_assigned"
 
 export type LevelInfo = {
   level: MessagingLevel
@@ -111,6 +115,14 @@ export function levelOf(event: WorkflowEvent): LevelInfo {
       // operator watching at L1 should see why a parallel-eligible wave
       // ended up running sequentially.
       return { level: 1, force: false, type: "wave_serialized" }
+    case "merge_gate_open":
+      return { level: 1, force: false, type: "merge_gate_open" }
+    case "merge_gate_cancelled":
+      return { level: 1, force: false, type: "merge_gate_cancelled" }
+    case "merge_completed":
+      return { level: 1, force: false, type: "merge_completed" }
+    case "worktree_port_assigned":
+      return { level: 1, force: false, type: "worktree_port_assigned" }
     default: {
       const exhaustive: never = event
       return exhaustive

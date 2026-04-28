@@ -78,6 +78,10 @@ Applied to the existing `WorkflowEvent` union (`apps/engine/src/core/io.ts`):
 | `log` — info / debug | L0 | |
 | `presentation` | L0 | Decorative, CLI-only. |
 | `wave_serialized` | L1 | Planner post-validator downgraded a `internallyParallelizable: true` wave to sequential because its stories share files (or fail to declare `sharedFiles` so overlap cannot be ruled out). Operator-relevant; no run-state implication. |
+| `merge_gate_open` | L1 | Item is parked in the merge column awaiting operator promotion. |
+| `merge_gate_cancelled` | L1 | Operator postponed promotion. |
+| `merge_completed` | L1 | Item branch landed on the base branch. |
+| `worktree_port_assigned` | L1 | Managed worktree received a preview port from the local pool. |
 
 New synthetic events (added to `WorkflowEvent`, emitted from existing call sites, optional for L0/L1 consumers):
 
@@ -231,6 +235,10 @@ To insulate clients from incidental renames in `WorkflowEvent`, messages expose 
 | `artifact_written` | `artifact_written` |
 | `log` | `log` |
 | `wave_serialized` | `wave_serialized` |
+| `merge_gate_open` | `merge_gate_open` |
+| `merge_gate_cancelled` | `merge_gate_cancelled` |
+| `merge_completed` | `merge_completed` |
+| `worktree_port_assigned` | `worktree_port_assigned` |
 
 The projection is a single function in `core/messagingProjection.ts` that maps a `StageLogRow` to a `MessageEntry`. Live consumers may still observe a local `WorkflowEvent` before persistence, but externally visible payloads come from the same projection contract.
 

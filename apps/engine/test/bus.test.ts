@@ -104,6 +104,34 @@ test("withPromptPersistence: creates and answers rows via bus events", () => {
   db.close()
 })
 
+test("withPromptPersistence stores prompt actions", () => {
+  const db = tmpDb()
+  const repos = new Repos(db)
+  const ws = repos.upsertWorkspace({ key: "t", name: "T" })
+  const item = repos.createItem({ workspaceId: ws.id, title: "T", description: "D" })
+  const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "T" })
+  const bus = createBus()
+  withPromptPersistence(bus, repos)
+
+  bus.emit({
+    type: "prompt_requested",
+    runId: run.id,
+    promptId: "p-actions",
+    prompt: "Promote this item?",
+    actions: [
+      { label: "Promote", value: "promote" },
+      { label: "Cancel", value: "cancel" },
+    ],
+  })
+
+  const row = repos.getPendingPrompt("p-actions")
+  assert.ok(row?.actions_json)
+  assert.match(row.actions_json ?? "", /promote/)
+  assert.match(row.actions_json ?? "", /cancel/)
+  bus.close()
+  db.close()
+})
+
 test("withPromptPersistence stores stageRunId for stage-scoped prompts", () => {
   const db = tmpDb()
   const repos = new Repos(db)

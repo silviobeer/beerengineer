@@ -759,6 +759,8 @@
               "start_implementation",
               "rerun_design_prep",
               "promote_to_requirements",
+              "promote_to_base",
+              "cancel_promotion",
               "mark_done"
             ]
           }
@@ -1574,6 +1576,70 @@
         }
       }
     },
+    "/items/{id}/preview": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ItemId"
+        }
+      ],
+      "get": {
+        "tags": [
+          "Items"
+        ],
+        "summary": "Preview info for an item's managed worktree.",
+        "responses": {
+          "200": {
+            "description": "Preview info.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemPreview"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/items/{id}/preview/start": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ItemId"
+        }
+      ],
+      "post": {
+        "tags": [
+          "Items"
+        ],
+        "summary": "Start the local preview command for an item's managed worktree.",
+        "security": [
+          {
+            "csrfToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Preview start accepted or detected as already running.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemPreview"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
     "/notifications/deliveries": {
       "get": {
         "tags": [
@@ -2192,6 +2258,27 @@
           "answerTo": {
             "type": "string",
             "description": "Present iff `kind === 'answer'`; the promptId being answered."
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PromptAction"
+            }
+          }
+        }
+      },
+      "PromptAction": {
+        "type": "object",
+        "required": [
+          "label",
+          "value"
+        ],
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
           }
         }
       },
@@ -2220,6 +2307,12 @@
           "createdAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PromptAction"
+            }
           }
         }
       },
@@ -2560,6 +2653,7 @@
               "frontend",
               "requirements",
               "implementation",
+              "merge",
               "done"
             ]
           },
@@ -2606,6 +2700,7 @@
               "frontend",
               "requirements",
               "implementation",
+              "merge",
               "done"
             ]
           },
@@ -2618,6 +2713,18 @@
               "null"
             ],
             "description": "Engine stage key for the item's authoritative run, or null when no live stage. Drives the mini-stepper on the board."
+          },
+          "hasOpenPrompt": {
+            "type": "boolean"
+          },
+          "hasReviewGateWaiting": {
+            "type": "boolean"
+          },
+          "hasBlockedRun": {
+            "type": "boolean"
+          },
+          "previewUrl": {
+            "type": "string"
           },
           "meta": {
             "type": "array",
@@ -2637,6 +2744,80 @@
                 }
               }
             }
+          }
+        }
+      },
+      "ItemPreview": {
+        "type": "object",
+        "required": [
+          "branch",
+          "worktreePath",
+          "previewHost",
+          "previewPort",
+          "previewUrl"
+        ],
+        "properties": {
+          "branch": {
+            "type": "string"
+          },
+          "worktreePath": {
+            "type": "string"
+          },
+          "previewHost": {
+            "type": "string"
+          },
+          "previewPort": {
+            "type": "integer"
+          },
+          "previewUrl": {
+            "type": "string"
+          },
+          "running": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "started",
+              "already_running",
+              "stopped"
+            ]
+          },
+          "logPath": {
+            "type": "string"
+          },
+          "launch": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PreviewLaunch"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "PreviewLaunch": {
+        "type": "object",
+        "required": [
+          "command",
+          "cwd",
+          "source"
+        ],
+        "properties": {
+          "command": {
+            "type": "string"
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "workspace-config",
+              "package-json"
+            ]
           }
         }
       }

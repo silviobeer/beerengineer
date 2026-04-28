@@ -18,6 +18,7 @@ import {
   type RunLlmConfig,
 } from "../../llm/registry.js"
 import { stagePresent } from "../../core/stagePresentation.js"
+import { assignPort, releasePort } from "../../core/portAllocator.js"
 import { runCoderHarness } from "../../llm/hosted/execution/coderHarness.js"
 import { renderArchitectureSummary } from "../../render/artifactDigests.js"
 import { renderTestPlanMarkdown } from "../../render/testPlan.js"
@@ -212,6 +213,9 @@ async function executeWave(
           resolved.id,
           layout.executionStoryWorktreeDir(ctx, wave.number, resolved.id),
         ) ?? undefined
+      if (storyWorktreeRoot && ctx.workspaceRoot) {
+        assignPort(storyWorktreeRoot, branchNameStory(ctx, ctx.project.id, wave.number, resolved.id), ctx.workspaceRoot)
+      }
       // `ensureStoryWorktree` already creates the story branch if missing
       // and checks it out inside the worktree. Calling `ensureStoryBranch`
       // here would `git checkout <story>` in the main workspace, which git
@@ -254,6 +258,7 @@ async function executeWave(
         // debugging signal; worktree-removal failures are surfaced via logs
         // and cleaned up by `gcManagedStoryWorktrees` on the next run.
         try {
+          releasePort(storyWorktreeRoot)
           git.removeStoryWorktree(storyWorktreeRoot)
         } catch (err) {
           stagePresent.dim(`worktree cleanup failed for ${storyWorktreeRoot}: ${(err as Error).message}`)

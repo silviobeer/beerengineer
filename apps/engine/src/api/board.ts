@@ -1,14 +1,33 @@
 import type { Repos } from "../db/repositories.js"
 import type { Db } from "../db/connection.js"
+import { previewUrlForWorktree } from "../core/portAllocator.js"
+import { layout } from "../core/workspaceLayout.js"
 
-const orderedColumns = ["idea", "brainstorm", "frontend", "requirements", "implementation", "done"] as const
+const orderedColumns = ["idea", "brainstorm", "frontend", "requirements", "implementation", "merge", "done"] as const
 const columnTitles: Record<(typeof orderedColumns)[number], string> = {
   idea: "Idea",
   brainstorm: "Brainstorm",
   frontend: "Frontend",
   requirements: "Requirements",
   implementation: "Implementation",
+  merge: "Merge",
   done: "Done"
+}
+
+function slugifyTitle(title: string, fallback: string): string {
+  const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
+  return slug || fallback.toLowerCase()
+}
+
+function itemWorktreePath(rootPath: string | null, workspaceFsId: string | null, itemTitle: string, itemId: string): string | null {
+  if (!rootPath || !workspaceFsId) return null
+  const itemSlug = slugifyTitle(itemTitle, itemId)
+  return layout.itemWorktreeDir({
+    workspaceId: workspaceFsId,
+    workspaceRoot: rootPath,
+    itemSlug,
+    runId: workspaceFsId,
+  })
 }
 
 export type BoardCardDTO = {
@@ -20,6 +39,10 @@ export type BoardCardDTO = {
   phaseStatus: string
   /** Engine stageKey of the authoritative run, null when no live stage. */
   currentStage: string | null
+  hasOpenPrompt?: boolean
+  hasReviewGateWaiting?: boolean
+  hasBlockedRun?: boolean
+  previewUrl?: string
   meta: Array<{ label: string; value: string }>
 }
 
@@ -36,8 +59,8 @@ export type BoardDTO = {
 
 export function getBoard(db: Db, workspaceKey?: string | null): BoardDTO {
   const workspace = workspaceKey
-    ? (db.prepare("SELECT * FROM workspaces WHERE key = ?").get(workspaceKey) as { id: string; key: string } | undefined)
-    : (db.prepare("SELECT * FROM workspaces ORDER BY created_at ASC LIMIT 1").get() as { id: string; key: string } | undefined)
+    ? (db.prepare("SELECT * FROM workspaces WHERE key = ?").get(workspaceKey) as { id: string; key: string; root_path: string | null } | undefined)
+    : (db.prepare("SELECT * FROM workspaces ORDER BY created_at ASC LIMIT 1").get() as { id: string; key: string; root_path: string | null } | undefined)
 
   if (!workspace) {
     return {
@@ -72,6 +95,46 @@ export function getBoard(db: Db, workspaceKey?: string | null): BoardDTO {
     .all(workspace.id) as Array<{ item_id: string; count: number }>
   for (const row of projectRows) projectCounts.set(row.item_id, row.count)
 
+  const latestRuns = new Map<string, {
+    id: string
+    item_id: string
+    status: string
+    recovery_status: string | null
+    recovery_scope_ref: string | null
+    workspace_fs_id: string | null
+  }>()
+  const runRows = db
+    .prepare(
+      `SELECT id, item_id, status, recovery_status, recovery_scope_ref, workspace_fs_id, created_at
+       FROM runs
+       WHERE workspace_id = ?
+       ORDER BY created_at DESC`
+    )
+    .all(workspace.id) as Array<{
+      id: string
+      item_id: string
+      status: string
+      recovery_status: string | null
+      recovery_scope_ref: string | null
+      workspace_fs_id: string | null
+      created_at: number
+    }>
+  for (const run of runRows) {
+    if (!latestRuns.has(run.item_id)) latestRuns.set(run.item_id, run)
+  }
+
+  const openPromptsByRun = new Map<string, { actions_json: string | null }>()
+  const promptRows = db
+    .prepare(
+      `SELECT run_id, actions_json
+       FROM pending_prompts
+       WHERE answered_at IS NULL`
+    )
+    .all() as Array<{ run_id: string; actions_json: string | null }>
+  for (const row of promptRows) {
+    if (!openPromptsByRun.has(row.run_id)) openPromptsByRun.set(row.run_id, row)
+  }
+
   return {
     workspaceKey: workspace.key,
     columns: orderedColumns.map(col => ({
@@ -80,6 +143,26 @@ export function getBoard(db: Db, workspaceKey?: string | null): BoardDTO {
       cards: items
         .filter(i => i.current_column === col)
         .map<BoardCardDTO>(i => ({
+          ...(function () {
+            const latestRun = latestRuns.get(i.id)
+            const openPrompt = latestRun ? openPromptsByRun.get(latestRun.id) : undefined
+            const hasReviewGateWaiting = (() => {
+              if (!openPrompt?.actions_json) return false
+              try {
+                const actions = JSON.parse(openPrompt.actions_json) as Array<{ value?: unknown }>
+                return actions.some(action => action?.value === "promote")
+              } catch {
+                return false
+              }
+            })()
+            const worktreePath = itemWorktreePath(workspace.root_path ?? null, latestRun?.workspace_fs_id ?? null, i.title, i.id)
+            return {
+              hasOpenPrompt: Boolean(openPrompt),
+              hasReviewGateWaiting,
+              hasBlockedRun: latestRun?.recovery_status === "blocked",
+              previewUrl: worktreePath ? previewUrlForWorktree(worktreePath) : undefined,
+            }
+          })(),
           itemCode: i.code,
           itemId: i.id,
           title: i.title,

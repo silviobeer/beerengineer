@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events"
-import { type WorkflowEvent, type WorkflowIO } from "./io.js"
+import { type PromptAction, type WorkflowEvent, type WorkflowIO } from "./io.js"
 import { getActiveRun } from "./runContext.js"
 
 /**
@@ -23,7 +23,7 @@ export type EventBus = {
   /** Request a prompt answer. The bus emits `prompt_requested`; the promise
    *  resolves when someone emits the matching `prompt_answered` (or calls
    *  `answer()`, which just emits on your behalf). */
-  request(prompt: string, opts?: { promptId?: string; runId?: string; stageRunId?: string | null }): Promise<string>
+  request(prompt: string, opts?: { promptId?: string; runId?: string; stageRunId?: string | null; actions?: PromptAction[] }): Promise<string>
   /** Emit a `prompt_answered` event to resolve a pending request. Returns
    *  false if the promptId is not pending. */
   answer(promptId: string, answer: string): boolean
@@ -76,6 +76,7 @@ export function createBus(): EventBus {
         runId,
         promptId,
         prompt,
+        actions: opts?.actions,
         stageRunId,
       })
     })
@@ -109,7 +110,7 @@ export function createBus(): EventBus {
  */
 export function busToWorkflowIO(bus: EventBus): WorkflowIO & { bus: EventBus } {
   return {
-    ask: (prompt: string) => bus.request(prompt),
+    ask: (prompt: string, opts?: { actions?: PromptAction[] }) => bus.request(prompt, opts),
     emit: (event: WorkflowEvent) => bus.emit(event),
     close: () => bus.close(),
     bus,

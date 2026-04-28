@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url"
 import { initDatabase } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
 import { main, parseArgs, resolveItemReference, resolveUiLaunchUrl, resolveUiWorkspacePath } from "../src/index.js"
+import { assignPort } from "../src/core/portAllocator.js"
 import { resolveConfiguredDbPath } from "../src/setup/config.js"
 import { layout } from "../src/core/workspaceLayout.js"
 
@@ -114,6 +115,7 @@ test("parseArgs recognizes help, doctor, start ui, workflow, item action, and un
   assert.deepEqual(parseArgs(["chats", "--all", "--json"]), { kind: "chats", workspaceKey: undefined, json: true, all: true, compact: false })
   assert.deepEqual(parseArgs(["item", "get", "ITEM-0001", "--workspace", "demo", "--json"]), { kind: "item-get", itemRef: "ITEM-0001", workspaceKey: "demo", json: true })
   assert.deepEqual(parseArgs(["item", "open", "ITEM-0001", "--workspace", "demo"]), { kind: "item-open", itemRef: "ITEM-0001", workspaceKey: "demo" })
+  assert.deepEqual(parseArgs(["item", "preview", "ITEM-0001", "--workspace", "demo", "--start", "--open", "--json"]), { kind: "item-preview", itemRef: "ITEM-0001", workspaceKey: "demo", start: true, open: true, json: true })
   assert.deepEqual(parseArgs(["item", "wireframes", "ITEM-0001", "--workspace", "demo", "--open", "--json"]), { kind: "item-wireframes", itemRef: "ITEM-0001", workspaceKey: "demo", open: true, json: true })
   assert.deepEqual(parseArgs(["item", "design", "ITEM-0001", "--workspace", "demo"]), { kind: "item-design", itemRef: "ITEM-0001", workspaceKey: "demo", open: false, json: false })
   assert.deepEqual(parseArgs(["run", "list", "--workspace", "demo", "--json"]), { kind: "run-list", workspaceKey: "demo", json: true, all: false, compact: false })
@@ -487,6 +489,80 @@ test("item wireframes and item design print artifact info and support --json", (
     assert.equal(design.status, 0, design.stderr)
     assert.match(design.stdout, /design-preview:/)
   } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("item preview prints and starts the item worktree preview", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-preview-"))
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
+  const previousDbPath = process.env.BEERENGINEER_UI_DB_PATH
+
+  try {
+    const dbPath = join(dir, "preview.sqlite")
+    process.env.BEERENGINEER_UI_DB_PATH = dbPath
+    const db = initDatabase(dbPath)
+    const repos = new Repos(db)
+    const repoRoot = join(dir, "repo")
+    mkdirSync(repoRoot, { recursive: true })
+    const ws = repos.upsertWorkspace({ key: "default", name: "Default Workspace", rootPath: repoRoot })
+    const item = repos.createItem({ workspaceId: ws.id, code: "ITEM-0001", title: "Preview Item", description: "preview" })
+    const workspaceId = `preview-item-${item.id.toLowerCase()}`
+    repos.createRun({
+      workspaceId: ws.id,
+      itemId: item.id,
+      title: item.title,
+      owner: "cli",
+      workspaceFsId: workspaceId,
+    })
+    db.close()
+
+    const itemSlug = "preview-item"
+    const worktreePath = layout.itemWorktreeDir({ workspaceId, workspaceRoot: repoRoot, runId: workspaceId, itemSlug })
+    mkdirSync(join(worktreePath, ".beerengineer"), { recursive: true })
+    const markerPath = join(worktreePath, "preview-started.txt")
+    writeFileSync(
+      join(worktreePath, ".beerengineer", "workspace.json"),
+      JSON.stringify({
+        schemaVersion: 2,
+        key: "default",
+        name: "Default Workspace",
+        harnessProfile: { mode: "fast" },
+        runtimePolicy: {
+          stageAuthoring: "safe-readonly",
+          reviewer: "safe-readonly",
+          coderExecution: "safe-workspace-write",
+        },
+        preview: {
+          command: `node -e "require('node:fs').writeFileSync('preview-started.txt', process.env.PORT || '')"`,
+        },
+        sonar: { enabled: false },
+        reviewPolicy: { coderabbit: { enabled: false }, sonarcloud: { enabled: false } },
+        createdAt: Date.now(),
+      }, null, 2),
+    )
+    assignPort(worktreePath, "item/preview-item", repoRoot)
+
+    const result = spawnSync(process.execPath, [binPath, "item", "preview", "ITEM-0001", "--start", "--json"], {
+      cwd: engineRoot,
+      encoding: "utf8",
+      env: { ...process.env, BEERENGINEER_UI_DB_PATH: dbPath, BEERENGINEER_DISABLE_BROWSER_OPEN: "1" },
+    })
+    assert.equal(result.status, 0, result.stderr)
+    const body = JSON.parse(result.stdout) as { previewPort: number; status: string; launch: { command: string } }
+    assert.equal(body.status, "started")
+    assert.match(body.launch.command, /node -e/)
+
+    for (let i = 0; i < 30; i++) {
+      if (existsSync(markerPath)) break
+      await new Promise(resolve => setTimeout(resolve, 20))
+    }
+    assert.equal(readFileSync(markerPath, "utf8"), String(body.previewPort))
+  } finally {
+    if (previousDbPath === undefined) delete process.env.BEERENGINEER_UI_DB_PATH
+    else process.env.BEERENGINEER_UI_DB_PATH = previousDbPath
     rmSync(dir, { recursive: true, force: true })
   }
 })
@@ -1201,4 +1277,7 @@ test("help output explains that user prompts are limited to intake and blockers"
   assert.match(output, /User prompts are limited to intake and blocked-run recovery\./)
   assert.match(output, /architecture/)
   assert.match(output, /documentation run without user chat unless a blocker stops the run\./)
+  assert.match(output, /promote_to_base/)
+  assert.match(output, /cancel_promotion/)
+  assert.match(output, /BEERENGINEER_WORKTREE_PORT_POOL/)
 })

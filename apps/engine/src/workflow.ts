@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { randomUUID } from "node:crypto"
 import { createGitAdapter, type GitAdapter } from "./core/gitAdapter.js"
 import { resolveBaseBranchForItem } from "./core/baseBranch.js"
-import { writeRecoveryRecord, type RecoveryScope } from "./core/recovery.js"
+import { writeRecoveryRecord, type RecoveryCause, type RecoveryScope } from "./core/recovery.js"
 import { layout } from "./core/workspaceLayout.js"
 import type {
   Concept,
@@ -23,9 +23,11 @@ import { loadFrontendSnapshot } from "./core/frontendSnapshot.js"
 import { loadItemDecisions } from "./core/itemDecisions.js"
 import { stagePresent } from "./core/stagePresentation.js"
 import { emitEvent, getActiveRun, withStageLifecycle } from "./core/runContext.js"
+import { assignPort } from "./core/portAllocator.js"
 import { brainstorm } from "./stages/brainstorm/index.js"
 import { visualCompanion } from "./stages/visual-companion/index.js"
 import { frontendDesign } from "./stages/frontend-design/index.js"
+import { mergeGate } from "./stages/mergeGate/index.js"
 import {
   PROJECT_STAGE_REGISTRY,
   shouldRunProjectStage,
@@ -33,9 +35,10 @@ import {
   type ProjectResumePlan,
   type StageLlmOptions,
 } from "./core/projectStageRegistry.js"
+import { branchNameItem } from "./core/branchNames.js"
 
 type ItemResumePlan = {
-  startStage: "brainstorm" | "visual-companion" | "frontend-design" | "projects"
+  startStage: "brainstorm" | "visual-companion" | "frontend-design" | "projects" | "merge-gate"
   /**
    * When set, the item-level loop runs *only* the named stage and skips the
    * other design-prep stage. Manual-progression actions
@@ -98,25 +101,37 @@ async function readJson<T>(path: string): Promise<T> {
   return JSON.parse(await readFile(path, "utf8")) as T
 }
 
-async function blockRunForWorkspaceState(context: WorkflowContext, summary: string): Promise<never> {
+async function blockRunForWorkspaceState(
+  context: WorkflowContext,
+  summary: string,
+  opts: {
+    cause?: RecoveryCause
+    scope?: RecoveryScope
+    detail?: string
+    evidencePaths?: string[]
+    branch?: string
+  } = {},
+): Promise<never> {
   const activeRun = getActiveRun()
   if (activeRun) {
+    const scope = opts.scope ?? { type: "run", runId: activeRun.runId }
     await writeRecoveryRecord(context, {
       status: "blocked",
-      cause: "system_error",
-      scope: { type: "run", runId: activeRun.runId },
+      cause: opts.cause ?? "system_error",
+      scope,
       summary,
-      detail: "Clean, commit, or stash the current workspace changes before starting a new item run.",
-      evidencePaths: [layout.runDir(context)],
+      detail: opts.detail ?? "Clean, commit, or stash the current workspace changes before starting a new item run.",
+      evidencePaths: opts.evidencePaths ?? [layout.runDir(context)],
     })
     emitEvent({
       type: "run_blocked",
       runId: activeRun.runId,
       itemId: activeRun.itemId,
       title: activeRun.title ?? activeRun.itemId,
-      scope: { type: "run", runId: activeRun.runId },
-      cause: "system_error",
+      scope,
+      cause: opts.cause ?? "system_error",
       summary,
+      branch: opts.branch,
     })
   }
   throw new BlockedRunError(summary)
@@ -182,6 +197,8 @@ function normalizeItemResume(input: WorkflowResumeInput): ItemResumePlan {
       return { startStage: "visual-companion", manualStage }
     case "frontend-design":
       return { startStage: "frontend-design", manualStage }
+    case "merge-gate":
+      return { startStage: "merge-gate", manualStage }
     default:
       return { startStage: "projects", manualStage }
   }
@@ -327,6 +344,16 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
     if (itemResumePlan.startStage === "projects") {
       await assertDesignPrepProjectFreeze(context, projects)
     }
+    if (context.workspaceRoot) {
+      const port = assignPort(layout.itemWorktreeDir(context), branchNameItem(context), context.workspaceRoot)
+      emitEvent({
+        type: "worktree_port_assigned",
+        runId: activeRun?.runId,
+        branch: branchNameItem(context),
+        worktreePath: layout.itemWorktreeDir(context),
+        port,
+      })
+    }
     const itemConcept = await loadConcept(context)
     const itemHasUi = projects.some(project => project.hasUi === true)
     // Frontend fingerprint is only useful for UI items, and it's only known
@@ -397,29 +424,33 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
       })
     }
 
-    for (const project of projects) {
-      git.ensureProjectBranch(project.id)
-      const conceptAmendments = [
-        ...(wireframes?.conceptAmendments ?? []),
-        ...(design?.conceptAmendments ?? []),
-      ]
-      await runProject(
-        {
-          ...context,
-          project: { ...project, concept: mergeAmendments(project.concept, conceptAmendments, project.id) },
-          wireframes: wireframes ? projectWireframes(wireframes, project.id) : undefined,
-          design: design ? projectDesign(design) : undefined,
-          codebase: itemSnapshot,
-          decisions: loadItemDecisions(context),
-        },
-        git,
-        resumePlan ?? undefined,
-        options?.llm,
-      )
-      // Project→item merge + post-merge invariant check happen inside the
-      // handoff stage so they land under withStageLifecycle("handoff", …)
-      // and any merge failure surfaces in the right recovery scope.
+    if (itemResumePlan.startStage !== "merge-gate") {
+      for (const project of projects) {
+        git.ensureProjectBranch(project.id)
+        const conceptAmendments = [
+          ...(wireframes?.conceptAmendments ?? []),
+          ...(design?.conceptAmendments ?? []),
+        ]
+        await runProject(
+          {
+            ...context,
+            project: { ...project, concept: mergeAmendments(project.concept, conceptAmendments, project.id) },
+            wireframes: wireframes ? projectWireframes(wireframes, project.id) : undefined,
+            design: design ? projectDesign(design) : undefined,
+            codebase: itemSnapshot,
+            decisions: loadItemDecisions(context),
+          },
+          git,
+          resumePlan ?? undefined,
+          options?.llm,
+        )
+        // Project→item merge + post-merge invariant check happen inside the
+        // handoff stage so they land under withStageLifecycle("handoff", …)
+        // and any merge failure surfaces in the right recovery scope.
+      }
     }
+
+    await withStageLifecycle("merge-gate", {}, () => mergeGate(context, git, blockRunForWorkspaceState))
 
     stagePresent.header("DONE")
     stagePresent.ok(`Item "${item.title}" is done ✓`)

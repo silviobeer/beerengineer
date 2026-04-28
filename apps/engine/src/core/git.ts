@@ -488,6 +488,33 @@ export function mergeProjectIntoItem(
   mergeNoFf(mode, item, project, `Merge project ${projectId} into item`, opts)
 }
 
+export function mergeItemIntoBase(
+  mode: GitMode,
+  context: WorkflowContext,
+): { mergeSha: string } {
+  const item = branchNameItem(context)
+  const root = mode.workspaceRoot
+  if (!branchExists(root, item)) {
+    throw new Error(`git: item branch ${item} does not exist`)
+  }
+  const ancestor = runGit(root, ["merge-base", "--is-ancestor", item, mode.baseBranch])
+  if (ancestor.ok) {
+    const mergeSha = runGit(root, ["rev-parse", mode.baseBranch]).stdout
+    return { mergeSha }
+  }
+  const checkout = runGit(root, ["checkout", mode.baseBranch])
+  if (!checkout.ok) throw new Error(`git: checkout ${mode.baseBranch} failed: ${checkout.stderr || checkout.stdout}`)
+  const merge = runGit(root, ["merge", "--no-ff", "-m", `Merge item ${context.itemSlug ?? "item"} into ${mode.baseBranch}`, item])
+  if (!merge.ok) {
+    const stderr = merge.stderr || merge.stdout
+    runGit(root, ["merge", "--abort"])
+    throw new Error(`git: merge ${item} → ${mode.baseBranch} failed: ${stderr}`)
+  }
+  const mergeSha = runGit(root, ["rev-parse", "HEAD"]).stdout
+  if (!mergeSha) throw new Error("git: could not resolve merge commit sha")
+  return { mergeSha }
+}
+
 export function exitRunToItemBranch(mode: GitMode, context: WorkflowContext): string {
   const item = branchNameItem(context)
   const root = branchWorkspaceRoot(mode)

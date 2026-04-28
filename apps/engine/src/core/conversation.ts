@@ -1,5 +1,6 @@
 import type { Repos, StageLogRow } from "../db/repositories.js"
 import { appendItemDecision } from "./itemDecisions.js"
+import type { PromptAction } from "./io.js"
 import { parseLogData } from "./jsonEnvelope.js"
 import { resolveWorkflowContextForRun } from "./workflowContextResolver.js"
 
@@ -109,6 +110,7 @@ export type ConversationEntry = {
   createdAt: string
   promptId?: string
   answerTo?: string
+  actions?: PromptAction[]
 }
 
 export type OpenPrompt = {
@@ -117,6 +119,7 @@ export type OpenPrompt = {
   stageKey: string | null
   text: string
   createdAt: string
+  actions?: PromptAction[]
 }
 
 export type ConversationResponse = {
@@ -137,6 +140,19 @@ function actorFromChat(source: string | undefined, role: string | undefined): Co
   if (role === "user") return "user"
   if (source === "stage-agent" || source === "reviewer") return "agent"
   return "system"
+}
+
+function parsePromptActions(value: unknown): PromptAction[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const actions = value
+    .filter((entry): entry is PromptAction => {
+      return typeof entry === "object" &&
+        entry !== null &&
+        typeof (entry as { label?: unknown }).label === "string" &&
+        typeof (entry as { value?: unknown }).value === "string"
+    })
+    .map(entry => ({ label: entry.label, value: entry.value }))
+  return actions.length > 0 ? actions : undefined
 }
 
 /**
@@ -222,7 +238,7 @@ export function buildConversation(repos: Repos, runId: string): ConversationResp
       continue
     }
     if (row.event_type === "prompt_requested") {
-      const data = parseLogData(row.data_json) as { promptId?: string } | undefined
+      const data = parseLogData(row.data_json) as { promptId?: string; actions?: unknown } | undefined
       const promptId = data?.promptId
       if (!promptId) continue
       const folded = foldedTextByLogId.get(row.id)
@@ -237,6 +253,7 @@ export function buildConversation(repos: Repos, runId: string): ConversationResp
         text,
         createdAt,
         promptId,
+        actions: parsePromptActions(data?.actions),
       })
       continue
     }
@@ -274,6 +291,7 @@ export function buildConversation(repos: Repos, runId: string): ConversationResp
       stageKey: e.stageKey,
       text: e.text,
       createdAt: e.createdAt,
+      actions: e.actions,
     }
     break
   }

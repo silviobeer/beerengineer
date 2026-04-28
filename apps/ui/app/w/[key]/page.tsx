@@ -1,5 +1,5 @@
 import { Board } from "@/components/Board";
-import { virtualBoardColumn, type BoardCardDTO } from "@/lib/types";
+import type { BoardCardDTO } from "@/lib/types";
 
 interface BoardApiItem {
   id?: string;
@@ -14,6 +14,7 @@ interface BoardApiItem {
   hasOpenPrompt?: boolean;
   hasReviewGateWaiting?: boolean;
   hasBlockedRun?: boolean;
+  previewUrl?: string;
   current_stage?: string | null;
   currentStage?: string | null;
 }
@@ -46,13 +47,12 @@ function toBoardCard(item: BoardApiItem): BoardCardDTO {
     itemCode: item.itemCode,
     title: item.title ?? "",
     summary: item.summary ?? null,
-    // Re-route handoff cards to the virtual `merge` column. See
-    // virtualBoardColumn for the rule.
-    column: virtualBoardColumn(engineColumn, currentStage),
+    column: engineColumn,
     phase_status: item.phase_status ?? item.phaseStatus ?? null,
     hasOpenPrompt: Boolean(item.hasOpenPrompt),
     hasReviewGateWaiting: Boolean(item.hasReviewGateWaiting),
     hasBlockedRun: Boolean(item.hasBlockedRun),
+    previewUrl: typeof item.previewUrl === "string" ? item.previewUrl : undefined,
     current_stage: currentStage,
   };
 }

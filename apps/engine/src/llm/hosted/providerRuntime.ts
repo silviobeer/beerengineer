@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process"
 import type { HostedHarness, HostedRequest } from "./promptEnvelope.js"
+import { lookupPort } from "../../core/portAllocator.js"
+import { previewHost, previewUrlForPort } from "../../core/previewHost.js"
 
 export type HostedSession = {
   harness: HostedHarness
@@ -45,9 +47,21 @@ export function spawnCommand(
   options: SpawnCommandOptions = {},
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   return new Promise((resolve, reject) => {
+    const assignedPort = lookupPort(cwd)
+    const host = previewHost()
     const child = spawn(command[0], command.slice(1), {
       cwd,
-      env: process.env,
+      env: {
+        ...process.env,
+        ...(assignedPort
+          ? {
+              PORT: String(assignedPort),
+              BEERENGINEER_PREVIEW_PORT: String(assignedPort),
+              BEERENGINEER_PREVIEW_HOST: host,
+              BEERENGINEER_PREVIEW_URL: previewUrlForPort(assignedPort),
+            }
+          : {}),
+      },
       stdio: ["pipe", "pipe", "pipe"],
     })
     const stdoutChunks: Buffer[] = []

@@ -230,7 +230,7 @@ test("performResume resumes a blocked story from execution without rerunning pri
       const resumedStages = resumed.events
         .filter((event): event is Extract<WorkflowEvent, { type: "stage_started" }> => event.type === "stage_started")
         .map(event => event.stageKey)
-      assert.deepEqual(resumedStages, ["execution", "project-review", "qa", "documentation", "handoff"])
+      assert.deepEqual(resumedStages, ["execution", "project-review", "qa", "documentation", "handoff", "merge-gate"])
       assert.equal(repos.getRun(run.id)?.recovery_status, null)
       assert.ok(requests.length > 0, "resume should emit Telegram notifications")
       assert.equal(repos.getNotificationDelivery(`${run.id}:run_finished`)?.status, "delivered")

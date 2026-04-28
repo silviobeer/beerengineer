@@ -58,11 +58,6 @@ export interface Workspace {
   name: string;
 }
 
-// Note: "merge" is a UI-virtual column. The engine's `/board` only emits
-// idea/brainstorm/frontend/requirements/implementation/done. The UI
-// synthesizes "merge" from items whose `current_stage === "handoff"` so
-// operators see "this card is being merged" as its own swimlane instead of
-// a card that quietly sits in Implementation while it merges.
 export const BOARD_COLUMNS = [
   "idea",
   "brainstorm",
@@ -74,31 +69,6 @@ export const BOARD_COLUMNS = [
 ] as const;
 
 export type BoardColumn = (typeof BOARD_COLUMNS)[number];
-
-/** Engine column keys actually returned by `/board`. The UI's `merge` column
- *  is derived in {@link reassignCardsToVirtualColumns}, not emitted by the
- *  engine. */
-export const ENGINE_BOARD_COLUMNS = [
-  "idea",
-  "brainstorm",
-  "frontend",
-  "requirements",
-  "implementation",
-  "done",
-] as const;
-
-/**
- * Reassign a card with `column === "implementation"` and
- * `current_stage === "handoff"` to the synthetic `merge` column so the board
- * can render Merge as its own swimlane.
- */
-export function virtualBoardColumn(
-  engineColumn: string,
-  currentStage: string | null | undefined,
-): BoardColumn {
-  if (engineColumn === "implementation" && currentStage === "handoff") return "merge";
-  return engineColumn as BoardColumn;
-}
 
 export const IMPLEMENTATION_STAGES = [
   "arch",
@@ -195,6 +165,7 @@ export interface BoardCardDTO {
   hasOpenPrompt?: boolean;
   hasReviewGateWaiting?: boolean;
   hasBlockedRun?: boolean;
+  previewUrl?: string;
   /** Live override from SSE; when defined, wins over the static flags. */
   liveAttention?: boolean | null;
 }

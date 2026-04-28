@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS workspaces (
 );
 
 -- Board clients group cards by items.current_column.
---   idea | brainstorm | requirements | implementation | done
+--   idea | brainstorm | frontend | requirements | implementation | merge | done
 -- phase_status values:
 --   draft | running | review_required | completed | failed
 -- current_stage mirrors the engine stageKey of the *authoritative* run (the
@@ -138,11 +138,19 @@ CREATE TABLE IF NOT EXISTS pending_prompts (
   run_id TEXT NOT NULL REFERENCES runs(id),
   stage_run_id TEXT REFERENCES stage_runs(id),
   prompt TEXT NOT NULL,
+  actions_json TEXT,
   answer TEXT,
   created_at INTEGER NOT NULL,
   answered_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS pending_prompts_run_idx ON pending_prompts(run_id, answered_at);
+
+CREATE TABLE IF NOT EXISTS worktree_port_assignments (
+  worktree_path TEXT PRIMARY KEY,
+  branch TEXT NOT NULL,
+  port INTEGER NOT NULL UNIQUE,
+  created_at INTEGER NOT NULL
+);
 
 -- Durable dedup + audit for outbound notifications. One row per unique
 -- delivery intent; replaying the same dedup_key is a no-op.

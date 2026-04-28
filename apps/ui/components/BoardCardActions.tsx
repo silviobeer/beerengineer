@@ -27,6 +27,16 @@ function actionsFor(card: BoardCardDTO): ActionDef[] {
       return [{ action: "promote_to_requirements", label: "Promote to requirements" }];
     }
   }
+  if (card.column === "merge") {
+    const actions: ActionDef[] = [];
+    if (card.hasReviewGateWaiting) {
+      actions.push({ action: "cancel_promotion", label: "Cancel" });
+    }
+    if (card.hasReviewGateWaiting || card.hasBlockedRun || card.hasOpenPrompt) {
+      actions.push({ action: "promote_to_base", label: "Promote to base" });
+    }
+    return actions;
+  }
   return [];
 }
 

@@ -16,7 +16,7 @@ function tmpDb() {
 
 function makeItem(
   repos: Repos,
-  column: "idea" | "brainstorm" | "frontend" | "requirements" | "implementation" | "done",
+  column: "idea" | "brainstorm" | "frontend" | "requirements" | "implementation" | "merge" | "done",
   phase: "draft" | "running" | "review_required" | "completed" | "failed"
 ) {
   const root = mkdtempSync(join(tmpdir(), "be2-itemactions-root-"))
@@ -30,7 +30,7 @@ function makeItem(
 // "start-run" (service records intent + returns needs_spawn), or "resume".
 const MATRIX_CASES: Array<{
   action: ItemAction
-  column: "idea" | "brainstorm" | "frontend" | "requirements" | "implementation" | "done"
+  column: "idea" | "brainstorm" | "frontend" | "requirements" | "implementation" | "merge" | "done"
   phase: "draft" | "running" | "review_required" | "completed" | "failed"
   expect: "reject" | { column: string; phaseStatus: string } | "start-run" | "resume"
 }> = [
@@ -89,8 +89,12 @@ const MATRIX_CASES: Array<{
   { action: "resume_run", column: "requirements", phase: "draft", expect: "resume" },
   { action: "resume_run", column: "implementation", phase: "running", expect: "resume" },
   { action: "resume_run", column: "implementation", phase: "failed", expect: "resume" },
+  { action: "resume_run", column: "merge", phase: "review_required", expect: "resume" },
   { action: "resume_run", column: "implementation", phase: "review_required", expect: "reject" },
   { action: "resume_run", column: "done", phase: "completed", expect: "reject" },
+
+  { action: "promote_to_base", column: "merge", phase: "review_required", expect: "reject" },
+  { action: "cancel_promotion", column: "merge", phase: "review_required", expect: "reject" },
 
   { action: "mark_done", column: "idea", phase: "draft", expect: "reject" },
   { action: "mark_done", column: "brainstorm", phase: "running", expect: "reject" },
@@ -289,6 +293,69 @@ test("resume_run records remediation and returns needs_spawn with runId + remedi
     assert.equal(result.runId, run.id)
     assert.ok(result.remediationId, "remediationId should be returned")
     assert.equal(repos.listExternalRemediations(run.id).length, 1)
+  } finally {
+    service.dispose()
+    db.close()
+  }
+})
+
+test("promote_to_base answers a live merge-gate prompt when one is open", async () => {
+  const db = tmpDb()
+  const repos = new Repos(db)
+  const item = makeItem(repos, "merge", "review_required")
+  const service = createItemActionsService(repos)
+  try {
+    const run = repos.createRun({ workspaceId: item.workspace_id, itemId: item.id, title: item.title })
+    repos.createPendingPrompt({
+      runId: run.id,
+      prompt: "Promote this item?",
+      actions: [
+        { label: "Promote", value: "promote" },
+        { label: "Cancel", value: "cancel" },
+      ],
+    })
+    const result = await service.perform(item.id, "promote_to_base")
+    assert.equal(result.ok, true)
+    if (!result.ok) return
+    assert.equal(result.kind, "state")
+    const open = repos.getOpenPrompt(run.id)
+    assert.equal(open, undefined)
+  } finally {
+    service.dispose()
+    db.close()
+  }
+})
+
+test("promote_to_base returns resume_run when merge gate was previously blocked", async () => {
+  const db = tmpDb()
+  const repos = new Repos(db)
+  const item = makeItem(repos, "merge", "review_required")
+  const service = createItemActionsService(repos)
+  try {
+    const workspace = repos.getWorkspace(item.workspace_id)!
+    const workspaceFsId = `t-${item.id.toLowerCase()}`
+    const run = repos.createRun({
+      workspaceId: item.workspace_id,
+      itemId: item.id,
+      title: item.title,
+      owner: "api",
+      workspaceFsId,
+    })
+    repos.updateRun(run.id, { status: "blocked" })
+    repos.setRunRecovery(run.id, { status: "blocked", scope: "stage", scopeRef: "merge-gate", summary: "blocked at merge gate" })
+    const ctx = { workspaceId: workspaceFsId, workspaceRoot: workspace.root_path!, runId: run.id }
+    await import("node:fs/promises").then(fs =>
+      fs.mkdir(layout.runDir(ctx), { recursive: true }).then(() =>
+        fs.writeFile(layout.runFile(ctx), JSON.stringify({ id: run.id }, null, 2)),
+      ),
+    )
+
+    const result = await service.perform(item.id, "promote_to_base")
+    assert.equal(result.ok, true)
+    if (!result.ok) return
+    assert.equal(result.kind, "resume_run")
+    if (result.kind !== "resume_run") return
+    assert.equal(result.runId, run.id)
   } finally {
     service.dispose()
     db.close()

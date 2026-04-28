@@ -8,6 +8,8 @@ export type RecoveryCause =
   | "story_error"
   | "stage_error"
   | "system_error"
+  | "merge_gate_cancelled"
+  | "merge_gate_failed"
 
 export type RecoveryStatus = "blocked" | "failed"
 

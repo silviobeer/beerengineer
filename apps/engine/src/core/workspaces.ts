@@ -38,6 +38,7 @@ import type {
   SonarConfig,
   ValidationResult,
   WorkspaceConfigFile,
+  WorkspacePreviewConfig,
   WorkspacePreflightReport,
   WorkspaceReviewPolicy,
   WorkspaceRuntimePolicy,
@@ -714,6 +715,7 @@ function buildWorkspaceConfigFile(input: {
   name: string
   harnessProfile: HarnessProfile
   runtimePolicy?: WorkspaceRuntimePolicy
+  preview?: WorkspacePreviewConfig
   sonar: SonarConfig
   reviewPolicy?: WorkspaceReviewPolicy
   preflight?: WorkspacePreflightReport
@@ -725,6 +727,7 @@ function buildWorkspaceConfigFile(input: {
     name: input.name,
     harnessProfile: input.harnessProfile,
     runtimePolicy: input.runtimePolicy ?? defaultWorkspaceRuntimePolicy(),
+    preview: input.preview,
     sonar: input.sonar,
     reviewPolicy: input.reviewPolicy ?? normalizeReviewPolicy(undefined, input.sonar, input.key),
     preflight: input.preflight,
@@ -754,6 +757,18 @@ function normalizeRuntimePolicy(raw: unknown): WorkspaceRuntimePolicy | null {
     stageAuthoring: policy.stageAuthoring,
     reviewer: policy.reviewer,
     coderExecution: policy.coderExecution,
+  }
+}
+
+function normalizePreviewConfig(raw: unknown): WorkspacePreviewConfig | undefined {
+  if (!raw || typeof raw !== "object") return undefined
+  const preview = raw as Partial<WorkspacePreviewConfig>
+  if (typeof preview.command !== "string" || preview.command.trim().length === 0) {
+    return undefined
+  }
+  return {
+    command: preview.command.trim(),
+    cwd: typeof preview.cwd === "string" && preview.cwd.trim().length > 0 ? preview.cwd.trim() : undefined,
   }
 }
 
@@ -792,6 +807,7 @@ export async function readWorkspaceConfig(root: string): Promise<WorkspaceConfig
       name?: unknown
       harnessProfile?: unknown
       runtimePolicy?: unknown
+      preview?: unknown
       sonar?: unknown
       reviewPolicy?: unknown
       preflight?: unknown
@@ -804,6 +820,7 @@ export async function readWorkspaceConfig(root: string): Promise<WorkspaceConfig
       return null
     }
     const runtimePolicy = normalizeRuntimePolicy(raw.runtimePolicy) ?? defaultWorkspaceRuntimePolicy()
+    const preview = normalizePreviewConfig(raw.preview)
     const sonar = normalizeSonarConfig(
       raw.sonar && typeof raw.sonar === "object" ? (raw.sonar as SonarConfig) : undefined,
       raw.key,
@@ -816,6 +833,7 @@ export async function readWorkspaceConfig(root: string): Promise<WorkspaceConfig
       name: raw.name,
       harnessProfile: raw.harnessProfile,
       runtimePolicy,
+      preview,
       sonar,
       reviewPolicy: normalizeReviewPolicy(reviewPolicy, sonar, raw.key),
       preflight: raw.preflight && typeof raw.preflight === "object" ? raw.preflight as WorkspacePreflightReport : undefined,
@@ -1206,6 +1224,7 @@ export async function registerWorkspace(input: RegisterWorkspaceInput, deps: Reg
     name,
     harnessProfile: input.harnessProfile,
     runtimePolicy: existingConfig?.runtimePolicy,
+    preview: existingConfig?.preview,
     sonar,
     reviewPolicy,
     preflight: preflight.report,

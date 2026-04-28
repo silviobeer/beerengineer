@@ -8,6 +8,7 @@ import { spawn, type ChildProcess } from "node:child_process"
 
 import { initDatabase } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
+import { assignPort } from "../src/core/portAllocator.js"
 import { layout } from "../src/core/workspaceLayout.js"
 import { createDatabaseBackup } from "../src/core/updateMode.js"
 
@@ -1074,6 +1075,82 @@ test("design-prep artifact endpoints expose item views and raw artifact files", 
     const nullByte = await fetch(`${base}/runs/${run.id}/artifacts/foo%00.html`)
     assert.equal(nullByte.status, 400)
   } finally {
+    await stopServer(proc)
+  }
+})
+
+test("item preview endpoints expose launch info and can start the local preview command", async () => {
+  const dbPath = tmpDbPath()
+  const previousDbPath = process.env.BEERENGINEER_UI_DB_PATH
+  process.env.BEERENGINEER_UI_DB_PATH = dbPath
+  const db = initDatabase(dbPath)
+  const repos = new Repos(db)
+  const workspaceRoot = mkdtempSync(join(tmpdir(), "be2-api-preview-"))
+  const ws = repos.upsertWorkspace({ key: "t", name: "T", rootPath: workspaceRoot })
+  const item = repos.createItem({ workspaceId: ws.id, title: "Preview Item", description: "" })
+  const workspaceId = `preview-${item.id.toLowerCase()}`
+  repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "cli", workspaceFsId: workspaceId })
+  db.close()
+
+  const worktreePath = layout.itemWorktreeDir({
+    workspaceId,
+    workspaceRoot,
+    runId: workspaceId,
+    itemSlug: "preview-item",
+  })
+  mkdirSync(join(worktreePath, ".beerengineer"), { recursive: true })
+  writeFileSync(
+    join(worktreePath, ".beerengineer", "workspace.json"),
+    JSON.stringify({
+      schemaVersion: 2,
+      key: "t",
+      name: "T",
+      harnessProfile: { mode: "fast" },
+      runtimePolicy: {
+        stageAuthoring: "safe-readonly",
+        reviewer: "safe-readonly",
+        coderExecution: "safe-workspace-write",
+      },
+      preview: {
+        command: `node -e "require('node:fs').writeFileSync('preview-started.txt', process.env.PORT || '')"`,
+      },
+      sonar: { enabled: false },
+      reviewPolicy: { coderabbit: { enabled: false }, sonarcloud: { enabled: false } },
+      createdAt: Date.now(),
+    }, null, 2),
+  )
+  assignPort(worktreePath, "item/preview-item", workspaceRoot)
+
+  const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
+  try {
+    await waitForHealth(base)
+
+    const previewRes = await fetch(`${base}/items/${item.id}/preview`)
+    assert.equal(previewRes.status, 200)
+    const previewBody = await previewRes.json() as { previewUrl: string; launch: { command: string; source: string } | null; running: boolean }
+    assert.match(previewBody.previewUrl, /^http:\/\/127\.0\.0\.1:/)
+    assert.equal(previewBody.launch?.source, "workspace-config")
+    assert.equal(previewBody.running, false)
+
+    const startRes = await fetch(`${base}/items/${item.id}/preview/start`, {
+      method: "POST",
+      headers: authHeaders({ "content-type": "application/json" }),
+      body: "{}",
+    })
+    assert.equal(startRes.status, 200)
+    const startBody = await startRes.json() as { status: string; previewPort: number; logPath: string }
+    assert.equal(startBody.status, "started")
+    assert.match(startBody.logPath, /\.beerengineer-preview\.log$/)
+
+    const markerPath = join(worktreePath, "preview-started.txt")
+    for (let i = 0; i < 30; i++) {
+      if (existsSync(markerPath)) break
+      await new Promise(resolve => setTimeout(resolve, 20))
+    }
+    assert.equal(readFileSync(markerPath, "utf8"), String(startBody.previewPort))
+  } finally {
+    if (previousDbPath === undefined) delete process.env.BEERENGINEER_UI_DB_PATH
+    else process.env.BEERENGINEER_UI_DB_PATH = previousDbPath
     await stopServer(proc)
   }
 })

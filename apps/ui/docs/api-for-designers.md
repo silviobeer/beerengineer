@@ -66,7 +66,7 @@ User drags in a folder path or types one.
 
 ### 3. Board view (the main screen)
 
-The core Kanban. Five columns, cards are items.
+The core Kanban. Seven columns, cards are items.
 
 - `GET /board?workspace=<key>` → a ready-to-render DTO:
   ```
@@ -78,7 +78,7 @@ The core Kanban. Five columns, cards are items.
       …
   ]}
   ```
-- Columns are **always in this order**: `idea` → `brainstorm` → `requirements` → `implementation` → `done`. Even when empty, they appear.
+- Columns are **always in this order**: `idea` → `brainstorm` → `frontend` → `requirements` → `implementation` → `merge` → `done`. Even when empty, they appear.
 - `meta` today contains `phase` and `projects` count. Minimal by design — if you need more (e.g. number of open questions, blocked/failed indicator, latest run info), say so and we add it. Don't reach around the API.
 
 **Live updates:** `GET /events?workspace=<key>` is a Server-Sent Events stream. Subscribe once and re-fetch the board (or merge events in) when you see `item_column_changed`, `run_started`, `run_finished`, `stage_started`, `stage_completed`, `project_created`. See §Live data.
@@ -94,6 +94,7 @@ User clicks a card.
   - `start_implementation` — move `requirements` (completed) → `implementation`, start a run.
   - `rerun_design_prep` — re-run visual-companion + frontend-design for an item that already has brainstorm.
   - `promote_to_requirements` — pure column transition.
+  - `promote_to_base` / `cancel_promotion` — merge-gate controls while an item sits in `merge`.
   - `mark_done` — pure column transition.
 - On success: `200 { kind, itemId, runId?, column, phaseStatus, action }`. On wrong column/phase: `409 { error: "invalid_transition", current: {column, phaseStatus}, action }`. Render this cleanly — the engine tells you which transitions are valid from where.
 - Design-prep artifacts: `GET /items/:id/wireframes` and `GET /items/:id/design` return the visual-companion and frontend-design bundles (URL pointers to generated HTML). Only populated after a completed run that went through those stages.
@@ -102,7 +103,7 @@ User clicks a card.
 
 User clicked into a run that's in-flight.
 
-- `GET /runs/:id` → run metadata. When the run is waiting for the user, response includes `openPrompt: { promptId, text, stageKey, createdAt }`. **That's the "waiting on me" signal** — no second call needed.
+- `GET /runs/:id` → run metadata. When the run is waiting for the user, response includes `openPrompt: { promptId, text, stageKey, createdAt, actions? }`. **That's the "waiting on me" signal** — no second call needed.
 - `GET /runs/:id/conversation` → operator-facing transcript. Array of entries with `kind ∈ {system, message, question, answer}`. Render as a chat-style log.
 - `GET /runs/:id/messages?level=<0|1|2>&since=<id>&limit=<n>` → full projected event log with level filtering. `level=2` is the default (milestones + summaries). `level=0` is the chattiest (every tool event). Use `/messages` when you want the full technical history; use `/conversation` for the human-readable transcript.
 - `GET /runs/:id/tree` → all stage runs with status + timings. Good for a vertical stepper UI.
@@ -187,7 +188,7 @@ If you design a screen that needs any of these, flag it — we'll add the endpoi
 - **Pending-prompts aggregate** per workspace. Today: walk `/runs` and filter client-side. See §7.
 - **Rich board cards**: `pending_prompts` count, blocked/failed flag, latest-run reference. Today: `meta` is minimal. See §3.
 - **Item → run filter**: `GET /runs?itemId=<id>` is documented in the contract as future work; the handler ignores filter params today.
-- **Merge status of an item**: the engine does not merge into base (that's a human PR step). There's no "is this merged?" signal today. Decide whether the UI needs to show this; if yes, we introduce `items.merged_at` + a `mark_merged` operator action.
+- **Post-merge archival status**: the engine now merges the item branch into the workspace base branch at the merge gate, but it still does not archive or delete the item branch afterward.
 - **Notification channel CRUD**: config is file-based today. No `POST /notifications/channels` surface.
 - **Swagger UI hosting**: we don't ship one. Paste `openapi.json` into any external viewer if you want interactive exploration.
 

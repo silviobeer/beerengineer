@@ -1,6 +1,7 @@
 import * as readline from "node:readline"
 import { createBus, busToWorkflowIO, type EventBus } from "./bus.js"
 import { withPromptPersistence } from "./promptPersistence.js"
+import type { PromptAction } from "./io.js"
 import { attachHumanCliRenderer } from "./renderers/humanCli.js"
 import type { WorkflowIO } from "./io.js"
 import type { Repos } from "../db/repositories.js"
@@ -49,6 +50,16 @@ export function createCliIO(repos?: Repos, opts: CliIOOptions = {}): WorkflowIO 
   const queuedAnswers: string[] = []
   const pendingAnswers: Array<(answer: string) => void> = []
 
+  const normalizeAnswer = (answer: string, actions?: PromptAction[]): string => {
+    const trimmed = answer.trim()
+    if (!actions || trimmed.length === 0) return trimmed
+    const idx = Number(trimmed)
+    if (Number.isInteger(idx) && idx >= 1 && idx <= actions.length) {
+      return actions[idx - 1]!.value
+    }
+    return trimmed
+  }
+
   const detachPromptResolver = opts.externalPromptResolver
     ? () => {}
     : bus.subscribe(event => {
@@ -59,11 +70,16 @@ export function createCliIO(repos?: Repos, opts: CliIOOptions = {}): WorkflowIO 
             type: "prompt_answered",
             runId: event.runId,
             promptId: event.promptId,
-            answer,
+            answer: normalizeAnswer(answer, event.actions),
           })
         }
 
         if (rl) {
+          if (event.actions && event.actions.length > 0) {
+            process.stdout.write(
+              `  choices: ${event.actions.map((action, index) => `${index + 1}) ${action.label}`).join(", ")}\n`,
+            )
+          }
           // Interactive TTY. The agent's message text already reached the
           // terminal via `attachHumanCliRenderer`'s `chat_message` line; we
           // just need a short answer cue here. The full prompt text is

@@ -14,6 +14,11 @@ and answer when it asks. It runs entirely on your machine: a CLI, a local
 engine process, a local web UI, a SQLite database on disk. No cloud
 service. No login.
 
+One important late-stage pause now exists on purpose: after all project work
+for an item has been merged back into the item branch, the item lands in
+**Merge** and waits for you to promote it to the base branch. That is when
+you test the integrated branch locally before letting BeerEngineer merge it.
+
 ## A few words you'll see constantly
 
 - **Engine** — the long-running local process that orchestrates runs, spawns

@@ -41,7 +41,10 @@ test("mapStageToColumn projects engine stages to board columns", () => {
   assert.equal(mapStageToColumn("requirements", "running").column, "requirements")
   assert.equal(mapStageToColumn("execution", "running").column, "implementation")
   assert.equal(mapStageToColumn("qa", "running").column, "implementation")
-  assert.equal(mapStageToColumn("documentation", "completed").column, "done")
+  assert.equal(mapStageToColumn("documentation", "completed").column, "implementation")
+  assert.equal(mapStageToColumn("merge-gate", "completed").column, "done")
+  assert.equal(mapStageToColumn("merge-gate", "failed").column, "merge")
+  assert.equal(mapStageToColumn("merge-gate", "failed").phaseStatus, "review_required")
   assert.equal(mapStageToColumn(undefined, "running").column, "idea")
 })
 
@@ -121,6 +124,26 @@ test("pending prompts round-trip via repos", () => {
   const answered = repos.answerPendingPrompt(p1.id, "answer!")
   assert.equal(answered?.answer, "answer!")
   assert.equal(repos.getOpenPrompt(run.id), undefined)
+  db.close()
+})
+
+test("pending prompts persist structured actions", () => {
+  const db = tmpDb()
+  const repos = new Repos(db)
+  const ws = repos.upsertWorkspace({ key: "test", name: "Test" })
+  const item = repos.createItem({ workspaceId: ws.id, title: "T", description: "D" })
+  const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "T" })
+
+  const prompt = repos.createPendingPrompt({
+    runId: run.id,
+    prompt: "Promote this item?",
+    actions: [
+      { label: "Promote", value: "promote" },
+      { label: "Cancel", value: "cancel" },
+    ],
+  })
+  assert.match(prompt.actions_json ?? "", /promote/)
+  assert.match(prompt.actions_json ?? "", /cancel/)
   db.close()
 })
 

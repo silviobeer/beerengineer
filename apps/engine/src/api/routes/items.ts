@@ -2,9 +2,11 @@ import type { IncomingMessage, ServerResponse } from "node:http"
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import type { Repos } from "../../db/repositories.js"
+import { isPortListening, resolvePreviewLaunchSpec, startPreviewServer } from "../../core/previewLauncher.js"
+import { resolveItemPreviewContext } from "../../core/itemPreview.js"
 import { isItemAction, lookupTransition, type ItemActionsService } from "../../core/itemActions.js"
 import { latestCompletedRunForItem } from "../../core/itemWorkspace.js"
-import { startRunForItem } from "../../core/runService.js"
+import { resumeRunInProcess, startRunForItem } from "../../core/runService.js"
 import { layout } from "../../core/workspaceLayout.js"
 import { resolveWorkflowContextForRun } from "../../core/workflowContextResolver.js"
 import { json, readJson } from "../http.js"
@@ -33,6 +35,56 @@ export function handleGetItem(repos: Repos, res: ServerResponse, itemId: string)
   const item = repos.getItem(itemId)
   if (!item) return json(res, 404, { error: "item_not_found", code: "not_found" })
   json(res, 200, item)
+}
+
+export function handleGetItemPreview(repos: Repos, res: ServerResponse, itemId: string): void {
+  void (async () => {
+    const context = resolveItemPreviewContext(repos, itemId)
+    if (!context.ok) return json(res, 404, context)
+    const launch = resolvePreviewLaunchSpec(context.worktreePath)
+    const running = await isPortListening(context.previewHost, context.previewPort)
+    json(res, 200, {
+      ...context,
+      running,
+      launch: launch
+        ? {
+            command: launch.command,
+            cwd: launch.cwd,
+            source: launch.source,
+          }
+        : null,
+    })
+  })().catch(err => json(res, 500, { error: (err as Error).message, code: "preview_lookup_failed" }))
+}
+
+export async function handleStartItemPreview(
+  repos: Repos,
+  req: IncomingMessage,
+  res: ServerResponse,
+  itemId: string,
+): Promise<void> {
+  await readJson(req).catch(() => ({}))
+  const context = resolveItemPreviewContext(repos, itemId)
+  if (!context.ok) return json(res, 404, context)
+  try {
+    const started = await startPreviewServer(context)
+    return json(res, 200, {
+      ...context,
+      running: true,
+      status: started.status,
+      logPath: started.logPath,
+      launch: {
+        command: started.launch.command,
+        cwd: started.launch.cwd,
+        source: started.launch.source,
+      },
+    })
+  } catch (error) {
+    return json(res, 409, {
+      error: (error as Error).message,
+      code: (error as Error).message,
+    })
+  }
 }
 
 export function handleGetItemWireframes(repos: Repos, res: ServerResponse, itemId: string): void {
@@ -112,6 +164,8 @@ export async function handleItemActionNamed(
         "promote_to_requirements",
         "start_implementation",
         "rerun_design_prep",
+        "promote_to_base",
+        "cancel_promotion",
         "mark_done",
       ],
     })
@@ -164,6 +218,15 @@ export async function handleItemActionNamed(
       current: result.current,
       action: result.action,
     })
+  }
+  if (result.kind === "resume_run") {
+    const resumed = await resumeRunInProcess(repos, {
+      runId: result.runId,
+      summary: result.summary,
+      branch: result.branch,
+      reviewNotes: result.reviewNotes,
+    })
+    if (!resumed.ok) return json(res, resumed.status, { error: resumed.error, code: resumed.error })
   }
   return json(res, 200, {
     kind: result.kind,

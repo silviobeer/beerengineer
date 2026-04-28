@@ -5,6 +5,11 @@ type WorkflowEventMeta = {
   at?: number
 }
 
+export type PromptAction = {
+  label: string
+  value: string
+}
+
 export type RecoveryEventScope =
   | { type: "run"; runId: string }
   | { type: "stage"; runId: string; stageId: string }
@@ -17,7 +22,14 @@ export type WorkflowEvent =
   | ({ type: "run_finished"; runId: string; itemId: string; title: string; status: "completed" | "failed"; error?: string } & WorkflowEventMeta)
   | ({ type: "stage_started"; runId: string; stageRunId: string; stageKey: string; projectId?: string | null } & WorkflowEventMeta)
   | ({ type: "stage_completed"; runId: string; stageRunId: string; stageKey: string; status: "completed" | "failed"; error?: string } & WorkflowEventMeta)
-  | ({ type: "prompt_requested"; runId: string; promptId: string; prompt: string; stageRunId?: string | null } & WorkflowEventMeta)
+  | ({
+      type: "prompt_requested"
+      runId: string
+      promptId: string
+      prompt: string
+      actions?: PromptAction[]
+      stageRunId?: string | null
+    } & WorkflowEventMeta)
   | ({ type: "prompt_answered"; runId: string; promptId: string; answer: string } & WorkflowEventMeta)
   | ({ type: "loop_iteration"; runId: string; stageRunId?: string | null; n: number; phase: "begin" | "user-message" | "review-feedback" | "review"; stageKey?: string | null } & WorkflowEventMeta)
   | ({ type: "tool_called"; runId: string; stageRunId?: string | null; name: string; argsPreview?: string; provider?: string } & WorkflowEventMeta)
@@ -37,10 +49,14 @@ export type WorkflowEvent =
   | ({ type: "external_remediation_recorded"; runId: string; remediationId: string; scope: RecoveryEventScope; summary: string; branch?: string } & WorkflowEventMeta)
   | ({ type: "run_resumed"; runId: string; remediationId: string; scope: RecoveryEventScope } & WorkflowEventMeta)
   | ({ type: "wave_serialized"; runId: string; waveId: string; waveNumber: number; stories: string[]; overlappingFiles: string[]; cause: "shared_file_overlap" | "missing_shared_files" } & WorkflowEventMeta)
+  | ({ type: "merge_gate_open"; runId: string; itemId: string; itemBranch: string; baseBranch: string; gatePromptId: string } & WorkflowEventMeta)
+  | ({ type: "merge_gate_cancelled"; runId: string; itemId: string; itemBranch: string; baseBranch: string } & WorkflowEventMeta)
+  | ({ type: "merge_completed"; runId: string; itemId: string; itemBranch: string; baseBranch: string; mergeSha: string } & WorkflowEventMeta)
+  | ({ type: "worktree_port_assigned"; runId?: string; branch: string; worktreePath: string; port: number } & WorkflowEventMeta)
 
 export type WorkflowIO = {
   /** Ask the operator a question and await a textual answer. */
-  ask(prompt: string): Promise<string>
+  ask(prompt: string, opts?: { actions?: PromptAction[] }): Promise<string>
   /** Emit a structured workflow event. */
   emit(event: WorkflowEvent): void
   /** Optional: called on terminal cleanup (e.g. close readline). */

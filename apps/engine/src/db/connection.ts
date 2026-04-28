@@ -87,6 +87,8 @@ export function applySchema(db: Db): void {
   migrateNotificationDeliveriesTable(db)
   migrateItemsCurrentStageColumn(db)
   migrateUpdateAttemptsColumns(db)
+  migratePendingPromptActionsColumn(db)
+  migrateWorktreePortAssignmentsTable(db)
   stampMigrationLevel(db)
 }
 
@@ -221,5 +223,22 @@ function migrateUpdateAttemptsColumns(db: Db): void {
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS update_attempts_idempotency_key_idx
     ON update_attempts(idempotency_key)
+  `)
+}
+
+function migratePendingPromptActionsColumn(db: Db): void {
+  const cols = db.prepare("PRAGMA table_info(pending_prompts)").all() as Array<{ name: string }>
+  if (cols.some(c => c.name === "actions_json")) return
+  db.exec("ALTER TABLE pending_prompts ADD COLUMN actions_json TEXT")
+}
+
+function migrateWorktreePortAssignmentsTable(db: Db): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS worktree_port_assignments (
+      worktree_path TEXT PRIMARY KEY,
+      branch TEXT NOT NULL,
+      port INTEGER NOT NULL UNIQUE,
+      created_at INTEGER NOT NULL
+    )
   `)
 }

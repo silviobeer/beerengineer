@@ -17,7 +17,7 @@ import {
 } from "../setup/config.js"
 import type { AppConfig } from "../setup/types.js"
 import { json, requireCsrfToken, setCors } from "./http.js"
-import { handleGetItem, handleGetItemDesign, handleGetItemWireframes, handleItemActionNamed, handleListItems } from "./routes/items.js"
+import { handleGetItem, handleGetItemDesign, handleGetItemPreview, handleGetItemWireframes, handleItemActionNamed, handleListItems, handleStartItemPreview } from "./routes/items.js"
 import {
   handleAnswer,
   handleGetArtifactFile,
@@ -59,6 +59,7 @@ import { seedIfEmpty } from "./seed.js"
 import { writeApiTokenFile } from "./tokenFile.js"
 import { removeEnginePidFile, writeEnginePidFile } from "./pidFile.js"
 import { markOrphanedRunsFailed } from "../core/orphanRecovery.js"
+import { pruneMissingWorktreeAssignments } from "../core/portAllocator.js"
 import { markPreparedUpdateInFlight, releaseUpdateLock, type UpdateApplyResult } from "../core/updateMode.js"
 
 const PORT = Number(process.env.PORT ?? 4100)
@@ -155,6 +156,7 @@ seedIfEmpty(db, repos)
 markOrphanedRunsFailed(repos).catch(err => {
   console.error("[orphanRecovery] startup scan failed:", (err as Error).message)
 })
+pruneMissingWorktreeAssignments()
 
 const server = createServer(async (req, res) => {
   if (!req.url || !req.method) return json(res, 400, { error: "bad request" })
@@ -249,6 +251,10 @@ const server = createServer(async (req, res) => {
     if (itemWireframesMatch && req.method === "GET") return handleGetItemWireframes(repos, res, itemWireframesMatch[1])
     const itemDesignMatch = path.match(/^\/items\/([^/]+)\/design$/)
     if (itemDesignMatch && req.method === "GET") return handleGetItemDesign(repos, res, itemDesignMatch[1])
+    const itemPreviewStartMatch = path.match(/^\/items\/([^/]+)\/preview\/start$/)
+    if (itemPreviewStartMatch && req.method === "POST") return handleStartItemPreview(repos, req, res, itemPreviewStartMatch[1])
+    const itemPreviewMatch = path.match(/^\/items\/([^/]+)\/preview$/)
+    if (itemPreviewMatch && req.method === "GET") return handleGetItemPreview(repos, res, itemPreviewMatch[1])
     const itemMatch = path.match(/^\/items\/([^/]+)$/)
     if (itemMatch && req.method === "GET") return handleGetItem(repos, res, itemMatch[1])
 

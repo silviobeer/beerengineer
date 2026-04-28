@@ -151,6 +151,37 @@ Supported env overrides:
   read-only` because it never needs shell access. Do not enable this on
   shared/untrusted hosts; it removes the OS-level guardrail in exchange for
   trust in the registered worktree.
+- `BEERENGINEER_WORKTREE_PORT_POOL` — preview-port range for managed
+  worktrees, default `3200-3399`. BeerEngineer assigns one port per item or
+  story worktree and injects `PORT`, `BEERENGINEER_PREVIEW_PORT`,
+  `BEERENGINEER_PREVIEW_HOST` (default `127.0.0.1`), and
+  `BEERENGINEER_PREVIEW_URL=http://<BEERENGINEER_PREVIEW_HOST>:<port>` into
+  spawned commands.
+- `<workspaceRoot>/.beerengineer/workspace.json -> preview.command` — optional
+  shell command BeerEngineer should run to start the operator-facing local
+  preview from an item worktree. `preview.cwd` may point at a relative
+  subdirectory inside that worktree. When omitted, BeerEngineer falls back to
+  a root `package.json` `scripts.dev` command if one exists.
+
+## Merge gate
+
+After all project branches complete `documentation -> handoff`, the item now
+stops in a dedicated **Merge** column before the workspace base branch is
+updated.
+
+- Per-project `handoff` still merges project branches into the item branch.
+- The new gate is item-level: it waits for operator input after the item
+  branch has the fully consolidated feature.
+- `promote_to_base` either answers the live merge-gate prompt or resumes a
+  previously blocked merge gate.
+- `cancel_promotion` only works while the live merge-gate prompt is still
+  open.
+
+The intended operator flow is: check out `item/<slug>`, run the preview on
+its assigned port, validate the integrated feature, then promote it.
+
+CLI and UI operators can now trigger this explicitly via `beerengineer item
+preview <id|code> --start` or `POST /items/:id/preview/start`.
 
 ## Storage model
 

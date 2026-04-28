@@ -26,6 +26,7 @@ export function withPromptPersistence(bus: EventBus, repos: Repos): () => void {
             runId: event.runId,
             stageRunId: event.stageRunId ?? null,
             prompt: event.prompt,
+            actions: event.actions,
           })
         }
         return

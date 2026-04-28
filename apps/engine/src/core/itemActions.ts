@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events"
 import type { ExternalRemediationRow, ItemRow, Repos, RunRow } from "../db/repositories.js"
+import { recordAnswer } from "./conversation.js"
 import { loadResumeReadiness } from "./resume.js"
 
 export type ItemAction =
@@ -10,6 +11,8 @@ export type ItemAction =
   | "start_implementation"
   | "rerun_design_prep"
   | "resume_run"
+  | "promote_to_base"
+  | "cancel_promotion"
   | "mark_done"
 
 export const ITEM_ACTIONS: readonly ItemAction[] = [
@@ -20,6 +23,8 @@ export const ITEM_ACTIONS: readonly ItemAction[] = [
   "start_implementation",
   "rerun_design_prep",
   "resume_run",
+  "promote_to_base",
+  "cancel_promotion",
   "mark_done"
 ] as const
 
@@ -51,6 +56,17 @@ export type ItemActionResult =
       runId?: string
       remediationId?: string
     }
+  | {
+      ok: true
+      kind: "resume_run"
+      itemId: string
+      runId: string
+      summary: string
+      branch?: string
+      reviewNotes?: string
+      column: ItemRow["current_column"]
+      phaseStatus: ItemRow["phase_status"]
+    }
   | { ok: false; status: 404; error: "item_not_found" }
   | { ok: false; status: 409; error: "invalid_transition" | "not_resumable" | "resume_in_progress"; current: { column: string; phaseStatus: string }; action: ItemAction }
   | { ok: false; status: 422; error: "remediation_required"; action: ItemAction }
@@ -70,6 +86,7 @@ type Transition =
   | { kind: "state"; to: { column: ItemRow["current_column"]; phase: ItemRow["phase_status"] } }
   | { kind: "start-run"; column: ItemRow["current_column"] }
   | { kind: "resume" }
+  | { kind: "answer-prompt-or-resume"; promoteAnswer: string; resumeWhenNoPrompt: boolean }
 
 type ColumnKey = ItemRow["current_column"]
 type PhaseKey = ItemRow["phase_status"]
@@ -117,7 +134,14 @@ const MATRIX: Record<ItemAction, Record<string, Transition>> = {
     "frontend/*": { kind: "resume" },
     "requirements/*": { kind: "resume" },
     "implementation/running": { kind: "resume" },
-    "implementation/failed": { kind: "resume" }
+    "implementation/failed": { kind: "resume" },
+    "merge/review_required": { kind: "resume" }
+  },
+  promote_to_base: {
+    "merge/review_required": { kind: "answer-prompt-or-resume", promoteAnswer: "promote", resumeWhenNoPrompt: true }
+  },
+  cancel_promotion: {
+    "merge/review_required": { kind: "answer-prompt-or-resume", promoteAnswer: "cancel", resumeWhenNoPrompt: false }
   },
   mark_done: {
     "implementation/review_required": { kind: "state", to: { column: "done", phase: "completed" } }
@@ -172,6 +196,18 @@ export function createItemActionsService(repos: Repos): ItemActionsService {
 
   const latestResumableRun = (item: ItemRow): RunRow | undefined => {
     return repos.latestActiveRunForItem(item.id) ?? repos.latestRecoverableRunForItem(item.id)
+  }
+
+  const promptSupportsAnswer = (runId: string, expected: string): { runId: string; promptId: string } | null => {
+    const open = repos.getOpenPrompt(runId)
+    if (!open?.actions_json) return null
+    try {
+      const actions = JSON.parse(open.actions_json) as Array<{ value?: unknown }>
+      const supported = actions.some(action => typeof action?.value === "string" && action.value === expected)
+      return supported ? { runId, promptId: open.id } : null
+    } catch {
+      return null
+    }
   }
 
   const recordResumeIntent = async (
@@ -248,6 +284,90 @@ export function createItemActionsService(repos: Repos): ItemActionsService {
     }
   }
 
+  const recordPromptOrResumeIntent = async (
+    item: ItemRow,
+    action: ItemAction,
+    transition: Extract<Transition, { kind: "answer-prompt-or-resume" }>,
+  ): Promise<ItemActionResult> => {
+    const liveRun = repos.latestActiveRunForItem(item.id)
+    const supportedPrompt = liveRun ? promptSupportsAnswer(liveRun.id, transition.promoteAnswer) : null
+    if (supportedPrompt) {
+      const answered = recordAnswer(repos, {
+        runId: supportedPrompt.runId,
+        promptId: supportedPrompt.promptId,
+        answer: transition.promoteAnswer,
+        source: "api",
+      })
+      if (!answered.ok) {
+        return {
+          ok: false,
+          status: 409,
+          error: "invalid_transition",
+          current: { column: item.current_column, phaseStatus: item.phase_status },
+          action,
+        }
+      }
+      return {
+        ok: true,
+        kind: "state",
+        itemId: item.id,
+        column: item.current_column,
+        phaseStatus: item.phase_status,
+      }
+    }
+
+    if (!transition.resumeWhenNoPrompt) {
+      return {
+        ok: false,
+        status: 409,
+        error: "invalid_transition",
+        current: { column: item.current_column, phaseStatus: item.phase_status },
+        action,
+      }
+    }
+
+    const recoverable = repos.latestRecoverableRunForItem(item.id)
+    if (!recoverable || recoverable.recovery_status !== "blocked" || recoverable.recovery_scope_ref !== "merge-gate") {
+      return {
+        ok: false,
+        status: 409,
+        error: "invalid_transition",
+        current: { column: item.current_column, phaseStatus: item.phase_status },
+        action,
+      }
+    }
+
+    const readiness = await loadResumeReadiness(repos, recoverable.id)
+    if (readiness.kind === "not_resumable") {
+      return {
+        ok: false,
+        status: 409,
+        error: readiness.reason === "resume_in_progress" ? "resume_in_progress" : "not_resumable",
+        current: { column: item.current_column, phaseStatus: item.phase_status },
+        action,
+      }
+    }
+    if (readiness.kind !== "ready" && readiness.kind !== "no_recovery") {
+      return {
+        ok: false,
+        status: 409,
+        error: "not_resumable",
+        current: { column: item.current_column, phaseStatus: item.phase_status },
+        action,
+      }
+    }
+
+    return {
+      ok: true,
+      kind: "resume_run",
+      itemId: item.id,
+      runId: recoverable.id,
+      summary: `Operator resumed promotion of ${item.code} to base branch`,
+      column: item.current_column,
+      phaseStatus: item.phase_status,
+    }
+  }
+
   return {
     async perform(itemId, action, input): Promise<ItemActionResult> {
       const item = repos.getItem(itemId)
@@ -269,6 +389,8 @@ export function createItemActionsService(repos: Repos): ItemActionsService {
           return recordStartRunIntent(item, action, transition.column)
         case "resume":
           return recordResumeIntent(item, action, input)
+        case "answer-prompt-or-resume":
+          return recordPromptOrResumeIntent(item, action, transition)
       }
     },
     on(event, listener) {

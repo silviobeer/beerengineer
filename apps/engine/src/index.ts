@@ -11,6 +11,8 @@ import { createGitAdapterFromMode } from "./core/gitAdapter.js"
 import { inspectWorkspaceState } from "./core/git.js"
 import { layout } from "./core/workspaceLayout.js"
 import { latestCompletedRunForItem } from "./core/itemWorkspace.js"
+import { resolveItemPreviewContext } from "./core/itemPreview.js"
+import { isPortListening, resolvePreviewLaunchSpec, startPreviewServer } from "./core/previewLauncher.js"
 import { resolveWorkflowContextForItemRun, resolveWorkflowContextForRun } from "./core/workflowContextResolver.js"
 import {
   backfillWorkspaceConfigs,
@@ -112,6 +114,7 @@ type Command =
   | { kind: "runs"; workspaceKey?: string; json?: boolean; all?: boolean; compact?: boolean }
   | { kind: "item-get"; itemRef?: string; workspaceKey?: string; json?: boolean }
   | { kind: "item-open"; itemRef?: string; workspaceKey?: string }
+  | { kind: "item-preview"; itemRef?: string; workspaceKey?: string; start?: boolean; open?: boolean; json?: boolean }
   | { kind: "item-wireframes"; itemRef?: string; workspaceKey?: string; open?: boolean; json?: boolean }
   | { kind: "item-design"; itemRef?: string; workspaceKey?: string; open?: boolean; json?: boolean }
   | { kind: "run-list"; workspaceKey?: string; json?: boolean; all?: boolean; compact?: boolean }
@@ -252,6 +255,7 @@ export function parseArgs(argv: string[]): Command {
   }
   if (first === "item" && second === "get") return { kind: "item-get", itemRef: argv[2], workspaceKey, json }
   if (first === "item" && second === "open") return { kind: "item-open", itemRef: argv[2], workspaceKey }
+  if (first === "item" && second === "preview") return { kind: "item-preview", itemRef: argv[2], workspaceKey, start: argv.includes("--start"), open: argv.includes("--open"), json }
   if (first === "item" && second === "wireframes") return { kind: "item-wireframes", itemRef: argv[2], workspaceKey, open: argv.includes("--open"), json }
   if (first === "item" && second === "design") return { kind: "item-design", itemRef: argv[2], workspaceKey, open: argv.includes("--open"), json }
   if (first === "start" && second === undefined) return { kind: "start-engine" }
@@ -320,6 +324,8 @@ function printHelp(): void {
     "    beerengineer workspace gc-worktrees <key> [--json]   Remove orphaned BeerEngineer story worktrees",
     "    beerengineer item get <id|code> [--workspace <key>]  Show one item",
     "    beerengineer item open <id|code> [--workspace <key>] Open one item in the UI",
+    "    beerengineer item preview <id|code> [--start] [--open] [--workspace <key>] [--json]",
+    "                                                         Show or start the item-branch local preview",
     "    beerengineer item wireframes <id|code> [--open] [--workspace <key>] [--json]",
     "                                                         Show/open wireframe artifacts",
     "    beerengineer item design <id|code> [--open] [--workspace <key>] [--json]",
@@ -342,7 +348,7 @@ function printHelp(): void {
     "  Item actions:",
     "    start_brainstorm  start_visual_companion  start_frontend_design",
     "    promote_to_requirements  start_implementation  rerun_design_prep",
-    "    resume_run  mark_done",
+    "    promote_to_base  cancel_promotion  resume_run  mark_done",
     "",
     "  Resume flags (for --action resume_run on a blocked run):",
     "    --remediation-summary <text>   Required. What you fixed outside BeerEngineer2.",
@@ -363,6 +369,9 @@ function printHelp(): void {
     "    Items with UI additionally run two item-scoped stages — visual-companion",
     "    and frontend-design — between brainstorm and requirements. Both are",
     "    silently skipped when item-level hasUi === false.",
+    "    After project handoff, items stop in merge-gate before landing on the",
+    "    base branch. Managed previews use a per-worktree port from",
+    "    BEERENGINEER_WORKTREE_PORT_POOL.",
     "",
     "  Aliases:",
     "    -h  --help  --doctor  items  chats  runs",
@@ -1578,6 +1587,29 @@ function resolvePublicBaseUrl(): string {
   return loadEffectiveConfig()?.publicBaseUrl?.trim() || resolveUiLaunchUrl()
 }
 
+function resolveCliItem(
+  repos: Repos,
+  itemRef: string,
+  workspaceKey?: string,
+): { item: ItemRow; workspaceKey?: string } | null {
+  if (workspaceKey) {
+    const workspace = repos.getWorkspaceByKey(workspaceKey)
+    if (!workspace) return null
+    const item = repos.getItemByCode(workspace.id, itemRef) ?? repos.getItem(itemRef)
+    if (!item || item.workspace_id !== workspace.id) return null
+    return { item, workspaceKey: workspace.key }
+  }
+  const direct = repos.getItem(itemRef)
+  if (direct) {
+    const workspace = repos.getWorkspace(direct.workspace_id)
+    return { item: direct, workspaceKey: workspace?.key }
+  }
+  const byCode = repos.findItemsByCode(itemRef)
+  if (byCode.length !== 1) return null
+  const workspace = repos.getWorkspace(byCode[0].workspace_id)
+  return { item: byCode[0], workspaceKey: workspace?.key }
+}
+
 async function runItemOpenCommand(itemRef: string | undefined, workspaceKey: string | undefined): Promise<number> {
   if (!itemRef) {
     console.error("  Missing item reference: beerengineer item open <id|code>")
@@ -1597,6 +1629,86 @@ async function runItemOpenCommand(itemRef: string | undefined, workspaceKey: str
     console.log(`  ${url}`)
     if (await isUiReachable(url)) openBrowser(url)
     else console.log("  UI is not reachable on that address; printed URL only.")
+    return 0
+  } finally {
+    db.close()
+  }
+}
+
+async function runItemPreviewCommand(
+  itemRef: string | undefined,
+  workspaceKey: string | undefined,
+  opts: { start?: boolean; open?: boolean; json?: boolean },
+): Promise<number> {
+  if (!itemRef) {
+    console.error("  Missing item reference: beerengineer item preview <id|code>")
+    return 2
+  }
+  const db = initDatabase()
+  try {
+    const repos = new Repos(db)
+    const resolved = resolveCliItem(repos, itemRef, workspaceKey)
+    if (!resolved) {
+      console.error(`  Item not found: ${itemRef}`)
+      return 1
+    }
+    const preview = resolveItemPreviewContext(repos, resolved.item.id)
+    if (!preview.ok) {
+      console.error(`  ${preview.error}`)
+      return 1
+    }
+    const launch = resolvePreviewLaunchSpec(preview.worktreePath)
+    let status: "started" | "already_running" | "stopped" = "stopped"
+    let logPath: string | undefined
+    if (opts.start) {
+      try {
+        const started = await startPreviewServer(preview)
+        status = started.status
+        logPath = started.logPath
+      } catch (error) {
+        console.error(`  ${(error as Error).message}`)
+        return 1
+      }
+    } else {
+      status = (await isPortListening(preview.previewHost, preview.previewPort)) ? "already_running" : "stopped"
+    }
+
+    const payload = {
+      itemId: resolved.item.id,
+      workspaceKey: resolved.workspaceKey,
+      branch: preview.branch,
+      worktreePath: preview.worktreePath,
+      previewHost: preview.previewHost,
+      previewPort: preview.previewPort,
+      previewUrl: preview.previewUrl,
+      status,
+      launch: launch
+        ? {
+            command: launch.command,
+            cwd: launch.cwd,
+            source: launch.source,
+          }
+        : null,
+      logPath: logPath ?? join(preview.worktreePath, ".beerengineer-preview.log"),
+    }
+    if (opts.json) {
+      process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`)
+    } else {
+      console.log(`  branch:       ${payload.branch}`)
+      console.log(`  worktree:     ${payload.worktreePath}`)
+      console.log(`  preview:      ${payload.previewUrl}`)
+      console.log(`  status:       ${payload.status}`)
+      if (payload.launch) {
+        console.log(`  command:      ${payload.launch.command}`)
+        console.log(`  command cwd:  ${payload.launch.cwd}`)
+        console.log(`  source:       ${payload.launch.source}`)
+      } else {
+        console.log("  command:      not configured")
+        console.log("  hint:         add .beerengineer/workspace.json -> preview.command or a root package.json dev script")
+      }
+      console.log(`  log:          ${payload.logPath}`)
+    }
+    if (opts.open) openBrowser(preview.previewUrl)
     return 0
   } finally {
     db.close()
@@ -2619,6 +2731,7 @@ const COMMAND_REGISTRY: CommandHandlers = {
   items: cmd => runItemsCommand(cmd.workspaceKey, cmd.all, cmd.json, cmd.compact),
   "item-get": cmd => runItemGetCommand(cmd.itemRef, cmd.workspaceKey, cmd.json),
   "item-open": cmd => runItemOpenCommand(cmd.itemRef, cmd.workspaceKey),
+  "item-preview": cmd => runItemPreviewCommand(cmd.itemRef, cmd.workspaceKey, { start: cmd.start, open: cmd.open, json: cmd.json }),
   "item-wireframes": cmd =>
     runItemWireframesCommand(cmd.itemRef, cmd.workspaceKey, cmd.open, cmd.json),
   "item-design": cmd => runItemDesignCommand(cmd.itemRef, cmd.workspaceKey, cmd.open, cmd.json),

@@ -71,6 +71,16 @@ function eventFromStageLog(row: StageLogRow): WorkflowEvent | null {
         runId: row.run_id,
         promptId: typeof data.promptId === "string" ? data.promptId : "",
         prompt: typeof data.prompt === "string" ? data.prompt : row.message,
+        actions: Array.isArray(data.actions)
+          ? data.actions
+              .filter((entry): entry is { label: string; value: string } => {
+                return typeof entry === "object" &&
+                  entry !== null &&
+                  typeof (entry as { label?: unknown }).label === "string" &&
+                  typeof (entry as { value?: unknown }).value === "string"
+              })
+              .map(entry => ({ label: entry.label, value: entry.value }))
+          : undefined,
         stageRunId: row.stage_run_id ?? null,
       }
     case "prompt_answered":
@@ -233,6 +243,40 @@ function eventFromStageLog(row: StageLogRow): WorkflowEvent | null {
         runId: row.run_id,
         remediationId: typeof data.remediationId === "string" ? data.remediationId : "",
         scope: parseRecoveryScope(data.scope, row.run_id),
+      }
+    case "merge_gate_open":
+      return {
+        type: "merge_gate_open",
+        runId: row.run_id,
+        itemId: typeof data.itemId === "string" ? data.itemId : "",
+        itemBranch: typeof data.itemBranch === "string" ? data.itemBranch : "",
+        baseBranch: typeof data.baseBranch === "string" ? data.baseBranch : "",
+        gatePromptId: typeof data.gatePromptId === "string" ? data.gatePromptId : "",
+      }
+    case "merge_gate_cancelled":
+      return {
+        type: "merge_gate_cancelled",
+        runId: row.run_id,
+        itemId: typeof data.itemId === "string" ? data.itemId : "",
+        itemBranch: typeof data.itemBranch === "string" ? data.itemBranch : "",
+        baseBranch: typeof data.baseBranch === "string" ? data.baseBranch : "",
+      }
+    case "merge_completed":
+      return {
+        type: "merge_completed",
+        runId: row.run_id,
+        itemId: typeof data.itemId === "string" ? data.itemId : "",
+        itemBranch: typeof data.itemBranch === "string" ? data.itemBranch : "",
+        baseBranch: typeof data.baseBranch === "string" ? data.baseBranch : "",
+        mergeSha: typeof data.mergeSha === "string" ? data.mergeSha : "",
+      }
+    case "worktree_port_assigned":
+      return {
+        type: "worktree_port_assigned",
+        runId: typeof data.runId === "string" ? data.runId : row.run_id,
+        branch: typeof data.branch === "string" ? data.branch : "",
+        worktreePath: typeof data.worktreePath === "string" ? data.worktreePath : "",
+        port: typeof data.port === "number" ? data.port : 0,
       }
     case "wave_serialized":
       return {

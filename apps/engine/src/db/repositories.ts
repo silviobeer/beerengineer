@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto"
 import type { Db } from "./connection.js"
+import type { PromptAction } from "../core/io.js"
 
 const now = () => Date.now()
 
@@ -22,7 +23,7 @@ export type ItemRow = {
   code: string
   title: string
   description: string
-  current_column: "idea" | "brainstorm" | "frontend" | "requirements" | "implementation" | "done"
+  current_column: "idea" | "brainstorm" | "frontend" | "requirements" | "implementation" | "merge" | "done"
   phase_status: "draft" | "running" | "review_required" | "completed" | "failed"
   current_stage: string | null
   created_at: number
@@ -120,6 +121,7 @@ export type PendingPromptRow = {
   run_id: string
   stage_run_id: string | null
   prompt: string
+  actions_json: string | null
   answer: string | null
   created_at: number
   answered_at: number | null
@@ -797,20 +799,21 @@ export class Repos {
       .all(runId) as ArtifactFileRow[]
   }
 
-  createPendingPrompt(input: { id?: string; runId: string; stageRunId?: string | null; prompt: string }): PendingPromptRow {
+  createPendingPrompt(input: { id?: string; runId: string; stageRunId?: string | null; prompt: string; actions?: PromptAction[] }): PendingPromptRow {
     const row: PendingPromptRow = {
       id: input.id ?? randomUUID(),
       run_id: input.runId,
       stage_run_id: input.stageRunId ?? null,
       prompt: input.prompt,
+      actions_json: input.actions?.length ? JSON.stringify(input.actions) : null,
       answer: null,
       created_at: now(),
       answered_at: null
     }
     this.db
       .prepare(
-        `INSERT INTO pending_prompts (id, run_id, stage_run_id, prompt, answer, created_at, answered_at)
-         VALUES (@id, @run_id, @stage_run_id, @prompt, @answer, @created_at, @answered_at)`
+        `INSERT INTO pending_prompts (id, run_id, stage_run_id, prompt, actions_json, answer, created_at, answered_at)
+         VALUES (@id, @run_id, @stage_run_id, @prompt, @actions_json, @answer, @created_at, @answered_at)`
       )
       .run(row)
     return row
