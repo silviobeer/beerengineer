@@ -81,7 +81,7 @@ The core Kanban. Seven columns, cards are items.
 - Columns are **always in this order**: `idea` → `brainstorm` → `frontend` → `requirements` → `implementation` → `merge` → `done`. Even when empty, they appear.
 - `meta` today contains `phase` and `projects` count. Minimal by design — if you need more (e.g. number of open questions, blocked/failed indicator, latest run info), say so and we add it. Don't reach around the API.
 
-**Live updates:** `GET /events?workspace=<key>` is a Server-Sent Events stream. Subscribe once and re-fetch the board (or merge events in) when you see `item_column_changed`, `run_started`, `run_finished`, `stage_started`, `stage_completed`, `project_created`. See §Live data.
+**Live updates:** `GET /events?workspace=<key>` is a Server-Sent Events stream. Subscribe once and re-fetch the board (or merge events in) when you see `item_column_changed`, `run_started`, `run_finished`, `stage_started`, `stage_completed`, `project_created`. `item_column_changed` is now emitted on **every** column transition — both operator-driven actions (`promote_to_requirements`, etc.) and workflow-driven stage transitions (e.g. moving from `implementation` → `merge` when the merge gate opens). The board no longer needs a manual refresh to track stage progress. See §Live data.
 
 ### 4. Item detail / overlay
 

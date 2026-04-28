@@ -34,3 +34,32 @@ All notable user-facing changes to BeerEngineer2 are recorded here.
   GitHub release into `<dataDir>/install/` and swaps via a detached
   switcher. Creates an automatic SQLite backup before any version switch.
   See README "Updating safely" and `apps/engine/docs/app-setup.md`.
+
+### Fixed
+
+- **Setup-task ralph loop now commits worktree state before merge.**
+  The setup-task short-circuit previously verified the contract against
+  the worktree, marked the story `passed`, but never committed — so
+  `mergeStoryIntoWave` carried an unchanged tip and downstream feature
+  waves saw no scaffolding. New `commitAll(worktreePath, message)` helper
+  in `core/git.ts` (idempotent, no-op on clean tree) is invoked from
+  `runSetupStory` after the contract passes. Setup-wave Fix-4 from the
+  wave-merge cascade work is now operational.
+
+- **Setup-task contract gate tolerates planner prose.** `expectedFiles`
+  entries containing whitespace (e.g. `"test runner config file"`) are
+  treated as descriptive and skipped instead of feeding nonsense paths
+  to `existsSync`. `postChecks` are descriptive by default; only entries
+  explicitly prefixed with `$ ` or `sh: ` are executed as shell. Stops
+  the gate from failing on every iteration when the planner emits
+  natural-language assertions alongside literals.
+
+- **Live board now reflects workflow-driven column changes.**
+  `item_column_changed` SSE frames are now emitted on every authoritative
+  `setItemColumn` write inside the workflow path (`stage_started`,
+  `stage_completed`, `run_finished`), not just on operator-driven item
+  actions. UI consumers no longer need a manual refresh to see the card
+  move between columns as stages progress — most visibly when entering
+  the `merge` column at the merge gate. Fix routes through a new
+  `onItemColumnChanged` callback on `attachDbSync` that the API server
+  wires to `board.broadcastItemColumnChanged`.
