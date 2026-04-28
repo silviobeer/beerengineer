@@ -45,6 +45,7 @@ export type WorkflowEvent =
     } & WorkflowEventMeta)
   | ({ type: "prompt_answered"; runId: string; promptId: string; answer: string } & WorkflowEventMeta)
   | ({ type: "loop_iteration"; runId: string; stageRunId?: string | null; n: number; phase: "begin" | "user-message" | "review-feedback" | "review"; stageKey?: string | null } & WorkflowEventMeta)
+  | ({ type: "review_feedback"; runId: string; stageRunId?: string | null; stageKey?: string | null; cycle: number; feedback: string } & WorkflowEventMeta)
   | ({ type: "tool_called"; runId: string; stageRunId?: string | null; name: string; argsPreview?: string; provider?: string } & WorkflowEventMeta)
   | ({ type: "tool_result"; runId: string; stageRunId?: string | null; name: string; argsPreview?: string; resultPreview?: string; provider?: string; isError?: boolean } & WorkflowEventMeta)
   | ({ type: "llm_thinking"; runId: string; stageRunId?: string | null; text: string; provider?: string; model?: string } & WorkflowEventMeta)

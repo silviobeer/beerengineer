@@ -23,25 +23,42 @@ export function presentMessageEntry(entry: MessageEntry): MessagePresentation {
     case "run_resumed":
       return { icon: "🪄", label: "run resumed" }
     case "phase_started":
-      return { icon: "🧭", label: "-> phase", detail: payloadString(entry.payload.stageKey) }
+      return { icon: "→", label: "stage entered", detail: payloadString(entry.payload.stageKey) }
     case "phase_completed":
-      return { icon: "✅", label: "<- phase", detail: payloadString(entry.payload.stageKey) }
+      return { icon: "✓", label: "stage done", detail: payloadString(entry.payload.stageKey) }
     case "phase_failed":
-      return { icon: "⚠️", label: "<- phase", detail: `${payloadString(entry.payload.stageKey)} failed` }
+      return { icon: "✗", label: "stage failed", detail: payloadString(entry.payload.stageKey) }
     case "prompt_requested":
-      return { icon: "❓", label: "? prompt", detail: payloadString(entry.payload.prompt) }
+      return { icon: "?", label: "needs an answer", detail: payloadString(entry.payload.prompt) }
     case "prompt_answered":
-      return { icon: "💬", label: "> answer", detail: payloadString(entry.payload.answer) }
-    case "loop_iteration":
+      return { icon: "↩", label: "answer received", detail: payloadString(entry.payload.answer) }
+    case "loop_iteration": {
+      const n = payloadString(String(entry.payload.n ?? ""), "0")
+      switch (entry.payload.phase) {
+        case "review":
+          return {
+            icon: "↻",
+            label: Number(n) === 1 ? "entered review loop" : `review loop ${n} — running`,
+          }
+        case "review-feedback":
+          return { icon: "✎", label: "revising after review", detail: `iteration ${n}` }
+        case "user-message":
+          return { icon: "↪", label: "stage agent processing user message", detail: `iteration ${n}` }
+        case "begin":
+        default:
+          return { icon: "▷", label: "stage agent working", detail: `iteration ${n}` }
+      }
+    }
+    case "review_feedback":
       return {
-        icon: "🔁",
-        label: "loop",
-        detail: `${payloadString(entry.payload.phase)} #${payloadString(String(entry.payload.n ?? ""), "0")}`,
+        icon: "↩",
+        label: `findings handed back to stage (cycle ${payloadString(String(entry.payload.cycle ?? ""), "1")})`,
+        detail: payloadString(entry.payload.feedback),
       }
     case "tool_called":
       return {
-        icon: "🛠️",
-        label: "tool",
+        icon: "·",
+        label: "tool call",
         detail: [
           payloadString(entry.payload.name),
           typeof entry.payload.provider === "string" ? `(${entry.payload.provider})` : undefined,
@@ -50,7 +67,7 @@ export function presentMessageEntry(entry: MessageEntry): MessagePresentation {
       }
     case "tool_result":
       return {
-        icon: "📦",
+        icon: "·",
         label: "tool result",
         detail: [
           payloadString(entry.payload.name),
@@ -93,13 +110,49 @@ export function presentMessageEntry(entry: MessageEntry): MessagePresentation {
         label: "item",
         detail: `${payloadString(entry.payload.column)} / ${payloadString(entry.payload.phaseStatus)}`,
       }
+    case "merge_gate_open":
+      return {
+        icon: "⏸",
+        label: "merge gate open — awaiting promotion",
+        detail: `${payloadString(entry.payload.itemBranch)} → ${payloadString(entry.payload.baseBranch)}`,
+      }
+    case "merge_gate_cancelled":
+      return {
+        icon: "↶",
+        label: "merge postponed",
+        detail: `${payloadString(entry.payload.itemBranch)} → ${payloadString(entry.payload.baseBranch)}`,
+      }
+    case "merge_completed":
+      return {
+        icon: "⇪",
+        label: "branch merged",
+        detail: `${payloadString(entry.payload.itemBranch)} → ${payloadString(entry.payload.baseBranch)}`,
+      }
+    case "worktree_port_assigned":
+      return {
+        icon: "·",
+        label: "preview port assigned",
+        detail: `${payloadString(entry.payload.branch)} on :${payloadString(String(entry.payload.port ?? ""), "?")}`,
+      }
+    case "wave_serialized": {
+      const stories = Array.isArray(entry.payload.stories) ? (entry.payload.stories as string[]).join(", ") : ""
+      return {
+        icon: "↺",
+        label: "wave serialized (parallel → sequential)",
+        detail: stories || payloadString(String(entry.payload.waveNumber ?? ""), "?"),
+      }
+    }
     case "presentation":
       return { icon: "✨", label: payloadString(entry.payload.text) }
-    default:
+    default: {
+      // Switch is exhaustive over CanonicalMessageType; this branch only
+      // fires if a new canonical type is added without a presentation case.
+      const exhaustive = entry as MessageEntry
       return {
-        icon: "📣",
-        label: entry.type,
-        detail: payloadString(entry.payload.rawType),
+        icon: "·",
+        label: String(exhaustive.type).replace(/_/g, " "),
+        detail: payloadString(exhaustive.payload.rawType),
       }
+    }
   }
 }

@@ -805,7 +805,19 @@ async function runOneReviewCycle(
   if (!storyReview.outcome.startsWith("pass")) {
     implementation.status = "in_progress"
     await writeJson(paths.implementationPath, implementation)
-    return { kind: "revise", review: storyReview, nextFeedback: storyReview.feedbackSummary.join("; ") }
+    const nextFeedback = storyReview.feedbackSummary.join("; ")
+    const activeRun = getActiveRun()
+    if (activeRun) {
+      emitEvent({
+        type: "review_feedback",
+        runId: activeRun.runId,
+        stageRunId: activeRun.stageRunId ?? null,
+        stageKey: "executing",
+        cycle: reviewCycle + 1,
+        feedback: nextFeedback,
+      })
+    }
+    return { kind: "revise", review: storyReview, nextFeedback }
   }
 
   // Real-git story→wave merge happens in the execution stage's

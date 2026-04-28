@@ -16,6 +16,7 @@ export type CanonicalMessageType =
   | "agent_message"
   | "user_message"
   | "loop_iteration"
+  | "review_feedback"
   | "tool_called"
   | "tool_result"
   | "llm_thinking"
@@ -71,9 +72,17 @@ export function levelOf(event: WorkflowEvent): LevelInfo {
     case "prompt_answered":
       return { level: 1, force: false, type: "prompt_answered" }
     case "loop_iteration":
-      return { level: 1, force: false, type: "loop_iteration" }
+      // First entry into the review loop (n===1 with phase=review) is the
+      // L2 "entered review loop" milestone; every other tick is L1 progress.
+      return {
+        level: event.phase === "review" && event.n === 1 ? 2 : 1,
+        force: false,
+        type: "loop_iteration",
+      }
+    case "review_feedback":
+      return { level: 1, force: false, type: "review_feedback" }
     case "tool_called":
-      return { level: 1, force: false, type: "tool_called" }
+      return { level: 0, force: false, type: "tool_called" }
     case "tool_result":
       return { level: 0, force: false, type: "tool_result" }
     case "llm_thinking":

@@ -87,8 +87,9 @@ New synthetic events (added to `WorkflowEvent`, emitted from existing call sites
 
 | Type | Level | Payload |
 |---|---|---|
-| `loop_iteration` | L1 | `{ runId, stageRunId, n, phase }` — emitted from the stage runtime where the inner loop tick already exists. |
-| `tool_called` | L1 | `{ runId, stageRunId, name }` |
+| `loop_iteration` | L1 (sub-classified) | `{ runId, stageRunId, n, phase }` — emitted from the stage runtime where the inner loop tick already exists. **Sub-classification:** `phase=review` with `n===1` is promoted to **L2** (the "entered review loop" milestone). All other ticks (`begin`, `user-message`, `review-feedback`, `review` at `n>1`) stay L1. |
+| `review_feedback` | L1 | `{ runId, stageRunId, stageKey, cycle, feedback }` — emitted from `stageRuntime` (all stages) and `ralphRuntime` (executing) whenever a reviewer hands feedback back to the stage agent. Carries the actual feedback text so an L1 operator sees what the next cycle will be revising against. |
+| `tool_called` | L0 | `{ runId, stageRunId, name }` — debug-only. Demoted from L1 because tool chatter is noise once the canonical narrative ("entered review loop", "revising after review", …) is rendering at L1. |
 | `tool_result` | L0 | `{ runId, stageRunId, name, argsPreview, resultPreview }` — previews truncated to 2KB. |
 | `llm_thinking` | L0 | `{ runId, stageRunId, text }` — only emitted when the LLM adapter is running a thinking-capable model; gated by config to avoid spam. |
 | `llm_tokens` | L0 | `{ runId, in, out, model }` — one per LLM call. |
@@ -228,6 +229,7 @@ To insulate clients from incidental renames in `WorkflowEvent`, messages expose 
 | `agent_message` | `chat_message` with role=agent/system |
 | `user_message` | `chat_message` with role=user (source=cli/api/webhook) |
 | `loop_iteration` | `loop_iteration` |
+| `review_feedback` | `review_feedback` |
 | `tool_called` | `tool_called` |
 | `tool_result` | `tool_result` |
 | `llm_thinking` | `llm_thinking` |

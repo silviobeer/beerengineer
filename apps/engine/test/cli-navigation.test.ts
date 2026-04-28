@@ -780,9 +780,9 @@ test("run watch replays canonical messages and final status", async () => {
 
     assert.match(stdout, /watching .* Watch item/)
     assert.match(stdout, /run started  Watch item/)
-    assert.match(stdout, /-> phase  requirements/)
+    assert.match(stdout, /stage entered  requirements/)
     assert.match(stdout, /agent  Working through requirements/)
-    assert.match(stdout, /<- phase  requirements/)
+    assert.match(stdout, /stage done  requirements/)
     assert.match(stdout, /done  requirements \/ completed/)
   } finally {
     db.close()

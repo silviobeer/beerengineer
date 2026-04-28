@@ -490,6 +490,17 @@ async function runStageBody<TState, TArtifact, TResult>(
     setStatus(run, "revision_requested")
     await persistRun(run)
     emitChatMessage(run, definition.reviewerLabel, "reviewer", review.feedback)
+    const activeRunForReview = getActiveRun()
+    if (activeRunForReview) {
+      emitEvent({
+        type: "review_feedback",
+        runId: activeRunForReview.runId,
+        stageRunId: activeRunForReview.stageRunId ?? null,
+        stageKey: run.stage,
+        cycle: run.reviewIteration,
+        feedback: review.feedback,
+      })
+    }
     response = await definition.stageAgent.step({
       kind: "review-feedback",
       state: run.state,

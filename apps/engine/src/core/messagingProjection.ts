@@ -94,6 +94,15 @@ function eventFromStageLog(row: StageLogRow): WorkflowEvent | null {
             : "begin",
         stageKey: typeof data.stageKey === "string" ? data.stageKey : null,
       }
+    case "review_feedback":
+      return {
+        type: "review_feedback",
+        runId: row.run_id,
+        stageRunId: row.stage_run_id ?? null,
+        stageKey: typeof data.stageKey === "string" ? data.stageKey : null,
+        cycle: typeof data.cycle === "number" ? data.cycle : 0,
+        feedback: typeof data.feedback === "string" ? data.feedback : row.message,
+      }
     case "tool_called":
       return {
         type: "tool_called",

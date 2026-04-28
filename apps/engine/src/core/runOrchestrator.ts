@@ -211,6 +211,16 @@ export function attachDbSync(
         }))
         return
       }
+      case "review_feedback": {
+        track(repos.appendLog({
+          runId: event.runId,
+          stageRunId: event.stageRunId ?? null,
+          eventType: "review_feedback",
+          message: event.feedback,
+          data: { cycle: event.cycle, feedback: event.feedback, stageKey: event.stageKey ?? null },
+        }))
+        return
+      }
       case "tool_called": {
         track(repos.appendLog({
           runId: event.runId,
