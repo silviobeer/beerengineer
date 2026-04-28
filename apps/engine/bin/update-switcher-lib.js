@@ -76,25 +76,38 @@ export function swapManagedInstallPointers({
   rollbackOnFailure = true,
 }) {
   if (platform === "win32") {
-    rmSync(previousPath, { recursive: true, force: true })
-    let movedCurrentToPrevious = false
-    try {
-      renameSync(currentPath, previousPath)
-      movedCurrentToPrevious = true
-      renameSync(nextPath, currentPath)
-      return { mode: "rename", rolledBackOnFailure: false }
-    } catch (err) {
-      let restoredCurrent = false
-      if (rollbackOnFailure && movedCurrentToPrevious) {
-        try {
-          renameSync(previousPath, currentPath)
-          restoredCurrent = true
-        } catch {}
-      }
-      throw new Error(`install_swap_failed:${err instanceof Error ? err.message : String(err)}:${restoredCurrent ? "restored_current" : "current_not_restored"}`)
-    }
+    return swapManagedInstallPointersWindows({ currentPath, previousPath, nextPath, rollbackOnFailure })
   }
 
   pointManagedInstallPointer(currentPath, nextPath, platform)
   return { mode: "symlink", rolledBackOnFailure: false }
+}
+
+function swapManagedInstallPointersWindows({
+  currentPath,
+  previousPath,
+  nextPath,
+  rollbackOnFailure,
+}) {
+  rmSync(previousPath, { recursive: true, force: true })
+  let movedCurrentToPrevious = false
+  try {
+    renameSync(currentPath, previousPath)
+    movedCurrentToPrevious = true
+    renameSync(nextPath, currentPath)
+    return { mode: "rename", rolledBackOnFailure: false }
+  } catch (err) {
+    const restoredCurrent = restorePreviousInstall(previousPath, currentPath, rollbackOnFailure && movedCurrentToPrevious)
+    throw new Error(`install_swap_failed:${err instanceof Error ? err.message : String(err)}:${restoredCurrent ? "restored_current" : "current_not_restored"}`)
+  }
+}
+
+function restorePreviousInstall(previousPath, currentPath, shouldRestore) {
+  if (!shouldRestore) return false
+  try {
+    renameSync(previousPath, currentPath)
+    return true
+  } catch {
+    return false
+  }
 }

@@ -394,37 +394,7 @@ async function runStageBody<TState, TArtifact, TResult>(
 
   while (true) {
     if (response.kind === "message") {
-      setStatus(run, "waiting_for_user")
-      pushLog(run, { type: "stage_message", message: response.message })
-      await persistRun(run)
-      emitChatMessage(run, definition.stageAgentLabel, "stage-agent", response.message, true)
-
-      // Pass the agent's message as the prompt text so `pending_prompts` and
-      // every transcript projection show real content instead of a "you >"
-      // placeholder. Terminal renderers already displayed the chat_message
-      // event above, so the CLI can safely suppress duplicate echo when it
-      // sees the same text come back through `prompt_requested`.
-      const userMessage = await definition.askUser(response.message)
-      if (userMessage === NON_INTERACTIVE_NO_ANSWER_SENTINEL) {
-        throw new Error(
-          `Stage "${run.stage}" emitted a prompt but this is a non-interactive run with no stdin answers queued. ` +
-          "Pipe answers via stdin (one per line), use the API (POST /runs/:id/answer) after the run " +
-          "emits a pending_prompt event, or provide all required inputs up-front (e.g. --references)."
-        )
-      }
-      pushLog(run, { type: "user_message", message: userMessage })
-      run.userTurnCount++
-      setStatus(run, "chat_in_progress")
-      response = await definition.stageAgent.step({
-        kind: "user-message",
-        state: run.state,
-        userMessage,
-        stageContext: buildStageContext(run, "user-message"),
-      })
-      emitLoopIteration(run, "user-message", run.stageAgentTurnCount + 1)
-      run.stageAgentTurnCount++
-      syncSessions(definition, run)
-      await persistRun(run)
+      response = await continueStageAfterUserMessage(definition, run, response.message)
       continue
     }
 
@@ -432,22 +402,7 @@ async function runStageBody<TState, TArtifact, TResult>(
     setStatus(run, "artifact_ready")
     pushLog(run, { type: "artifact_created", message: "Artifact created." })
 
-    const artifactContents = await definition.persistArtifacts(run, response.artifact)
-    run.files = await writeArtifactFiles(run.stageArtifactsDir, artifactContents)
-    for (const file of run.files) {
-      pushLog(run, { type: "file_written", message: `${file.label}: ${file.path}` })
-      const activeRun = getActiveRun()
-      if (activeRun) {
-        emitEvent({
-          type: "artifact_written",
-          runId: activeRun.runId,
-          stageRunId: activeRun.stageRunId ?? null,
-          label: file.label,
-          kind: file.kind,
-          path: file.path,
-        })
-      }
-    }
+    await persistRunArtifacts(definition, run, response.artifact)
 
     setStatus(run, "in_review")
     run.reviewIteration++
@@ -462,54 +417,158 @@ async function runStageBody<TState, TArtifact, TResult>(
     syncSessions(definition, run)
     await persistRun(run)
 
-    if (review.kind === "pass") {
-      pushLog(run, { type: "review_pass", message: "Review passed." })
-      setStatus(run, "approved")
-      await persistRun(run)
-      const result = await definition.onApproved(response.artifact, run)
-      return { result, run }
+    const nextStep = await handleReviewOutcome(definition, run, response.artifact, review)
+    if (nextStep.kind === "approved") {
+      return { result: nextStep.result, run }
     }
-
-    if (review.kind === "block") {
-      pushLog(run, { type: "status_changed", message: review.reason, data: { cycle: run.reviewIteration, reviewOutcome: "block" } })
-      setStatus(run, "blocked")
-      await persistRun(run)
-      await recordStageBlocked(run, "review_block", review.reason)
-      throw new Error(review.reason)
-    }
-
-    pushLog(run, { type: "review_revise", message: review.feedback, data: { cycle: run.reviewIteration, reviewOutcome: "revise" } })
-    if (run.reviewIteration >= definition.maxReviews) {
-      setStatus(run, "blocked")
-      await persistRun(run)
-      const summary = `Blocked: no pass after ${definition.maxReviews} reviews`
-      await recordStageBlocked(run, "review_limit", summary, { detail: review.feedback })
-      throw new Error(summary)
-    }
-
-    setStatus(run, "revision_requested")
-    await persistRun(run)
-    emitChatMessage(run, definition.reviewerLabel, "reviewer", review.feedback)
-    const activeRunForReview = getActiveRun()
-    if (activeRunForReview) {
-      emitEvent({
-        type: "review_feedback",
-        runId: activeRunForReview.runId,
-        stageRunId: activeRunForReview.stageRunId ?? null,
-        stageKey: run.stage,
-        cycle: run.reviewIteration,
-        feedback: review.feedback,
-      })
-    }
-    response = await definition.stageAgent.step({
-      kind: "review-feedback",
-      state: run.state,
-      reviewFeedback: review.feedback,
-      stageContext: buildStageContext(run, "review-feedback"),
-    })
+    response = nextStep.response
     emitLoopIteration(run, "review-feedback", run.stageAgentTurnCount + 1)
     run.stageAgentTurnCount++
     syncSessions(definition, run)
     await persistRun(run)
   }
+}
+
+async function persistRunArtifacts<TState, TArtifact, TResult>(
+  definition: StageDefinition<TState, TArtifact, TResult>,
+  run: StageRun<TState, TArtifact>,
+  artifact: TArtifact,
+): Promise<void> {
+  const artifactContents = await definition.persistArtifacts(run, artifact)
+  run.files = await writeArtifactFiles(run.stageArtifactsDir, artifactContents)
+  emitArtifactWrittenEvents(run)
+}
+
+function emitArtifactWrittenEvents<TState, TArtifact>(run: StageRun<TState, TArtifact>): void {
+  for (const file of run.files) {
+    pushLog(run, { type: "file_written", message: `${file.label}: ${file.path}` })
+    const activeRun = getActiveRun()
+    if (!activeRun) continue
+    emitEvent({
+      type: "artifact_written",
+      runId: activeRun.runId,
+      stageRunId: activeRun.stageRunId ?? null,
+      label: file.label,
+      kind: file.kind,
+      path: file.path,
+    })
+  }
+}
+
+async function handleReviewOutcome<TState, TArtifact, TResult>(
+  definition: StageDefinition<TState, TArtifact, TResult>,
+  run: StageRun<TState, TArtifact>,
+  artifact: TArtifact,
+  review: Awaited<ReturnType<StageDefinition<TState, TArtifact, TResult>["reviewer"]["review"]>>,
+): Promise<
+  | { kind: "approved"; result: TResult }
+  | { kind: "revise"; response: StageAgentResponse<TArtifact> }
+> {
+  if (review.kind === "pass") {
+    pushLog(run, { type: "review_pass", message: "Review passed." })
+    setStatus(run, "approved")
+    await persistRun(run)
+    return { kind: "approved", result: await definition.onApproved(artifact, run) }
+  }
+
+  if (review.kind === "block") {
+    await blockReviewRun(run, review.reason)
+  }
+  if (review.kind !== "revise") {
+    throw new Error(`Unsupported review outcome: ${String((review as { kind: string }).kind)}`)
+  }
+
+  return {
+    kind: "revise",
+    response: await requestRevision(definition, run, review.feedback),
+  }
+}
+
+async function blockReviewRun<TState, TArtifact>(
+  run: StageRun<TState, TArtifact>,
+  reason: string,
+): Promise<never> {
+  pushLog(run, { type: "status_changed", message: reason, data: { cycle: run.reviewIteration, reviewOutcome: "block" } })
+  setStatus(run, "blocked")
+  await persistRun(run)
+  await recordStageBlocked(run, "review_block", reason)
+  throw new Error(reason)
+}
+
+async function requestRevision<TState, TArtifact, TResult>(
+  definition: StageDefinition<TState, TArtifact, TResult>,
+  run: StageRun<TState, TArtifact>,
+  feedback: string,
+): Promise<StageAgentResponse<TArtifact>> {
+  pushLog(run, { type: "review_revise", message: feedback, data: { cycle: run.reviewIteration, reviewOutcome: "revise" } })
+  if (run.reviewIteration >= definition.maxReviews) {
+    setStatus(run, "blocked")
+    await persistRun(run)
+    const summary = `Blocked: no pass after ${definition.maxReviews} reviews`
+    await recordStageBlocked(run, "review_limit", summary, { detail: feedback })
+    throw new Error(summary)
+  }
+
+  setStatus(run, "revision_requested")
+  await persistRun(run)
+  emitChatMessage(run, definition.reviewerLabel, "reviewer", feedback)
+  emitReviewFeedbackEvent(run, feedback)
+  return definition.stageAgent.step({
+    kind: "review-feedback",
+    state: run.state,
+    reviewFeedback: feedback,
+    stageContext: buildStageContext(run, "review-feedback"),
+  })
+}
+
+async function continueStageAfterUserMessage<TState, TArtifact, TResult>(
+  definition: StageDefinition<TState, TArtifact, TResult>,
+  run: StageRun<TState, TArtifact>,
+  message: string,
+): Promise<StageAgentResponse<TArtifact>> {
+  setStatus(run, "waiting_for_user")
+  pushLog(run, { type: "stage_message", message })
+  await persistRun(run)
+  emitChatMessage(run, definition.stageAgentLabel, "stage-agent", message, true)
+
+  // Pass the agent's message as the prompt text so `pending_prompts` and
+  // every transcript projection show real content instead of a "you >"
+  // placeholder. Terminal renderers already displayed the chat_message
+  // event above, so the CLI can safely suppress duplicate echo when it
+  // sees the same text come back through `prompt_requested`.
+  const userMessage = await definition.askUser(message)
+  if (userMessage === NON_INTERACTIVE_NO_ANSWER_SENTINEL) {
+    throw new Error(
+      `Stage "${run.stage}" emitted a prompt but this is a non-interactive run with no stdin answers queued. ` +
+      "Pipe answers via stdin (one per line), use the API (POST /runs/:id/answer) after the run " +
+      "emits a pending_prompt event, or provide all required inputs up-front (e.g. --references)."
+    )
+  }
+  pushLog(run, { type: "user_message", message: userMessage })
+  run.userTurnCount++
+  setStatus(run, "chat_in_progress")
+  const response = await definition.stageAgent.step({
+    kind: "user-message",
+    state: run.state,
+    userMessage,
+    stageContext: buildStageContext(run, "user-message"),
+  })
+  emitLoopIteration(run, "user-message", run.stageAgentTurnCount + 1)
+  run.stageAgentTurnCount++
+  syncSessions(definition, run)
+  await persistRun(run)
+  return response
+}
+
+function emitReviewFeedbackEvent<TState, TArtifact>(run: StageRun<TState, TArtifact>, feedback: string): void {
+  const activeRunForReview = getActiveRun()
+  if (!activeRunForReview) return
+  emitEvent({
+    type: "review_feedback",
+    runId: activeRunForReview.runId,
+    stageRunId: activeRunForReview.stageRunId ?? null,
+    stageKey: run.stage,
+    cycle: run.reviewIteration,
+    feedback,
+  })
 }

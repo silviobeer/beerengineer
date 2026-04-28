@@ -142,82 +142,94 @@ export function validateHarnessProfileShape(input: unknown): HarnessProfile {
   }
 
   if (input.mode === "opencode") {
-    const roles = input.roles
-    if (!isObject(roles) || !isObject(roles.coder) || !isObject(roles.reviewer)) {
-      throw new TypeError("llm.defaultHarnessProfile.roles must define coder and reviewer")
-    }
-    if (typeof roles.coder.provider !== "string" || typeof roles.coder.model !== "string" || typeof roles.reviewer.provider !== "string" || typeof roles.reviewer.model !== "string") {
-      throw new TypeError("opencode roles must define provider and model")
-    }
-    return {
-      mode: "opencode",
-      roles: {
-        coder: { provider: roles.coder.provider, model: roles.coder.model },
-        reviewer: { provider: roles.reviewer.provider, model: roles.reviewer.model },
-      },
-    }
+    return validateOpenCodeHarnessProfile(input.roles)
   }
 
   if (input.mode === "self") {
-    const roles = input.roles
-    if (!isObject(roles) || !isObject(roles.coder) || !isObject(roles.reviewer)) {
-      throw new TypeError("llm.defaultHarnessProfile.roles must define coder and reviewer")
-    }
-    const isHarness = (value: unknown): value is "claude" | "codex" | "opencode" =>
-      value === "claude" || value === "codex" || value === "opencode"
-    const isRuntime = (value: unknown): value is "cli" | "sdk" | undefined =>
-      value === undefined || value === "cli" || value === "sdk"
-    if (!isHarness(roles.coder.harness) || !isHarness(roles.reviewer.harness)) {
-      throw new TypeError("self roles must define a valid harness")
-    }
-    if (!isRuntime(roles.coder.runtime) || !isRuntime(roles.reviewer.runtime)) {
-      throw new TypeError('self roles "runtime" must be "cli" or "sdk" when set')
-    }
-    if (typeof roles.coder.provider !== "string" || typeof roles.coder.model !== "string" || typeof roles.reviewer.provider !== "string" || typeof roles.reviewer.model !== "string") {
-      throw new TypeError("self roles must define provider and model")
-    }
-    const mergeResolver = isObject(roles["merge-resolver"]) ? roles["merge-resolver"] : undefined
-    if (mergeResolver) {
-      if (!isHarness(mergeResolver.harness)) {
-        throw new TypeError("self roles[merge-resolver] must define a valid harness")
-      }
-      if (!isRuntime(mergeResolver.runtime)) {
-        throw new TypeError('self roles[merge-resolver] "runtime" must be "cli" or "sdk" when set')
-      }
-      if (typeof mergeResolver.provider !== "string" || typeof mergeResolver.model !== "string") {
-        throw new TypeError("self roles[merge-resolver] must define provider and model")
-      }
-    }
-    return {
-      mode: "self",
-      roles: {
-        coder: {
-          harness: roles.coder.harness,
-          provider: roles.coder.provider,
-          model: roles.coder.model,
-          ...(roles.coder.runtime ? { runtime: roles.coder.runtime } : {}),
-        },
-        reviewer: {
-          harness: roles.reviewer.harness,
-          provider: roles.reviewer.provider,
-          model: roles.reviewer.model,
-          ...(roles.reviewer.runtime ? { runtime: roles.reviewer.runtime } : {}),
-        },
-        ...(mergeResolver
-          ? {
-              "merge-resolver": {
-                harness: mergeResolver.harness as "claude" | "codex" | "opencode",
-                provider: mergeResolver.provider as string,
-                model: mergeResolver.model as string,
-                ...(mergeResolver.runtime ? { runtime: mergeResolver.runtime as "cli" | "sdk" } : {}),
-              },
-            }
-          : {}),
-      },
-    }
+    return validateSelfHarnessProfile(input.roles)
   }
 
   throw new TypeError("llm.defaultHarnessProfile.mode is invalid")
+}
+
+function validateOpenCodeHarnessProfile(roles: unknown): HarnessProfile {
+  const parsedRoles = requireProviderRoles(roles, "opencode roles")
+  return {
+    mode: "opencode",
+    roles: {
+      coder: { provider: parsedRoles.coder.provider, model: parsedRoles.coder.model },
+      reviewer: { provider: parsedRoles.reviewer.provider, model: parsedRoles.reviewer.model },
+    },
+  }
+}
+
+function validateSelfHarnessProfile(roles: unknown): HarnessProfile {
+  const parsedRoles = requireProviderRoles(roles, "self roles")
+  const coder = requireHarnessRole(parsedRoles.coder, "self roles")
+  const reviewer = requireHarnessRole(parsedRoles.reviewer, "self roles")
+  const mergeResolver = isObject(parsedRoles["merge-resolver"])
+    ? requireHarnessRole(parsedRoles["merge-resolver"], "self roles[merge-resolver]")
+    : undefined
+  return {
+    mode: "self",
+    roles: {
+      coder: serializeHarnessRole(coder),
+      reviewer: serializeHarnessRole(reviewer),
+      ...(mergeResolver ? { "merge-resolver": serializeHarnessRole(mergeResolver) } : {}),
+    },
+  }
+}
+
+function requireProviderRoles(roles: unknown, context: string) {
+  if (!isObject(roles) || !isObject(roles.coder) || !isObject(roles.reviewer)) {
+    throw new TypeError("llm.defaultHarnessProfile.roles must define coder and reviewer")
+  }
+  if (
+    typeof roles.coder.provider !== "string"
+    || typeof roles.coder.model !== "string"
+    || typeof roles.reviewer.provider !== "string"
+    || typeof roles.reviewer.model !== "string"
+  ) {
+    throw new TypeError(`${context} must define provider and model`)
+  }
+  return roles as {
+    coder: { provider: string; model: string; harness?: unknown; runtime?: unknown }
+    reviewer: { provider: string; model: string; harness?: unknown; runtime?: unknown }
+    "merge-resolver"?: Record<string, unknown>
+  }
+}
+
+function requireHarnessRole(role: Record<string, unknown>, context: string) {
+  const isHarness = (value: unknown): value is "claude" | "codex" | "opencode" =>
+    value === "claude" || value === "codex" || value === "opencode"
+  const isRuntime = (value: unknown): value is "cli" | "sdk" | undefined =>
+    value === undefined || value === "cli" || value === "sdk"
+  if (!isHarness(role.harness)) {
+    throw new TypeError(`${context} must define a valid harness`)
+  }
+  if (!isRuntime(role.runtime)) {
+    throw new TypeError(`${context} "runtime" must be "cli" or "sdk" when set`)
+  }
+  return {
+    harness: role.harness,
+    provider: role.provider as string,
+    model: role.model as string,
+    ...(role.runtime ? { runtime: role.runtime } : {}),
+  }
+}
+
+function serializeHarnessRole(role: {
+  harness: "claude" | "codex" | "opencode"
+  provider: string
+  model: string
+  runtime?: "cli" | "sdk"
+}) {
+  return {
+    harness: role.harness,
+    provider: role.provider,
+    model: role.model,
+    ...(role.runtime ? { runtime: role.runtime } : {}),
+  }
 }
 
 function validateConfig(input: unknown): AppConfig {

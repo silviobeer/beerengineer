@@ -28,21 +28,13 @@ function parseAgentOutput(output: string): {
     try {
       const event = JSON.parse(line) as Record<string, unknown>
       if (event.type === "finding") {
-        let message = "CodeRabbit reported a finding."
-        if (typeof event.codegenInstructions === "string") message = event.codegenInstructions
-        else if (typeof event.message === "string") message = event.message
-        else if (typeof event.fileName === "string") message = `Review finding in ${event.fileName}`
         findings.push({
           source: "coderabbit",
           severity: normalizeSeverity(typeof event.severity === "string" ? event.severity : "info"),
-          message,
+          message: findingMessageForEvent(event),
         })
-      } else if (event.type === "status" && typeof event.message === "string") {
-        summaries.push(event.message)
-      } else if (event.type === "complete" && typeof event.summary === "string") {
-        summaries.push(event.summary)
-      } else if (event.type === "error" && typeof event.message === "string") {
-        summaries.push(event.message)
+      } else {
+        appendEventSummary(event, summaries)
       }
     } catch {
       // Ignore non-JSON lines and keep raw evidence persisted.
@@ -51,6 +43,23 @@ function parseAgentOutput(output: string): {
   return {
     findings,
     summary: summaries.at(-1),
+  }
+}
+
+function findingMessageForEvent(event: Record<string, unknown>): string {
+  if (typeof event.codegenInstructions === "string") return event.codegenInstructions
+  if (typeof event.message === "string") return event.message
+  if (typeof event.fileName === "string") return `Review finding in ${event.fileName}`
+  return "CodeRabbit reported a finding."
+}
+
+function appendEventSummary(event: Record<string, unknown>, summaries: string[]): void {
+  if (event.type === "complete" && typeof event.summary === "string") {
+    summaries.push(event.summary)
+    return
+  }
+  if ((event.type === "status" || event.type === "error") && typeof event.message === "string") {
+    summaries.push(event.message)
   }
 }
 

@@ -118,30 +118,7 @@ export function handleGetMessages(repos: Repos, url: URL, res: ServerResponse, r
   const rawLimit = Number(url.searchParams.get("limit") ?? 200)
   const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(Math.floor(rawLimit), 500) : 200
 
-  const entries = []
-  let cursor = since
-  let scanned = 0
-  let hitScanCap = false
-  outer: while (entries.length < limit) {
-    const batch = repos.listLogsForRunAfterId(runId, cursor, limit * 4)
-    if (batch.length === 0) break
-    for (const row of batch) {
-      const entry = projectStageLogRow(row)
-      if (entry && shouldDeliverAtLevel(entry, level)) entries.push(entry)
-      cursor = row.id
-      scanned += 1
-      if (entries.length >= limit) break outer
-      if (scanned >= MESSAGES_ENDPOINT_MAX_SCAN) {
-        hitScanCap = true
-        break outer
-      }
-    }
-    if (batch.length < limit * 4) break
-  }
-
-  let nextSince: string | null = null
-  if (entries.length === limit) nextSince = entries.at(-1)?.id ?? null
-  else if (hitScanCap) nextSince = cursor
+  const { entries, nextSince } = collectRunMessages(repos, runId, { since, level, limit })
 
   json(res, 200, {
     runId,
@@ -149,6 +126,43 @@ export function handleGetMessages(repos: Repos, url: URL, res: ServerResponse, r
     nextSince,
     entries,
   })
+}
+
+function collectRunMessages(
+  repos: Repos,
+  runId: string,
+  options: { since: string | null; level: Parameters<typeof shouldDeliverAtLevel>[1]; limit: number },
+): { entries: ReturnType<typeof projectStageLogRow>[]; nextSince: string | null } {
+  const entries: Array<NonNullable<ReturnType<typeof projectStageLogRow>>> = []
+  let cursor = options.since
+  let scanned = 0
+  let hitScanCap = false
+  outer: while (entries.length < options.limit) {
+    const batch = repos.listLogsForRunAfterId(runId, cursor, options.limit * 4)
+    if (batch.length === 0) break
+    for (const row of batch) {
+      pushVisibleEntry(entries, row, options.level)
+      cursor = row.id
+      scanned += 1
+      if (entries.length >= options.limit || scanned >= MESSAGES_ENDPOINT_MAX_SCAN) {
+        hitScanCap = true
+        break outer
+      }
+    }
+    if (batch.length < options.limit * 4) break
+  }
+
+  if (entries.length >= options.limit) return { entries, nextSince: entries.at(-1)?.id ?? null }
+  return { entries, nextSince: hitScanCap ? cursor : null }
+}
+
+function pushVisibleEntry(
+  entries: Array<NonNullable<ReturnType<typeof projectStageLogRow>>>,
+  row: Parameters<typeof projectStageLogRow>[0],
+  level: Parameters<typeof shouldDeliverAtLevel>[1],
+): void {
+  const entry = projectStageLogRow(row)
+  if (entry && shouldDeliverAtLevel(entry, level)) entries.push(entry)
 }
 
 export async function handlePostMessage(

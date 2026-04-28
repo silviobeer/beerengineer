@@ -57,26 +57,30 @@ export function BoardCardActions({ card }: Readonly<BoardCardActionsProps>) {
 
   const itemId = card.id || card.itemCode || "";
 
-  const onClick = (action: string): ((e: React.MouseEvent) => void) => (e) => {
+  async function runAction(action: string): Promise<void> {
+    try {
+      const res = await fetch(
+        `/api/items/${encodeURIComponent(itemId)}/actions/${encodeURIComponent(action)}`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({} as { error?: string }));
+        setError(parseActionError(body, res.status));
+      }
+      // No client-side optimistic state; the SSE workspace stream will
+      // emit `item_column_changed` and the live overlay re-buckets the
+      // card without a refresh.
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "network_error");
+    }
+  }
+
+  const onClick = (action: string) => (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setError(null);
-    startTransition(async () => {
-      try {
-        const res = await fetch(
-          `/api/items/${encodeURIComponent(itemId)}/actions/${encodeURIComponent(action)}`,
-          { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }
-        );
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({} as { error?: string }));
-          setError(parseActionError(body, res.status));
-        }
-        // No client-side optimistic state; the SSE workspace stream will
-        // emit `item_column_changed` and the live overlay re-buckets the
-        // card without a refresh.
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "network_error");
-      }
+    startTransition(() => {
+      void runAction(action);
     });
   };
 

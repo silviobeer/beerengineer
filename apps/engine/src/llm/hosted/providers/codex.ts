@@ -29,6 +29,35 @@ function createCodexStreamState(): CodexStreamState {
   return { streamedSummary: false, tempDir: null, responsePath: null }
 }
 
+function codexTurnCompletedSummary(usage: CodexStreamEvent["usage"]): string {
+  const parts: string[] = []
+  if (usage?.input_tokens !== undefined) parts.push(`in=${usage.input_tokens}`)
+  if (usage?.output_tokens !== undefined) parts.push(`out=${usage.output_tokens}`)
+  if (usage?.cached_input_tokens !== undefined) parts.push(`cache=${usage.cached_input_tokens}`)
+  return parts.length > 0 ? ` (${parts.join(" ")})` : ""
+}
+
+function codexItemSummary(
+  event: CodexStreamEvent,
+  state: CodexStreamState,
+  completed: boolean,
+): { kind: "dim"; text: string } | null {
+  if (!event.item?.type) return null
+  if (!completed) {
+    if (event.item.type === "reasoning" && typeof event.item.text === "string") {
+      emitHostedThinking(sanitizePreviewValue(event.item.text) ?? event.item.text, "codex")
+    } else {
+      emitHostedToolCalled(event.item.name ?? event.item.type, sanitizePreviewValue(event.item.text), "codex")
+    }
+    state.streamedSummary = true
+    const itemNameSuffix = event.item.name ? ` ${event.item.name}` : ""
+    return { kind: "dim", text: `codex: ${event.item.type}${itemNameSuffix}` }
+  }
+  emitHostedToolResult(event.item.name ?? event.item.type, undefined, sanitizePreviewValue(event.item.text), "codex")
+  state.streamedSummary = true
+  return { kind: "dim", text: `codex: ${event.item.type} done` }
+}
+
 function summarizeCodexEvent(event: CodexStreamEvent, state: CodexStreamState): { kind: "dim" | "step"; text: string } | null {
   switch (event.type) {
     case "thread.started":
@@ -39,31 +68,13 @@ function summarizeCodexEvent(event: CodexStreamEvent, state: CodexStreamState): 
       return { kind: "dim", text: `codex: turn started` }
     case "turn.completed": {
       state.streamedSummary = true
-      const u = event.usage
-      const parts: string[] = []
-      if (u?.input_tokens !== undefined) parts.push(`in=${u.input_tokens}`)
-      if (u?.output_tokens !== undefined) parts.push(`out=${u.output_tokens}`)
-      if (u?.cached_input_tokens !== undefined) parts.push(`cache=${u.cached_input_tokens}`)
-      const usageSuffix = parts.length > 0 ? ` (${parts.join(" ")})` : ""
-      return { kind: "dim", text: `codex: turn completed${usageSuffix}` }
+      return { kind: "dim", text: `codex: turn completed${codexTurnCompletedSummary(event.usage)}` }
     }
     case "item.started":
     case "item.added":
-      if (event.item?.type) {
-        if (event.item.type === "reasoning" && typeof event.item.text === "string") emitHostedThinking(sanitizePreviewValue(event.item.text) ?? event.item.text, "codex")
-        else emitHostedToolCalled(event.item.name ?? event.item.type, sanitizePreviewValue(event.item.text), "codex")
-        state.streamedSummary = true
-        const itemNameSuffix = event.item.name ? ` ${event.item.name}` : ""
-        return { kind: "dim", text: `codex: ${event.item.type}${itemNameSuffix}` }
-      }
-      return null
+      return codexItemSummary(event, state, false)
     case "item.completed":
-      if (event.item?.type) {
-        emitHostedToolResult(event.item.name ?? event.item.type, undefined, sanitizePreviewValue(event.item.text), "codex")
-        state.streamedSummary = true
-        return { kind: "dim", text: `codex: ${event.item.type} done` }
-      }
-      return null
+      return codexItemSummary(event, state, true)
     case "error":
       state.streamedSummary = true
       return { kind: "step", text: `codex error: ${event.message ?? "unknown"}` }
@@ -112,33 +123,7 @@ export function buildCodexCommand(
   // safe-workspace-write modes through `-c sandbox_mode=<mode>` on resume, which
   // both subcommands accept.
   const bypass = codexSandboxBypassEnabled(env)
-  if (input.runtime.policy.mode === "no-tools") {
-    // Stage agents + reviewers: emit JSON only, no shell. Pin the sandbox to
-    // the strictest mode codex offers so a misbehaving model cannot touch the
-    // filesystem either way. The bypass env var deliberately does not weaken
-    // this — no-tools never needs shell access.
-    if (isResume) command.push("-c", 'sandbox_mode="read-only"')
-    else command.push("--sandbox", "read-only")
-  } else if (input.runtime.policy.mode === "safe-readonly") {
-    if (bypass) // codex enforces mutual exclusion between --full-auto and
-// --dangerously-bypass-approvals-and-sandbox. The bypass flag alone
-// already implies --full-auto's behaviour (skip approvals, no sandbox).
-command.push("--dangerously-bypass-approvals-and-sandbox")
-    else if (isResume) command.push("-c", 'sandbox_mode="read-only"')
-    else command.push("--sandbox", "read-only")
-  } else if (input.runtime.policy.mode === "safe-workspace-write") {
-    if (bypass) // codex enforces mutual exclusion between --full-auto and
-// --dangerously-bypass-approvals-and-sandbox. The bypass flag alone
-// already implies --full-auto's behaviour (skip approvals, no sandbox).
-command.push("--dangerously-bypass-approvals-and-sandbox")
-    else if (isResume) command.push("-c", 'sandbox_mode="workspace-write"')
-    else command.push("--sandbox", "workspace-write")
-  } else {
-    // codex enforces mutual exclusion between --full-auto and
-// --dangerously-bypass-approvals-and-sandbox. The bypass flag alone
-// already implies --full-auto's behaviour (skip approvals, no sandbox).
-command.push("--dangerously-bypass-approvals-and-sandbox")
-  }
+  applyCodexSandboxMode(command, input.runtime.policy.mode, { isResume, bypass })
   if (input.runtime.model) command.push("--model", input.runtime.model)
   // `codex exec resume` inherits cwd from the original session and rejects
   // `--cd`; only pass it on fresh exec. no-tools also benefits from setting cwd
@@ -146,6 +131,35 @@ command.push("--dangerously-bypass-approvals-and-sandbox")
   if (!isResume) command.push("--cd", input.runtime.workspaceRoot)
   command.push("--output-last-message", state.responsePath, "-")
   return command
+}
+
+function applyCodexSandboxMode(
+  command: string[],
+  mode: HostedProviderInvokeInput["runtime"]["policy"]["mode"],
+  options: { isResume: boolean; bypass: boolean },
+): void {
+  const { isResume, bypass } = options
+  if (mode === "no-tools") {
+    // Stage agents + reviewers: emit JSON only, no shell. Pin the sandbox to
+    // the strictest mode codex offers so a misbehaving model cannot touch the
+    // filesystem either way. The bypass env var deliberately does not weaken
+    // this — no-tools never needs shell access.
+    pushCodexSandboxCommand(command, isResume, "read-only")
+    return
+  }
+  if (bypass || mode === "unsafe-autonomous-write") {
+    // codex enforces mutual exclusion between --full-auto and
+    // --dangerously-bypass-approvals-and-sandbox. The bypass flag alone
+    // already implies --full-auto's behaviour (skip approvals, no sandbox).
+    command.push("--dangerously-bypass-approvals-and-sandbox")
+    return
+  }
+  pushCodexSandboxCommand(command, isResume, mode === "safe-workspace-write" ? "workspace-write" : "read-only")
+}
+
+function pushCodexSandboxCommand(command: string[], isResume: boolean, mode: "read-only" | "workspace-write"): void {
+  if (isResume) command.push("-c", `sandbox_mode="${mode}"`)
+  else command.push("--sandbox", mode)
 }
 
 function parseUsage(stdout: string): { sessionId: string | null; cachedInputTokens: number; totalInputTokens: number } {

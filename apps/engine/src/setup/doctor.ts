@@ -1,7 +1,7 @@
 import Database from "better-sqlite3"
 import { spawn } from "node:child_process"
 import { accessSync, constants, existsSync, mkdirSync, readFileSync } from "node:fs"
-import { createInterface } from "node:readline/promises"
+import { createInterface, type Interface } from "node:readline/promises"
 import { stdin as input, stdout as output } from "node:process"
 import { normalizePublicBaseUrl, resolveConfiguredDbPath, resolveConfigPath, resolveMergedConfig, readConfigFile, REQUIRED_MIGRATION_LEVEL, resolveOverrides, writeConfigFile } from "./config.js"
 import type { AppConfig, CheckResult, GroupResult, SetupOverrides, SetupReport, SetupStatus } from "./types.js"
@@ -197,7 +197,7 @@ function getActiveLlmGroup(config: AppConfig | null): string | null {
 
 async function runCoreChecks(configPath: string, configState: ReturnType<typeof readConfigFile>, config: AppConfig | null): Promise<CheckResult[]> {
   const checks: CheckResult[] = []
-  const [major] = process.versions.node.split(".").map(Number)
+  const major = currentNodeMajorVersion()
   checks.push(createCheck(
     "core.node",
     "Node.js runtime",
@@ -214,50 +214,17 @@ async function runCoreChecks(configPath: string, configState: ReturnType<typeof 
     { remedy: git.ok ? undefined : { hint: "Install Git and ensure it is on PATH.", url: "https://git-scm.com/downloads" } }
   ))
 
-  if (configState.kind === "missing") {
-    checks.push(
-      createCheck("core.config", "config file", "uninitialized", `missing at ${configPath}`),
-      createCheck("core.dataDir", "configured data dir", "uninitialized", "config has not been initialized"),
-      createCheck("core.db", "configured database", "uninitialized", "config has not been initialized"),
-      createCheck("core.migrations", "database migration level", "uninitialized", "config has not been initialized"),
-    )
+  const preconditionChecks = buildCorePreconditionChecks(configPath, configState, config)
+  if (preconditionChecks) {
+    checks.push(...preconditionChecks)
     return checks
   }
-
-  if (configState.kind === "invalid") {
-    checks.push(
-      createCheck("core.config", "config file", "misconfigured", `${configPath}: ${configState.error}`),
-      createCheck("core.dataDir", "configured data dir", "skipped", "config is invalid"),
-      createCheck("core.db", "configured database", "skipped", "config is invalid"),
-      createCheck("core.migrations", "database migration level", "skipped", "config is invalid"),
-    )
-    return checks
-  }
-
-  if (!config) {
-    checks.push(
-      createCheck("core.config", "config file", "unknown", `${configPath}: effective config could not be resolved`),
-      createCheck("core.dataDir", "configured data dir", "skipped", "effective config is unavailable"),
-      createCheck("core.db", "configured database", "skipped", "effective config is unavailable"),
-      createCheck("core.migrations", "database migration level", "skipped", "effective config is unavailable"),
-    )
-    return checks
-  }
+  const resolvedConfig = config as AppConfig
 
   checks.push(createCheck("core.config", "config file", "ok", configPath))
+  checks.push(checkConfiguredDataDir(resolvedConfig.dataDir))
 
-  if (existsSync(config.dataDir)) {
-    try {
-      accessSync(config.dataDir, constants.W_OK)
-      checks.push(createCheck("core.dataDir", "configured data dir", "ok", config.dataDir))
-    } catch (err) {
-      checks.push(createCheck("core.dataDir", "configured data dir", "misconfigured", `${config.dataDir}: ${(err as Error).message}`))
-    }
-  } else {
-    checks.push(createCheck("core.dataDir", "configured data dir", "missing", config.dataDir))
-  }
-
-  const dbPath = resolveConfiguredDbPath(config)
+  const dbPath = resolveConfiguredDbPath(resolvedConfig)
   if (!existsSync(dbPath)) {
     checks.push(
       createCheck("core.db", "configured database", "missing", dbPath),
@@ -265,71 +232,140 @@ async function runCoreChecks(configPath: string, configState: ReturnType<typeof 
     )
     return checks
   }
+  checks.push(...readableDatabaseChecks(dbPath))
+  checks.push(checkDesignPrepAdapters())
+  checks.push(await checkDesignPrepReferences(dbPath))
 
+  return checks
+}
+
+function checkConfiguredDataDir(dataDir: string): CheckResult {
+  if (!existsSync(dataDir)) {
+    return createCheck("core.dataDir", "configured data dir", "missing", dataDir)
+  }
+  try {
+    accessSync(dataDir, constants.W_OK)
+    return createCheck("core.dataDir", "configured data dir", "ok", dataDir)
+  } catch (err) {
+    return createCheck("core.dataDir", "configured data dir", "misconfigured", `${dataDir}: ${(err as Error).message}`)
+  }
+}
+
+function readableDatabaseChecks(dbPath: string): CheckResult[] {
   try {
     const db = new Database(dbPath, { readonly: true, fileMustExist: true })
     db.prepare("SELECT 1").get()
-    checks.push(createCheck("core.db", "configured database", "ok", dbPath))
     const userVersion = (db.pragma("user_version", { simple: true }) as number) ?? 0
-    checks.push(createCheck(
-      "core.migrations",
-      "database migration level",
-      userVersion === REQUIRED_MIGRATION_LEVEL ? "ok" : "misconfigured",
-      `current=${userVersion}, required=${REQUIRED_MIGRATION_LEVEL}`
-    ))
     db.close()
+    return [
+      createCheck("core.db", "configured database", "ok", dbPath),
+      createCheck(
+        "core.migrations",
+        "database migration level",
+        userVersion === REQUIRED_MIGRATION_LEVEL ? "ok" : "misconfigured",
+        `current=${userVersion}, required=${REQUIRED_MIGRATION_LEVEL}`
+      ),
+    ]
   } catch (err) {
-    checks.push(
+    return [
       createCheck("core.db", "configured database", "misconfigured", `${dbPath}: ${(err as Error).message}`),
       createCheck("core.migrations", "database migration level", "skipped", "database is not readable"),
-    )
+    ]
   }
+}
 
+function checkDesignPrepAdapters(): CheckResult {
   try {
     createVisualCompanionStage()
     createVisualCompanionReview()
     createFrontendDesignStage()
     createFrontendDesignReview()
-    checks.push(createCheck("core.designPrepAdapters", "design-prep adapters registered", "ok", "visual-companion + frontend-design"))
+    return createCheck("core.designPrepAdapters", "design-prep adapters registered", "ok", "visual-companion + frontend-design")
   } catch (err) {
-    checks.push(createCheck("core.designPrepAdapters", "design-prep adapters registered", "misconfigured", (err as Error).message))
+    return createCheck("core.designPrepAdapters", "design-prep adapters registered", "misconfigured", (err as Error).message)
   }
+}
 
+async function checkDesignPrepReferences(dbPath: string): Promise<CheckResult> {
   try {
     const db = initDatabase(dbPath)
     const repos = new Repos(db)
-    const runs = repos.listRuns().filter(run => run.workspace_fs_id)
-    const hasUiRun = runs.some(run => {
-      try {
-        const ctx = resolveWorkflowContextForRun(repos, run)
-        if (!ctx) return false
-        const projectsPath = layout.stageArtifactsDir(ctx, "brainstorm")
-        const projects = JSON.parse(readFileSync(`${projectsPath}/projects.json`, "utf8")) as Array<{ hasUi?: boolean }>
-        return projects.some(project => project.hasUi === true)
-      } catch {
-        return false
-      }
-    })
+    const hasUiRun = repoHasUiRun(repos)
     const workspace = repos.listWorkspaces().find(candidate => candidate.root_path)
-    if (hasUiRun && !workspace?.root_path) {
-      checks.push(createCheck("core.designPrepReferences", "design-prep references folder writable", "skipped", "no registered workspace roots"))
-    } else if (hasUiRun) {
-      // Probe the workspace root itself for writability rather than creating
-      // the design-prep subdirectory eagerly — doctor should be read-only.
-      const workspaceRoot = workspace!.root_path!
-      const probeTarget = `${workspaceRoot}/.beerengineer`
-      const parentTarget = existsSync(probeTarget) ? probeTarget : workspaceRoot
-      accessSync(parentTarget, constants.W_OK)
-      checks.push(createCheck("core.designPrepReferences", "design-prep references folder writable", "ok", `${probeTarget}/references/design-prep (parent: ${parentTarget})`))
-    } else {
-      checks.push(createCheck("core.designPrepReferences", "design-prep references folder writable", "skipped", "no UI-bearing runs detected"))
-    }
     db.close()
+    if (!hasUiRun) {
+      return createCheck("core.designPrepReferences", "design-prep references folder writable", "skipped", "no UI-bearing runs detected")
+    }
+    if (!workspace?.root_path) {
+      return createCheck("core.designPrepReferences", "design-prep references folder writable", "skipped", "no registered workspace roots")
+    }
+    return probeDesignPrepReferences(workspace.root_path)
   } catch (err) {
-    checks.push(createCheck("core.designPrepReferences", "design-prep references folder writable", "misconfigured", (err as Error).message))
+    return createCheck("core.designPrepReferences", "design-prep references folder writable", "misconfigured", (err as Error).message)
   }
+}
 
-  return checks
+function repoHasUiRun(repos: Repos): boolean {
+  return repos.listRuns().filter(run => run.workspace_fs_id).some(run => {
+    try {
+      const ctx = resolveWorkflowContextForRun(repos, run)
+      if (!ctx) return false
+      const projectsPath = layout.stageArtifactsDir(ctx, "brainstorm")
+      const projects = JSON.parse(readFileSync(`${projectsPath}/projects.json`, "utf8")) as Array<{ hasUi?: boolean }>
+      return projects.some(project => project.hasUi === true)
+    } catch {
+      return false
+    }
+  })
+}
+
+function probeDesignPrepReferences(workspaceRoot: string): CheckResult {
+  // Probe the workspace root itself for writability rather than creating
+  // the design-prep subdirectory eagerly — doctor should be read-only.
+  const probeTarget = `${workspaceRoot}/.beerengineer`
+  const parentTarget = existsSync(probeTarget) ? probeTarget : workspaceRoot
+  accessSync(parentTarget, constants.W_OK)
+  return createCheck(
+    "core.designPrepReferences",
+    "design-prep references folder writable",
+    "ok",
+    `${probeTarget}/references/design-prep (parent: ${parentTarget})`
+  )
+}
+
+function currentNodeMajorVersion(): number {
+  const [major] = process.versions.node.split(".").map(Number)
+  return major
+}
+
+function buildCorePreconditionChecks(
+  configPath: string,
+  configState: ReturnType<typeof readConfigFile>,
+  config: AppConfig | null,
+): CheckResult[] | null {
+  if (configState.kind === "missing") {
+    return [
+      createCheck("core.config", "config file", "uninitialized", `missing at ${configPath}`),
+      createCheck("core.dataDir", "configured data dir", "uninitialized", "config has not been initialized"),
+      createCheck("core.db", "configured database", "uninitialized", "config has not been initialized"),
+      createCheck("core.migrations", "database migration level", "uninitialized", "config has not been initialized"),
+    ]
+  }
+  if (configState.kind === "invalid") {
+    return [
+      createCheck("core.config", "config file", "misconfigured", `${configPath}: ${configState.error}`),
+      createCheck("core.dataDir", "configured data dir", "skipped", "config is invalid"),
+      createCheck("core.db", "configured database", "skipped", "config is invalid"),
+      createCheck("core.migrations", "database migration level", "skipped", "config is invalid"),
+    ]
+  }
+  if (config) return null
+  return [
+    createCheck("core.config", "config file", "unknown", `${configPath}: effective config could not be resolved`),
+    createCheck("core.dataDir", "configured data dir", "skipped", "effective config is unavailable"),
+    createCheck("core.db", "configured database", "skipped", "effective config is unavailable"),
+    createCheck("core.migrations", "database migration level", "skipped", "effective config is unavailable"),
+  ]
 }
 
 async function runGitHubChecks(enabled: boolean): Promise<CheckResult[]> {
@@ -489,29 +525,7 @@ async function runNotificationChecks(config: AppConfig | null): Promise<CheckRes
   }
 
   const checks: CheckResult[] = []
-  const baseUrl = config.publicBaseUrl?.trim()
-  if (baseUrl) {
-    try {
-      const normalized = normalizePublicBaseUrl(baseUrl)
-      checks.push(createCheck("notifications.public-base-url", "Public base URL", "ok", normalized))
-    } catch (err) {
-      checks.push(createCheck(
-        "notifications.public-base-url",
-        "Public base URL",
-        "misconfigured",
-        (err as Error).message,
-        { remedy: { hint: "Use an absolute http(s) URL that is reachable over Tailscale and not localhost.", command: "BEERENGINEER_PUBLIC_BASE_URL=http://100.x.y.z:3100" } },
-      ))
-    }
-  } else {
-    checks.push(createCheck(
-      "notifications.public-base-url",
-      "Public base URL",
-      "missing",
-      "Missing publicBaseUrl. Telegram links need a Tailscale-reachable absolute URL.",
-      { remedy: { hint: "Set publicBaseUrl to the externally reachable UI address, for example http://100.x.y.z:3100." } },
-    ))
-  }
+  checks.push(checkNotificationBaseUrl(config.publicBaseUrl?.trim()))
 
   const telegramEnabled = config.notifications?.telegram?.enabled === true
   checks.push(createCheck(
@@ -523,16 +537,7 @@ async function runNotificationChecks(config: AppConfig | null): Promise<CheckRes
 
   const tokenEnv = config.notifications?.telegram?.botTokenEnv?.trim()
   if (!telegramEnabled) {
-    const disabledDetail = "Telegram notifications are disabled in config"
-    checks.push(
-      createCheck("notifications.telegram.level", "Telegram message level", "skipped", disabledDetail),
-      createCheck("notifications.telegram.bot-token-env", "Telegram bot token env var", "skipped", disabledDetail),
-      createCheck("notifications.telegram.bot-token-present", "Telegram bot token present", "skipped", disabledDetail),
-      createCheck("notifications.telegram.default-chat-id", "Telegram default chat id", "skipped", disabledDetail),
-      createCheck("notifications.telegram.inbound.enabled", "Telegram inbound replies enabled", "skipped", disabledDetail),
-      createCheck("notifications.telegram.inbound.webhook-secret-env", "Telegram webhook secret env var", "skipped", disabledDetail),
-      createCheck("notifications.telegram.inbound.webhook-secret-present", "Telegram webhook secret present", "skipped", disabledDetail),
-    )
+    checks.push(...disabledTelegramChecks())
     return checks
   }
 
@@ -543,37 +548,9 @@ async function runNotificationChecks(config: AppConfig | null): Promise<CheckRes
     `L${config.notifications?.telegram?.level ?? 2}`,
   ))
 
-  if (tokenEnv) {
-    checks.push(createCheck("notifications.telegram.bot-token-env", "Telegram bot token env var", "ok", tokenEnv))
-  } else {
-    checks.push(createCheck(
-      "notifications.telegram.bot-token-env",
-      "Telegram bot token env var",
-      "missing",
-      "Missing notifications.telegram.botTokenEnv",
-      { remedy: { hint: "Store the Telegram bot token in an env var and record that env var name in config." } },
-    ))
-  }
-
-  const tokenPresent = tokenEnv ? Boolean(process.env[tokenEnv]) : false
-  checks.push(createCheck(
-    "notifications.telegram.bot-token-present",
-    "Telegram bot token present",
-    tokenPresent ? "ok" : "missing",
-    tokenPresent ? `${tokenEnv} is set` : `${tokenEnv ?? "bot token env"} is not set in this shell`,
-    tokenPresent || !tokenEnv
-      ? {}
-      : { remedy: { hint: "Export the Telegram bot token before starting the engine.", command: buildTelegramExportCommand(tokenEnv) } },
-  ))
-
-  const chatId = config.notifications?.telegram?.defaultChatId?.trim()
-  checks.push(createCheck(
-    "notifications.telegram.default-chat-id",
-    "Telegram default chat id",
-    chatId ? "ok" : "missing",
-    chatId ?? "Missing notifications.telegram.defaultChatId",
-    chatId ? {} : { remedy: { hint: "Record the chat id that should receive beerengineer_ notifications." } },
-  ))
+  checks.push(checkTelegramTokenEnv(tokenEnv))
+  checks.push(checkTelegramTokenPresent(tokenEnv))
+  checks.push(checkTelegramDefaultChatId(config.notifications?.telegram?.defaultChatId?.trim()))
 
   const inboundEnabled = config.notifications?.telegram?.inbound?.enabled === true
   checks.push(createCheck(
@@ -584,48 +561,122 @@ async function runNotificationChecks(config: AppConfig | null): Promise<CheckRes
   ))
 
   const webhookSecretEnv = config.notifications?.telegram?.inbound?.webhookSecretEnv?.trim()
-  let webhookSecretEnvStatus: SetupStatus = "skipped"
-  let webhookSecretEnvDetail = "Telegram inbound replies are disabled in config"
-  if (inboundEnabled) {
-    webhookSecretEnvStatus = webhookSecretEnv ? "ok" : "missing"
-    webhookSecretEnvDetail = webhookSecretEnv ?? "Missing notifications.telegram.inbound.webhookSecretEnv"
+  checks.push(checkTelegramWebhookSecretEnv(inboundEnabled, webhookSecretEnv))
+  checks.push(checkTelegramWebhookSecretPresent(inboundEnabled, webhookSecretEnv))
+
+  return checks
+}
+
+function checkNotificationBaseUrl(baseUrl: string | undefined): CheckResult {
+  if (!baseUrl) {
+    return createCheck(
+      "notifications.public-base-url",
+      "Public base URL",
+      "missing",
+      "Missing publicBaseUrl. Telegram links need a Tailscale-reachable absolute URL.",
+      { remedy: { hint: "Set publicBaseUrl to the externally reachable UI address, for example http://100.x.y.z:3100." } },
+    )
   }
-  checks.push(createCheck(
+  try {
+    return createCheck("notifications.public-base-url", "Public base URL", "ok", normalizePublicBaseUrl(baseUrl))
+  } catch (err) {
+    return createCheck(
+      "notifications.public-base-url",
+      "Public base URL",
+      "misconfigured",
+      (err as Error).message,
+      { remedy: { hint: "Use an absolute http(s) URL that is reachable over Tailscale and not localhost.", command: "BEERENGINEER_PUBLIC_BASE_URL=http://100.x.y.z:3100" } },
+    )
+  }
+}
+
+function disabledTelegramChecks(): CheckResult[] {
+  const disabledDetail = "Telegram notifications are disabled in config"
+  return [
+    createCheck("notifications.telegram.level", "Telegram message level", "skipped", disabledDetail),
+    createCheck("notifications.telegram.bot-token-env", "Telegram bot token env var", "skipped", disabledDetail),
+    createCheck("notifications.telegram.bot-token-present", "Telegram bot token present", "skipped", disabledDetail),
+    createCheck("notifications.telegram.default-chat-id", "Telegram default chat id", "skipped", disabledDetail),
+    createCheck("notifications.telegram.inbound.enabled", "Telegram inbound replies enabled", "skipped", disabledDetail),
+    createCheck("notifications.telegram.inbound.webhook-secret-env", "Telegram webhook secret env var", "skipped", disabledDetail),
+    createCheck("notifications.telegram.inbound.webhook-secret-present", "Telegram webhook secret present", "skipped", disabledDetail),
+  ]
+}
+
+function checkTelegramTokenEnv(tokenEnv: string | undefined): CheckResult {
+  if (tokenEnv) {
+    return createCheck("notifications.telegram.bot-token-env", "Telegram bot token env var", "ok", tokenEnv)
+  }
+  return createCheck(
+    "notifications.telegram.bot-token-env",
+    "Telegram bot token env var",
+    "missing",
+    "Missing notifications.telegram.botTokenEnv",
+    { remedy: { hint: "Store the Telegram bot token in an env var and record that env var name in config." } },
+  )
+}
+
+function checkTelegramTokenPresent(tokenEnv: string | undefined): CheckResult {
+  const tokenPresent = tokenEnv ? Boolean(process.env[tokenEnv]) : false
+  return createCheck(
+    "notifications.telegram.bot-token-present",
+    "Telegram bot token present",
+    tokenPresent ? "ok" : "missing",
+    tokenPresent ? `${tokenEnv} is set` : `${tokenEnv ?? "bot token env"} is not set in this shell`,
+    tokenPresent || !tokenEnv
+      ? {}
+      : { remedy: { hint: "Export the Telegram bot token before starting the engine.", command: buildTelegramExportCommand(tokenEnv) } },
+  )
+}
+
+function checkTelegramDefaultChatId(chatId: string | undefined): CheckResult {
+  return createCheck(
+    "notifications.telegram.default-chat-id",
+    "Telegram default chat id",
+    chatId ? "ok" : "missing",
+    chatId ?? "Missing notifications.telegram.defaultChatId",
+    chatId ? {} : { remedy: { hint: "Record the chat id that should receive beerengineer_ notifications." } },
+  )
+}
+
+function checkTelegramWebhookSecretEnv(inboundEnabled: boolean, webhookSecretEnv: string | undefined): CheckResult {
+  let status: SetupStatus = "skipped"
+  let detail = "Telegram inbound replies are disabled in config"
+  if (inboundEnabled) {
+    status = webhookSecretEnv ? "ok" : "missing"
+    detail = webhookSecretEnv ?? "Missing notifications.telegram.inbound.webhookSecretEnv"
+  }
+  return createCheck(
     "notifications.telegram.inbound.webhook-secret-env",
     "Telegram webhook secret env var",
-    webhookSecretEnvStatus,
-    webhookSecretEnvDetail,
+    status,
+    detail,
     inboundEnabled && !webhookSecretEnv
       ? { remedy: { hint: "Store the Telegram webhook secret in an env var and record that env var name in config." } }
       : {},
-  ))
+  )
+}
 
+function checkTelegramWebhookSecretPresent(inboundEnabled: boolean, webhookSecretEnv: string | undefined): CheckResult {
   const webhookSecretPresent = webhookSecretEnv ? Boolean(process.env[webhookSecretEnv]) : false
-  let webhookSecretPresentStatus: SetupStatus = "skipped"
+  let status: SetupStatus = "skipped"
+  let detail = "Telegram inbound replies are disabled in config"
   if (inboundEnabled && webhookSecretEnv) {
-    webhookSecretPresentStatus = webhookSecretPresent ? "ok" : "missing"
+    status = webhookSecretPresent ? "ok" : "missing"
+    detail = webhookSecretPresent ? `${webhookSecretEnv} is set` : `${webhookSecretEnv} is not set in this shell`
   } else if (inboundEnabled) {
-    webhookSecretPresentStatus = "missing"
+    status = "missing"
+    detail = "Webhook secret env var is not configured"
   }
-  let webhookSecretPresentDetail = "Telegram inbound replies are disabled in config"
-  if (inboundEnabled && webhookSecretEnv) {
-    webhookSecretPresentDetail = webhookSecretPresent
-      ? `${webhookSecretEnv} is set`
-      : `${webhookSecretEnv} is not set in this shell`
-  } else if (inboundEnabled) {
-    webhookSecretPresentDetail = "Webhook secret env var is not configured"
-  }
-  checks.push(createCheck(
+  return createCheck(
     "notifications.telegram.inbound.webhook-secret-present",
     "Telegram webhook secret present",
-    webhookSecretPresentStatus,
-    webhookSecretPresentDetail,
+    status,
+    detail,
     inboundEnabled && webhookSecretEnv && !webhookSecretPresent
       ? { remedy: { hint: "Export the Telegram webhook secret before starting the engine.", command: buildTelegramWebhookSecretExportCommand(webhookSecretEnv) } }
       : {},
-  ))
-
-  return checks
+  )
 }
 
 export async function generateSetupReport(options: DoctorOptions = {}): Promise<SetupReport> {
@@ -737,16 +788,19 @@ function printDoctorReport(report: SetupReport, opts: { installHints: boolean })
   for (const group of report.groups) {
     console.log(`  ${formatGroupTitle(group)} [${group.passed}/${group.idealOk ?? group.minOk}]`)
     for (const check of group.checks) {
-      const detail = check.detail ? ` - ${check.detail}` : ""
-      console.log(`    [${renderStatus(check.status)}] ${check.label}${detail}`)
-      if (opts.installHints && check.status !== "ok" && check.remedy) {
-        console.log(`      hint: ${check.remedy.hint}`)
-        if (check.remedy.command) console.log(`      cmd:  ${check.remedy.command}`)
-        if (check.remedy.url) console.log(`      url:  ${check.remedy.url}`)
-      }
+      printDoctorCheck(check, opts.installHints)
     }
   }
   console.log("")
+}
+
+function printDoctorCheck(check: CheckResult, installHints: boolean): void {
+  const detail = check.detail ? ` - ${check.detail}` : ""
+  console.log(`    [${renderStatus(check.status)}] ${check.label}${detail}`)
+  if (!installHints || check.status === "ok" || !check.remedy) return
+  console.log(`      hint: ${check.remedy.hint}`)
+  if (check.remedy.command) console.log(`      cmd:  ${check.remedy.command}`)
+  if (check.remedy.url) console.log(`      url:  ${check.remedy.url}`)
 }
 
 function doctorExitCode(report: SetupReport): number {
@@ -860,16 +914,7 @@ async function maybeConfigureTelegramInteractive(configPath: string, config: App
       return next
     }
 
-    while (true) {
-      const baseUrlAnswer = (await rl.question(`  Public base URL [${next.publicBaseUrl ?? "http://100.x.y.z:3100"}]: `)).trim()
-      const candidate = baseUrlAnswer || next.publicBaseUrl || "http://100.x.y.z:3100"
-      try {
-        next.publicBaseUrl = normalizePublicBaseUrl(candidate)
-        break
-      } catch (err) {
-        console.log(`  ${String((err as Error).message)}`)
-      }
-    }
+    next.publicBaseUrl = await promptTelegramPublicBaseUrl(rl, next.publicBaseUrl)
 
     const tokenEnvAnswer = (await rl.question(`  Telegram bot token env var [${telegram.botTokenEnv ?? "TELEGRAM_BOT_TOKEN"}]: `)).trim()
     next.notifications!.telegram = {
@@ -878,38 +923,13 @@ async function maybeConfigureTelegramInteractive(configPath: string, config: App
       botTokenEnv: tokenEnvAnswer || telegram.botTokenEnv || "TELEGRAM_BOT_TOKEN",
     }
 
-    while (true) {
-      const configuredTelegram = next.notifications?.telegram
-      if (!configuredTelegram) throw new Error("Telegram config missing during interactive setup")
-      const currentLevel = configuredTelegram.level ?? 2
-      const levelAnswer = (await rl.question(`  Telegram message level [${currentLevel}] (0=debug, 1=ops, 2=milestones): `)).trim()
-      const candidate = levelAnswer || String(currentLevel)
-      if (candidate === "0" || candidate === "1" || candidate === "2") {
-        configuredTelegram.level = Number(candidate) as 0 | 1 | 2
-        break
-      }
-      console.log("  Telegram message level must be 0, 1, or 2.")
-    }
+    await promptTelegramLevel(rl, next)
 
-    while (true) {
-      const currentTelegram = next.notifications?.telegram
-      if (!currentTelegram) throw new Error("Telegram config missing during interactive setup")
-      const chatIdAnswer = (await rl.question(`  Telegram chat id [${currentTelegram.defaultChatId ?? ""}]: `)).trim()
-      const chatId = chatIdAnswer || currentTelegram.defaultChatId
-      if (chatId) {
-        currentTelegram.defaultChatId = chatId
-        break
-      }
-      console.log("  Telegram chat id is required when notifications are enabled.")
-    }
+    await promptTelegramChatId(rl, next)
 
     const configuredTelegram = next.notifications?.telegram
     if (!configuredTelegram) throw new Error("Telegram config missing during interactive setup")
-    const inboundAnswer = (await rl.question(`  Enable Telegram inbound prompt replies? [${configuredTelegram.inbound?.enabled ? "Y/n" : "y/N"}] `)).trim().toLowerCase()
-    const inboundEnabled =
-      inboundAnswer === ""
-        ? configuredTelegram.inbound?.enabled === true
-        : inboundAnswer === "y" || inboundAnswer === "yes"
+    const inboundEnabled = await promptTelegramInboundEnabled(rl, configuredTelegram)
     configuredTelegram.inbound = {
       ...configuredTelegram.inbound,
       enabled: inboundEnabled,
@@ -940,34 +960,73 @@ async function maybeConfigureTelegramInteractive(configPath: string, config: App
   }
 }
 
+async function promptTelegramPublicBaseUrl(rl: Interface, current: string | undefined): Promise<string> {
+  while (true) {
+    const baseUrlAnswer = (await rl.question(`  Public base URL [${current ?? "http://100.x.y.z:3100"}]: `)).trim()
+    const candidate = baseUrlAnswer || current || "http://100.x.y.z:3100"
+    try {
+      return normalizePublicBaseUrl(candidate)
+    } catch (err) {
+      console.log(`  ${String((err as Error).message)}`)
+    }
+  }
+}
+
+async function promptTelegramLevel(rl: Interface, config: AppConfig): Promise<void> {
+  while (true) {
+    const configuredTelegram = config.notifications?.telegram
+    if (!configuredTelegram) throw new Error("Telegram config missing during interactive setup")
+    const currentLevel = configuredTelegram.level ?? 2
+    const levelAnswer = (await rl.question(`  Telegram message level [${currentLevel}] (0=debug, 1=ops, 2=milestones): `)).trim()
+    const candidate = levelAnswer || String(currentLevel)
+    if (candidate === "0" || candidate === "1" || candidate === "2") {
+      configuredTelegram.level = Number(candidate) as 0 | 1 | 2
+      return
+    }
+    console.log("  Telegram message level must be 0, 1, or 2.")
+  }
+}
+
+async function promptTelegramChatId(rl: Interface, config: AppConfig): Promise<void> {
+  while (true) {
+    const currentTelegram = config.notifications?.telegram
+    if (!currentTelegram) throw new Error("Telegram config missing during interactive setup")
+    const chatIdAnswer = (await rl.question(`  Telegram chat id [${currentTelegram.defaultChatId ?? ""}]: `)).trim()
+    const chatId = chatIdAnswer || currentTelegram.defaultChatId
+    if (chatId) {
+      currentTelegram.defaultChatId = chatId
+      return
+    }
+    console.log("  Telegram chat id is required when notifications are enabled.")
+  }
+}
+
+async function promptTelegramInboundEnabled(
+  rl: Interface,
+  configuredTelegram: NonNullable<NonNullable<AppConfig["notifications"]>["telegram"]>,
+): Promise<boolean> {
+  const inboundAnswer = (await rl.question(`  Enable Telegram inbound prompt replies? [${configuredTelegram.inbound?.enabled ? "Y/n" : "y/N"}] `)).trim().toLowerCase()
+  if (inboundAnswer === "") return configuredTelegram.inbound?.enabled === true
+  return inboundAnswer === "y" || inboundAnswer === "yes"
+}
+
 export async function runSetupCommand(options: SetupRunOptions = {}): Promise<number> {
   const resolved = resolveOverrides(options.overrides)
   const configPath = resolveConfigPath(resolved)
-  let report = await generateSetupReport(options)
-  printDoctorReport(report, { installHints: true })
+  let report = await refreshSetupReport(options)
 
   if (needsInitialization(report)) {
-    try {
-      ensureProvisionedState(options.overrides)
-    } catch (err) {
-      if (err instanceof InvalidConfigError) {
-        console.error(`  Refusing to overwrite invalid config at ${err.path}: ${err.reason}`)
-        console.error("  Fix the file by hand or remove it, then re-run `beerengineer setup`.")
-        return 1
-      }
-      throw err
-    }
+    const initialized = initializeProvisionedState(options.overrides)
+    if (!initialized.ok) return 1
     console.log("  App setup initialized config, data dir, and database.")
-    report = await generateSetupReport(options)
-    printDoctorReport(report, { installHints: true })
+    report = await refreshSetupReport(options)
   }
 
   const interactive = !options.noInteractive && Boolean(process.stdin.isTTY && process.stdout.isTTY)
   if (interactive && (!options.group || options.group === "notifications")) {
     const configured = maybeConfigureTelegramInteractive(configPath, buildProvisionedConfig(resolved))
     await configured
-    report = await generateSetupReport(options)
-    printDoctorReport(report, { installHints: true })
+    report = await refreshSetupReport(options)
   }
   while (interactive && report.overall === "blocked") {
     const action = await promptRetryAction(report.groups.filter(group => group.level === "required").every(group => group.satisfied))
@@ -982,4 +1041,24 @@ export async function runSetupCommand(options: SetupRunOptions = {}): Promise<nu
     console.log("  Next: beerengineer workspace add <path>")
   }
   return doctorExitCode(report)
+}
+
+function initializeProvisionedState(overrides: SetupOverrides | undefined): { ok: true } | { ok: false } {
+  try {
+    ensureProvisionedState(overrides)
+    return { ok: true }
+  } catch (err) {
+    if (err instanceof InvalidConfigError) {
+      console.error(`  Refusing to overwrite invalid config at ${err.path}: ${err.reason}`)
+      console.error("  Fix the file by hand or remove it, then re-run `beerengineer setup`.")
+      return { ok: false }
+    }
+    throw err
+  }
+}
+
+async function refreshSetupReport(options: SetupRunOptions): Promise<SetupReport> {
+  const report = await generateSetupReport(options)
+  printDoctorReport(report, { installHints: true })
+  return report
 }

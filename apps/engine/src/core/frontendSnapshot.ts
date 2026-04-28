@@ -113,6 +113,29 @@ function readPackageDeps(pkgJsonPath: string): Record<string, unknown> | undefin
   }
 }
 
+function appendDetectedFrontendRoots(workspaceRoot: string, parent: string, roots: string[]): void {
+  const parentAbs = join(workspaceRoot, parent)
+  let entries: string[]
+  try {
+    if (!statSync(parentAbs).isDirectory()) return
+    entries = readdirSync(parentAbs)
+  } catch {
+    return
+  }
+  for (const name of entries) {
+    const subAbs = join(parentAbs, name)
+    try {
+      if (!statSync(subAbs).isDirectory()) continue
+    } catch {
+      continue
+    }
+    const subDeps = readPackageDeps(join(subAbs, "package.json"))
+    if (detectFromDeps(subDeps).framework) {
+      roots.push(`${parent}/${name}`)
+    }
+  }
+}
+
 /**
  * Detect candidate frontend roots: workspace root if it has frontend deps,
  * plus any direct subdir of `apps/` whose package.json declares one. Common
@@ -129,26 +152,7 @@ function detectFrontendRoots(workspaceRoot: string): string[] {
   // monorepo shapes) for nested package.json files declaring FE deps.
   const monorepoParents = ["apps", "packages"]
   for (const parent of monorepoParents) {
-    const parentAbs = join(workspaceRoot, parent)
-    let entries: string[]
-    try {
-      if (!statSync(parentAbs).isDirectory()) continue
-      entries = readdirSync(parentAbs)
-    } catch {
-      continue
-    }
-    for (const name of entries) {
-      const subAbs = join(parentAbs, name)
-      try {
-        if (!statSync(subAbs).isDirectory()) continue
-      } catch {
-        continue
-      }
-      const subDeps = readPackageDeps(join(subAbs, "package.json"))
-      if (detectFromDeps(subDeps).framework) {
-        roots.push(`${parent}/${name}`)
-      }
-    }
+    appendDetectedFrontendRoots(workspaceRoot, parent, roots)
   }
   // Also probe non-monorepo conventions if root didn't match.
   if (roots.length === 0) {
@@ -197,48 +201,84 @@ export function loadFrontendSnapshot(workspaceRoot: string | undefined): Fronten
   if (!workspaceRoot || !existsSync(workspaceRoot)) return undefined
   const detectedRoots = detectFrontendRoots(workspaceRoot)
   if (detectedRoots.length === 0) return undefined
-  // Collapse framework / styling detection across roots: take the first non-
-  // undefined result. Most projects have a single root; for multi-root
-  // monorepos the leading entry is the most representative.
+  const { framework, stylingSystem } = detectFrontendMetadata(workspaceRoot, detectedRoots)
+  const configFiles = collectFrontendConfigFiles(workspaceRoot, detectedRoots)
+  const componentTree = collectFrontendComponentTree(workspaceRoot, detectedRoots)
+  return { detectedRoots, framework, stylingSystem, configFiles, componentTree }
+}
+
+function detectFrontendMetadata(
+  workspaceRoot: string,
+  detectedRoots: string[],
+): Pick<FrontendSnapshot, "framework" | "stylingSystem"> {
   let framework: string | undefined
   let stylingSystem: string | undefined
   for (const rel of detectedRoots) {
     const deps = readPackageDeps(join(workspaceRoot, rel, "package.json"))
-    const d = detectFromDeps(deps)
-    if (!framework) framework = d.framework
-    if (!stylingSystem) stylingSystem = d.stylingSystem
+    const detected = detectFromDeps(deps)
+    if (!framework) framework = detected.framework
+    if (!stylingSystem) stylingSystem = detected.stylingSystem
   }
-  // CSS modules detection is harder than dep-checking — look for any
-  // *.module.css under the first detected root.
-  if (!stylingSystem && detectedRoots.length > 0) {
-    const firstRoot = join(workspaceRoot, detectedRoots[0])
-    if (anyCssModule(firstRoot)) stylingSystem = "css-modules"
+  if (!stylingSystem && hasCssModuleStyling(workspaceRoot, detectedRoots)) {
+    stylingSystem = "css-modules"
   }
+  return { framework, stylingSystem }
+}
+
+function hasCssModuleStyling(workspaceRoot: string, detectedRoots: string[]): boolean {
+  if (detectedRoots.length === 0) return false
+  const firstRoot = join(workspaceRoot, detectedRoots[0])
+  return anyCssModule(firstRoot)
+}
+
+function collectFrontendConfigFiles(
+  workspaceRoot: string,
+  detectedRoots: string[],
+): Array<{ path: string; content: string }> {
   const configFiles: Array<{ path: string; content: string }> = []
   for (const rel of detectedRoots) {
-    for (const file of FRONTEND_CONFIG_PATHS) {
-      const probed = rel === "" ? file : `${rel}/${file}`
-      const full = join(workspaceRoot, probed)
-      const content = readBoundedFile(full)
-      if (content !== undefined) configFiles.push({ path: probed, content })
-    }
+    appendFrontendConfigFiles(workspaceRoot, rel, configFiles)
   }
+  return configFiles
+}
+
+function appendFrontendConfigFiles(
+  workspaceRoot: string,
+  rel: string,
+  configFiles: Array<{ path: string; content: string }>,
+): void {
+  for (const file of FRONTEND_CONFIG_PATHS) {
+    const probed = rel === "" ? file : `${rel}/${file}`
+    const content = readBoundedFile(join(workspaceRoot, probed))
+    if (content !== undefined) configFiles.push({ path: probed, content })
+  }
+}
+
+function collectFrontendComponentTree(workspaceRoot: string, detectedRoots: string[]): string[] {
   const componentTree: string[] = []
   for (const rel of detectedRoots) {
-    for (const dir of FRONTEND_TREE_DIRS) {
-      const probed = rel === "" ? dir : `${rel}/${dir}`
-      const dirAbs = join(workspaceRoot, probed)
-      try {
-        if (!statSync(dirAbs).isDirectory()) continue
-      } catch {
-        continue
-      }
-      // Header so the agent can tell which tree each entry belongs to.
-      componentTree.push(`${probed}/`)
-      walkShallow(workspaceRoot, dirAbs, TREE_DEPTH - 1, componentTree)
-    }
+    appendFrontendComponentTree(workspaceRoot, rel, componentTree)
   }
-  return { detectedRoots, framework, stylingSystem, configFiles, componentTree }
+  return componentTree
+}
+
+function appendFrontendComponentTree(
+  workspaceRoot: string,
+  rel: string,
+  componentTree: string[],
+): void {
+  for (const dir of FRONTEND_TREE_DIRS) {
+    const probed = rel === "" ? dir : `${rel}/${dir}`
+    const dirAbs = join(workspaceRoot, probed)
+    try {
+      if (!statSync(dirAbs).isDirectory()) continue
+    } catch {
+      continue
+    }
+    // Header so the agent can tell which tree each entry belongs to.
+    componentTree.push(`${probed}/`)
+    walkShallow(workspaceRoot, dirAbs, TREE_DEPTH - 1, componentTree)
+  }
 }
 
 function anyCssModule(rootAbs: string, depth = 3): boolean {

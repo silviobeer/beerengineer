@@ -1211,24 +1211,20 @@ async function runItemWireframesCommand(
     if (!workspace) return 2
     const item = repos.getItemByCode(workspace.id, itemRef) ?? repos.getItem(itemRef)
     if (!item) {
-      const payload = { ok: false, code: 2, reason: `item not found: ${itemRef}` }
-      if (json) process.stdout.write(`${JSON.stringify(payload)}\n`)
-      else console.error(`  Item not found: ${itemRef}`)
-      return 2
+      return printItemCommandError(json, 2, `item not found: ${itemRef}`, `  Item not found: ${itemRef}`)
     }
     const run = latestCompletedRunForItem(repos, item.id)
     if (!run) {
-      const payload = { ok: false, code: 3, reason: `no completed run for ${item.code}` }
-      if (json) process.stdout.write(`${JSON.stringify(payload)}\n`)
-      else console.error(`  no completed run for ${item.code}`)
-      return 3
+      return printItemCommandError(json, 3, `no completed run for ${item.code}`, `  no completed run for ${item.code}`)
     }
     const artifact = readArtifactJson<WireframeArtifact>(repos, run.id, "visual-companion", "wireframes.json")
     if (!artifact) {
-      const payload = { ok: false, code: 3, reason: `no design-prep artifacts for ${item.code} (hasUi=false)` }
-      if (json) process.stdout.write(`${JSON.stringify(payload)}\n`)
-      else console.error(`  no design-prep artifacts for ${item.code} (hasUi=false)`)
-      return 3
+      return printItemCommandError(
+        json,
+        3,
+        `no design-prep artifacts for ${item.code} (hasUi=false)`,
+        `  no design-prep artifacts for ${item.code} (hasUi=false)`,
+      )
     }
     const screenMapPath = artifactPath(repos, run.id, "visual-companion", "screen-map.html")
     if (json) {
@@ -1260,6 +1256,12 @@ async function runItemWireframesCommand(
   }
 }
 
+function printItemCommandError(json: boolean, code: number, reason: string, message: string): number {
+  if (json) process.stdout.write(`${JSON.stringify({ ok: false, code, reason })}\n`)
+  else console.error(message)
+  return code
+}
+
 async function runItemDesignCommand(
   itemRef: string | undefined,
   workspaceKey: string | undefined,
@@ -1277,24 +1279,20 @@ async function runItemDesignCommand(
     if (!workspace) return 2
     const item = repos.getItemByCode(workspace.id, itemRef) ?? repos.getItem(itemRef)
     if (!item) {
-      const payload = { ok: false, code: 2, reason: `item not found: ${itemRef}` }
-      if (json) process.stdout.write(`${JSON.stringify(payload)}\n`)
-      else console.error(`  Item not found: ${itemRef}`)
-      return 2
+      return printItemCommandError(json, 2, `item not found: ${itemRef}`, `  Item not found: ${itemRef}`)
     }
     const run = latestCompletedRunForItem(repos, item.id)
     if (!run) {
-      const payload = { ok: false, code: 3, reason: `no completed run for ${item.code}` }
-      if (json) process.stdout.write(`${JSON.stringify(payload)}\n`)
-      else console.error(`  no completed run for ${item.code}`)
-      return 3
+      return printItemCommandError(json, 3, `no completed run for ${item.code}`, `  no completed run for ${item.code}`)
     }
     const artifact = readArtifactJson<DesignArtifact>(repos, run.id, "frontend-design", "design.json")
     if (!artifact) {
-      const payload = { ok: false, code: 3, reason: `no design-prep artifacts for ${item.code} (hasUi=false)` }
-      if (json) process.stdout.write(`${JSON.stringify(payload)}\n`)
-      else console.error(`  no design-prep artifacts for ${item.code} (hasUi=false)`)
-      return 3
+      return printItemCommandError(
+        json,
+        3,
+        `no design-prep artifacts for ${item.code} (hasUi=false)`,
+        `  no design-prep artifacts for ${item.code} (hasUi=false)`,
+      )
     }
     const previewPath = artifactPath(repos, run.id, "frontend-design", "design-preview.html")
     if (json) {
@@ -1678,52 +1676,9 @@ async function runItemPreviewCommand(
       return 1
     }
     const launch = resolvePreviewLaunchSpec(preview.worktreePath)
-    let logPath: string | undefined
-    let pid: number | null | undefined
-    let status: "started" | "already_running" | "stopped" | "already_stopped"
-    if (opts.start) {
-      try {
-        const started = await startPreviewServer(preview)
-        status = started.status
-        logPath = started.logPath
-        pid = started.pid
-      } catch (error) {
-        console.error(`  ${(error as Error).message}`)
-        return 1
-      }
-    } else if (opts.stop) {
-      try {
-        const stopped = await stopPreviewServer(preview)
-        status = stopped.status
-        logPath = stopped.logPath
-        pid = stopped.pid
-      } catch (error) {
-        console.error(`  ${(error as Error).message}`)
-        return 1
-      }
-    } else {
-      status = (await isPortListening(preview.previewHost, preview.previewPort)) ? "already_running" : "stopped"
-    }
-
-    const payload = {
-      itemId: resolved.item.id,
-      workspaceKey: resolved.workspaceKey,
-      branch: preview.branch,
-      worktreePath: preview.worktreePath,
-      previewHost: preview.previewHost,
-      previewPort: preview.previewPort,
-      previewUrl: preview.previewUrl,
-      status,
-      pid,
-      launch: launch
-        ? {
-            command: launch.command,
-            cwd: launch.cwd,
-            source: launch.source,
-          }
-        : null,
-      logPath: logPath ?? join(preview.worktreePath, ".beerengineer-preview.log"),
-    }
+    const previewState = await resolvePreviewState(preview, opts)
+    if (!previewState) return 1
+    const payload = buildPreviewPayload(resolved, preview, launch, previewState)
     if (opts.json) {
       process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`)
     } else {
@@ -1745,6 +1700,76 @@ async function runItemPreviewCommand(
     return 0
   } finally {
     db.close()
+  }
+}
+
+type PreviewState = {
+  logPath?: string
+  pid: number | null | undefined
+  status: "started" | "already_running" | "stopped" | "already_stopped"
+}
+
+async function resolvePreviewState(
+  preview: {
+    worktreePath: string
+    previewHost: string
+    previewPort: number
+  } & Record<string, unknown>,
+  opts: { start?: boolean; stop?: boolean },
+): Promise<PreviewState | null> {
+  if (opts.start) {
+    return runPreviewTransition(() => startPreviewServer(preview))
+  }
+  if (opts.stop) {
+    return runPreviewTransition(() => stopPreviewServer(preview))
+  }
+  return {
+    status: (await isPortListening(preview.previewHost, preview.previewPort)) ? "already_running" : "stopped",
+    pid: undefined,
+  }
+}
+
+async function runPreviewTransition(
+  action: () => Promise<{ status: PreviewState["status"]; logPath?: string; pid: number | null }>,
+): Promise<PreviewState | null> {
+  try {
+    return await action()
+  } catch (error) {
+    console.error(`  ${(error as Error).message}`)
+    return null
+  }
+}
+
+function buildPreviewPayload(
+  resolved: { item: ItemRow; workspaceKey?: string },
+  preview: {
+    branch: string
+    worktreePath: string
+    previewHost: string
+    previewPort: number
+    previewUrl: string
+  },
+  launch: ReturnType<typeof resolvePreviewLaunchSpec>,
+  previewState: PreviewState,
+) {
+  return {
+    itemId: resolved.item.id,
+    workspaceKey: resolved.workspaceKey,
+    branch: preview.branch,
+    worktreePath: preview.worktreePath,
+    previewHost: preview.previewHost,
+    previewPort: preview.previewPort,
+    previewUrl: preview.previewUrl,
+    status: previewState.status,
+    pid: previewState.pid,
+    launch: launch
+      ? {
+          command: launch.command,
+          cwd: launch.cwd,
+          source: launch.source,
+        }
+      : null,
+    logPath: previewState.logPath ?? join(preview.worktreePath, ".beerengineer-preview.log"),
   }
 }
 

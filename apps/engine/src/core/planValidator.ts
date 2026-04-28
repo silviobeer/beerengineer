@@ -50,14 +50,7 @@ export type EnforceParallelismOptions = {
   runId?: string
 }
 
-function findOverlappingFiles(wave: WaveDefinition): { stories: string[]; overlap: string[] } | null {
-  // Setup waves are out of scope — they always run sequentially.
-  if (wave.kind === "setup") return null
-  const stories = wave.stories ?? []
-  if (stories.length < 2) return null
-  // Story id → set of declared shared files. A story with `undefined` or
-  // `[]` is "unknown overlap": we cannot prove non-overlap, so we treat
-  // it as colliding with every other story below.
+function collectStoryFiles(stories: NonNullable<WaveDefinition["stories"]>): { filesByStory: Map<string, Set<string>>; anyMissing: boolean } {
   const filesByStory = new Map<string, Set<string>>()
   let anyMissing = false
   for (const story of stories) {
@@ -69,6 +62,18 @@ function findOverlappingFiles(wave: WaveDefinition): { stories: string[]; overla
     }
     filesByStory.set(story.id, new Set(declared))
   }
+  return { filesByStory, anyMissing }
+}
+
+function findOverlappingFiles(wave: WaveDefinition): { stories: string[]; overlap: string[] } | null {
+  // Setup waves are out of scope — they always run sequentially.
+  if (wave.kind === "setup") return null
+  const stories = wave.stories ?? []
+  if (stories.length < 2) return null
+  // Story id → set of declared shared files. A story with `undefined` or
+  // `[]` is "unknown overlap": we cannot prove non-overlap, so we treat
+  // it as colliding with every other story below.
+  const { filesByStory, anyMissing } = collectStoryFiles(stories)
   if (anyMissing) {
     return { stories: stories.map(s => s.id), overlap: [] }
   }
@@ -76,14 +81,25 @@ function findOverlappingFiles(wave: WaveDefinition): { stories: string[]; overla
   const ids = stories.map(s => s.id)
   for (let i = 0; i < ids.length; i++) {
     for (let j = i + 1; j < ids.length; j++) {
-      const a = filesByStory.get(ids[i])
-      const b = filesByStory.get(ids[j])
-      if (!a || !b) continue
-      for (const f of a) if (b.has(f)) overlap.add(f)
+      addStoryPairOverlap(filesByStory, ids[i], ids[j], overlap)
     }
   }
   if (overlap.size === 0) return null
   return { stories: ids, overlap: Array.from(overlap).sort((left, right) => left.localeCompare(right)) }
+}
+
+function addStoryPairOverlap(
+  filesByStory: Map<string, Set<string>>,
+  leftId: string,
+  rightId: string,
+  overlap: Set<string>,
+): void {
+  const left = filesByStory.get(leftId)
+  const right = filesByStory.get(rightId)
+  if (!left || !right) return
+  for (const file of left) {
+    if (right.has(file)) overlap.add(file)
+  }
 }
 
 /**

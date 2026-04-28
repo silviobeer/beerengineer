@@ -552,51 +552,65 @@ function verifySetupContract(
   contract: NonNullable<StoryExecutionContext["setupContract"]>,
 ): string[] {
   const failures: string[] = []
-  for (const expectedFile of contract.expectedFiles) {
-    // Skip prose entries the planner sometimes emits (e.g. "test runner
-    // config file"); only literal path-shaped strings are checked. A real
-    // filename has no spaces; directory entries end with "/".
+  failures.push(...verifyExpectedFiles(workspaceRoot, contract.expectedFiles))
+  failures.push(...verifyRequiredScripts(workspaceRoot, contract.requiredScripts))
+  failures.push(...verifyPostChecks(workspaceRoot, contract.postChecks))
+  return failures
+}
+
+function verifyExpectedFiles(workspaceRoot: string, expectedFiles: string[]): string[] {
+  const failures: string[] = []
+  for (const expectedFile of expectedFiles) {
     if (/\s/.test(expectedFile)) continue
     if (!existsSync(join(workspaceRoot, expectedFile))) {
       failures.push(`missing expected file: ${expectedFile}`)
     }
   }
+  return failures
+}
 
-  if (contract.requiredScripts.length > 0) {
-    const packageJsonPath = join(workspaceRoot, "package.json")
-    if (existsSync(packageJsonPath)) {
-      const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as { scripts?: Record<string, string> }
-      for (const script of contract.requiredScripts) {
-        if (!packageJson.scripts?.[script]) {
-          failures.push(`missing required package.json script: ${script}`)
-          continue
-        }
-        const run = runShell(`npm run ${script}`, workspaceRoot)
-        if (!run.ok) {
-          const outputSuffix = run.output ? `\n${run.output}` : ""
-          failures.push(`script failed: npm run ${script}${outputSuffix}`)
-        }
-      }
-    } else {
-      failures.push("missing package.json required to verify setup scripts")
-    }
+function verifyRequiredScripts(workspaceRoot: string, requiredScripts: string[]): string[] {
+  if (requiredScripts.length === 0) return []
+  const packageJsonPath = join(workspaceRoot, "package.json")
+  if (!existsSync(packageJsonPath)) {
+    return ["missing package.json required to verify setup scripts"]
   }
-
-  // postChecks are descriptive contract assertions, not shell commands —
-  // the planner emits prose like "Project dependencies install locally".
-  // Shape-verification (expectedFiles + requiredScripts) is the executable
-  // gate; postChecks are passed to the coder/reviewer as context only.
-  for (const postCheck of contract.postChecks) {
-    const trimmed = postCheck.trim()
-    if (!trimmed.startsWith("$ ") && !trimmed.startsWith("sh: ")) continue
-    const cmd = trimmed.replace(/^\$\s+|^sh:\s+/, "")
-    const run = runShell(cmd, workspaceRoot)
+  const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as { scripts?: Record<string, string> }
+  const failures: string[] = []
+  for (const script of requiredScripts) {
+    if (!packageJson.scripts?.[script]) {
+      failures.push(`missing required package.json script: ${script}`)
+      continue
+    }
+    const run = runShell(`npm run ${script}`, workspaceRoot)
     if (!run.ok) {
-      const outputSuffix = run.output ? `\n${run.output}` : ""
-      failures.push(`post-check failed: ${cmd}${outputSuffix}`)
+      failures.push(`script failed: npm run ${script}${formatCommandOutput(run.output)}`)
     }
   }
   return failures
+}
+
+function verifyPostChecks(workspaceRoot: string, postChecks: string[]): string[] {
+  const failures: string[] = []
+  for (const postCheck of postChecks) {
+    const cmd = shellCommandFromPostCheck(postCheck)
+    if (!cmd) continue
+    const run = runShell(cmd, workspaceRoot)
+    if (!run.ok) {
+      failures.push(`post-check failed: ${cmd}${formatCommandOutput(run.output)}`)
+    }
+  }
+  return failures
+}
+
+function shellCommandFromPostCheck(postCheck: string): string | null {
+  const trimmed = postCheck.trim()
+  if (!trimmed.startsWith("$ ") && !trimmed.startsWith("sh: ")) return null
+  return trimmed.replace(/^\$\s+|^sh:\s+/, "")
+}
+
+function formatCommandOutput(output: string): string {
+  return output ? `\n${output}` : ""
 }
 
 export async function runSetupStory(

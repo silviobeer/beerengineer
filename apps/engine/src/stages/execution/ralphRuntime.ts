@@ -373,23 +373,7 @@ async function runStoryReview(input: {
     const designSystem = designSystemGate(review.designSystem)
     const coderabbit = coderabbitGate(review.coderabbit)
     const sonar = sonarGate(review.sonarcloud)
-    const failedBecause: string[] = []
-    if (designSystem.status === "ran" && !designSystem.passed) {
-      failedBecause.push("Design-system gate found hardcoded colors or rounded styles.")
-    }
-    if (coderabbit.status === "ran" && !coderabbit.passed) {
-      failedBecause.push("CodeRabbit still reports critical or high-severity review issues.")
-    }
-    if (sonar.status === "ran" && !sonar.passed) {
-      const failedMetrics = (sonar.conditions ?? [])
-        .filter(condition => condition.status === "error")
-        .map(condition => `${condition.metric} ${condition.actual}/${condition.threshold}`)
-      failedBecause.push(
-        failedMetrics.length > 0
-          ? `SonarQube quality gate failed: ${failedMetrics.join(", ")}.`
-          : "SonarQube quality gate failed.",
-      )
-    }
+    const failedBecause = reviewFailureReasons(designSystem, coderabbit, sonar)
     return {
       designSystemFindings: review.designSystem.findings,
       coderabbitFindings: review.coderabbit.findings,
@@ -435,11 +419,30 @@ async function runStoryReview(input: {
   const coderabbitFindings = review.coderabbit.findings
   const sonarFindings = review.sonarcloud.findings
   const combinedFindings = dedupeFindings([...designSystemFindings, ...coderabbitFindings, ...sonarFindings])
-  const failedBecause: string[] = []
   const designSystem = designSystemGate(review.designSystem)
   const coderabbit = coderabbitGate(review.coderabbit)
   const sonar = sonarGate(review.sonarcloud)
+  const failedBecause = reviewFailureReasons(designSystem, coderabbit, sonar)
 
+  return {
+    designSystemFindings,
+    coderabbitFindings,
+    sonarFindings,
+    combinedFindings,
+    designSystem,
+    coderabbit,
+    sonar,
+    failedBecause,
+    outcome: reviewOutcome(designSystem, coderabbit, sonar, failedBecause),
+  }
+}
+
+function reviewFailureReasons(
+  designSystem: ReturnType<typeof designSystemGate>,
+  coderabbit: ReturnType<typeof coderabbitGate>,
+  sonar: ReturnType<typeof sonarGate>,
+): string[] {
+  const failedBecause: string[] = []
   if (designSystem.status === "ran" && !designSystem.passed) {
     failedBecause.push("Design-system gate found hardcoded colors or rounded styles.")
   }
@@ -456,18 +459,7 @@ async function runStoryReview(input: {
         : "SonarQube quality gate failed.",
     )
   }
-
-  return {
-    designSystemFindings,
-    coderabbitFindings,
-    sonarFindings,
-    combinedFindings,
-    designSystem,
-    coderabbit,
-    sonar,
-    failedBecause,
-    outcome: reviewOutcome(designSystem, coderabbit, sonar, failedBecause),
-  }
+  return failedBecause
 }
 
 function printReviewResult(result: StoryReviewRun): void {
@@ -626,9 +618,7 @@ async function runOneIteration(
   const { storyContext, paths, llm } = ctx
   const iterationNumber = implementation.iterations.length + 1
   const isRemediation = Boolean(opts.feedback)
-  const action = isRemediation
-    ? `Apply review feedback: ${opts.feedback}`
-    : "Implement story against approved test plan"
+  const action = iterationAction(isRemediation, opts.feedback)
 
   stagePresent.step(
     isRemediation
@@ -641,58 +631,19 @@ async function runOneIteration(
   let notes: string[] = isRemediation ? ["Remediation run triggered by story review."] : []
 
   if (llm) {
-    const harness = resolveHarness({
-      workspaceRoot: llm.workspaceRoot,
-      harnessProfile: llm.harnessProfile,
-      runtimePolicy: llm.runtimePolicy,
-      role: "coder",
-      stage: "execution",
-    })
-    const iterationContext: IterationContext = {
-      iteration: iterationNumber,
-      maxIterations: opts.maxIterationsPerCycle,
-      reviewCycle: opts.reviewCycle + 1,
+    const llmResult = await executeLlmIteration(ctx, implementation, {
+      iterationNumber,
+      reviewCycle: opts.reviewCycle,
+      maxIterationsPerCycle: opts.maxIterationsPerCycle,
       maxReviewCycles: opts.maxReviewCycles,
-      priorAttempts: implementation.priorAttempts ?? [],
-    }
-    const coderResult = await runCoderHarness({
-      harness,
-      runtimePolicy: executionCoderPolicy(llm.runtimePolicy),
-      baselinePath: paths.baselinePath,
-      storyContext: implementation.mockupDeliveredToSession
-        ? { ...storyContext, mockupHtmlByScreen: undefined }
-        : storyContext,
-      reviewFeedback: isRemediation ? opts.feedback ?? "" : undefined,
-      sessionId: implementation.coderSessionId ?? null,
-      iterationContext,
+      isRemediation,
+      feedback: opts.feedback,
     })
-    coderSummary = coderResult.summary
-    changedFilesThisIteration = coderResult.changedFiles
-    implementation.coderSessionId = coderResult.sessionId
-    implementation.mockupDeliveredToSession ||= Boolean(storyContext.mockupHtmlByScreen)
-    notes = [...notes, ...coderResult.implementationNotes]
-    if (coderResult.blockers.length > 0) {
-      notes.push(...coderResult.blockers.map(blocker => `[blocker] ${blocker}`))
-    }
-    stagePresent.dim(`    → ${coderSummary}`)
-    if (storyContext.worktreeRoot) {
-      const commitMessage = isRemediation
-        ? `Apply review feedback for ${storyContext.story.id} (iteration ${iterationNumber})`
-        : `Implement ${storyContext.story.id} (iteration ${iterationNumber})`
-      const sha = commitWorktreeChanges(storyContext.worktreeRoot, commitMessage)
-      if (sha) {
-        stagePresent.dim(`    → committed ${storyContext.story.id} iteration ${iterationNumber}: ${sha.slice(0, 8)}`)
-      }
-    }
-  } else if (isRemediation) {
-    await llm6bFix(opts.feedback ?? "")
+    coderSummary = llmResult.summary
+    changedFilesThisIteration = llmResult.changedFiles
+    notes = [...notes, ...llmResult.notes]
   } else {
-    await llm6bImplement({
-      id: storyContext.story.id,
-      title: storyContext.story.title,
-      acceptanceCriteria: storyContext.story.acceptanceCriteria,
-    })
-    changedFilesThisIteration = fakeChangedFiles(storyContext.story.id)
+    changedFilesThisIteration = await executeFallbackIteration(storyContext, isRemediation, opts.feedback)
   }
 
   const checks = checksForIteration(opts.iterationsThisCycle, isRemediation)
@@ -744,6 +695,97 @@ async function runOneIteration(
   }))
 
   return result
+}
+
+function iterationAction(isRemediation: boolean, feedback: string | undefined): string {
+  return isRemediation
+    ? `Apply review feedback: ${feedback}`
+    : "Implement story against approved test plan"
+}
+
+async function executeLlmIteration(
+  ctx: RalphLoopContext,
+  implementation: StoryImplementationArtifact,
+  opts: {
+    iterationNumber: number
+    reviewCycle: number
+    maxIterationsPerCycle: number
+    maxReviewCycles: number
+    isRemediation: boolean
+    feedback: string | undefined
+  },
+): Promise<{ summary: string; changedFiles: string[]; notes: string[] }> {
+  const { storyContext, paths, llm } = ctx
+  if (!llm) throw new Error("LLM iteration requested without execution LLM configuration")
+  const harness = resolveHarness({
+    workspaceRoot: llm.workspaceRoot,
+    harnessProfile: llm.harnessProfile,
+    runtimePolicy: llm.runtimePolicy,
+    role: "coder",
+    stage: "execution",
+  })
+  const iterationContext: IterationContext = {
+    iteration: opts.iterationNumber,
+    maxIterations: opts.maxIterationsPerCycle,
+    reviewCycle: opts.reviewCycle + 1,
+    maxReviewCycles: opts.maxReviewCycles,
+    priorAttempts: implementation.priorAttempts ?? [],
+  }
+  const coderResult = await runCoderHarness({
+    harness,
+    runtimePolicy: executionCoderPolicy(llm.runtimePolicy),
+    baselinePath: paths.baselinePath,
+    storyContext: implementation.mockupDeliveredToSession
+      ? { ...storyContext, mockupHtmlByScreen: undefined }
+      : storyContext,
+    reviewFeedback: opts.isRemediation ? opts.feedback ?? "" : undefined,
+    sessionId: implementation.coderSessionId ?? null,
+    iterationContext,
+  })
+  implementation.coderSessionId = coderResult.sessionId
+  implementation.mockupDeliveredToSession ||= Boolean(storyContext.mockupHtmlByScreen)
+  stagePresent.dim(`    → ${coderResult.summary}`)
+  commitIterationWorktree(storyContext, opts.iterationNumber, opts.isRemediation)
+  return {
+    summary: coderResult.summary,
+    changedFiles: coderResult.changedFiles,
+    notes: [
+      ...coderResult.implementationNotes,
+      ...coderResult.blockers.map(blocker => `[blocker] ${blocker}`),
+    ],
+  }
+}
+
+function commitIterationWorktree(
+  storyContext: StoryExecutionContext,
+  iterationNumber: number,
+  isRemediation: boolean,
+): void {
+  if (!storyContext.worktreeRoot) return
+  const commitMessage = isRemediation
+    ? `Apply review feedback for ${storyContext.story.id} (iteration ${iterationNumber})`
+    : `Implement ${storyContext.story.id} (iteration ${iterationNumber})`
+  const sha = commitWorktreeChanges(storyContext.worktreeRoot, commitMessage)
+  if (sha) {
+    stagePresent.dim(`    → committed ${storyContext.story.id} iteration ${iterationNumber}: ${sha.slice(0, 8)}`)
+  }
+}
+
+async function executeFallbackIteration(
+  storyContext: StoryExecutionContext,
+  isRemediation: boolean,
+  feedback: string | undefined,
+): Promise<string[]> {
+  if (isRemediation) {
+    await llm6bFix(feedback ?? "")
+    return []
+  }
+  await llm6bImplement({
+    id: storyContext.story.id,
+    title: storyContext.story.title,
+    acceptanceCriteria: storyContext.story.acceptanceCriteria,
+  })
+  return fakeChangedFiles(storyContext.story.id)
 }
 
 /** Run iterations until green or iteration budget is exhausted. */

@@ -719,19 +719,20 @@ async function buildPathPreview(path: string, allowedRoots: string[]): Promise<O
   const exists = await pathExists(resolvedPath)
   const stats = exists ? await stat(resolvedPath) : null
   const isDirectory = stats?.isDirectory() ?? false
-  const topLevelEntries = exists && isDirectory ? (await readdir(resolvedPath)).slice(0, 20) : []
+  const topLevelEntries = await readTopLevelEntries(resolvedPath, exists, isDirectory)
   const isWritable = exists ? await isWritablePath(resolvedPath) : await findWritableParent(resolvedPath)
-  const gitProbe = exists && isDirectory ? runGit(["rev-parse", "--is-inside-work-tree"], resolvedPath) : { ok: false, stdout: "", stderr: "" }
+  const gitProbe = probeGitRepoState(resolvedPath, exists, isDirectory)
   const isGitRepo = gitProbe.ok && gitProbe.stdout === "true"
   const defaultBranch = isGitRepo ? resolveGitDefaultBranch(resolvedPath) : null
   const remoteProbe = isGitRepo ? runGit(["remote"], resolvedPath) : { ok: false, stdout: "", stderr: "" }
   const hasRemote = Boolean(remoteProbe.stdout)
   const configFile = exists && isDirectory ? await readWorkspaceConfig(resolvedPath) : null
   const hasSonarProperties = exists && isDirectory ? await pathExists(sonarPropertiesPath(resolvedPath)) : false
+  const insideAllowedRoot = isInsideAllowedRoot(resolvedPath, allowedRoots)
   const conflicts: string[] = []
   if (exists && !isDirectory) conflicts.push("path is not a directory")
   if (!isWritable) conflicts.push("path is not writable")
-  if (!isInsideAllowedRoot(resolvedPath, allowedRoots)) conflicts.push("path is outside allowed roots")
+  if (!insideAllowedRoot) conflicts.push("path is outside allowed roots")
   return {
     schemaVersion: WORKSPACE_SCHEMA_VERSION,
     path: resolvedPath,
@@ -743,12 +744,22 @@ async function buildPathPreview(path: string, allowedRoots: string[]): Promise<O
     defaultBranch,
     detectedStack: detectStack(topLevelEntries),
     existingFiles: topLevelEntries,
-    isInsideAllowedRoot: isInsideAllowedRoot(resolvedPath, allowedRoots),
+    isInsideAllowedRoot: insideAllowedRoot,
     isGreenfield: !exists || (isDirectory && topLevelEntries.length === 0),
     hasWorkspaceConfigFile: Boolean(configFile),
     hasSonarProperties,
     conflicts,
   }
+}
+
+async function readTopLevelEntries(path: string, exists: boolean, isDirectory: boolean): Promise<string[]> {
+  if (!exists || !isDirectory) return []
+  return (await readdir(path)).slice(0, 20)
+}
+
+function probeGitRepoState(path: string, exists: boolean, isDirectory: boolean): { ok: boolean; stdout: string; stderr: string } {
+  if (!exists || !isDirectory) return { ok: false, stdout: "", stderr: "" }
+  return runGit(["rev-parse", "--is-inside-work-tree"], path)
 }
 
 async function ensureManagedGitignore(root: string): Promise<{ changed: boolean }> {
@@ -1313,14 +1324,11 @@ function rolePairsForProfile(
  * `profile_references_unavailable_runtime` error.
  */
 function sdkApiKeyEnv(harness: KnownHarness): string | null {
-  switch (harness) {
-    case "claude":
-      return "ANTHROPIC_API_KEY"
-    case "codex":
-      return "OPENAI_API_KEY"
-    case "opencode":
-      return null
+  const envByHarness: Partial<Record<KnownHarness, string>> = {
+    claude: "ANTHROPIC_API_KEY",
+    codex: "OPENAI_API_KEY",
   }
+  return envByHarness[harness] ?? null
 }
 
 export function validateHarnessProfile(profile: HarnessProfile, appReport: SetupReport): ValidationResult {
@@ -1379,12 +1387,7 @@ export function validateHarnessProfile(profile: HarnessProfile, appReport: Setup
   // SDK roles need the matching API key in process env. We deliberately do
   // NOT silently fall back to CLI — operators picking SDK want SDK semantics
   // (per-token billing, in-process tool gating) and need to see this clearly.
-  const missingKeys: string[] = []
-  for (const pair of pairs) {
-    if (pair.runtime !== "sdk") continue
-    const env = sdkApiKeyEnv(pair.harness)
-    if (env && !process.env[env]) missingKeys.push(`${pair.harness}:sdk requires ${env}`)
-  }
+  const missingKeys = missingSdkKeys(pairs)
   if (missingKeys.length > 0) {
     return {
       ok: false,
@@ -1395,21 +1398,27 @@ export function validateHarnessProfile(profile: HarnessProfile, appReport: Setup
       },
     }
   }
-  if (profile.mode === "opencode") {
-    for (const role of [profile.roles.coder, profile.roles.reviewer]) {
-      if (!isKnownModel(role.provider, role.model)) {
-        warnings.push(`Unknown ${role.provider} model "${role.model}" accepted for opencode profile`)
-      }
-    }
-  }
-  if (profile.mode === "self") {
-    for (const role of [profile.roles.coder, profile.roles.reviewer]) {
-      if (!isKnownModel(role.provider, role.model)) {
-        warnings.push(`Unknown ${role.provider} model "${role.model}" accepted for self profile`)
-      }
-    }
-  }
+  appendUnknownModelWarnings(profile, warnings)
   return { ok: true, warnings }
+}
+
+function missingSdkKeys(pairs: Array<{ harness: KnownHarness; runtime: "cli" | "sdk" }>): string[] {
+  const missingKeys: string[] = []
+  for (const pair of pairs) {
+    if (pair.runtime !== "sdk") continue
+    const env = sdkApiKeyEnv(pair.harness)
+    if (env && !process.env[env]) missingKeys.push(`${pair.harness}:sdk requires ${env}`)
+  }
+  return missingKeys
+}
+
+function appendUnknownModelWarnings(profile: HarnessProfile, warnings: string[]): void {
+  if (profile.mode !== "opencode" && profile.mode !== "self") return
+  for (const role of [profile.roles.coder, profile.roles.reviewer]) {
+    if (!isKnownModel(role.provider, role.model)) {
+      warnings.push(`Unknown ${role.provider} model "${role.model}" accepted for ${profile.mode} profile`)
+    }
+  }
 }
 
 export async function previewWorkspace(path: string, config: Pick<AppConfig, "allowedRoots">, repos: Repos): Promise<WorkspacePreview> {

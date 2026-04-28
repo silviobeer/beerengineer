@@ -28,6 +28,8 @@ export type ChatToolMessage = {
   promptId: string | null
 }
 
+type MessagePresentation = ReturnType<typeof presentMessageEntry>
+
 function promptContextForEntry(
   entry: MessageEntry,
   repos?: Repos,
@@ -85,6 +87,29 @@ export function correlationKeyForMessage(entry: MessageEntry): string {
   }
 }
 
+function summaryHeader(presentation: MessagePresentation): string {
+  return `${presentation.icon} beerengineer_ ${presentation.label}`
+}
+
+function renderPhaseStatusMessage(entry: MessageEntry, presentation: MessagePresentation): ChatToolMessage {
+  const failed = entry.type === "phase_failed"
+  const stageKey = s(entry.payload.stageKey)
+  return {
+    text: joinTelegramLines([
+      `${presentation.icon} beerengineer_ stage ${failed ? "failed" : "completed"}`,
+      "",
+      `Stage: ${stageKey}`,
+      "",
+      failed
+        ? `${stageKey} hit trouble in run ${shortRunId(entry.runId)}.`
+        : `${stageKey} is done in run ${shortRunId(entry.runId)}.`,
+      failed ? "This stage needs attention." : "Another stage down.",
+      typeof entry.payload.error === "string" ? `Error: ${entry.payload.error}` : undefined,
+    ]),
+    promptId: null,
+  }
+}
+
 export function messageRoleForEntry(entry: MessageEntry): "summary" | "prompt" | "event" {
   if (entry.type === "prompt_requested") return "prompt"
   if (
@@ -106,7 +131,7 @@ export function describeChatMessage(entry: MessageEntry, repos?: Repos): ChatToo
     case "run_started":
       return {
         text: joinTelegramLines([
-          `${presentation.icon} beerengineer_ ${presentation.label}`,
+          summaryHeader(presentation),
           "",
           `Heads up: ${s(entry.payload.title, entry.runId)} is underway.`,
           `Run ${shortRunId(entry.runId)}`,
@@ -118,7 +143,7 @@ export function describeChatMessage(entry: MessageEntry, repos?: Repos): ChatToo
     case "run_blocked":
       return {
         text: joinTelegramLines([
-          `${presentation.icon} beerengineer_ ${presentation.label}`,
+          summaryHeader(presentation),
           "",
           `${s(entry.payload.title, entry.runId)} hit a blocker.`,
           `Run ${shortRunId(entry.runId)}`,
@@ -133,7 +158,7 @@ export function describeChatMessage(entry: MessageEntry, repos?: Repos): ChatToo
     case "run_finished":
       return {
         text: joinTelegramLines([
-          `${presentation.icon} beerengineer_ ${presentation.label}`,
+          summaryHeader(presentation),
           "",
           `${s(entry.payload.title, entry.runId)} is done.`,
           `Run ${shortRunId(entry.runId)}`,
@@ -157,20 +182,7 @@ export function describeChatMessage(entry: MessageEntry, repos?: Repos): ChatToo
       }
     case "phase_completed":
     case "phase_failed":
-      return {
-        text: joinTelegramLines([
-          `${presentation.icon} beerengineer_ stage ${entry.type === "phase_failed" ? "failed" : "completed"}`,
-          "",
-          `Stage: ${s(entry.payload.stageKey)}`,
-          "",
-          entry.type === "phase_failed"
-            ? `${s(entry.payload.stageKey)} hit trouble in run ${shortRunId(entry.runId)}.`
-            : `${s(entry.payload.stageKey)} is done in run ${shortRunId(entry.runId)}.`,
-          entry.type === "phase_failed" ? "This stage needs attention." : "Another stage down.",
-          typeof entry.payload.error === "string" ? `Error: ${entry.payload.error}` : undefined,
-        ]),
-        promptId: null,
-      }
+      return renderPhaseStatusMessage(entry, presentation)
     case "prompt_requested":
       return {
         text: joinTelegramLines([

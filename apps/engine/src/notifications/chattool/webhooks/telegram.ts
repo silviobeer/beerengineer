@@ -45,6 +45,20 @@ function allowWebhookWrite(chatId: string): boolean {
   return true
 }
 
+function inboundFailureMessage(error: string): string {
+  switch (error) {
+    case "prompt_not_open":
+    case "prompt_mismatch":
+      return "That prompt was already answered."
+    case "empty_answer":
+      return "Empty answers are ignored."
+    case "run_not_found":
+      return "That run no longer exists."
+    default:
+      return "Reply to a beerengineer_ prompt to answer it."
+  }
+}
+
 export function resetTelegramChatToolWebhookRateLimit(): void {
   webhookWritesByChat.clear()
 }
@@ -84,15 +98,7 @@ export async function handleTelegramChatToolWebhook(
 
   const result = handleChatToolInbound(repos, "telegram", update)
   if (!result.ok) {
-    let message = "Reply to a beerengineer_ prompt to answer it."
-    if (result.error === "prompt_not_open" || result.error === "prompt_mismatch") {
-      message = "That prompt was already answered."
-    } else if (result.error === "empty_answer") {
-      message = "Empty answers are ignored."
-    } else if (result.error === "run_not_found") {
-      message = "That run no longer exists."
-    }
-    await softReply(resolved.botToken, update.channelRef, message, deps.send)
+    await softReply(resolved.botToken, update.channelRef, inboundFailureMessage(result.error), deps.send)
     return plainOk(res)
   }
 

@@ -100,9 +100,7 @@ function extractOutermostJsonObject(text: string): string | null {
   for (let i = 0; i < text.length; i++) {
     const ch = text[i]
     if (inString) {
-      if (escape) escape = false
-      else if (ch === "\\") escape = true
-      else if (ch === '"') inString = false
+      ({ escape, inString } = updateStringState(ch, escape, inString))
       continue
     }
     if (ch === '"') {
@@ -120,6 +118,13 @@ function extractOutermostJsonObject(text: string): string | null {
     }
   }
   return null
+}
+
+function updateStringState(ch: string, escape: boolean, inString: boolean): { escape: boolean; inString: boolean } {
+  if (escape) return { escape: false, inString }
+  if (ch === "\\") return { escape: true, inString }
+  if (ch === '"') return { escape: false, inString: false }
+  return { escape: false, inString }
 }
 
 type HostedAdapterInput = {
@@ -149,7 +154,7 @@ async function invokeAndParse<Env>(params: {
   try {
     return { envelope: params.parse(parseJsonObject(firstResult.outputText)), session }
   } catch (err) {
-    const retryPrompt = `${params.request.prompt}\n\n${params.retryHint}\n\nPrevious response (for your reference):\n${firstResult.outputText.slice(0, 2000)}`
+    const retryPrompt = buildRetryPrompt(params.request.prompt, params.retryHint, firstResult.outputText)
     const retryResult = await invokeHostedCli({ ...params.request, prompt: retryPrompt }, session)
     session = retryResult.session
     try {
@@ -158,6 +163,10 @@ async function invokeAndParse<Env>(params: {
       throw err
     }
   }
+}
+
+function buildRetryPrompt(prompt: string, retryHint: string, previousOutput: string): string {
+  return `${prompt}\n\n${retryHint}\n\nPrevious response (for your reference):\n${previousOutput.slice(0, 2000)}`
 }
 
 const STAGE_RETRY_HINT =
