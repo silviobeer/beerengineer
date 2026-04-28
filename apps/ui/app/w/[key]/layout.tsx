@@ -12,7 +12,7 @@ interface WorkspaceLayoutProps {
 export default async function WorkspaceLayout({
   children,
   params,
-}: WorkspaceLayoutProps) {
+}: Readonly<WorkspaceLayoutProps>) {
   const { key } = await params;
   const { workspaces, error } = await fetchWorkspacesResult();
   return (

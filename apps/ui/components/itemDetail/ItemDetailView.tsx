@@ -9,7 +9,7 @@ type Props = {
   onAction: (action: ItemAction) => Promise<ActionResult>;
 };
 
-export function ItemDetailView({ item, onAction }: Props): React.ReactElement {
+export function ItemDetailView({ item, onAction }: Readonly<Props>): React.ReactElement {
   return (
     <div data-testid="item-detail-view" className="flex flex-col">
       <ItemDetailHeader

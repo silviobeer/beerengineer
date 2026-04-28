@@ -72,8 +72,8 @@ function slugify(input: string): string {
   const core = input
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
+    .replaceAll(/[^a-z0-9]+/g, "-")
+    .replaceAll(/^-+|-+$/g, "")
   if (core) return core
   // Empty slug (e.g. `.`, `/`): fall back to a random suffix rather than the
   // fixed string `workspace`, which would collide across keyless registrations.
@@ -209,7 +209,7 @@ function readEnvFileValue(raw: string, key: string): string | undefined {
     const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/)
     if (!match || match[1] !== key) continue
     const value = match[2].trim()
-    return value.replace(/^['"]|['"]$/g, "")
+    return value.replaceAll(/^['"]|['"]$/g, "")
   }
   return undefined
 }
@@ -597,9 +597,9 @@ function renderSonarProperties(owner: string, repo: string): string {
   return [
     `sonar.projectKey=${owner}_${repo}`,
     `sonar.organization=${owner}`,
-    "sonar.sources=apps,packages",
+    "sonar.sources=apps",
     "sonar.tests=.",
-    "sonar.test.inclusions=**/*.test.ts,**/*.spec.ts",
+    "sonar.test.inclusions=**/*.test.ts,**/*.spec.ts,**/*.test.tsx,**/*.spec.tsx",
     "sonar.exclusions=**/node_modules/**,**/dist/**,**/.next/**",
     "sonar.javascript.lcov.reportPaths=coverage/engine/lcov.info,coverage/ui/lcov.info",
   ].join("\n") + "\n"

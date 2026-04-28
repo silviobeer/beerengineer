@@ -9,6 +9,7 @@ import type { ItemRow, Repos } from "../db/repositories.js"
 import type { WorkflowResumeInput } from "../workflow.js"
 import { attachRunSubscribers, resolveWorkflowLlmOptions } from "./runSubscribers.js"
 import { mapStageToColumn } from "./boardColumns.js"
+/* c8 ignore next -- pure re-export */
 export { mapStageToColumn } from "./boardColumns.js"
 
 export type AttachDbSyncOptions = {

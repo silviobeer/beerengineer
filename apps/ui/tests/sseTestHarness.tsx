@@ -20,9 +20,9 @@ export const noopSSEContext: SSEContextValue = {
 export function SSETestProvider({
   children,
   value = noopSSEContext,
-}: {
+}: Readonly<{
   children: ReactNode;
   value?: SSEContextValue;
-}) {
+}>) {
   return <SSEContext.Provider value={value}>{children}</SSEContext.Provider>;
 }

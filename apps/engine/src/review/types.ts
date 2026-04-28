@@ -2,7 +2,7 @@ import type { Finding } from "../types.js"
 import type { WorkspaceReviewPolicy } from "../types/workspace.js"
 
 export type GateCondition = {
-  metric: "reliability" | "security" | "maintainability" | string
+  metric: string
   status: "ok" | "error"
   actual: string
   threshold: string

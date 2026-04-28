@@ -4,7 +4,7 @@ interface LogLineProps {
   entry: LogEntry;
 }
 
-export function LogLine({ entry }: LogLineProps) {
+export function LogLine({ entry }: Readonly<LogLineProps>) {
   const label = severityLabel(entry.level);
   return (
     <li

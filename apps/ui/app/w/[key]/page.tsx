@@ -91,7 +91,7 @@ interface BoardPageProps {
   params: Promise<{ key: string }>;
 }
 
-export default async function BoardPage({ params }: BoardPageProps) {
+export default async function BoardPage({ params }: Readonly<BoardPageProps>) {
   const { key } = await params;
   const { items, error } = await fetchBoard(key);
 

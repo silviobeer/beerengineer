@@ -6,6 +6,10 @@ import { join } from "node:path"
 
 import { claimUpdateLock, decideTerminalUpdateStatus, pointManagedInstallPointer, swapManagedInstallPointers, validateRestartedUpdateStatus } from "../bin/update-switcher-lib.js"
 
+test("update-switcher entry module is import-safe when not executed as the entrypoint", async () => {
+  await import("../bin/update-switcher.js")
+})
+
 test("decideTerminalUpdateStatus marks degraded when hard-kill was needed and no warnings", () => {
   assert.equal(decideTerminalUpdateStatus({ warningKeys: [], degraded: true }), "succeeded-degraded")
 })

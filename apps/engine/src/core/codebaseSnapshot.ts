@@ -59,7 +59,7 @@ function walkTree(root: string, current: string, depth: number, out: string[]): 
   if (depth < 0) return
   let entries: string[]
   try {
-    entries = readdirSync(current).sort()
+    entries = readdirSync(current).sort((left, right) => left.localeCompare(right))
   } catch {
     return
   }

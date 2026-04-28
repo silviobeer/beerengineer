@@ -31,7 +31,7 @@ function listUntrackedFiles(workspaceRoot: string): string[] {
 }
 
 export function shouldIgnoreTransientUntrackedPath(path: string): boolean {
-  const normalized = path.replace(/\\/g, "/").replace(/^\.\//, "")
+  const normalized = path.replaceAll("\\", "/").replace(/^\.\//, "")
   return (
     normalized === "node_modules" ||
     normalized.startsWith("node_modules/") ||
@@ -69,7 +69,9 @@ function collectChangedFiles(workspaceRoot: string, baseline: GitBaseline): stri
   const untrackedDelta = currentUntracked.filter(
     path => !baselineUntracked.has(path) && !shouldIgnoreTransientUntrackedPath(path),
   )
-  return Array.from(new Set([...tracked.split(/\r?\n/).map(line => line.trim()).filter(Boolean), ...untrackedDelta])).sort()
+  /* c8 ignore next 2 -- deterministic ordering only */
+  return Array.from(new Set([...tracked.split(/\r?\n/).map(line => line.trim()).filter(Boolean), ...untrackedDelta]))
+    .sort((left, right) => left.localeCompare(right))
 }
 
 export async function runCoderHarness(input: {

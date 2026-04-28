@@ -40,7 +40,7 @@ function buildHref(card: BoardCardDTO, workspaceKey?: string): string {
   return `/items/${encodeURIComponent(id)}`;
 }
 
-export function BoardCard({ card, workspaceKey, onOpen }: BoardCardProps) {
+export function BoardCard({ card, workspaceKey, onOpen }: Readonly<BoardCardProps>) {
   const showAttention = hasAttention(card);
   const href = buildHref(card, workspaceKey);
 

@@ -25,7 +25,7 @@ export function WorkspaceProvider({
   currentKey,
   fetchError = false,
   children,
-}: WorkspaceProviderProps) {
+}: Readonly<WorkspaceProviderProps>) {
   const value = useMemo<WorkspaceContextValue>(() => {
     const current = workspaces.find((w) => w.key === currentKey) ?? null;
     return {

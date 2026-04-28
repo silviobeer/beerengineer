@@ -141,6 +141,58 @@ test("dispatcher maps canonical events into telegram messages", async () => {
   db.close()
 })
 
+test("dispatcher falls back to generic blocked guidance when there is no open prompt context", async () => {
+  const sent: Array<{ text: string }> = []
+  const dir = mkdtempSync(join(tmpdir(), "be2-notify-db-"))
+  const db = initDatabase(join(dir, "test.sqlite"))
+  const repos = new Repos(db)
+  process.env.TELEGRAM_BOT_TOKEN = "secret-token"
+
+  const ws = repos.upsertWorkspace({ key: "demo", name: "Demo", rootPath: "/tmp/demo" })
+  const item = repos.createItem({ workspaceId: ws.id, title: "Fix login", description: "blocked" })
+  const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "Fix login", owner: "cli" })
+
+  const dispatcher = new TelegramNotificationDispatcher(
+    {
+      ...defaultAppConfig(),
+      publicBaseUrl: "http://100.64.0.7:3100",
+      notifications: {
+        telegram: {
+          enabled: true,
+          botTokenEnv: "TELEGRAM_BOT_TOKEN",
+          defaultChatId: "123",
+        },
+      },
+    },
+    repos,
+    {
+      async send(input) {
+        sent.push(input)
+        return { ok: true, status: 200 }
+      },
+    },
+  )
+
+  const result = await dispatcher.deliver(projected({
+    type: "run_blocked",
+    runId: run.id,
+    itemId: item.id,
+    title: "Fix login",
+    scope: { type: "run", runId: run.id },
+    cause: "system_error",
+    summary: "Workspace is dirty",
+  }))
+
+  assert.deepEqual(result, { delivered: true, eventType: "run_blocked" })
+  assert.equal(sent.length, 1)
+  assert.match(sent[0].text, /What's stuck: Workspace is dirty/)
+  assert.doesNotMatch(sent[0].text, /Question:/)
+  assert.match(sent[0].text, /Open the run for the next detail\./)
+
+  delete process.env.TELEGRAM_BOT_TOKEN
+  db.close()
+})
+
 test("dispatcher maps phase_completed into telegram messages", async () => {
   const sent: Array<{ token: string; chatId: string; text: string }> = []
   const dir = mkdtempSync(join(tmpdir(), "be2-notify-db-"))

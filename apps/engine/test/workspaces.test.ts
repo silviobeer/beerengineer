@@ -7,6 +7,7 @@ import { spawnSync } from "node:child_process"
 
 import {
   generateSonarMcpSnippet,
+  generateSonarProjectUrl,
   initGit,
   previewWorkspace,
   registerWorkspace,
@@ -190,6 +191,7 @@ test("registerWorkspace persists preflight and writes quality config once GitHub
     assert.match(sonarProperties, /sonar.projectKey=acme_demo/)
     assert.match(sonarProperties, /sonar.organization=acme/)
     assert.match(sonarProperties, /sonar\.sources=apps/)
+    assert.match(sonarProperties, /sonar\.test\.inclusions=\*\*\/\*\.test\.ts,\*\*\/\*\.spec\.ts,\*\*\/\*\.test\.tsx,\*\*\/\*\.spec\.tsx/)
     const sonarWorkflow = readFileSync(join(path, ".github", "workflows", "sonar.yml"), "utf8")
     assert.match(sonarWorkflow, /SonarCloud Scan/)
     const coderabbit = readFileSync(join(path, ".coderabbit.yaml"), "utf8")
@@ -241,6 +243,27 @@ test("generateSonarMcpSnippet emits Codex TOML for cloud and self-hosted sonar",
   )
 
   assert.equal(generateSonarMcpSnippet({ enabled: false }), undefined)
+})
+
+test("generateSonarProjectUrl only deep-links for SonarCloud projects", () => {
+  assert.match(
+    generateSonarProjectUrl("demo", {
+      enabled: true,
+      organization: "acme",
+      projectKey: "acme_demo",
+      hostUrl: "https://sonarcloud.io",
+    }) ?? "",
+    /https:\/\/sonarcloud\.io\/projects\/create\?/,
+  )
+  assert.equal(
+    generateSonarProjectUrl("demo", {
+      enabled: true,
+      organization: "acme",
+      projectKey: "acme_demo",
+      hostUrl: "https://sonarqube.example.com",
+    }),
+    undefined,
+  )
 })
 
 test("workspace preflight and preview prefer origin HEAD over current story branch", async () => {

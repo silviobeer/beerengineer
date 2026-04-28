@@ -12,7 +12,7 @@ interface BoardProps {
   workspaceKey?: string;
 }
 
-export function Board({ items, workspaceKey }: BoardProps) {
+export function Board({ items, workspaceKey }: Readonly<BoardProps>) {
   const { itemState } = useSSE();
   const [selectedId, setSelectedId] = useState<string | null>(null);
 

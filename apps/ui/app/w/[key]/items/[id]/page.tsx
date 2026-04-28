@@ -4,9 +4,9 @@ import { ItemDetailClient } from "./ItemDetailClient";
 
 export default async function ItemDetailPage({
   params,
-}: {
+}: Readonly<{
   params: Promise<{ key: string; id: string }>;
-}) {
+}>) {
   const { id } = await params;
   try {
     const item = await fetchItem(id);

@@ -170,7 +170,7 @@ export function SSEConnectionManager({
   initialRunId = null,
   eventSourceFactory,
   children,
-}: SSEConnectionManagerProps) {
+}: Readonly<SSEConnectionManagerProps>) {
   const factory = eventSourceFactory ?? defaultFactory;
   const factoryRef = useRef(factory);
   factoryRef.current = factory;

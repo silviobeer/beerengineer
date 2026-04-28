@@ -82,7 +82,7 @@ function findOverlappingFiles(wave: WaveDefinition): { stories: string[]; overla
     }
   }
   if (overlap.size === 0) return null
-  return { stories: ids, overlap: Array.from(overlap).sort() }
+  return { stories: ids, overlap: Array.from(overlap).sort((left, right) => left.localeCompare(right)) }
 }
 
 /**

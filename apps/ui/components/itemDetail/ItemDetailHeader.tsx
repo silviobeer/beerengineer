@@ -12,7 +12,7 @@ export function ItemDetailHeader({
   title,
   phaseStatus,
   currentStage,
-}: Props): React.ReactElement {
+}: Readonly<Props>): React.ReactElement {
   const chip = statusChipText(phaseStatus, currentStage);
   return (
     <header

@@ -16,7 +16,7 @@ type Props = {
   onAction: (action: ItemAction) => Promise<ActionResult>;
 };
 
-export function ItemDetailToolbar({ allowedActions, onAction }: Props): React.ReactElement {
+export function ItemDetailToolbar({ allowedActions, onAction }: Readonly<Props>): React.ReactElement {
   const allowed = new Set(allowedActions);
   const [error, setError] = useState<string | null>(null);
   const inFlight = useRef(false);

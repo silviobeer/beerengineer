@@ -211,7 +211,7 @@ function collectManagedWorktreePaths(root: string): string[] {
       if (entry.isDirectory()) stack.push(resolve(current, entry.name))
     }
   }
-  return out.sort()
+  return out.sort((left, right) => left.localeCompare(right))
 }
 
 function assertActiveBranch(mode: GitMode, expected: string, reason: string): void {
@@ -539,7 +539,7 @@ export function abandonStoryBranch(
   if (!branchExists(root, branch)) return null
   // Move to a namespaced ref so the branch disappears from `git branch` but
   // remains recoverable. Timestamp prevents collisions on repeat abandons.
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-")
+  const stamp = new Date().toISOString().replaceAll(/[:.]/g, "-")
   const abandonedRef = `refs/beerengineer/abandoned/${branch}/${stamp}`
   const sha = runGit(root, ["rev-parse", `refs/heads/${branch}`])
   if (!sha.ok || !sha.stdout) return null

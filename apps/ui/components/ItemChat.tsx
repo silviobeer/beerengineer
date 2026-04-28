@@ -141,7 +141,7 @@ function promptEntry(input: {
  * Primes the conversation from the engine, then keeps it live by appending
  * SSE chat entries the SSEConnectionManager dispatches.
  */
-export function ItemChat({ itemId }: ItemChatProps) {
+export function ItemChat({ itemId }: Readonly<ItemChatProps>) {
   const { registerConversationListener } = useSSE();
 
   const [runId, setRunId] = useState<string | null>(null);

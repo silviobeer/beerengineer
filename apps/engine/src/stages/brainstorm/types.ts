@@ -21,14 +21,14 @@ export type BrainstormArtifact = {
  *   non-string[]          → each element stringified
  */
 export function coerceToStringArray(value: unknown): string[] {
-  if (Array.isArray(value)) return value.map(v => String(v))
+  if (Array.isArray(value)) return value.map(String)
   if (value == null) return []
   if (typeof value === "string") {
     const lines = value.split(/\r?\n/).map(s => s.replace(/^[-*•]\s*/, "").trim()).filter(Boolean)
     return lines.length > 0 ? lines : [value]
   }
   if (typeof value === "object") {
-    return Object.values(value as Record<string, unknown>).map(v => String(v))
+    return Object.values(value as Record<string, unknown>).map(String)
   }
   return [String(value)]
 }

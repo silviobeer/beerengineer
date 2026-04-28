@@ -5,7 +5,7 @@ interface StatusChipProps {
   currentStage?: string | null;
 }
 
-export function StatusChip({ state, currentStage }: StatusChipProps) {
+export function StatusChip({ state, currentStage }: Readonly<StatusChipProps>) {
   const label = deriveStatusLabel(state, currentStage ?? null);
   return (
     <span

@@ -71,7 +71,7 @@ export function MiniStepper({
   stages = IMPLEMENTATION_STAGES,
   labels = IMPLEMENTATION_STAGE_LABELS,
   ariaLabel = "Implementation progress",
-}: MiniStepperProps) {
+}: Readonly<MiniStepperProps>) {
   const resolvedStage = stage ?? currentStage ?? null;
   // The engine emits full stageKeys (`architecture`, `execution`,
   // `visual-companion`, …) but the implementation stepper uses 4 collapsed
@@ -89,7 +89,6 @@ export function MiniStepper({
   return (
     <ol
       data-testid="mini-stepper"
-      role="list"
       aria-label={ariaLabel}
       data-state={pipelineState ?? ""}
       className="flex items-center gap-1"
@@ -100,7 +99,6 @@ export function MiniStepper({
         return (
           <li
             key={segment}
-            role="listitem"
             data-testid={`mini-stepper-segment-${segment}`}
             data-segment={segment}
             data-active={active ? "true" : "false"}

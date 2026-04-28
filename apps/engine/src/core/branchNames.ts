@@ -13,8 +13,8 @@ import type { WorkflowContext } from "./workspaceLayout.js"
 function slugify(value: string, fallback = "branch"): string {
   const slug = value
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
+    .replaceAll(/[^a-z0-9]+/g, "-")
+    .replaceAll(/^-+|-+$/g, "")
   return slug || fallback
 }
 

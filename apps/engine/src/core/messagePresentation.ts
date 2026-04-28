@@ -150,7 +150,7 @@ export function presentMessageEntry(entry: MessageEntry): MessagePresentation {
       const exhaustive = entry as MessageEntry
       return {
         icon: "·",
-        label: String(exhaustive.type).replace(/_/g, " "),
+        label: String(exhaustive.type).replaceAll("_", " "),
         detail: payloadString(exhaustive.payload.rawType),
       }
     }

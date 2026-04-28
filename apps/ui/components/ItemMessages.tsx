@@ -91,7 +91,7 @@ function formatTime(ts: string): string {
   }
 }
 
-export function ItemMessages({ itemId }: ItemMessagesProps) {
+export function ItemMessages({ itemId }: Readonly<ItemMessagesProps>) {
   const [runId, setRunId] = useState<string | null>(null);
   const [entries, setEntries] = useState<EngineMessageEntry[]>([]);
   const [error, setError] = useState<string | null>(null);

@@ -327,6 +327,42 @@ test("webhook replies with help text when the reply_to message is unknown", asyn
   db.close()
 })
 
+test("webhook ignores updates from a different telegram chat", async () => {
+  const db = tmpDb()
+  const repos = new Repos(db)
+  process.env.TELEGRAM_BOT_TOKEN = "bot-secret"
+  process.env.TELEGRAM_WEBHOOK_SECRET = "correct-horse"
+  resetTelegramWebhookRateLimit()
+
+  const softReplies: string[] = []
+  const req = fakeRequest({
+    headers: { "x-telegram-bot-api-secret-token": "correct-horse" },
+    body: {
+      message: {
+        message_id: 99,
+        chat: { id: 1234 },
+        text: "hello",
+      },
+    },
+  })
+  const { res, status, body } = captureResponse()
+
+  await handleTelegramWebhook(repos, inboundTelegramConfig(), req, res, {
+    async send(input) {
+      softReplies.push(input.text)
+      return { ok: true, status: 200 }
+    },
+  })
+
+  assert.equal(status(), 200)
+  assert.equal(body(), '{"ok":true}')
+  assert.deepEqual(softReplies, [])
+
+  delete process.env.TELEGRAM_BOT_TOKEN
+  delete process.env.TELEGRAM_WEBHOOK_SECRET
+  db.close()
+})
+
 test("webhook ignores command-style messages in Phase B", async () => {
   const db = tmpDb()
   const repos = new Repos(db)

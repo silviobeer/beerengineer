@@ -25,10 +25,10 @@ const LogStreamContext = createContext<LogStreamContextValue | null>(null);
 export function LogStreamProvider({
   value,
   children,
-}: {
+}: Readonly<{
   value: LogStreamContextValue | null;
   children: ReactNode;
-}) {
+}>) {
   return (
     <LogStreamContext.Provider value={value}>
       {children}

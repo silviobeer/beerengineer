@@ -14,7 +14,7 @@ function resolveItemUrl(itemId: string): string {
   return base ? `${base.replace(/\/$/, "")}/items/${itemId}` : `/items/${itemId}`;
 }
 
-export function ItemDetailChatLoader({ itemId }: ItemDetailChatLoaderProps) {
+export function ItemDetailChatLoader({ itemId }: Readonly<ItemDetailChatLoaderProps>) {
   const [item, setItem] = useState<ItemDetailDTO | null>(null);
   const [error, setError] = useState<string | null>(null);
 

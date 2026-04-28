@@ -249,7 +249,7 @@ export function createStageRun<TState, TArtifact>(
   }
   const startedAt = nowIso()
   return {
-    id: startedAt.replace(/[:.]/g, "-"),
+    id: startedAt.replaceAll(/[:.]/g, "-"),
     workspaceId: ctx.workspaceId,
     workspaceRoot: ctx.workspaceRoot!,
     runId: ctx.runId,

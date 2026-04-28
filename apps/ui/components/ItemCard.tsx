@@ -17,7 +17,7 @@ interface ItemCardProps {
   workspaceKey: string;
 }
 
-export function ItemCard({ item, workspaceKey }: ItemCardProps) {
+export function ItemCard({ item, workspaceKey }: Readonly<ItemCardProps>) {
   const showAttention = hasAttentionDot(item);
   const showFailure = !showAttention && hasFailureIndicator(item);
   const stepperKind: "implementation" | "frontend" | null =
