@@ -879,27 +879,8 @@ async function runWorkspaceRemoveCommand(
   const db = initDatabase()
   try {
     const repos = new Repos(db)
-    if (purge && !yes) {
-      const workspace = getRegisteredWorkspace(repos, key)
-      const targetPath = workspace?.rootPath ?? "(unknown path)"
-      const interactive = !noInteractive && !json && process.stdin.isTTY && process.stdout.isTTY
-      if (!interactive) {
-        const message = `Refusing to purge workspace ${key} (${targetPath}) without --yes in non-interactive mode.`
-        if (json) {
-          process.stdout.write(`${JSON.stringify({ ok: false, error: "confirmation_required", detail: message }, null, 2)}\n`)
-        } else {
-          console.error(`  ${message}`)
-          console.error(`  Re-run with: beerengineer workspace remove ${key} --purge --yes`)
-        }
-        return 2
-      }
-      const answer = await ask(`  About to rm -rf ${targetPath}. This cannot be undone. Type 'yes' to confirm: `)
-      close()
-      if (answer.trim().toLowerCase() !== "yes") {
-        console.log("  Purge cancelled.")
-        return 1
-      }
-    }
+    const confirmationStatus = await confirmWorkspacePurge({ repos, key, purge, yes, noInteractive, json })
+    if (confirmationStatus !== null) return confirmationStatus
     const result = await removeWorkspace(repos, key, {
       purge,
       allowedRoots: config?.allowedRoots,
@@ -919,6 +900,35 @@ async function runWorkspaceRemoveCommand(
   } finally {
     db.close()
   }
+}
+
+async function confirmWorkspacePurge(input: {
+  repos: Repos
+  key: string
+  purge: boolean
+  yes: boolean
+  noInteractive: boolean
+  json: boolean
+}): Promise<number | null> {
+  if (!input.purge || input.yes) return null
+  const workspace = getRegisteredWorkspace(input.repos, input.key)
+  const targetPath = workspace?.rootPath ?? "(unknown path)"
+  const interactive = !input.noInteractive && !input.json && process.stdin.isTTY && process.stdout.isTTY
+  if (!interactive) {
+    const message = `Refusing to purge workspace ${input.key} (${targetPath}) without --yes in non-interactive mode.`
+    if (input.json) {
+      process.stdout.write(`${JSON.stringify({ ok: false, error: "confirmation_required", detail: message }, null, 2)}\n`)
+    } else {
+      console.error(`  ${message}`)
+      console.error(`  Re-run with: beerengineer workspace remove ${input.key} --purge --yes`)
+    }
+    return 2
+  }
+  const answer = await ask(`  About to rm -rf ${targetPath}. This cannot be undone. Type 'yes' to confirm: `)
+  close()
+  if (answer.trim().toLowerCase() === "yes") return null
+  console.log("  Purge cancelled.")
+  return 1
 }
 
 async function runWorkspaceOpenCommand(key: string | undefined): Promise<number> {

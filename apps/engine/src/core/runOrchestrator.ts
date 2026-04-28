@@ -112,75 +112,26 @@ export function attachDbSync(
   const persist = (event: WorkflowEvent): void => {
     switch (event.type) {
       case "run_started": {
-        repos.updateRun(event.runId, { status: "running" })
-        track(repos.appendLog({
-          runId: event.runId,
-          eventType: "run_started",
-          message: event.title,
-          data: {
-            itemId: event.itemId,
-            title: event.title,
-          },
-        }))
+        persistRunStartedEvent(repos, track, event)
         return
       }
       case "stage_started": {
-        if (persistedStageIds.has(event.stageRunId)) return
-        const persistedProjectId = event.projectId
-          ? persistedProjectIds.get(event.projectId) ?? event.projectId
-          : null
-        const stageRun = repos.createStageRun({
-          id: event.stageRunId,
-          runId: event.runId,
-          stageKey: event.stageKey,
-          projectId: persistedProjectId
+        persistStageStartedEvent(repos, track, event, {
+          persistedStageIds,
+          persistedProjectIds,
+          stageRunIds,
+          itemId: ctx.itemId,
+          isAuthoritative,
+          onItemColumnChanged: opts.onItemColumnChanged,
         })
-        persistedStageIds.add(stageRun.id)
-        stageRunIds.set(event.stageKey, stageRun.id)
-        repos.updateRun(event.runId, { current_stage: event.stageKey })
-        const { column, phaseStatus } = mapStageToColumn(event.stageKey, "running")
-        if (isAuthoritative()) {
-          const from = repos.getItem(ctx.itemId)?.current_column ?? "idea"
-          repos.setItemColumn(ctx.itemId, column, phaseStatus)
-          repos.setItemCurrentStage(ctx.itemId, event.stageKey)
-          opts.onItemColumnChanged?.({ itemId: ctx.itemId, from, to: column, phaseStatus })
-        }
-        track(repos.appendLog({
-          runId: event.runId,
-          stageRunId: stageRun.id,
-          eventType: "stage_started",
-          message: `stage ${event.stageKey} started`,
-          data: {
-            stageRunId: stageRun.id,
-            stageKey: event.stageKey,
-            projectId: persistedProjectId,
-          },
-        }))
         return
       }
       case "stage_completed": {
-        const stageRunId = event.stageRunId ?? stageRunIds.get(event.stageKey)
-        if (stageRunId) {
-          repos.completeStageRun(stageRunId, event.status, event.error ?? null)
-        }
-        const { column, phaseStatus } = mapStageToColumn(event.stageKey, event.status)
-        if (isAuthoritative()) {
-          const from = repos.getItem(ctx.itemId)?.current_column ?? "idea"
-          repos.setItemColumn(ctx.itemId, column, phaseStatus)
-          opts.onItemColumnChanged?.({ itemId: ctx.itemId, from, to: column, phaseStatus })
-        }
-        track(repos.appendLog({
-          runId: event.runId,
-          stageRunId: stageRunId ?? null,
-          eventType: "stage_completed",
-          message: `stage ${event.stageKey} ${event.status}`,
-          data: {
-            stageRunId: stageRunId ?? null,
-            stageKey: event.stageKey,
-            status: event.status,
-            error: event.error,
-          },
-        }))
+        persistStageCompletedEvent(repos, track, event, stageRunIds, {
+          itemId: ctx.itemId,
+          isAuthoritative,
+          onItemColumnChanged: opts.onItemColumnChanged,
+        })
         return
       }
       case "prompt_requested": {
@@ -564,6 +515,92 @@ export function attachDbSync(
       console.error("[db-sync]", (err as Error).message)
     }
   })
+}
+
+function persistRunStartedEvent(
+  repos: Repos,
+  track: (row: { id: string } | undefined) => void,
+  event: Extract<WorkflowEvent, { type: "run_started" }>,
+): void {
+  repos.updateRun(event.runId, { status: "running" })
+  track(repos.appendLog({
+    runId: event.runId,
+    eventType: "run_started",
+    message: event.title,
+    data: { itemId: event.itemId, title: event.title },
+  }))
+}
+
+function persistStageStartedEvent(
+  repos: Repos,
+  track: (row: { id: string } | undefined) => void,
+  event: Extract<WorkflowEvent, { type: "stage_started" }>,
+  state: {
+    persistedStageIds: Set<string>
+    persistedProjectIds: Map<string, string>
+    stageRunIds: Map<string, string>
+    itemId: string
+    isAuthoritative: () => boolean
+    onItemColumnChanged?: AttachDbSyncOptions["onItemColumnChanged"]
+  },
+): void {
+  if (state.persistedStageIds.has(event.stageRunId)) return
+  const persistedProjectId = event.projectId
+    ? state.persistedProjectIds.get(event.projectId) ?? event.projectId
+    : null
+  const stageRun = repos.createStageRun({
+    id: event.stageRunId,
+    runId: event.runId,
+    stageKey: event.stageKey,
+    projectId: persistedProjectId,
+  })
+  state.persistedStageIds.add(stageRun.id)
+  state.stageRunIds.set(event.stageKey, stageRun.id)
+  repos.updateRun(event.runId, { current_stage: event.stageKey })
+  const { column, phaseStatus } = mapStageToColumn(event.stageKey, "running")
+  if (state.isAuthoritative()) {
+    const from = repos.getItem(state.itemId)?.current_column ?? "idea"
+    repos.setItemColumn(state.itemId, column, phaseStatus)
+    repos.setItemCurrentStage(state.itemId, event.stageKey)
+    state.onItemColumnChanged?.({ itemId: state.itemId, from, to: column, phaseStatus })
+  }
+  track(repos.appendLog({
+    runId: event.runId,
+    stageRunId: stageRun.id,
+    eventType: "stage_started",
+    message: `stage ${event.stageKey} started`,
+    data: { stageRunId: stageRun.id, stageKey: event.stageKey, projectId: persistedProjectId },
+  }))
+}
+
+function persistStageCompletedEvent(
+  repos: Repos,
+  track: (row: { id: string } | undefined) => void,
+  event: Extract<WorkflowEvent, { type: "stage_completed" }>,
+  stageRunIds: Map<string, string>,
+  state: {
+    itemId: string
+    isAuthoritative: () => boolean
+    onItemColumnChanged?: AttachDbSyncOptions["onItemColumnChanged"]
+  },
+): void {
+  const stageRunId = event.stageRunId ?? stageRunIds.get(event.stageKey)
+  if (stageRunId) {
+    repos.completeStageRun(stageRunId, event.status, event.error ?? null)
+  }
+  const { column, phaseStatus } = mapStageToColumn(event.stageKey, event.status)
+  if (state.isAuthoritative()) {
+    const from = repos.getItem(state.itemId)?.current_column ?? "idea"
+    repos.setItemColumn(state.itemId, column, phaseStatus)
+    state.onItemColumnChanged?.({ itemId: state.itemId, from, to: column, phaseStatus })
+  }
+  track(repos.appendLog({
+    runId: event.runId,
+    stageRunId: stageRunId ?? null,
+    eventType: "stage_completed",
+    message: `stage ${event.stageKey} ${event.status}`,
+    data: { stageRunId: stageRunId ?? null, stageKey: event.stageKey, status: event.status, error: event.error },
+  }))
 }
 
 /**

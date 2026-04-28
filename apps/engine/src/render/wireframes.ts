@@ -18,133 +18,125 @@ export function validateWireframeArtifact(artifact: WireframeArtifact): void {
       "The LLM response may have been truncated or returned a malformed structure."
     )
   }
-  for (let i = 0; i < artifact.screens.length; i++) {
-    const screen = artifact.screens[i]
-    if (!screen || typeof screen !== "object") {
+  artifact.screens.forEach((screen, index) => validateWireframeScreen(screen, index))
+  validateWireframeHtmlPerScreen(artifact.wireframeHtmlPerScreen)
+}
+
+function validateWireframeScreen(screen: WireframeArtifact["screens"][number], index: number): void {
+  if (!screen || typeof screen !== "object") {
+    throw new TypeError(`Invalid wireframe artifact from LLM: screens[${index}] is not an object.`)
+  }
+  validateWireframeScreenMetadata(screen, index)
+  validateWireframeRegions(screen, index)
+  validateWireframeElements(screen, index)
+}
+
+function validateWireframeScreenMetadata(screen: Screen, index: number): void {
+  requireWireframeString(
+    screen.name,
+    `Invalid wireframe artifact from LLM: screens[${index}] (id="${screen.id ?? "?"}") is missing required string field "name". ` +
+      "Every screen must have a non-empty string name — retry or inspect the LLM output.",
+  )
+  requireWireframeString(
+    screen.purpose,
+    `Invalid wireframe artifact from LLM: screens[${index}] (id="${screen.id ?? "?"}") is missing required string field "purpose". ` +
+      "Every screen must have a non-empty string purpose — retry or inspect the LLM output.",
+  )
+}
+
+function validateWireframeRegions(screen: Screen, index: number): void {
+  if (!screen.layout || !Array.isArray(screen.layout.regions)) {
+    throw new Error(
+      `Invalid wireframe artifact from LLM: screens[${index}] (id="${screen.id ?? "?"}") is missing layout.regions array. ` +
+      `Got layout=${JSON.stringify(screen.layout)}. ` +
+      "The LLM must return each screen with a layout.regions array — retry or inspect the LLM output.",
+    )
+  }
+  screen.layout.regions.forEach((region, regionIndex) => {
+    if (!region || typeof region !== "object") {
       throw new TypeError(
-        `Invalid wireframe artifact from LLM: screens[${i}] is not an object.`
+        `Invalid wireframe artifact from LLM: screens[${index}].layout.regions[${regionIndex}] is not an object.`,
       )
     }
+    requireWireframeString(
+      region.label,
+      `Invalid wireframe artifact from LLM: screens[${index}] (id="${screen.id ?? "?"}") layout.regions[${regionIndex}] (id="${region.id ?? "?"}") is missing required string field "label". ` +
+        "Every region must have a non-empty string label — retry or inspect the LLM output.",
+    )
+  })
+}
 
-    // Required string fields on the screen itself
-    if (typeof screen.name !== "string" || screen.name.length === 0) {
+function validateWireframeElements(screen: Screen, index: number): void {
+  if (!Array.isArray(screen.elements)) {
+    throw new TypeError(
+      `Invalid wireframe artifact from LLM: screens[${index}] (id="${screen.id ?? "?"}") is missing elements array. ` +
+      "The LLM must return each screen with an elements array — retry or inspect the LLM output.",
+    )
+  }
+  screen.elements.forEach((element, elementIndex) => validateWireframeElement(screen, index, element, elementIndex))
+}
+
+function validateWireframeElement(
+  screen: Screen,
+  screenIndex: number,
+  element: Screen["elements"][number],
+  elementIndex: number,
+): void {
+  if (!element || typeof element !== "object") {
+    throw new Error(`Invalid wireframe artifact from LLM: screens[${screenIndex}].elements[${elementIndex}] is not an object.`)
+  }
+  requireWireframeString(
+    element.kind,
+    `Invalid wireframe artifact from LLM: screens[${screenIndex}] (id="${screen.id ?? "?"}") elements[${elementIndex}] (id="${element.id ?? "?"}") is missing required string field "kind". ` +
+      "Every element must have a non-empty string kind — retry or inspect the LLM output.",
+  )
+  requireWireframeString(
+    element.label,
+    `Invalid wireframe artifact from LLM: screens[${screenIndex}] (id="${screen.id ?? "?"}") elements[${elementIndex}] (id="${element.id ?? "?"}") is missing required string field "label". ` +
+      "Every element must have a non-empty string label — retry or inspect the LLM output.",
+  )
+  if ("placeholder" in element && element.placeholder !== undefined && typeof element.placeholder !== "string") {
+    throw new Error(
+      `Invalid wireframe artifact from LLM: screens[${screenIndex}] (id="${screen.id ?? "?"}") elements[${elementIndex}] (id="${element.id ?? "?"}") has a "placeholder" field that is not a string. ` +
+      "When present, placeholder must be a string — retry or inspect the LLM output.",
+    )
+  }
+}
+
+function validateWireframeHtmlPerScreen(htmlMap: WireframeArtifact["wireframeHtmlPerScreen"]): void {
+  if (htmlMap === undefined) return
+  if (typeof htmlMap !== "object" || Array.isArray(htmlMap)) {
+    throw new TypeError(
+      "Invalid wireframe artifact from LLM: wireframeHtmlPerScreen must be an object mapping screenId to HTML string.",
+    )
+  }
+  const keys = Object.keys(htmlMap)
+  if (keys.length === 0) {
+    throw new Error(
+      "Invalid wireframe artifact from LLM: wireframeHtmlPerScreen is present but empty. " +
+      "Either omit the field or provide at least one screen HTML entry.",
+    )
+  }
+  for (const screenId of keys) {
+    const html = htmlMap[screenId]
+    requireWireframeString(
+      html,
+      `Invalid wireframe artifact from LLM: wireframeHtmlPerScreen["${screenId}"] is empty or not a string. ` +
+        "Each entry must be a non-empty HTML string.",
+    )
+    const trimmed = html.trimStart().toLowerCase()
+    if (!trimmed.startsWith("<!doctype") && !trimmed.startsWith("<html")) {
       throw new Error(
-        `Invalid wireframe artifact from LLM: screens[${i}] (id="${screen.id ?? "?"}") ` +
-        `is missing required string field "name". ` +
-        "Every screen must have a non-empty string name — retry or inspect the LLM output."
+        `Invalid wireframe artifact from LLM: wireframeHtmlPerScreen["${screenId}"] does not start with <!doctype or <html. Got: "${html.slice(0, 40)}...". ` +
+        "Each entry must be a full standalone HTML document.",
       )
-    }
-    if (typeof screen.purpose !== "string" || screen.purpose.length === 0) {
-      throw new Error(
-        `Invalid wireframe artifact from LLM: screens[${i}] (id="${screen.id ?? "?"}") ` +
-        `is missing required string field "purpose". ` +
-        "Every screen must have a non-empty string purpose — retry or inspect the LLM output."
-      )
-    }
-
-    if (!screen.layout || !Array.isArray(screen.layout.regions)) {
-      throw new Error(
-        `Invalid wireframe artifact from LLM: screens[${i}] (id="${screen.id ?? "?"}") ` +
-        `is missing layout.regions array. ` +
-        `Got layout=${JSON.stringify(screen.layout)}. ` +
-        "The LLM must return each screen with a layout.regions array — retry or inspect the LLM output."
-      )
-    }
-
-    // Required string fields on each region
-    for (let r = 0; r < screen.layout.regions.length; r++) {
-      const region = screen.layout.regions[r]
-      if (!region || typeof region !== "object") {
-        throw new TypeError(
-          `Invalid wireframe artifact from LLM: screens[${i}].layout.regions[${r}] is not an object.`
-        )
-      }
-      if (typeof region.label !== "string" || region.label.length === 0) {
-        throw new Error(
-          `Invalid wireframe artifact from LLM: screens[${i}] (id="${screen.id ?? "?"}") ` +
-          `layout.regions[${r}] (id="${region.id ?? "?"}") is missing required string field "label". ` +
-          "Every region must have a non-empty string label — retry or inspect the LLM output."
-        )
-      }
-    }
-
-    if (!Array.isArray(screen.elements)) {
-      throw new TypeError(
-        `Invalid wireframe artifact from LLM: screens[${i}] (id="${screen.id ?? "?"}") ` +
-        `is missing elements array. ` +
-        "The LLM must return each screen with an elements array — retry or inspect the LLM output."
-      )
-    }
-
-    // Required string fields on each element
-    for (let e = 0; e < screen.elements.length; e++) {
-      const element = screen.elements[e]
-      if (!element || typeof element !== "object") {
-        throw new Error(
-          `Invalid wireframe artifact from LLM: screens[${i}].elements[${e}] is not an object.`
-        )
-      }
-      if (typeof element.kind !== "string" || element.kind.length === 0) {
-        throw new Error(
-          `Invalid wireframe artifact from LLM: screens[${i}] (id="${screen.id ?? "?"}") ` +
-          `elements[${e}] (id="${element.id ?? "?"}") is missing required string field "kind". ` +
-          "Every element must have a non-empty string kind — retry or inspect the LLM output."
-        )
-      }
-      if (typeof element.label !== "string" || element.label.length === 0) {
-        throw new Error(
-          `Invalid wireframe artifact from LLM: screens[${i}] (id="${screen.id ?? "?"}") ` +
-          `elements[${e}] (id="${element.id ?? "?"}") is missing required string field "label". ` +
-          "Every element must have a non-empty string label — retry or inspect the LLM output."
-        )
-      }
-      // element.placeholder is optional — only validate if present
-      if (
-        "placeholder" in element &&
-        element.placeholder !== undefined &&
-        typeof element.placeholder !== "string"
-      ) {
-        throw new Error(
-          `Invalid wireframe artifact from LLM: screens[${i}] (id="${screen.id ?? "?"}") ` +
-          `elements[${e}] (id="${element.id ?? "?"}") has a "placeholder" field that is not a string. ` +
-          "When present, placeholder must be a string — retry or inspect the LLM output."
-        )
-      }
     }
   }
+}
 
-  // Validate wireframeHtmlPerScreen when present
-  if ("wireframeHtmlPerScreen" in artifact && artifact.wireframeHtmlPerScreen !== undefined) {
-    const htmlMap = artifact.wireframeHtmlPerScreen
-    if (typeof htmlMap !== "object" || Array.isArray(htmlMap)) {
-      throw new TypeError(
-        "Invalid wireframe artifact from LLM: wireframeHtmlPerScreen must be an object mapping screenId to HTML string."
-      )
-    }
-    const keys = Object.keys(htmlMap)
-    if (keys.length === 0) {
-      throw new Error(
-        "Invalid wireframe artifact from LLM: wireframeHtmlPerScreen is present but empty. " +
-        "Either omit the field or provide at least one screen HTML entry."
-      )
-    }
-    for (const screenId of keys) {
-      const html = htmlMap[screenId]
-      if (typeof html !== "string" || html.length === 0) {
-        throw new Error(
-          `Invalid wireframe artifact from LLM: wireframeHtmlPerScreen["${screenId}"] is empty or not a string. ` +
-          "Each entry must be a non-empty HTML string."
-        )
-      }
-      const trimmed = html.trimStart().toLowerCase()
-      if (!trimmed.startsWith("<!doctype") && !trimmed.startsWith("<html")) {
-        throw new Error(
-          `Invalid wireframe artifact from LLM: wireframeHtmlPerScreen["${screenId}"] does not start with ` +
-          `<!doctype or <html. Got: "${html.slice(0, 40)}...". ` +
-          "Each entry must be a full standalone HTML document."
-        )
-      }
-    }
+function requireWireframeString(value: unknown, message: string): asserts value is string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(message)
   }
 }
 

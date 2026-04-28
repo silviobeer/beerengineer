@@ -660,58 +660,17 @@ export async function runSetupStory(
   await mkdir(dir, { recursive: true })
 
   for (let attempt = 1; attempt <= implementation.maxReviewCycles; attempt++) {
-    let changedFiles: string[] = []
-    let notes: string[] = []
-    let summary = `Setup attempt ${attempt} completed.`
-    if (executionLlm) {
-      const coderResult = await runCoderHarness({
-        harness: resolveHarness({
-          workspaceRoot: executionLlm.workspaceRoot,
-          harnessProfile: executionLlm.harnessProfile,
-          runtimePolicy: executionLlm.runtimePolicy,
-          role: "coder",
-          stage: "execution",
-        }),
-        runtimePolicy: executionCoderPolicy(executionLlm.runtimePolicy),
-        baselinePath,
-        storyContext,
-        sessionId: implementation.coderSessionId ?? null,
-        iterationContext: {
-          iteration: attempt,
-          maxIterations: implementation.maxIterations,
-          reviewCycle: attempt,
-          maxReviewCycles: implementation.maxReviewCycles,
-          priorAttempts: implementation.priorAttempts ?? [],
-        },
-      })
-      implementation.coderSessionId = coderResult.sessionId
-      changedFiles = coderResult.changedFiles
-      notes = coderResult.implementationNotes
-      summary = coderResult.summary
-    }
-
-    const failures = verifySetupContract(workspaceRoot, task.contract)
-    implementation.changedFiles = Array.from(new Set([...implementation.changedFiles, ...changedFiles]))
-    implementation.iterations.push({
-      number: attempt,
-      reviewCycle: attempt - 1,
-      action: "Apply setup contract",
-      checks: [{
-        name: "setup-contract",
-        kind: "review-gate",
-        status: failures.length === 0 ? "pass" : "fail",
-        summary: failures.length === 0 ? "Setup contract satisfied." : failures.join("; "),
-      }],
-      result: failures.length === 0 ? "done" : "review_feedback_applied",
-      notes: [...notes, ...failures],
+    const attemptResult = await runSetupAttempt({
+      attempt,
+      baselinePath,
+      executionLlm,
+      implementation,
+      storyContext,
+      workspaceRoot,
+      taskContract: task.contract,
     })
-    implementation.priorAttempts?.push({
-      iteration: attempt,
-      summary,
-      outcome: failures.length === 0 ? "passed" : "failed",
-    })
-    implementation.currentReviewCycle = attempt - 1
-    if (failures.length === 0) {
+    recordSetupAttempt(implementation, attempt, attemptResult)
+    if (attemptResult.failures.length === 0) {
       implementation.status = "passed"
       implementation.finalSummary = "Setup contract satisfied."
       // Commit whatever the coder placed in the worktree so that
@@ -725,7 +684,7 @@ export async function runSetupStory(
       }
       break
     }
-    implementation.finalSummary = failures.join("; ")
+    implementation.finalSummary = attemptResult.failures.join("; ")
   }
 
   if (implementation.status !== "passed") {
@@ -735,6 +694,84 @@ export async function runSetupStory(
   await writeFile(implementationPath, `${JSON.stringify(implementation, null, 2)}\n`)
   stagePresent.dim(`  Status: ${implementation.status}`)
   return { storyId: story.id, implementation }
+}
+
+async function runSetupAttempt(input: {
+  attempt: number
+  baselinePath: string
+  executionLlm: RunLlmConfig | undefined
+  implementation: StoryImplementationArtifact
+  storyContext: StoryExecutionContext
+  workspaceRoot: string
+  taskContract: NonNullable<StoryExecutionContext["setupContract"]>
+}): Promise<{ changedFiles: string[]; notes: string[]; summary: string; failures: string[] }> {
+  const llmResult = input.executionLlm
+    ? await runSetupAttemptWithLlm({ ...input, executionLlm: input.executionLlm })
+    : { changedFiles: [], notes: [], summary: `Setup attempt ${input.attempt} completed.` }
+  const failures = verifySetupContract(input.workspaceRoot, input.taskContract)
+  return { ...llmResult, failures }
+}
+
+async function runSetupAttemptWithLlm(input: {
+  attempt: number
+  baselinePath: string
+  executionLlm: RunLlmConfig
+  implementation: StoryImplementationArtifact
+  storyContext: StoryExecutionContext
+}): Promise<{ changedFiles: string[]; notes: string[]; summary: string }> {
+  const coderResult = await runCoderHarness({
+    harness: resolveHarness({
+      workspaceRoot: input.executionLlm.workspaceRoot,
+      harnessProfile: input.executionLlm.harnessProfile,
+      runtimePolicy: input.executionLlm.runtimePolicy,
+      role: "coder",
+      stage: "execution",
+    }),
+    runtimePolicy: executionCoderPolicy(input.executionLlm.runtimePolicy),
+    baselinePath: input.baselinePath,
+    storyContext: input.storyContext,
+    sessionId: input.implementation.coderSessionId ?? null,
+    iterationContext: {
+      iteration: input.attempt,
+      maxIterations: input.implementation.maxIterations,
+      reviewCycle: input.attempt,
+      maxReviewCycles: input.implementation.maxReviewCycles,
+      priorAttempts: input.implementation.priorAttempts ?? [],
+    },
+  })
+  input.implementation.coderSessionId = coderResult.sessionId
+  return {
+    changedFiles: coderResult.changedFiles,
+    notes: coderResult.implementationNotes,
+    summary: coderResult.summary,
+  }
+}
+
+function recordSetupAttempt(
+  implementation: StoryImplementationArtifact,
+  attempt: number,
+  attemptResult: { changedFiles: string[]; notes: string[]; summary: string; failures: string[] },
+): void {
+  implementation.changedFiles = Array.from(new Set([...implementation.changedFiles, ...attemptResult.changedFiles]))
+  implementation.iterations.push({
+    number: attempt,
+    reviewCycle: attempt - 1,
+    action: "Apply setup contract",
+    checks: [{
+      name: "setup-contract",
+      kind: "review-gate",
+      status: attemptResult.failures.length === 0 ? "pass" : "fail",
+      summary: attemptResult.failures.length === 0 ? "Setup contract satisfied." : attemptResult.failures.join("; "),
+    }],
+    result: attemptResult.failures.length === 0 ? "done" : "review_feedback_applied",
+    notes: [...attemptResult.notes, ...attemptResult.failures],
+  })
+  implementation.priorAttempts?.push({
+    iteration: attempt,
+    summary: attemptResult.summary,
+    outcome: attemptResult.failures.length === 0 ? "passed" : "failed",
+  })
+  implementation.currentReviewCycle = attempt - 1
 }
 
 async function writeStoryTestPlan(

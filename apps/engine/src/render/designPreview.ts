@@ -19,23 +19,31 @@ import type { ColorPalette, DesignArtifact } from "../types/domain.js"
  *   - artifact.shadows (object — not undefined/null)
  */
 export function validateDesignArtifact(artifact: DesignArtifact): void {
-  // tone
+  validateDesignMetadata(artifact)
+  validateDesignTokens(artifact)
+  validateDesignTypography(artifact)
+  validateDesignSpacing(artifact)
+  validateDesignBorders(artifact)
+  validateDesignShadows(artifact)
+  validateMockupHtmlPerScreen(artifact.mockupHtmlPerScreen)
+}
+
+function validateDesignMetadata(artifact: DesignArtifact): void {
   if (typeof artifact.tone !== "string" || artifact.tone.length === 0) {
     throw new TypeError(
       "Invalid design artifact from LLM: artifact.tone is missing or not a string. " +
       "The LLM response may have been truncated or returned a malformed structure.",
     )
   }
-
-  // antiPatterns
   if (!Array.isArray(artifact.antiPatterns)) {
     throw new TypeError(
       "Invalid design artifact from LLM: artifact.antiPatterns is not an array. " +
       "Every design artifact must include an antiPatterns array — retry or inspect the LLM output.",
     )
   }
+}
 
-  // tokens.light
+function validateDesignTokens(artifact: DesignArtifact): void {
   if (!artifact.tokens || typeof artifact.tokens !== "object") {
     throw new Error(
       "Invalid design artifact from LLM: artifact.tokens is missing. " +
@@ -48,8 +56,9 @@ export function validateDesignArtifact(artifact: DesignArtifact): void {
       "Every design artifact must include a light-mode token palette — retry or inspect the LLM output.",
     )
   }
+}
 
-  // typography
+function validateDesignTypography(artifact: DesignArtifact): void {
   if (!artifact.typography || typeof artifact.typography !== "object") {
     throw new Error(
       "Invalid design artifact from LLM: artifact.typography is missing. " +
@@ -59,48 +68,33 @@ export function validateDesignArtifact(artifact: DesignArtifact): void {
   if (!artifact.typography.scale || typeof artifact.typography.scale !== "object") {
     throw new Error(
       "Invalid design artifact from LLM: artifact.typography.scale is missing or not an object. " +
-      "typography.scale must be a Record<string, string> mapping token names to size values " +
-      "— retry or inspect the LLM output.",
+      "typography.scale must be a Record<string, string> mapping token names to size values — retry or inspect the LLM output.",
     )
   }
-  if (!artifact.typography.display || typeof artifact.typography.display !== "object") {
-    throw new Error(
-      "Invalid design artifact from LLM: artifact.typography.display is missing. " +
-      "Every design artifact must include typography.display with family and weight — retry or inspect the LLM output.",
-    )
-  }
-  if (typeof artifact.typography.display.family !== "string" || artifact.typography.display.family.length === 0) {
-    throw new Error(
-      "Invalid design artifact from LLM: artifact.typography.display.family is missing or not a string. " +
-      "Every design artifact must have a non-empty display font family — retry or inspect the LLM output.",
-    )
-  }
-  if (typeof artifact.typography.display.weight !== "string" || artifact.typography.display.weight.length === 0) {
-    throw new Error(
-      "Invalid design artifact from LLM: artifact.typography.display.weight is missing or not a string. " +
-      "Every design artifact must have a non-empty display font weight — retry or inspect the LLM output.",
-    )
-  }
-  if (!artifact.typography.body || typeof artifact.typography.body !== "object") {
-    throw new Error(
-      "Invalid design artifact from LLM: artifact.typography.body is missing. " +
-      "Every design artifact must include typography.body with family and weight — retry or inspect the LLM output.",
-    )
-  }
-  if (typeof artifact.typography.body.family !== "string" || artifact.typography.body.family.length === 0) {
-    throw new Error(
-      "Invalid design artifact from LLM: artifact.typography.body.family is missing or not a string. " +
-      "Every design artifact must have a non-empty body font family — retry or inspect the LLM output.",
-    )
-  }
-  if (typeof artifact.typography.body.weight !== "string" || artifact.typography.body.weight.length === 0) {
-    throw new Error(
-      "Invalid design artifact from LLM: artifact.typography.body.weight is missing or not a string. " +
-      "Every design artifact must have a non-empty body font weight — retry or inspect the LLM output.",
-    )
-  }
+  validateFontRole(artifact.typography.display, "display")
+  validateFontRole(artifact.typography.body, "body")
+}
 
-  // spacing
+function validateFontRole(role: DesignArtifact["typography"]["display"], roleName: "display" | "body"): void {
+  if (!role || typeof role !== "object") {
+    throw new Error(
+      `Invalid design artifact from LLM: artifact.typography.${roleName} is missing. ` +
+      `Every design artifact must include typography.${roleName} with family and weight — retry or inspect the LLM output.`,
+    )
+  }
+  requireNonEmptyString(
+    role.family,
+    `Invalid design artifact from LLM: artifact.typography.${roleName}.family is missing or not a string. ` +
+      `Every design artifact must have a non-empty ${roleName} font family — retry or inspect the LLM output.`,
+  )
+  requireNonEmptyString(
+    role.weight,
+    `Invalid design artifact from LLM: artifact.typography.${roleName}.weight is missing or not a string. ` +
+      `Every design artifact must have a non-empty ${roleName} font weight — retry or inspect the LLM output.`,
+  )
+}
+
+function validateDesignSpacing(artifact: DesignArtifact): void {
   if (!artifact.spacing || typeof artifact.spacing !== "object") {
     throw new Error(
       "Invalid design artifact from LLM: artifact.spacing is missing. " +
@@ -108,15 +102,15 @@ export function validateDesignArtifact(artifact: DesignArtifact): void {
     )
   }
   for (const field of ["baseUnit", "sectionPadding", "cardPadding", "contentMaxWidth"] as const) {
-    if (typeof artifact.spacing[field] !== "string" || artifact.spacing[field].length === 0) {
-      throw new TypeError(
-        `Invalid design artifact from LLM: artifact.spacing.${field} is missing or not a string. ` +
+    requireNonEmptyString(
+      artifact.spacing[field],
+      `Invalid design artifact from LLM: artifact.spacing.${field} is missing or not a string. ` +
         "Every design artifact must have all spacing token fields — retry or inspect the LLM output.",
-      )
-    }
+    )
   }
+}
 
-  // borders
+function validateDesignBorders(artifact: DesignArtifact): void {
   if (!artifact.borders || typeof artifact.borders !== "object") {
     throw new Error(
       "Invalid design artifact from LLM: artifact.borders is missing. " +
@@ -124,45 +118,50 @@ export function validateDesignArtifact(artifact: DesignArtifact): void {
     )
   }
   for (const field of ["buttons", "cards", "badges"] as const) {
-    if (typeof artifact.borders[field] !== "string" || artifact.borders[field].length === 0) {
-      throw new Error(
-        `Invalid design artifact from LLM: artifact.borders.${field} is missing or not a string. ` +
+    requireNonEmptyString(
+      artifact.borders[field],
+      `Invalid design artifact from LLM: artifact.borders.${field} is missing or not a string. ` +
         "Every design artifact must have all border token fields — retry or inspect the LLM output.",
-      )
-    }
+    )
   }
+}
 
-  // shadows
+function validateDesignShadows(artifact: DesignArtifact): void {
   if (!artifact.shadows || typeof artifact.shadows !== "object") {
     throw new Error(
       "Invalid design artifact from LLM: artifact.shadows is missing or not an object. " +
       "Every design artifact must include a shadows Record<string, string> — retry or inspect the LLM output.",
     )
   }
+}
 
-  // mockupHtmlPerScreen — optional but if present must be valid
-  if (artifact.mockupHtmlPerScreen !== undefined) {
-    if (typeof artifact.mockupHtmlPerScreen !== "object" || Array.isArray(artifact.mockupHtmlPerScreen)) {
-      throw new TypeError(
-        "Invalid design artifact from LLM: artifact.mockupHtmlPerScreen is present but not an object. " +
-        "It must be a Record<string, string> mapping screenId to a full HTML document — retry or inspect the LLM output.",
+function validateMockupHtmlPerScreen(mockupHtmlPerScreen: DesignArtifact["mockupHtmlPerScreen"]): void {
+  if (mockupHtmlPerScreen === undefined) return
+  if (typeof mockupHtmlPerScreen !== "object" || Array.isArray(mockupHtmlPerScreen)) {
+    throw new TypeError(
+      "Invalid design artifact from LLM: artifact.mockupHtmlPerScreen is present but not an object. " +
+      "It must be a Record<string, string> mapping screenId to a full HTML document — retry or inspect the LLM output.",
+    )
+  }
+  for (const [screenId, html] of Object.entries(mockupHtmlPerScreen)) {
+    requireNonEmptyString(
+      html,
+      `Invalid design artifact from LLM: mockupHtmlPerScreen["${screenId}"] is empty or not a string. ` +
+        "Each entry must be a non-empty HTML document — retry or inspect the LLM output.",
+    )
+    const trimmed = html.trimStart().toLowerCase()
+    if (!trimmed.startsWith("<!doctype") && !trimmed.startsWith("<html")) {
+      throw new Error(
+        `Invalid design artifact from LLM: mockupHtmlPerScreen["${screenId}"] does not start with <!doctype or <html. ` +
+        "Each entry must be a self-contained HTML document — retry or inspect the LLM output.",
       )
     }
-    for (const [screenId, html] of Object.entries(artifact.mockupHtmlPerScreen)) {
-      if (typeof html !== "string" || html.trim().length === 0) {
-        throw new TypeError(
-          `Invalid design artifact from LLM: mockupHtmlPerScreen["${screenId}"] is empty or not a string. ` +
-          "Each entry must be a non-empty HTML document — retry or inspect the LLM output.",
-        )
-      }
-      const trimmed = html.trimStart().toLowerCase()
-      if (!trimmed.startsWith("<!doctype") && !trimmed.startsWith("<html")) {
-        throw new Error(
-          `Invalid design artifact from LLM: mockupHtmlPerScreen["${screenId}"] does not start with <!doctype or <html. ` +
-          "Each entry must be a self-contained HTML document — retry or inspect the LLM output.",
-        )
-      }
-    }
+  }
+}
+
+function requireNonEmptyString(value: unknown, message: string): asserts value is string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(message)
   }
 }
 

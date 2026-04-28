@@ -235,6 +235,37 @@ function serializeHarnessRole(role: {
 function validateConfig(input: unknown): AppConfig {
   if (!input || typeof input !== "object") throw new TypeError("config must be an object")
   const config = input as Partial<AppConfig>
+  const core = validateCoreConfig(config)
+  const publicBaseUrl = validatePublicBaseUrl(config.publicBaseUrl)
+  const llm = validateLlmConfig(config.llm)
+  const defaultHarnessProfile = validateHarnessProfileShape((config.llm as AppConfig["llm"]).defaultHarnessProfile)
+  const notifications = validateNotificationsConfig(config.notifications)
+  return {
+    schemaVersion: CONFIG_SCHEMA_VERSION,
+    dataDir: core.dataDir,
+    allowedRoots: [...core.allowedRoots],
+    enginePort: core.enginePort,
+    publicBaseUrl,
+    llm: {
+      provider: llm.provider,
+      model: llm.model,
+      apiKeyRef: llm.apiKeyRef,
+      defaultHarnessProfile,
+      defaultSonarOrganization: llm.defaultSonarOrganization,
+    },
+    notifications,
+    vcs: {
+      github: {
+        enabled: config.vcs?.github?.enabled === true,
+      },
+    },
+    browser: {
+      enabled: config.browser?.enabled === true,
+    },
+  }
+}
+
+function validateCoreConfig(config: Partial<AppConfig>): Pick<AppConfig, "dataDir" | "allowedRoots" | "enginePort"> {
   if (config.schemaVersion !== CONFIG_SCHEMA_VERSION) {
     throw new TypeError(`schemaVersion must be ${CONFIG_SCHEMA_VERSION}`)
   }
@@ -247,119 +278,108 @@ function validateConfig(input: unknown): AppConfig {
   if (typeof config.enginePort !== "number" || !Number.isInteger(config.enginePort) || config.enginePort <= 0) {
     throw new TypeError("enginePort must be a positive integer")
   }
-  let publicBaseUrl: string | undefined
-  if (config.publicBaseUrl === undefined) {
-    publicBaseUrl = undefined
-  } else if (typeof config.publicBaseUrl === "string") {
-    publicBaseUrl = normalizePublicBaseUrl(config.publicBaseUrl)
-  } else {
+  return {
+    dataDir: config.dataDir,
+    allowedRoots: config.allowedRoots,
+    enginePort: config.enginePort,
+  }
+}
+
+function validatePublicBaseUrl(publicBaseUrl: unknown): string | undefined {
+  if (publicBaseUrl === undefined) return undefined
+  if (typeof publicBaseUrl !== "string") {
     throw new TypeError("publicBaseUrl must be a string when set")
   }
-  if (!config.llm || typeof config.llm !== "object") throw new TypeError("llm config is required")
-  if (!parseProvider(config.llm.provider)) throw new TypeError("llm.provider must be anthropic, openai, or opencode")
-  if (typeof config.llm.model !== "string" || config.llm.model.length === 0) {
+  return normalizePublicBaseUrl(publicBaseUrl)
+}
+
+function validateLlmConfig(llm: unknown): {
+  provider: AppConfig["llm"]["provider"]
+  model: string
+  apiKeyRef: string
+  defaultSonarOrganization?: string
+} {
+  if (!llm || typeof llm !== "object") throw new TypeError("llm config is required")
+  const parsed = llm as Partial<AppConfig["llm"]>
+  const provider = parseProvider(parsed.provider)
+  if (!provider) throw new TypeError("llm.provider must be anthropic, openai, or opencode")
+  if (typeof parsed.model !== "string" || parsed.model.length === 0) {
     throw new TypeError("llm.model must be a non-empty string")
   }
-  if (typeof config.llm.apiKeyRef !== "string" || config.llm.apiKeyRef.length === 0) {
+  if (typeof parsed.apiKeyRef !== "string" || parsed.apiKeyRef.length === 0) {
     throw new TypeError("llm.apiKeyRef must be a non-empty string")
   }
-  const defaultHarnessProfile = validateHarnessProfileShape(config.llm.defaultHarnessProfile)
-  if (config.llm.defaultSonarOrganization !== undefined && typeof config.llm.defaultSonarOrganization !== "string") {
+  if (parsed.defaultSonarOrganization !== undefined && typeof parsed.defaultSonarOrganization !== "string") {
     throw new TypeError("llm.defaultSonarOrganization must be a string when set")
   }
-  const telegram = config.notifications?.telegram
+  return {
+    provider,
+    model: parsed.model,
+    apiKeyRef: parsed.apiKeyRef,
+    defaultSonarOrganization: parsed.defaultSonarOrganization,
+  }
+}
+
+function validateNotificationsConfig(notifications: AppConfig["notifications"] | undefined): AppConfig["notifications"] {
+  const telegram = validateTelegramConfig(notifications?.telegram)
+  return {
+    telegram: {
+      enabled: telegram.enabled ?? false,
+      botTokenEnv: telegram.botTokenEnv,
+      defaultChatId: telegram.defaultChatId,
+      level: telegram.level ?? 2,
+      inbound: {
+        enabled: telegram.inboundEnabled ?? false,
+        webhookSecretEnv: telegram.webhookSecretEnv,
+      },
+    },
+  }
+}
+
+function validateTelegramConfig(telegram: unknown): {
+  enabled?: boolean
+  botTokenEnv?: string
+  defaultChatId?: string
+  level?: 0 | 1 | 2
+  inboundEnabled?: boolean
+  webhookSecretEnv?: string
+} {
   if (telegram !== undefined && !isObject(telegram)) {
     throw new TypeError("notifications.telegram must be an object when set")
   }
-  let telegramEnabled: boolean | undefined
-  if (telegram?.enabled === undefined) {
-    telegramEnabled = undefined
-  } else if (typeof telegram.enabled === "boolean") {
-    telegramEnabled = telegram.enabled
-  } else {
-    throw new TypeError("notifications.telegram.enabled must be a boolean when set")
-  }
-  let telegramBotTokenEnv: string | undefined
-  if (telegram?.botTokenEnv === undefined) {
-    telegramBotTokenEnv = undefined
-  } else {
-    telegramBotTokenEnv = normalizeOptionalString(telegram.botTokenEnv)
-    if (!telegramBotTokenEnv) {
-      throw new TypeError("notifications.telegram.botTokenEnv must be a non-empty string when set")
-    }
-  }
-  let telegramDefaultChatId: string | undefined
-  if (telegram?.defaultChatId === undefined) {
-    telegramDefaultChatId = undefined
-  } else {
-    telegramDefaultChatId = normalizeOptionalString(telegram.defaultChatId)
-    if (!telegramDefaultChatId) {
-      throw new TypeError("notifications.telegram.defaultChatId must be a non-empty string when set")
-    }
-  }
-  let telegramLevel: 0 | 1 | 2 | undefined
-  if (telegram?.level === undefined) {
-    telegramLevel = undefined
-  } else if (telegram.level === 0 || telegram.level === 1 || telegram.level === 2) {
-    telegramLevel = telegram.level
-  } else {
-    throw new TypeError("notifications.telegram.level must be 0, 1, or 2 when set")
-  }
-  const telegramInbound = telegram?.inbound
-  if (telegramInbound !== undefined && !isObject(telegramInbound)) {
+  const inbound = isObject(telegram?.inbound) ? telegram.inbound : telegram?.inbound
+  if (inbound !== undefined && !isObject(inbound)) {
     throw new TypeError("notifications.telegram.inbound must be an object when set")
   }
-  let telegramInboundEnabled: boolean | undefined
-  if (telegramInbound?.enabled === undefined) {
-    telegramInboundEnabled = undefined
-  } else if (typeof telegramInbound.enabled === "boolean") {
-    telegramInboundEnabled = telegramInbound.enabled
-  } else {
-    throw new TypeError("notifications.telegram.inbound.enabled must be a boolean when set")
-  }
-  let telegramWebhookSecretEnv: string | undefined
-  if (telegramInbound?.webhookSecretEnv === undefined) {
-    telegramWebhookSecretEnv = undefined
-  } else {
-    telegramWebhookSecretEnv = normalizeOptionalString(telegramInbound.webhookSecretEnv)
-    if (!telegramWebhookSecretEnv) {
-      throw new TypeError("notifications.telegram.inbound.webhookSecretEnv must be a non-empty string when set")
-    }
-  }
   return {
-    schemaVersion: CONFIG_SCHEMA_VERSION,
-    dataDir: config.dataDir,
-    allowedRoots: [...config.allowedRoots],
-    enginePort: config.enginePort,
-    publicBaseUrl,
-    llm: {
-      provider: config.llm.provider,
-      model: config.llm.model,
-      apiKeyRef: config.llm.apiKeyRef,
-      defaultHarnessProfile,
-      defaultSonarOrganization: config.llm.defaultSonarOrganization,
-    },
-    notifications: {
-      telegram: {
-        enabled: telegramEnabled ?? false,
-        botTokenEnv: telegramBotTokenEnv,
-        defaultChatId: telegramDefaultChatId,
-        level: telegramLevel ?? 2,
-        inbound: {
-          enabled: telegramInboundEnabled ?? false,
-          webhookSecretEnv: telegramWebhookSecretEnv,
-        },
-      },
-    },
-    vcs: {
-      github: {
-        enabled: config.vcs?.github?.enabled === true,
-      },
-    },
-    browser: {
-      enabled: config.browser?.enabled === true,
-    },
+    enabled: validateOptionalBoolean(telegram?.enabled, "notifications.telegram.enabled"),
+    botTokenEnv: validateOptionalRequiredString(telegram?.botTokenEnv, "notifications.telegram.botTokenEnv"),
+    defaultChatId: validateOptionalRequiredString(telegram?.defaultChatId, "notifications.telegram.defaultChatId"),
+    level: validateTelegramLevel(telegram?.level),
+    inboundEnabled: validateOptionalBoolean(inbound?.enabled, "notifications.telegram.inbound.enabled"),
+    webhookSecretEnv: validateOptionalRequiredString(inbound?.webhookSecretEnv, "notifications.telegram.inbound.webhookSecretEnv"),
   }
+}
+
+function validateOptionalBoolean(value: unknown, field: string): boolean | undefined {
+  if (value === undefined) return undefined
+  if (typeof value === "boolean") return value
+  throw new TypeError(`${field} must be a boolean when set`)
+}
+
+function validateOptionalRequiredString(value: unknown, field: string): string | undefined {
+  if (value === undefined) return undefined
+  const normalized = normalizeOptionalString(value)
+  if (!normalized) {
+    throw new TypeError(`${field} must be a non-empty string when set`)
+  }
+  return normalized
+}
+
+function validateTelegramLevel(value: unknown): 0 | 1 | 2 | undefined {
+  if (value === undefined) return undefined
+  if (value === 0 || value === 1 || value === 2) return value
+  throw new TypeError("notifications.telegram.level must be 0, 1, or 2 when set")
 }
 
 export function readConfigFile(configPath = defaultConfigPath()): ConfigFileState {

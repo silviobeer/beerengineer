@@ -263,59 +263,9 @@ async function validateSonarProperties(root: string, props: SonarProperties | nu
     return readiness
   }
 
-  const sourceEntries = splitCsv(props["sonar.sources"])
-  if (sourceEntries.length === 0) {
-    details.config = 'Missing required "sonar.sources"'
-  } else {
-    const missing: string[] = []
-    for (const entry of sourceEntries) {
-      const matches = await expandWorkspacePattern(root, entry)
-      if (matches.length === 0) missing.push(entry)
-    }
-    if (missing.length > 0) {
-      details.config = `Source path${missing.length > 1 ? "s" : ""} not found: ${missing.join(", ")}`
-    }
-  }
-
-  for (const key of ["sonar.tests", "sonar.test.inclusions", "sonar.exclusions", "sonar.test.exclusions", "sonar.coverage.exclusions"] as const) {
-    for (const entry of splitCsv(props[key])) {
-      const matches = await expandWorkspacePattern(root, entry)
-      if (matches.length === 0 && key.includes("exclusions") && !hasGlobMagic(entry)) {
-        warnings.push(`${key} entry matches nothing: ${entry}`)
-      }
-    }
-  }
-
-  const lcovEntries = splitCsv(props["sonar.javascript.lcov.reportPaths"])
-  let coverage: SonarReadiness["coverage"]
-  if (lcovEntries.length === 0) {
-    if (coverageProducer.stack === "js-ts") {
-      coverage = "not-configured"
-      details.coverage = coverageProducer.hasProducer
-        ? "Coverage producer detected, but Sonar LCOV import is not configured."
-        : "No LCOV import configured."
-    } else {
-      coverage = "unknown"
-      details.coverage = "Coverage detection is stack-specific and was not inferred."
-    }
-  } else {
-    const lcovMatches = await Promise.all(lcovEntries.map(entry => expandWorkspacePattern(root, entry)))
-    const existingFiles = lcovMatches.flat()
-    if (existingFiles.length > 0) {
-      coverage = "ok"
-      details.coverage = `LCOV artifact${existingFiles.length > 1 ? "s" : ""} present`
-    } else if (coverageProducer.stack === "js-ts" && coverageProducer.hasProducer) {
-      coverage = "artifact-missing"
-      details.coverage = `Coverage command detected, but ${lcovEntries.join(", ")} has not been generated yet`
-    } else if (coverageProducer.stack === "js-ts") {
-      coverage = "producer-missing"
-      details.coverage = "Coverage import configured but no JS/TS coverage producer was detected"
-      warnings.push("Coverage import configured but no coverage command was detected")
-    } else {
-      coverage = "unknown"
-      details.coverage = "Coverage import configured, but no matching artifact exists yet"
-    }
-  }
+  details.config = await validateSonarSourceEntries(root, props)
+  warnings.push(...await collectSonarPathWarnings(root, props))
+  const coverage = await validateSonarCoverage(root, props, coverageProducer, details, warnings)
 
   return {
     scanner: "unknown",
@@ -325,6 +275,77 @@ async function validateSonarProperties(root: string, props: SonarProperties | nu
     warnings,
     details,
   }
+}
+
+async function validateSonarSourceEntries(root: string, props: SonarProperties): Promise<string | undefined> {
+  const sourceEntries = splitCsv(props["sonar.sources"])
+  if (sourceEntries.length === 0) {
+    return 'Missing required "sonar.sources"'
+  }
+  const missing: string[] = []
+  for (const entry of sourceEntries) {
+    const matches = await expandWorkspacePattern(root, entry)
+    if (matches.length === 0) missing.push(entry)
+  }
+  if (missing.length === 0) return undefined
+  return `Source path${missing.length > 1 ? "s" : ""} not found: ${missing.join(", ")}`
+}
+
+async function collectSonarPathWarnings(root: string, props: SonarProperties): Promise<string[]> {
+  const warnings: string[] = []
+  for (const key of ["sonar.tests", "sonar.test.inclusions", "sonar.exclusions", "sonar.test.exclusions", "sonar.coverage.exclusions"] as const) {
+    for (const entry of splitCsv(props[key])) {
+      const matches = await expandWorkspacePattern(root, entry)
+      if (matches.length === 0 && key.includes("exclusions") && !hasGlobMagic(entry)) {
+        warnings.push(`${key} entry matches nothing: ${entry}`)
+      }
+    }
+  }
+  return warnings
+}
+
+async function validateSonarCoverage(
+  root: string,
+  props: SonarProperties,
+  coverageProducer: Awaited<ReturnType<typeof detectCoverageProducer>>,
+  details: NonNullable<SonarReadiness["details"]>,
+  warnings: string[],
+): Promise<SonarReadiness["coverage"]> {
+  const lcovEntries = splitCsv(props["sonar.javascript.lcov.reportPaths"])
+  if (lcovEntries.length === 0) {
+    return coverageWithoutLcov(coverageProducer, details)
+  }
+  const lcovMatches = await Promise.all(lcovEntries.map(entry => expandWorkspacePattern(root, entry)))
+  const existingFiles = lcovMatches.flat()
+  if (existingFiles.length > 0) {
+    details.coverage = `LCOV artifact${existingFiles.length > 1 ? "s" : ""} present`
+    return "ok"
+  }
+  if (coverageProducer.stack === "js-ts" && coverageProducer.hasProducer) {
+    details.coverage = `Coverage command detected, but ${lcovEntries.join(", ")} has not been generated yet`
+    return "artifact-missing"
+  }
+  if (coverageProducer.stack === "js-ts") {
+    details.coverage = "Coverage import configured but no JS/TS coverage producer was detected"
+    warnings.push("Coverage import configured but no coverage command was detected")
+    return "producer-missing"
+  }
+  details.coverage = "Coverage import configured, but no matching artifact exists yet"
+  return "unknown"
+}
+
+function coverageWithoutLcov(
+  coverageProducer: Awaited<ReturnType<typeof detectCoverageProducer>>,
+  details: NonNullable<SonarReadiness["details"]>,
+): SonarReadiness["coverage"] {
+  if (coverageProducer.stack === "js-ts") {
+    details.coverage = coverageProducer.hasProducer
+      ? "Coverage producer detected, but Sonar LCOV import is not configured."
+      : "No LCOV import configured."
+    return "not-configured"
+  }
+  details.coverage = "Coverage detection is stack-specific and was not inferred."
+  return "unknown"
 }
 
 function mergeSonarReadiness(base: SonarReadiness, extra: Partial<SonarReadiness>): SonarReadiness {
@@ -812,61 +833,9 @@ export async function runWorkspacePreflight(
 ): Promise<{ report: WorkspacePreflightReport }> {
   const gitProbe = runGit(["rev-parse", "--is-inside-work-tree"], root)
   const defaultBranch = gitProbe.ok ? resolveGitDefaultBranch(root) : null
-  const remoteProbe = gitProbe.ok ? runGit(["remote", "get-url", "origin"], root) : { ok: false, stdout: "", stderr: "" }
-  const parsedRemote = remoteProbe.ok ? parseGitHubRemote(remoteProbe.stdout) : null
-
-  const ghVersion = runCommand("gh", ["--version"], root)
-  const ghStatus = ghVersion.ok ? runCommand("gh", ["auth", "status"], root) : { ok: false, stdout: "", stderr: "gh unavailable" }
-  let ghUser: string | undefined
-  if (ghStatus.ok) {
-    const userProbe = runCommand("gh", ["api", "user", "--jq", ".login"], root)
-    ghUser = userProbe.ok ? userProbe.stdout : undefined
-  }
-
-  const sonarToken = await detectSonarToken(root)
-  const sonarHost = options.sonarHostUrl ?? SONAR_DEFAULT_HOST
-  const sonarValid = sonarToken.value ? await validateSonarToken(sonarToken.value, sonarHost) : undefined
-  const localSonarReadiness = await validateSonarProperties(root, await loadWorkspaceSonarProperties(root))
-  const scannerReadiness = probeSonarScanner(root)
-  let sonarTokenStatus: "ok" | "invalid" | "missing" = "missing"
-  if (sonarToken.value) {
-    sonarTokenStatus = sonarValid ? "ok" : "invalid"
-  }
-  const sonarReadiness = mergeSonarReadiness(localSonarReadiness, {
-    scanner: scannerReadiness.scanner,
-    token: sonarTokenStatus,
-    details: {
-      ...scannerReadiness.details,
-      token: (() => {
-        if (!sonarToken.value) return "SONAR_TOKEN was not found in env, .env.local, or repo git config"
-        return sonarValid
-          ? `SONAR_TOKEN validated against ${sonarHost}`
-          : `SONAR_TOKEN failed validation against ${sonarHost}`
-      })(),
-    },
-  })
-  let sonarStatus: WorkspacePreflightReport["sonar"]["status"]
-  if (!sonarToken.value) {
-    sonarStatus = options.sonarEnabled || localSonarReadiness.config !== "missing" ? "missing" : "skipped"
-  } else if (!options.sonarEnabled && localSonarReadiness.config === "missing") {
-    sonarStatus = sonarValid ? "ok" : "invalid"
-  } else if (sonarValid && localSonarReadiness.config === "ok") {
-    sonarStatus = "ok"
-  } else if (localSonarReadiness.config === "missing") {
-    sonarStatus = "missing"
-  } else {
-    sonarStatus = "invalid"
-  }
-  let sonarDetail: string | undefined
-  if (localSonarReadiness.config === "invalid") {
-    sonarDetail = localSonarReadiness.details?.config
-  } else if (sonarToken.value && sonarValid) {
-    sonarDetail = sonarReadiness.details?.coverage
-  } else if (sonarToken.value) {
-    sonarDetail = "SONAR_TOKEN failed Sonar validation"
-  } else {
-    sonarDetail = "SONAR_TOKEN was not found in env, .env.local, or repo git config"
-  }
+  const github = resolveWorkspaceGithubPreflight(root, gitProbe, defaultBranch)
+  const gh = resolveWorkspaceGhPreflight(root)
+  const sonar = await resolveWorkspaceSonarPreflight(root, options)
 
   const coderabbitCli = runCommand("coderabbit", ["--version"], root)
   const crCli = coderabbitCli.ok ? coderabbitCli : runCommand("cr", ["--version"], root)
@@ -877,36 +846,9 @@ export async function runWorkspacePreflight(
         status: gitProbe.ok && gitProbe.stdout === "true" ? "ok" : "missing",
         detail: gitProbe.ok ? undefined : (gitProbe.stderr || undefined),
       },
-      github: parsedRemote
-        ? {
-            status: "ok",
-            owner: parsedRemote.owner,
-            repo: parsedRemote.repo,
-            defaultBranch,
-            remoteUrl: remoteProbe.stdout,
-          }
-        : {
-            status: remoteProbe.ok ? "invalid" : "missing",
-            detail: remoteProbe.ok ? "origin is not a GitHub remote" : remoteProbe.stderr || "origin remote is not configured",
-            defaultBranch,
-            remoteUrl: remoteProbe.ok ? remoteProbe.stdout : undefined,
-          },
-      gh: ghStatus.ok
-        ? {
-            status: "ok",
-            user: ghUser,
-          }
-        : {
-            status: ghVersion.ok ? "missing" : "skipped",
-            detail: ghVersion.ok ? (ghStatus.stderr || "gh auth status failed") : "GitHub CLI is not available",
-          },
-      sonar: {
-        status: sonarStatus,
-        tokenSource: sonarToken.source,
-        tokenValid: sonarValid,
-        readiness: sonarReadiness,
-        detail: sonarDetail,
-      },
+      github,
+      gh,
+      sonar,
       coderabbit: crCli.ok
         ? {
             status: "ok",
@@ -919,6 +861,116 @@ export async function runWorkspacePreflight(
       checkedAt: new Date().toISOString(),
     },
   }
+}
+
+function resolveWorkspaceGithubPreflight(
+  root: string,
+  gitProbe: ReturnType<typeof runGit>,
+  defaultBranch: string | null,
+): WorkspacePreflightReport["github"] {
+  const remoteProbe = gitProbe.ok ? runGit(["remote", "get-url", "origin"], root) : { ok: false, stdout: "", stderr: "" }
+  const parsedRemote = remoteProbe.ok ? parseGitHubRemote(remoteProbe.stdout) : null
+  return parsedRemote
+    ? {
+        status: "ok",
+        owner: parsedRemote.owner,
+        repo: parsedRemote.repo,
+        defaultBranch,
+        remoteUrl: remoteProbe.stdout,
+      }
+    : {
+        status: remoteProbe.ok ? "invalid" : "missing",
+        detail: remoteProbe.ok ? "origin is not a GitHub remote" : remoteProbe.stderr || "origin remote is not configured",
+        defaultBranch,
+        remoteUrl: remoteProbe.ok ? remoteProbe.stdout : undefined,
+      }
+}
+
+function resolveWorkspaceGhPreflight(root: string): WorkspacePreflightReport["gh"] {
+  const ghVersion = runCommand("gh", ["--version"], root)
+  const ghStatus = ghVersion.ok ? runCommand("gh", ["auth", "status"], root) : { ok: false, stdout: "", stderr: "gh unavailable" }
+  if (!ghStatus.ok) {
+    return {
+      status: ghVersion.ok ? "missing" : "skipped",
+      detail: ghVersion.ok ? (ghStatus.stderr || "gh auth status failed") : "GitHub CLI is not available",
+    }
+  }
+  const userProbe = runCommand("gh", ["api", "user", "--jq", ".login"], root)
+  return {
+    status: "ok",
+    user: userProbe.ok ? userProbe.stdout : undefined,
+  }
+}
+
+async function resolveWorkspaceSonarPreflight(
+  root: string,
+  options: { sonarHostUrl?: string; sonarEnabled?: boolean },
+): Promise<WorkspacePreflightReport["sonar"]> {
+  const sonarToken = await detectSonarToken(root)
+  const sonarHost = options.sonarHostUrl ?? SONAR_DEFAULT_HOST
+  const sonarValid = sonarToken.value ? await validateSonarToken(sonarToken.value, sonarHost) : undefined
+  const localSonarReadiness = await validateSonarProperties(root, await loadWorkspaceSonarProperties(root))
+  const sonarReadiness = buildSonarReadiness(localSonarReadiness, probeSonarScanner(root), sonarToken.value, sonarValid, sonarHost)
+  return {
+    status: classifySonarStatus(sonarToken.value, sonarValid, localSonarReadiness, options.sonarEnabled),
+    tokenSource: sonarToken.source,
+    tokenValid: sonarValid,
+    readiness: sonarReadiness,
+    detail: sonarDetail(sonarToken.value, sonarValid, localSonarReadiness, sonarReadiness),
+  }
+}
+
+function buildSonarReadiness(
+  localSonarReadiness: SonarReadiness,
+  scannerReadiness: ReturnType<typeof probeSonarScanner>,
+  tokenValue: string | undefined,
+  sonarValid: boolean | undefined,
+  sonarHost: string,
+): SonarReadiness {
+  const tokenStatus: "ok" | "invalid" | "missing" = !tokenValue ? "missing" : sonarValid ? "ok" : "invalid"
+  return mergeSonarReadiness(localSonarReadiness, {
+    scanner: scannerReadiness.scanner,
+    token: tokenStatus,
+    details: {
+      ...scannerReadiness.details,
+      token: tokenValue
+        ? sonarValid
+          ? `SONAR_TOKEN validated against ${sonarHost}`
+          : `SONAR_TOKEN failed validation against ${sonarHost}`
+        : "SONAR_TOKEN was not found in env, .env.local, or repo git config",
+    },
+  })
+}
+
+function classifySonarStatus(
+  tokenValue: string | undefined,
+  sonarValid: boolean | undefined,
+  localSonarReadiness: SonarReadiness,
+  sonarEnabled: boolean | undefined,
+): WorkspacePreflightReport["sonar"]["status"] {
+  if (!tokenValue) {
+    return sonarEnabled || localSonarReadiness.config !== "missing" ? "missing" : "skipped"
+  }
+  if (!sonarEnabled && localSonarReadiness.config === "missing") {
+    return sonarValid ? "ok" : "invalid"
+  }
+  if (sonarValid && localSonarReadiness.config === "ok") return "ok"
+  if (localSonarReadiness.config === "missing") return "missing"
+  return "invalid"
+}
+
+function sonarDetail(
+  tokenValue: string | undefined,
+  sonarValid: boolean | undefined,
+  localSonarReadiness: SonarReadiness,
+  sonarReadiness: SonarReadiness,
+): string | undefined {
+  if (localSonarReadiness.config === "invalid") {
+    return localSonarReadiness.details?.config
+  }
+  if (tokenValue && sonarValid) return sonarReadiness.details?.coverage
+  if (tokenValue) return "SONAR_TOKEN failed Sonar validation"
+  return "SONAR_TOKEN was not found in env, .env.local, or repo git config"
 }
 
 async function buildGeneratedSonarProperties(root: string, owner: string, repo: string): Promise<{

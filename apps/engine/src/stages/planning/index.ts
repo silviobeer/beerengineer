@@ -28,74 +28,121 @@ function validatePlanStoryIds(artifact: ImplementationPlanArtifact, prd: PRD): s
     idsBefore.add(wave.id)
   }
   for (const wave of waves) {
-    const kind = wave.kind ?? "feature"
-    const storyList = Array.isArray(wave.stories) ? wave.stories : []
-    const setupTasks = Array.isArray(wave.tasks) ? wave.tasks : []
-    if (kind === "setup") {
-      if (setupTasks.length === 0) {
-        issues.push(`Setup wave ${wave.id ?? wave.number ?? "?"} has zero tasks. Setup waves must use \`tasks\` with at least one setup task.`)
-      }
-      for (const task of setupTasks) {
-        if (!task.id || !task.title) {
-          issues.push(`Setup wave ${wave.id} contains a task missing \`id\` or \`title\`.`)
-          continue
-        }
-        const contract = (task as { contract?: unknown }).contract as
-          | { expectedFiles?: unknown; requiredScripts?: unknown; postChecks?: unknown }
-          | undefined
-        if (
-          !contract ||
-          !Array.isArray(contract.expectedFiles) ||
-          !Array.isArray(contract.requiredScripts) ||
-          !Array.isArray(contract.postChecks)
-        ) {
-          issues.push(
-            `Setup wave ${wave.id} task "${task.id}" has malformed \`contract\`; required shape is { expectedFiles: string[], requiredScripts: string[], postChecks: string[] }.`,
-          )
-        }
-        if (!Array.isArray((task as { sharedFiles?: unknown }).sharedFiles)) {
-          issues.push(
-            `Setup wave ${wave.id} task "${task.id}" is missing \`sharedFiles: string[]\` (use [] when none).`,
-          )
-        }
-      }
-    } else {
-      if (storyList.length === 0) {
-        issues.push(`Wave ${wave.id ?? wave.number ?? "?"} has zero stories. Every feature wave must contain at least one PRD story.`)
-      }
-      for (const ref of storyList) {
-        const id = (ref as { id?: string })?.id
-        const title = (ref as { title?: string })?.title
-        if (!id || typeof id !== "string") {
-          issues.push(`Wave ${wave.number} contains a story without an \`id\` (shape must be {id, title}).`)
-          continue
-        }
-        if (!prdIds.has(id)) {
-          const titleSuffix = title ? ` ("${title}")` : ""
-          issues.push(`Wave ${wave.number} references story id "${id}"${titleSuffix} that is not in the PRD. Only PRD story ids are allowed.`)
-        }
-        if (seen.has(id)) {
-          issues.push(`Story id "${id}" appears in more than one wave; each PRD story must appear exactly once.`)
-        }
-        seen.add(id)
-      }
-    }
-    for (const dep of wave.dependencies ?? []) {
-      if (typeof dep !== "string" || !/^W\d+$/.test(dep)) {
-        issues.push(`Wave ${wave.id} has invalid dependency "${dep}". Dependencies must be an Array<string> of earlier wave ids like "W1" — never prose, never story ids.`)
-        continue
-      }
-      if (!waveIds.has(dep)) {
-        issues.push(`Wave ${wave.id} depends on unknown wave "${dep}".`)
-      } else if (!waveIdsBefore.get(wave.id)!.has(dep)) {
-        issues.push(`Wave ${wave.id} depends on "${dep}" which is not an earlier wave (dependencies must flow forward only).`)
-      }
-    }
+    validateWaveShape(wave, prdIds, seen, issues)
+    validateWaveDependencies(wave, waveIds, waveIdsBefore, issues)
   }
   for (const s of prd.stories) {
     if (!seen.has(s.id)) issues.push(`PRD story "${s.id}" is not assigned to any wave.`)
   }
   return issues.length > 0 ? issues.join(" ") : null
+}
+
+function validateWaveShape(
+  wave: NonNullable<ImplementationPlanArtifact["plan"]>["waves"][number],
+  prdIds: Set<string>,
+  seen: Set<string>,
+  issues: string[],
+): void {
+  if ((wave.kind ?? "feature") === "setup") {
+    validateSetupWave(wave, issues)
+    return
+  }
+  validateFeatureWave(wave, prdIds, seen, issues)
+}
+
+function validateSetupWave(
+  wave: NonNullable<ImplementationPlanArtifact["plan"]>["waves"][number],
+  issues: string[],
+): void {
+  const setupTasks = Array.isArray(wave.tasks) ? wave.tasks : []
+  if (setupTasks.length === 0) {
+    issues.push(`Setup wave ${wave.id ?? wave.number ?? "?"} has zero tasks. Setup waves must use \`tasks\` with at least one setup task.`)
+  }
+  for (const task of setupTasks) {
+    if (!task.id || !task.title) {
+      issues.push(`Setup wave ${wave.id} contains a task missing \`id\` or \`title\`.`)
+      continue
+    }
+    validateSetupTask(wave.id, task, issues)
+  }
+}
+
+function validateSetupTask(waveId: string, task: { id?: string; sharedFiles?: unknown; contract?: unknown }, issues: string[]): void {
+  const contract = task.contract as
+    | { expectedFiles?: unknown; requiredScripts?: unknown; postChecks?: unknown }
+    | undefined
+  if (
+    !contract ||
+    !Array.isArray(contract.expectedFiles) ||
+    !Array.isArray(contract.requiredScripts) ||
+    !Array.isArray(contract.postChecks)
+  ) {
+    issues.push(
+      `Setup wave ${waveId} task "${task.id}" has malformed \`contract\`; required shape is { expectedFiles: string[], requiredScripts: string[], postChecks: string[] }.`,
+    )
+  }
+  if (!Array.isArray(task.sharedFiles)) {
+    issues.push(
+      `Setup wave ${waveId} task "${task.id}" is missing \`sharedFiles: string[]\` (use [] when none).`,
+    )
+  }
+}
+
+function validateFeatureWave(
+  wave: NonNullable<ImplementationPlanArtifact["plan"]>["waves"][number],
+  prdIds: Set<string>,
+  seen: Set<string>,
+  issues: string[],
+): void {
+  const storyList = Array.isArray(wave.stories) ? wave.stories : []
+  if (storyList.length === 0) {
+    issues.push(`Wave ${wave.id ?? wave.number ?? "?"} has zero stories. Every feature wave must contain at least one PRD story.`)
+  }
+  for (const ref of storyList) {
+    validateFeatureStoryRef(wave.number, ref as { id?: string; title?: string }, prdIds, seen, issues)
+  }
+}
+
+function validateFeatureStoryRef(
+  waveNumber: number,
+  ref: { id?: string; title?: string },
+  prdIds: Set<string>,
+  seen: Set<string>,
+  issues: string[],
+): void {
+  const id = ref.id
+  const title = ref.title
+  if (!id || typeof id !== "string") {
+    issues.push(`Wave ${waveNumber} contains a story without an \`id\` (shape must be {id, title}).`)
+    return
+  }
+  if (!prdIds.has(id)) {
+    const titleSuffix = title ? ` ("${title}")` : ""
+    issues.push(`Wave ${waveNumber} references story id "${id}"${titleSuffix} that is not in the PRD. Only PRD story ids are allowed.`)
+  }
+  if (seen.has(id)) {
+    issues.push(`Story id "${id}" appears in more than one wave; each PRD story must appear exactly once.`)
+  }
+  seen.add(id)
+}
+
+function validateWaveDependencies(
+  wave: NonNullable<ImplementationPlanArtifact["plan"]>["waves"][number],
+  waveIds: Set<string>,
+  waveIdsBefore: Map<string, Set<string>>,
+  issues: string[],
+): void {
+  for (const dep of wave.dependencies ?? []) {
+    if (typeof dep !== "string" || !/^W\d+$/.test(dep)) {
+      issues.push(`Wave ${wave.id} has invalid dependency "${dep}". Dependencies must be an Array<string> of earlier wave ids like "W1" — never prose, never story ids.`)
+      continue
+    }
+    if (!waveIds.has(dep)) {
+      issues.push(`Wave ${wave.id} depends on unknown wave "${dep}".`)
+    } else if (!waveIdsBefore.get(wave.id)!.has(dep)) {
+      issues.push(`Wave ${wave.id} depends on "${dep}" which is not an earlier wave (dependencies must flow forward only).`)
+    }
+  }
 }
 
 function validatingReviewer<S>(
