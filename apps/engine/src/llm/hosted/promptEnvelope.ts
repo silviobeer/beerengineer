@@ -53,9 +53,6 @@ export type HostedRequest = {
   payload: unknown
 }
 
-/** @deprecated Use `HostedRequest`. */
-export type HostedCliRequest = HostedRequest
-
 type PromptSchema = {
   promptKind: PromptKind
   /** Whether to fall back to `_default` if the per-stage prompt is missing. */

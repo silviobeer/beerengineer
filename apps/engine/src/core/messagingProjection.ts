@@ -54,7 +54,7 @@ function eventFromStageLog(row: StageLogRow): WorkflowEvent | null {
         type: "stage_started",
         runId: row.run_id,
         stageRunId: row.stage_run_id ?? (typeof data.stageRunId === "string" ? data.stageRunId : ""),
-        stageKey: typeof data.stageKey === "string" ? data.stageKey : row.message.replace(/^stage\s+|\s+started$/g, ""),
+        stageKey: typeof data.stageKey === "string" ? data.stageKey : row.message.replaceAll(/^stage\s+|\s+started$/g, ""),
         projectId: typeof data.projectId === "string" ? data.projectId : null,
       }
     case "stage_completed":

@@ -3,7 +3,7 @@ import type { ProjectReviewState } from "../../stages/project-review/types.js"
 import type { ProjectReviewArtifact, ProjectReviewFinding, Project } from "../../types/domain.js"
 
 function hashProjectId(projectId: string): number {
-  return Array.from(projectId).reduce((sum, char) => sum + char.charCodeAt(0), 0)
+  return Array.from(projectId).reduce((sum, char) => sum + (char.codePointAt(0) ?? 0), 0)
 }
 
 function totalBlockedStories(state: ProjectReviewState): number {

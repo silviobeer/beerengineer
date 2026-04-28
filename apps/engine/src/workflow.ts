@@ -337,8 +337,10 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
     let projects: Project[]
     if (itemResumePlan.startStage === "brainstorm") {
       // Fresh-run path: brainstorm owns the item-branch + worktree creation.
-      projects = await withStageLifecycle("brainstorm", {}, () =>
-        brainstorm(item, context, git, options?.llm?.stage, codebaseSnapshot),
+      projects = await withStageLifecycle(
+        "brainstorm",
+        () => brainstorm(item, context, git, options?.llm?.stage, codebaseSnapshot),
+        {},
       )
     } else {
       // Resume past brainstorm: brainstorm won't run, so re-establish the
@@ -403,16 +405,20 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
     let wireframes: WireframeArtifact | undefined
     if (itemHasUi) {
       wireframes = shouldRunVisualCompanion
-        ? await withStageLifecycle("visual-companion", {}, () =>
-            visualCompanion(context, { itemConcept, projects, references: designPrepReferences }, options?.llm?.stage, itemSnapshot),
+        ? await withStageLifecycle(
+            "visual-companion",
+            () => visualCompanion(context, { itemConcept, projects, references: designPrepReferences }, options?.llm?.stage, itemSnapshot),
+            {},
           )
         : await loadWireframes(context)
     }
     let design: DesignArtifact | undefined
     if (itemHasUi) {
       design = shouldRunFrontendDesign
-        ? await withStageLifecycle("frontend-design", {}, () =>
-            frontendDesign(context, { itemConcept, projects, wireframes, references: designPrepReferences }, options?.llm?.stage, itemSnapshot),
+        ? await withStageLifecycle(
+            "frontend-design",
+            () => frontendDesign(context, { itemConcept, projects, wireframes, references: designPrepReferences }, options?.llm?.stage, itemSnapshot),
+            {},
           )
         : await loadDesign(context)
     }
@@ -457,7 +463,7 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
       }
     }
 
-    await withStageLifecycle("merge-gate", {}, () => mergeGate(context, git, blockRunForWorkspaceState))
+    await withStageLifecycle("merge-gate", () => mergeGate(context, git, blockRunForWorkspaceState), {})
 
     stagePresent.header("DONE")
     stagePresent.ok(`Item "${item.title}" is done ✓`)
@@ -517,7 +523,7 @@ async function runProject(
 
   for (const node of PROJECT_STAGE_REGISTRY) {
     ctx = shouldRunProjectStage(resume, node.id)
-      ? await withStageLifecycle(node.id, { projectId }, () => node.run(ctx, deps))
+      ? await withStageLifecycle(node.id, () => node.run(ctx, deps), { projectId })
       : await node.resumeFromDisk(ctx)
   }
 }

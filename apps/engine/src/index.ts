@@ -1103,7 +1103,8 @@ async function runStatusCommand(workspaceKey: string | undefined, all = false, j
         const items = repos.listItemsForWorkspace(workspace.id)
         const runs = repos.listRuns().filter(run => run.workspace_id === workspace.id)
         const chats = promptRows.filter(prompt => prompt.workspace_id === workspace.id)
-        const latestRun = runs.sort((a, b) => b.created_at - a.created_at)[0]
+        const sortedRuns = [...runs].sort((a, b) => b.created_at - a.created_at)
+        const latestRun = sortedRuns[0]
         let state = "idle"
         if (chats.length > 0) state = "needs_answer"
         else if (runs.some(run => run.recovery_status === "blocked")) state = "blocked"
@@ -1137,7 +1138,8 @@ async function runStatusCommand(workspaceKey: string | undefined, all = false, j
     const items = repos.listItemsForWorkspace(workspace.id)
     const runs = repos.listRuns().filter(run => run.workspace_id === workspace.id)
     const openPrompts = repos.listOpenPrompts({ workspaceId: workspace.id })
-    const latestRun = runs.sort((a, b) => b.created_at - a.created_at)[0]
+    const sortedRuns = [...runs].sort((a, b) => b.created_at - a.created_at)
+    const latestRun = sortedRuns[0]
     let state = "idle"
     if (openPrompts.length > 0) state = "needs_answer"
     else if (runs.some(run => run.recovery_status === "blocked")) state = "blocked"
@@ -1676,9 +1678,9 @@ async function runItemPreviewCommand(
       return 1
     }
     const launch = resolvePreviewLaunchSpec(preview.worktreePath)
-    let status: "started" | "already_running" | "stopped" | "already_stopped" = "stopped"
     let logPath: string | undefined
-    let pid: number | null = null
+    let pid: number | null | undefined
+    let status: "started" | "already_running" | "stopped" | "already_stopped"
     if (opts.start) {
       try {
         const started = await startPreviewServer(preview)
@@ -1694,7 +1696,7 @@ async function runItemPreviewCommand(
         const stopped = await stopPreviewServer(preview)
         status = stopped.status
         logPath = stopped.logPath
-        pid = null
+        pid = stopped.pid
       } catch (error) {
         console.error(`  ${(error as Error).message}`)
         return 1
@@ -2038,12 +2040,44 @@ function printResumeBlockedOutput(
   recovery: { summary: string | null; scope: string | null; scopeRef: string | null },
   itemRef: string,
 ): void {
+  const scopeDetail = recovery.scopeRef ? ` (${recovery.scopeRef})` : ""
   console.error(`\n  Run ${runId} is blocked.`)
   if (recovery.summary) console.error(`  Reason: ${recovery.summary}`)
-  if (recovery.scope) console.error(`  Scope:  ${recovery.scope}${recovery.scopeRef ? ` (${recovery.scopeRef})` : ""}`)
+  if (recovery.scope) console.error(`  Scope:  ${recovery.scope}${scopeDetail}`)
   console.error(
     `  Resume with: beerengineer item action --item ${itemRef} --action resume_run --remediation-summary "<what you fixed>"`,
   )
+}
+
+async function collectResumePayload(
+  active: ReturnType<Repos["latestActiveRunForItem"]>,
+  resumeFlags: ResumeFlags | undefined,
+  itemRef: string,
+): Promise<
+  | { kind: "continue"; payload?: { summary: string; branch?: string; commitSha?: string; reviewNotes?: string } }
+  | { kind: "exit"; code: number }
+> {
+  if (!active?.recovery_status) return { kind: "continue" }
+  const isTty = Boolean(process.stdin.isTTY && process.stdout.isTTY) && resumeFlags?.yes !== true
+  const collected = await collectRemediationFlags(resumeFlags ?? {}, isTty)
+  if (!collected?.summary) {
+    printResumeBlockedOutput(active.id, {
+      summary: active.recovery_summary,
+      scope: active.recovery_scope,
+      scopeRef: active.recovery_scope_ref,
+    }, itemRef)
+    console.error("  Missing --remediation-summary (required for non-interactive resume).")
+    return { kind: "exit", code: 75 }
+  }
+  return {
+    kind: "continue",
+    payload: {
+      summary: collected.summary,
+      branch: collected.branch,
+      commitSha: collected.commit,
+      reviewNotes: collected.notes,
+    },
+  }
 }
 
 /**
@@ -2280,26 +2314,9 @@ const handleResumeRun: CliItemActionHandler = async ctx => {
   const active =
     ctx.repos.latestActiveRunForItem(ctx.item.id) ?? ctx.repos.latestRecoverableRunForItem(ctx.item.id)
   const resumeRunId = active?.id
-  let resumePayload: { summary: string; branch?: string; commitSha?: string; reviewNotes?: string } | undefined
-  if (active?.recovery_status) {
-    const isTty = Boolean(process.stdin.isTTY && process.stdout.isTTY) && ctx.resumeFlags?.yes !== true
-    const collected = await collectRemediationFlags(ctx.resumeFlags ?? {}, isTty)
-    if (!collected?.summary) {
-      printResumeBlockedOutput(active.id, {
-        summary: active.recovery_summary,
-        scope: active.recovery_scope,
-        scopeRef: active.recovery_scope_ref,
-      }, ctx.itemRef)
-      console.error("  Missing --remediation-summary (required for non-interactive resume).")
-      return 75
-    }
-    resumePayload = {
-      summary: collected.summary,
-      branch: collected.branch,
-      commitSha: collected.commit,
-      reviewNotes: collected.notes,
-    }
-  }
+  const resumePayloadResult = await collectResumePayload(active, ctx.resumeFlags, ctx.itemRef)
+  if (resumePayloadResult.kind === "exit") return resumePayloadResult.code
+  const resumePayload = resumePayloadResult.payload
 
   // CLI-specific resume_run: the shared service runs performResume
   // asynchronously over an API IO session; the CLI needs synchronous
@@ -2819,5 +2836,5 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
 const isEntrypoint = process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(process.argv[1])
 
 if (isEntrypoint) {
-  main()
+  await main()
 }

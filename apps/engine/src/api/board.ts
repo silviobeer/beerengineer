@@ -26,6 +26,31 @@ function itemWorktreePath(rootPath: string | null, workspaceFsId: string | null,
   })
 }
 
+function reviewGateWaiting(actionsJson: string | null | undefined): boolean {
+  if (!actionsJson) return false
+  try {
+    const actions = JSON.parse(actionsJson) as Array<{ value?: unknown }>
+    return actions.some(action => action?.value === "promote")
+  } catch {
+    return false
+  }
+}
+
+function boardCardMeta(
+  workspaceRoot: string | null,
+  latestRun: { id: string; workspace_fs_id: string | null; recovery_status: string | null } | undefined,
+  openPrompt: { actions_json: string | null } | undefined,
+  item: { title: string; id: string },
+): Pick<BoardCardDTO, "hasOpenPrompt" | "hasReviewGateWaiting" | "hasBlockedRun" | "previewUrl"> {
+  const worktreePath = itemWorktreePath(workspaceRoot, latestRun?.workspace_fs_id ?? null, item.title, item.id)
+  return {
+    hasOpenPrompt: Boolean(openPrompt),
+    hasReviewGateWaiting: reviewGateWaiting(openPrompt?.actions_json),
+    hasBlockedRun: latestRun?.recovery_status === "blocked",
+    previewUrl: worktreePath ? previewUrlForWorktree(worktreePath) : undefined,
+  }
+}
+
 export type BoardCardDTO = {
   itemCode: string
   itemId: string
@@ -140,27 +165,11 @@ export function getBoard(db: Db, workspaceKey?: string | null): BoardDTO {
       title: columnTitles[col],
       cards: items
         .filter(i => i.current_column === col)
-        .map<BoardCardDTO>(i => ({
-          ...(function () {
-            const latestRun = latestRuns.get(i.id)
-            const openPrompt = latestRun ? openPromptsByRun.get(latestRun.id) : undefined
-            const hasReviewGateWaiting = (() => {
-              if (!openPrompt?.actions_json) return false
-              try {
-                const actions = JSON.parse(openPrompt.actions_json) as Array<{ value?: unknown }>
-                return actions.some(action => action?.value === "promote")
-              } catch {
-                return false
-              }
-            })()
-            const worktreePath = itemWorktreePath(workspace.root_path ?? null, latestRun?.workspace_fs_id ?? null, i.title, i.id)
-            return {
-              hasOpenPrompt: Boolean(openPrompt),
-              hasReviewGateWaiting,
-              hasBlockedRun: latestRun?.recovery_status === "blocked",
-              previewUrl: worktreePath ? previewUrlForWorktree(worktreePath) : undefined,
-            }
-          })(),
+        .map<BoardCardDTO>(i => {
+          const latestRun = latestRuns.get(i.id)
+          const openPrompt = latestRun ? openPromptsByRun.get(latestRun.id) : undefined
+          return {
+          ...boardCardMeta(workspace.root_path ?? null, latestRun, openPrompt, { title: i.title, id: i.id }),
           itemCode: i.code,
           itemId: i.id,
           title: i.title,
@@ -172,7 +181,7 @@ export function getBoard(db: Db, workspaceKey?: string | null): BoardDTO {
             { label: "phase", value: i.phase_status },
             { label: "projects", value: String(projectCounts.get(i.id) ?? 0) }
           ]
-        }))
+        }})
     }))
   }
 }

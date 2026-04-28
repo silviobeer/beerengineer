@@ -44,6 +44,10 @@ interface BoardCardActionsProps {
   card: BoardCardDTO;
 }
 
+function parseActionError(body: unknown, status: number): string {
+  return (body as { error?: string }).error ?? `engine_${status}`;
+}
+
 export function BoardCardActions({ card }: Readonly<BoardCardActionsProps>) {
   const actions = actionsFor(card);
   const [error, setError] = useState<string | null>(null);
@@ -65,7 +69,7 @@ export function BoardCardActions({ card }: Readonly<BoardCardActionsProps>) {
         );
         if (!res.ok) {
           const body = await res.json().catch(() => ({} as { error?: string }));
-          setError((body as { error?: string }).error ?? `engine_${res.status}`);
+          setError(parseActionError(body, res.status));
         }
         // No client-side optimistic state; the SSE workspace stream will
         // emit `item_column_changed` and the live overlay re-buckets the

@@ -42,8 +42,7 @@ export function projectWireframes(
   // requirements/architecture/planning/execution stages need the structural
   // info (regions, navigation, screens) but not the rendered HTML, which can
   // easily inflate the prompt by 30-50KB per screen.
-  const { wireframeHtmlPerScreen: _omit, ...rest } = artifact
-  void _omit
+  const rest = omitField(artifact, "wireframeHtmlPerScreen")
   return {
     ...rest,
     screens,
@@ -60,9 +59,7 @@ export function projectWireframes(
 // Strips mockupHtmlPerScreen so downstream stages do not haul the full
 // hi-fi mockup HTML (often 25KB per screen) through their prompt payload.
 export function projectDesign(artifact: DesignArtifact): DesignArtifact {
-  const { mockupHtmlPerScreen: _omit, ...rest } = artifact
-  void _omit
-  return rest
+  return omitField(artifact, "mockupHtmlPerScreen")
 }
 
 export function projectDesignGuidance(artifact: DesignArtifact | undefined): DesignGuidance | undefined {
@@ -87,4 +84,9 @@ export function mergeAmendments(
     summary: mergeConceptText(concept.summary, relevant),
     constraints: [...(Array.isArray(concept.constraints) ? concept.constraints : []), ...relevant.map(amendment => amendment.description)],
   }
+}
+
+function omitField<T extends object, K extends keyof T>(value: T, key: K): Omit<T, K> {
+  const { [key]: _ignored, ...rest } = value
+  return rest
 }

@@ -450,7 +450,7 @@ function readEnvFileValue(raw: string, key: string): string | undefined {
   for (const line of raw.split(/\r?\n/)) {
     const trimmed = line.trim()
     if (!trimmed || trimmed.startsWith("#")) continue
-    const match = /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(trimmed)
+    const match = /^([A-Za-z_]\w*)\s*=\s*(.*)$/.exec(trimmed)
     if (match?.[1] !== key) continue
     const value = match[2].trim()
     return value.replaceAll(/^['"]|['"]$/g, "")
@@ -1801,6 +1801,77 @@ function renderPreviewSummary(preview: WorkspacePreview): void {
   console.log("")
 }
 
+async function promptHarnessProfile(rl: PromptSession, config: AppConfig): Promise<HarnessProfile> {
+  console.log("\n  Harness profile")
+  console.log("    1) codex-first")
+  console.log("    2) claude-first")
+  console.log("    3) codex-only")
+  console.log("    4) claude-only")
+  console.log("    5) fast")
+  console.log("    6) claude-sdk-first  (Claude Agent SDK; needs ANTHROPIC_API_KEY, bills per-token)")
+  console.log("    7) codex-sdk-first   (Codex SDK; needs OPENAI_API_KEY, bills per-token)")
+  console.log("    8) opencode-china    (qwen + deepseek via OpenRouter)")
+  console.log("    9) opencode-euro     (mistral via OpenRouter)")
+  const choice = await promptLine(rl, "Pick [1-9] or [d]efault", "d")
+  const profileMap: Record<string, HarnessProfile> = {
+    "1": { mode: "codex-first" },
+    "2": { mode: "claude-first" },
+    "3": { mode: "codex-only" },
+    "4": { mode: "claude-only" },
+    "5": { mode: "fast" },
+    "6": { mode: "claude-sdk-first" },
+    "7": { mode: "codex-sdk-first" },
+    "8": { mode: "opencode-china" },
+    "9": { mode: "opencode-euro" },
+    d: config.llm.defaultHarnessProfile,
+  }
+  return profileMap[choice.toLowerCase()] ?? config.llm.defaultHarnessProfile
+}
+
+async function promptSonarConfig(rl: PromptSession, key: string, config: AppConfig): Promise<SonarConfig> {
+  console.log("")
+  const enableSonar = await promptYesNo(rl, "Enable Sonar for this workspace?", false)
+  if (!enableSonar) return { enabled: false }
+  return {
+    enabled: true,
+    projectKey: await promptLine(rl, "Project key", key),
+    organization: await promptLine(rl, "Organization", config.llm.defaultSonarOrganization ?? ""),
+    hostUrl: await promptLine(rl, "Host URL", SONAR_DEFAULT_HOST),
+  }
+}
+
+async function promptGitHubCreateOption(
+  rl: PromptSession,
+  preview: WorkspacePreview,
+  path: string,
+): Promise<{ create: boolean; visibility: "public" | "private" } | undefined> {
+  const ghProbe = runCommand("gh", ["auth", "status"], process.cwd())
+  const hasGhAuth = ghProbe.ok
+  const hasOrigin = preview.isGitRepo && runCommand("git", ["remote", "get-url", "origin"], path).ok
+  if (!hasGhAuth || hasOrigin) return undefined
+  const create = await promptYesNo(rl, "No GitHub origin detected. Create a new GitHub repo now?", false)
+  if (!create) return undefined
+  const visibilityAnswer = await promptLine(rl, "Visibility [private/public]", "private")
+  const visibility: "public" | "private" = visibilityAnswer.toLowerCase().startsWith("pub") ? "public" : "private"
+  return { create: true, visibility }
+}
+
+async function promptSonarTokenValue(
+  rl: PromptSession,
+  path: string,
+  sonar: SonarConfig,
+): Promise<{ value: string; persist: boolean } | undefined> {
+  if (!sonar.enabled) return undefined
+  const detected = await detectSonarToken(path)
+  if (detected.value) return undefined
+  console.log("\n  SONAR_TOKEN is required for SonarCloud project creation and scanner runs.")
+  console.log("  Generate one at https://sonarcloud.io/account/security")
+  const value = (await promptLine(rl, "SONAR_TOKEN (blank to skip)", "")).trim()
+  if (!value) return undefined
+  const persist = await promptYesNo(rl, "Write SONAR_TOKEN to .env.local (git-ignored)?", true)
+  return { value, persist }
+}
+
 export async function promptForWorkspaceAddDefaults(config: AppConfig): Promise<{
   path: string
   name?: string
@@ -1819,42 +1890,8 @@ export async function promptForWorkspaceAddDefaults(config: AppConfig): Promise<
 
     const name = await promptLine(rl, "Name", basename(path))
     const key = await promptLine(rl, "Key", slugify(name))
-
-    console.log("\n  Harness profile")
-    console.log("    1) codex-first")
-    console.log("    2) claude-first")
-    console.log("    3) codex-only")
-    console.log("    4) claude-only")
-    console.log("    5) fast")
-    console.log("    6) claude-sdk-first  (Claude Agent SDK; needs ANTHROPIC_API_KEY, bills per-token)")
-    console.log("    7) codex-sdk-first   (Codex SDK; needs OPENAI_API_KEY, bills per-token)")
-    console.log("    8) opencode-china    (qwen + deepseek via OpenRouter)")
-    console.log("    9) opencode-euro     (mistral via OpenRouter)")
-    const choice = await promptLine(rl, "Pick [1-9] or [d]efault", "d")
-    const profileMap: Record<string, HarnessProfile> = {
-      "1": { mode: "codex-first" },
-      "2": { mode: "claude-first" },
-      "3": { mode: "codex-only" },
-      "4": { mode: "claude-only" },
-      "5": { mode: "fast" },
-      "6": { mode: "claude-sdk-first" },
-      "7": { mode: "codex-sdk-first" },
-      "8": { mode: "opencode-china" },
-      "9": { mode: "opencode-euro" },
-      d: config.llm.defaultHarnessProfile,
-    }
-    const profile = profileMap[choice.toLowerCase()] ?? config.llm.defaultHarnessProfile
-
-    console.log("")
-    const enableSonar = await promptYesNo(rl, "Enable Sonar for this workspace?", false)
-    const sonar = enableSonar
-      ? {
-          enabled: true,
-          projectKey: await promptLine(rl, "Project key", key),
-          organization: await promptLine(rl, "Organization", config.llm.defaultSonarOrganization ?? ""),
-          hostUrl: await promptLine(rl, "Host URL", SONAR_DEFAULT_HOST),
-        }
-      : { enabled: false }
+    const profile = await promptHarnessProfile(rl, config)
+    const sonar = await promptSonarConfig(rl, key, config)
 
     const defaultGitInit = preview.isGreenfield || !preview.isGitRepo
     const gitInit = await promptYesNo(rl, "Initialize git?", defaultGitInit)
@@ -1862,33 +1899,10 @@ export async function promptForWorkspaceAddDefaults(config: AppConfig): Promise<
     // Offer GitHub repo creation when gh is authenticated and the workspace
     // has no detected origin remote. Preflight runs again inside registerWorkspace
     // after the repo is created, so CodeRabbit/Sonar can key off it.
-    let github: { create: boolean; visibility: "public" | "private" } | undefined
-    const ghProbe = runCommand("gh", ["auth", "status"], process.cwd())
-    const hasGhAuth = ghProbe.ok
-    const hasOrigin = preview.isGitRepo && runCommand("git", ["remote", "get-url", "origin"], path).ok
-    if (hasGhAuth && !hasOrigin) {
-      const create = await promptYesNo(rl, "No GitHub origin detected. Create a new GitHub repo now?", false)
-      if (create) {
-        const visibilityAnswer = await promptLine(rl, "Visibility [private/public]", "private")
-        const visibility: "public" | "private" = visibilityAnswer.toLowerCase().startsWith("pub") ? "public" : "private"
-        github = { create: true, visibility }
-      }
-    }
+    const github = await promptGitHubCreateOption(rl, preview, path)
 
     // Offer to supply SONAR_TOKEN when Sonar is enabled but none is detected.
-    let sonarToken: { value: string; persist: boolean } | undefined
-    if (sonar.enabled) {
-      const detected = await detectSonarToken(path)
-      if (!detected.value) {
-        console.log("\n  SONAR_TOKEN is required for SonarCloud project creation and scanner runs.")
-        console.log("  Generate one at https://sonarcloud.io/account/security")
-        const value = (await promptLine(rl, "SONAR_TOKEN (blank to skip)", "")).trim()
-        if (value) {
-          const persist = await promptYesNo(rl, "Write SONAR_TOKEN to .env.local (git-ignored)?", true)
-          sonarToken = { value, persist }
-        }
-      }
-    }
+    const sonarToken = await promptSonarTokenValue(rl, path, sonar)
 
     const proceed = await promptYesNo(rl, "Proceed?", true)
     if (!proceed) {

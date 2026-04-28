@@ -129,8 +129,6 @@ export type WorkspacePreflightCheck = {
   detail?: string
 }
 
-export type WorkspaceGitPreflight = WorkspacePreflightCheck
-
 export type WorkspaceGitHubPreflight = WorkspacePreflightCheck & {
   owner?: string
   repo?: string
@@ -148,14 +146,12 @@ export type WorkspaceSonarPreflight = WorkspacePreflightCheck & {
   readiness?: SonarReadiness
 }
 
-export type WorkspaceCoderabbitPreflight = WorkspacePreflightCheck
-
 export type WorkspacePreflightReport = {
-  git: WorkspaceGitPreflight
+  git: WorkspacePreflightCheck
   github: WorkspaceGitHubPreflight
   gh: WorkspaceGhPreflight
   sonar: WorkspaceSonarPreflight
-  coderabbit: WorkspaceCoderabbitPreflight
+  coderabbit: WorkspacePreflightCheck
   checkedAt: string
 }
 

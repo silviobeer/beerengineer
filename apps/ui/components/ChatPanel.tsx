@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type ComponentProps } from "react";
 import type { ConversationAction, ConversationEntry } from "../lib/types";
 
 function formatTimestamp(iso: string | undefined): string | null {
@@ -89,7 +89,7 @@ export function ChatPanel({ activeRunId, conversation }: Readonly<ChatPanelProps
     }
   }
 
-  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
+  const handleSubmit = async (e: Parameters<NonNullable<ComponentProps<"form">["onSubmit"]>>[0]) => {
     e.preventDefault();
     if (pendingMessage) return;
     if (draft.trim().length === 0) {
@@ -115,7 +115,7 @@ export function ChatPanel({ activeRunId, conversation }: Readonly<ChatPanelProps
     } finally {
       setPendingMessage(false);
     }
-  }
+  };
 
   return (
     <section data-testid="chat-panel" aria-label="Chat panel">

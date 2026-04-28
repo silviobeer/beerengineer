@@ -9,7 +9,6 @@ import {
   branchNameStory,
   branchNameWave,
 } from "./branchNames.js"
-import { isEngineOwnedBranchName } from "./baseBranch.js"
 import { resolveMergeConflictsViaLlm, type MergeResolverHarness } from "./mergeResolver.js"
 
 export type GitMergeOptions = {
@@ -608,7 +607,7 @@ export function commitAll(worktreePath: string, message: string): string | null 
 }
 
 // Re-export so callers that only reach for real-git helpers still get a single entry point.
-export { isEngineOwnedBranchName }
+export { isEngineOwnedBranchName } from "./baseBranch.js"
 
 export function removeStoryWorktree(mode: GitMode, worktreeRoot: string): void {
   const targetPath = resolve(worktreeRoot)

@@ -86,7 +86,7 @@ function detectFromDeps(deps: Record<string, unknown> | undefined): DetectedDeps
   if (!deps) return {}
   // Order matters: a Next.js project always also declares `react`; we want the
   // higher-level framework first.
-  const has = (name: string): boolean => Object.prototype.hasOwnProperty.call(deps, name)
+  const has = (name: string): boolean => Object.hasOwn(deps, name)
   let framework: string | undefined
   if (has("next")) framework = "next"
   else if (has("@angular/core")) framework = "angular"
@@ -104,7 +104,10 @@ function readPackageDeps(pkgJsonPath: string): Record<string, unknown> | undefin
   try {
     const raw = readFileSync(pkgJsonPath, "utf8")
     const parsed = JSON.parse(raw) as { dependencies?: Record<string, unknown>; devDependencies?: Record<string, unknown> }
-    return { ...(parsed.dependencies ?? {}), ...(parsed.devDependencies ?? {}) }
+    const dependencies = parsed.dependencies ?? undefined
+    const devDependencies = parsed.devDependencies ?? undefined
+    if (dependencies && devDependencies) return { ...dependencies, ...devDependencies }
+    return dependencies ?? devDependencies
   } catch {
     return undefined
   }

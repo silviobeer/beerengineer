@@ -206,9 +206,11 @@ function buildFeedbackSummary(result: StoryReviewRun): string[] {
     }
     return `[tool-status] ${tool}: ${value.status} (${value.reason})`
   }
-  summary.push(toolStatusLine("design-system", result.designSystem))
-  summary.push(toolStatusLine("coderabbit", result.coderabbit))
-  summary.push(toolStatusLine("sonar", result.sonar))
+  summary.push(
+    toolStatusLine("design-system", result.designSystem),
+    toolStatusLine("coderabbit", result.coderabbit),
+    toolStatusLine("sonar", result.sonar),
+  )
   for (const reason of result.failedBecause) summary.push(`[gate] ${reason}`)
   for (const finding of result.combinedFindings) summary.push(`[${finding.source}] ${finding.message}`)
   return summary
@@ -704,7 +706,8 @@ async function runOneIteration(
     result: result === "done" && isRemediation ? "review_feedback_applied" : result,
     notes,
   })
-  ;(implementation.priorAttempts ??= []).push({
+  const priorAttempts = (implementation.priorAttempts ??= [])
+  priorAttempts.push({
     iteration: iterationNumber,
     summary: coderSummary ?? (result === "done" ? "Implementation reached green." : "Implementation still failing checks."),
     outcome: (() => {

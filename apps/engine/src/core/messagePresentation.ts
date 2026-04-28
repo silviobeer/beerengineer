@@ -45,6 +45,9 @@ export type MessagePresentation = {
 }
 
 export function presentMessageEntry(entry: MessageEntry): MessagePresentation {
+  if (entry.type === "run_resumed") {
+    return { icon: "🪄", label: "run resumed" }
+  }
   switch (entry.type) {
     case "run_started":
       return { icon: "🚀", label: "run started", detail: payloadString(entry.payload.title, entry.runId) }
@@ -54,8 +57,6 @@ export function presentMessageEntry(entry: MessageEntry): MessagePresentation {
       return { icon: "💥", label: "run failed", detail: payloadString(entry.payload.summary) }
     case "run_blocked":
       return { icon: "🧱", label: "run blocked", detail: payloadString(entry.payload.summary) }
-    case "run_resumed":
-      return { icon: "🪄", label: "run resumed" }
     case "phase_started":
       return { icon: "→", label: "stage entered", detail: payloadString(entry.payload.stageKey) }
     case "phase_completed":

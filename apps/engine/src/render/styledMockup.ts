@@ -3,14 +3,23 @@ import { validateDesignArtifact } from "./designPreview.js"
 
 // ── CSS-value safety guards (same conservative approach as designPreview.ts) ──
 
-const COLOR_PATTERN = /^(#[0-9a-f]{3,8}|rgba?\([0-9.,\s%]+\)|hsla?\([0-9.,\s%]+\)|transparent|currentColor|[a-z]+)$/i
-const FONT_FAMILY_PATTERN = /^[A-Za-z0-9 ,'"\-]+$/
+type CssValuePattern = Pick<RegExp, "test">
+
+const COLOR_FUNCTION_PATTERN = /^(?:rgba?|hsla?)\([0-9.,\s%]+\)$/i
+const COLOR_HEX_PATTERN = /^#[0-9a-f]{3,8}$/i
+const COLOR_KEYWORDS = new Set(["transparent", "currentColor"])
+const COLOR_PATTERN: CssValuePattern = {
+  test(value: string): boolean {
+    return COLOR_HEX_PATTERN.test(value) || COLOR_FUNCTION_PATTERN.test(value) || COLOR_KEYWORDS.has(value) || /^[a-z]+$/i.test(value)
+  },
+}
+const FONT_FAMILY_PATTERN = /^[A-Za-z0-9 ,'"-]+$/
 const FONT_WEIGHT_PATTERN = /^(normal|bold|lighter|bolder|[1-9]00)$/
-const BORDER_RADIUS_PATTERN = /^[0-9]+(%|px|rem|em)?$/
-const SIZE_PATTERN = /^[0-9]+(%|px|rem|em|vw|vh)?$/
+const BORDER_RADIUS_PATTERN = /^\d+(%|px|rem|em)?$/
+const SIZE_PATTERN = /^\d+(%|px|rem|em|vw|vh)?$/
 const SHADOW_PATTERN = /^[0-9a-z#(),.\s%]+$/i
 
-function safe(raw: string | undefined, pattern: RegExp, fallback: string): string {
+function safe(raw: string | undefined, pattern: CssValuePattern, fallback: string): string {
   if (typeof raw !== "string") return fallback
   const t = raw.trim()
   return pattern.test(t) ? t : fallback
