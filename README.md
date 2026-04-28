@@ -115,6 +115,10 @@ Notes:
 - Workspace artefacts now live under the registered repo root:
   `/path/to/your/project/.beerengineer/`.
 - Make sure `.beerengineer/` is ignored by git in every registered workspace.
+- Sonar tokens stay operator-local. Put `SONAR_TOKEN` in your shell environment
+  or local secret store; `workspace add --sonar` writes non-secret Sonar metadata
+  only and validates the generated `sonar-project.properties` against the real
+  workspace layout.
 
 Alternatively, start the HTTP API and drive from another tool:
 

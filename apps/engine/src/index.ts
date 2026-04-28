@@ -770,6 +770,7 @@ async function runWorkspaceAddCommand(cmd: Extract<Command, { kind: "workspace-a
       console.log(`    1. Create or import the project in SonarQube Cloud: ${result.sonarProjectUrl}`)
       console.log("    2. Check whether your org uses the EU default or the US region.")
       console.log("    3. Create an analysis token and export it locally: export SONAR_TOKEN=...")
+      console.log("       Keep SONAR_TOKEN in your shell, keychain, or .env.local flow; never commit it to the repo.")
       console.log("    4. Mark the project as AI-generated: Project settings > AI-generated code >")
       console.log("       enable \"Contains AI-generated code\" (adds the +Contains AI code label).")
       console.log("    5. Apply an AI-qualified quality gate: Project settings > Quality Gate >")
@@ -785,6 +786,13 @@ async function runWorkspaceAddCommand(cmd: Extract<Command, { kind: "workspace-a
       }
     } else if (result.ghCreateCommand) {
       console.log("\n  Next steps")
+    }
+    if (result.workspace.sonarEnabled) {
+      console.log("    Local Sonar readiness")
+      console.log(`    - scanner: ${result.sonarReadiness.scanner}`)
+      console.log(`    - token: ${result.sonarReadiness.token}${result.sonarReadiness.details?.token ? ` (${result.sonarReadiness.details.token})` : ""}`)
+      console.log(`    - config: ${result.sonarReadiness.config}${result.sonarReadiness.details?.config ? ` (${result.sonarReadiness.details.config})` : ""}`)
+      console.log(`    - coverage: ${result.sonarReadiness.coverage}${result.sonarReadiness.details?.coverage ? ` (${result.sonarReadiness.details.coverage})` : ""}`)
     }
     if (result.sonarProjectUrl || result.ghCreateCommand) {
       console.log("    CodeRabbit")

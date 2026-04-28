@@ -1,5 +1,24 @@
 export type SetupStatus = "ok" | "missing" | "misconfigured" | "skipped" | "unknown" | "uninitialized"
 export type SetupLevel = "required" | "recommended" | "optional"
+export type SonarReadinessStatus = "ok" | "missing" | "invalid" | "unknown"
+export type SonarCoverageReadinessStatus =
+  | "ok"
+  | "producer-missing"
+  | "artifact-missing"
+  | "not-configured"
+  | "unknown"
+
+export type SonarReadinessState = {
+  scanner: SonarReadinessStatus
+  token: SonarReadinessStatus
+  config: SonarReadinessStatus
+  coverage: SonarCoverageReadinessStatus
+}
+
+export type SonarReadiness = SonarReadinessState & {
+  warnings: string[]
+  details?: Partial<Record<keyof SonarReadinessState, string>>
+}
 
 export type SetupRemedy = {
   hint: string

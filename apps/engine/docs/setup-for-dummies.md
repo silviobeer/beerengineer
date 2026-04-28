@@ -73,10 +73,15 @@ often miss:**
 
 - beerengineer_ can generate local Sonar config files, but you still need to
   create or import the project in SonarQube Cloud itself.
+- The generated `sonar-project.properties` is now validated against the actual
+  workspace layout. If beerengineer_ cannot find real source roots or a likely
+  coverage producer, it will warn instead of pretending Sonar is ready.
 - If possible, import the repository into SonarQube Cloud instead of creating
   the project by hand.
 - After that, create an analysis token and export it locally as
   `SONAR_TOKEN`.
+- Keep `SONAR_TOKEN` out of the repo. Store it in your shell environment,
+  keychain, or another operator-local secret store.
 - If your organization uses the US SonarQube Cloud instance instead of the
   EU default, that must be selected explicitly during setup.
 
