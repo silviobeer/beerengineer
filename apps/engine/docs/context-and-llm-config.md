@@ -34,6 +34,8 @@ shape regardless of stage:
 
 ```
 <prompt-file markdown>           ← from apps/engine/prompts/<kind>/<id>.md
+## References                   ← injected only when PROMPT_BUNDLES wires bundles
+<reference bundle markdown>     ← from apps/engine/prompts/references/<bundle>.md
 <canonical instruction lines>    ← per-kind (stage / review / execution)
 <action line>                    ← e.g. "Revise the stage output ..."
 <identity lines>                 ← Stage: …, Story: …, Action: …
@@ -47,6 +49,12 @@ Payload:
 The **payload** is the structured carrier of all turn-specific context.
 The prompt file owns *behavior*; the payload owns *facts*.
 
+Reference composition is static and engine-side. The model never "fetches"
+bundle files later; `loadComposedPrompt(...)` resolves them before the
+provider call. Reviewer `_default.md` fallback applies only when the
+reviewer prompt file itself is missing, not when a referenced bundle fails
+to load.
+
 ### The three prompt kinds
 
 `HostedPromptKind = "stage" | "review" | "execution"` —
@@ -57,6 +65,14 @@ The prompt file owns *behavior*; the payload owns *facts*.
 | `stage`     | `prompts/system/`| `{ kind: "artifact", artifact }` or `{ kind: "message", message }`                                    | no               |
 | `review`    | `prompts/reviewers/`| `{ kind: "pass" }` \| `{ kind: "revise", feedback }` \| `{ kind: "block", reason }`                | yes (`_default.md`) |
 | `execution` | `prompts/workers/`| `{ summary, testsRun[], implementationNotes[], blockers[] }`                                          | no               |
+
+`promptEnvelope.ts` also owns a `PROMPT_BUNDLES` table that maps selected
+prompt ids to reusable `prompts/references/...` bundle files. Today:
+
+- `system/frontend-design` gets the anti-pattern bank plus all design-domain references
+- `system/qa` gets the anti-pattern bank only
+- `reviewers/frontend-design` gets the anti-pattern bank only
+- `workers/execution` gets the implementation-relevant subset
 
 The instruction block is **canonical**: single JSON object, no markdown
 fences, prior turns may exist in the provider's native session, the

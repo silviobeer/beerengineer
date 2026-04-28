@@ -36,6 +36,7 @@ The repository ships a single source of truth at `apps/ui/app/design-tokens.css`
 - mono font is reserved for code, logs, item codes, chip labels, timestamps, and keyboard hints; use `var(--font-mono)`, `var(--font-display)`, and `var(--font-body)` intentionally
 - if you touch the entry layout, import `app/design-tokens.css`; otherwise rely on the layout import and do not redeclare tokens
 - if the payload includes `storyContext.design`, `storyContext.mockupHtmlByScreen`, or `storyContext.references`, treat them as ground truth rather than optional inspiration
+- implementation-relevant design references are appended under `## References`; use them to preserve the intended typography, contrast, spacing, and interaction quality while staying inside the story boundary
 
 ## Project Scaffold (do not modify)
 

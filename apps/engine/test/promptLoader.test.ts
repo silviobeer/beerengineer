@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { clearPromptCache, loadPrompt, PromptLoadError } from "../src/llm/prompts/loader.js"
+import { clearPromptCache, loadComposedPrompt, loadPrompt, PromptLoadError } from "../src/llm/prompts/loader.js"
 
 test("loadPrompt strips the title heading and caches results", () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-prompts-"))
@@ -70,5 +70,98 @@ test("loadPrompt honors BEERENGINEER_PROMPTS_DIR relative to cwd", () => {
     clearPromptCache()
     if (previousDir === undefined) delete process.env.BEERENGINEER_PROMPTS_DIR
     else process.env.BEERENGINEER_PROMPTS_DIR = previousDir
+  }
+})
+
+test("loadComposedPrompt appends references and reuses the same cache entry for reordered bundles", () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-prompts-bundles-"))
+  mkdirSync(join(dir, "system"), { recursive: true })
+  mkdirSync(join(dir, "references", "design"), { recursive: true })
+  writeFileSync(join(dir, "system", "frontend-design.md"), "# Frontend Design\n\nstage body\n", "utf8")
+  writeFileSync(join(dir, "references", "design", "anti-patterns.md"), "# Anti-patterns\n\nANTI SENTINEL\n", "utf8")
+  writeFileSync(join(dir, "references", "design", "typography.md"), "# Typography\n\nTYPE SENTINEL\n", "utf8")
+
+  const previous = process.env.BEERENGINEER_PROMPTS_DIR
+  process.env.BEERENGINEER_PROMPTS_DIR = dir
+  clearPromptCache()
+
+  try {
+    const first = loadComposedPrompt("system", "frontend-design", ["design/anti-patterns", "design/typography"])
+    writeFileSync(join(dir, "references", "design", "anti-patterns.md"), "# Anti-patterns\n\nCHANGED SENTINEL\n", "utf8")
+    const second = loadComposedPrompt("system", "frontend-design", ["design/typography", "design/anti-patterns"])
+    const third = loadComposedPrompt("system", "frontend-design", ["design/typography"])
+
+    assert.match(first, /stage body/)
+    assert.match(first, /## References/)
+    assert.match(first, /ANTI SENTINEL/)
+    assert.match(first, /TYPE SENTINEL/)
+    assert.equal(second, first)
+    assert.notEqual(third, first)
+    assert.doesNotMatch(second, /CHANGED SENTINEL/)
+  } finally {
+    clearPromptCache()
+    if (previous === undefined) delete process.env.BEERENGINEER_PROMPTS_DIR
+    else process.env.BEERENGINEER_PROMPTS_DIR = previous
+  }
+})
+
+test("loadComposedPrompt errors loudly on a missing bundle", () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-prompts-missing-bundle-"))
+  mkdirSync(join(dir, "system"), { recursive: true })
+  writeFileSync(join(dir, "system", "frontend-design.md"), "# Frontend Design\n\nstage body\n", "utf8")
+
+  const previous = process.env.BEERENGINEER_PROMPTS_DIR
+  process.env.BEERENGINEER_PROMPTS_DIR = dir
+  clearPromptCache()
+
+  try {
+    assert.throws(
+      () => loadComposedPrompt("system", "frontend-design", ["design/anti-patterns"]),
+      (error: unknown) =>
+        error instanceof PromptLoadError &&
+        error.missing &&
+        error.message.includes(join(dir, "references", "design", "anti-patterns.md")) &&
+        error.message.includes('prompt bundle id="design/anti-patterns"'),
+    )
+  } finally {
+    clearPromptCache()
+    if (previous === undefined) delete process.env.BEERENGINEER_PROMPTS_DIR
+    else process.env.BEERENGINEER_PROMPTS_DIR = previous
+  }
+})
+
+test("loadComposedPrompt rejects invalid or duplicate bundle ids", () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-prompts-invalid-bundle-"))
+  mkdirSync(join(dir, "system"), { recursive: true })
+  mkdirSync(join(dir, "references", "design"), { recursive: true })
+  writeFileSync(join(dir, "system", "frontend-design.md"), "# Frontend Design\n\nstage body\n", "utf8")
+  writeFileSync(join(dir, "references", "design", "anti-patterns.md"), "# Anti-patterns\n\nANTI SENTINEL\n", "utf8")
+
+  const previous = process.env.BEERENGINEER_PROMPTS_DIR
+  process.env.BEERENGINEER_PROMPTS_DIR = dir
+  clearPromptCache()
+
+  try {
+    assert.throws(
+      () => loadComposedPrompt("system", "frontend-design", ["../escape"]),
+      (error: unknown) =>
+        error instanceof PromptLoadError &&
+        error.source === "bundle" &&
+        error.id === "../escape" &&
+        error.message.includes('Invalid prompt bundle id "../escape"'),
+    )
+
+    assert.throws(
+      () => loadComposedPrompt("system", "frontend-design", ["design/anti-patterns", "design/anti-patterns"]),
+      (error: unknown) =>
+        error instanceof PromptLoadError &&
+        error.source === "bundle" &&
+        error.id === "design/anti-patterns" &&
+        error.message.includes('Duplicate prompt bundle id "design/anti-patterns"'),
+    )
+  } finally {
+    clearPromptCache()
+    if (previous === undefined) delete process.env.BEERENGINEER_PROMPTS_DIR
+    else process.env.BEERENGINEER_PROMPTS_DIR = previous
   }
 })

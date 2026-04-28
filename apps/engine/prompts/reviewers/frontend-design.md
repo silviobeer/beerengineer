@@ -11,6 +11,7 @@ Pass only if all of the following are true:
 - No code-level or component-library decisions leak into the artifact.
 - If wireframes exist: borders.buttons, borders.cards, borders.badges, and shadows.* values are specific and match the stated tone (e.g. a "zero rounded corners" tone must have `0px` in all border radius tokens, not `12px`).
 - anti-patterns are self-consistent with the tokens (e.g. if an anti-pattern says "no rounded corners", border tokens must reflect that).
+- anti-patterns are specific enough to be actionable, with at least some entries grounded in the bundled bank rather than empty filler.
 - **If wireframes are present in the payload**: `mockupHtmlPerScreen` must be present with one entry per UI-bearing screen.
 - **Each mockup HTML entry** must:
   - Start with `<!doctype html` or `<html` (well-formed standalone document)
@@ -24,7 +25,7 @@ Revise when:
 - Tokens are incomplete.
 - The direction is vague, generic, or internally inconsistent.
 - Readability appears weak.
-- Anti-patterns are missing or too generic.
+- Anti-patterns are missing, generic, or copied from the bank without being shaped to the item's tone, audience, or workflow.
 - Border or shadow tokens contradict the stated tone or anti-patterns.
 - Wireframes were provided but `mockupHtmlPerScreen` is absent or missing screens.
 - Any mockup HTML contains bracket-style placeholders instead of realistic content.
