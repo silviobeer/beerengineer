@@ -1,12 +1,17 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 
 import { buildExecutionPrompt, buildReviewPrompt, buildStagePrompt } from "../src/llm/hosted/promptEnvelope.js"
+import { clearPromptCache, PromptLoadError } from "../src/llm/prompts/loader.js"
 
 test("stage prompt preserves the outer JSON contract after externalization", () => {
   const prompt = buildStagePrompt({
     stageId: "planning",
-    provider: "codex",
+    harness: "codex",
+    runtime: "sdk",
     runtimePolicy: { mode: "safe-workspace-write" },
     request: { kind: "begin", state: { foo: "bar" } },
   })
@@ -22,7 +27,8 @@ test("stage prompt preserves the outer JSON contract after externalization", () 
 test("review prompt preserves the pass revise block contract and falls back to the default reviewer", () => {
   const prompt = buildReviewPrompt({
     stageId: "documentation",
-    provider: "codex",
+    harness: "codex",
+    runtime: "sdk",
     runtimePolicy: { mode: "safe-readonly" },
     request: { artifact: { ok: true }, state: { loop: 1 } },
   })
@@ -33,7 +39,8 @@ test("review prompt preserves the pass revise block contract and falls back to t
 
   const fallbackPrompt = buildReviewPrompt({
     stageId: "execution",
-    provider: "codex",
+    harness: "codex",
+    runtime: "sdk",
     runtimePolicy: { mode: "safe-readonly" },
     request: { artifact: { ok: true }, state: { loop: 1 } },
   })
@@ -43,7 +50,8 @@ test("review prompt preserves the pass revise block contract and falls back to t
 
 test("execution prompt loads the external worker prompt and keeps the coder contract inline", () => {
   const prompt = buildExecutionPrompt({
-    provider: "codex",
+    harness: "codex",
+    runtime: "sdk",
     runtimePolicy: { mode: "unsafe-autonomous-write" },
     storyId: "ITEM-1-P01-US01",
     action: "implement",
@@ -54,4 +62,87 @@ test("execution prompt loads the external worker prompt and keeps the coder cont
   assert.match(prompt, /Modify files directly inside the workspace when required by the task\./)
   assert.match(prompt, /iterationContext/)
   assert.match(prompt, /"summary": string/)
+})
+
+test("frontend-design, qa, and execution prompts include bundled design references", () => {
+  const frontendDesignPrompt = buildStagePrompt({
+    stageId: "frontend-design",
+    harness: "codex",
+    runtime: "sdk",
+    runtimePolicy: { mode: "safe-workspace-write" },
+    request: { kind: "begin", state: { foo: "bar" } },
+  })
+  assert.match(frontendDesignPrompt, /## References/)
+  assert.match(frontendDesignPrompt, /Prefer a distinct type pairing/)
+  assert.match(frontendDesignPrompt, /Avoid the familiar "single violet accent on off-white" palette/)
+
+  const qaPrompt = buildStagePrompt({
+    stageId: "qa",
+    harness: "codex",
+    runtime: "sdk",
+    runtimePolicy: { mode: "safe-readonly" },
+    request: { kind: "begin", state: { foo: "bar" } },
+  })
+  assert.match(qaPrompt, /## References/)
+  assert.match(qaPrompt, /Avoid the familiar "single violet accent on off-white" palette/)
+  assert.doesNotMatch(qaPrompt, /Responsive checks are part of QA/)
+
+  const executionPrompt = buildExecutionPrompt({
+    harness: "codex",
+    runtime: "sdk",
+    runtimePolicy: { mode: "unsafe-autonomous-write" },
+    storyId: "ITEM-1-P01-US01",
+    action: "implement",
+    payload: { story: "demo" },
+  })
+  assert.match(executionPrompt, /## References/)
+  assert.match(executionPrompt, /Interaction polish should survive keyboard and pointer use/)
+  assert.doesNotMatch(executionPrompt, /Responsive checks are part of QA/)
+})
+
+test("frontend-design review prompt includes the bundled anti-patterns reference", () => {
+  const prompt = buildReviewPrompt({
+    stageId: "frontend-design",
+    harness: "codex",
+    runtime: "sdk",
+    runtimePolicy: { mode: "safe-readonly" },
+    request: { artifact: { ok: true }, state: { loop: 1 } },
+  })
+
+  assert.match(prompt, /## References/)
+  assert.match(prompt, /Avoid the familiar "single violet accent on off-white" palette/)
+})
+
+test("frontend-design review prompt does not fall back to _default when a bundle is missing", () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-review-bundle-missing-"))
+  mkdirSync(join(dir, "reviewers"), { recursive: true })
+  writeFileSync(join(dir, "reviewers", "frontend-design.md"), "# Frontend Design Reviewer\n\nreview body\n", "utf8")
+  writeFileSync(join(dir, "reviewers", "_default.md"), "# Default Reviewer\n\ndefault body\n", "utf8")
+
+  const previous = process.env.BEERENGINEER_PROMPTS_DIR
+  process.env.BEERENGINEER_PROMPTS_DIR = dir
+  clearPromptCache()
+
+  try {
+    assert.throws(
+      () =>
+        buildReviewPrompt({
+          stageId: "frontend-design",
+          harness: "codex",
+          runtime: "sdk",
+          runtimePolicy: { mode: "safe-readonly" },
+          request: { artifact: { ok: true }, state: { loop: 1 } },
+        }),
+      (error: unknown) =>
+        error instanceof PromptLoadError &&
+        error.source === "bundle" &&
+        error.kind === "reviewers" &&
+        error.id === "design/anti-patterns" &&
+        error.missing,
+    )
+  } finally {
+    clearPromptCache()
+    if (previous === undefined) delete process.env.BEERENGINEER_PROMPTS_DIR
+    else process.env.BEERENGINEER_PROMPTS_DIR = previous
+  }
 })

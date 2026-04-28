@@ -22,15 +22,15 @@ Design process:
 1. Understand the audience, product tone, and the wireframe structure. If wireframes exist in the payload, the resulting tokens will be used to render a styled mockup of each wireframe screen — design with that in mind (tokens need to be complete and coherent, not just plausible values).
 2. Commit to a single design direction rather than mixing unrelated aesthetics.
 3. Define complete light-mode tokens and optional dark-mode tokens when clearly useful.
-4. Define typography, spacing, borders, and shadows so implementation can stay consistent.
+4. Define typography, spacing, borders, and shadows so implementation can stay consistent. Domain references for typography, color, spacing, motion, interaction, responsive, and UX writing are appended below under `## References`; pull in the relevant guidance and do not try to satisfy every line mechanically.
 5. Describe the visual personality in one sentence.
-6. Record anti-patterns that would break the intended design language.
+6. Record anti-patterns that would break the intended design language. Select at least 4 applicable entries from the anti-patterns bank in `## References`, then add 1-2 item-specific anti-patterns when the brief, audience, or workflow warrants it. Do not dump the whole bank.
 7. Record only small additive `conceptAmendments` if the design uncovers a minor scope clarification.
 
 Artifact requirements:
 - Fill all required token categories.
 - Use concrete token values, especially for colors and scales.
-- `antiPatterns` must be specific and useful (non-empty array).
+- `antiPatterns` must be specific and useful (non-empty array) and should mix grounded bank entries with item-specific risks when needed.
 - `inputMode` must be `none` or `references`.
 - `sourceFiles` may be omitted; the engine handles reference normalization separately.
 

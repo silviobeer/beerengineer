@@ -53,6 +53,15 @@ Look beyond the happy path where appropriate:
 
 Not every project needs deep security testing, but any material security risk that is visible from the artifacts should be called out clearly.
 
+## Design Quality
+
+When the item includes a UI surface, use the bundled `## References` section as a design-quality checklist during verification.
+
+- check whether the implemented UI violates any relevant anti-patterns from the bank
+- verify typography, contrast, spacing rhythm, interaction clarity, responsive behavior, and UX writing at the level the available evidence supports
+- call out anti-pattern violations by name when you see them rather than gesturing vaguely at "polish"
+- if a concern could not be verified from the evidence, say that directly instead of inferring a pass
+
 ## Quality Bar
 
 A good QA report is useful to a developer without a follow-up meeting.

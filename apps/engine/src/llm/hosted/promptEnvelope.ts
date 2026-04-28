@@ -2,7 +2,7 @@ import type { ReviewContext, StageAgentInput, StageContext } from "../../core/ad
 import type { RuntimePolicy } from "../registry.js"
 import type { InvocationRuntime } from "../types.js"
 import type { KnownHarness } from "../../types/workspace.js"
-import { loadPrompt, PromptLoadError, type PromptKind } from "../prompts/loader.js"
+import { loadComposedPrompt, loadPrompt, PromptLoadError, type PromptBundleId, type PromptKind } from "../prompts/loader.js"
 
 /**
  * Hosted dispatch identifier — the agent runtime brand. Distinct from the
@@ -109,11 +109,55 @@ const SCHEMAS: Record<HostedPromptKind, PromptSchema> = {
   },
 }
 
+const PROMPT_BUNDLES: Partial<Record<PromptKind, Partial<Record<string, readonly PromptBundleId[]>>>> = {
+  system: {
+    "frontend-design": [
+      "design/anti-patterns",
+      "design/color-and-contrast",
+      "design/interaction-design",
+      "design/motion-design",
+      "design/responsive-design",
+      "design/spatial-design",
+      "design/typography",
+      "design/ux-writing",
+    ],
+    qa: [
+      "design/anti-patterns",
+    ],
+  },
+  reviewers: {
+    "frontend-design": ["design/anti-patterns"],
+  },
+  workers: {
+    execution: [
+      "design/anti-patterns",
+      "design/color-and-contrast",
+      "design/interaction-design",
+      "design/spatial-design",
+      "design/typography",
+    ],
+  },
+}
+
+function bundlesFor(kind: PromptKind, promptId: string): readonly PromptBundleId[] {
+  return PROMPT_BUNDLES[kind]?.[promptId] ?? []
+}
+
 function loadPromptWithFallback(schema: PromptSchema, promptId: string): string {
+  const bundleIds = bundlesFor(schema.promptKind, promptId)
   try {
-    return loadPrompt(schema.promptKind, promptId)
+    return bundleIds.length === 0 ? loadPrompt(schema.promptKind, promptId) : loadComposedPrompt(schema.promptKind, promptId, bundleIds)
   } catch (error) {
-    if (!schema.allowDefaultFallback || !(error instanceof PromptLoadError) || !error.missing) throw error
+    if (
+      !schema.allowDefaultFallback ||
+      !(error instanceof PromptLoadError) ||
+      !error.missing ||
+      error.source !== "prompt" ||
+      error.kind !== schema.promptKind ||
+      error.id !== promptId
+    ) {
+      throw error
+    }
     return loadPrompt(schema.promptKind, "_default")
   }
 }

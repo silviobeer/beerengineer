@@ -35,6 +35,20 @@ All notable user-facing changes to beerengineer_ are recorded here.
   switcher. Creates an automatic SQLite backup before any version switch.
   See README "Updating safely" and `apps/engine/docs/app-setup.md`.
 
+- Prompt composition support for reusable reference bundles under
+  `apps/engine/prompts/references/`. `frontend-design`, the
+  `frontend-design` reviewer, `execution`, and `qa` can now receive a
+  generated `## References` section at prompt-build time instead of
+  duplicating shared design guidance inline.
+
+### Changed
+
+- Design-quality guidance now ships as reusable prompt reference bundles:
+  the full design domain set is attached to `frontend-design`, the
+  implementation subset to `execution`, and the anti-pattern bank to
+  `qa` and the `frontend-design` reviewer. This increases prompt size
+  for those invocations, so operator token cost is higher than before.
+
 ### Fixed
 
 - **Setup-task ralph loop now commits worktree state before merge.**
