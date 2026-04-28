@@ -1,11 +1,4 @@
-export type LogSeverity =
-  | "DEBUG"
-  | "INFO"
-  | "WARN"
-  | "ERROR"
-  | "TRACE"
-  | "CRITICAL"
-  | string;
+export type LogSeverity = string;
 
 const HIGH_SEVERITY_TOKENS = new Set<string>(["L0", "WARN", "ERROR", "CRITICAL"]);
 const LOW_SEVERITY_TOKENS = new Set<string>(["L1", "L2", "DEBUG", "INFO", "TRACE"]);

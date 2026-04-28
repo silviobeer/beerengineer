@@ -2,7 +2,7 @@
 
 import { useWorkspaceContext } from "@/lib/context/WorkspaceContext";
 
-export function UnknownWorkspaceGuard({ children }: { children: React.ReactNode }) {
+export function UnknownWorkspaceGuard({ children }: Readonly<{ children: React.ReactNode }>) {
   const { isKnownWorkspace, currentKey, workspaces } = useWorkspaceContext();
   if (isKnownWorkspace) return <>{children}</>;
   return (

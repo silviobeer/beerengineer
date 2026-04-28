@@ -17,7 +17,7 @@ export type WorkflowContext = {
 type WorkspaceScopedContext = Pick<WorkflowContext, "workspaceId" | "workspaceRoot">
 
 function sanitizeSegment(segment: string): string {
-  return segment.replace(/[^a-z0-9/-]/gi, "-").toLowerCase()
+  return segment.replaceAll(/[^a-z0-9/-]/gi, "-").toLowerCase()
 }
 
 function sanitizeStageId(stageId: string): string {

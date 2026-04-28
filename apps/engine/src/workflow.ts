@@ -241,7 +241,7 @@ async function loadDesignPrepFreeze(context: WorkflowContext): Promise<DesignPre
 }
 
 function normalizedProjectIds(projects: Project[]): string[] {
-  return [...projects.map(project => project.id)].sort()
+  return [...projects.map(project => project.id)].sort((left, right) => left.localeCompare(right))
 }
 
 function sameProjectSet(left: string[], right: string[]): boolean {
@@ -253,7 +253,7 @@ async function assertDesignPrepProjectFreeze(context: WorkflowContext, projects:
   const freeze = await loadDesignPrepFreeze(context)
   if (!freeze) return
   const currentIds = normalizedProjectIds(projects)
-  const frozenIds = [...freeze.projectIds].sort()
+  const frozenIds = [...freeze.projectIds].sort((left, right) => left.localeCompare(right))
   if (sameProjectSet(currentIds, frozenIds)) return
   const summary =
     `Resume blocked: brainstorm project set changed after design prep. ` +
@@ -288,7 +288,7 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
   stagePresent.dim(`→ Base branch: ${baseBranch} (source: ${baseBranchSource})`)
   const context: WorkflowContext = {
     workspaceId: workflowWorkspaceId(item),
-    runId: activeRun?.runId ?? `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`,
+    runId: activeRun?.runId ?? `${new Date().toISOString().replaceAll(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`,
     itemSlug: slug,
     baseBranch,
     workspaceRoot: options?.workspaceRoot,

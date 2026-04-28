@@ -144,11 +144,11 @@ export type StoryReviewArtifact = {
           exitCode?: number
         }
     sonar:
-      | {
+        | {
           status: "ran"
           passed: boolean
           conditions?: Array<{
-            metric: "reliability" | "security" | "maintainability" | string
+            metric: string
             status: "ok" | "error"
             actual: string
             threshold: string

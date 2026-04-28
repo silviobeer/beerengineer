@@ -133,6 +133,63 @@ test("chat list shows open prompts across workspaces with resolved question text
   }
 })
 
+test("chat list compact mode prints one-line rows with workspace and prompt text", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-"))
+  const previousDataDir = process.env.BEERENGINEER_DATA_DIR
+  const previousConfigPath = process.env.BEERENGINEER_CONFIG_PATH
+  const previousUiDbPath = process.env.BEERENGINEER_UI_DB_PATH
+  const dbPath = join(dir, "beerengineer.sqlite")
+  const db = initDatabase(dbPath)
+  const repos = new Repos(db)
+
+  try {
+    process.env.BEERENGINEER_DATA_DIR = dir
+    process.env.BEERENGINEER_CONFIG_PATH = join(dir, "config.json")
+    process.env.BEERENGINEER_UI_DB_PATH = dbPath
+    const ws = repos.upsertWorkspace({ key: "demo", name: "Demo", rootPath: "/tmp/demo" })
+    const item = repos.createItem({ workspaceId: ws.id, code: "ITEM-0042", title: "Compact prompt", description: "chat" })
+    repos.setItemColumn(item.id, "requirements", "running")
+    const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "cli" })
+    repos.updateRun(run.id, { current_stage: "requirements", status: "running" })
+    const stageRun = repos.createStageRun({ runId: run.id, stageKey: "requirements" })
+    repos.appendLog({ runId: run.id, stageRunId: stageRun.id, eventType: "chat_message", message: "Need a branch choice" })
+    repos.createPendingPrompt({ id: "p-compact", runId: run.id, stageRunId: stageRun.id, prompt: "  you > " })
+
+    let stdout = ""
+    const originalWrite = process.stdout.write.bind(process.stdout)
+    const originalExit = process.exit
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      stdout += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8")
+      return true
+    }) as typeof process.stdout.write
+    process.exit = ((code?: number) => {
+      throw new Error(`EXIT:${code ?? 0}`)
+    }) as typeof process.exit
+
+    try {
+      await main(["chat", "list", "--workspace", "demo", "--compact"])
+      assert.fail("expected main() to exit")
+    } catch (err) {
+      assert.equal((err as Error).message, "EXIT:0")
+    } finally {
+      process.stdout.write = originalWrite
+      process.exit = originalExit
+    }
+
+    assert.match(stdout, /workspace\s+item\s+title\s+stage\/status\s+prompt/i)
+    assert.match(stdout, /demo\s+ITEM-0042\s+Compact prompt\s+requirements \/ needs_answer\s+Need a branch choice/)
+  } finally {
+    db.close()
+    if (previousDataDir === undefined) delete process.env.BEERENGINEER_DATA_DIR
+    else process.env.BEERENGINEER_DATA_DIR = previousDataDir
+    if (previousConfigPath === undefined) delete process.env.BEERENGINEER_CONFIG_PATH
+    else process.env.BEERENGINEER_CONFIG_PATH = previousConfigPath
+    if (previousUiDbPath === undefined) delete process.env.BEERENGINEER_UI_DB_PATH
+    else process.env.BEERENGINEER_UI_DB_PATH = previousUiDbPath
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test("workspace use selects the current workspace for items/chats shortcuts", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-cli-"))
   const previousUiDbPath = process.env.BEERENGINEER_UI_DB_PATH

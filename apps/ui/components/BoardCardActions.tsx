@@ -44,7 +44,7 @@ interface BoardCardActionsProps {
   card: BoardCardDTO;
 }
 
-export function BoardCardActions({ card }: BoardCardActionsProps) {
+export function BoardCardActions({ card }: Readonly<BoardCardActionsProps>) {
   const actions = actionsFor(card);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();

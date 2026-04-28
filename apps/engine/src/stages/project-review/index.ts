@@ -55,7 +55,7 @@ function reviewTargetPaths(executionSummaries: WithExecution["executionSummaries
     "package.json",
     "package-lock.json",
   ]
-  return Array.from(new Set([...explicit, ...fromExecution])).sort()
+  return Array.from(new Set([...explicit, ...fromExecution])).sort((left, right) => left.localeCompare(right))
 }
 
 function readBranchFile(workspaceRoot: string, branch: string, path: string): string | null {

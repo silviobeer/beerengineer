@@ -147,7 +147,7 @@ function expectedSharedFilesForWave(wave: WaveDefinition): string[] {
   const entries = wave.kind === "setup"
     ? (wave.tasks ?? []).flatMap(task => task.sharedFiles ?? [])
     : wave.stories.flatMap(story => story.sharedFiles ?? [])
-  return Array.from(new Set(entries)).sort()
+  return Array.from(new Set(entries)).sort((left, right) => left.localeCompare(right))
 }
 
 async function executeWave(
@@ -373,7 +373,7 @@ function resolveStory(
 ): UserStory {
   const full = storyById.get(ref.id)
   if (full) return full
-  const id = ref.id ?? `scaffold-${(ref.title ?? "story").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "story"}`
+  const id = ref.id ?? `scaffold-${(ref.title ?? "story").toLowerCase().replaceAll(/[^a-z0-9]+/g, "-").replaceAll(/(^-|-$)/g, "") || "story"}`
   stagePresent.warn(`Story ${ref.id ?? "<unnamed>"} is referenced by the plan but missing from the PRD — synthesizing scaffold ACs as ${id}.`)
   return { id, title: ref.title ?? id, acceptanceCriteria: [] }
 }

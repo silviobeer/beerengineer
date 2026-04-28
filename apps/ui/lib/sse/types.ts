@@ -14,7 +14,7 @@ export type ItemState = {
 export type ChatEntry = {
   id?: string;
   runId: string;
-  role: "user" | "assistant" | "system" | string;
+  role: string;
   content: string;
   kind?: "message" | "question" | "answer";
   promptId?: string;

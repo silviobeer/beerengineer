@@ -1,9 +1,8 @@
 import * as readline from "node:readline"
 import { createBus, busToWorkflowIO, type EventBus } from "./bus.js"
 import { withPromptPersistence } from "./promptPersistence.js"
-import type { PromptAction } from "./io.js"
 import { attachHumanCliRenderer } from "./renderers/humanCli.js"
-import type { WorkflowIO } from "./io.js"
+import type { PromptAction, WorkflowIO } from "./io.js"
 import type { Repos } from "../db/repositories.js"
 import { NON_INTERACTIVE_NO_ANSWER_SENTINEL } from "./constants.js"
 

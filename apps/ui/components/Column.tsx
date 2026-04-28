@@ -7,7 +7,7 @@ interface ColumnProps {
   workspaceKey: string;
 }
 
-export function Column({ phase, items, workspaceKey }: ColumnProps) {
+export function Column({ phase, items, workspaceKey }: Readonly<ColumnProps>) {
   return (
     <section
       data-testid="board-column"

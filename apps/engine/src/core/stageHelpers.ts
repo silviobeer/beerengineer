@@ -12,7 +12,7 @@ export function summaryArtifactFile(name: string, body: string[]): StageArtifact
   return {
     kind: "txt",
     label: `${name} Summary`,
-    fileName: `${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-summary.txt`,
+    fileName: `${name.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-")}-summary.txt`,
     content: body.join("\n"),
   }
 }

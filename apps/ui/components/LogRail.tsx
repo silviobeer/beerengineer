@@ -15,7 +15,7 @@ interface LogRailProps {
   initialFilter?: LogFilter;
 }
 
-export function LogRail({ logs, initialFilter = "alles" }: LogRailProps) {
+export function LogRail({ logs, initialFilter = "alles" }: Readonly<LogRailProps>) {
   const [filter, setFilter] = useState<LogFilter>(initialFilter);
   const visible = filterLogs(logs, filter);
   const isEmpty = visible.length === 0;

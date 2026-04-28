@@ -64,7 +64,7 @@ const BEERENGINEER_GITIGNORE_ENTRIES = [
   ".beerengineer/cache/",
 ]
 const SONAR_GENERATOR_ROOTS = ["apps", "packages", "services", "libs", "src", "lib"] as const
-const SONAR_DEFAULT_TEST_INCLUSIONS = "**/*.test.ts,**/*.spec.ts"
+const SONAR_DEFAULT_TEST_INCLUSIONS = "**/*.test.ts,**/*.spec.ts,**/*.test.tsx,**/*.spec.tsx"
 const SONAR_DEFAULT_EXCLUSIONS = "**/node_modules/**,**/dist/**,**/.next/**"
 const SONAR_DEFAULT_LCOV_PATH = "coverage/**/lcov.info"
 
@@ -84,8 +84,8 @@ function slugify(input: string): string {
   const core = input
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
+    .replaceAll(/[^a-z0-9]+/g, "-")
+    .replaceAll(/^-+|-+$/g, "")
   if (core) return core
   // Empty slug (e.g. `.`, `/`): fall back to a random suffix rather than the
   // fixed string `workspace`, which would collide across keyless registrations.
@@ -449,7 +449,7 @@ function readEnvFileValue(raw: string, key: string): string | undefined {
     const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/)
     if (!match || match[1] !== key) continue
     const value = match[2].trim()
-    return value.replace(/^['"]|['"]$/g, "")
+    return value.replaceAll(/^['"]|['"]$/g, "")
   }
   return undefined
 }

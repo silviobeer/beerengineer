@@ -26,7 +26,7 @@ const SPEAKER_LABELS: Record<string, string> = {
   "review-gate": "Beerengineer:",
 };
 
-export function ChatPanel({ activeRunId, conversation }: ChatPanelProps) {
+export function ChatPanel({ activeRunId, conversation }: Readonly<ChatPanelProps>) {
   const [draft, setDraft] = useState("");
   const [validationError, setValidationError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -199,7 +199,7 @@ function normalizeActions(
   );
 }
 
-function ConversationEntryView({ entry, onAction, disabled }: ConversationEntryViewProps) {
+function ConversationEntryView({ entry, onAction, disabled }: Readonly<ConversationEntryViewProps>) {
   const label = SPEAKER_LABELS[entry.type];
   const isReviewGate = entry.type === "review-gate";
   const actions = normalizeActions(entry.actions);

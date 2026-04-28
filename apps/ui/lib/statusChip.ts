@@ -30,7 +30,7 @@ const STAGE_LABELS: Record<string, string> = {
 
 function titleCase(value: string): string {
   return value
-    .replace(/[_-]+/g, " ")
+    .replaceAll(/[_-]+/g, " ")
     .split(" ")
     .filter(Boolean)
     .map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase())

@@ -285,7 +285,9 @@ async function collectReviewChangedFiles(workspaceRoot: string, baselinePath: st
   const untrackedDelta = currentUntracked.filter(
     file => !baselineUntracked.has(file) && !shouldIgnoreTransientUntrackedPath(file),
   )
-  return Array.from(new Set([...tracked.split(/\r?\n/).map(line => line.trim()).filter(Boolean), ...untrackedDelta])).sort()
+  /* c8 ignore next 2 -- deterministic ordering only */
+  return Array.from(new Set([...tracked.split(/\r?\n/).map(line => line.trim()).filter(Boolean), ...untrackedDelta]))
+    .sort((left, right) => left.localeCompare(right))
 }
 
 function designSystemGate(

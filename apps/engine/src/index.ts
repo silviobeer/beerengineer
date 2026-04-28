@@ -1035,8 +1035,6 @@ function printChatRows(
     console.log(`    ${row.stage} / ${row.status}`)
     console.log(`    prompt: ${row.prompt}`)
     console.log(`    run: ${row.runId}`)
-    const lastAnswer = row.runId ? null : null
-    void lastAnswer
   })
 }
 

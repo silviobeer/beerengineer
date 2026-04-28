@@ -37,7 +37,7 @@ interface PreviewInfo {
   } | null;
 }
 
-export function BoardItemModal({ card, workspaceKey, onClose }: BoardItemModalProps) {
+export function BoardItemModal({ card, workspaceKey, onClose }: Readonly<BoardItemModalProps>) {
   const [preview, setPreview] = useState<PreviewInfo | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [isPreviewPending, startPreviewTransition] = useTransition();
@@ -91,7 +91,7 @@ export function BoardItemModal({ card, workspaceKey, onClose }: BoardItemModalPr
   }, [card.id, supportsPreviewControls]);
 
   const fullPageHref = `/w/${encodeURIComponent(workspaceKey)}/items/${encodeURIComponent(card.id)}`;
-  const itemBranch = `item/${card.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || card.id.toLowerCase()}`;
+  const itemBranch = `item/${card.title.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-").replaceAll(/^-|-$/g, "") || card.id.toLowerCase()}`;
   const effectivePreviewUrl = preview?.previewUrl ?? card.previewUrl;
   const effectiveBranch = preview?.branch ?? itemBranch;
   const isPreviewLive = preview?.running || preview?.status === "already_running";
@@ -148,8 +148,12 @@ export function BoardItemModal({ card, workspaceKey, onClose }: BoardItemModalPr
       role="dialog"
       aria-modal="true"
       aria-label={card.title || "Item detail"}
+      tabIndex={-1}
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") onClose();
       }}
       className="fixed inset-0 z-50 flex items-start justify-center p-4 sm:p-8 bg-black/70 backdrop-blur-sm overflow-y-auto"
     >

@@ -9,7 +9,7 @@ interface KanbanColumnProps {
   children?: ReactNode;
 }
 
-export function KanbanColumn({ column, children }: KanbanColumnProps) {
+export function KanbanColumn({ column, children }: Readonly<KanbanColumnProps>) {
   const label = BOARD_COLUMN_LABELS[column];
   return (
     <section

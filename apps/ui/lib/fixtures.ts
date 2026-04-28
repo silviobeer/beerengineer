@@ -1,11 +1,4 @@
-import type { Item, Phase, Workspace } from "./types";
-import { PHASES } from "./types";
-import type {
-  BoardCardDTO,
-  BoardColumn,
-  ImplementationStage,
-  ItemDetailDTO,
-} from "./types";
+import { PHASES, type BoardCardDTO, type BoardColumn, type ImplementationStage, type Item, type ItemDetailDTO, type Phase, type Workspace } from "./types";
 
 const LONG_LATIN =
   "Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod " +

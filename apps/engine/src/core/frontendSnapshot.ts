@@ -161,7 +161,7 @@ function walkShallow(root: string, current: string, depth: number, out: string[]
   if (depth < 0 || out.length >= TREE_MAX_ENTRIES) return
   let entries: string[]
   try {
-    entries = readdirSync(current).sort()
+    entries = readdirSync(current).sort((left, right) => left.localeCompare(right))
   } catch {
     return
   }

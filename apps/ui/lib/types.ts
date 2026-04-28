@@ -9,14 +9,7 @@ export const PHASES = [
 
 export type Phase = (typeof PHASES)[number];
 
-export type PipelineState =
-  | "idle"
-  | "running"
-  | "openPrompt"
-  | "review-gate-waiting"
-  | "run-blocked"
-  | "failed"
-  | string;
+export type PipelineState = string;
 
 // Implementation stepper segments. Mirror of IMPLEMENTATION_STAGES below;
 // kept as the legacy alias used by older tests/components. Edit both lists
@@ -180,7 +173,7 @@ export const BOARD_COLUMN_LABELS: Record<BoardColumn, string> = {
   done: "Done",
 };
 
-export type ConversationRole = "system" | "agent" | "user" | "review-gate";
+export type ConversationRole = string;
 
 export interface ConversationAction {
   label: string;
@@ -189,7 +182,7 @@ export interface ConversationAction {
 
 export interface ConversationEntry {
   id?: string;
-  type: ConversationRole | string;
+  type: ConversationRole;
   text: string;
   promptId?: string;
   actions?: Array<string | ConversationAction>;
