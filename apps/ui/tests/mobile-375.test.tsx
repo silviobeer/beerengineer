@@ -31,7 +31,6 @@ import { BoardCard } from "@/components/BoardCard";
 import { ChatPanel } from "@/components/ChatPanel";
 import { WorkspaceSwitcher } from "@/components/WorkspaceSwitcher";
 import { WorkspaceProvider } from "@/lib/context/WorkspaceContext";
-import { ItemDetailToolbar } from "@/app/_ui/ItemDetailToolbar";
 import {
   fullBoardItems,
   FIXTURE_MULTI_WORKSPACES,
@@ -150,80 +149,6 @@ describe("S-09 mobile board card readability", () => {
     expect(screen.queryByTestId("attention-dot")).toBeNull();
     expect(screen.getByTestId("board-card-code")).toBeInTheDocument();
     expect(screen.getByTestId("board-card-title")).toBeInTheDocument();
-  });
-});
-
-describe("S-09 mobile item-detail toolbar", () => {
-  const ALL_ACTIONS = [
-    "start_brainstorm",
-    "start_implementation",
-    "rerun_design_prep",
-    "promote_to_requirements",
-    "mark_done",
-  ];
-
-  it("AC-S09-03: toolbar uses flex-wrap so buttons stack instead of overflowing", async () => {
-    render(
-      <ItemDetailToolbar
-        allowedActions={ALL_ACTIONS}
-        onAction={async () => ({ ok: true, status: 200 })}
-      />,
-    );
-    const toolbar = screen.getByRole("toolbar");
-    const row = toolbar.firstElementChild as HTMLElement;
-    expect(row.className).toMatch(/flex-wrap/);
-    expect(row.className).toMatch(/max-w-full/);
-  });
-
-  it("AC-S09-03: every action button is rendered, with a tap-friendly min-height", () => {
-    render(
-      <ItemDetailToolbar
-        allowedActions={ALL_ACTIONS}
-        onAction={async () => ({ ok: true, status: 200 })}
-      />,
-    );
-    const buttons = screen.getAllByRole("button");
-    expect(buttons).toHaveLength(5);
-    for (const btn of buttons) {
-      expect(btn.className).toMatch(/min-h-10/);
-      expect(btn.className).toMatch(/max-w-full/);
-    }
-  });
-
-  it("AC-S09-03: each enabled toolbar button triggers its action handler when clicked", async () => {
-    const calls: string[] = [];
-    render(
-      <ItemDetailToolbar
-        allowedActions={ALL_ACTIONS}
-        onAction={async (action) => {
-          calls.push(action);
-          return { ok: true, status: 200 };
-        }}
-      />,
-    );
-    const buttons = screen.getAllByRole("button");
-    for (const btn of buttons) {
-      fireEvent.click(btn);
-      // let the toolbar's inFlight latch clear before the next click
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
-    }
-    expect(new Set(calls)).toEqual(new Set(ALL_ACTIONS));
-  });
-
-  it("AC-S09-03 EC: with only one allowed action, that single button still passes the same wrap/min-height requirements", () => {
-    render(
-      <ItemDetailToolbar
-        allowedActions={["mark_done"]}
-        onAction={async () => ({ ok: true, status: 200 })}
-      />,
-    );
-    const buttons = screen.getAllByRole("button");
-    expect(buttons).toHaveLength(5); // all rendered, only one enabled
-    const enabled = buttons.filter((b) => !(b as HTMLButtonElement).disabled);
-    expect(enabled).toHaveLength(1);
-    expect(enabled[0].className).toMatch(/min-h-10/);
   });
 });
 

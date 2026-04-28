@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { SSEContext, type SSEContextValue } from "@/app/lib/sse/SSEContext";
+import { SSEContext, type SSEContextValue } from "@/lib/sse/SSEContext";
 
 /**
  * Test-only wrapper that provides an empty `SSEContext` so components calling

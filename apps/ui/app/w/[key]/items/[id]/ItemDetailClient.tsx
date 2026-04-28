@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback } from "react";
-import type { ItemDetailDTO, ActionResult, ItemAction } from "../../../../_engine/types";
-import { ItemDetailView } from "../../../../_ui/ItemDetailView";
+import type { ItemDetailDTO, ActionResult, ItemAction } from "@/lib/engine/types";
+import { ItemDetailView } from "@/components/itemDetail/ItemDetailView";
 import { performItemAction } from "./actions";
 
 export function ItemDetailClient({ item }: { item: ItemDetailDTO }): React.ReactElement {

@@ -2,7 +2,7 @@ import { fetchWorkspacesResult } from "@/lib/api";
 import { WorkspaceProvider } from "@/lib/context/WorkspaceContext";
 import { Topbar } from "@/components/Topbar";
 import { UnknownWorkspaceGuard } from "@/components/UnknownWorkspace";
-import { SSEConnectionManager } from "@/app/lib/sse/SSEContext";
+import { SSEConnectionManager } from "@/lib/sse/SSEContext";
 
 interface WorkspaceLayoutProps {
   children: React.ReactNode;

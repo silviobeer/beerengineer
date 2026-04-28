@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { fetchItem } from "../../../../_engine/server";
+import { fetchItem } from "@/lib/engine/server";
 import { ItemDetailClient } from "./ItemDetailClient";
 
 export default async function ItemDetailPage({

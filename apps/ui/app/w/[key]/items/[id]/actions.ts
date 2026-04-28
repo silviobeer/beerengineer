@@ -1,7 +1,7 @@
 "use server";
 
-import { ITEM_ACTIONS, type ActionResult, type ItemAction } from "../../../../_engine/types";
-import { postItemAction } from "../../../../_engine/server";
+import { ITEM_ACTIONS, type ActionResult, type ItemAction } from "@/lib/engine/types";
+import { postItemAction } from "@/lib/engine/server";
 
 export async function performItemAction(
   itemId: string,

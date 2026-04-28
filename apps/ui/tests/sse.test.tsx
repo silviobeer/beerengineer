@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { Board } from "@/components/Board";
 import { fullBoardItems, implementationCardWithStage } from "@/lib/fixtures";
-import type { ItemState } from "@/app/lib/sse/types";
+import type { ItemState } from "@/lib/sse/types";
 import { SSETestProvider, noopSSEContext } from "./sseTestHarness";
 
 /**

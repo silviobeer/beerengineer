@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ConversationEntry } from "../lib/types";
-import { useSSE } from "../app/lib/sse/SSEContext";
-import type { ChatEntry } from "../app/lib/sse/types";
+import { useSSE } from "@/lib/sse/SSEContext";
+import type { ChatEntry } from "@/lib/sse/types";
 import { ChatPanel } from "./ChatPanel";
 
 interface ItemChatProps {

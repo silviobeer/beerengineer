@@ -1,4 +1,4 @@
-import { proxyEngineMutation } from "@/lib/engineProxy";
+import { proxyEngineMutation } from "@/lib/engine/proxy";
 
 export async function POST(
   request: Request,

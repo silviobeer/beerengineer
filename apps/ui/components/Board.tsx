@@ -5,7 +5,7 @@ import { BoardCard } from "./BoardCard";
 import { BoardItemModal } from "./BoardItemModal";
 import { KanbanColumn } from "./KanbanColumn";
 import { BOARD_COLUMNS, type BoardCardDTO } from "../lib/types";
-import { useSSE } from "../app/lib/sse/SSEContext";
+import { useSSE } from "@/lib/sse/SSEContext";
 
 interface BoardProps {
   items: BoardCardDTO[];

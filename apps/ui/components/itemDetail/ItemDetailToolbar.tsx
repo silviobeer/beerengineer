@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { ITEM_ACTIONS, type ActionResult, type ItemAction } from "../_engine/types";
+import { ITEM_ACTIONS, type ActionResult, type ItemAction } from "@/lib/engine/types";
 
 const BUTTONS: { action: ItemAction; label: string }[] = [
   { action: "start_brainstorm", label: "Start Brainstorm" },

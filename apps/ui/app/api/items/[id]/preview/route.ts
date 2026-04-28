@@ -1,4 +1,4 @@
-import { proxyEngineGet } from "@/lib/engineProxy";
+import { proxyEngineGet } from "@/lib/engine/proxy";
 
 export async function GET(
   _request: Request,

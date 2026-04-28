@@ -1,4 +1,4 @@
-import { statusChipText } from "./statusChip";
+import { statusChipText } from "@/lib/statusChip";
 
 type Props = {
   itemCode: string;

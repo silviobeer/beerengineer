@@ -1,6 +1,6 @@
 "use client";
 
-import type { ItemDetailDTO, ActionResult, ItemAction } from "../_engine/types";
+import type { ItemDetailDTO, ActionResult, ItemAction } from "@/lib/engine/types";
 import { ItemDetailHeader } from "./ItemDetailHeader";
 import { ItemDetailToolbar } from "./ItemDetailToolbar";
 
