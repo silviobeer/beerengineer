@@ -5,7 +5,14 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { spawnSync } from "node:child_process"
 
-import { initGit, previewWorkspace, registerWorkspace, runWorkspacePreflight, validateHarnessProfile } from "../src/core/workspaces.js"
+import {
+  generateSonarMcpSnippet,
+  initGit,
+  previewWorkspace,
+  registerWorkspace,
+  runWorkspacePreflight,
+  validateHarnessProfile,
+} from "../src/core/workspaces.js"
 import { initDatabase } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
 import { defaultAppConfig } from "../src/setup/config.js"
@@ -182,7 +189,7 @@ test("registerWorkspace persists preflight and writes quality config once GitHub
     const sonarProperties = readFileSync(join(path, "sonar-project.properties"), "utf8")
     assert.match(sonarProperties, /sonar.projectKey=acme_demo/)
     assert.match(sonarProperties, /sonar.organization=acme/)
-    assert.match(sonarProperties, /sonar\.sources=apps,packages/)
+    assert.match(sonarProperties, /sonar\.sources=apps/)
     const sonarWorkflow = readFileSync(join(path, ".github", "workflows", "sonar.yml"), "utf8")
     assert.match(sonarWorkflow, /SonarCloud Scan/)
     const coderabbit = readFileSync(join(path, ".coderabbit.yaml"), "utf8")
@@ -201,6 +208,39 @@ test("registerWorkspace persists preflight and writes quality config once GitHub
     db.close()
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test("generateSonarMcpSnippet emits Codex TOML for cloud and self-hosted sonar", () => {
+  const cloud = generateSonarMcpSnippet({
+    enabled: true,
+    organization: "acme",
+    hostUrl: "https://sonarcloud.io",
+  })
+  assert.equal(
+    cloud,
+    [
+      "[mcp_servers.sonarqube]",
+      'command = "docker"',
+      'args = ["run", "--rm", "-i", "--init", "--pull=always", "-e", "SONARQUBE_TOKEN", "-e", "SONARQUBE_ORG"]',
+      'env = { "SONARQUBE_TOKEN" = "<YourSonarQubeUserToken>", "SONARQUBE_ORG" = "acme" }',
+    ].join("\n"),
+  )
+
+  const selfHosted = generateSonarMcpSnippet({
+    enabled: true,
+    hostUrl: "https://sonarqube.example.com",
+  })
+  assert.equal(
+    selfHosted,
+    [
+      "[mcp_servers.sonarqube]",
+      'command = "docker"',
+      'args = ["run", "--rm", "-i", "--init", "--pull=always", "-e", "SONARQUBE_TOKEN", "-e", "SONARQUBE_URL"]',
+      'env = { "SONARQUBE_TOKEN" = "<YourSonarQubeUserToken>", "SONARQUBE_URL" = "https://sonarqube.example.com" }',
+    ].join("\n"),
+  )
+
+  assert.equal(generateSonarMcpSnippet({ enabled: false }), undefined)
 })
 
 test("workspace preflight and preview prefer origin HEAD over current story branch", async () => {

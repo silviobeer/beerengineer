@@ -11,7 +11,8 @@
     "dev": "tsx watch src/api/server.ts",
     "start:api": "tsx src/api/server.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --test --import tsx test/*.test.ts"
+    "test": "node --test --import tsx test/*.test.ts",
+    "coverage": "c8 --reporter=lcov --reporter=text-summary --report-dir=../../coverage/engine node --test --import tsx test/*.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.119",
@@ -20,6 +21,7 @@
     "env-paths": "^4.0.0"
   },
   "devDependencies": {
+    "c8": "^11.0.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.6.0",
     "tsx": "^4.19.2",

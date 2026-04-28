@@ -11,6 +11,7 @@
     "dev:ui": "npm run dev --workspace=@beerengineer/ui",
     "start:api": "npm run start:api --workspace=@beerengineer/engine",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present"
+    "test": "npm run test --workspaces --if-present",
+    "coverage": "rm -rf coverage && npm run coverage --workspaces --if-present"
   }
 }

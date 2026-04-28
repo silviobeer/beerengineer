@@ -601,7 +601,7 @@ function renderSonarProperties(owner: string, repo: string): string {
     "sonar.tests=.",
     "sonar.test.inclusions=**/*.test.ts,**/*.spec.ts",
     "sonar.exclusions=**/node_modules/**,**/dist/**,**/.next/**",
-    "sonar.javascript.lcov.reportPaths=coverage/lcov.info",
+    "sonar.javascript.lcov.reportPaths=coverage/engine/lcov.info,coverage/ui/lcov.info",
   ].join("\n") + "\n"
 }
 
@@ -870,18 +870,24 @@ export function generateSonarProjectUrl(name: string, sonar: SonarConfig): strin
 
 export function generateSonarMcpSnippet(sonar: SonarConfig): string | undefined {
   if (!sonar.enabled) return undefined
-  return JSON.stringify(
-    {
-      servers: {
-        sonarqube: {
-          url: sonar.hostUrl ?? SONAR_DEFAULT_HOST,
-          token: "<SONAR_TOKEN>",
-        },
-      },
-    },
-    null,
-    2,
-  )
+  const host = sonar.hostUrl ?? SONAR_DEFAULT_HOST
+  const args = ["run", "--rm", "-i", "--init", "--pull=always", "-e", "SONARQUBE_TOKEN"]
+  const env: string[] = ['"SONARQUBE_TOKEN" = "<YourSonarQubeUserToken>"']
+
+  if (host === SONAR_DEFAULT_HOST) {
+    args.push("-e", "SONARQUBE_ORG")
+    env.push(`"SONARQUBE_ORG" = "${sonar.organization ?? "<YourOrganizationName>"}"`)
+  } else {
+    args.push("-e", "SONARQUBE_URL")
+    env.push(`"SONARQUBE_URL" = "${host}"`)
+  }
+
+  return [
+    "[mcp_servers.sonarqube]",
+    'command = "docker"',
+    `args = [${args.map(value => JSON.stringify(value)).join(", ")}]`,
+    `env = { ${env.join(", ")} }`,
+  ].join("\n")
 }
 
 function harnessesForProfile(profile: HarnessProfile): KnownHarness[] {
