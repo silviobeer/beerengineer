@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { computeScreenOwners, type ScreenOwnerMap } from "../../core/screenOwners.js"
 import { projectDesignGuidance } from "../../core/designPrep.js"
 import { branchNameStory } from "../../core/branchNames.js"
+import { commitAll } from "../../core/git.js"
 import { createGitAdapter, type GitAdapter } from "../../core/gitAdapter.js"
 import { writeRecoveryRecord } from "../../core/recovery.js"
 import { emitEvent, getActiveRun } from "../../core/runContext.js"
@@ -589,7 +590,7 @@ function verifySetupContract(
   return failures
 }
 
-async function runSetupStory(
+export async function runSetupStory(
   ctx: WithArchitecture,
   wave: WaveDefinition,
   story: UserStory,
@@ -690,6 +691,15 @@ async function runSetupStory(
     if (failures.length === 0) {
       implementation.status = "passed"
       implementation.finalSummary = "Setup contract satisfied."
+      // Commit whatever the coder placed in the worktree so that
+      // mergeStoryIntoWave carries real content onto the wave branch.
+      // No-op when the tree is already clean (idempotent).
+      if (opts.worktreeRoot) {
+        const sha = commitAll(opts.worktreeRoot, `Setup task ${task.id}: ${task.title}`)
+        if (sha) {
+          stagePresent.dim(`  Committed setup worktree ${task.id}: ${sha.slice(0, 8)}`)
+        }
+      }
       break
     }
     implementation.finalSummary = failures.join("; ")

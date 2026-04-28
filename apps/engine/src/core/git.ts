@@ -567,6 +567,29 @@ export function abandonStoryBranch(
   return { abandonedRef }
 }
 
+/**
+ * Stage every change in `worktreePath` and commit with `message`.
+ * Returns the new commit SHA on success, or `null` when the tree is already
+ * clean (no-op path — idempotent, safe to call unconditionally).
+ *
+ * Intended for callers that modify files in a managed worktree (e.g. the
+ * setup-task short-circuit in the execution stage) but do not go through the
+ * ralph coder harness which has its own commit step.
+ */
+export function commitAll(worktreePath: string, message: string): string | null {
+  const inside = runGit(worktreePath, ["rev-parse", "--is-inside-work-tree"])
+  if (!inside.ok || inside.stdout !== "true") return null
+  // Short-circuit when the tree is clean — avoids a spurious "nothing to commit" error.
+  const status = runGit(worktreePath, ["status", "--porcelain"])
+  if (!status.ok || !status.stdout) return null
+  const add = runGit(worktreePath, ["add", "-A"])
+  if (!add.ok) return null
+  const commit = runGit(worktreePath, ["commit", "-m", message])
+  if (!commit.ok) return null
+  const sha = runGit(worktreePath, ["rev-parse", "HEAD"])
+  return sha.ok ? sha.stdout : null
+}
+
 // Re-export so callers that only reach for real-git helpers still get a single entry point.
 export { isEngineOwnedBranchName }
 
