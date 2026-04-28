@@ -665,3 +665,126 @@ test("attachDbSync does NOT clear items.current_stage when a sibling run is stil
     db.close()
   }
 })
+
+// ---------------------------------------------------------------------------
+// onItemColumnChanged callback — SSE broadcast tests
+// ---------------------------------------------------------------------------
+
+test("attachDbSync calls onItemColumnChanged on authoritative stage_started", () => {
+  const db = tmpDb()
+  const repos = new Repos(db)
+  const ws = repos.upsertWorkspace({ key: "test", name: "Test" })
+  const item = repos.createItem({ workspaceId: ws.id, title: "T", description: "D" })
+  const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "T" })
+  const { bus } = makeBusIO()
+  const calls: Array<{ itemId: string; from: string; to: string; phaseStatus: string }> = []
+
+  try {
+    attachDbSync(bus, repos, { runId: run.id, itemId: item.id }, {
+      onItemColumnChanged: (payload) => calls.push(payload),
+    })
+    bus.emit({ type: "stage_started", runId: run.id, stageRunId: "s1", stageKey: "architecture" })
+
+    assert.equal(calls.length, 1, "should have received one column-changed callback")
+    assert.equal(calls[0]?.itemId, item.id)
+    assert.equal(calls[0]?.to, "implementation")
+    assert.equal(calls[0]?.phaseStatus, "running")
+  } finally {
+    db.close()
+  }
+})
+
+test("attachDbSync calls onItemColumnChanged on authoritative stage_completed", () => {
+  const db = tmpDb()
+  const repos = new Repos(db)
+  const ws = repos.upsertWorkspace({ key: "test", name: "Test" })
+  const item = repos.createItem({ workspaceId: ws.id, title: "T", description: "D" })
+  const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "T" })
+  const { bus } = makeBusIO()
+  const calls: Array<{ itemId: string; from: string; to: string; phaseStatus: string }> = []
+
+  try {
+    attachDbSync(bus, repos, { runId: run.id, itemId: item.id }, {
+      onItemColumnChanged: (payload) => calls.push(payload),
+    })
+    repos.createStageRun({ id: "s1", runId: run.id, stageKey: "requirements" })
+    bus.emit({ type: "stage_completed", runId: run.id, stageRunId: "s1", stageKey: "requirements", status: "completed" })
+
+    assert.equal(calls.length, 1, "should have received one column-changed callback on stage_completed")
+    assert.equal(calls[0]?.itemId, item.id)
+    assert.equal(calls[0]?.to, "requirements")
+    assert.equal(calls[0]?.phaseStatus, "completed")
+  } finally {
+    db.close()
+  }
+})
+
+test("attachDbSync calls onItemColumnChanged on authoritative run_finished (completed)", () => {
+  const db = tmpDb()
+  const repos = new Repos(db)
+  const ws = repos.upsertWorkspace({ key: "test", name: "Test" })
+  const item = repos.createItem({ workspaceId: ws.id, title: "T", description: "D" })
+  const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "T" })
+  const { bus } = makeBusIO()
+  const calls: Array<{ itemId: string; from: string; to: string; phaseStatus: string }> = []
+
+  try {
+    attachDbSync(bus, repos, { runId: run.id, itemId: item.id }, {
+      onItemColumnChanged: (payload) => calls.push(payload),
+    })
+    bus.emit({ type: "run_finished", runId: run.id, itemId: item.id, title: "T", status: "completed" })
+
+    assert.equal(calls.length, 1, "should have received one column-changed callback on run_finished")
+    assert.equal(calls[0]?.itemId, item.id)
+    assert.equal(calls[0]?.to, "done")
+    assert.equal(calls[0]?.phaseStatus, "completed")
+  } finally {
+    db.close()
+  }
+})
+
+test("attachDbSync does NOT call onItemColumnChanged for failed run_finished (non-authoritative)", () => {
+  const db = tmpDb()
+  const repos = new Repos(db)
+  const ws = repos.upsertWorkspace({ key: "test", name: "Test" })
+  const item = repos.createItem({ workspaceId: ws.id, title: "T", description: "D" })
+  const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "T" })
+  const { bus } = makeBusIO()
+  const calls: Array<unknown> = []
+
+  try {
+    attachDbSync(bus, repos, { runId: run.id, itemId: item.id }, {
+      onItemColumnChanged: (payload) => calls.push(payload),
+    })
+    bus.emit({ type: "run_finished", runId: run.id, itemId: item.id, title: "T", status: "failed", error: "boom" })
+
+    assert.equal(calls.length, 0, "failed run_finished must not trigger column-changed callback")
+  } finally {
+    db.close()
+  }
+})
+
+test("attachDbSync does NOT call onItemColumnChanged when a sibling run is live (non-authoritative)", () => {
+  const db = tmpDb()
+  const repos = new Repos(db)
+  const ws = repos.upsertWorkspace({ key: "test", name: "Test" })
+  const item = repos.createItem({ workspaceId: ws.id, title: "T", description: "D" })
+  // main run is live
+  const main = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "Main" })
+  repos.updateRun(main.id, { status: "running" })
+  // side run starts — main is still live so side is non-authoritative
+  const side = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "Side" })
+  const { bus } = makeBusIO()
+  const calls: Array<unknown> = []
+
+  try {
+    attachDbSync(bus, repos, { runId: side.id, itemId: item.id }, {
+      onItemColumnChanged: (payload) => calls.push(payload),
+    })
+    bus.emit({ type: "stage_started", runId: side.id, stageRunId: "s1", stageKey: "brainstorm" })
+
+    assert.equal(calls.length, 0, "non-authoritative run must not fire column-changed callback")
+  } finally {
+    db.close()
+  }
+})

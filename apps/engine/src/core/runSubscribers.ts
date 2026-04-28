@@ -23,13 +23,22 @@ export function attachRunSubscribers(
   bus: EventBus,
   repos: Repos,
   ctx: { runId: string; itemId: string },
+  opts: {
+    /**
+     * Called after every authoritative `setItemColumn` write. The API server
+     * passes `board.broadcastItemColumnChanged` here so workflow-driven column
+     * transitions produce an `item_column_changed` SSE frame just like
+     * operator-driven transitions do. Optional — CLI path leaves it undefined.
+     */
+    onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
+  } = {},
 ): () => void {
   const writtenLogIds = new Set<string>()
   const overrides = resolveOverrides()
   const notificationConfig =
     resolveMergedConfig(readConfigFile(resolveConfigPath(overrides)), overrides) ?? defaultAppConfig()
 
-  const detachDbSync = attachDbSync(bus, repos, ctx, { writtenLogIds })
+  const detachDbSync = attachDbSync(bus, repos, ctx, { writtenLogIds, onItemColumnChanged: opts.onItemColumnChanged })
   const detachTelegram = attachChatToolNotifications(bus, repos, notificationConfig)
   const detachBridge = attachCrossProcessBridge(bus, repos, ctx.runId, { writtenLogIds })
 

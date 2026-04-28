@@ -19,6 +19,16 @@ export type AttachDbSyncOptions = {
    * re-emit foreign events onto the local bus.
    */
   writtenLogIds?: Set<string>
+  /**
+   * Called after every authoritative `setItemColumn` write so that the API
+   * server's board-stream can push an `item_column_changed` SSE frame to
+   * connected UI clients. Mirrors the operator-driven path in `itemActions.ts`.
+   *
+   * Only invoked when `isAuthoritative()` is true — i.e. this run is the sole
+   * live run for the item. The payload matches the shape the UI's SSEContext
+   * already parses: `{ itemId, from, to, phaseStatus }`.
+   */
+  onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
 }
 
 /**
@@ -129,8 +139,10 @@ export function attachDbSync(
         repos.updateRun(event.runId, { current_stage: event.stageKey })
         const { column, phaseStatus } = mapStageToColumn(event.stageKey, "running")
         if (isAuthoritative()) {
+          const from = repos.getItem(ctx.itemId)?.current_column ?? "idea"
           repos.setItemColumn(ctx.itemId, column, phaseStatus)
           repos.setItemCurrentStage(ctx.itemId, event.stageKey)
+          opts.onItemColumnChanged?.({ itemId: ctx.itemId, from, to: column, phaseStatus })
         }
         track(repos.appendLog({
           runId: event.runId,
@@ -151,7 +163,11 @@ export function attachDbSync(
           repos.completeStageRun(stageRunId, event.status, event.error ?? null)
         }
         const { column, phaseStatus } = mapStageToColumn(event.stageKey, event.status)
-        if (isAuthoritative()) repos.setItemColumn(ctx.itemId, column, phaseStatus)
+        if (isAuthoritative()) {
+          const from = repos.getItem(ctx.itemId)?.current_column ?? "idea"
+          repos.setItemColumn(ctx.itemId, column, phaseStatus)
+          opts.onItemColumnChanged?.({ itemId: ctx.itemId, from, to: column, phaseStatus })
+        }
         track(repos.appendLog({
           runId: event.runId,
           stageRunId: stageRunId ?? null,
@@ -291,7 +307,9 @@ export function attachDbSync(
         const item = repos.getItem(ctx.itemId)
         const { column, phaseStatus } = mapStageToColumn(item?.current_stage ?? "documentation", event.status)
         if (authoritative) {
+          const from = repos.getItem(ctx.itemId)?.current_column ?? "idea"
           repos.setItemColumn(ctx.itemId, column, phaseStatus)
+          opts.onItemColumnChanged?.({ itemId: ctx.itemId, from, to: column, phaseStatus })
         }
         if (soleLive) {
           repos.setItemCurrentStage(ctx.itemId, null)
@@ -568,6 +586,8 @@ export function prepareRun(
     owner?: "cli" | "api"
     itemId?: string
     resume?: WorkflowResumeInput
+    /** Forwarded to `attachRunSubscribers` → `attachDbSync`. See `AttachDbSyncOptions.onItemColumnChanged`. */
+    onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
   } = {}
 ) {
   const itemRow = opts.itemId
@@ -612,7 +632,7 @@ export function prepareRun(
         message: `workspace config missing or invalid for ${workspaceRow.root_path}; falling back to fake LLM adapters`,
       })
     }
-    const detach = attachRunSubscribers(bus, repos, { runId: runRow.id, itemId: itemRow.id })
+    const detach = attachRunSubscribers(bus, repos, { runId: runRow.id, itemId: itemRow.id }, { onItemColumnChanged: opts.onItemColumnChanged })
     try {
       await runWithWorkflowIO(io, async () =>
         runWithActiveRun({ runId: runRow.id, itemId: itemRow.id, title: item.title }, async () => {

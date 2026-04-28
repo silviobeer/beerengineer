@@ -185,6 +185,7 @@ export async function handleItemActionNamed(
   res: ServerResponse,
   itemId: string,
   action: string,
+  onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void,
 ): Promise<void> {
   if (!isItemAction(action) || action === "resume_run") {
     return json(res, 400, {
@@ -225,7 +226,7 @@ export async function handleItemActionNamed(
         action,
       })
     }
-    const result = startRunForItem(repos, { itemId, action })
+    const result = startRunForItem(repos, { itemId, action, onItemColumnChanged })
     if (!result.ok) return json(res, result.status, { error: result.error, action })
     // Move the board column immediately so clients see the transition before
     // the workflow emits its first stage update.

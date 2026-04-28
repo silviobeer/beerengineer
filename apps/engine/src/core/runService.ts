@@ -116,7 +116,7 @@ function resolveWorkspaceMeta(
  */
 export function startRunFromIdea(
   repos: Repos,
-  input: { title: string; description: string; workspaceKey?: string },
+  input: { title: string; description: string; workspaceKey?: string; onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void },
 ): StartRunResult {
   const meta = resolveWorkspaceMeta(repos, input.workspaceKey)
   if ("error" in meta) return { ok: false, status: 404, error: "unknown_workspace" }
@@ -126,7 +126,7 @@ export function startRunFromIdea(
     { id: "new", title: input.title, description: input.description },
     repos,
     io,
-    { owner: "api", ...meta },
+    { owner: "api", ...meta, onItemColumnChanged: input.onItemColumnChanged },
   )
   fireInBackground(io, "startRunFromIdea", prepared.start)
   return { ok: true, runId: prepared.runId, itemId: prepared.itemId }
@@ -150,7 +150,7 @@ export type StartRunAction =
 
 export function startRunForItem(
   repos: Repos,
-  input: { itemId: string; action: StartRunAction },
+  input: { itemId: string; action: StartRunAction; onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void },
 ): StartRunResult {
   const item = repos.getItem(input.itemId)
   if (!item) return { ok: false, status: 404, error: "item_not_found" }
@@ -198,7 +198,7 @@ export function startRunForItem(
     { id: item.id, title: item.title, description: item.description },
     repos,
     io,
-    { owner: "api", itemId: item.id, resume },
+    { owner: "api", itemId: item.id, resume, onItemColumnChanged: input.onItemColumnChanged },
   )
 
   if (sourceRun && seedStages.length > 0) {
@@ -235,6 +235,7 @@ export async function resumeRunInProcess(
     branch?: string
     commit?: string
     reviewNotes?: string
+    onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
   },
 ): Promise<ResumeRunResult> {
   const summary = input.summary.trim()
@@ -284,7 +285,7 @@ export async function resumeRunInProcess(
 
   const io = buildApiIo(repos)
   fireInBackground(io, "resumeRunInProcess", () =>
-    performResume({ repos, io, runId: input.runId, remediation }),
+    performResume({ repos, io, runId: input.runId, remediation, onItemColumnChanged: input.onItemColumnChanged }),
   )
   return { ok: true, runId: input.runId, remediationId: remediation.id }
 }

@@ -205,6 +205,7 @@ export async function handleResumeRun(
   req: IncomingMessage,
   res: ServerResponse,
   runId: string,
+  onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void,
 ): Promise<void> {
   const body = (await readJson(req)) as {
     summary?: string
@@ -219,6 +220,7 @@ export async function handleResumeRun(
     branch: body.branch,
     commit: body.commit,
     reviewNotes: body.reviewNotes,
+    onItemColumnChanged,
   })
   if (!result.ok) {
     return json(res, result.status, { error: result.error })
@@ -232,6 +234,7 @@ export async function handleCreateRun(
   repos: Repos,
   req: IncomingMessage,
   res: ServerResponse,
+  onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void,
 ): Promise<void> {
   const body = (await readJson(req)) as {
     title?: string
@@ -247,6 +250,7 @@ export async function handleCreateRun(
     workspaceKey: typeof body.workspaceKey === "string" && body.workspaceKey.trim()
       ? body.workspaceKey.trim()
       : undefined,
+    onItemColumnChanged,
   })
   if (!result.ok) return json(res, result.status, { error: result.error })
   const run = repos.getRun(result.runId)

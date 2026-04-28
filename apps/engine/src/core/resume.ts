@@ -134,6 +134,8 @@ export type PerformResumeInput = {
   io: WorkflowIO & { bus?: EventBus }
   runId: string
   remediation: ExternalRemediationRow
+  /** Forwarded to `attachRunSubscribers` → `attachDbSync`. See `AttachDbSyncOptions.onItemColumnChanged`. */
+  onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
 }
 
 /**
@@ -156,7 +158,7 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
       throw new Error("performResume: io must be bus-backed (runService.buildApiIo / createCliIO)")
     }
     const bus = input.io.bus
-    const detach = attachRunSubscribers(bus, input.repos, { runId: run.id, itemId: run.item_id })
+    const detach = attachRunSubscribers(bus, input.repos, { runId: run.id, itemId: run.item_id }, { onItemColumnChanged: input.onItemColumnChanged })
 
     const eventScope =
       record.scope.type === "story"

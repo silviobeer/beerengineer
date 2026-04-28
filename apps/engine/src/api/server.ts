@@ -189,7 +189,7 @@ const server = createServer(async (req, res) => {
   try {
     // ---- Runs (reads + intent recording) ------------------------------------
     if (path === "/runs" && req.method === "GET") return handleListRuns(repos, res)
-    if (path === "/runs" && req.method === "POST") return handleCreateRun(repos, req, res)
+    if (path === "/runs" && req.method === "POST") return handleCreateRun(repos, req, res, payload => board.broadcastItemColumnChanged(payload))
 
     // ---- Board ---------------------------------------------------------------
     if (path === "/board" && req.method === "GET") return handleGetBoard(db, url, res)
@@ -245,7 +245,7 @@ const server = createServer(async (req, res) => {
     if (path === "/items" && req.method === "GET") return handleListItems(repos, url, res)
     const itemActionNamed = path.match(/^\/items\/([^/]+)\/actions\/([^/]+)$/)
     if (itemActionNamed && req.method === "POST") {
-      return handleItemActionNamed(itemActions, repos, req, res, itemActionNamed[1], itemActionNamed[2])
+      return handleItemActionNamed(itemActions, repos, req, res, itemActionNamed[1], itemActionNamed[2], payload => board.broadcastItemColumnChanged(payload))
     }
     const itemWireframesMatch = path.match(/^\/items\/([^/]+)\/wireframes$/)
     if (itemWireframesMatch && req.method === "GET") return handleGetItemWireframes(repos, res, itemWireframesMatch[1])
@@ -278,7 +278,7 @@ const server = createServer(async (req, res) => {
       if (sub === "messages" && req.method === "POST") return handlePostMessage(repos, req, res, runId)
       if (sub === "conversation" && req.method === "GET") return handleGetConversation(repos, res, runId)
       if (sub === "answer" && req.method === "POST") return handleAnswer(repos, req, res, runId)
-      if (sub === "resume" && req.method === "POST") return handleResumeRun(repos, req, res, runId)
+      if (sub === "resume" && req.method === "POST") return handleResumeRun(repos, req, res, runId, payload => board.broadcastItemColumnChanged(payload))
       if (sub === "recovery" && req.method === "GET") return handleGetRecovery(repos, res, runId)
     }
 
