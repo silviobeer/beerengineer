@@ -109,401 +109,70 @@ export function attachDbSync(
     )
   }
 
+  const eventHandlers: Partial<Record<WorkflowEvent["type"], (event: WorkflowEvent) => void>> = {
+    run_started: event => persistRunStartedEvent(repos, track, event as Extract<WorkflowEvent, { type: "run_started" }>),
+    stage_started: event => persistStageStartedEvent(repos, track, event as Extract<WorkflowEvent, { type: "stage_started" }>, {
+      persistedStageIds,
+      persistedProjectIds,
+      stageRunIds,
+      itemId: ctx.itemId,
+      isAuthoritative,
+      onItemColumnChanged: opts.onItemColumnChanged,
+    }),
+    stage_completed: event => persistStageCompletedEvent(
+      repos,
+      track,
+      event as Extract<WorkflowEvent, { type: "stage_completed" }>,
+      stageRunIds,
+      { itemId: ctx.itemId, isAuthoritative, onItemColumnChanged: opts.onItemColumnChanged },
+    ),
+    prompt_requested: event => persistPromptRequestedEvent(repos, track, event as Extract<WorkflowEvent, { type: "prompt_requested" }>),
+    prompt_answered: event => persistPromptAnsweredEvent(repos, track, event as Extract<WorkflowEvent, { type: "prompt_answered" }>),
+    loop_iteration: event => persistLoopIterationEvent(repos, track, event as Extract<WorkflowEvent, { type: "loop_iteration" }>),
+    review_feedback: event => persistReviewFeedbackEvent(repos, track, event as Extract<WorkflowEvent, { type: "review_feedback" }>),
+    tool_called: event => persistToolCalledEvent(repos, track, event as Extract<WorkflowEvent, { type: "tool_called" }>),
+    tool_result: event => persistToolResultEvent(repos, track, event as Extract<WorkflowEvent, { type: "tool_result" }>),
+    llm_thinking: event => persistLlmThinkingEvent(repos, track, event as Extract<WorkflowEvent, { type: "llm_thinking" }>),
+    llm_tokens: event => persistLlmTokensEvent(repos, track, event as Extract<WorkflowEvent, { type: "llm_tokens" }>),
+    artifact_written: event => persistArtifactWrittenEvent(repos, track, event as Extract<WorkflowEvent, { type: "artifact_written" }>),
+    log: event => persistLogEvent(repos, track, event as Extract<WorkflowEvent, { type: "log" }>),
+    run_finished: event => persistRunFinishedEvent(
+      repos,
+      track,
+      event as Extract<WorkflowEvent, { type: "run_finished" }>,
+      ctx.itemId,
+      isAuthoritative,
+      wasSoleLiveRun,
+      opts.onItemColumnChanged,
+    ),
+    item_column_changed: event => persistItemColumnChangedEvent(repos, event as Extract<WorkflowEvent, { type: "item_column_changed" }>),
+    project_created: event => persistProjectCreatedEvent(repos, track, event as Extract<WorkflowEvent, { type: "project_created" }>, persistedProjectIds),
+    wireframes_ready: event => persistWireframesReadyEvent(repos, track, event as Extract<WorkflowEvent, { type: "wireframes_ready" }>),
+    design_ready: event => persistDesignReadyEvent(repos, track, event as Extract<WorkflowEvent, { type: "design_ready" }>),
+    run_blocked: event => persistRunRecoveryEvent(repos, track, event as Extract<WorkflowEvent, { type: "run_blocked" }>, ctx.itemId, wasSoleLiveRun),
+    run_failed: event => persistRunRecoveryEvent(repos, track, event as Extract<WorkflowEvent, { type: "run_failed" }>, ctx.itemId, wasSoleLiveRun),
+    external_remediation_recorded: event => persistExternalRemediationRecordedEvent(
+      repos,
+      track,
+      event as Extract<WorkflowEvent, { type: "external_remediation_recorded" }>,
+    ),
+    run_resumed: event => persistRunResumedEvent(repos, track, event as Extract<WorkflowEvent, { type: "run_resumed" }>),
+    merge_gate_open: event => persistMergeGateOpenEvent(repos, track, event as Extract<WorkflowEvent, { type: "merge_gate_open" }>),
+    merge_gate_cancelled: event => persistMergeGateCancelledEvent(repos, track, event as Extract<WorkflowEvent, { type: "merge_gate_cancelled" }>),
+    merge_completed: event => persistMergeCompletedEvent(repos, track, event as Extract<WorkflowEvent, { type: "merge_completed" }>),
+    worktree_port_assigned: event => persistWorktreePortAssignedEvent(
+      repos,
+      track,
+      event as Extract<WorkflowEvent, { type: "worktree_port_assigned" }>,
+      ctx.runId,
+    ),
+    chat_message: event => persistChatMessageEvent(repos, track, event as Extract<WorkflowEvent, { type: "chat_message" }>),
+    presentation: event => persistPresentationEvent(repos, track, event as Extract<WorkflowEvent, { type: "presentation" }>),
+    wave_serialized: event => persistWaveSerializedEvent(repos, track, event as Extract<WorkflowEvent, { type: "wave_serialized" }>),
+  }
+
   const persist = (event: WorkflowEvent): void => {
-    switch (event.type) {
-      case "run_started": {
-        persistRunStartedEvent(repos, track, event)
-        return
-      }
-      case "stage_started": {
-        persistStageStartedEvent(repos, track, event, {
-          persistedStageIds,
-          persistedProjectIds,
-          stageRunIds,
-          itemId: ctx.itemId,
-          isAuthoritative,
-          onItemColumnChanged: opts.onItemColumnChanged,
-        })
-        return
-      }
-      case "stage_completed": {
-        persistStageCompletedEvent(repos, track, event, stageRunIds, {
-          itemId: ctx.itemId,
-          isAuthoritative,
-          onItemColumnChanged: opts.onItemColumnChanged,
-        })
-        return
-      }
-      case "prompt_requested": {
-        track(repos.appendLog({
-          runId: event.runId,
-          stageRunId: event.stageRunId ?? null,
-          eventType: "prompt_requested",
-          message: event.prompt,
-          data: { promptId: event.promptId, prompt: event.prompt, actions: event.actions }
-        }))
-        return
-      }
-      case "prompt_answered": {
-        track(repos.appendLog({
-          runId: event.runId,
-          eventType: "prompt_answered",
-          message: event.answer,
-          data: { promptId: event.promptId, answer: event.answer }
-        }))
-        return
-      }
-      case "loop_iteration": {
-        track(repos.appendLog({
-          runId: event.runId,
-          stageRunId: event.stageRunId ?? null,
-          eventType: "loop_iteration",
-          message: `${event.phase} ${event.n}`,
-          data: { n: event.n, phase: event.phase, stageKey: event.stageKey ?? null },
-        }))
-        return
-      }
-      case "review_feedback": {
-        track(repos.appendLog({
-          runId: event.runId,
-          stageRunId: event.stageRunId ?? null,
-          eventType: "review_feedback",
-          message: event.feedback,
-          data: { cycle: event.cycle, feedback: event.feedback, stageKey: event.stageKey ?? null },
-        }))
-        return
-      }
-      case "tool_called": {
-        track(repos.appendLog({
-          runId: event.runId,
-          stageRunId: event.stageRunId ?? null,
-          eventType: "tool_called",
-          message: event.name,
-          data: {
-            name: event.name,
-            argsPreview: event.argsPreview,
-            provider: event.provider,
-          },
-        }))
-        return
-      }
-      case "tool_result": {
-        track(repos.appendLog({
-          runId: event.runId,
-          stageRunId: event.stageRunId ?? null,
-          eventType: "tool_result",
-          message: event.name,
-          data: {
-            name: event.name,
-            argsPreview: event.argsPreview,
-            resultPreview: event.resultPreview,
-            provider: event.provider,
-            isError: event.isError ?? false,
-          },
-        }))
-        return
-      }
-      case "llm_thinking": {
-        track(repos.appendLog({
-          runId: event.runId,
-          stageRunId: event.stageRunId ?? null,
-          eventType: "llm_thinking",
-          message: event.text,
-          data: { provider: event.provider, model: event.model },
-        }))
-        return
-      }
-      case "llm_tokens": {
-        track(repos.appendLog({
-          runId: event.runId,
-          stageRunId: event.stageRunId ?? null,
-          eventType: "llm_tokens",
-          message: `${event.provider ?? "llm"} in=${event.in} out=${event.out}`,
-          data: {
-            in: event.in,
-            out: event.out,
-            cached: event.cached ?? 0,
-            provider: event.provider,
-            model: event.model,
-          },
-        }))
-        return
-      }
-      case "artifact_written": {
-        repos.recordArtifact({
-          runId: event.runId,
-          stageRunId: event.stageRunId ?? null,
-          label: event.label,
-          kind: event.kind,
-          path: event.path
-        })
-        track(repos.appendLog({
-          runId: event.runId,
-          stageRunId: event.stageRunId ?? null,
-          eventType: "artifact_written",
-          message: event.label,
-          data: { label: event.label, path: event.path, kind: event.kind }
-        }))
-        return
-      }
-      case "log": {
-        track(repos.appendLog({
-          runId: event.runId,
-          eventType: "log",
-          message: event.message,
-          data: { level: event.level ?? "info" },
-        }))
-        return
-      }
-      case "run_finished": {
-        // Snapshot authority *before* updating the run status, so the guard
-        // sees the run's current (pre-mutation) status and not the new one.
-        // Passing event.status tells isAuthoritative what this run is becoming,
-        // so a run that is completing as "failed" correctly suppresses item writes.
-        const authoritative = isAuthoritative(event.status)
-        // current_stage clears on terminal events of the sole live run regardless
-        // of whether column/phase writes are authoritative — a dead run owns no
-        // stage even if it died by failing.
-        const soleLive = wasSoleLiveRun()
-        repos.updateRun(event.runId, { status: event.status })
-        const item = repos.getItem(ctx.itemId)
-        const { column, phaseStatus } = mapStageToColumn(item?.current_stage ?? "documentation", event.status)
-        if (authoritative) {
-          const from = repos.getItem(ctx.itemId)?.current_column ?? "idea"
-          repos.setItemColumn(ctx.itemId, column, phaseStatus)
-          opts.onItemColumnChanged?.({ itemId: ctx.itemId, from, to: column, phaseStatus })
-        }
-        if (soleLive) {
-          repos.setItemCurrentStage(ctx.itemId, null)
-        }
-        track(repos.appendLog({
-          runId: event.runId,
-          eventType: "run_finished",
-          message: `run ${event.status}`,
-          data: {
-            itemId: event.itemId,
-            title: event.title,
-            status: event.status,
-            error: event.error,
-          },
-        }))
-        return
-      }
-      case "item_column_changed": {
-        repos.setItemColumn(
-          event.itemId,
-          event.column as ItemRow["current_column"],
-          event.phaseStatus as ItemRow["phase_status"]
-        )
-        return
-      }
-      case "project_created": {
-        const project = repos.createProject({
-          id: event.projectId,
-          itemId: event.itemId,
-          code: event.code,
-          name: event.name,
-          summary: event.summary,
-          status: "draft",
-          position: event.position
-        })
-        persistedProjectIds.set(event.projectId, project.id)
-        track(repos.appendLog({
-          runId: event.runId,
-          eventType: "project_created",
-          message: event.name,
-          data: {
-            itemId: event.itemId,
-            projectId: event.projectId,
-            code: event.code,
-            name: event.name,
-            summary: event.summary,
-            position: event.position,
-          },
-        }))
-        return
-      }
-      case "wireframes_ready": {
-        track(repos.appendLog({
-          runId: event.runId,
-          eventType: "wireframes_ready",
-          message: `${event.screenCount} screens ready`,
-          data: { itemId: event.itemId, screenCount: event.screenCount, urls: event.urls },
-        }))
-        return
-      }
-      case "design_ready": {
-        track(repos.appendLog({
-          runId: event.runId,
-          eventType: "design_ready",
-          message: "design preview ready",
-          data: { itemId: event.itemId, url: event.url },
-        }))
-        return
-      }
-      case "run_blocked":
-      case "run_failed": {
-        // Snapshot live-sibling state *before* mutating this run's status, so
-        // a run going to "blocked" doesn't see itself as a live sibling. The
-        // sibling check excludes ctx.runId anyway, but reading first is the
-        // intent-preserving order.
-        const soleLive = wasSoleLiveRun()
-        repos.updateRun(event.runId, { status: event.type === "run_blocked" ? "blocked" : "failed" })
-        if (soleLive) {
-          // Dead/paused sole run owns no live stage. Column/phase stays put
-          // (failed runs intentionally don't mutate them per Option A); only
-          // current_stage clears so the mini-stepper doesn't lie.
-          repos.setItemCurrentStage(ctx.itemId, null)
-        }
-        const scope = event.scope
-        let scopeRefVal: string | null = null
-        if (scope.type === "stage") scopeRefVal = scope.stageId
-        else if (scope.type === "story") scopeRefVal = `${scope.waveNumber}/${scope.storyId}`
-        repos.setRunRecovery(event.runId, {
-          status: event.type === "run_blocked" ? "blocked" : "failed",
-          scope: scope.type,
-          scopeRef: scopeRefVal,
-          summary: event.summary
-        })
-        track(repos.appendLog({
-          runId: event.runId,
-          eventType: event.type,
-          message: event.summary,
-          data: {
-            itemId: "itemId" in event ? event.itemId : undefined,
-            title: "title" in event ? event.title : undefined,
-            cause: event.cause,
-            scope,
-            branch: "branch" in event ? event.branch : undefined,
-          },
-        }))
-        return
-      }
-      case "external_remediation_recorded": {
-        track(repos.appendLog({
-          runId: event.runId,
-          eventType: "external_remediation_recorded",
-          message: event.summary,
-          data: { remediationId: event.remediationId, scope: event.scope, branch: event.branch }
-        }))
-        return
-      }
-      case "run_resumed": {
-        repos.clearRunRecovery(event.runId)
-        track(repos.appendLog({
-          runId: event.runId,
-          eventType: "run_resumed",
-          message: `run resumed from ${event.scope.type} scope`,
-          data: { remediationId: event.remediationId, scope: event.scope }
-        }))
-        return
-      }
-      case "merge_gate_open": {
-        track(repos.appendLog({
-          runId: event.runId,
-          eventType: "merge_gate_open",
-          message: `merge gate opened for ${event.itemBranch}`,
-          data: {
-            itemId: event.itemId,
-            itemBranch: event.itemBranch,
-            baseBranch: event.baseBranch,
-            gatePromptId: event.gatePromptId,
-          },
-        }))
-        return
-      }
-      case "merge_gate_cancelled": {
-        track(repos.appendLog({
-          runId: event.runId,
-          eventType: "merge_gate_cancelled",
-          message: `merge gate cancelled for ${event.itemBranch}`,
-          data: {
-            itemId: event.itemId,
-            itemBranch: event.itemBranch,
-            baseBranch: event.baseBranch,
-          },
-        }))
-        return
-      }
-      case "merge_completed": {
-        track(repos.appendLog({
-          runId: event.runId,
-          eventType: "merge_completed",
-          message: `merged ${event.itemBranch} into ${event.baseBranch}`,
-          data: {
-            itemId: event.itemId,
-            itemBranch: event.itemBranch,
-            baseBranch: event.baseBranch,
-            mergeSha: event.mergeSha,
-          },
-        }))
-        return
-      }
-      case "worktree_port_assigned": {
-        track(repos.appendLog({
-          runId: event.runId ?? ctx.runId,
-          eventType: "worktree_port_assigned",
-          message: `${event.branch} -> ${event.port}`,
-          data: {
-            branch: event.branch,
-            worktreePath: event.worktreePath,
-            port: event.port,
-          },
-        }))
-        return
-      }
-      case "chat_message": {
-        track(repos.appendLog({
-          runId: event.runId,
-          stageRunId: event.stageRunId ?? null,
-          eventType: "chat_message",
-          message: event.text,
-          data: {
-            role: event.role,
-            source: event.source,
-            requiresResponse: event.requiresResponse ?? false,
-          },
-        }))
-        return
-      }
-      case "presentation": {
-        // `stagePresent.*` callers only emit presentation events when an
-        // active run context is set, so runId is expected. If something
-        // slips through without one (e.g. a test stub), drop silently —
-        // the local bus has already delivered it to subscribers.
-        if (!event.runId) return
-        track(repos.appendLog({
-          runId: event.runId,
-          stageRunId: event.stageRunId ?? null,
-          eventType: "presentation",
-          message: event.text,
-          data: {
-            kind: event.kind,
-            meta: event.meta,
-          },
-        }))
-        return
-      }
-      case "wave_serialized": {
-        track(repos.appendLog({
-          runId: event.runId,
-          eventType: "wave_serialized",
-          message: `wave ${event.waveNumber} serialized`,
-          data: {
-            waveId: event.waveId,
-            waveNumber: event.waveNumber,
-            stories: event.stories,
-            overlappingFiles: event.overlappingFiles,
-            cause: event.cause,
-          },
-        }))
-        return
-      }
-      default: {
-        const exhaustive: never = event
-        return exhaustive
-      }
-    }
+    eventHandlers[event.type]?.(event)
   }
 
   return bus.subscribe(event => {
@@ -600,6 +269,433 @@ function persistStageCompletedEvent(
     eventType: "stage_completed",
     message: `stage ${event.stageKey} ${event.status}`,
     data: { stageRunId: stageRunId ?? null, stageKey: event.stageKey, status: event.status, error: event.error },
+  }))
+}
+
+function persistPromptRequestedEvent(
+  repos: Repos,
+  track: (row: { id: string } | undefined) => void,
+  event: Extract<WorkflowEvent, { type: "prompt_requested" }>,
+): void {
+  track(repos.appendLog({
+    runId: event.runId,
+    stageRunId: event.stageRunId ?? null,
+    eventType: "prompt_requested",
+    message: event.prompt,
+    data: { promptId: event.promptId, prompt: event.prompt, actions: event.actions }
+  }))
+}
+
+function persistPromptAnsweredEvent(
+  repos: Repos,
+  track: (row: { id: string } | undefined) => void,
+  event: Extract<WorkflowEvent, { type: "prompt_answered" }>,
+): void {
+  track(repos.appendLog({
+    runId: event.runId,
+    eventType: "prompt_answered",
+    message: event.answer,
+    data: { promptId: event.promptId, answer: event.answer }
+  }))
+}
+
+function persistLoopIterationEvent(
+  repos: Repos,
+  track: (row: { id: string } | undefined) => void,
+  event: Extract<WorkflowEvent, { type: "loop_iteration" }>,
+): void {
+  track(repos.appendLog({
+    runId: event.runId,
+    stageRunId: event.stageRunId ?? null,
+    eventType: "loop_iteration",
+    message: `${event.phase} ${event.n}`,
+    data: { n: event.n, phase: event.phase, stageKey: event.stageKey ?? null },
+  }))
+}
+
+function persistReviewFeedbackEvent(
+  repos: Repos,
+  track: (row: { id: string } | undefined) => void,
+  event: Extract<WorkflowEvent, { type: "review_feedback" }>,
+): void {
+  track(repos.appendLog({
+    runId: event.runId,
+    stageRunId: event.stageRunId ?? null,
+    eventType: "review_feedback",
+    message: event.feedback,
+    data: { cycle: event.cycle, feedback: event.feedback, stageKey: event.stageKey ?? null },
+  }))
+}
+
+function persistToolCalledEvent(
+  repos: Repos,
+  track: (row: { id: string } | undefined) => void,
+  event: Extract<WorkflowEvent, { type: "tool_called" }>,
+): void {
+  track(repos.appendLog({
+    runId: event.runId,
+    stageRunId: event.stageRunId ?? null,
+    eventType: "tool_called",
+    message: event.name,
+    data: { name: event.name, argsPreview: event.argsPreview, provider: event.provider },
+  }))
+}
+
+function persistToolResultEvent(
+  repos: Repos,
+  track: (row: { id: string } | undefined) => void,
+  event: Extract<WorkflowEvent, { type: "tool_result" }>,
+): void {
+  track(repos.appendLog({
+    runId: event.runId,
+    stageRunId: event.stageRunId ?? null,
+    eventType: "tool_result",
+    message: event.name,
+    data: {
+      name: event.name,
+      argsPreview: event.argsPreview,
+      resultPreview: event.resultPreview,
+      provider: event.provider,
+      isError: event.isError ?? false,
+    },
+  }))
+}
+
+function persistLlmThinkingEvent(
+  repos: Repos,
+  track: (row: { id: string } | undefined) => void,
+  event: Extract<WorkflowEvent, { type: "llm_thinking" }>,
+): void {
+  track(repos.appendLog({
+    runId: event.runId,
+    stageRunId: event.stageRunId ?? null,
+    eventType: "llm_thinking",
+    message: event.text,
+    data: { provider: event.provider, model: event.model },
+  }))
+}
+
+function persistLlmTokensEvent(
+  repos: Repos,
+  track: (row: { id: string } | undefined) => void,
+  event: Extract<WorkflowEvent, { type: "llm_tokens" }>,
+): void {
+  track(repos.appendLog({
+    runId: event.runId,
+    stageRunId: event.stageRunId ?? null,
+    eventType: "llm_tokens",
+    message: `${event.provider ?? "llm"} in=${event.in} out=${event.out}`,
+    data: {
+      in: event.in,
+      out: event.out,
+      cached: event.cached ?? 0,
+      provider: event.provider,
+      model: event.model,
+    },
+  }))
+}
+
+function persistArtifactWrittenEvent(
+  repos: Repos,
+  track: (row: { id: string } | undefined) => void,
+  event: Extract<WorkflowEvent, { type: "artifact_written" }>,
+): void {
+  repos.recordArtifact({
+    runId: event.runId,
+    stageRunId: event.stageRunId ?? null,
+    label: event.label,
+    kind: event.kind,
+    path: event.path
+  })
+  track(repos.appendLog({
+    runId: event.runId,
+    stageRunId: event.stageRunId ?? null,
+    eventType: "artifact_written",
+    message: event.label,
+    data: { label: event.label, path: event.path, kind: event.kind }
+  }))
+}
+
+function persistLogEvent(
+  repos: Repos,
+  track: (row: { id: string } | undefined) => void,
+  event: Extract<WorkflowEvent, { type: "log" }>,
+): void {
+  track(repos.appendLog({
+    runId: event.runId,
+    eventType: "log",
+    message: event.message,
+    data: { level: event.level ?? "info" },
+  }))
+}
+
+function persistRunFinishedEvent(
+  repos: Repos,
+  track: (row: { id: string } | undefined) => void,
+  event: Extract<WorkflowEvent, { type: "run_finished" }>,
+  itemId: string,
+  isAuthoritative: (thisRunStatus?: string) => boolean,
+  wasSoleLiveRun: () => boolean,
+  onItemColumnChanged?: AttachDbSyncOptions["onItemColumnChanged"],
+): void {
+  const authoritative = isAuthoritative(event.status)
+  const soleLive = wasSoleLiveRun()
+  repos.updateRun(event.runId, { status: event.status })
+  const item = repos.getItem(itemId)
+  const { column, phaseStatus } = mapStageToColumn(item?.current_stage ?? "documentation", event.status)
+  if (authoritative) {
+    const from = repos.getItem(itemId)?.current_column ?? "idea"
+    repos.setItemColumn(itemId, column, phaseStatus)
+    onItemColumnChanged?.({ itemId, from, to: column, phaseStatus })
+  }
+  if (soleLive) repos.setItemCurrentStage(itemId, null)
+  track(repos.appendLog({
+    runId: event.runId,
+    eventType: "run_finished",
+    message: `run ${event.status}`,
+    data: { itemId: event.itemId, title: event.title, status: event.status, error: event.error },
+  }))
+}
+
+function persistItemColumnChangedEvent(
+  repos: Repos,
+  event: Extract<WorkflowEvent, { type: "item_column_changed" }>,
+): void {
+  repos.setItemColumn(
+    event.itemId,
+    event.column as ItemRow["current_column"],
+    event.phaseStatus as ItemRow["phase_status"]
+  )
+}
+
+function persistProjectCreatedEvent(
+  repos: Repos,
+  track: (row: { id: string } | undefined) => void,
+  event: Extract<WorkflowEvent, { type: "project_created" }>,
+  persistedProjectIds: Map<string, string>,
+): void {
+  const project = repos.createProject({
+    id: event.projectId,
+    itemId: event.itemId,
+    code: event.code,
+    name: event.name,
+    summary: event.summary,
+    status: "draft",
+    position: event.position
+  })
+  persistedProjectIds.set(event.projectId, project.id)
+  track(repos.appendLog({
+    runId: event.runId,
+    eventType: "project_created",
+    message: event.name,
+    data: {
+      itemId: event.itemId,
+      projectId: event.projectId,
+      code: event.code,
+      name: event.name,
+      summary: event.summary,
+      position: event.position,
+    },
+  }))
+}
+
+function persistWireframesReadyEvent(
+  repos: Repos,
+  track: (row: { id: string } | undefined) => void,
+  event: Extract<WorkflowEvent, { type: "wireframes_ready" }>,
+): void {
+  track(repos.appendLog({
+    runId: event.runId,
+    eventType: "wireframes_ready",
+    message: `${event.screenCount} screens ready`,
+    data: { itemId: event.itemId, screenCount: event.screenCount, urls: event.urls },
+  }))
+}
+
+function persistDesignReadyEvent(
+  repos: Repos,
+  track: (row: { id: string } | undefined) => void,
+  event: Extract<WorkflowEvent, { type: "design_ready" }>,
+): void {
+  track(repos.appendLog({
+    runId: event.runId,
+    eventType: "design_ready",
+    message: "design preview ready",
+    data: { itemId: event.itemId, url: event.url },
+  }))
+}
+
+function persistRunRecoveryEvent(
+  repos: Repos,
+  track: (row: { id: string } | undefined) => void,
+  event: Extract<WorkflowEvent, { type: "run_blocked" | "run_failed" }>,
+  itemId: string,
+  wasSoleLiveRun: () => boolean,
+): void {
+  const soleLive = wasSoleLiveRun()
+  repos.updateRun(event.runId, { status: event.type === "run_blocked" ? "blocked" : "failed" })
+  if (soleLive) repos.setItemCurrentStage(itemId, null)
+  const scope = event.scope
+  const scopeRefVal = scope.type === "stage" ? scope.stageId : scope.type === "story" ? `${scope.waveNumber}/${scope.storyId}` : null
+  repos.setRunRecovery(event.runId, {
+    status: event.type === "run_blocked" ? "blocked" : "failed",
+    scope: scope.type,
+    scopeRef: scopeRefVal,
+    summary: event.summary
+  })
+  track(repos.appendLog({
+    runId: event.runId,
+    eventType: event.type,
+    message: event.summary,
+    data: {
+      itemId: "itemId" in event ? event.itemId : undefined,
+      title: "title" in event ? event.title : undefined,
+      cause: event.cause,
+      scope,
+      branch: "branch" in event ? event.branch : undefined,
+    },
+  }))
+}
+
+function persistExternalRemediationRecordedEvent(
+  repos: Repos,
+  track: (row: { id: string } | undefined) => void,
+  event: Extract<WorkflowEvent, { type: "external_remediation_recorded" }>,
+): void {
+  track(repos.appendLog({
+    runId: event.runId,
+    eventType: "external_remediation_recorded",
+    message: event.summary,
+    data: { remediationId: event.remediationId, scope: event.scope, branch: event.branch }
+  }))
+}
+
+function persistRunResumedEvent(
+  repos: Repos,
+  track: (row: { id: string } | undefined) => void,
+  event: Extract<WorkflowEvent, { type: "run_resumed" }>,
+): void {
+  repos.clearRunRecovery(event.runId)
+  track(repos.appendLog({
+    runId: event.runId,
+    eventType: "run_resumed",
+    message: `run resumed from ${event.scope.type} scope`,
+    data: { remediationId: event.remediationId, scope: event.scope }
+  }))
+}
+
+function persistMergeGateOpenEvent(
+  repos: Repos,
+  track: (row: { id: string } | undefined) => void,
+  event: Extract<WorkflowEvent, { type: "merge_gate_open" }>,
+): void {
+  track(repos.appendLog({
+    runId: event.runId,
+    eventType: "merge_gate_open",
+    message: `merge gate opened for ${event.itemBranch}`,
+    data: {
+      itemId: event.itemId,
+      itemBranch: event.itemBranch,
+      baseBranch: event.baseBranch,
+      gatePromptId: event.gatePromptId,
+    },
+  }))
+}
+
+function persistMergeGateCancelledEvent(
+  repos: Repos,
+  track: (row: { id: string } | undefined) => void,
+  event: Extract<WorkflowEvent, { type: "merge_gate_cancelled" }>,
+): void {
+  track(repos.appendLog({
+    runId: event.runId,
+    eventType: "merge_gate_cancelled",
+    message: `merge gate cancelled for ${event.itemBranch}`,
+    data: {
+      itemId: event.itemId,
+      itemBranch: event.itemBranch,
+      baseBranch: event.baseBranch,
+    },
+  }))
+}
+
+function persistMergeCompletedEvent(
+  repos: Repos,
+  track: (row: { id: string } | undefined) => void,
+  event: Extract<WorkflowEvent, { type: "merge_completed" }>,
+): void {
+  track(repos.appendLog({
+    runId: event.runId,
+    eventType: "merge_completed",
+    message: `merged ${event.itemBranch} into ${event.baseBranch}`,
+    data: {
+      itemId: event.itemId,
+      itemBranch: event.itemBranch,
+      baseBranch: event.baseBranch,
+      mergeSha: event.mergeSha,
+    },
+  }))
+}
+
+function persistWorktreePortAssignedEvent(
+  repos: Repos,
+  track: (row: { id: string } | undefined) => void,
+  event: Extract<WorkflowEvent, { type: "worktree_port_assigned" }>,
+  runId: string,
+): void {
+  track(repos.appendLog({
+    runId: event.runId ?? runId,
+    eventType: "worktree_port_assigned",
+    message: `${event.branch} -> ${event.port}`,
+    data: { branch: event.branch, worktreePath: event.worktreePath, port: event.port },
+  }))
+}
+
+function persistChatMessageEvent(
+  repos: Repos,
+  track: (row: { id: string } | undefined) => void,
+  event: Extract<WorkflowEvent, { type: "chat_message" }>,
+): void {
+  track(repos.appendLog({
+    runId: event.runId,
+    stageRunId: event.stageRunId ?? null,
+    eventType: "chat_message",
+    message: event.text,
+    data: { role: event.role, source: event.source, requiresResponse: event.requiresResponse ?? false },
+  }))
+}
+
+function persistPresentationEvent(
+  repos: Repos,
+  track: (row: { id: string } | undefined) => void,
+  event: Extract<WorkflowEvent, { type: "presentation" }>,
+): void {
+  if (!event.runId) return
+  track(repos.appendLog({
+    runId: event.runId,
+    stageRunId: event.stageRunId ?? null,
+    eventType: "presentation",
+    message: event.text,
+    data: { kind: event.kind, meta: event.meta },
+  }))
+}
+
+function persistWaveSerializedEvent(
+  repos: Repos,
+  track: (row: { id: string } | undefined) => void,
+  event: Extract<WorkflowEvent, { type: "wave_serialized" }>,
+): void {
+  track(repos.appendLog({
+    runId: event.runId,
+    eventType: "wave_serialized",
+    message: `wave ${event.waveNumber} serialized`,
+    data: {
+      waveId: event.waveId,
+      waveNumber: event.waveNumber,
+      stories: event.stories,
+      overlappingFiles: event.overlappingFiles,
+      cause: event.cause,
+    },
   }))
 }
 

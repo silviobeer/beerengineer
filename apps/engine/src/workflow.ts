@@ -300,29 +300,8 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
     workspaceRoot: options?.workspaceRoot,
   }
 
-  let git
-  try {
-    git = createGitAdapter(context)
-  } catch (error) {
-    const reason = (error as Error).message.replace(/^git:\s*/, "")
-    const summary = options?.workspaceRoot
-      ? (() => {
-          const currentBranch = currentGitBranch(options.workspaceRoot)
-          if (reason.includes("uncommitted changes")) {
-            return currentBranch === "main" || currentBranch === "master"
-              ? `Workspace ${options.workspaceRoot} has uncommitted changes on ${currentBranch}. ` +
-                "Strategy violation: main/master must stay clean; item work belongs on isolated item branches."
-              : `Workspace ${options.workspaceRoot} has uncommitted changes. ` +
-                "beerengineer_ requires a clean repo before it creates an isolated item branch."
-          }
-          return `Cannot start run: ${reason}`
-        })()
-      : `Cannot start run: ${reason}`
-    stagePresent.warn(summary)
-    await blockRunForWorkspaceState(context, summary)
-  }
+  const git = await ensureWorkflowGitAdapter(context, options?.workspaceRoot)
   // Above blockRunForWorkspaceState always throws, so `git` is defined here.
-  if (!git) throw new Error("unreachable: git adapter was not constructed")
   stagePresent.dim(`→ Real git mode: branches will be created in ${git.mode.workspaceRoot}`)
 
   try {
@@ -334,133 +313,27 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
     // project — was the previous behavior. Loaded here so brainstorm /
     // visual-companion / frontend-design also receive it.
     const codebaseSnapshot = loadCodebaseSnapshot(options?.workspaceRoot)
-    let projects: Project[]
-    if (itemResumePlan.startStage === "brainstorm") {
-      // Fresh-run path: brainstorm owns the item-branch + worktree creation.
-      projects = await withStageLifecycle(
-        "brainstorm",
-        () => brainstorm(item, context, git, options?.llm?.stage, codebaseSnapshot),
-        {},
-      )
-    } else {
-      // Resume past brainstorm: brainstorm won't run, so re-establish the
-      // item worktree here in case the operator nuked .beerengineer/ between
-      // runs. ensureItemBranch is idempotent against a healthy worktree.
-      git.ensureItemBranch()
-      git.assertWorkspaceRootOnBaseBranch("after ensureItemBranch (resume past brainstorm)")
-      projects = await loadProjects(context)
-    }
+    const projects = await resolveWorkflowProjects(item, context, git, itemResumePlan, options?.llm?.stage, codebaseSnapshot)
     if (itemResumePlan.startStage === "projects") {
       await assertDesignPrepProjectFreeze(context, projects)
     }
-    if (context.workspaceRoot) {
-      const port = assignPort(layout.itemWorktreeDir(context), branchNameItem(context), context.workspaceRoot)
-      emitEvent({
-        type: "worktree_port_assigned",
-        runId: activeRun?.runId,
-        branch: branchNameItem(context),
-        worktreePath: layout.itemWorktreeDir(context),
-        port,
-      })
-    }
+    emitWorkflowPreviewPort(context, activeRun)
     const itemConcept = await loadConcept(context)
     const itemHasUi = projects.some(project => project.hasUi === true)
-    // Frontend fingerprint is only useful for UI items, and it's only known
-    // to be needed *after* brainstorm produced the project split with their
-    // hasUi flags. Load lazily here, then enrich the codebase snapshot so
-    // every downstream stage (visual-companion, frontend-design, the
-    // per-project pipeline) sees it through the same `ctx.codebase` channel.
-    const itemSnapshot = itemHasUi && codebaseSnapshot
-      ? { ...codebaseSnapshot, frontend: loadFrontendSnapshot(options?.workspaceRoot) }
-      : codebaseSnapshot
-    // If we were asked to skip directly to projects but the seeded artifacts
-    // aren't actually present (legacy run, partial seed), fall back to running
-    // the corresponding design-prep stage instead of crashing on ENOENT.
-    const wireframesFileExists = existsSync(join(layout.stageArtifactsDir(context, "visual-companion"), "wireframes.json"))
-    const designFileExists = existsSync(join(layout.stageArtifactsDir(context, "frontend-design"), "design.json"))
-    // Manual-mode actions (start_visual_companion / start_frontend_design)
-    // run *only* the targeted stage and skip the sibling; runService seeds
-    // any required prior artifacts before this point. Without manualStage we
-    // keep the existing non-strict logic so `rerun_design_prep` and resumes
-    // still backfill missing artifacts.
-    const isManualVisual = itemResumePlan.manualStage === "visual-companion"
-    const isManualFrontend = itemResumePlan.manualStage === "frontend-design"
-    const shouldRunVisualCompanion = itemHasUi && (
-      isManualVisual ||
-      (!itemResumePlan.manualStage && (
-        itemResumePlan.startStage === "brainstorm" ||
-        itemResumePlan.startStage === "visual-companion" ||
-        !wireframesFileExists
-      ))
+    const itemSnapshot = buildItemSnapshot(itemHasUi, codebaseSnapshot, options?.workspaceRoot)
+    const { wireframes, design } = await resolveDesignPrepArtifacts(
+      context,
+      itemResumePlan,
+      itemHasUi,
+      itemConcept,
+      projects,
+      options?.llm?.stage,
+      itemSnapshot,
     )
-    const shouldRunFrontendDesign = itemHasUi && (
-      isManualFrontend ||
-      (!itemResumePlan.manualStage && (
-        shouldRunVisualCompanion ||
-        itemResumePlan.startStage === "frontend-design" ||
-        !designFileExists
-      ))
-    )
-    const designPrepReferences = loadItemWorkspaceReferences(context)
-    let wireframes: WireframeArtifact | undefined
-    if (itemHasUi) {
-      wireframes = shouldRunVisualCompanion
-        ? await withStageLifecycle(
-            "visual-companion",
-            () => visualCompanion(context, { itemConcept, projects, references: designPrepReferences }, options?.llm?.stage, itemSnapshot),
-            {},
-          )
-        : await loadWireframes(context)
-    }
-    let design: DesignArtifact | undefined
-    if (itemHasUi) {
-      design = shouldRunFrontendDesign
-        ? await withStageLifecycle(
-            "frontend-design",
-            () => frontendDesign(context, { itemConcept, projects, wireframes, references: designPrepReferences }, options?.llm?.stage, itemSnapshot),
-            {},
-          )
-        : await loadDesign(context)
-    }
-    if (activeRun) {
-      projects.forEach((project, index) => {
-        emitEvent({
-          type: "project_created",
-          runId: activeRun.runId,
-          itemId: activeRun.itemId,
-          projectId: project.id,
-          code: project.id,
-          name: project.name,
-          summary: project.description,
-          position: index,
-        })
-      })
-    }
+    emitWorkflowProjectsCreated(activeRun, projects)
 
     if (itemResumePlan.startStage !== "merge-gate") {
-      for (const project of projects) {
-        git.ensureProjectBranch(project.id)
-        const conceptAmendments = [
-          ...(wireframes?.conceptAmendments ?? []),
-          ...(design?.conceptAmendments ?? []),
-        ]
-        await runProject(
-          {
-            ...context,
-            project: { ...project, concept: mergeAmendments(project.concept, conceptAmendments, project.id) },
-            wireframes: wireframes ? projectWireframes(wireframes, project.id) : undefined,
-            design: design ? projectDesign(design) : undefined,
-            codebase: itemSnapshot,
-            decisions: loadItemDecisions(context),
-          },
-          git,
-          resumePlan ?? undefined,
-          options?.llm,
-        )
-        // Project→item merge + post-merge invariant check happen inside the
-        // handoff stage so they land under withStageLifecycle("handoff", …)
-        // and any merge failure surfaces in the right recovery scope.
-      }
+      await runWorkflowProjects(context, projects, git, wireframes, design, itemSnapshot, resumePlan, options?.llm)
     }
 
     await withStageLifecycle("merge-gate", () => mergeGate(context, git, blockRunForWorkspaceState), {})
@@ -468,39 +341,223 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
     stagePresent.header("DONE")
     stagePresent.ok(`Item "${item.title}" is done ✓`)
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    if (isWorktreePortPoolExhaustedError(error)) {
-      const summary =
-        `Run blocked: no preview port is available for "${item.title}". ` +
-        "Expand BEERENGINEER_WORKTREE_PORT_POOL or the workspace worktreePortPool setting."
-      stagePresent.warn(summary)
-      await blockRunForWorkspaceState(context, summary, {
-        cause: "worktree_port_pool_exhausted",
-        detail: `Port allocation failed for item branch ${branchNameItem(context)}.`,
-        branch: branchNameItem(context),
-      })
-    }
-    if (message.startsWith("git:") || message.startsWith("branch_gate:")) {
-      const summary =
-        `Run blocked: git branch gate failed for "${item.title}". ` +
-        `${message.replace(/^branch_gate:\s*/, "").replace(/^git:\s*/, "")}`
-      stagePresent.warn(summary)
-      await blockRunForWorkspaceState(context, summary)
-    }
+    await handleWorkflowFailure(context, item.title, error)
     throw error
   } finally {
-    try {
-      const exitBranch = git.exitRunToItemBranch()
-      stagePresent.dim(`→ Run exit branch: ${exitBranch}`)
-    } catch (error) {
-      stagePresent.warn(`Run exit branch restore failed: ${(error as Error).message}`)
-    }
-    try {
-      git.assertWorkspaceRootOnBaseBranch("run exit")
-    } catch (error) {
-      stagePresent.warn(`Workspace root invariant failed at run exit: ${(error as Error).message}`)
-    }
+    restoreWorkflowExitState(git)
   }
+}
+
+async function resolveWorkflowProjects(
+  item: Item,
+  context: WorkflowContext,
+  git: ReturnType<typeof createGitAdapter>,
+  itemResumePlan: ReturnType<typeof normalizeItemResume>,
+  stageLlm: WorkflowLlmOptions["stage"] | undefined,
+  codebaseSnapshot: ReturnType<typeof loadCodebaseSnapshot>,
+): Promise<Project[]> {
+  if (itemResumePlan.startStage === "brainstorm") {
+    return await withStageLifecycle(
+      "brainstorm",
+      () => brainstorm(item, context, git, stageLlm, codebaseSnapshot),
+      {},
+    )
+  }
+  git.ensureItemBranch()
+  git.assertWorkspaceRootOnBaseBranch("after ensureItemBranch (resume past brainstorm)")
+  return await loadProjects(context)
+}
+
+function emitWorkflowPreviewPort(
+  context: WorkflowContext,
+  activeRun: ReturnType<typeof getActiveRun>,
+): void {
+  if (!context.workspaceRoot) return
+  const port = assignPort(layout.itemWorktreeDir(context), branchNameItem(context), context.workspaceRoot)
+  emitEvent({
+    type: "worktree_port_assigned",
+    runId: activeRun?.runId,
+    branch: branchNameItem(context),
+    worktreePath: layout.itemWorktreeDir(context),
+    port,
+  })
+}
+
+async function resolveDesignPrepArtifacts(
+  context: WorkflowContext,
+  itemResumePlan: ReturnType<typeof normalizeItemResume>,
+  itemHasUi: boolean,
+  itemConcept: Concept & { hasUi?: boolean },
+  projects: Project[],
+  stageLlm: WorkflowLlmOptions["stage"] | undefined,
+  itemSnapshot: ReturnType<typeof buildItemSnapshot>,
+): Promise<{ wireframes: WireframeArtifact | undefined; design: DesignArtifact | undefined }> {
+  if (!itemHasUi) return { wireframes: undefined, design: undefined }
+  const designPrepPlan = buildDesignPrepPlan(context, itemResumePlan, itemHasUi)
+  const designPrepReferences = loadItemWorkspaceReferences(context)
+  const wireframes = designPrepPlan.shouldRunVisualCompanion
+    ? await withStageLifecycle(
+        "visual-companion",
+        () => visualCompanion(context, { itemConcept, projects, references: designPrepReferences }, stageLlm, itemSnapshot),
+        {},
+      )
+    : await loadWireframes(context)
+  const design = designPrepPlan.shouldRunFrontendDesign
+    ? await withStageLifecycle(
+        "frontend-design",
+        () => frontendDesign(context, { itemConcept, projects, wireframes, references: designPrepReferences }, stageLlm, itemSnapshot),
+        {},
+      )
+    : await loadDesign(context)
+  return { wireframes, design }
+}
+
+function emitWorkflowProjectsCreated(
+  activeRun: ReturnType<typeof getActiveRun>,
+  projects: Project[],
+): void {
+  if (!activeRun) return
+  projects.forEach((project, index) => {
+    emitEvent({
+      type: "project_created",
+      runId: activeRun.runId,
+      itemId: activeRun.itemId,
+      projectId: project.id,
+      code: project.id,
+      name: project.name,
+      summary: project.description,
+      position: index,
+    })
+  })
+}
+
+async function runWorkflowProjects(
+  context: WorkflowContext,
+  projects: Project[],
+  git: ReturnType<typeof createGitAdapter>,
+  wireframes: WireframeArtifact | undefined,
+  design: DesignArtifact | undefined,
+  itemSnapshot: ReturnType<typeof buildItemSnapshot>,
+  resumePlan: ReturnType<typeof normalizeProjectResume> | null,
+  llm: WorkflowLlmOptions | undefined,
+): Promise<void> {
+  for (const project of projects) {
+    git.ensureProjectBranch(project.id)
+    const conceptAmendments = [
+      ...(wireframes?.conceptAmendments ?? []),
+      ...(design?.conceptAmendments ?? []),
+    ]
+    await runProject(
+      {
+        ...context,
+        project: { ...project, concept: mergeAmendments(project.concept, conceptAmendments, project.id) },
+        wireframes: wireframes ? projectWireframes(wireframes, project.id) : undefined,
+        design: design ? projectDesign(design) : undefined,
+        codebase: itemSnapshot,
+        decisions: loadItemDecisions(context),
+      },
+      git,
+      resumePlan ?? undefined,
+      llm,
+    )
+  }
+}
+
+async function handleWorkflowFailure(context: WorkflowContext, itemTitle: string, error: unknown): Promise<void> {
+  const message = error instanceof Error ? error.message : String(error)
+  if (isWorktreePortPoolExhaustedError(error)) {
+    const summary =
+      `Run blocked: no preview port is available for "${itemTitle}". ` +
+      "Expand BEERENGINEER_WORKTREE_PORT_POOL or the workspace worktreePortPool setting."
+    stagePresent.warn(summary)
+    await blockRunForWorkspaceState(context, summary, {
+      cause: "worktree_port_pool_exhausted",
+      detail: `Port allocation failed for item branch ${branchNameItem(context)}.`,
+      branch: branchNameItem(context),
+    })
+  }
+  if (message.startsWith("git:") || message.startsWith("branch_gate:")) {
+    const summary =
+      `Run blocked: git branch gate failed for "${itemTitle}". ` +
+      `${message.replace(/^branch_gate:\s*/, "").replace(/^git:\s*/, "")}`
+    stagePresent.warn(summary)
+    await blockRunForWorkspaceState(context, summary)
+  }
+}
+
+function restoreWorkflowExitState(git: ReturnType<typeof createGitAdapter>): void {
+  try {
+    const exitBranch = git.exitRunToItemBranch()
+    stagePresent.dim(`→ Run exit branch: ${exitBranch}`)
+  } catch (error) {
+    stagePresent.warn(`Run exit branch restore failed: ${(error as Error).message}`)
+  }
+  try {
+    git.assertWorkspaceRootOnBaseBranch("run exit")
+  } catch (error) {
+    stagePresent.warn(`Workspace root invariant failed at run exit: ${(error as Error).message}`)
+  }
+}
+
+async function ensureWorkflowGitAdapter(context: WorkflowContext, workspaceRoot?: string) {
+  try {
+    return createGitAdapter(context)
+  } catch (error) {
+    const reason = (error as Error).message.replace(/^git:\s*/, "")
+    const summary = workflowGitFailureSummary(reason, workspaceRoot)
+    stagePresent.warn(summary)
+    await blockRunForWorkspaceState(context, summary)
+    throw error
+  }
+}
+
+function workflowGitFailureSummary(reason: string, workspaceRoot?: string): string {
+  if (!workspaceRoot) return `Cannot start run: ${reason}`
+  const currentBranch = currentGitBranch(workspaceRoot)
+  if (!reason.includes("uncommitted changes")) {
+    return `Cannot start run: ${reason}`
+  }
+  return currentBranch === "main" || currentBranch === "master"
+    ? `Workspace ${workspaceRoot} has uncommitted changes on ${currentBranch}. Strategy violation: main/master must stay clean; item work belongs on isolated item branches.`
+    : `Workspace ${workspaceRoot} has uncommitted changes. beerengineer_ requires a clean repo before it creates an isolated item branch.`
+}
+
+function buildItemSnapshot(
+  itemHasUi: boolean,
+  codebaseSnapshot: ReturnType<typeof loadCodebaseSnapshot>,
+  workspaceRoot?: string,
+) {
+  return itemHasUi && codebaseSnapshot
+    ? { ...codebaseSnapshot, frontend: loadFrontendSnapshot(workspaceRoot) }
+    : codebaseSnapshot
+}
+
+function buildDesignPrepPlan(
+  context: WorkflowContext,
+  itemResumePlan: ReturnType<typeof normalizeItemResume>,
+  itemHasUi: boolean,
+) {
+  const wireframesFileExists = existsSync(join(layout.stageArtifactsDir(context, "visual-companion"), "wireframes.json"))
+  const designFileExists = existsSync(join(layout.stageArtifactsDir(context, "frontend-design"), "design.json"))
+  const isManualVisual = itemResumePlan.manualStage === "visual-companion"
+  const isManualFrontend = itemResumePlan.manualStage === "frontend-design"
+  const shouldRunVisualCompanion = itemHasUi && (
+    isManualVisual ||
+    (!itemResumePlan.manualStage && (
+      itemResumePlan.startStage === "brainstorm" ||
+      itemResumePlan.startStage === "visual-companion" ||
+      !wireframesFileExists
+    ))
+  )
+  const shouldRunFrontendDesign = itemHasUi && (
+    isManualFrontend ||
+    (!itemResumePlan.manualStage && (
+      shouldRunVisualCompanion ||
+      itemResumePlan.startStage === "frontend-design" ||
+      !designFileExists
+    ))
+  )
+  return { shouldRunVisualCompanion, shouldRunFrontendDesign }
 }
 
 /**

@@ -700,52 +700,65 @@ async function runWorkspaceAddCommand(cmd: Extract<Command, { kind: "workspace-a
     return 1
   }
 
-  let addInput: RegisterWorkspaceInput
   try {
-    if (!cmd.path && !cmd.noInteractive && process.stdin.isTTY && process.stdout.isTTY) {
-      const prompted = await promptForWorkspaceAddDefaults(config)
-      addInput = {
-        path: prompted.path,
-        name: prompted.name,
-        key: prompted.key,
-        harnessProfile: prompted.profile,
-        sonar: prompted.sonar,
-        git: { init: prompted.gitInit, defaultBranch: "main" },
-        github: prompted.github,
-        sonarToken: prompted.sonarToken,
-      }
-    } else {
-      if (!cmd.path) {
-        console.error("  Missing --path for non-interactive workspace add.")
-        return 2
-      }
-      addInput = {
-        path: cmd.path,
-        name: cmd.name,
-        key: cmd.key,
-        harnessProfile: parseHarnessProfile(cmd, config),
-        sonar: cmd.sonar
-          ? {
-              enabled: true,
-              projectKey: cmd.sonarKey,
-              organization: cmd.sonarOrg,
-              hostUrl: cmd.sonarHost,
-            }
-          : { enabled: false },
-        git: { init: cmd.noGit !== true, defaultBranch: "main" },
-        github: cmd.ghCreate
-          ? { create: true, visibility: cmd.ghPublic ? "public" : "private", owner: cmd.ghOwner }
-          : undefined,
-        sonarToken: cmd.sonarToken
-          ? { value: cmd.sonarToken, persist: cmd.sonarTokenPersist !== false }
-          : undefined,
-      }
-    }
+    const addInput = await resolveWorkspaceAddInput(cmd, config)
+    if (typeof addInput === "number") return addInput
+    return await executeWorkspaceAdd(cmd, config, addInput)
   } catch (err) {
     console.error(`  ${(err as Error).message}`)
     return 2
   }
+}
 
+async function resolveWorkspaceAddInput(
+  cmd: Extract<Command, { kind: "workspace-add" }>,
+  config: AppConfig,
+): Promise<RegisterWorkspaceInput | number> {
+  if (!cmd.path && !cmd.noInteractive && process.stdin.isTTY && process.stdout.isTTY) {
+    const prompted = await promptForWorkspaceAddDefaults(config)
+    return {
+      path: prompted.path,
+      name: prompted.name,
+      key: prompted.key,
+      harnessProfile: prompted.profile,
+      sonar: prompted.sonar,
+      git: { init: prompted.gitInit, defaultBranch: "main" },
+      github: prompted.github,
+      sonarToken: prompted.sonarToken,
+    }
+  }
+  if (!cmd.path) {
+    console.error("  Missing --path for non-interactive workspace add.")
+    return 2
+  }
+  return {
+    path: cmd.path,
+    name: cmd.name,
+    key: cmd.key,
+    harnessProfile: parseHarnessProfile(cmd, config),
+    sonar: cmd.sonar
+      ? {
+          enabled: true,
+          projectKey: cmd.sonarKey,
+          organization: cmd.sonarOrg,
+          hostUrl: cmd.sonarHost,
+        }
+      : { enabled: false },
+    git: { init: cmd.noGit !== true, defaultBranch: "main" },
+    github: cmd.ghCreate
+      ? { create: true, visibility: cmd.ghPublic ? "public" : "private", owner: cmd.ghOwner }
+      : undefined,
+    sonarToken: cmd.sonarToken
+      ? { value: cmd.sonarToken, persist: cmd.sonarTokenPersist !== false }
+      : undefined,
+  }
+}
+
+async function executeWorkspaceAdd(
+  cmd: Extract<Command, { kind: "workspace-add" }>,
+  config: AppConfig,
+  addInput: RegisterWorkspaceInput,
+): Promise<number> {
   const db = initDatabase()
   try {
     const repos = new Repos(db)
@@ -759,57 +772,78 @@ async function runWorkspaceAddCommand(cmd: Extract<Command, { kind: "workspace-a
       console.error(`  ${result.error}: ${result.detail}`)
       return 1
     }
-    for (const action of result.actions) console.log(`  ${action}`)
-    for (const warning of result.warnings) console.log(`  ! ${warning}`)
-    console.log(`\n  Registered as "${result.workspace.name}" (key: ${result.workspace.key}).`)
-    if (result.sonarProjectUrl) {
-      console.log("\n  Next steps")
-      console.log("    SonarQube Cloud")
-      console.log(`    1. Create or import the project in SonarQube Cloud: ${result.sonarProjectUrl}`)
-      console.log("    2. Check whether your org uses the EU default or the US region.")
-      console.log("    3. Create an analysis token and export it locally: export SONAR_TOKEN=...")
-      console.log("       Prefer repo-local git config for workspace sharing across worktrees; never commit it to the repo.")
-      console.log("    4. Mark the project as AI-generated: Project settings > AI-generated code >")
-      console.log("       enable \"Contains AI-generated code\" (adds the +Contains AI code label).")
-      console.log("    5. Apply an AI-qualified quality gate: Project settings > Quality Gate >")
-      console.log("       select \"Sonar way for AI Code\" (or a custom gate qualified for AI Code")
-      console.log("       Assurance by a Quality Standard admin).")
-      console.log("    6. Disable automatic analysis: Administration > Analysis Method > uncheck")
-      console.log("       \"Enabled for this project\" so only the local sonar-scanner runs.")
-      console.log("    7. Keep durable analysis settings in the SonarQube Cloud UI when possible.")
-      console.log("    8. If the project is on the US region, set sonar.region=us for scanner runs.")
-      if (result.sonarMcpSnippet) {
-        console.log("    9. Optional: add Sonar MCP to your Codex config (~/.codex/config.toml):")
-        console.log(`\n${indentBlock(result.sonarMcpSnippet, 6)}`)
-      }
-    } else if (result.ghCreateCommand) {
-      console.log("\n  Next steps")
-    }
-    if (result.workspace.sonarEnabled) {
-      const tokenDetail = result.sonarReadiness.details?.token
-      const configDetail = result.sonarReadiness.details?.config
-      const coverageDetail = result.sonarReadiness.details?.coverage
-      const tokenSuffix = tokenDetail ? ` (${tokenDetail})` : ""
-      const configSuffix = configDetail ? ` (${configDetail})` : ""
-      const coverageSuffix = coverageDetail ? ` (${coverageDetail})` : ""
-      console.log("    Local Sonar readiness")
-      console.log(`    - scanner: ${result.sonarReadiness.scanner}`)
-      console.log(`    - token: ${result.sonarReadiness.token}${tokenSuffix}`)
-      console.log(`    - config: ${result.sonarReadiness.config}${configSuffix}`)
-      console.log(`    - coverage: ${result.sonarReadiness.coverage}${coverageSuffix}`)
-    }
-    if (result.sonarProjectUrl || result.ghCreateCommand) {
-      console.log("    CodeRabbit")
-      console.log("    - Optional: install the CLI with npm i -g @coderabbit/cli")
-      console.log("    - Authenticate it per the CodeRabbit CLI docs before enabling real review runs")
-      console.log("    - If it is not configured, beerengineer_ will skip CodeRabbit review for the workspace")
-    }
-    if (result.ghCreateCommand) console.log(`    Optional remote: ${result.ghCreateCommand}`)
-    console.log(`    Open: beerengineer workspace open ${result.workspace.key}`)
+    printWorkspaceAddResult(result)
     return 0
   } finally {
     db.close()
   }
+}
+
+function printWorkspaceAddResult(result: Awaited<ReturnType<typeof registerWorkspace>> & { ok: true }): void {
+  for (const action of result.actions) console.log(`  ${action}`)
+  for (const warning of result.warnings) console.log(`  ! ${warning}`)
+  console.log(`\n  Registered as "${result.workspace.name}" (key: ${result.workspace.key}).`)
+  printWorkspaceAddNextSteps(result)
+  if (result.workspace.sonarEnabled) printWorkspaceSonarReadiness(result)
+  if (result.sonarProjectUrl || result.ghCreateCommand) printWorkspaceCodeRabbitHints(result.ghCreateCommand)
+  console.log(`    Open: beerengineer workspace open ${result.workspace.key}`)
+}
+
+function printWorkspaceAddNextSteps(result: {
+  sonarProjectUrl?: string
+  sonarMcpSnippet?: string
+  ghCreateCommand?: string
+}): void {
+  if (result.sonarProjectUrl) {
+    console.log("\n  Next steps")
+    console.log("    SonarQube Cloud")
+    console.log(`    1. Create or import the project in SonarQube Cloud: ${result.sonarProjectUrl}`)
+    console.log("    2. Check whether your org uses the EU default or the US region.")
+    console.log("    3. Create an analysis token and export it locally: export SONAR_TOKEN=...")
+    console.log("       Prefer repo-local git config for workspace sharing across worktrees; never commit it to the repo.")
+    console.log("    4. Mark the project as AI-generated: Project settings > AI-generated code >")
+    console.log("       enable \"Contains AI-generated code\" (adds the +Contains AI code label).")
+    console.log("    5. Apply an AI-qualified quality gate: Project settings > Quality Gate >")
+    console.log("       select \"Sonar way for AI Code\" (or a custom gate qualified for AI Code")
+    console.log("       Assurance by a Quality Standard admin).")
+    console.log("    6. Disable automatic analysis: Administration > Analysis Method > uncheck")
+    console.log("       \"Enabled for this project\" so only the local sonar-scanner runs.")
+    console.log("    7. Keep durable analysis settings in the SonarQube Cloud UI when possible.")
+    console.log("    8. If the project is on the US region, set sonar.region=us for scanner runs.")
+    if (result.sonarMcpSnippet) {
+      console.log("    9. Optional: add Sonar MCP to your Codex config (~/.codex/config.toml):")
+      console.log(`\n${indentBlock(result.sonarMcpSnippet, 6)}`)
+    }
+    return
+  }
+  if (result.ghCreateCommand) console.log("\n  Next steps")
+}
+
+function printWorkspaceSonarReadiness(result: {
+  sonarReadiness: {
+    scanner: string
+    token: string
+    config: string
+    coverage: string
+    details?: { token?: string; config?: string; coverage?: string }
+  }
+}): void {
+  const tokenDetail = result.sonarReadiness.details?.token
+  const configDetail = result.sonarReadiness.details?.config
+  const coverageDetail = result.sonarReadiness.details?.coverage
+  console.log("    Local Sonar readiness")
+  console.log(`    - scanner: ${result.sonarReadiness.scanner}`)
+  console.log(`    - token: ${result.sonarReadiness.token}${tokenDetail ? ` (${tokenDetail})` : ""}`)
+  console.log(`    - config: ${result.sonarReadiness.config}${configDetail ? ` (${configDetail})` : ""}`)
+  console.log(`    - coverage: ${result.sonarReadiness.coverage}${coverageDetail ? ` (${coverageDetail})` : ""}`)
+}
+
+function printWorkspaceCodeRabbitHints(ghCreateCommand?: string): void {
+  console.log("    CodeRabbit")
+  console.log("    - Optional: install the CLI with npm i -g @coderabbit/cli")
+  console.log("    - Authenticate it per the CodeRabbit CLI docs before enabling real review runs")
+  console.log("    - If it is not configured, beerengineer_ will skip CodeRabbit review for the workspace")
+  if (ghCreateCommand) console.log(`    Optional remote: ${ghCreateCommand}`)
 }
 
 function indentBlock(text: string, spaces: number): string {
@@ -2524,112 +2558,144 @@ async function runUpdateCommand(cmd: Extract<Command, { kind: "update" }>): Prom
   try {
     const repos = new Repos(db)
     const status = buildUpdateStatus(repos, config)
-    if (cmd.rollback) {
-      const payload = {
-        status,
-        error: "post-migration-rollback-unsupported",
-        code: "post-migration-rollback-unsupported",
+    if (cmd.rollback) return handleUnsupportedUpdateRollback(cmd, status)
+    if (cmd.dryRun) return await handleUpdateDryRunCommand(cmd, repos, config, status)
+    if (!cmd.check) return await handleUpdateApplyCommand(cmd, repos, config, status)
+    return await handleUpdateCheckCommand(cmd, repos, config, status)
+  } finally {
+    db.close()
+  }
+}
+
+function handleUnsupportedUpdateRollback(
+  cmd: Extract<Command, { kind: "update" }>,
+  status: ReturnType<typeof buildUpdateStatus>,
+): number {
+  const payload = {
+    status,
+    error: "post-migration-rollback-unsupported",
+    code: "post-migration-rollback-unsupported",
+  }
+  if (cmd.json) {
+    process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`)
+  } else {
+    console.error("  Manual rollback is not supported after migrations have run.")
+    console.error("  Restore the pre-update backup manually instead.")
+    console.error("  code:             post-migration-rollback-unsupported")
+  }
+  return 1
+}
+
+async function handleUpdateDryRunCommand(
+  cmd: Extract<Command, { kind: "update" }>,
+  repos: Repos,
+  config: AppConfig,
+  status: ReturnType<typeof buildUpdateStatus>,
+): Promise<number> {
+  try {
+    const dryRun = await runUpdateDryRun(repos, config, {
+      version: cmd.version,
+      allowLegacyDbShadow: cmd.allowLegacyDbShadow,
+    })
+    const nextStatus = buildUpdateStatus(repos, config, { latestRelease: dryRun.targetRelease })
+    if (cmd.json) {
+      process.stdout.write(`${JSON.stringify({ status: nextStatus, dryRun }, null, 2)}\n`)
+    } else {
+      console.log(`  dry-run status:   ${dryRun.status}`)
+      console.log(`  current version:  ${dryRun.currentVersion}`)
+      console.log(`  target release:   ${dryRun.targetRelease.tag}`)
+      console.log(`  update repo:      ${dryRun.githubRepo}`)
+      console.log(`  install root:     ${nextStatus.install.root}`)
+      if (dryRun.warnings.length > 0) {
+        console.log(`  warnings:         ${dryRun.warnings.join(", ")}`)
       }
-      if (cmd.json) {
-        process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`)
-      } else {
-        console.error("  Manual rollback is not supported after migrations have run.")
-        console.error("  Restore the pre-update backup manually instead.")
-        console.error("  code:             post-migration-rollback-unsupported")
-      }
-      return 1
-    }
-    if (cmd.dryRun) {
-      try {
-        const dryRun = await runUpdateDryRun(repos, config, {
-          version: cmd.version,
-          allowLegacyDbShadow: cmd.allowLegacyDbShadow,
-        })
-        const nextStatus = buildUpdateStatus(repos, config, { latestRelease: dryRun.targetRelease })
-        if (cmd.json) {
-          process.stdout.write(`${JSON.stringify({ status: nextStatus, dryRun }, null, 2)}\n`)
-          return dryRun.status === "aborted-dry-run" ? 0 : 1
-        }
-        console.log(`  dry-run status:   ${dryRun.status}`)
-        console.log(`  current version:  ${dryRun.currentVersion}`)
-        console.log(`  target release:   ${dryRun.targetRelease.tag}`)
-        console.log(`  update repo:      ${dryRun.githubRepo}`)
-        console.log(`  install root:     ${nextStatus.install.root}`)
-        if (dryRun.warnings.length > 0) {
-          console.log(`  warnings:         ${dryRun.warnings.join(", ")}`)
-        }
-        dryRun.stages.forEach(stage => {
-          console.log(`  ${stage.name.padEnd(16)} ${stage.status.toUpperCase()}  ${stage.detail}`)
-        })
-        return dryRun.status === "aborted-dry-run" ? 0 : 1
-      } catch (err) {
-        if (cmd.json) {
-          process.stdout.write(`${JSON.stringify({ status, error: (err as Error).message }, null, 2)}\n`)
-        } else {
-          console.error(`  Update dry-run failed: ${(err as Error).message}`)
-        }
-        return 1
-      }
-    }
-    if (!cmd.check) {
-      try {
-        const remote = await maybeSubmitRemoteUpdateApply(config, cmd)
-        const apply = remote?.apply ?? await prepareUpdateApply(repos, config, {
-          version: cmd.version,
-          allowLegacyDbShadow: cmd.allowLegacyDbShadow,
-        })
-        const execution = remote?.execution ?? await maybeStartPreparedUpdateExecution(repos, config, apply.operationId, apply.switcherPath)
-        if (cmd.json) {
-          process.stdout.write(`${JSON.stringify({ status: buildUpdateStatus(repos, config, { latestRelease: apply.targetRelease }), apply, execution }, null, 2)}\n`)
-          return 0
-        }
-        console.log(`  apply state:      ${apply.state}`)
-        console.log(`  operation id:     ${apply.operationId}`)
-        console.log(`  current version:  ${apply.currentVersion}`)
-        console.log(`  target release:   ${apply.targetRelease.tag}`)
-        console.log(`  update repo:      ${apply.githubRepo}`)
-        console.log(`  staged root:      ${apply.stagedRoot}`)
-        console.log(`  switcher script:  ${apply.switcherPath}`)
-        if (apply.warnings.length > 0) {
-          console.log(`  warnings:         ${apply.warnings.join(", ")}`)
-        }
-        if (execution.started) {
-          console.log("  shutdown:         accepted")
-          console.log("  executor:         started")
-        } else {
-          console.log(`  executor:         not started (${execution.reason})`)
-          console.log("  The release has been staged and recorded, but no live local engine was available for automatic shutdown.")
-        }
-        return 0
-      } catch (err) {
-        if (cmd.json) {
-          process.stdout.write(`${JSON.stringify({ status, error: (err as Error).message }, null, 2)}\n`)
-        } else {
-          console.error(`  Update apply preparation failed: ${(err as Error).message}`)
-        }
-        return 1
-      }
-    }
-    const operationId = randomUUID()
-    try {
-      const check = await runUpdateCheck(config, { version: cmd.version })
-      repos.upsertUpdateAttempt({
-        operationId,
-        kind: "check",
-        status: "succeeded",
-        fromVersion: check.currentVersion,
-        targetVersion: check.latestRelease.version,
-        dbPath: status.dbPath,
-        dbPathSource: status.dbPathSource,
-        legacyDbShadow: status.warnings.some(w => w.startsWith("legacy-db-shadow:")),
-        installRoot: status.install.root,
-        metadataJson: JSON.stringify({ checkedAt: check.checkedAt, githubRepo: check.githubRepo }),
-        completedAt: Date.now(),
+      dryRun.stages.forEach(stage => {
+        console.log(`  ${stage.name.padEnd(16)} ${stage.status.toUpperCase()}  ${stage.detail}`)
       })
-      if (cmd.json) {
-        process.stdout.write(`${JSON.stringify({ status: buildUpdateStatus(repos, config, { latestRelease: check.latestRelease }), check }, null, 2)}\n`)
-        return 0
+    }
+    return dryRun.status === "aborted-dry-run" ? 0 : 1
+  } catch (err) {
+    if (cmd.json) {
+      process.stdout.write(`${JSON.stringify({ status, error: (err as Error).message }, null, 2)}\n`)
+    } else {
+      console.error(`  Update dry-run failed: ${(err as Error).message}`)
+    }
+    return 1
+  }
+}
+
+async function handleUpdateApplyCommand(
+  cmd: Extract<Command, { kind: "update" }>,
+  repos: Repos,
+  config: AppConfig,
+  status: ReturnType<typeof buildUpdateStatus>,
+): Promise<number> {
+  try {
+    const remote = await maybeSubmitRemoteUpdateApply(config, cmd)
+    const apply = remote?.apply ?? await prepareUpdateApply(repos, config, {
+      version: cmd.version,
+      allowLegacyDbShadow: cmd.allowLegacyDbShadow,
+    })
+    const execution = remote?.execution ?? await maybeStartPreparedUpdateExecution(repos, config, apply.operationId, apply.switcherPath)
+    if (cmd.json) {
+      process.stdout.write(
+        `${JSON.stringify({ status: buildUpdateStatus(repos, config, { latestRelease: apply.targetRelease }), apply, execution }, null, 2)}\n`,
+      )
+    } else {
+      console.log(`  apply state:      ${apply.state}`)
+      console.log(`  operation id:     ${apply.operationId}`)
+      console.log(`  current version:  ${apply.currentVersion}`)
+      console.log(`  target release:   ${apply.targetRelease.tag}`)
+      console.log(`  update repo:      ${apply.githubRepo}`)
+      console.log(`  staged root:      ${apply.stagedRoot}`)
+      console.log(`  switcher script:  ${apply.switcherPath}`)
+      if (apply.warnings.length > 0) {
+        console.log(`  warnings:         ${apply.warnings.join(", ")}`)
       }
+      if (execution.started) {
+        console.log("  shutdown:         accepted")
+        console.log("  executor:         started")
+      } else {
+        console.log(`  executor:         not started (${execution.reason})`)
+        console.log("  The release has been staged and recorded, but no live local engine was available for automatic shutdown.")
+      }
+    }
+    return 0
+  } catch (err) {
+    if (cmd.json) {
+      process.stdout.write(`${JSON.stringify({ status, error: (err as Error).message }, null, 2)}\n`)
+    } else {
+      console.error(`  Update apply preparation failed: ${(err as Error).message}`)
+    }
+    return 1
+  }
+}
+
+async function handleUpdateCheckCommand(
+  cmd: Extract<Command, { kind: "update" }>,
+  repos: Repos,
+  config: AppConfig,
+  status: ReturnType<typeof buildUpdateStatus>,
+): Promise<number> {
+  const operationId = randomUUID()
+  try {
+    const check = await runUpdateCheck(config, { version: cmd.version })
+    repos.upsertUpdateAttempt({
+      operationId,
+      kind: "check",
+      status: "succeeded",
+      fromVersion: check.currentVersion,
+      targetVersion: check.latestRelease.version,
+      dbPath: status.dbPath,
+      dbPathSource: status.dbPathSource,
+      legacyDbShadow: status.warnings.some(w => w.startsWith("legacy-db-shadow:")),
+      installRoot: status.install.root,
+      metadataJson: JSON.stringify({ checkedAt: check.checkedAt, githubRepo: check.githubRepo }),
+      completedAt: Date.now(),
+    })
+    if (cmd.json) {
+      process.stdout.write(`${JSON.stringify({ status: buildUpdateStatus(repos, config, { latestRelease: check.latestRelease }), check }, null, 2)}\n`)
+    } else {
       console.log(`  current version: ${check.currentVersion}`)
       console.log(`  latest release:  ${check.latestRelease.tag}`)
       console.log(`  update repo:     ${check.githubRepo}`)
@@ -2641,29 +2707,27 @@ async function runUpdateCommand(cmd: Extract<Command, { kind: "update" }>): Prom
       console.log(`  db path:         ${status.dbPath} (${status.dbPathSource})`)
       console.log(`  install root:    ${status.install.root}`)
       console.log(`  release url:     ${check.latestRelease.url}`)
-      return 0
-    } catch (err) {
-      repos.upsertUpdateAttempt({
-        operationId,
-        kind: "check",
-        status: "failed",
-        fromVersion: status.currentVersion,
-        dbPath: status.dbPath,
-        dbPathSource: status.dbPathSource,
-        legacyDbShadow: status.warnings.some(w => w.startsWith("legacy-db-shadow:")),
-        installRoot: status.install.root,
-        errorMessage: (err as Error).message,
-        completedAt: Date.now(),
-      })
-      if (cmd.json) {
-        process.stdout.write(`${JSON.stringify({ status, error: (err as Error).message }, null, 2)}\n`)
-      } else {
-        console.error(`  Update check failed: ${(err as Error).message}`)
-      }
-      return 1
     }
-  } finally {
-    db.close()
+    return 0
+  } catch (err) {
+    repos.upsertUpdateAttempt({
+      operationId,
+      kind: "check",
+      status: "failed",
+      fromVersion: status.currentVersion,
+      dbPath: status.dbPath,
+      dbPathSource: status.dbPathSource,
+      legacyDbShadow: status.warnings.some(w => w.startsWith("legacy-db-shadow:")),
+      installRoot: status.install.root,
+      errorMessage: (err as Error).message,
+      completedAt: Date.now(),
+    })
+    if (cmd.json) {
+      process.stdout.write(`${JSON.stringify({ status, error: (err as Error).message }, null, 2)}\n`)
+    } else {
+      console.error(`  Update check failed: ${(err as Error).message}`)
+    }
+    return 1
   }
 }
 

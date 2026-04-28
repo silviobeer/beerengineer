@@ -164,7 +164,22 @@ export function buildConversation(repos: Repos, runId: string): ConversationResp
   const run = repos.getRun(runId)
   if (!run) return null
 
-  const logs = repos
+  const logs = listConversationLogs(repos, runId)
+  const stageKeyOf = buildStageKeyResolver(repos, runId)
+  const foldedPrompts = foldPromptMessages(logs)
+  const entries = logs.flatMap(row => {
+    if (foldedPrompts.suppressedLogIds.has(row.id)) return []
+    const entry = conversationEntryFromLog(runId, row, stageKeyOf(row), foldedPrompts.foldedTextByLogId)
+    return entry ? [entry] : []
+  })
+  const openPrompt = findOpenPrompt(entries)
+  const updatedAt = entries.at(-1)?.createdAt ?? new Date(run.updated_at).toISOString()
+
+  return { runId, updatedAt, entries, openPrompt }
+}
+
+function listConversationLogs(repos: Repos, runId: string): StageLogRow[] {
+  return repos
     .listLogsForRun(runId)
     .filter(
       log =>
@@ -172,118 +187,116 @@ export function buildConversation(repos: Repos, runId: string): ConversationResp
         log.event_type === "prompt_requested" ||
         log.event_type === "prompt_answered",
     )
+}
 
+function buildStageKeyResolver(repos: Repos, runId: string): (row: StageLogRow) => string | null {
   const stageKeyByRunId = new Map<string, string>()
   for (const sr of repos.listStageRunsForRun(runId)) stageKeyByRunId.set(sr.id, sr.stage_key)
-  const stageKeyOf = (row: StageLogRow): string | null =>
+  return (row: StageLogRow): string | null =>
     row.stage_run_id ? stageKeyByRunId.get(row.stage_run_id) ?? null : null
+}
 
-  // Two-pass: for each prompt_requested, suppress an immediately preceding
-  // chat_message whose text the prompt already carries (this happens when
-  // `stageRuntime` forwards the agent's last message as the prompt text).
-  // Placeholder prompts ("you >") are also folded, in case legacy rows exist
-  // in the DB from before the stageRuntime fix.
+function foldPromptMessages(logs: StageLogRow[]): {
+  suppressedLogIds: Set<string>
+  foldedTextByLogId: Map<string, string>
+} {
   const suppressedLogIds = new Set<string>()
   const foldedTextByLogId = new Map<string, string>()
-  for (let i = 0; i < logs.length; i++) {
-    const row = logs[i]
+  for (const [index, row] of logs.entries()) {
     if (row.event_type !== "prompt_requested") continue
+    const previousMessage = findFoldablePreviousChatMessage(logs, index)
+    if (!previousMessage) continue
     const promptText = (row.message ?? "").trim()
     const isPlaceholder = isPlaceholderText(row.message)
-    for (let j = i - 1; j >= 0; j--) {
-      const prev = logs[j]
-      if (prev.event_type === "chat_message" && prev.message.trim()) {
-        const prevText = prev.message.trim()
-        if (isPlaceholder || prevText === promptText) {
-          suppressedLogIds.add(prev.id)
-          if (isPlaceholder) foldedTextByLogId.set(row.id, prev.message)
-        }
-        break
-      }
-      if (prev.event_type !== "chat_message") break
+    const previousText = previousMessage.message.trim()
+    if (!isPlaceholder && previousText !== promptText) continue
+    suppressedLogIds.add(previousMessage.id)
+    if (isPlaceholder) foldedTextByLogId.set(row.id, previousMessage.message)
+  }
+  return { suppressedLogIds, foldedTextByLogId }
+}
+
+function findFoldablePreviousChatMessage(logs: StageLogRow[], startIndex: number): StageLogRow | null {
+  for (let i = startIndex - 1; i >= 0; i--) {
+    const row = logs[i]
+    if (row.event_type !== "chat_message") return null
+    if (row.message.trim()) return row
+  }
+  return null
+}
+
+function conversationEntryFromLog(
+  runId: string,
+  row: StageLogRow,
+  stageKey: string | null,
+  foldedTextByLogId: Map<string, string>,
+): ConversationEntry | null {
+  const createdAt = new Date(row.created_at).toISOString()
+  if (row.event_type === "chat_message") {
+    const text = row.message.trim()
+    if (!text) return null
+    const data = parseLogData(row.data_json) as { source?: string; role?: string } | undefined
+    return {
+      id: row.id,
+      runId,
+      stageKey,
+      kind: "message",
+      actor: actorFromChat(data?.source, data?.role),
+      text,
+      createdAt,
     }
   }
-
-  const entries: ConversationEntry[] = []
-  for (const row of logs) {
-    if (suppressedLogIds.has(row.id)) continue
-    const stageKey = stageKeyOf(row)
-    const createdAt = new Date(row.created_at).toISOString()
-    if (row.event_type === "chat_message") {
-      const text = row.message.trim()
-      if (!text) continue
-      const data = parseLogData(row.data_json) as { source?: string; role?: string } | undefined
-      entries.push({
-        id: row.id,
-        runId,
-        stageKey,
-        kind: "message",
-        actor: actorFromChat(data?.source, data?.role),
-        text,
-        createdAt,
-      })
-      continue
-    }
-    if (row.event_type === "prompt_requested") {
-      const data = parseLogData(row.data_json) as { promptId?: string; actions?: unknown } | undefined
-      const promptId = data?.promptId
-      if (!promptId) continue
-      const folded = foldedTextByLogId.get(row.id)
-      const rawText = folded ?? (isPlaceholderText(row.message) ? "" : row.message)
-      const text = rawText.trim() || "Awaiting your input."
-      entries.push({
-        id: row.id,
-        runId,
-        stageKey,
-        kind: "question",
-        actor: "agent",
-        text,
-        createdAt,
-        promptId,
-        actions: parsePromptActions(data?.actions),
-      })
-      continue
-    }
-    if (row.event_type === "prompt_answered") {
-      const data = parseLogData(row.data_json) as { promptId?: string } | undefined
-      const promptId = data?.promptId
-      if (!promptId) continue
-      const text = row.message.trim()
-      if (!text) continue
-      entries.push({
-        id: row.id,
-        runId,
-        stageKey,
-        kind: "answer",
-        actor: "user",
-        text,
-        createdAt,
-        answerTo: promptId,
-      })
+  if (row.event_type === "prompt_requested") {
+    const data = parseLogData(row.data_json) as { promptId?: string; actions?: unknown } | undefined
+    const promptId = data?.promptId
+    if (!promptId) return null
+    const folded = foldedTextByLogId.get(row.id)
+    const rawText = folded ?? (isPlaceholderText(row.message) ? "" : row.message)
+    return {
+      id: row.id,
+      runId,
+      stageKey,
+      kind: "question",
+      actor: "agent",
+      text: rawText.trim() || "Awaiting your input.",
+      createdAt,
+      promptId,
+      actions: parsePromptActions(data?.actions),
     }
   }
+  if (row.event_type !== "prompt_answered") return null
+  const data = parseLogData(row.data_json) as { promptId?: string } | undefined
+  const promptId = data?.promptId
+  const text = row.message.trim()
+  if (!promptId || !text) return null
+  return {
+    id: row.id,
+    runId,
+    stageKey,
+    kind: "answer",
+    actor: "user",
+    text,
+    createdAt,
+    answerTo: promptId,
+  }
+}
 
+function findOpenPrompt(entries: ConversationEntry[]): OpenPrompt | null {
   const answered = new Set<string>()
-  for (const e of entries) {
-    if (e.kind === "answer" && e.answerTo) answered.add(e.answerTo)
+  for (const entry of entries) {
+    if (entry.kind === "answer" && entry.answerTo) answered.add(entry.answerTo)
   }
-  let openPrompt: OpenPrompt | null = null
   for (let i = entries.length - 1; i >= 0; i--) {
-    const e = entries[i]
-    if (e.kind !== "question" || !e.promptId) continue
-    if (answered.has(e.promptId)) continue
-    openPrompt = {
-      promptId: e.promptId,
-      runId: e.runId,
-      stageKey: e.stageKey,
-      text: e.text,
-      createdAt: e.createdAt,
-      actions: e.actions,
+    const entry = entries[i]
+    if (entry.kind !== "question" || !entry.promptId || answered.has(entry.promptId)) continue
+    return {
+      promptId: entry.promptId,
+      runId: entry.runId,
+      stageKey: entry.stageKey,
+      text: entry.text,
+      createdAt: entry.createdAt,
+      actions: entry.actions,
     }
-    break
   }
-
-  const updatedAt = entries.at(-1)?.createdAt ?? new Date(run.updated_at).toISOString()
-
-  return { runId, updatedAt, entries, openPrompt }
+  return null
 }

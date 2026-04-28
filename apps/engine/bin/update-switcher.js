@@ -266,85 +266,12 @@ async function main() {
 
   try {
     appendUpdateLog(meta, "switcher_started", { metadataPath })
-  const lock = readLock(meta.updateLockPath)
-  if (!lock || lock.operationId !== meta.operationId) {
-    throw new Error("update_lock_missing_or_mismatched")
-  }
-  appendUpdateLog(meta, "lock_verified", { operationId: meta.operationId })
-  const claimedLock = claimUpdateLock(meta.updateLockPath, meta.operationId)
-  appendUpdateLog(meta, "lock_claimed_by_switcher", { pid: claimedLock.pid })
-
-  const pidRecord = existsSync(meta.api.pidFile) ? readJson(meta.api.pidFile) : null
-  const pid = typeof pidRecord?.pid === "number" ? pidRecord.pid : null
-  let degraded = false
-  if (pid) {
-    degraded = await waitForShutdown(meta.api.pidFile, pid, 30_000)
-    appendUpdateLog(meta, "engine_stopped", { pid, degraded })
-  }
-
-  // Pre-load better-sqlite3 from the staged tree before any pointer swap so
-  // post-swap dynamic imports hit the ESM cache. On Windows the staged tree
-  // is renamed into install/current; the original file:// path no longer
-  // exists, but the in-memory module reference is reusable.
-  await loadBetterSqlite3(meta)
-  appendUpdateLog(meta, "better_sqlite3_preloaded")
-
-  const backup = await invokeBackupHelper(meta, metadataPath)
-  appendUpdateLog(meta, "backup_created", { backupDir: backup.backupDir })
-  const previousCurrent = existsSync(meta.install.currentLink) ? realpathSync(meta.install.currentLink) : null
-  if (previousCurrent && process.platform !== "win32") {
-    pointManagedInstallPointer(meta.install.previousLink, previousCurrent, process.platform)
-  }
-
-  swapManagedInstallPointers({
-    currentPath: meta.install.currentLink,
-    previousPath: meta.install.previousLink,
-    nextPath: meta.stagedRoot,
-    platform: process.platform,
-  })
-  appendUpdateLog(meta, "install_pointer_swapped", {
-    currentLink: meta.install.currentLink,
-    stagedRoot: meta.stagedRoot,
-    previousCurrent,
-  })
-  ensureWrapper(meta.install.wrapperPath)
-  startEngine(meta, join(meta.install.logRoot, `${meta.operationId}.log`))
-  appendUpdateLog(meta, "engine_restart_requested", { port: meta.api.enginePort })
-
-  const healthy = await waitForHealth(meta.api.host, meta.api.enginePort, 30_000)
+    verifyAndClaimLock(meta)
+    const { backup, previousCurrent, degraded } = await installPreparedRelease(meta, metadataPath)
+    const healthy = await waitForHealth(meta.api.host, meta.api.enginePort, 30_000)
   if (!healthy) {
     appendUpdateLog(meta, "engine_healthcheck_failed")
-    if (previousCurrent) {
-      swapManagedInstallPointers({
-        currentPath: meta.install.currentLink,
-        previousPath: meta.install.previousLink,
-        nextPath: previousCurrent,
-        platform: process.platform,
-      })
-      ensureWrapper(meta.install.wrapperPath)
-      startEngine(meta, join(meta.install.logRoot, `${meta.operationId}.rollback.log`))
-      const rollbackHealthy = await waitForHealth(meta.api.host, meta.api.enginePort, 30_000)
-      if (rollbackHealthy) {
-        appendUpdateLog(meta, "rollback_succeeded", { previousCurrent })
-        await updateAttempt(meta, {
-          status: "failed-rolled-back",
-          backupDir: backup.backupDir,
-          errorMessage: "restart_healthcheck_failed",
-          metadata: { backup: backup.manifest, stagedRoot: meta.stagedRoot, previousCurrent },
-        })
-        releaseLock(meta.updateLockPath, meta.operationId)
-        process.exit(1)
-      }
-    }
-    appendUpdateLog(meta, "rollback_unavailable_or_failed", { previousCurrent })
-    await updateAttempt(meta, {
-      status: "failed-no-rollback",
-      backupDir: backup.backupDir,
-      errorMessage: "restart_healthcheck_failed",
-      metadata: { backup: backup.manifest, stagedRoot: meta.stagedRoot, previousCurrent },
-    })
-    releaseLock(meta.updateLockPath, meta.operationId)
-    process.exit(1)
+    await rollbackOrFailUpdate(meta, backup, previousCurrent, "restart_healthcheck_failed", "restart_healthcheck_failed")
   }
 
   const userVersion = await verifyDatabaseState(meta)
@@ -356,37 +283,13 @@ async function main() {
   } catch (err) {
     console.error(`[update-switcher] post-restart update status probe failed: ${err.message}`)
     appendUpdateLog(meta, "update_status_fetch_failed", { error: err.message })
-    if (previousCurrent) {
-      swapManagedInstallPointers({
-        currentPath: meta.install.currentLink,
-        previousPath: meta.install.previousLink,
-        nextPath: previousCurrent,
-        platform: process.platform,
-      })
-      ensureWrapper(meta.install.wrapperPath)
-      startEngine(meta, join(meta.install.logRoot, `${meta.operationId}.rollback.log`))
-      const rollbackHealthy = await waitForHealth(meta.api.host, meta.api.enginePort, 30_000)
-      if (rollbackHealthy) {
-        appendUpdateLog(meta, "rollback_succeeded", { previousCurrent, cause: "update_status_fetch_failed" })
-        await updateAttempt(meta, {
-          status: "failed-rolled-back",
-          backupDir: backup.backupDir,
-          errorMessage: `update_status_fetch_failed:${err.message}`,
-          metadata: { backup: backup.manifest, stagedRoot: meta.stagedRoot, previousCurrent },
-        })
-        releaseLock(meta.updateLockPath, meta.operationId)
-        process.exit(1)
-      }
-    }
-    appendUpdateLog(meta, "rollback_unavailable_or_failed", { previousCurrent, cause: "update_status_fetch_failed" })
-    await updateAttempt(meta, {
-      status: "failed-no-rollback",
-      backupDir: backup.backupDir,
-      errorMessage: `update_status_fetch_failed:${err.message}`,
-      metadata: { backup: backup.manifest, stagedRoot: meta.stagedRoot, previousCurrent },
-    })
-    releaseLock(meta.updateLockPath, meta.operationId)
-    process.exit(1)
+    await rollbackOrFailUpdate(
+      meta,
+      backup,
+      previousCurrent,
+      `update_status_fetch_failed:${err.message}`,
+      "update_status_fetch_failed",
+    )
   }
   let warningKeys = []
   try {
@@ -397,37 +300,14 @@ async function main() {
     })
   } catch (err) {
     appendUpdateLog(meta, "update_status_validation_failed", { error: err.message })
-    if (previousCurrent) {
-      swapManagedInstallPointers({
-        currentPath: meta.install.currentLink,
-        previousPath: meta.install.previousLink,
-        nextPath: previousCurrent,
-        platform: process.platform,
-      })
-      ensureWrapper(meta.install.wrapperPath)
-      startEngine(meta, join(meta.install.logRoot, `${meta.operationId}.rollback.log`))
-      const rollbackHealthy = await waitForHealth(meta.api.host, meta.api.enginePort, 30_000)
-      if (rollbackHealthy) {
-        appendUpdateLog(meta, "rollback_succeeded", { previousCurrent, cause: "update_status_validation_failed" })
-        await updateAttempt(meta, {
-          status: "failed-rolled-back",
-          backupDir: backup.backupDir,
-          errorMessage: `update_status_validation_failed:${err.message}`,
-          metadata: { backup: backup.manifest, stagedRoot: meta.stagedRoot, previousCurrent, restartedStatus },
-        })
-        releaseLock(meta.updateLockPath, meta.operationId)
-        process.exit(1)
-      }
-    }
-    appendUpdateLog(meta, "rollback_unavailable_or_failed", { previousCurrent, cause: "update_status_validation_failed" })
-    await updateAttempt(meta, {
-      status: "failed-no-rollback",
-      backupDir: backup.backupDir,
-      errorMessage: `update_status_validation_failed:${err.message}`,
-      metadata: { backup: backup.manifest, stagedRoot: meta.stagedRoot, previousCurrent, restartedStatus },
-    })
-    releaseLock(meta.updateLockPath, meta.operationId)
-    process.exit(1)
+    await rollbackOrFailUpdate(
+      meta,
+      backup,
+      previousCurrent,
+      `update_status_validation_failed:${err.message}`,
+      "update_status_validation_failed",
+      { restartedStatus },
+    )
   }
   await updateAttempt(meta, {
     status: decideTerminalUpdateStatus({ warningKeys, degraded }),
@@ -455,6 +335,92 @@ async function main() {
     } catch {}
     process.exit(1)
   }
+}
+
+function verifyAndClaimLock(meta) {
+  const lock = readLock(meta.updateLockPath)
+  if (!lock || lock.operationId !== meta.operationId) {
+    throw new Error("update_lock_missing_or_mismatched")
+  }
+  appendUpdateLog(meta, "lock_verified", { operationId: meta.operationId })
+  const claimedLock = claimUpdateLock(meta.updateLockPath, meta.operationId)
+  appendUpdateLog(meta, "lock_claimed_by_switcher", { pid: claimedLock.pid })
+}
+
+async function installPreparedRelease(meta, metadataPath) {
+  const degraded = await stopExistingEngine(meta)
+  await loadBetterSqlite3(meta)
+  appendUpdateLog(meta, "better_sqlite3_preloaded")
+
+  const backup = await invokeBackupHelper(meta, metadataPath)
+  appendUpdateLog(meta, "backup_created", { backupDir: backup.backupDir })
+  const previousCurrent = existsSync(meta.install.currentLink) ? realpathSync(meta.install.currentLink) : null
+  if (previousCurrent && process.platform !== "win32") {
+    pointManagedInstallPointer(meta.install.previousLink, previousCurrent, process.platform)
+  }
+
+  swapManagedInstallPointers({
+    currentPath: meta.install.currentLink,
+    previousPath: meta.install.previousLink,
+    nextPath: meta.stagedRoot,
+    platform: process.platform,
+  })
+  appendUpdateLog(meta, "install_pointer_swapped", {
+    currentLink: meta.install.currentLink,
+    stagedRoot: meta.stagedRoot,
+    previousCurrent,
+  })
+  ensureWrapper(meta.install.wrapperPath)
+  startEngine(meta, join(meta.install.logRoot, `${meta.operationId}.log`))
+  appendUpdateLog(meta, "engine_restart_requested", { port: meta.api.enginePort })
+  return { backup, previousCurrent, degraded }
+}
+
+async function stopExistingEngine(meta) {
+  const pidRecord = existsSync(meta.api.pidFile) ? readJson(meta.api.pidFile) : null
+  const pid = typeof pidRecord?.pid === "number" ? pidRecord.pid : null
+  if (!pid) return false
+  const degraded = await waitForShutdown(meta.api.pidFile, pid, 30_000)
+  appendUpdateLog(meta, "engine_stopped", { pid, degraded })
+  return degraded
+}
+
+async function rollbackOrFailUpdate(meta, backup, previousCurrent, errorMessage, cause, extraMetadata = {}) {
+  if (previousCurrent) {
+    const rollbackHealthy = await rollbackManagedInstall(meta, previousCurrent)
+    if (rollbackHealthy) {
+      appendUpdateLog(meta, "rollback_succeeded", { previousCurrent, cause })
+      await updateAttempt(meta, {
+        status: "failed-rolled-back",
+        backupDir: backup.backupDir,
+        errorMessage,
+        metadata: { backup: backup.manifest, stagedRoot: meta.stagedRoot, previousCurrent, ...extraMetadata },
+      })
+      releaseLock(meta.updateLockPath, meta.operationId)
+      process.exit(1)
+    }
+  }
+  appendUpdateLog(meta, "rollback_unavailable_or_failed", { previousCurrent, cause })
+  await updateAttempt(meta, {
+    status: "failed-no-rollback",
+    backupDir: backup.backupDir,
+    errorMessage,
+    metadata: { backup: backup.manifest, stagedRoot: meta.stagedRoot, previousCurrent, ...extraMetadata },
+  })
+  releaseLock(meta.updateLockPath, meta.operationId)
+  process.exit(1)
+}
+
+async function rollbackManagedInstall(meta, previousCurrent) {
+  swapManagedInstallPointers({
+    currentPath: meta.install.currentLink,
+    previousPath: meta.install.previousLink,
+    nextPath: previousCurrent,
+    platform: process.platform,
+  })
+  ensureWrapper(meta.install.wrapperPath)
+  startEngine(meta, join(meta.install.logRoot, `${meta.operationId}.rollback.log`))
+  return await waitForHealth(meta.api.host, meta.api.enginePort, 30_000)
 }
 
 const isEntrypoint = process.argv[1] != null && fileURLToPath(import.meta.url) === process.argv[1]
