@@ -271,6 +271,49 @@ test("registerWorkspace omits LCOV import when no JS/TS coverage producer is det
   }
 })
 
+test("registerWorkspace persists SONAR_TOKEN to repo git config for shared worktrees", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-workspaces-"))
+  const db = initDatabase(join(dir, "db.sqlite"))
+  try {
+    const repos = new Repos(db)
+    const config = { ...defaultAppConfig(), allowedRoots: [dir] }
+    const path = join(dir, "demo-shared-token")
+    mkdirSync(join(path, "apps", "api"), { recursive: true })
+    writeFileSync(
+      join(path, "package.json"),
+      JSON.stringify({
+        name: "demo-shared-token",
+        private: true,
+      }, null, 2),
+    )
+    const gitInit = await initGit(path, { defaultBranch: "main", initialCommit: false })
+    assert.equal(gitInit.ok, true)
+
+    const result = await registerWorkspace(
+      {
+        path,
+        harnessProfile: { mode: "fast" },
+        sonar: { enabled: true },
+        sonarToken: { value: "persisted-token", persist: true },
+      },
+      { repos, config, appReport: readyReport() },
+    )
+    assert.equal(result.ok, true)
+    if (!result.ok) return
+
+    assert.match(result.actions.join("\n"), /repo git config/)
+    const persisted = spawnSync("git", ["config", "--local", "--get", "beerengineer.sonarToken"], {
+      cwd: path,
+      encoding: "utf8",
+    })
+    assert.equal(persisted.status, 0, persisted.stderr ?? "")
+    assert.equal(persisted.stdout.trim(), "persisted-token")
+  } finally {
+    db.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test("runWorkspacePreflight falls back to Basic auth after Bearer 401 for self-hosted sonar", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-workspaces-"))
   const prevToken = process.env.SONAR_TOKEN
@@ -293,6 +336,40 @@ test("runWorkspacePreflight falls back to Basic auth after Bearer 401 for self-h
     assert.equal(report.report.sonar.tokenValid, true)
     assert.equal(authHeaders[0], "Bearer test-token")
     assert.match(authHeaders[1] ?? "", /^Basic /)
+  } finally {
+    globalThis.fetch = prevFetch
+    if (prevToken === undefined) delete process.env.SONAR_TOKEN
+    else process.env.SONAR_TOKEN = prevToken
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("runWorkspacePreflight reads SONAR_TOKEN from repo git config", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-workspaces-"))
+  const prevToken = process.env.SONAR_TOKEN
+  const prevFetch = globalThis.fetch
+  delete process.env.SONAR_TOKEN
+  globalThis.fetch = (async input => {
+    const url = String(input)
+    if (url.includes("/api/authentication/validate")) {
+      return new Response(JSON.stringify({ valid: true }), { status: 200, headers: { "content-type": "application/json" } })
+    }
+    return new Response("ok", { status: 200 })
+  }) as typeof fetch
+
+  try {
+    const gitInit = await initGit(dir, { defaultBranch: "main", initialCommit: false })
+    assert.equal(gitInit.ok, true)
+    const config = spawnSync("git", ["config", "--local", "beerengineer.sonarToken", "git-config-token"], {
+      cwd: dir,
+      encoding: "utf8",
+    })
+    assert.equal(config.status, 0, config.stderr ?? "")
+
+    const report = await runWorkspacePreflight(dir, { sonarHostUrl: "https://sonarqube.example.com", sonarEnabled: true })
+    assert.equal(report.report.sonar.status, "missing")
+    assert.equal(report.report.sonar.tokenSource, "git-config")
+    assert.equal(report.report.sonar.tokenValid, true)
   } finally {
     globalThis.fetch = prevFetch
     if (prevToken === undefined) delete process.env.SONAR_TOKEN

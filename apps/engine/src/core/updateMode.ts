@@ -664,6 +664,14 @@ function buildUpdateReadiness(repos: Repos, config: AppConfig, opts: { pid?: num
   const anthropicOk: UpdateReadinessState = config.llm.provider === "anthropic" ? integrationReady(claudeAuth) : "not_applicable"
   const openaiOk: UpdateReadinessState = config.llm.provider === "openai" ? integrationReady(codexAuth) : "not_applicable"
   const sonarEnabled = repos.listWorkspaces().some(workspace => workspace.sonar_enabled === 1)
+  const sonarTokenInGitConfig = repos.listWorkspaces().some(workspace => {
+    if (!workspace.root_path) return false
+    const probe = spawnSync("git", ["config", "--get", "beerengineer.sonarToken"], {
+      cwd: workspace.root_path,
+      encoding: "utf8",
+    })
+    return probe.status === 0 && Boolean(probe.stdout.trim())
+  })
   const sonarTokenPresent = Boolean(process.env.SONAR_TOKEN?.trim()) || repos.listWorkspaces().some(workspace => {
     if (!workspace.root_path) return false
     try {
@@ -675,7 +683,7 @@ function buildUpdateReadiness(repos: Repos, config: AppConfig, opts: { pid?: num
     } catch {
       return false
     }
-  })
+  }) || sonarTokenInGitConfig
   const sonarOk: UpdateReadinessState = sonarEnabled ? integrationReady(sonarTokenPresent) : "not_applicable"
 
   return {

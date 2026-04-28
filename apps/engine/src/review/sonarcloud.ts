@@ -1,5 +1,7 @@
+import { execFile } from "node:child_process"
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
+import { promisify } from "node:util"
 import type { Finding } from "../types.js"
 import { commandExists, runCommand } from "./commandRunner.js"
 import { reviewCycleArtifactsDir, writeArtifactJson, writeArtifactText } from "./artifacts.js"
@@ -7,6 +9,7 @@ import type { GateCondition, ReviewScope, SonarCloudResult } from "./types.js"
 
 const DEFAULT_TIMEOUT_MS = 5 * 60_000
 const branchLocks = new Map<string, Promise<void>>()
+const execFileAsync = promisify(execFile)
 
 function basicAuthHeader(token: string): string {
   const credentials = `${token}:`
@@ -42,17 +45,39 @@ async function withBranchLock<T>(key: string, work: () => Promise<T>): Promise<T
   }
 }
 
-async function readLocalEnvToken(workspaceRoot: string): Promise<string | undefined> {
+function readTokenFromEnvFile(raw: string): string | undefined {
+  for (const line of raw.split(/\r?\n/)) {
+    const match = /^SONAR_TOKEN=(.*)$/.exec(line.trim())
+    if (match?.[1]) return match[1].replaceAll(/^["']|["']$/g, "")
+  }
+  return undefined
+}
+
+async function readTokenFromFile(path: string): Promise<string | undefined> {
   try {
-    const raw = await readFile(resolve(workspaceRoot, ".env"), "utf8")
-    for (const line of raw.split(/\r?\n/)) {
-      const match = /^SONAR_TOKEN=(.*)$/.exec(line.trim())
-      if (match?.[1]) return match[1].replaceAll(/^["']|["']$/g, "")
-    }
-    return undefined
+    return readTokenFromEnvFile(await readFile(path, "utf8"))
   } catch {
     return undefined
   }
+}
+
+async function readGitConfigToken(workspaceRoot: string): Promise<string | undefined> {
+  try {
+    const { stdout } = await execFileAsync("git", ["config", "--get", "beerengineer.sonarToken"], {
+      cwd: workspaceRoot,
+      encoding: "utf8",
+    })
+    const value = stdout.trim()
+    return value || undefined
+  } catch {
+    return undefined
+  }
+}
+
+async function readLocalEnvToken(workspaceRoot: string): Promise<string | undefined> {
+  return await readTokenFromFile(resolve(workspaceRoot, ".env.local"))
+    ?? await readTokenFromFile(resolve(workspaceRoot, ".env"))
+    ?? await readGitConfigToken(workspaceRoot)
 }
 
 function mapSeverity(severity: string | undefined): Finding<"sonarqube">["severity"] {

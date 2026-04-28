@@ -499,7 +499,13 @@ function resolveGitDefaultBranch(root: string): string | null {
   return null
 }
 
-async function detectSonarToken(root: string): Promise<{ value?: string; source?: "env" | ".env.local" }> {
+function readGitConfigSonarToken(root: string): string | undefined {
+  const probe = runGit(["config", "--get", "beerengineer.sonarToken"], root)
+  const value = probe.ok ? probe.stdout.trim() : ""
+  return value || undefined
+}
+
+async function detectSonarToken(root: string): Promise<{ value?: string; source?: "env" | ".env.local" | "git-config" }> {
   if (process.env.SONAR_TOKEN) return { value: process.env.SONAR_TOKEN, source: "env" }
   try {
     const envLocal = await readFile(resolve(root, ".env.local"), "utf8")
@@ -508,22 +514,14 @@ async function detectSonarToken(root: string): Promise<{ value?: string; source?
   } catch {
     // ignore
   }
+  const gitConfigValue = readGitConfigSonarToken(root)
+  if (gitConfigValue) return { value: gitConfigValue, source: "git-config" }
   return {}
 }
 
-async function persistSonarTokenToEnvLocal(root: string, token: string): Promise<void> {
-  const envLocalPath = resolve(root, ".env.local")
-  let existing = ""
-  try {
-    existing = await readFile(envLocalPath, "utf8")
-  } catch {
-    // file doesn't exist yet — fine
-  }
-  const lines = existing.split(/\r?\n/).filter(line => !/^SONAR_TOKEN\s*=/.test(line))
-  const trimmed = lines.filter((line, idx) => !(idx === lines.length - 1 && line === "")).join("\n")
-  const prefix = trimmed ? `${trimmed}\n` : ""
-  const next = `${prefix}SONAR_TOKEN=${token}\n`
-  await writeFile(envLocalPath, next)
+function persistSonarTokenToGitConfig(root: string, token: string): void {
+  const result = runGit(["config", "--local", "beerengineer.sonarToken", token], root)
+  if (!result.ok) throw new Error(result.stderr || "failed to persist SONAR_TOKEN to git config")
 }
 
 function sonarBearerAuthHeader(token: string): Record<string, string> {
@@ -829,7 +827,7 @@ export async function runWorkspacePreflight(
     details: {
       ...scannerReadiness.details,
       token: (() => {
-        if (!sonarToken.value) return "SONAR_TOKEN was not found in env or .env.local"
+        if (!sonarToken.value) return "SONAR_TOKEN was not found in env, .env.local, or repo git config"
         return sonarValid
           ? `SONAR_TOKEN validated against ${sonarHost}`
           : `SONAR_TOKEN failed validation against ${sonarHost}`
@@ -856,7 +854,7 @@ export async function runWorkspacePreflight(
   } else if (sonarToken.value) {
     sonarDetail = "SONAR_TOKEN failed Sonar validation"
   } else {
-    sonarDetail = "SONAR_TOKEN was not found in env or .env.local"
+    sonarDetail = "SONAR_TOKEN was not found in env, .env.local, or repo git config"
   }
 
   const coderabbitCli = runCommand("coderabbit", ["--version"], root)
@@ -1519,13 +1517,13 @@ export async function registerWorkspace(input: RegisterWorkspaceInput, deps: Reg
   actions.push(...gitSetup.actions)
 
   // Accept a SONAR_TOKEN supplied by the caller (interactive prompt or --sonar-token flag).
-  // Persist to .env.local when requested, and surface via process.env so the subsequent
-  // preflight's token validation + project creation can use it.
+  // Persist to repo-local git config when requested so linked worktrees share it, and
+  // surface via process.env so the subsequent preflight validation + project creation can use it.
   if (input.sonarToken?.value) {
     if (!process.env.SONAR_TOKEN) process.env.SONAR_TOKEN = input.sonarToken.value
     if (input.sonarToken.persist) {
-      await persistSonarTokenToEnvLocal(path, input.sonarToken.value)
-      actions.push("wrote SONAR_TOKEN to .env.local")
+      persistSonarTokenToGitConfig(path, input.sonarToken.value)
+      actions.push("wrote SONAR_TOKEN to repo git config for shared worktree access")
     }
   }
 
@@ -1868,7 +1866,7 @@ async function promptSonarTokenValue(
   console.log("  Generate one at https://sonarcloud.io/account/security")
   const value = (await promptLine(rl, "SONAR_TOKEN (blank to skip)", "")).trim()
   if (!value) return undefined
-  const persist = await promptYesNo(rl, "Write SONAR_TOKEN to .env.local (git-ignored)?", true)
+  const persist = await promptYesNo(rl, "Write SONAR_TOKEN to repo git config for all worktrees of this workspace?", true)
   return { value, persist }
 }
 
