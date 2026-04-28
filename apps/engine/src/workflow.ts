@@ -320,7 +320,9 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
     emitWorkflowPreviewPort(context, activeRun)
     const itemConcept = await loadConcept(context)
     const itemHasUi = projects.some(project => project.hasUi === true)
-    const itemSnapshot = buildItemSnapshot(itemHasUi, codebaseSnapshot, options?.workspaceRoot)
+    const itemSnapshot = itemHasUi
+      ? buildItemSnapshotWithUi(codebaseSnapshot, options?.workspaceRoot)
+      : buildItemSnapshotWithoutUi(codebaseSnapshot)
     const { wireframes, design } = await resolveDesignPrepArtifacts(
       context,
       itemResumePlan,
@@ -333,7 +335,16 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
     emitWorkflowProjectsCreated(activeRun, projects)
 
     if (itemResumePlan.startStage !== "merge-gate") {
-      await runWorkflowProjects(context, projects, git, wireframes, design, itemSnapshot, resumePlan, options?.llm)
+      await runWorkflowProjects({
+        context,
+        projects,
+        git,
+        wireframes,
+        design,
+        itemSnapshot,
+        resumePlan,
+        llm: options?.llm,
+      })
     }
 
     await withStageLifecycle("merge-gate", () => mergeGate(context, git, blockRunForWorkspaceState), {})
@@ -390,7 +401,7 @@ async function resolveDesignPrepArtifacts(
   itemConcept: Concept & { hasUi?: boolean },
   projects: Project[],
   stageLlm: WorkflowLlmOptions["stage"] | undefined,
-  itemSnapshot: ReturnType<typeof buildItemSnapshot>,
+  itemSnapshot: ReturnType<typeof buildItemSnapshotWithoutUi>,
 ): Promise<{ wireframes: WireframeArtifact | undefined; design: DesignArtifact | undefined }> {
   if (!itemHasUi) return { wireframes: undefined, design: undefined }
   const designPrepPlan = buildDesignPrepPlan(context, itemResumePlan, itemHasUi)
@@ -432,15 +443,18 @@ function emitWorkflowProjectsCreated(
 }
 
 async function runWorkflowProjects(
-  context: WorkflowContext,
-  projects: Project[],
-  git: ReturnType<typeof createGitAdapter>,
-  wireframes: WireframeArtifact | undefined,
-  design: DesignArtifact | undefined,
-  itemSnapshot: ReturnType<typeof buildItemSnapshot>,
-  resumePlan: ReturnType<typeof normalizeProjectResume> | null,
-  llm: WorkflowLlmOptions | undefined,
+  options: {
+    context: WorkflowContext
+    projects: Project[]
+    git: ReturnType<typeof createGitAdapter>
+    wireframes: WireframeArtifact | undefined
+    design: DesignArtifact | undefined
+    itemSnapshot: ReturnType<typeof buildItemSnapshotWithoutUi>
+    resumePlan: ReturnType<typeof normalizeProjectResume> | null
+    llm: WorkflowLlmOptions | undefined
+  },
 ): Promise<void> {
+  const { context, projects, git, wireframes, design, itemSnapshot, resumePlan, llm } = options
   for (const project of projects) {
     git.ensureProjectBranch(project.id)
     const conceptAmendments = [
@@ -522,14 +536,19 @@ function workflowGitFailureSummary(reason: string, workspaceRoot?: string): stri
     : `Workspace ${workspaceRoot} has uncommitted changes. beerengineer_ requires a clean repo before it creates an isolated item branch.`
 }
 
-function buildItemSnapshot(
-  itemHasUi: boolean,
+function buildItemSnapshotWithUi(
   codebaseSnapshot: ReturnType<typeof loadCodebaseSnapshot>,
   workspaceRoot?: string,
 ) {
-  return itemHasUi && codebaseSnapshot
+  return codebaseSnapshot
     ? { ...codebaseSnapshot, frontend: loadFrontendSnapshot(workspaceRoot) }
     : codebaseSnapshot
+}
+
+function buildItemSnapshotWithoutUi(
+  codebaseSnapshot: ReturnType<typeof loadCodebaseSnapshot>,
+) {
+  return codebaseSnapshot
 }
 
 function buildDesignPrepPlan(

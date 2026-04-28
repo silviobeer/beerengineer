@@ -120,132 +120,146 @@ function usageParts(usage?: ClaudeUsage | null): string[] {
   return parts
 }
 
+function summarizeClaudeSystemEvent(event: ClaudeStreamEvent, state: ClaudeStreamState): StreamEventSummary | null {
+  if (event.subtype === "init") {
+    state.streamedSummary = true
+    return { kind: "dim", text: "claude: session started" }
+  }
+  if (event.subtype === "api_retry") {
+    state.streamedSummary = true
+    const attempt = typeof event.attempt === "number" ? event.attempt : "?"
+    const maxAttempts = typeof event.max_attempts === "number" ? event.max_attempts : "?"
+    const delay = typeof event.retry_delay_ms === "number" ? event.retry_delay_ms : 0
+    return { kind: "dim", text: `claude: retrying (${attempt}/${maxAttempts} in ${delay} ms)` }
+  }
+  return null
+}
+
+function summarizeClaudeAssistantEvent(event: ClaudeStreamEvent, state: ClaudeStreamState): StreamEventSummary | null {
+  const message = event.message
+  if (!message) return null
+  state.usage = message.usage ?? state.usage
+  if (!Array.isArray(message.content)) return null
+  for (const part of message.content) {
+    if (part.type === "text" && typeof part.text === "string") state.fallbackTextParts.push(part.text)
+  }
+  const toolUse = message.content.find((part): part is Extract<ClaudeAssistantContent, { type?: "tool_use"; name?: string }> => {
+    return isToolUseContent(part) && typeof part.name === "string"
+  })
+  if (toolUse?.name) {
+    const argsPreview = sanitizePreviewValue("input" in toolUse ? toolUse.input : undefined)
+    if (toolUse.id) state.toolCalls.set(toolUse.id, { name: toolUse.name, argsPreview })
+    emitHostedToolCalled(toolUse.name, argsPreview, "claude")
+    state.streamedSummary = true
+    return { kind: "dim", text: `claude: tool ${toolUse.name}` }
+  }
+  const messageId = message.id
+  const hasText = message.content.some(part => part.type === "text" && typeof part.text === "string" && part.text.length > 0)
+  if (!hasText || !messageId || state.completedAssistantMessageIds.has(messageId)) return null
+  state.completedAssistantMessageIds.add(messageId)
+  state.streamedSummary = true
+  const parts = usageParts(message.usage)
+  const usageSuffix = parts.length > 0 ? ` (${parts.join(" ")})` : ""
+  return { kind: "dim", text: `claude: turn completed${usageSuffix}` }
+}
+
+function emitClaudeToolResult(content: ClaudeAssistantContent[] | undefined, state: ClaudeStreamState): void {
+  const toolResult = content?.find((part: ClaudeAssistantContent) => part.type === "tool_result") as
+    | { type?: string; content?: unknown; is_error?: boolean; tool_use_id?: string }
+    | undefined
+  if (!toolResult) return
+  const call = toolResult.tool_use_id ? state.toolCalls.get(toolResult.tool_use_id) : undefined
+  emitHostedToolResult(
+    call?.name ?? toolResult.tool_use_id ?? "tool",
+    call?.argsPreview,
+    sanitizePreviewValue(toolResult.content),
+    "claude",
+    toolResult.is_error === true,
+  )
+}
+
+function summarizeClaudeUserEvent(event: ClaudeStreamEvent, state: ClaudeStreamState): void {
+  emitClaudeToolResult(event.message?.content, state)
+}
+
+function summarizeClaudeContentBlockStart(
+  inner: NonNullable<ClaudeStreamEvent["event"]>,
+  state: ClaudeStreamState,
+): StreamEventSummary | null {
+  if (inner.type !== "content_block_start" || typeof inner.index !== "number") return null
+  const blockType = inner.content_block?.type
+  if (typeof blockType === "string") state.textBlockTypes.set(inner.index, blockType)
+  if (blockType === "tool_use") {
+    emitHostedToolCalled("tool", undefined, "claude")
+    state.streamedSummary = true
+    return { kind: "dim", text: "claude: tool" }
+  }
+  if (blockType === "thinking") emitHostedThinking("thinking", "claude")
+  return null
+}
+
+function appendClaudeContentDelta(
+  inner: NonNullable<ClaudeStreamEvent["event"]>,
+  state: ClaudeStreamState,
+): void {
+  if (
+    inner.type !== "content_block_delta" ||
+    typeof inner.index !== "number" ||
+    inner.delta?.type !== "text_delta" ||
+    typeof inner.delta.text !== "string"
+  ) {
+    return
+  }
+  const blockType = state.textBlockTypes.get(inner.index)
+  if (blockType === "text") state.fallbackTextParts.push(inner.delta.text)
+  if (blockType === "thinking") emitHostedThinking(sanitizePreviewValue(inner.delta.text) ?? inner.delta.text, "claude")
+}
+
+function summarizeClaudeStreamEvent(event: ClaudeStreamEvent, state: ClaudeStreamState): StreamEventSummary | null {
+  const inner = event.event
+  if (!inner) return null
+  if (inner.type === "message_start") {
+    state.streamedSummary = true
+    return { kind: "dim", text: "claude: turn started" }
+  }
+  if (inner.type === "message_stop") {
+    state.streamedSummary = true
+    return { kind: "dim", text: "claude: turn completed" }
+  }
+  const blockStartSummary = summarizeClaudeContentBlockStart(inner, state)
+  if (blockStartSummary) return blockStartSummary
+  if (inner.type === "message_delta" && inner.usage) state.usage = inner.usage
+  appendClaudeContentDelta(inner, state)
+  return null
+}
+
+function summarizeClaudeResultEvent(event: ClaudeStreamEvent, state: ClaudeStreamState): StreamEventSummary {
+  state.sawResult = true
+  state.resultText = typeof event.result === "string" ? event.result : state.resultText
+  state.usage = event.usage ?? state.usage
+  state.streamedSummary = true
+  const parts = usageParts(event.usage)
+  const usageSuffix = parts.length > 0 ? ` (${parts.join(" ")})` : ""
+  return {
+    kind: event.is_error ? "step" : "dim",
+    text: `claude: run completed${usageSuffix}`,
+  }
+}
+
 function summarizeClaudeEvent(event: ClaudeStreamEvent, state: ClaudeStreamState): StreamEventSummary | null {
   if (typeof event.session_id === "string") state.sessionId = event.session_id
-  if (event.type === "system") {
-    if (event.subtype === "init") {
-      state.streamedSummary = true
-      return { kind: "dim", text: "claude: session started" }
-    }
-    if (event.subtype === "api_retry") {
-      state.streamedSummary = true
-      const attempt = typeof event.attempt === "number" ? event.attempt : "?"
-      const maxAttempts = typeof event.max_attempts === "number" ? event.max_attempts : "?"
-      const delay = typeof event.retry_delay_ms === "number" ? event.retry_delay_ms : 0
-      return { kind: "dim", text: `claude: retrying (${attempt}/${maxAttempts} in ${delay} ms)` }
-    }
+  if (event.type === "system") return summarizeClaudeSystemEvent(event, state)
+  if (event.type === "assistant") return summarizeClaudeAssistantEvent(event, state)
+  if (event.type === "user") {
+    summarizeClaudeUserEvent(event, state)
     return null
   }
-
-  if (event.type === "assistant") {
-    const message = event.message
-    if (!message) return null
-    state.usage = message.usage ?? state.usage
-    if (Array.isArray(message.content)) {
-      for (const part of message.content) {
-        if (part.type === "text" && typeof part.text === "string") state.fallbackTextParts.push(part.text)
-      }
-      const toolUse = message.content.find((part): part is Extract<ClaudeAssistantContent, { type?: "tool_use"; name?: string }> => {
-        return isToolUseContent(part) && typeof part.name === "string"
-      })
-      if (toolUse?.name) {
-        const argsPreview = sanitizePreviewValue("input" in toolUse ? toolUse.input : undefined)
-        if (toolUse.id) state.toolCalls.set(toolUse.id, { name: toolUse.name, argsPreview })
-        emitHostedToolCalled(toolUse.name, argsPreview, "claude")
-        state.streamedSummary = true
-        return { kind: "dim", text: `claude: tool ${toolUse.name}` }
-      }
-      const messageId = message.id
-      const hasText = message.content.some(part => part.type === "text" && typeof part.text === "string" && part.text.length > 0)
-      if (hasText && messageId && !state.completedAssistantMessageIds.has(messageId)) {
-        state.completedAssistantMessageIds.add(messageId)
-        state.streamedSummary = true
-        const parts = usageParts(message.usage)
-        const usageSuffix = parts.length > 0 ? ` (${parts.join(" ")})` : ""
-        return { kind: "dim", text: `claude: turn completed${usageSuffix}` }
-      }
-    }
-    return null
-  }
-
-  if (event.type === "user" && event.message?.content) {
-    const toolResult = event.message.content.find(part => part.type === "tool_result") as
-      | { type?: string; content?: unknown; is_error?: boolean; tool_use_id?: string }
-      | undefined
-    if (toolResult) {
-      const call = toolResult.tool_use_id ? state.toolCalls.get(toolResult.tool_use_id) : undefined
-      emitHostedToolResult(
-        call?.name ?? toolResult.tool_use_id ?? "tool",
-        call?.argsPreview,
-        sanitizePreviewValue(toolResult.content),
-        "claude",
-        toolResult.is_error === true,
-      )
-    }
-  }
-
-  if (event.type === "stream_event" && event.event) {
-    const inner = event.event
-    if (inner.type === "message_start") {
-      state.streamedSummary = true
-      return { kind: "dim", text: "claude: turn started" }
-    }
-    if (inner.type === "message_stop") {
-      state.streamedSummary = true
-      return { kind: "dim", text: "claude: turn completed" }
-    }
-    if (inner.type === "content_block_start" && typeof inner.index === "number") {
-      const blockType = inner.content_block?.type
-      if (typeof blockType === "string") state.textBlockTypes.set(inner.index, blockType)
-      if (blockType === "tool_use") {
-        emitHostedToolCalled("tool", undefined, "claude")
-        state.streamedSummary = true
-        return { kind: "dim", text: "claude: tool" }
-      }
-      if (blockType === "thinking") {
-        emitHostedThinking("thinking", "claude")
-      }
-    }
-    if (inner.type === "message_delta" && inner.usage) state.usage = inner.usage
-    if (
-      inner.type === "content_block_delta" &&
-      typeof inner.index === "number" &&
-      state.textBlockTypes.get(inner.index) === "text" &&
-      inner.delta?.type === "text_delta" &&
-      typeof inner.delta.text === "string"
-    ) {
-      state.fallbackTextParts.push(inner.delta.text)
-    }
-    if (
-      inner.type === "content_block_delta" &&
-      typeof inner.index === "number" &&
-      state.textBlockTypes.get(inner.index) === "thinking" &&
-      inner.delta?.type === "text_delta" &&
-      typeof inner.delta.text === "string"
-    ) {
-      emitHostedThinking(sanitizePreviewValue(inner.delta.text) ?? inner.delta.text, "claude")
-    }
-    return null
-  }
-
-  if (event.type === "result") {
-    state.sawResult = true
-    state.resultText = typeof event.result === "string" ? event.result : state.resultText
-    state.usage = event.usage ?? state.usage
-    state.streamedSummary = true
-    const parts = usageParts(event.usage)
-    const usageSuffix = parts.length > 0 ? ` (${parts.join(" ")})` : ""
-    return {
-      kind: event.is_error ? "step" : "dim",
-      text: `claude: run completed${usageSuffix}`,
-    }
-  }
-
+  if (event.type === "stream_event") return summarizeClaudeStreamEvent(event, state)
+  if (event.type === "result") return summarizeClaudeResultEvent(event, state)
   if (event.type === "error") {
     state.streamedSummary = true
     return { kind: "step", text: `claude error: ${event.error ?? "unknown"}` }
   }
-
   return null
 }
 

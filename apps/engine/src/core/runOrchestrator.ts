@@ -32,6 +32,8 @@ export type AttachDbSyncOptions = {
   onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
 }
 
+type RecoveryEventScope = Extract<WorkflowEvent, { type: "run_blocked" | "run_failed" }>["scope"]
+
 /**
  * Subscribe a DB-sync middleware to the bus. Every emitted `WorkflowEvent`
  * is persisted to the appropriate table (runs, stage_runs, stage_logs,
@@ -536,7 +538,7 @@ function persistRunRecoveryEvent(
   repos.updateRun(event.runId, { status: event.type === "run_blocked" ? "blocked" : "failed" })
   if (soleLive) repos.setItemCurrentStage(itemId, null)
   const scope = event.scope
-  const scopeRefVal = scope.type === "stage" ? scope.stageId : scope.type === "story" ? `${scope.waveNumber}/${scope.storyId}` : null
+  const scopeRefVal = recoveryScopeRef(event.scope)
   repos.setRunRecovery(event.runId, {
     status: event.type === "run_blocked" ? "blocked" : "failed",
     scope: scope.type,
@@ -555,6 +557,12 @@ function persistRunRecoveryEvent(
       branch: "branch" in event ? event.branch : undefined,
     },
   }))
+}
+
+function recoveryScopeRef(scope: RecoveryEventScope): string | null {
+  if (scope.type === "stage") return scope.stageId
+  if (scope.type === "story") return `${scope.waveNumber}/${scope.storyId}`
+  return null
 }
 
 function persistExternalRemediationRecordedEvent(

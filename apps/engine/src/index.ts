@@ -140,52 +140,42 @@ function isKnownGroupId(group: string): group is (typeof KNOWN_GROUP_IDS)[number
   return KNOWN_GROUP_IDS.includes(group as (typeof KNOWN_GROUP_IDS)[number])
 }
 
-export function parseArgs(argv: string[]): Command {
-  const [first, second] = argv
-  const json = argv.includes("--json")
-  const group = readFlag(argv, "--group")
-  const workspaceKey = readFlag(argv, "--workspace")
-  const all = argv.includes("--all")
-  const compact = argv.includes("--compact")
-  const since = readFlag(argv, "--since")
-  const level = messagingLevelFromQuery(readFlag(argv, "--level"), 1)
-  const messagesLevel = messagingLevelFromQuery(readFlag(argv, "--level"), 2)
-  const rawLimit = Number(readFlag(argv, "--limit") ?? 200)
-  const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.floor(rawLimit) : 200
-  const positionalThird = argv[2] && !argv[2].startsWith("--") ? argv[2] : undefined
-  if (first === undefined || first === "--json" || first === "--workspace") {
+type ParseArgsContext = {
+  argv: string[]
+  first: string | undefined
+  second: string | undefined
+  json: boolean
+  group: string | undefined
+  workspaceKey: string | undefined
+  all: boolean
+  compact: boolean
+  since: string | undefined
+  level: MessagingLevel
+  messagesLevel: MessagingLevel
+  limit: number
+  positionalThird: string | undefined
+}
+
+function parseRunSubcommand(context: ParseArgsContext): Command | null {
+  const { second, argv, workspaceKey, json, all, compact, level, messagesLevel, since, limit } = context
+  if (context.first !== "run") return null
+  if (second === undefined || second === "--json" || second === "--workspace" || second === "--verbose") {
     return { kind: "workflow", json, workspaceKey, verbose: argv.includes("--verbose") }
   }
-  if (first === "run") {
-    if (second === undefined || second === "--json" || second === "--workspace" || second === "--verbose") {
-      return { kind: "workflow", json, workspaceKey, verbose: argv.includes("--verbose") }
-    }
-    if (second === "list") return { kind: "run-list", workspaceKey, json, all, compact }
-    if (second === "get") return { kind: "run-get", runId: argv[2], json }
-    if (second === "open") return { kind: "run-open", runId: argv[2] }
-    if (second === "tail") return { kind: "run-tail", runId: argv[2], level, since, json }
-    if (second === "messages") return { kind: "run-messages", runId: argv[2], level: messagesLevel, since, limit, json }
-    if (second === "watch") return { kind: "run-watch", runId: argv[2], level, since, json }
-    return { kind: "unknown", token: argv.join(" ") }
-  }
-  if (first === "--help" || first === "-h" || first === "help") return { kind: "help" }
-  if (first === "--doctor" || first === "doctor") return { kind: "doctor", json, group }
-  if (first === "setup") return { kind: "setup", group, noInteractive: argv.includes("--no-interactive") }
-  if (first === "update") {
-    return {
-      kind: "update",
-      check: argv.includes("--check"),
-      json,
-      dryRun: argv.includes("--dry-run"),
-      rollback: argv.includes("--rollback"),
-      version: readFlag(argv, "--version"),
-      allowLegacyDbShadow: argv.includes("--allow-legacy-db-shadow"),
-    }
-  }
-  if (first === "notifications" && second === "test" && argv[2] === "telegram") return { kind: "notifications-test", channel: "telegram" }
-  if (first === "status") return { kind: "status", workspaceKey, json, all }
-  if (first === "workspace" && second === "preview") return { kind: "workspace-preview", path: argv[2], json }
-  if (first === "workspace" && second === "add") {
+  if (second === "list") return { kind: "run-list", workspaceKey, json, all, compact }
+  if (second === "get") return { kind: "run-get", runId: argv[2], json }
+  if (second === "open") return { kind: "run-open", runId: argv[2] }
+  if (second === "tail") return { kind: "run-tail", runId: argv[2], level, since, json }
+  if (second === "messages") return { kind: "run-messages", runId: argv[2], level: messagesLevel, since, limit, json }
+  if (second === "watch") return { kind: "run-watch", runId: argv[2], level, since, json }
+  return { kind: "unknown", token: argv.join(" ") }
+}
+
+function parseWorkspaceSubcommand(context: ParseArgsContext): Command | null {
+  const { first, second, argv, json } = context
+  if (first !== "workspace") return null
+  if (second === "preview") return { kind: "workspace-preview", path: argv[2], json }
+  if (second === "add") {
     return {
       kind: "workspace-add",
       json,
@@ -207,34 +197,41 @@ export function parseArgs(argv: string[]): Command {
       ghOwner: readFlag(argv, "--gh-owner"),
     }
   }
-  if (first === "workspace" && second === "list") return { kind: "workspace-list", json }
-  if (first === "workspace" && second === "get") return { kind: "workspace-get", key: argv[2], json }
-  if (first === "workspace" && second === "items") return { kind: "workspace-items", key: argv[2], json }
-  if (first === "workspace" && second === "use") return { kind: "workspace-use", key: argv[2] }
-  if (first === "workspace" && second === "remove") return {
-    kind: "workspace-remove",
-    key: argv[2],
-    json,
-    purge: argv.includes("--purge"),
-    yes: argv.includes("--yes"),
-    noInteractive: argv.includes("--no-interactive"),
+  if (second === "list") return { kind: "workspace-list", json }
+  if (second === "get") return { kind: "workspace-get", key: argv[2], json }
+  if (second === "items") return { kind: "workspace-items", key: argv[2], json }
+  if (second === "use") return { kind: "workspace-use", key: argv[2] }
+  if (second === "remove") {
+    return {
+      kind: "workspace-remove",
+      key: argv[2],
+      json,
+      purge: argv.includes("--purge"),
+      yes: argv.includes("--yes"),
+      noInteractive: argv.includes("--no-interactive"),
+    }
   }
-  if (first === "workspace" && second === "open") return { kind: "workspace-open", key: argv[2] }
-  if (first === "workspace" && second === "backfill") return { kind: "workspace-backfill", json }
-  if (first === "workspace" && second === "gc-worktrees") return { kind: "workspace-worktree-gc", key: argv[2], json }
+  if (second === "open") return { kind: "workspace-open", key: argv[2] }
+  if (second === "backfill") return { kind: "workspace-backfill", json }
+  if (second === "gc-worktrees") return { kind: "workspace-worktree-gc", key: argv[2], json }
+  return null
+}
+
+function parseChatSubcommand(context: ParseArgsContext): Command | null {
+  const { first, second, argv, json, workspaceKey, all, compact, positionalThird } = context
   if (first === "chat" && second === "list") return { kind: "chat-list", workspaceKey, json, all, compact }
+  const positionalText = argv.slice(3).filter(part => !part.startsWith("--")).join(" ")
   if (first === "chat" && second === "send") {
     return {
       kind: "chat-send",
       runId: positionalThird ?? readFlag(argv, "--run"),
-      text: argv.slice(3).filter(part => !part.startsWith("--")).join(" ") || readFlag(argv, "--text"),
+      text: positionalText || readFlag(argv, "--text"),
       json,
     }
   }
   if (first === "chat" && second === "answer") {
     const positionalRunId = positionalThird
-    const positionalAnswer =
-      positionalRunId ? argv.slice(3).filter(part => !part.startsWith("--")).join(" ") || undefined : undefined
+    const positionalAnswer = positionalRunId ? positionalText || undefined : undefined
     return {
       kind: "chat-answer",
       promptId: readFlag(argv, "--prompt"),
@@ -245,40 +242,128 @@ export function parseArgs(argv: string[]): Command {
       json,
     }
   }
+  return null
+}
+
+function resolveResumeFlags(argv: string[]): ResumeFlags {
+  const resume: ResumeFlags = {}
+  const summary = readFlag(argv, "--remediation-summary")
+  const branch = readFlag(argv, "--branch")
+  const commit = readFlag(argv, "--commit")
+  const notes = readFlag(argv, "--notes")
+  if (summary) resume.summary = summary
+  if (branch) resume.branch = branch
+  if (commit) resume.commit = commit
+  if (notes) resume.notes = notes
+  if (argv.includes("--yes")) resume.yes = true
+  return resume
+}
+
+function parseItemActionSubcommand(argv: string[]): Command {
+  const itemRef = readFlag(argv, "--item")
+  const action = readFlag(argv, "--action")
+  if (!itemRef || !action) return { kind: "unknown", token: argv.join(" ") }
+  const resume = resolveResumeFlags(argv)
+  return Object.keys(resume).length === 0
+    ? { kind: "item-action", itemRef, action }
+    : { kind: "item-action", itemRef, action, resume }
+}
+
+function parseItemSubcommand(context: ParseArgsContext): Command | null {
+  const { first, second, argv, workspaceKey, json } = context
+  if (first !== "item") return null
+  if (second === "get") return { kind: "item-get", itemRef: argv[2], workspaceKey, json }
+  if (second === "open") return { kind: "item-open", itemRef: argv[2], workspaceKey }
+  if (second === "preview") return { kind: "item-preview", itemRef: argv[2], workspaceKey, start: argv.includes("--start"), stop: argv.includes("--stop"), open: argv.includes("--open"), json }
+  if (second === "wireframes") return { kind: "item-wireframes", itemRef: argv[2], workspaceKey, open: argv.includes("--open"), json }
+  if (second === "design") return { kind: "item-design", itemRef: argv[2], workspaceKey, open: argv.includes("--open"), json }
+  if (second === "action") return parseItemActionSubcommand(argv)
+  return null
+}
+
+function buildParseArgsContext(argv: string[]): ParseArgsContext {
+  const [first, second] = argv
+  const json = argv.includes("--json")
+  const group = readFlag(argv, "--group")
+  const workspaceKey = readFlag(argv, "--workspace")
+  const all = argv.includes("--all")
+  const compact = argv.includes("--compact")
+  const since = readFlag(argv, "--since")
+  const level = messagingLevelFromQuery(readFlag(argv, "--level"), 1)
+  const messagesLevel = messagingLevelFromQuery(readFlag(argv, "--level"), 2)
+  const rawLimit = Number(readFlag(argv, "--limit") ?? 200)
+  const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.floor(rawLimit) : 200
+  const positionalThird = argv[2] && !argv[2].startsWith("--") ? argv[2] : undefined
+  return {
+    argv,
+    first,
+    second,
+    json,
+    group,
+    workspaceKey,
+    all,
+    compact,
+    since,
+    level,
+    messagesLevel,
+    limit,
+    positionalThird,
+  }
+}
+
+function parseUpdateCommand(context: ParseArgsContext): Command | null {
+  if (context.first !== "update") return null
+  return {
+    kind: "update",
+    check: context.argv.includes("--check"),
+    json: context.json,
+    dryRun: context.argv.includes("--dry-run"),
+    rollback: context.argv.includes("--rollback"),
+    version: readFlag(context.argv, "--version"),
+    allowLegacyDbShadow: context.argv.includes("--allow-legacy-db-shadow"),
+  }
+}
+
+function parsePluralListCommand(context: ParseArgsContext): Command | null {
+  const { first, second, argv, workspaceKey, json, all, compact, level, messagesLevel, since, limit } = context
   if (first === "items") return { kind: "items", workspaceKey, json, all, compact }
   if (first === "chats") return { kind: "chats", workspaceKey, json, all, compact }
-  if (first === "runs") {
-    if (second === "tail") return { kind: "run-tail", runId: argv[2], level, since, json }
-    if (second === "messages") return { kind: "run-messages", runId: argv[2], level: messagesLevel, since, limit, json }
-    if (second === "watch") return { kind: "run-watch", runId: argv[2], level, since, json }
-    return { kind: "runs", workspaceKey, json, all, compact }
-  }
-  if (first === "item" && second === "get") return { kind: "item-get", itemRef: argv[2], workspaceKey, json }
-  if (first === "item" && second === "open") return { kind: "item-open", itemRef: argv[2], workspaceKey }
-  if (first === "item" && second === "preview") return { kind: "item-preview", itemRef: argv[2], workspaceKey, start: argv.includes("--start"), stop: argv.includes("--stop"), open: argv.includes("--open"), json }
-  if (first === "item" && second === "wireframes") return { kind: "item-wireframes", itemRef: argv[2], workspaceKey, open: argv.includes("--open"), json }
-  if (first === "item" && second === "design") return { kind: "item-design", itemRef: argv[2], workspaceKey, open: argv.includes("--open"), json }
+  if (first !== "runs") return null
+  if (second === "tail") return { kind: "run-tail", runId: argv[2], level, since, json }
+  if (second === "messages") return { kind: "run-messages", runId: argv[2], level: messagesLevel, since, limit, json }
+  if (second === "watch") return { kind: "run-watch", runId: argv[2], level, since, json }
+  return { kind: "runs", workspaceKey, json, all, compact }
+}
+
+function parseSimpleTopLevelCommand(context: ParseArgsContext): Command | null {
+  const { first, second, argv, json, group, workspaceKey, all } = context
+  if (first === "--help" || first === "-h" || first === "help") return { kind: "help" }
+  if (first === "--doctor" || first === "doctor") return { kind: "doctor", json, group }
+  if (first === "setup") return { kind: "setup", group, noInteractive: argv.includes("--no-interactive") }
+  const update = parseUpdateCommand(context)
+  if (update) return update
+  if (first === "notifications" && second === "test" && argv[2] === "telegram") return { kind: "notifications-test", channel: "telegram" }
+  if (first === "status") return { kind: "status", workspaceKey, json, all }
+  const pluralList = parsePluralListCommand(context)
+  if (pluralList) return pluralList
   if (first === "start" && second === undefined) return { kind: "start-engine" }
   if (first === "start" && second === "ui") return { kind: "start-ui" }
-  if (first === "item" && second === "action") {
-    const itemRef = readFlag(argv, "--item")
-    const action = readFlag(argv, "--action")
-    if (!itemRef || !action) return { kind: "unknown", token: argv.join(" ") }
-    const resume: ResumeFlags = {}
-    const summary = readFlag(argv, "--remediation-summary")
-    const branch = readFlag(argv, "--branch")
-    const commit = readFlag(argv, "--commit")
-    const notes = readFlag(argv, "--notes")
-    if (summary) resume.summary = summary
-    if (branch) resume.branch = branch
-    if (commit) resume.commit = commit
-    if (notes) resume.notes = notes
-    if (argv.includes("--yes")) resume.yes = true
-    if (Object.keys(resume).length === 0) {
-      return { kind: "item-action", itemRef, action }
-    }
-    return { kind: "item-action", itemRef, action, resume }
+  return null
+}
+
+export function parseArgs(argv: string[]): Command {
+  const context = buildParseArgsContext(argv)
+  const { first, json, workspaceKey } = context
+  if (first === undefined || first === "--json" || first === "--workspace") {
+    return { kind: "workflow", json, workspaceKey, verbose: argv.includes("--verbose") }
   }
+  const delegated = parseRunSubcommand(context)
+    ?? parseWorkspaceSubcommand(context)
+    ?? parseChatSubcommand(context)
+    ?? parseItemSubcommand(context)
+  if (delegated) return delegated
+  const topLevel = parseSimpleTopLevelCommand(context)
+  if (topLevel) return topLevel
   return { kind: "unknown", token: argv.join(" ") }
 }
 
@@ -833,9 +918,12 @@ function printWorkspaceSonarReadiness(result: {
   const coverageDetail = result.sonarReadiness.details?.coverage
   console.log("    Local Sonar readiness")
   console.log(`    - scanner: ${result.sonarReadiness.scanner}`)
-  console.log(`    - token: ${result.sonarReadiness.token}${tokenDetail ? ` (${tokenDetail})` : ""}`)
-  console.log(`    - config: ${result.sonarReadiness.config}${configDetail ? ` (${configDetail})` : ""}`)
-  console.log(`    - coverage: ${result.sonarReadiness.coverage}${coverageDetail ? ` (${coverageDetail})` : ""}`)
+  const tokenSuffix = tokenDetail ? ` (${tokenDetail})` : ""
+  const configSuffix = configDetail ? ` (${configDetail})` : ""
+  const coverageSuffix = coverageDetail ? ` (${coverageDetail})` : ""
+  console.log(`    - token: ${result.sonarReadiness.token}${tokenSuffix}`)
+  console.log(`    - config: ${result.sonarReadiness.config}${configSuffix}`)
+  console.log(`    - coverage: ${result.sonarReadiness.coverage}${coverageSuffix}`)
 }
 
 function printWorkspaceCodeRabbitHints(ghCreateCommand?: string): void {
@@ -1740,7 +1828,7 @@ async function runItemPreviewCommand(
       }
       console.log(`  log:          ${payload.logPath}`)
     }
-    if (opts.open && (status === "started" || status === "already_running")) openBrowser(preview.previewUrl)
+    if (opts.open && (payload.status === "started" || payload.status === "already_running")) openBrowser(preview.previewUrl)
     return 0
   } finally {
     db.close()

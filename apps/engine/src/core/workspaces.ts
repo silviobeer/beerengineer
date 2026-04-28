@@ -927,17 +927,20 @@ function buildSonarReadiness(
   sonarValid: boolean | undefined,
   sonarHost: string,
 ): SonarReadiness {
-  const tokenStatus: "ok" | "invalid" | "missing" = !tokenValue ? "missing" : sonarValid ? "ok" : "invalid"
+  let tokenStatus: "ok" | "invalid" | "missing" = "missing"
+  let tokenDetail = "SONAR_TOKEN was not found in env, .env.local, or repo git config"
+  if (tokenValue) {
+    tokenStatus = sonarValid ? "ok" : "invalid"
+    tokenDetail = sonarValid
+      ? `SONAR_TOKEN validated against ${sonarHost}`
+      : `SONAR_TOKEN failed validation against ${sonarHost}`
+  }
   return mergeSonarReadiness(localSonarReadiness, {
     scanner: scannerReadiness.scanner,
     token: tokenStatus,
     details: {
       ...scannerReadiness.details,
-      token: tokenValue
-        ? sonarValid
-          ? `SONAR_TOKEN validated against ${sonarHost}`
-          : `SONAR_TOKEN failed validation against ${sonarHost}`
-        : "SONAR_TOKEN was not found in env, .env.local, or repo git config",
+      token: tokenDetail,
     },
   })
 }
@@ -1520,7 +1523,21 @@ type RegisterDeps = {
   appReport: SetupReport
 }
 
-export async function registerWorkspace(input: RegisterWorkspaceInput, deps: RegisterDeps): Promise<RegisterResult> {
+type RegisterWorkspaceState = {
+  path: string
+  preview: WorkspacePreview
+  existingConfig: Awaited<ReturnType<typeof readWorkspaceConfig>>
+  name: string
+  key: string
+  requestedSonar: SonarConfig | undefined
+  validation: ValidationResult & { ok: true }
+  byKey: ReturnType<Repos["getWorkspaceByKey"]>
+}
+
+async function resolveRegisterWorkspaceState(
+  input: RegisterWorkspaceInput,
+  deps: RegisterDeps,
+): Promise<RegisterWorkspaceState | RegisterResult> {
   const path = resolve(input.path)
   const preview = await previewWorkspace(path, deps.config, deps.repos)
   if (!preview.isInsideAllowedRoot) {
@@ -1548,6 +1565,7 @@ export async function registerWorkspace(input: RegisterWorkspaceInput, deps: Reg
   if (!validation.ok) {
     return { ok: false, error: validation.error?.code ?? "unknown", detail: validation.error?.detail ?? "invalid harness profile" }
   }
+  const validValidation = validation as ValidationResult & { ok: true }
 
   const byPath = deps.repos.getWorkspaceByRootPath(path)
   if (byPath && byPath.key !== key) {
@@ -1557,189 +1575,200 @@ export async function registerWorkspace(input: RegisterWorkspaceInput, deps: Reg
   if (byKey?.root_path && byKey.root_path !== path) {
     return { ok: false, error: "key_conflict", detail: `Workspace key ${key} is already registered for ${byKey.root_path}` }
   }
+  return {
+    path,
+    preview,
+    existingConfig,
+    name,
+    key,
+    requestedSonar,
+    validation: validValidation,
+    byKey,
+  }
+}
 
-  const actions: string[] = []
-  if (preview.isGreenfield || input.create) {
+async function prepareWorkspaceFilesystem(
+  input: RegisterWorkspaceInput,
+  state: RegisterWorkspaceState,
+  actions: string[],
+): Promise<RegisterResult | null> {
+  if (state.preview.isGreenfield || input.create) {
     try {
-      actions.push(...await scaffoldWorkspace(path, { createGitignore: true }))
+      actions.push(...await scaffoldWorkspace(state.path, { createGitignore: true }))
     } catch (err) {
       return { ok: false, error: "scaffold_failed", detail: (err as Error).message }
     }
   } else {
-    await mkdir(resolve(path, WORKSPACE_CONFIG_DIR), { recursive: true })
-    const gitignore = await ensureManagedGitignore(path)
+    await mkdir(resolve(state.path, WORKSPACE_CONFIG_DIR), { recursive: true })
+    const gitignore = await ensureManagedGitignore(state.path)
     if (gitignore.changed) actions.push(`updated ${GITIGNORE_FILE}`)
   }
 
-  const gitSetup = await ensureGitRepo(path, input.git?.defaultBranch ?? "main")
+  const gitSetup = await ensureGitRepo(state.path, input.git?.defaultBranch ?? "main")
   if (!gitSetup.ok) {
     return { ok: false, error: "git_init_failed", detail: gitSetup.detail ?? "git init failed" }
   }
   actions.push(...gitSetup.actions)
+  return null
+}
 
-  // Accept a SONAR_TOKEN supplied by the caller (interactive prompt or --sonar-token flag).
-  // Persist to repo-local git config when requested so linked worktrees share it, and
-  // surface via process.env so the subsequent preflight validation + project creation can use it.
-  if (input.sonarToken?.value) {
-    if (!process.env.SONAR_TOKEN) process.env.SONAR_TOKEN = input.sonarToken.value
-    if (input.sonarToken.persist) {
-      persistSonarTokenToGitConfig(path, input.sonarToken.value)
-      actions.push("wrote SONAR_TOKEN to repo git config for shared worktree access")
-    }
-  }
+function seedWorkspaceSonarToken(path: string, sonarToken: RegisterWorkspaceInput["sonarToken"], actions: string[]): void {
+  if (!sonarToken?.value) return
+  if (!process.env.SONAR_TOKEN) process.env.SONAR_TOKEN = sonarToken.value
+  if (!sonarToken.persist) return
+  persistSonarTokenToGitConfig(path, sonarToken.value)
+  actions.push("wrote SONAR_TOKEN to repo git config for shared worktree access")
+}
 
-  let preflight = await runWorkspacePreflight(path, {
+async function refreshWorkspacePreflight(
+  path: string,
+  requestedSonar: SonarConfig | undefined,
+  hasSonarProperties: boolean,
+): Promise<Awaited<ReturnType<typeof runWorkspacePreflight>>> {
+  return await runWorkspacePreflight(path, {
     sonarHostUrl: requestedSonar?.hostUrl,
-    sonarEnabled: requestedSonar?.enabled ?? preview.hasSonarProperties,
+    sonarEnabled: requestedSonar?.enabled ?? hasSonarProperties,
   })
+}
 
+async function maybeCreateGithubRepoForWorkspace(
+  input: RegisterWorkspaceInput,
+  state: RegisterWorkspaceState,
+  preflight: Awaited<ReturnType<typeof runWorkspacePreflight>>,
+  actions: string[],
+): Promise<Awaited<ReturnType<typeof runWorkspacePreflight>>> {
   if (
-    input.github?.create &&
-    preflight.report.github.status !== "ok" &&
-    preflight.report.gh.status === "ok"
+    !input.github?.create ||
+    preflight.report.github.status === "ok" ||
+    preflight.report.gh.status !== "ok"
   ) {
-    const visibility = input.github.visibility === "public" ? "--public" : "--private"
-    const owner = input.github.owner ?? preflight.report.gh.user
-    const slug = owner ? `${owner}/${key}` : key
-    const ghResult = runCommand("gh", ["repo", "create", slug, visibility, "--source=.", "--remote=origin", "--push"], path)
-    if (ghResult.ok) {
-      actions.push(`gh repo create ${slug}`)
-      preflight = await runWorkspacePreflight(path, {
-        sonarHostUrl: requestedSonar?.hostUrl,
-        sonarEnabled: requestedSonar?.enabled ?? preview.hasSonarProperties,
-      })
-    } else {
-      actions.push(`! gh repo create ${slug} failed: ${ghResult.stderr || ghResult.stdout || "unknown error"}`)
-    }
+    return preflight
   }
+  const visibility = input.github.visibility === "public" ? "--public" : "--private"
+  const owner = input.github.owner ?? preflight.report.gh.user
+  const slug = owner ? `${owner}/${state.key}` : state.key
+  const ghResult = runCommand("gh", ["repo", "create", slug, visibility, "--source=.", "--remote=origin", "--push"], state.path)
+  if (!ghResult.ok) {
+    actions.push(`! gh repo create ${slug} failed: ${ghResult.stderr || ghResult.stdout || "unknown error"}`)
+    return preflight
+  }
+  actions.push(`gh repo create ${slug}`)
+  return await refreshWorkspacePreflight(state.path, state.requestedSonar, state.preview.hasSonarProperties)
+}
 
-  const githubReady = preflight.report.github.status === "ok" && preflight.report.github.owner && preflight.report.github.repo
-  const sonar = githubReady && requestedSonar?.enabled
+function resolveWorkspaceSonarSettings(
+  state: RegisterWorkspaceState,
+  deps: RegisterDeps,
+  preflight: Awaited<ReturnType<typeof runWorkspacePreflight>>,
+) {
+  const githubReady = Boolean(preflight.report.github.status === "ok" && preflight.report.github.owner && preflight.report.github.repo)
+  const sonar = githubReady && state.requestedSonar?.enabled
     ? normalizeSonarConfig({
-        ...requestedSonar,
+        ...state.requestedSonar,
         enabled: true,
         organization: preflight.report.github.owner,
         projectKey: `${preflight.report.github.owner}_${preflight.report.github.repo}`,
-        baseBranch: preflight.report.github.defaultBranch ?? requestedSonar.baseBranch,
-      }, key, deps.config.llm.defaultSonarOrganization)
-    : normalizeSonarConfig({ enabled: false }, key, deps.config.llm.defaultSonarOrganization)
+        baseBranch: preflight.report.github.defaultBranch ?? state.requestedSonar.baseBranch,
+      }, state.key, deps.config.llm.defaultSonarOrganization)
+    : normalizeSonarConfig({ enabled: false }, state.key, deps.config.llm.defaultSonarOrganization)
   const coderabbitCliAvailable = preflight.report.coderabbit.status === "ok"
-  const reviewPolicy = normalizeReviewPolicy(existingConfig?.reviewPolicy, sonar, key, deps.config.llm.defaultSonarOrganization, coderabbitCliAvailable)
-  const warnings = [...validation.warnings]
+  const reviewPolicy = normalizeReviewPolicy(
+    state.existingConfig?.reviewPolicy,
+    sonar,
+    state.key,
+    deps.config.llm.defaultSonarOrganization,
+    coderabbitCliAvailable,
+  )
+  return { githubReady, sonar, reviewPolicy }
+}
+
+function appendWorkspaceProvisionWarnings(
+  warnings: string[],
+  requestedSonar: SonarConfig | undefined,
+  githubReady: boolean,
+  preflight: Awaited<ReturnType<typeof runWorkspacePreflight>>,
+): void {
   if (requestedSonar?.enabled && !githubReady) {
     warnings.push("SonarCloud config generation skipped until a GitHub origin remote is configured")
   }
   if (preflight.report.gh.status !== "ok") {
     warnings.push("GitHub CLI is not authenticated; repo creation and secret sync remain manual")
   }
+}
 
-  const workspaceConfig = buildWorkspaceConfigFile({
-    key,
-    name,
-    harnessProfile: input.harnessProfile,
-    runtimePolicy: existingConfig?.runtimePolicy,
-    preview: existingConfig?.preview,
-    sonar,
-    reviewPolicy,
-    preflight: preflight.report,
-    createdAt: existingConfig?.createdAt,
-  })
-  await writeWorkspaceConfig(path, workspaceConfig)
-  actions.push(`wrote ${WORKSPACE_CONFIG_DIR}/${WORKSPACE_CONFIG_FILE}`)
-
-  if (githubReady && sonar.enabled) {
-    const owner = preflight.report.github.owner!
-    const repo = preflight.report.github.repo!
-    const sonarWrite = await writeSonarProperties(path, owner, repo)
-    if (sonarWrite.changed) {
-      actions.push(`wrote ${SONAR_PROPERTIES_FILE}`)
-    }
-    warnings.push(...sonarWrite.warnings)
-    if (await writeFileIfMissing(sonarWorkflowPath(path), renderSonarWorkflow())) {
-      actions.push(`wrote ${SONAR_WORKFLOW_FILE}`)
-    }
-    preflight = await runWorkspacePreflight(path, {
-      sonarHostUrl: sonar.hostUrl,
-      sonarEnabled: sonar.enabled,
-    })
-    // Create the SonarCloud project if the token can talk to the API and the
-    // project doesn't yet exist. Non-fatal — scanner runs later will fail
-    // cleanly if creation was refused (wrong permissions, org mismatch, etc.).
-    if (sonar.enabled && preflight.report.sonar.status === "ok") {
-      const token = (await detectSonarToken(path)).value
-      if (token && sonar.organization && sonar.projectKey) {
-        const host = sonar.hostUrl ?? SONAR_DEFAULT_HOST
-        const create = await createSonarProject(
-          token,
-          sonar.organization,
-          sonar.projectKey,
-          name,
-          "private",
-          host,
-        )
-        const projectReady = create.ok
-        if (create.ok && create.created) {
-          actions.push(`created SonarCloud project ${sonar.organization}/${sonar.projectKey}`)
-        } else if (create.ok && !create.created) {
-          actions.push(`SonarCloud project ${sonar.organization}/${sonar.projectKey} already exists`)
-        } else {
-          warnings.push(`SonarCloud project create failed: ${create.reason}`)
-        }
-
-        if (projectReady) {
-          // Best-effort: apply AI-qualified quality gate. Default is "Sonar way for AI Code";
-          // callers can override via SonarConfig.qualityGateName.
-          const gateName = sonar.qualityGateName ?? "Sonar way for AI Code"
-          const gate = await assignSonarQualityGate(token, sonar.organization, sonar.projectKey, gateName, host)
-          if (gate.ok) {
-            actions.push(`applied SonarCloud quality gate "${gateName}"`)
-          } else {
-            warnings.push(`SonarCloud quality gate "${gateName}" not applied: ${gate.reason}`)
-          }
-
-          // Best-effort: disable automatic analysis so only the local sonar-scanner runs.
-          const autoscan = await disableSonarAutoScan(token, sonar.projectKey, host)
-          if (autoscan.ok) {
-            actions.push("disabled SonarCloud automatic analysis")
-          } else {
-            warnings.push(`SonarCloud automatic analysis not disabled: ${autoscan.reason}`)
-          }
-        }
-      } else if (!token) {
-        warnings.push("SonarCloud project creation skipped: SONAR_TOKEN not available")
-      }
-    }
+async function provisionWorkspaceSonar(
+  path: string,
+  name: string,
+  sonar: SonarConfig,
+  preflight: Awaited<ReturnType<typeof runWorkspacePreflight>>,
+  actions: string[],
+  warnings: string[],
+): Promise<Awaited<ReturnType<typeof runWorkspacePreflight>>> {
+  if (!(preflight.report.github.status === "ok" && preflight.report.github.owner && preflight.report.github.repo && sonar.enabled)) {
+    return preflight
   }
-  if (await writeFileIfMissing(coderabbitConfigPath(path), renderCoderabbitConfig())) {
-    actions.push(`wrote ${CODERABBIT_CONFIG_FILE}`)
+  const owner = preflight.report.github.owner
+  const repo = preflight.report.github.repo
+  const sonarWrite = await writeSonarProperties(path, owner, repo)
+  if (sonarWrite.changed) actions.push(`wrote ${SONAR_PROPERTIES_FILE}`)
+  warnings.push(...sonarWrite.warnings)
+  if (await writeFileIfMissing(sonarWorkflowPath(path), renderSonarWorkflow())) {
+    actions.push(`wrote ${SONAR_WORKFLOW_FILE}`)
   }
-
-  const dbRow = deps.repos.upsertWorkspace({
-    key,
-    name,
-    description: byKey?.description ?? null,
-    rootPath: path,
-    harnessProfileJson: JSON.stringify(input.harnessProfile),
+  const refreshedPreflight = await runWorkspacePreflight(path, {
+    sonarHostUrl: sonar.hostUrl,
     sonarEnabled: sonar.enabled,
   })
-  const workspace = previewFromDbRow(dbRow)
-  const ghOwner = preflight.report.gh.user ?? preflight.report.github.owner
-  let ghCommand: string | undefined
-  if (preflight.report.github.status !== "ok") {
-    ghCommand = ghOwner
-      ? `gh repo create ${ghOwner}/${key} --private --source=. --remote=origin --push`
-      : `gh repo create ${key} --private --source=. --remote=origin --push`
+  if (sonar.enabled && refreshedPreflight.report.sonar.status === "ok") {
+    await provisionSonarCloudProject(path, name, sonar, actions, warnings)
   }
-  const coderabbitInstallUrl = preflight.report.github.owner
-    ? generateCodeRabbitInstallUrl()
-    : undefined
-  const sonarReadiness = preflight.report.sonar.readiness ?? {
-    scanner: "unknown",
-    token: "unknown",
-    config: "missing",
-    coverage: "unknown",
-    warnings: [],
-  } satisfies SonarReadiness
+  return refreshedPreflight
+}
+
+async function provisionSonarCloudProject(
+  path: string,
+  name: string,
+  sonar: SonarConfig,
+  actions: string[],
+  warnings: string[],
+): Promise<void> {
+  const token = (await detectSonarToken(path)).value
+  if (!token) {
+    warnings.push("SonarCloud project creation skipped: SONAR_TOKEN not available")
+    return
+  }
+  if (!sonar.organization || !sonar.projectKey) return
+  const host = sonar.hostUrl ?? SONAR_DEFAULT_HOST
+  const create = await createSonarProject(token, sonar.organization, sonar.projectKey, name, "private", host)
+  const projectReady = create.ok
+  if (create.ok && create.created) {
+    actions.push(`created SonarCloud project ${sonar.organization}/${sonar.projectKey}`)
+  } else if (create.ok && !create.created) {
+    actions.push(`SonarCloud project ${sonar.organization}/${sonar.projectKey} already exists`)
+  } else {
+    warnings.push(`SonarCloud project create failed: ${create.reason}`)
+  }
+  if (!projectReady) return
+  const gateName = sonar.qualityGateName ?? "Sonar way for AI Code"
+  const gate = await assignSonarQualityGate(token, sonar.organization, sonar.projectKey, gateName, host)
+  if (gate.ok) {
+    actions.push(`applied SonarCloud quality gate "${gateName}"`)
+  } else {
+    warnings.push(`SonarCloud quality gate "${gateName}" not applied: ${gate.reason}`)
+  }
+  const autoscan = await disableSonarAutoScan(token, sonar.projectKey, host)
+  if (autoscan.ok) {
+    actions.push("disabled SonarCloud automatic analysis")
+  } else {
+    warnings.push(`SonarCloud automatic analysis not disabled: ${autoscan.reason}`)
+  }
+}
+
+function finalizeWorkspaceWarnings(
+  warnings: string[],
+  requestedSonar: SonarConfig | undefined,
+  sonarReadiness: SonarReadiness,
+): void {
   if (requestedSonar?.enabled && sonarReadiness.token === "invalid") {
     warnings.push("SONAR_TOKEN is present but failed Sonar validation")
   } else if (requestedSonar?.enabled && sonarReadiness.token === "missing") {
@@ -1757,16 +1786,79 @@ export async function registerWorkspace(input: RegisterWorkspaceInput, deps: Reg
     warnings.push(sonarReadiness.details.coverage)
   }
   warnings.push(...sonarReadiness.warnings)
+}
+
+export async function registerWorkspace(input: RegisterWorkspaceInput, deps: RegisterDeps): Promise<RegisterResult> {
+  const resolvedState = await resolveRegisterWorkspaceState(input, deps)
+  if ("ok" in resolvedState) return resolvedState
+  const state = resolvedState
+  const actions: string[] = []
+  const prepError = await prepareWorkspaceFilesystem(input, state, actions)
+  if (prepError) return prepError
+  seedWorkspaceSonarToken(state.path, input.sonarToken, actions)
+
+  let preflight = await refreshWorkspacePreflight(state.path, state.requestedSonar, state.preview.hasSonarProperties)
+  preflight = await maybeCreateGithubRepoForWorkspace(input, state, preflight, actions)
+
+  const { githubReady, sonar, reviewPolicy } = resolveWorkspaceSonarSettings(state, deps, preflight)
+  const warnings = [...state.validation.warnings]
+  appendWorkspaceProvisionWarnings(warnings, state.requestedSonar, githubReady, preflight)
+
+  const workspaceConfig = buildWorkspaceConfigFile({
+    key: state.key,
+    name: state.name,
+    harnessProfile: input.harnessProfile,
+    runtimePolicy: state.existingConfig?.runtimePolicy,
+    preview: state.existingConfig?.preview,
+    sonar,
+    reviewPolicy,
+    preflight: preflight.report,
+    createdAt: state.existingConfig?.createdAt,
+  })
+  await writeWorkspaceConfig(state.path, workspaceConfig)
+  actions.push(`wrote ${WORKSPACE_CONFIG_DIR}/${WORKSPACE_CONFIG_FILE}`)
+  preflight = await provisionWorkspaceSonar(state.path, state.name, sonar, preflight, actions, warnings)
+  if (await writeFileIfMissing(coderabbitConfigPath(state.path), renderCoderabbitConfig())) {
+    actions.push(`wrote ${CODERABBIT_CONFIG_FILE}`)
+  }
+
+  const dbRow = deps.repos.upsertWorkspace({
+    key: state.key,
+    name: state.name,
+    description: state.byKey?.description ?? null,
+    rootPath: state.path,
+    harnessProfileJson: JSON.stringify(input.harnessProfile),
+    sonarEnabled: sonar.enabled,
+  })
+  const workspace = previewFromDbRow(dbRow)
+  const ghOwner = preflight.report.gh.user ?? preflight.report.github.owner
+  let ghCommand: string | undefined
+  if (preflight.report.github.status !== "ok") {
+    ghCommand = ghOwner
+      ? `gh repo create ${ghOwner}/${state.key} --private --source=. --remote=origin --push`
+      : `gh repo create ${state.key} --private --source=. --remote=origin --push`
+  }
+  const coderabbitInstallUrl = preflight.report.github.owner
+    ? generateCodeRabbitInstallUrl()
+    : undefined
+  const sonarReadiness = preflight.report.sonar.readiness ?? {
+    scanner: "unknown",
+    token: "unknown",
+    config: "missing",
+    coverage: "unknown",
+    warnings: [],
+  } satisfies SonarReadiness
+  finalizeWorkspaceWarnings(warnings, state.requestedSonar, sonarReadiness)
 
   return {
     ok: true,
     workspace,
-    preview: await previewWorkspace(path, deps.config, deps.repos),
+    preview: await previewWorkspace(state.path, deps.config, deps.repos),
     actions,
     warnings,
     preflight: preflight.report,
     sonarReadiness,
-    sonarProjectUrl: generateSonarProjectUrl(name, sonar),
+    sonarProjectUrl: generateSonarProjectUrl(state.name, sonar),
     sonarMcpSnippet: generateSonarMcpSnippet(sonar),
     ghCreateCommand: ghCommand,
     coderabbitInstallUrl,

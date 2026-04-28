@@ -2,7 +2,7 @@ import type { ReviewContext, StageAgentInput, StageContext } from "../../core/ad
 import type { RuntimePolicy } from "../registry.js"
 import type { InvocationRuntime } from "../types.js"
 import type { KnownHarness } from "../../types/workspace.js"
-import { loadComposedPrompt, loadPrompt, PromptLoadError, type PromptBundleId, type PromptKind } from "../prompts/loader.js"
+import { loadComposedPrompt, loadPrompt, PromptLoadError, type PromptKind } from "../prompts/loader.js"
 
 /**
  * Hosted dispatch identifier — the agent runtime brand. Distinct from the
@@ -106,7 +106,7 @@ const SCHEMAS: Record<HostedPromptKind, PromptSchema> = {
   },
 }
 
-const PROMPT_BUNDLES: Partial<Record<PromptKind, Partial<Record<string, readonly PromptBundleId[]>>>> = {
+const PROMPT_BUNDLES: Partial<Record<PromptKind, Partial<Record<string, readonly string[]>>>> = {
   system: {
     "frontend-design": [
       "design/anti-patterns",
@@ -136,7 +136,7 @@ const PROMPT_BUNDLES: Partial<Record<PromptKind, Partial<Record<string, readonly
   },
 }
 
-function bundlesFor(kind: PromptKind, promptId: string): readonly PromptBundleId[] {
+function bundlesFor(kind: PromptKind, promptId: string): readonly string[] {
   return PROMPT_BUNDLES[kind]?.[promptId] ?? []
 }
 

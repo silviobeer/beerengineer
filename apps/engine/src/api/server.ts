@@ -1,4 +1,4 @@
-import { createServer } from "node:http"
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
 import { URL, fileURLToPath } from "node:url"
 import { randomBytes } from "node:crypto"
 import { existsSync, readFileSync } from "node:fs"
@@ -160,7 +160,158 @@ try {
 }
 pruneMissingWorktreeAssignments()
 
-const server = createServer(async (req, res) => {
+type ApiRequest = IncomingMessage & {
+  repos?: Repos
+  appConfig?: AppConfig
+  executePreparedApply?: (prepared: UpdateApplyResult) => void
+}
+
+type RouteContext = {
+  req: ApiRequest
+  res: ServerResponse<IncomingMessage>
+  url: URL
+  path: string
+  appConfig: AppConfig
+}
+
+function attachRouteContext(req: ApiRequest, appConfig: AppConfig): void {
+  req.repos = repos
+  req.appConfig = appConfig
+  req.executePreparedApply = startPreparedApplyExecution
+}
+
+function topLevelRouteHandlers(context: RouteContext): Partial<Record<string, () => void>> {
+  return {
+    "GET /runs": () => handleListRuns(repos, context.res),
+    "POST /runs": () => handleCreateRun(repos, context.req, context.res, payload => board.broadcastItemColumnChanged(payload)),
+    "GET /board": () => handleGetBoard(db, context.url, context.res),
+    "GET /setup/status": () => handleSetupStatus(context.url, context.res),
+    "GET /update/status": () => handleUpdateStatus(repos, context.appConfig, context.res, { pid: process.pid }),
+    "GET /update/preflight": () => handleUpdatePreflight(repos, context.appConfig, context.res, { pid: process.pid }),
+    "POST /update/check": () => handleUpdateCheck(context.req, context.res),
+    "POST /update/apply": () => handleUpdateApply(context.req, context.res),
+    "GET /update/history": () => handleUpdateHistory(repos, context.appConfig, context.res),
+    "POST /update/rollback": () => json(context.res, 409, {
+      error: "post-migration-rollback-unsupported",
+      code: "post-migration-rollback-unsupported",
+    }),
+    "POST /update/shutdown": () => handleUpdateShutdown(context.req, context.res, {
+      requestShutdown: operationId => void gracefulShutdown(`update:${operationId}`)
+    }),
+    "GET /events": () => board.handle(context.req, context.res),
+    "GET /health": () => json(context.res, 200, { ok: true }),
+  }
+}
+
+function itemRouteMatchers(context: RouteContext): Array<{ pattern: RegExp; method: string; handle: (...captures: string[]) => void }> {
+  return [
+    { pattern: /^\/items\/([^/]+)\/actions\/([^/]+)$/, method: "POST", handle: (itemId, action) => handleItemActionNamed(itemActions, repos, context.req, context.res, itemId, action, payload => board.broadcastItemColumnChanged(payload)) },
+    { pattern: /^\/items\/([^/]+)\/wireframes$/, method: "GET", handle: itemId => handleGetItemWireframes(repos, context.res, itemId) },
+    { pattern: /^\/items\/([^/]+)\/design$/, method: "GET", handle: itemId => handleGetItemDesign(repos, context.res, itemId) },
+    { pattern: /^\/items\/([^/]+)\/preview\/start$/, method: "POST", handle: itemId => handleStartItemPreview(repos, context.req, context.res, itemId) },
+    { pattern: /^\/items\/([^/]+)\/preview\/stop$/, method: "POST", handle: itemId => handleStopItemPreview(repos, context.req, context.res, itemId) },
+    { pattern: /^\/items\/([^/]+)\/preview$/, method: "GET", handle: itemId => handleGetItemPreview(repos, context.res, itemId) },
+    { pattern: /^\/items\/([^/]+)$/, method: "GET", handle: itemId => handleGetItem(repos, context.res, itemId) },
+  ]
+}
+
+function runRouteMatchers(context: RouteContext): Array<{ pattern: RegExp; method: string; handle: (...captures: string[]) => void }> {
+  return [
+    { pattern: /^\/runs\/([^/]+)\/artifacts\/(.+)$/, method: "GET", handle: (runId, artifactPath) => handleGetArtifactFile(repos, context.res, runId, artifactPath) },
+    { pattern: /^\/runs\/([^/]+)\/artifacts$/, method: "GET", handle: runId => handleGetArtifacts(repos, context.res, runId) },
+    { pattern: /^\/runs\/([^/]+)$/, method: "GET", handle: runId => handleGetRun(repos, context.res, runId) },
+    { pattern: /^\/runs\/([^/]+)\/tree$/, method: "GET", handle: runId => handleGetRunTree(repos, context.res, runId) },
+    { pattern: /^\/runs\/([^/]+)\/events$/, method: "GET", handle: runId => handleRunEvents(repos, context.req, context.res, runId) },
+    { pattern: /^\/runs\/([^/]+)\/messages$/, method: "GET", handle: runId => handleGetMessages(repos, context.url, context.res, runId) },
+    { pattern: /^\/runs\/([^/]+)\/messages$/, method: "POST", handle: runId => handlePostMessage(repos, context.req, context.res, runId) },
+    { pattern: /^\/runs\/([^/]+)\/conversation$/, method: "GET", handle: runId => handleGetConversation(repos, context.res, runId) },
+    { pattern: /^\/runs\/([^/]+)\/answer$/, method: "POST", handle: runId => handleAnswer(repos, context.req, context.res, runId) },
+    { pattern: /^\/runs\/([^/]+)\/resume$/, method: "POST", handle: runId => handleResumeRun(repos, context.req, context.res, runId, payload => board.broadcastItemColumnChanged(payload)) },
+    { pattern: /^\/runs\/([^/]+)\/recovery$/, method: "GET", handle: runId => handleGetRecovery(repos, context.res, runId) },
+  ]
+}
+
+function handleRouteMatchers(
+  context: RouteContext,
+  matchers: Array<{ pattern: RegExp; method: string; handle: (...captures: string[]) => void }>
+): boolean {
+  for (const matcher of matchers) {
+    if (context.req.method !== matcher.method) continue
+    const match = matcher.pattern.exec(context.path)
+    if (!match) continue
+    matcher.handle(...match.slice(1))
+    return true
+  }
+  return false
+}
+
+async function handlePreCsrfRoutes(context: RouteContext): Promise<boolean> {
+  if (context.path !== "/webhooks/telegram" || context.req.method !== "POST") return false
+  handleTelegramChatToolWebhook(repos, context.appConfig, context.req, context.res)
+  return true
+}
+
+async function handleTopLevelRoutes(context: RouteContext): Promise<boolean> {
+  const handler = topLevelRouteHandlers(context)[`${context.req.method} ${context.path}`]
+  if (handler) {
+    handler()
+    return true
+  }
+  if (context.path === "/openapi.json" && context.req.method === "GET") {
+    const body = loadOpenApi()
+    if (!body) {
+      json(context.res, 503, { error: "openapi_unavailable", code: "service_unavailable" })
+      return true
+    }
+    context.res.writeHead(200, { "content-type": "application/json; charset=utf-8" })
+    context.res.end(body)
+    return true
+  }
+  return false
+}
+
+async function handleNotificationRoutes(context: RouteContext): Promise<boolean> {
+  const notificationTestMatch = /^\/notifications\/test\/([^/]+)$/.exec(context.path)
+  if (notificationTestMatch && context.req.method === "POST") {
+    handleNotificationTest(repos, loadEffectiveConfig, context.res, notificationTestMatch[1])
+    return true
+  }
+  if (context.path === "/notifications/deliveries" && context.req.method === "GET") {
+    handleNotificationDeliveries(repos, context.url, context.res)
+    return true
+  }
+  return false
+}
+
+async function handleWorkspaceRoutes(context: RouteContext): Promise<boolean> {
+  const { path, req, res, url } = context
+  if (path === "/workspaces/preview" && req.method === "GET") { handleWorkspacePreview(repos, loadEffectiveConfig, url, res); return true }
+  if (path === "/workspaces" && req.method === "GET") { handleWorkspaceList(repos, res); return true }
+  if (path === "/workspaces" && req.method === "POST") { handleWorkspaceAdd(repos, loadEffectiveConfig, req, res); return true }
+  if (path === "/workspaces/backfill" && req.method === "POST") { handleWorkspaceBackfill(repos, res); return true }
+
+  const workspaceMatch = /^\/workspaces\/([^/]+)(?:\/(open))?$/.exec(path)
+  if (!workspaceMatch) return false
+  const [, key, sub] = workspaceMatch
+  if (!sub && req.method === "GET") { handleWorkspaceGet(repos, res, key); return true }
+  if (!sub && req.method === "DELETE") { handleWorkspaceRemove(repos, loadEffectiveConfig, url, res, key); return true }
+  if (sub === "open" && req.method === "POST") { handleWorkspaceOpen(repos, res, key); return true }
+  return false
+}
+
+async function handleItemRoutes(context: RouteContext): Promise<boolean> {
+  if (context.path === "/items" && context.req.method === "GET") {
+    handleListItems(repos, context.url, context.res)
+    return true
+  }
+  return handleRouteMatchers(context, itemRouteMatchers(context))
+}
+
+async function handleRunRoutes(context: RouteContext): Promise<boolean> {
+  return handleRouteMatchers(context, runRouteMatchers(context))
+}
+
+const server = createServer(async (req: ApiRequest, res) => {
   if (!req.url || !req.method) return json(res, 400, { error: "bad request" })
   setCors(res, req, ALLOWED_ORIGIN)
   if (req.method === "OPTIONS") {
@@ -171,130 +322,25 @@ const server = createServer(async (req, res) => {
 
   const url = new URL(req.url, `http://${HOST}:${PORT}`)
   const path = url.pathname
-  ;(req as typeof req & { repos?: Repos; appConfig?: AppConfig }).repos = repos
-  ;(req as typeof req & { repos?: Repos; appConfig?: AppConfig }).appConfig = loadEffectiveConfig()
-  ;(req as typeof req & { executePreparedApply?: (prepared: UpdateApplyResult) => void }).executePreparedApply = startPreparedApplyExecution
+  const appConfig = loadEffectiveConfig()
+  attachRouteContext(req, appConfig)
+  const context: RouteContext = { req, res, url, path, appConfig }
 
   // Inbound webhooks authenticate via a channel-specific secret header
   // (Telegram sends `x-telegram-bot-api-secret-token`), not the engine's
   // CSRF token. Route them before the CSRF gate.
-  if (path === "/webhooks/telegram" && req.method === "POST") {
-    const config = loadEffectiveConfig()
-    if (!config) return json(res, 500, { error: "config unavailable" })
-    return handleTelegramChatToolWebhook(repos, config, req, res)
-  }
+  if (await handlePreCsrfRoutes(context)) return
 
   if (!requireCsrfToken(req, API_TOKEN)) {
     return json(res, 403, { error: "csrf_token_required" })
   }
 
   try {
-    // ---- Runs (reads + intent recording) ------------------------------------
-    if (path === "/runs" && req.method === "GET") return handleListRuns(repos, res)
-    if (path === "/runs" && req.method === "POST") return handleCreateRun(repos, req, res, payload => board.broadcastItemColumnChanged(payload))
-
-    // ---- Board ---------------------------------------------------------------
-    if (path === "/board" && req.method === "GET") return handleGetBoard(db, url, res)
-
-    // ---- Setup ---------------------------------------------------------------
-    if (path === "/setup/status" && req.method === "GET") return handleSetupStatus(url, res)
-    if (path === "/update/status" && req.method === "GET") return handleUpdateStatus(repos, (req as typeof req & { appConfig: AppConfig }).appConfig, res, { pid: process.pid })
-    if (path === "/update/preflight" && req.method === "GET") return handleUpdatePreflight(repos, (req as typeof req & { appConfig: AppConfig }).appConfig, res, { pid: process.pid })
-    if (path === "/update/check" && req.method === "POST") return handleUpdateCheck(req, res)
-    if (path === "/update/apply" && req.method === "POST") return handleUpdateApply(req, res)
-    if (path === "/update/history" && req.method === "GET") {
-      return handleUpdateHistory(repos, (req as typeof req & { appConfig: AppConfig }).appConfig, res)
-    }
-    if (path === "/update/rollback" && req.method === "POST") {
-      return json(res, 409, {
-        error: "post-migration-rollback-unsupported",
-        code: "post-migration-rollback-unsupported",
-      })
-    }
-    if (path === "/update/shutdown" && req.method === "POST") {
-      return handleUpdateShutdown(req, res, { requestShutdown: operationId => void gracefulShutdown(`update:${operationId}`) })
-    }
-
-    // ---- Notifications -------------------------------------------------------
-    const notificationTestMatch = /^\/notifications\/test\/([^/]+)$/.exec(path)
-    if (notificationTestMatch && req.method === "POST") {
-      return handleNotificationTest(repos, loadEffectiveConfig, res, notificationTestMatch[1])
-    }
-    if (path === "/notifications/deliveries" && req.method === "GET") {
-      return handleNotificationDeliveries(repos, url, res)
-    }
-
-    // ---- Workspaces ----------------------------------------------------------
-    if (path === "/workspaces/preview" && req.method === "GET") {
-      return handleWorkspacePreview(repos, loadEffectiveConfig, url, res)
-    }
-    if (path === "/workspaces" && req.method === "GET") return handleWorkspaceList(repos, res)
-    if (path === "/workspaces" && req.method === "POST") return handleWorkspaceAdd(repos, loadEffectiveConfig, req, res)
-    if (path === "/workspaces/backfill" && req.method === "POST") return handleWorkspaceBackfill(repos, res)
-
-    const workspaceMatch = /^\/workspaces\/([^/]+)(?:\/(open))?$/.exec(path)
-    if (workspaceMatch) {
-      const [, key, sub] = workspaceMatch
-      if (!sub && req.method === "GET") return handleWorkspaceGet(repos, res, key)
-      if (!sub && req.method === "DELETE") return handleWorkspaceRemove(repos, loadEffectiveConfig, url, res, key)
-      if (sub === "open" && req.method === "POST") return handleWorkspaceOpen(repos, res, key)
-    }
-
-    // ---- Board SSE -----------------------------------------------------------
-    if (path === "/events" && req.method === "GET") return board.handle(req, res)
-
-    // ---- Items ---------------------------------------------------------------
-    if (path === "/items" && req.method === "GET") return handleListItems(repos, url, res)
-    const itemActionNamed = /^\/items\/([^/]+)\/actions\/([^/]+)$/.exec(path)
-    if (itemActionNamed && req.method === "POST") {
-      return handleItemActionNamed(itemActions, repos, req, res, itemActionNamed[1], itemActionNamed[2], payload => board.broadcastItemColumnChanged(payload))
-    }
-    const itemWireframesMatch = /^\/items\/([^/]+)\/wireframes$/.exec(path)
-    if (itemWireframesMatch && req.method === "GET") return handleGetItemWireframes(repos, res, itemWireframesMatch[1])
-    const itemDesignMatch = /^\/items\/([^/]+)\/design$/.exec(path)
-    if (itemDesignMatch && req.method === "GET") return handleGetItemDesign(repos, res, itemDesignMatch[1])
-    const itemPreviewStartMatch = /^\/items\/([^/]+)\/preview\/start$/.exec(path)
-    const itemPreviewStopMatch = /^\/items\/([^/]+)\/preview\/stop$/.exec(path)
-    if (itemPreviewStartMatch && req.method === "POST") return handleStartItemPreview(repos, req, res, itemPreviewStartMatch[1])
-    if (itemPreviewStopMatch && req.method === "POST") return handleStopItemPreview(repos, req, res, itemPreviewStopMatch[1])
-    const itemPreviewMatch = /^\/items\/([^/]+)\/preview$/.exec(path)
-    if (itemPreviewMatch && req.method === "GET") return handleGetItemPreview(repos, res, itemPreviewMatch[1])
-    const itemMatch = /^\/items\/([^/]+)$/.exec(path)
-    if (itemMatch && req.method === "GET") return handleGetItem(repos, res, itemMatch[1])
-
-    const runArtifactsFileMatch = /^\/runs\/([^/]+)\/artifacts\/(.+)$/.exec(path)
-    if (runArtifactsFileMatch && req.method === "GET") {
-      return handleGetArtifactFile(repos, res, runArtifactsFileMatch[1], runArtifactsFileMatch[2])
-    }
-    const runArtifactsMatch = /^\/runs\/([^/]+)\/artifacts$/.exec(path)
-    if (runArtifactsMatch && req.method === "GET") return handleGetArtifacts(repos, res, runArtifactsMatch[1])
-
-    // ---- Run-scoped subresources --------------------------------------------
-    const runMatch = /^\/runs\/([^/]+)(?:\/(tree|events|messages|resume|recovery|conversation|answer))?$/.exec(path)
-    if (runMatch) {
-      const [, runId, sub] = runMatch
-      if (!sub && req.method === "GET") return handleGetRun(repos, res, runId)
-      if (sub === "tree" && req.method === "GET") return handleGetRunTree(repos, res, runId)
-      if (sub === "events" && req.method === "GET") return handleRunEvents(repos, req, res, runId)
-      if (sub === "messages" && req.method === "GET") return handleGetMessages(repos, url, res, runId)
-      if (sub === "messages" && req.method === "POST") return handlePostMessage(repos, req, res, runId)
-      if (sub === "conversation" && req.method === "GET") return handleGetConversation(repos, res, runId)
-      if (sub === "answer" && req.method === "POST") return handleAnswer(repos, req, res, runId)
-      if (sub === "resume" && req.method === "POST") return handleResumeRun(repos, req, res, runId, payload => board.broadcastItemColumnChanged(payload))
-      if (sub === "recovery" && req.method === "GET") return handleGetRecovery(repos, res, runId)
-    }
-
-    // ---- OpenAPI spec --------------------------------------------------------
-    if (path === "/openapi.json" && req.method === "GET") {
-      const body = loadOpenApi()
-      if (!body) return json(res, 503, { error: "openapi_unavailable", code: "service_unavailable" })
-      res.writeHead(200, { "content-type": "application/json; charset=utf-8" })
-      res.end(body)
-      return
-    }
-
-    // ---- Health --------------------------------------------------------------
-    if (path === "/health") return json(res, 200, { ok: true })
+    if (await handleTopLevelRoutes(context)) return
+    if (await handleNotificationRoutes(context)) return
+    if (await handleWorkspaceRoutes(context)) return
+    if (await handleItemRoutes(context)) return
+    if (await handleRunRoutes(context)) return
 
     json(res, 404, { error: "not found" })
   } catch (err) {

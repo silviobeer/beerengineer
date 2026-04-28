@@ -552,9 +552,11 @@ function verifySetupContract(
   contract: NonNullable<StoryExecutionContext["setupContract"]>,
 ): string[] {
   const failures: string[] = []
-  failures.push(...verifyExpectedFiles(workspaceRoot, contract.expectedFiles))
-  failures.push(...verifyRequiredScripts(workspaceRoot, contract.requiredScripts))
-  failures.push(...verifyPostChecks(workspaceRoot, contract.postChecks))
+  failures.push(
+    ...verifyExpectedFiles(workspaceRoot, contract.expectedFiles),
+    ...verifyRequiredScripts(workspaceRoot, contract.requiredScripts),
+    ...verifyPostChecks(workspaceRoot, contract.postChecks),
+  )
   return failures
 }
 

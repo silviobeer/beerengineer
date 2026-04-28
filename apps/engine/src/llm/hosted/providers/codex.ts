@@ -158,8 +158,19 @@ function applyCodexSandboxMode(
 }
 
 function pushCodexSandboxCommand(command: string[], isResume: boolean, mode: "read-only" | "workspace-write"): void {
-  if (isResume) command.push("-c", `sandbox_mode="${mode}"`)
-  else command.push("--sandbox", mode)
+  if (isResume) {
+    pushCodexResumeSandboxCommand(command, mode)
+    return
+  }
+  pushCodexFreshSandboxCommand(command, mode)
+}
+
+function pushCodexResumeSandboxCommand(command: string[], mode: "read-only" | "workspace-write"): void {
+  command.push("-c", `sandbox_mode="${mode}"`)
+}
+
+function pushCodexFreshSandboxCommand(command: string[], mode: "read-only" | "workspace-write"): void {
+  command.push("--sandbox", mode)
 }
 
 function parseUsage(stdout: string): { sessionId: string | null; cachedInputTokens: number; totalInputTokens: number } {

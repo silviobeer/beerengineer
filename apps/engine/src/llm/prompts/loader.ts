@@ -3,7 +3,6 @@ import { dirname, isAbsolute, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 export type PromptKind = "system" | "reviewers" | "workers"
-export type PromptBundleId = string
 export type PromptLoadSource = "prompt" | "bundle"
 
 export class PromptLoadError extends Error {
@@ -42,7 +41,7 @@ function promptPath(kind: PromptKind, id: string): string {
   return resolve(promptsRoot(), kind, `${id}.md`)
 }
 
-function bundlePath(id: PromptBundleId): string {
+function bundlePath(id: string): string {
   if (!/^[a-z0-9][a-z0-9/-]*$/i.test(id) || id.includes("//")) {
     throw new PromptLoadError(`Invalid prompt bundle id "${id}".`, "system", id, id, false, "bundle")
   }
@@ -79,7 +78,7 @@ function readPromptFile(kind: PromptKind, id: string): string {
   }
 }
 
-function readBundleFile(kind: PromptKind, id: PromptBundleId): string {
+function readBundleFile(kind: PromptKind, id: string): string {
   const path = bundlePath(id)
   try {
     return stripLeadingHeading(readFileSync(path, "utf8"))
@@ -101,8 +100,8 @@ function readBundleFile(kind: PromptKind, id: PromptBundleId): string {
   }
 }
 
-function normalizeBundleIds(bundleIds: readonly PromptBundleId[]): PromptBundleId[] {
-  const seen = new Set<PromptBundleId>()
+function normalizeBundleIds(bundleIds: readonly string[]): string[] {
+  const seen = new Set<string>()
   for (const bundleId of bundleIds) {
     if (seen.has(bundleId)) {
       throw new PromptLoadError(`Duplicate prompt bundle id "${bundleId}".`, "system", bundleId, bundleId, false, "bundle")
@@ -122,7 +121,7 @@ export function loadPrompt(kind: PromptKind, id: string): string {
   return prompt
 }
 
-export function loadComposedPrompt(kind: PromptKind, id: string, bundleIds: readonly PromptBundleId[] = []): string {
+export function loadComposedPrompt(kind: PromptKind, id: string, bundleIds: readonly string[] = []): string {
   const normalizedBundleIds = normalizeBundleIds(bundleIds)
   if (normalizedBundleIds.length === 0) return loadPrompt(kind, id)
 

@@ -221,8 +221,10 @@ async function runCoreChecks(configPath: string, configState: ReturnType<typeof 
   }
   const resolvedConfig = config as AppConfig
 
-  checks.push(createCheck("core.config", "config file", "ok", configPath))
-  checks.push(checkConfiguredDataDir(resolvedConfig.dataDir))
+  checks.push(
+    createCheck("core.config", "config file", "ok", configPath),
+    checkConfiguredDataDir(resolvedConfig.dataDir),
+  )
 
   const dbPath = resolveConfiguredDbPath(resolvedConfig)
   if (!existsSync(dbPath)) {
@@ -232,9 +234,11 @@ async function runCoreChecks(configPath: string, configState: ReturnType<typeof 
     )
     return checks
   }
-  checks.push(...readableDatabaseChecks(dbPath))
-  checks.push(checkDesignPrepAdapters())
-  checks.push(await checkDesignPrepReferences(dbPath))
+  checks.push(
+    ...readableDatabaseChecks(dbPath),
+    checkDesignPrepAdapters(),
+    await checkDesignPrepReferences(dbPath),
+  )
 
   return checks
 }
@@ -548,9 +552,12 @@ async function runNotificationChecks(config: AppConfig | null): Promise<CheckRes
     `L${config.notifications?.telegram?.level ?? 2}`,
   ))
 
-  checks.push(checkTelegramTokenEnv(tokenEnv))
-  checks.push(checkTelegramTokenPresent(tokenEnv))
-  checks.push(checkTelegramDefaultChatId(config.notifications?.telegram?.defaultChatId?.trim()))
+  const tokenChecks = [
+    checkTelegramTokenEnv(tokenEnv),
+    checkTelegramTokenPresent(tokenEnv),
+    checkTelegramDefaultChatId(config.notifications?.telegram?.defaultChatId?.trim()),
+  ]
+  checks.push(...tokenChecks)
 
   const inboundEnabled = config.notifications?.telegram?.inbound?.enabled === true
   checks.push(createCheck(
@@ -561,8 +568,10 @@ async function runNotificationChecks(config: AppConfig | null): Promise<CheckRes
   ))
 
   const webhookSecretEnv = config.notifications?.telegram?.inbound?.webhookSecretEnv?.trim()
-  checks.push(checkTelegramWebhookSecretEnv(inboundEnabled, webhookSecretEnv))
-  checks.push(checkTelegramWebhookSecretPresent(inboundEnabled, webhookSecretEnv))
+  checks.push(
+    checkTelegramWebhookSecretEnv(inboundEnabled, webhookSecretEnv),
+    checkTelegramWebhookSecretPresent(inboundEnabled, webhookSecretEnv),
+  )
 
   return checks
 }
