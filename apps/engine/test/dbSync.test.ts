@@ -736,7 +736,10 @@ test("attachDbSync calls onItemColumnChanged on authoritative run_finished (comp
 
     assert.equal(calls.length, 1, "should have received one column-changed callback on run_finished")
     assert.equal(calls[0]?.itemId, item.id)
-    assert.equal(calls[0]?.to, "done")
+    // run_finished projects through `mapStageToColumn("documentation", status)`,
+    // which since the merge-gate work maps to `implementation`. The terminal
+    // `done` flip now happens via `merge-gate / completed`, not via run_finished.
+    assert.equal(calls[0]?.to, "implementation")
     assert.equal(calls[0]?.phaseStatus, "completed")
   } finally {
     db.close()
