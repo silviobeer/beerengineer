@@ -72,7 +72,7 @@ package.json        npm workspaces; engine + ui live under apps/.
 ```bash
 npm install                                       # workspaces install
 npm run typecheck                                 # both workspaces
-npm test --workspace=@beerengineer2/engine        # engine unit tests (~45 files)
+npm test --workspace=@beerengineer/engine        # engine unit tests (~45 files)
 npm run dev:engine                                # watch-mode HTTP API on :4100
 npm run dev:ui                                    # Next.js on :3000
 ```

@@ -334,7 +334,7 @@ process.on("SIGTERM", () => void gracefulShutdown("sigterm"))
 process.on("SIGINT", () => void gracefulShutdown("sigint"))
 
 server.listen(PORT, HOST, () => {
-  console.log(`beerengineer2 engine listening on http://${HOST}:${PORT}`)
+  console.log(`beerengineer engine listening on http://${HOST}:${PORT}`)
   const pidPath = writeEnginePidFile({
     pid: process.pid,
     host: HOST,

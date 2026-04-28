@@ -1,4 +1,4 @@
--- beerengineer2 board + engine schema.
+-- beerengineer board + engine schema.
 -- Core board tables (workspaces, items, projects) plus engine-side tables
 -- (runs, stage_runs, stage_logs, artifact_files).
 

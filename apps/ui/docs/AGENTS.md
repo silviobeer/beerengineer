@@ -46,5 +46,5 @@ the repo root [`docs/`](../../../docs/) folder.
   gitignored.)
 - **Update this index when you add a doc.** Either add a row above or
   refuse to add the doc — there is no third option.
-- **Boundary stays intact.** No mention of `@beerengineer2/engine`
+- **Boundary stays intact.** No mention of `@beerengineer/engine`
   imports — the UI talks to the engine over HTTP/SSE only.

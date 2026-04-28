@@ -97,16 +97,16 @@ cd beerengineer
 npm install
 
 # One-time app setup (config + SQLite DB under env-paths app dirs)
-npm exec --workspace=@beerengineer2/engine beerengineer -- setup
+npm exec --workspace=@beerengineer/engine beerengineer -- setup
 
 # Register the project you want the engine to work on
-npm exec --workspace=@beerengineer2/engine beerengineer -- \
+npm exec --workspace=@beerengineer/engine beerengineer -- \
   workspace add --path /path/to/your/project --sonar
-npm exec --workspace=@beerengineer2/engine beerengineer -- \
+npm exec --workspace=@beerengineer/engine beerengineer -- \
   workspace use <key>
 
 # Run the default workflow — you'll get prompted for an idea
-npm exec --workspace=@beerengineer2/engine beerengineer
+npm exec --workspace=@beerengineer/engine beerengineer
 ```
 
 Notes:
@@ -194,7 +194,7 @@ the recommended operator path — use `beerengineer update` for managed hosts.
              │ HTTP + SSE (OpenAPI)
              ▼
 ┌─────────────────────────┐
-│   @beerengineer2/engine │
+│   @beerengineer/engine │
 │   ┌───────────────────┐ │
 │   │  Stage Runtime    │ │  ←  Claude / Codex (CLI or SDK)
 │   │  Run Orchestrator │ │
@@ -250,7 +250,7 @@ contracts, and how context flows into every LLM call, see
 
 ```bash
 npm run typecheck                     # both workspaces
-npm test --workspace=@beerengineer2/engine
+npm test --workspace=@beerengineer/engine
 npm run dev:engine                    # watch-mode API
 npm run dev:ui                        # Next.js on :3000
 ```

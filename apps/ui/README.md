@@ -1,4 +1,4 @@
-# @beerengineer2/ui
+# @beerengineer/ui
 
 > Next.js 15 operator console for BeerEngineer. Watch and steer pipeline runs;
 > chat with the agent; trigger stage actions. Talks to the engine over HTTP +
@@ -21,14 +21,14 @@ the repo root. UI ↔ engine talk over HTTP + SSE only.
 - **React 19**, TypeScript strict
 - **Tailwind CSS v4** — CSS-first config via `@theme` in `app/globals.css`
 - **next/font** — Inter / Space Grotesk / JetBrains Mono
-- **Vitest + @testing-library/react** — `npm test --workspace=@beerengineer2/ui`
+- **Vitest + @testing-library/react** — `npm test --workspace=@beerengineer/ui`
 
 No data-fetching library, no state manager, no component library — all UI
 state is local React state + a single SSE provider.
 
 ## Boundary (hard rule)
 
-`apps/ui` **must not** import from `@beerengineer2/engine`, `apps/engine/*`,
+`apps/ui` **must not** import from `@beerengineer/engine`, `apps/engine/*`,
 or any engine-internal module. Coupling is HTTP/SSE only. The engine and CLI
 must remain fully functional with `apps/ui` removed. The contract lives in
 [`docs/api-contract.md`](../../docs/api-contract.md) and `apps/engine/src/api/openapi.json`.

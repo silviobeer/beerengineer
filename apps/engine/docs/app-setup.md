@@ -15,11 +15,11 @@ this repo and are running the engine locally from that install.
 ## Commands
 
 ```bash
-npm exec --workspace=@beerengineer2/engine beerengineer -- doctor
-npm exec --workspace=@beerengineer2/engine beerengineer -- doctor --json
-npm exec --workspace=@beerengineer2/engine beerengineer -- setup --no-interactive
-npm exec --workspace=@beerengineer2/engine beerengineer -- setup --group notifications
-npm exec --workspace=@beerengineer2/engine beerengineer -- notifications test telegram
+npm exec --workspace=@beerengineer/engine beerengineer -- doctor
+npm exec --workspace=@beerengineer/engine beerengineer -- doctor --json
+npm exec --workspace=@beerengineer/engine beerengineer -- setup --no-interactive
+npm exec --workspace=@beerengineer/engine beerengineer -- setup --group notifications
+npm exec --workspace=@beerengineer/engine beerengineer -- notifications test telegram
 ```
 
 - `doctor` is read-only. It reports config, data-dir, DB, toolchain, and auth status.
@@ -288,7 +288,7 @@ flag handling is in `apps/engine/src/index.ts`.
 
 ## Tests
 
-- Fast unit tests run by default: `npm test --workspace=@beerengineer2/engine`.
+- Fast unit tests run by default: `npm test --workspace=@beerengineer/engine`.
 - The end-to-end CLI smoke test (`start_brainstorm runs to completion`) is gated behind
   `BE2_RUN_SLOW_TESTS=1` because it drives scripted stdin through the real workflow and
   is sensitive to prompt-count changes.

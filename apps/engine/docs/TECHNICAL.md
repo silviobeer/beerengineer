@@ -156,8 +156,8 @@ Recent additions to that contract:
 ## Testing
 
 ```bash
-npm test --workspace=@beerengineer2/engine          # node:test, ~45 files
-npm run typecheck --workspace=@beerengineer2/engine
+npm test --workspace=@beerengineer/engine          # node:test, ~45 files
+npm run typecheck --workspace=@beerengineer/engine
 ```
 
 - `node:test --import tsx` — no transpile step, real TS in tests.

@@ -732,7 +732,7 @@ function requestHeaders(extra: Record<string, string> = {}): Record<string, stri
   const token = resolveGithubAuthToken()
   return {
     accept: "application/vnd.github+json",
-    "user-agent": "beerengineer2-updater",
+    "user-agent": "beerengineer-updater",
     connection: "close",
     ...(token ? { authorization: `Bearer ${token}` } : {}),
     ...extra,

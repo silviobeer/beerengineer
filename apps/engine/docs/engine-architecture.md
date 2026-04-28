@@ -1,6 +1,6 @@
 # Engine Architecture
 
-> Reference for `@beerengineer2/engine`'s internal structure. Source of truth
+> Reference for `@beerengineer/engine`'s internal structure. Source of truth
 > is the code; this doc explains the *shape*. If something below disagrees
 > with the code, the code wins — file an issue or send a PR for the doc.
 

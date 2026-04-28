@@ -1,7 +1,7 @@
 # Engine — Features
 
 **Last updated:** 2026-04-27
-**Scope:** `@beerengineer2/engine` — the CLI + HTTP/SSE service that drives
+**Scope:** `@beerengineer/engine` — the CLI + HTTP/SSE service that drives
 AI coding assistants through a structured product-development pipeline.
 
 The engine is the product. The UI (`apps/ui`) is one optional consumer of

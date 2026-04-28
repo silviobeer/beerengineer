@@ -731,7 +731,7 @@ test("POST /update/apply stages a release and records a queued apply attempt", a
     workspaces: ["apps/*"],
   }, null, 2))
   writeFileSync(join(releaseRoot, "apps", "engine", "package.json"), JSON.stringify({
-    name: "@beerengineer2/engine",
+    name: "@beerengineer/engine",
     version: "9.9.9",
     private: true,
     type: "module",
@@ -739,7 +739,7 @@ test("POST /update/apply stages a release and records a queued apply attempt", a
   }, null, 2))
   writeFileSync(join(releaseRoot, "apps", "engine", "bin", "beerengineer.js"), "#!/usr/bin/env node\nconsole.log('ok')\n", "utf8")
   writeFileSync(join(releaseRoot, "apps", "ui", "package.json"), JSON.stringify({
-    name: "@beerengineer2/ui",
+    name: "@beerengineer/ui",
     version: "9.9.9",
     private: true,
   }, null, 2))
@@ -831,7 +831,7 @@ test("POST /update/apply replays the same queued operation for a repeated Idempo
     workspaces: ["apps/*"],
   }, null, 2))
   writeFileSync(join(releaseRoot, "apps", "engine", "package.json"), JSON.stringify({
-    name: "@beerengineer2/engine",
+    name: "@beerengineer/engine",
     version: "9.9.9",
     private: true,
     type: "module",
@@ -839,7 +839,7 @@ test("POST /update/apply replays the same queued operation for a repeated Idempo
   }, null, 2))
   writeFileSync(join(releaseRoot, "apps", "engine", "bin", "beerengineer.js"), "#!/usr/bin/env node\nconsole.log('ok')\n", "utf8")
   writeFileSync(join(releaseRoot, "apps", "ui", "package.json"), JSON.stringify({
-    name: "@beerengineer2/ui",
+    name: "@beerengineer/ui",
     version: "9.9.9",
     private: true,
   }, null, 2))

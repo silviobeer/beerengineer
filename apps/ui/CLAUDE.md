@@ -4,7 +4,7 @@ Durable rules for AI agents editing the UI subtree. Read
 [`docs/AGENTS.md`](./docs/AGENTS.md) for navigation.
 
 <!-- UI-BOUNDARY -->
-- **Hard boundary.** `apps/ui` MUST NOT import from `@beerengineer2/engine`,
+- **Hard boundary.** `apps/ui` MUST NOT import from `@beerengineer/engine`,
   `apps/engine/*`, or any engine-internal module. Talk to the engine over
   HTTP/SSE only. The contract is `apps/engine/src/api/openapi.json`.
 

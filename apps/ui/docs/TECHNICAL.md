@@ -166,8 +166,8 @@ critical path.
 ## Testing
 
 ```bash
-npm test --workspace=@beerengineer2/ui          # Vitest + jsdom
-npm run typecheck --workspace=@beerengineer2/ui
+npm test --workspace=@beerengineer/ui          # Vitest + jsdom
+npm run typecheck --workspace=@beerengineer/ui
 ```
 
 Tests under `apps/ui/tests/` exercise the active component tree against

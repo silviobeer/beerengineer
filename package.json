@@ -1,5 +1,5 @@
 {
-  "name": "beerengineer2",
+  "name": "beerengineer",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -7,9 +7,9 @@
     "apps/*"
   ],
   "scripts": {
-    "dev:engine": "npm run dev --workspace=@beerengineer2/engine",
-    "dev:ui": "npm run dev --workspace=@beerengineer2/ui",
-    "start:api": "npm run start:api --workspace=@beerengineer2/engine",
+    "dev:engine": "npm run dev --workspace=@beerengineer/engine",
+    "dev:ui": "npm run dev --workspace=@beerengineer/ui",
+    "start:api": "npm run start:api --workspace=@beerengineer/engine",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present"
   }

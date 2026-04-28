@@ -59,15 +59,15 @@ Status (Milestone 3 reached): backend ready · live run control · UI integrated
 npm install
 
 # engine API server (terminal 1)
-BEERENGINEER_UI_DB_PATH=./.data/beerengineer2.sqlite npm run start:api
+BEERENGINEER_UI_DB_PATH=./.data/beerengineer.sqlite npm run start:api
 
 # UI (terminal 2)
-BEERENGINEER_UI_DB_PATH=./.data/beerengineer2.sqlite \
+BEERENGINEER_UI_DB_PATH=./.data/beerengineer.sqlite \
   NEXT_PUBLIC_ENGINE_BASE_URL=http://127.0.0.1:4100 \
   npm run dev --workspace=beerengineer-ui
 
 # unit tests
-npm test --workspace=@beerengineer2/engine
+npm test --workspace=@beerengineer/engine
 
 # playwright
 cd apps/ui && npx playwright test tests/e2e/runs-live.spec.ts

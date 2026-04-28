@@ -654,7 +654,7 @@ test("update --dry-run reclaims a stale lock and reports stage results", async (
     workspaces: ["apps/*"],
   }, null, 2))
   writeFileSync(join(releaseRoot, "apps", "engine", "package.json"), JSON.stringify({
-    name: "@beerengineer2/engine",
+    name: "@beerengineer/engine",
     version: "9.9.9",
     private: true,
     type: "module",
@@ -664,7 +664,7 @@ test("update --dry-run reclaims a stale lock and reports stage results", async (
   }, null, 2))
   writeFileSync(join(releaseRoot, "apps", "engine", "bin", "beerengineer.js"), "#!/usr/bin/env node\nconsole.log('ok')\n", "utf8")
   writeFileSync(join(releaseRoot, "apps", "ui", "package.json"), JSON.stringify({
-    name: "@beerengineer2/ui",
+    name: "@beerengineer/ui",
     version: "9.9.9",
     private: true,
   }, null, 2))
@@ -761,7 +761,7 @@ test("update --dry-run fails closed when BEERENGINEER_UPDATE_EXPECTED_TARBALL_SH
     workspaces: ["apps/*"],
   }, null, 2))
   writeFileSync(join(releaseRoot, "apps", "engine", "package.json"), JSON.stringify({
-    name: "@beerengineer2/engine",
+    name: "@beerengineer/engine",
     version: "9.9.9",
     private: true,
     type: "module",
@@ -771,7 +771,7 @@ test("update --dry-run fails closed when BEERENGINEER_UPDATE_EXPECTED_TARBALL_SH
   }, null, 2))
   writeFileSync(join(releaseRoot, "apps", "engine", "bin", "beerengineer.js"), "#!/usr/bin/env node\nconsole.log('ok')\n", "utf8")
   writeFileSync(join(releaseRoot, "apps", "ui", "package.json"), JSON.stringify({
-    name: "@beerengineer2/ui",
+    name: "@beerengineer/ui",
     version: "9.9.9",
     private: true,
   }, null, 2))
@@ -956,7 +956,7 @@ test("update prepares a staged apply attempt and returns machine-readable metada
     workspaces: ["apps/*"],
   }, null, 2))
   writeFileSync(join(releaseRoot, "apps", "engine", "package.json"), JSON.stringify({
-    name: "@beerengineer2/engine",
+    name: "@beerengineer/engine",
     version: "9.9.9",
     private: true,
     type: "module",
@@ -966,7 +966,7 @@ test("update prepares a staged apply attempt and returns machine-readable metada
   }, null, 2))
   writeFileSync(join(releaseRoot, "apps", "engine", "bin", "beerengineer.js"), "#!/usr/bin/env node\nconsole.log('ok')\n", "utf8")
   writeFileSync(join(releaseRoot, "apps", "ui", "package.json"), JSON.stringify({
-    name: "@beerengineer2/ui",
+    name: "@beerengineer/ui",
     version: "9.9.9",
     private: true,
   }, null, 2))

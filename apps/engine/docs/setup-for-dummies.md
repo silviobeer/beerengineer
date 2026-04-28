@@ -115,11 +115,11 @@ Assured in the SonarQube Cloud UI.
 ## Step 1 — Install BeerEngineer2 itself
 
 You have the BeerEngineer2 source from GitHub at
-`~/projects/beerengineer2/`. Install it as a global command so your terminal
+`~/projects/beerengineer/`. Install it as a global command so your terminal
 can find `beerengineer`:
 
 ```
-cd ~/projects/beerengineer2
+cd ~/projects/beerengineer
 npm i -g ./apps/engine
 ```
 
@@ -153,7 +153,7 @@ Don't do the simple global install above and then switch later. Set up a
 separate worktree now:
 
 ```
-cd ~/projects/beerengineer2
+cd ~/projects/beerengineer
 git worktree add ~/.beerengineer-tool main
 
 cd ~/.beerengineer-tool/apps/engine
@@ -163,7 +163,7 @@ npm i -g .
 
 That gives you:
 
-- `~/projects/beerengineer2/` — your editable checkout, where feature work happens
+- `~/projects/beerengineer/` — your editable checkout, where feature work happens
 - `~/.beerengineer-tool/` — the pinned tool checkout that the global `beerengineer` command runs from
 
 This is the recommended self-hosting path because it prevents half-finished
@@ -368,7 +368,7 @@ BeerEngineer still registers it.
 After registering at least one workspace, open the UI:
 
 ```
-npm run dev:ui --prefix ~/projects/beerengineer2
+npm run dev:ui --prefix ~/projects/beerengineer
 ```
 
 Or if you set it up to run under the `beerengineer` binary later, a single
@@ -376,10 +376,10 @@ command will start both the engine and the UI. For now, two terminals:
 
 ```
 # Terminal 1 — engine
-npm run dev:engine --prefix ~/projects/beerengineer2
+npm run dev:engine --prefix ~/projects/beerengineer
 
 # Terminal 2 — UI
-npm run dev:ui --prefix ~/projects/beerengineer2
+npm run dev:ui --prefix ~/projects/beerengineer
 ```
 
 Open `http://127.0.0.1:3100` in your browser. You should see your registered
@@ -404,27 +404,27 @@ The clean way uses `git worktree`:
 
 ```
 # One-time:
-cd ~/projects/beerengineer2
+cd ~/projects/beerengineer
 git worktree add ~/.beerengineer-tool main
 
 cd ~/.beerengineer-tool/apps/engine
 npm i
 npm i -g .
 
-beerengineer workspace add --path ~/projects/beerengineer2
+beerengineer workspace add --path ~/projects/beerengineer
 ```
 
 Now:
 
-- `~/projects/beerengineer2/` is where you edit. Work on feature branches.
+- `~/projects/beerengineer/` is where you edit. Work on feature branches.
 - `~/.beerengineer-tool/` is what the tool runs from. Stays on `main`.
 - `beerengineer` (the global command) runs from the worktree, edits land
-  in `~/projects/beerengineer2/`. No conflict.
+  in `~/projects/beerengineer/`. No conflict.
 
 When a feature is good and you want the running tool to upgrade to it:
 
 ```
-cd ~/projects/beerengineer2
+cd ~/projects/beerengineer
 git checkout main
 git merge feat/my-feature
 
@@ -468,7 +468,7 @@ try again.
 ## TL;DR
 
 1. Install prerequisites (Node + npm, git, at least one AI harness + login, at least one browser agent; `gh` recommended).
-2. `npm i -g ~/projects/beerengineer2/apps/engine`
+2. `npm i -g ~/projects/beerengineer/apps/engine`
 3. `beerengineer setup` — keep pressing `r` until required groups are green.
 4. `beerengineer workspace add` — or `beerengineer workspace add --path ~/projects/my-app`.
 5. Open the UI on `http://127.0.0.1:3100`, pick your workspace, create an idea, let it run.
