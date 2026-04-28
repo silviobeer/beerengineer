@@ -312,6 +312,25 @@ configuration.
 - [`docs/messaging-levels.md`](docs/messaging-levels.md) — L0/L1/L2
   taxonomy and event-to-level mapping.
 
+## Credits & inspirations
+
+beerengineer_ borrows ideas — not code — from a handful of public projects
+that pioneered "pipeline of specialised agents" thinking for coding agents.
+None of these are dependencies; the credit is for shaping how we think
+about staged, reviewer-gated, spec-driven agent workflows.
+
+- [`obra/superpowers`](https://github.com/obra/superpowers) — agentic
+  skills framework: spec-first, subagent-driven development, automatic
+  skill triggering. Inspired our stage-gated pipeline and the
+  reviewer-loop discipline.
+- [`gsd-build/get-shit-done`](https://github.com/gsd-build/get-shit-done) —
+  meta-prompting and context-engineering system for Claude Code. Inspired
+  how we keep per-stage prompts narrow and context-rot-resistant.
+- [`pbakaus/impeccable`](https://github.com/pbakaus/impeccable) (Apache-2.0)
+  — design-language skill bundle with curated anti-patterns. Inspired the
+  upcoming `frontend-design` reference split (see
+  [`specs/impeccable-adoption-plan.md`](specs/impeccable-adoption-plan.md)).
+
 ## License
 
 [MIT](LICENSE) © Silvio Beer
