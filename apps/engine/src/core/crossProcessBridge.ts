@@ -64,19 +64,14 @@ function parseJson(raw: string | null): Record<string, unknown> | null {
  * cross-process need, not speculation.
  */
 function rehydrate(row: StageLogRow): WorkflowEvent | null {
-  switch (row.event_type) {
-    case "prompt_answered": {
-      const data = parseJson(row.data_json)
-      const promptId = typeof data?.promptId === "string" ? data.promptId : undefined
-      if (!promptId) return null
-      return {
-        type: "prompt_answered",
-        runId: row.run_id,
-        promptId,
-        answer: row.message,
-      }
-    }
-    default:
-      return null
+  if (row.event_type !== "prompt_answered") return null
+  const data = parseJson(row.data_json)
+  const promptId = typeof data?.promptId === "string" ? data.promptId : undefined
+  if (!promptId) return null
+  return {
+    type: "prompt_answered",
+    runId: row.run_id,
+    promptId,
+    answer: row.message,
   }
 }

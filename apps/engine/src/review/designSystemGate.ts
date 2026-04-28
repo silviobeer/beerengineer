@@ -4,10 +4,35 @@ import { spawnSync } from "node:child_process"
 import type { Finding } from "../types.js"
 import type { ReviewScope } from "./types.js"
 
-const HEX_COLOR = /(?:^|[^A-Za-z0-9_])(#[0-9a-fA-F]{3,8})\b/
-const TAILWIND_PALETTE = /\b(bg|text|border|ring|outline|fill|stroke|from|to|via)-(zinc|slate|gray|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-\d{2,3}\b/
+const HEX_COLOR = /(?:^|\W)(#[0-9a-fA-F]{3,8})\b/
+const TAILWIND_PALETTE = /\b([a-z]+)-([a-z]+)-(\d{2,3})\b/
 const ROUNDED = /\brounded(?:-[\w/[\]-]+)?\b/
 const BORDER_RADIUS_NONZERO = /border-radius\s*:\s*(?!0(?:[a-z%]+)?\b)[^;]+/i
+const TAILWIND_PREFIXES = new Set(["bg", "text", "border", "ring", "outline", "fill", "stroke", "from", "to", "via"])
+const TAILWIND_COLORS = new Set([
+  "zinc",
+  "slate",
+  "gray",
+  "neutral",
+  "stone",
+  "red",
+  "orange",
+  "amber",
+  "yellow",
+  "lime",
+  "green",
+  "emerald",
+  "teal",
+  "cyan",
+  "sky",
+  "blue",
+  "indigo",
+  "violet",
+  "purple",
+  "fuchsia",
+  "pink",
+  "rose",
+])
 
 type AddedLine = {
   file: string
@@ -22,6 +47,10 @@ function runGit(args: string[], cwd: string): { ok: boolean; stdout: string } {
 
 function shouldSkipHexRule(file: string): boolean {
   return file.endsWith("design-tokens.css") || file.endsWith(".test.tsx")
+}
+
+function isTailwindPaletteMatch(match: RegExpExecArray | null): match is RegExpExecArray {
+  return match !== null && TAILWIND_PREFIXES.has(match[1]) && TAILWIND_COLORS.has(match[2])
 }
 
 function readUntrackedAddedLines(workspaceRoot: string, file: string): AddedLine[] {
@@ -106,7 +135,7 @@ export async function runDesignSystemGate(input: ReviewScope): Promise<{
       })
     }
     const paletteMatch = TAILWIND_PALETTE.exec(line.content)
-    if (paletteMatch) {
+    if (isTailwindPaletteMatch(paletteMatch)) {
       findings.push({
         source: "design-system",
         severity: "high",

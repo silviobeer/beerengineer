@@ -149,7 +149,7 @@ export interface BoardCardDTO {
   id: string;
   itemCode?: string;
   title: string;
-  column: BoardColumn | string;
+  column: string;
   current_stage?: string | null;
   summary?: string | null;
   phase_status?: string | null;

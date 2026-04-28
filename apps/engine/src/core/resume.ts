@@ -74,16 +74,14 @@ export async function loadResumeReadiness(
   }
 
   // Synthesized minimal record for legacy blocked runs (no recovery.json on disk).
-  if (!record) {
-    record = {
-      status: run.recovery_status,
-      cause: "system_error",
-      scope: { type: "run", runId: run.id },
-      summary: run.recovery_summary ?? "Legacy blocked run — resume may restart from the beginning.",
-      evidencePaths: [],
-      createdAt: new Date(run.updated_at).toISOString(),
-      updatedAt: new Date(run.updated_at).toISOString(),
-    }
+  record ??= {
+    status: run.recovery_status,
+    cause: "system_error",
+    scope: { type: "run", runId: run.id },
+    summary: run.recovery_summary ?? "Legacy blocked run — resume may restart from the beginning.",
+    evidencePaths: [],
+    createdAt: new Date(run.updated_at).toISOString(),
+    updatedAt: new Date(run.updated_at).toISOString(),
   }
 
   return { kind: "ready", run, record, ctx }

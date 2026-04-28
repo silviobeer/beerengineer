@@ -143,7 +143,7 @@ export function validateDesignArtifact(artifact: DesignArtifact): void {
   // mockupHtmlPerScreen — optional but if present must be valid
   if (artifact.mockupHtmlPerScreen !== undefined) {
     if (typeof artifact.mockupHtmlPerScreen !== "object" || Array.isArray(artifact.mockupHtmlPerScreen)) {
-      throw new Error(
+      throw new TypeError(
         "Invalid design artifact from LLM: artifact.mockupHtmlPerScreen is present but not an object. " +
         "It must be a Record<string, string> mapping screenId to a full HTML document — retry or inspect the LLM output.",
       )
@@ -183,13 +183,22 @@ function escapeHtml(value: string): string {
 // Values landing inside <style> are attacker-controlled (LLM output). Match
 // each token against a conservative whitelist; fall back to a safe placeholder
 // rather than interpolating raw text that could close the style tag.
-const COLOR_PATTERN = /^(#[0-9a-f]{3,8}|rgba?\([0-9.,\s%]+\)|hsla?\([0-9.,\s%]+\)|transparent|currentColor|[a-z]+)$/i
-const FONT_FAMILY_PATTERN = /^[A-Za-z0-9 ,'"\-]+$/
+type CssValuePattern = Pick<RegExp, "test">
+
+const COLOR_FUNCTION_PATTERN = /^(?:rgba?|hsla?)\([0-9.,\s%]+\)$/i
+const COLOR_HEX_PATTERN = /^#[0-9a-f]{3,8}$/i
+const COLOR_KEYWORDS = new Set(["transparent", "currentColor"])
+const COLOR_PATTERN: CssValuePattern = {
+  test(value: string): boolean {
+    return COLOR_HEX_PATTERN.test(value) || COLOR_FUNCTION_PATTERN.test(value) || COLOR_KEYWORDS.has(value) || /^[a-z]+$/i.test(value)
+  },
+}
+const FONT_FAMILY_PATTERN = /^[A-Za-z0-9 ,'"-]+$/
 const FONT_WEIGHT_PATTERN = /^(normal|bold|lighter|bolder|[1-9]00)$/
 // Border-radius values: "0", "0px", "4px", "8px", "12px", "9999px", "50%", etc.
-const BORDER_RADIUS_PATTERN = /^[0-9]+(%|px|rem|em)?$/
+const BORDER_RADIUS_PATTERN = /^\d+(%|px|rem|em)?$/
 
-function safeCssValue(raw: string | undefined, pattern: RegExp, fallback: string): string {
+function safeCssValue(raw: string | undefined, pattern: CssValuePattern, fallback: string): string {
   if (typeof raw !== "string") return fallback
   const trimmed = raw.trim()
   return pattern.test(trimmed) ? trimmed : fallback

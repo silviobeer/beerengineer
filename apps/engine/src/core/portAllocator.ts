@@ -58,7 +58,7 @@ function readWorkspacePool(workspaceRoot?: string): Pool {
 function hashBranch(branch: string): number {
   let hash = 0
   for (let i = 0; i < branch.length; i++) {
-    hash = ((hash << 5) - hash + branch.charCodeAt(i)) | 0
+    hash = Math.trunc((hash << 5) - hash + (branch.codePointAt(i) ?? 0))
   }
   return Math.abs(hash)
 }

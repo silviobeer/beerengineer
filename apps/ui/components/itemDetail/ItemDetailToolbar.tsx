@@ -41,8 +41,7 @@ export function ItemDetailToolbar({ allowedActions, onAction }: Readonly<Props>)
   }
 
   return (
-    <section
-      role="toolbar"
+    <div
       aria-label="Item actions"
       className="flex flex-col gap-2 border-b border-zinc-800 px-3 py-3 sm:px-4"
     >
@@ -77,7 +76,7 @@ export function ItemDetailToolbar({ allowedActions, onAction }: Readonly<Props>)
           {error}
         </p>
       ) : null}
-    </section>
+    </div>
   );
 }
 

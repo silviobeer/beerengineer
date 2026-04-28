@@ -54,8 +54,8 @@ export function BoardItemModal({ card, workspaceKey, onClose }: Readonly<BoardIt
         onClose();
       }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    globalThis.addEventListener("keydown", onKey);
+    return () => globalThis.removeEventListener("keydown", onKey);
   }, [onClose]);
 
   // Lock the underlying board scroll.
@@ -143,18 +143,12 @@ export function BoardItemModal({ card, workspaceKey, onClose }: Readonly<BoardIt
   };
 
   return (
-    <div
+    <dialog
       data-testid="board-item-modal-backdrop"
-      role="dialog"
+      open
       aria-modal="true"
       aria-label={card.title || "Item detail"}
       tabIndex={-1}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-      onKeyDown={(e) => {
-        if (e.key === "Escape") onClose();
-      }}
       className="fixed inset-0 z-50 flex items-start justify-center p-4 sm:p-8 bg-black/70 backdrop-blur-sm overflow-y-auto"
     >
       <div
@@ -315,7 +309,7 @@ export function BoardItemModal({ card, workspaceKey, onClose }: Readonly<BoardIt
           </div>
         </div>
       </div>
-    </div>
+    </dialog>
   );
 }
 

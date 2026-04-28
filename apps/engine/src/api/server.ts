@@ -153,9 +153,11 @@ seedIfEmpty(db, repos)
 // On every fresh process start, any run still in status='running' has no live
 // worker — the previous process died mid-flight. Mark them failed so
 // POST /runs/:id/resume accepts them without a manual DB patch.
-markOrphanedRunsFailed(repos).catch(err => {
+try {
+  await markOrphanedRunsFailed(repos)
+} catch (err) {
   console.error("[orphanRecovery] startup scan failed:", (err as Error).message)
-})
+}
 pruneMissingWorktreeAssignments()
 
 const server = createServer(async (req, res) => {

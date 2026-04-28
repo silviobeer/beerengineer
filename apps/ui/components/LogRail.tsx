@@ -58,15 +58,14 @@ export function LogRail({ logs, initialFilter = "alles" }: Readonly<LogRailProps
         className="flex-1 overflow-y-auto"
       >
         {isEmpty ? (
-          <p
+          <output
             data-testid="log-rail-empty"
-            role="status"
             className="px-3 py-4 font-mono text-xs text-zinc-500"
           >
             Keine Log-Eintraege.
-          </p>
+          </output>
         ) : (
-          <ol data-testid="log-rail-list" role="list" className="flex flex-col">
+          <ol data-testid="log-rail-list" className="flex flex-col">
             {visible.map((entry, index) => (
               <LogLine
                 key={entry.id ?? `${entry.level}-${index}-${entry.message}`}

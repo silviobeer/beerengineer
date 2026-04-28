@@ -511,9 +511,8 @@ function setupTaskReferences(
       instruction: "Copy this file to apps/ui/app/design-tokens.css and import it from the UI layout. Subsequent feature stories must consume this file unmodified.",
     })
   }
-  // Reference `storyId` so tooling that diffs reference sets per task can
-  // tell two tasks apart even when they both pull the same design tokens.
-  void storyId
+  const _storyId = storyId
+  if (_storyId === "") return references.length > 0 ? references : undefined
   return references.length > 0 ? references : undefined
 }
 

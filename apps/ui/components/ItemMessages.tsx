@@ -69,14 +69,14 @@ function engineUrl(): string {
 }
 
 function pickText(env: EngineMessageEntry): string {
-  const p = env.payload ?? {};
+  const p: Record<string, unknown> = env.payload ?? {};
   const candidates = ["message", "text", "summary", "title", "prompt", "answer"];
   for (const k of candidates) {
-    const v = (p as Record<string, unknown>)[k];
+    const v = p[k];
     if (typeof v === "string" && v.length > 0) return v;
   }
   // stageKey is more useful than the bare event type for phase events
-  const stageKey = (p as { stageKey?: unknown }).stageKey;
+  const stageKey = p.stageKey;
   if (typeof stageKey === "string" && stageKey.length > 0) {
     return `${env.type}: ${stageKey}`;
   }

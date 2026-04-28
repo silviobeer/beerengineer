@@ -2,8 +2,10 @@ import type { Concept } from "../types/domain.js"
 
 function stringifyListValue(value: unknown): string {
   if (typeof value === "string") return value
+  if (value == null) return ""
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") return String(value)
   const serialized = JSON.stringify(value)
-  return serialized ?? String(value)
+  return serialized ?? ""
 }
 
 function toStringList(value: unknown): string[] {
@@ -11,7 +13,7 @@ function toStringList(value: unknown): string[] {
   if (value == null) return []
   if (typeof value === "string") return value.split(/\r?\n/).map(s => s.replace(/^[-*]\s*/, "").trim()).filter(Boolean)
   if (typeof value === "object") return Object.values(value as Record<string, unknown>).map(stringifyListValue)
-  return [String(value)]
+  return typeof value === "number" || typeof value === "boolean" || typeof value === "bigint" ? [String(value)] : []
 }
 
 export function renderConceptMarkdown(concept: Concept & { hasUi?: boolean }): string {

@@ -1,7 +1,11 @@
 import type { ColorPalette, DesignArtifact, FontSpec } from "../types/domain.js"
 
+function kebabCaseToken(name: string): string {
+  return name.replaceAll(/[A-Z]/g, match => `-${match.toLowerCase()}`)
+}
+
 function renderPaletteSelectors(selectors: string[], palette: ColorPalette): string {
-  const lines = Object.entries(palette).map(([name, value]) => `  --color-${name.replace(/[A-Z]/g, match => `-${match.toLowerCase()}`)}: ${value};`)
+  const lines = Object.entries(palette).map(([name, value]) => `  --color-${kebabCaseToken(name)}: ${value};`)
   return `${selectors.join(", ")} {\n${lines.join("\n")}\n}`
 }
 

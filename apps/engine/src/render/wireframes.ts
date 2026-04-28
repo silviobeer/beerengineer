@@ -117,7 +117,7 @@ export function validateWireframeArtifact(artifact: WireframeArtifact): void {
   if ("wireframeHtmlPerScreen" in artifact && artifact.wireframeHtmlPerScreen !== undefined) {
     const htmlMap = artifact.wireframeHtmlPerScreen
     if (typeof htmlMap !== "object" || Array.isArray(htmlMap)) {
-      throw new Error(
+      throw new TypeError(
         "Invalid wireframe artifact from LLM: wireframeHtmlPerScreen must be an object mapping screenId to HTML string."
       )
     }

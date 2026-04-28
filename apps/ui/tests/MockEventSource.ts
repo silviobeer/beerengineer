@@ -1,10 +1,10 @@
 type Listener = (ev: MessageEvent | Event) => void;
 
 export class MockEventSource {
-  static instances: MockEventSource[] = [];
+  static readonly instances: MockEventSource[] = [];
   url: string;
   readyState = 0;
-  private listeners = new Map<string, Set<Listener>>();
+  private readonly listeners = new Map<string, Set<Listener>>();
   closed = false;
 
   constructor(url: string) {
@@ -32,7 +32,7 @@ export class MockEventSource {
     this.listeners.get("error")?.forEach((l) => l(ev));
   }
   static reset() {
-    MockEventSource.instances = [];
+    MockEventSource.instances.length = 0;
   }
   static last(): MockEventSource | undefined {
     return MockEventSource.instances.at(-1);

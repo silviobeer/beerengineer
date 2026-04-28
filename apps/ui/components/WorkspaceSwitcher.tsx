@@ -38,13 +38,12 @@ export function WorkspaceSwitcher() {
             workspaces unavailable
           </option>
         </select>
-        <span
-          role="status"
+        <output
           data-testid="workspace-switcher-error-text"
           className="text-xs text-zinc-400"
         >
           failed to load workspaces
-        </span>
+        </output>
       </div>
     );
   }

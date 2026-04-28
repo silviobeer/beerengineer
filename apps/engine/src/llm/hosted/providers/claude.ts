@@ -101,8 +101,7 @@ function buildClaudeCommand(input: HostedProviderInvokeInput): string[] {
   if (noTools) {
     command.push("--output-format", "json")
   } else {
-    command.push("--verbose", "--output-format", "stream-json")
-    command.push("--add-dir", input.runtime.workspaceRoot)
+    command.push("--verbose", "--output-format", "stream-json", "--add-dir", input.runtime.workspaceRoot)
   }
   const mode = permissionMode(input.runtime.policy)
   if (mode) command.push("--permission-mode", mode)

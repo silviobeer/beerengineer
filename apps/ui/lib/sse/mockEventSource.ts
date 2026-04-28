@@ -3,8 +3,8 @@ import type { EventSourceLike } from "./types";
 type Listener = (e: MessageEvent) => void;
 
 export class MockEventSource implements EventSourceLike {
-  static instances: MockEventSource[] = [];
-  static constructorCount = 0;
+  static readonly instances: MockEventSource[] = [];
+  private static _constructorCount = 0;
 
   url: string;
   closed = false;
@@ -13,12 +13,16 @@ export class MockEventSource implements EventSourceLike {
   onerror: ((e: Event) => void) | null = null;
   onclose: ((e: Event) => void) | null = null;
 
-  private listeners = new Map<string, Set<Listener>>();
+  private readonly listeners = new Map<string, Set<Listener>>();
 
   constructor(url: string) {
     this.url = url;
-    MockEventSource.constructorCount += 1;
+    MockEventSource._constructorCount += 1;
     MockEventSource.instances.push(this);
+  }
+
+  static get constructorCount(): number {
+    return MockEventSource._constructorCount;
   }
 
   addEventListener(type: string, listener: Listener): void {
@@ -73,8 +77,8 @@ export class MockEventSource implements EventSourceLike {
   }
 
   static reset(): void {
-    MockEventSource.instances = [];
-    MockEventSource.constructorCount = 0;
+    MockEventSource.instances.length = 0;
+    MockEventSource._constructorCount = 0;
   }
 }
 

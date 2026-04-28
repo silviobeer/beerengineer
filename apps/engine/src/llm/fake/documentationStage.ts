@@ -58,11 +58,12 @@ function buildTechnicalSections(project: Project, state: DocumentationState): Do
       : "No residual project-wide technical risks remain.",
   })
 
+  const updateModeContent = artifactMode(state) === "generate"
+    ? "This run generated the technical documentation from project artifacts."
+    : `This run updated the technical documentation for ${project.name} using the latest workflow artifacts.`
   sections.push({
     heading: "Update Mode",
-    content: artifactMode(state) === "generate"
-      ? "This run generated the technical documentation from project artifacts."
-      : `This run updated the technical documentation for ${project.name} using the latest workflow artifacts.`,
+    content: updateModeContent,
   })
 
   return sections

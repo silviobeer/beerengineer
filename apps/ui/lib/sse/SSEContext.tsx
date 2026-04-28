@@ -21,6 +21,7 @@ import type {
 type ConversationListener = (entry: ChatEntry) => void;
 type LogListener = (entry: LogEntry) => void;
 type ItemEventListener = (state: ItemState) => void;
+type ListenerRef<T> = { current: Set<T> };
 
 type SSEContextValue = {
   isOffline: boolean;
@@ -132,6 +133,32 @@ function toLogEntry(env: Envelope, eventType: string): LogEntry | null {
   };
 }
 
+function createChatDispatcher(
+  listeners: ListenerRef<ConversationListener>,
+  eventType: string,
+): (e: MessageEvent) => void {
+  return e => {
+    const data = parseData(e.data);
+    if (!data || typeof data !== "object") return;
+    const entry = toChatEntry(data as Envelope, eventType);
+    if (!entry) return;
+    for (const cb of listeners.current) cb(entry);
+  };
+}
+
+function createLogDispatcher(
+  listeners: ListenerRef<LogListener>,
+  eventType: string,
+): (e: MessageEvent) => void {
+  return e => {
+    const data = parseData(e.data);
+    if (!data || typeof data !== "object") return;
+    const entry = toLogEntry(data as Envelope, eventType);
+    if (!entry) return;
+    for (const cb of listeners.current) cb(entry);
+  };
+}
+
 function parseData(raw: unknown): unknown {
   if (typeof raw === "string") {
     try {
@@ -170,7 +197,7 @@ export function SSEConnectionManager({
 
   const [itemState, setItemState] = useState<Record<string, ItemState>>(initialMap);
   const [isOffline, setIsOffline] = useState(false);
-  const [runId, setRunIdState] = useState<string | null>(initialRunId);
+  const [currentRunId, setCurrentRunId] = useState<string | null>(initialRunId);
 
   const conversationListeners = useRef(new Set<ConversationListener>());
   const logListeners = useRef(new Set<LogListener>());
@@ -270,21 +297,6 @@ export function SSEConnectionManager({
       applyItemUpdate(update);
     };
 
-    const dispatchChat = (eventType: string) => (e: MessageEvent) => {
-      const data = parseData(e.data);
-      if (!data || typeof data !== "object") return;
-      const entry = toChatEntry(data as Envelope, eventType);
-      if (!entry) return;
-      for (const cb of conversationListeners.current) cb(entry);
-    };
-    const dispatchLog = (eventType: string) => (e: MessageEvent) => {
-      const data = parseData(e.data);
-      if (!data || typeof data !== "object") return;
-      const entry = toLogEntry(data as Envelope, eventType);
-      if (!entry) return;
-      for (const cb of logListeners.current) cb(entry);
-    };
-
     const onErr = () => goOffline();
     const onOpen = () => goOnline();
     const onClose = () => goOffline();
@@ -302,10 +314,10 @@ export function SSEConnectionManager({
     // Stepper progression.
     sourceRef.addEventListener("phase_started", onPhaseStarted);
     // Workspace-level chat / log feeds (consumed by detail page).
-    sourceRef.addEventListener("agent_message", dispatchChat("agent_message"));
-    sourceRef.addEventListener("user_message", dispatchChat("user_message"));
-    sourceRef.addEventListener("artifact_written", dispatchLog("artifact_written"));
-    sourceRef.addEventListener("log", dispatchLog("log"));
+    sourceRef.addEventListener("agent_message", createChatDispatcher(conversationListeners, "agent_message"));
+    sourceRef.addEventListener("user_message", createChatDispatcher(conversationListeners, "user_message"));
+    sourceRef.addEventListener("artifact_written", createLogDispatcher(logListeners, "artifact_written"));
+    sourceRef.addEventListener("log", createLogDispatcher(logListeners, "log"));
 
     sourceRef.onopen = onOpen;
     sourceRef.onerror = onErr;
@@ -324,11 +336,11 @@ export function SSEConnectionManager({
   // Default engine level is 2 (milestones-only); request level=1 so we get
   // chat / phase / artifact frames the detail page actually consumes.
   useEffect(() => {
-    if (!runId) return;
+    if (!currentRunId) return;
     let es: EventSourceLike | null = null;
     try {
       es = factoryRef.current(
-        `${engineBase()}/runs/${encodeURIComponent(runId)}/events?level=1`,
+        `${engineBase()}/runs/${encodeURIComponent(currentRunId)}/events?level=1`,
       );
     } catch {
       goOffline();
@@ -336,30 +348,16 @@ export function SSEConnectionManager({
     }
     const sourceRef = es;
 
-    const dispatchChat = (eventType: string) => (e: MessageEvent) => {
-      const data = parseData(e.data);
-      if (!data || typeof data !== "object") return;
-      const entry = toChatEntry(data as Envelope, eventType);
-      if (!entry) return;
-      for (const cb of conversationListeners.current) cb(entry);
-    };
-    const dispatchLog = (eventType: string) => (e: MessageEvent) => {
-      const data = parseData(e.data);
-      if (!data || typeof data !== "object") return;
-      const entry = toLogEntry(data as Envelope, eventType);
-      if (!entry) return;
-      for (const cb of logListeners.current) cb(entry);
-    };
     const onErr = () => goOffline();
     const onOpen = () => goOnline();
     const onClose = () => goOffline();
 
-    sourceRef.addEventListener("agent_message", dispatchChat("agent_message"));
-    sourceRef.addEventListener("user_message", dispatchChat("user_message"));
-    sourceRef.addEventListener("prompt_requested", dispatchChat("prompt_requested"));
-    sourceRef.addEventListener("prompt_answered", dispatchChat("prompt_answered"));
-    sourceRef.addEventListener("artifact_written", dispatchLog("artifact_written"));
-    sourceRef.addEventListener("log", dispatchLog("log"));
+    sourceRef.addEventListener("agent_message", createChatDispatcher(conversationListeners, "agent_message"));
+    sourceRef.addEventListener("user_message", createChatDispatcher(conversationListeners, "user_message"));
+    sourceRef.addEventListener("prompt_requested", createChatDispatcher(conversationListeners, "prompt_requested"));
+    sourceRef.addEventListener("prompt_answered", createChatDispatcher(conversationListeners, "prompt_answered"));
+    sourceRef.addEventListener("artifact_written", createLogDispatcher(logListeners, "artifact_written"));
+    sourceRef.addEventListener("log", createLogDispatcher(logListeners, "log"));
     sourceRef.onopen = onOpen;
     sourceRef.onerror = onErr;
     sourceRef.onclose = onClose;
@@ -371,10 +369,10 @@ export function SSEConnectionManager({
         /* ignore */
       }
     };
-  }, [runId, goOffline, goOnline]);
+  }, [currentRunId, goOffline, goOnline]);
 
   const setRunId = useCallback((next: string | null) => {
-    setRunIdState(next);
+    setCurrentRunId(next);
   }, []);
 
   const registerConversationListener = useCallback((cb: ConversationListener) => {

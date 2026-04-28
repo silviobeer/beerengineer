@@ -29,8 +29,8 @@ export function emitEvent(event: WorkflowEvent): void {
  */
 export async function withStageLifecycle<T>(
   stageKey: string,
+  fn: () => Promise<T>,
   opts: { projectId?: string | null } = {},
-  fn: () => Promise<T>
 ): Promise<T> {
   const current = getActiveRun()
   if (!current || !hasWorkflowIO()) {

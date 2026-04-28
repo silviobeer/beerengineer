@@ -459,5 +459,5 @@ async function main() {
 
 const isEntrypoint = process.argv[1] != null && fileURLToPath(import.meta.url) === process.argv[1]
 if (isEntrypoint) {
-  void main()
+  await main()
 }

@@ -96,7 +96,7 @@ export function applySchema(db: Db): void {
 // current shape. Only stamp user_version when we're at or below the level we
 // know how to produce; leave higher levels untouched so a newer binary opening
 // an older DB doesn't appear to downgrade.
-// TODO: when introducing level 2+, switch to a real migrate(from, to) runner
+// Future migration note: when introducing level 2+, switch to a real migrate(from, to) runner
 // keyed off the current user_version rather than unconditionally running every
 // idempotent helper.
 function stampMigrationLevel(db: Db): void {

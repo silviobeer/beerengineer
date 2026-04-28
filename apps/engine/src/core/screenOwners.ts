@@ -3,11 +3,10 @@ import type { ImplementationPlanArtifact, PRD, WireframeArtifact } from "../type
 export type ScreenOwnerMap = Record<string, string>
 
 export function computeScreenOwners(
-  prd: PRD,
+  _prd: PRD,
   plan: ImplementationPlanArtifact,
   wireframes: WireframeArtifact | undefined,
 ): ScreenOwnerMap {
-  void prd
   if (!wireframes || wireframes.screens.length === 0) return {}
 
   const validScreens = new Set(wireframes.screens.map(screen => screen.id))

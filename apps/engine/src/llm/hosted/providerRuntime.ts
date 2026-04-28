@@ -27,9 +27,6 @@ export type HostedInvocationResult = {
   }
 }
 
-/** @deprecated Use `HostedInvocationResult`. */
-export type HostedCliExecutionResult = HostedInvocationResult
-
 export type HostedProviderInvokeInput = {
   prompt: string
   session?: HostedSession | null

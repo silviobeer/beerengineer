@@ -23,7 +23,7 @@ if (!metadataPath) {
 
 const meta = readJson(metadataPath)
 mkdirSync(meta.install.backupRoot, { recursive: true })
-const stamp = new Date().toISOString().replace(/:/g, "-")
+const stamp = new Date().toISOString().replaceAll(":", "-")
 const backupDir = join(meta.install.backupRoot, `${stamp}-${meta.currentVersion}-to-${meta.targetVersion}`)
 mkdirSync(backupDir, { recursive: true })
 

@@ -3,7 +3,7 @@ import type { WorkflowContext } from "./workspaceLayout.js"
 
 function trimRootPath(workspace: Pick<WorkspaceRow, "root_path"> | undefined): string | null {
   const rootPath = workspace?.root_path?.trim()
-  return rootPath ? rootPath : null
+  return rootPath || null
 }
 
 export function resolveWorkspaceRootForWorkspaceId(repos: Repos, workspaceId: string): string | null {

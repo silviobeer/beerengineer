@@ -259,8 +259,10 @@ async function runCoreChecks(configPath: string, configState: ReturnType<typeof 
 
   const dbPath = resolveConfiguredDbPath(config)
   if (!existsSync(dbPath)) {
-    checks.push(createCheck("core.db", "configured database", "missing", dbPath))
-    checks.push(createCheck("core.migrations", "database migration level", "skipped", "database file is missing"))
+    checks.push(
+      createCheck("core.db", "configured database", "missing", dbPath),
+      createCheck("core.migrations", "database migration level", "skipped", "database file is missing"),
+    )
     return checks
   }
 
@@ -277,8 +279,10 @@ async function runCoreChecks(configPath: string, configState: ReturnType<typeof 
     ))
     db.close()
   } catch (err) {
-    checks.push(createCheck("core.db", "configured database", "misconfigured", `${dbPath}: ${(err as Error).message}`))
-    checks.push(createCheck("core.migrations", "database migration level", "skipped", "database is not readable"))
+    checks.push(
+      createCheck("core.db", "configured database", "misconfigured", `${dbPath}: ${(err as Error).message}`),
+      createCheck("core.migrations", "database migration level", "skipped", "database is not readable"),
+    )
   }
 
   try {
@@ -307,17 +311,18 @@ async function runCoreChecks(configPath: string, configState: ReturnType<typeof 
       }
     })
     const workspace = repos.listWorkspaces().find(candidate => candidate.root_path)
-    if (!hasUiRun) {
-      checks.push(createCheck("core.designPrepReferences", "design-prep references folder writable", "skipped", "no UI-bearing runs detected"))
-    } else if (!workspace?.root_path) {
+    if (hasUiRun && !workspace?.root_path) {
       checks.push(createCheck("core.designPrepReferences", "design-prep references folder writable", "skipped", "no registered workspace roots"))
-    } else {
+    } else if (hasUiRun) {
       // Probe the workspace root itself for writability rather than creating
       // the design-prep subdirectory eagerly — doctor should be read-only.
-      const probeTarget = `${workspace.root_path}/.beerengineer`
-      const parentTarget = existsSync(probeTarget) ? probeTarget : workspace.root_path
+      const workspaceRoot = workspace!.root_path!
+      const probeTarget = `${workspaceRoot}/.beerengineer`
+      const parentTarget = existsSync(probeTarget) ? probeTarget : workspaceRoot
       accessSync(parentTarget, constants.W_OK)
       checks.push(createCheck("core.designPrepReferences", "design-prep references folder writable", "ok", `${probeTarget}/references/design-prep (parent: ${parentTarget})`))
+    } else {
+      checks.push(createCheck("core.designPrepReferences", "design-prep references folder writable", "skipped", "no UI-bearing runs detected"))
     }
     db.close()
   } catch (err) {

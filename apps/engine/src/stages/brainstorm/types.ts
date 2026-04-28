@@ -9,8 +9,10 @@ export type BrainstormArtifact = {
 
 function stringifyArrayValue(value: unknown): string {
   if (typeof value === "string") return value
+  if (value == null) return ""
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") return String(value)
   const serialized = JSON.stringify(value)
-  return serialized ?? String(value)
+  return serialized ?? ""
 }
 
 /**
@@ -36,7 +38,19 @@ export function coerceToStringArray(value: unknown): string[] {
   if (typeof value === "object") {
     return Object.values(value as Record<string, unknown>).map(stringifyArrayValue)
   }
-  return [String(value)]
+  return typeof value === "number" || typeof value === "boolean" || typeof value === "bigint" ? [String(value)] : []
+}
+
+function normalizeConcept<T extends { users: string[]; constraints: string[] }>(c: T | string | null | undefined): T {
+  if (typeof c === "string" || c == null) {
+    return {
+      summary: typeof c === "string" ? c : "",
+      problem: "",
+      users: [],
+      constraints: [],
+    } as unknown as T
+  }
+  return { ...c, users: coerceToStringArray(c.users), constraints: coerceToStringArray(c.constraints) }
 }
 
 /**
@@ -46,21 +60,6 @@ export function coerceToStringArray(value: unknown): string[] {
  * concept and every project concept.
  */
 export function normalizeBrainstormArtifact(raw: BrainstormArtifact): BrainstormArtifact {
-  function normalizeConcept<T extends { users: string[]; constraints: string[] }>(c: T | string | null | undefined): T {
-    // Real LLMs occasionally return the entire concept object as a single
-    // string. Spreading a string yields character-indexed keys (`{0:"A",
-    // 1:" ", …}`), which then poison every downstream consumer that expects
-    // a real Concept. Treat that as `summary` and synthesize the rest.
-    if (typeof c === "string" || c == null) {
-      return {
-        summary: typeof c === "string" ? c : "",
-        problem: "",
-        users: [],
-        constraints: [],
-      } as unknown as T
-    }
-    return { ...c, users: coerceToStringArray(c.users), constraints: coerceToStringArray(c.constraints) }
-  }
   return {
     concept: normalizeConcept(raw.concept),
     projects: raw.projects.map(p => ({ ...p, concept: normalizeConcept(p.concept) })),

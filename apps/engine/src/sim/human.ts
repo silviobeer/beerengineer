@@ -1,11 +1,9 @@
-import * as readline from "readline"
+import * as readline from "node:readline"
 import { getWorkflowIO, hasWorkflowIO } from "../core/io.js"
 
 let fallback: readline.Interface | null = null
 const fallbackInterface = (): readline.Interface => {
-  if (!fallback) {
-    fallback = readline.createInterface({ input: process.stdin, output: process.stdout })
-  }
+  fallback ??= readline.createInterface({ input: process.stdin, output: process.stdout })
   return fallback
 }
 

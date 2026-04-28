@@ -16,7 +16,7 @@ export function Topbar() {
         className="inline-flex shrink-0 items-center gap-1.5 font-mono text-[11px] tracking-[0.18em] text-zinc-400 select-none"
       >
         <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-400" />
-        beerengineer_
+        <span>beerengineer_</span>
       </span>
     </header>
   );
