@@ -307,7 +307,7 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
               ? `Workspace ${options.workspaceRoot} has uncommitted changes on ${currentBranch}. ` +
                 "Strategy violation: main/master must stay clean; item work belongs on isolated item branches."
               : `Workspace ${options.workspaceRoot} has uncommitted changes. ` +
-                "BeerEngineer requires a clean repo before it creates an isolated item branch."
+                "beerengineer_ requires a clean repo before it creates an isolated item branch."
           }
           return `Cannot start run: ${reason}`
         })()

@@ -168,7 +168,7 @@ function hasGitIdentityConfigured(cwd: string): boolean {
 }
 
 function runGit(args: string[], cwd: string): { ok: boolean; stdout: string; stderr: string } {
-  // Only inject the BeerEngineer fallback identity for commits AND only when the
+  // Only inject the beerengineer_ fallback identity for commits AND only when the
   // user has neither env vars nor git config set. GIT_AUTHOR_* env takes
   // precedence over git config, so blind injection would silently hijack a
   // configured user's identity on the empty initial commit.
@@ -178,9 +178,9 @@ function runGit(args: string[], cwd: string): { ok: boolean; stdout: string; std
     if (!hasEnvIdentity && !hasGitIdentityConfigured(cwd)) {
       env = {
         ...process.env,
-        GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME ?? "BeerEngineer",
+        GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME ?? "beerengineer_",
         GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL ?? "beerengineer@example.invalid",
-        GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME ?? "BeerEngineer",
+        GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME ?? "beerengineer_",
         GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL ?? "beerengineer@example.invalid",
       }
     }
@@ -486,7 +486,7 @@ async function ensureManagedGitignore(root: string): Promise<{ changed: boolean 
   const prefix = current.length > 0 && !current.endsWith("\n") ? `${current}\n` : current
   const body = exists
     ? `${prefix}${missing.join("\n")}\n`
-    : `# BeerEngineer managed\n${BEERENGINEER_GITIGNORE_ENTRIES.join("\n")}\n`
+    : `# beerengineer_ managed\n${BEERENGINEER_GITIGNORE_ENTRIES.join("\n")}\n`
   await writeFile(path, body, "utf8")
   return { changed: true }
 }
@@ -1094,7 +1094,7 @@ export async function initGit(root: string, opts: { defaultBranch?: string; init
   if (opts.initialCommit) {
     const add = runGit(["add", "."], root)
     if (!add.ok) return { ok: false, detail: add.stderr || "git add failed", actions }
-    const commit = runGit(["commit", "-m", "Initial BeerEngineer scaffold"], root)
+    const commit = runGit(["commit", "-m", "Initial beerengineer_ scaffold"], root)
     if (!commit.ok) return { ok: false, detail: commit.stderr || "git commit failed", actions }
     actions.push("git initial commit")
   }

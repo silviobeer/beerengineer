@@ -106,7 +106,7 @@ export function describeChatMessage(entry: MessageEntry, repos?: Repos): ChatToo
     case "run_started":
       return {
         text: joinTelegramLines([
-          `${presentation.icon} BeerEngineer ${presentation.label}`,
+          `${presentation.icon} beerengineer_ ${presentation.label}`,
           "",
           `Heads up: ${s(entry.payload.title, entry.runId)} is underway.`,
           `Run ${shortRunId(entry.runId)}`,
@@ -118,7 +118,7 @@ export function describeChatMessage(entry: MessageEntry, repos?: Repos): ChatToo
     case "run_blocked":
       return {
         text: joinTelegramLines([
-          `${presentation.icon} BeerEngineer ${presentation.label}`,
+          `${presentation.icon} beerengineer_ ${presentation.label}`,
           "",
           `${s(entry.payload.title, entry.runId)} hit a blocker.`,
           `Run ${shortRunId(entry.runId)}`,
@@ -133,7 +133,7 @@ export function describeChatMessage(entry: MessageEntry, repos?: Repos): ChatToo
     case "run_finished":
       return {
         text: joinTelegramLines([
-          `${presentation.icon} BeerEngineer ${presentation.label}`,
+          `${presentation.icon} beerengineer_ ${presentation.label}`,
           "",
           `${s(entry.payload.title, entry.runId)} is done.`,
           `Run ${shortRunId(entry.runId)}`,
@@ -146,7 +146,7 @@ export function describeChatMessage(entry: MessageEntry, repos?: Repos): ChatToo
     case "phase_started":
       return {
         text: joinTelegramLines([
-          `${presentation.icon} BeerEngineer stage started`,
+          `${presentation.icon} beerengineer_ stage started`,
           "",
           `Stage: ${s(entry.payload.stageKey)}`,
           `Run ${shortRunId(entry.runId)}`,
@@ -159,7 +159,7 @@ export function describeChatMessage(entry: MessageEntry, repos?: Repos): ChatToo
     case "phase_failed":
       return {
         text: joinTelegramLines([
-          `${presentation.icon} BeerEngineer stage ${entry.type === "phase_failed" ? "failed" : "completed"}`,
+          `${presentation.icon} beerengineer_ stage ${entry.type === "phase_failed" ? "failed" : "completed"}`,
           "",
           `Stage: ${s(entry.payload.stageKey)}`,
           "",
@@ -174,7 +174,7 @@ export function describeChatMessage(entry: MessageEntry, repos?: Repos): ChatToo
     case "prompt_requested":
       return {
         text: joinTelegramLines([
-          `${presentation.icon} BeerEngineer needs an answer`,
+          `${presentation.icon} beerengineer_ needs an answer`,
           "",
           `Run ${shortRunId(entry.runId)}`,
           "",

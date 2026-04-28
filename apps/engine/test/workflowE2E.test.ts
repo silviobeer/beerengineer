@@ -462,7 +462,7 @@ test("runWorkflow blocks dirty engine-owned branches without labeling them as ma
             ),
           ),
         ),
-      /BeerEngineer requires a clean repo before it creates an isolated item branch\./i,
+      /beerengineer_ requires a clean repo before it creates an isolated item branch\./i,
     )
 
     const blocked = events.find((event) => event.type === "run_blocked")

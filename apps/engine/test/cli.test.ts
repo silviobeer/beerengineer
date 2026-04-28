@@ -342,7 +342,7 @@ test("notifications test telegram sends a smoke message through the configured b
     assert.match(result.stdout ?? "", /Telegram test notification sent\./)
     assert.equal(requests.length, 1)
     assert.match(requests[0].url, /\/botsecret-token\/sendMessage$/)
-    assert.match(requests[0].body, /BeerEngineer test notification/)
+    assert.match(requests[0].body, /beerengineer_ test notification/)
   } finally {
     await new Promise<void>((resolve, reject) => server.close(err => err ? reject(err) : resolve()))
     rmSync(dir, { recursive: true, force: true })
@@ -1162,7 +1162,7 @@ test("workspace add/register/open/remove work end-to-end through the CLI", () =>
     assert.match(add.stdout ?? "", /SonarCloud config generation skipped until a GitHub origin remote is configured/)
     assert.match(add.stdout ?? "", /SONAR_TOKEN is not configured yet; CI and local scans will remain incomplete/)
     assert.match(add.stdout ?? "", /Optional: install the CLI with npm i -g @coderabbit\/cli/)
-    assert.match(add.stdout ?? "", /BeerEngineer will skip CodeRabbit review for the workspace/)
+    assert.match(add.stdout ?? "", /beerengineer_ will skip CodeRabbit review for the workspace/)
     assert.ok(existsSync(join(workspacePath, ".beerengineer", "workspace.json")))
     assert.equal(existsSync(join(workspacePath, "sonar-project.properties")), false)
 
@@ -1267,7 +1267,7 @@ test("beerengineer bin shim runs the TypeScript entrypoint", () => {
   })
 
   assert.equal(result.status, 0)
-  assert.match(`${result.stdout ?? ""}${result.stderr ?? ""}`, /BeerEngineer2 CLI/)
+  assert.match(`${result.stdout ?? ""}${result.stderr ?? ""}`, /beerengineer_ CLI/)
 })
 
 test("help output explains that user prompts are limited to intake and blockers", async () => {

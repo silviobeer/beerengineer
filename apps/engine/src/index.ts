@@ -285,7 +285,7 @@ export function parseArgs(argv: string[]): Command {
 function printHelp(): void {
   const lines = [
     "",
-    "  BeerEngineer2 CLI",
+    "  beerengineer_ CLI",
     "",
     "  Usage:",
     "    beerengineer                                         Run the default workflow",
@@ -321,7 +321,7 @@ function printHelp(): void {
     "                                                         Unregister a workspace (--purge also rm -rf's root; --yes skips confirm)",
     "    beerengineer workspace open <key>                    Print the workspace root path",
     "    beerengineer workspace backfill [--json]             Write missing .beerengineer/workspace.json files",
-    "    beerengineer workspace gc-worktrees <key> [--json]   Remove orphaned BeerEngineer story worktrees",
+    "    beerengineer workspace gc-worktrees <key> [--json]   Remove orphaned beerengineer_ story worktrees",
     "    beerengineer item get <id|code> [--workspace <key>]  Show one item",
     "    beerengineer item open <id|code> [--workspace <key>] Open one item in the UI",
     "    beerengineer item preview <id|code> [--start|--stop] [--open] [--workspace <key>] [--json]",
@@ -351,7 +351,7 @@ function printHelp(): void {
     "    promote_to_base  cancel_promotion  resume_run  mark_done",
     "",
     "  Resume flags (for --action resume_run on a blocked run):",
-    "    --remediation-summary <text>   Required. What you fixed outside BeerEngineer2.",
+    "    --remediation-summary <text>   Required. What you fixed outside beerengineer_.",
     "    --branch <name>                Optional. Branch that holds the fix.",
     "    --commit <sha>                 Optional. Fix commit SHA.",
     "    --notes <text>                 Optional. Extra review notes.",
@@ -780,7 +780,7 @@ async function runWorkspaceAddCommand(cmd: Extract<Command, { kind: "workspace-a
       console.log("    7. Keep durable analysis settings in the SonarQube Cloud UI when possible.")
       console.log("    8. If the project is on the US region, set sonar.region=us for scanner runs.")
       if (result.sonarMcpSnippet) {
-        console.log("    9. Optional: add Sonar MCP to your harness config:")
+        console.log("    9. Optional: add Sonar MCP to your Codex config (~/.codex/config.toml):")
         console.log(`\n${indentBlock(result.sonarMcpSnippet, 6)}`)
       }
     } else if (result.ghCreateCommand) {
@@ -790,7 +790,7 @@ async function runWorkspaceAddCommand(cmd: Extract<Command, { kind: "workspace-a
       console.log("    CodeRabbit")
       console.log("    - Optional: install the CLI with npm i -g @coderabbit/cli")
       console.log("    - Authenticate it per the CodeRabbit CLI docs before enabling real review runs")
-      console.log("    - If it is not configured, BeerEngineer will skip CodeRabbit review for the workspace")
+      console.log("    - If it is not configured, beerengineer_ will skip CodeRabbit review for the workspace")
     }
     if (result.ghCreateCommand) console.log(`    Optional remote: ${result.ghCreateCommand}`)
     console.log(`    Open: beerengineer workspace open ${result.workspace.key}`)
@@ -2051,9 +2051,9 @@ function printDirtyRepoPreflight(rootPath: string): number {
   console.error(`  Changed files: ${total} (${inspection.trackedCount} tracked, ${inspection.untrackedCount} untracked)`)
   if (onBaseBranch) {
     console.error("  Strategy violation: uncommitted work is sitting on main/master.")
-    console.error("  BeerEngineer expects main/master to stay clean; item work must happen on item/* branches.")
+    console.error("  beerengineer_ expects main/master to stay clean; item work must happen on item/* branches.")
   } else {
-    console.error("  BeerEngineer requires a clean repo before starting a new item branch.")
+    console.error("  beerengineer_ requires a clean repo before starting a new item branch.")
   }
   console.error("  Next steps: git status")
   console.error("             git add -A && git commit -m \"...\"")

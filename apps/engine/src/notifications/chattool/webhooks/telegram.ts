@@ -76,7 +76,7 @@ export async function handleTelegramChatToolWebhook(
     await softReply(
       resolved.botToken,
       update.channelRef,
-      "Reply to a BeerEngineer prompt to answer it. Commands are not supported yet.",
+      "Reply to a beerengineer_ prompt to answer it. Commands are not supported yet.",
       deps.send,
     )
     return plainOk(res)
@@ -91,7 +91,7 @@ export async function handleTelegramChatToolWebhook(
         ? "Empty answers are ignored."
         : result.error === "run_not_found"
         ? "That run no longer exists."
-        : "Reply to a BeerEngineer prompt to answer it."
+        : "Reply to a beerengineer_ prompt to answer it."
     await softReply(resolved.botToken, update.channelRef, message, deps.send)
     return plainOk(res)
   }
@@ -100,7 +100,7 @@ export async function handleTelegramChatToolWebhook(
     await softReply(
       resolved.botToken,
       update.channelRef,
-      "Reply to a BeerEngineer prompt to answer it.",
+      "Reply to a beerengineer_ prompt to answer it.",
       deps.send,
     )
     return plainOk(res)

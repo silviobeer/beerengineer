@@ -608,7 +608,7 @@ export function prepareRun(
         workspaceId: repos.upsertWorkspace({
           key: opts.workspaceKey ?? "default",
           name: opts.workspaceName ?? "Default Workspace",
-          description: "BeerEngineer2 engine workspace"
+          description: "beerengineer_ engine workspace"
         }).id,
         title: item.title,
         description: item.description

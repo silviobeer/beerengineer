@@ -1,4 +1,4 @@
-# API for Designers — BeerEngineer Engine
+# API for Designers — beerengineer_ Engine
 
 A quick orientation for UI/UX designers joining the UI rebuild. You don't
 need to read code. This document shows **what the Engine exposes**, grouped

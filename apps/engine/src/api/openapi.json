@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "BeerEngineer Engine API",
+    "title": "beerengineer_ Engine API",
     "version": "0.1.0",
     "description": "HTTP surface for `@beerengineer/engine`. Canonical contract for every\nclient \u2014 CLI (remote mode), UI (when one exists), future chattool\nwebhooks. Hand-maintained; companion to `spec/api-contract.md`.\n\n### Authentication\n\nMutating requests (POST, DELETE, PUT, PATCH) must send\n`x-beerengineer-token: <api_token>`. The token is generated at engine\nstartup when `BEERENGINEER_API_TOKEN` is not set, and written to\n`$XDG_STATE_HOME/beerengineer/api.token` (default\n`~/.local/state/beerengineer/api.token`).\n\nGET requests (including SSE streams) do not require the header \u2014 only the\nin-scope UI origin (configured via `BEERENGINEER_UI_ORIGIN`) can talk to\nthe engine in browsers thanks to CORS.\n\nInbound webhooks under `/webhooks/*` authenticate with channel-specific\nsecrets (e.g. `x-telegram-bot-api-secret-token`) and bypass the CSRF gate.\n"
   },

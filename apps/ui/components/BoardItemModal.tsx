@@ -97,7 +97,7 @@ export function BoardItemModal({ card, workspaceKey, onClose }: BoardItemModalPr
   const isPreviewLive = preview?.running || preview?.status === "already_running";
   const previewErrorMessage =
     previewError === "preview_running_but_unmanaged"
-      ? "Preview is running but was not started by BeerEngineer. Stop it manually in that worktree."
+      ? "Preview is running but was not started by beerengineer_. Stop it manually in that worktree."
       : previewError;
 
   const handleStartPreview = () => {

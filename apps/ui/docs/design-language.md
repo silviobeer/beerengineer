@@ -1,4 +1,4 @@
-# Design Language — BeerEngineer UI
+# Design Language — beerengineer_ UI
 
 > Techy-clean operator console: warm-dark petrol surfaces, cream type, gold for attention, lime for live highlights.
 

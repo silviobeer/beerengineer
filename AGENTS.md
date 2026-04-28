@@ -22,7 +22,7 @@
 
 ## What this repo is
 
-BeerEngineer2 is a local tool that drives AI coding assistants (Claude
+beerengineer_ is a local tool that drives AI coding assistants (Claude
 Code, Codex, OpenCode) through a structured product-development pipeline
 — brainstorm → requirements → architecture → planning → execution →
 review → QA → docs — and offers a web UI to watch and steer it. Runs

@@ -1,6 +1,6 @@
 # Changelog
 
-All notable user-facing changes to BeerEngineer2 are recorded here.
+All notable user-facing changes to beerengineer_ are recorded here.
 
 ## Unreleased
 

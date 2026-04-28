@@ -152,9 +152,9 @@ When changing CLI UX, verify:
 - open prompts resolve to real question text
 - answer flow proves forward motion after submit
 
-## BeerEngineer-specific defaults
+## beerengineer_-specific defaults
 
-For BeerEngineer-style workflow CLIs, favor:
+For beerengineer_-style workflow CLIs, favor:
 
 - workspace-scoped navigation
 - not-done items first

@@ -82,7 +82,7 @@ function summarizeCodexEvent(event: CodexStreamEvent, state: CodexStreamState): 
  * call inside the sandbox is silently rejected. The model then reports
  * "execution environment rejected every local command invocation" and
  * cannot inspect the repo or run tests. Setting this env var trades the
- * OS-level sandbox for trust in the host (BeerEngineer2 already runs codex
+ * OS-level sandbox for trust in the host (beerengineer_ already runs codex
  * in the registered worktree the operator owns). `no-tools` policy still
  * pins to `read-only` since it never needs shell access at all.
  *

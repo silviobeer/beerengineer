@@ -1,8 +1,8 @@
 # App Setup
 
-BeerEngineer now has a dedicated app-level setup flow for machine readiness.
+beerengineer_ now has a dedicated app-level setup flow for machine readiness.
 
-This setup model assumes you installed BeerEngineer from a GitHub checkout of
+This setup model assumes you installed beerengineer_ from a GitHub checkout of
 this repo and are running the engine locally from that install.
 
 > **Audience:** operators / developers running the engine, not first-time
@@ -30,11 +30,11 @@ npm exec --workspace=@beerengineer/engine beerengineer -- notifications test tel
 - `beerengineer update --check` is now available as a read-only GitHub release check. It does not install or restart anything; it reports the current version, latest release, DB-path source, and managed install root.
 - `GET /update/status` now also reports a readiness summary for engine startup, DB access, GitHub updater access, the configured LLM auth path, and Sonar when any registered workspace has Sonar enabled.
 - Managed update completion now distinguishes a healthy install from a healthy-but-partially-misconfigured one: after restart the detached switcher probes `GET /update/status`, and `GET /update/history` may therefore end in `succeeded-with-warning` when the new engine is up but a configured non-core integration auth check is failing.
-- Successful restart now means more than `/health = 200`: the detached switcher also requires `GET /update/status` to succeed, confirm the expected target version, and report core readiness (`engineStarted` and `dbOk`) as `ok`. If that check fails, BeerEngineer treats it as a core restart failure and rolls back instead of reporting a warning-only success.
-- If you want a stricter integrity gate than shape validation + audit logging, export `BEERENGINEER_UPDATE_EXPECTED_TARBALL_SHA256=<hex>` before `beerengineer update` or `beerengineer update --dry-run`. BeerEngineer will fail closed if the downloaded GitHub tarball hash differs.
+- Successful restart now means more than `/health = 200`: the detached switcher also requires `GET /update/status` to succeed, confirm the expected target version, and report core readiness (`engineStarted` and `dbOk`) as `ok`. If that check fails, beerengineer_ treats it as a core restart failure and rolls back instead of reporting a warning-only success.
+- If you want a stricter integrity gate than shape validation + audit logging, export `BEERENGINEER_UPDATE_EXPECTED_TARBALL_SHA256=<hex>` before `beerengineer update` or `beerengineer update --dry-run`. beerengineer_ will fail closed if the downloaded GitHub tarball hash differs.
 - Managed tarball downloads now also fail closed if a redirect leaves the trusted host set for the selected release source. In normal GitHub release flow that still allows the initial tarball host and GitHub's `codeload.github.com` redirect target, and the final tarball URL is stored in update-attempt metadata for audit.
 - `beerengineer update --dry-run` now exercises the safe preflight path: it validates idle state, acquires/releases the update lock, resolves the target GitHub release (latest by default, or `--version <tag>`), downloads the GitHub source tarball, unpacks and validates the release shape, runs `npm install` in a temporary staged copy under the managed install root, checks managed update directories, and confirms the switcher-script location is writable. It still stops before shutdown or install swap, so successful dry-runs are recorded as `aborted-dry-run`.
-- `beerengineer update` now performs the same release staging work as the dry-run, keeps the staged tree, writes a prepared switcher script/payload under `<dataDir>/install/.switcher/`, and records a queued apply attempt in SQLite. When the active engine is already running from the managed `install/current` tree, the engine then marks the attempt `in-flight`, shuts down cleanly, lets the detached switcher create the DB backup, flips `install/current`, restarts, and rolls back automatically if the restarted engine never becomes healthy. When you're still running from an unmanaged dev checkout, BeerEngineer leaves the prepared attempt queued instead of attempting a broken swap.
+- `beerengineer update` now performs the same release staging work as the dry-run, keeps the staged tree, writes a prepared switcher script/payload under `<dataDir>/install/.switcher/`, and records a queued apply attempt in SQLite. When the active engine is already running from the managed `install/current` tree, the engine then marks the attempt `in-flight`, shuts down cleanly, lets the detached switcher create the DB backup, flips `install/current`, restarts, and rolls back automatically if the restarted engine never becomes healthy. When you're still running from an unmanaged dev checkout, beerengineer_ leaves the prepared attempt queued instead of attempting a broken swap.
 - `beerengineer update --rollback` is intentionally reserved, not implemented. It returns `post-migration-rollback-unsupported`, matching `POST /update/rollback`, because successful-start downgrades still require restoring the pre-update SQLite backup manually.
 - `POST /update/rollback` is intentionally not a real rollback flow yet; it returns `409 post-migration-rollback-unsupported`. Manual rollback still means restoring the pre-update SQLite backup yourself.
 - `beerengineer start` is now the stable engine entrypoint for managed restart flows. It launches the local HTTP API server the same way the future updater switcher will.
@@ -43,7 +43,7 @@ Operator prerequisites for a GitHub-based local install:
 
 - `node` and `npm` must both be on `PATH`
 - Git is required
-- `gh` is recommended, not mandatory; BeerEngineer can still run without it
+- `gh` is recommended, not mandatory; beerengineer_ can still run without it
 
 Known group ids: `core`, `vcs.github`, `llm.anthropic`, `llm.openai`, `llm.opencode`, `browser-agent`, `review`, `notifications`.
 
@@ -152,15 +152,15 @@ Supported env overrides:
   shared/untrusted hosts; it removes the OS-level guardrail in exchange for
   trust in the registered worktree.
 - `BEERENGINEER_WORKTREE_PORT_POOL` — preview-port range for managed
-  worktrees, default `3200-3399`. BeerEngineer assigns one port per item or
+  worktrees, default `3200-3399`. beerengineer_ assigns one port per item or
   story worktree and injects `PORT`, `BEERENGINEER_PREVIEW_PORT`,
   `BEERENGINEER_PREVIEW_HOST` (default `127.0.0.1`), and
   `BEERENGINEER_PREVIEW_URL=http://<BEERENGINEER_PREVIEW_HOST>:<port>` into
   spawned commands.
 - `<workspaceRoot>/.beerengineer/workspace.json -> preview.command` — optional
-  shell command BeerEngineer should run to start the operator-facing local
+  shell command beerengineer_ should run to start the operator-facing local
   preview from an item worktree. `preview.cwd` may point at a relative
-  subdirectory inside that worktree. When omitted, BeerEngineer falls back to
+  subdirectory inside that worktree. When omitted, beerengineer_ falls back to
   a root `package.json` `scripts.dev` command if one exists.
 
 ## Merge gate
@@ -185,7 +185,7 @@ preview <id|code> --start` or `POST /items/:id/preview/start`.
 
 ## Storage model
 
-BeerEngineer keeps app-level state and workspace-level state separate:
+beerengineer_ keeps app-level state and workspace-level state separate:
 
 - app config lives under the OS-specific config dir from `env-paths`
 - the SQLite DB lives under the OS-specific data dir from `env-paths`

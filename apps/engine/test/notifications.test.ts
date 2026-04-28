@@ -130,7 +130,7 @@ test("dispatcher maps canonical events into telegram messages", async () => {
 
   assert.deepEqual(result, { delivered: true, eventType: "run_blocked" })
   assert.equal(sent.length, 1)
-  assert.match(sent[0].text, /BeerEngineer run blocked/)
+  assert.match(sent[0].text, /beerengineer_ run blocked/)
   assert.match(sent[0].text, /Open: http:\/\/100.64.0.7:3100\/runs\/run-1/)
   assert.doesNotMatch(sent[0].text, /sk-abcdefghijklmnopqrstuvwxyz012345/)
   const delivery = repos.getNotificationDelivery("run-1:run_blocked:story:2:US-01")
@@ -179,7 +179,7 @@ test("dispatcher maps phase_completed into telegram messages", async () => {
 
   assert.deepEqual(result, { delivered: true, eventType: "phase_completed" })
   assert.equal(sent.length, 1)
-  assert.match(sent[0].text, /BeerEngineer stage completed/)
+  assert.match(sent[0].text, /beerengineer_ stage completed/)
   assert.match(sent[0].text, /Stage: requirements/)
 
   delete process.env.TELEGRAM_BOT_TOKEN
@@ -390,7 +390,7 @@ test("telegram test does not write a notification delivery row for synthetic run
 
   assert.deepEqual(result, { ok: true })
   assert.equal(sent.length, 1)
-  assert.match(sent[0].text, /BeerEngineer test notification/)
+  assert.match(sent[0].text, /beerengineer_ test notification/)
   assert.equal(repos.listNotificationDeliveries().length, 0)
 
   delete process.env.TELEGRAM_BOT_TOKEN

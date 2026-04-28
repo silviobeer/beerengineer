@@ -320,7 +320,7 @@ test("webhook replies with help text when the reply_to message is unknown", asyn
 
   assert.equal(status(), 200)
   assert.equal(softReplies.length, 1)
-  assert.match(softReplies[0], /Reply to a BeerEngineer prompt/)
+  assert.match(softReplies[0], /Reply to a beerengineer_ prompt/)
 
   delete process.env.TELEGRAM_BOT_TOKEN
   delete process.env.TELEGRAM_WEBHOOK_SECRET

@@ -54,7 +54,7 @@ export async function sendTelegramTestNotification(
   const links = createExternalLinkBuilder(resolved.config.publicBaseUrl)
   const runId = `telegram-test-${Date.now()}`
   const message = [
-    "BeerEngineer test notification",
+    "beerengineer_ test notification",
     `Run: ${runId}`,
     `Open: ${links.run(runId)}`,
   ].join("\n")

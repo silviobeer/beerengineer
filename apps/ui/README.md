@@ -1,6 +1,6 @@
 # @beerengineer/ui
 
-> Next.js 15 operator console for BeerEngineer. Watch and steer pipeline runs;
+> Next.js 15 operator console for beerengineer_. Watch and steer pipeline runs;
 > chat with the agent; trigger stage actions. Talks to the engine over HTTP +
 > SSE only — never imports engine code.
 

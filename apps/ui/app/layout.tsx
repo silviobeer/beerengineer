@@ -3,8 +3,8 @@ import { inter, jetbrainsMono, spaceGrotesk } from "@/lib/fonts";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "BeerEngineer",
-  description: "BeerEngineer UI",
+  title: "beerengineer_",
+  description: "beerengineer_ UI",
 };
 
 export default function RootLayout({

@@ -235,7 +235,7 @@ Not present (intentionally): `requiresResponse`, `status`, `source`, `meta`, `ac
   with `PORT`, `BEERENGINEER_PREVIEW_PORT`, `BEERENGINEER_PREVIEW_HOST`, and
   `BEERENGINEER_PREVIEW_URL` injected into the child environment.
 - `POST /items/:id/preview/stop` stops a preview process previously started by
-  BeerEngineer for that item worktree.
+  beerengineer_ for that item worktree.
 
 Computed as: last `question` entry in `entries` with no matching `answer` (i.e. no later entry with `answerTo === this.promptId`). `null` if none.
 

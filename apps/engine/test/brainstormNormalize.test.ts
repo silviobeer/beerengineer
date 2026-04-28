@@ -58,7 +58,7 @@ function makeMalformedArtifact(): BrainstormArtifact {
   // Cast via unknown to simulate raw LLM JSON where the field is a string.
   return {
     concept: {
-      summary: "BeerEngineer2 UI rebuild",
+      summary: "beerengineer_ UI rebuild",
       problem: "The existing UI is broken and needs a full rebuild.",
       users: "Frontend developers; end users of the product" as unknown as string[],
       constraints: "Hard boundary: apps/ui imports nothing from apps/engine; Must run on Node 20" as unknown as string[],
@@ -71,7 +71,7 @@ function makeMalformedArtifact(): BrainstormArtifact {
         description: "Full UI rebuild",
         hasUi: true,
         concept: {
-          summary: "BeerEngineer2 UI rebuild",
+          summary: "beerengineer_ UI rebuild",
           problem: "The existing UI is broken.",
           users: "Frontend developers" as unknown as string[],
           constraints: "Hard boundary: apps/ui imports nothing from apps/engine" as unknown as string[],

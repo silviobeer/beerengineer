@@ -1,7 +1,7 @@
 # UI — Features
 
 **Last updated:** 2026-04-27
-**Scope:** Operator console for BeerEngineer. Watch & steer pipeline runs.
+**Scope:** Operator console for beerengineer_. Watch & steer pipeline runs.
 
 The UI is one Next.js app with three primary surfaces: the **workspace
 topbar**, the **board**, and the **item detail modal**. Everything else is

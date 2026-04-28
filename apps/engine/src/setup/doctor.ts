@@ -115,7 +115,7 @@ async function probeCodexAuth(): Promise<CheckResult> {
     "missing",
     "Codex is not logged in and OPENAI_API_KEY is not set",
     {
-      remedy: { hint: "Run `codex login`, or export OPENAI_API_KEY before running BeerEngineer." },
+      remedy: { hint: "Run `codex login`, or export OPENAI_API_KEY before running beerengineer_." },
     },
   )
 }
@@ -129,7 +129,7 @@ async function probeClaudeAuth(): Promise<CheckResult> {
       "missing",
       "Claude Code is not logged in and ANTHROPIC_API_KEY is not set",
       {
-        remedy: { hint: "Run `claude`, complete `/login`, or export ANTHROPIC_API_KEY before running BeerEngineer." },
+        remedy: { hint: "Run `claude`, complete `/login`, or export ANTHROPIC_API_KEY before running beerengineer_." },
       },
     )
   }
@@ -386,7 +386,7 @@ async function runLlmChecks(provider: AppConfig["llm"]["provider"], config: AppC
       `${def.label} auth`,
       present ? "ok" : "missing",
       present ? `${def.apiKeyRef} is set` : `${def.apiKeyRef} is not set`,
-      present ? {} : { remedy: { hint: `Export ${def.apiKeyRef} before running BeerEngineer.` } }
+      present ? {} : { remedy: { hint: `Export ${def.apiKeyRef} before running beerengineer_.` } }
     ),
   ]
 }
@@ -553,7 +553,7 @@ async function runNotificationChecks(config: AppConfig | null): Promise<CheckRes
     "Telegram default chat id",
     chatId ? "ok" : "missing",
     chatId ? chatId : "Missing notifications.telegram.defaultChatId",
-    chatId ? {} : { remedy: { hint: "Record the chat id that should receive BeerEngineer notifications." } },
+    chatId ? {} : { remedy: { hint: "Record the chat id that should receive beerengineer_ notifications." } },
   ))
 
   const inboundEnabled = config.notifications?.telegram?.inbound?.enabled === true
@@ -796,7 +796,7 @@ async function maybeConfigureTelegramInteractive(configPath: string, config: App
     console.log("")
     console.log("  Telegram can deliver outbound notifications and optional inbound prompt replies.")
     console.log("  Outbound runs on messaging levels: L2 milestones, L1 operational detail, L0 debug detail.")
-    console.log("  Inbound is limited to replying to BeerEngineer prompts when enabled.")
+    console.log("  Inbound is limited to replying to beerengineer_ prompts when enabled.")
     console.log("")
     console.log("  Setup steps:")
     console.log("    1. Open Telegram and talk to @BotFather.")

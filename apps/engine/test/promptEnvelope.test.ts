@@ -38,7 +38,7 @@ test("review prompt preserves the pass revise block contract and falls back to t
     request: { artifact: { ok: true }, state: { loop: 1 } },
   })
 
-  assert.match(fallbackPrompt, /You are a read-only reviewer inside the BeerEngineer workflow engine\./)
+  assert.match(fallbackPrompt, /You are a read-only reviewer inside the beerengineer_ workflow engine\./)
 })
 
 test("execution prompt loads the external worker prompt and keeps the coder contract inline", () => {

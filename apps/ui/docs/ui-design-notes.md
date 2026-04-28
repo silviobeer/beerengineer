@@ -1,4 +1,4 @@
-# BeerEngineer UI — design notes
+# beerengineer_ UI — design notes
 
 **Status (2026-04-24):** This is *design intent* for the UI rebuild. The
 first UI existed 2026-04-22 → 2026-04-24 in `apps/ui/` and was then torn
@@ -162,7 +162,7 @@ building it?*
 
 - **Workspace repo** (in git): specs, PRDs, architecture docs, generated
   code, test fixtures — human-reviewable outputs that belong to the product.
-- **BeerEngineer data dir** (not in any git): run transcripts, SSE events,
+- **beerengineer_ data dir** (not in any git): run transcripts, SSE events,
   stage timings, prompt histories, attempt blobs, preview snapshots, plus
   design-prep artifacts (wireframe HTMLs, design-preview HTMLs).
 - Preview URLs / screenshots → engine data dir, referenced by URL in PR

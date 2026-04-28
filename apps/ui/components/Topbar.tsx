@@ -11,10 +11,10 @@ export function Topbar() {
       <div className="flex items-center gap-3 min-w-0 max-w-full">
         <span
           aria-hidden="true"
-          className="hidden sm:inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-[0.18em] text-zinc-400 select-none"
+          className="hidden sm:inline-flex items-center gap-1.5 font-mono text-[11px] tracking-[0.18em] text-zinc-400 select-none"
         >
           <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-400" />
-          beerengineer
+          beerengineer_
         </span>
         <WorkspaceSwitcher />
       </div>

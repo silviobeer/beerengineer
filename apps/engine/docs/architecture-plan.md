@@ -1,4 +1,4 @@
-# BeerEngineer — Architecture Plan
+# beerengineer_ — Architecture Plan
 
 > **Status: ✓ shipped (2026-04-27).** All four phases of this plan landed.
 > The current architecture is described in
