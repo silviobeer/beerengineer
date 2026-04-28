@@ -545,6 +545,10 @@ function verifySetupContract(
 ): string[] {
   const failures: string[] = []
   for (const expectedFile of contract.expectedFiles) {
+    // Skip prose entries the planner sometimes emits (e.g. "test runner
+    // config file"); only literal path-shaped strings are checked. A real
+    // filename has no spaces; directory entries end with "/".
+    if (/\s/.test(expectedFile)) continue
     if (!existsSync(join(workspaceRoot, expectedFile))) {
       failures.push(`missing expected file: ${expectedFile}`)
     }
@@ -569,10 +573,17 @@ function verifySetupContract(
     }
   }
 
+  // postChecks are descriptive contract assertions, not shell commands —
+  // the planner emits prose like "Project dependencies install locally".
+  // Shape-verification (expectedFiles + requiredScripts) is the executable
+  // gate; postChecks are passed to the coder/reviewer as context only.
   for (const postCheck of contract.postChecks) {
-    const run = runShell(postCheck, workspaceRoot)
+    const trimmed = postCheck.trim()
+    if (!trimmed.startsWith("$ ") && !trimmed.startsWith("sh: ")) continue
+    const cmd = trimmed.replace(/^\$\s+|^sh:\s+/, "")
+    const run = runShell(cmd, workspaceRoot)
     if (!run.ok) {
-      failures.push(`post-check failed: ${postCheck}${run.output ? `\n${run.output}` : ""}`)
+      failures.push(`post-check failed: ${cmd}${run.output ? `\n${run.output}` : ""}`)
     }
   }
   return failures
