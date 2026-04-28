@@ -231,7 +231,7 @@ async function executeWave(
         git.ensureStoryBranch(ctx.project.id, wave.number, resolved.id)
       }
       result = await implementStory(ctx, wave, resolved, screenOwners, {
-        rerunTestWriter: resume != null && resume.storyId === story.id ? Boolean(resume.rerunTestWriter) : false,
+        rerunTestWriter: resume?.storyId === story.id ? Boolean(resume.rerunTestWriter) : false,
         worktreeRoot: storyWorktreeRoot,
       }, llm)
       // Gate real-git merge on the same condition as the simulated merge
@@ -574,7 +574,8 @@ function verifySetupContract(
         }
         const run = runShell(`npm run ${script}`, workspaceRoot)
         if (!run.ok) {
-          failures.push(`script failed: npm run ${script}${run.output ? `\n${run.output}` : ""}`)
+          const outputSuffix = run.output ? `\n${run.output}` : ""
+          failures.push(`script failed: npm run ${script}${outputSuffix}`)
         }
       }
     } else {
@@ -592,7 +593,8 @@ function verifySetupContract(
     const cmd = trimmed.replace(/^\$\s+|^sh:\s+/, "")
     const run = runShell(cmd, workspaceRoot)
     if (!run.ok) {
-      failures.push(`post-check failed: ${cmd}${run.output ? `\n${run.output}` : ""}`)
+      const outputSuffix = run.output ? `\n${run.output}` : ""
+      failures.push(`post-check failed: ${cmd}${outputSuffix}`)
     }
   }
   return failures

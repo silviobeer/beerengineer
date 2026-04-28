@@ -35,7 +35,7 @@ export class MockEventSource {
     MockEventSource.instances = [];
   }
   static last(): MockEventSource | undefined {
-    return MockEventSource.instances[MockEventSource.instances.length - 1];
+    return MockEventSource.instances.at(-1);
   }
 }
 

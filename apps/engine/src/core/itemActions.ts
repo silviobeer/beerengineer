@@ -326,7 +326,7 @@ export function createItemActionsService(repos: Repos): ItemActionsService {
     }
 
     const recoverable = repos.latestRecoverableRunForItem(item.id)
-    if (!recoverable || recoverable.recovery_status !== "blocked" || recoverable.recovery_scope_ref !== "merge-gate") {
+    if (recoverable?.recovery_status !== "blocked" || recoverable.recovery_scope_ref !== "merge-gate") {
       return {
         ok: false,
         status: 409,

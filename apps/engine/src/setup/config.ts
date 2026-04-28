@@ -144,10 +144,10 @@ export function validateHarnessProfileShape(input: unknown): HarnessProfile {
   if (input.mode === "opencode") {
     const roles = input.roles
     if (!isObject(roles) || !isObject(roles.coder) || !isObject(roles.reviewer)) {
-      throw new Error("llm.defaultHarnessProfile.roles must define coder and reviewer")
+      throw new TypeError("llm.defaultHarnessProfile.roles must define coder and reviewer")
     }
     if (typeof roles.coder.provider !== "string" || typeof roles.coder.model !== "string" || typeof roles.reviewer.provider !== "string" || typeof roles.reviewer.model !== "string") {
-      throw new Error("opencode roles must define provider and model")
+      throw new TypeError("opencode roles must define provider and model")
     }
     return {
       mode: "opencode",
@@ -161,31 +161,31 @@ export function validateHarnessProfileShape(input: unknown): HarnessProfile {
   if (input.mode === "self") {
     const roles = input.roles
     if (!isObject(roles) || !isObject(roles.coder) || !isObject(roles.reviewer)) {
-      throw new Error("llm.defaultHarnessProfile.roles must define coder and reviewer")
+      throw new TypeError("llm.defaultHarnessProfile.roles must define coder and reviewer")
     }
     const isHarness = (value: unknown): value is "claude" | "codex" | "opencode" =>
       value === "claude" || value === "codex" || value === "opencode"
     const isRuntime = (value: unknown): value is "cli" | "sdk" | undefined =>
       value === undefined || value === "cli" || value === "sdk"
     if (!isHarness(roles.coder.harness) || !isHarness(roles.reviewer.harness)) {
-      throw new Error("self roles must define a valid harness")
+      throw new TypeError("self roles must define a valid harness")
     }
     if (!isRuntime(roles.coder.runtime) || !isRuntime(roles.reviewer.runtime)) {
-      throw new Error('self roles "runtime" must be "cli" or "sdk" when set')
+      throw new TypeError('self roles "runtime" must be "cli" or "sdk" when set')
     }
     if (typeof roles.coder.provider !== "string" || typeof roles.coder.model !== "string" || typeof roles.reviewer.provider !== "string" || typeof roles.reviewer.model !== "string") {
-      throw new Error("self roles must define provider and model")
+      throw new TypeError("self roles must define provider and model")
     }
     const mergeResolver = isObject(roles["merge-resolver"]) ? roles["merge-resolver"] : undefined
     if (mergeResolver) {
       if (!isHarness(mergeResolver.harness)) {
-        throw new Error("self roles[merge-resolver] must define a valid harness")
+        throw new TypeError("self roles[merge-resolver] must define a valid harness")
       }
       if (!isRuntime(mergeResolver.runtime)) {
-        throw new Error('self roles[merge-resolver] "runtime" must be "cli" or "sdk" when set')
+        throw new TypeError('self roles[merge-resolver] "runtime" must be "cli" or "sdk" when set')
       }
       if (typeof mergeResolver.provider !== "string" || typeof mergeResolver.model !== "string") {
-        throw new Error("self roles[merge-resolver] must define provider and model")
+        throw new TypeError("self roles[merge-resolver] must define provider and model")
       }
     }
     return {
@@ -217,23 +217,23 @@ export function validateHarnessProfileShape(input: unknown): HarnessProfile {
     }
   }
 
-  throw new Error("llm.defaultHarnessProfile.mode is invalid")
+  throw new TypeError("llm.defaultHarnessProfile.mode is invalid")
 }
 
 function validateConfig(input: unknown): AppConfig {
-  if (!input || typeof input !== "object") throw new Error("config must be an object")
+  if (!input || typeof input !== "object") throw new TypeError("config must be an object")
   const config = input as Partial<AppConfig>
   if (config.schemaVersion !== CONFIG_SCHEMA_VERSION) {
-    throw new Error(`schemaVersion must be ${CONFIG_SCHEMA_VERSION}`)
+    throw new TypeError(`schemaVersion must be ${CONFIG_SCHEMA_VERSION}`)
   }
   if (typeof config.dataDir !== "string" || config.dataDir.length === 0) {
-    throw new Error("dataDir must be a non-empty string")
+    throw new TypeError("dataDir must be a non-empty string")
   }
   if (!Array.isArray(config.allowedRoots) || config.allowedRoots.some(root => typeof root !== "string" || root.length === 0)) {
-    throw new Error("allowedRoots must be a string array")
+    throw new TypeError("allowedRoots must be a string array")
   }
   if (typeof config.enginePort !== "number" || !Number.isInteger(config.enginePort) || config.enginePort <= 0) {
-    throw new Error("enginePort must be a positive integer")
+    throw new TypeError("enginePort must be a positive integer")
   }
   let publicBaseUrl: string | undefined
   if (config.publicBaseUrl === undefined) {
@@ -241,23 +241,23 @@ function validateConfig(input: unknown): AppConfig {
   } else if (typeof config.publicBaseUrl === "string") {
     publicBaseUrl = normalizePublicBaseUrl(config.publicBaseUrl)
   } else {
-    throw new Error("publicBaseUrl must be a string when set")
+    throw new TypeError("publicBaseUrl must be a string when set")
   }
-  if (!config.llm || typeof config.llm !== "object") throw new Error("llm config is required")
-  if (!parseProvider(config.llm.provider)) throw new Error("llm.provider must be anthropic, openai, or opencode")
+  if (!config.llm || typeof config.llm !== "object") throw new TypeError("llm config is required")
+  if (!parseProvider(config.llm.provider)) throw new TypeError("llm.provider must be anthropic, openai, or opencode")
   if (typeof config.llm.model !== "string" || config.llm.model.length === 0) {
-    throw new Error("llm.model must be a non-empty string")
+    throw new TypeError("llm.model must be a non-empty string")
   }
   if (typeof config.llm.apiKeyRef !== "string" || config.llm.apiKeyRef.length === 0) {
-    throw new Error("llm.apiKeyRef must be a non-empty string")
+    throw new TypeError("llm.apiKeyRef must be a non-empty string")
   }
   const defaultHarnessProfile = validateHarnessProfileShape(config.llm.defaultHarnessProfile)
   if (config.llm.defaultSonarOrganization !== undefined && typeof config.llm.defaultSonarOrganization !== "string") {
-    throw new Error("llm.defaultSonarOrganization must be a string when set")
+    throw new TypeError("llm.defaultSonarOrganization must be a string when set")
   }
   const telegram = config.notifications?.telegram
   if (telegram !== undefined && !isObject(telegram)) {
-    throw new Error("notifications.telegram must be an object when set")
+    throw new TypeError("notifications.telegram must be an object when set")
   }
   let telegramEnabled: boolean | undefined
   if (telegram?.enabled === undefined) {
@@ -265,7 +265,7 @@ function validateConfig(input: unknown): AppConfig {
   } else if (typeof telegram.enabled === "boolean") {
     telegramEnabled = telegram.enabled
   } else {
-    throw new Error("notifications.telegram.enabled must be a boolean when set")
+    throw new TypeError("notifications.telegram.enabled must be a boolean when set")
   }
   let telegramBotTokenEnv: string | undefined
   if (telegram?.botTokenEnv === undefined) {
@@ -273,7 +273,7 @@ function validateConfig(input: unknown): AppConfig {
   } else {
     telegramBotTokenEnv = normalizeOptionalString(telegram.botTokenEnv)
     if (!telegramBotTokenEnv) {
-      throw new Error("notifications.telegram.botTokenEnv must be a non-empty string when set")
+      throw new TypeError("notifications.telegram.botTokenEnv must be a non-empty string when set")
     }
   }
   let telegramDefaultChatId: string | undefined
@@ -282,7 +282,7 @@ function validateConfig(input: unknown): AppConfig {
   } else {
     telegramDefaultChatId = normalizeOptionalString(telegram.defaultChatId)
     if (!telegramDefaultChatId) {
-      throw new Error("notifications.telegram.defaultChatId must be a non-empty string when set")
+      throw new TypeError("notifications.telegram.defaultChatId must be a non-empty string when set")
     }
   }
   let telegramLevel: 0 | 1 | 2 | undefined
@@ -291,11 +291,11 @@ function validateConfig(input: unknown): AppConfig {
   } else if (telegram.level === 0 || telegram.level === 1 || telegram.level === 2) {
     telegramLevel = telegram.level
   } else {
-    throw new Error("notifications.telegram.level must be 0, 1, or 2 when set")
+    throw new TypeError("notifications.telegram.level must be 0, 1, or 2 when set")
   }
   const telegramInbound = telegram?.inbound
   if (telegramInbound !== undefined && !isObject(telegramInbound)) {
-    throw new Error("notifications.telegram.inbound must be an object when set")
+    throw new TypeError("notifications.telegram.inbound must be an object when set")
   }
   let telegramInboundEnabled: boolean | undefined
   if (telegramInbound?.enabled === undefined) {
@@ -303,7 +303,7 @@ function validateConfig(input: unknown): AppConfig {
   } else if (typeof telegramInbound.enabled === "boolean") {
     telegramInboundEnabled = telegramInbound.enabled
   } else {
-    throw new Error("notifications.telegram.inbound.enabled must be a boolean when set")
+    throw new TypeError("notifications.telegram.inbound.enabled must be a boolean when set")
   }
   let telegramWebhookSecretEnv: string | undefined
   if (telegramInbound?.webhookSecretEnv === undefined) {
@@ -311,7 +311,7 @@ function validateConfig(input: unknown): AppConfig {
   } else {
     telegramWebhookSecretEnv = normalizeOptionalString(telegramInbound.webhookSecretEnv)
     if (!telegramWebhookSecretEnv) {
-      throw new Error("notifications.telegram.inbound.webhookSecretEnv must be a non-empty string when set")
+      throw new TypeError("notifications.telegram.inbound.webhookSecretEnv must be a non-empty string when set")
     }
   }
   return {

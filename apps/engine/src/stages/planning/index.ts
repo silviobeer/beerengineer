@@ -71,7 +71,8 @@ function validatePlanStoryIds(artifact: ImplementationPlanArtifact, prd: PRD): s
           continue
         }
         if (!prdIds.has(id)) {
-          issues.push(`Wave ${wave.number} references story id "${id}"${title ? ` ("${title}")` : ""} that is not in the PRD. Only PRD story ids are allowed.`)
+          const titleSuffix = title ? ` ("${title}")` : ""
+          issues.push(`Wave ${wave.number} references story id "${id}"${titleSuffix} that is not in the PRD. Only PRD story ids are allowed.`)
         }
         if (seen.has(id)) {
           issues.push(`Story id "${id}" appears in more than one wave; each PRD story must appear exactly once.`)

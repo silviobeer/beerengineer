@@ -9,7 +9,8 @@ const DEFAULT_TIMEOUT_MS = 5 * 60_000
 const branchLocks = new Map<string, Promise<void>>()
 
 function basicAuthHeader(token: string): string {
-  return `Basic ${Buffer.from(`${token}:`).toString("base64")}`
+  const credentials = `${token}:`
+  return `Basic ${Buffer.from(credentials).toString("base64")}`
 }
 
 async function fetchJson(url: string, token: string): Promise<unknown> {
@@ -46,7 +47,7 @@ async function readLocalEnvToken(workspaceRoot: string): Promise<string | undefi
     const raw = await readFile(resolve(workspaceRoot, ".env"), "utf8")
     for (const line of raw.split(/\r?\n/)) {
       const match = /^SONAR_TOKEN=(.*)$/.exec(line.trim())
-      if (match?.[1]) return match[1].replace(/^["']|["']$/g, "")
+      if (match?.[1]) return match[1].replaceAll(/^["']|["']$/g, "")
     }
     return undefined
   } catch {

@@ -37,7 +37,7 @@ export function recordAnswer(
   }
 
   const answered = repos.answerPendingPrompt(promptId, answer)
-  if (!answered || answered.answered_at === null) {
+  if (answered?.answered_at === null || !answered) {
     return { ok: false, code: "prompt_not_open" }
   }
 
@@ -283,8 +283,7 @@ export function buildConversation(repos: Repos, runId: string): ConversationResp
     break
   }
 
-  const updatedAt =
-    entries.length > 0 ? entries[entries.length - 1].createdAt : new Date(run.updated_at).toISOString()
+  const updatedAt = entries.at(-1)?.createdAt ?? new Date(run.updated_at).toISOString()
 
   return { runId, updatedAt, entries, openPrompt }
 }

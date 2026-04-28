@@ -50,7 +50,7 @@ function parseAgentOutput(output: string): {
   }
   return {
     findings,
-    summary: summaries.length > 0 ? summaries[summaries.length - 1] : undefined,
+    summary: summaries.at(-1),
   }
 }
 

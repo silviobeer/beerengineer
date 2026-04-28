@@ -2,8 +2,6 @@ import type {
   ArchitectureArtifact,
   PlanSummary,
   PRD,
-  ProjectReviewArtifact,
-  ProjectReviewFinding,
   WaveSummary,
 } from "../../types.js"
 
@@ -29,4 +27,4 @@ export type ProjectReviewState = {
   lastReviewFeedback?: string
 }
 
-export type { ProjectReviewArtifact, ProjectReviewFinding }
+export type { ProjectReviewArtifact, ProjectReviewFinding } from "../../types.js"

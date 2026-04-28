@@ -1,5 +1,5 @@
 import type { ItemDecision } from "../../core/itemDecisions.js"
-import type { ArchitectureArtifact, PRD, WireframeArtifact } from "../../types.js"
+import type { PRD, WireframeArtifact } from "../../types.js"
 import type { CodebaseSnapshot } from "../../types/context.js"
 
 export type ArchitectureState = {
@@ -16,4 +16,4 @@ export type ArchitectureState = {
   lastReviewFeedback?: string
 }
 
-export type { ArchitectureArtifact }
+export type { ArchitectureArtifact } from "../../types.js"

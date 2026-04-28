@@ -621,7 +621,7 @@ async function runOneIteration(
     feedback: string | undefined
   },
 ): Promise<"done" | "tests_failed"> {
-  const { runtimeContext, storyContext, paths, llm } = ctx
+  const { storyContext, paths, llm } = ctx
   const iterationNumber = implementation.iterations.length + 1
   const isRemediation = Boolean(opts.feedback)
   const action = isRemediation

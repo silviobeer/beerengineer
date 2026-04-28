@@ -1,5 +1,5 @@
 import type { ChatMessage } from "../../llm/types.js"
-import type { Concept, Project, ReferenceInput, WireframeArtifact } from "../../types/domain.js"
+import type { Concept, Project, ReferenceInput } from "../../types/domain.js"
 import type { CodebaseSnapshot } from "../../types/context.js"
 
 export type DesignPrepInput = {
@@ -25,4 +25,4 @@ export type VisualCompanionState = {
   codebase?: CodebaseSnapshot
 }
 
-export type { WireframeArtifact }
+export type { WireframeArtifact } from "../../types/domain.js"

@@ -6,7 +6,7 @@ import { isPortListening, readManagedPreviewPid, resolvePreviewLaunchSpec, start
 import { resolveItemPreviewContext } from "../../core/itemPreview.js"
 import { isItemAction, lookupTransition, type ItemActionsService } from "../../core/itemActions.js"
 import { latestCompletedRunForItem } from "../../core/itemWorkspace.js"
-import { resumeRunInProcess, startRunForItem } from "../../core/runService.js"
+import { resumeRunInProcess, startRunForItem, type StartRunAction } from "../../core/runService.js"
 import { layout } from "../../core/workspaceLayout.js"
 import { resolveWorkflowContextForRun } from "../../core/workflowContextResolver.js"
 import { json, readJson } from "../http.js"
@@ -35,6 +35,110 @@ export function handleGetItem(repos: Repos, res: ServerResponse, itemId: string)
   const item = repos.getItem(itemId)
   if (!item) return json(res, 404, { error: "item_not_found", code: "not_found" })
   json(res, 200, item)
+}
+
+function respondInvalidItemAction(res: ServerResponse): void {
+  json(res, 400, {
+    error: "bad_request",
+    code: "bad_request",
+    valid: [
+      "start_brainstorm",
+      "start_visual_companion",
+      "start_frontend_design",
+      "promote_to_requirements",
+      "start_implementation",
+      "rerun_design_prep",
+      "promote_to_base",
+      "cancel_promotion",
+      "mark_done",
+    ],
+  })
+}
+
+function isRunStartingAction(action: string): action is StartRunAction {
+  return action === "start_brainstorm"
+    || action === "start_visual_companion"
+    || action === "start_frontend_design"
+    || action === "start_implementation"
+    || action === "rerun_design_prep"
+}
+
+function respondItemActionFailure(
+  res: ServerResponse,
+  result: Awaited<ReturnType<ItemActionsService["perform"]>>,
+): void {
+  if (result.ok) return
+  if (result.status === 404) {
+    json(res, 404, { error: result.error, code: "not_found" })
+    return
+  }
+  if (result.status === 422) {
+    json(res, 422, { error: result.error, action: result.action })
+    return
+  }
+  json(res, 409, {
+    error: result.error,
+    code: result.error,
+    current: result.current,
+    action: result.action,
+  })
+}
+
+function handleStartRunItemAction(
+  repos: Repos,
+  res: ServerResponse,
+  itemId: string,
+  action: StartRunAction,
+  onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void,
+): void {
+  const item = repos.getItem(itemId)
+  if (!item) {
+    json(res, 404, { error: "item_not_found", code: "not_found" })
+    return
+  }
+  const transition = lookupTransition(action, item.current_column, item.phase_status)
+  if (transition.kind !== "start-run") {
+    json(res, 409, {
+      error: "invalid_transition",
+      code: "invalid_transition",
+      current: { column: item.current_column, phaseStatus: item.phase_status },
+      action,
+    })
+    return
+  }
+  const result = startRunForItem(repos, { itemId, action, onItemColumnChanged })
+  if (!result.ok) {
+    json(res, result.status, { error: result.error, action })
+    return
+  }
+  repos.setItemColumn(itemId, transition.column, "running")
+  json(res, 200, {
+    kind: "started",
+    itemId,
+    runId: result.runId,
+    action,
+    column: transition.column,
+    phaseStatus: "running",
+  })
+}
+
+async function maybeResumeItemActionRun(
+  repos: Repos,
+  res: ServerResponse,
+  result: Extract<Awaited<ReturnType<ItemActionsService["perform"]>>, { ok: true }>,
+): Promise<boolean> {
+  if (result.kind !== "resume_run") return false
+  const resumed = await resumeRunInProcess(repos, {
+    runId: result.runId,
+    summary: result.summary,
+    branch: result.branch,
+    reviewNotes: result.reviewNotes,
+  })
+  if (!resumed.ok) {
+    json(res, resumed.status, { error: resumed.error, code: resumed.error })
+    return true
+  }
+  return false
 }
 
 export function handleGetItemPreview(repos: Repos, res: ServerResponse, itemId: string): void {
@@ -188,80 +292,25 @@ export async function handleItemActionNamed(
   onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void,
 ): Promise<void> {
   if (!isItemAction(action) || action === "resume_run") {
-    return json(res, 400, {
-      error: "bad_request",
-      code: "bad_request",
-      valid: [
-        "start_brainstorm",
-        "start_visual_companion",
-        "start_frontend_design",
-        "promote_to_requirements",
-        "start_implementation",
-        "rerun_design_prep",
-        "promote_to_base",
-        "cancel_promotion",
-        "mark_done",
-      ],
-    })
+    respondInvalidItemAction(res)
+    return
   }
   // Consume the body even though these actions currently have no request
   // fields; that keeps the route future-proof for action-specific payloads.
   await readJson(req).catch(() => ({}))
 
-  if (
-    action === "start_brainstorm" ||
-    action === "start_visual_companion" ||
-    action === "start_frontend_design" ||
-    action === "start_implementation" ||
-    action === "rerun_design_prep"
-  ) {
-    const item = repos.getItem(itemId)
-    if (!item) return json(res, 404, { error: "item_not_found", code: "not_found" })
-    const transition = lookupTransition(action, item.current_column, item.phase_status)
-    if (transition.kind !== "start-run") {
-      return json(res, 409, {
-        error: "invalid_transition",
-        code: "invalid_transition",
-        current: { column: item.current_column, phaseStatus: item.phase_status },
-        action,
-      })
-    }
-    const result = startRunForItem(repos, { itemId, action, onItemColumnChanged })
-    if (!result.ok) return json(res, result.status, { error: result.error, action })
-    // Move the board column immediately so clients see the transition before
-    // the workflow emits its first stage update.
-    repos.setItemColumn(itemId, transition.column, "running")
-    return json(res, 200, {
-      kind: "started",
-      itemId,
-      runId: result.runId,
-      action,
-      column: transition.column,
-      phaseStatus: "running",
-    })
+  if (isRunStartingAction(action)) {
+    handleStartRunItemAction(repos, res, itemId, action, onItemColumnChanged)
+    return
   }
 
   // Pure state transitions use the shared service.
   const result = await itemActions.perform(itemId, action)
   if (!result.ok) {
-    if (result.status === 404) return json(res, 404, { error: result.error, code: "not_found" })
-    if (result.status === 422) return json(res, 422, { error: result.error, action: result.action })
-    return json(res, 409, {
-      error: result.error,
-      code: result.error,
-      current: result.current,
-      action: result.action,
-    })
+    respondItemActionFailure(res, result)
+    return
   }
-  if (result.kind === "resume_run") {
-    const resumed = await resumeRunInProcess(repos, {
-      runId: result.runId,
-      summary: result.summary,
-      branch: result.branch,
-      reviewNotes: result.reviewNotes,
-    })
-    if (!resumed.ok) return json(res, resumed.status, { error: resumed.error, code: resumed.error })
-  }
+  if (await maybeResumeItemActionRun(repos, res, result)) return
   return json(res, 200, {
     kind: result.kind,
     itemId: result.itemId,

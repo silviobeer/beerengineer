@@ -162,7 +162,8 @@ function summarizeClaudeEvent(event: ClaudeStreamEvent, state: ClaudeStreamState
         state.completedAssistantMessageIds.add(messageId)
         state.streamedSummary = true
         const parts = usageParts(message.usage)
-        return { kind: "dim", text: `claude: turn completed${parts.length > 0 ? ` (${parts.join(" ")})` : ""}` }
+        const usageSuffix = parts.length > 0 ? ` (${parts.join(" ")})` : ""
+        return { kind: "dim", text: `claude: turn completed${usageSuffix}` }
       }
     }
     return null
@@ -234,9 +235,10 @@ function summarizeClaudeEvent(event: ClaudeStreamEvent, state: ClaudeStreamState
     state.usage = event.usage ?? state.usage
     state.streamedSummary = true
     const parts = usageParts(event.usage)
+    const usageSuffix = parts.length > 0 ? ` (${parts.join(" ")})` : ""
     return {
       kind: event.is_error ? "step" : "dim",
-      text: `claude: run completed${parts.length > 0 ? ` (${parts.join(" ")})` : ""}`,
+      text: `claude: run completed${usageSuffix}`,
     }
   }
 

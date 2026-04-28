@@ -21,7 +21,7 @@ import type { ColorPalette, DesignArtifact } from "../types/domain.js"
 export function validateDesignArtifact(artifact: DesignArtifact): void {
   // tone
   if (typeof artifact.tone !== "string" || artifact.tone.length === 0) {
-    throw new Error(
+    throw new TypeError(
       "Invalid design artifact from LLM: artifact.tone is missing or not a string. " +
       "The LLM response may have been truncated or returned a malformed structure.",
     )
@@ -29,7 +29,7 @@ export function validateDesignArtifact(artifact: DesignArtifact): void {
 
   // antiPatterns
   if (!Array.isArray(artifact.antiPatterns)) {
-    throw new Error(
+    throw new TypeError(
       "Invalid design artifact from LLM: artifact.antiPatterns is not an array. " +
       "Every design artifact must include an antiPatterns array — retry or inspect the LLM output.",
     )
@@ -109,7 +109,7 @@ export function validateDesignArtifact(artifact: DesignArtifact): void {
   }
   for (const field of ["baseUnit", "sectionPadding", "cardPadding", "contentMaxWidth"] as const) {
     if (typeof artifact.spacing[field] !== "string" || artifact.spacing[field].length === 0) {
-      throw new Error(
+      throw new TypeError(
         `Invalid design artifact from LLM: artifact.spacing.${field} is missing or not a string. ` +
         "Every design artifact must have all spacing token fields — retry or inspect the LLM output.",
       )
@@ -150,7 +150,7 @@ export function validateDesignArtifact(artifact: DesignArtifact): void {
     }
     for (const [screenId, html] of Object.entries(artifact.mockupHtmlPerScreen)) {
       if (typeof html !== "string" || html.trim().length === 0) {
-        throw new Error(
+        throw new TypeError(
           `Invalid design artifact from LLM: mockupHtmlPerScreen["${screenId}"] is empty or not a string. ` +
           "Each entry must be a non-empty HTML document — retry or inspect the LLM output.",
         )
@@ -168,7 +168,7 @@ export function validateDesignArtifact(artifact: DesignArtifact): void {
 
 function escapeHtml(value: string): string {
   if (typeof value !== "string") {
-    throw new Error(
+    throw new TypeError(
       `escapeHtml received a non-string value: ${JSON.stringify(value)}. ` +
       "Call validateDesignArtifact before rendering to catch missing string fields.",
     )

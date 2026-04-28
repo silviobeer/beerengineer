@@ -1,5 +1,5 @@
 import type { ChatMessage } from "../../llm/types.js"
-import type { DesignArtifact, ReferenceInput, WireframeArtifact } from "../../types/domain.js"
+import type { ReferenceInput, WireframeArtifact } from "../../types/domain.js"
 import type { CodebaseSnapshot } from "../../types/context.js"
 import type { DesignPrepInput } from "../visual-companion/types.js"
 
@@ -25,4 +25,4 @@ export type FrontendDesignState = {
   codebase?: CodebaseSnapshot
 }
 
-export type { DesignArtifact }
+export type { DesignArtifact } from "../../types/domain.js"

@@ -81,8 +81,11 @@ export function createCliIO(repos?: Repos, opts: CliIOOptions = {}): WorkflowIO 
 
         if (rl) {
           if (event.actions && event.actions.length > 0) {
+            const choices = event.actions
+              .map((action, index) => `${index + 1}) ${action.label}`)
+              .join(", ")
             process.stdout.write(
-              `  choices: ${event.actions.map((action, index) => `${index + 1}) ${action.label}`).join(", ")}\n`,
+              `  choices: ${choices}\n`,
             )
           }
           // Interactive TTY. The agent's message text already reached the

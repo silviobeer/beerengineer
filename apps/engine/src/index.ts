@@ -528,7 +528,7 @@ function listProjectedMessages(
   }
   return {
     entries,
-    nextSince: entries.length === input.limit ? entries[entries.length - 1]?.id ?? null : null,
+    nextSince: entries.length === input.limit ? entries.at(-1)?.id ?? null : null,
   }
 }
 
@@ -789,11 +789,14 @@ async function runWorkspaceAddCommand(cmd: Extract<Command, { kind: "workspace-a
       const tokenDetail = result.sonarReadiness.details?.token
       const configDetail = result.sonarReadiness.details?.config
       const coverageDetail = result.sonarReadiness.details?.coverage
+      const tokenSuffix = tokenDetail ? ` (${tokenDetail})` : ""
+      const configSuffix = configDetail ? ` (${configDetail})` : ""
+      const coverageSuffix = coverageDetail ? ` (${coverageDetail})` : ""
       console.log("    Local Sonar readiness")
       console.log(`    - scanner: ${result.sonarReadiness.scanner}`)
-      console.log(`    - token: ${result.sonarReadiness.token}${tokenDetail ? ` (${tokenDetail})` : ""}`)
-      console.log(`    - config: ${result.sonarReadiness.config}${configDetail ? ` (${configDetail})` : ""}`)
-      console.log(`    - coverage: ${result.sonarReadiness.coverage}${coverageDetail ? ` (${coverageDetail})` : ""}`)
+      console.log(`    - token: ${result.sonarReadiness.token}${tokenSuffix}`)
+      console.log(`    - config: ${result.sonarReadiness.config}${configSuffix}`)
+      console.log(`    - coverage: ${result.sonarReadiness.coverage}${coverageSuffix}`)
     }
     if (result.sonarProjectUrl || result.ghCreateCommand) {
       console.log("    CodeRabbit")
@@ -1515,7 +1518,7 @@ async function runRunTailCommand(cmd: Extract<Command, { kind: "run-tail" }>): P
     }
     const sinceId =
       cmd.since ??
-      repos.listLogsForRunAfterCursor(cmd.runId, 0).slice(-1)[0]?.id ??
+      repos.listLogsForRunAfterCursor(cmd.runId, 0).at(-1)?.id ??
       undefined
 
     return await new Promise<number>((resolve) => {
@@ -1607,7 +1610,7 @@ function resolveCliItem(
     const workspace = repos.getWorkspaceByKey(workspaceKey)
     if (!workspace) return null
     const item = repos.getItemByCode(workspace.id, itemRef) ?? repos.getItem(itemRef)
-    if (!item || item.workspace_id !== workspace.id) return null
+    if (item?.workspace_id !== workspace.id) return null
     return { item, workspaceKey: workspace.key }
   }
   const direct = repos.getItem(itemRef)
@@ -2281,7 +2284,7 @@ const handleResumeRun: CliItemActionHandler = async ctx => {
   if (active?.recovery_status) {
     const isTty = Boolean(process.stdin.isTTY && process.stdout.isTTY) && ctx.resumeFlags?.yes !== true
     const collected = await collectRemediationFlags(ctx.resumeFlags ?? {}, isTty)
-    if (!collected || !collected.summary) {
+    if (!collected?.summary) {
       printResumeBlockedOutput(active.id, {
         summary: active.recovery_summary,
         scope: active.recovery_scope,
@@ -2619,7 +2622,7 @@ async function maybeStartPreparedUpdateExecution(
   switcherPath: string,
 ): Promise<{ started: boolean; reason: string }> {
   const pid = readEnginePidFile()
-  if (pid && pid.port === config.enginePort) {
+  if (pid?.port === config.enginePort) {
     return { started: false, reason: "engine_running_use_api_apply" }
   }
   if (!existsSync(join(config.dataDir, "install", "current", "apps", "engine", "bin", "update-backup.js"))) {
@@ -2655,7 +2658,7 @@ async function maybeSubmitRemoteUpdateApply(
   execution: { started: boolean; reason: string }
 }> {
   const pid = readEnginePidFile()
-  if (!pid || pid.port !== config.enginePort) return null
+  if (pid?.port !== config.enginePort) return null
   if (!existsSync(join(config.dataDir, "install", "current", "apps", "engine", "bin", "update-backup.js"))) {
     return null
   }

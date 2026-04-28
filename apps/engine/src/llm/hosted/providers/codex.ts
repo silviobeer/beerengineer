@@ -44,7 +44,8 @@ function summarizeCodexEvent(event: CodexStreamEvent, state: CodexStreamState): 
       if (u?.input_tokens !== undefined) parts.push(`in=${u.input_tokens}`)
       if (u?.output_tokens !== undefined) parts.push(`out=${u.output_tokens}`)
       if (u?.cached_input_tokens !== undefined) parts.push(`cache=${u.cached_input_tokens}`)
-      return { kind: "dim", text: `codex: turn completed${parts.length > 0 ? ` (${parts.join(" ")})` : ""}` }
+      const usageSuffix = parts.length > 0 ? ` (${parts.join(" ")})` : ""
+      return { kind: "dim", text: `codex: turn completed${usageSuffix}` }
     }
     case "item.started":
     case "item.added":
@@ -52,7 +53,8 @@ function summarizeCodexEvent(event: CodexStreamEvent, state: CodexStreamState): 
         if (event.item.type === "reasoning" && typeof event.item.text === "string") emitHostedThinking(sanitizePreviewValue(event.item.text) ?? event.item.text, "codex")
         else emitHostedToolCalled(event.item.name ?? event.item.type, sanitizePreviewValue(event.item.text), "codex")
         state.streamedSummary = true
-        return { kind: "dim", text: `codex: ${event.item.type}${event.item.name ? ` ${event.item.name}` : ""}` }
+        const itemNameSuffix = event.item.name ? ` ${event.item.name}` : ""
+        return { kind: "dim", text: `codex: ${event.item.type}${itemNameSuffix}` }
       }
       return null
     case "item.completed":

@@ -2,7 +2,7 @@ import { cpSync, existsSync } from "node:fs"
 import { busToWorkflowIO, createBus, type EventBus } from "./bus.js"
 import { appendItemDecision } from "./itemDecisions.js"
 import { withPromptPersistence } from "./promptPersistence.js"
-import { prepareRun, type WorkflowEvent } from "./runOrchestrator.js"
+import { prepareRun } from "./runOrchestrator.js"
 import { loadResumeReadiness, performResume } from "./resume.js"
 import { getRegisteredWorkspace } from "./workspaces.js"
 import { layout } from "./workspaceLayout.js"
@@ -291,4 +291,4 @@ export async function resumeRunInProcess(
 }
 
 // Re-export the event type for convenience.
-export type { WorkflowEvent }
+export type { WorkflowEvent } from "./runOrchestrator.js"

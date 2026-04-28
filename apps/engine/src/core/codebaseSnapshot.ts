@@ -55,6 +55,19 @@ function readBoundedFile(path: string): string | undefined {
   }
 }
 
+function shouldSkipTreeEntry(name: string, depth: number): boolean {
+  if (SKIP_DIRS.has(name)) return true
+  return name.startsWith(".") && depth === TREE_DEPTH
+}
+
+function readTreeEntryKind(path: string): "dir" | "file" | undefined {
+  try {
+    return statSync(path).isDirectory() ? "dir" : "file"
+  } catch {
+    return undefined
+  }
+}
+
 function walkTree(root: string, current: string, depth: number, out: string[]): void {
   if (depth < 0) return
   let entries: string[]
@@ -64,15 +77,10 @@ function walkTree(root: string, current: string, depth: number, out: string[]): 
     return
   }
   for (const name of entries) {
-    if (SKIP_DIRS.has(name)) continue
-    if (name.startsWith(".") && depth === TREE_DEPTH) continue
+    if (shouldSkipTreeEntry(name, depth)) continue
     const full = join(current, name)
-    let kind: "dir" | "file" | "other"
-    try {
-      kind = statSync(full).isDirectory() ? "dir" : "file"
-    } catch {
-      continue
-    }
+    const kind = readTreeEntryKind(full)
+    if (!kind) continue
     const rel = relative(root, full) || name
     out.push(kind === "dir" ? `${rel}/` : rel)
     if (kind === "dir") walkTree(root, full, depth - 1, out)

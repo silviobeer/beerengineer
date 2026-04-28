@@ -295,13 +295,7 @@ function mergeNoFf(
 // on which worktree currently has HEAD.
 function ensureManagedWorktree(mode: GitMode, branch: string, targetPath: string, from: string): string {
   const primary = mode.workspaceRoot
-  if (!branchExists(primary, branch)) {
-    if (!branchExists(primary, from)) {
-      throw new Error(`git: cannot branch ${branch} from missing base ${from}`)
-    }
-    const create = runGit(primary, ["branch", branch, from])
-    if (!create.ok) throw new Error(`git: create ${branch} from ${from} failed: ${create.stderr}`)
-  }
+  ensureBranchExists(primary, branch, from)
   const existing = findWorktreeByPath(primary, targetPath)
   if (existing?.branch === branch) {
     if (currentBranch(targetPath) !== branch) {
@@ -310,26 +304,11 @@ function ensureManagedWorktree(mode: GitMode, branch: string, targetPath: string
     }
     return targetPath
   }
-  if (existing) {
-    const remove = runGit(primary, ["worktree", "remove", "--force", targetPath])
-    if (!remove.ok) throw new Error(`git: remove stale worktree ${targetPath} failed: ${remove.stderr}`)
-  } else if (existsSync(targetPath)) {
-    rmSync(targetPath, { recursive: true, force: true })
-  }
+  clearStaleWorktreeTarget(primary, targetPath, existing)
   // git refuses to put a branch in two worktrees, so an orphan worktree
   // from a prior failed run holding `branch` will block the add. Prune
   // first; then drop any live worktrees that still hold this branch.
-  runGit(primary, ["worktree", "prune"])
-  for (const entry of listWorktrees(primary)) {
-    if (entry.branch === branch && resolve(entry.path) !== resolve(targetPath)) {
-      const remove = runGit(primary, ["worktree", "remove", "--force", entry.path])
-      if (!remove.ok) {
-        throw new Error(
-          `git: cannot reclaim ${branch} from stale worktree ${entry.path}: ${remove.stderr || remove.stdout}`,
-        )
-      }
-    }
-  }
+  reclaimBranchWorktrees(primary, branch, targetPath)
   const add = runGit(primary, ["worktree", "add", "--force", targetPath, branch])
   if (!add.ok) throw new Error(`git: create worktree ${targetPath} for ${branch} failed: ${add.stderr || add.stdout}`)
   const actual = currentBranch(targetPath)
@@ -337,6 +316,43 @@ function ensureManagedWorktree(mode: GitMode, branch: string, targetPath: string
     throw new Error(`branch_gate: expected worktree ${targetPath} on ${branch}, but HEAD is ${actual || "<detached>"}`)
   }
   return targetPath
+}
+
+function ensureBranchExists(primary: string, branch: string, from: string): void {
+  if (branchExists(primary, branch)) return
+  if (!branchExists(primary, from)) {
+    throw new Error(`git: cannot branch ${branch} from missing base ${from}`)
+  }
+  const create = runGit(primary, ["branch", branch, from])
+  if (!create.ok) throw new Error(`git: create ${branch} from ${from} failed: ${create.stderr}`)
+}
+
+function clearStaleWorktreeTarget(
+  primary: string,
+  targetPath: string,
+  existing: ReturnType<typeof findWorktreeByPath>,
+): void {
+  if (existing) {
+    const remove = runGit(primary, ["worktree", "remove", "--force", targetPath])
+    if (!remove.ok) throw new Error(`git: remove stale worktree ${targetPath} failed: ${remove.stderr}`)
+    return
+  }
+  if (existsSync(targetPath)) {
+    rmSync(targetPath, { recursive: true, force: true })
+  }
+}
+
+function reclaimBranchWorktrees(primary: string, branch: string, targetPath: string): void {
+  runGit(primary, ["worktree", "prune"])
+  for (const entry of listWorktrees(primary)) {
+    if (entry.branch !== branch || resolve(entry.path) === resolve(targetPath)) continue
+    const remove = runGit(primary, ["worktree", "remove", "--force", entry.path])
+    if (!remove.ok) {
+      throw new Error(
+        `git: cannot reclaim ${branch} from stale worktree ${entry.path}: ${remove.stderr || remove.stdout}`,
+      )
+    }
+  }
 }
 
 export function ensureItemBranch(mode: GitMode, context: WorkflowContext): string {
@@ -631,29 +647,38 @@ export function gcManagedStoryWorktrees(mode: GitMode, managedRoot: string): Man
   }
 
   for (const path of managedPaths) {
-    if (duplicatePathsToRemove.has(path)) {
-      removeStoryWorktree(mode, path)
-      result.removed.push(path)
-      continue
-    }
-    const entry = live.get(path)
-    if (!entry) {
-      rmSync(path, { recursive: true, force: true })
-      result.removed.push(path)
-      continue
-    }
-    if (!entry.branch) {
-      removeStoryWorktree(mode, path)
-      result.removed.push(path)
-      continue
-    }
-    if (branchExists(mode.workspaceRoot, entry.branch)) {
-      result.kept.push({ path, reason: `branch ${entry.branch} still exists` })
-      continue
-    }
-    removeStoryWorktree(mode, path)
-    result.removed.push(path)
+    processManagedWorktreePath(mode, path, live.get(path), duplicatePathsToRemove, result)
   }
 
   return result
+}
+
+function processManagedWorktreePath(
+  mode: GitMode,
+  path: string,
+  entry: ReturnType<typeof listWorktrees>[number] | undefined,
+  duplicatePathsToRemove: Set<string>,
+  result: ManagedWorktreeGcResult,
+): void {
+  if (duplicatePathsToRemove.has(path)) {
+    removeStoryWorktree(mode, path)
+    result.removed.push(path)
+    return
+  }
+  if (!entry) {
+    rmSync(path, { recursive: true, force: true })
+    result.removed.push(path)
+    return
+  }
+  if (!entry.branch) {
+    removeStoryWorktree(mode, path)
+    result.removed.push(path)
+    return
+  }
+  if (branchExists(mode.workspaceRoot, entry.branch)) {
+    result.kept.push({ path, reason: `branch ${entry.branch} still exists` })
+    return
+  }
+  removeStoryWorktree(mode, path)
+  result.removed.push(path)
 }

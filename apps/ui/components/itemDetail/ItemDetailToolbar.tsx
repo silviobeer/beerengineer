@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { ITEM_ACTIONS, type ActionResult, type ItemAction } from "@/lib/engine/types";
+import type { ActionResult, ItemAction } from "@/lib/engine/types";
 
 const BUTTONS: { action: ItemAction; label: string }[] = [
   { action: "start_brainstorm", label: "Start Brainstorm" },
@@ -85,4 +85,5 @@ function formatError(status: number, error: string): string {
   return `Action failed (${status}): ${error}`;
 }
 
-export { BUTTONS as ITEM_TOOLBAR_BUTTONS, ITEM_ACTIONS };
+export { BUTTONS as ITEM_TOOLBAR_BUTTONS };
+export { ITEM_ACTIONS } from "@/lib/engine/types";

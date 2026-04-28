@@ -1,7 +1,5 @@
 import type {
   ArchitectureSummary,
-  DocumentationArtifact,
-  DocumentationSection,
   PlanSummary,
   PrdDigest,
   ProjectReviewArtifact,
@@ -24,4 +22,4 @@ export type DocumentationState = {
   }
 }
 
-export type { DocumentationArtifact, DocumentationSection }
+export type { DocumentationArtifact, DocumentationSection } from "../../types.js"

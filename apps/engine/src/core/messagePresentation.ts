@@ -4,6 +4,40 @@ function payloadString(value: unknown, fallback = "—"): string {
   return typeof value === "string" && value.trim() ? value : fallback
 }
 
+function payloadNumberString(value: unknown, fallback: string): string {
+  return typeof value === "number" ? String(value) : fallback
+}
+
+function branchTransitionDetail(entry: MessageEntry): string {
+  return `${payloadString(entry.payload.itemBranch)} → ${payloadString(entry.payload.baseBranch)}`
+}
+
+function iterationLabel(n: string, phase: unknown): MessagePresentation {
+  switch (phase) {
+    case "review":
+      return {
+        icon: "↻",
+        label: Number(n) === 1 ? "entered review loop" : `review loop ${n} — running`,
+      }
+    case "review-feedback":
+      return { icon: "✎", label: "revising after review", detail: `iteration ${n}` }
+    case "user-message":
+      return { icon: "↪", label: "stage agent processing user message", detail: `iteration ${n}` }
+    case "begin":
+    default:
+      return { icon: "▷", label: "stage agent working", detail: `iteration ${n}` }
+  }
+}
+
+function tokenDetail(entry: MessageEntry): string {
+  return [
+    `in=${payloadNumberString(entry.payload.in, "0")} out=${payloadNumberString(entry.payload.out, "0")}`,
+    typeof entry.payload.cached === "number" ? `cache=${entry.payload.cached}` : undefined,
+    typeof entry.payload.provider === "string" ? entry.payload.provider : undefined,
+    typeof entry.payload.model === "string" ? entry.payload.model : undefined,
+  ].filter(Boolean).join(" ")
+}
+
 export type MessagePresentation = {
   icon: string
   label: string
@@ -33,26 +67,13 @@ export function presentMessageEntry(entry: MessageEntry): MessagePresentation {
     case "prompt_answered":
       return { icon: "↩", label: "answer received", detail: payloadString(entry.payload.answer) }
     case "loop_iteration": {
-      const n = payloadString(String(entry.payload.n ?? ""), "0")
-      switch (entry.payload.phase) {
-        case "review":
-          return {
-            icon: "↻",
-            label: Number(n) === 1 ? "entered review loop" : `review loop ${n} — running`,
-          }
-        case "review-feedback":
-          return { icon: "✎", label: "revising after review", detail: `iteration ${n}` }
-        case "user-message":
-          return { icon: "↪", label: "stage agent processing user message", detail: `iteration ${n}` }
-        case "begin":
-        default:
-          return { icon: "▷", label: "stage agent working", detail: `iteration ${n}` }
-      }
+      const n = payloadNumberString(entry.payload.n, "0")
+      return iterationLabel(n, entry.payload.phase)
     }
     case "review_feedback":
       return {
         icon: "↩",
-        label: `findings handed back to stage (cycle ${payloadString(String(entry.payload.cycle ?? ""), "1")})`,
+        label: `findings handed back to stage (cycle ${payloadNumberString(entry.payload.cycle, "1")})`,
         detail: payloadString(entry.payload.feedback),
       }
     case "tool_called":
@@ -81,12 +102,7 @@ export function presentMessageEntry(entry: MessageEntry): MessagePresentation {
       return {
         icon: "🔢",
         label: "tokens",
-        detail: [
-          `in=${payloadString(String(entry.payload.in ?? 0), "0")} out=${payloadString(String(entry.payload.out ?? 0), "0")}`,
-          typeof entry.payload.cached === "number" ? `cache=${entry.payload.cached}` : undefined,
-          typeof entry.payload.provider === "string" ? entry.payload.provider : undefined,
-          typeof entry.payload.model === "string" ? entry.payload.model : undefined,
-        ].filter(Boolean).join(" "),
+        detail: tokenDetail(entry),
       }
     case "agent_message":
       return { icon: "🤖", label: "agent", detail: payloadString(entry.payload.text) }
@@ -95,7 +111,7 @@ export function presentMessageEntry(entry: MessageEntry): MessagePresentation {
     case "project_created":
       return { icon: "📚", label: "project", detail: payloadString(entry.payload.name) }
     case "wireframes_ready":
-      return { icon: "🗺️", label: "wireframes", detail: payloadString(String(entry.payload.screenCount ?? "")) }
+      return { icon: "🗺️", label: "wireframes", detail: payloadNumberString(entry.payload.screenCount, "—") }
     case "design_ready":
       return { icon: "🎨", label: "design", detail: payloadString(entry.payload.url) }
     case "log":
@@ -114,32 +130,32 @@ export function presentMessageEntry(entry: MessageEntry): MessagePresentation {
       return {
         icon: "⏸",
         label: "merge gate open — awaiting promotion",
-        detail: `${payloadString(entry.payload.itemBranch)} → ${payloadString(entry.payload.baseBranch)}`,
+        detail: branchTransitionDetail(entry),
       }
     case "merge_gate_cancelled":
       return {
         icon: "↶",
         label: "merge postponed",
-        detail: `${payloadString(entry.payload.itemBranch)} → ${payloadString(entry.payload.baseBranch)}`,
+        detail: branchTransitionDetail(entry),
       }
     case "merge_completed":
       return {
         icon: "⇪",
         label: "branch merged",
-        detail: `${payloadString(entry.payload.itemBranch)} → ${payloadString(entry.payload.baseBranch)}`,
+        detail: branchTransitionDetail(entry),
       }
     case "worktree_port_assigned":
       return {
         icon: "·",
         label: "preview port assigned",
-        detail: `${payloadString(entry.payload.branch)} on :${payloadString(String(entry.payload.port ?? ""), "?")}`,
+        detail: `${payloadString(entry.payload.branch)} on :${payloadNumberString(entry.payload.port, "?")}`,
       }
     case "wave_serialized": {
       const stories = Array.isArray(entry.payload.stories) ? (entry.payload.stories as string[]).join(", ") : ""
       return {
         icon: "↺",
         label: "wave serialized (parallel → sequential)",
-        detail: stories || payloadString(String(entry.payload.waveNumber ?? ""), "?"),
+        detail: stories || payloadNumberString(entry.payload.waveNumber, "?"),
       }
     }
     case "presentation":

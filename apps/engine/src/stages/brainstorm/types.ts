@@ -7,6 +7,12 @@ export type BrainstormArtifact = {
   projects: Project[]
 }
 
+function stringifyArrayValue(value: unknown): string {
+  if (typeof value === "string") return value
+  const serialized = JSON.stringify(value)
+  return serialized ?? String(value)
+}
+
 /**
  * Coerce a value that should be `string[]` to an actual `string[]`.
  *
@@ -21,14 +27,14 @@ export type BrainstormArtifact = {
  *   non-string[]          → each element stringified
  */
 export function coerceToStringArray(value: unknown): string[] {
-  if (Array.isArray(value)) return value.map(String)
+  if (Array.isArray(value)) return value.map(stringifyArrayValue)
   if (value == null) return []
   if (typeof value === "string") {
     const lines = value.split(/\r?\n/).map(s => s.replace(/^[-*•]\s*/, "").trim()).filter(Boolean)
     return lines.length > 0 ? lines : [value]
   }
   if (typeof value === "object") {
-    return Object.values(value as Record<string, unknown>).map(String)
+    return Object.values(value as Record<string, unknown>).map(stringifyArrayValue)
   }
   return [String(value)]
 }

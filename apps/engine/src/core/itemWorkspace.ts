@@ -1,5 +1,4 @@
 import type { Repos } from "../db/repositories.js"
-import { workflowWorkspaceId } from "./itemIdentity.js"
 
 // Derives the on-disk workspace id used by the workflow runtime. Must stay in
 // lockstep with WorkflowContext.workspaceId assembly in workflow.ts; changing

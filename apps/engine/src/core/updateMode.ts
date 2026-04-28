@@ -444,7 +444,7 @@ export function createDatabaseBackup(
 ): DatabaseBackupRecord {
   const install = resolveManagedInstallPaths(config)
   mkdirSync(install.backupRoot, { recursive: true })
-  const stamp = new Date().toISOString().replace(/:/g, "-")
+  const stamp = new Date().toISOString().replaceAll(":", "-")
   const backupDir = join(install.backupRoot, `${stamp}-${opts.fromVersion}-to-${opts.targetVersion}`)
   mkdirSync(backupDir, { recursive: true })
 
@@ -1175,7 +1175,7 @@ export async function runUpdateDryRun(
       warnings,
     }
   } catch (err) {
-    return fail(stages[stages.length - 1]?.name ?? "preflight", err as Error)
+    return fail(stages.at(-1)?.name ?? "preflight", err as Error)
   }
 }
 
@@ -1272,7 +1272,7 @@ export function markPreparedUpdateInFlight(
   operationId: string,
 ): UpdateHistoryEntry | null {
   const existing = repos.getUpdateAttempt(operationId)
-  if (!existing || existing.status !== "queued") return null
+  if (existing?.status !== "queued") return null
   const row = repos.upsertUpdateAttempt({
     operationId,
     kind: existing.kind,

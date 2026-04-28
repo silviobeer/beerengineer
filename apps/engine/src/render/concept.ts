@@ -1,10 +1,16 @@
 import type { Concept } from "../types/domain.js"
 
+function stringifyListValue(value: unknown): string {
+  if (typeof value === "string") return value
+  const serialized = JSON.stringify(value)
+  return serialized ?? String(value)
+}
+
 function toStringList(value: unknown): string[] {
-  if (Array.isArray(value)) return value.map(v => String(v))
+  if (Array.isArray(value)) return value.map(stringifyListValue)
   if (value == null) return []
   if (typeof value === "string") return value.split(/\r?\n/).map(s => s.replace(/^[-*]\s*/, "").trim()).filter(Boolean)
-  if (typeof value === "object") return Object.values(value as Record<string, unknown>).map(v => String(v))
+  if (typeof value === "object") return Object.values(value as Record<string, unknown>).map(stringifyListValue)
   return [String(value)]
 }
 

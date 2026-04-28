@@ -4,7 +4,6 @@ import {
   IMPLEMENTATION_STAGE_LABELS,
   mapEngineStageToDesignPrepSegment,
   mapEngineStageToImplementationSegment,
-  type ImplementationStage,
 } from "../lib/types";
 
 interface MiniStepperProps {
@@ -116,4 +115,4 @@ export function MiniStepper({
 // Re-export so existing imports of ImplementationStage from this module still
 // resolve through it; the canonical home is lib/types but BoardCard already
 // imports from here in some test files.
-export type { ImplementationStage };
+export type { ImplementationStage } from "../lib/types";

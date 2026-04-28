@@ -12,7 +12,7 @@ import type {
 } from "./domain.js"
 import type { WaveSummary } from "./execution.js"
 
-export type { WorkflowContext }
+export type { WorkflowContext } from "../core/workspaceLayout.js"
 
 export type CodebaseSnapshot = {
   topLevelFiles: Array<{ path: string; content: string }>

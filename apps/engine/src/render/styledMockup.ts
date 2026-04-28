@@ -160,11 +160,6 @@ export function renderStyledMockup(screen: Screen, design: DesignArtifact): stri
   const darkVars = buildDarkCssVars(design)
   const antiPatternCss = buildAntiPatternCss(design.antiPatterns)
 
-  const displayFamily = safe(design.typography.display.family, FONT_FAMILY_PATTERN, "sans-serif")
-  const displayWeight = safe(design.typography.display.weight, FONT_WEIGHT_PATTERN, "700")
-  const bodyFamily = safe(design.typography.body.family, FONT_FAMILY_PATTERN, "sans-serif")
-  const bodyWeight = safe(design.typography.body.weight, FONT_WEIGHT_PATTERN, "400")
-
   // Render each region with its elements
   const regions = screen.layout.regions.map(region => {
     const elements = screen.elements

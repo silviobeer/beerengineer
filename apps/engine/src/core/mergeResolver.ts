@@ -140,7 +140,7 @@ function writeResolverLog(logDir: string | undefined, payload: Record<string, un
   try {
     mkdirSync(dirname(join(logDir, "merge-resolver.log.txt")), { recursive: true })
     mkdirSync(logDir, { recursive: true })
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-")
+    const stamp = new Date().toISOString().replaceAll(/[:.]/g, "-")
     const file = join(logDir, `merge-resolver.${stamp}.json`)
     writeFileSync(file, JSON.stringify(payload, null, 2), "utf8")
   } catch {

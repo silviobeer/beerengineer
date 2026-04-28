@@ -1,5 +1,5 @@
 import type { ItemDecision } from "../../core/itemDecisions.js"
-import type { ArchitectureSummary, ImplementationPlanArtifact, PRD } from "../../types.js"
+import type { ArchitectureSummary, PRD } from "../../types.js"
 import type { CodebaseSnapshot } from "../../types/context.js"
 
 export type PlanningState = {
@@ -12,4 +12,4 @@ export type PlanningState = {
   lastReviewFeedback?: string
 }
 
-export type { ImplementationPlanArtifact }
+export type { ImplementationPlanArtifact } from "../../types.js"

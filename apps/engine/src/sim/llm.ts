@@ -1,4 +1,4 @@
-import type { Finding, StoryReviewArtifact, UserStory } from "../types.js"
+import type { Finding, UserStory } from "../types.js"
 import { stagePresent } from "../core/stagePresentation.js"
 
 const delay = (ms: number) => new Promise<void>(r => setTimeout(r, ms))

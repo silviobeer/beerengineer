@@ -198,7 +198,7 @@ function packageLooksLikeCoverageProducer(pkg: PackageJsonShape | null): string[
   if (!pkg) return []
   const hits: string[] = []
   const scripts = pkg.scripts ?? {}
-  const deps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) }
+  const deps = { ...pkg.dependencies, ...pkg.devDependencies }
   for (const [name, script] of Object.entries(scripts)) {
     const lower = script.toLowerCase()
     if (name === "coverage") hits.push(`script:${name}`)
@@ -334,7 +334,10 @@ function mergeSonarReadiness(base: SonarReadiness, extra: Partial<SonarReadiness
     config: extra.config ?? base.config,
     coverage: extra.coverage ?? base.coverage,
     warnings: Array.from(new Set([...base.warnings, ...(extra.warnings ?? [])])),
-    details: { ...(base.details ?? {}), ...(extra.details ?? {}) },
+    details: {
+      ...base.details,
+      ...extra.details,
+    },
   }
 }
 
@@ -448,7 +451,7 @@ function readEnvFileValue(raw: string, key: string): string | undefined {
     const trimmed = line.trim()
     if (!trimmed || trimmed.startsWith("#")) continue
     const match = /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(trimmed)
-    if (!match || match[1] !== key) continue
+    if (match?.[1] !== key) continue
     const value = match[2].trim()
     return value.replaceAll(/^['"]|['"]$/g, "")
   }
@@ -1480,7 +1483,7 @@ export async function registerWorkspace(input: RegisterWorkspaceInput, deps: Reg
   // Token validity is re-checked after preflight below, before we treat the
   // requested config as effective.
   if (!requestedSonar?.enabled && preview.hasSonarProperties) {
-    requestedSonar = { ...(requestedSonar ?? {}), enabled: true }
+    requestedSonar = { ...requestedSonar, enabled: true }
   }
   const validation = validateHarnessProfile(input.harnessProfile, deps.appReport)
   if (!validation.ok) {
@@ -1492,7 +1495,7 @@ export async function registerWorkspace(input: RegisterWorkspaceInput, deps: Reg
     return { ok: false, error: "path_already_registered", detail: `Path ${path} is already registered as ${byPath.key}` }
   }
   const byKey = deps.repos.getWorkspaceByKey(key)
-  if (byKey && byKey.root_path && byKey.root_path !== path) {
+  if (byKey?.root_path && byKey.root_path !== path) {
     return { ok: false, error: "key_conflict", detail: `Workspace key ${key} is already registered for ${byKey.root_path}` }
   }
 
@@ -1786,7 +1789,10 @@ function renderPreviewSummary(preview: WorkspacePreview): void {
   else console.log(`    ✓ path exists and is populated (${preview.existingFiles.length}+ top-level entries)`)
   console.log(`    ${preview.isInsideAllowedRoot ? "✓" : "!"} inside allowed roots`)
   console.log(`    ${preview.isGreenfield ? "· will be a greenfield workspace" : "· will be a brownfield registration"}`)
-  if (preview.isGitRepo) console.log(`    · git repo detected${preview.defaultBranch ? ` (${preview.defaultBranch})` : ""}`)
+  if (preview.isGitRepo) {
+    const defaultBranchSuffix = preview.defaultBranch ? ` (${preview.defaultBranch})` : ""
+    console.log(`    · git repo detected${defaultBranchSuffix}`)
+  }
   else console.log("    · no git repo detected")
   if (preview.detectedStack) console.log(`    · detected stack: ${preview.detectedStack}`)
   if (preview.hasWorkspaceConfigFile) console.log(`    · existing ${WORKSPACE_CONFIG_DIR}/${WORKSPACE_CONFIG_FILE} found`)

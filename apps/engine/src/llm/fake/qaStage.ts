@@ -27,7 +27,8 @@ export class FakeQaStageAdapter implements StageAgentAdapter<QaState, QaArtifact
       if (state.findings.length === 0) {
         return { kind: "artifact", artifact: { accepted: true, loops: state.loop, findings: [] } }
       }
-      const message = `Reviewer findings: ${state.findings.map(f => `[${f.source}/${f.severity}] ${f.message}`).join("; ")}. Fix or accept? [fix/accept]`
+      const findingsSummary = state.findings.map(f => `[${f.source}/${f.severity}] ${f.message}`).join("; ")
+      const message = `Reviewer findings: ${findingsSummary}. Fix or accept? [fix/accept]`
       return { kind: "message", message }
     }
 
@@ -46,7 +47,8 @@ export class FakeQaStageAdapter implements StageAgentAdapter<QaState, QaArtifact
       if (state.findings.length === 0) {
         return { kind: "artifact", artifact: { accepted: false, loops: state.loop, findings: [] } }
       }
-      const message = `Reviewer findings: ${state.findings.map(f => `[${f.source}/${f.severity}] ${f.message}`).join("; ")}. Fix or accept? [fix/accept]`
+      const findingsSummary = state.findings.map(f => `[${f.source}/${f.severity}] ${f.message}`).join("; ")
+      const message = `Reviewer findings: ${findingsSummary}. Fix or accept? [fix/accept]`
       return { kind: "message", message }
     }
 

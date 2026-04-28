@@ -140,7 +140,7 @@ export function handleGetMessages(repos: Repos, url: URL, res: ServerResponse, r
   }
 
   let nextSince: string | null = null
-  if (entries.length === limit) nextSince = entries[entries.length - 1]?.id ?? null
+  if (entries.length === limit) nextSince = entries.at(-1)?.id ?? null
   else if (hitScanCap) nextSince = cursor
 
   json(res, 200, {

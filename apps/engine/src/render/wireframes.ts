@@ -13,7 +13,7 @@ import type { Screen, WireframeArtifact } from "../types/domain.js"
  */
 export function validateWireframeArtifact(artifact: WireframeArtifact): void {
   if (!Array.isArray(artifact.screens)) {
-    throw new Error(
+    throw new TypeError(
       "Invalid wireframe artifact from LLM: artifact.screens is not an array. " +
       "The LLM response may have been truncated or returned a malformed structure."
     )
@@ -21,7 +21,7 @@ export function validateWireframeArtifact(artifact: WireframeArtifact): void {
   for (let i = 0; i < artifact.screens.length; i++) {
     const screen = artifact.screens[i]
     if (!screen || typeof screen !== "object") {
-      throw new Error(
+      throw new TypeError(
         `Invalid wireframe artifact from LLM: screens[${i}] is not an object.`
       )
     }
@@ -55,7 +55,7 @@ export function validateWireframeArtifact(artifact: WireframeArtifact): void {
     for (let r = 0; r < screen.layout.regions.length; r++) {
       const region = screen.layout.regions[r]
       if (!region || typeof region !== "object") {
-        throw new Error(
+        throw new TypeError(
           `Invalid wireframe artifact from LLM: screens[${i}].layout.regions[${r}] is not an object.`
         )
       }
@@ -69,7 +69,7 @@ export function validateWireframeArtifact(artifact: WireframeArtifact): void {
     }
 
     if (!Array.isArray(screen.elements)) {
-      throw new Error(
+      throw new TypeError(
         `Invalid wireframe artifact from LLM: screens[${i}] (id="${screen.id ?? "?"}") ` +
         `is missing elements array. ` +
         "The LLM must return each screen with an elements array — retry or inspect the LLM output."
@@ -150,7 +150,7 @@ export function validateWireframeArtifact(artifact: WireframeArtifact): void {
 
 function escapeHtml(value: string): string {
   if (typeof value !== "string") {
-    throw new Error(
+    throw new TypeError(
       `escapeHtml received a non-string value: ${JSON.stringify(value)}. ` +
       "Call validateWireframeArtifact before rendering to catch missing string fields."
     )

@@ -2,7 +2,7 @@ import { runWorkflow } from "../workflow.js"
 import type { Item } from "../types.js"
 import { runWithWorkflowIO, type WorkflowEvent, type WorkflowIO } from "./io.js"
 import { runWithActiveRun } from "./runContext.js"
-import { createBus, busToWorkflowIO, type EventBus } from "./bus.js"
+import { createBus, type EventBus } from "./bus.js"
 import { workflowWorkspaceId } from "./itemIdentity.js"
 import { persistWorkflowRunState } from "./stageRuntime.js"
 import type { ItemRow, Repos } from "../db/repositories.js"
@@ -731,9 +731,9 @@ export function withDbSync(
  * Re-export `busToWorkflowIO` so tests that need a throwaway bus-backed io
  * can build one without reaching into `bus.ts`.
  */
-export { busToWorkflowIO }
+export { busToWorkflowIO } from "./bus.js"
 
 /**
  * Explicit type re-export for legacy imports.
  */
-export type { WorkflowEvent }
+export type { WorkflowEvent } from "./io.js"

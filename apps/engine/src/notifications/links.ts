@@ -8,7 +8,8 @@ export type ExternalLinkBuilder = {
 }
 
 function joinPath(baseUrl: string, path: string): string {
-  return `${baseUrl}${path.startsWith("/") ? path : `/${path}`}`
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`
+  return `${baseUrl}${normalizedPath}`
 }
 
 export function createExternalLinkBuilder(publicBaseUrl: string): ExternalLinkBuilder {

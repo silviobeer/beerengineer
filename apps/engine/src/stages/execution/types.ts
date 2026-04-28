@@ -1,4 +1,4 @@
-import type { AcceptanceCriterion, StoryTestPlanArtifact, WaveDefinition } from "../../types.js"
+import type { AcceptanceCriterion, WaveDefinition } from "../../types.js"
 
 export type TestWriterState = {
   projectId: string
@@ -29,4 +29,4 @@ export type TestWriterState = {
   lastReviewFeedback?: string
 }
 
-export type { StoryTestPlanArtifact }
+export type { StoryTestPlanArtifact } from "../../types.js"
