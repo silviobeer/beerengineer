@@ -89,6 +89,17 @@ function parseWorkspaceSubcommand(context: ParseArgsContext): Command | null {
   return null
 }
 
+function parseProjectAliasSubcommand(context: ParseArgsContext): Command | null {
+  const { first, second, argv, json } = context
+  if (first === "projects" && (second === undefined || second === "--json")) return { kind: "workspace-list", json }
+  if (first !== "project") return null
+  if (second === "list") return { kind: "workspace-list", json }
+  if (second === "get") return { kind: "workspace-get", key: argv[2], json }
+  if (second === "items") return { kind: "workspace-items", key: argv[2], json }
+  if (second === "open") return { kind: "workspace-open", key: argv[2] }
+  return null
+}
+
 function parseChatSubcommand(context: ParseArgsContext): Command | null {
   const { first, second, argv, json, workspaceKey, all, compact, positionalThird } = context
   if (first === "chat" && second === "list") return { kind: "chat-list", workspaceKey, json, all, compact }
@@ -235,6 +246,7 @@ export function parseArgs(argv: string[]): Command {
   }
   const delegated = parseRunSubcommand(context)
     ?? parseWorkspaceSubcommand(context)
+    ?? parseProjectAliasSubcommand(context)
     ?? parseChatSubcommand(context)
     ?? parseItemSubcommand(context)
   if (delegated) return delegated
@@ -283,6 +295,8 @@ export function printHelp(): void {
     "    beerengineer workspace open <key>                    Print the workspace root path",
     "    beerengineer workspace backfill [--json]             Write missing .beerengineer/workspace.json files",
     "    beerengineer workspace gc-worktrees <key> [--json]   Remove orphaned beerengineer_ story worktrees",
+    "    beerengineer projects [--json]                       Alias for workspace list",
+    "    beerengineer project get <key> [--json]              Alias for workspace get",
     "    beerengineer item get <id|code> [--workspace <key>]  Show one item",
     "    beerengineer item open <id|code> [--workspace <key>] Open one item in the UI",
     "    beerengineer item preview <id|code> [--start|--stop] [--open] [--workspace <key>] [--json]",
@@ -338,7 +352,7 @@ export function printHelp(): void {
     "    BEERENGINEER_WORKTREE_PORT_POOL.",
     "",
     "  Aliases:",
-    "    -h  --help  --doctor  items  chats  runs",
+    "    -h  --help  --doctor  projects  project get  items  chats  runs",
     "",
     "  Quick start:",
     "    beerengineer workspace list",

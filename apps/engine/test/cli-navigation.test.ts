@@ -443,6 +443,7 @@ test("items --all aggregates items across workspaces with not-done first", async
     process.env.BEERENGINEER_UI_DB_PATH = dbPath
     const wsA = repos.upsertWorkspace({ key: "alpha", name: "Alpha", rootPath: "/tmp/alpha" })
     const wsB = repos.upsertWorkspace({ key: "beta", name: "Beta", rootPath: "/tmp/beta" })
+    repos.upsertWorkspace({ key: "empty", name: "Empty", rootPath: "/tmp/empty" })
     const running = repos.createItem({ workspaceId: wsB.id, code: "ITEM-0002", title: "Running item", description: "r" })
     repos.setItemColumn(running.id, "requirements", "running")
     const done = repos.createItem({ workspaceId: wsA.id, code: "ITEM-0001", title: "Done item", description: "d" })
@@ -472,11 +473,15 @@ test("items --all aggregates items across workspaces with not-done first", async
     assert.match(stdout, /Items across all workspaces/)
     const runningIndex = stdout.indexOf("beta  ITEM-0002  Running item")
     const doneIndex = stdout.indexOf("alpha  ITEM-0001  Done item")
+    const emptyIndex = stdout.indexOf("empty  —  (no items)")
     assert.ok(runningIndex !== -1)
     assert.ok(doneIndex !== -1)
+    assert.ok(emptyIndex !== -1)
     assert.ok(runningIndex < doneIndex)
+    assert.ok(doneIndex < emptyIndex)
     assert.match(stdout, /requirements \/ running/)
     assert.match(stdout, /done \/ done/)
+    assert.match(stdout, /— \/ empty/)
   } finally {
     db.close()
     if (previousUiDbPath === undefined) delete process.env.BEERENGINEER_UI_DB_PATH

@@ -52,6 +52,8 @@ handoff → merge-gate`
 ```bash
 beerengineer                       # default workflow (will prompt for an idea)
 beerengineer status [--all]        # workspace overview
+beerengineer projects [--json]     # list registered project workspaces
+beerengineer project get <key>     # show one project workspace, even if empty
 beerengineer items [--all]         # list items
 beerengineer chats [--all]         # open prompts waiting for an answer
 beerengineer chat answer <runId> "<text>"

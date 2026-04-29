@@ -17,11 +17,13 @@ import {
 } from "../common.js"
 
 export type ItemRow = {
+  kind: "item" | "workspace"
   workspaceKey?: string
   code: string
   title: string
   stage: string
   status: string
+  sortCreatedAt?: number
 }
 
 export type ChatRow = {
@@ -134,10 +136,11 @@ export function listItemRows(repos: Repos, workspaceKey: string | undefined, all
   return workspaces
     .flatMap(workspace => {
       const promptsByRun = new Map(repos.listOpenPrompts({ workspaceId: workspace.id }).map(prompt => [prompt.run_id, prompt]))
-      return repos.listItemsForWorkspace(workspace.id).map(item => {
+      const itemRows: ItemRow[] = repos.listItemsForWorkspace(workspace.id).map(item => {
         const latestRun = latestRunForItem(repos, item.id)
         const prompt = latestRun ? promptsByRun.get(latestRun.id) : undefined
         return {
+          kind: "item" as const,
           workspaceKey: all ? workspace.key : undefined,
           code: item.code,
           title: item.title,
@@ -146,8 +149,24 @@ export function listItemRows(repos: Repos, workspaceKey: string | undefined, all
           sortCreatedAt: item.created_at,
         }
       })
+      if (all && itemRows.length === 0) {
+        return [{
+          kind: "workspace" as const,
+          workspaceKey: workspace.key,
+          code: "—",
+          title: "(no items)",
+          stage: "—",
+          status: "empty",
+          sortCreatedAt: Number.MAX_SAFE_INTEGER,
+        }]
+      }
+      return itemRows
     })
-    .sort((a, b) => itemSortWeight(a.status) - itemSortWeight(b.status) || a.sortCreatedAt - b.sortCreatedAt)
+    .sort((a, b) =>
+      itemSortWeight(a.status) - itemSortWeight(b.status)
+      || (a.sortCreatedAt ?? 0) - (b.sortCreatedAt ?? 0)
+      || (a.workspaceKey ?? "").localeCompare(b.workspaceKey ?? "")
+    )
 }
 
 export function printItemRows(rows: ItemRow[], compact = false): void {

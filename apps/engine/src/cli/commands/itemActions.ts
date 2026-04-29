@@ -404,24 +404,6 @@ const CLI_ITEM_ACTION_HANDLERS: Partial<Record<ItemAction, CliItemActionHandler>
   resume_run: handleResumeRun,
 }
 
-type PreparedImportItemLookup =
-  | { kind: "ok"; item: ItemRow }
-  | { kind: "exit"; code: number }
-
-function resolvePreparedImportItem(repos: Repos, itemRef: string): PreparedImportItemLookup {
-  const resolved = resolveItemReference(repos, itemRef)
-  if (resolved.kind === "missing") {
-    console.error(`  Item not found: ${itemRef}`)
-    return { kind: "exit", code: 1 }
-  }
-  if (resolved.kind === "ambiguous") {
-    console.error(`  Ambiguous item code: ${itemRef}`)
-    resolved.matches.forEach(match => console.error(`    ${match.id}`))
-    return { kind: "exit", code: 1 }
-  }
-  return { kind: "ok", item: resolved.item }
-}
-
 async function startPreparedImportFromCli(
   repos: Repos,
   item: ItemRow | undefined,
@@ -525,9 +507,21 @@ export async function runItemImportPrepared(itemRef: string | undefined, sourceD
   const repos = new (await import("../../db/repositories.js")).Repos(db)
   try {
     if (!itemRef) return await startPreparedImportFromCli(repos, undefined, sourceDir, workspaceKey, json)
-    const resolved = resolvePreparedImportItem(repos, itemRef)
-    if (resolved.kind === "exit") return resolved.code
-    return await startPreparedImportFromCli(repos, resolved.item, sourceDir, workspaceKey, json)
+    const resolvedWorkspace = !workspaceKey ? repos.getWorkspaceByKey(itemRef) : undefined
+    const resolved = resolveItemReference(repos, itemRef)
+    if (resolved.kind === "found") {
+      return await startPreparedImportFromCli(repos, resolved.item, sourceDir, workspaceKey, json)
+    }
+    if (resolved.kind === "missing" && resolvedWorkspace) {
+      return await startPreparedImportFromCli(repos, undefined, sourceDir, resolvedWorkspace.key, json)
+    }
+    if (resolved.kind === "missing") {
+      console.error(`  Item not found: ${itemRef}`)
+      return 1
+    }
+    console.error(`  Ambiguous item code: ${itemRef}`)
+    resolved.matches.forEach(match => console.error(`    ${match.id}`))
+    return 1
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     if (json) console.error(JSON.stringify({ error: message }))

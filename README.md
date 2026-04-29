@@ -138,6 +138,8 @@ curl -X POST http://localhost:4100/runs \
 ```bash
 beerengineer                       # run default workflow
 beerengineer status [--all]        # workspace overview
+beerengineer projects [--json]     # list registered project workspaces
+beerengineer project get <key>     # show one project workspace, even if empty
 beerengineer items [--all]         # list items
 beerengineer chats [--all]         # open prompts waiting for answer
 beerengineer chat answer <runId> "<text>"

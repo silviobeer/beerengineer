@@ -118,6 +118,7 @@ const ITEM_SORT_WEIGHTS: Record<string, number> = {
   review_required: 3,
   failed: 4,
   done: 9,
+  empty: 10,
 }
 
 export function itemSortWeight(status: string): number {
