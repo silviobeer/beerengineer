@@ -1,4 +1,4 @@
-import { resolve } from "node:path"
+import { isAbsolute, relative, resolve } from "node:path"
 import type { WorkflowContext } from "../workspaceLayout.js"
 import { layout } from "../workspaceLayout.js"
 import { type GitMode, currentBranch, itemRoot, runGit } from "./shared.js"
@@ -15,7 +15,23 @@ export type WorkspaceInspection =
   | { kind: "git-status-failed"; stderr: string }
   | { kind: "dirty"; currentBranch: string; trackedCount: number; untrackedCount: number }
 
-export function inspectWorkspaceState(workspaceRoot: string): WorkspaceInspection {
+function ignoredPathspecs(workspaceRoot: string, ignoredPaths: string[] | undefined): string[] {
+  if (!ignoredPaths?.length) return []
+  const root = resolve(workspaceRoot)
+  return ignoredPaths
+    .map(path => {
+      const absolute = isAbsolute(path) ? resolve(path) : resolve(root, path)
+      const rel = relative(root, absolute)
+      if (!rel || rel.startsWith("..")) return null
+      return `:(exclude)${rel.replaceAll("\\", "/")}`
+    })
+    .filter((pathspec): pathspec is string => Boolean(pathspec))
+}
+
+export function inspectWorkspaceState(
+  workspaceRoot: string,
+  options: { ignoredPaths?: string[] } = {},
+): WorkspaceInspection {
   const inside = runGit(workspaceRoot, ["rev-parse", "--is-inside-work-tree"])
   if (!inside.ok || inside.stdout !== "true") return { kind: "not-a-repo" }
   const status = runGit(workspaceRoot, [
@@ -25,6 +41,7 @@ export function inspectWorkspaceState(workspaceRoot: string): WorkspaceInspectio
     "--",
     ".",
     ":(exclude).beerengineer",
+    ...ignoredPathspecs(workspaceRoot, options.ignoredPaths),
   ])
   if (!status.ok) return { kind: "git-status-failed", stderr: status.stderr }
   const lines = status.stdout.split(/\r?\n/).filter(Boolean)
@@ -56,7 +73,7 @@ export function detectGitMode(context: WorkflowContext): GitMode {
   if (!context.itemSlug?.trim()) {
     throw new Error("git: itemSlug is required (item worktree is mandatory)")
   }
-  const inspection = inspectWorkspaceState(workspaceRoot)
+  const inspection = inspectWorkspaceState(workspaceRoot, { ignoredPaths: context.dirtyCheckIgnoredPaths })
   switch (inspection.kind) {
     case "not-a-repo":
       throw new Error(`git: workspace ${workspaceRoot} is not a git repository`)

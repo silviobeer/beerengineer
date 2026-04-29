@@ -60,14 +60,6 @@ interface EngineMessagesResponse {
   entries: EngineMessageEntry[];
 }
 
-function engineUrl(): string {
-  const url =
-    (typeof process !== "undefined" &&
-      (process.env.NEXT_PUBLIC_ENGINE_URL || process.env.ENGINE_URL)) ||
-    "http://127.0.0.1:4100";
-  return String(url).replace(/\/$/, "");
-}
-
 function pickText(env: EngineMessageEntry): string {
   const p: Record<string, unknown> = env.payload ?? {};
   const candidates = ["message", "text", "summary", "title", "prompt", "answer"];
@@ -114,7 +106,7 @@ export function ItemMessages({ itemId }: Readonly<ItemMessagesProps>) {
 
     (async () => {
       try {
-        const runsRes = await fetch(`${engineUrl()}/runs`, { cache: "no-store" });
+        const runsRes = await fetch("/api/runs", { cache: "no-store" });
         if (!runsRes.ok) throw new Error(`runs_${runsRes.status}`);
         const runs = ((await runsRes.json()) as { runs?: EngineRun[] }).runs ?? [];
         const latest = runs
@@ -126,7 +118,7 @@ export function ItemMessages({ itemId }: Readonly<ItemMessagesProps>) {
           return;
         }
         const res = await fetch(
-          `${engineUrl()}/runs/${encodeURIComponent(latest.id)}/messages?level=0`,
+          `/api/runs/${encodeURIComponent(latest.id)}/messages?level=0`,
           { cache: "no-store" }
         );
         if (!res.ok) throw new Error(`messages_${res.status}`);
@@ -156,7 +148,7 @@ export function ItemMessages({ itemId }: Readonly<ItemMessagesProps>) {
     const Ctor = (globalThis as { EventSource?: new (u: string) => EventSource })
       .EventSource;
     if (!Ctor) return;
-    const url = `${engineUrl()}/runs/${encodeURIComponent(runId)}/events?level=0`;
+    const url = `/api/runs/${encodeURIComponent(runId)}/events?level=0`;
     const es = new Ctor(url);
     const append = (e: MessageEvent) => {
       try {

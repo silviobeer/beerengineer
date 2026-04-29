@@ -3,8 +3,10 @@ import { busToWorkflowIO, createBus, type EventBus } from "./bus.js"
 import { appendItemDecision } from "./itemDecisions.js"
 import { withPromptPersistence } from "./promptPersistence.js"
 import { prepareRun } from "./runOrchestrator.js"
+import { resolveWorkflowLlmOptions } from "./runSubscribers.js"
 import { loadResumeReadiness, performResume } from "./resume.js"
 import { getRegisteredWorkspace } from "./workspaces.js"
+import { loadPreparedImportBundleWithLlmFallback, seedPreparedImportArtifacts, type PreparedImportBundle } from "./preparedImport.js"
 import { layout } from "./workspaceLayout.js"
 import { resolveWorkflowContextForItemRun, resolveWorkflowContextForRun } from "./workflowContextResolver.js"
 import type { Repos, ItemRow, RunRow, ExternalRemediationRow } from "../db/repositories.js"
@@ -32,6 +34,10 @@ export type StartRunResult =
 
 export type ResumeRunResult =
   | { ok: true; runId: string; remediationId: string }
+  | { ok: false; status: 404 | 409 | 422; error: string }
+
+export type PreparedImportRunResult =
+  | { ok: true; runId: string; itemId: string; warnings: string[] }
   | { ok: false; status: 404 | 409 | 422; error: string }
 
 function buildApiIo(repos: Repos): WorkflowIO & { bus: EventBus } {
@@ -234,6 +240,59 @@ export function startRunForItem(
 
   fireInBackground(io, `startRunForItem:${input.action}`, prepared.start)
   return { ok: true, runId: prepared.runId, itemId: item.id }
+}
+
+export async function startPreparedImportForItem(
+  repos: Repos,
+  input: {
+    itemId: string
+    sourceDir: string
+    owner?: "cli" | "api"
+    onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
+  },
+): Promise<PreparedImportRunResult> {
+  const item = repos.getItem(input.itemId)
+  if (!item) return { ok: false, status: 404, error: "item_not_found" }
+
+  let bundle: PreparedImportBundle
+  try {
+    const workspace = repos.getWorkspace(item.workspace_id)
+    const llm = await resolveWorkflowLlmOptions(workspace)
+    bundle = await loadPreparedImportBundleWithLlmFallback(
+      input.sourceDir,
+      { title: item.title, description: item.description ?? "" },
+      llm?.stage,
+    )
+  } catch (error) {
+    return { ok: false, status: 422, error: (error as Error).message }
+  }
+
+  const projectStartStages = Object.fromEntries(
+    bundle.projects.map(project => [
+      project.id,
+      bundle.prdsByProjectId[project.id]?.stories.length ? "architecture" : "requirements",
+    ]),
+  ) as Record<string, "requirements" | "architecture">
+  const io = buildApiIo(repos)
+  const resume = {
+    scope: { type: "run", runId: "pending" } as const,
+    currentStage: "projects",
+    projectStartStages,
+    dirtyCheckIgnoredPaths: [input.sourceDir],
+    skipDesignPrep: true,
+  }
+  const prepared = prepareRun(
+    { id: item.id, title: item.title, description: item.description },
+    repos,
+    io,
+    { owner: input.owner ?? "api", itemId: item.id, resume, onItemColumnChanged: input.onItemColumnChanged },
+  )
+  const targetRun = repos.getRun(prepared.runId)
+  const ctx = targetRun ? resolveWorkflowContextForItemRun(repos, item, targetRun) : null
+  if (!ctx) return { ok: false, status: 409, error: "seed_failed" }
+  const seeded = seedPreparedImportArtifacts(ctx, bundle, { sourceDir: input.sourceDir })
+  fireInBackground(io, "startPreparedImportForItem", prepared.start)
+  return { ok: true, runId: prepared.runId, itemId: item.id, warnings: seeded.warnings }
 }
 
 /**

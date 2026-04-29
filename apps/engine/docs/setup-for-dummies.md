@@ -189,6 +189,24 @@ Run:
 beerengineer setup
 ```
 
+If you already prepared the concept/projects/PRDs outside beerengineer_, you
+can skip the early workflow stages after setup:
+
+```
+beerengineer item import-prepared ITEM-0001 --from /path/to/prepared-artifacts
+```
+
+The folder can be a complete skill-process project folder such as
+`specs/PROJ-1-trendradar-demo` with `1_brainstorm/`, `2_visual-companion/`,
+`5_mockups/`, and optional `3_PRDs/`. It can also contain Engine JSON files or
+Markdown PRDs directly. Markdown is parsed locally first; if the workspace has
+an LLM harness configured, beerengineer_ uses it as a fallback normalizer when
+Markdown is incomplete or hard to map. beerengineer_ stores the imported files
+in the new run like normal artifacts, starts implementation, and only reruns
+Requirements for projects where no usable PRD was found. It also stores a copy
+of the original folder under the run's `imports/prepared-source` directory, but
+does not copy those process files into the product worktree.
+
 You'll see something like this:
 
 ```

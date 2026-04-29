@@ -79,6 +79,13 @@ const MATRIX_CASES: Array<{
   { action: "start_implementation", column: "implementation", phase: "running", expect: "reject" },
   { action: "start_implementation", column: "done", phase: "completed", expect: "reject" },
 
+  { action: "import_prepared", column: "idea", phase: "draft", expect: "start-run" },
+  { action: "import_prepared", column: "brainstorm", phase: "completed", expect: "start-run" },
+  { action: "import_prepared", column: "frontend", phase: "review_required", expect: "start-run" },
+  { action: "import_prepared", column: "requirements", phase: "draft", expect: "start-run" },
+  { action: "import_prepared", column: "implementation", phase: "running", expect: "reject" },
+  { action: "import_prepared", column: "done", phase: "completed", expect: "reject" },
+
   { action: "rerun_design_prep", column: "brainstorm", phase: "running", expect: "start-run" },
   { action: "rerun_design_prep", column: "requirements", phase: "draft", expect: "start-run" },
   { action: "rerun_design_prep", column: "implementation", phase: "failed", expect: "start-run" },

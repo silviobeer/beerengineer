@@ -27,6 +27,15 @@ npm exec --workspace=@beerengineer/engine beerengineer -- notifications test tel
 - `setup --group notifications` re-runs only the notification setup flow and guides you through `publicBaseUrl`, the Telegram bot-token env var name, and the default chat id.
 - `notifications test telegram` sends a smoke-test message through the configured Telegram bot/chat, using the same engine delivery path as real run events.
 - `GET /setup/status` returns the same JSON contract as `doctor --json`. Passing `?group=` with an unknown id responds `400 { "error": "unknown_group" }`; the CLI equivalent exits with code 2.
+- Prepared-requirements import is a workflow command, not a setup check:
+  `beerengineer item import-prepared <item> --from <dir>`. `doctor` remains
+  system-readiness only. `<dir>` may be a prepared Engine artifact folder or a
+  whole skill-process `specs/PROJ-*` folder with `1_brainstorm/`,
+  `2_visual-companion/`, `5_mockups/`, and optional `3_PRDs/`.
+  The source folder is copied into the run at `imports/prepared-source` for
+  traceability, while the product worktree receives only normal implementation
+  changes. Import-specific errors are reported by the command and written into
+  the run's normal artifacts/logs.
 - `beerengineer update --check` is now available as a read-only GitHub release check. It does not install or restart anything; it reports the current version, latest release, DB-path source, and managed install root.
 - `GET /update/status` now also reports a readiness summary for engine startup, DB access, GitHub updater access, the configured LLM auth path, and Sonar when any registered workspace has Sonar enabled.
 - Managed update completion now distinguishes a healthy install from a healthy-but-partially-misconfigured one: after restart the detached switcher probes `GET /update/status`, and `GET /update/history` may therefore end in `succeeded-with-warning` when the new engine is up but a configured non-core integration auth check is failing.

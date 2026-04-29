@@ -1,12 +1,12 @@
 "use client";
 
-import type { ItemDetailDTO, ActionResult, ItemAction } from "@/lib/engine/types";
+import type { ItemDetailDTO, ActionResult, ItemAction, ItemActionPayload } from "@/lib/engine/types";
 import { ItemDetailHeader } from "./ItemDetailHeader";
 import { ItemDetailToolbar } from "./ItemDetailToolbar";
 
 type Props = {
   readonly item: ItemDetailDTO;
-  readonly onAction: (action: ItemAction) => Promise<ActionResult>;
+  readonly onAction: (action: ItemAction, payload?: ItemActionPayload) => Promise<ActionResult>;
 };
 
 export function ItemDetailView({ item, onAction }: Readonly<Props>): React.ReactElement {

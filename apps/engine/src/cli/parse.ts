@@ -144,6 +144,7 @@ function parseItemActionSubcommand(argv: string[]): Command {
 function parseItemSubcommand(context: ParseArgsContext): Command | null {
   const { first, second, argv, workspaceKey, json } = context
   if (first !== "item") return null
+  if (second === "import-prepared") return { kind: "item-import-prepared", itemRef: argv[2], sourceDir: readFlag(argv, "--from"), json }
   if (second === "get") return { kind: "item-get", itemRef: argv[2], workspaceKey, json }
   if (second === "open") return { kind: "item-open", itemRef: argv[2], workspaceKey }
   if (second === "preview") return { kind: "item-preview", itemRef: argv[2], workspaceKey, start: argv.includes("--start"), stop: argv.includes("--stop"), open: argv.includes("--open"), json }
@@ -287,6 +288,8 @@ export function printHelp(): void {
     "                                                         Show/open wireframe artifacts",
     "    beerengineer item design <id|code> [--open] [--workspace <key>] [--json]",
     "                                                         Show/open design artifact",
+    "    beerengineer item import-prepared <id|code> --from <dir> [--json]",
+    "                                                         Import prepared concept/PRDs and start implementation",
     "    beerengineer run list [--all] [--compact]            List runs",
     "    beerengineer run get <run-id> [--json]               Show one run",
     "    beerengineer runs messages <run-id> [--level L2]    Show canonical message history",
@@ -304,7 +307,8 @@ export function printHelp(): void {
     "",
     "  Item actions:",
     "    start_brainstorm  start_visual_companion  start_frontend_design",
-    "    promote_to_requirements  start_implementation  rerun_design_prep",
+    "    promote_to_requirements  start_implementation  import_prepared",
+    "    rerun_design_prep",
     "    promote_to_base  cancel_promotion  resume_run  mark_done",
     "",
     "  Resume flags (for --action resume_run on a blocked run):",

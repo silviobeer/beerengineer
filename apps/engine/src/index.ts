@@ -37,7 +37,7 @@ import {
   runWorkspaceUseCommand,
   runWorkspaceWorktreeGcCommand,
 } from "./cli/commands/workspaces.js"
-import { runItemAction } from "./cli/commands/itemActions.js"
+import { runItemAction, runItemImportPrepared } from "./cli/commands/itemActions.js"
 import { runUpdateCommand } from "./cli/commands/update.js"
 import { runInteractiveWorkflow } from "./cli/workflow.js"
 import type { Command } from "./cli/types.js"
@@ -108,6 +108,7 @@ const COMMAND_REGISTRY: CommandHandlers = {
   "item-preview": cmd => runItemPreviewCommand(cmd.itemRef, cmd.workspaceKey, { start: cmd.start, stop: cmd.stop, open: cmd.open, json: cmd.json }),
   "item-wireframes": cmd => runItemWireframesCommand(cmd.itemRef, cmd.workspaceKey, cmd.open, cmd.json),
   "item-design": cmd => runItemDesignCommand(cmd.itemRef, cmd.workspaceKey, cmd.open, cmd.json),
+  "item-import-prepared": cmd => runItemImportPrepared(cmd.itemRef, cmd.sourceDir, cmd.json),
   "run-list": cmd => runRunListCommand(cmd.workspaceKey, cmd.all, cmd.json, cmd.compact),
   runs: cmd => runRunListCommand(cmd.workspaceKey, cmd.all, cmd.json, cmd.compact),
   "run-get": cmd => runRunGetCommand(cmd.runId, cmd.json),

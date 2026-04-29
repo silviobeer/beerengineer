@@ -1,4 +1,13 @@
-import { proxyEngineMutation } from "@/lib/engine/proxy";
+import { proxyEngineGet, proxyEngineMutation } from "@/lib/engine/proxy";
+
+export async function GET(
+  request: Request,
+  context: { params: Promise<{ id: string }> }
+): Promise<Response> {
+  const { id } = await context.params;
+  const { search } = new URL(request.url);
+  return proxyEngineGet(`/runs/${encodeURIComponent(id)}/messages${search}`);
+}
 
 export async function POST(
   request: Request,

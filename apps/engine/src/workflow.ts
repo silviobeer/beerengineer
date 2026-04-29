@@ -41,6 +41,12 @@ import { itemSlug, workflowWorkspaceId } from "./core/itemIdentity.js"
 type ItemResumePlan = {
   startStage: "brainstorm" | "visual-companion" | "frontend-design" | "projects" | "merge-gate"
   /**
+   * Prepared imports may already contain all upstream product artifacts.
+   * When true, the item-level UI preparation stages are skipped entirely,
+   * even when the item/project has UI.
+   */
+  skipDesignPrep?: boolean
+  /**
    * When set, the item-level loop runs *only* the named stage and skips the
    * other design-prep stage. Manual-progression actions
    * (start_visual_companion / start_frontend_design) populate this so the
@@ -81,6 +87,23 @@ function loadItemWorkspaceReferences(context: WorkflowContext): ReferenceInput[]
 export type WorkflowResumeInput = {
   scope: RecoveryScope
   currentStage?: string | null
+  /**
+   * Optional prepared-import override. When present, each project can enter
+   * the project pipeline at a different stage: projects with imported PRDs
+   * skip requirements, while incomplete projects run requirements first.
+   */
+  projectStartStages?: Record<string, ProjectResumePlan["startStage"]>
+  /**
+   * Paths copied into run artifacts before workflow start and therefore safe
+   * to ignore for the initial dirty-repo branch gate.
+   */
+  dirtyCheckIgnoredPaths?: string[]
+  /**
+   * Skip brainstorm/design-prep item stages and enter the project pipeline
+   * directly. Prepared imports set this when their source already supplied
+   * concept/projects and optionally PRDs.
+   */
+  skipDesignPrep?: boolean
   /**
    * Manual-mode signal from the item-action service. When set, the workflow
    * runs *only* the named design-prep stage and skips the sibling, regardless
@@ -180,7 +203,7 @@ function normalizeProjectResume(input: WorkflowResumeInput): ProjectResumePlan |
     case "qa":
     case "documentation":
     case "handoff":
-      return { startStage: topStage }
+      return { startStage: topStage, projectStartStages: input.projectStartStages }
     case "execution": {
       let executionScope = normalizeExecutionResume(stageId)
       if (scope.type === "story") {
@@ -189,10 +212,13 @@ function normalizeProjectResume(input: WorkflowResumeInput): ProjectResumePlan |
       return {
         startStage: "execution",
         execution: executionScope,
+        projectStartStages: input.projectStartStages,
       }
     }
     default:
-      return null
+      return input.projectStartStages
+        ? { startStage: "requirements", projectStartStages: input.projectStartStages }
+        : null
   }
 }
 
@@ -205,7 +231,7 @@ function normalizeItemResume(input: WorkflowResumeInput): ItemResumePlan {
   const startStage = (
     ["brainstorm", "visual-companion", "frontend-design", "merge-gate"] as const
   ).find(stage => stage === topStage) ?? "projects"
-  return { startStage, manualStage: input.manualStage }
+  return { startStage, manualStage: input.manualStage, skipDesignPrep: input.skipDesignPrep === true }
 }
 
 async function loadProjects(context: WorkflowContext): Promise<Project[]> {
@@ -293,6 +319,7 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
     itemSlug: slug,
     baseBranch,
     workspaceRoot: options?.workspaceRoot,
+    dirtyCheckIgnoredPaths: options?.resume?.dirtyCheckIgnoredPaths,
   }
 
   const git = await ensureWorkflowGitAdapter(context, options?.workspaceRoot)
@@ -300,6 +327,9 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
   stagePresent.dim(`→ Real git mode: branches will be created in ${git.mode.workspaceRoot}`)
 
   try {
+    git.ensureItemBranch()
+    git.assertWorkspaceRootOnBaseBranch("after ensureItemBranch (run start)")
+    const itemWorktreeLlm = workflowLlmForWorkspace(options?.llm, git.mode.itemWorktreeRoot)
     const itemResumePlan = options?.resume
       ? normalizeItemResume(options.resume)
       : { startStage: "brainstorm" as const }
@@ -310,7 +340,7 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
     // project — was the previous behavior. Loaded here so brainstorm /
     // visual-companion / frontend-design also receive it.
     const codebaseSnapshot = loadCodebaseSnapshot(options?.workspaceRoot)
-    const projects = await resolveWorkflowProjects(item, context, git, itemResumePlan, options?.llm?.stage, codebaseSnapshot)
+    const projects = await resolveWorkflowProjects(item, context, git, itemResumePlan, itemWorktreeLlm?.stage, codebaseSnapshot)
     if (itemResumePlan.startStage === "projects") {
       await assertDesignPrepProjectFreeze(context, projects)
     }
@@ -324,7 +354,7 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
       itemHasUi,
       itemConcept,
       projects,
-      options?.llm?.stage,
+      itemWorktreeLlm?.stage,
       itemSnapshot,
     )
     emitWorkflowProjectsCreated(activeRun, projects)
@@ -338,7 +368,7 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
         design,
         itemSnapshot,
         resumePlan,
-        llm: options?.llm,
+        llm: itemWorktreeLlm,
       })
     }
 
@@ -351,6 +381,25 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
     throw error
   } finally {
     restoreWorkflowExitState(git)
+  }
+}
+
+export function workflowLlmForWorkspace(
+  llm: WorkflowLlmOptions | undefined,
+  workspaceRoot: string,
+): WorkflowLlmOptions | undefined {
+  if (!llm) return undefined
+  const rebase = <T extends { workspaceRoot: string } | undefined>(config: T): T => {
+    return config ? { ...config, workspaceRoot } : config
+  }
+  return {
+    stage: rebase(llm.stage),
+    execution: llm.execution
+      ? {
+          stage: rebase(llm.execution.stage),
+          executionCoder: rebase(llm.execution.executionCoder),
+        }
+      : undefined,
   }
 }
 
@@ -395,6 +444,7 @@ async function resolveDesignPrepArtifacts(
   itemSnapshot: ReturnType<typeof buildItemSnapshot>,
 ): Promise<{ wireframes: WireframeArtifact | undefined; design: DesignArtifact | undefined }> {
   if (!itemHasUi) return { wireframes: undefined, design: undefined }
+  if (itemResumePlan.skipDesignPrep) return { wireframes: undefined, design: undefined }
   const { shouldRunVisualCompanion, shouldRunFrontendDesign } = buildDesignPrepPlan(context, itemResumePlan)
   const references = loadItemWorkspaceReferences(context)
   const wireframes = shouldRunVisualCompanion
@@ -454,6 +504,9 @@ async function runWorkflowProjects(
   const decisions = loadItemDecisions(context)
   for (const project of projects) {
     git.ensureProjectBranch(project.id)
+    const projectResumePlan = resumePlan?.projectStartStages?.[project.id]
+      ? { ...resumePlan, startStage: resumePlan.projectStartStages[project.id]! }
+      : resumePlan
     await runProject(
       {
         ...context,
@@ -464,7 +517,7 @@ async function runWorkflowProjects(
         decisions,
       },
       git,
-      resumePlan ?? undefined,
+      projectResumePlan ?? undefined,
       llm,
     )
   }

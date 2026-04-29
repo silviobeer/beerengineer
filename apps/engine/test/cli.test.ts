@@ -119,6 +119,7 @@ test("parseArgs recognizes help, doctor, start ui, workflow, item action, and un
   assert.deepEqual(parseArgs(["item", "preview", "ITEM-0001", "--workspace", "demo", "--stop", "--json"]), { kind: "item-preview", itemRef: "ITEM-0001", workspaceKey: "demo", start: false, stop: true, open: false, json: true })
   assert.deepEqual(parseArgs(["item", "wireframes", "ITEM-0001", "--workspace", "demo", "--open", "--json"]), { kind: "item-wireframes", itemRef: "ITEM-0001", workspaceKey: "demo", open: true, json: true })
   assert.deepEqual(parseArgs(["item", "design", "ITEM-0001", "--workspace", "demo"]), { kind: "item-design", itemRef: "ITEM-0001", workspaceKey: "demo", open: false, json: false })
+  assert.deepEqual(parseArgs(["item", "import-prepared", "ITEM-0001", "--from", "/tmp/prepared", "--json"]), { kind: "item-import-prepared", itemRef: "ITEM-0001", sourceDir: "/tmp/prepared", json: true })
   assert.deepEqual(parseArgs(["run", "list", "--workspace", "demo", "--json"]), { kind: "run-list", workspaceKey: "demo", json: true, all: false, compact: false })
   assert.deepEqual(parseArgs(["run", "list", "--all", "--json"]), { kind: "run-list", workspaceKey: undefined, json: true, all: true, compact: false })
   assert.deepEqual(parseArgs(["run", "list", "--all", "--compact"]), { kind: "run-list", workspaceKey: undefined, json: false, all: true, compact: true })

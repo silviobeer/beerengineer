@@ -5,6 +5,8 @@ import type { ItemAction } from "../../core/itemActions.js"
 import { inspectWorkspaceState } from "../../core/git.js"
 import { layout } from "../../core/workspaceLayout.js"
 import { prepareRun, runWorkflowWithSync } from "../../core/runOrchestrator.js"
+import { loadPreparedImportBundleWithLlmFallback, seedPreparedImportArtifacts } from "../../core/preparedImport.js"
+import { resolveWorkflowLlmOptions } from "../../core/runSubscribers.js"
 import { resolveWorkflowContextForItemRun } from "../../core/workflowContextResolver.js"
 import type { ItemRow, Repos } from "../../db/repositories.js"
 import { initDatabase } from "../../db/connection.js"
@@ -85,8 +87,8 @@ async function collectResumePayload(
   }
 }
 
-function printDirtyRepoPreflight(rootPath: string): number {
-  const inspection = inspectWorkspaceState(rootPath)
+function printDirtyRepoPreflight(rootPath: string, ignoredPaths: string[] = []): number {
+  const inspection = inspectWorkspaceState(rootPath, { ignoredPaths })
   if (inspection.kind !== "dirty") return 0
 
   const onBaseBranch = inspection.currentBranch === "main" || inspection.currentBranch === "master"
@@ -108,11 +110,11 @@ function printDirtyRepoPreflight(rootPath: string): number {
   return 73
 }
 
-function preflightCliBranchingStart(repos: Repos, workspaceId: string): number {
+function preflightCliBranchingStart(repos: Repos, workspaceId: string, ignoredPaths: string[] = []): number {
   const workspace = repos.getWorkspace(workspaceId)
   const rootPath = workspace?.root_path?.trim()
   if (!rootPath) return 0
-  return printDirtyRepoPreflight(rootPath)
+  return printDirtyRepoPreflight(rootPath, ignoredPaths)
 }
 
 function hasStageArtifacts(repos: Repos, item: Pick<ItemRow, "workspace_id">, runId: string, stageId: string): boolean {
@@ -400,6 +402,93 @@ const CLI_ITEM_ACTION_HANDLERS: Partial<Record<ItemAction, CliItemActionHandler>
   start_implementation: handleStartImplementationOrRerunDesignPrep,
   rerun_design_prep: handleStartImplementationOrRerunDesignPrep,
   resume_run: handleResumeRun,
+}
+
+export async function runItemImportPrepared(itemRef: string | undefined, sourceDir: string | undefined, json = false): Promise<number> {
+  if (!itemRef || !sourceDir) {
+    console.error("  Usage: beerengineer item import-prepared <item> --from <dir>")
+    return 1
+  }
+  const itemActions = await import("../../core/itemActions.js")
+  lookupTransitionSync = itemActions.lookupTransition
+  const db = initDatabase()
+  const repos = new (await import("../../db/repositories.js")).Repos(db)
+  try {
+    const resolved = resolveItemReference(repos, itemRef)
+    if (resolved.kind === "missing") {
+      console.error(`  Item not found: ${itemRef}`)
+      return 1
+    }
+    if (resolved.kind === "ambiguous") {
+      console.error(`  Ambiguous item code: ${itemRef}`)
+      resolved.matches.forEach(match => console.error(`    ${match.id}`))
+      return 1
+    }
+    const transition = lookupTransitionSync("import_prepared", resolved.item.current_column, resolved.item.phase_status)
+    if (transition.kind !== "start-run") {
+      console.error(`  Invalid transition: import_prepared from ${resolved.item.current_column}/${resolved.item.phase_status}`)
+      return 1
+    }
+    const exit = preflightCliBranchingStart(repos, resolved.item.workspace_id, [sourceDir])
+    if (exit !== 0) return exit
+    const workspace = repos.getWorkspace(resolved.item.workspace_id)
+    const llm = await resolveWorkflowLlmOptions(workspace)
+    const bundle = await loadPreparedImportBundleWithLlmFallback(sourceDir, {
+      title: resolved.item.title,
+      description: resolved.item.description ?? "",
+    }, llm?.stage)
+    const projectStartStages = Object.fromEntries(
+      bundle.projects.map(project => [
+        project.id,
+        bundle.prdsByProjectId[project.id]?.stories.length ? "architecture" : "requirements",
+      ]),
+    ) as Record<string, "requirements" | "architecture">
+    const io = createCliIO(repos)
+    try {
+      const prepared = prepareRun(
+        { id: resolved.item.id, title: resolved.item.title, description: resolved.item.description },
+        repos,
+        io,
+        {
+          owner: "cli",
+          itemId: resolved.item.id,
+          resume: {
+            scope: { type: "run", runId: "pending" },
+            currentStage: "projects",
+            projectStartStages,
+            dirtyCheckIgnoredPaths: [sourceDir],
+            skipDesignPrep: true,
+          },
+        },
+      )
+      const targetRun = repos.getRun(prepared.runId)
+      const ctx = targetRun ? resolveWorkflowContextForItemRun(repos, resolved.item, targetRun) : null
+      if (!ctx) {
+        console.error("  Cannot import prepared artifacts: failed to resolve target run workspace.")
+        return 1
+      }
+      seedPreparedImportArtifacts(ctx, bundle, { sourceDir })
+      repos.setItemColumn(resolved.item.id, transition.column, "running")
+      await prepared.start()
+      if (json) {
+        console.log(JSON.stringify({ kind: "started", itemId: resolved.item.id, runId: prepared.runId, warnings: bundle.warnings }))
+      } else {
+        console.log("  import_prepared applied")
+        console.log(`  run-id: ${prepared.runId}`)
+        for (const warning of bundle.warnings) console.log(`  warning: ${warning}`)
+      }
+      return 0
+    } finally {
+      io.close?.()
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    if (json) console.error(JSON.stringify({ error: message }))
+    else console.error(`  Import failed: ${message}`)
+    return 1
+  } finally {
+    db.close()
+  }
 }
 
 export async function runItemAction(itemRef: string, action: string, resumeFlags?: ResumeFlags): Promise<number> {

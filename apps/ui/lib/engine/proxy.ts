@@ -29,17 +29,22 @@ function readToken(): string | null {
   }
 }
 
-export async function proxyEngineMutation(
-  path: string,
-  body: unknown
-): Promise<Response> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
+function authHeaders(extra?: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = { ...(extra ?? {}) };
   const token = readToken();
   if (token) {
     headers["x-beerengineer-token"] = token;
   }
+  return headers;
+}
+
+export async function proxyEngineMutation(
+  path: string,
+  body: unknown
+): Promise<Response> {
+  const headers = authHeaders({
+    "Content-Type": "application/json",
+  });
   const upstream = await fetch(`${engineBaseUrl()}${path}`, {
     method: "POST",
     headers,
@@ -57,6 +62,7 @@ export async function proxyEngineMutation(
 export async function proxyEngineGet(path: string): Promise<Response> {
   const upstream = await fetch(`${engineBaseUrl()}${path}`, {
     method: "GET",
+    headers: authHeaders(),
     cache: "no-store",
   });
   const text = await upstream.text();
@@ -64,6 +70,32 @@ export async function proxyEngineGet(path: string): Promise<Response> {
     status: upstream.status,
     headers: {
       "Content-Type": upstream.headers.get("Content-Type") ?? "application/json",
+    },
+  });
+}
+
+export async function proxyEngineStream(path: string): Promise<Response> {
+  const upstream = await fetch(`${engineBaseUrl()}${path}`, {
+    method: "GET",
+    headers: authHeaders({
+      Accept: "text/event-stream",
+    }),
+    cache: "no-store",
+  });
+  if (!upstream.body) {
+    const text = await upstream.text();
+    return new Response(text, {
+      status: upstream.status,
+      headers: {
+        "Content-Type": upstream.headers.get("Content-Type") ?? "text/plain",
+      },
+    });
+  }
+  return new Response(upstream.body, {
+    status: upstream.status,
+    headers: {
+      "Content-Type": upstream.headers.get("Content-Type") ?? "text/event-stream",
+      "Cache-Control": upstream.headers.get("Cache-Control") ?? "no-cache",
     },
   });
 }

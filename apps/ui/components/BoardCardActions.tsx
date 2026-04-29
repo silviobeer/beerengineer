@@ -16,8 +16,14 @@ function actionsFor(card: BoardCardDTO): ActionDef[] {
   const phase = card.phase_status ?? "";
   const stage = card.current_stage ?? null;
 
+  if ((card.column === "idea" || card.column === "requirements") && phase !== "running") {
+    return [{ action: "import_prepared", label: "Import prepared" }];
+  }
   if (card.column === "brainstorm" && (phase === "completed" || phase === "review_required")) {
-    return [{ action: "start_visual_companion", label: "Start visual companion" }];
+    return [
+      { action: "start_visual_companion", label: "Start visual companion" },
+      { action: "import_prepared", label: "Import prepared" },
+    ];
   }
   if (card.column === "frontend" && (phase === "review_required" || phase === "completed")) {
     if (stage === "visual-companion") {
@@ -59,9 +65,15 @@ export function BoardCardActions({ card }: Readonly<BoardCardActionsProps>) {
 
   async function runAction(action: string): Promise<void> {
     try {
+      const body: Record<string, string> = {};
+      if (action === "import_prepared") {
+        const path = window.prompt("Prepared artifact directory");
+        if (!path?.trim()) return;
+        body.path = path.trim();
+      }
       const res = await fetch(
         `/api/items/${encodeURIComponent(itemId)}/actions/${encodeURIComponent(action)}`,
-        { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
       );
       if (!res.ok) {
         const body = await res.json().catch(() => ({} as { error?: string }));

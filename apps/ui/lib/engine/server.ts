@@ -71,6 +71,7 @@ function pickString(
 export async function postItemAction(
   itemId: string,
   action: string,
+  body: Record<string, string> = {},
 ): Promise<{ ok: boolean; status: number; error: string | null }> {
   const url = `${engineBaseUrl()}/items/${encodeURIComponent(itemId)}/actions/${encodeURIComponent(action)}`;
   const headers: Record<string, string> = { "content-type": "application/json" };
@@ -79,7 +80,7 @@ export async function postItemAction(
   const res = await fetch(url, {
     method: "POST",
     headers,
-    body: "{}",
+    body: JSON.stringify(body),
     cache: "no-store",
   });
   if (res.ok) return { ok: true, status: res.status, error: null };

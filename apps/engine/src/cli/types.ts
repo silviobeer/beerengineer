@@ -26,6 +26,7 @@ export type Command =
   | { kind: "start-ui" }
   | { kind: "workflow"; json?: boolean; workspaceKey?: string; verbose?: boolean }
   | { kind: "item-action"; itemRef: string; action: string; resume?: ResumeFlags }
+  | { kind: "item-import-prepared"; itemRef?: string; sourceDir?: string; json?: boolean }
   | { kind: "workspace-preview"; path?: string; json?: boolean }
   | {
       kind: "workspace-add"

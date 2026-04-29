@@ -46,14 +46,6 @@ interface EngineConversationResponse {
   openPrompt: EngineOpenPrompt | null;
 }
 
-function engineUrl(): string {
-  const url =
-    (typeof process !== "undefined" &&
-      (process.env.NEXT_PUBLIC_ENGINE_URL || process.env.ENGINE_URL)) ||
-    "http://127.0.0.1:4100";
-  return String(url).replace(/\/$/, "");
-}
-
 function toUiEntry(e: EngineConversationEntry): ConversationEntry {
   if (e.kind === "question" && e.promptId) {
     return promptEntry({
@@ -186,7 +178,7 @@ export function ItemChat({ itemId }: Readonly<ItemChatProps>) {
 
     (async () => {
       try {
-        const runsRes = await fetch(`${engineUrl()}/runs`, { cache: "no-store" });
+        const runsRes = await fetch("/api/runs", { cache: "no-store" });
         if (!runsRes.ok) throw new Error(`runs_${runsRes.status}`);
         const runsBody = (await runsRes.json()) as { runs?: EngineRun[] };
         const itemRuns = (runsBody.runs ?? [])
@@ -200,7 +192,7 @@ export function ItemChat({ itemId }: Readonly<ItemChatProps>) {
         }
 
         const convRes = await fetch(
-          `${engineUrl()}/runs/${encodeURIComponent(latest.id)}/conversation`,
+          `/api/runs/${encodeURIComponent(latest.id)}/conversation`,
           { cache: "no-store" }
         );
         if (!convRes.ok) throw new Error(`conv_${convRes.status}`);

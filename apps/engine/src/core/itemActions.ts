@@ -9,6 +9,7 @@ export type ItemAction =
   | "start_frontend_design"
   | "promote_to_requirements"
   | "start_implementation"
+  | "import_prepared"
   | "rerun_design_prep"
   | "resume_run"
   | "promote_to_base"
@@ -21,6 +22,7 @@ export const ITEM_ACTIONS: readonly ItemAction[] = [
   "start_frontend_design",
   "promote_to_requirements",
   "start_implementation",
+  "import_prepared",
   "rerun_design_prep",
   "resume_run",
   "promote_to_base",
@@ -120,6 +122,12 @@ const MATRIX: Record<ItemAction, Record<string, Transition>> = {
     "frontend/*": { kind: "state", to: { column: "requirements", phase: "draft" } }
   },
   start_implementation: {
+    "requirements/*": { kind: "start-run", column: "implementation" }
+  },
+  import_prepared: {
+    "idea/*": { kind: "start-run", column: "implementation" },
+    "brainstorm/*": { kind: "start-run", column: "implementation" },
+    "frontend/*": { kind: "start-run", column: "implementation" },
     "requirements/*": { kind: "start-run", column: "implementation" }
   },
   rerun_design_prep: {

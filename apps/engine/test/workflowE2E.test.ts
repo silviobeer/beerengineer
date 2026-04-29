@@ -7,7 +7,7 @@ import { join } from "node:path"
 import { spawnSync } from "node:child_process"
 
 import { runWithWorkflowIO, type WorkflowEvent, type WorkflowIO } from "../src/core/io.js"
-import { runWorkflow } from "../src/workflow.ts"
+import { runWorkflow, workflowLlmForWorkspace, type WorkflowLlmOptions } from "../src/workflow.ts"
 import { assignPort } from "../src/core/portAllocator.js"
 import { layout } from "../src/core/workspaceLayout.js"
 import { runWithActiveRun } from "../src/core/runContext.js"
@@ -111,6 +111,33 @@ function seedCleanGitRepo(root: string): void {
   spawnSync("git", ["remote", "add", "origin", "https://github.com/acme/demo.git"], { cwd: root, encoding: "utf8" })
   spawnSync("git", ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"], { cwd: root, encoding: "utf8" })
 }
+
+test("workflowLlmForWorkspace points all workflow LLM roles at the item worktree", () => {
+  const rootConfig = {
+    workspaceRoot: "/repo",
+    harnessProfile: { mode: "codex-first" as const },
+    runtimePolicy: {
+      stageAuthoring: "safe-readonly" as const,
+      reviewer: "safe-readonly" as const,
+      coderExecution: "safe-workspace-write" as const,
+    },
+  }
+  const llm: WorkflowLlmOptions = {
+    stage: rootConfig,
+    execution: {
+      stage: { ...rootConfig },
+      executionCoder: { ...rootConfig },
+    },
+  }
+
+  const rebased = workflowLlmForWorkspace(llm, "/repo/.beerengineer/worktrees/item/worktree")
+
+  assert.equal(rebased?.stage?.workspaceRoot, "/repo/.beerengineer/worktrees/item/worktree")
+  assert.equal(rebased?.execution?.stage?.workspaceRoot, "/repo/.beerengineer/worktrees/item/worktree")
+  assert.equal(rebased?.execution?.executionCoder?.workspaceRoot, "/repo/.beerengineer/worktrees/item/worktree")
+  assert.equal(llm.stage?.workspaceRoot, "/repo")
+  assert.equal(llm.execution?.executionCoder?.workspaceRoot, "/repo")
+})
 
 test("runWorkflow runs end-to-end with all review/side loops, producing artifacts", async () => {
   await withTmpCwd(async () => {

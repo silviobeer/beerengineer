@@ -14,6 +14,7 @@
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { layout } from "./workspaceLayout.js"
+import { requirementsArtifactFileName } from "./preparedImport.js"
 import type { GitAdapter } from "./gitAdapter.js"
 import { architecture } from "../stages/architecture/index.js"
 import { documentation } from "../stages/documentation/index.js"
@@ -68,6 +69,7 @@ export type ExecutionResumeOptions = {
 export type ProjectResumePlan = {
   startStage: ProjectStageId
   execution?: ExecutionResumeOptions
+  projectStartStages?: Record<string, ProjectStageId>
 }
 
 export type StageLlmOptions = {
@@ -178,10 +180,27 @@ async function readJson<T>(path: string): Promise<T> {
 }
 
 async function loadPrd(ctx: ProjectContext): Promise<PRD> {
+  const projectScopedPath = join(
+    layout.stageArtifactsDir(ctx, "requirements"),
+    requirementsArtifactFileName(ctx.project.id),
+  )
+  if (await fileExists(projectScopedPath)) {
+    const artifact = await readJson<{ prd: PRD }>(projectScopedPath)
+    return artifact.prd
+  }
   const artifact = await readJson<{ prd: PRD }>(
     join(layout.stageArtifactsDir(ctx, "requirements"), "prd.json"),
   )
   return artifact.prd
+}
+
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await readFile(path)
+    return true
+  } catch {
+    return false
+  }
 }
 
 async function loadArchitecture(ctx: ProjectContext): Promise<ArchitectureArtifact> {

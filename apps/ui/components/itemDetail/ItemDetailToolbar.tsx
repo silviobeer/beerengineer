@@ -1,11 +1,12 @@
 "use client";
 
 import { useRef, useState } from "react";
-import type { ActionResult, ItemAction } from "@/lib/engine/types";
+import type { ActionResult, ItemAction, ItemActionPayload } from "@/lib/engine/types";
 
 const BUTTONS: { action: ItemAction; label: string }[] = [
   { action: "start_brainstorm", label: "Start Brainstorm" },
   { action: "start_implementation", label: "Start Implementation" },
+  { action: "import_prepared", label: "Import Prepared" },
   { action: "rerun_design_prep", label: "Rerun Design Prep" },
   { action: "promote_to_requirements", label: "Promote to Requirements" },
   { action: "mark_done", label: "Mark Done" },
@@ -13,7 +14,7 @@ const BUTTONS: { action: ItemAction; label: string }[] = [
 
 type Props = {
   readonly allowedActions: string[];
-  readonly onAction: (action: ItemAction) => Promise<ActionResult>;
+  readonly onAction: (action: ItemAction, payload?: ItemActionPayload) => Promise<ActionResult>;
 };
 
 export function ItemDetailToolbar({ allowedActions, onAction }: Readonly<Props>): React.ReactElement {
@@ -24,9 +25,15 @@ export function ItemDetailToolbar({ allowedActions, onAction }: Readonly<Props>)
   async function handleClick(action: ItemAction): Promise<void> {
     if (!allowed.has(action)) return;
     if (inFlight.current) return;
+    const payload: ItemActionPayload = {};
+    if (action === "import_prepared") {
+      const path = window.prompt("Prepared artifact directory");
+      if (!path?.trim()) return;
+      payload.path = path.trim();
+    }
     inFlight.current = true;
     try {
-      const result = await onAction(action);
+      const result = await onAction(action, payload);
       if (result.ok) {
         setError(null);
       } else {

@@ -6,7 +6,7 @@ import { isPortListening, readManagedPreviewPid, resolvePreviewLaunchSpec, start
 import { resolveItemPreviewContext } from "../../core/itemPreview.js"
 import { isItemAction, lookupTransition, type ItemActionsService } from "../../core/itemActions.js"
 import { latestCompletedRunForItem, latestRunForItemWithStageArtifact } from "../../core/itemWorkspace.js"
-import { resumeRunInProcess, startRunForItem, type StartRunAction } from "../../core/runService.js"
+import { resumeRunInProcess, startPreparedImportForItem, startRunForItem, type StartRunAction } from "../../core/runService.js"
 import { layout } from "../../core/workspaceLayout.js"
 import { resolveWorkflowContextForRun } from "../../core/workflowContextResolver.js"
 import { json, readJson } from "../http.js"
@@ -47,11 +47,62 @@ function respondInvalidItemAction(res: ServerResponse): void {
       "start_frontend_design",
       "promote_to_requirements",
       "start_implementation",
+      "import_prepared",
       "rerun_design_prep",
       "promote_to_base",
       "cancel_promotion",
       "mark_done",
     ],
+  })
+}
+
+function requestPath(body: unknown): string | null {
+  return typeof (body as { path?: unknown })?.path === "string"
+    ? ((body as { path: string }).path.trim() || null)
+    : null
+}
+
+async function handlePreparedImportAction(
+  repos: Repos,
+  res: ServerResponse,
+  itemId: string,
+  body: unknown,
+  onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void,
+): Promise<void> {
+  const item = repos.getItem(itemId)
+  if (!item) {
+    json(res, 404, { error: "item_not_found", code: "not_found" })
+    return
+  }
+  const transition = lookupTransition("import_prepared", item.current_column, item.phase_status)
+  if (transition.kind !== "start-run") {
+    json(res, 409, {
+      error: "invalid_transition",
+      code: "invalid_transition",
+      current: { column: item.current_column, phaseStatus: item.phase_status },
+      action: "import_prepared",
+    })
+    return
+  }
+  const path = requestPath(body)
+  if (!path) {
+    json(res, 400, { error: "missing_path", code: "bad_request" })
+    return
+  }
+  const result = await startPreparedImportForItem(repos, { itemId, sourceDir: path, onItemColumnChanged })
+  if (!result.ok) {
+    json(res, result.status, { error: result.error, action: "import_prepared" })
+    return
+  }
+  repos.setItemColumn(itemId, transition.column, "running")
+  json(res, 200, {
+    kind: "started",
+    itemId,
+    runId: result.runId,
+    action: "import_prepared",
+    column: transition.column,
+    phaseStatus: "running",
+    warnings: result.warnings,
   })
 }
 
@@ -297,7 +348,12 @@ export async function handleItemActionNamed(
   }
   // Consume the body even though these actions currently have no request
   // fields; that keeps the route future-proof for action-specific payloads.
-  await readJson(req).catch(() => ({}))
+  const body = await readJson(req).catch(() => ({}))
+
+  if (action === "import_prepared") {
+    await handlePreparedImportAction(repos, res, itemId, body, onItemColumnChanged)
+    return
+  }
 
   if (isRunStartingAction(action)) {
     handleStartRunItemAction(repos, res, itemId, action, onItemColumnChanged)

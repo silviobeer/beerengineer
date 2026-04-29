@@ -12,6 +12,11 @@ export type WorkflowContext = {
   // against a real git repo at this path (base-branch detection, branch
   // ops). Required at run-start time — simulation has been removed.
   workspaceRoot?: string
+  // Absolute or workspace-relative paths allowed to be dirty during the
+  // initial branch gate. Used for prepared imports where the source artifacts
+  // may live inside the target repo but are copied into run artifacts before
+  // branch/worktree work begins.
+  dirtyCheckIgnoredPaths?: string[]
 }
 
 type WorkspaceScopedContext = Pick<WorkflowContext, "workspaceId" | "workspaceRoot">

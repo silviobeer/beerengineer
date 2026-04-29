@@ -52,15 +52,6 @@ function defaultFactory(url: string): EventSourceLike {
   return new Ctor(url);
 }
 
-function engineBase(): string {
-  const fromEnv =
-    (typeof process !== "undefined" &&
-      (process.env?.NEXT_PUBLIC_ENGINE_URL ||
-        process.env?.ENGINE_URL)) ||
-    "http://127.0.0.1:4100";
-  return String(fromEnv).replace(/\/$/, "");
-}
-
 const STAGE_TO_STEP: Record<string, number> = {
   architecture: 1,
   arch: 1,
@@ -229,7 +220,7 @@ export function SSEConnectionManager({
     let es: EventSourceLike | null = null;
     try {
       es = factoryRef.current(
-        `${engineBase()}/events?workspace=${encodeURIComponent(workspaceKey)}&level=1`,
+        `/api/events?workspace=${encodeURIComponent(workspaceKey)}&level=1`,
       );
     } catch {
       goOffline();
@@ -340,7 +331,7 @@ export function SSEConnectionManager({
     let es: EventSourceLike | null = null;
     try {
       es = factoryRef.current(
-        `${engineBase()}/runs/${encodeURIComponent(currentRunId)}/events?level=1`,
+        `/api/runs/${encodeURIComponent(currentRunId)}/events?level=1`,
       );
     } catch {
       goOffline();

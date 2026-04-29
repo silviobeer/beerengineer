@@ -143,6 +143,7 @@ beerengineer chats [--all]         # open prompts waiting for answer
 beerengineer chat answer <runId> "<text>"
 beerengineer runs watch <runId>    # live event stream
 beerengineer item action --item <id> --action <name>
+beerengineer item import-prepared <id> --from <dir>
 beerengineer doctor                # health check
 beerengineer setup                 # re-run setup
 beerengineer start                 # start the engine HTTP API
@@ -153,6 +154,19 @@ beerengineer update --rollback     # reserved; returns rollback unsupported
 ```
 
 Full CLI help: `beerengineer --help`.
+
+Prepared import is the CLI-first shortcut for work you already shaped outside
+beerengineer_. The source directory may be a whole skill-process project folder
+such as `specs/PROJ-1-trendradar-demo` with `1_brainstorm/`,
+`2_visual-companion/`, `5_mockups/`, and optional `3_PRDs/`, or it may contain
+Engine JSON (`concept.json`, `projects.json`, PRD JSON files). Markdown is
+parsed locally first; when the workspace has an LLM harness configured,
+beerengineer_ uses it as a fallback normalizer for incomplete Markdown. The
+command writes those artifacts into a new run and starts implementation;
+projects with imported PRDs enter architecture, while incomplete projects run
+requirements first. The original source folder is snapshotted into the run at
+`imports/prepared-source` for traceability; it is not copied into the product
+worktree.
 
 ## Updating safely
 
