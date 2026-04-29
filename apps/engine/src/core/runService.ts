@@ -6,7 +6,7 @@ import { prepareRun } from "./runOrchestrator.js"
 import { resolveWorkflowLlmOptions } from "./runSubscribers.js"
 import { loadResumeReadiness, performResume } from "./resume.js"
 import { getRegisteredWorkspace } from "./workspaces.js"
-import { loadPreparedImportBundleWithLlmFallback, seedPreparedImportArtifacts, type PreparedImportBundle } from "./preparedImport.js"
+import { deriveProjectStartStages, loadPreparedImportBundleWithLlmFallback, seedPreparedImportArtifacts, type PreparedImportBundle } from "./preparedImport.js"
 import { layout } from "./workspaceLayout.js"
 import { resolveWorkflowContextForItemRun, resolveWorkflowContextForRun } from "./workflowContextResolver.js"
 import type { Repos, ItemRow, RunRow, ExternalRemediationRow } from "../db/repositories.js"
@@ -267,17 +267,11 @@ export async function startPreparedImportForItem(
     return { ok: false, status: 422, error: (error as Error).message }
   }
 
-  const projectStartStages = Object.fromEntries(
-    bundle.projects.map(project => [
-      project.id,
-      bundle.prdsByProjectId[project.id]?.stories.length ? "architecture" : "requirements",
-    ]),
-  ) as Record<string, "requirements" | "architecture">
   const io = buildApiIo(repos)
   const resume = {
     scope: { type: "run", runId: "pending" } as const,
     currentStage: "projects",
-    projectStartStages,
+    projectStartStages: deriveProjectStartStages(bundle),
     dirtyCheckIgnoredPaths: [input.sourceDir],
     skipDesignPrep: true,
   }

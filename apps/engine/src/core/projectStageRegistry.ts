@@ -14,7 +14,7 @@
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { layout } from "./workspaceLayout.js"
-import { requirementsArtifactFileName } from "./preparedImport.js"
+import { projectPrdFileName } from "./preparedImport.js"
 import type { GitAdapter } from "./gitAdapter.js"
 import { architecture } from "../stages/architecture/index.js"
 import { documentation } from "../stages/documentation/index.js"
@@ -182,7 +182,7 @@ async function readJson<T>(path: string): Promise<T> {
 async function loadPrd(ctx: ProjectContext): Promise<PRD> {
   const projectScopedPath = join(
     layout.stageArtifactsDir(ctx, "requirements"),
-    requirementsArtifactFileName(ctx.project.id),
+    projectPrdFileName(ctx.project.id),
   )
   if (await fileExists(projectScopedPath)) {
     const artifact = await readJson<{ prd: PRD }>(projectScopedPath)

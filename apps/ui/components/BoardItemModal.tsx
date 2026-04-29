@@ -87,7 +87,7 @@ function previewErrorMessageFor(previewError: string | null): string | null {
 }
 
 function proxyArtifactHref(url: string | undefined): string | null {
-  if (!url || !url.startsWith("/runs/")) return null;
+  if (!url?.startsWith("/runs/")) return null;
   return `/api${url}`;
 }
 
@@ -352,13 +352,13 @@ function DesignArtifactsPanel({
           </a>
         </div>
       ) : null}
-      {!hasArtifacts ? (
+      {hasArtifacts ? null : (
         <div className="text-zinc-500">
           {card.current_stage === "frontend-design"
             ? "Artifacts will appear here as visual-companion and frontend-design finish."
             : "Wireframe artifacts will appear here when visual-companion completes."}
         </div>
-      ) : null}
+      )}
       {artifactError ? (
         <div className="text-red-400">{artifactError}</div>
       ) : null}

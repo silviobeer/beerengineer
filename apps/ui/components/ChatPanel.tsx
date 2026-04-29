@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ComponentProps } from "react";
+import { useEffect, useRef, useState, type ComponentProps, type Dispatch, type SetStateAction } from "react";
 import type { ConversationAction, ConversationEntry } from "../lib/types";
 
 function formatTimestamp(iso: string | undefined): string | null {
@@ -59,12 +59,144 @@ interface ChatPanelProps {
   }) => void;
 }
 
+type ConversationSyncPayload = Parameters<NonNullable<ChatPanelProps["onConversationSync"]>>[0];
+
 const SPEAKER_LABELS: Record<string, string> = {
   system: "System:",
   agent: "Beerengineer:",
   user: "You:",
   "review-gate": "Beerengineer:",
 };
+
+function isConversationSyncPayload(body: unknown): body is ConversationSyncPayload {
+  return Boolean(body && typeof body === "object" && Array.isArray((body as { entries?: unknown }).entries));
+}
+
+async function readConversationSync(res: Response): Promise<ConversationSyncPayload | null> {
+  const body = await res.json().catch(() => null);
+  return isConversationSyncPayload(body) ? body : null;
+}
+
+function addAnsweredPromptId(promptId: string, setAnsweredPromptIds: Dispatch<SetStateAction<string[]>>) {
+  setAnsweredPromptIds((prev) => (prev.includes(promptId) ? prev : [...prev, promptId]));
+}
+
+type ReviewGateBannerProps = {
+  readonly prompt: ConversationEntry;
+  readonly reviewDraft: string;
+  readonly reviewValidationError: string | null;
+  readonly pendingAnswer: boolean;
+  readonly selectedReviewUrl: string | null;
+  readonly onReviewDraftChange: (value: string) => void;
+  readonly onReviewDecision: (kind: "approve" | "revise") => void;
+  readonly onSelectReviewUrl: (url: string) => void;
+};
+
+function ReviewGateBanner({
+  prompt,
+  reviewDraft,
+  reviewValidationError,
+  pendingAnswer,
+  selectedReviewUrl,
+  onReviewDraftChange,
+  onReviewDecision,
+  onSelectReviewUrl,
+}: ReviewGateBannerProps) {
+  const reviewUrls = extractReviewUrls(prompt.text);
+  return (
+    <section
+      data-testid="chat-review-gate-banner"
+      className="mb-3 border border-amber-700 bg-amber-950/30 p-3"
+    >
+      <div className="font-mono text-[11px] uppercase tracking-wider text-amber-300">
+        Review Required
+      </div>
+      <p className="mt-2 whitespace-pre-wrap text-sm text-zinc-100">
+        {prompt.text}
+      </p>
+      <textarea
+        data-testid="chat-review-feedback"
+        aria-label="Revision feedback"
+        value={reviewDraft}
+        onChange={(e) => onReviewDraftChange(e.target.value)}
+        placeholder="Describe what should change before the next iteration."
+        className="mt-3 min-h-20 w-full max-w-full resize-y border border-zinc-700 bg-zinc-900 p-2 text-sm text-zinc-100 box-border"
+      />
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          data-testid="chat-review-approve"
+          disabled={pendingAnswer}
+          onClick={() => onReviewDecision("approve")}
+          className="border border-zinc-700 px-3 py-1.5 text-xs uppercase tracking-wider text-zinc-100 disabled:opacity-50"
+        >
+          Approve
+        </button>
+        <button
+          type="button"
+          data-testid="chat-review-revise"
+          disabled={pendingAnswer}
+          onClick={() => onReviewDecision("revise")}
+          className="border border-amber-600 bg-amber-500/10 px-3 py-1.5 text-xs uppercase tracking-wider text-amber-200 disabled:opacity-50"
+        >
+          Revise
+        </button>
+        {reviewValidationError ? (
+          <span data-testid="chat-review-validation" className="text-xs text-amber-300">
+            {reviewValidationError}
+          </span>
+        ) : null}
+      </div>
+      {reviewUrls.length > 0 ? (
+        <div className="mt-3 space-y-2">
+          <div className="text-[11px] uppercase tracking-wider text-zinc-400">
+            Review Targets
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {reviewUrls.map((url, index) => {
+              const active = selectedReviewUrl === url;
+              return (
+                <button
+                  key={url}
+                  type="button"
+                  data-testid="chat-review-target"
+                  data-active={active ? "true" : "false"}
+                  onClick={() => onSelectReviewUrl(url)}
+                  className={
+                    active
+                      ? "border border-amber-500 bg-amber-500/15 px-2 py-1 text-[11px] uppercase tracking-wider text-amber-200"
+                      : "border border-zinc-700 bg-zinc-900 px-2 py-1 text-[11px] uppercase tracking-wider text-zinc-300"
+                  }
+                >
+                  {`Mockup ${index + 1}`}
+                </button>
+              );
+            })}
+            {selectedReviewUrl ? (
+              <a
+                href={reviewHref(selectedReviewUrl)}
+                target="_blank"
+                rel="noreferrer"
+                data-testid="chat-review-open-link"
+                className="border border-zinc-700 bg-zinc-900 px-2 py-1 text-[11px] uppercase tracking-wider text-zinc-300 underline"
+              >
+                Open in new tab
+              </a>
+            ) : null}
+          </div>
+          {selectedReviewUrl ? (
+            <iframe
+              title="Review target preview"
+              src={reviewHref(selectedReviewUrl)}
+              data-testid="chat-review-iframe"
+              className="h-72 w-full border border-zinc-800 bg-white"
+            />
+          ) : null}
+        </div>
+      ) : null}
+    </section>
+  );
+}
 
 export function ChatPanel({
   activeRunId,
@@ -145,13 +277,9 @@ export function ChatPanel({
         body: JSON.stringify({ promptId, answer }),
       });
       if (res.ok) {
-        const body = await res.json().catch(() => null);
-        if (body && typeof body === "object" && Array.isArray((body as { entries?: unknown }).entries)) {
-          onConversationSync?.(body as Parameters<NonNullable<typeof onConversationSync>>[0]);
-        }
-        setAnsweredPromptIds((prev) =>
-          prev.includes(promptId) ? prev : [...prev, promptId]
-        );
+        const body = await readConversationSync(res);
+        if (body) onConversationSync?.(body);
+        addAnsweredPromptId(promptId, setAnsweredPromptIds);
       } else {
         setSubmitError("Failed to send answer.");
       }
@@ -186,10 +314,40 @@ export function ChatPanel({
     await submitPromptAnswer(promptId, `revise: ${trimmed}`);
   }
 
+  async function sendQuestionAnswer(promptId: string, answer: string): Promise<boolean> {
+    const res = await fetch(`/api/runs/${activeRunId}/answer`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ promptId, answer }),
+    });
+    if (!res.ok) {
+      setSubmitError("Failed to answer prompt.");
+      return false;
+    }
+    const body = await readConversationSync(res);
+    if (body) onConversationSync?.(body);
+    addAnsweredPromptId(promptId, setAnsweredPromptIds);
+    return true;
+  }
+
+  async function sendFreeMessage(text: string): Promise<boolean> {
+    const res = await fetch(`/api/runs/${activeRunId}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (!res.ok) {
+      setSubmitError("Failed to send message.");
+      return false;
+    }
+    return true;
+  }
+
   const handleSubmit = async (e: Parameters<NonNullable<ComponentProps<"form">["onSubmit"]>>[0]) => {
     e.preventDefault();
     if (pendingMessage) return;
-    if (draft.trim().length === 0) {
+    const trimmedDraft = draft.trim();
+    if (trimmedDraft.length === 0) {
       setValidationError(
         activeQuestionPrompt
           ? "Please enter an answer before sending."
@@ -199,28 +357,11 @@ export function ChatPanel({
     }
     setValidationError(null);
     setSubmitError(null);
-    if (activeQuestionPrompt?.promptId) {
+    const promptId = activeQuestionPrompt?.promptId;
+    if (promptId) {
       setPendingMessage(true);
       try {
-        const res = await fetch(`/api/runs/${activeRunId}/answer`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ promptId: activeQuestionPrompt.promptId, answer: draft.trim() }),
-        });
-        if (res.ok) {
-          const body = await res.json().catch(() => null);
-          if (body && typeof body === "object" && Array.isArray((body as { entries?: unknown }).entries)) {
-            onConversationSync?.(body as Parameters<NonNullable<typeof onConversationSync>>[0]);
-          }
-          setAnsweredPromptIds((prev) =>
-            prev.includes(activeQuestionPrompt.promptId as string)
-              ? prev
-              : [...prev, activeQuestionPrompt.promptId as string]
-          );
-          setDraft("");
-        } else {
-          setSubmitError("Failed to answer prompt.");
-        }
+        if (await sendQuestionAnswer(promptId, trimmedDraft)) setDraft("");
       } catch {
         setSubmitError("Failed to answer prompt.");
       } finally {
@@ -231,16 +372,7 @@ export function ChatPanel({
 
     setPendingMessage(true);
     try {
-      const res = await fetch(`/api/runs/${activeRunId}/messages`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: draft.trim() }),
-      });
-      if (res.ok) {
-        setDraft("");
-      } else {
-        setSubmitError("Failed to send message.");
-      }
+      if (await sendFreeMessage(trimmedDraft)) setDraft("");
     } catch {
       setSubmitError("Failed to send message.");
     } finally {
@@ -251,98 +383,16 @@ export function ChatPanel({
   return (
     <section data-testid="chat-panel" aria-label="Chat panel">
       {activeReviewPrompt ? (
-        <section
-          data-testid="chat-review-gate-banner"
-          className="mb-3 border border-amber-700 bg-amber-950/30 p-3"
-        >
-          <div className="font-mono text-[11px] uppercase tracking-wider text-amber-300">
-            Review Required
-          </div>
-          <p className="mt-2 whitespace-pre-wrap text-sm text-zinc-100">
-            {activeReviewPrompt.text}
-          </p>
-          <textarea
-            data-testid="chat-review-feedback"
-            aria-label="Revision feedback"
-            value={reviewDraft}
-            onChange={(e) => setReviewDraft(e.target.value)}
-            placeholder="Describe what should change before the next iteration."
-            className="mt-3 min-h-20 w-full max-w-full resize-y border border-zinc-700 bg-zinc-900 p-2 text-sm text-zinc-100 box-border"
-          />
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              data-testid="chat-review-approve"
-              disabled={pendingAnswer}
-              onClick={() => void handleReviewDecision("approve")}
-              className="border border-zinc-700 px-3 py-1.5 text-xs uppercase tracking-wider text-zinc-100 disabled:opacity-50"
-            >
-              Approve
-            </button>
-            <button
-              type="button"
-              data-testid="chat-review-revise"
-              disabled={pendingAnswer}
-              onClick={() => void handleReviewDecision("revise")}
-              className="border border-amber-600 bg-amber-500/10 px-3 py-1.5 text-xs uppercase tracking-wider text-amber-200 disabled:opacity-50"
-            >
-              Revise
-            </button>
-            {reviewValidationError ? (
-              <span data-testid="chat-review-validation" className="text-xs text-amber-300">
-                {reviewValidationError}
-              </span>
-            ) : null}
-          </div>
-          {reviewUrls.length > 0 ? (
-            <div className="mt-3 space-y-2">
-              <div className="text-[11px] uppercase tracking-wider text-zinc-400">
-                Review Targets
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {reviewUrls.map((url, index) => {
-                  const href = reviewHref(url);
-                  const active = selectedReviewUrl === url;
-                  return (
-                    <button
-                      key={url}
-                      type="button"
-                      data-testid="chat-review-target"
-                      data-active={active ? "true" : "false"}
-                      onClick={() => setSelectedReviewUrl(url)}
-                      className={
-                        active
-                          ? "border border-amber-500 bg-amber-500/15 px-2 py-1 text-[11px] uppercase tracking-wider text-amber-200"
-                          : "border border-zinc-700 bg-zinc-900 px-2 py-1 text-[11px] uppercase tracking-wider text-zinc-300"
-                      }
-                    >
-                      {`Mockup ${index + 1}`}
-                    </button>
-                  );
-                })}
-                {selectedReviewUrl ? (
-                  <a
-                    href={reviewHref(selectedReviewUrl)}
-                    target="_blank"
-                    rel="noreferrer"
-                    data-testid="chat-review-open-link"
-                    className="border border-zinc-700 bg-zinc-900 px-2 py-1 text-[11px] uppercase tracking-wider text-zinc-300 underline"
-                  >
-                    Open in new tab
-                  </a>
-                ) : null}
-              </div>
-              {selectedReviewUrl ? (
-                <iframe
-                  title="Review target preview"
-                  src={reviewHref(selectedReviewUrl)}
-                  data-testid="chat-review-iframe"
-                  className="h-72 w-full border border-zinc-800 bg-white"
-                />
-              ) : null}
-            </div>
-          ) : null}
-        </section>
+        <ReviewGateBanner
+          prompt={activeReviewPrompt}
+          reviewDraft={reviewDraft}
+          reviewValidationError={reviewValidationError}
+          pendingAnswer={pendingAnswer}
+          selectedReviewUrl={selectedReviewUrl}
+          onReviewDraftChange={setReviewDraft}
+          onReviewDecision={(kind) => void handleReviewDecision(kind)}
+          onSelectReviewUrl={setSelectedReviewUrl}
+        />
       ) : null}
       {activeQuestionPrompt ? (
         <section

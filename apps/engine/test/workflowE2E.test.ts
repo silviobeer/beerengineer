@@ -12,9 +12,9 @@ import { assignPort } from "../src/core/portAllocator.js"
 import { layout } from "../src/core/workspaceLayout.js"
 import { runWithActiveRun } from "../src/core/runContext.js"
 
-/** Default answers for design-prep stages: 3 clarification no-ops + approve. */
-const DEFAULT_VISUAL_COMPANION_ANSWERS = ["no existing mockups", "dashboard first", "WCAG AA required", "approve"]
-const DEFAULT_FRONTEND_DESIGN_ANSWERS = ["no design system", "professional", "no brand constraints", "approve"]
+/** Default answers for design-prep stages: mode + 2 clarification no-ops + approve. */
+const DEFAULT_VISUAL_COMPANION_ANSWERS = ["none", "dashboard first", "WCAG AA required", "approve"]
+const DEFAULT_FRONTEND_DESIGN_ANSWERS = ["none", "professional", "no brand constraints", "approve"]
 
 function makeIO(answers: {
   brainstorm: string[]

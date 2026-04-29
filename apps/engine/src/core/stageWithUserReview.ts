@@ -35,6 +35,51 @@ export type UserReviewGateOptions<S extends RevisableState, A, R> = {
   maxUserReviewRounds?: number
 }
 
+function buildInitialReviewState<S extends RevisableState, A, R>(
+  opts: UserReviewGateOptions<S, A, R>,
+  priorState: S | undefined,
+  revisionFeedback: string | undefined,
+  reviewRound: number,
+): S {
+  if (!priorState) return opts.buildFreshState({ revisionFeedback, reviewRound })
+  return {
+    ...priorState,
+    pendingRevisionFeedback: revisionFeedback,
+    userReviewRound: reviewRound,
+    clarificationCount: priorState.maxClarifications,
+  }
+}
+
+async function readUserReviewDecision<S extends RevisableState, A, R>(
+  opts: UserReviewGateOptions<S, A, R>,
+  artifact: A,
+  run: StageRun<S, A>,
+): Promise<{ kind: "approved"; value: R } | { kind: "revise"; feedback: string }> {
+  while (true) {
+    const userReply = (await opts.askUser(opts.buildGatePrompt({ artifact, run }))).trim()
+
+    if (userReply === NON_INTERACTIVE_NO_ANSWER_SENTINEL) {
+      throw new Error(
+        `Stage "${opts.stageId}" reached the post-artifact review gate in a non-interactive run with no queued answer. ` +
+        "Resume the run from the UI or API so the review gate emits a pending_prompt event, " +
+        "then answer with \"approve\" or \"revise: <feedback>\".",
+      )
+    }
+
+    if (/^approve$/i.test(userReply)) {
+      return { kind: "approved", value: await opts.onUserApprove({ artifact, run }) }
+    }
+
+    if (/^revise:/i.test(userReply)) {
+      return { kind: "revise", feedback: userReply.replace(/^revise:\s*/i, "").trim() }
+    }
+
+    stagePresent.warn(
+      `Unrecognised reply "${userReply}". Reply with exactly "approve" or "revise: <feedback>".`,
+    )
+  }
+}
+
 /**
  * Runs a stage that produces an artifact, then gates it behind a user
  * "approve / revise: <feedback>" prompt. On revise, re-enters runStage with
@@ -67,15 +112,7 @@ export async function runStageWithUserReview<S extends RevisableState, A, R>(
       workspaceRoot: opts.workspaceRoot,
       runId: reviewRound === 0 ? opts.baseRunId : `${opts.baseRunId}-rev${reviewRound}`,
       createInitialState: () => {
-        if (priorState) {
-          return {
-            ...priorState,
-            pendingRevisionFeedback: revisionFeedback,
-            userReviewRound: reviewRound,
-            clarificationCount: priorState.maxClarifications,
-          }
-        }
-        return opts.buildFreshState({ revisionFeedback, reviewRound })
+        return buildInitialReviewState(opts, priorState, revisionFeedback, reviewRound)
       },
       stageAgent: opts.stageAgent,
       reviewer: opts.reviewer,
@@ -89,38 +126,17 @@ export async function runStageWithUserReview<S extends RevisableState, A, R>(
     }
 
     const { result: artifact, run } = await runStage<S, A, A>(definition)
+    const decision = await readUserReviewDecision(opts, artifact, run)
+    if (decision.kind === "approved") return decision.value
 
-    while (true) {
-      const userReply = (await opts.askUser(opts.buildGatePrompt({ artifact, run }))).trim()
-
-      if (userReply === NON_INTERACTIVE_NO_ANSWER_SENTINEL) {
-        throw new Error(
-          `Stage "${opts.stageId}" reached the post-artifact review gate in a non-interactive run with no queued answer. ` +
-          "Resume the run from the UI or API so the review gate emits a pending_prompt event, " +
-          "then answer with \"approve\" or \"revise: <feedback>\".",
-        )
-      }
-
-      if (/^approve$/i.test(userReply)) {
-        return await opts.onUserApprove({ artifact, run })
-      }
-
-      if (/^revise:/i.test(userReply)) {
-        userReviewRound++
-        if (userReviewRound > maxRounds) {
-          throw new Error(
-            `${opts.stageId}: post-artifact review cap reached (${maxRounds} rounds). ` +
-            "Approve the artifact or restart the stage with updated references.",
-          )
-        }
-        pendingRevisionFeedback = userReply.replace(/^revise:\s*/i, "").trim()
-        stagePresent.step(`User revision round ${userReviewRound}: ${pendingRevisionFeedback}`)
-        break
-      }
-
-      stagePresent.warn(
-        `Unrecognised reply "${userReply}". Reply with exactly "approve" or "revise: <feedback>".`,
+    userReviewRound++
+    if (userReviewRound > maxRounds) {
+      throw new Error(
+        `${opts.stageId}: post-artifact review cap reached (${maxRounds} rounds). ` +
+        "Approve the artifact or restart the stage with updated references.",
       )
     }
+    pendingRevisionFeedback = decision.feedback
+    stagePresent.step(`User revision round ${userReviewRound}: ${pendingRevisionFeedback}`)
   }
 }

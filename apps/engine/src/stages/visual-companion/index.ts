@@ -42,6 +42,27 @@ export function nextClarificationQuestion(state: VisualCompanionState): string |
   return null
 }
 
+function invalidClarificationModeMessage(): StageAgentResponse<WireframeArtifact> {
+  return {
+    kind: "message",
+    message:
+      "Reply with exactly `none` or `references`. If you choose `references`, the next answer can contain the actual links or mockups.",
+  }
+}
+
+function handleClarificationReply(state: VisualCompanionState, reply: string): StageAgentResponse<WireframeArtifact> | null {
+  if (state.clarificationCount === 0) {
+    const mode = parseClarificationModeReply(reply)
+    if (!mode) return invalidClarificationModeMessage()
+    state.inputMode = mode
+    state.maxClarifications = mode === "references" ? 4 : 3
+  }
+  state.history.push({ role: "user", text: reply })
+  state.clarificationCount++
+  const nextQuestion = nextClarificationQuestion(state)
+  return nextQuestion ? { kind: "message", message: nextQuestion } : null
+}
+
 function withClarificationGate(
   delegate: StageAgentAdapter<VisualCompanionState, WireframeArtifact>,
 ): StageAgentAdapter<VisualCompanionState, WireframeArtifact> {
@@ -61,24 +82,8 @@ function withClarificationGate(
         }
 
         const reply = input.userMessage.trim()
-        if (state.clarificationCount === 0) {
-          const mode = parseClarificationModeReply(reply)
-          if (!mode) {
-            return {
-              kind: "message",
-              message:
-                "Reply with exactly `none` or `references`. If you choose `references`, the next answer can contain the actual links or mockups.",
-            }
-          }
-          state.inputMode = mode
-          state.maxClarifications = mode === "references" ? 4 : 3
-        }
-        state.history.push({ role: "user", text: reply })
-        state.clarificationCount++
-        const nextQuestion = nextClarificationQuestion(state)
-        if (nextQuestion) {
-          return { kind: "message", message: nextQuestion }
-        }
+        const response = handleClarificationReply(state, reply)
+        if (response) return response
       }
 
       return delegate.step(input)

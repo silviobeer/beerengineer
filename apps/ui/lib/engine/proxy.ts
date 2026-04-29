@@ -30,7 +30,7 @@ function readToken(): string | null {
 }
 
 function authHeaders(extra?: Record<string, string>): Record<string, string> {
-  const headers: Record<string, string> = { ...(extra ?? {}) };
+  const headers: Record<string, string> = extra ? { ...extra } : {};
   const token = readToken();
   if (token) {
     headers["x-beerengineer-token"] = token;

@@ -45,6 +45,27 @@ export function nextClarificationQuestion(state: FrontendDesignState): string | 
   return null
 }
 
+function invalidClarificationModeMessage(): StageAgentResponse<DesignArtifact> {
+  return {
+    kind: "message",
+    message:
+      "Reply with exactly `none` or `references`. If you choose `references`, the next answer can contain the actual design systems, apps, or links.",
+  }
+}
+
+function handleClarificationReply(state: FrontendDesignState, reply: string): StageAgentResponse<DesignArtifact> | null {
+  if (state.clarificationCount === 0) {
+    const mode = parseClarificationModeReply(reply)
+    if (!mode) return invalidClarificationModeMessage()
+    state.inputMode = mode
+    state.maxClarifications = mode === "references" ? 4 : 3
+  }
+  state.history.push({ role: "user", text: reply })
+  state.clarificationCount++
+  const nextQuestion = nextClarificationQuestion(state)
+  return nextQuestion ? { kind: "message", message: nextQuestion } : null
+}
+
 function withClarificationGate(
   delegate: StageAgentAdapter<FrontendDesignState, DesignArtifact>,
 ): StageAgentAdapter<FrontendDesignState, DesignArtifact> {
@@ -64,24 +85,8 @@ function withClarificationGate(
         }
 
         const reply = input.userMessage.trim()
-        if (state.clarificationCount === 0) {
-          const mode = parseClarificationModeReply(reply)
-          if (!mode) {
-            return {
-              kind: "message",
-              message:
-                "Reply with exactly `none` or `references`. If you choose `references`, the next answer can contain the actual design systems, apps, or links.",
-            }
-          }
-          state.inputMode = mode
-          state.maxClarifications = mode === "references" ? 4 : 3
-        }
-        state.history.push({ role: "user", text: reply })
-        state.clarificationCount++
-        const nextQuestion = nextClarificationQuestion(state)
-        if (nextQuestion) {
-          return { kind: "message", message: nextQuestion }
-        }
+        const response = handleClarificationReply(state, reply)
+        if (response) return response
       }
 
       return delegate.step(input)

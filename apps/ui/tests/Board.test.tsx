@@ -312,14 +312,15 @@ describe("Card navigation target (S-01)", () => {
       <BoardCard card={fullBoardItems()[0]} workspaceKey="alpha" />
     );
     const card = within(container).getByTestId("board-card");
+    const bodyLink = within(card).getByTestId("board-card-link");
     const semantic = Array.from(
       card.querySelectorAll("a[href], button, input, select, textarea")
-    );
+    ).filter((el) => bodyLink.contains(el));
     const ariaInteractive = Array.from(
       card.querySelectorAll(
         "[role='button'], [role='link'], [role='checkbox'], [role='menuitem'], [role='option'], [role='tab'], [role='switch']"
       )
-    );
+    ).filter((el) => bodyLink.contains(el));
     const set = new Set<Element>();
     semantic.forEach((el) => set.add(el));
     ariaInteractive.forEach((el) => set.add(el));

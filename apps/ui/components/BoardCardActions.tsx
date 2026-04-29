@@ -67,7 +67,7 @@ export function BoardCardActions({ card }: Readonly<BoardCardActionsProps>) {
     try {
       const body: Record<string, string> = {};
       if (action === "import_prepared") {
-        const path = window.prompt("Prepared artifact directory");
+        const path = globalThis.prompt("Prepared artifact directory");
         if (!path?.trim()) return;
         body.path = path.trim();
       }

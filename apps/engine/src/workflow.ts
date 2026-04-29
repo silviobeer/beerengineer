@@ -505,7 +505,7 @@ async function runWorkflowProjects(
   for (const project of projects) {
     git.ensureProjectBranch(project.id)
     const projectResumePlan = resumePlan?.projectStartStages?.[project.id]
-      ? { ...resumePlan, startStage: resumePlan.projectStartStages[project.id]! }
+      ? { ...resumePlan, startStage: resumePlan.projectStartStages[project.id] }
       : resumePlan
     await runProject(
       {

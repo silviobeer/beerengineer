@@ -27,7 +27,7 @@ export function ItemDetailToolbar({ allowedActions, onAction }: Readonly<Props>)
     if (inFlight.current) return;
     const payload: ItemActionPayload = {};
     if (action === "import_prepared") {
-      const path = window.prompt("Prepared artifact directory");
+      const path = globalThis.prompt("Prepared artifact directory");
       if (!path?.trim()) return;
       payload.path = path.trim();
     }

@@ -1,8 +1,8 @@
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { renderConceptMarkdown } from "../render/concept.js"
 import { renderPrdMarkdown } from "../render/prd.js"
-import type { Concept, Item, PRD, Project } from "../types.js"
+import type { AcceptanceCriterion, Concept, Item, PRD, Project, UserStory } from "../types.js"
 import { resolveHarness, type RunLlmConfig } from "../llm/registry.js"
 import { invokeHostedCli, parseJsonObject } from "../llm/hosted/hostedCliAdapter.js"
 import type { HostedRequest } from "../llm/hosted/promptEnvelope.js"
@@ -29,6 +29,12 @@ type LlmNormalizedImport = {
   warnings?: unknown
 }
 
+type JsonReadResult<T> = {
+  exists: boolean
+  malformed: boolean
+  value: T | null
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
@@ -43,9 +49,13 @@ function stringArray(value: unknown): string[] {
   return []
 }
 
-function readJsonFile<T>(path: string): T | null {
-  if (!existsSync(path)) return null
-  return JSON.parse(readFileSync(path, "utf8")) as T
+function readJsonFile<T>(path: string): JsonReadResult<T> {
+  if (!existsSync(path)) return { exists: false, malformed: false, value: null }
+  try {
+    return { exists: true, malformed: false, value: JSON.parse(readFileSync(path, "utf8")) as T }
+  } catch {
+    return { exists: true, malformed: true, value: null }
+  }
 }
 
 function maybeConcept(value: unknown): Concept | null {
@@ -71,15 +81,52 @@ function maybeProject(value: unknown, index: number, fallbackConcept: Concept): 
   }
 }
 
+const ACCEPTANCE_PRIORITIES = new Set<AcceptanceCriterion["priority"]>(["must", "should", "could"])
+const ACCEPTANCE_CATEGORIES = new Set<AcceptanceCriterion["category"]>(["functional", "validation", "error", "state", "ui"])
+
+function maybeAcceptanceCriterion(value: unknown): AcceptanceCriterion | null {
+  if (!isRecord(value)) return null
+  const id = stringValue(value.id)
+  const text = stringValue(value.text)
+  if (!id || !text) return null
+  const priority = ACCEPTANCE_PRIORITIES.has(value.priority as AcceptanceCriterion["priority"])
+    ? value.priority as AcceptanceCriterion["priority"]
+    : "must"
+  const category = ACCEPTANCE_CATEGORIES.has(value.category as AcceptanceCriterion["category"])
+    ? value.category as AcceptanceCriterion["category"]
+    : "functional"
+  return { id, text, priority, category }
+}
+
+function maybeStory(value: unknown): UserStory | null {
+  if (!isRecord(value)) return null
+  const id = stringValue(value.id)
+  if (!id) return null
+  const acceptanceCriteria = Array.isArray(value.acceptanceCriteria)
+    ? value.acceptanceCriteria
+      .map(maybeAcceptanceCriterion)
+      .filter((criterion): criterion is AcceptanceCriterion => Boolean(criterion))
+    : []
+  return {
+    id,
+    title: stringValue(value.title, id),
+    description: typeof value.description === "string" ? value.description.trim() : undefined,
+    acceptanceCriteria,
+  }
+}
+
 function maybePrd(value: unknown): PRD | null {
   const raw = isRecord(value) && isRecord(value.prd) ? value.prd : value
   if (!isRecord(raw) || !Array.isArray(raw.stories)) return null
-  return { stories: raw.stories as PRD["stories"] }
+  const stories = raw.stories
+    .map(maybeStory)
+    .filter((story): story is UserStory => Boolean(story))
+  return stories.length > 0 ? { stories } : null
 }
 
 function headingSection(markdown: string, heading: string): string {
-  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-  const match = new RegExp(`^##\\s+${escaped}\\s*\\r?\\n([\\s\\S]*?)(?=^##\\s+|(?![\\s\\S]))`, "im").exec(markdown)
+  const escaped = heading.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`)
+  const match = new RegExp(String.raw`^##\s+${escaped}\s*\r?\n([\s\S]*?)(?=^##\s+|(?![\s\S]))`, "im").exec(markdown)
   return match?.[1]?.trim() ?? ""
 }
 
@@ -136,17 +183,17 @@ function prdFromMarkdown(markdown: string, options: { storyIdPrefix?: string } =
   const storyPattern = /^###\s+(US-[\w-]+|Story\s+\d+)\s*:?\s*(.*)$/gim
   const matches = [...markdown.matchAll(storyPattern)]
   for (let index = 0; index < matches.length; index++) {
-    const match = matches[index]!
-    const rawId = match[1]!.replace(/^Story\s+/i, "US-")
+    const match = matches[index]
+    const rawId = match[1].replace(/^Story\s+/i, "US-")
     const id = options.storyIdPrefix ? `${options.storyIdPrefix}-${rawId}` : rawId
     const title = (match[2] ?? "").trim() || id
     const start = (match.index ?? 0) + match[0].length
     const end = Math.min(matches[index + 1]?.index ?? markdown.length, nextSectionIndex(markdown, start))
     const body = markdown.slice(start, end)
-    const acceptanceCriteria = [...body.matchAll(/^\s*[-*]\s+(?:\[[ xX]\]\s*)?(AC-[\w.-]+)\s*:?\s*(.+)$/gim)]
+    const acceptanceCriteria = [...body.matchAll(/^\s*[-*]\s+(?:\[[ xX]\]\s*)?((?:AC|ac)-[A-Za-z0-9_.-]+)\s*:?\s*(.+)$/gm)]
       .map(ac => ({
-        id: ac[1]!,
-        text: ac[2]!.trim(),
+        id: ac[1],
+        text: ac[2].trim(),
         priority: "must" as const,
         category: "functional" as const,
       }))
@@ -158,7 +205,8 @@ function prdFromMarkdown(markdown: string, options: { storyIdPrefix?: string } =
 function collectFiles(root: string): string[] {
   const entries = readdirSync(root).map(name => join(root, name))
   return entries.flatMap(path => {
-    const stat = statSync(path)
+    const stat = lstatSync(path)
+    if (stat.isSymbolicLink()) return []
     if (stat.isDirectory()) return collectFiles(path)
     return stat.isFile() ? [path] : []
   })
@@ -202,13 +250,19 @@ function projectIdFromPrdFile(path: string): string | null {
 function mergePrd(existing: PRD | undefined, incoming: PRD): PRD {
   if (!existing) return incoming
   const stories = [...existing.stories]
-  const existingIds = new Set(stories.map(story => story.id))
+  const idCounts = new Map<string, number>()
+  for (const story of stories) {
+    idCounts.set(story.id, (idCounts.get(story.id) ?? 0) + 1)
+  }
   for (const story of incoming.stories) {
-    if (existingIds.has(story.id)) {
-      stories.push({ ...story, id: `${story.id}-${stories.length + 1}` })
+    const existingCount = idCounts.get(story.id) ?? 0
+    if (existingCount > 0) {
+      const nextCount = existingCount + 1
+      stories.push({ ...story, id: `${story.id}-${nextCount}` })
+      idCounts.set(story.id, nextCount)
     } else {
       stories.push(story)
-      existingIds.add(story.id)
+      idCounts.set(story.id, 1)
     }
   }
   return { stories }
@@ -228,6 +282,146 @@ function isPathInside(parent: string, child: string): boolean {
   return Boolean(rel) && !rel.startsWith("..") && !isAbsolute(rel)
 }
 
+function relativeImportPath(sourceDir: string, file: string): string {
+  return relative(sourceDir, file).split(sep).join("/")
+}
+
+export function deriveProjectStartStages(bundle: PreparedImportBundle): Record<string, "requirements" | "architecture"> {
+  return Object.fromEntries(
+    bundle.projects.map(project => [
+      project.id,
+      bundle.prdsByProjectId[project.id]?.stories.length ? "architecture" : "requirements",
+    ]),
+  ) as Record<string, "requirements" | "architecture">
+}
+
+function loadConceptFromSource(
+  sourceDir: string,
+  item: Pick<Item, "title" | "description">,
+  files: string[],
+  warnings: string[],
+): { concept: Concept & { hasUi: boolean }; markdownConcept: string; inferredHasUi: boolean } {
+  const conceptJson = readJsonFile<unknown>(join(sourceDir, "concept.json"))
+  if (conceptJson.malformed) {
+    warnings.push("concept.json present but unparseable; fell back to markdown or item metadata.")
+  }
+  const markdownConceptFile =
+    files.find(path => /(?:^|\/)1_brainstorm\/.*concept.*\.md$/i.test(path)) ??
+    files.find(path => path.toLowerCase().endsWith("concept.md")) ??
+    files.find(path => extname(path).toLowerCase() === ".md")
+  const markdownConcept = markdownConceptFile ? readFileSync(markdownConceptFile, "utf8") : ""
+  const fallbackConcept = markdownConceptFile
+    ? conceptFromMarkdown(markdownConcept, item)
+    : { summary: item.title, problem: item.description ?? "", users: [], constraints: [] }
+  const inferredHasUi = hasUiSignal(sourceDir, files)
+  const concept = { ...(maybeConcept(conceptJson.value) ?? fallbackConcept), hasUi: inferredHasUi }
+  return { concept, markdownConcept, inferredHasUi }
+}
+
+function loadProjectsFromJson(
+  sourceDir: string,
+  concept: Concept,
+  warnings: string[],
+): Project[] {
+  const projectsJson = readJsonFile<unknown>(join(sourceDir, "projects.json"))
+  if (projectsJson.malformed) {
+    warnings.push("projects.json present but unparseable; inferred projects from prepared artifacts.")
+    return []
+  }
+  if (projectsJson.exists && !Array.isArray(projectsJson.value)) {
+    warnings.push("projects.json present but not an array; inferred projects from prepared artifacts.")
+    return []
+  }
+  return Array.isArray(projectsJson.value)
+    ? projectsJson.value.map((project, index) => maybeProject(project, index, concept)).filter((project): project is Project => Boolean(project))
+    : []
+}
+
+function setJsonPrd(
+  sourceDir: string,
+  file: string,
+  projects: Project[],
+  prdsByProjectId: Record<string, PRD>,
+  warnings: string[],
+): void {
+  const raw = readJsonFile<unknown>(file)
+  const prd = maybePrd(raw.value)
+  if (!prd) {
+    const reason = raw.malformed ? "unparseable JSON" : "no valid stories"
+    warnings.push(`ignored PRD JSON (${reason}): ${relativeImportPath(sourceDir, file)}`)
+    return
+  }
+  const projectId = projectIdFromPrdFile(file) ?? projects[0]?.id ?? projectIdFromFolder(sourceDir) ?? "P01"
+  setPrd(prdsByProjectId, projectId, prd)
+}
+
+function setMarkdownPrd(
+  sourceDir: string,
+  file: string,
+  projects: Project[],
+  prdsByProjectId: Record<string, PRD>,
+): void {
+  const prd = prdFromMarkdown(readFileSync(file, "utf8"), { storyIdPrefix: prdPrefixFromFile(file) ?? undefined })
+  if (!prd) return
+  const projectId = projectIdFromPrdFile(file) ?? projects[0]?.id ?? projectIdFromFolder(sourceDir) ?? "P01"
+  setPrd(prdsByProjectId, projectId, prd)
+}
+
+function loadPrdsFromFiles(
+  sourceDir: string,
+  files: string[],
+  projects: Project[],
+  warnings: string[],
+): Record<string, PRD> {
+  const prdsByProjectId: Record<string, PRD> = {}
+  for (const file of files) {
+    const ext = extname(file).toLowerCase()
+    const base = basename(file).toLowerCase()
+    if (ext === ".json" && isPrdJsonFile(sourceDir, file, base)) {
+      setJsonPrd(sourceDir, file, projects, prdsByProjectId, warnings)
+    }
+    if (ext === ".md" && !base.endsWith("concept.md")) {
+      setMarkdownPrd(sourceDir, file, projects, prdsByProjectId)
+    }
+  }
+  return prdsByProjectId
+}
+
+function inferProjectsFromArtifacts(
+  sourceDir: string,
+  markdownConcept: string,
+  concept: Concept,
+  prdsByProjectId: Record<string, PRD>,
+  inferredHasUi: boolean,
+): Project[] {
+  const projectIds = Object.keys(prdsByProjectId)
+  const inferredProjectId = projectIdFromFolder(sourceDir) ?? projectIdFromConcept(markdownConcept)
+  const ids = projectIds.length > 0 ? projectIds : [inferredProjectId ?? "P01"]
+  return ids.map(id => ({
+    id,
+    name: id === inferredProjectId && markdownConcept ? projectNameFromConcept(markdownConcept, id) : id,
+    description: concept.summary,
+    concept,
+    hasUi: inferredHasUi,
+  }))
+}
+
+function addProjectsFromPrdFilenames(
+  projects: Project[],
+  prdsByProjectId: Record<string, PRD>,
+  concept: Concept,
+  inferredHasUi: boolean,
+  warnings: string[],
+): Project[] {
+  const knownProjectIds = new Set(projects.map(project => project.id))
+  for (const projectId of Object.keys(prdsByProjectId)) {
+    if (knownProjectIds.has(projectId)) continue
+    projects.push({ id: projectId, name: projectId, description: concept.summary, concept, hasUi: inferredHasUi })
+    warnings.push(`created project from PRD filename: ${projectId}`)
+  }
+  return projects
+}
+
 export function loadPreparedImportBundle(
   sourceDir: string,
   item: Pick<Item, "title" | "description">,
@@ -238,67 +432,15 @@ export function loadPreparedImportBundle(
 
   const warnings: string[] = []
   const files = collectFiles(sourceDir)
-  const conceptJson = readJsonFile<unknown>(join(sourceDir, "concept.json"))
-  const markdownConceptFile =
-    files.find(path => /(?:^|\/)1_brainstorm\/.*concept.*\.md$/i.test(path)) ??
-    files.find(path => /concept\.md$/i.test(path)) ??
-    files.find(path => extname(path).toLowerCase() === ".md")
-  const markdownConcept = markdownConceptFile ? readFileSync(markdownConceptFile, "utf8") : ""
-  const fallbackConcept = markdownConceptFile
-    ? conceptFromMarkdown(markdownConcept, item)
-    : { summary: item.title, problem: item.description ?? "", users: [], constraints: [] }
-  const inferredHasUi = hasUiSignal(sourceDir, files)
-  const concept = { ...(maybeConcept(conceptJson) ?? fallbackConcept), hasUi: inferredHasUi }
-
-  const projectsJson = readJsonFile<unknown>(join(sourceDir, "projects.json"))
-  let projects = Array.isArray(projectsJson)
-    ? projectsJson.map((project, index) => maybeProject(project, index, concept)).filter((project): project is Project => Boolean(project))
-    : []
-
-  const prdsByProjectId: Record<string, PRD> = {}
-  for (const file of files) {
-    const ext = extname(file).toLowerCase()
-    const base = basename(file).toLowerCase()
-    if (ext === ".json" && isPrdJsonFile(sourceDir, file, base)) {
-      const prd = maybePrd(readJsonFile<unknown>(file))
-      if (!prd) {
-        warnings.push(`ignored malformed PRD JSON: ${file}`)
-        continue
-      }
-      const projectId = projectIdFromPrdFile(file)
-      if (projectId) setPrd(prdsByProjectId, projectId, prd)
-      else if (projects[0]) setPrd(prdsByProjectId, projects[0].id, prd)
-      else setPrd(prdsByProjectId, projectIdFromFolder(sourceDir) ?? "P01", prd)
-    }
-    if (ext === ".md" && !/concept\.md$/i.test(base)) {
-      const prd = prdFromMarkdown(readFileSync(file, "utf8"), { storyIdPrefix: prdPrefixFromFile(file) ?? undefined })
-      if (!prd) continue
-      const projectId = projectIdFromPrdFile(file) ?? (projects[0]?.id ?? projectIdFromFolder(sourceDir) ?? "P01")
-      setPrd(prdsByProjectId, projectId, prd)
-    }
-  }
+  const { concept, markdownConcept, inferredHasUi } = loadConceptFromSource(sourceDir, item, files, warnings)
+  let projects = loadProjectsFromJson(sourceDir, concept, warnings)
+  const prdsByProjectId = loadPrdsFromFiles(sourceDir, files, projects, warnings)
 
   if (projects.length === 0) {
-    const projectIds = Object.keys(prdsByProjectId)
-    const inferredProjectId = projectIdFromFolder(sourceDir) ?? projectIdFromConcept(markdownConcept)
-    const ids = projectIds.length > 0 ? projectIds : [inferredProjectId ?? "P01"]
-    projects = ids.map(id => ({
-      id,
-      name: id === inferredProjectId && markdownConcept ? projectNameFromConcept(markdownConcept, id) : id,
-      description: concept.summary,
-      concept,
-      hasUi: inferredHasUi,
-    }))
+    projects = inferProjectsFromArtifacts(sourceDir, markdownConcept, concept, prdsByProjectId, inferredHasUi)
   }
 
-  const knownProjectIds = new Set(projects.map(project => project.id))
-  for (const projectId of Object.keys(prdsByProjectId)) {
-    if (!knownProjectIds.has(projectId)) {
-      projects.push({ id: projectId, name: projectId, description: concept.summary, concept, hasUi: inferredHasUi })
-      warnings.push(`created project from PRD filename: ${projectId}`)
-    }
-  }
-
+  projects = addProjectsFromPrdFilenames(projects, prdsByProjectId, concept, inferredHasUi, warnings)
   projects = projects.map(project => ({ ...project, hasUi: project.hasUi === true || inferredHasUi }))
 
   return { concept: { ...concept, hasUi: projects.some(project => project.hasUi === true) }, projects, prdsByProjectId, warnings }
@@ -362,7 +504,7 @@ export async function loadPreparedImportBundleWithLlmFallback(
     workspaceRoot: sourceDir,
     policy: { mode: "no-tools" },
   }
-  const files = markdownFiles(sourceDir)
+  const files = markdownFiles(sourceDir).map(file => ({ ...file, relativePath: relativeImportPath(sourceDir, file.path) }))
   const prompt = [
     "Normalize prepared product artifacts for beerengineer_.",
     "Return exactly one JSON object, no markdown fences, no prose.",
@@ -382,11 +524,11 @@ export async function loadPreparedImportBundleWithLlmFallback(
     JSON.stringify(parsed, null, 2),
     "",
     "Markdown files:",
-    ...files.flatMap(file => [`--- ${file.path}`, file.content.slice(0, 20000)]),
+    ...files.flatMap(file => [`--- ${file.relativePath}`, file.content.slice(0, 20000)]),
   ].join("\n")
   try {
     const result = await invokeHostedCli(
-      { kind: "stage", runtime, prompt, payload: { sourceDir, item, files: files.map(file => file.path) } },
+      { kind: "stage", runtime, prompt, payload: { item, files: files.map(file => file.relativePath) } },
       { harness: harness.harness, sessionId: null },
     )
     return mergeLlmNormalizedBundle(parsed, parseJsonObject(result.outputText) as LlmNormalizedImport)
@@ -398,12 +540,8 @@ export async function loadPreparedImportBundleWithLlmFallback(
   }
 }
 
-function projectPrdFileName(projectId: string): string {
+export function projectPrdFileName(projectId: string): string {
   return `prd.${projectId.toLowerCase().replaceAll(/[^a-z0-9-]+/g, "-")}.json`
-}
-
-export function requirementsArtifactFileName(projectId: string): string {
-  return projectPrdFileName(projectId)
 }
 
 export function preparedImportSourceSnapshotDir(context: WorkflowContext): string {
@@ -426,6 +564,11 @@ function snapshotPreparedImportSource(context: WorkflowContext, sourceDir: strin
     filter: path => {
       const resolvedPath = resolve(path)
       if (resolvedPath === resolvedTarget || isPathInside(resolvedTarget, resolvedPath)) return false
+      try {
+        if (lstatSync(resolvedPath).isSymbolicLink()) return false
+      } catch {
+        return false
+      }
       return ![".git", ".beerengineer"].includes(basename(resolvedPath))
     },
   })
@@ -450,22 +593,18 @@ export function seedPreparedImportArtifacts(
 
   const requirementsDir = layout.stageArtifactsDir(context, "requirements")
   mkdirSync(requirementsDir, { recursive: true })
-  const projectStartStages: Record<string, "requirements" | "architecture"> = {}
+  const projectStartStages = deriveProjectStartStages(bundle)
   for (const project of bundle.projects) {
     const prd = bundle.prdsByProjectId[project.id]
-    if (!prd || prd.stories.length === 0) {
-      projectStartStages[project.id] = "requirements"
-      continue
-    }
+    if (projectStartStages[project.id] !== "architecture" || !prd) continue
     const artifact = { concept: project.concept, prd }
     writeFileSync(join(requirementsDir, projectPrdFileName(project.id)), JSON.stringify(artifact, null, 2))
     writeFileSync(join(requirementsDir, `prd.${project.id.toLowerCase().replaceAll(/[^a-z0-9-]+/g, "-")}.md`), renderPrdMarkdown(artifact))
-    projectStartStages[project.id] = "architecture"
   }
 
   const firstReadyProject = bundle.projects.find(project => projectStartStages[project.id] === "architecture")
   if (firstReadyProject) {
-    const prd = bundle.prdsByProjectId[firstReadyProject.id]!
+    const prd = bundle.prdsByProjectId[firstReadyProject.id]
     writeFileSync(join(requirementsDir, "prd.json"), JSON.stringify({ concept: firstReadyProject.concept, prd }, null, 2))
   }
 

@@ -52,7 +52,10 @@ test("beerengineer item action start_brainstorm runs to completion through the t
         // was removed intentionally — see stageRuntime.ts:398.)
         input:
           "Title from terminal\nDescription from terminal\naccept\n" +
-          "ok\nok\nok\nok\nok\nok\nok\nok\nok\nok\nok\nok\nok\nok\nok\nok\nok\nok\nok\nok\n",
+          "local-only smoke test\n" +
+          "none\ndashboard first\nWCAG AA required\napprove\n" +
+          "none\nprofessional\nno brand constraints\napprove\n" +
+          "ok\nok\nok\naccept\npromote\n",
         timeout: 15000,
       }
     )
@@ -145,8 +148,9 @@ test("beerengineer item action start_implementation resumes from brainstorm arti
         input: [
           "Focus on a single static greeting page.",
           "Keep CLI and browser entry points separate.",
-          ...Array.from({ length: 16 }, () => "accept"),
-          ...Array.from({ length: 16 }, () => "merge"),
+          "accept",
+          "accept",
+          ...Array.from({ length: 16 }, () => "promote"),
         ].join("\n") + "\n",
         timeout: 20000,
       },

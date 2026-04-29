@@ -52,8 +52,8 @@ describe("ItemDetailPage server component (TC-04: real GET /items/:id round-trip
     const chip = screen.getByTestId("status-chip");
     expect(chip.textContent).toMatch(/Implementation/);
     expect(chip.textContent).toMatch(/Exec/);
-    // All five buttons present.
-    expect(screen.getAllByRole("button")).toHaveLength(5);
+    // All six action buttons are present; only allowed actions are enabled.
+    expect(screen.getAllByRole("button")).toHaveLength(6);
   });
 
   it("calls notFound() when GET /items/:id fails", async () => {

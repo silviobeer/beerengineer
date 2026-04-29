@@ -19,6 +19,26 @@ vi.mock("next/font/google", () => {
   };
 });
 
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({
+    push: vi.fn(),
+    replace: vi.fn(),
+    refresh: vi.fn(),
+    prefetch: vi.fn(),
+    back: vi.fn(),
+    forward: vi.fn(),
+  }),
+  usePathname: () => "/",
+  useSearchParams: () => new URLSearchParams(),
+  useParams: () => ({}),
+  redirect: vi.fn((url: string) => {
+    throw new Error(`NEXT_REDIRECT: ${url}`);
+  }),
+  notFound: vi.fn(() => {
+    throw new Error("NEXT_HTTP_ERROR_FALLBACK;404");
+  }),
+}));
+
 afterEach(() => {
   cleanup();
 });

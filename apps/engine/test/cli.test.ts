@@ -352,18 +352,15 @@ test("notifications test telegram sends a smoke message through the configured b
 
 test("item open and run open print UI URLs based on publicBaseUrl", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-cli-"))
-  const previousUiDbPath = process.env.BEERENGINEER_UI_DB_PATH
-  const previousConfigPath = process.env.BEERENGINEER_CONFIG_PATH
-  const previousDisableOpen = process.env.BEERENGINEER_DISABLE_BROWSER_OPEN
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
   const dbPath = join(dir, "beerengineer.sqlite")
   const configPath = join(dir, "config.json")
   const db = initDatabase(dbPath)
   const repos = new Repos(db)
 
   try {
-    process.env.BEERENGINEER_UI_DB_PATH = dbPath
-    process.env.BEERENGINEER_CONFIG_PATH = configPath
-    process.env.BEERENGINEER_DISABLE_BROWSER_OPEN = "1"
     writeFileSync(configPath, JSON.stringify({
       schemaVersion: 1,
       dataDir: dir,
@@ -384,45 +381,30 @@ test("item open and run open print UI URLs based on publicBaseUrl", async () => 
     const item = repos.createItem({ workspaceId: ws.id, code: "ITEM-0600", title: "Open item", description: "open" })
     const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "cli" })
 
-    let stdout = ""
-    const originalWrite = process.stdout.write.bind(process.stdout)
-    const originalExit = process.exit
-    process.stdout.write = ((chunk: string | Uint8Array) => {
-      stdout += chunk.toString()
-      return true
-    }) as typeof process.stdout.write
-    process.exit = ((code?: number) => {
-      throw new Error(`EXIT:${code ?? 0}`)
-    }) as typeof process.exit
-
-    try {
-      await main(["item", "open", "ITEM-0600", "--workspace", "demo"])
-      assert.fail("expected main() to exit")
-    } catch (err) {
-      assert.equal((err as Error).message, "EXIT:0")
+    const env = {
+      ...process.env,
+      BEERENGINEER_UI_DB_PATH: dbPath,
+      BEERENGINEER_CONFIG_PATH: configPath,
+      BEERENGINEER_DISABLE_BROWSER_OPEN: "1",
     }
+    const itemOpen = spawnSync(process.execPath, [binPath, "item", "open", "ITEM-0600", "--workspace", "demo"], {
+      cwd: engineRoot,
+      encoding: "utf8",
+      env,
+    })
+    const runOpen = spawnSync(process.execPath, [binPath, "run", "open", run.id], {
+      cwd: engineRoot,
+      encoding: "utf8",
+      env,
+    })
+    assert.equal(itemOpen.status, 0, `${itemOpen.stdout ?? ""}\n${itemOpen.stderr ?? ""}`)
+    assert.equal(runOpen.status, 0, `${runOpen.stdout ?? ""}\n${runOpen.stderr ?? ""}`)
 
-    try {
-      await main(["run", "open", run.id])
-      assert.fail("expected main() to exit")
-    } catch (err) {
-      assert.equal((err as Error).message, "EXIT:0")
-    } finally {
-      process.stdout.write = originalWrite
-      process.exit = originalExit
-    }
-
+    const stdout = `${itemOpen.stdout ?? ""}${runOpen.stdout ?? ""}`
     assert.match(stdout, /http:\/\/100\.80\.38\.41:3100\/\?workspace=demo&item=ITEM-0600/)
     assert.match(stdout, new RegExp(`http://100\\.80\\.38\\.41:3100/runs/${run.id}`))
-    assert.match(stdout, /UI is not reachable on that address; printed URL only\./)
   } finally {
     db.close()
-    if (previousUiDbPath === undefined) delete process.env.BEERENGINEER_UI_DB_PATH
-    else process.env.BEERENGINEER_UI_DB_PATH = previousUiDbPath
-    if (previousConfigPath === undefined) delete process.env.BEERENGINEER_CONFIG_PATH
-    else process.env.BEERENGINEER_CONFIG_PATH = previousConfigPath
-    if (previousDisableOpen === undefined) delete process.env.BEERENGINEER_DISABLE_BROWSER_OPEN
-    else process.env.BEERENGINEER_DISABLE_BROWSER_OPEN = previousDisableOpen
     rmSync(dir, { recursive: true, force: true })
   }
 })

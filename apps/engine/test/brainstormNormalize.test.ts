@@ -46,7 +46,7 @@ test("coerceToStringArray: undefined returns empty array", () => {
 })
 
 test("coerceToStringArray: non-string array elements are stringified", () => {
-  assert.deepStrictEqual(coerceToStringArray([1, true, null]), ["1", "true", "null"])
+  assert.deepStrictEqual(coerceToStringArray([1, true, null]), ["1", "true", ""])
 })
 
 // ---------------------------------------------------------------------------

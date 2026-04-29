@@ -46,8 +46,8 @@ export function Board({ items, workspaceKey }: Readonly<BoardProps>) {
       return;
     }
 
-    const nextUnknownKey = unknownIds.slice().sort().join(",");
-    const previousUnknownKey = Array.from(pendingUnknownIdsRef.current).sort().join(",");
+    const nextUnknownKey = unknownIds.slice().sort((a, b) => a.localeCompare(b)).join(",");
+    const previousUnknownKey = Array.from(pendingUnknownIdsRef.current).sort((a, b) => a.localeCompare(b)).join(",");
     if (nextUnknownKey === previousUnknownKey) return;
 
     pendingUnknownIdsRef.current = new Set(unknownIds);

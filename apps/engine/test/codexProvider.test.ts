@@ -4,7 +4,7 @@ import assert from "node:assert/strict"
 import { buildCodexCommand, codexSandboxBypassEnabled } from "../src/llm/hosted/providers/codex.js"
 import type { HostedProviderInvokeInput } from "../src/llm/hosted/providerRuntime.js"
 
-function inputFor(policyMode: "no-tools" | "safe-readonly" | "safe-workspace-write" | "unsafe", opts: { resume?: boolean } = {}): HostedProviderInvokeInput {
+function inputFor(policyMode: "no-tools" | "safe-readonly" | "safe-workspace-write" | "unsafe-autonomous-write", opts: { resume?: boolean } = {}): HostedProviderInvokeInput {
   return {
     prompt: "hi",
     session: opts.resume ? { sessionId: "thr-1" } : null,
@@ -85,8 +85,8 @@ test("buildCodexCommand: bypass on + no-tools policy still pins --sandbox read-o
   assert.ok(!cmd.includes("--dangerously-bypass-approvals-and-sandbox"))
 })
 
-test("buildCodexCommand: unknown policy mode emits bypass flag alone (existing behavior preserved, --full-auto removed for codex compat)", () => {
-  const cmd = buildCodexCommand(inputFor("unsafe"), STATE(), "/tmp/codex-6", {})
+test("buildCodexCommand: unsafe-autonomous-write emits bypass flag alone (existing behavior preserved, --full-auto removed for codex compat)", () => {
+  const cmd = buildCodexCommand(inputFor("unsafe-autonomous-write"), STATE(), "/tmp/codex-6", {})
   assert.ok(!cmd.includes("--full-auto"))
   assert.ok(cmd.includes("--dangerously-bypass-approvals-and-sandbox"))
 })
