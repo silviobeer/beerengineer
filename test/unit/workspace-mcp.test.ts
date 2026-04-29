@@ -74,7 +74,7 @@ describe("workspace MCP harness config", () => {
       );
       const codexDir = join(root, ".codex");
       mkdirSync(codexDir, { recursive: true });
-      writeFileSync(join(codexDir, "config.toml"), "[profile.default]\nmodel = \"gpt-5.4\"\n", "utf8");
+      writeFileSync(join(codexDir, "config.toml"), "[profile.default]\nmodel = \"gpt-5.5\"\n", "utf8");
 
       const descriptors = resolveHarnessMcpTargets(root);
       applyHarnessMcpConfig(descriptors.find((descriptor) => descriptor.target === "opencode")!);

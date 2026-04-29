@@ -44,11 +44,11 @@
   "workers": {
     "test_preparation": {
       "provider": "codex",
-      "model": "gpt-5.4"
+      "model": "gpt-5.5"
     },
     "execution": {
       "provider": "codex",
-      "model": "gpt-5.4"
+      "model": "gpt-5.5"
     },
     "ralph": {
       "provider": "claude",
@@ -56,7 +56,7 @@
     },
     "app_verification": {
       "provider": "codex",
-      "model": "gpt-5.4"
+      "model": "gpt-5.5"
     },
     "story_review": {
       "provider": "claude",
@@ -64,7 +64,7 @@
     },
     "story_review_remediation": {
       "provider": "codex",
-      "model": "gpt-5.4"
+      "model": "gpt-5.5"
     },
     "qa": {
       "provider": "claude",

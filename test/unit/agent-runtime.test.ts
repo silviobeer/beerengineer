@@ -19,11 +19,11 @@ function writeConfig(root: string, policyOverride?: Partial<AgentExecutionPolicy
     defaults: {
       interactive: {
         provider: "codex",
-        model: "gpt-5.4"
+        model: "gpt-5.5"
       },
       autonomous: {
         provider: "codex",
-        model: "gpt-5.4"
+        model: "gpt-5.5"
       }
     },
     interactive: {
@@ -47,7 +47,7 @@ function writeConfig(root: string, policyOverride?: Partial<AgentExecutionPolicy
     providers: {
       codex: {
         adapterKey: "codex",
-        model: "gpt-5.4",
+        model: "gpt-5.5",
         command: ["codex"],
         env: {},
         timeoutMs: 1_800_000
@@ -116,7 +116,7 @@ describe("agent runtime config", () => {
       expect(resolver.resolveInteractive("story_review_chat")).toMatchObject({
         providerKey: "codex",
         adapterKey: "codex",
-        model: "gpt-5.4"
+        model: "gpt-5.5"
       });
       expect(resolver.resolveStage("requirements")).toMatchObject({
         providerKey: "claude",
@@ -126,7 +126,7 @@ describe("agent runtime config", () => {
       expect(resolver.resolveStage("planning")).toMatchObject({
         providerKey: "codex",
         adapterKey: "codex",
-        model: "gpt-5.4"
+        model: "gpt-5.5"
       });
       expect(resolver.resolveWorker("qa")).toMatchObject({
         providerKey: "claude",
@@ -136,7 +136,7 @@ describe("agent runtime config", () => {
       expect(resolver.resolveWorker("documentation")).toMatchObject({
         providerKey: "codex",
         adapterKey: "codex",
-        model: "gpt-5.4"
+        model: "gpt-5.5"
       });
     } finally {
       rmSync(root, { recursive: true, force: true });

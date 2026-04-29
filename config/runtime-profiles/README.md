@@ -29,8 +29,8 @@ Gedachte Nutzung im spaeteren Workspace-Profil:
   "label": "Codex Primary",
   "defaultProvider": "codex",
   "defaults": {
-    "interactive": { "provider": "codex", "model": "gpt-5.4" },
-    "autonomous": { "provider": "codex", "model": "gpt-5.4" }
+    "interactive": { "provider": "codex", "model": "gpt-5.5" },
+    "autonomous": { "provider": "codex", "model": "gpt-5.5" }
   },
   "interactive": {},
   "stages": {},

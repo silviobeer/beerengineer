@@ -82,11 +82,11 @@ describe("app context", () => {
           defaults: {
             autonomous: {
               provider: "codex",
-              model: "gpt-5.4"
+              model: "gpt-5.5"
             },
             interactive: {
               provider: "codex",
-              model: "gpt-5.4"
+              model: "gpt-5.5"
             }
           },
           interactive: {},
@@ -100,7 +100,7 @@ describe("app context", () => {
           providers: {
             codex: {
               adapterKey: "codex",
-              model: "gpt-5.4",
+              model: "gpt-5.5",
               command: ["codex"],
               env: {},
               timeoutMs: 1800000

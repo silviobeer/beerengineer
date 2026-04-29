@@ -362,7 +362,7 @@ npm run cli -- --workspace app-two workspace:runtime:show
 npm run cli -- --workspace app-two workspace:runtime:apply-profile --profile codex_primary
 npm run cli -- --workspace app-two workspace:runtime:clear-profile
 npm run cli -- --workspace app-two workspace:runtime:set-stage --stage planning --provider claude --model sonnet
-npm run cli -- --workspace app-two workspace:runtime:set-worker --worker execution --provider codex --model gpt-5.4
+npm run cli -- --workspace app-two workspace:runtime:set-worker --worker execution --provider codex --model gpt-5.5
 npm run cli -- --workspace app-two workspace:runtime:set-interactive --flow brainstorm_chat --provider claude --model sonnet
 npm run cli -- --workspace app-two workspace:mcp:show
 npm run cli -- --workspace app-two workspace:mcp:apply --target all

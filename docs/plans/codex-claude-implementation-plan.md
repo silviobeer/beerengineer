@@ -192,11 +192,11 @@ Recommended normalized shape:
   "defaults": {
     "interactive": {
       "provider": "codex",
-      "model": "gpt-5.4"
+      "model": "gpt-5.5"
     },
     "autonomous": {
       "provider": "codex",
-      "model": "gpt-5.4"
+      "model": "gpt-5.5"
     }
   },
   "interactive": {
@@ -206,7 +206,7 @@ Recommended normalized shape:
     },
     "story_review_chat": {
       "provider": "codex",
-      "model": "gpt-5.4"
+      "model": "gpt-5.5"
     }
   },
   "stages": {
@@ -216,25 +216,25 @@ Recommended normalized shape:
     },
     "requirements": {
       "provider": "codex",
-      "model": "gpt-5.4"
+      "model": "gpt-5.5"
     },
     "architecture": {
       "provider": "codex",
-      "model": "gpt-5.4"
+      "model": "gpt-5.5"
     },
     "planning": {
       "provider": "codex",
-      "model": "gpt-5.4"
+      "model": "gpt-5.5"
     }
   },
   "workers": {
     "test_preparation": {
       "provider": "codex",
-      "model": "gpt-5.4"
+      "model": "gpt-5.5"
     },
     "execution": {
       "provider": "codex",
-      "model": "gpt-5.4"
+      "model": "gpt-5.5"
     },
     "ralph": {
       "provider": "claude",
@@ -242,7 +242,7 @@ Recommended normalized shape:
     },
     "app_verification": {
       "provider": "codex",
-      "model": "gpt-5.4"
+      "model": "gpt-5.5"
     },
     "story_review": {
       "provider": "claude",
@@ -260,7 +260,7 @@ Recommended normalized shape:
   "providers": {
     "codex": {
       "adapterKey": "codex",
-      "model": "gpt-5.4",
+      "model": "gpt-5.5",
       "command": ["codex"],
       "env": {},
       "timeoutMs": 1800000

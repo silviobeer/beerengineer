@@ -20,11 +20,11 @@ function createRuntimeConfig(): AgentRuntimeConfig {
     defaults: {
       interactive: {
         provider: "codex",
-        model: "gpt-5.4"
+        model: "gpt-5.5"
       },
       autonomous: {
         provider: "codex",
-        model: "gpt-5.4"
+        model: "gpt-5.5"
       }
     },
     interactive: {},
@@ -33,7 +33,7 @@ function createRuntimeConfig(): AgentRuntimeConfig {
     providers: {
       codex: {
         adapterKey: "codex",
-        model: "gpt-5.4",
+        model: "gpt-5.5",
         command: ["codex"],
         env: {},
         timeoutMs: 1_800_000

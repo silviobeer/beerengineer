@@ -16,7 +16,7 @@ function buildBrainstormRequest(workspaceRoot: string): InteractiveBrainstormAda
   return {
     runtime: {
       provider: "codex",
-      model: "gpt-5.4",
+      model: "gpt-5.5",
       workspaceRoot,
       policy: {
         autonomyMode: "yolo",
@@ -130,7 +130,7 @@ function buildTestPreparationRequest(workspaceRoot: string): TestPreparationAdap
   return {
     runtime: {
       provider: "codex",
-      model: "gpt-5.4",
+      model: "gpt-5.5",
       workspaceRoot,
       policy: {
         autonomyMode: "yolo",

@@ -154,26 +154,26 @@ Neue interne Form:
   "label": "Codex Primary",
   "defaultProvider": "codex",
   "defaults": {
-    "interactive": { "provider": "codex", "model": "gpt-5.4" },
-    "autonomous": { "provider": "codex", "model": "gpt-5.4" }
+    "interactive": { "provider": "codex", "model": "gpt-5.5" },
+    "autonomous": { "provider": "codex", "model": "gpt-5.5" }
   },
   "interactive": {
     "brainstorm_chat": { "provider": "claude", "model": "claude-sonnet" },
-    "story_review_chat": { "provider": "codex", "model": "gpt-5.4" }
+    "story_review_chat": { "provider": "codex", "model": "gpt-5.5" }
   },
   "stages": {
     "brainstorm": { "provider": "claude", "model": "claude-sonnet" },
-    "requirements": { "provider": "codex", "model": "gpt-5.4" },
-    "architecture": { "provider": "codex", "model": "gpt-5.4" },
-    "planning": { "provider": "codex", "model": "gpt-5.4" }
+    "requirements": { "provider": "codex", "model": "gpt-5.5" },
+    "architecture": { "provider": "codex", "model": "gpt-5.5" },
+    "planning": { "provider": "codex", "model": "gpt-5.5" }
   },
   "workers": {
-    "test_preparation": { "provider": "codex", "model": "gpt-5.4" },
-    "execution": { "provider": "codex", "model": "gpt-5.4" },
+    "test_preparation": { "provider": "codex", "model": "gpt-5.5" },
+    "execution": { "provider": "codex", "model": "gpt-5.5" },
     "ralph": { "provider": "claude", "model": "claude-sonnet" },
-    "app_verification": { "provider": "codex", "model": "gpt-5.4" },
+    "app_verification": { "provider": "codex", "model": "gpt-5.5" },
     "story_review": { "provider": "claude", "model": "claude-sonnet" },
-    "story_review_remediation": { "provider": "codex", "model": "gpt-5.4" },
+    "story_review_remediation": { "provider": "codex", "model": "gpt-5.5" },
     "qa": { "provider": "claude", "model": "claude-sonnet" },
     "documentation": { "provider": "claude", "model": "claude-sonnet" }
   },

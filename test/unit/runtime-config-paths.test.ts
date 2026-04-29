@@ -20,11 +20,11 @@ function writeRuntimeConfig(path: string, patch: Record<string, unknown> = {}): 
     defaults: {
       interactive: {
         provider: "codex",
-        model: "gpt-5.4"
+        model: "gpt-5.5"
       },
       autonomous: {
         provider: "codex",
-        model: "gpt-5.4"
+        model: "gpt-5.5"
       }
     },
     interactive: {},
@@ -33,7 +33,7 @@ function writeRuntimeConfig(path: string, patch: Record<string, unknown> = {}): 
     providers: {
       codex: {
         adapterKey: "codex",
-        model: "gpt-5.4",
+        model: "gpt-5.5",
         command: ["codex"],
         env: {},
         timeoutMs: 1800000
@@ -54,7 +54,7 @@ describe("runtime config path resolution", () => {
     try {
       const resolved = loadResolvedAgentRuntimeConfig({ repoRoot: root });
       expect(resolved.configPath).toBe(resolveInstalledAgentRuntimeConfigPath(root));
-      expect(resolved.config.defaults.autonomous?.model).toBe("gpt-5.4");
+      expect(resolved.config.defaults.autonomous?.model).toBe("gpt-5.5");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -91,7 +91,7 @@ describe("runtime config path resolution", () => {
       });
       expect(resolved.configPath).toBe(join(overrideDir, "agent-runtime.override.json"));
       expect(resolved.config.defaults.autonomous?.model).toBe("gpt-5.4-mini");
-      expect(resolved.config.defaults.interactive?.model).toBe("gpt-5.4");
+      expect(resolved.config.defaults.interactive?.model).toBe("gpt-5.5");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
