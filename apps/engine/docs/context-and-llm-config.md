@@ -279,6 +279,14 @@ When a run resumes, it does not replay LLM calls. Instead:
   alive; an "unknown session" message from the CLI triggers one fresh
   retry with a brand-new session, with the structured context
   unchanged. See `llm/hosted/providers/_invoke.ts` (`unknownSession`).
+- Resume uses the persisted recovery scope as the authority for where to
+  re-enter the workflow (`core/resume.ts` `buildWorkflowResumeInput`).
+  For example, a recovery record scoped to `execution` resumes execution
+  even if the board projection still says `visual-companion`. Prepared
+  imports are detected by their copied `imports/prepared-source` snapshot
+  (`core/preparedImport.ts` `preparedImportSourceSnapshotDir`) and keep
+  `skipDesignPrep: true` on resume, so brainstorm / visual-companion /
+  frontend-design are not regenerated after an imported run blocks.
 - `BEERENGINEER_FORCE_FAKE_LLM=1` bypasses everything and runs
   per-stage fake adapters from `llm/fake/`.
 
@@ -439,7 +447,7 @@ expensive than text generation. Other stages keep the preset's Sonnet.
 
 `WorkspaceRuntimePolicy` (`types/workspace.ts:10-20`) is **separate from
 the harness profile**. It governs *what tools each role can use*, not
-*which model runs*. The default:
+*which model runs*. The baseline default is:
 
 ```json
 {
@@ -449,14 +457,23 @@ the harness profile**. It governs *what tools each role can use*, not
 }
 ```
 
+The persisted default is profile-aware (`types/workspace.ts`
+`defaultRuntimePolicyForHarnessProfile`, surfaced through
+`core/workspaces/configFile.ts`). Workspaces whose execution coder is
+Codex CLI (`codex-first`, `codex-only`, `fast`, or `self` with a Codex
+CLI coder) default `coderExecution` to `unsafe-autonomous-write`. This
+avoids Codex CLI's OS sandbox on hosts where `workspace-write` cannot run
+shell/file tools reliably. Claude and SDK-based execution coders keep
+`safe-workspace-write`.
+
 Modes (`RuntimePolicyMode`):
 
 | Mode                          | Means                                                                  |
 |-------------------------------|------------------------------------------------------------------------|
 | `no-tools`                    | Single JSON envelope per turn, no tool access. Lowest first-token latency. |
 | `safe-readonly`               | Read / Grep / etc. — can inspect the codebase, cannot mutate it.        |
-| `safe-workspace-write`        | Can write inside the workspace root. Default for execution coder.       |
-| `unsafe-autonomous-write`     | Free rein. Only enable for sandboxed runs.                              |
+| `safe-workspace-write`        | Can write inside the workspace root. Baseline execution-coder default; used for Claude / SDK execution coders. |
+| `unsafe-autonomous-write`     | Bypass provider sandbox / permission prompts. Default for Codex CLI execution coders so they can write reliably on hosts where Codex's OS sandbox fails. |
 
 The mapping is **stage-aware**, not just policy-aware
 (`llm/runtimePolicy.ts:20-41`):
@@ -469,8 +486,7 @@ The mapping is **stage-aware**, not just policy-aware
   concept and only emit one JSON envelope per turn.
 - `executionCoderPolicy` is the only one that respects the workspace
   policy directly — it returns whatever `policy.coderExecution`
-  declares. Operators who want a sandbox can set it to
-  `unsafe-autonomous-write`.
+  declares.
 
 ### Prompt files
 
@@ -512,7 +528,11 @@ routes to one of:
   back to local message-history replay (`_sdkSession.ts`) when no
   server-side session handle is returned. Lazily imports the SDK
   package so CLI-only workspaces never need the dep.
-- `codex.ts` — codex CLI subprocess, `--json`, `--model <id>`.
+- `codex.ts` — codex CLI subprocess, `--json`, `--model <id>`. For
+  `unsafe-autonomous-write` it emits
+  `--dangerously-bypass-approvals-and-sandbox`; for `safe-readonly` /
+  `safe-workspace-write` it normally emits Codex's `--sandbox` mode
+  unless `BEERENGINEER_CODEX_SANDBOX_BYPASS=1` is set.
 - `codexSdk.ts` — `@openai/codex-sdk` in-process. Wraps the same
   `codex` CLI surface (sandboxed exec, JSONL events, session resume
   via `~/.codex/sessions`). Maps engine `RuntimePolicy` modes to
@@ -587,7 +607,7 @@ and the markdown files in `apps/engine/prompts/{system,reviewers,workers}/`.
 | `architecture` | PRD + (optional) wireframes/design + codebase snapshot | `ArchitectureArtifact` (components, decisions, risks, AC→component map) | `prompts/system/architecture.md` — Staff Solution Architect grounded in repo | `prompts/reviewers/architecture.md` — boundary clarity, decision consistency | Tool-using → `safe-readonly`; emits decision binding |
 | `planning` | PRD + architecture + codebase snapshot | `ImplementationPlanArtifact` (waves, story groups, dependencies, exit criteria) | `prompts/system/planning.md` — TPM sequencing waves with explicit deps | `prompts/reviewers/planning.md` — forward-flow deps, parallel safety, story coverage | Tool-using → `safe-readonly` |
 | `test-writer` | wave + story + ACs + architecture summary | `StoryTestPlanArtifact` (testCases, fixtures, edge cases) | `prompts/system/test-writer.md` — Staff Test Engineer authoring per-story test plans | `prompts/reviewers/test-writer.md` — AC coverage, falsifiability | Per-story; spawned by `execution` |
-| `execution` (coder) | story + test plan + architecture + iterationContext + codebase | `CoderHarnessOutput` (`{ summary, testsRun[], implementationNotes[], blockers[] }`) | `prompts/workers/execution.md` — implementation worker with file-write access | n/a (Ralph reviewer is the test-writer review feeding back as `feedback` field) | Tool-using → `safe-workspace-write` (default) or `unsafe-autonomous-write`; runs inside Ralph loop with `iterationContext` |
+| `execution` (coder) | story + test plan + architecture + iterationContext + codebase | `CoderHarnessOutput` (`{ summary, testsRun[], implementationNotes[], blockers[] }`) | `prompts/workers/execution.md` — implementation worker with file-write access | n/a (Ralph reviewer is the test-writer review feeding back as `feedback` field) | Tool-using → profile-aware `coderExecution`: Claude/SDK normally `safe-workspace-write`, Codex CLI normally `unsafe-autonomous-write`; runs inside Ralph loop with `iterationContext` |
 | `project-review` | concept + PRD + architecture + plan + execution summaries | `ProjectReviewArtifact` (overallStatus, findings, recommendations) | `prompts/system/project-review.md` — Engineering Manager checking cross-artifact consistency | `prompts/reviewers/project-review.md` (falls back to `_default.md` if absent) | Tool-using → `safe-readonly` |
 | `qa` | merged project branch + PRD digest + project-review findings | `QaArtifact` (`accepted`, `loops`, `findings[]`) | `prompts/system/qa.md` — QA Lead doing adversarial verification | `prompts/reviewers/qa.md` (falls back to `_default.md`) | Tool-using → `safe-readonly`; runs against the post-merge branch |
 | `documentation` | all upstream artifacts + execution summaries + repo evidence | `DocumentationArtifact` (`technicalDoc`, `featuresDoc`, compact README) | `prompts/system/documentation.md` — Senior Technical Writer | `prompts/reviewers/documentation.md` (falls back to `_default.md`) | Tool-using → `safe-readonly` |

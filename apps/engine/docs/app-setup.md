@@ -149,13 +149,17 @@ Supported env overrides:
   collisions out of the affected waves. The legacy
   `BEERENGINEER_SEQUENTIAL_STORIES` env var is no longer consulted —
   sequential is the default and parallel is opt-in.
-- `BEERENGINEER_CODEX_SANDBOX_BYPASS` — operator opt-in. When truthy (`1`,
-  `true`, `yes`), codex runs with `--full-auto
-  --dangerously-bypass-approvals-and-sandbox` for `safe-readonly` and
+- `BEERENGINEER_CODEX_SANDBOX_BYPASS` — operator opt-in escape hatch for
+  Codex CLI. When truthy (`1`, `true`, `yes`), Codex runs with
+  `--dangerously-bypass-approvals-and-sandbox` for `safe-readonly` and
   `safe-workspace-write` runtime policies instead of `--sandbox <mode>`.
-  Use this on hosts where codex's built-in OS sandbox (Linux landlock +
-  seccomp) is missing or non-functional and the implementer agent reports
-  "execution environment rejected every local command invocation". The
+  New workspaces whose execution coder is Codex CLI already default
+  `coderExecution` to `unsafe-autonomous-write`, which uses the same
+  write-capable bypass for implementation work only
+  (`types/workspace.ts` `defaultRuntimePolicyForHarnessProfile`). This env
+  var remains useful for older workspaces that still declare
+  `safe-workspace-write`, or for diagnosing hosts where Codex's built-in OS
+  sandbox (Linux landlock + seccomp) is missing or non-functional. The
   `no-tools` policy is not affected — it stays pinned to `--sandbox
   read-only` because it never needs shell access. Do not enable this on
   shared/untrusted hosts; it removes the OS-level guardrail in exchange for
