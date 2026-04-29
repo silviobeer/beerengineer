@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ComponentProps, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useMemo, useRef, useState, type ComponentProps, type Dispatch, type SetStateAction } from "react";
 import type { ConversationAction, ConversationEntry } from "../lib/types";
 
 function formatTimestamp(iso: string | undefined): string | null {
@@ -215,35 +215,43 @@ export function ChatPanel({
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const lastMessageCountRef = useRef(0);
+  const lastScrollHeightRef = useRef(0);
+  const displayedConversation = useMemo(
+    () => [...conversation].reverse(),
+    [conversation]
+  );
 
   useEffect(() => {
     setAnsweredPromptIds([]);
     setReviewDraft("");
     setReviewValidationError(null);
     setSelectedReviewUrl(null);
+    lastMessageCountRef.current = 0;
+    lastScrollHeightRef.current = 0;
   }, [activeRunId]);
 
-  // Auto-scroll to bottom when a new message arrives, but only when the user
-  // is already near the bottom — preserves manual scroll-back to read history.
+  // Auto-scroll to the newest message when it arrives, but only when the user
+  // is already near the top — preserves manual scroll-back to older history.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
+    const previousScrollHeight = lastScrollHeightRef.current;
     const grew = conversation.length > lastMessageCountRef.current;
     lastMessageCountRef.current = conversation.length;
+    lastScrollHeightRef.current = el.scrollHeight;
     if (!grew) return;
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (distanceFromBottom < 80) {
-      el.scrollTop = el.scrollHeight;
+    if (el.scrollTop < 80) {
+      el.scrollTop = 0;
+    } else if (previousScrollHeight > 0) {
+      el.scrollTop += el.scrollHeight - previousScrollHeight;
     }
   }, [conversation]);
 
-  const activePrompt = [...conversation]
-    .reverse()
-    .find(
-      (entry) =>
-        typeof entry.promptId === "string" &&
-        !answeredPromptIds.includes(entry.promptId)
-    );
+  const activePrompt = displayedConversation.find(
+    (entry) =>
+      typeof entry.promptId === "string" &&
+      !answeredPromptIds.includes(entry.promptId)
+  );
   const activeReviewPrompt = activePrompt?.type === "review-gate" ? activePrompt : null;
   const activeQuestionPrompt = activePrompt && activePrompt.type !== "review-gate" ? activePrompt : null;
   const reviewUrls = activeReviewPrompt ? extractReviewUrls(activeReviewPrompt.text) : [];
@@ -418,7 +426,7 @@ export function ChatPanel({
           className="overflow-y-auto max-h-[60vh] pr-2 border border-zinc-800 bg-zinc-950/40"
         >
           <ul data-testid="chat-history" className="space-y-3 p-3">
-            {conversation.map((entry, index) => (
+            {displayedConversation.map((entry, index) => (
               <ConversationEntryView
                 key={entry.id ?? index}
                 entry={entry}

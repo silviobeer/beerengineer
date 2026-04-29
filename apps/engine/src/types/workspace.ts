@@ -28,6 +28,31 @@ export const DEFAULT_WORKSPACE_RUNTIME_POLICY: WorkspaceRuntimePolicy = {
   coderExecution: "safe-workspace-write",
 }
 
+export function defaultRuntimePolicyForHarnessProfile(profile: HarnessProfile): WorkspaceRuntimePolicy {
+  if (usesCodexCliCoder(profile)) {
+    return {
+      ...DEFAULT_WORKSPACE_RUNTIME_POLICY,
+      coderExecution: "unsafe-autonomous-write",
+    }
+  }
+  return { ...DEFAULT_WORKSPACE_RUNTIME_POLICY }
+}
+
+function usesCodexCliCoder(profile: HarnessProfile): boolean {
+  switch (profile.mode) {
+    case "codex-first":
+    case "codex-only":
+    case "fast":
+      return true
+    case "self": {
+      const coder = profile.roles.coder
+      return coder.harness === "codex" && (coder.runtime ?? "cli") === "cli"
+    }
+    default:
+      return false
+  }
+}
+
 export type RoleModelRef = {
   provider: string
   model: string

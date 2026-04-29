@@ -69,7 +69,7 @@ Applied to the existing `WorkflowEvent` union (`apps/engine/src/core/io.ts`):
 | `stage_completed` — status failed | L2 (force) | |
 | `prompt_requested` | L2 | Blocks the run → stakeholder-relevant. |
 | `prompt_answered` | L1 | The answer itself is operational detail; L2 subscribers see the lifted block via `prompt_requested` → next phase. |
-| `chat_message` — role agent, final-facing | L1 | Final-facing = last message before a prompt / run end. Same heuristic `telegramWebhook` already uses. |
+| `chat_message` — role agent, final-facing or reviewer feedback | L1 | Final-facing = last message before a prompt / run end. Reviewer feedback is also operator-relevant because it explains the next revision cycle. |
 | `chat_message` — intermediate / tool chatter | L0 | |
 | `item_column_changed` | L1 | Emitted by both paths: operator-driven actions (`itemActions.ts`) and workflow-driven stage transitions (`runOrchestrator.ts` `stage_started` / `stage_completed` / `run_finished` callback into `board.broadcastItemColumnChanged`). UI consumers see live column moves on every transition without polling. |
 | `project_created` | L2 | |

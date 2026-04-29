@@ -187,7 +187,7 @@ export function ItemMessages({ itemId }: Readonly<ItemMessagesProps>) {
   }, [runId]);
 
   const visible = useMemo<EngineMessageEntry[]>(
-    () => entries.filter((e) => e.level >= level),
+    () => entries.filter((e) => e.level >= level).reverse(),
     [entries, level]
   );
 

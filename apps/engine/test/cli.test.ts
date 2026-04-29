@@ -1210,9 +1210,14 @@ test("workspace backfill writes missing workspace.json files for existing rows",
     assert.equal(result.status, 0, `${result.stdout ?? ""}\n${result.stderr ?? ""}`)
     const body = JSON.parse(result.stdout) as { written: string[] }
     assert.deepEqual(body.written, ["legacy"])
-    const config = JSON.parse(readFileSync(join(rootPath, ".beerengineer", "workspace.json"), "utf8")) as { key: string; harnessProfile: { mode: string } }
+    const config = JSON.parse(readFileSync(join(rootPath, ".beerengineer", "workspace.json"), "utf8")) as {
+      key: string
+      harnessProfile: { mode: string }
+      runtimePolicy: { coderExecution: string }
+    }
     assert.equal(config.key, "legacy")
     assert.equal(config.harnessProfile.mode, "fast")
+    assert.equal(config.runtimePolicy.coderExecution, "unsafe-autonomous-write")
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

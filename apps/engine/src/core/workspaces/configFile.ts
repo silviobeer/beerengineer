@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname } from "node:path"
-import { DEFAULT_WORKSPACE_RUNTIME_POLICY } from "../../types/workspace.js"
+import { DEFAULT_WORKSPACE_RUNTIME_POLICY, defaultRuntimePolicyForHarnessProfile } from "../../types/workspace.js"
 import type {
   HarnessProfile,
   RuntimePolicyMode,
@@ -57,6 +57,10 @@ function isRuntimePolicyMode(value: unknown): value is RuntimePolicyMode {
 
 export function defaultWorkspaceRuntimePolicy(): WorkspaceRuntimePolicy {
   return { ...DEFAULT_WORKSPACE_RUNTIME_POLICY }
+}
+
+export function defaultWorkspaceRuntimePolicyForHarnessProfile(profile: HarnessProfile): WorkspaceRuntimePolicy {
+  return defaultRuntimePolicyForHarnessProfile(profile)
 }
 
 function normalizeRuntimePolicy(raw: unknown): WorkspaceRuntimePolicy | null {
@@ -131,7 +135,7 @@ export function buildWorkspaceConfigFile(input: {
     key: input.key,
     name: input.name,
     harnessProfile: input.harnessProfile,
-    runtimePolicy: input.runtimePolicy ?? defaultWorkspaceRuntimePolicy(),
+    runtimePolicy: input.runtimePolicy ?? defaultWorkspaceRuntimePolicyForHarnessProfile(input.harnessProfile),
     preview: input.preview,
     sonar: input.sonar,
     reviewPolicy: input.reviewPolicy ?? normalizeReviewPolicy(undefined, input.sonar, input.key),
@@ -158,7 +162,8 @@ export async function readWorkspaceConfig(root: string): Promise<WorkspaceConfig
       return null
     }
     if (!isValidHarnessProfile(raw.harnessProfile)) return null
-    const runtimePolicy = normalizeRuntimePolicy(raw.runtimePolicy) ?? defaultWorkspaceRuntimePolicy()
+    const runtimePolicy =
+      normalizeRuntimePolicy(raw.runtimePolicy) ?? defaultWorkspaceRuntimePolicyForHarnessProfile(raw.harnessProfile)
     const preview = normalizePreviewConfig(raw.preview)
     const sonar = normalizeSonarConfig(
       raw.sonar && typeof raw.sonar === "object" ? (raw.sonar as SonarConfig) : undefined,

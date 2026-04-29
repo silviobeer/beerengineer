@@ -14,11 +14,14 @@ import { runWithWorkflowIO, type WorkflowEvent, type WorkflowIO } from "../src/c
 import { runWithActiveRun } from "../src/core/runContext.js"
 import { layout } from "../src/core/workspaceLayout.js"
 import { writeRecoveryRecord } from "../src/core/recovery.js"
-import { performResume } from "../src/core/resume.js"
+import { buildWorkflowResumeInput, performResume } from "../src/core/resume.js"
+import { preparedImportSourceSnapshotDir } from "../src/core/preparedImport.js"
 import { createBus, busToWorkflowIO, type EventBus } from "../src/core/bus.js"
 import { defaultAppConfig, writeConfigFile } from "../src/setup/config.js"
 import type { StoryImplementationArtifact } from "../src/types.js"
 import type { WorkspaceConfigFile } from "../src/types/workspace.js"
+import type { RecoveryRecord } from "../src/core/recovery.js"
+import type { RunRow } from "../src/db/repositories.js"
 
 function makeWorkflowIO(): { io: WorkflowIO & { bus: EventBus }; events: WorkflowEvent[] } {
   const events: WorkflowEvent[] = []
@@ -237,6 +240,50 @@ test("performResume resumes a blocked story from execution without rerunning pri
     } finally {
       db.close()
     }
+  })
+})
+
+test("buildWorkflowResumeInput trusts recovery scope and preserves prepared-import skipDesignPrep", async () => {
+  await withTmpCwd(async () => {
+    const repoRoot = join(process.cwd(), "repo")
+    const ctx = {
+      workspaceId: "prepared-import-item",
+      workspaceRoot: repoRoot,
+      runId: "run-1",
+    }
+    mkdirSync(preparedImportSourceSnapshotDir(ctx), { recursive: true })
+
+    const run = {
+      id: "run-1",
+      workspace_id: "workspace-1",
+      item_id: "item-1",
+      title: "Prepared Import",
+      status: "blocked",
+      current_stage: "visual-companion",
+      owner: "cli",
+      recovery_status: "blocked",
+      recovery_scope: "stage",
+      recovery_scope_ref: "execution",
+      recovery_summary: "Execution blocked.",
+      workspace_fs_id: "prepared-import-item",
+      created_at: Date.now(),
+      updated_at: Date.now(),
+    } satisfies RunRow
+    const record = {
+      status: "blocked",
+      cause: "stage_error",
+      scope: { type: "stage", runId: run.id, stageId: "execution" },
+      summary: "Execution blocked.",
+      evidencePaths: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    } satisfies RecoveryRecord
+
+    assert.deepEqual(buildWorkflowResumeInput(run, record, ctx), {
+      scope: record.scope,
+      currentStage: "execution",
+      skipDesignPrep: true,
+    })
   })
 })
 

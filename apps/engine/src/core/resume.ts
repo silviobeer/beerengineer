@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs"
 import { readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { runWorkflow } from "../workflow.js"
@@ -12,6 +13,7 @@ import { resolveWorkflowContextForRun } from "./workflowContextResolver.js"
 import type { EventBus } from "./bus.js"
 import type { ExternalRemediationRow, Repos, RunRow } from "../db/repositories.js"
 import { attachRunSubscribers, resolveWorkflowLlmOptions } from "./runSubscribers.js"
+import { preparedImportSourceSnapshotDir } from "./preparedImport.js"
 
 /** Returned by load(). Centralizes the decision about whether a run can be resumed. */
 export type ResumeReadiness =
@@ -40,6 +42,30 @@ async function inferWorkspaceDir(repos: Repos, run: RunRow): Promise<WorkflowCon
   const ctx = resolveWorkflowContextForRun(repos, run)
   if (!ctx) return null
   return (await runFileMatchesRun(ctx, run.id)) ? ctx : null
+}
+
+function resumeCurrentStage(run: RunRow, record: RecoveryRecord): string | null {
+  if (record.scope.type === "stage") return record.scope.stageId
+  if (record.scope.type === "story") {
+    return `execution/waves/${record.scope.waveNumber}/stories/${record.scope.storyId}`
+  }
+  return run.current_stage
+}
+
+function isPreparedImportRun(ctx: WorkflowContext): boolean {
+  return existsSync(preparedImportSourceSnapshotDir(ctx))
+}
+
+export function buildWorkflowResumeInput(
+  run: RunRow,
+  record: RecoveryRecord,
+  ctx: WorkflowContext,
+): WorkflowResumeInput {
+  return {
+    scope: record.scope,
+    currentStage: resumeCurrentStage(run, record),
+    skipDesignPrep: isPreparedImportRun(ctx),
+  }
 }
 
 export async function loadResumeReadiness(
@@ -203,7 +229,7 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
             await runWorkflow(
               { id: run.item_id, title: run.title, description: "" },
               {
-                resume: { scope: record.scope, currentStage: run.current_stage },
+                resume: buildWorkflowResumeInput(run, record, ctx),
                 llm,
                 workspaceRoot: workspaceRow?.root_path ?? undefined,
               },

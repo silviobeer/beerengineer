@@ -183,7 +183,7 @@ test("registerWorkspace persists preflight and writes quality config once GitHub
     assert.equal(workspaceJson.harnessProfile.mode, "fast")
     assert.equal(workspaceJson.runtimePolicy.stageAuthoring, "safe-readonly")
     assert.equal(workspaceJson.runtimePolicy.reviewer, "safe-readonly")
-    assert.equal(workspaceJson.runtimePolicy.coderExecution, "safe-workspace-write")
+    assert.equal(workspaceJson.runtimePolicy.coderExecution, "unsafe-autonomous-write")
     assert.equal(workspaceJson.sonar.organization, "acme")
     assert.equal(workspaceJson.sonar.projectKey, "acme_demo")
     assert.equal(workspaceJson.preflight.git.status, "ok")
@@ -525,6 +525,31 @@ test("readWorkspaceConfig upgrades schemaVersion 1 files with default runtime po
       coderabbit: { enabled: false },
       sonarcloud: { enabled: false },
     })
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("readWorkspaceConfig upgrades codex CLI workspaces with write-capable execution policy", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-workspaces-"))
+  try {
+    const root = join(dir, "legacy-codex")
+    mkdirSync(join(root, ".beerengineer"), { recursive: true })
+    writeFileSync(
+      join(root, ".beerengineer", "workspace.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        key: "legacy-codex",
+        name: "Legacy Codex",
+        harnessProfile: { mode: "codex-first" },
+        sonar: { enabled: false },
+        createdAt: 123,
+      }, null, 2),
+    )
+
+    const config = await import("../src/core/workspaces.js").then(mod => mod.readWorkspaceConfig(root))
+    assert.equal(config?.schemaVersion, 2)
+    assert.equal(config?.runtimePolicy.coderExecution, "unsafe-autonomous-write")
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

@@ -42,7 +42,7 @@ export type LevelInfo = {
 }
 
 function isFinalFacingAgentMessage(event: Extract<WorkflowEvent, { type: "chat_message" }>): boolean {
-  return event.requiresResponse === true
+  return event.requiresResponse === true || event.source === "reviewer"
 }
 
 export function levelOf(event: WorkflowEvent): LevelInfo {

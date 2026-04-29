@@ -95,7 +95,7 @@ afterEach(() => {
 });
 
 describe("ChatPanel rendering (US-5)", () => {
-  it("TC-5.1a: renders entries in server-provided order without reordering", () => {
+  it("TC-5.1a: renders newest entries first", () => {
     const item = itemWithActiveRunAndConversation();
     render(
       <ChatPanel activeRunId={item.activeRunId} conversation={item.conversation} />
@@ -104,8 +104,8 @@ describe("ChatPanel rendering (US-5)", () => {
     const text = history.textContent ?? "";
     const positions = ["alpha", "beta", "gamma"].map((token) => text.indexOf(token));
     expect(positions[0]).toBeGreaterThanOrEqual(0);
-    expect(positions[0]).toBeLessThan(positions[1]);
-    expect(positions[1]).toBeLessThan(positions[2]);
+    expect(positions[2]).toBeLessThan(positions[1]);
+    expect(positions[1]).toBeLessThan(positions[0]);
   });
 
   it("TC-5.1b: each entry carries the correct speaker label prefix", () => {
@@ -116,11 +116,11 @@ describe("ChatPanel rendering (US-5)", () => {
     ];
     render(<ChatPanel activeRunId="run-42" conversation={conversation} />);
     const entries = screen.getAllByTestId("chat-entry");
-    expect(within(entries[0]).getByTestId("chat-entry-label")).toHaveTextContent("System:");
+    expect(within(entries[0]).getByTestId("chat-entry-label")).toHaveTextContent("You:");
     expect(within(entries[1]).getByTestId("chat-entry-label")).toHaveTextContent(
       "Beerengineer:"
     );
-    expect(within(entries[2]).getByTestId("chat-entry-label")).toHaveTextContent("You:");
+    expect(within(entries[2]).getByTestId("chat-entry-label")).toHaveTextContent("System:");
   });
 
   it("TC-5.1b extra: an unknown role does not render any of the known labels", () => {
