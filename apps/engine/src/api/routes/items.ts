@@ -62,6 +62,44 @@ function requestPath(body: unknown): string | null {
     : null
 }
 
+function requestWorkspaceKey(body: unknown): string | undefined {
+  const value = (body as { workspaceKey?: unknown })?.workspaceKey
+  return typeof value === "string" && value.trim() ? value.trim() : undefined
+}
+
+export async function handleCreatePreparedImportItem(
+  repos: Repos,
+  req: IncomingMessage,
+  res: ServerResponse,
+  onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void,
+): Promise<void> {
+  const body = await readJson(req).catch(() => ({}))
+  const path = requestPath(body)
+  if (!path) {
+    json(res, 400, { error: "missing_path", code: "bad_request" })
+    return
+  }
+  const result = await startPreparedImportForItem(repos, {
+    sourceDir: path,
+    workspaceKey: requestWorkspaceKey(body),
+    onItemColumnChanged,
+  })
+  if (!result.ok) {
+    json(res, result.status, { error: result.error, action: "import_prepared" })
+    return
+  }
+  repos.setItemColumn(result.itemId, "implementation", "running")
+  json(res, 200, {
+    kind: "started",
+    itemId: result.itemId,
+    runId: result.runId,
+    action: "import_prepared",
+    column: "implementation",
+    phaseStatus: "running",
+    warnings: result.warnings,
+  })
+}
+
 async function handlePreparedImportAction(
   repos: Repos,
   res: ServerResponse,

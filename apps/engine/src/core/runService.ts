@@ -245,22 +245,39 @@ export function startRunForItem(
 export async function startPreparedImportForItem(
   repos: Repos,
   input: {
-    itemId: string
+    itemId?: string
     sourceDir: string
+    workspaceKey?: string
     owner?: "cli" | "api"
     onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
   },
 ): Promise<PreparedImportRunResult> {
-  const item = repos.getItem(input.itemId)
-  if (!item) return { ok: false, status: 404, error: "item_not_found" }
+  const existingItem = input.itemId ? repos.getItem(input.itemId) : undefined
+  if (input.itemId && !existingItem) return { ok: false, status: 404, error: "item_not_found" }
+
+  let workspace = existingItem ? repos.getWorkspace(existingItem.workspace_id) : undefined
+  if (!existingItem) {
+    if (input.workspaceKey) {
+      workspace = repos.getWorkspaceByKey(input.workspaceKey)
+      if (!workspace) return { ok: false, status: 404, error: "unknown_workspace" }
+    } else {
+      workspace = repos.upsertWorkspace({
+        key: "default",
+        name: "Default Workspace",
+        description: "beerengineer_ engine workspace",
+      })
+    }
+  }
 
   let bundle: PreparedImportBundle
   try {
-    const workspace = repos.getWorkspace(item.workspace_id)
     const llm = await resolveWorkflowLlmOptions(workspace)
     bundle = await loadPreparedImportBundleWithLlmFallback(
       input.sourceDir,
-      { title: item.title, description: item.description ?? "" },
+      {
+        title: existingItem?.title ?? "Prepared import",
+        description: existingItem?.description ?? "",
+      },
       llm?.stage,
     )
   } catch (error) {
@@ -276,17 +293,46 @@ export async function startPreparedImportForItem(
     skipDesignPrep: true,
   }
   const prepared = prepareRun(
-    { id: item.id, title: item.title, description: item.description },
+    {
+      id: existingItem?.id ?? "new",
+      title: existingItem?.title ?? titleForPreparedImportItem(bundle),
+      description: existingItem?.description ?? descriptionForPreparedImportItem(bundle),
+    },
     repos,
     io,
-    { owner: input.owner ?? "api", itemId: item.id, resume, onItemColumnChanged: input.onItemColumnChanged },
+    {
+      owner: input.owner ?? "api",
+      itemId: existingItem?.id,
+      workspaceKey: !existingItem ? workspace?.key : undefined,
+      workspaceName: !existingItem ? workspace?.name : undefined,
+      resume,
+      onItemColumnChanged: input.onItemColumnChanged,
+    },
   )
   const targetRun = repos.getRun(prepared.runId)
+  const item = repos.getItem(prepared.itemId)
+  if (!item) return { ok: false, status: 409, error: "seed_failed" }
   const ctx = targetRun ? resolveWorkflowContextForItemRun(repos, item, targetRun) : null
   if (!ctx) return { ok: false, status: 409, error: "seed_failed" }
   const seeded = seedPreparedImportArtifacts(ctx, bundle, { sourceDir: input.sourceDir })
   fireInBackground(io, "startPreparedImportForItem", prepared.start)
   return { ok: true, runId: prepared.runId, itemId: item.id, warnings: seeded.warnings }
+}
+
+function titleForPreparedImportItem(bundle: PreparedImportBundle): string {
+  return bundle.projects[0]?.name.trim()
+    || firstLine(bundle.concept.summary)
+    || "Prepared import"
+}
+
+function descriptionForPreparedImportItem(bundle: PreparedImportBundle): string {
+  return bundle.projects[0]?.description.trim()
+    || firstLine(bundle.concept.problem)
+    || firstLine(bundle.concept.summary)
+}
+
+function firstLine(value: string): string {
+  return value.split(/\r?\n/).map(line => line.trim()).find(Boolean) ?? ""
 }
 
 /**

@@ -11,7 +11,7 @@ import { resolveWorkflowContextForItemRun } from "../../core/workflowContextReso
 import type { ItemRow, Repos } from "../../db/repositories.js"
 import { initDatabase } from "../../db/connection.js"
 import type { ResumeFlags } from "../types.js"
-import { resolveItemReference } from "../common.js"
+import { resolveItemReference, resolveSelectedWorkspace } from "../common.js"
 
 type CliItemActionContext = {
   item: ItemRow
@@ -424,22 +424,30 @@ function resolvePreparedImportItem(repos: Repos, itemRef: string): PreparedImpor
 
 async function startPreparedImportFromCli(
   repos: Repos,
-  item: ItemRow,
+  item: ItemRow | undefined,
   sourceDir: string,
+  workspaceKey: string | undefined,
   json: boolean,
 ): Promise<number> {
-  const transition = lookupTransitionSync("import_prepared", item.current_column, item.phase_status)
-  if (transition.kind !== "start-run") {
-    console.error(`  Invalid transition: import_prepared from ${item.current_column}/${item.phase_status}`)
+  const workspace = item ? repos.getWorkspace(item.workspace_id) : resolveSelectedWorkspace(repos, workspaceKey)
+  if (!workspace) {
+    console.error(workspaceKey ? `  Unknown workspace: ${workspaceKey}` : "  No workspace configured. Use `beerengineer workspace add` first.")
     return 1
   }
-  const exit = preflightCliBranchingStart(repos, item.workspace_id, [sourceDir])
+
+  if (item) {
+    const transition = lookupTransitionSync("import_prepared", item.current_column, item.phase_status)
+    if (transition.kind !== "start-run") {
+      console.error(`  Invalid transition: import_prepared from ${item.current_column}/${item.phase_status}`)
+      return 1
+    }
+  }
+  const exit = preflightCliBranchingStart(repos, workspace.id, [sourceDir])
   if (exit !== 0) return exit
-  const workspace = repos.getWorkspace(item.workspace_id)
   const llm = await resolveWorkflowLlmOptions(workspace)
   const bundle = await loadPreparedImportBundleWithLlmFallback(sourceDir, {
-    title: item.title,
-    description: item.description ?? "",
+    title: item?.title ?? "Prepared import",
+    description: item?.description ?? "",
   }, llm?.stage)
   const io = createCliIO(repos)
   try {
@@ -451,28 +459,36 @@ async function startPreparedImportFromCli(
       skipDesignPrep: true,
     }
     const prepared = prepareRun(
-      { id: item.id, title: item.title, description: item.description },
+      {
+        id: item?.id ?? "new",
+        title: item?.title ?? titleForPreparedImportItem(bundle),
+        description: item?.description ?? descriptionForPreparedImportItem(bundle),
+      },
       repos,
       io,
       {
         owner: "cli",
-        itemId: item.id,
+        itemId: item?.id,
+        workspaceKey: !item ? workspace.key : undefined,
+        workspaceName: !item ? workspace.name : undefined,
         resume,
       },
     )
     const targetRun = repos.getRun(prepared.runId)
-    const ctx = targetRun ? resolveWorkflowContextForItemRun(repos, item, targetRun) : null
+    const preparedItem = repos.getItem(prepared.itemId)
+    const ctx = targetRun && preparedItem ? resolveWorkflowContextForItemRun(repos, preparedItem, targetRun) : null
     if (!ctx) {
       console.error("  Cannot import prepared artifacts: failed to resolve target run workspace.")
       return 1
     }
     const seeded = seedPreparedImportArtifacts(ctx, bundle, { sourceDir })
-    repos.setItemColumn(item.id, transition.column, "running")
+    repos.setItemColumn(prepared.itemId, "implementation", "running")
     await prepared.start()
     if (json) {
-      console.log(JSON.stringify({ kind: "started", itemId: item.id, runId: prepared.runId, warnings: seeded.warnings }))
+      console.log(JSON.stringify({ kind: "started", itemId: prepared.itemId, runId: prepared.runId, warnings: seeded.warnings }))
     } else {
       console.log("  import_prepared applied")
+      console.log(`  item-id: ${prepared.itemId}`)
       console.log(`  run-id: ${prepared.runId}`)
       for (const warning of seeded.warnings) console.log(`  warning: ${warning}`)
     }
@@ -482,9 +498,25 @@ async function startPreparedImportFromCli(
   }
 }
 
-export async function runItemImportPrepared(itemRef: string | undefined, sourceDir: string | undefined, json = false): Promise<number> {
-  if (!itemRef || !sourceDir) {
-    console.error("  Usage: beerengineer item import-prepared <item> --from <dir>")
+function titleForPreparedImportItem(bundle: Awaited<ReturnType<typeof loadPreparedImportBundleWithLlmFallback>>): string {
+  return bundle.projects[0]?.name.trim()
+    || firstLine(bundle.concept.summary)
+    || "Prepared import"
+}
+
+function descriptionForPreparedImportItem(bundle: Awaited<ReturnType<typeof loadPreparedImportBundleWithLlmFallback>>): string {
+  return bundle.projects[0]?.description.trim()
+    || firstLine(bundle.concept.problem)
+    || firstLine(bundle.concept.summary)
+}
+
+function firstLine(value: string): string {
+  return value.split(/\r?\n/).map(line => line.trim()).find(Boolean) ?? ""
+}
+
+export async function runItemImportPrepared(itemRef: string | undefined, sourceDir: string | undefined, workspaceKey?: string, json = false): Promise<number> {
+  if (!sourceDir) {
+    console.error("  Usage: beerengineer item import-prepared [item] --from <dir>")
     return 1
   }
   const itemActions = await import("../../core/itemActions.js")
@@ -492,9 +524,10 @@ export async function runItemImportPrepared(itemRef: string | undefined, sourceD
   const db = initDatabase()
   const repos = new (await import("../../db/repositories.js")).Repos(db)
   try {
+    if (!itemRef) return await startPreparedImportFromCli(repos, undefined, sourceDir, workspaceKey, json)
     const resolved = resolvePreparedImportItem(repos, itemRef)
     if (resolved.kind === "exit") return resolved.code
-    return await startPreparedImportFromCli(repos, resolved.item, sourceDir, json)
+    return await startPreparedImportFromCli(repos, resolved.item, sourceDir, workspaceKey, json)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     if (json) console.error(JSON.stringify({ error: message }))

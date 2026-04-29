@@ -17,7 +17,7 @@ import {
 } from "../setup/config.js"
 import type { AppConfig } from "../setup/types.js"
 import { json, requireCsrfToken, setCors } from "./http.js"
-import { handleGetItem, handleGetItemDesign, handleGetItemPreview, handleGetItemWireframes, handleItemActionNamed, handleListItems, handleStartItemPreview, handleStopItemPreview } from "./routes/items.js"
+import { handleCreatePreparedImportItem, handleGetItem, handleGetItemDesign, handleGetItemPreview, handleGetItemWireframes, handleItemActionNamed, handleListItems, handleStartItemPreview, handleStopItemPreview } from "./routes/items.js"
 import {
   handleAnswer,
   handleGetArtifactFile,
@@ -184,6 +184,7 @@ function topLevelRouteHandlers(context: RouteContext): Partial<Record<string, ()
   return {
     "GET /runs": () => handleListRuns(repos, context.res),
     "POST /runs": () => handleCreateRun(repos, context.req, context.res, payload => board.broadcastItemColumnChanged(payload)),
+    "POST /items/import-prepared": () => handleCreatePreparedImportItem(repos, context.req, context.res, payload => board.broadcastItemColumnChanged(payload)),
     "GET /board": () => handleGetBoard(db, context.url, context.res),
     "GET /setup/status": () => handleSetupStatus(context.url, context.res),
     "GET /update/status": () => handleUpdateStatus(repos, context.appConfig, context.res, { pid: process.pid }),

@@ -144,7 +144,10 @@ function parseItemActionSubcommand(argv: string[]): Command {
 function parseItemSubcommand(context: ParseArgsContext): Command | null {
   const { first, second, argv, workspaceKey, json } = context
   if (first !== "item") return null
-  if (second === "import-prepared") return { kind: "item-import-prepared", itemRef: argv[2], sourceDir: readFlag(argv, "--from"), json }
+  if (second === "import-prepared") {
+    const itemRef = argv[2] && !argv[2].startsWith("--") ? argv[2] : undefined
+    return { kind: "item-import-prepared", itemRef, sourceDir: readFlag(argv, "--from"), workspaceKey, json }
+  }
   if (second === "get") return { kind: "item-get", itemRef: argv[2], workspaceKey, json }
   if (second === "open") return { kind: "item-open", itemRef: argv[2], workspaceKey }
   if (second === "preview") return { kind: "item-preview", itemRef: argv[2], workspaceKey, start: argv.includes("--start"), stop: argv.includes("--stop"), open: argv.includes("--open"), json }
