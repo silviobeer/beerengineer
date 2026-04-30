@@ -49,13 +49,14 @@ export async function downloadManagedInstallTarball(
     request?: ManagedInstallDownloadRequest
   } = {},
 ): Promise<ManagedInstallDownloadResult> {
-  const request = opts.request ?? requestHttpsBuffer
+  const requestTimeoutMs = opts.requestTimeoutMs ?? DEFAULT_DOWNLOAD_REQUEST_TIMEOUT_MS
+  const request = opts.request ?? (url => requestHttpsBuffer(url, requestTimeoutMs))
   const maxRedirects = opts.maxRedirects ?? 5
   return await downloadTrustedUrl(
     assertTrustedManagedInstallDownloadUrl(urlString),
     request,
     maxRedirects,
-    opts.requestTimeoutMs ?? DEFAULT_DOWNLOAD_REQUEST_TIMEOUT_MS,
+    requestTimeoutMs,
   )
 }
 
@@ -106,7 +107,7 @@ function redirectTrustError(err: Error): Error {
     .replace("managed_install_download_failed:untrusted_host:", "managed_install_download_failed:untrusted_redirect_host:"))
 }
 
-function requestHttpsBuffer(url: URL): Promise<ManagedInstallDownloadResponse> {
+function requestHttpsBuffer(url: URL, timeoutMs: number): Promise<ManagedInstallDownloadResponse> {
   return new Promise((resolvePromise, reject) => {
     const req = httpsRequest(url, {
       method: "GET",
@@ -124,7 +125,7 @@ function requestHttpsBuffer(url: URL): Promise<ManagedInstallDownloadResponse> {
         body: Buffer.concat(chunks),
       }))
     })
-    req.setTimeout(DEFAULT_DOWNLOAD_REQUEST_TIMEOUT_MS, () => {
+    req.setTimeout(timeoutMs, () => {
       req.destroy(new Error("timeout"))
     })
     req.on("error", err => reject(new Error(`managed_install_download_failed:${err.message}`)))

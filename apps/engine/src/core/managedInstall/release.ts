@@ -75,6 +75,7 @@ function comparePublishedDescending(a: GithubReleasePayload, b: GithubReleasePay
 }
 
 function publishedTime(payload: GithubReleasePayload): number {
+  if (payload.draft === true) return 0
   const publishedAt = typeof payload.published_at === "string" ? Date.parse(payload.published_at) : Number.NaN
   return Number.isFinite(publishedAt) ? publishedAt : 0
 }
