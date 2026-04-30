@@ -57,7 +57,11 @@ async function fetchGithubReleases(context: { repo: string; apiBaseUrl: string; 
     throw new Error(`managed_install_release_resolution_failed:${(err as Error).message}`)
   }
   if (!response.ok) throw new Error(`managed_install_release_resolution_failed:github_http_${response.status}`)
-  return await response.json()
+  try {
+    return await response.json()
+  } catch {
+    throw new Error("managed_install_release_resolution_failed:invalid_github_payload")
+  }
 }
 
 function isTimeoutError(err: unknown): boolean {

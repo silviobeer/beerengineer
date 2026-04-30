@@ -84,6 +84,25 @@ test("resolveManagedInstallRelease times out stalled GitHub release requests", a
   )
 })
 
+test("resolveManagedInstallRelease wraps malformed GitHub JSON", async t => {
+  const server = createServer((_req, res) => {
+    res.writeHead(200, { "content-type": "application/json" })
+    res.end("not-json")
+  })
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()))
+  t.after(() => server.close())
+  const port = (server.address() as { port: number }).port
+
+  await assert.rejects(
+    resolveManagedInstallRelease({
+      repo: "silviobeer/beerengineer",
+      apiBaseUrl: `http://127.0.0.1:${port}`,
+      fetchTimeoutMs: 1_000,
+    }),
+    /managed_install_release_resolution_failed:invalid_github_payload/,
+  )
+})
+
 function releasePayload(tag: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     tag_name: tag,

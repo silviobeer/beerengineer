@@ -121,6 +121,19 @@ function redirectTrustError(err: Error): Error {
 
 function requestHttpsBuffer(url: URL, timeoutMs: number, maxBytes: number): Promise<ManagedInstallDownloadResponse> {
   return new Promise((resolvePromise, reject) => {
+    let settled = false
+    let abortedOrErrored = false
+    const rejectOnce = (err: Error): void => {
+      if (settled) return
+      settled = true
+      abortedOrErrored = true
+      reject(new Error(`managed_install_download_failed:${err.message}`))
+    }
+    const resolveOnce = (response: ManagedInstallDownloadResponse): void => {
+      if (settled) return
+      settled = true
+      resolvePromise(response)
+    }
     const req = httpsRequest(url, {
       method: "GET",
       headers: {
@@ -131,27 +144,30 @@ function requestHttpsBuffer(url: URL, timeoutMs: number, maxBytes: number): Prom
     }, res => {
       const chunks: Buffer[] = []
       let totalBytes = 0
-      let sizeExceeded = false
       res.on("data", chunk => {
         const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
         totalBytes += buffer.byteLength
         if (totalBytes > maxBytes) {
-          sizeExceeded = true
+          abortedOrErrored = true
           req.destroy(new Error(`size_exceeded:${totalBytes}:${maxBytes}`))
           return
         }
         chunks.push(buffer)
       })
-      res.on("end", () => resolvePromise({
-        statusCode: sizeExceeded ? 500 : res.statusCode ?? 500,
-        headers: res.headers,
-        body: sizeExceeded ? Buffer.alloc(0) : Buffer.concat(chunks),
-      }))
+      res.on("end", () => {
+        if (abortedOrErrored) return
+        resolveOnce({
+          statusCode: res.statusCode ?? 500,
+          headers: res.headers,
+          body: Buffer.concat(chunks),
+        })
+      })
+      res.on("error", err => rejectOnce(err as Error))
     })
     req.setTimeout(timeoutMs, () => {
       req.destroy(new Error("timeout"))
     })
-    req.on("error", err => reject(new Error(`managed_install_download_failed:${err.message}`)))
+    req.on("error", err => rejectOnce(err))
     req.end()
   })
 }
