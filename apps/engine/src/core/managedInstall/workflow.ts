@@ -7,6 +7,7 @@ import {
   releaseUpdateLock,
 } from "../updateMode/lock.js"
 import {
+  buildManagedInstallSummary,
   createManagedInstallPhase,
   createManagedInstallResult,
 } from "./diagnostics.js"
@@ -16,6 +17,8 @@ import type {
   ManagedInstallResult,
 } from "./types.js"
 import { resolveManagedInstallStatePaths } from "./state.js"
+import { detectManagedWrapperShadow } from "./pathCheck.js"
+import { evaluateManagedInstallState } from "./state.js"
 
 type DownloadedRelease = {
   body: Buffer
@@ -33,6 +36,32 @@ export type ManagedInstallReleaseWorkflowOptions = {
   resolveRelease: () => Promise<ManagedInstallReleaseTarget>
   downloadRelease: (target: ManagedInstallReleaseTarget) => Promise<DownloadedRelease>
   validateRelease: (input: ValidateReleaseInput) => Promise<void> | void
+}
+
+export type ManagedInstallCommandPhase = "setup" | "engineStart" | "uiStart"
+
+export type ManagedInstallCommandInvocation = {
+  phase: ManagedInstallCommandPhase
+  command: string
+  args: string[]
+  env: NodeJS.ProcessEnv
+}
+
+export type ManagedInstallCommandResult = {
+  exitCode: number
+  stdout?: string
+  stderr?: string
+}
+
+export type ManagedInstallCompletionWorkflowOptions = {
+  operationId?: string
+  mode?: "after-activation" | "rerun"
+  pathEnv?: string
+  resolvedBeerengineerCommandPath?: string | null
+  engineUrl?: string
+  uiUrl?: string
+  uiStartEligible?: boolean
+  commandRunner: (invocation: ManagedInstallCommandInvocation) => Promise<ManagedInstallCommandResult>
 }
 
 export async function runManagedInstallReleaseWorkflow(
@@ -101,10 +130,155 @@ export async function runManagedInstallReleaseWorkflow(
   }
 }
 
+export async function runManagedInstallCompletionWorkflow(
+  config: Pick<AppConfig, "dataDir">,
+  opts: ManagedInstallCompletionWorkflowOptions,
+): Promise<ManagedInstallResult> {
+  const operationId = opts.operationId ?? randomUUID()
+  const paths = resolveManagedInstallStatePaths(config)
+  const state = evaluateManagedInstallState(config)
+  const pathEnv = opts.pathEnv ?? process.env.PATH ?? ""
+  const engineUrl = opts.engineUrl ?? "http://127.0.0.1:4100"
+  const uiUrl = opts.uiUrl ?? "http://127.0.0.1:3100"
+  const nextCommands: string[] = []
+  const phases = [
+    createManagedInstallPhase({
+      name: "install",
+      status: state.status === "already-installed" ? "ok" : "warning",
+      message: state.status === "already-installed"
+        ? "managed install state is active"
+        : `managed install state is ${state.status}`,
+      durationMs: 0,
+    }),
+  ]
+
+  const pathCheck = detectManagedWrapperShadow({
+    wrapperPath: paths.wrapperPath,
+    pathEnv,
+    resolvedCommandPath: opts.resolvedBeerengineerCommandPath,
+  })
+  if (pathCheck.warning) {
+    phases.push(createManagedInstallPhase({
+      name: "setup",
+      status: "warning",
+      message: pathCheck.warning,
+      fixHint: pathCheck.fixHint,
+      durationMs: 0,
+    }))
+  }
+
+  if (opts.mode === "rerun" && state.status === "already-installed") {
+    nextCommands.push(`${paths.wrapperPath} start`, `${paths.wrapperPath} update`)
+    return createManagedInstallResult({
+      operationId,
+      phases,
+      summary: buildManagedInstallSummary({
+        phases,
+        wrapperPath: paths.wrapperPath,
+        nextCommands,
+        pathInstructions: pathCheck.pathInstruction ? [pathCheck.pathInstruction] : [],
+      }),
+    })
+  }
+
+  const baseEnv = { ...process.env, PATH: pathEnv }
+  const setup = await opts.commandRunner({
+    phase: "setup",
+    command: paths.wrapperPath,
+    args: ["setup"],
+    env: baseEnv,
+  })
+  if (setup.exitCode !== 0) {
+    return failResult(operationId, "setup", "setup", new Error(commandMessage(setup, "setup failed")))
+  }
+  phases.push(createManagedInstallPhase({
+    name: "setup",
+    status: "ok",
+    message: "setup completed through managed wrapper",
+    durationMs: 0,
+  }))
+
+  const engine = await opts.commandRunner({
+    phase: "engineStart",
+    command: paths.wrapperPath,
+    args: ["start"],
+    env: baseEnv,
+  })
+  let summaryEngineUrl: string | undefined = engineUrl
+  if (engine.exitCode === 0) {
+    phases.push(createManagedInstallPhase({
+      name: "engineStart",
+      status: "ok",
+      message: `engine available at ${engineUrl}`,
+      durationMs: 0,
+    }))
+  } else {
+    summaryEngineUrl = undefined
+    nextCommands.push(`${paths.wrapperPath} start`)
+    phases.push(createManagedInstallPhase({
+      name: "engineStart",
+      status: "warning",
+      message: `engine start failed: ${commandMessage(engine, "manual start required")}`,
+      fixHint: `Run ${paths.wrapperPath} start when ready.`,
+      durationMs: 0,
+    }))
+  }
+
+  let summaryUiUrl: string | undefined = uiUrl
+  const uiCommand = `${paths.wrapperPath} start ui`
+  if (opts.uiStartEligible === false) {
+    nextCommands.push(uiCommand)
+    phases.push(createManagedInstallPhase({
+      name: "uiStart",
+      status: "warning",
+      message: `UI automatic start is not reliable; run ${uiCommand} and open ${uiUrl}`,
+      fixHint: uiCommand,
+      durationMs: 0,
+    }))
+  } else {
+    const ui = await opts.commandRunner({
+      phase: "uiStart",
+      command: paths.wrapperPath,
+      args: ["start", "ui"],
+      env: baseEnv,
+    })
+    if (ui.exitCode === 0) {
+      phases.push(createManagedInstallPhase({
+        name: "uiStart",
+        status: "ok",
+        message: `UI available at ${uiUrl}`,
+        durationMs: 0,
+      }))
+    } else {
+      nextCommands.push(uiCommand)
+      phases.push(createManagedInstallPhase({
+        name: "uiStart",
+        status: "warning",
+        message: `UI start failed: ${commandMessage(ui, "manual UI start required")}`,
+        fixHint: uiCommand,
+        durationMs: 0,
+      }))
+    }
+  }
+
+  return createManagedInstallResult({
+    operationId,
+    phases,
+    summary: buildManagedInstallSummary({
+      phases,
+      wrapperPath: paths.wrapperPath,
+      engineUrl: summaryEngineUrl,
+      uiUrl: summaryUiUrl,
+      nextCommands: dedupe(nextCommands),
+      pathInstructions: pathCheck.pathInstruction ? [pathCheck.pathInstruction] : [],
+    }),
+  })
+}
+
 function failResult(
   operationId: string,
-  category: "release-resolution" | "download" | "release-validation" | "staging" | "lock",
-  phaseName: "download" | "install",
+  category: "release-resolution" | "download" | "release-validation" | "staging" | "setup" | "lock",
+  phaseName: "download" | "install" | "setup",
   err: Error,
   target?: ManagedInstallReleaseTarget,
 ): ManagedInstallResult {
@@ -128,9 +302,10 @@ function failResult(
   }
 }
 
-function fixHintForCategory(category: "release-resolution" | "download" | "release-validation" | "staging" | "lock"): string {
+function fixHintForCategory(category: "release-resolution" | "download" | "release-validation" | "staging" | "setup" | "lock"): string {
   if (category === "lock") return "Wait for the active install or update to finish, then retry."
   if (category === "staging") return "Check permissions and free space for the managed install versions directory, then retry."
+  if (category === "setup") return "Fix the setup error, then rerun the installer."
   if (category === "release-resolution") return "Check GitHub release availability and rerun the installer."
   if (category === "download") return "Check network access to the trusted GitHub download host, then retry."
   return "Inspect the release contents and retry with a valid beerengineer release."
@@ -143,4 +318,12 @@ function withDownloadMetadata(target: ManagedInstallReleaseTarget): ManagedInsta
     protocol: target.download.protocol,
   }
   return { ...target, download }
+}
+
+function commandMessage(result: ManagedInstallCommandResult, fallback: string): string {
+  return result.stderr?.trim() || result.stdout?.trim() || fallback
+}
+
+function dedupe(values: string[]): string[] {
+  return [...new Set(values)]
 }
