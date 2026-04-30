@@ -40,6 +40,7 @@ export type ManagedInstallSummary = {
   engineUrl?: string
   uiUrl?: string
   nextCommands: string[]
+  pathInstructions: string[]
   warnings: string[]
 }
 

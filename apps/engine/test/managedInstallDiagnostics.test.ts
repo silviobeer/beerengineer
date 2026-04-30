@@ -78,13 +78,17 @@ test("summary carries target metadata commands exit code and warning semantics",
     engineUrl: "http://127.0.0.1:4100",
     uiUrl: "http://127.0.0.1:3000",
     nextCommands: ["beerengineer start", "npm run dev:ui"],
+    pathInstructions: ["Add /home/user/.local/share/beerengineer-nodejs/bin to PATH."],
   })
   const result = createManagedInstallResult({ operationId: "op-summary", phases, target, summary })
+  const rendered = renderManagedInstallHuman(result)
 
   assert.equal(result.summary.status, "succeeded-with-warning")
   assert.equal(result.exitCode, 0)
   assert.equal(result.target?.repo, "silviobeer/beerengineer")
   assert.equal(result.summary.wrapperPath, "/home/user/.local/share/beerengineer-nodejs/bin/beerengineer")
+  assert.deepEqual(result.summary.pathInstructions, ["Add /home/user/.local/share/beerengineer-nodejs/bin to PATH."])
   assert.deepEqual(result.summary.nextCommands, ["beerengineer start", "npm run dev:ui"])
   assert.deepEqual(result.summary.warnings, ["uiStart: manual UI start required"])
+  assert.match(rendered, /path: Add \/home\/user\/\.local\/share\/beerengineer-nodejs\/bin to PATH\./)
 })

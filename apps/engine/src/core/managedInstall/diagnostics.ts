@@ -33,6 +33,7 @@ export function buildManagedInstallSummary(input: {
   engineUrl?: string
   uiUrl?: string
   nextCommands?: string[]
+  pathInstructions?: string[]
 }): ManagedInstallSummary {
   const warnings = input.phases
     .filter(phase => phase.status === "warning")
@@ -44,6 +45,7 @@ export function buildManagedInstallSummary(input: {
     engineUrl: input.engineUrl,
     uiUrl: input.uiUrl,
     nextCommands: input.nextCommands ?? [],
+    pathInstructions: input.pathInstructions ?? [],
     warnings,
   }
 }
@@ -107,5 +109,6 @@ export function renderManagedInstallHuman(result: ManagedInstallResult): string 
   if (result.summary.engineUrl) lines.push(`engine: ${result.summary.engineUrl}`)
   if (result.summary.uiUrl) lines.push(`ui: ${result.summary.uiUrl}`)
   if (result.summary.nextCommands.length > 0) lines.push(`next: ${result.summary.nextCommands.join(" && ")}`)
+  for (const instruction of result.summary.pathInstructions) lines.push(`path: ${instruction}`)
   return `${lines.join("\n")}\n`
 }
