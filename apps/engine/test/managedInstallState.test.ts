@@ -60,7 +60,8 @@ test("managed install adoption preserves existing config database and dev checko
   assert.equal(readFileSync(configPath, "utf8"), "user config\n")
   assert.equal(readFileSync(dbPath, "utf8"), "sqlite data\n")
   assert.equal(readFileSync(devCheckoutPackage, "utf8"), "{}\n")
-  assert.equal(existsSync(join(config.dataDir, "install", "dev-checkout")), false)
+  assert.equal(existsSync(devCheckoutPackage), true)
+  assert.equal(existsSync(join(config.dataDir, "install", "dev-checkout", "package.json")), false)
 })
 
 test("repairManagedInstallState repairs unambiguous missing current and wrapper states", () => {
