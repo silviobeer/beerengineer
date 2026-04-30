@@ -88,3 +88,17 @@ test("downloadManagedInstallTarball times out stalled download requests", async 
     /managed_install_download_failed:timeout/,
   )
 })
+
+test("downloadManagedInstallTarball rejects oversized responses", async () => {
+  await assert.rejects(
+    downloadManagedInstallTarball("https://github.com/silviobeer/beerengineer/archive.tar.gz", {
+      maxBytes: 3,
+      request: async () => ({
+        statusCode: 200,
+        headers: {},
+        body: Buffer.from("too large"),
+      }),
+    }),
+    /managed_install_download_failed:size_exceeded:9:3/,
+  )
+})

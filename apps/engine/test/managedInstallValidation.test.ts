@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs"
+import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -93,6 +93,17 @@ test("validateManagedInstallReleaseTree rejects missing and inconsistent package
     () => validateManagedInstallReleaseTree(directoryBin, { tag: "v1.0.0", version: "1.0.0" }),
     /managed_install_validate_failed:engine_bin_not_file/,
   )
+
+  if (process.platform !== "win32") {
+    const symlinkBin = createValidReleaseTree({ enginePackage: { name: "@beerengineer/engine", version: "1.0.0", bin: { beerengineer: "./bin/beerengineer-link.js" } } })
+    const outside = join(symlinkBin, "outside.js")
+    writeFileSync(outside, "#!/usr/bin/env node\n", "utf8")
+    symlinkSync(outside, join(symlinkBin, "apps", "engine", "bin", "beerengineer-link.js"))
+    assert.throws(
+      () => validateManagedInstallReleaseTree(symlinkBin, { tag: "v1.0.0", version: "1.0.0" }),
+      /managed_install_validate_failed:engine_bin_outside_engine_dir/,
+    )
+  }
 })
 
 function createValidReleaseTree(overrides: {

@@ -1,5 +1,6 @@
 import { request as httpsRequest } from "node:https"
 import { URL } from "node:url"
+import { DEFAULT_MANAGED_INSTALL_VALIDATION_LIMITS } from "./validation.js"
 
 export const TRUSTED_MANAGED_INSTALL_DOWNLOAD_HOSTS = new Set([
   "github.com",
@@ -45,18 +46,21 @@ export async function downloadManagedInstallTarball(
   urlString: string,
   opts: {
     maxRedirects?: number
+    maxBytes?: number
     requestTimeoutMs?: number
     request?: ManagedInstallDownloadRequest
   } = {},
 ): Promise<ManagedInstallDownloadResult> {
   const requestTimeoutMs = opts.requestTimeoutMs ?? DEFAULT_DOWNLOAD_REQUEST_TIMEOUT_MS
-  const request = opts.request ?? (url => requestHttpsBuffer(url, requestTimeoutMs))
+  const maxBytes = opts.maxBytes ?? DEFAULT_MANAGED_INSTALL_VALIDATION_LIMITS.maxTarballBytes
+  const request = opts.request ?? (url => requestHttpsBuffer(url, requestTimeoutMs, maxBytes))
   const maxRedirects = opts.maxRedirects ?? 5
   return await downloadTrustedUrl(
     assertTrustedManagedInstallDownloadUrl(urlString),
     request,
     maxRedirects,
     requestTimeoutMs,
+    maxBytes,
   )
 }
 
@@ -65,8 +69,10 @@ async function downloadTrustedUrl(
   request: ManagedInstallDownloadRequest,
   remainingRedirects: number,
   requestTimeoutMs: number,
+  maxBytes: number,
 ): Promise<ManagedInstallDownloadResult> {
   const response = await withRequestTimeout(request(url), requestTimeoutMs)
+  assertResponseSize(response.body.byteLength, maxBytes)
   const location = response.headers.location
   if (response.statusCode >= 300 && response.statusCode < 400 && location) {
     if (remainingRedirects <= 0) throw new Error("managed_install_download_failed:too_many_redirects")
@@ -76,7 +82,7 @@ async function downloadTrustedUrl(
     } catch (err) {
       throw redirectTrustError(err as Error)
     }
-    return await downloadTrustedUrl(next, request, remainingRedirects - 1, requestTimeoutMs)
+    return await downloadTrustedUrl(next, request, remainingRedirects - 1, requestTimeoutMs, maxBytes)
   }
   if (response.statusCode < 200 || response.statusCode >= 300) {
     throw new Error(`managed_install_download_failed:http_${response.statusCode}`)
@@ -84,6 +90,12 @@ async function downloadTrustedUrl(
   return {
     body: response.body,
     finalUrl: url.toString(),
+  }
+}
+
+function assertResponseSize(bytes: number, maxBytes: number): void {
+  if (bytes > maxBytes) {
+    throw new Error(`managed_install_download_failed:size_exceeded:${bytes}:${maxBytes}`)
   }
 }
 
@@ -107,7 +119,7 @@ function redirectTrustError(err: Error): Error {
     .replace("managed_install_download_failed:untrusted_host:", "managed_install_download_failed:untrusted_redirect_host:"))
 }
 
-function requestHttpsBuffer(url: URL, timeoutMs: number): Promise<ManagedInstallDownloadResponse> {
+function requestHttpsBuffer(url: URL, timeoutMs: number, maxBytes: number): Promise<ManagedInstallDownloadResponse> {
   return new Promise((resolvePromise, reject) => {
     const req = httpsRequest(url, {
       method: "GET",
@@ -118,11 +130,22 @@ function requestHttpsBuffer(url: URL, timeoutMs: number): Promise<ManagedInstall
       },
     }, res => {
       const chunks: Buffer[] = []
-      res.on("data", chunk => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)))
+      let totalBytes = 0
+      let sizeExceeded = false
+      res.on("data", chunk => {
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+        totalBytes += buffer.byteLength
+        if (totalBytes > maxBytes) {
+          sizeExceeded = true
+          req.destroy(new Error(`size_exceeded:${totalBytes}:${maxBytes}`))
+          return
+        }
+        chunks.push(buffer)
+      })
       res.on("end", () => resolvePromise({
-        statusCode: res.statusCode ?? 500,
+        statusCode: sizeExceeded ? 500 : res.statusCode ?? 500,
         headers: res.headers,
-        body: Buffer.concat(chunks),
+        body: sizeExceeded ? Buffer.alloc(0) : Buffer.concat(chunks),
       }))
     })
     req.setTimeout(timeoutMs, () => {

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process"
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs"
 import { join, resolve, sep } from "node:path"
 
 export type ManagedInstallReleaseValidationLimits = {
@@ -63,8 +63,12 @@ export function validateManagedInstallReleaseTree(root: string, release: Release
     ? (enginePackage.bin as Record<string, unknown>).beerengineer
     : null
   if (typeof bin !== "string" || !bin.trim()) throw new Error("managed_install_validate_failed:missing_engine_bin")
-  const engineRoot = resolve(engineDir)
-  const binPath = resolve(engineRoot, bin.replace(/^\.\//, ""))
+  const engineRoot = realpathSync(resolve(engineDir))
+  const rawBinPath = resolve(engineRoot, bin.replace(/^\.\//, ""))
+  if (rawBinPath !== engineRoot && !rawBinPath.startsWith(`${engineRoot}${sep}`)) {
+    throw new Error("managed_install_validate_failed:engine_bin_outside_engine_dir")
+  }
+  const binPath = existsSync(rawBinPath) ? realpathSync(rawBinPath) : rawBinPath
   if (binPath !== engineRoot && !binPath.startsWith(`${engineRoot}${sep}`)) {
     throw new Error("managed_install_validate_failed:engine_bin_outside_engine_dir")
   }
