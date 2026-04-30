@@ -73,10 +73,9 @@ async function downloadTrustedUrl(
 ): Promise<ManagedInstallDownloadResult> {
   const response = await withRequestTimeout(request(url), requestTimeoutMs)
   assertResponseSize(response.body.byteLength, maxBytes)
-  const location = response.headers.location
-  if (response.statusCode >= 300 && response.statusCode < 400 && location) {
+  if (response.statusCode >= 300 && response.statusCode < 400) {
     if (remainingRedirects <= 0) throw new Error("managed_install_download_failed:too_many_redirects")
-    const next = new URL(Array.isArray(location) ? location[0] ?? "" : location, url)
+    const next = new URL(normalizeRedirectLocation(response.headers.location), url)
     try {
       assertTrustedManagedInstallDownloadUrl(next.toString())
     } catch (err) {
@@ -91,6 +90,12 @@ async function downloadTrustedUrl(
     body: response.body,
     finalUrl: url.toString(),
   }
+}
+
+function normalizeRedirectLocation(location: string | string[] | undefined): string {
+  const value = Array.isArray(location) ? location[0] : location
+  if (!value?.trim()) throw new Error("managed_install_download_failed:empty_redirect_location")
+  return value
 }
 
 function assertResponseSize(bytes: number, maxBytes: number): void {

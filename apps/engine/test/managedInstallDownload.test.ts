@@ -51,6 +51,30 @@ test("downloadManagedInstallTarball fails closed on untrusted redirects", async 
   )
 })
 
+test("downloadManagedInstallTarball fails closed on empty redirect locations", async () => {
+  await assert.rejects(
+    downloadManagedInstallTarball("https://github.com/silviobeer/beerengineer/archive.tar.gz", {
+      request: async () => ({
+        statusCode: 302,
+        headers: { location: [] },
+        body: Buffer.alloc(0),
+      }),
+    }),
+    /managed_install_download_failed:empty_redirect_location/,
+  )
+
+  await assert.rejects(
+    downloadManagedInstallTarball("https://github.com/silviobeer/beerengineer/archive.tar.gz", {
+      request: async () => ({
+        statusCode: 302,
+        headers: { location: "" },
+        body: Buffer.alloc(0),
+      }),
+    }),
+    /managed_install_download_failed:empty_redirect_location/,
+  )
+})
+
 test("downloadManagedInstallTarball follows trusted redirects and returns final metadata", async () => {
   const seen: string[] = []
   const result = await downloadManagedInstallTarball("https://github.com/silviobeer/beerengineer/archive.tar.gz", {
