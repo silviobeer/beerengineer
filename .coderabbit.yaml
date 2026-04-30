@@ -10,6 +10,13 @@ reviews:
   # contract — false-positive churn the operator can't act on without
   # forking the SDK. Real verification lives in apps/engine/test/sdkLive.test.ts.
   path_filters:
+    - "!node_modules/**"
+    - "!coverage/**"
+    - "!dist/**"
+    - "!build/**"
+    - "!apps/*/dist/**"
+    - "!apps/*/.next/**"
+    - "!package-lock.json"
     - "!apps/engine/src/llm/hosted/providers/claudeSdk.ts"
     - "!apps/engine/src/llm/hosted/providers/codexSdk.ts"
     - "!apps/engine/src/llm/hosted/providers/_sdkSession.ts"
