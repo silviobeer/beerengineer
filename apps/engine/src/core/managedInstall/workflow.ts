@@ -55,8 +55,12 @@ export async function runManagedInstallReleaseWorkflow(
       return failResult(operationId, "release-resolution", "download", err as Error, target)
     }
 
-    mkdirSync(paths.versionsDir, { recursive: true })
-    stagingDir = mkdtempSync(join(paths.versionsDir, `.staging-${operationId}-`))
+    try {
+      mkdirSync(paths.versionsDir, { recursive: true })
+      stagingDir = mkdtempSync(join(paths.versionsDir, `.staging-${operationId}-`))
+    } catch (err) {
+      return failResult(operationId, "staging", "install", err as Error, target)
+    }
 
     let download: DownloadedRelease
     try {
@@ -99,7 +103,7 @@ export async function runManagedInstallReleaseWorkflow(
 
 function failResult(
   operationId: string,
-  category: "release-resolution" | "download" | "release-validation" | "lock",
+  category: "release-resolution" | "download" | "release-validation" | "staging" | "lock",
   phaseName: "download" | "install",
   err: Error,
   target?: ManagedInstallReleaseTarget,
@@ -124,8 +128,9 @@ function failResult(
   }
 }
 
-function fixHintForCategory(category: "release-resolution" | "download" | "release-validation" | "lock"): string {
+function fixHintForCategory(category: "release-resolution" | "download" | "release-validation" | "staging" | "lock"): string {
   if (category === "lock") return "Wait for the active install or update to finish, then retry."
+  if (category === "staging") return "Check permissions and free space for the managed install versions directory, then retry."
   if (category === "release-resolution") return "Check GitHub release availability and rerun the installer."
   if (category === "download") return "Check network access to the trusted GitHub download host, then retry."
   return "Inspect the release contents and retry with a valid beerengineer release."

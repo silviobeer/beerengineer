@@ -79,6 +79,24 @@ test("managed install workflow cleans staged invalid releases and releases share
   assert.equal(readUpdateLock(paths.lockPath).held, false)
 })
 
+test("managed install workflow reports staging failures separately from lock failures", async () => {
+  const config = configForTempDir()
+  writeFileSync(join(config.dataDir, "install"), "not a directory\n", "utf8")
+
+  const result = await runManagedInstallReleaseWorkflow(config, {
+    operationId: "op-staging",
+    resolveRelease: async () => releaseTarget(),
+    downloadRelease: async () => ({ body: Buffer.from("tarball"), finalUrl: "https://codeload.github.com/repo.tar.gz" }),
+    validateRelease: async () => {
+      throw new Error("should_not_validate")
+    },
+  })
+
+  assert.equal(result.exitCode, 1)
+  assert.match(result.error?.message ?? "", /staging failed:/)
+  assert.doesNotMatch(result.error?.message ?? "", /lock failed:/)
+})
+
 function configForTempDir(): { dataDir: string } {
   return { dataDir: mkdtempSync(join(tmpdir(), "managed-install-workflow-")) }
 }
