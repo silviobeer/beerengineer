@@ -85,7 +85,13 @@ test("validateManagedInstallReleaseTree rejects missing and inconsistent package
   writeFileSync(join(escapingBin, "apps", "outside.js"), "#!/usr/bin/env node\n", "utf8")
   assert.throws(
     () => validateManagedInstallReleaseTree(escapingBin, { tag: "v1.0.0", version: "1.0.0" }),
-    /managed_install_validate_failed:engine_bin_missing/,
+    /managed_install_validate_failed:engine_bin_outside_engine_dir/,
+  )
+
+  const directoryBin = createValidReleaseTree({ enginePackage: { name: "@beerengineer/engine", version: "1.0.0", bin: { beerengineer: "." } } })
+  assert.throws(
+    () => validateManagedInstallReleaseTree(directoryBin, { tag: "v1.0.0", version: "1.0.0" }),
+    /managed_install_validate_failed:engine_bin_not_file/,
   )
 })
 

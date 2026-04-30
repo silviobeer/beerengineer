@@ -131,12 +131,14 @@ echo "   base: $WAVE_BASE"
 COMMITS_SINCE=$(git rev-list --count "${WAVE_BASE}..HEAD" 2>/dev/null || echo "?")
 FILES_CHANGED=$(git diff --name-only "${WAVE_BASE}..HEAD" 2>/dev/null | wc -l | tr -d ' ')
 echo "   diff scope: ${COMMITS_SINCE} commits, ${FILES_CHANGED} files"
+mapfile -t REVIEW_FILES < <(git diff --name-only "${WAVE_BASE}..HEAD" 2>/dev/null)
+[[ "${#REVIEW_FILES[@]}" -gt 0 ]] || fail "CodeRabbit review has no committed files to review from ${WAVE_BASE}..HEAD"
 
 CR_OUT=$(mktemp)
 CR_START=$(date +%s)
 set +e
 timeout --foreground "$CODERABBIT_TIMEOUT" \
-  coderabbit review --agent --type committed --base-commit "$WAVE_BASE" > "$CR_OUT"
+  coderabbit review --agent --base-commit "$WAVE_BASE" --files "${REVIEW_FILES[@]}" > "$CR_OUT"
 rc=$?
 set -e
 if [[ $rc -ne 0 ]]; then

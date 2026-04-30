@@ -66,9 +66,10 @@ export function validateManagedInstallReleaseTree(root: string, release: Release
   const engineRoot = resolve(engineDir)
   const binPath = resolve(engineRoot, bin.replace(/^\.\//, ""))
   if (binPath !== engineRoot && !binPath.startsWith(`${engineRoot}${sep}`)) {
-    throw new Error("managed_install_validate_failed:engine_bin_missing")
+    throw new Error("managed_install_validate_failed:engine_bin_outside_engine_dir")
   }
   if (!existsSync(binPath)) throw new Error("managed_install_validate_failed:engine_bin_missing")
+  if (!statSync(binPath).isFile()) throw new Error("managed_install_validate_failed:engine_bin_not_file")
   return { binPath }
 }
 
