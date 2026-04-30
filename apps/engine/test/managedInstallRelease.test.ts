@@ -1,5 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
+import { createServer } from "node:http"
 
 import { resolveManagedInstallRelease } from "../src/core/managedInstall/release.js"
 
@@ -64,6 +65,22 @@ test("resolveManagedInstallRelease rejects non-HTTPS tarball metadata", async ()
       ],
     }),
     /managed_install_release_resolution_failed:insecure_tarball_protocol:http:/,
+  )
+})
+
+test("resolveManagedInstallRelease times out stalled GitHub release requests", async t => {
+  const server = createServer(() => {})
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()))
+  t.after(() => server.close())
+  const port = (server.address() as { port: number }).port
+
+  await assert.rejects(
+    resolveManagedInstallRelease({
+      repo: "silviobeer/beerengineer",
+      apiBaseUrl: `http://127.0.0.1:${port}`,
+      fetchTimeoutMs: 10,
+    }),
+    /managed_install_release_resolution_failed:github_timeout/,
   )
 })
 

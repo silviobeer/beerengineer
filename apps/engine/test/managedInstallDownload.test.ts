@@ -78,3 +78,13 @@ test("downloadManagedInstallTarball follows trusted redirects and returns final 
     "https://codeload.github.com/silviobeer/beerengineer/tar.gz/refs/tags/v1.0.0",
   ])
 })
+
+test("downloadManagedInstallTarball times out stalled download requests", async () => {
+  await assert.rejects(
+    downloadManagedInstallTarball("https://github.com/silviobeer/beerengineer/archive.tar.gz", {
+      requestTimeoutMs: 10,
+      request: async () => await new Promise(() => {}),
+    }),
+    /managed_install_download_failed:timeout/,
+  )
+})

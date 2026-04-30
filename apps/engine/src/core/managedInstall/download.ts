@@ -21,6 +21,8 @@ export type ManagedInstallDownloadResult = {
   finalUrl: string
 }
 
+const DEFAULT_DOWNLOAD_REQUEST_TIMEOUT_MS = 30_000
+
 export function assertTrustedManagedInstallDownloadUrl(
   urlString: string,
   allowedHosts = TRUSTED_MANAGED_INSTALL_DOWNLOAD_HOSTS,
@@ -43,20 +45,27 @@ export async function downloadManagedInstallTarball(
   urlString: string,
   opts: {
     maxRedirects?: number
+    requestTimeoutMs?: number
     request?: ManagedInstallDownloadRequest
   } = {},
 ): Promise<ManagedInstallDownloadResult> {
   const request = opts.request ?? requestHttpsBuffer
   const maxRedirects = opts.maxRedirects ?? 5
-  return await downloadTrustedUrl(assertTrustedManagedInstallDownloadUrl(urlString), request, maxRedirects)
+  return await downloadTrustedUrl(
+    assertTrustedManagedInstallDownloadUrl(urlString),
+    request,
+    maxRedirects,
+    opts.requestTimeoutMs ?? DEFAULT_DOWNLOAD_REQUEST_TIMEOUT_MS,
+  )
 }
 
 async function downloadTrustedUrl(
   url: URL,
   request: ManagedInstallDownloadRequest,
   remainingRedirects: number,
+  requestTimeoutMs: number,
 ): Promise<ManagedInstallDownloadResult> {
-  const response = await request(url)
+  const response = await withRequestTimeout(request(url), requestTimeoutMs)
   const location = response.headers.location
   if (response.statusCode >= 300 && response.statusCode < 400 && location) {
     if (remainingRedirects <= 0) throw new Error("managed_install_download_failed:too_many_redirects")
@@ -66,7 +75,7 @@ async function downloadTrustedUrl(
     } catch (err) {
       throw redirectTrustError(err as Error)
     }
-    return await downloadTrustedUrl(next, request, remainingRedirects - 1)
+    return await downloadTrustedUrl(next, request, remainingRedirects - 1, requestTimeoutMs)
   }
   if (response.statusCode < 200 || response.statusCode >= 300) {
     throw new Error(`managed_install_download_failed:http_${response.statusCode}`)
@@ -75,6 +84,21 @@ async function downloadTrustedUrl(
     body: response.body,
     finalUrl: url.toString(),
   }
+}
+
+function withRequestTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise((resolvePromise, reject) => {
+    const timer = setTimeout(() => reject(new Error("managed_install_download_failed:timeout")), timeoutMs)
+    promise
+      .then(value => {
+        clearTimeout(timer)
+        resolvePromise(value)
+      })
+      .catch(err => {
+        clearTimeout(timer)
+        reject(err)
+      })
+  })
 }
 
 function redirectTrustError(err: Error): Error {
@@ -99,6 +123,9 @@ function requestHttpsBuffer(url: URL): Promise<ManagedInstallDownloadResponse> {
         headers: res.headers,
         body: Buffer.concat(chunks),
       }))
+    })
+    req.setTimeout(DEFAULT_DOWNLOAD_REQUEST_TIMEOUT_MS, () => {
+      req.destroy(new Error("timeout"))
     })
     req.on("error", err => reject(new Error(`managed_install_download_failed:${err.message}`)))
     req.end()

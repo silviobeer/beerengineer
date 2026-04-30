@@ -14,10 +14,12 @@ type GithubReleasePayload = {
 type ResolveManagedInstallReleaseOptions = {
   repo?: string
   apiBaseUrl?: string
+  fetchTimeoutMs?: number
   fetchReleases?: (context: { repo: string; apiBaseUrl: string }) => Promise<unknown>
 }
 
 const DEFAULT_GITHUB_API_BASE = process.env.BEERENGINEER_INSTALL_GITHUB_API_BASE_URL?.trim() || "https://api.github.com"
+const DEFAULT_RELEASE_FETCH_TIMEOUT_MS = 30_000
 
 export async function resolveManagedInstallRelease(
   opts: ResolveManagedInstallReleaseOptions = {},
@@ -26,7 +28,11 @@ export async function resolveManagedInstallRelease(
   const apiBaseUrl = opts.apiBaseUrl?.trim() || DEFAULT_GITHUB_API_BASE
   const rawPayload = opts.fetchReleases
     ? await opts.fetchReleases({ repo, apiBaseUrl })
-    : await fetchGithubReleases({ repo, apiBaseUrl })
+    : await fetchGithubReleases({
+      repo,
+      apiBaseUrl,
+      timeoutMs: opts.fetchTimeoutMs ?? DEFAULT_RELEASE_FETCH_TIMEOUT_MS,
+    })
   const payloads = coerceReleasePayloads(rawPayload)
   const stable = payloads
     .filter(payload => payload.draft !== true && payload.prerelease !== true)
@@ -36,15 +42,27 @@ export async function resolveManagedInstallRelease(
   return releasePayloadToManagedTarget(repo, selected)
 }
 
-async function fetchGithubReleases(context: { repo: string; apiBaseUrl: string }): Promise<unknown> {
-  const response = await fetch(`${context.apiBaseUrl.replace(/\/$/, "")}/repos/${context.repo}/releases`, {
-    headers: {
-      accept: "application/vnd.github+json",
-      "user-agent": "beerengineer-managed-install",
-    },
-  })
+async function fetchGithubReleases(context: { repo: string; apiBaseUrl: string; timeoutMs: number }): Promise<unknown> {
+  let response: Response
+  try {
+    response = await fetch(`${context.apiBaseUrl.replace(/\/$/, "")}/repos/${context.repo}/releases`, {
+      headers: {
+        accept: "application/vnd.github+json",
+        "user-agent": "beerengineer-managed-install",
+      },
+      signal: AbortSignal.timeout(context.timeoutMs),
+    })
+  } catch (err) {
+    if (isTimeoutError(err)) throw new Error("managed_install_release_resolution_failed:github_timeout")
+    throw new Error(`managed_install_release_resolution_failed:${(err as Error).message}`)
+  }
   if (!response.ok) throw new Error(`managed_install_release_resolution_failed:github_http_${response.status}`)
   return await response.json()
+}
+
+function isTimeoutError(err: unknown): boolean {
+  const name = (err as { name?: unknown }).name
+  return name === "AbortError" || name === "TimeoutError"
 }
 
 function coerceReleasePayloads(raw: unknown): GithubReleasePayload[] {
