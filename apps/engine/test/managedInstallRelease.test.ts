@@ -68,6 +68,20 @@ test("resolveManagedInstallRelease rejects non-HTTPS tarball metadata", async ()
   )
 })
 
+test("resolveManagedInstallRelease wraps malformed tarball metadata", async () => {
+  await assert.rejects(
+    resolveManagedInstallRelease({
+      repo: "silviobeer/beerengineer",
+      fetchReleases: async () => [
+        releasePayload("v1.0.0", {
+          tarball_url: "://not-a-url",
+        }),
+      ],
+    }),
+    /managed_install_release_resolution_failed:invalid_tarball_url/,
+  )
+})
+
 test("resolveManagedInstallRelease times out stalled GitHub release requests", async t => {
   const server = createServer(() => {})
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()))
