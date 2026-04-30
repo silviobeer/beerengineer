@@ -17,11 +17,14 @@ export {
   resolveSwitcherScriptExtension,
   currentAppVersion,
   resolveGithubRepo,
+  resolveManagedInstallWrapperPath,
   resolveManagedInstallPaths,
 } from "./updateMode/shared.js"
 
 export {
   resolveUpdateLockFilePath,
+  managedInstallUpdateLockPath,
+  acquireManagedInstallUpdateLock,
   readUpdateLock,
   acquireUpdateLock,
   releaseUpdateLock,

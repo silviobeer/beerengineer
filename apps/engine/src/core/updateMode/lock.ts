@@ -12,6 +12,10 @@ export function updateLockPath(config: Pick<AppConfig, "dataDir">): string {
   return join(config.dataDir, "update.lock")
 }
 
+export function managedInstallUpdateLockPath(config: Pick<AppConfig, "dataDir">): string {
+  return updateLockPath(config)
+}
+
 export function resolveUpdateLockFilePath(config: Pick<AppConfig, "dataDir">): string {
   return updateLockPath(config)
 }
@@ -73,6 +77,20 @@ export function acquireUpdateLock(
     } catch {}
     write()
     return { path, record, reclaimed: true, reclaimedFrom: existing.record }
+  }
+}
+
+export function acquireManagedInstallUpdateLock(
+  config: Pick<AppConfig, "dataDir">,
+  opts: { operationId?: string; pid?: number } = {},
+): { path: string; record: UpdateLockRecord; reclaimed: boolean; reclaimedFrom: UpdateLockRecord | null } {
+  try {
+    return acquireUpdateLock(config, opts)
+  } catch (err) {
+    if ((err as Error).message === "update_lock_held") {
+      throw new Error(`managed_install_lock_failed:held:retry_later:${managedInstallUpdateLockPath(config)}`)
+    }
+    throw err
   }
 }
 
