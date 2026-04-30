@@ -69,6 +69,9 @@ function releasePayloadToManagedTarget(repo: string, payload: GithubReleasePaylo
     throw new Error("managed_install_release_resolution_failed:invalid_github_payload")
   }
   const downloadUrl = new URL(tarballUrl)
+  if (downloadUrl.protocol !== "https:") {
+    throw new Error(`managed_install_release_resolution_failed:insecure_tarball_protocol:${downloadUrl.protocol}`)
+  }
   return {
     repo,
     tag,
@@ -79,7 +82,7 @@ function releasePayloadToManagedTarget(repo: string, payload: GithubReleasePaylo
     download: {
       tarballUrl,
       host: downloadUrl.hostname.toLowerCase(),
-      protocol: downloadUrl.protocol as "https:",
+      protocol: "https:",
     },
   }
 }

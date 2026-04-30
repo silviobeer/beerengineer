@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process"
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
-import { join } from "node:path"
+import { join, resolve, sep } from "node:path"
 
 export type ManagedInstallReleaseValidationLimits = {
   maxTarballBytes: number
@@ -63,7 +63,11 @@ export function validateManagedInstallReleaseTree(root: string, release: Release
     ? (enginePackage.bin as Record<string, unknown>).beerengineer
     : null
   if (typeof bin !== "string" || !bin.trim()) throw new Error("managed_install_validate_failed:missing_engine_bin")
-  const binPath = join(engineDir, bin.replace(/^\.\//, ""))
+  const engineRoot = resolve(engineDir)
+  const binPath = resolve(engineRoot, bin.replace(/^\.\//, ""))
+  if (binPath !== engineRoot && !binPath.startsWith(`${engineRoot}${sep}`)) {
+    throw new Error("managed_install_validate_failed:engine_bin_missing")
+  }
   if (!existsSync(binPath)) throw new Error("managed_install_validate_failed:engine_bin_missing")
   return { binPath }
 }
@@ -92,7 +96,7 @@ export function measureDirectoryBytes(root: string): number {
 function archiveEntryIsUnsafe(entry: string): boolean {
   const normalized = entry.trim().replaceAll("\\", "/")
   if (!normalized) return true
-  if (normalized.startsWith("/") || /^[A-Za-z]:\//.test(normalized)) return true
+  if (normalized.startsWith("/") || /^[A-Za-z]:/.test(normalized)) return true
   return normalized.split("/").some(part => part === "..")
 }
 

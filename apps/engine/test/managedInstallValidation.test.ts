@@ -23,6 +23,10 @@ test("validateManagedInstallArchiveEntries rejects traversal and absolute paths"
     () => validateManagedInstallArchiveEntries(["C:/tmp/evil.js"]),
     /managed_install_validate_failed:unsafe_archive_entry/,
   )
+  assert.throws(
+    () => validateManagedInstallArchiveEntries(["C:file.js"]),
+    /managed_install_validate_failed:unsafe_archive_entry/,
+  )
 })
 
 test("validateManagedInstallReleaseSizes enforces tarball and extracted-tree bounds", () => {
@@ -75,6 +79,13 @@ test("validateManagedInstallReleaseTree rejects missing and inconsistent package
   assert.throws(
     () => validateManagedInstallReleaseTree(mismatchedVersion, { tag: "v1.0.0", version: "1.0.0" }),
     /managed_install_validate_failed:tag_version_mismatch:v1.0.0:2.0.0/,
+  )
+
+  const escapingBin = createValidReleaseTree({ enginePackage: { name: "@beerengineer/engine", version: "1.0.0", bin: { beerengineer: "../outside.js" } } })
+  writeFileSync(join(escapingBin, "apps", "outside.js"), "#!/usr/bin/env node\n", "utf8")
+  assert.throws(
+    () => validateManagedInstallReleaseTree(escapingBin, { tag: "v1.0.0", version: "1.0.0" }),
+    /managed_install_validate_failed:engine_bin_missing/,
   )
 })
 

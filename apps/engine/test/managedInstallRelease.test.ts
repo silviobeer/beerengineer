@@ -53,6 +53,20 @@ test("resolveManagedInstallRelease fails clearly when no stable release exists",
   )
 })
 
+test("resolveManagedInstallRelease rejects non-HTTPS tarball metadata", async () => {
+  await assert.rejects(
+    resolveManagedInstallRelease({
+      repo: "silviobeer/beerengineer",
+      fetchReleases: async () => [
+        releasePayload("v1.0.0", {
+          tarball_url: "http://api.github.com/repos/silviobeer/beerengineer/tarball/v1.0.0",
+        }),
+      ],
+    }),
+    /managed_install_release_resolution_failed:insecure_tarball_protocol:http:/,
+  )
+})
+
 function releasePayload(tag: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     tag_name: tag,
