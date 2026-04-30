@@ -138,7 +138,7 @@ CR_OUT=$(mktemp)
 CR_START=$(date +%s)
 set +e
 timeout --foreground "$CODERABBIT_TIMEOUT" \
-  coderabbit review --agent --base-commit "$WAVE_BASE" --files "${REVIEW_FILES[@]}" > "$CR_OUT"
+  coderabbit review --agent --config AGENTS.md apps/engine/CLAUDE.md --base-commit "$WAVE_BASE" --files "${REVIEW_FILES[@]}" > "$CR_OUT"
 rc=$?
 set -e
 if [[ $rc -ne 0 ]]; then

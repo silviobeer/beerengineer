@@ -28,6 +28,12 @@ Durable rules for AI agents editing the engine. Read
 - **Real git only.** No simulated mode. Every run gets a worktree off
   `master` and a PR to merge back. `src/sim/` is legacy; don't extend it.
 
+<!-- ENGINE-TESTS -->
+- **Engine tests use Node's built-in runner.** Keep engine tests on
+  `node:test` / `node:assert/strict` and run them through
+  `node --test --import tsx` unless the engine package tooling is changed
+  deliberately in the same scope.
+
 <!-- ENGINE-DB -->
 - **Idempotent migrations.** Add new columns via `ALTER TABLE … IF NOT
   EXISTS` guards in `src/db/connection.ts`. No separate migration files.
