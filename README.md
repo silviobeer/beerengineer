@@ -95,6 +95,26 @@ silently falls back to CLI.
 
 ## Quick start
 
+Managed first install (recommended for humans and agents):
+
+```bash
+curl -fsSL https://github.com/silviobeer/beerengineer/releases/latest/download/install.sh | sh
+```
+
+```powershell
+irm https://github.com/silviobeer/beerengineer/releases/latest/download/install.ps1 | iex
+```
+
+The installer uses the newest stable GitHub release only. It reports the repo
+and target version, or explains that no stable release is available yet. It
+requires Node.js 22+, npm, and Git; it does not silently install those tools.
+It prints `PATH` guidance when the managed wrapper directory is not visible and
+does not edit shell profiles. v1 has no uninstall command; manual removal means
+reviewing the beerengineer config file, SQLite database, and managed install
+root under the OS app-data locations before deleting anything.
+
+Developer checkout:
+
 ```bash
 git clone https://github.com/silviobeer/beerengineer.git
 cd beerengineer

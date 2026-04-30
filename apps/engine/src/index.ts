@@ -38,6 +38,7 @@ import {
   runWorkspaceWorktreeGcCommand,
 } from "./cli/commands/workspaces.js"
 import { runItemAction, runItemImportPrepared } from "./cli/commands/itemActions.js"
+import { runManagedInstallCommand } from "./cli/commands/install.js"
 import { runUpdateCommand } from "./cli/commands/update.js"
 import { runInteractiveWorkflow } from "./cli/workflow.js"
 import type { Command } from "./cli/types.js"
@@ -85,6 +86,7 @@ const COMMAND_REGISTRY: CommandHandlers = {
     if (exit !== null) return exit
     return runSetupCommand({ group: cmd.group, noInteractive: cmd.noInteractive })
   },
+  install: cmd => runManagedInstallCommand(cmd),
   update: cmd => runUpdateCommand(cmd),
   "notifications-test": cmd => runNotificationsTestCommand(cmd.channel),
   "workspace-preview": cmd => runWorkspacePreviewCommand(cmd.path, cmd.json),

@@ -119,9 +119,29 @@ Assured in the SonarQube Cloud UI.
 
 ## Step 1 — Install beerengineer_ itself
 
-You have the beerengineer_ source from GitHub at
-`~/projects/beerengineer/`. Install it as a global command so your terminal
-can find `beerengineer`:
+Use the managed GitHub release installer. Humans and agents use the same
+commands; there is no agent-only clone or branch path.
+
+macOS/Linux:
+
+```
+curl -fsSL https://github.com/silviobeer/beerengineer/releases/latest/download/install.sh | sh
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://github.com/silviobeer/beerengineer/releases/latest/download/install.ps1 | iex
+```
+
+The installer requires Node.js 22+, npm, and Git. It tells you whether a
+prerequisite is missing, whether no stable GitHub release exists, or which repo
+and target release is starting. It prints `PATH` instructions for the managed
+wrapper and does not edit shell profiles for you. v1 has no uninstall command;
+manual cleanup means inspecting the config file, SQLite database, and managed
+install root under the OS app-data locations before removing anything.
+
+Developer checkout fallback:
 
 ```
 cd ~/projects/beerengineer

@@ -13,6 +13,7 @@ export type Command =
   | { kind: "start-engine" }
   | { kind: "doctor"; json?: boolean; group?: string }
   | { kind: "setup"; group?: string; noInteractive?: boolean }
+  | { kind: "install"; json?: boolean; fromBootstrap?: "posix" | "windows" }
   | {
       kind: "update"
       check?: boolean

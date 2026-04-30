@@ -226,6 +226,14 @@ function parseSimpleTopLevelCommand(context: ParseArgsContext): Command | null {
   const { first, second, argv, json, group, workspaceKey, all } = context
   if (first === "--help" || first === "-h" || first === "help") return { kind: "help" }
   if (first === "--doctor" || first === "doctor") return { kind: "doctor", json, group }
+  if (first === "install") {
+    const fromBootstrap = readFlag(argv, "--from-bootstrap")
+    return {
+      kind: "install",
+      json,
+      fromBootstrap: fromBootstrap === "posix" || fromBootstrap === "windows" ? fromBootstrap : undefined,
+    }
+  }
   if (first === "setup") return { kind: "setup", group, noInteractive: argv.includes("--no-interactive") }
   const update = parseUpdateCommand(context)
   if (update) return update
@@ -273,6 +281,7 @@ export function printHelp(): void {
     "    beerengineer item action --item <id|code> --action <name>",
     "                                                         Perform an item action",
     "    beerengineer doctor [--json] [--group <id>]          Run machine diagnostics",
+    "    beerengineer install [--json]                        Resolve stable release and start managed install",
     "    beerengineer setup [--group <id>] [--no-interactive] Provision app config/data/DB and retry checks",
     "    beerengineer update [--json] [--version <tag>]       Stage and queue an update apply attempt",
     "    beerengineer update --check [--json]                 Check the newest GitHub release against the current install",

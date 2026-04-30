@@ -14,6 +14,25 @@ this repo and are running the engine locally from that install.
 
 ## Commands
 
+Managed first install uses the same path for humans and agents:
+
+```bash
+curl -fsSL https://github.com/silviobeer/beerengineer/releases/latest/download/install.sh | sh
+```
+
+```powershell
+irm https://github.com/silviobeer/beerengineer/releases/latest/download/install.ps1 | iex
+```
+
+The bootstrap scripts require Node.js 22+, npm, and Git to already be present.
+They delegate to `beerengineer install`, which resolves a stable GitHub release
+and reports either the repo/target version or a no-stable-release failure. The
+installer prints `PATH` instructions for the managed wrapper and never mutates
+shell or PowerShell profiles. v1 intentionally ships no uninstall command; for
+manual removal, inspect the config file, SQLite database, and managed install
+root under the OS app-data locations first. Code paths: `apps/engine/bin/install.sh`,
+`apps/engine/bin/install.ps1`, and `apps/engine/src/cli/commands/install.ts`.
+
 ```bash
 npm exec --workspace=@beerengineer/engine beerengineer -- doctor
 npm exec --workspace=@beerengineer/engine beerengineer -- doctor --json
