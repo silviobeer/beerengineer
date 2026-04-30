@@ -37,14 +37,24 @@ export function resolveGithubRepo(): string {
   return DEFAULT_GITHUB_REPO
 }
 
-export function resolveManagedInstallPaths(config: Pick<AppConfig, "dataDir">): UpdateStatus["install"] {
+export function resolveManagedInstallWrapperPath(
+  config: Pick<AppConfig, "dataDir">,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  return join(config.dataDir, "bin", platform === "win32" ? "beerengineer.cmd" : "beerengineer")
+}
+
+export function resolveManagedInstallPaths(
+  config: Pick<AppConfig, "dataDir">,
+  opts: { platform?: NodeJS.Platform } = {},
+): UpdateStatus["install"] {
   const installRoot = resolve(config.dataDir, "install")
   return {
     root: installRoot,
     versionsDir: join(installRoot, "versions"),
     currentPath: resolvePointer(join(installRoot, "current")),
     previousPath: resolvePointer(join(installRoot, "previous")),
-    wrapperPath: join(config.dataDir, "bin", "beerengineer"),
+    wrapperPath: resolveManagedInstallWrapperPath(config, opts.platform),
     switcherDir: join(installRoot, ".switcher"),
     backupRoot: join(config.dataDir, "backups", "update"),
     logRoot: join(config.dataDir, "logs", "update"),
