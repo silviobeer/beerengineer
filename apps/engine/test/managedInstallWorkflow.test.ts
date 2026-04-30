@@ -10,6 +10,7 @@ import {
   activateManagedInstallVersion,
   resolveManagedInstallStatePaths,
 } from "../src/core/managedInstall/state.js"
+import { MANAGED_INSTALL_RESULT_VERSION } from "../src/core/managedInstall/diagnostics.js"
 import {
   runManagedInstallCompletionWorkflow,
   runManagedInstallReleaseWorkflow,
@@ -204,17 +205,51 @@ test("completion workflow short-circuits idempotent reruns without mutating acti
   const result = await runManagedInstallCompletionWorkflow(config, {
     operationId: "op-rerun",
     mode: "rerun",
+    pathEnv: paths.binDir,
     commandRunner: async () => {
       commandCount += 1
       return { exitCode: 0 }
     },
   })
 
+  assert.equal(result.version, MANAGED_INSTALL_RESULT_VERSION)
+  assert.equal(result.operationId, "op-rerun")
   assert.equal(result.exitCode, 0)
+  assert.equal(result.summary.status, "succeeded")
+  assert.equal(result.summary.wrapperPath, paths.wrapperPath)
+  assert.deepEqual(result.summary.pathInstructions, [])
   assert.equal(commandCount, 0)
   assert.match(result.summary.nextCommands.join("\n"), /update/)
   assert.equal(readFileSync(paths.wrapperPath, "utf8"), currentBefore)
   assert.equal(existsSync(active), true)
+})
+
+test("completion workflow carries wrapper shadow detection into final warning summary", async () => {
+  const config = configForTempDir()
+  createActiveInstall(config.dataDir)
+  const paths = resolveManagedInstallStatePaths(config)
+
+  const result = await runManagedInstallCompletionWorkflow(config, {
+    operationId: "op-shadow",
+    pathEnv: `/usr/local/bin:${paths.binDir}`,
+    resolvedBeerengineerCommandPath: "/usr/local/bin/beerengineer",
+    uiStartEligible: false,
+    commandRunner: async () => ({ exitCode: 0 }),
+  })
+
+  assert.equal(result.exitCode, 0)
+  assert.equal(result.summary.status, "succeeded-with-warning")
+  assert.match(result.summary.warnings.join("\n"), /setup: PATH resolves beerengineer to \/usr\/local\/bin\/beerengineer/)
+  assert.match(result.summary.warnings.join("\n"), new RegExp(escapeRegex(paths.wrapperPath)))
+  assert.equal(result.summary.pathInstructions.length, 0)
+  assert.equal(
+    result.phases.some(phase => phase.name === "setup" && phase.status === "warning" && phase.fixHint?.includes("manually remove")),
+    true,
+  )
+  assert.equal(
+    result.phases.some(phase => phase.name === "setup" && phase.status === "ok"),
+    true,
+  )
 })
 
 function configForTempDir(): { dataDir: string } {
@@ -254,4 +289,8 @@ function createActiveInstall(dataDir: string): string {
   writeFileSync(join(root, "apps", "engine", "bin", "beerengineer.js"), "#!/usr/bin/env node\n", "utf8")
   activateManagedInstallVersion({ dataDir }, { tag: "v1.0.0", version: "1.0.0" })
   return root
+}
+
+function escapeRegex(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 }

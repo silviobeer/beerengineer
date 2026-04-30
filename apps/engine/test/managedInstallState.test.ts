@@ -39,6 +39,47 @@ test("activateManagedInstallVersion creates update-aligned layout current pointe
   assert.match(readFileSync(windowsPaths.wrapperPath, "utf8"), /install\\current\\apps\\engine\\bin\\beerengineer\.js/)
 })
 
+test("active current evaluation is explicit for POSIX and Windows wrapper targets", () => {
+  const scenarios: Array<{
+    platform: NodeJS.Platform
+    wrapperName: string
+    bodyPattern: RegExp
+    argvPattern: RegExp
+  }> = [
+    {
+      platform: "linux",
+      wrapperName: "beerengineer",
+      bodyPattern: /install\/current\/apps\/engine\/bin\/beerengineer\.js/,
+      argvPattern: /\$@/,
+    },
+    {
+      platform: "win32",
+      wrapperName: "beerengineer.cmd",
+      bodyPattern: /install\\current\\apps\\engine\\bin\\beerengineer\.js/,
+      argvPattern: /%\*/,
+    },
+  ]
+
+  for (const scenario of scenarios) {
+    const config = configForTempDir()
+    createValidVersionTree(config.dataDir, "v1.0.0")
+    const result = activateManagedInstallVersion(config, releaseRef("v1.0.0"), {
+      platform: scenario.platform,
+    })
+    const paths = resolveManagedInstallStatePaths(config, { platform: scenario.platform })
+    const state = evaluateManagedInstallState(config, { platform: scenario.platform })
+    const wrapper = readFileSync(paths.wrapperPath, "utf8")
+
+    assert.equal(paths.wrapperPath, join(config.dataDir, "bin", scenario.wrapperName))
+    assert.equal(realpathSync(paths.currentLinkPath), result.versionPath)
+    assert.equal(state.status, "already-installed")
+    assert.equal(state.activeVersion, "1.0.0")
+    assert.equal(state.currentTargetPath, result.versionPath)
+    assert.match(wrapper, scenario.bodyPattern)
+    assert.match(wrapper, scenario.argvPattern)
+  }
+})
+
 test("managed install adoption preserves existing config database and dev checkout artifacts", () => {
   const config = configForTempDir()
   const configPath = join(config.dataDir, "config.json")

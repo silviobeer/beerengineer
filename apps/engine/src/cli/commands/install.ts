@@ -1,11 +1,36 @@
 import { resolveManagedInstallRelease } from "../../core/managedInstall/release.js"
-import { renderManagedInstallJson } from "../../core/managedInstall/diagnostics.js"
-import { createManagedInstallResult, createManagedInstallPhase, buildManagedInstallSummary } from "../../core/managedInstall/diagnostics.js"
+import type { ManagedInstallReleaseTarget } from "../../core/managedInstall/types.js"
+import {
+  buildManagedInstallSummary,
+  createManagedInstallErrorResult,
+  createManagedInstallPhase,
+  createManagedInstallResult,
+  renderManagedInstallJson,
+} from "../../core/managedInstall/diagnostics.js"
 import type { Command } from "../types.js"
 
-export async function runManagedInstallCommand(cmd: Extract<Command, { kind: "install" }>): Promise<number> {
+export type ManagedInstallCommandDeps = {
+  operationId?: () => string
+  resolveRelease?: () => Promise<ManagedInstallReleaseTarget>
+  writeStdout?: (chunk: string) => void
+  writeStderr?: (chunk: string) => void
+}
+
+export async function runManagedInstallCommand(
+  cmd: Extract<Command, { kind: "install" }>,
+  deps: ManagedInstallCommandDeps = {},
+): Promise<number> {
+  const operationId = deps.operationId?.() ?? `bootstrap-${Date.now()}`
+  const resolveRelease = deps.resolveRelease ?? resolveManagedInstallRelease
+  const writeStdout = deps.writeStdout ?? ((chunk: string) => {
+    process.stdout.write(chunk)
+  })
+  const writeStderr = deps.writeStderr ?? ((chunk: string) => {
+    process.stderr.write(chunk)
+  })
+
   try {
-    const target = await resolveManagedInstallRelease()
+    const target = await resolveRelease()
     const phases = [
       createManagedInstallPhase({
         name: "download",
@@ -15,7 +40,7 @@ export async function runManagedInstallCommand(cmd: Extract<Command, { kind: "in
       }),
     ]
     const result = createManagedInstallResult({
-      operationId: `bootstrap-${Date.now()}`,
+      operationId,
       target,
       phases,
       summary: buildManagedInstallSummary({
@@ -23,22 +48,30 @@ export async function runManagedInstallCommand(cmd: Extract<Command, { kind: "in
         nextCommands: ["managed install workflow will continue from the resolved release"],
       }),
     })
-    if (cmd.json) process.stdout.write(renderManagedInstallJson(result))
+    if (cmd.json) writeStdout(renderManagedInstallJson(result))
     else {
-      console.log(`beerengineer_ managed install starting`)
-      console.log(`repo: ${target.repo}`)
-      console.log(`target: ${target.tag} (${target.version})`)
-      console.log(`source: ${target.tarballUrl}`)
+      writeStdout([
+        "beerengineer_ managed install starting",
+        `repo: ${target.repo}`,
+        `target: ${target.tag} (${target.version})`,
+        `source: ${target.tarballUrl}`,
+        "",
+      ].join("\n"))
     }
     return 0
   } catch (err) {
     const message = (err as Error).message
-    if (cmd.json) process.stdout.write(`${JSON.stringify({ status: "failed", error: message })}\n`)
+    if (cmd.json) {
+      writeStdout(renderManagedInstallJson(createManagedInstallErrorResult({
+        operationId,
+        error: new Error(message),
+      })))
+    }
     else {
-      console.error("beerengineer_ managed install cannot start")
-      console.error(message.includes("no_stable_release")
+      writeStderr("beerengineer_ managed install cannot start\n")
+      writeStderr(`${message.includes("no_stable_release")
         ? "No stable GitHub release is available yet."
-        : message)
+        : message}\n`)
     }
     return 1
   }

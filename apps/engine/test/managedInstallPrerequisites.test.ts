@@ -28,6 +28,24 @@ test("runManagedInstallPrerequisiteProbe fails with actionable hints for missing
   assert.match(phase.fixHint ?? "", /Install npm/)
 })
 
+test("runManagedInstallPrerequisiteProbe names missing node npm and git independently", async () => {
+  const phase = await runManagedInstallPrerequisiteProbe({
+    nodeVersion: "v22.3.0",
+    probeCommand: async command => ({
+      ok: false,
+      detail: `${command} missing`,
+    }),
+  })
+
+  assert.equal(phase.status, "failed")
+  assert.match(phase.message, /node/)
+  assert.match(phase.message, /npm/)
+  assert.match(phase.message, /git/)
+  assert.match(phase.fixHint ?? "", /Install Node\.js 22/)
+  assert.match(phase.fixHint ?? "", /Install npm/)
+  assert.match(phase.fixHint ?? "", /Install Git/)
+})
+
 test("runManagedInstallPrerequisiteProbe enforces the documented Node version floor", async () => {
   const phase = await runManagedInstallPrerequisiteProbe({
     nodeVersion: "v20.11.0",

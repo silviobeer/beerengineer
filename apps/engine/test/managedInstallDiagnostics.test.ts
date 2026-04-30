@@ -82,6 +82,7 @@ test("summary carries target metadata commands exit code and warning semantics",
   })
   const result = createManagedInstallResult({ operationId: "op-summary", phases, target, summary })
   const rendered = renderManagedInstallHuman(result)
+  const parsed = JSON.parse(renderManagedInstallJson(result)) as typeof result
 
   assert.equal(result.summary.status, "succeeded-with-warning")
   assert.equal(result.exitCode, 0)
@@ -91,4 +92,10 @@ test("summary carries target metadata commands exit code and warning semantics",
   assert.deepEqual(result.summary.nextCommands, ["beerengineer start", "npm run dev:ui"])
   assert.deepEqual(result.summary.warnings, ["uiStart: manual UI start required"])
   assert.match(rendered, /path: Add \/home\/user\/\.local\/share\/beerengineer-nodejs\/bin to PATH\./)
+  assert.equal(parsed.version, MANAGED_INSTALL_RESULT_VERSION)
+  assert.equal(parsed.operationId, "op-summary")
+  assert.equal(parsed.target?.download.host, "api.github.com")
+  assert.equal(parsed.summary.status, "succeeded-with-warning")
+  assert.equal(parsed.exitCode, 0)
+  assert.deepEqual(parsed.summary.pathInstructions, ["Add /home/user/.local/share/beerengineer-nodejs/bin to PATH."])
 })

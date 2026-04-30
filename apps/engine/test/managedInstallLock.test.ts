@@ -37,6 +37,34 @@ test("active managed install lock fails hard with retry hint", () => {
   releaseUpdateLock(config, held.record.operationId)
 })
 
+test("managed install lock blocks concurrent update attempts until released", () => {
+  const config = configForTempDir()
+  const held = acquireManagedInstallUpdateLock(config, { operationId: "install-active", pid: process.pid })
+
+  const attempts = Array.from({ length: 5 }, (_value, index) => {
+    try {
+      acquireUpdateLock(config, { operationId: `update-attempt-${index}`, pid: process.pid })
+      return "acquired"
+    } catch (err) {
+      return (err as Error).message
+    }
+  })
+
+  assert.deepEqual(attempts, [
+    "update_lock_held",
+    "update_lock_held",
+    "update_lock_held",
+    "update_lock_held",
+    "update_lock_held",
+  ])
+  assert.equal(readFileSync(managedInstallUpdateLockPath(config), "utf8").includes("install-active"), true)
+  assert.equal(releaseUpdateLock(config, held.record.operationId), true)
+
+  const afterRelease = acquireUpdateLock(config, { operationId: "update-after-install", pid: process.pid })
+  assert.equal(afterRelease.record.operationId, "update-after-install")
+  releaseUpdateLock(config, afterRelease.record.operationId)
+})
+
 test("stale lock behavior is shared with update lock reclamation", () => {
   const config = configForTempDir()
   mkdirSync(config.dataDir, { recursive: true })
