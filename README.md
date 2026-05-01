@@ -58,6 +58,12 @@ Items now pause in a dedicated **Merge** column after per-project handoff and on
 - **Recovery-on-restart** — orphaned runs are auto-marked failed with
   a resume-ready recovery payload
 
+## Docs
+
+- [Features](docs/PROJECT.md) — shipped PROJs, scope, PRDs, and QA status
+- [Technical](docs/TECHNICAL.md) — architecture, data model, decisions, and gotchas
+- [Agent orientation](AGENTS.md) — durable conventions for AI-pair coding
+
 ## Prerequisites
 
 | Required | |

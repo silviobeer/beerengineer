@@ -13,6 +13,8 @@
 
 | If you need to know… | Open |
 |---|---|
+| Which PROJs/features have shipped, their scope, linked PRDs, and QA status | [`PROJECT.md`](./PROJECT.md) |
+| Cross-project architecture, data model, decisions, dependencies, deployment notes, and gotchas | [`TECHNICAL.md`](./TECHNICAL.md) |
 | HTTP API request/response shapes (prose companion to `openapi.json`) | [`api-contract.md`](./api-contract.md) |
 | `MessageEntry` projection, level taxonomy (L0/L1/L2), event-to-level mapping, chattool dispatcher | [`messaging-levels.md`](./messaging-levels.md) |
 
