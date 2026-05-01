@@ -16,9 +16,11 @@ import type {
   ManagedInstallReleaseTarget,
   ManagedInstallResult,
 } from "./types.js"
-import { resolveManagedInstallStatePaths } from "./state.js"
+import {
+  evaluateManagedInstallState,
+  resolveManagedInstallStatePaths,
+} from "./state.js"
 import { detectManagedWrapperShadow } from "./pathCheck.js"
-import { evaluateManagedInstallState } from "./state.js"
 
 type DownloadedRelease = {
   body: Buffer
@@ -182,84 +184,14 @@ export async function runManagedInstallCompletionWorkflow(
   }
 
   const baseEnv = { ...process.env, PATH: pathEnv }
-  const setup = await opts.commandRunner({
-    phase: "setup",
-    command: paths.wrapperPath,
-    args: ["setup"],
-    env: baseEnv,
-  })
-  if (setup.exitCode !== 0) {
-    return failResult(operationId, "setup", "setup", new Error(commandMessage(setup, "setup failed")))
-  }
-  phases.push(createManagedInstallPhase({
-    name: "setup",
-    status: "ok",
-    message: "setup completed through managed wrapper",
-    durationMs: 0,
-  }))
+  const setupFailure = await runSetupPhase(opts, paths.wrapperPath, baseEnv, phases)
+  if (setupFailure) return failResult(operationId, "setup", "setup", setupFailure)
 
-  const engine = await opts.commandRunner({
-    phase: "engineStart",
-    command: paths.wrapperPath,
-    args: ["start"],
-    env: baseEnv,
-  })
-  let summaryEngineUrl: string | undefined = engineUrl
-  if (engine.exitCode === 0) {
-    phases.push(createManagedInstallPhase({
-      name: "engineStart",
-      status: "ok",
-      message: `engine available at ${engineUrl}`,
-      durationMs: 0,
-    }))
-  } else {
-    summaryEngineUrl = undefined
-    nextCommands.push(`${paths.wrapperPath} start`)
-    phases.push(createManagedInstallPhase({
-      name: "engineStart",
-      status: "warning",
-      message: `engine start failed: ${commandMessage(engine, "manual start required")}`,
-      fixHint: `Run ${paths.wrapperPath} start when ready.`,
-      durationMs: 0,
-    }))
-  }
+  const summaryEngineUrl = await runEngineStartPhase(opts, paths.wrapperPath, baseEnv, phases, nextCommands, engineUrl)
 
   let summaryUiUrl: string | undefined = uiUrl
   const uiCommand = `${paths.wrapperPath} start ui`
-  if (opts.uiStartEligible === false) {
-    nextCommands.push(uiCommand)
-    phases.push(createManagedInstallPhase({
-      name: "uiStart",
-      status: "warning",
-      message: `UI automatic start is not reliable; run ${uiCommand} and open ${uiUrl}`,
-      fixHint: uiCommand,
-      durationMs: 0,
-    }))
-  } else {
-    const ui = await opts.commandRunner({
-      phase: "uiStart",
-      command: paths.wrapperPath,
-      args: ["start", "ui"],
-      env: baseEnv,
-    })
-    if (ui.exitCode === 0) {
-      phases.push(createManagedInstallPhase({
-        name: "uiStart",
-        status: "ok",
-        message: `UI available at ${uiUrl}`,
-        durationMs: 0,
-      }))
-    } else {
-      nextCommands.push(uiCommand)
-      phases.push(createManagedInstallPhase({
-        name: "uiStart",
-        status: "warning",
-        message: `UI start failed: ${commandMessage(ui, "manual UI start required")}`,
-        fixHint: uiCommand,
-        durationMs: 0,
-      }))
-    }
-  }
+  await runUiStartPhase(opts, paths.wrapperPath, baseEnv, phases, nextCommands, uiUrl, uiCommand)
 
   return createManagedInstallResult({
     operationId,
@@ -322,6 +254,81 @@ function withDownloadMetadata(target: ManagedInstallReleaseTarget): ManagedInsta
 
 function commandMessage(result: ManagedInstallCommandResult, fallback: string): string {
   return result.stderr?.trim() || result.stdout?.trim() || fallback
+}
+
+async function runSetupPhase(
+  opts: ManagedInstallCompletionWorkflowOptions,
+  wrapperPath: string,
+  env: NodeJS.ProcessEnv,
+  phases: ReturnType<typeof createManagedInstallPhase>[],
+): Promise<Error | null> {
+  const setup = await runManagedCommand(opts, "setup", wrapperPath, ["setup"], env)
+  if (setup.exitCode !== 0) return new Error(commandMessage(setup, "setup failed"))
+  phases.push(okPhase("setup", "setup completed through managed wrapper"))
+  return null
+}
+
+async function runEngineStartPhase(
+  opts: ManagedInstallCompletionWorkflowOptions,
+  wrapperPath: string,
+  env: NodeJS.ProcessEnv,
+  phases: ReturnType<typeof createManagedInstallPhase>[],
+  nextCommands: string[],
+  engineUrl: string,
+): Promise<string | undefined> {
+  const engine = await runManagedCommand(opts, "engineStart", wrapperPath, ["start"], env)
+  if (engine.exitCode === 0) {
+    phases.push(okPhase("engineStart", `engine available at ${engineUrl}`))
+    return engineUrl
+  }
+  nextCommands.push(`${wrapperPath} start`)
+  phases.push(warningPhase(
+    "engineStart",
+    `engine start failed: ${commandMessage(engine, "manual start required")}`,
+    `Run ${wrapperPath} start when ready.`,
+  ))
+  return undefined
+}
+
+async function runUiStartPhase(
+  opts: ManagedInstallCompletionWorkflowOptions,
+  wrapperPath: string,
+  env: NodeJS.ProcessEnv,
+  phases: ReturnType<typeof createManagedInstallPhase>[],
+  nextCommands: string[],
+  uiUrl: string,
+  uiCommand: string,
+): Promise<void> {
+  if (opts.uiStartEligible === false) {
+    nextCommands.push(uiCommand)
+    phases.push(warningPhase("uiStart", `UI automatic start is not reliable; run ${uiCommand} and open ${uiUrl}`, uiCommand))
+    return
+  }
+  const ui = await runManagedCommand(opts, "uiStart", wrapperPath, ["start", "ui"], env)
+  if (ui.exitCode === 0) {
+    phases.push(okPhase("uiStart", `UI available at ${uiUrl}`))
+    return
+  }
+  nextCommands.push(uiCommand)
+  phases.push(warningPhase("uiStart", `UI start failed: ${commandMessage(ui, "manual UI start required")}`, uiCommand))
+}
+
+function runManagedCommand(
+  opts: ManagedInstallCompletionWorkflowOptions,
+  phase: ManagedInstallCommandPhase,
+  command: string,
+  args: string[],
+  env: NodeJS.ProcessEnv,
+): Promise<ManagedInstallCommandResult> {
+  return opts.commandRunner({ phase, command, args, env })
+}
+
+function okPhase(name: ManagedInstallCommandPhase, message: string) {
+  return createManagedInstallPhase({ name, status: "ok", message, durationMs: 0 })
+}
+
+function warningPhase(name: ManagedInstallCommandPhase, message: string, fixHint: string) {
+  return createManagedInstallPhase({ name, status: "warning", message, fixHint, durationMs: 0 })
 }
 
 function dedupe(values: string[]): string[] {

@@ -42,36 +42,18 @@ export function validateManagedInstallReleaseTree(root: string, release: Release
   const engineDir = join(root, "apps", "engine")
   const enginePackagePath = join(engineDir, "package.json")
   const uiDir = join(root, "apps", "ui")
-  if (!existsSync(rootPackagePath)) throw new Error("managed_install_validate_failed:missing_root_package_json")
-  if (!existsSync(enginePackagePath)) throw new Error("managed_install_validate_failed:missing_engine_package_json")
-  if (!existsSync(uiDir)) throw new Error("managed_install_validate_failed:missing_apps_ui")
-
-  const rootPackage = readJson<{ workspaces?: unknown }>(rootPackagePath)
-  const workspaces = normalizeWorkspaces(rootPackage.workspaces)
-  if (!workspaceIncludes(workspaces, "apps/engine")) throw new Error("managed_install_validate_failed:missing_workspace_apps_engine")
-  if (!workspaceIncludes(workspaces, "apps/ui")) throw new Error("managed_install_validate_failed:missing_workspace_apps_ui")
-
+  validateRequiredReleasePaths({ rootPackagePath, enginePackagePath, uiDir })
+  validateWorkspaceMetadata(rootPackagePath)
   const enginePackage = readJson<{ name?: unknown; version?: unknown; bin?: unknown }>(enginePackagePath)
   if (enginePackage.name !== "@beerengineer/engine") throw new Error("managed_install_validate_failed:unexpected_engine_package_name")
-  const engineVersion = typeof enginePackage.version === "string" && enginePackage.version.trim()
-    ? enginePackage.version.trim()
-    : "missing"
+  const engineVersion = readEngineVersion(enginePackage.version)
   if (engineVersion !== release.version) {
     throw new Error(`managed_install_validate_failed:tag_version_mismatch:${release.tag}:${engineVersion}`)
   }
-  const bin = typeof enginePackage.bin === "object" && enginePackage.bin && "beerengineer" in enginePackage.bin
-    ? (enginePackage.bin as Record<string, unknown>).beerengineer
-    : null
+  const bin = readBeerengineerBin(enginePackage.bin)
   if (typeof bin !== "string" || !bin.trim()) throw new Error("managed_install_validate_failed:missing_engine_bin")
   const engineRoot = realpathSync(resolve(engineDir))
-  const rawBinPath = resolve(engineRoot, bin.replace(/^\.\//, ""))
-  if (rawBinPath !== engineRoot && !rawBinPath.startsWith(`${engineRoot}${sep}`)) {
-    throw new Error("managed_install_validate_failed:engine_bin_outside_engine_dir")
-  }
-  const binPath = existsSync(rawBinPath) ? realpathSync(rawBinPath) : rawBinPath
-  if (binPath !== engineRoot && !binPath.startsWith(`${engineRoot}${sep}`)) {
-    throw new Error("managed_install_validate_failed:engine_bin_outside_engine_dir")
-  }
+  const binPath = resolveEngineBinPath(engineRoot, bin)
   if (!existsSync(binPath)) throw new Error("managed_install_validate_failed:engine_bin_missing")
   if (!statSync(binPath).isFile()) throw new Error("managed_install_validate_failed:engine_bin_not_file")
   return { binPath }
@@ -102,7 +84,43 @@ function archiveEntryIsUnsafe(entry: string): boolean {
   const normalized = entry.trim().replaceAll("\\", "/")
   if (!normalized) return true
   if (normalized.startsWith("/") || /^[A-Za-z]:/.test(normalized)) return true
-  return normalized.split("/").some(part => part === "..")
+  return normalized.split("/").includes("..")
+}
+
+function validateRequiredReleasePaths(paths: { rootPackagePath: string; enginePackagePath: string; uiDir: string }): void {
+  if (!existsSync(paths.rootPackagePath)) throw new Error("managed_install_validate_failed:missing_root_package_json")
+  if (!existsSync(paths.enginePackagePath)) throw new Error("managed_install_validate_failed:missing_engine_package_json")
+  if (!existsSync(paths.uiDir)) throw new Error("managed_install_validate_failed:missing_apps_ui")
+}
+
+function validateWorkspaceMetadata(rootPackagePath: string): void {
+  const rootPackage = readJson<{ workspaces?: unknown }>(rootPackagePath)
+  const workspaces = normalizeWorkspaces(rootPackage.workspaces)
+  if (!workspaceIncludes(workspaces, "apps/engine")) throw new Error("managed_install_validate_failed:missing_workspace_apps_engine")
+  if (!workspaceIncludes(workspaces, "apps/ui")) throw new Error("managed_install_validate_failed:missing_workspace_apps_ui")
+}
+
+function readEngineVersion(rawVersion: unknown): string {
+  return typeof rawVersion === "string" && rawVersion.trim() ? rawVersion.trim() : "missing"
+}
+
+function readBeerengineerBin(rawBin: unknown): unknown {
+  if (typeof rawBin !== "object" || !rawBin || !("beerengineer" in rawBin)) return null
+  return (rawBin as Record<string, unknown>).beerengineer
+}
+
+function resolveEngineBinPath(engineRoot: string, bin: string): string {
+  const rawBinPath = resolve(engineRoot, bin.replace(/^\.\//, ""))
+  assertPathInsideEngineRoot(engineRoot, rawBinPath)
+  const binPath = existsSync(rawBinPath) ? realpathSync(rawBinPath) : rawBinPath
+  assertPathInsideEngineRoot(engineRoot, binPath)
+  return binPath
+}
+
+function assertPathInsideEngineRoot(engineRoot: string, path: string): void {
+  if (path !== engineRoot && !path.startsWith(`${engineRoot}${sep}`)) {
+    throw new Error("managed_install_validate_failed:engine_bin_outside_engine_dir")
+  }
 }
 
 function readJson<T>(path: string): T {

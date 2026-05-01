@@ -371,17 +371,21 @@ function readPreservedAppData(dataDir: string): ManagedInstallStateEvaluation["p
   const configFiles = entries
     .filter(entry => entry.isFile() && entry.name.endsWith(".json") && entry.name.toLowerCase().includes("config"))
     .map(entry => join(dataDir, entry.name))
-    .sort()
+    .sort(compareStrings)
   const sqliteFiles = entries
     .filter(entry => entry.isFile() && /\.(sqlite|sqlite3|db)$/i.test(entry.name))
     .map(entry => join(dataDir, entry.name))
-    .sort()
+    .sort(compareStrings)
   const devCheckoutArtifacts = entries
     .filter(entry => entry.isDirectory() && existsSync(join(dataDir, entry.name, "package.json")))
     .map(entry => join(dataDir, entry.name))
     .filter(path => !path.startsWith(resolve(dataDir, "install")))
-    .sort()
+    .sort(compareStrings)
   return { configFiles, sqliteFiles, devCheckoutArtifacts }
+}
+
+function compareStrings(left: string, right: string): number {
+  return left.localeCompare(right)
 }
 
 function hasPreservedAppData(appData: ManagedInstallStateEvaluation["preservedAppData"]): boolean {

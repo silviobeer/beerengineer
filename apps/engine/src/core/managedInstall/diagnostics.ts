@@ -18,10 +18,10 @@ export const REQUIRED_MANAGED_INSTALL_PHASES: readonly ManagedInstallPhaseName[]
   "uiStart",
 ]
 
-const PHASE_STATUSES: readonly ManagedInstallPhaseStatus[] = ["ok", "warning", "failed"]
+const PHASE_STATUSES = new Set<ManagedInstallPhaseStatus>(["ok", "warning", "failed"])
 
 export function createManagedInstallPhase(input: ManagedInstallPhase): ManagedInstallPhase {
-  if (!PHASE_STATUSES.includes(input.status)) {
+  if (!PHASE_STATUSES.has(input.status)) {
     throw new Error(`managed_install_diagnostics_failed:invalid_phase_status:${input.status}`)
   }
   return { ...input }
@@ -39,8 +39,11 @@ export function buildManagedInstallSummary(input: {
     .filter(phase => phase.status === "warning")
     .map(phase => `${phase.name}: ${phase.message}`)
   const failed = input.phases.some(phase => phase.status === "failed")
+  const status = failed
+    ? "failed"
+    : summaryStatusForWarnings(warnings)
   return {
-    status: failed ? "failed" : warnings.length > 0 ? "succeeded-with-warning" : "succeeded",
+    status,
     wrapperPath: input.wrapperPath,
     engineUrl: input.engineUrl,
     uiUrl: input.uiUrl,
@@ -48,6 +51,10 @@ export function buildManagedInstallSummary(input: {
     pathInstructions: input.pathInstructions ?? [],
     warnings,
   }
+}
+
+function summaryStatusForWarnings(warnings: string[]): ManagedInstallSummary["status"] {
+  return warnings.length > 0 ? "succeeded-with-warning" : "succeeded"
 }
 
 export function createManagedInstallResult(input: {

@@ -167,7 +167,7 @@ function requestHttpsBuffer(url: URL, timeoutMs: number, maxBytes: number): Prom
           body: Buffer.concat(chunks),
         })
       })
-      res.on("error", err => rejectOnce(err as Error))
+      res.on("error", err => rejectOnce(err))
     })
     req.setTimeout(timeoutMs, () => {
       req.destroy(new Error("timeout"))

@@ -29,17 +29,19 @@ export function detectManagedWrapperShadow(input: {
   const wrapperDirOnPath = pathContainsDirectory(input.pathEnv, wrapperDir, delimiter)
   const resolved = input.resolvedCommandPath?.trim() || null
   const shadowed = Boolean(resolved && normalizeForCompare(resolved) !== normalizeForCompare(input.wrapperPath))
+  let fixHint = `Add ${wrapperDir} to PATH before running beerengineer from a new shell.`
+  if (shadowed) {
+    fixHint = `Put ${wrapperDir} earlier in PATH order or manually remove the old global package.`
+  } else if (wrapperDirOnPath) {
+    fixHint = `Managed wrapper directory ${wrapperDir} is already on PATH.`
+  }
   return {
     wrapperDirOnPath,
     shadowed,
     warning: shadowed
       ? `PATH resolves beerengineer to ${resolved}; managed wrapper is ${input.wrapperPath}.`
       : null,
-    fixHint: shadowed
-      ? `Put ${wrapperDir} earlier in PATH order or manually remove the old global package.`
-      : wrapperDirOnPath
-        ? `Managed wrapper directory ${wrapperDir} is already on PATH.`
-        : `Add ${wrapperDir} to PATH before running beerengineer from a new shell.`,
+    fixHint,
     pathInstruction: wrapperDirOnPath ? null : `Add ${wrapperDir} to PATH.`,
     shouldRemoveGlobalInstall: false,
   }
