@@ -249,15 +249,33 @@
       margin: 0 auto;
     }
     .giant-step {
-      display: grid;
-      place-items: center;
       min-height: 430px;
-      text-align: center;
       border: 1px solid var(--line);
       background: var(--panel);
       padding: 24px;
     }
     .giant-step h2 { font-size: 22px; margin-bottom: 8px; }
+    .hero-copy {
+      max-width: 720px;
+      margin: 0 auto;
+      text-align: center;
+    }
+    .info-list {
+      display: grid;
+      gap: 10px;
+    }
+    .info-item {
+      border: 1px solid var(--line);
+      background: var(--panel2);
+      padding: 12px;
+    }
+    .agent-prompt {
+      border: 1px solid var(--line);
+      background: #0c1012;
+      padding: 12px;
+      white-space: pre-wrap;
+      line-height: 1.45;
+    }
     .formgrid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -403,13 +421,35 @@
             <div class="step-token locked"><span class="step-num">5</span><strong>Finish</strong></div>
           </div>
           <div class="giant-step stack">
-            <div>
+            <div class="hero-copy">
               <h2>Install Codex CLI</h2>
-              <p class="muted">This is the only thing to do right now.</p>
+              <p class="muted">beerengineer_ needs at least one working AI harness before it can run implementation work. Codex is missing on this machine, so this step explains what it is, where to get it, and how to verify it.</p>
             </div>
-            <div class="command" style="width: min(620px, 100%)"><span class="mono">npm i -g @openai/codex</span><button class="primary" data-toast="toast-c">Copy</button></div>
-            <div class="row" style="justify-content: center"><button>I've installed it, re-check</button><button class="primary" disabled>Continue</button></div>
+            <div class="info-list">
+              <div class="info-item">
+                <h3>Recommended install</h3>
+                <p class="muted" style="margin-top: 6px">Use npm when Node.js is already available. The wizard will not install it for you; it gives you the exact command and then verifies the result.</p>
+                <div class="command" style="margin-top: 10px"><span class="mono">npm i -g @openai/codex</span><button class="primary" data-toast="toast-c">Copy command</button></div>
+              </div>
+              <div class="info-item">
+                <h3>Where to download or read docs</h3>
+                <p class="muted" style="margin-top: 6px">OpenAI Codex CLI package: <span class="mono">https://www.npmjs.com/package/@openai/codex</span></p>
+                <p class="muted" style="margin-top: 6px">If npm itself is missing, install Node.js first from <span class="mono">https://nodejs.org/</span>, then return to this step.</p>
+              </div>
+              <div class="info-item">
+                <h3>Prompt for your local agent</h3>
+                <p class="muted" style="margin: 6px 0 10px">If you are using an agent in this machine, copy this prompt instead of copying only the command.</p>
+                <div class="agent-prompt mono">Install the OpenAI Codex CLI on this machine if it is missing, using the official npm package @openai/codex. After installation, run `codex --version` and report whether the command is available on PATH. Do not modify this project repository.</div>
+                <button style="margin-top: 10px" data-toast="toast-c-agent">Copy agent prompt</button>
+              </div>
+              <div class="info-item">
+                <h3>Verification</h3>
+                <p class="muted" style="margin-top: 6px">After installing, run the check. The wizard unlocks Step 3 only when a required harness is ready.</p>
+                <div class="row" style="margin-top: 10px"><button>I've installed it, re-check</button><button class="primary" disabled>Continue to Step 3</button></div>
+              </div>
+            </div>
             <div id="toast-c" class="toast">Copied command.</div>
+            <div id="toast-c-agent" class="toast">Copied agent prompt.</div>
           </div>
         </div>
         <footer class="footer"><button>Back</button><button disabled>Step 3 is locked</button></footer>

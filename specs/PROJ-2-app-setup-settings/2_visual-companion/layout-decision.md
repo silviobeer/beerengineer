@@ -43,9 +43,9 @@
 
 ### C. Single-Task Wizard
 
-- Flow: Full-page wizard with one nearly full-screen task. It still shows a compact 5-step indicator, but the current action dominates the page.
-- Pros: Most wizard-like and least distracting; ideal for first-time users who should do exactly one thing.
-- Cons: Can feel slow or oversized for form-heavy steps like app config and secrets.
+- Flow: Full-page wizard with one nearly full-screen task. It still shows a compact 5-step indicator, but the current action dominates the page. The active step includes explanation, download/source links, direct command, an optional agent prompt, and verification.
+- Pros: Most wizard-like and least distracting; ideal for first-time users who should do exactly one thing. Rich text keeps the step educational instead of reducing it to a terminal command.
+- Cons: Can feel slow or oversized for form-heavy steps like app config and secrets. Needs careful content hierarchy so "single task" does not become a wall of text.
 - Existing-fit: Biggest departure from current board UI, but that is acceptable for first-run setup.
 - Mobile: Strong, because one task at a time maps cleanly to narrow screens.
 
@@ -68,20 +68,27 @@
 
 ## Recommendation
 
-Use **A. Centered Wizard** as the primary `/setup` shape, with **D. Runbook Wizard** blocks inside dependency and auth steps.
+Use **C. Single-Task Wizard** as the selected `/setup` shape, with richer instructional content inside each step.
 
-This responds directly to the desired mental model: the user should immediately see "Step 2 of 5" and understand there are three steps left. A centered full-page wizard also cleanly moves away from the board layout, which is good here because first-run setup is not workspace work. It should feel like an install/setup flow, not another board surface.
+This responds directly to the desired mental model: the user should immediately see "Step 2 of 5" and understand there are three steps left. The setup surface should feel like a dedicated wizard, not a board or dashboard. Each step should be focused, but not thin: for dependency/auth steps it should explain what is missing, where to download/read more, what command to run, what prompt to give a local agent, and how beerengineer_ will verify the result.
 
 For later Eigenschaften, reuse the same ordered sections and status model, but allow direct section selection once setup is complete. The first-run wizard can be strict; maintenance mode can be more navigable.
+
+## Selected Direction
+
+- Selected: **C. Single-Task Wizard**.
+- Refinement: use more explanatory text than the first C variant. A step is not just a terminal command; it includes context, official download/docs source, command, optional local-agent prompt, and verification gate.
+- Setup may intentionally move away from the existing board layout. Existing UI patterns still matter for tone, status language, and API safety, but not for the primary first-run container.
+- Step count should remain visible at all times, e.g. "Step 2 of 5" plus visible remaining locked steps.
 
 ## Shape Brief
 
 - Primary job: guide a new local user through app-level setup one step at a time, with visible progress and hard gates for required checks.
 - User context: no workspace or incomplete setup; likely switching between UI and terminal.
 - Information shape: five ordered steps, current step number, remaining step count, required/optional status, command remedies, verification state, app-config fields, secret metadata.
-- Interaction container: dedicated `/setup` full-page wizard, not the board layout.
+- Interaction container: dedicated `/setup` full-page single-task wizard, not the board layout.
 - Existing components to preserve: beerengineer_ brand/topbar, status/check language, API proxy boundary, sharp operator-console styling, concise command remedies.
-- New component candidates: wizard shell, horizontal/stacked progress stepper, locked future step token, step content panel, runbook command block, verification gate, partial-save summary, secret maintenance row.
+- New component candidates: wizard shell, horizontal/stacked progress stepper, locked future step token, rich step content panel, download/docs link block, command block, agent-prompt block, verification gate, partial-save summary, secret maintenance row.
 - Design constraints: low-fidelity here; final UI should stay operational and direct, not marketing onboarding.
 - Anti-goals: board-like dashboard as primary setup, automatic external tool installation, workspace/project setup in v1, SonarCloud project creation, live engine-port migration.
 
@@ -93,6 +100,7 @@ For later Eigenschaften, reuse the same ordered sections and status model, but a
   - Chose "C. Hybrid: guided recommended path, but sections are still jumpable."
   - After seeing the first exploration, requested approaches that become a clearer, tightly guided step-by-step process.
   - After seeing the second exploration, clarified that all variants were still not wizard-like enough. The desired shape should show "I am now in step 2 and have 3 steps ahead"; it may move away from the board layout.
+  - Selected C, with more explanatory text, download/source guidance, and a prompt for the local agent.
 - Assumptions:
   - The concept from `1_brainstorm/PROJ-2-concept.md` is accepted.
   - `/setup` should optimize first-time clarity more than existing board continuity.
@@ -102,13 +110,6 @@ For later Eigenschaften, reuse the same ordered sections and status model, but a
 
 ## Open Decisions For User
 
-- Choose the preferred wizard shell:
-  - A. Centered Wizard
-  - B. Rail Wizard
-  - C. Single-Task Wizard
-  - D. Runbook Wizard
-  - Recommended combination: A with D-style command/verification blocks for technical steps.
 - Decide whether the first-run setup should have exactly five steps or whether the step count should adapt when optional services are skipped.
 - Decide whether future locked steps should be visible as names or only as generic remaining-step markers.
 - Decide whether Eigenschaften should reuse the same wizard shell in maintenance mode or switch to a denser section editor after setup is complete.
-
