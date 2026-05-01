@@ -4,6 +4,7 @@ import { join, resolve, sep } from "node:path"
 
 export type ExtractTarballOptions = {
   errorPrefix?: string
+  tarFailureCode?: string
   timeoutMs?: number
 }
 
@@ -88,13 +89,16 @@ export function extractManagedInstallTarball(
   opts: ExtractTarballOptions = {},
 ): string {
   const errorPrefix = opts.errorPrefix ?? "managed_install_validate_failed"
+  const tarFailureCode = opts.tarFailureCode ?? "tar_extract_failed"
   const timeoutMs = opts.timeoutMs ?? MANAGED_INSTALL_TAR_TIMEOUT_MS
   const result = spawnSync("tar", ["-xzf", tarballPath, "-C", extractDir], {
     encoding: "utf8",
     timeout: timeoutMs,
   })
   if (result.status !== 0) {
-    throw new Error(`${errorPrefix}:tar_extract_failed:${managedInstallTarFailureMessage(result.stderr, result.stdout, result.error)}`)
+    const failureMessage = managedInstallTarFailureMessage(result.stderr, result.stdout, result.error)
+    const segments = [errorPrefix, tarFailureCode, failureMessage].filter(segment => segment.length > 0)
+    throw new Error(segments.join(":"))
   }
   const entries = readdirSync(extractDir, { withFileTypes: true }).filter(entry => entry.isDirectory())
   if (entries.length !== 1) throw new Error(`${errorPrefix}:unexpected_tarball_layout`)

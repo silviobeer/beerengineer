@@ -206,6 +206,7 @@ export function writeTarball(prepared: PreparedRelease, body: Buffer, finalUrl: 
 export function extractTarball(prepared: PreparedRelease): string {
   return extractManagedInstallTarball(prepared.tarballPath, prepared.extractedRoot, {
     errorPrefix: "update_extract_failed",
+    tarFailureCode: "",
   })
 }
 
