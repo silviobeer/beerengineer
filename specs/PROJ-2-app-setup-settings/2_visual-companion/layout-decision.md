@@ -13,76 +13,76 @@
 ## Project Mode
 
 - Mode: hybrid
-- Evidence: The UI has a real shell, design language, active component tree, modal pattern, SSE architecture, and proxy pattern. Setup/settings still need new routes, navigation, form containers, and wizard/checklist patterns.
-- Design/component gaps: no existing settings page, no setup wizard, no tabs/section navigation primitive, no form-heavy app-config surface, no drawer/sidepanel primitive, and no mobile setup pattern.
+- Evidence: The UI has a real shell, design language, active component tree, modal pattern, SSE architecture, and proxy pattern. Setup/settings still need new routes, navigation, form containers, and guided setup patterns.
+- Design/component gaps: no existing settings page, no setup wizard, no guided runbook/checklist primitive, no form-heavy app-config surface, and no mobile setup pattern.
 
 ## Layout Decision To Make
 
-- Should first-run setup be a linear wizard, a free-form checklist, or a hybrid guided checklist?
-- Should properties reuse the setup shape or become a separate dense maintenance page?
-- Should app-level setup/settings live outside workspace context or inside the existing workspace shell?
+- Which kind of **tight step-by-step process** should drive first-run setup?
+- How much context should be visible while the user is blocked on the current step?
+- How should later Eigenschaften reuse the same guidance without becoming a free-form dashboard?
 
 ## Approaches
 
-### A. Guided Sections
+### A. Strict Wizard
 
-- Flow: User lands on `/setup`, sees a recommended step path, can jump between sections, but required blockers prevent completion. Each section owns one task: initialize, dependencies, app config, secrets, finish.
-- Pros: Best first-run clarity, maps well to required/optional checks, supports deep links per step, avoids overwhelming new users.
-- Cons: Less efficient for returning operators who want to edit one field quickly.
-- Existing-fit: Reuses the operator-console tone and stepper/check vocabulary, but introduces a new setup container.
-- Mobile: Strong fit because one active section can stack naturally.
+- Flow: User sees one active step, one current task, and one primary next action. Future steps stay locked until the current required task passes.
+- Pros: Maximum clarity for first-time users, minimal cognitive load, simple blocker handling, strongest "do this now" posture.
+- Cons: Slow for returning operators; hiding future steps can make optional capabilities feel less discoverable.
+- Existing-fit: Reuses check rows, status language, and stepper vocabulary, but introduces a dedicated first-run container.
+- Mobile: Strong fit because one task at a time stacks cleanly.
 
-### B. Readiness Dashboard
+### B. Guided Checklist
 
-- Flow: User sees all readiness groups as cards, clicks a domain, edits or re-checks details below.
-- Pros: Fast overview, good for returning users, makes optional areas visible without forcing sequence.
-- Cons: Weaker first-run guidance; users may not know what to fix first.
-- Existing-fit: Fits board/card scanning patterns and status chips.
-- Mobile: Cards stack well, but long pages may become noisy.
+- Flow: Setup is still linear, but completed/current/locked steps are visible as checklist cards. The current step expands into action details and verification.
+- Pros: Clear sequence while still showing progress; users understand what is done, current, and locked. Good compromise between guidance and orientation.
+- Cons: Locked future steps need careful wording so they do not feel broken.
+- Existing-fit: Fits current card/status scanning patterns while adding guided progression.
+- Mobile: Good; cards can stack and the active step can remain first.
 
-### C. Split Control Center
+### C. Coach + Detail
 
-- Flow: Left pane lists readiness groups and statuses; right pane shows the selected editor/check detail. Secret maintenance can open a drawer.
-- Pros: Best shared shape for setup and properties; keeps readiness context visible while editing.
-- Cons: Heavier layout and more custom interaction primitives than the app currently has.
-- Existing-fit: Similar density to current modal detail, but introduces a split-pane and optional drawer.
-- Mobile: Needs careful stacking; left pane becomes top navigation or section list.
+- Flow: A persistent coach rail pins the next required action first. Details, upcoming steps, and optional services remain visible but secondary.
+- Pros: Strong "next action" focus without hiding context; can evolve naturally into Eigenschaften later.
+- Cons: More complex than a pure wizard and needs a new split/rail pattern.
+- Existing-fit: Similar operational density to current item modal/detail panels, but not an existing component.
+- Mobile: Needs stacking rules: coach first, detail below.
 
-### D. Existing Shell Extension
+### D. Setup Runbook
 
-- Flow: Setup and Eigenschaften become app-level destinations in the current shell/navigation; topbar and workspace context remain visible.
-- Pros: Minimal navigation invention and strongest continuity with the existing app.
-- Cons: First-run "no workspace yet" feels awkward inside a workspace-oriented shell. Setup may look like a secondary page instead of the install handoff.
-- Existing-fit: High, because it extends current shell and modal patterns.
-- Mobile: Depends on future shell navigation; currently no mobile nav pattern is established.
+- Flow: Each step is an instruction/action/verification/continue gate. It reads like an operational checklist with copyable commands.
+- Pros: Very concrete, terminal-friendly, strong for dependency/auth steps, easy to document.
+- Cons: Verbose for simple app-config edits and can feel less like an app, more like docs with buttons.
+- Existing-fit: Matches beerengineer_'s operator-console personality and remedy-command model.
+- Mobile: Good for single-column instructions; long command-heavy content may need careful wrapping.
 
 ## Trade-off Matrix
 
-| Approach | Speed | Clarity | Complexity | Mobile fit | Existing fit | Risk |
-|---|---:|---:|---:|---:|---:|---|
-| A. Guided Sections | 4 | 5 | 3 | 5 | 3 | 2 |
-| B. Readiness Dashboard | 4 | 3 | 2 | 4 | 4 | 3 |
-| C. Split Control Center | 3 | 4 | 4 | 3 | 3 | 3 |
-| D. Existing Shell Extension | 4 | 3 | 3 | 3 | 5 | 4 |
+| Approach | Guidance | Context | Speed | Complexity | Mobile fit | Existing fit | Risk |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| A. Strict Wizard | 5 | 2 | 3 | 2 | 5 | 3 | 2 |
+| B. Guided Checklist | 5 | 4 | 4 | 3 | 4 | 4 | 2 |
+| C. Coach + Detail | 4 | 5 | 4 | 4 | 3 | 3 | 3 |
+| D. Setup Runbook | 5 | 3 | 3 | 3 | 4 | 4 | 3 |
 
 ## Recommendation
 
-Use **A. Guided Sections** for `/setup`, then use **C. Split Control Center** as the direction for the later app-level properties page.
+Use **B. Guided Checklist** as the primary direction, with selected runbook mechanics from **D** for dependency and auth steps.
 
-The reason: the concept names first-time setup as the primary persona, and the user explicitly chose a hybrid flow. Approach A gives a clear path while preserving jumpability. Returning maintenance has different ergonomics: it benefits from persistent readiness context while editing, which Approach C handles better than a pure wizard.
+This matches the user's request for a clear, tightly guided step-by-step process while avoiding the frustration of a fully opaque wizard. The user sees the path, knows exactly which step is current, and cannot accidentally bypass required blockers. For command-heavy steps such as installing Codex or running `gh auth login`, the runbook format gives the right precision: instruction, copyable action, verification, continue gate.
 
-This can still share underlying data, section definitions, and form components. The layout decision is not "two unrelated UIs"; it is one app-setup model expressed as first-run guidance and later maintenance.
+Eigenschaften can reuse the same section order and status model, but it should unlock direct navigation because returning operators already know what they came to edit.
 
 ## Shape Brief
 
-- Primary job: help a new local user make beerengineer_ app-level setup ready, then let them maintain app-level properties and secrets later.
-- User context: initially no workspace or incomplete setup; later a returning operator with a specific setting/token to update.
-- Information shape: readiness groups, field-based app config, secret metadata, required/optional status, and remedy instructions.
-- Interaction container: `/setup` as guided jumpable sections; properties as split readiness/editor surface.
-- Existing components to preserve: Topbar branding, status chip/check language, modal discipline for short focused edits, API proxy boundary, sharp operator-console styling.
-- New component candidates: setup section navigator, readiness checklist, config form field group, partial-save summary, secret metadata row, secret edit drawer or inline secret editor.
-- Design constraints: low-fidelity here; final UI should remain dense and operational, avoid marketing onboarding, avoid hiding command remedies, and keep secret values redacted.
-- Anti-goals: no automatic external tool installation, no workspace/project setup in v1, no SonarCloud project creation, no live engine-port migration.
+- Primary job: guide a new local user through app-level setup one step at a time, with hard gates for required checks.
+- User context: no workspace or incomplete setup; likely switching between UI and terminal.
+- Information shape: ordered steps, current action, command remedies, verification status, required/optional distinction, app-config fields, secret metadata.
+- Interaction container: `/setup` as a guided checklist with locked future steps and an expanded current step.
+- Existing components to preserve: Topbar branding, status chip/check language, API proxy boundary, sharp operator-console styling, concise command remedies.
+- New component candidates: setup progress rail, locked/completed/current step cards, current-step action panel, command/remedy row, verification gate, partial-save summary, secret maintenance row.
+- Design constraints: low-fidelity here; final UI should remain operational and direct, not a marketing onboarding page.
+- Anti-goals: free-form dashboard as primary setup, automatic external tool installation, workspace/project setup in v1, SonarCloud project creation, live engine-port migration.
 
 ## Conversation Notes
 
@@ -90,19 +90,21 @@ This can still share underlying data, section definitions, and form components. 
   - For first-run setup, should users be forced through a linear wizard or jump freely between setup sections?
 - User answers:
   - Chose "C. Hybrid: guided recommended path, but sections are still jumpable."
+  - After seeing the first exploration, requested approaches that become a clearer, tightly guided step-by-step process.
 - Assumptions:
   - The concept from `1_brainstorm/PROJ-2-concept.md` is accepted.
-  - `/setup` should be optimized for first-time clarity.
-  - Eigenschaften should optimize later maintenance, not duplicate every wizard affordance.
-  - App-level setup/settings should remain separate from future workspace/project setup.
+  - `/setup` should optimize first-time clarity more than free-form editing speed.
+  - Required setup steps should be gated; optional areas can be shown but not block completion.
+  - Eigenschaften can be less restrictive than first-run setup, but should share the same ordered sections and status language.
 
 ## Open Decisions For User
 
-- Choose whether the final direction is:
-  - A only: guided sections for both setup and properties.
-  - C only: split control center for both setup and properties.
-  - Recommended combination: A for setup and C for properties.
-  - D hybridized: keep everything inside the current app shell.
-- Decide whether secret editing should use an inline editor inside the selected section or a drawer-style secondary panel.
-- Decide whether `/setup` should hide the workspace switcher entirely when no workspace exists or show a disabled/no-workspace topbar for continuity.
+- Choose the preferred tight-guidance model:
+  - A. Strict Wizard
+  - B. Guided Checklist
+  - C. Coach + Detail
+  - D. Setup Runbook
+  - Recommended combination: B with D-style command/verification blocks.
+- Decide whether future locked steps should be visible in `/setup` or hidden until unlocked.
+- Decide whether Eigenschaften should use the same guided checklist layout in "maintenance mode" or a slightly denser section editor once setup is complete.
 
