@@ -53,8 +53,11 @@ The later Eigenschaften page reuses the same ordered setup sections and status l
   - Board-column layout for `/setup`.
   - Marketing onboarding visuals.
   - Rounded card-heavy composition.
+  - Loud nested card stacks where every section has equal visual weight.
+  - Decorative status panels when a quiet divider or compact chip is enough.
   - Showing secret values after they are stored.
 - Existing app design takes precedence over exact HTML mockup CSS: yes.
+- Visual reduction rule: keep the setup wizard closer to the existing board/modal language than to a dashboard. Prefer one main container, subtle dividers, compact mono labels, and a single strong gate indicator over many bordered panels.
 
 ## Interaction Contract
 
@@ -105,4 +108,3 @@ The later Eigenschaften page reuses the same ordered setup sections and status l
 - Whether locked future steps show exact names or generic remaining markers remains open.
 - Maintenance mode may need a denser layout than the wizard for frequent operators.
 - The UI needs backend support for app-config patching, setup initialization, secret metadata, and explicit secret tests before production behavior can match the mockups.
-
