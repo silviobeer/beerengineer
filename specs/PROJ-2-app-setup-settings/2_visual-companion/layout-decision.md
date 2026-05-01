@@ -13,76 +13,77 @@
 ## Project Mode
 
 - Mode: hybrid
-- Evidence: The UI has a real shell, design language, active component tree, modal pattern, SSE architecture, and proxy pattern. Setup/settings still need new routes, navigation, form containers, and guided setup patterns.
-- Design/component gaps: no existing settings page, no setup wizard, no guided runbook/checklist primitive, no form-heavy app-config surface, and no mobile setup pattern.
+- Evidence: The UI has a real shell, design language, active component tree, modal pattern, SSE architecture, and proxy pattern. However, first-run setup can deliberately move away from the board layout because no existing setup route or settings surface constrains it.
+- Design/component gaps: no existing setup wizard, no full-page first-run flow, no guided runbook/checklist primitive, no form-heavy app-config surface, and no mobile setup pattern.
 
 ## Layout Decision To Make
 
-- Which kind of **tight step-by-step process** should drive first-run setup?
-- How much context should be visible while the user is blocked on the current step?
-- How should later Eigenschaften reuse the same guidance without becoming a free-form dashboard?
+- What kind of dedicated wizard should `/setup` use?
+- How should the wizard show "I am on step 2 and there are 3 steps left"?
+- Should dependency/auth steps use a special command/verification panel inside the wizard?
+- How much, if any, of the existing workspace shell should remain visible during first-run setup?
 
 ## Approaches
 
-### A. Strict Wizard
+### A. Centered Wizard
 
-- Flow: User sees one active step, one current task, and one primary next action. Future steps stay locked until the current required task passes.
-- Pros: Maximum clarity for first-time users, minimal cognitive load, simple blocker handling, strongest "do this now" posture.
-- Cons: Slow for returning operators; hiding future steps can make optional capabilities feel less discoverable.
-- Existing-fit: Reuses check rows, status language, and stepper vocabulary, but introduces a dedicated first-run container.
-- Mobile: Strong fit because one task at a time stacks cleanly.
+- Flow: Dedicated `/setup` page with a centered content area, horizontal 5-step progress, "Step 2 of 5" heading, locked future steps, and one main step panel.
+- Pros: Strong wizard identity, clear progress, good balance of context and focus, visibly separate from the board.
+- Cons: Horizontal stepper can get tight on small screens; complex steps may need careful layout inside the panel.
+- Existing-fit: Keeps beerengineer_ topbar/branding and status language, but intentionally leaves the board layout behind.
+- Mobile: Stepper stacks into one column; content becomes single-column.
 
-### B. Guided Checklist
+### B. Rail Wizard
 
-- Flow: Setup is still linear, but completed/current/locked steps are visible as checklist cards. The current step expands into action details and verification.
-- Pros: Clear sequence while still showing progress; users understand what is done, current, and locked. Good compromise between guidance and orientation.
-- Cons: Locked future steps need careful wording so they do not feel broken.
-- Existing-fit: Fits current card/status scanning patterns while adding guided progression.
-- Mobile: Good; cards can stack and the active step can remain first.
+- Flow: Dedicated wizard with a left progress rail and right step content. The rail shows done/current/locked states, while the content focuses on the active step.
+- Pros: Very clear "where am I" model; good for users who want to see previous and upcoming steps at all times.
+- Cons: More structural UI than A; left rail consumes space and needs a mobile stacking rule.
+- Existing-fit: Similar to operational navigation but not tied to workspace board.
+- Mobile: Rail stacks above content.
 
-### C. Coach + Detail
+### C. Single-Task Wizard
 
-- Flow: A persistent coach rail pins the next required action first. Details, upcoming steps, and optional services remain visible but secondary.
-- Pros: Strong "next action" focus without hiding context; can evolve naturally into Eigenschaften later.
-- Cons: More complex than a pure wizard and needs a new split/rail pattern.
-- Existing-fit: Similar operational density to current item modal/detail panels, but not an existing component.
-- Mobile: Needs stacking rules: coach first, detail below.
+- Flow: Full-page wizard with one nearly full-screen task. It still shows a compact 5-step indicator, but the current action dominates the page.
+- Pros: Most wizard-like and least distracting; ideal for first-time users who should do exactly one thing.
+- Cons: Can feel slow or oversized for form-heavy steps like app config and secrets.
+- Existing-fit: Biggest departure from current board UI, but that is acceptable for first-run setup.
+- Mobile: Strong, because one task at a time maps cleanly to narrow screens.
 
-### D. Setup Runbook
+### D. Runbook Wizard
 
-- Flow: Each step is an instruction/action/verification/continue gate. It reads like an operational checklist with copyable commands.
-- Pros: Very concrete, terminal-friendly, strong for dependency/auth steps, easy to document.
-- Cons: Verbose for simple app-config edits and can feel less like an app, more like docs with buttons.
-- Existing-fit: Matches beerengineer_'s operator-console personality and remedy-command model.
-- Mobile: Good for single-column instructions; long command-heavy content may need careful wrapping.
+- Flow: A normal wizard shell, but each technical step is structured as instruction, command, verification, and continue gate.
+- Pros: Best for dependency/auth steps; very concrete for users switching between UI and terminal.
+- Cons: Too verbose as the whole wizard style; works better as a step content pattern inside A or B.
+- Existing-fit: Matches existing `doctor` remedy command model and operator-console tone.
+- Mobile: Good as a stacked checklist; command wrapping needs care.
 
 ## Trade-off Matrix
 
-| Approach | Guidance | Context | Speed | Complexity | Mobile fit | Existing fit | Risk |
+| Approach | Wizard feel | Progress clarity | Focus | Handles complex forms | Mobile fit | Existing fit | Risk |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| A. Strict Wizard | 5 | 2 | 3 | 2 | 5 | 3 | 2 |
-| B. Guided Checklist | 5 | 4 | 4 | 3 | 4 | 4 | 2 |
-| C. Coach + Detail | 4 | 5 | 4 | 4 | 3 | 3 | 3 |
-| D. Setup Runbook | 5 | 3 | 3 | 3 | 4 | 4 | 3 |
+| A. Centered Wizard | 5 | 5 | 4 | 4 | 4 | 4 | 2 |
+| B. Rail Wizard | 5 | 5 | 4 | 4 | 3 | 4 | 2 |
+| C. Single-Task Wizard | 5 | 4 | 5 | 2 | 5 | 3 | 3 |
+| D. Runbook Wizard | 4 | 4 | 4 | 3 | 4 | 4 | 3 |
 
 ## Recommendation
 
-Use **B. Guided Checklist** as the primary direction, with selected runbook mechanics from **D** for dependency and auth steps.
+Use **A. Centered Wizard** as the primary `/setup` shape, with **D. Runbook Wizard** blocks inside dependency and auth steps.
 
-This matches the user's request for a clear, tightly guided step-by-step process while avoiding the frustration of a fully opaque wizard. The user sees the path, knows exactly which step is current, and cannot accidentally bypass required blockers. For command-heavy steps such as installing Codex or running `gh auth login`, the runbook format gives the right precision: instruction, copyable action, verification, continue gate.
+This responds directly to the desired mental model: the user should immediately see "Step 2 of 5" and understand there are three steps left. A centered full-page wizard also cleanly moves away from the board layout, which is good here because first-run setup is not workspace work. It should feel like an install/setup flow, not another board surface.
 
-Eigenschaften can reuse the same section order and status model, but it should unlock direct navigation because returning operators already know what they came to edit.
+For later Eigenschaften, reuse the same ordered sections and status model, but allow direct section selection once setup is complete. The first-run wizard can be strict; maintenance mode can be more navigable.
 
 ## Shape Brief
 
-- Primary job: guide a new local user through app-level setup one step at a time, with hard gates for required checks.
+- Primary job: guide a new local user through app-level setup one step at a time, with visible progress and hard gates for required checks.
 - User context: no workspace or incomplete setup; likely switching between UI and terminal.
-- Information shape: ordered steps, current action, command remedies, verification status, required/optional distinction, app-config fields, secret metadata.
-- Interaction container: `/setup` as a guided checklist with locked future steps and an expanded current step.
-- Existing components to preserve: Topbar branding, status chip/check language, API proxy boundary, sharp operator-console styling, concise command remedies.
-- New component candidates: setup progress rail, locked/completed/current step cards, current-step action panel, command/remedy row, verification gate, partial-save summary, secret maintenance row.
-- Design constraints: low-fidelity here; final UI should remain operational and direct, not a marketing onboarding page.
-- Anti-goals: free-form dashboard as primary setup, automatic external tool installation, workspace/project setup in v1, SonarCloud project creation, live engine-port migration.
+- Information shape: five ordered steps, current step number, remaining step count, required/optional status, command remedies, verification state, app-config fields, secret metadata.
+- Interaction container: dedicated `/setup` full-page wizard, not the board layout.
+- Existing components to preserve: beerengineer_ brand/topbar, status/check language, API proxy boundary, sharp operator-console styling, concise command remedies.
+- New component candidates: wizard shell, horizontal/stacked progress stepper, locked future step token, step content panel, runbook command block, verification gate, partial-save summary, secret maintenance row.
+- Design constraints: low-fidelity here; final UI should stay operational and direct, not marketing onboarding.
+- Anti-goals: board-like dashboard as primary setup, automatic external tool installation, workspace/project setup in v1, SonarCloud project creation, live engine-port migration.
 
 ## Conversation Notes
 
@@ -91,20 +92,23 @@ Eigenschaften can reuse the same section order and status model, but it should u
 - User answers:
   - Chose "C. Hybrid: guided recommended path, but sections are still jumpable."
   - After seeing the first exploration, requested approaches that become a clearer, tightly guided step-by-step process.
+  - After seeing the second exploration, clarified that all variants were still not wizard-like enough. The desired shape should show "I am now in step 2 and have 3 steps ahead"; it may move away from the board layout.
 - Assumptions:
   - The concept from `1_brainstorm/PROJ-2-concept.md` is accepted.
-  - `/setup` should optimize first-time clarity more than free-form editing speed.
-  - Required setup steps should be gated; optional areas can be shown but not block completion.
+  - `/setup` should optimize first-time clarity more than existing board continuity.
+  - Required setup steps should be gated; optional areas can be shown but should not block completion.
+  - Existing app shell patterns are constraints for tone and API behavior, not for the setup page layout.
   - Eigenschaften can be less restrictive than first-run setup, but should share the same ordered sections and status language.
 
 ## Open Decisions For User
 
-- Choose the preferred tight-guidance model:
-  - A. Strict Wizard
-  - B. Guided Checklist
-  - C. Coach + Detail
-  - D. Setup Runbook
-  - Recommended combination: B with D-style command/verification blocks.
-- Decide whether future locked steps should be visible in `/setup` or hidden until unlocked.
-- Decide whether Eigenschaften should use the same guided checklist layout in "maintenance mode" or a slightly denser section editor once setup is complete.
+- Choose the preferred wizard shell:
+  - A. Centered Wizard
+  - B. Rail Wizard
+  - C. Single-Task Wizard
+  - D. Runbook Wizard
+  - Recommended combination: A with D-style command/verification blocks for technical steps.
+- Decide whether the first-run setup should have exactly five steps or whether the step count should adapt when optional services are skipped.
+- Decide whether future locked steps should be visible as names or only as generic remaining-step markers.
+- Decide whether Eigenschaften should reuse the same wizard shell in maintenance mode or switch to a denser section editor after setup is complete.
 

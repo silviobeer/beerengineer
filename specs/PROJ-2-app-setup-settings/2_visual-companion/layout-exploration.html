@@ -3,17 +3,17 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>PROJ-2 Layout Exploration</title>
+  <title>PROJ-2 Wizard Layout Exploration</title>
   <style>
     :root {
       color-scheme: dark;
-      --bg: #101416;
+      --bg: #0f1416;
       --panel: #171d20;
-      --panel-2: #20272b;
-      --line: #3a4247;
+      --panel2: #20272b;
+      --line: #394247;
       --text: #ece7dc;
-      --muted: #aab1b3;
-      --faint: #747d81;
+      --muted: #a8b1b4;
+      --faint: #737d82;
       --accent: #d0a749;
       --ok: #79b7bd;
       --bad: #d47b7b;
@@ -26,51 +26,42 @@
       font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       font-size: 14px;
     }
-    button, input, select {
-      font: inherit;
-      color: inherit;
-    }
+    button, input, select { font: inherit; color: inherit; }
     button {
-      background: var(--panel-2);
       border: 1px solid var(--line);
+      background: var(--panel2);
+      padding: 8px 11px;
       border-radius: 0;
-      padding: 8px 10px;
       cursor: pointer;
     }
-    button.primary {
-      border-color: var(--accent);
-      color: var(--accent);
-    }
-    button.ghost {
-      background: transparent;
-    }
-    button:disabled {
-      opacity: .45;
-      cursor: not-allowed;
-    }
+    button.primary { border-color: var(--accent); color: var(--accent); }
+    button.active { border-color: var(--ok); color: var(--ok); }
+    button:disabled { opacity: .45; cursor: not-allowed; }
     input, select {
       width: 100%;
-      background: #0d1113;
+      background: #0c1012;
       border: 1px solid var(--line);
-      border-radius: 0;
       padding: 8px;
+      border-radius: 0;
     }
-    .shell {
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
+    h1, h2, h3, p { margin: 0; }
+    h1 { font-size: 19px; }
+    h2 { font-size: 16px; }
+    h3 { font-size: 13px; color: var(--muted); }
+    .muted { color: var(--muted); }
+    .faint { color: var(--faint); }
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12px;
     }
     .topbar {
       height: 44px;
-      border-bottom: 1px solid var(--line);
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 0 12px;
-      background: #0d1214;
-      position: sticky;
-      top: 0;
-      z-index: 2;
+      padding: 0 14px;
+      border-bottom: 1px solid var(--line);
+      background: #0c1113;
     }
     .brand {
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
@@ -86,67 +77,41 @@
       border-radius: 999px;
       background: var(--accent);
       margin-right: 8px;
-      vertical-align: 1px;
     }
-    .approach-tabs {
+    .tabs {
       display: flex;
       gap: 6px;
-      padding: 10px 12px;
+      padding: 10px 14px;
       border-bottom: 1px solid var(--line);
       overflow-x: auto;
-      background: var(--bg);
     }
-    .approach-tabs button.active {
-      border-color: var(--ok);
-      color: var(--ok);
-    }
-    .frame {
-      padding: 14px;
-    }
-    .approach {
+    .stage {
       display: none;
+      padding: 16px;
+    }
+    .stage.active { display: block; }
+    .wizard-frame {
       border: 1px solid var(--line);
       min-height: 720px;
-      background: #0f1416;
+      background: #101719;
     }
-    .approach.active { display: block; }
-    .approach-header {
+    .wizard-head {
+      padding: 18px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
       display: flex;
       align-items: flex-start;
       justify-content: space-between;
-      gap: 12px;
-      padding: 14px;
-      border-bottom: 1px solid var(--line);
-      background: var(--panel);
+      gap: 16px;
     }
-    h1, h2, h3, p { margin: 0; }
-    h1 { font-size: 18px; }
-    h2 { font-size: 15px; }
-    h3 { font-size: 13px; color: var(--muted); }
-    .muted { color: var(--muted); }
-    .faint { color: var(--faint); }
-    .mono {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      font-size: 12px;
-    }
-    .row { display: flex; gap: 10px; align-items: center; }
-    .stack { display: grid; gap: 10px; }
-    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-    .panel {
-      border: 1px solid var(--line);
-      background: var(--panel);
-      padding: 12px;
-    }
-    .panel.soft { background: var(--panel-2); }
-    .status {
+    .pill {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
+      gap: 7px;
       border: 1px solid var(--line);
-      padding: 4px 7px;
-      font-size: 12px;
+      padding: 5px 8px;
       color: var(--muted);
+      white-space: nowrap;
     }
     .dot {
       width: 7px;
@@ -157,39 +122,143 @@
     .dot.ok { background: var(--ok); }
     .dot.warn { background: var(--accent); }
     .dot.bad { background: var(--bad); }
-    .steps {
-      display: grid;
-      gap: 7px;
+    .wizard-body {
+      padding: 18px;
     }
-    .step {
+    .stepper {
       display: grid;
-      grid-template-columns: 28px 1fr auto;
-      gap: 10px;
-      align-items: center;
-      border: 1px solid var(--line);
-      background: #121719;
-      padding: 9px;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 18px;
     }
-    .step.active { border-color: var(--accent); }
-    .step.done { border-color: #4d777b; }
-    .num {
-      width: 24px;
-      height: 24px;
+    .step-token {
       border: 1px solid var(--line);
-      display: grid;
+      background: #12191b;
+      padding: 10px;
+      min-height: 76px;
+      position: relative;
+    }
+    .step-token.done { border-color: #4b777b; }
+    .step-token.current { border-color: var(--accent); }
+    .step-token.locked { opacity: .55; }
+    .step-token strong {
+      display: block;
+      margin-top: 6px;
+      font-size: 13px;
+    }
+    .step-num {
+      display: inline-grid;
       place-items: center;
-      color: var(--muted);
+      width: 22px;
+      height: 22px;
+      border: 1px solid var(--line);
       font-size: 12px;
+      color: var(--muted);
     }
-    .content {
+    .progressbar {
+      height: 8px;
+      border: 1px solid var(--line);
+      background: #0c1012;
+      margin-bottom: 18px;
+    }
+    .progressbar span {
+      display: block;
+      height: 100%;
+      width: 40%;
+      background: var(--accent);
+    }
+    .panel {
+      border: 1px solid var(--line);
+      background: var(--panel);
       padding: 14px;
     }
-    .wizard-layout {
+    .panel.soft { background: var(--panel2); }
+    .grid2 {
       display: grid;
-      grid-template-columns: 280px 1fr;
+      grid-template-columns: minmax(0, 1fr) minmax(280px, 380px);
       gap: 14px;
     }
-    .form-grid {
+    .stack { display: grid; gap: 12px; }
+    .row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    .between {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+    .check {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 10px;
+      align-items: center;
+      padding: 9px 0;
+      border-bottom: 1px solid #2b3337;
+    }
+    .check:last-child { border-bottom: 0; }
+    .command {
+      border: 1px solid var(--line);
+      background: #0c1012;
+      padding: 10px;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+    }
+    .footer {
+      border-top: 1px solid var(--line);
+      padding: 14px 18px;
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      background: #0c1012;
+    }
+    .notes {
+      padding: 12px 18px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      background: #0c1012;
+    }
+    .toast {
+      display: none;
+      border: 1px solid var(--accent);
+      color: var(--accent);
+      padding: 9px;
+    }
+    .toast.show { display: block; }
+    .rail-layout {
+      display: grid;
+      grid-template-columns: 260px 1fr;
+      gap: 14px;
+    }
+    .rail {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      padding: 12px;
+    }
+    .rail button {
+      width: 100%;
+      text-align: left;
+      margin-bottom: 8px;
+    }
+    .centered {
+      max-width: 880px;
+      margin: 0 auto;
+    }
+    .giant-step {
+      display: grid;
+      place-items: center;
+      min-height: 430px;
+      text-align: center;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      padding: 24px;
+    }
+    .giant-step h2 { font-size: 22px; margin-bottom: 8px; }
+    .formgrid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 12px;
@@ -200,474 +269,204 @@
       font-size: 12px;
       margin-bottom: 5px;
     }
-    .check-row {
-      display: grid;
-      grid-template-columns: auto 1fr auto;
-      gap: 9px;
-      align-items: center;
-      padding: 8px 0;
-      border-bottom: 1px solid #2c3337;
-    }
-    .check-row:last-child { border-bottom: 0; }
-    .notes {
-      border-top: 1px solid var(--line);
-      padding: 12px 14px;
-      color: var(--muted);
-      background: #0c1012;
-    }
-    .toast {
-      display: none;
-      border: 1px solid var(--accent);
-      color: var(--accent);
-      padding: 8px;
-      margin-bottom: 10px;
-    }
-    .toast.show { display: block; }
-    .dashboard-layout {
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 12px;
-    }
-    .cards {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 10px;
-    }
-    .card {
-      border: 1px solid var(--line);
-      background: var(--panel);
-      padding: 12px;
-      min-height: 124px;
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-    }
-    .card.selected { border-color: var(--accent); }
-    .split {
-      display: grid;
-      grid-template-columns: 340px 1fr;
-      min-height: 600px;
-    }
-    .split-left {
-      border-right: 1px solid var(--line);
-      padding: 12px;
-      background: #101719;
-    }
-    .split-right {
-      padding: 12px;
-    }
-    .shell-layout {
-      display: grid;
-      grid-template-columns: 220px 1fr;
-      min-height: 610px;
-    }
-    .side-nav {
-      border-right: 1px solid var(--line);
-      padding: 12px;
-      background: #101719;
-    }
-    .nav-item {
-      width: 100%;
-      text-align: left;
-      margin-bottom: 7px;
-    }
-    .nav-item.active {
-      border-color: var(--ok);
-      color: var(--ok);
-    }
-    .mobile-pair {
-      display: grid;
-      grid-template-columns: 1fr 360px;
-      gap: 12px;
-      align-items: start;
-    }
-    .mobile {
-      width: 360px;
-      min-height: 560px;
-      border: 1px solid var(--line);
-      background: #0f1416;
-      overflow: hidden;
-    }
-    .mobile .wizard-layout,
-    .mobile .split,
-    .mobile .shell-layout {
-      display: block;
-    }
-    .mobile .split-left,
-    .mobile .side-nav {
-      border-right: 0;
-      border-bottom: 1px solid var(--line);
-    }
-    .mobile .cards,
-    .mobile .grid-2,
-    .mobile .grid-3,
-    .mobile .form-grid {
-      grid-template-columns: 1fr;
-    }
-    .mobile .desktop-only { display: none; }
-    .overlay {
-      display: none;
-      position: fixed;
-      inset: 0;
-      background: rgba(0,0,0,.55);
-      align-items: center;
-      justify-content: center;
-      z-index: 20;
-    }
-    .overlay.show { display: flex; }
-    .modal {
-      width: min(620px, calc(100vw - 32px));
-      border: 1px solid var(--line);
-      background: var(--panel);
-      padding: 14px;
-    }
-    .drawer {
-      display: none;
-      position: fixed;
-      right: 0;
-      top: 0;
-      bottom: 0;
-      width: min(480px, 100vw);
-      border-left: 1px solid var(--line);
-      background: var(--panel);
-      z-index: 30;
-      padding: 14px;
-    }
-    .drawer.show { display: block; }
-    @media (max-width: 900px) {
-      .mobile-pair { grid-template-columns: 1fr; }
-      .mobile { width: 100%; }
-      .wizard-layout, .split, .shell-layout { display: block; }
-      .cards, .grid-2, .grid-3, .form-grid { grid-template-columns: 1fr; }
-      .split-left, .side-nav { border-right: 0; border-bottom: 1px solid var(--line); }
+    @media (max-width: 860px) {
+      .stepper { grid-template-columns: 1fr; }
+      .grid2, .rail-layout, .formgrid { grid-template-columns: 1fr; }
+      .wizard-head, .footer, .between { align-items: stretch; flex-direction: column; }
     }
   </style>
 </head>
 <body>
-  <div class="shell">
-    <div class="topbar">
-      <div class="row">
-        <span class="mono muted">Workspace</span>
-        <select style="width: 170px">
-          <option>No workspace yet</option>
-          <option>beerengineer2</option>
-        </select>
-      </div>
-      <div class="brand">beerengineer_</div>
-    </div>
+  <div class="topbar">
+    <span class="mono muted">/setup</span>
+    <span class="brand">beerengineer_</span>
+  </div>
 
-    <div class="approach-tabs" role="tablist">
-      <button class="active" data-approach="a">A. Strict Wizard</button>
-      <button data-approach="b">B. Guided Checklist</button>
-      <button data-approach="c">C. Coach + Detail</button>
-      <button data-approach="d">D. Setup Runbook</button>
-    </div>
+  <div class="tabs">
+    <button class="active" data-tab="a">A. Centered Wizard</button>
+    <button data-tab="b">B. Rail Wizard</button>
+    <button data-tab="c">C. Single-Task Wizard</button>
+    <button data-tab="d">D. Runbook Wizard</button>
+  </div>
 
-    <div class="frame">
-      <section id="approach-a" class="approach active">
-        <div class="approach-header">
+  <main>
+    <section id="stage-a" class="stage active">
+      <div class="wizard-frame">
+        <header class="wizard-head">
           <div>
-            <h1>A. Strict Wizard</h1>
-            <p class="muted">One step at a time. The user always sees exactly one task and one next action.</p>
+            <h1>Setup wizard</h1>
+            <p class="muted">Step 2 of 5: check required dependencies before app configuration unlocks.</p>
           </div>
-          <span class="status"><span class="dot warn"></span>Setup blocked</span>
-        </div>
-        <div class="content mobile-pair">
-          <div class="wizard-layout">
-            <aside class="panel">
-                <h2>Setup path</h2>
-              <p class="muted" style="margin: 6px 0 12px">Future steps stay locked until the current required task is resolved.</p>
-              <div class="steps">
-                <button class="step done" data-step="a-init"><span class="num">1</span><span>Initialize app</span><span class="dot ok"></span></button>
-                <button class="step active" data-step="a-tools"><span class="num">2</span><span>Dependencies</span><span class="dot bad"></span></button>
-                <button class="step" disabled><span class="num">3</span><span>App config</span><span class="dot"></span></button>
-                <button class="step" disabled><span class="num">4</span><span>Secrets</span><span class="dot"></span></button>
-                <button class="step" disabled><span class="num">5</span><span>Finish</span><span class="dot"></span></button>
+          <span class="pill"><span class="dot bad"></span>Required blocker</span>
+        </header>
+        <div class="wizard-body centered">
+          <div class="progressbar"><span></span></div>
+          <div class="stepper">
+            <div class="step-token done"><span class="step-num">1</span><strong>Initialize</strong><p class="muted">Done</p></div>
+            <div class="step-token current"><span class="step-num">2</span><strong>Dependencies</strong><p class="muted">Current</p></div>
+            <div class="step-token locked"><span class="step-num">3</span><strong>App config</strong><p class="muted">Locked</p></div>
+            <div class="step-token locked"><span class="step-num">4</span><strong>Secrets</strong><p class="muted">Locked</p></div>
+            <div class="step-token locked"><span class="step-num">5</span><strong>Finish</strong><p class="muted">Locked</p></div>
+          </div>
+          <div class="grid2">
+            <div class="panel stack">
+              <div>
+                <h2>Install or authenticate required tools</h2>
+                <p class="muted">You cannot continue until at least one AI harness is ready. Optional checks appear later.</p>
               </div>
+              <div class="panel soft">
+                <div class="check"><span class="dot ok"></span><div><strong>Node.js 22+</strong><div class="mono muted">v22.15.0</div></div><span class="pill">ok</span></div>
+                <div class="check"><span class="dot ok"></span><div><strong>Git</strong><div class="mono muted">git version available</div></div><span class="pill">ok</span></div>
+                <div class="check"><span class="dot bad"></span><div><strong>Codex CLI</strong><div class="mono muted">not installed</div></div><button class="primary" data-toast="toast-a">Copy command</button></div>
+              </div>
+              <div id="toast-a" class="toast">Copied: npm i -g @openai/codex</div>
+            </div>
+            <aside class="panel stack">
+              <h3>Current instruction</h3>
+              <p>Open a terminal, install the missing CLI, then return here and re-check.</p>
+              <div class="command"><span class="mono">npm i -g @openai/codex</span><button class="primary" data-toast="toast-a">Copy</button></div>
+              <button>Re-check dependencies</button>
+              <button class="primary" disabled>Continue to step 3</button>
             </aside>
-            <main class="panel">
-              <div id="a-panel" class="stack">
-                <h2>Dependencies</h2>
-                <p class="muted">Required tools block setup. Optional tools stay visible but skippable.</p>
-                <div class="panel soft">
-                  <div class="check-row"><span class="dot ok"></span><div><strong>Node.js 22+</strong><div class="muted mono">v22.15.0</div></div><button>Re-check</button></div>
-                  <div class="check-row"><span class="dot ok"></span><div><strong>Git</strong><div class="muted mono">git version available</div></div><button>Re-check</button></div>
-                  <div class="check-row"><span class="dot bad"></span><div><strong>Codex CLI</strong><div class="muted mono">install: npm i -g @openai/codex</div></div><button class="primary" data-toast="a-toast">Copy command</button></div>
-                  <div class="check-row"><span class="dot warn"></span><div><strong>GitHub CLI auth</strong><div class="muted mono">run: gh auth login</div></div><button>Re-check</button></div>
-                </div>
-                <div id="a-toast" class="toast">Command copied. Re-check after installing or logging in.</div>
-                <div class="row">
-                  <button>Back</button>
-                  <button class="primary" disabled>Continue after required checks pass</button>
-                </div>
-              </div>
-            </main>
-          </div>
-          <div class="mobile">
-            <div class="approach-header"><h2>Mobile preview</h2><span class="status"><span class="dot bad"></span>Blocked</span></div>
-            <div class="content">
-              <div class="steps">
-                <button class="step active"><span class="num">2</span><span>Dependencies</span><span class="dot bad"></span></button>
-              </div>
-              <div class="panel" style="margin-top: 10px">
-                <div class="check-row"><span class="dot bad"></span><div><strong>Codex CLI</strong><div class="muted mono">npm i -g @openai/codex</div></div></div>
-                <button class="primary" style="width: 100%; margin-top: 10px">Copy command</button>
-              </div>
-            </div>
           </div>
         </div>
-        <div class="notes">Best fit: users who need maximum guidance. Pros: no ambiguity, strong blocker handling. Cons: slower for operators who already know what to edit.</div>
-      </section>
+        <footer class="footer">
+          <button>Back to step 1</button>
+          <div class="row"><button>Skip optional later</button><button class="primary" disabled>Continue</button></div>
+        </footer>
+        <div class="notes">A. Best when setup should feel like a dedicated flow, not a dashboard. Strong visible "Step 2 of 5" and locked future steps.</div>
+      </div>
+    </section>
 
-      <section id="approach-b" class="approach">
-        <div class="approach-header">
+    <section id="stage-b" class="stage">
+      <div class="wizard-frame">
+        <header class="wizard-head">
           <div>
-            <h1>B. Guided Checklist</h1>
-            <p class="muted">A linear checklist with the current task expanded. Completed tasks collapse into proof.</p>
+            <h1>Setup wizard with step rail</h1>
+            <p class="muted">Step 2 of 5 remains explicit, while the left rail shows what came before and what remains.</p>
           </div>
-          <button class="primary" data-toast="b-toast">Re-check current step</button>
-        </div>
-        <div class="content dashboard-layout">
-          <div id="b-toast" class="toast">Current step refreshed. Continue unlocks when required checks pass.</div>
-          <div class="cards">
-            <button class="card selected" data-card="b-core">
-              <div><h2>1. Core</h2><p class="muted">Config, data dir, DB</p></div>
-              <span class="status"><span class="dot ok"></span>Done</span>
-            </button>
-            <button class="card" data-card="b-llm">
-              <div><h2>2. LLM</h2><p class="muted">Claude, Codex, OpenCode</p></div>
-              <span class="status"><span class="dot bad"></span>Current</span>
-            </button>
-            <button class="card" data-card="b-github">
-              <div><h2>3. GitHub</h2><p class="muted">gh installed and logged in</p></div>
-              <span class="status"><span class="dot"></span>Locked</span>
-            </button>
-            <button class="card" data-card="b-secrets">
-              <div><h2>4. Secrets</h2><p class="muted">Sonar and optional tokens</p></div>
-              <span class="status"><span class="dot"></span>Locked</span>
-            </button>
-          </div>
-          <div class="grid-2">
-            <section class="panel">
-              <h2 id="b-title">Step 1 complete: Core readiness</h2>
-              <p id="b-copy" class="muted" style="margin: 6px 0 12px">Config and database are initialized. This section is collapsed proof.</p>
-              <div class="panel soft">
-                <div class="check-row"><span class="dot ok"></span><div><strong>Config file</strong><div class="muted mono">config.json exists</div></div><button>Edit</button></div>
-                <div class="check-row"><span class="dot ok"></span><div><strong>SQLite DB</strong><div class="muted mono">beerengineer.sqlite reachable</div></div><button>Open status</button></div>
-              </div>
-            </section>
-            <section class="panel">
-              <h2>Current step action</h2>
-              <p class="muted" style="margin-top: 6px">The right side always explains the one action needed to advance.</p>
-              <div class="form-grid" style="margin-top: 10px">
-                <label><span>Default harness</span><select><option>Claude first</option><option>Codex first</option></select></label>
-                <label><span>Fallback harness</span><select><option>Codex optional</option><option>OpenCode optional</option></select></label>
-              </div>
-              <button class="primary" style="margin-top: 12px" data-toast="b-save">Save and re-check step</button>
-              <div id="b-save" class="toast">Saved. Codex install is still missing, so next step stays locked.</div>
-            </section>
-          </div>
-        </div>
-        <div class="notes">Best fit: guided but less claustrophobic than A. Pros: clear sequence plus proof of progress. Cons: locked future cards need careful explanation.</div>
-      </section>
-
-      <section id="approach-c" class="approach">
-        <div class="approach-header">
-          <div>
-            <h1>C. Coach + Detail</h1>
-            <p class="muted">A coach rail tells the user what to do next; details stay available but secondary.</p>
-          </div>
-          <button data-drawer="secret-drawer">Open secret drawer</button>
-        </div>
-        <div class="split">
-          <aside class="split-left">
-            <h2>Coach rail</h2>
-            <p class="muted" style="margin: 6px 0 12px">The next required action is always pinned first.</p>
-            <div class="steps">
-              <button class="step active" data-split="Next required action"><span class="num">!</span><span>Install Codex CLI</span><span class="dot bad"></span></button>
-              <button class="step done" data-split="Completed proof"><span class="num">1</span><span>Core app ready</span><span class="dot ok"></span></button>
-              <button class="step" data-split="Upcoming"><span class="num">3</span><span>GitHub login</span><span class="dot"></span></button>
-              <button class="step" data-split="Optional later"><span class="num">4</span><span>Sonar token</span><span class="dot warn"></span></button>
-              <button class="step" data-split="Optional later"><span class="num">5</span><span>Telegram</span><span class="dot"></span></button>
-            </div>
-          </aside>
-          <main class="split-right">
+          <span class="pill"><span class="dot warn"></span>3 steps remaining</span>
+        </header>
+        <div class="wizard-body">
+          <div class="rail-layout">
+            <aside class="rail">
+              <h3 style="margin-bottom: 10px">Progress</h3>
+              <button><span class="dot ok"></span> 1. Initialize app</button>
+              <button class="active"><span class="dot bad"></span> 2. Dependencies</button>
+              <button disabled><span class="dot"></span> 3. App configuration</button>
+              <button disabled><span class="dot"></span> 4. Secrets</button>
+              <button disabled><span class="dot"></span> 5. Finish</button>
+            </aside>
             <div class="panel stack">
-              <h2 id="c-title">Next required action</h2>
-              <p id="c-copy" class="muted">Install Codex CLI in a terminal, then come back and re-check. Other details are visible, but this action is the gate.</p>
-              <div class="grid-2">
-                <label><span>Default harness profile</span><select><option>claude-first</option><option>codex-first</option><option>codex-only</option></select></label>
-                <label><span>Default model</span><input value="claude-opus-4-7"></label>
-              </div>
-              <div class="panel soft">
-                <div class="check-row"><span class="dot ok"></span><div><strong>Claude Code CLI</strong><div class="muted mono">logged in</div></div><button>Re-check</button></div>
-                <div class="check-row"><span class="dot bad"></span><div><strong>Codex CLI</strong><div class="muted mono">missing</div></div><button class="primary">Copy install</button></div>
-              </div>
-              <div class="row">
-                <button class="primary" data-toast="c-toast">Copy install command</button>
-                <button>Re-check and continue</button>
-              </div>
-              <div id="c-toast" class="toast">Saved. One check is still blocked.</div>
-            </div>
-          </main>
-        </div>
-        <div class="notes">Best fit: guided process that still exposes context. Pros: strong "do this now" focus. Cons: more complex than a pure wizard.</div>
-      </section>
-
-      <section id="approach-d" class="approach">
-        <div class="approach-header">
-          <div>
-            <h1>D. Setup Runbook</h1>
-            <p class="muted">A procedural runbook: each step has an instruction, a command, a verification, and a continue gate.</p>
-          </div>
-          <button data-modal="settings-modal">Open quick edit modal</button>
-        </div>
-        <div class="shell-layout">
-          <nav class="side-nav">
-              <button class="nav-item active">1. Prepare app</button>
-              <button class="nav-item">2. Install tools</button>
-              <button class="nav-item">3. Authenticate</button>
-              <button class="nav-item">4. Optional services</button>
-              <button class="nav-item">5. Finish</button>
-          </nav>
-          <main class="content stack">
-            <div class="panel">
-              <div class="row" style="justify-content: space-between">
+              <div class="between">
                 <div>
-                  <h2>Runbook step: install required AI harness</h2>
-                  <p class="muted">Every step is written as instruction → action → verify → continue.</p>
+                  <h2>Step 2: Dependencies</h2>
+                  <p class="muted">Resolve required tooling. You are halfway to app configuration.</p>
                 </div>
-                <span class="status"><span class="dot bad"></span>2 blockers</span>
+                <span class="pill">2 / 5</span>
               </div>
+              <div class="command">
+                <div>
+                  <strong>Missing Codex CLI</strong>
+                  <div class="mono muted">npm i -g @openai/codex</div>
+                </div>
+                <button class="primary" data-toast="toast-b">Copy command</button>
+              </div>
+              <div class="panel soft">
+                <div class="check"><span class="dot warn"></span><div><strong>After installing</strong><div class="muted">Run the re-check. The wizard unlocks step 3 automatically if required checks pass.</div></div><button>Re-check</button></div>
+                <div class="check"><span class="dot"></span><div><strong>Optional GitHub</strong><div class="mono muted">gh auth login appears in step 3/4 depending on config</div></div><span class="pill">later</span></div>
+              </div>
+              <div id="toast-b" class="toast">Copied install command.</div>
             </div>
-            <div class="grid-3">
-              <div class="panel"><h3>Instruction</h3><p class="mono" style="margin-top: 8px">Open terminal</p></div>
-              <div class="panel"><h3>Action</h3><p class="mono" style="margin-top: 8px">npm i -g @openai/codex</p></div>
-              <div class="panel"><h3>Verify</h3><p class="mono" style="margin-top: 8px">codex --version</p></div>
-            </div>
-            <div class="panel stack">
-              <h2>Current instruction</h2>
-              <div class="check-row"><span class="dot bad"></span><div><strong>Required command</strong><div class="muted mono">npm i -g @openai/codex</div></div><button class="primary">Copy command</button></div>
-              <div class="check-row"><span class="dot"></span><div><strong>Verification</strong><div class="muted mono">The UI checks codex --version through doctor.</div></div><button>Run verification</button></div>
-              <div class="check-row"><span class="dot"></span><div><strong>Continue gate</strong><div class="muted mono">Locked until verification passes.</div></div><button disabled>Continue</button></div>
-            </div>
-          </main>
+          </div>
         </div>
-        <div class="notes">Best fit: users who like explicit operational instructions. Pros: very concrete and copy-paste friendly. Cons: can feel verbose for simple config edits.</div>
-      </section>
-    </div>
-  </div>
-
-  <div id="settings-modal" class="overlay">
-    <div class="modal stack">
-      <div class="row" style="justify-content: space-between">
-        <h2>Quick app settings</h2>
-        <button class="ghost" data-close-modal>Close</button>
+        <footer class="footer"><button>Previous</button><button class="primary" disabled>Next: App configuration</button></footer>
+        <div class="notes">B. Best compromise: very wizard-like, but the rail gives orientation without looking like the board.</div>
       </div>
-      <div class="form-grid">
-        <label><span>Public base URL</span><input value="http://100.x.y.z:3100"></label>
-        <label><span>Engine port</span><input value="4100"></label>
-      </div>
-      <div class="panel soft">This modal is useful for small edits, but the full feature likely needs more room.</div>
-      <button class="primary" data-close-modal>Save</button>
-    </div>
-  </div>
+    </section>
 
-  <div id="secret-drawer" class="drawer stack">
-    <div class="row" style="justify-content: space-between">
-      <h2>Secret: SONAR_TOKEN</h2>
-      <button class="ghost" data-close-drawer>Close</button>
-    </div>
-    <p class="muted">Stored values are never displayed. Replace the value or run a targeted test.</p>
-    <label><span>New value</span><input placeholder="Paste token to replace"></label>
-    <div class="row">
-      <button class="primary" data-toast="drawer-toast">Test and save</button>
-      <button>Disable</button>
-      <button>Delete</button>
-    </div>
-    <div id="drawer-toast" class="toast">Secret saved and test passed.</div>
-  </div>
+    <section id="stage-c" class="stage">
+      <div class="wizard-frame">
+        <header class="wizard-head">
+          <div>
+            <h1>Single-task wizard</h1>
+            <p class="muted">Step 2 of 5 is almost full-screen. This maximizes focus and removes surrounding app chrome.</p>
+          </div>
+          <span class="pill">2 / 5</span>
+        </header>
+        <div class="wizard-body centered">
+          <div class="stepper">
+            <div class="step-token done"><span class="step-num">1</span><strong>Initialize</strong></div>
+            <div class="step-token current"><span class="step-num">2</span><strong>Dependencies</strong></div>
+            <div class="step-token locked"><span class="step-num">3</span><strong>Config</strong></div>
+            <div class="step-token locked"><span class="step-num">4</span><strong>Secrets</strong></div>
+            <div class="step-token locked"><span class="step-num">5</span><strong>Finish</strong></div>
+          </div>
+          <div class="giant-step stack">
+            <div>
+              <h2>Install Codex CLI</h2>
+              <p class="muted">This is the only thing to do right now.</p>
+            </div>
+            <div class="command" style="width: min(620px, 100%)"><span class="mono">npm i -g @openai/codex</span><button class="primary" data-toast="toast-c">Copy</button></div>
+            <div class="row" style="justify-content: center"><button>I've installed it, re-check</button><button class="primary" disabled>Continue</button></div>
+            <div id="toast-c" class="toast">Copied command.</div>
+          </div>
+        </div>
+        <footer class="footer"><button>Back</button><button disabled>Step 3 is locked</button></footer>
+        <div class="notes">C. Best for absolute focus. It is the most wizard-like, but may feel slow when a step has multiple fields.</div>
+      </div>
+    </section>
+
+    <section id="stage-d" class="stage">
+      <div class="wizard-frame">
+        <header class="wizard-head">
+          <div>
+            <h1>Wizard with runbook panel</h1>
+            <p class="muted">Still a wizard, but each technical step is structured as instruction, command, verification, gate.</p>
+          </div>
+          <span class="pill"><span class="dot bad"></span>Step 2 / 5</span>
+        </header>
+        <div class="wizard-body centered stack">
+          <div class="progressbar"><span></span></div>
+          <div class="panel stack">
+            <div class="between">
+              <div><h2>Step 2: Dependencies</h2><p class="muted">Complete the checklist in order.</p></div>
+              <span class="pill">3 steps after this</span>
+            </div>
+            <div class="check"><span class="dot ok"></span><div><strong>Instruction</strong><div class="muted">Open a terminal on this machine.</div></div><span class="pill">done</span></div>
+            <div class="check"><span class="dot bad"></span><div><strong>Action</strong><div class="mono muted">npm i -g @openai/codex</div></div><button class="primary" data-toast="toast-d">Copy</button></div>
+            <div class="check"><span class="dot"></span><div><strong>Verification</strong><div class="muted">Wizard runs doctor and checks `codex --version`.</div></div><button>Run verification</button></div>
+            <div class="check"><span class="dot"></span><div><strong>Gate</strong><div class="muted">Continue unlocks only after verification passes.</div></div><button disabled>Continue</button></div>
+            <div id="toast-d" class="toast">Copied command.</div>
+          </div>
+          <div class="formgrid">
+            <div class="panel"><h3>Previous</h3><p class="muted">Step 1 initialized app config, data directory, and DB.</p></div>
+            <div class="panel"><h3>Next</h3><p class="muted">Step 3 will ask for app settings such as public URL and LLM defaults.</p></div>
+          </div>
+        </div>
+        <footer class="footer"><button>Previous step</button><button class="primary" disabled>Continue to app settings</button></footer>
+        <div class="notes">D. Best for technical install/auth steps. It can be embedded inside A or B as the content pattern for dependency steps.</div>
+      </div>
+    </section>
+  </main>
 
   <script>
-    const approaches = document.querySelectorAll("[data-approach]");
-    approaches.forEach(btn => {
-      btn.addEventListener("click", () => {
-        approaches.forEach(b => b.classList.remove("active"));
-        document.querySelectorAll(".approach").forEach(a => a.classList.remove("active"));
-        btn.classList.add("active");
-        document.querySelector("#approach-" + btn.dataset.approach).classList.add("active");
+    document.querySelectorAll("[data-tab]").forEach(button => {
+      button.addEventListener("click", () => {
+        document.querySelectorAll("[data-tab]").forEach(b => b.classList.remove("active"));
+        document.querySelectorAll(".stage").forEach(s => s.classList.remove("active"));
+        button.classList.add("active");
+        document.getElementById("stage-" + button.dataset.tab).classList.add("active");
       });
     });
 
-    document.querySelectorAll("[data-toast]").forEach(btn => {
-      btn.addEventListener("click", () => {
-        const toast = document.getElementById(btn.dataset.toast);
+    document.querySelectorAll("[data-toast]").forEach(button => {
+      button.addEventListener("click", () => {
+        const toast = document.getElementById(button.dataset.toast);
         if (!toast) return;
         toast.classList.add("show");
         window.setTimeout(() => toast.classList.remove("show"), 2200);
       });
-    });
-
-    const aContent = {
-      "a-init": ["Initialize app", "App config, data dir, and SQLite database are ready.", "Initialize if missing"],
-      "a-tools": ["Dependencies", "Required tools block setup. Optional tools stay visible but skippable.", "Continue after required checks pass"],
-      "a-config": ["App config", "Set allowed roots, public base URL, default LLM, GitHub, browser, and Telegram switches.", "Save valid fields"],
-      "a-secrets": ["Secrets", "Enter, replace, test, disable, or delete local secrets without revealing stored values.", "Test and save secret"],
-      "a-finish": ["Finish", "Required checks are ready. Optional checks can remain visible for later.", "Continue to workspace setup later"]
-    };
-    document.querySelectorAll("[data-step]").forEach(btn => {
-      btn.addEventListener("click", () => {
-        document.querySelectorAll("[data-step]").forEach(b => b.classList.remove("active"));
-        btn.classList.add("active");
-        const data = aContent[btn.dataset.step];
-        const panel = document.getElementById("a-panel");
-        panel.innerHTML = `
-          <h2>${data[0]}</h2>
-          <p class="muted">${data[1]}</p>
-          <div class="panel soft">
-            <div class="check-row"><span class="dot warn"></span><div><strong>${data[0]} status</strong><div class="muted mono">sample low-fidelity state</div></div><button>Re-check</button></div>
-            <div class="check-row"><span class="dot ok"></span><div><strong>Existing setup report</strong><div class="muted mono">GET /setup/status</div></div><button>Open details</button></div>
-          </div>
-          <div class="row"><button>Back</button><button class="primary">${data[2]}</button></div>
-        `;
-      });
-    });
-
-    const bContent = {
-      "b-core": ["Core readiness", "Config and database are initialized."],
-      "b-llm": ["LLM readiness", "Codex is missing. Install or switch the default harness."],
-      "b-github": ["GitHub readiness", "gh exists but login is missing. Run gh auth login."],
-      "b-secrets": ["Secret readiness", "SONAR_TOKEN is optional and can be added or replaced."]
-    };
-    document.querySelectorAll("[data-card]").forEach(card => {
-      card.addEventListener("click", () => {
-        document.querySelectorAll("[data-card]").forEach(c => c.classList.remove("selected"));
-        card.classList.add("selected");
-        document.getElementById("b-title").textContent = bContent[card.dataset.card][0];
-        document.getElementById("b-copy").textContent = bContent[card.dataset.card][1];
-      });
-    });
-
-    document.querySelectorAll("[data-split]").forEach(btn => {
-      btn.addEventListener("click", () => {
-        document.querySelectorAll("[data-split]").forEach(b => b.classList.remove("active"));
-        btn.classList.add("active");
-        document.getElementById("c-title").textContent = btn.dataset.split;
-        document.getElementById("c-copy").textContent = btn.dataset.split + " details stay on the right while readiness context remains visible.";
-      });
-    });
-
-    document.querySelectorAll("[data-modal]").forEach(btn => {
-      btn.addEventListener("click", () => document.getElementById(btn.dataset.modal).classList.add("show"));
-    });
-    document.querySelectorAll("[data-close-modal]").forEach(btn => {
-      btn.addEventListener("click", () => document.querySelectorAll(".overlay").forEach(m => m.classList.remove("show")));
-    });
-    document.querySelectorAll("[data-drawer]").forEach(btn => {
-      btn.addEventListener("click", () => document.getElementById(btn.dataset.drawer).classList.add("show"));
-    });
-    document.querySelectorAll("[data-close-drawer]").forEach(btn => {
-      btn.addEventListener("click", () => document.querySelectorAll(".drawer").forEach(d => d.classList.remove("show")));
     });
   </script>
 </body>
