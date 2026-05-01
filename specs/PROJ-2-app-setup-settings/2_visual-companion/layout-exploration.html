@@ -1,0 +1,674 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PROJ-2 Layout Exploration</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #101416;
+      --panel: #171d20;
+      --panel-2: #20272b;
+      --line: #3a4247;
+      --text: #ece7dc;
+      --muted: #aab1b3;
+      --faint: #747d81;
+      --accent: #d0a749;
+      --ok: #79b7bd;
+      --bad: #d47b7b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 14px;
+    }
+    button, input, select {
+      font: inherit;
+      color: inherit;
+    }
+    button {
+      background: var(--panel-2);
+      border: 1px solid var(--line);
+      border-radius: 0;
+      padding: 8px 10px;
+      cursor: pointer;
+    }
+    button.primary {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    button.ghost {
+      background: transparent;
+    }
+    button:disabled {
+      opacity: .45;
+      cursor: not-allowed;
+    }
+    input, select {
+      width: 100%;
+      background: #0d1113;
+      border: 1px solid var(--line);
+      border-radius: 0;
+      padding: 8px;
+    }
+    .shell {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .topbar {
+      height: 44px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 12px;
+      background: #0d1214;
+      position: sticky;
+      top: 0;
+      z-index: 2;
+    }
+    .brand {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      letter-spacing: .14em;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .brand:before {
+      content: "";
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: var(--accent);
+      margin-right: 8px;
+      vertical-align: 1px;
+    }
+    .approach-tabs {
+      display: flex;
+      gap: 6px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      overflow-x: auto;
+      background: var(--bg);
+    }
+    .approach-tabs button.active {
+      border-color: var(--ok);
+      color: var(--ok);
+    }
+    .frame {
+      padding: 14px;
+    }
+    .approach {
+      display: none;
+      border: 1px solid var(--line);
+      min-height: 720px;
+      background: #0f1416;
+    }
+    .approach.active { display: block; }
+    .approach-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+    h1, h2, h3, p { margin: 0; }
+    h1 { font-size: 18px; }
+    h2 { font-size: 15px; }
+    h3 { font-size: 13px; color: var(--muted); }
+    .muted { color: var(--muted); }
+    .faint { color: var(--faint); }
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12px;
+    }
+    .row { display: flex; gap: 10px; align-items: center; }
+    .stack { display: grid; gap: 10px; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    .panel {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      padding: 12px;
+    }
+    .panel.soft { background: var(--panel-2); }
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid var(--line);
+      padding: 4px 7px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: var(--faint);
+    }
+    .dot.ok { background: var(--ok); }
+    .dot.warn { background: var(--accent); }
+    .dot.bad { background: var(--bad); }
+    .steps {
+      display: grid;
+      gap: 7px;
+    }
+    .step {
+      display: grid;
+      grid-template-columns: 28px 1fr auto;
+      gap: 10px;
+      align-items: center;
+      border: 1px solid var(--line);
+      background: #121719;
+      padding: 9px;
+    }
+    .step.active { border-color: var(--accent); }
+    .step.done { border-color: #4d777b; }
+    .num {
+      width: 24px;
+      height: 24px;
+      border: 1px solid var(--line);
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .content {
+      padding: 14px;
+    }
+    .wizard-layout {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      gap: 14px;
+    }
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    label span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 5px;
+    }
+    .check-row {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 9px;
+      align-items: center;
+      padding: 8px 0;
+      border-bottom: 1px solid #2c3337;
+    }
+    .check-row:last-child { border-bottom: 0; }
+    .notes {
+      border-top: 1px solid var(--line);
+      padding: 12px 14px;
+      color: var(--muted);
+      background: #0c1012;
+    }
+    .toast {
+      display: none;
+      border: 1px solid var(--accent);
+      color: var(--accent);
+      padding: 8px;
+      margin-bottom: 10px;
+    }
+    .toast.show { display: block; }
+    .dashboard-layout {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .card {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      padding: 12px;
+      min-height: 124px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    .card.selected { border-color: var(--accent); }
+    .split {
+      display: grid;
+      grid-template-columns: 340px 1fr;
+      min-height: 600px;
+    }
+    .split-left {
+      border-right: 1px solid var(--line);
+      padding: 12px;
+      background: #101719;
+    }
+    .split-right {
+      padding: 12px;
+    }
+    .shell-layout {
+      display: grid;
+      grid-template-columns: 220px 1fr;
+      min-height: 610px;
+    }
+    .side-nav {
+      border-right: 1px solid var(--line);
+      padding: 12px;
+      background: #101719;
+    }
+    .nav-item {
+      width: 100%;
+      text-align: left;
+      margin-bottom: 7px;
+    }
+    .nav-item.active {
+      border-color: var(--ok);
+      color: var(--ok);
+    }
+    .mobile-pair {
+      display: grid;
+      grid-template-columns: 1fr 360px;
+      gap: 12px;
+      align-items: start;
+    }
+    .mobile {
+      width: 360px;
+      min-height: 560px;
+      border: 1px solid var(--line);
+      background: #0f1416;
+      overflow: hidden;
+    }
+    .mobile .wizard-layout,
+    .mobile .split,
+    .mobile .shell-layout {
+      display: block;
+    }
+    .mobile .split-left,
+    .mobile .side-nav {
+      border-right: 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .mobile .cards,
+    .mobile .grid-2,
+    .mobile .grid-3,
+    .mobile .form-grid {
+      grid-template-columns: 1fr;
+    }
+    .mobile .desktop-only { display: none; }
+    .overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.55);
+      align-items: center;
+      justify-content: center;
+      z-index: 20;
+    }
+    .overlay.show { display: flex; }
+    .modal {
+      width: min(620px, calc(100vw - 32px));
+      border: 1px solid var(--line);
+      background: var(--panel);
+      padding: 14px;
+    }
+    .drawer {
+      display: none;
+      position: fixed;
+      right: 0;
+      top: 0;
+      bottom: 0;
+      width: min(480px, 100vw);
+      border-left: 1px solid var(--line);
+      background: var(--panel);
+      z-index: 30;
+      padding: 14px;
+    }
+    .drawer.show { display: block; }
+    @media (max-width: 900px) {
+      .mobile-pair { grid-template-columns: 1fr; }
+      .mobile { width: 100%; }
+      .wizard-layout, .split, .shell-layout { display: block; }
+      .cards, .grid-2, .grid-3, .form-grid { grid-template-columns: 1fr; }
+      .split-left, .side-nav { border-right: 0; border-bottom: 1px solid var(--line); }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="topbar">
+      <div class="row">
+        <span class="mono muted">Workspace</span>
+        <select style="width: 170px">
+          <option>No workspace yet</option>
+          <option>beerengineer2</option>
+        </select>
+      </div>
+      <div class="brand">beerengineer_</div>
+    </div>
+
+    <div class="approach-tabs" role="tablist">
+      <button class="active" data-approach="a">A. Guided Sections</button>
+      <button data-approach="b">B. Readiness Dashboard</button>
+      <button data-approach="c">C. Split Control Center</button>
+      <button data-approach="d">D. Shell Extension</button>
+    </div>
+
+    <div class="frame">
+      <section id="approach-a" class="approach active">
+        <div class="approach-header">
+          <div>
+            <h1>A. Guided Sections</h1>
+            <p class="muted">Hybrid setup: recommended path with jumpable steps. Strongest first-run shape.</p>
+          </div>
+          <span class="status"><span class="dot warn"></span>Setup blocked</span>
+        </div>
+        <div class="content mobile-pair">
+          <div class="wizard-layout">
+            <aside class="panel">
+              <h2>Setup path</h2>
+              <p class="muted" style="margin: 6px 0 12px">Click any step; required blockers still gate completion.</p>
+              <div class="steps">
+                <button class="step done" data-step="a-init"><span class="num">1</span><span>Initialize app</span><span class="dot ok"></span></button>
+                <button class="step active" data-step="a-tools"><span class="num">2</span><span>Dependencies</span><span class="dot bad"></span></button>
+                <button class="step" data-step="a-config"><span class="num">3</span><span>App config</span><span class="dot warn"></span></button>
+                <button class="step" data-step="a-secrets"><span class="num">4</span><span>Secrets</span><span class="dot warn"></span></button>
+                <button class="step" data-step="a-finish"><span class="num">5</span><span>Finish</span><span class="dot"></span></button>
+              </div>
+            </aside>
+            <main class="panel">
+              <div id="a-panel" class="stack">
+                <h2>Dependencies</h2>
+                <p class="muted">Required tools block setup. Optional tools stay visible but skippable.</p>
+                <div class="panel soft">
+                  <div class="check-row"><span class="dot ok"></span><div><strong>Node.js 22+</strong><div class="muted mono">v22.15.0</div></div><button>Re-check</button></div>
+                  <div class="check-row"><span class="dot ok"></span><div><strong>Git</strong><div class="muted mono">git version available</div></div><button>Re-check</button></div>
+                  <div class="check-row"><span class="dot bad"></span><div><strong>Codex CLI</strong><div class="muted mono">install: npm i -g @openai/codex</div></div><button class="primary" data-toast="a-toast">Copy command</button></div>
+                  <div class="check-row"><span class="dot warn"></span><div><strong>GitHub CLI auth</strong><div class="muted mono">run: gh auth login</div></div><button>Re-check</button></div>
+                </div>
+                <div id="a-toast" class="toast">Command copied. Re-check after installing or logging in.</div>
+                <div class="row">
+                  <button>Back</button>
+                  <button class="primary" disabled>Continue after required checks pass</button>
+                </div>
+              </div>
+            </main>
+          </div>
+          <div class="mobile">
+            <div class="approach-header"><h2>Mobile preview</h2><span class="status"><span class="dot bad"></span>Blocked</span></div>
+            <div class="content">
+              <div class="steps">
+                <button class="step active"><span class="num">2</span><span>Dependencies</span><span class="dot bad"></span></button>
+              </div>
+              <div class="panel" style="margin-top: 10px">
+                <div class="check-row"><span class="dot bad"></span><div><strong>Codex CLI</strong><div class="muted mono">npm i -g @openai/codex</div></div></div>
+                <button class="primary" style="width: 100%; margin-top: 10px">Copy command</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="notes">Best fit: first-run setup. Pros: clear path, deep links per section, easy to block required steps. Cons: less dense for returning operators.</div>
+      </section>
+
+      <section id="approach-b" class="approach">
+        <div class="approach-header">
+          <div>
+            <h1>B. Readiness Dashboard</h1>
+            <p class="muted">All setup domains as cards; users jump into whichever area needs work.</p>
+          </div>
+          <button class="primary" data-toast="b-toast">Run all checks</button>
+        </div>
+        <div class="content dashboard-layout">
+          <div id="b-toast" class="toast">Checks refreshed. Required blockers remain in Core and LLM.</div>
+          <div class="cards">
+            <button class="card selected" data-card="b-core">
+              <div><h2>Core</h2><p class="muted">Config, data dir, DB</p></div>
+              <span class="status"><span class="dot ok"></span>Ready</span>
+            </button>
+            <button class="card" data-card="b-llm">
+              <div><h2>LLM</h2><p class="muted">Claude, Codex, OpenCode</p></div>
+              <span class="status"><span class="dot bad"></span>Blocked</span>
+            </button>
+            <button class="card" data-card="b-github">
+              <div><h2>GitHub</h2><p class="muted">gh installed and logged in</p></div>
+              <span class="status"><span class="dot warn"></span>Login needed</span>
+            </button>
+            <button class="card" data-card="b-secrets">
+              <div><h2>Secrets</h2><p class="muted">Sonar and optional tokens</p></div>
+              <span class="status"><span class="dot warn"></span>Optional</span>
+            </button>
+          </div>
+          <div class="grid-2">
+            <section class="panel">
+              <h2 id="b-title">Core readiness</h2>
+              <p id="b-copy" class="muted" style="margin: 6px 0 12px">Config and database are initialized.</p>
+              <div class="panel soft">
+                <div class="check-row"><span class="dot ok"></span><div><strong>Config file</strong><div class="muted mono">config.json exists</div></div><button>Edit</button></div>
+                <div class="check-row"><span class="dot ok"></span><div><strong>SQLite DB</strong><div class="muted mono">beerengineer.sqlite reachable</div></div><button>Open status</button></div>
+              </div>
+            </section>
+            <section class="panel">
+              <h2>App settings quick edit</h2>
+              <div class="form-grid" style="margin-top: 10px">
+                <label><span>Public base URL</span><input value="http://100.x.y.z:3100"></label>
+                <label><span>Engine port</span><input value="4100"></label>
+                <label><span>Default LLM</span><select><option>Anthropic / Claude</option><option>OpenAI / Codex</option></select></label>
+                <label><span>GitHub</span><select><option>Enabled</option><option>Disabled</option></select></label>
+              </div>
+              <button class="primary" style="margin-top: 12px" data-toast="b-save">Save valid fields</button>
+              <div id="b-save" class="toast">Partially saved. Engine port applies after restart.</div>
+            </section>
+          </div>
+        </div>
+        <div class="notes">Best fit: returning operators or users who dislike step flows. Pros: maximum visibility. Cons: first-time users may not know what to do first.</div>
+      </section>
+
+      <section id="approach-c" class="approach">
+        <div class="approach-header">
+          <div>
+            <h1>C. Split Control Center</h1>
+            <p class="muted">Persistent readiness list on the left, focused editor/check detail on the right.</p>
+          </div>
+          <button data-drawer="secret-drawer">Open secret drawer</button>
+        </div>
+        <div class="split">
+          <aside class="split-left">
+            <h2>Readiness</h2>
+            <p class="muted" style="margin: 6px 0 12px">Select a group to inspect or edit.</p>
+            <div class="steps">
+              <button class="step done" data-split="Core"><span class="num">C</span><span>Core app</span><span class="dot ok"></span></button>
+              <button class="step active" data-split="LLM"><span class="num">L</span><span>LLM harness</span><span class="dot bad"></span></button>
+              <button class="step" data-split="GitHub"><span class="num">G</span><span>GitHub</span><span class="dot warn"></span></button>
+              <button class="step" data-split="Secrets"><span class="num">S</span><span>Secrets</span><span class="dot warn"></span></button>
+              <button class="step" data-split="Telegram"><span class="num">T</span><span>Telegram</span><span class="dot"></span></button>
+            </div>
+          </aside>
+          <main class="split-right">
+            <div class="panel stack">
+              <h2 id="c-title">LLM harness</h2>
+              <p id="c-copy" class="muted">Codex is selected as a default path but the CLI is missing. Fix it, then re-check this group.</p>
+              <div class="grid-2">
+                <label><span>Default harness profile</span><select><option>claude-first</option><option>codex-first</option><option>codex-only</option></select></label>
+                <label><span>Default model</span><input value="claude-opus-4-7"></label>
+              </div>
+              <div class="panel soft">
+                <div class="check-row"><span class="dot ok"></span><div><strong>Claude Code CLI</strong><div class="muted mono">logged in</div></div><button>Re-check</button></div>
+                <div class="check-row"><span class="dot bad"></span><div><strong>Codex CLI</strong><div class="muted mono">missing</div></div><button class="primary">Copy install</button></div>
+              </div>
+              <div class="row">
+                <button class="primary" data-toast="c-toast">Save valid fields</button>
+                <button>Re-check group</button>
+              </div>
+              <div id="c-toast" class="toast">Saved. One check is still blocked.</div>
+            </div>
+          </main>
+        </div>
+        <div class="notes">Best fit: unifies wizard and properties in one durable control center. Pros: strong context while editing. Cons: heavier than a simple first-run path.</div>
+      </section>
+
+      <section id="approach-d" class="approach">
+        <div class="approach-header">
+          <div>
+            <h1>D. Existing Shell Extension</h1>
+            <p class="muted">Setup and Eigenschaften become app-level destinations inside the current topbar/workspace shell.</p>
+          </div>
+          <button data-modal="settings-modal">Open quick edit modal</button>
+        </div>
+        <div class="shell-layout">
+          <nav class="side-nav">
+            <button class="nav-item">Board</button>
+            <button class="nav-item">Inbox</button>
+            <button class="nav-item active">Setup</button>
+            <button class="nav-item">Eigenschaften</button>
+          </nav>
+          <main class="content stack">
+            <div class="panel">
+              <div class="row" style="justify-content: space-between">
+                <div>
+                  <h2>App setup inside operator shell</h2>
+                  <p class="muted">Topbar and workspace context stay visible; setup appears as another route.</p>
+                </div>
+                <span class="status"><span class="dot bad"></span>2 blockers</span>
+              </div>
+            </div>
+            <div class="grid-3">
+              <div class="panel"><h3>Current workspace</h3><p class="mono" style="margin-top: 8px">No workspace yet</p></div>
+              <div class="panel"><h3>Setup status</h3><p class="mono" style="margin-top: 8px">blocked</p></div>
+              <div class="panel"><h3>Next action</h3><p class="mono" style="margin-top: 8px">Install Codex CLI</p></div>
+            </div>
+            <div class="panel stack">
+              <h2>Setup route content</h2>
+              <div class="check-row"><span class="dot bad"></span><div><strong>Required dependency</strong><div class="muted mono">npm i -g @openai/codex</div></div><button class="primary">Copy command</button></div>
+              <div class="check-row"><span class="dot warn"></span><div><strong>GitHub login</strong><div class="muted mono">gh auth login</div></div><button>Re-check</button></div>
+              <div class="check-row"><span class="dot ok"></span><div><strong>App config</strong><div class="muted mono">initialized</div></div><button>Edit</button></div>
+            </div>
+          </main>
+        </div>
+        <div class="notes">Best fit: continuity with current UI. Pros: minimal navigation invention. Cons: first-run no-workspace state may feel odd inside a workspace-oriented shell.</div>
+      </section>
+    </div>
+  </div>
+
+  <div id="settings-modal" class="overlay">
+    <div class="modal stack">
+      <div class="row" style="justify-content: space-between">
+        <h2>Quick app settings</h2>
+        <button class="ghost" data-close-modal>Close</button>
+      </div>
+      <div class="form-grid">
+        <label><span>Public base URL</span><input value="http://100.x.y.z:3100"></label>
+        <label><span>Engine port</span><input value="4100"></label>
+      </div>
+      <div class="panel soft">This modal is useful for small edits, but the full feature likely needs more room.</div>
+      <button class="primary" data-close-modal>Save</button>
+    </div>
+  </div>
+
+  <div id="secret-drawer" class="drawer stack">
+    <div class="row" style="justify-content: space-between">
+      <h2>Secret: SONAR_TOKEN</h2>
+      <button class="ghost" data-close-drawer>Close</button>
+    </div>
+    <p class="muted">Stored values are never displayed. Replace the value or run a targeted test.</p>
+    <label><span>New value</span><input placeholder="Paste token to replace"></label>
+    <div class="row">
+      <button class="primary" data-toast="drawer-toast">Test and save</button>
+      <button>Disable</button>
+      <button>Delete</button>
+    </div>
+    <div id="drawer-toast" class="toast">Secret saved and test passed.</div>
+  </div>
+
+  <script>
+    const approaches = document.querySelectorAll("[data-approach]");
+    approaches.forEach(btn => {
+      btn.addEventListener("click", () => {
+        approaches.forEach(b => b.classList.remove("active"));
+        document.querySelectorAll(".approach").forEach(a => a.classList.remove("active"));
+        btn.classList.add("active");
+        document.querySelector("#approach-" + btn.dataset.approach).classList.add("active");
+      });
+    });
+
+    document.querySelectorAll("[data-toast]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const toast = document.getElementById(btn.dataset.toast);
+        if (!toast) return;
+        toast.classList.add("show");
+        window.setTimeout(() => toast.classList.remove("show"), 2200);
+      });
+    });
+
+    const aContent = {
+      "a-init": ["Initialize app", "App config, data dir, and SQLite database are ready.", "Initialize if missing"],
+      "a-tools": ["Dependencies", "Required tools block setup. Optional tools stay visible but skippable.", "Continue after required checks pass"],
+      "a-config": ["App config", "Set allowed roots, public base URL, default LLM, GitHub, browser, and Telegram switches.", "Save valid fields"],
+      "a-secrets": ["Secrets", "Enter, replace, test, disable, or delete local secrets without revealing stored values.", "Test and save secret"],
+      "a-finish": ["Finish", "Required checks are ready. Optional checks can remain visible for later.", "Continue to workspace setup later"]
+    };
+    document.querySelectorAll("[data-step]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll("[data-step]").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        const data = aContent[btn.dataset.step];
+        const panel = document.getElementById("a-panel");
+        panel.innerHTML = `
+          <h2>${data[0]}</h2>
+          <p class="muted">${data[1]}</p>
+          <div class="panel soft">
+            <div class="check-row"><span class="dot warn"></span><div><strong>${data[0]} status</strong><div class="muted mono">sample low-fidelity state</div></div><button>Re-check</button></div>
+            <div class="check-row"><span class="dot ok"></span><div><strong>Existing setup report</strong><div class="muted mono">GET /setup/status</div></div><button>Open details</button></div>
+          </div>
+          <div class="row"><button>Back</button><button class="primary">${data[2]}</button></div>
+        `;
+      });
+    });
+
+    const bContent = {
+      "b-core": ["Core readiness", "Config and database are initialized."],
+      "b-llm": ["LLM readiness", "Codex is missing. Install or switch the default harness."],
+      "b-github": ["GitHub readiness", "gh exists but login is missing. Run gh auth login."],
+      "b-secrets": ["Secret readiness", "SONAR_TOKEN is optional and can be added or replaced."]
+    };
+    document.querySelectorAll("[data-card]").forEach(card => {
+      card.addEventListener("click", () => {
+        document.querySelectorAll("[data-card]").forEach(c => c.classList.remove("selected"));
+        card.classList.add("selected");
+        document.getElementById("b-title").textContent = bContent[card.dataset.card][0];
+        document.getElementById("b-copy").textContent = bContent[card.dataset.card][1];
+      });
+    });
+
+    document.querySelectorAll("[data-split]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll("[data-split]").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        document.getElementById("c-title").textContent = btn.dataset.split;
+        document.getElementById("c-copy").textContent = btn.dataset.split + " details stay on the right while readiness context remains visible.";
+      });
+    });
+
+    document.querySelectorAll("[data-modal]").forEach(btn => {
+      btn.addEventListener("click", () => document.getElementById(btn.dataset.modal).classList.add("show"));
+    });
+    document.querySelectorAll("[data-close-modal]").forEach(btn => {
+      btn.addEventListener("click", () => document.querySelectorAll(".overlay").forEach(m => m.classList.remove("show")));
+    });
+    document.querySelectorAll("[data-drawer]").forEach(btn => {
+      btn.addEventListener("click", () => document.getElementById(btn.dataset.drawer).classList.add("show"));
+    });
+    document.querySelectorAll("[data-close-drawer]").forEach(btn => {
+      btn.addEventListener("click", () => document.querySelectorAll(".drawer").forEach(d => d.classList.remove("show")));
+    });
+  </script>
+</body>
+</html>
