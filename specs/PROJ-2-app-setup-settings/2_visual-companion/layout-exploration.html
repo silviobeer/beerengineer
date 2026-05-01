@@ -155,6 +155,52 @@
       font-size: 12px;
       color: var(--muted);
     }
+    .step-state {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      margin-top: 8px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .gate-banner {
+      border: 1px solid var(--line);
+      background: #0c1012;
+      padding: 12px;
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 10px;
+      align-items: center;
+    }
+    .gate-banner.blocked { border-color: var(--bad); }
+    .gate-banner.ready { border-color: var(--ok); }
+    .gate-banner.checking { border-color: var(--accent); }
+    .gate-icon {
+      width: 28px;
+      height: 28px;
+      border: 1px solid var(--line);
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      font-weight: 700;
+    }
+    .verification-card {
+      border: 1px solid var(--line);
+      background: var(--panel2);
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+    }
+    .mini-state-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .mini-state {
+      border: 1px solid var(--line);
+      background: #0c1012;
+      padding: 9px;
+    }
     .progressbar {
       height: 8px;
       border: 1px solid var(--line);
@@ -414,13 +460,21 @@
         </header>
         <div class="wizard-body centered">
           <div class="stepper">
-            <div class="step-token done"><span class="step-num">1</span><strong>Initialize</strong></div>
-            <div class="step-token current"><span class="step-num">2</span><strong>Dependencies</strong></div>
-            <div class="step-token locked"><span class="step-num">3</span><strong>Config</strong></div>
-            <div class="step-token locked"><span class="step-num">4</span><strong>Secrets</strong></div>
-            <div class="step-token locked"><span class="step-num">5</span><strong>Finish</strong></div>
+            <div class="step-token done"><span class="step-num">1</span><strong>Initialize</strong><span class="step-state"><span class="dot ok"></span>Done</span></div>
+            <div class="step-token current"><span class="step-num">2</span><strong>Dependencies</strong><span class="step-state"><span class="dot bad"></span>Blocked</span></div>
+            <div class="step-token locked"><span class="step-num">3</span><strong>Config</strong><span class="step-state"><span class="dot"></span>Locked</span></div>
+            <div class="step-token locked"><span class="step-num">4</span><strong>Secrets</strong><span class="step-state"><span class="dot"></span>Locked</span></div>
+            <div class="step-token locked"><span class="step-num">5</span><strong>Finish</strong><span class="step-state"><span class="dot"></span>Locked</span></div>
           </div>
           <div class="giant-step stack">
+            <div id="gate-c" class="gate-banner blocked">
+              <div class="gate-icon">!</div>
+              <div>
+                <strong>Step 2 is not complete yet</strong>
+                <p class="muted" style="margin-top: 4px">Install Codex CLI or make another required harness available, then run verification. Step 3 stays locked until this passes.</p>
+              </div>
+              <span class="pill"><span class="dot bad"></span>Cannot continue</span>
+            </div>
             <div class="hero-copy">
               <h2>Install Codex CLI</h2>
               <p class="muted">beerengineer_ needs at least one working AI harness before it can run implementation work. Codex is missing on this machine, so this step explains what it is, where to get it, and how to verify it.</p>
@@ -445,14 +499,21 @@
               <div class="info-item">
                 <h3>Verification</h3>
                 <p class="muted" style="margin-top: 6px">After installing, run the check. The wizard unlocks Step 3 only when a required harness is ready.</p>
-                <div class="row" style="margin-top: 10px"><button>I've installed it, re-check</button><button class="primary" disabled>Continue to Step 3</button></div>
+                <div class="verification-card" style="margin-top: 10px">
+                  <div class="mini-state-grid">
+                    <div class="mini-state"><strong>Current</strong><div class="muted">Blocked</div></div>
+                    <div class="mini-state"><strong>After check</strong><div class="muted">Done or still blocked</div></div>
+                    <div class="mini-state"><strong>Next</strong><div class="muted">Step 3 unlocks</div></div>
+                  </div>
+                  <div class="row"><button data-gate="checking">Run verification</button><button data-gate="ready">Simulate passed check</button><button id="continue-c" class="primary" disabled>Continue to Step 3</button></div>
+                </div>
               </div>
             </div>
             <div id="toast-c" class="toast">Copied command.</div>
             <div id="toast-c-agent" class="toast">Copied agent prompt.</div>
           </div>
         </div>
-        <footer class="footer"><button>Back</button><button disabled>Step 3 is locked</button></footer>
+        <footer class="footer"><button>Back</button><button id="footer-continue-c" disabled>Step 3 is locked</button></footer>
         <div class="notes">C. Best for absolute focus. It is the most wizard-like, but may feel slow when a step has multiple fields.</div>
       </div>
     </section>
@@ -506,6 +567,31 @@
         if (!toast) return;
         toast.classList.add("show");
         window.setTimeout(() => toast.classList.remove("show"), 2200);
+      });
+    });
+
+    document.querySelectorAll("[data-gate]").forEach(button => {
+      button.addEventListener("click", () => {
+        const gate = document.getElementById("gate-c");
+        const main = document.getElementById("continue-c");
+        const footer = document.getElementById("footer-continue-c");
+        if (!gate || !main || !footer) return;
+        gate.classList.remove("blocked", "ready", "checking");
+        if (button.dataset.gate === "checking") {
+          gate.classList.add("checking");
+          gate.innerHTML = '<div class="gate-icon">...</div><div><strong>Verification is running</strong><p class="muted" style="margin-top: 4px">beerengineer_ is checking the local command and auth state. Continue stays locked while this runs.</p></div><span class="pill"><span class="dot warn"></span>Checking</span>';
+          main.disabled = true;
+          footer.disabled = true;
+          footer.textContent = "Verification running";
+        }
+        if (button.dataset.gate === "ready") {
+          gate.classList.add("ready");
+          gate.innerHTML = '<div class="gate-icon">✓</div><div><strong>Step 2 is complete</strong><p class="muted" style="margin-top: 4px">A required AI harness is available. You can continue to app configuration.</p></div><span class="pill"><span class="dot ok"></span>Continue unlocked</span>';
+          main.disabled = false;
+          footer.disabled = false;
+          footer.classList.add("primary");
+          footer.textContent = "Continue to Step 3";
+        }
       });
     });
   </script>

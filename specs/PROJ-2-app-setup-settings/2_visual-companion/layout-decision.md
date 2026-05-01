@@ -78,6 +78,7 @@ For later Eigenschaften, reuse the same ordered sections and status model, but a
 
 - Selected: **C. Single-Task Wizard**.
 - Refinement: use more explanatory text than the first C variant. A step is not just a terminal command; it includes context, official download/docs source, command, optional local-agent prompt, and verification gate.
+- Refinement: every step needs an explicit gate indicator. The user must immediately know whether the current step is done and they can continue, or whether it is blocked and why.
 - Setup may intentionally move away from the existing board layout. Existing UI patterns still matter for tone, status language, and API safety, but not for the primary first-run container.
 - Step count should remain visible at all times, e.g. "Step 2 of 5" plus visible remaining locked steps.
 
@@ -85,10 +86,10 @@ For later Eigenschaften, reuse the same ordered sections and status model, but a
 
 - Primary job: guide a new local user through app-level setup one step at a time, with visible progress and hard gates for required checks.
 - User context: no workspace or incomplete setup; likely switching between UI and terminal.
-- Information shape: five ordered steps, current step number, remaining step count, required/optional status, command remedies, verification state, app-config fields, secret metadata.
+- Information shape: five ordered steps, current step number, remaining step count, explicit step state, required/optional status, command remedies, verification state, app-config fields, secret metadata.
 - Interaction container: dedicated `/setup` full-page single-task wizard, not the board layout.
 - Existing components to preserve: beerengineer_ brand/topbar, status/check language, API proxy boundary, sharp operator-console styling, concise command remedies.
-- New component candidates: wizard shell, horizontal/stacked progress stepper, locked future step token, rich step content panel, download/docs link block, command block, agent-prompt block, verification gate, partial-save summary, secret maintenance row.
+- New component candidates: wizard shell, horizontal/stacked progress stepper, locked/focused/done step token, current-step gate banner, rich step content panel, download/docs link block, command block, agent-prompt block, verification gate, continue-unlocked state, partial-save summary, secret maintenance row.
 - Design constraints: low-fidelity here; final UI should stay operational and direct, not marketing onboarding.
 - Anti-goals: board-like dashboard as primary setup, automatic external tool installation, workspace/project setup in v1, SonarCloud project creation, live engine-port migration.
 
@@ -101,6 +102,7 @@ For later Eigenschaften, reuse the same ordered sections and status model, but a
   - After seeing the first exploration, requested approaches that become a clearer, tightly guided step-by-step process.
   - After seeing the second exploration, clarified that all variants were still not wizard-like enough. The desired shape should show "I am now in step 2 and have 3 steps ahead"; it may move away from the board layout.
   - Selected C, with more explanatory text, download/source guidance, and a prompt for the local agent.
+  - Requested clearer indicators for whether the current step is completed and the user can continue, or not completed and blocked.
 - Assumptions:
   - The concept from `1_brainstorm/PROJ-2-concept.md` is accepted.
   - `/setup` should optimize first-time clarity more than existing board continuity.
