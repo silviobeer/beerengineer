@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PROJ-2 Settings Mockup</title>
+  <style>
+    :root{--bg:#0b1517;--panel:#122024;--panel2:#1a2f33;--line:#2a4348;--text:#f0ebe0;--muted:#8fa0a4;--gold:#d4a843;--ok:#5fb6c2;--bad:#e06f6f}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,ui-sans-serif,system-ui,sans-serif;font-size:14px}button,input,select{font:inherit;color:inherit}button{border:1px solid var(--line);background:var(--panel2);padding:8px 11px;border-radius:0;cursor:pointer}button.primary{border-color:var(--gold);color:var(--gold)}input,select{width:100%;border:1px solid var(--line);background:#081012;padding:8px}
+    .mockbar{background:#050a0b;border-bottom:1px solid var(--line);padding:8px 14px;display:flex;justify-content:space-between}.mockbar a{color:var(--gold)}.topbar{height:44px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 16px;background:#081012}.brand{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;letter-spacing:.14em;color:var(--muted)}
+    main{max-width:1120px;margin:0 auto;padding:22px}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}.muted{color:var(--muted)}h1,h2,h3,p{margin:0}h1{font-size:22px}h2{font-size:17px}h3{font-size:13px;color:var(--muted)}.label{display:inline-flex;border:1px solid var(--line);padding:3px 6px;color:var(--muted);font-size:11px;margin:3px 3px 3px 0}
+    .layout{display:grid;grid-template-columns:260px 1fr;gap:14px}.panel{border:1px solid var(--line);background:var(--panel);padding:14px}.nav button{width:100%;text-align:left;margin-bottom:8px}.nav button.active{border-color:var(--gold);color:var(--gold)}.pill{display:inline-flex;gap:7px;align-items:center;border:1px solid var(--line);padding:5px 8px;color:var(--muted)}.dot{width:7px;height:7px;border-radius:999px;background:var(--muted)}.dot.ok{background:var(--ok)}.dot.bad{background:var(--bad)}.dot.warn{background:var(--gold)}
+    .stack{display:grid;gap:12px}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.between{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.field span{display:block;color:var(--muted);font-size:12px;margin-bottom:5px}.message{border:1px solid var(--gold);background:#2a210b;padding:10px;color:var(--gold)}.error{border-color:var(--bad);background:#301719;color:#f0b0b0}.ok{border-color:var(--ok);background:#062c32;color:#9fd8e0}
+    .secret{border:1px solid var(--line);background:var(--panel2);padding:12px;display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center}.states{display:grid;gap:12px;margin-top:14px}.statebox{border:1px solid var(--line);background:var(--panel);padding:12px}
+    @media(max-width:850px){main{padding:12px}.layout,.grid2{grid-template-columns:1fr}.between{display:grid}}
+  </style>
+</head>
+<body>
+  <div class="mockbar"><span>PROJ-2 settings mockup</span><a href="sitemap.html">Back to sitemap</a></div>
+  <header class="topbar"><span class="mono">/settings</span><span class="brand">beerengineer_</span></header>
+  <main class="stack">
+    <div>
+      <span class="label">[New candidate: AppSettingsPage]</span>
+      <span class="label">[Reuse: StatusChip language]</span>
+      <h1>Eigenschaften</h1>
+      <p class="muted">Maintenance mode uses the same ordered setup sections, but direct navigation is unlocked after first-run setup.</p>
+    </div>
+    <section class="layout">
+      <aside class="panel nav">
+        <h3 style="margin-bottom:10px">Sections</h3>
+        <button><span class="dot ok"></span> Setup status</button>
+        <button class="active"><span class="dot warn"></span> App config</button>
+        <button><span class="dot warn"></span> Secrets</button>
+        <button><span class="dot"></span> Optional services</button>
+      </aside>
+      <div class="panel stack">
+        <div class="between">
+          <div>
+            <h2>App config</h2>
+            <p class="muted">Valid fields save immediately. Invalid fields remain unchanged and visible.</p>
+          </div>
+          <span class="pill"><span class="dot warn"></span>Partial save possible</span>
+        </div>
+        <div id="save-message" class="message hidden">Changes partially saved. Public base URL was rejected and remains unchanged.</div>
+        <div class="grid2">
+          <label class="field"><span>Allowed roots</span><input value="~/projects"></label>
+          <label class="field"><span>Engine port</span><input value="4100"></label>
+          <label class="field"><span>Public base URL</span><input id="public-url" value="http://localhost:3100"></label>
+          <label class="field"><span>Default harness</span><select><option>claude-first</option><option>codex-first</option></select></label>
+        </div>
+        <div class="row"><button class="primary" id="save">Save valid fields</button><button>Run setup status check</button></div>
+
+        <section class="stack">
+          <h3>Secret maintenance</h3>
+          <div class="secret">
+            <div><strong>SONAR_TOKEN</strong><p class="muted">Stored value hidden. Status: disabled after failed explicit test.</p></div>
+            <div class="row"><button>Replace</button><button>Test</button><button>Delete</button></div>
+          </div>
+          <div class="secret">
+            <div><strong>TELEGRAM_BOT_TOKEN</strong><p class="muted">No value stored. Optional service can stay skipped.</p></div>
+            <div class="row"><button>Add</button><button disabled>Test</button></div>
+          </div>
+        </section>
+
+        <section class="states">
+          <div class="statebox"><span class="label">[Normal State]</span><strong>Editable app settings</strong><p class="muted">Shows current values and secret metadata, never secret values.</p></div>
+          <div class="statebox"><span class="label">[Loading State]</span><strong>Saving valid fields</strong><p class="muted">Save button becomes pending; fields stay visible.</p></div>
+          <div class="statebox"><span class="label">[Error State]</span><strong>Partial save</strong><p class="muted">Invalid fields remain marked while valid fields persist.</p></div>
+          <div class="statebox"><span class="label">[Success State]</span><strong>All changes saved</strong><p class="muted">Status check can be re-run from the same page.</p></div>
+          <div class="statebox"><span class="label">[Empty State]</span><strong>No secrets stored</strong><p class="muted">Show add actions and explain where values are stored.</p></div>
+        </section>
+      </div>
+    </section>
+  </main>
+  <script>
+    document.getElementById("save").addEventListener("click",()=>{const msg=document.getElementById("save-message");msg.classList.remove("hidden");document.getElementById("public-url").style.borderColor="var(--bad)"});
+  </script>
+</body>
+</html>

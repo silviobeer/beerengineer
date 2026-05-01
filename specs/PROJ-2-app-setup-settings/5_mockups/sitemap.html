@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PROJ-2 Sitemap</title>
+  <style>
+    :root{--bg:#0b1517;--panel:#122024;--panel2:#1a2f33;--line:#2a4348;--text:#f0ebe0;--muted:#8fa0a4;--gold:#d4a843;--ok:#5fb6c2;--bad:#dc6666}
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,ui-sans-serif,system-ui,sans-serif}
+    .bar{height:44px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 16px;background:#081012}
+    .brand{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;letter-spacing:.14em;color:var(--muted)}
+    main{padding:22px;max-width:1100px;margin:0 auto}.muted{color:var(--muted)}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+    h1{font-size:22px;margin:0 0 8px} h2{font-size:15px;margin:0 0 8px}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;margin-top:22px}
+    .box{display:block;text-decoration:none;color:inherit;border:1px solid var(--line);background:var(--panel);padding:16px;min-height:150px;position:relative}
+    .box:hover{border-color:var(--gold)}.box.primary{border-color:var(--gold)}.tag{display:inline-flex;border:1px solid var(--line);padding:3px 6px;color:var(--muted);font-size:12px;margin-bottom:14px}
+    .flow{margin-top:22px;border:1px solid var(--line);background:var(--panel);padding:16px}.flowline{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.node{border:1px solid var(--line);background:#0d1719;padding:10px}.arrow{color:var(--gold)}
+    .legend{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:18px}.legend div{border:1px solid var(--line);padding:10px;background:var(--panel2)}
+    @media(max-width:800px){.grid,.legend{grid-template-columns:1fr}.flowline{display:grid}}
+  </style>
+</head>
+<body>
+  <header class="bar"><span class="mono">PROJ-2 / Sitemap</span><span class="brand">beerengineer_</span></header>
+  <main>
+    <h1>App Setup And Settings Sitemap</h1>
+    <p class="muted">Visual structure for the selected Single-Task Wizard direction. Boxes link to the mockup screens.</p>
+
+    <section class="grid">
+      <a class="box primary" href="PROJ-2-setup-wizard.html">
+        <span class="tag">First-run flow</span>
+        <h2>/setup</h2>
+        <p class="muted">Single-task setup wizard with visible step count, rich instructions, gate states, and verification.</p>
+        <p class="mono">Roles: first-time local user, returning operator when setup is blocked</p>
+      </a>
+      <a class="box" href="PROJ-2-settings-maintenance.html">
+        <span class="tag">Maintenance flow</span>
+        <h2>/settings</h2>
+        <p class="muted">App-level Eigenschaften after setup: same sections, direct navigation, secret replacement, partial save states.</p>
+        <p class="mono">Roles: returning operator</p>
+      </a>
+      <a class="box" href="implementation-handoff.md">
+        <span class="tag">Handoff</span>
+        <h2>Implementation handoff</h2>
+        <p class="muted">Component reuse, new candidates, interaction contract, implementation tolerance, and UI risks.</p>
+        <p class="mono">Audience: requirements, architecture, execution</p>
+      </a>
+    </section>
+
+    <section class="flow">
+      <h2>Primary user flow</h2>
+      <div class="flowline">
+        <div class="node">Installer opens UI or prints URL</div><span class="arrow">→</span>
+        <div class="node">/setup Step 1 Initialize</div><span class="arrow">→</span>
+        <div class="node">Step 2 Dependencies</div><span class="arrow">→</span>
+        <div class="node">Step 3 App config</div><span class="arrow">→</span>
+        <div class="node">Step 4 Secrets/options</div><span class="arrow">→</span>
+        <div class="node">Step 5 Finish</div>
+      </div>
+    </section>
+
+    <section class="legend">
+      <div><strong>Normal</strong><p class="muted">Current step is blocked until verification passes.</p></div>
+      <div><strong>Success</strong><p class="muted">Step gate flips to done and Continue unlocks.</p></div>
+      <div><strong>Error/loading/empty</strong><p class="muted">Shown in-state inside each screen mockup.</p></div>
+    </section>
+  </main>
+</body>
+</html>
