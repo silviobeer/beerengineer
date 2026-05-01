@@ -14,6 +14,11 @@ export type ManagedInstallReleaseTarget = {
   download: ManagedInstallDownloadMetadata
 }
 
+export type ManagedInstallDownloadedRelease = {
+  body: Buffer
+  finalUrl: string
+}
+
 export type ManagedInstallPhaseName =
   | "prerequisites"
   | "download"

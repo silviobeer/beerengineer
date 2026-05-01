@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process"
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs"
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs"
 import { join, resolve, sep } from "node:path"
 
 export type ManagedInstallReleaseValidationLimits = {
@@ -16,6 +16,8 @@ type ReleaseVersion = {
   tag: string
   version: string
 }
+
+const MANAGED_INSTALL_TAR_TIMEOUT_MS = 60_000
 
 export function validateManagedInstallArchiveEntries(entries: string[]): void {
   for (const entry of entries) {
@@ -43,6 +45,7 @@ export function validateManagedInstallReleaseTree(root: string, release: Release
   const enginePackagePath = join(engineDir, "package.json")
   const uiDir = join(root, "apps", "ui")
   validateRequiredReleasePaths({ rootPackagePath, enginePackagePath, uiDir })
+  rejectSymlink(engineDir, "engine_dir_symlink")
   validateWorkspaceMetadata(rootPackagePath)
   const enginePackage = readJson<{ name?: unknown; version?: unknown; bin?: unknown }>(enginePackagePath)
   if (enginePackage.name !== "@beerengineer/engine") throw new Error("managed_install_validate_failed:unexpected_engine_package_name")
@@ -60,9 +63,12 @@ export function validateManagedInstallReleaseTree(root: string, release: Release
 }
 
 export function listManagedInstallTarballEntries(tarballPath: string): string[] {
-  const result = spawnSync("tar", ["-tzf", tarballPath], { encoding: "utf8" })
+  const result = spawnSync("tar", ["-tzf", tarballPath], {
+    encoding: "utf8",
+    timeout: MANAGED_INSTALL_TAR_TIMEOUT_MS,
+  })
   if (result.status !== 0) {
-    throw new Error(`managed_install_validate_failed:tar_list_failed:${result.stderr.trim() || result.stdout.trim() || "tar failed"}`)
+    throw new Error(`managed_install_validate_failed:tar_list_failed:${tarFailureMessage(result.stderr, result.stdout, result.error)}`)
   }
   return result.stdout.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
 }
@@ -91,6 +97,16 @@ function validateRequiredReleasePaths(paths: { rootPackagePath: string; enginePa
   if (!existsSync(paths.rootPackagePath)) throw new Error("managed_install_validate_failed:missing_root_package_json")
   if (!existsSync(paths.enginePackagePath)) throw new Error("managed_install_validate_failed:missing_engine_package_json")
   if (!existsSync(paths.uiDir)) throw new Error("managed_install_validate_failed:missing_apps_ui")
+}
+
+function rejectSymlink(path: string, code: string): void {
+  if (lstatSync(path).isSymbolicLink()) {
+    throw new Error(`managed_install_validate_failed:${code}`)
+  }
+}
+
+function tarFailureMessage(stderr: string, stdout: string, error?: Error): string {
+  return error?.message || stderr.trim() || stdout.trim() || "tar failed"
 }
 
 function validateWorkspaceMetadata(rootPackagePath: string): void {

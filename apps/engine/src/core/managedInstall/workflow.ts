@@ -12,6 +12,7 @@ import {
   createManagedInstallResult,
 } from "./diagnostics.js"
 import type {
+  ManagedInstallDownloadedRelease,
   ManagedInstallDownloadMetadata,
   ManagedInstallReleaseTarget,
   ManagedInstallResult,
@@ -22,21 +23,16 @@ import {
 } from "./state.js"
 import { detectManagedWrapperShadow } from "./pathCheck.js"
 
-type DownloadedRelease = {
-  body: Buffer
-  finalUrl: string
-}
-
 type ValidateReleaseInput = {
   target: ManagedInstallReleaseTarget
-  download: DownloadedRelease
+  download: ManagedInstallDownloadedRelease
   stagingDir: string
 }
 
 export type ManagedInstallReleaseWorkflowOptions = {
   operationId?: string
   resolveRelease: () => Promise<ManagedInstallReleaseTarget>
-  downloadRelease: (target: ManagedInstallReleaseTarget) => Promise<DownloadedRelease>
+  downloadRelease: (target: ManagedInstallReleaseTarget) => Promise<ManagedInstallDownloadedRelease>
   validateRelease: (input: ValidateReleaseInput) => Promise<void> | void
 }
 
@@ -93,7 +89,7 @@ export async function runManagedInstallReleaseWorkflow(
       return failResult(operationId, "staging", "install", err as Error, target)
     }
 
-    let download: DownloadedRelease
+    let download: ManagedInstallDownloadedRelease
     try {
       download = await opts.downloadRelease(target)
     } catch (err) {
@@ -189,9 +185,8 @@ export async function runManagedInstallCompletionWorkflow(
 
   const summaryEngineUrl = await runEngineStartPhase(opts, paths.wrapperPath, baseEnv, phases, nextCommands, engineUrl)
 
-  let summaryUiUrl: string | undefined = uiUrl
   const uiCommand = `${paths.wrapperPath} start ui`
-  await runUiStartPhase(opts, paths.wrapperPath, baseEnv, phases, nextCommands, uiUrl, uiCommand)
+  const summaryUiUrl = await runUiStartPhase(opts, paths.wrapperPath, baseEnv, phases, nextCommands, uiUrl, uiCommand)
 
   return createManagedInstallResult({
     operationId,
@@ -298,19 +293,20 @@ async function runUiStartPhase(
   nextCommands: string[],
   uiUrl: string,
   uiCommand: string,
-): Promise<void> {
+): Promise<string | undefined> {
   if (opts.uiStartEligible === false) {
     nextCommands.push(uiCommand)
     phases.push(warningPhase("uiStart", `UI automatic start is not reliable; run ${uiCommand} and open ${uiUrl}`, uiCommand))
-    return
+    return uiUrl
   }
   const ui = await runManagedCommand(opts, "uiStart", wrapperPath, ["start", "ui"], env)
   if (ui.exitCode === 0) {
     phases.push(okPhase("uiStart", `UI available at ${uiUrl}`))
-    return
+    return uiUrl
   }
   nextCommands.push(uiCommand)
   phases.push(warningPhase("uiStart", `UI start failed: ${commandMessage(ui, "manual UI start required")}`, uiCommand))
+  return undefined
 }
 
 function runManagedCommand(

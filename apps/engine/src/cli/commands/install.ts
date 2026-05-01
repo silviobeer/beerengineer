@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process"
 import { mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs"
-import { basename, join } from "node:path"
+import { join } from "node:path"
 import { resolveManagedInstallRelease } from "../../core/managedInstall/release.js"
 import { downloadManagedInstallTarball } from "../../core/managedInstall/download.js"
 import { runManagedInstallPrerequisiteProbe } from "../../core/managedInstall/prerequisites.js"
@@ -15,8 +15,14 @@ import {
   activateManagedInstallVersion,
   evaluateManagedInstallState,
   resolveManagedInstallStatePaths,
+  safeReleaseTag,
 } from "../../core/managedInstall/state.js"
-import type { ManagedInstallPhase, ManagedInstallReleaseTarget, ManagedInstallResult } from "../../core/managedInstall/types.js"
+import type {
+  ManagedInstallDownloadedRelease,
+  ManagedInstallPhase,
+  ManagedInstallReleaseTarget,
+  ManagedInstallResult,
+} from "../../core/managedInstall/types.js"
 import {
   buildManagedInstallSummary,
   createManagedInstallErrorResult,
@@ -35,10 +41,7 @@ import type { AppConfig } from "../../setup/types.js"
 import type { Command } from "../types.js"
 import { loadEffectiveConfig } from "../common.js"
 
-type DownloadedRelease = {
-  body: Buffer
-  finalUrl: string
-}
+const MANAGED_INSTALL_TAR_TIMEOUT_MS = 60_000
 
 type InstalledRelease = {
   extractedRoot: string
@@ -50,11 +53,11 @@ export type ManagedInstallCommandDeps = {
   config?: Pick<AppConfig, "dataDir">
   probePrerequisites?: () => Promise<ManagedInstallPhase>
   resolveRelease?: () => Promise<ManagedInstallReleaseTarget>
-  downloadRelease?: (target: ManagedInstallReleaseTarget) => Promise<DownloadedRelease>
+  downloadRelease?: (target: ManagedInstallReleaseTarget) => Promise<ManagedInstallDownloadedRelease>
   installDownloadedRelease?: (input: {
     config: Pick<AppConfig, "dataDir">
     target: ManagedInstallReleaseTarget
-    download: DownloadedRelease
+    download: ManagedInstallDownloadedRelease
     stagingDir: string
   }) => Promise<InstalledRelease>
   commandRunner?: (invocation: ManagedInstallCommandInvocation) => Promise<ManagedInstallCommandResult>
@@ -70,7 +73,6 @@ export async function runManagedInstallCommand(
   deps: ManagedInstallCommandDeps = {},
 ): Promise<number> {
   const operationId = deps.operationId?.() ?? `bootstrap-${Date.now()}`
-  const config = deps.config ?? loadEffectiveConfig() ?? defaultAppConfig()
   const probePrerequisites = deps.probePrerequisites ?? runManagedInstallPrerequisiteProbe
   const resolveRelease = deps.resolveRelease ?? resolveManagedInstallRelease
   const downloadRelease = deps.downloadRelease ?? (target => downloadManagedInstallTarball(target.tarballUrl))
@@ -84,6 +86,7 @@ export async function runManagedInstallCommand(
   })
 
   try {
+    const config = deps.config ?? loadEffectiveConfig() ?? defaultAppConfig()
     const prerequisitePhase = await probePrerequisites()
     if (prerequisitePhase.status === "failed") {
       const result = failedResult(operationId, [prerequisitePhase], prerequisitePhase.message)
@@ -114,12 +117,13 @@ export async function runManagedInstallCommand(
       return result.exitCode
     }
 
+    const installedRelease: { value?: InstalledRelease } = {}
     const releaseResult = await runManagedInstallReleaseWorkflow(config, {
       operationId,
       resolveRelease,
       downloadRelease,
       validateRelease: async ({ target, download, stagingDir }) => {
-        await installDownloadedRelease({ config, target, download, stagingDir })
+        installedRelease.value = await installDownloadedRelease({ config, target, download, stagingDir })
       },
     })
     if (releaseResult.exitCode !== 0) {
@@ -135,6 +139,9 @@ export async function runManagedInstallCommand(
       writeResult(cmd, result, writeStdout, writeStderr)
       return result.exitCode
     }
+    const releasePhases = installedRelease.value
+      ? annotateInstallPhaseWithExtractedBytes(releaseResult.phases, installedRelease.value.extractedBytes)
+      : releaseResult.phases
 
     const completion = await runManagedInstallCompletionWorkflow(config, {
       operationId,
@@ -143,7 +150,7 @@ export async function runManagedInstallCommand(
       uiStartEligible: deps.uiStartEligible,
       commandRunner,
     })
-    const phases = [prerequisitePhase, ...releaseResult.phases, ...completion.phases]
+    const phases = [prerequisitePhase, ...releasePhases, ...completion.phases]
     const result = createManagedInstallResult({
       operationId,
       target: releaseResult.target,
@@ -163,7 +170,7 @@ export async function runManagedInstallCommand(
 async function installDownloadedManagedRelease(input: {
   config: Pick<AppConfig, "dataDir">
   target: ManagedInstallReleaseTarget
-  download: DownloadedRelease
+  download: ManagedInstallDownloadedRelease
   stagingDir: string
 }): Promise<InstalledRelease> {
   const tarballPath = join(input.stagingDir, `${input.target.version}.tar.gz`)
@@ -171,9 +178,12 @@ async function installDownloadedManagedRelease(input: {
   mkdirSync(extractDir, { recursive: true })
   writeFileSync(tarballPath, input.download.body)
   validateManagedInstallArchiveEntries(listManagedInstallTarballEntries(tarballPath))
-  const extract = spawnSync("tar", ["-xzf", tarballPath, "-C", extractDir], { encoding: "utf8" })
+  const extract = spawnSync("tar", ["-xzf", tarballPath, "-C", extractDir], {
+    encoding: "utf8",
+    timeout: MANAGED_INSTALL_TAR_TIMEOUT_MS,
+  })
   if (extract.status !== 0) {
-    throw new Error(`managed_install_validate_failed:tar_extract_failed:${extract.stderr.trim() || extract.stdout.trim() || "tar failed"}`)
+    throw new Error(`managed_install_validate_failed:tar_extract_failed:${tarFailureMessage(extract.stderr, extract.stdout, extract.error)}`)
   }
   const entries = readdirSync(extractDir, { withFileTypes: true }).filter(entry => entry.isDirectory())
   if (entries.length !== 1) throw new Error("managed_install_validate_failed:unexpected_tarball_layout")
@@ -189,6 +199,16 @@ async function installDownloadedManagedRelease(input: {
   renameSync(extractedRoot, versionDir)
   activateManagedInstallVersion(input.config, { tag: input.target.tag, version: input.target.version })
   return { extractedRoot: versionDir, extractedBytes }
+}
+
+function annotateInstallPhaseWithExtractedBytes(phases: ManagedInstallPhase[], extractedBytes: number): ManagedInstallPhase[] {
+  return phases.map(phase => phase.name === "install" && phase.status === "ok"
+    ? { ...phase, message: `${phase.message} (${extractedBytes} bytes extracted)` }
+    : phase)
+}
+
+function tarFailureMessage(stderr: string, stdout: string, error?: Error): string {
+  return error?.message || stderr.trim() || stdout.trim() || "tar failed"
 }
 
 async function runManagedInstallSubcommand(invocation: ManagedInstallCommandInvocation): Promise<ManagedInstallCommandResult> {
@@ -228,12 +248,4 @@ function failedResult(operationId: string, phases: ManagedInstallPhase[], messag
     }),
     error: { message },
   }
-}
-
-function safeReleaseTag(tag: string): string {
-  const name = basename(tag.trim())
-  if (!name || name !== tag || name === "." || name === ".." || name.includes("/") || name.includes("\\")) {
-    throw new Error("managed_install_validate_failed:invalid_release_tag")
-  }
-  return name
 }

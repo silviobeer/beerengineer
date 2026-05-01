@@ -392,7 +392,7 @@ function hasPreservedAppData(appData: ManagedInstallStateEvaluation["preservedAp
   return appData.configFiles.length > 0 || appData.sqliteFiles.length > 0
 }
 
-function safeReleaseTag(tag: string): string {
+export function safeReleaseTag(tag: string): string {
   const trimmed = tag.trim()
   if (!trimmed || trimmed === "." || trimmed === ".." || trimmed.includes("/") || trimmed.includes("\\")) {
     throw new Error("managed_install_state_failed:invalid_release_tag")

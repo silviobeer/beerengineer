@@ -192,6 +192,7 @@ test("completion workflow handles UI best-effort success instruction and warning
       : { exitCode: 0 },
   })
   assert.equal(failed.exitCode, 0)
+  assert.equal(failed.summary.uiUrl, undefined)
   assert.match(failed.summary.warnings.join("\n"), /uiStart: UI start failed/)
 })
 

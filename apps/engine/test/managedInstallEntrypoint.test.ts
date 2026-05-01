@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -48,9 +48,9 @@ test("public shell entrypoints are thin delegates into repo-owned install comman
   }
 })
 
-test("install CLI JSON output round-trips success and startup errors with schema", async () => {
+test("install CLI JSON output round-trips success and startup errors with schema", async t => {
   const successChunks: string[] = []
-  const config = configForTempDir()
+  const config = configForTempDir(t)
   const successExit = await runManagedInstallCommand(
     { kind: "install", json: true, fromBootstrap: "posix" },
     {
@@ -92,7 +92,7 @@ test("install CLI JSON output round-trips success and startup errors with schema
     { kind: "install", json: true, fromBootstrap: "windows" },
     {
       operationId: () => "op-cli-failure",
-      config: configForTempDir(),
+      config: configForTempDir(t),
       resolveRelease: async () => {
         throw new Error("managed_install_release_required:no_stable_release")
       },
@@ -128,8 +128,10 @@ function repoPath(path: string): string {
   return resolve(REPO_ROOT, path)
 }
 
-function configForTempDir(): { dataDir: string } {
-  return { dataDir: mkdtempSync(join(tmpdir(), "managed-install-cli-")) }
+function configForTempDir(t: { after: (fn: () => void) => void }): { dataDir: string } {
+  const dataDir = mkdtempSync(join(tmpdir(), "managed-install-cli-"))
+  t.after(() => rmSync(dataDir, { recursive: true, force: true }))
+  return { dataDir }
 }
 
 function releaseTarget() {
