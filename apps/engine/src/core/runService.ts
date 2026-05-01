@@ -9,7 +9,7 @@ import { getRegisteredWorkspace } from "./workspaces.js"
 import { deriveProjectStartStages, loadPreparedImportBundleWithLlmFallback, seedPreparedImportArtifacts, type PreparedImportBundle } from "./preparedImport.js"
 import { layout } from "./workspaceLayout.js"
 import { resolveWorkflowContextForItemRun, resolveWorkflowContextForRun } from "./workflowContextResolver.js"
-import type { Repos, ItemRow, RunRow, ExternalRemediationRow } from "../db/repositories.js"
+import type { Repos, ItemRow, RunRow, ExternalRemediationRow, WorkspaceRow } from "../db/repositories.js"
 import type { WorkflowIO } from "./io.js"
 import type { WorkflowResumeInput } from "../workflow.js"
 
@@ -255,19 +255,9 @@ export async function startPreparedImportForItem(
   const existingItem = input.itemId ? repos.getItem(input.itemId) : undefined
   if (input.itemId && !existingItem) return { ok: false, status: 404, error: "item_not_found" }
 
-  let workspace = existingItem ? repos.getWorkspace(existingItem.workspace_id) : undefined
-  if (!existingItem) {
-    if (input.workspaceKey) {
-      workspace = repos.getWorkspaceByKey(input.workspaceKey)
-      if (!workspace) return { ok: false, status: 404, error: "unknown_workspace" }
-    } else {
-      workspace = repos.upsertWorkspace({
-        key: "default",
-        name: "Default Workspace",
-        description: "beerengineer_ engine workspace",
-      })
-    }
-  }
+  const workspaceResult = resolvePreparedImportWorkspace(repos, existingItem, input.workspaceKey)
+  if (!workspaceResult.ok) return workspaceResult.error
+  const workspace = workspaceResult.workspace
 
   let bundle: PreparedImportBundle
   try {
@@ -303,8 +293,7 @@ export async function startPreparedImportForItem(
     {
       owner: input.owner ?? "api",
       itemId: existingItem?.id,
-      workspaceKey: !existingItem ? workspace?.key : undefined,
-      workspaceName: !existingItem ? workspace?.name : undefined,
+      ...newItemWorkspaceFields(existingItem, workspace),
       resume,
       onItemColumnChanged: input.onItemColumnChanged,
     },
@@ -317,6 +306,32 @@ export async function startPreparedImportForItem(
   const seeded = seedPreparedImportArtifacts(ctx, bundle, { sourceDir: input.sourceDir })
   fireInBackground(io, "startPreparedImportForItem", prepared.start)
   return { ok: true, runId: prepared.runId, itemId: item.id, warnings: seeded.warnings }
+}
+
+function resolvePreparedImportWorkspace(
+  repos: Repos,
+  existingItem: ItemRow | undefined,
+  workspaceKey: string | undefined,
+): { ok: true; workspace: WorkspaceRow | undefined } | { ok: false; error: PreparedImportRunResult } {
+  if (existingItem) return { ok: true, workspace: repos.getWorkspace(existingItem.workspace_id) }
+  if (!workspaceKey) {
+    return {
+      ok: true,
+      workspace: repos.upsertWorkspace({
+        key: "default",
+        name: "Default Workspace",
+        description: "beerengineer_ engine workspace",
+      }),
+    }
+  }
+  const workspace = repos.getWorkspaceByKey(workspaceKey)
+  if (workspace) return { ok: true, workspace }
+  return { ok: false, error: { ok: false, status: 404, error: "unknown_workspace" } }
+}
+
+function newItemWorkspaceFields(item: ItemRow | undefined, workspace: WorkspaceRow | undefined): { workspaceKey?: string; workspaceName?: string } {
+  if (item !== undefined) return {}
+  return { workspaceKey: workspace?.key, workspaceName: workspace?.name }
 }
 
 function titleForPreparedImportItem(bundle: PreparedImportBundle): string {

@@ -18,12 +18,20 @@ export async function readJson(req: IncomingMessage): Promise<unknown> {
 }
 
 /**
- * Echo only the approved UI origin. `*` combined with a DELETE route that
+ * Echo only approved UI origins. `*` combined with a DELETE route that
  * does rm -rf would let any page on the user's browser delete workspaces.
+ *
+ * `allowedOrigin` may be a comma-separated list (e.g.
+ * "http://127.0.0.1:3100,http://100.80.38.41:3100") to support multiple
+ * reachable hostnames (loopback + Tailscale + LAN). The string `"*"`
+ * disables the origin check — only safe because every mutating method is
+ * still gated by `x-beerengineer-token`.
  */
 export function setCors(res: ServerResponse, req: IncomingMessage, allowedOrigin: string): void {
   const origin = req.headers.origin
-  if (origin === allowedOrigin) {
+  const allowList = new Set(allowedOrigin.split(",").map(entry => entry.trim()).filter(Boolean))
+  const wildcard = allowList.has("*")
+  if (typeof origin === "string" && (wildcard || allowList.has(origin))) {
     res.setHeader("access-control-allow-origin", origin)
     res.setHeader("vary", "origin")
     res.setHeader("access-control-allow-credentials", "true")

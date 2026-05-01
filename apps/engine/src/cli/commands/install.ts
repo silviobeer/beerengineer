@@ -20,7 +20,6 @@ import type { ManagedInstallPhase, ManagedInstallReleaseTarget, ManagedInstallRe
 import {
   buildManagedInstallSummary,
   createManagedInstallErrorResult,
-  createManagedInstallPhase,
   createManagedInstallResult,
   renderManagedInstallJson,
   renderManagedInstallHuman,

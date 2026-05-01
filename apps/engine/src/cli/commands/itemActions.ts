@@ -8,7 +8,7 @@ import { prepareRun, runWorkflowWithSync } from "../../core/runOrchestrator.js"
 import { deriveProjectStartStages, loadPreparedImportBundleWithLlmFallback, seedPreparedImportArtifacts } from "../../core/preparedImport.js"
 import { resolveWorkflowLlmOptions } from "../../core/runSubscribers.js"
 import { resolveWorkflowContextForItemRun } from "../../core/workflowContextResolver.js"
-import type { ItemRow, Repos } from "../../db/repositories.js"
+import type { ItemRow, Repos, WorkspaceRow } from "../../db/repositories.js"
 import { initDatabase } from "../../db/connection.js"
 import type { ResumeFlags } from "../types.js"
 import { resolveItemReference, resolveSelectedWorkspace } from "../common.js"
@@ -22,6 +22,49 @@ type CliItemActionContext = {
 }
 
 type CliItemActionHandler = (ctx: CliItemActionContext) => Promise<number>
+
+const CLI_RUN_DEATH_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const
+
+function exitCodeForSignal(signal: string): number {
+  if (signal === "SIGINT") return 130
+  if (signal === "SIGTERM") return 143
+  return 129
+}
+
+function installCliRunDeathHandlers(repos: Repos, runId: string): () => void {
+  let triggered = false
+  const fail = (cause: string): void => {
+    if (triggered) return
+    triggered = true
+    try {
+      const run = repos.getRun(runId)
+      if (run?.status !== "running") return
+      repos.updateRun(runId, {
+        status: "failed",
+        recovery_status: "failed",
+        recovery_scope: "run",
+        recovery_scope_ref: null,
+        recovery_summary: `CLI worker exited (${cause}) — no live process; resume or abandon.`,
+      })
+    } catch {
+      // best-effort cleanup; suppress so signal handler can finish
+    }
+  }
+  const handlers = CLI_RUN_DEATH_SIGNALS.map(signal => {
+    const handler = (): void => {
+      fail(signal)
+      process.exit(exitCodeForSignal(signal))
+    }
+    process.on(signal, handler)
+    return { signal, handler }
+  })
+  const beforeExit = (): void => fail("beforeExit")
+  process.on("beforeExit", beforeExit)
+  return () => {
+    for (const { signal, handler } of handlers) process.off(signal, handler)
+    process.off("beforeExit", beforeExit)
+  }
+}
 
 type ItemActionsModule = typeof import("../../core/itemActions.js")
 let lookupTransitionSync: ItemActionsModule["lookupTransition"]
@@ -412,18 +455,10 @@ async function startPreparedImportFromCli(
   json: boolean,
 ): Promise<number> {
   const workspace = item ? repos.getWorkspace(item.workspace_id) : resolveSelectedWorkspace(repos, workspaceKey)
-  if (!workspace) {
-    console.error(workspaceKey ? `  Unknown workspace: ${workspaceKey}` : "  No workspace configured. Use `beerengineer workspace add` first.")
-    return 1
-  }
+  if (!workspace) return reportMissingPreparedImportWorkspace(workspaceKey)
 
-  if (item) {
-    const transition = lookupTransitionSync("import_prepared", item.current_column, item.phase_status)
-    if (transition.kind !== "start-run") {
-      console.error(`  Invalid transition: import_prepared from ${item.current_column}/${item.phase_status}`)
-      return 1
-    }
-  }
+  const transitionExit = validatePreparedImportTransition(item)
+  if (transitionExit !== 0) return transitionExit
   const exit = preflightCliBranchingStart(repos, workspace.id, [sourceDir])
   if (exit !== 0) return exit
   const llm = await resolveWorkflowLlmOptions(workspace)
@@ -451,8 +486,7 @@ async function startPreparedImportFromCli(
       {
         owner: "cli",
         itemId: item?.id,
-        workspaceKey: !item ? workspace.key : undefined,
-        workspaceName: !item ? workspace.name : undefined,
+        ...newItemWorkspaceFields(item, workspace),
         resume,
       },
     )
@@ -465,7 +499,12 @@ async function startPreparedImportFromCli(
     }
     const seeded = seedPreparedImportArtifacts(ctx, bundle, { sourceDir })
     repos.setItemColumn(prepared.itemId, "implementation", "running")
-    await prepared.start()
+    const releaseDeathHandlers = installCliRunDeathHandlers(repos, prepared.runId)
+    try {
+      await prepared.start()
+    } finally {
+      releaseDeathHandlers()
+    }
     if (json) {
       console.log(JSON.stringify({ kind: "started", itemId: prepared.itemId, runId: prepared.runId, warnings: seeded.warnings }))
     } else {
@@ -478,6 +517,24 @@ async function startPreparedImportFromCli(
   } finally {
     io.close?.()
   }
+}
+
+function reportMissingPreparedImportWorkspace(workspaceKey: string | undefined): number {
+  console.error(workspaceKey ? `  Unknown workspace: ${workspaceKey}` : "  No workspace configured. Use `beerengineer workspace add` first.")
+  return 1
+}
+
+function validatePreparedImportTransition(item: ItemRow | undefined): number {
+  if (item === undefined) return 0
+  const transition = lookupTransitionSync("import_prepared", item.current_column, item.phase_status)
+  if (transition.kind === "start-run") return 0
+  console.error(`  Invalid transition: import_prepared from ${item.current_column}/${item.phase_status}`)
+  return 1
+}
+
+function newItemWorkspaceFields(item: ItemRow | undefined, workspace: WorkspaceRow): { workspaceKey?: string; workspaceName?: string } {
+  if (item !== undefined) return {}
+  return { workspaceKey: workspace.key, workspaceName: workspace.name }
 }
 
 function titleForPreparedImportItem(bundle: Awaited<ReturnType<typeof loadPreparedImportBundleWithLlmFallback>>): string {
@@ -507,7 +564,7 @@ export async function runItemImportPrepared(itemRef: string | undefined, sourceD
   const repos = new (await import("../../db/repositories.js")).Repos(db)
   try {
     if (!itemRef) return await startPreparedImportFromCli(repos, undefined, sourceDir, workspaceKey, json)
-    const resolvedWorkspace = !workspaceKey ? repos.getWorkspaceByKey(itemRef) : undefined
+    const resolvedWorkspace = workspaceKey ? undefined : repos.getWorkspaceByKey(itemRef)
     const resolved = resolveItemReference(repos, itemRef)
     if (resolved.kind === "found") {
       return await startPreparedImportFromCli(repos, resolved.item, sourceDir, workspaceKey, json)

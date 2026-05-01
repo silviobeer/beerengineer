@@ -1121,14 +1121,21 @@ test("item preview endpoints expose launch info and can start and stop the local
   )
   assignPort(worktreePath, "item/preview-item", workspaceRoot)
 
-  const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
+  const expectedPreviewHost = "127.0.0.1"
+  const { proc, base } = startServer({
+    BEERENGINEER_UI_DB_PATH: dbPath,
+    BEERENGINEER_PUBLIC_BASE_URL: `http://${expectedPreviewHost}:3100`,
+  })
   try {
     await waitForHealth(base)
 
     const previewRes = await fetch(`${base}/items/${item.id}/preview`)
     assert.equal(previewRes.status, 200)
     const previewBody = await previewRes.json() as { previewUrl: string; launch: { command: string; source: string } | null; running: boolean; managed: boolean }
-    assert.match(previewBody.previewUrl, /^http:\/\/127\.0\.0\.1:/)
+    const previewUrl = new URL(previewBody.previewUrl)
+    assert.equal(previewUrl.protocol, "http:")
+    assert.equal(previewUrl.hostname, expectedPreviewHost)
+    assert.match(previewUrl.port, /^\d+$/)
     assert.equal(previewBody.launch?.source, "workspace-config")
     assert.equal(previewBody.running, false)
     assert.equal(previewBody.managed, false)

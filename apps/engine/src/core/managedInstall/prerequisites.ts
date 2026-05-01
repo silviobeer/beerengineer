@@ -74,7 +74,7 @@ async function defaultProbeCommand(command: "node" | "npm" | "git"): Promise<Pro
 }
 
 function parseNodeMajor(version: string): number {
-  const match = version.match(/v?(\d+)/)
+  const match = /v?(\d+)/.exec(version)
   return match ? Number(match[1]) : 0
 }
 
