@@ -17,7 +17,7 @@ type ReleaseVersion = {
   version: string
 }
 
-const MANAGED_INSTALL_TAR_TIMEOUT_MS = 60_000
+export const MANAGED_INSTALL_TAR_TIMEOUT_MS = 60_000
 
 export function validateManagedInstallArchiveEntries(entries: string[]): void {
   for (const entry of entries) {
@@ -41,11 +41,15 @@ export function validateManagedInstallReleaseSizes(
 
 export function validateManagedInstallReleaseTree(root: string, release: ReleaseVersion): { binPath: string } {
   const rootPackagePath = join(root, "package.json")
+  const appsDir = join(root, "apps")
   const engineDir = join(root, "apps", "engine")
   const enginePackagePath = join(engineDir, "package.json")
   const uiDir = join(root, "apps", "ui")
   validateRequiredReleasePaths({ rootPackagePath, enginePackagePath, uiDir })
+  rejectSymlink(root, "release_root_symlink")
+  rejectSymlink(appsDir, "apps_dir_symlink")
   rejectSymlink(engineDir, "engine_dir_symlink")
+  rejectSymlink(uiDir, "ui_dir_symlink")
   validateWorkspaceMetadata(rootPackagePath)
   const enginePackage = readJson<{ name?: unknown; version?: unknown; bin?: unknown }>(enginePackagePath)
   if (enginePackage.name !== "@beerengineer/engine") throw new Error("managed_install_validate_failed:unexpected_engine_package_name")
@@ -68,9 +72,13 @@ export function listManagedInstallTarballEntries(tarballPath: string): string[] 
     timeout: MANAGED_INSTALL_TAR_TIMEOUT_MS,
   })
   if (result.status !== 0) {
-    throw new Error(`managed_install_validate_failed:tar_list_failed:${tarFailureMessage(result.stderr, result.stdout, result.error)}`)
+    throw new Error(`managed_install_validate_failed:tar_list_failed:${managedInstallTarFailureMessage(result.stderr, result.stdout, result.error)}`)
   }
   return result.stdout.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+}
+
+export function managedInstallTarFailureMessage(stderr: string, stdout: string, error?: Error): string {
+  return error?.message || stderr.trim() || stdout.trim() || "tar failed"
 }
 
 export function measureDirectoryBytes(root: string): number {
@@ -103,10 +111,6 @@ function rejectSymlink(path: string, code: string): void {
   if (lstatSync(path).isSymbolicLink()) {
     throw new Error(`managed_install_validate_failed:${code}`)
   }
-}
-
-function tarFailureMessage(stderr: string, stdout: string, error?: Error): string {
-  return error?.message || stderr.trim() || stdout.trim() || "tar failed"
 }
 
 function validateWorkspaceMetadata(rootPackagePath: string): void {

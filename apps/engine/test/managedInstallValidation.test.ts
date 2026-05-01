@@ -119,6 +119,32 @@ test("validateManagedInstallReleaseTree rejects missing and inconsistent package
       () => validateManagedInstallReleaseTree(symlinkEngineDir, { tag: "v1.0.0", version: "1.0.0" }),
       /managed_install_validate_failed:engine_dir_symlink/,
     )
+
+    const outsideRelease = createValidReleaseTree()
+    const symlinkRoot = join(tmpdir(), `managed-install-root-link-${process.pid}-${Date.now()}`)
+    symlinkSync(outsideRelease, symlinkRoot, "dir")
+    assert.throws(
+      () => validateManagedInstallReleaseTree(symlinkRoot, { tag: "v1.0.0", version: "1.0.0" }),
+      /managed_install_validate_failed:release_root_symlink/,
+    )
+
+    const symlinkAppsDir = createValidReleaseTree()
+    const outsideApps = join(createValidReleaseTree(), "apps")
+    rmSync(join(symlinkAppsDir, "apps"), { recursive: true, force: true })
+    symlinkSync(outsideApps, join(symlinkAppsDir, "apps"), "dir")
+    assert.throws(
+      () => validateManagedInstallReleaseTree(symlinkAppsDir, { tag: "v1.0.0", version: "1.0.0" }),
+      /managed_install_validate_failed:apps_dir_symlink/,
+    )
+
+    const symlinkUiDir = createValidReleaseTree()
+    const outsideUi = mkdtempSync(join(tmpdir(), "managed-install-outside-ui-"))
+    rmSync(join(symlinkUiDir, "apps", "ui"), { recursive: true, force: true })
+    symlinkSync(outsideUi, join(symlinkUiDir, "apps", "ui"), "dir")
+    assert.throws(
+      () => validateManagedInstallReleaseTree(symlinkUiDir, { tag: "v1.0.0", version: "1.0.0" }),
+      /managed_install_validate_failed:ui_dir_symlink/,
+    )
   }
 })
 

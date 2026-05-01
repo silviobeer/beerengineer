@@ -6,6 +6,8 @@ import { downloadManagedInstallTarball } from "../../core/managedInstall/downloa
 import { runManagedInstallPrerequisiteProbe } from "../../core/managedInstall/prerequisites.js"
 import {
   listManagedInstallTarballEntries,
+  MANAGED_INSTALL_TAR_TIMEOUT_MS,
+  managedInstallTarFailureMessage,
   measureDirectoryBytes,
   validateManagedInstallArchiveEntries,
   validateManagedInstallReleaseSizes,
@@ -40,8 +42,6 @@ import { defaultAppConfig } from "../../setup/config.js"
 import type { AppConfig } from "../../setup/types.js"
 import type { Command } from "../types.js"
 import { loadEffectiveConfig } from "../common.js"
-
-const MANAGED_INSTALL_TAR_TIMEOUT_MS = 60_000
 
 type InstalledRelease = {
   extractedRoot: string
@@ -183,7 +183,7 @@ async function installDownloadedManagedRelease(input: {
     timeout: MANAGED_INSTALL_TAR_TIMEOUT_MS,
   })
   if (extract.status !== 0) {
-    throw new Error(`managed_install_validate_failed:tar_extract_failed:${tarFailureMessage(extract.stderr, extract.stdout, extract.error)}`)
+    throw new Error(`managed_install_validate_failed:tar_extract_failed:${managedInstallTarFailureMessage(extract.stderr, extract.stdout, extract.error)}`)
   }
   const entries = readdirSync(extractDir, { withFileTypes: true }).filter(entry => entry.isDirectory())
   if (entries.length !== 1) throw new Error("managed_install_validate_failed:unexpected_tarball_layout")
@@ -205,10 +205,6 @@ function annotateInstallPhaseWithExtractedBytes(phases: ManagedInstallPhase[], e
   return phases.map(phase => phase.name === "install" && phase.status === "ok"
     ? { ...phase, message: `${phase.message} (${extractedBytes} bytes extracted)` }
     : phase)
-}
-
-function tarFailureMessage(stderr: string, stdout: string, error?: Error): string {
-  return error?.message || stderr.trim() || stdout.trim() || "tar failed"
 }
 
 async function runManagedInstallSubcommand(invocation: ManagedInstallCommandInvocation): Promise<ManagedInstallCommandResult> {
