@@ -214,12 +214,14 @@
 - **File:** `apps/engine/src/cli/commands/install.ts`
 - **Anchor:** `export async function runManagedInstallCommand`
 - **Source:** QA local adversarial review; Marcus Weber (Principal) + Thomas Müller (Reliability)
-- **Status:** open
-- **Fix attempts:** 0
+- **Status:** fixed
+- **Fix attempts:** 1
 - **Description:** The public `beerengineer install` path resolves a stable release and returns success, but it does not call `downloadManagedInstallTarball`, release validation/extraction, `activateManagedInstallVersion`, `runManagedInstallReleaseWorkflow`, or `runManagedInstallCompletionWorkflow`. The implemented lower-level workflows are therefore unreachable from the documented POSIX/PowerShell one-liners.
 - **Repro:** Inspect `runManagedInstallCommand`; success path calls only `resolveRelease()`, creates one `download` phase with message `resolved stable release...`, and returns `0` with next command text `managed install workflow will continue from the resolved release`.
 - **Impact:** The documented first-install command cannot create a managed install layout, current pointer, wrapper, setup run, engine start, UI instructions, or preserve/adopt state as promised by PRD-2, PRD-3, and PRD-4. This is production-blocking for PROJ-1 despite green unit tests for the lower-level pieces.
 - **Fix sketch:** Wire `runManagedInstallCommand` to the full managed install orchestration: prerequisite probe -> release resolution -> trusted download -> archive entry/size/tree validation/extraction -> locked activation -> completion workflow. Add CLI-level tests that assert visible side effects: created `install/versions/<tag>`, `install/current`, wrapper, and summary phases.
+- **Fix:** Public `install` command now runs prerequisite checks, release workflow, trusted download, archive validation/extraction, managed activation, and completion workflow. CLI entrypoint test asserts created `install/versions/<tag>`, `install/current`, wrapper, and full phase sequence.
+- **Verification:** PASS — `node --test --import tsx apps/engine/test/managedInstallEntrypoint.test.ts`; PASS — `npm run test:managed-install --workspace=@beerengineer/engine`; PASS — `npm run typecheck`.
 
 ## AGENTS.md Candidates
 
@@ -244,7 +246,7 @@
 ---
 
 ## Open Blockers
-- BUG-PROJ1-QA-001: public install entrypoint is not wired to the full managed install workflow.
+- None in PROJ-1 managed-install after BUG-PROJ1-QA-001 fix. Full QA re-run still recommended before documentation.
 - SonarCloud repo-level quality-gate failures were explicitly deferred by user instruction on 2026-05-01.
 
 ### Wave 1 Gate — PASSED (2026-04-30T21:55:08+02:00)

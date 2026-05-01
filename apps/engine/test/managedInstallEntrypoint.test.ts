@@ -1,7 +1,8 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
-import { dirname, resolve } from "node:path"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { runManagedInstallCommand } from "../src/cli/commands/install.js"
@@ -12,6 +13,10 @@ import {
   MANAGED_INSTALL_REPO,
   MANAGED_INSTALL_WINDOWS_COMMAND,
 } from "../src/core/managedInstall/docs.js"
+import {
+  activateManagedInstallVersion,
+  resolveManagedInstallStatePaths,
+} from "../src/core/managedInstall/state.js"
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..")
 
@@ -45,28 +50,49 @@ test("public shell entrypoints are thin delegates into repo-owned install comman
 
 test("install CLI JSON output round-trips success and startup errors with schema", async () => {
   const successChunks: string[] = []
+  const config = configForTempDir()
   const successExit = await runManagedInstallCommand(
     { kind: "install", json: true, fromBootstrap: "posix" },
     {
       operationId: () => "op-cli-success",
+      config,
       resolveRelease: async () => releaseTarget(),
+      downloadRelease: async () => ({ body: Buffer.from("tarball"), finalUrl: "https://codeload.github.com/release.tar.gz" }),
+      installDownloadedRelease: async ({ target, stagingDir }) => {
+        const versionDir = join(resolveManagedInstallStatePaths(config).versionsDir, target.tag)
+        createValidReleaseTree(versionDir, target.version)
+        activateManagedInstallVersion(config, { tag: target.tag, version: target.version })
+        return { extractedRoot: stagingDir, extractedBytes: 12 }
+      },
+      commandRunner: async invocation => invocation.phase === "uiStart"
+        ? { exitCode: 1, stderr: "manual UI start required" }
+        : { exitCode: 0 },
       writeStdout: chunk => successChunks.push(chunk),
     },
   )
   const success = JSON.parse(successChunks.join(""))
+  const paths = resolveManagedInstallStatePaths(config)
 
   assert.equal(successExit, 0)
   assert.equal(success.version, MANAGED_INSTALL_RESULT_VERSION)
   assert.equal(success.operationId, "op-cli-success")
   assert.equal(success.target.repo, MANAGED_INSTALL_REPO)
-  assert.equal(success.summary.status, "succeeded")
+  assert.equal(success.summary.status, "succeeded-with-warning")
   assert.equal(success.exitCode, 0)
+  assert.equal(existsSync(join(paths.versionsDir, "v1.0.0", "package.json")), true)
+  assert.equal(existsSync(paths.currentLinkPath), true)
+  assert.equal(existsSync(paths.wrapperPath), true)
+  assert.deepEqual(
+    success.phases.map((phase: { name: string }) => phase.name),
+    ["prerequisites", "download", "install", "install", "setup", "engineStart", "uiStart"],
+  )
 
   const failureChunks: string[] = []
   const failureExit = await runManagedInstallCommand(
     { kind: "install", json: true, fromBootstrap: "windows" },
     {
       operationId: () => "op-cli-failure",
+      config: configForTempDir(),
       resolveRelease: async () => {
         throw new Error("managed_install_release_required:no_stable_release")
       },
@@ -102,6 +128,10 @@ function repoPath(path: string): string {
   return resolve(REPO_ROOT, path)
 }
 
+function configForTempDir(): { dataDir: string } {
+  return { dataDir: mkdtempSync(join(tmpdir(), "managed-install-cli-")) }
+}
+
 function releaseTarget() {
   return {
     repo: MANAGED_INSTALL_REPO,
@@ -116,4 +146,20 @@ function releaseTarget() {
       protocol: "https:" as const,
     },
   }
+}
+
+function createValidReleaseTree(root: string, version: string): void {
+  mkdirSync(join(root, "apps", "engine", "bin"), { recursive: true })
+  mkdirSync(join(root, "apps", "ui"), { recursive: true })
+  writeFileSync(join(root, "package.json"), `${JSON.stringify({
+    name: "beerengineer",
+    private: true,
+    workspaces: ["apps/*"],
+  })}\n`, "utf8")
+  writeFileSync(join(root, "apps", "engine", "package.json"), `${JSON.stringify({
+    name: "@beerengineer/engine",
+    version,
+    bin: { beerengineer: "./bin/beerengineer.js" },
+  })}\n`, "utf8")
+  writeFileSync(join(root, "apps", "engine", "bin", "beerengineer.js"), "#!/usr/bin/env node\n", "utf8")
 }
