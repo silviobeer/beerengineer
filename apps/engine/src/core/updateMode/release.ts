@@ -1,11 +1,11 @@
 import { spawnSync } from "node:child_process"
-import { createHash } from "node:crypto"
 import { request as httpRequest } from "node:http"
 import { request as httpsRequest } from "node:https"
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { URL } from "node:url"
 import type { AppConfig } from "../../setup/types.js"
+import { extractManagedInstallTarball } from "../managedInstall/validation.js"
 import {
   compareVersions,
   currentAppVersion,
@@ -13,6 +13,7 @@ import {
   resolveGithubRepo,
   resolveNpmCommandForPlatform,
   safeReadJson,
+  sha256Buffer,
 } from "./shared.js"
 import type { UpdateCheckResult, UpdateStatus } from "./types.js"
 
@@ -189,7 +190,7 @@ export function stageReleaseDryRun(
 }
 
 export function writeTarball(prepared: PreparedRelease, body: Buffer, finalUrl: string): PreparedRelease {
-  const tarballSha256 = createHash("sha256").update(body).digest("hex")
+  const tarballSha256 = sha256Buffer(body)
   if (EXPECTED_TARBALL_SHA256 && tarballSha256.toLowerCase() !== EXPECTED_TARBALL_SHA256.toLowerCase()) {
     throw new Error(`update_validate_failed:tarball_sha256_mismatch:${tarballSha256}`)
   }
@@ -203,13 +204,9 @@ export function writeTarball(prepared: PreparedRelease, body: Buffer, finalUrl: 
 }
 
 export function extractTarball(prepared: PreparedRelease): string {
-  const result = spawnSync("tar", ["-xzf", prepared.tarballPath, "-C", prepared.extractedRoot], { encoding: "utf8" })
-  if (result.status !== 0) {
-    throw new Error(`update_extract_failed:${result.stderr.trim() || result.stdout.trim() || "tar failed"}`)
-  }
-  const entries = readdirSync(prepared.extractedRoot, { withFileTypes: true }).filter(entry => entry.isDirectory())
-  if (entries.length !== 1) throw new Error("update_extract_failed:unexpected_tarball_layout")
-  return join(prepared.extractedRoot, entries[0].name)
+  return extractManagedInstallTarball(prepared.tarballPath, prepared.extractedRoot, {
+    errorPrefix: "update_extract_failed",
+  })
 }
 
 export function validateExtractedRelease(root: string, release: UpdateCheckResult["latestRelease"]): { binPath: string } {

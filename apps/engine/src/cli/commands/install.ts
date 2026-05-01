@@ -1,13 +1,12 @@
 import { spawnSync } from "node:child_process"
-import { mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { resolveManagedInstallRelease } from "../../core/managedInstall/release.js"
 import { downloadManagedInstallTarball } from "../../core/managedInstall/download.js"
 import { runManagedInstallPrerequisiteProbe } from "../../core/managedInstall/prerequisites.js"
 import {
+  extractManagedInstallTarball,
   listManagedInstallTarballEntries,
-  MANAGED_INSTALL_TAR_TIMEOUT_MS,
-  managedInstallTarFailureMessage,
   measureDirectoryBytes,
   validateManagedInstallArchiveEntries,
   validateManagedInstallReleaseSizes,
@@ -178,16 +177,7 @@ async function installDownloadedManagedRelease(input: {
   mkdirSync(extractDir, { recursive: true })
   writeFileSync(tarballPath, input.download.body)
   validateManagedInstallArchiveEntries(listManagedInstallTarballEntries(tarballPath))
-  const extract = spawnSync("tar", ["-xzf", tarballPath, "-C", extractDir], {
-    encoding: "utf8",
-    timeout: MANAGED_INSTALL_TAR_TIMEOUT_MS,
-  })
-  if (extract.status !== 0) {
-    throw new Error(`managed_install_validate_failed:tar_extract_failed:${managedInstallTarFailureMessage(extract.stderr, extract.stdout, extract.error)}`)
-  }
-  const entries = readdirSync(extractDir, { withFileTypes: true }).filter(entry => entry.isDirectory())
-  if (entries.length !== 1) throw new Error("managed_install_validate_failed:unexpected_tarball_layout")
-  const extractedRoot = join(extractDir, entries[0].name)
+  const extractedRoot = extractManagedInstallTarball(tarballPath, extractDir)
   const extractedBytes = measureDirectoryBytes(extractedRoot)
   validateManagedInstallReleaseSizes({ tarballBytes: input.download.body.byteLength, extractedBytes })
   validateManagedInstallReleaseTree(extractedRoot, input.target)

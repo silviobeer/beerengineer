@@ -1,19 +1,9 @@
 #!/usr/bin/env node
 
 import Database from "better-sqlite3"
-import { createHash } from "node:crypto"
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-
-const BACKUP_RETENTION_COUNT = 5
-
-function readJson(path) {
-  return JSON.parse(readFileSync(path, "utf8"))
-}
-
-function sha256File(path) {
-  return createHash("sha256").update(readFileSync(path)).digest("hex")
-}
+import { BACKUP_RETENTION_COUNT, readJson, sha256File } from "./update-switcher-lib.js"
 
 const metadataPath = process.argv[2]
 if (!metadataPath) {

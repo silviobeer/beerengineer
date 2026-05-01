@@ -1,11 +1,18 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process"
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs"
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, realpathSync, unlinkSync, writeFileSync } from "node:fs"
 import { request as httpRequest } from "node:http"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
-import { claimUpdateLock, decideTerminalUpdateStatus, pointManagedInstallPointer, swapManagedInstallPointers, validateRestartedUpdateStatus } from "./update-switcher-lib.js"
+import {
+  claimUpdateLock,
+  decideTerminalUpdateStatus,
+  pointManagedInstallPointer,
+  readJson,
+  swapManagedInstallPointers,
+  validateRestartedUpdateStatus,
+} from "./update-switcher-lib.js"
 
 let cachedBetterSqlite3 = null
 
@@ -14,10 +21,6 @@ async function loadBetterSqlite3(meta) {
   const mod = join(meta.stagedRoot, "node_modules", "better-sqlite3")
   cachedBetterSqlite3 = (await import(`file://${mod}/lib/index.js`)).default
   return cachedBetterSqlite3
-}
-
-function readJson(path) {
-  return JSON.parse(readFileSync(path, "utf8"))
 }
 
 function now() {

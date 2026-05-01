@@ -1,5 +1,16 @@
 import { dirname } from "node:path"
+import { createHash } from "node:crypto"
 import { mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs"
+
+export const BACKUP_RETENTION_COUNT = 5
+
+export function readJson(path) {
+  return JSON.parse(readFileSync(path, "utf8"))
+}
+
+export function sha256File(path) {
+  return createHash("sha256").update(readFileSync(path)).digest("hex")
+}
 
 export function decideTerminalUpdateStatus({ warningKeys, degraded }) {
   if (Array.isArray(warningKeys) && warningKeys.length > 0) return "succeeded-with-warning"

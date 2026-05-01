@@ -2,6 +2,11 @@ import { spawnSync } from "node:child_process"
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs"
 import { join, resolve, sep } from "node:path"
 
+export type ExtractTarballOptions = {
+  errorPrefix?: string
+  timeoutMs?: number
+}
+
 export type ManagedInstallReleaseValidationLimits = {
   maxTarballBytes: number
   maxExtractedBytes: number
@@ -75,6 +80,25 @@ export function listManagedInstallTarballEntries(tarballPath: string): string[] 
     throw new Error(`managed_install_validate_failed:tar_list_failed:${managedInstallTarFailureMessage(result.stderr, result.stdout, result.error)}`)
   }
   return result.stdout.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+}
+
+export function extractManagedInstallTarball(
+  tarballPath: string,
+  extractDir: string,
+  opts: ExtractTarballOptions = {},
+): string {
+  const errorPrefix = opts.errorPrefix ?? "managed_install_validate_failed"
+  const timeoutMs = opts.timeoutMs ?? MANAGED_INSTALL_TAR_TIMEOUT_MS
+  const result = spawnSync("tar", ["-xzf", tarballPath, "-C", extractDir], {
+    encoding: "utf8",
+    timeout: timeoutMs,
+  })
+  if (result.status !== 0) {
+    throw new Error(`${errorPrefix}:tar_extract_failed:${managedInstallTarFailureMessage(result.stderr, result.stdout, result.error)}`)
+  }
+  const entries = readdirSync(extractDir, { withFileTypes: true }).filter(entry => entry.isDirectory())
+  if (entries.length !== 1) throw new Error(`${errorPrefix}:unexpected_tarball_layout`)
+  return join(extractDir, entries[0].name)
 }
 
 export function managedInstallTarFailureMessage(stderr: string, stdout: string, error?: Error): string {

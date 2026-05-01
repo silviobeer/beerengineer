@@ -78,7 +78,11 @@ export function compareVersions(a: string, b: string): number {
 }
 
 export function sha256File(path: string): string {
-  return createHash("sha256").update(readFileSync(path)).digest("hex")
+  return sha256Buffer(readFileSync(path))
+}
+
+export function sha256Buffer(body: Buffer): string {
+  return createHash("sha256").update(body).digest("hex")
 }
 
 function resolvePointer(path: string): string | null {
