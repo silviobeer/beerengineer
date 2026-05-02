@@ -20,9 +20,7 @@ export default async function HomePage() {
       <div className="text-center space-y-2 max-w-md">
         <h1 className="text-2xl font-mono">No workspace</h1>
         <p className="text-sm text-zinc-400">
-          {error
-            ? "Engine is unreachable — start the API on port 4100, then open the setup URL again."
-            : "No workspaces are registered. Run `beerengineer workspace add` to register one."}
+          Engine is unreachable — start the API on port 4100, then open the setup URL again.
         </p>
         <a className="text-sm text-amber-300 underline" href="/setup">
           Open setup

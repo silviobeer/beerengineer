@@ -99,7 +99,7 @@ test("AC-10 effective app config returns secret references, never plaintext valu
   }
 })
 
-test("AC-10 effective app config treats stored secrets as present without env export", () => {
+test("AC-10b effective app config treats stored secrets as present without env export", () => {
   const paths = tempSetupPaths()
   try {
     writeConfigFile(paths.configPath, {
