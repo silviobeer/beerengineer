@@ -16,6 +16,27 @@ export type DoctorOptions = {
   allLlmGroups?: boolean
 }
 
+export type SetupRecheckResult =
+  | {
+      ok: true
+      report: SetupReport
+      requiredGate: {
+        blocked: boolean
+        canProceed: boolean
+        blockingGroups: string[]
+      }
+    }
+  | {
+      ok: false
+      error: "unknown_group"
+      group: string
+      requiredGate: {
+        blocked: true
+        canProceed: false
+        blockingGroups: string[]
+      }
+    }
+
 type GroupDefinition = {
   id: (typeof KNOWN_GROUP_IDS)[number]
   label: string
@@ -72,6 +93,31 @@ export async function runDoctorCommand(options: DoctorOptions = {}): Promise<num
   const report = await generateSetupReport(options)
   printDoctorReport(report, { installHints: false })
   return doctorExitCode(report)
+}
+
+export async function runSetupRecheck(options: DoctorOptions = {}): Promise<SetupRecheckResult> {
+  if (options.group && !(KNOWN_GROUP_IDS as readonly string[]).includes(options.group)) {
+    return {
+      ok: false,
+      error: "unknown_group",
+      group: options.group,
+      requiredGate: { blocked: true, canProceed: false, blockingGroups: [] },
+    }
+  }
+  const report = await generateSetupReport(options)
+  const blockingGroups = report.groups
+    .filter(group => group.level === "required" && !group.satisfied)
+    .map(group => group.id)
+  const blocked = blockingGroups.length > 0
+  return {
+    ok: true,
+    report,
+    requiredGate: {
+      blocked,
+      canProceed: !blocked,
+      blockingGroups,
+    },
+  }
 }
 
 export async function runSetupCommand(options: SetupRunOptions = {}): Promise<number> {

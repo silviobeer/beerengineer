@@ -42,7 +42,14 @@ import {
   handleWorkspacePreview,
   handleWorkspaceRemove,
 } from "./routes/workspaces.js"
-import { handleSetupConfig, handleSetupInit, handleSetupStatus } from "./routes/setup.js"
+import {
+  handleSecretAction,
+  handleSetupConfig,
+  handleSetupConfigPatch,
+  handleSetupInit,
+  handleSetupRecheck,
+  handleSetupStatus,
+} from "./routes/setup.js"
 import {
   handleUpdateApply,
   handleUpdateCheck,
@@ -188,7 +195,9 @@ function topLevelRouteHandlers(context: RouteContext): Partial<Record<string, ()
     "GET /board": () => handleGetBoard(db, context.url, context.res),
     "GET /setup/status": () => handleSetupStatus(context.url, context.res),
     "GET /setup/config": () => handleSetupConfig(context.res),
+    "PATCH /setup/config": () => void handleSetupConfigPatch(context.req, context.res),
     "POST /setup/init": () => handleSetupInit(context.res),
+    "POST /setup/recheck": () => void handleSetupRecheck(context.req, context.res),
     "GET /update/status": () => handleUpdateStatus(repos, context.appConfig, context.res, { pid: process.pid }),
     "GET /update/preflight": () => handleUpdatePreflight(repos, context.appConfig, context.res, { pid: process.pid }),
     "POST /update/check": () => handleUpdateCheck(context.req, context.res),
@@ -286,6 +295,15 @@ async function handleNotificationRoutes(context: RouteContext): Promise<boolean>
   return false
 }
 
+async function handleSetupRoutes(context: RouteContext): Promise<boolean> {
+  const secretMatch = /^\/setup\/secrets\/([^/]+)$/.exec(context.path)
+  if (secretMatch && context.req.method === "POST") {
+    void handleSecretAction(context.req, context.res, secretMatch[1])
+    return true
+  }
+  return false
+}
+
 async function handleWorkspaceRoutes(context: RouteContext): Promise<boolean> {
   const { path, req, res, url } = context
   if (path === "/workspaces/preview" && req.method === "GET") { handleWorkspacePreview(repos, loadEffectiveConfig, url, res); return true }
@@ -340,6 +358,7 @@ const server = createServer(async (req: ApiRequest, res) => {
 
   try {
     if (await handleTopLevelRoutes(context)) return
+    if (await handleSetupRoutes(context)) return
     if (await handleNotificationRoutes(context)) return
     if (await handleWorkspaceRoutes(context)) return
     if (await handleItemRoutes(context)) return
