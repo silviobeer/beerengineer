@@ -23,7 +23,7 @@ export function VerificationGateControls({
     <div className="flex flex-wrap gap-2">
       <button
         type="button"
-        onClick={onSkip}
+        onClick={() => onSkip?.()}
         disabled={required || checking || !optional}
         className="border border-zinc-700 px-3 py-2 text-sm text-zinc-200 disabled:opacity-45"
       >

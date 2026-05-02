@@ -1,9 +1,16 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { SetupSupportZone } from "@/components/setup/SetupSupportZone";
 import { blockedReport } from "./setupFixtures";
 
 describe("SetupSupportZone", () => {
+  const originalClipboard = navigator.clipboard;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    Object.assign(navigator, { clipboard: originalClipboard });
+  });
+
   it("AC-13 renders support material below the Gate Box as a separate zone", () => {
     render(<SetupSupportZone report={blockedReport()} />);
     expect(screen.getByTestId("setup-support-zone")).toBeInTheDocument();
