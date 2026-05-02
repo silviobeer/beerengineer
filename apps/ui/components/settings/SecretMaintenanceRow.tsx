@@ -51,7 +51,12 @@ export function SecretMaintenanceRow({
       setValue("");
       const nextMeta = body.metadata ?? body.secret ?? body;
       if (isSecretMetadata(nextMeta)) {
-        setMeta(nextMeta);
+        setMeta((prev) => ({
+          ...prev,
+          ...nextMeta,
+          present: nextMeta.present ?? nextMeta.active ?? prev.present,
+          active: nextMeta.active ?? nextMeta.present ?? prev.active,
+        }));
       } else {
         setError("Secret action returned invalid metadata.");
       }

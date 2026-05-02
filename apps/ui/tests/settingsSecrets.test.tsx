@@ -42,6 +42,15 @@ describe("SecretMaintenanceRow", () => {
     await waitFor(() => expect(screen.getByTestId("status-chip")).toHaveAttribute("data-state", "disabled"));
   });
 
+  it("preserves known presence when secret action responses are partial", async () => {
+    globalThis.fetch = vi.fn(async () => Response.json({ ref: "ANTHROPIC_API_KEY", status: "disabled" })) as unknown as typeof fetch;
+    render(<SecretMaintenanceRow label="LLM API key" secret={{ ref: "ANTHROPIC_API_KEY", present: true }} fallbackRef="ANTHROPIC_API_KEY" />);
+    fireEvent.click(screen.getByRole("button", { name: "Disable" }));
+
+    await waitFor(() => expect(screen.getByTestId("status-chip")).toHaveAttribute("data-state", "disabled"));
+    expect(screen.getByRole("button", { name: "Delete" })).not.toBeDisabled();
+  });
+
   it("AC-16 keeps missing optional secrets visible as not configured or skipped", () => {
     render(<SecretMaintenanceRow label="Telegram bot token" secret={{ ref: "TELEGRAM_BOT_TOKEN", present: false }} fallbackRef="TELEGRAM_BOT_TOKEN" />);
     expect(screen.getByText("TELEGRAM_BOT_TOKEN")).toBeInTheDocument();
