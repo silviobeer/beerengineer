@@ -1,16 +1,29 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SecretMaintenanceRow } from "@/components/settings/SecretMaintenanceRow";
+
+const originalFetch = globalThis.fetch;
 
 describe("SecretMaintenanceRow", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
   });
 
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
   it("AC-13 shows metadata without cleartext values", () => {
-    render(<SecretMaintenanceRow label="LLM API key" secret={{ ref: "ANTHROPIC_API_KEY", present: true }} fallbackRef="ANTHROPIC_API_KEY" />);
+    render(
+      <SecretMaintenanceRow
+        label="LLM API key"
+        secret={{ ref: "ANTHROPIC_API_KEY", present: true, value: "sk-live-secret" } as never}
+        fallbackRef="ANTHROPIC_API_KEY"
+      />,
+    );
     expect(screen.getByText("ANTHROPIC_API_KEY")).toBeInTheDocument();
     expect(screen.queryByText("sk-live-secret")).not.toBeInTheDocument();
+    expect(screen.queryByText(/^sk-/)).not.toBeInTheDocument();
   });
 
   it("AC-14 clears add or replace input after success", async () => {

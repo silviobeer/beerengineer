@@ -58,11 +58,27 @@ export function AppConfigSection({ initialView }: Readonly<AppConfigSectionProps
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
+      if (!res.ok && res.status !== 207) {
+        setResult({
+          ok: false,
+          saved: [],
+          rejected: [{ field: "_", error: `Request failed: ${res.status}` }],
+          config: {},
+        });
+        return;
+      }
       const patch = (await res.json()) as AppConfigPatchResult;
       setResult(patch);
       if (patch.config && patch.rejected.length === 0) {
         setForm((prev) => ({ ...prev, enginePort: String((patch.config as { enginePort?: unknown }).enginePort ?? prev.enginePort) }));
       }
+    } catch (err) {
+      setResult({
+        ok: false,
+        saved: [],
+        rejected: [{ field: "_", error: err instanceof Error ? err.message : "Network error" }],
+        config: {},
+      });
     } finally {
       setSaving(false);
     }
@@ -109,6 +125,18 @@ export function AppConfigSection({ initialView }: Readonly<AppConfigSectionProps
         <label className="space-y-1 text-sm">
           <span className="text-zinc-300">API key reference</span>
           <input className="w-full border border-zinc-800 bg-zinc-950 p-2" value={form.apiKeyRef} onChange={(e) => setField("apiKeyRef", e.target.value)} />
+        </label>
+        <label className="space-y-1 text-sm">
+          <span className="text-zinc-300">Default Sonar organization</span>
+          <input className="w-full border border-zinc-800 bg-zinc-950 p-2" value={form.sonarOrg} onChange={(e) => setField("sonarOrg", e.target.value)} />
+        </label>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={form.telegramEnabled} onChange={(e) => setField("telegramEnabled", e.target.checked)} />
+          <span className="text-zinc-300">Enable Telegram notifications</span>
+        </label>
+        <label className="space-y-1 text-sm">
+          <span className="text-zinc-300">Telegram default chat ID</span>
+          <input className="w-full border border-zinc-800 bg-zinc-950 p-2" value={form.telegramChatId} onChange={(e) => setField("telegramChatId", e.target.value)} />
         </label>
       </div>
       <button type="button" disabled={saving} onClick={save} className="border border-amber-500 bg-amber-500 px-3 py-2 text-sm font-medium text-zinc-950 disabled:opacity-50">

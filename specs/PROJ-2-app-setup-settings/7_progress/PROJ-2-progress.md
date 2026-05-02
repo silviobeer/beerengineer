@@ -1,7 +1,7 @@
 # PROJ-2 Progress
 
 ## Status: in progress
-## Current Wave: 2
+## Current Wave: 6
 ## BASE_SHA: 35b6ee5c43f6b871b832ad6800c704562149b242
 
 ---
@@ -19,7 +19,7 @@
 ## Wave 1
 
 ### Wave Start
-- Status: in progress
+- Status: complete
 - Base tag: `wave-1-start-PROJ-2`
 - Started after local tag creation at `35b6ee5c43f6b871b832ad6800c704562149b242`.
 
@@ -147,7 +147,7 @@
 ## Wave 2
 
 ### Wave Start
-- Status: in progress
+- Status: complete
 - Base tag: `wave-2-start-PROJ-2`
 - Started after Wave 1 gate at `682d494`.
 
@@ -267,7 +267,7 @@
 ## Wave 3
 
 ### Wave Start
-- Status: in progress
+- Status: complete
 - Base tag: `wave-3-start-PROJ-2`
 - Started after Wave 2 gate at `6815d96`.
 
@@ -372,7 +372,7 @@
 ## Wave 4
 
 ### Wave Start
-- Status: in progress
+- Status: complete
 - Base tag: `wave-4-start-PROJ-2`
 - Started after Wave 3 gate at `86c8d33`.
 
@@ -397,7 +397,7 @@
 ## Wave 5
 
 ### Wave Start
-- Status: in progress
+- Status: complete
 - Base tag: `wave-5-start-PROJ-2`
 - Started after Wave 4 implementation in the same UI pass.
 

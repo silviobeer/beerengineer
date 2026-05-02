@@ -11,10 +11,16 @@ function engineBaseUrl(): string {
 
 async function readJson<T>(path: string): Promise<{ data: T | null; error: string | null }> {
   try {
-    const res = await fetch(`${engineBaseUrl()}${path}`, { cache: "no-store" });
+    const res = await fetch(`${engineBaseUrl()}${path}`, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(7000),
+    });
     if (!res.ok) return { data: null, error: `engine responded ${res.status}` };
     return { data: (await res.json()) as T, error: null };
-  } catch {
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "TimeoutError") {
+      return { data: null, error: "Engine setup request timed out. Confirm the local engine is responsive and reload this page." };
+    }
     return { data: null, error: "Engine is unreachable. Start the local engine and reload this page." };
   }
 }

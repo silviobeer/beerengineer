@@ -52,7 +52,7 @@ export function SetupStatusSection({ initialReport }: Readonly<{ initialReport: 
             <div>
               <h3 className="text-sm font-medium text-zinc-100">{group.label}</h3>
               <p className="font-mono text-xs uppercase text-zinc-500">{group.level} · {group.passed}/{group.minOk} required · {group.satisfied ? "done" : "blocked"}</p>
-              {errors[group.id] ? <p className="text-sm text-amber-300">{errors[group.id]}</p> : null}
+              {errors[group.id] ? <p role="alert" className="text-sm text-amber-300">{errors[group.id]}</p> : null}
             </div>
             <div className="flex items-center gap-2">
               <StatusChip state={statusLabel(group.satisfied ? "ok" : group.level === "optional" ? "skipped" : "missing")} />
@@ -63,7 +63,7 @@ export function SetupStatusSection({ initialReport }: Readonly<{ initialReport: 
           </article>
         ))}
       </div>
-      {errors.all ? <p className="text-sm text-amber-300">{errors.all}</p> : null}
+      {errors.all ? <p role="alert" className="text-sm text-amber-300">{errors.all}</p> : null}
     </section>
   );
 }
