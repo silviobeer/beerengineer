@@ -40,6 +40,8 @@ export function SecretMaintenanceRow({
       }
       setValue("");
       setMeta((body.metadata ?? body.secret ?? body) as SecretMetadata);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Network error while performing secret action.");
     } finally {
       setBusy(false);
     }

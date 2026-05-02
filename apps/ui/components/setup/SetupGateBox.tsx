@@ -36,7 +36,7 @@ export function SetupGateBox({ initialReport, initialError = null }: Readonly<Se
 
   const secretSafeText = useMemo(() => {
     return detail.replace(/sk-[A-Za-z0-9_-]+/g, "redacted");
-  }, [detail, title]);
+  }, [detail]);
 
   async function recheck() {
     setChecking(true);
@@ -63,11 +63,21 @@ export function SetupGateBox({ initialReport, initialError = null }: Readonly<Se
   async function skip() {
     if (!optional || !group) return;
     setSkipped((prev) => [...prev, group.id]);
-    await fetch("/api/setup/optional", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ group: group.id }),
-    });
+    try {
+      const res = await fetch("/api/setup/optional", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ group: group.id }),
+      });
+      if (!res.ok) throw new Error("Optional skip failed.");
+    } catch (err) {
+      setSkipped((prev) => prev.filter((id) => id !== group.id));
+      setError(err instanceof Error ? err.message : "Optional skip failed.");
+    }
+  }
+
+  function next() {
+    window.location.href = "/settings";
   }
 
   return (
@@ -92,6 +102,7 @@ export function SetupGateBox({ initialReport, initialError = null }: Readonly<Se
         checking={checking}
         onRecheck={recheck}
         onSkip={skip}
+        onNext={next}
       />
     </section>
   );

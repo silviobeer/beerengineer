@@ -7,6 +7,7 @@ interface VerificationGateControlsProps {
   readonly checking: boolean;
   readonly onRecheck: () => void;
   readonly onSkip?: () => void;
+  readonly onNext: () => void;
 }
 
 export function VerificationGateControls({
@@ -16,6 +17,7 @@ export function VerificationGateControls({
   checking,
   onRecheck,
   onSkip,
+  onNext,
 }: Readonly<VerificationGateControlsProps>) {
   return (
     <div className="flex flex-wrap gap-2">
@@ -37,6 +39,7 @@ export function VerificationGateControls({
       </button>
       <button
         type="button"
+        onClick={onNext}
         disabled={checking || blocked}
         className="border border-emerald-500 px-3 py-2 text-sm font-medium text-emerald-300 disabled:opacity-45"
       >

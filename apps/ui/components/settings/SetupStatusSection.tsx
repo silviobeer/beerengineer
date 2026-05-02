@@ -25,6 +25,11 @@ export function SetupStatusSection({ initialReport }: Readonly<{ initialReport: 
         return;
       }
       setReport(body.report as SetupReport);
+    } catch (err) {
+      setErrors((prev) => ({
+        ...prev,
+        [key]: err instanceof Error ? err.message : "Re-check failed.",
+      }));
     } finally {
       setLoading(null);
     }
