@@ -422,3 +422,15 @@
 
 - 2026-05-02: UI acceptance files for Waves 4 and 5 passed together: 44 tests across 11 files.
 - 2026-05-02: `npm run typecheck` passed for engine and UI workspaces.
+
+### Wave 4 Gate — PASSED (2026-05-02T23:04:55+02:00)
+- [x] Ralph: 24 AC commands green
+- [x] Build: `npm run typecheck`
+- [x] CodeRabbit: 0 non-advisory findings (advisory severities: medium,low)
+- [x] Smoke: /setup
+
+### Wave 5 Gate — PASSED (2026-05-02T23:16:35+02:00)
+- [x] Ralph: 20 AC commands green
+- [x] Build: `npm run typecheck`
+- [x] CodeRabbit: 0 non-advisory findings (advisory severities: medium,low)
+- [x] Smoke: /settings
