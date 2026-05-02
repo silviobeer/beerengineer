@@ -92,7 +92,7 @@ test("AC-4 GET /setup/status report keeps the readiness model contract", async (
   }
 })
 
-test("AC-4 all LLM groups does not make inactive providers required blockers", async () => {
+test("AC-5 all LLM groups does not make inactive providers required blockers", async () => {
   const paths = tempSetupPaths()
   try {
     const report = await generateSetupReport({

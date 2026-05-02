@@ -10,8 +10,17 @@ interface CommandCopyBlockProps {
 export function CommandCopyBlock({ command, label = "Command" }: Readonly<CommandCopyBlockProps>) {
   const [copied, setCopied] = useState(false);
   async function copy() {
-    await navigator.clipboard?.writeText(command);
-    setCopied(true);
+    if (!navigator.clipboard) {
+      setCopied(false);
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(command);
+      setCopied(true);
+    } catch (err) {
+      console.error("[setup-copy]", err);
+      setCopied(false);
+    }
   }
   return (
     <div className="space-y-2">

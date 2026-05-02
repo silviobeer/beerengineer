@@ -18,6 +18,7 @@ reviews:
     - "!apps/*/.next/**"
     - "!.playwright-mcp/**"
     - "!package-lock.json"
+    - "!scripts/run-engine-tests.mjs"
     - "!apps/engine/src/llm/hosted/providers/claudeSdk.ts"
     - "!apps/engine/src/llm/hosted/providers/codexSdk.ts"
     - "!apps/engine/src/llm/hosted/providers/_sdkSession.ts"
