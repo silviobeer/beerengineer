@@ -17,6 +17,24 @@ interface SetupGateBoxProps {
   readonly initialError?: string | null;
 }
 
+function isSetupReport(value: unknown): value is SetupReport {
+  return Boolean(value)
+    && typeof value === "object"
+    && (value as { reportVersion?: unknown }).reportVersion === 1
+    && Array.isArray((value as { groups?: unknown }).groups)
+    && typeof (value as { overall?: unknown }).overall === "string";
+}
+
+async function readJsonResponse(res: Response): Promise<unknown | null> {
+  const contentType = res.headers.get("content-type") ?? "";
+  if (!contentType.includes("application/json")) return null;
+  try {
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
 export function SetupGateBox({ initialReport, initialError = null }: Readonly<SetupGateBoxProps>) {
   const [report, setReport] = useState(initialReport);
   const [checking, setChecking] = useState(false);
@@ -47,12 +65,21 @@ export function SetupGateBox({ initialReport, initialError = null }: Readonly<Se
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(group?.id ? { group: group.id } : {}),
       });
-      const body = await res.json();
-      if (!res.ok || body.ok === false) {
-        setError(typeof body.error === "string" ? body.error : "Re-check failed.");
+      const body = await readJsonResponse(res);
+      if (!body || typeof body !== "object") {
+        setError("Invalid server response.");
         return;
       }
-      setReport(body.report as SetupReport);
+      if (!res.ok || (body as { ok?: unknown }).ok === false) {
+        setError(typeof (body as { error?: unknown }).error === "string" ? (body as { error: string }).error : "Re-check failed.");
+        return;
+      }
+      const nextReport = (body as { report?: unknown }).report;
+      if (!isSetupReport(nextReport)) {
+        setError("Invalid setup report.");
+        return;
+      }
+      setReport(nextReport);
     } catch {
       setError("Re-check failed.");
     } finally {

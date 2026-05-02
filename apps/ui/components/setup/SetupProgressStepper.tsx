@@ -5,10 +5,16 @@ interface SetupProgressStepperProps {
   readonly checking?: boolean;
 }
 
-function stateFor(index: number, current: number, checking: boolean, complete: boolean): WizardStepState {
-  if (complete) return index === SETUP_STEP_LABELS.length ? "finished" : "done";
-  if (index < current) return "done";
-  if (index === current) return checking ? "checking" : "blocked";
+function stateFor(args: {
+  step: number;
+  current: number;
+  checking: boolean;
+  complete: boolean;
+  isLast: boolean;
+}): WizardStepState {
+  if (args.complete) return args.isLast ? "finished" : "done";
+  if (args.step < args.current) return "done";
+  if (args.step === args.current) return args.checking ? "checking" : "blocked";
   return "locked";
 }
 
@@ -23,7 +29,7 @@ export function SetupProgressStepper({ report, checking = false }: Readonly<Setu
       <ol className="grid gap-2 sm:grid-cols-5">
         {SETUP_STEP_LABELS.map((label, i) => {
           const step = i + 1;
-          const state = stateFor(step, current, checking, complete);
+          const state = stateFor({ step, current, checking, complete, isLast: i === SETUP_STEP_LABELS.length - 1 });
           return (
             <li
               key={label}
