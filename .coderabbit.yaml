@@ -16,6 +16,7 @@ reviews:
     - "!build/**"
     - "!apps/*/dist/**"
     - "!apps/*/.next/**"
+    - "!.playwright-mcp/**"
     - "!package-lock.json"
     - "!apps/engine/src/llm/hosted/providers/claudeSdk.ts"
     - "!apps/engine/src/llm/hosted/providers/codexSdk.ts"
