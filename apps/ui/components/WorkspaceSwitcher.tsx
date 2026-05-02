@@ -2,11 +2,11 @@
 
 import { useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { useWorkspaceContext } from "@/lib/context/WorkspaceContext";
+import { useOptionalWorkspaceContext } from "@/lib/context/WorkspaceContext";
 
 export function WorkspaceSwitcher() {
   const { workspaces, currentKey, isKnownWorkspace, fetchError } =
-    useWorkspaceContext();
+    useOptionalWorkspaceContext();
   const router = useRouter();
 
   const handleChange = useCallback(

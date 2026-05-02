@@ -1,0 +1,145 @@
+export type SetupStatus =
+  | "ok"
+  | "missing"
+  | "misconfigured"
+  | "skipped"
+  | "unknown"
+  | "uninitialized"
+  | "checking";
+
+export type SetupLevel = "required" | "recommended" | "optional";
+
+export interface SetupRemedy {
+  hint?: string;
+  command?: string;
+  url?: string;
+}
+
+export interface SetupCheck {
+  id: string;
+  label: string;
+  status: SetupStatus;
+  version?: string;
+  detail?: string;
+  remedy?: SetupRemedy;
+}
+
+export interface SetupGroup {
+  id: string;
+  label: string;
+  level: SetupLevel;
+  minOk: number;
+  idealOk?: number;
+  passed: number;
+  satisfied: boolean;
+  ideal: boolean;
+  checks: SetupCheck[];
+}
+
+export interface SetupReport {
+  reportVersion: 1;
+  overall: "ok" | "warning" | "blocked";
+  groups: SetupGroup[];
+  generatedAt: number;
+}
+
+export interface SecretRefView {
+  ref: string;
+  present: boolean;
+}
+
+export interface AppConfigView {
+  setupState: "uninitialized" | "partial" | "complete";
+  configPath: string;
+  configFile: { kind: "ok" | "missing" | "invalid"; path: string; error?: string };
+  config: {
+    allowedRoots: string[];
+    enginePort: number;
+    publicBaseUrl?: string;
+    llm: {
+      provider: "anthropic" | "openai" | "opencode";
+      model: string;
+      defaultHarnessProfile: { mode?: string; [key: string]: unknown };
+      defaultSonarOrganization?: string;
+      apiKey: SecretRefView;
+    };
+    vcs: { github: { enabled: boolean } };
+    browser: { enabled: boolean };
+    notifications: {
+      telegram: {
+        enabled: boolean;
+        level: 0 | 1 | 2;
+        defaultChatId?: string;
+        botToken?: SecretRefView;
+        inbound: {
+          enabled: boolean;
+          webhookSecret?: SecretRefView;
+        };
+      };
+    };
+  };
+}
+
+export interface AppConfigPatchResult {
+  ok: boolean;
+  saved: string[];
+  rejected: Array<{ field: string; error: string }>;
+  config: Record<string, unknown>;
+}
+
+export interface SecretMetadata {
+  ref: string;
+  status: "missing" | "active" | "disabled" | "invalid" | "suspicious" | "unknown";
+  present?: boolean;
+  active?: boolean;
+  lastUpdatedAt?: number;
+  lastTestedAt?: number;
+  source?: string;
+}
+
+export const SETUP_STEP_LABELS = ["Core", "LLM", "Git", "Optional services", "Finish"] as const;
+
+export type WizardStepState = "done" | "current" | "blocked" | "checking" | "locked" | "finished";
+
+export function statusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    ok: "done",
+    missing: "blocked",
+    misconfigured: "blocked",
+    skipped: "skipped",
+    unknown: "unknown",
+    uninitialized: "blocked",
+    checking: "checking",
+    active: "configured",
+    disabled: "disabled",
+    invalid: "invalid",
+    suspicious: "suspicious",
+  };
+  return labels[status] ?? status;
+}
+
+export function firstBlockingGroup(report: SetupReport | null): SetupGroup | null {
+  if (!report) return null;
+  return report.groups.find((group) => group.level === "required" && !group.satisfied) ?? null;
+}
+
+export function currentSetupGroup(report: SetupReport | null): SetupGroup | null {
+  if (!report) return null;
+  return firstBlockingGroup(report) ?? report.groups.find((group) => !group.ideal) ?? report.groups[report.groups.length - 1] ?? null;
+}
+
+export function deriveCurrentStep(report: SetupReport | null): number {
+  if (!report) return 1;
+  const group = currentSetupGroup(report);
+  if (!group) return SETUP_STEP_LABELS.length;
+  if (group.id.includes("llm")) return 2;
+  if (group.id.includes("git") || group.id.includes("vcs")) return 3;
+  if (group.level === "optional" || group.id.includes("telegram") || group.id.includes("sonar")) return 4;
+  if (report.overall === "ok") return 5;
+  return 1;
+}
+
+export function groupPrimaryCheck(group: SetupGroup | null): SetupCheck | null {
+  if (!group) return null;
+  return group.checks.find((check) => check.status !== "ok" && check.status !== "skipped") ?? group.checks[0] ?? null;
+}

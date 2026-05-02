@@ -42,11 +42,26 @@ export async function proxyEngineMutation(
   path: string,
   body: unknown
 ): Promise<Response> {
+  return proxyEngineJson("POST", path, body);
+}
+
+export async function proxyEnginePatch(
+  path: string,
+  body: unknown
+): Promise<Response> {
+  return proxyEngineJson("PATCH", path, body);
+}
+
+async function proxyEngineJson(
+  method: "POST" | "PATCH",
+  path: string,
+  body: unknown
+): Promise<Response> {
   const headers = authHeaders({
     "Content-Type": "application/json",
   });
   const upstream = await fetch(`${engineBaseUrl()}${path}`, {
-    method: "POST",
+    method,
     headers,
     body: JSON.stringify(body ?? {}),
   });

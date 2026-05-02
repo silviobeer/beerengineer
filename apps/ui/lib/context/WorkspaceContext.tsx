@@ -52,3 +52,14 @@ export function useWorkspaceContext(): WorkspaceContextValue {
   }
   return ctx;
 }
+
+export function useOptionalWorkspaceContext(): WorkspaceContextValue {
+  const ctx = useContext(WorkspaceContext);
+  return ctx ?? {
+    workspaces: [],
+    currentKey: "",
+    currentWorkspace: null,
+    isKnownWorkspace: false,
+    fetchError: false,
+  };
+}

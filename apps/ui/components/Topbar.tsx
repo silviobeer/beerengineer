@@ -10,6 +10,10 @@ export function Topbar() {
     >
       <div className="flex items-center gap-3 min-w-0">
         <WorkspaceSwitcher />
+        <nav aria-label="App navigation" className="flex items-center gap-2 text-xs text-zinc-400">
+          <a className="hover:text-amber-300" href="/setup">Setup</a>
+          <a className="hover:text-amber-300" href="/settings">Settings</a>
+        </nav>
       </div>
       <span
         aria-hidden="true"
