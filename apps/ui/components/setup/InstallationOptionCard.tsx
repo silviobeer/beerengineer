@@ -15,7 +15,7 @@ export function InstallationOptionCard({ check }: Readonly<InstallationOptionCar
         <h3 className="text-sm font-medium text-zinc-100">{check.label}</h3>
         <p className="text-sm text-zinc-400">{check.remedy?.hint ?? check.detail ?? "Review this setup check manually."}</p>
         {check.remedy?.url ? (
-          <a className="text-sm text-amber-300 underline" href={check.remedy.url}>
+          <a className="text-sm text-amber-300 underline" href={check.remedy.url} target="_blank" rel="noopener noreferrer">
             Source documentation
           </a>
         ) : null}

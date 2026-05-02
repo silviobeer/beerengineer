@@ -14,6 +14,12 @@ function initialMeta(secret: SecretRefView | undefined, fallbackRef: string): Se
   };
 }
 
+function isSecretMetadata(value: unknown): value is SecretMetadata {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as { ref?: unknown; status?: unknown };
+  return typeof candidate.ref === "string" && typeof candidate.status === "string";
+}
+
 export function SecretMaintenanceRow({
   label,
   secret,
@@ -43,7 +49,12 @@ export function SecretMaintenanceRow({
         return;
       }
       setValue("");
-      setMeta((body.metadata ?? body.secret ?? body) as SecretMetadata);
+      const nextMeta = body.metadata ?? body.secret ?? body;
+      if (isSecretMetadata(nextMeta)) {
+        setMeta(nextMeta);
+      } else {
+        setError("Secret action returned invalid metadata.");
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Network error while performing secret action.");
     } finally {

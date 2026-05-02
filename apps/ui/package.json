@@ -9,7 +9,10 @@
     "typecheck": "tsc --noEmit",
     "lint": "next lint",
     "test": "vitest run",
-    "coverage": "vitest run --coverage.enabled true --coverage.provider=v8 --coverage.reporter=lcov --coverage.reporter=text-summary --coverage.reportsDirectory=../../coverage/ui",
+    "test:all": "vitest run",
+    "test:unit": "vitest run",
+    "coverage": "npm run coverage:sonar",
+    "coverage:sonar": "vitest run --coverage.enabled --coverage.provider=v8 --coverage.reporter=lcov --coverage.reporter=text-summary --coverage.reportsDirectory=../../coverage/ui",
     "test:watch": "vitest"
   },
   "dependencies": {
