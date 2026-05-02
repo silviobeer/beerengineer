@@ -45,10 +45,14 @@ export async function handleSetupRecheck(req: IncomingMessage, res: ServerRespon
 
 export async function handleSecretAction(req: IncomingMessage, res: ServerResponse, ref: string): Promise<void> {
   const body = await readJson(req)
-  const decoded = decodeURIComponent(ref)
+  const decoded = parseSecretRef(ref)
+  if (!decoded) {
+    json(res, 400, { error: "invalid_secret_ref" })
+    return
+  }
   if (body && typeof body === "object" && (body as { action?: unknown }).action === "test") {
     const result = await runSecretTest(decoded)
-    json(res, result.ok ? 200 : 409, result)
+    json(res, result.ok ? 200 : result.status === "not_implemented" ? 501 : 409, result)
     return
   }
   const result = applySecretAction(decoded, body)
@@ -56,5 +60,22 @@ export async function handleSecretAction(req: IncomingMessage, res: ServerRespon
 }
 
 export async function handleSecretMetadata(res: ServerResponse, ref: string): Promise<void> {
-  json(res, 200, readSecretMetadata(decodeURIComponent(ref)))
+  const decoded = parseSecretRef(ref)
+  if (!decoded) {
+    json(res, 400, { error: "invalid_secret_ref" })
+    return
+  }
+  json(res, 200, readSecretMetadata(decoded))
+}
+
+function parseSecretRef(raw: string): string | null {
+  let decoded: string
+  try {
+    decoded = decodeURIComponent(raw)
+  } catch {
+    return null
+  }
+  const trimmed = decoded.trim()
+  if (!trimmed || trimmed.includes("\0")) return null
+  return trimmed
 }

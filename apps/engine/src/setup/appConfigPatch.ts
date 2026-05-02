@@ -85,8 +85,8 @@ export function patchAppConfig(overrides: SetupOverrides = {}, patch: unknown = 
 
   if ("enginePort" in input) {
     applyField(saved, rejected, "enginePort", () => {
-      if (!Number.isInteger(input.enginePort) || Number(input.enginePort) <= 0) {
-        throw new TypeError("enginePort must be a positive integer")
+      if (!Number.isInteger(input.enginePort) || Number(input.enginePort) <= 0 || Number(input.enginePort) > 65535) {
+        throw new TypeError("enginePort must be an integer between 1 and 65535")
       }
       next.enginePort = Number(input.enginePort)
     })
@@ -132,33 +132,35 @@ export function patchAppConfig(overrides: SetupOverrides = {}, patch: unknown = 
 
   const notifications = optionalObject(input.notifications)
   const telegram = optionalObject(notifications.telegram)
-  next.notifications ??= { telegram: { enabled: false, level: 2, inbound: { enabled: false } } }
-  next.notifications.telegram ??= { enabled: false, level: 2, inbound: { enabled: false } }
-  if ("enabled" in telegram) applyField(saved, rejected, "notifications.telegram.enabled", () => { next.notifications!.telegram!.enabled = parseBoolean(telegram.enabled, "notifications.telegram.enabled") })
-  if ("level" in telegram) applyField(saved, rejected, "notifications.telegram.level", () => { next.notifications!.telegram!.level = parseTelegramLevel(telegram.level) })
-  if ("defaultChatId" in telegram) {
-    applyField(saved, rejected, "notifications.telegram.defaultChatId", () => {
-      next.notifications!.telegram!.defaultChatId = telegram.defaultChatId === undefined || telegram.defaultChatId === null || telegram.defaultChatId === ""
-        ? undefined
-        : parseString(telegram.defaultChatId, "notifications.telegram.defaultChatId")
-    })
-  }
-  if ("botTokenEnv" in telegram) {
-    applyField(saved, rejected, "notifications.telegram.botTokenEnv", () => {
-      next.notifications!.telegram!.botTokenEnv = telegram.botTokenEnv === undefined || telegram.botTokenEnv === null || telegram.botTokenEnv === ""
-        ? undefined
-        : parseString(telegram.botTokenEnv, "notifications.telegram.botTokenEnv")
-    })
-  }
   const inbound = optionalObject(telegram.inbound)
-  next.notifications.telegram.inbound ??= { enabled: false }
-  if ("enabled" in inbound) applyField(saved, rejected, "notifications.telegram.inbound.enabled", () => { next.notifications!.telegram!.inbound!.enabled = parseBoolean(inbound.enabled, "notifications.telegram.inbound.enabled") })
-  if ("webhookSecretEnv" in inbound) {
-    applyField(saved, rejected, "notifications.telegram.inbound.webhookSecretEnv", () => {
-      next.notifications!.telegram!.inbound!.webhookSecretEnv = inbound.webhookSecretEnv === undefined || inbound.webhookSecretEnv === null || inbound.webhookSecretEnv === ""
-        ? undefined
-        : parseString(inbound.webhookSecretEnv, "notifications.telegram.inbound.webhookSecretEnv")
-    })
+  if (Object.keys(telegram).length > 0 || Object.keys(inbound).length > 0) {
+    next.notifications ??= { telegram: { enabled: false, level: 2, inbound: { enabled: false } } }
+    next.notifications.telegram ??= { enabled: false, level: 2, inbound: { enabled: false } }
+    if ("enabled" in telegram) applyField(saved, rejected, "notifications.telegram.enabled", () => { next.notifications!.telegram!.enabled = parseBoolean(telegram.enabled, "notifications.telegram.enabled") })
+    if ("level" in telegram) applyField(saved, rejected, "notifications.telegram.level", () => { next.notifications!.telegram!.level = parseTelegramLevel(telegram.level) })
+    if ("defaultChatId" in telegram) {
+      applyField(saved, rejected, "notifications.telegram.defaultChatId", () => {
+        next.notifications!.telegram!.defaultChatId = telegram.defaultChatId === undefined || telegram.defaultChatId === null || telegram.defaultChatId === ""
+          ? undefined
+          : parseString(telegram.defaultChatId, "notifications.telegram.defaultChatId")
+      })
+    }
+    if ("botTokenEnv" in telegram) {
+      applyField(saved, rejected, "notifications.telegram.botTokenEnv", () => {
+        next.notifications!.telegram!.botTokenEnv = telegram.botTokenEnv === undefined || telegram.botTokenEnv === null || telegram.botTokenEnv === ""
+          ? undefined
+          : parseString(telegram.botTokenEnv, "notifications.telegram.botTokenEnv")
+      })
+    }
+    next.notifications.telegram.inbound ??= { enabled: false }
+    if ("enabled" in inbound) applyField(saved, rejected, "notifications.telegram.inbound.enabled", () => { next.notifications!.telegram!.inbound!.enabled = parseBoolean(inbound.enabled, "notifications.telegram.inbound.enabled") })
+    if ("webhookSecretEnv" in inbound) {
+      applyField(saved, rejected, "notifications.telegram.inbound.webhookSecretEnv", () => {
+        next.notifications!.telegram!.inbound!.webhookSecretEnv = inbound.webhookSecretEnv === undefined || inbound.webhookSecretEnv === null || inbound.webhookSecretEnv === ""
+          ? undefined
+          : parseString(inbound.webhookSecretEnv, "notifications.telegram.inbound.webhookSecretEnv")
+      })
+    }
   }
 
   if (saved.length > 0) writeConfigFile(configPath, next)

@@ -139,6 +139,7 @@ async function executeWave(
   let waveBranchOpQueue: Promise<unknown> = Promise.resolve()
   const enqueueWaveBranchOp = <T>(op: () => T | Promise<T>): Promise<T> => {
     const next = waveBranchOpQueue.then(op, op)
+    // Keep the queue usable after an individual branch operation fails.
     waveBranchOpQueue = next.then(
       () => undefined,
       () => undefined,

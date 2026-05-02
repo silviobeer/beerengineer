@@ -91,3 +91,23 @@ test("AC-4 GET /setup/status report keeps the readiness model contract", async (
     rmSync(paths.dir, { recursive: true, force: true })
   }
 })
+
+test("AC-4 all LLM groups does not make inactive providers required blockers", async () => {
+  const paths = tempSetupPaths()
+  try {
+    const report = await generateSetupReport({
+      allLlmGroups: true,
+      overrides: {
+        configPath: paths.configPath,
+        dataDir: paths.dataDir,
+        llmProvider: "anthropic",
+      },
+    })
+
+    const inactiveLlmGroups = report.groups.filter(group => group.id.startsWith("llm.") && group.id !== "llm.anthropic")
+    assert.equal(inactiveLlmGroups.length, 2)
+    assert.equal(inactiveLlmGroups.every(group => group.level === "optional"), true)
+  } finally {
+    rmSync(paths.dir, { recursive: true, force: true })
+  }
+})

@@ -94,3 +94,20 @@ test("AC-15 enginePort is stored as a future-start value without changing curren
     rmSync(paths.dir, { recursive: true, force: true })
   }
 })
+
+test("AC-15 enginePort rejects values outside the TCP port range", () => {
+  const paths = tempSetupPaths()
+  try {
+    writeConfigFile(paths.configPath, { ...defaultAppConfig(), dataDir: paths.dataDir, enginePort: 4100 })
+
+    const result = patchAppConfig({ configPath: paths.configPath, dataDir: paths.dataDir }, { enginePort: 2147483647 })
+
+    assert.equal(result.ok, false)
+    assert.deepEqual(result.rejected.map(entry => entry.field), ["enginePort"])
+    const state = readConfigFile(paths.configPath)
+    assert.equal(state.kind, "ok")
+    if (state.kind === "ok") assert.equal(state.config.enginePort, 4100)
+  } finally {
+    rmSync(paths.dir, { recursive: true, force: true })
+  }
+})

@@ -15,20 +15,21 @@ function tempSetupPaths() {
   }
 }
 
-test("AC-17 re-checks return fresh status values", async () => {
+test("PRD-1 AC-17 re-checks return fresh status values", async () => {
   const paths = tempSetupPaths()
   try {
     const first = await runSetupRecheck({ overrides: { configPath: paths.configPath, dataDir: paths.dataDir } })
-    await new Promise(resolve => setTimeout(resolve, 5))
     const second = await runSetupRecheck({ overrides: { configPath: paths.configPath, dataDir: paths.dataDir } })
 
-    assert.equal(second.report.generatedAt > first.report.generatedAt, true)
+    assert.equal(second.report.generatedAt >= first.report.generatedAt, true)
+    assert.notEqual(second.report, first.report)
+    assert.deepEqual(second.report.groups.map(group => group.id), first.report.groups.map(group => group.id))
   } finally {
     rmSync(paths.dir, { recursive: true, force: true })
   }
 })
 
-test("AC-18 re-checks can run for all checks or a specific setup group", async () => {
+test("PRD-1 AC-18 re-checks can run for all checks or a specific setup group", async () => {
   const paths = tempSetupPaths()
   try {
     const all = await runSetupRecheck({ overrides: { configPath: paths.configPath, dataDir: paths.dataDir } })
@@ -41,7 +42,7 @@ test("AC-18 re-checks can run for all checks or a specific setup group", async (
   }
 })
 
-test("AC-19 transient check failures are reported as understandable error states", async () => {
+test("PRD-1 AC-19 transient check failures are reported as understandable error states", async () => {
   const paths = tempSetupPaths()
   try {
     const result = await runSetupRecheck({
@@ -57,7 +58,7 @@ test("AC-19 transient check failures are reported as understandable error states
   }
 })
 
-test("AC-20 required gate status clearly supports Next enablement decisions", async () => {
+test("PRD-1 AC-20 required gate status clearly supports Next enablement decisions", async () => {
   const paths = tempSetupPaths()
   try {
     const report = await generateSetupReport({

@@ -12,7 +12,7 @@ function tempSecretStore() {
   return { dir, storePath: join(dir, "secrets.json") }
 }
 
-test("AC-18 missing optional secrets do not block required gates", () => {
+test("PRD-2 AC-18 missing optional secrets do not block required gates", () => {
   const paths = tempSecretStore()
   try {
     const gate = optionalSecretGate("telegram", { storePath: paths.storePath })
@@ -23,7 +23,7 @@ test("AC-18 missing optional secrets do not block required gates", () => {
   }
 })
 
-test("AC-19 optional secret readiness distinguishes skipped, configured, and failed", () => {
+test("PRD-2 AC-19 optional secret readiness distinguishes skipped, configured, and failed", () => {
   const paths = tempSecretStore()
   try {
     storeSecret("configured", "secret", { storePath: paths.storePath })
@@ -38,7 +38,7 @@ test("AC-19 optional secret readiness distinguishes skipped, configured, and fai
   }
 })
 
-test("AC-20 optional gate metadata lets the UI enable Skip", () => {
+test("PRD-2 AC-20 optional gate metadata lets the UI enable Skip", () => {
   const paths = tempSecretStore()
   try {
     const gate = optionalSecretGate("telegram", { storePath: paths.storePath })

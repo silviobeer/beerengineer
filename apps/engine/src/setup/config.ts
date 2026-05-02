@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, resolve } from "node:path"
 import envPaths from "env-paths"
@@ -470,7 +470,9 @@ export function resolveMergedConfig(state: ConfigFileState, overrides: SetupOver
 
 export function writeConfigFile(configPath: string, config: AppConfig): void {
   mkdirSync(dirname(configPath), { recursive: true })
-  writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8")
+  const tmpPath = `${configPath}.${process.pid}.tmp`
+  writeFileSync(tmpPath, `${JSON.stringify(config, null, 2)}\n`, "utf8")
+  renameSync(tmpPath, configPath)
 }
 
 export function resolveConfiguredDbPath(config: Pick<AppConfig, "dataDir">): string {

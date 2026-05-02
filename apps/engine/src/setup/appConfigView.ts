@@ -4,6 +4,7 @@ import {
   resolveMergedConfig,
   resolveOverrides,
 } from "./config.js"
+import { readActiveSecretValue } from "./secretStore.js"
 import type { AppConfig, ConfigFileState, SetupOverrides } from "./types.js"
 
 export type SecretRefView = {
@@ -113,7 +114,7 @@ function fileStateView(state: ConfigFileState): AppConfigView["configFile"] {
 }
 
 function secretRef(ref: string): SecretRefView {
-  return { ref, present: Boolean(process.env[ref]) }
+  return { ref, present: Boolean(process.env[ref]) || readActiveSecretValue(ref) !== null }
 }
 
 function emptyConfigView(): AppConfigView["config"] {

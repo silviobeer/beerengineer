@@ -6,6 +6,7 @@ import { test } from "node:test"
 
 import { getAppConfigView } from "../src/setup/appConfigView.js"
 import { defaultAppConfig, writeConfigFile } from "../src/setup/config.js"
+import { storeSecret } from "../src/setup/secretStore.js"
 
 function tempSetupPaths() {
   const dir = mkdtempSync(join(tmpdir(), "be2-app-config-view-"))
@@ -94,6 +95,33 @@ test("AC-10 effective app config returns secret references, never plaintext valu
   } finally {
     delete process.env.OPENAI_API_KEY
     delete process.env.TELEGRAM_BOT_TOKEN
+    rmSync(paths.dir, { recursive: true, force: true })
+  }
+})
+
+test("AC-10 effective app config treats stored secrets as present without env export", () => {
+  const paths = tempSetupPaths()
+  try {
+    writeConfigFile(paths.configPath, {
+      ...defaultAppConfig(),
+      dataDir: paths.dataDir,
+      llm: {
+        ...defaultAppConfig().llm,
+        apiKeyRef: "ANTHROPIC_API_KEY",
+      },
+    })
+    storeSecret("ANTHROPIC_API_KEY", "stored-secret-plaintext", {
+      storePath: join(paths.dir, "secrets.json"),
+    })
+    process.env.BEERENGINEER_SECRET_STORE_PATH = join(paths.dir, "secrets.json")
+
+    const view = getAppConfigView({ configPath: paths.configPath, dataDir: paths.dataDir })
+    const serialized = JSON.stringify(view)
+
+    assert.equal(view.config.llm.apiKey.present, true)
+    assert.doesNotMatch(serialized, /stored-secret-plaintext/)
+  } finally {
+    delete process.env.BEERENGINEER_SECRET_STORE_PATH
     rmSync(paths.dir, { recursive: true, force: true })
   }
 })

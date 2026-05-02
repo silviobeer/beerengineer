@@ -372,7 +372,7 @@ const server = createServer(async (req: ApiRequest, res) => {
     json(res, 404, { error: "not found" })
   } catch (err) {
     console.error("[api]", err)
-    json(res, 500, { error: (err as Error).message })
+    json(res, 500, { error: "internal_server_error" })
   }
 })
 

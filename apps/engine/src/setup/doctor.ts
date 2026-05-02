@@ -54,14 +54,18 @@ export async function generateSetupReport(options: DoctorOptions = {}): Promise<
   const config = resolveMergedConfig(configState, overrides)
   const llmGroup = getActiveLlmGroup(config)
   const telegramEnabled = config?.notifications?.telegram?.enabled === true
+  const llmGate = (id: "llm.anthropic" | "llm.openai" | "llm.opencode"): Pick<GroupDefinition, "level" | "minOk" | "idealOk"> =>
+    options.allLlmGroups === true && id !== llmGroup
+      ? { level: "optional", minOk: 0, idealOk: 2 }
+      : { level: "required", minOk: 2 }
 
   const groupDefs: GroupDefinition[] = [
     { id: "core", label: "Core app checks", level: "required", minOk: 6, active: true, run: () => runCoreChecks(configPath, configState, config) },
     { id: "notifications", label: "Notification delivery", level: "optional", minOk: 0, idealOk: telegramEnabled ? 4 : 0, active: true, run: () => runNotificationChecks(config) },
     { id: "vcs.github", label: "GitHub workflows", level: "optional", minOk: 0, idealOk: config?.vcs?.github?.enabled ? 2 : 0, active: true, run: () => runGitHubChecks(Boolean(config?.vcs?.github?.enabled)) },
-    { id: "llm.anthropic", label: "Anthropic capability", level: "required", minOk: 2, active: Boolean(config) && (options.allLlmGroups === true || llmGroup === "llm.anthropic"), run: () => runLlmChecks("anthropic", config as AppConfig) },
-    { id: "llm.openai", label: "OpenAI capability", level: "required", minOk: 2, active: Boolean(config) && (options.allLlmGroups === true || llmGroup === "llm.openai"), run: () => runLlmChecks("openai", config as AppConfig) },
-    { id: "llm.opencode", label: "OpenCode capability", level: "required", minOk: 2, active: Boolean(config) && (options.allLlmGroups === true || llmGroup === "llm.opencode"), run: () => runLlmChecks("opencode", config as AppConfig) },
+    { id: "llm.anthropic", label: "Anthropic capability", ...llmGate("llm.anthropic"), active: Boolean(config) && (options.allLlmGroups === true || llmGroup === "llm.anthropic"), run: () => runLlmChecks("anthropic", config as AppConfig) },
+    { id: "llm.openai", label: "OpenAI capability", ...llmGate("llm.openai"), active: Boolean(config) && (options.allLlmGroups === true || llmGroup === "llm.openai"), run: () => runLlmChecks("openai", config as AppConfig) },
+    { id: "llm.opencode", label: "OpenCode capability", ...llmGate("llm.opencode"), active: Boolean(config) && (options.allLlmGroups === true || llmGroup === "llm.opencode"), run: () => runLlmChecks("opencode", config as AppConfig) },
     { id: "browser-agent", label: "Browser agent capability", level: "optional", minOk: 0, idealOk: config?.browser?.enabled ? 2 : 0, active: true, run: () => runBrowserChecks(Boolean(config?.browser?.enabled)) },
     { id: "review", label: "Review tool recommendations", level: "recommended", minOk: 0, idealOk: 3, active: true, run: () => runReviewChecks() },
   ]
