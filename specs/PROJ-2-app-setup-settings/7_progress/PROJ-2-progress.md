@@ -1,7 +1,7 @@
 # PROJ-2 Progress
 
 ## Status: in progress
-## Current Wave: 6
+## Current Wave: 5
 ## BASE_SHA: 35b6ee5c43f6b871b832ad6800c704562149b242
 
 ---

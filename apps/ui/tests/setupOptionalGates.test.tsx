@@ -1,11 +1,18 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SetupGateBox } from "@/components/setup/SetupGateBox";
 import { optionalReport } from "./setupFixtures";
 
 describe("Setup optional gates", () => {
+  const originalFetch = globalThis.fetch;
+
   beforeEach(() => {
     globalThis.fetch = vi.fn(async () => Response.json({ ok: true, status: "skipped" })) as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    globalThis.fetch = originalFetch;
   });
 
   it("AC-21 optional-service gates show an enabled Skip path", () => {
