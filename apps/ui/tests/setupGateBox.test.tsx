@@ -28,4 +28,14 @@ describe("SetupGateBox", () => {
     fireEvent.click(screen.getByRole("button", { name: /re-check/i }));
     expect(screen.getByRole("button", { name: /checking/i })).toBeDisabled();
   });
+
+  it("redacts project and admin OpenAI key prefixes from setup detail text", () => {
+    const report = blockedReport();
+    report.groups[1].checks[0].detail = "Keys sk-proj-secret_token and sk-admin-secret_token failed validation.";
+
+    render(<SetupGateBox initialReport={report} />);
+
+    expect(screen.getByText("Keys redacted and redacted failed validation.")).toBeInTheDocument();
+    expect(screen.queryByText(/sk-proj-secret_token|sk-admin-secret_token/)).not.toBeInTheDocument();
+  });
 });

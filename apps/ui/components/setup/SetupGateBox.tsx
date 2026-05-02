@@ -59,7 +59,7 @@ export function SetupGateBox({ initialReport, initialError = null, onCheckingCha
   const detail = error ?? check?.detail ?? check?.remedy?.hint ?? "All required checks are ready.";
 
   const secretSafeText = useMemo(() => {
-    return detail.replace(/sk-[A-Za-z0-9_-]+/g, "redacted");
+    return detail.replace(/\bsk(?:-proj|-admin)?-[A-Za-z0-9_-]+/g, "redacted");
   }, [detail]);
 
   async function recheck() {
