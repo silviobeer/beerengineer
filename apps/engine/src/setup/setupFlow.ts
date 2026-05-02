@@ -1,18 +1,16 @@
-import { mkdirSync } from "node:fs"
 import { createInterface, type Interface } from "node:readline/promises"
 import { stdin as input, stdout as output } from "node:process"
-import { initDatabase } from "../db/connection.js"
 import {
   normalizePublicBaseUrl,
   readConfigFile,
   resolveConfigPath,
-  resolveConfiguredDbPath,
   resolveMergedConfig,
   resolveOverrides,
   writeConfigFile,
 } from "./config.js"
 import { doctorExitCode, printDoctorReport } from "./doctorOutput.js"
 import { generateSetupReport } from "./doctor.js"
+import { initializeAppState } from "./appState.js"
 import type { AppConfig, SetupOverrides, SetupReport } from "./types.js"
 
 export type SetupRunOptions = {
@@ -58,41 +56,21 @@ export async function runSetupFlow(options: SetupRunOptions = {}): Promise<numbe
   return doctorExitCode(report)
 }
 
-class InvalidConfigError extends Error {
-  constructor(public readonly path: string, public readonly reason: string) {
-    super(`config at ${path} is invalid: ${reason}`)
-  }
-}
-
 function buildProvisionedConfig(overrides: SetupOverrides = {}): AppConfig {
   const resolved = resolveOverrides(overrides)
   const state = readConfigFile(resolveConfigPath(resolved))
-  if (state.kind === "invalid") throw new InvalidConfigError(state.path, state.error)
+  if (state.kind === "invalid") throw new Error(`config at ${state.path} is invalid: ${state.error}`)
   return resolveMergedConfig(state, resolved) as AppConfig
 }
 
-function ensureProvisionedState(overrides: SetupOverrides = {}): AppConfig {
-  const resolved = resolveOverrides(overrides)
-  const configPath = resolveConfigPath(resolved)
-  const config = buildProvisionedConfig(resolved)
-  mkdirSync(config.dataDir, { recursive: true })
-  initDatabase(resolveConfiguredDbPath(config)).close()
-  writeConfigFile(configPath, config)
-  return config
-}
-
 function initializeProvisionedState(overrides: SetupOverrides | undefined): { ok: true } | { ok: false } {
-  try {
-    ensureProvisionedState(overrides)
-    return { ok: true }
-  } catch (err) {
-    if (err instanceof InvalidConfigError) {
-      console.error(`  Refusing to overwrite invalid config at ${err.path}: ${err.reason}`)
-      console.error("  Fix the file by hand or remove it, then re-run `beerengineer setup`.")
-      return { ok: false }
-    }
-    throw err
+  const result = initializeAppState(overrides)
+  if (!result.ok) {
+    console.error(`  Refusing to overwrite invalid config at ${result.configPath}: ${result.error}`)
+    console.error("  Fix the file by hand or remove it, then re-run `beerengineer setup`.")
+    return { ok: false }
   }
+  return { ok: true }
 }
 
 async function refreshSetupReport(options: SetupRunOptions): Promise<SetupReport> {

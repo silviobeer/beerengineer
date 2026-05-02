@@ -42,7 +42,7 @@ import {
   handleWorkspacePreview,
   handleWorkspaceRemove,
 } from "./routes/workspaces.js"
-import { handleSetupStatus } from "./routes/setup.js"
+import { handleSetupConfig, handleSetupInit, handleSetupStatus } from "./routes/setup.js"
 import {
   handleUpdateApply,
   handleUpdateCheck,
@@ -187,6 +187,8 @@ function topLevelRouteHandlers(context: RouteContext): Partial<Record<string, ()
     "POST /items/import-prepared": () => handleCreatePreparedImportItem(repos, context.req, context.res, payload => board.broadcastItemColumnChanged(payload)),
     "GET /board": () => handleGetBoard(db, context.url, context.res),
     "GET /setup/status": () => handleSetupStatus(context.url, context.res),
+    "GET /setup/config": () => handleSetupConfig(context.res),
+    "POST /setup/init": () => handleSetupInit(context.res),
     "GET /update/status": () => handleUpdateStatus(repos, context.appConfig, context.res, { pid: process.pid }),
     "GET /update/preflight": () => handleUpdatePreflight(repos, context.appConfig, context.res, { pid: process.pid }),
     "POST /update/check": () => handleUpdateCheck(context.req, context.res),
