@@ -52,14 +52,3 @@ test("waveCoordinator: an unknown story id never asks to rebase", () => {
   c.notifyMergedStory("s1")
   assert.equal(c.shouldRebase("not-registered"), false)
 })
-
-test.todo(
-  "TODO(merge-conflict-cascade-fix-2): rebase-on-merge is not yet wired into ralphRuntime " +
-  "iteration boundaries. The waveCoordinator + rebaseStoryOntoWave primitives are ready, " +
-  "but threading them through the cycled-loop runtime so an in-flight story rebases between " +
-  "test+coder cycles requires changes to ralphRuntime.runRalphStory + iterationLoop signatures " +
-  "that are out of scope for the current change. The parallel-stories path (BEERENGINEER_" +
-  "EXECUTION_PARALLEL_STORIES) defaults OFF, so the safe sequential path (Fix 1) protects " +
-  "today's runs; rebase-on-merge remains opt-in for an operator who has explicitly enabled " +
-  "the parallel mode and accepted the runtime risk."
-)

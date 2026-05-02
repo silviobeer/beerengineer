@@ -18,10 +18,19 @@ import {
 
 export type { StoryArtifacts } from "./ralphRuntimeShared.js"
 
+export type RalphCycleBoundaryResult =
+  | { ok: true }
+  | { ok: false; reason: string }
+
+export type RalphStoryRuntimeHooks = {
+  onCycleBoundary?: (args: { cycle: number }) => Promise<RalphCycleBoundaryResult> | RalphCycleBoundaryResult
+}
+
 export async function runRalphStory(
   storyContext: StoryExecutionContext,
   runtimeContext: WorkflowContext,
   llm?: RunLlmConfig,
+  hooks: RalphStoryRuntimeHooks = {},
 ): Promise<StoryArtifacts> {
   const paths = ralphPaths(runtimeContext, storyContext)
   await mkdir(paths.dir, { recursive: true })
@@ -35,6 +44,7 @@ export async function runRalphStory(
     implementation,
     storyReview: persisted.review,
     pendingRemediation: persisted.pendingRemediation,
+    onCycleBoundary: hooks.onCycleBoundary,
   })
 }
 

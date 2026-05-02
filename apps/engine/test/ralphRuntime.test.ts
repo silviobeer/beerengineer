@@ -182,6 +182,26 @@ test("runRalphStory records pass-partial when one tool passes and the other is s
   })
 })
 
+test("runRalphStory blocks when the cycle boundary hook reports a rebase conflict", async () => {
+  await withTmpCwd(async () => {
+    const ctx = makeCtx(process.cwd())
+    const cycles: number[] = []
+    const result = await runRalphStory(storyContext("US-35"), ctx, undefined, {
+      onCycleBoundary: ({ cycle }) => {
+        cycles.push(cycle)
+        return cycle === 1
+          ? { ok: false, reason: "rebase_conflict_on:package.json" }
+          : { ok: true }
+      },
+    })
+
+    assert.deepEqual(cycles, [0, 1])
+    assert.equal(result.implementation.status, "blocked")
+    assert.match(result.implementation.finalSummary, /rebase_conflict_on:package\.json/)
+    assert.equal(result.implementation.iterations.length, 2)
+  })
+})
+
 test("writeWaveSummary classifies stories by status", async () => {
   await withTmpCwd(async () => {
     const ctx = makeCtx(process.cwd())

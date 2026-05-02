@@ -8,10 +8,11 @@ import { stagePresent } from "../../core/stagePresentation.js"
 import { assignPort, releasePort } from "../../core/portAllocator.js"
 import { layout } from "../../core/workspaceLayout.js"
 import { resolveMergeResolverHarness } from "../../llm/registry.js"
-import { runRalphStory, writeWaveSummary, type StoryArtifacts } from "./ralphRuntime.js"
+import { runRalphStory, writeWaveSummary, type RalphCycleBoundaryResult, type StoryArtifacts } from "./ralphRuntime.js"
 import { runSetupStory } from "./setupStory.js"
 import { buildStoryExecutionContext, createScreenOwners, executionStageLlmForStory } from "./storyContext.js"
 import { writeStoryTestPlan } from "./testWriter.js"
+import { createWaveCoordinator, type WaveCoordinator } from "./waveCoordinator.js"
 import type { ExecutionLlmOptions } from "./index.js"
 import type { StoryTestPlanArtifact } from "./types.js"
 import type {
@@ -135,11 +136,18 @@ async function executeWave(
       })()
     : undefined
   const expectedSharedFiles = expectedSharedFilesForWave(wave)
-  let waveBranchOpQueue: Promise<void> = Promise.resolve()
-  const enqueueWaveBranchOp = (op: () => void): Promise<void> => {
-    waveBranchOpQueue = waveBranchOpQueue.then(async () => op())
-    return waveBranchOpQueue
+  let waveBranchOpQueue: Promise<unknown> = Promise.resolve()
+  const enqueueWaveBranchOp = <T>(op: () => T | Promise<T>): Promise<T> => {
+    const next = waveBranchOpQueue.then(op, op)
+    waveBranchOpQueue = next.then(
+      () => undefined,
+      () => undefined,
+    )
+    return next
   }
+  const waveCoordinator = parallelEnabled
+    ? createWaveCoordinator(waveEntries.map(entry => entry.id))
+    : undefined
 
   const run = async (story: Pick<UserStory, "id" | "title">) => {
     const resolved = wave.kind === "setup"
@@ -164,6 +172,7 @@ async function executeWave(
       result = await implementStory(ctx, wave, resolved, screenOwners, {
         rerunTestWriter: resume?.storyId === story.id ? Boolean(resume.rerunTestWriter) : false,
         worktreeRoot: storyWorktreeRoot,
+        onCycleBoundary: createStoryRebaseBoundary(ctx, wave, resolved, git, enqueueWaveBranchOp, waveCoordinator),
       }, llm)
       if (result.implementation.status === "passed") {
         await enqueueWaveBranchOp(() =>
@@ -173,6 +182,7 @@ async function executeWave(
             expectedSharedFiles,
           }),
         )
+        waveCoordinator?.notifyMergedStory(resolved.id)
       }
       if (result.implementation.status === "blocked") {
         await enqueueWaveBranchOp(() => git.abandonStoryBranch(ctx.project.id, wave.number, resolved.id))
@@ -285,7 +295,11 @@ async function implementStory(
   wave: WaveDefinition,
   story: UserStory,
   screenOwners: ReturnType<typeof createScreenOwners>,
-  opts: { rerunTestWriter?: boolean; worktreeRoot?: string } = {},
+  opts: {
+    rerunTestWriter?: boolean
+    worktreeRoot?: string
+    onCycleBoundary?: (args: { cycle: number }) => Promise<RalphCycleBoundaryResult> | RalphCycleBoundaryResult
+  } = {},
   llm?: ExecutionLlmOptions,
 ): Promise<StoryResult> {
   stagePresent.step(`  Story ${story.id}: ${story.title}`)
@@ -312,7 +326,31 @@ async function implementStory(
     screenOwners,
   })
   const executionLlm = executionStageLlmForStory(llm?.executionCoder, opts.worktreeRoot)
-  const result: StoryArtifacts = await runRalphStory(storyContext, ctx, executionLlm)
+  const result: StoryArtifacts = await runRalphStory(storyContext, ctx, executionLlm, {
+    onCycleBoundary: opts.onCycleBoundary,
+  })
   stagePresent.dim(`  Status: ${result.implementation.status}`)
   return { storyId: story.id, implementation: result.implementation }
+}
+
+function createStoryRebaseBoundary(
+  ctx: WithArchitecture,
+  wave: WaveDefinition,
+  story: UserStory,
+  git: GitAdapter,
+  enqueueWaveBranchOp: <T>(op: () => T | Promise<T>) => Promise<T>,
+  waveCoordinator: WaveCoordinator | undefined,
+): ((args: { cycle: number }) => Promise<RalphCycleBoundaryResult>) | undefined {
+  if (!waveCoordinator || wave.kind === "setup") return undefined
+  return async ({ cycle }) => {
+    if (!waveCoordinator.shouldRebase(story.id)) return { ok: true }
+    stagePresent.dim(`  Rebase ${story.id} onto updated wave ${wave.number} before review cycle ${cycle + 1}`)
+    const result = await enqueueWaveBranchOp(() => git.rebaseStoryOntoWave(ctx.project.id, wave.number, story.id))
+    if (result.ok) {
+      waveCoordinator.markRebased(story.id)
+      return { ok: true }
+    }
+    waveCoordinator.abandonStory(story.id, result.reason)
+    return result
+  }
 }

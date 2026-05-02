@@ -22,12 +22,14 @@ import {
   type RalphLoopContext,
   type StoryArtifacts,
 } from "./ralphRuntimeShared.js"
+import type { RalphCycleBoundaryResult } from "./ralphRuntime.js"
 
 export async function runRalphLoop(input: {
   ctx: RalphLoopContext
   implementation: StoryImplementationArtifact
   storyReview?: StoryReviewArtifact
   pendingRemediation?: PendingRemediation
+  onCycleBoundary?: (args: { cycle: number }) => Promise<RalphCycleBoundaryResult> | RalphCycleBoundaryResult
 }): Promise<StoryArtifacts> {
   const { ctx, implementation } = input
   let { storyReview } = input
@@ -41,6 +43,17 @@ export async function runRalphLoop(input: {
     startCycle: Math.max(implementation.currentReviewCycle, 0),
     initialFeedback: seedFeedback,
     runCycle: async ({ cycle: reviewCycle, feedback }): Promise<CycleOutcome<StoryArtifacts>> => {
+      const boundary = await input.onCycleBoundary?.({ cycle: reviewCycle })
+      if (boundary && !boundary.ok) {
+        const result = await blockStory(
+          ctx,
+          implementation,
+          storyReview,
+          "story_error",
+          `Story blocked before review cycle ${reviewCycle + 1}: ${boundary.reason}`,
+        )
+        return { kind: "done", result }
+      }
       implementation.currentReviewCycle = reviewCycle
       if (implementation.status !== "ready_for_review") {
         const coderOutcome = await runCoderCycleUntilGreen(ctx, implementation, {
