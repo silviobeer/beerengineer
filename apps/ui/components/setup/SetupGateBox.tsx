@@ -15,6 +15,7 @@ import { VerificationGateControls } from "./VerificationGateControls";
 interface SetupGateBoxProps {
   readonly initialReport: SetupReport | null;
   readonly initialError?: string | null;
+  readonly onCheckingChange?: (checking: boolean) => void;
 }
 
 function isSetupReport(value: unknown): value is SetupReport {
@@ -35,7 +36,7 @@ async function readJsonResponse(res: Response): Promise<unknown | null> {
   }
 }
 
-export function SetupGateBox({ initialReport, initialError = null }: Readonly<SetupGateBoxProps>) {
+export function SetupGateBox({ initialReport, initialError = null, onCheckingChange }: Readonly<SetupGateBoxProps>) {
   const [report, setReport] = useState(initialReport);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState(initialError);
@@ -43,6 +44,11 @@ export function SetupGateBox({ initialReport, initialError = null }: Readonly<Se
   useEffect(() => {
     setReport(initialReport);
   }, [initialReport]);
+
+  function setCheckingState(next: boolean) {
+    setChecking(next);
+    onCheckingChange?.(next);
+  }
   const requiredBlocker = firstBlockingGroup(report);
   const group = currentSetupGroup(report);
   const check = groupPrimaryCheck(group);
@@ -57,7 +63,7 @@ export function SetupGateBox({ initialReport, initialError = null }: Readonly<Se
   }, [detail]);
 
   async function recheck() {
-    setChecking(true);
+    setCheckingState(true);
     setError(null);
     try {
       const res = await fetch("/api/setup/recheck", {
@@ -83,7 +89,7 @@ export function SetupGateBox({ initialReport, initialError = null }: Readonly<Se
     } catch {
       setError("Re-check failed.");
     } finally {
-      setChecking(false);
+      setCheckingState(false);
     }
   }
 

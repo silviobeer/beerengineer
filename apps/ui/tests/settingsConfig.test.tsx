@@ -1,11 +1,15 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppConfigSection } from "@/components/settings/AppConfigSection";
 import { configView } from "./setupFixtures";
 
 describe("AppConfigSection", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it("AC-5 shows in-scope app config fields", () => {
@@ -18,7 +22,7 @@ describe("AppConfigSection", () => {
 
   it("AC-6 saves through the UI API proxy boundary", async () => {
     const fetchSpy = vi.fn(async () => Response.json({ ok: true, saved: ["enginePort"], rejected: [], config: { enginePort: 4200 } }));
-    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    vi.stubGlobal("fetch", fetchSpy);
     render(<AppConfigSection initialView={configView()} />);
     fireEvent.click(screen.getByRole("button", { name: /save app config/i }));
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith("/api/settings/config", expect.objectContaining({ method: "PATCH" })));
@@ -30,7 +34,7 @@ describe("AppConfigSection", () => {
   });
 
   it("AC-8 refreshes visible values from the backend response", async () => {
-    globalThis.fetch = vi.fn(async () => Response.json({ ok: true, saved: ["enginePort"], rejected: [], config: { enginePort: 4200 } })) as unknown as typeof fetch;
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ok: true, saved: ["enginePort"], rejected: [], config: { enginePort: 4200 } })));
     render(<AppConfigSection initialView={configView()} />);
     fireEvent.click(screen.getByRole("button", { name: /save app config/i }));
     await waitFor(() => expect(screen.getByLabelText(/Engine port/i)).toHaveValue("4200"));
