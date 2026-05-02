@@ -4,6 +4,8 @@ import { getAppConfigView } from "../../setup/appConfigView.js"
 import { patchAppConfig } from "../../setup/appConfigPatch.js"
 import { generateSetupReport, runSetupRecheck } from "../../setup/doctor.js"
 import { applySecretAction } from "../../setup/secretActions.js"
+import { readSecretMetadata } from "../../setup/secretMetadata.js"
+import { runSecretTest } from "../../setup/secretTests.js"
 import { KNOWN_GROUP_IDS } from "../../setup/config.js"
 import { json, readJson } from "../http.js"
 
@@ -43,6 +45,16 @@ export async function handleSetupRecheck(req: IncomingMessage, res: ServerRespon
 
 export async function handleSecretAction(req: IncomingMessage, res: ServerResponse, ref: string): Promise<void> {
   const body = await readJson(req)
-  const result = applySecretAction(decodeURIComponent(ref), body)
+  const decoded = decodeURIComponent(ref)
+  if (body && typeof body === "object" && (body as { action?: unknown }).action === "test") {
+    const result = await runSecretTest(decoded)
+    json(res, result.ok ? 200 : 409, result)
+    return
+  }
+  const result = applySecretAction(decoded, body)
   json(res, result.ok ? 200 : 400, result)
+}
+
+export async function handleSecretMetadata(res: ServerResponse, ref: string): Promise<void> {
+  json(res, 200, readSecretMetadata(decodeURIComponent(ref)))
 }

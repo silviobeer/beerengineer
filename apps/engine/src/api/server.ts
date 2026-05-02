@@ -44,6 +44,7 @@ import {
 } from "./routes/workspaces.js"
 import {
   handleSecretAction,
+  handleSecretMetadata,
   handleSetupConfig,
   handleSetupConfigPatch,
   handleSetupInit,
@@ -297,6 +298,10 @@ async function handleNotificationRoutes(context: RouteContext): Promise<boolean>
 
 async function handleSetupRoutes(context: RouteContext): Promise<boolean> {
   const secretMatch = /^\/setup\/secrets\/([^/]+)$/.exec(context.path)
+  if (secretMatch && context.req.method === "GET") {
+    await handleSecretMetadata(context.res, secretMatch[1])
+    return true
+  }
   if (secretMatch && context.req.method === "POST") {
     await handleSecretAction(context.req, context.res, secretMatch[1])
     return true

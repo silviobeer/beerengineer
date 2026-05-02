@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { dirname, resolve } from "node:path"
 import envPaths from "env-paths"
 
-export type SecretStatus = "missing" | "active" | "disabled" | "unknown"
+export type SecretStatus = "missing" | "active" | "disabled" | "invalid" | "suspicious" | "unknown"
 
 export type SecretMetadata = {
   ref: string
@@ -21,6 +21,7 @@ type SecretRecord = {
   active: boolean
   updatedAt: number
   lastTestedAt?: number
+  testStatus?: "valid" | "invalid" | "suspicious" | "unknown"
 }
 
 type SecretStoreFile = {
@@ -63,11 +64,19 @@ function metadataFor(ref: string, record: SecretRecord | undefined): SecretMetad
   if (!record) return { ref, status: "missing", active: false }
   return {
     ref,
-    status: record.active ? "active" : "disabled",
+    status: metadataStatus(record),
     active: record.active,
     updatedAt: record.updatedAt,
     lastTestedAt: record.lastTestedAt,
   }
+}
+
+function metadataStatus(record: SecretRecord): SecretStatus {
+  if (record.testStatus === "invalid") return "invalid"
+  if (record.testStatus === "suspicious") return "suspicious"
+  if (record.testStatus === "unknown") return "unknown"
+  if (!record.active) return "disabled"
+  return "active"
 }
 
 export function storeSecret(ref: string, value: string, options: SecretStoreOptions = {}): SecretMetadata {
@@ -99,6 +108,22 @@ export function deleteSecret(ref: string, options: SecretStoreOptions = {}): Sec
   delete store.secrets[ref]
   writeStore(store, options)
   return metadataFor(ref, undefined)
+}
+
+export function markSecretTested(
+  ref: string,
+  status: "valid" | "invalid" | "suspicious" | "unknown",
+  options: SecretStoreOptions = {},
+): SecretMetadata {
+  const store = readStore(options)
+  const record = store.secrets[ref]
+  if (!record) return metadataFor(ref, undefined)
+  record.lastTestedAt = Date.now()
+  record.testStatus = status
+  if (status === "invalid") record.active = false
+  record.updatedAt = Date.now()
+  writeStore(store, options)
+  return metadataFor(ref, record)
 }
 
 export function readActiveSecretValue(ref: string, options: SecretStoreOptions = {}): string | null {
