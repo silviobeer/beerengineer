@@ -19,9 +19,10 @@ test("AC-17 re-checks return fresh status values", async () => {
   const paths = tempSetupPaths()
   try {
     const first = await runSetupRecheck({ overrides: { configPath: paths.configPath, dataDir: paths.dataDir } })
+    await new Promise(resolve => setTimeout(resolve, 5))
     const second = await runSetupRecheck({ overrides: { configPath: paths.configPath, dataDir: paths.dataDir } })
 
-    assert.notEqual(first.report.generatedAt, second.report.generatedAt)
+    assert.equal(second.report.generatedAt > first.report.generatedAt, true)
   } finally {
     rmSync(paths.dir, { recursive: true, force: true })
   }
