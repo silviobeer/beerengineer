@@ -187,7 +187,7 @@ function attachRouteContext(req: ApiRequest, appConfig: AppConfig): void {
   req.executePreparedApply = startPreparedApplyExecution
 }
 
-function topLevelRouteHandlers(context: RouteContext): Partial<Record<string, () => void>> {
+function topLevelRouteHandlers(context: RouteContext): Partial<Record<string, () => void | Promise<void>>> {
   return {
     "GET /runs": () => handleListRuns(repos, context.res),
     "POST /runs": () => handleCreateRun(repos, context.req, context.res, payload => board.broadcastItemColumnChanged(payload)),
@@ -195,9 +195,9 @@ function topLevelRouteHandlers(context: RouteContext): Partial<Record<string, ()
     "GET /board": () => handleGetBoard(db, context.url, context.res),
     "GET /setup/status": () => handleSetupStatus(context.url, context.res),
     "GET /setup/config": () => handleSetupConfig(context.res),
-    "PATCH /setup/config": () => void handleSetupConfigPatch(context.req, context.res),
+    "PATCH /setup/config": () => handleSetupConfigPatch(context.req, context.res),
     "POST /setup/init": () => handleSetupInit(context.res),
-    "POST /setup/recheck": () => void handleSetupRecheck(context.req, context.res),
+    "POST /setup/recheck": () => handleSetupRecheck(context.req, context.res),
     "GET /update/status": () => handleUpdateStatus(repos, context.appConfig, context.res, { pid: process.pid }),
     "GET /update/preflight": () => handleUpdatePreflight(repos, context.appConfig, context.res, { pid: process.pid }),
     "POST /update/check": () => handleUpdateCheck(context.req, context.res),
@@ -266,7 +266,7 @@ async function handlePreCsrfRoutes(context: RouteContext): Promise<boolean> {
 async function handleTopLevelRoutes(context: RouteContext): Promise<boolean> {
   const handler = topLevelRouteHandlers(context)[`${context.req.method} ${context.path}`]
   if (handler) {
-    handler()
+    await handler()
     return true
   }
   if (context.path === "/openapi.json" && context.req.method === "GET") {
@@ -298,7 +298,7 @@ async function handleNotificationRoutes(context: RouteContext): Promise<boolean>
 async function handleSetupRoutes(context: RouteContext): Promise<boolean> {
   const secretMatch = /^\/setup\/secrets\/([^/]+)$/.exec(context.path)
   if (secretMatch && context.req.method === "POST") {
-    void handleSecretAction(context.req, context.res, secretMatch[1])
+    await handleSecretAction(context.req, context.res, secretMatch[1])
     return true
   }
   return false

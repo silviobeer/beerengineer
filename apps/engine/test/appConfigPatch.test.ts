@@ -38,6 +38,21 @@ test("AC-13 partial-save responses list saved and rejected fields separately", (
   }
 })
 
+test("AC-13 partial-save rejects empty allowedRoots instead of persisting it", () => {
+  const paths = tempSetupPaths()
+  try {
+    writeConfigFile(paths.configPath, { ...defaultAppConfig(), dataDir: paths.dataDir })
+
+    const result = patchAppConfig({ configPath: paths.configPath, dataDir: paths.dataDir }, { allowedRoots: [] })
+
+    assert.equal(result.ok, false)
+    assert.deepEqual(result.saved, [])
+    assert.deepEqual(result.rejected.map(entry => entry.field), ["allowedRoots"])
+  } finally {
+    rmSync(paths.dir, { recursive: true, force: true })
+  }
+})
+
 test("AC-14 invalid fields remain unchanged in persisted config", () => {
   const paths = tempSetupPaths()
   try {

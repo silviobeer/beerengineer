@@ -72,7 +72,11 @@ export function patchAppConfig(overrides: SetupOverrides = {}, patch: unknown = 
 
   if ("allowedRoots" in input) {
     applyField(saved, rejected, "allowedRoots", () => {
-      if (!Array.isArray(input.allowedRoots) || input.allowedRoots.some(root => typeof root !== "string" || root.trim().length === 0)) {
+      if (
+        !Array.isArray(input.allowedRoots)
+        || input.allowedRoots.length === 0
+        || input.allowedRoots.some(root => typeof root !== "string" || root.trim().length === 0)
+      ) {
         throw new TypeError("allowedRoots must be a non-empty string array")
       }
       next.allowedRoots = input.allowedRoots.map(root => root.trim())
@@ -110,10 +114,21 @@ export function patchAppConfig(overrides: SetupOverrides = {}, patch: unknown = 
 
   const vcs = optionalObject(input.vcs)
   const github = optionalObject(vcs.github)
-  if ("enabled" in github) applyField(saved, rejected, "vcs.github.enabled", () => { next.vcs = { github: { enabled: parseBoolean(github.enabled, "vcs.github.enabled") } } })
+  if ("enabled" in github) {
+    applyField(saved, rejected, "vcs.github.enabled", () => {
+      next.vcs ??= { github: { enabled: false } }
+      next.vcs.github ??= { enabled: false }
+      next.vcs.github.enabled = parseBoolean(github.enabled, "vcs.github.enabled")
+    })
+  }
 
   const browser = optionalObject(input.browser)
-  if ("enabled" in browser) applyField(saved, rejected, "browser.enabled", () => { next.browser = { enabled: parseBoolean(browser.enabled, "browser.enabled") } })
+  if ("enabled" in browser) {
+    applyField(saved, rejected, "browser.enabled", () => {
+      next.browser ??= { enabled: false }
+      next.browser.enabled = parseBoolean(browser.enabled, "browser.enabled")
+    })
+  }
 
   const notifications = optionalObject(input.notifications)
   const telegram = optionalObject(notifications.telegram)

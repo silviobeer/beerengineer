@@ -66,3 +66,17 @@ test("AC-12 delete removes the stored value and reports missing afterwards", () 
     rmSync(paths.dir, { recursive: true, force: true })
   }
 })
+
+test("AC-12 invalid secret actions do not default to delete", () => {
+  const paths = tempSecretStore()
+  try {
+    applySecretAction("sonar.token", { action: "replace", value: "secret" }, { storePath: paths.storePath })
+    const result = applySecretAction("sonar.token", { action: "unknown" }, { storePath: paths.storePath })
+    const after = getSecretMetadata("sonar.token", { storePath: paths.storePath })
+
+    assert.equal(result.ok, false)
+    assert.equal(after.status, "active")
+  } finally {
+    rmSync(paths.dir, { recursive: true, force: true })
+  }
+})
