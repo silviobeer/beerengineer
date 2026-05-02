@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { StatusChip } from "@/components/StatusChip";
 import type { SecretMetadata, SecretRefView } from "@/lib/setup/types";
 import { statusLabel } from "@/lib/setup/types";
@@ -23,6 +23,10 @@ export function SecretMaintenanceRow({
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setMeta(initialMeta(secret, fallbackRef));
+  }, [fallbackRef, secret]);
 
   async function action(actionName: string, nextValue?: string) {
     setBusy(true);

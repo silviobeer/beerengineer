@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { spawnSync } from "node:child_process"
@@ -9,6 +9,15 @@ import { fileURLToPath } from "node:url"
 import { initDatabase } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
 import { main } from "../src/index.js"
+import { removeTempDir } from "./helpers/fs.js"
+
+function stdoutChunkText(chunk: string | Uint8Array): string {
+  return typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8")
+}
+
+function isTestReporterChunk(text: string): boolean {
+  return /^\s*(TAP version|# |ok \d|not ok \d|\d+\.\.\d+|---|\.\.\.|duration_ms:|type:|location:|failureType:|error:|code:|name:|expected:|actual:|operator:|stack:)/.test(text)
+}
 
 test("workspace items lists not-done items first with stage/status context", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-cli-"))
@@ -38,8 +47,10 @@ test("workspace items lists not-done items first with stage/status context", asy
     const originalWrite = process.stdout.write.bind(process.stdout)
     const originalExit = process.exit
     process.stdout.write = ((chunk: string | Uint8Array) => {
-      stdout += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8")
-      return true
+      const text = stdoutChunkText(chunk)
+      if (isTestReporterChunk(text)) return originalWrite(chunk)
+      stdout += text
+      return originalWrite(chunk)
     }) as typeof process.stdout.write
     process.exit = ((code?: number) => {
       throw new Error(`EXIT:${code ?? 0}`)
@@ -70,7 +81,7 @@ test("workspace items lists not-done items first with stage/status context", asy
     else process.env.BEERENGINEER_CONFIG_PATH = previousConfigPath
     if (previousUiDbPath === undefined) delete process.env.BEERENGINEER_UI_DB_PATH
     else process.env.BEERENGINEER_UI_DB_PATH = previousUiDbPath
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -100,8 +111,10 @@ test("chat list shows open prompts across workspaces with resolved question text
     const originalWrite = process.stdout.write.bind(process.stdout)
     const originalExit = process.exit
     process.stdout.write = ((chunk: string | Uint8Array) => {
-      stdout += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8")
-      return true
+      const text = stdoutChunkText(chunk)
+      if (isTestReporterChunk(text)) return originalWrite(chunk)
+      stdout += text
+      return originalWrite(chunk)
     }) as typeof process.stdout.write
     process.exit = ((code?: number) => {
       throw new Error(`EXIT:${code ?? 0}`)
@@ -129,7 +142,7 @@ test("chat list shows open prompts across workspaces with resolved question text
     else process.env.BEERENGINEER_CONFIG_PATH = previousConfigPath
     if (previousUiDbPath === undefined) delete process.env.BEERENGINEER_UI_DB_PATH
     else process.env.BEERENGINEER_UI_DB_PATH = previousUiDbPath
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -159,8 +172,10 @@ test("chat list compact mode prints one-line rows with workspace and prompt text
     const originalWrite = process.stdout.write.bind(process.stdout)
     const originalExit = process.exit
     process.stdout.write = ((chunk: string | Uint8Array) => {
-      stdout += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8")
-      return true
+      const text = stdoutChunkText(chunk)
+      if (isTestReporterChunk(text)) return originalWrite(chunk)
+      stdout += text
+      return originalWrite(chunk)
     }) as typeof process.stdout.write
     process.exit = ((code?: number) => {
       throw new Error(`EXIT:${code ?? 0}`)
@@ -186,7 +201,7 @@ test("chat list compact mode prints one-line rows with workspace and prompt text
     else process.env.BEERENGINEER_CONFIG_PATH = previousConfigPath
     if (previousUiDbPath === undefined) delete process.env.BEERENGINEER_UI_DB_PATH
     else process.env.BEERENGINEER_UI_DB_PATH = previousUiDbPath
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -212,8 +227,10 @@ test("workspace use selects the current workspace for items/chats shortcuts", as
     const originalWrite = process.stdout.write.bind(process.stdout)
     const originalExit = process.exit
     process.stdout.write = ((chunk: string | Uint8Array) => {
-      stdout += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8")
-      return true
+      const text = stdoutChunkText(chunk)
+      if (isTestReporterChunk(text)) return originalWrite(chunk)
+      stdout += text
+      return originalWrite(chunk)
     }) as typeof process.stdout.write
     process.exit = ((code?: number) => {
       throw new Error(`EXIT:${code ?? 0}`)
@@ -251,7 +268,7 @@ test("workspace use selects the current workspace for items/chats shortcuts", as
     db.close()
     if (previousUiDbPath === undefined) delete process.env.BEERENGINEER_UI_DB_PATH
     else process.env.BEERENGINEER_UI_DB_PATH = previousUiDbPath
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -284,8 +301,10 @@ test("status summarizes the current workspace and repo state", async () => {
     const originalWrite = process.stdout.write.bind(process.stdout)
     const originalExit = process.exit
     process.stdout.write = ((chunk: string | Uint8Array) => {
-      stdout += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8")
-      return true
+      const text = stdoutChunkText(chunk)
+      if (isTestReporterChunk(text)) return originalWrite(chunk)
+      stdout += text
+      return originalWrite(chunk)
     }) as typeof process.stdout.write
     process.exit = ((code?: number) => {
       throw new Error(`EXIT:${code ?? 0}`)
@@ -311,7 +330,7 @@ test("status summarizes the current workspace and repo state", async () => {
     db.close()
     if (previousUiDbPath === undefined) delete process.env.BEERENGINEER_UI_DB_PATH
     else process.env.BEERENGINEER_UI_DB_PATH = previousUiDbPath
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -344,8 +363,10 @@ test("status --all summarizes all workspaces with operator-first ordering", asyn
     const originalWrite = process.stdout.write.bind(process.stdout)
     const originalExit = process.exit
     process.stdout.write = ((chunk: string | Uint8Array) => {
-      stdout += chunk.toString()
-      return true
+      const text = stdoutChunkText(chunk)
+      if (isTestReporterChunk(text)) return originalWrite(chunk)
+      stdout += text
+      return originalWrite(chunk)
     }) as typeof process.stdout.write
     process.exit = ((code?: number) => {
       throw new Error(`EXIT:${code ?? 0}`)
@@ -370,7 +391,7 @@ test("status --all summarizes all workspaces with operator-first ordering", asyn
     db.close()
     if (previousUiDbPath === undefined) delete process.env.BEERENGINEER_UI_DB_PATH
     else process.env.BEERENGINEER_UI_DB_PATH = previousUiDbPath
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -402,8 +423,10 @@ test("chats --all aggregates open prompts across workspaces", async () => {
     const originalWrite = process.stdout.write.bind(process.stdout)
     const originalExit = process.exit
     process.stdout.write = ((chunk: string | Uint8Array) => {
-      stdout += chunk.toString()
-      return true
+      const text = stdoutChunkText(chunk)
+      if (isTestReporterChunk(text)) return originalWrite(chunk)
+      stdout += text
+      return originalWrite(chunk)
     }) as typeof process.stdout.write
     process.exit = ((code?: number) => {
       throw new Error(`EXIT:${code ?? 0}`)
@@ -428,7 +451,7 @@ test("chats --all aggregates open prompts across workspaces", async () => {
     db.close()
     if (previousUiDbPath === undefined) delete process.env.BEERENGINEER_UI_DB_PATH
     else process.env.BEERENGINEER_UI_DB_PATH = previousUiDbPath
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -453,8 +476,10 @@ test("items --all aggregates items across workspaces with not-done first", async
     const originalWrite = process.stdout.write.bind(process.stdout)
     const originalExit = process.exit
     process.stdout.write = ((chunk: string | Uint8Array) => {
-      stdout += chunk.toString()
-      return true
+      const text = stdoutChunkText(chunk)
+      if (isTestReporterChunk(text)) return originalWrite(chunk)
+      stdout += text
+      return originalWrite(chunk)
     }) as typeof process.stdout.write
     process.exit = ((code?: number) => {
       throw new Error(`EXIT:${code ?? 0}`)
@@ -486,7 +511,7 @@ test("items --all aggregates items across workspaces with not-done first", async
     db.close()
     if (previousUiDbPath === undefined) delete process.env.BEERENGINEER_UI_DB_PATH
     else process.env.BEERENGINEER_UI_DB_PATH = previousUiDbPath
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -514,8 +539,10 @@ test("runs --all aggregates runs across workspaces with needs_answer first", asy
     const originalWrite = process.stdout.write.bind(process.stdout)
     const originalExit = process.exit
     process.stdout.write = ((chunk: string | Uint8Array) => {
-      stdout += chunk.toString()
-      return true
+      const text = stdoutChunkText(chunk)
+      if (isTestReporterChunk(text)) return originalWrite(chunk)
+      stdout += text
+      return originalWrite(chunk)
     }) as typeof process.stdout.write
     process.exit = ((code?: number) => {
       throw new Error(`EXIT:${code ?? 0}`)
@@ -543,7 +570,7 @@ test("runs --all aggregates runs across workspaces with needs_answer first", asy
     db.close()
     if (previousUiDbPath === undefined) delete process.env.BEERENGINEER_UI_DB_PATH
     else process.env.BEERENGINEER_UI_DB_PATH = previousUiDbPath
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -569,8 +596,10 @@ test("compact list modes render single-line scan tables", async () => {
     const originalWrite = process.stdout.write.bind(process.stdout)
     const originalExit = process.exit
     process.stdout.write = ((chunk: string | Uint8Array) => {
-      stdout += chunk.toString()
-      return true
+      const text = stdoutChunkText(chunk)
+      if (isTestReporterChunk(text)) return originalWrite(chunk)
+      stdout += text
+      return originalWrite(chunk)
     }) as typeof process.stdout.write
     process.exit = ((code?: number) => {
       throw new Error(`EXIT:${code ?? 0}`)
@@ -610,7 +639,7 @@ test("compact list modes render single-line scan tables", async () => {
     db.close()
     if (previousUiDbPath === undefined) delete process.env.BEERENGINEER_UI_DB_PATH
     else process.env.BEERENGINEER_UI_DB_PATH = previousUiDbPath
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -636,8 +665,10 @@ test("item get shows item detail and resolved open chat in the selected workspac
     const originalWrite = process.stdout.write.bind(process.stdout)
     const originalExit = process.exit
     process.stdout.write = ((chunk: string | Uint8Array) => {
-      stdout += chunk.toString()
-      return true
+      const text = stdoutChunkText(chunk)
+      if (isTestReporterChunk(text)) return originalWrite(chunk)
+      stdout += text
+      return originalWrite(chunk)
     }) as typeof process.stdout.write
     process.exit = ((code?: number) => {
       throw new Error(`EXIT:${code ?? 0}`)
@@ -662,7 +693,7 @@ test("item get shows item detail and resolved open chat in the selected workspac
     db.close()
     if (previousUiDbPath === undefined) delete process.env.BEERENGINEER_UI_DB_PATH
     else process.env.BEERENGINEER_UI_DB_PATH = previousUiDbPath
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -688,8 +719,10 @@ test("run get and chat answer expose run state and resolve prompts", async () =>
     const originalWrite = process.stdout.write.bind(process.stdout)
     const originalExit = process.exit
     process.stdout.write = ((chunk: string | Uint8Array) => {
-      stdout += chunk.toString()
-      return true
+      const text = stdoutChunkText(chunk)
+      if (isTestReporterChunk(text)) return originalWrite(chunk)
+      stdout += text
+      return originalWrite(chunk)
     }) as typeof process.stdout.write
     process.exit = ((code?: number) => {
       throw new Error(`EXIT:${code ?? 0}`)
@@ -727,7 +760,7 @@ test("run get and chat answer expose run state and resolve prompts", async () =>
     db.close()
     if (previousUiDbPath === undefined) delete process.env.BEERENGINEER_UI_DB_PATH
     else process.env.BEERENGINEER_UI_DB_PATH = previousUiDbPath
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -752,8 +785,10 @@ test("chat answer can target the latest open prompt by run id", async () => {
     const originalWrite = process.stdout.write.bind(process.stdout)
     const originalExit = process.exit
     process.stdout.write = ((chunk: string | Uint8Array) => {
-      stdout += chunk.toString()
-      return true
+      const text = stdoutChunkText(chunk)
+      if (isTestReporterChunk(text)) return originalWrite(chunk)
+      stdout += text
+      return originalWrite(chunk)
     }) as typeof process.stdout.write
     process.exit = ((code?: number) => {
       throw new Error(`EXIT:${code ?? 0}`)
@@ -777,7 +812,7 @@ test("chat answer can target the latest open prompt by run id", async () => {
     db.close()
     if (previousUiDbPath === undefined) delete process.env.BEERENGINEER_UI_DB_PATH
     else process.env.BEERENGINEER_UI_DB_PATH = previousUiDbPath
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -823,8 +858,10 @@ test("run watch replays canonical messages and final status", async () => {
     const originalWrite = process.stdout.write.bind(process.stdout)
     const originalExit = process.exit
     process.stdout.write = ((chunk: string | Uint8Array) => {
-      stdout += chunk.toString()
-      return true
+      const text = stdoutChunkText(chunk)
+      if (isTestReporterChunk(text)) return originalWrite(chunk)
+      stdout += text
+      return originalWrite(chunk)
     }) as typeof process.stdout.write
     process.exit = ((code?: number) => {
       throw new Error(`EXIT:${code ?? 0}`)
@@ -850,7 +887,7 @@ test("run watch replays canonical messages and final status", async () => {
     db.close()
     if (previousUiDbPath === undefined) delete process.env.BEERENGINEER_UI_DB_PATH
     else process.env.BEERENGINEER_UI_DB_PATH = previousUiDbPath
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -873,8 +910,10 @@ test("runs messages prints canonical JSON payload", async () => {
     const originalWrite = process.stdout.write.bind(process.stdout)
     const originalExit = process.exit
     process.stdout.write = ((chunk: string | Uint8Array) => {
-      stdout += chunk.toString()
-      return true
+      const text = stdoutChunkText(chunk)
+      if (isTestReporterChunk(text)) return originalWrite(chunk)
+      stdout += text
+      return originalWrite(chunk)
     }) as typeof process.stdout.write
     process.exit = ((code?: number) => {
       throw new Error(`EXIT:${code ?? 0}`)
@@ -897,7 +936,7 @@ test("runs messages prints canonical JSON payload", async () => {
     db.close()
     if (previousUiDbPath === undefined) delete process.env.BEERENGINEER_UI_DB_PATH
     else process.env.BEERENGINEER_UI_DB_PATH = previousUiDbPath
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -919,8 +958,10 @@ test("runs tail streams new canonical entries from --since and exits blocked wit
     const originalWrite = process.stdout.write.bind(process.stdout)
     const originalExit = process.exit
     process.stdout.write = ((chunk: string | Uint8Array) => {
-      stdout += chunk.toString()
-      return true
+      const text = stdoutChunkText(chunk)
+      if (isTestReporterChunk(text)) return originalWrite(chunk)
+      stdout += text
+      return originalWrite(chunk)
     }) as typeof process.stdout.write
     process.exit = ((code?: number) => {
       throw new Error(`EXIT:${code ?? 0}`)
@@ -951,7 +992,7 @@ test("runs tail streams new canonical entries from --since and exits blocked wit
     db.close()
     if (previousUiDbPath === undefined) delete process.env.BEERENGINEER_UI_DB_PATH
     else process.env.BEERENGINEER_UI_DB_PATH = previousUiDbPath
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -972,8 +1013,10 @@ test("chat send appends a user message", async () => {
     const originalWrite = process.stdout.write.bind(process.stdout)
     const originalExit = process.exit
     process.stdout.write = ((chunk: string | Uint8Array) => {
-      stdout += chunk.toString()
-      return true
+      const text = stdoutChunkText(chunk)
+      if (isTestReporterChunk(text)) return originalWrite(chunk)
+      stdout += text
+      return originalWrite(chunk)
     }) as typeof process.stdout.write
     process.exit = ((code?: number) => {
       throw new Error(`EXIT:${code ?? 0}`)
@@ -997,6 +1040,6 @@ test("chat send appends a user message", async () => {
     db.close()
     if (previousUiDbPath === undefined) delete process.env.BEERENGINEER_UI_DB_PATH
     else process.env.BEERENGINEER_UI_DB_PATH = previousUiDbPath
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
