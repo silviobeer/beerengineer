@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { test } from "node:test"
 
 import { runSecretTest } from "../src/setup/secretTests.js"
-import { readActiveSecretValue, storeSecret } from "../src/setup/secretStore.js"
+import { readActiveSecretValue, setSecretActive, storeSecret } from "../src/setup/secretStore.js"
 
 function tempSecretStore() {
   const dir = mkdtempSync(join(tmpdir(), "be2-secret-tests-"))
@@ -85,6 +85,22 @@ test("AC-17 unimplemented secret tests do not infer validity from secret text", 
     assert.equal(result.status, "not_implemented")
     assert.equal(readActiveSecretValue("sonar", { storePath: paths.storePath }), "contains-invalid-but-is-not-tested")
     assert.doesNotMatch(JSON.stringify(result), /contains-invalid-but-is-not-tested/)
+  } finally {
+    rmSync(paths.dir, { recursive: true, force: true })
+  }
+})
+
+test("AC-17 missing and disabled secrets keep distinct test statuses", async () => {
+  const paths = tempSecretStore()
+  try {
+    const missing = await runSecretTest("sonar", { storePath: paths.storePath })
+    assert.equal(missing.status, "missing")
+
+    storeSecret("sonar", "stored-token", { storePath: paths.storePath })
+    setSecretActive("sonar", false, { storePath: paths.storePath })
+    const disabled = await runSecretTest("sonar", { storePath: paths.storePath })
+
+    assert.equal(disabled.status, "disabled")
   } finally {
     rmSync(paths.dir, { recursive: true, force: true })
   }

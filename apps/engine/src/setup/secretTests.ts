@@ -1,4 +1,4 @@
-import { markSecretTested, readActiveSecretValue, type SecretMetadata, type SecretStoreOptions } from "./secretStore.js"
+import { getSecretMetadata, markSecretTested, readActiveSecretValue, type SecretMetadata, type SecretStoreOptions } from "./secretStore.js"
 
 export class SecretTestNotImplementedError extends Error {
   constructor(ref: string) {
@@ -29,8 +29,9 @@ export type SecretTestOptions = SecretStoreOptions & {
 export async function runSecretTest(ref: string, options: SecretTestOptions = {}): Promise<SecretTestResult> {
   const value = readActiveSecretValue(ref, options)
   if (!value) {
+    const previous = getSecretMetadata(ref, options)
     const secret = markSecretTested(ref, "unknown", options)
-    return { ok: false, ref, status: secret.status === "disabled" ? "disabled" : "missing", message: "Secret is missing or disabled.", secret }
+    return { ok: false, ref, status: previous.status === "missing" ? "missing" : "disabled", message: "Secret is missing or disabled.", secret }
   }
   const tester = options.testers?.[ref]
   if (!tester) {
