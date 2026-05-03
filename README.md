@@ -6,8 +6,9 @@ A multi-stage agent pipeline that drives a product concept through
 **brainstorm → visual-companion → frontend-design → requirements →
 architecture → planning → execution → project-review → QA →
 documentation**, using Claude Code and/or Codex as the underlying
-agent runtimes — **either via the CLI (subscription-bundled) or
-in-process via the vendor SDK (per-token, API-key billed)**.
+worker and reviewer runtimes — **either via the CLI
+(subscription-bundled) or in-process via the vendor SDK (per-token,
+API-key billed)**.
 CLI-first, HTTP/SSE API, optional Next.js UI.
 
 ![status](https://img.shields.io/badge/status-experimental-orange)
@@ -22,8 +23,17 @@ agent harness.
 
 You describe an idea in one or two paragraphs. `beerengineer` takes
 that idea, runs it through a chain of specialised agents — each with
-its own prompt, reviewer loop, and persisted artefact — and ends up
-with working, committed code on a feature branch.
+its own prompt, persisted artefact, and cross-provider reviewer loop —
+and ends up with working, committed code on a feature branch.
+
+The quality loop is not a final rubber stamp. At every LLM-produced
+stage, a separate reviewer LLM checks the result before the next stage
+may consume it. In the recommended `*-first` profiles, that reviewer is
+from the other provider: Claude drafts and Codex reviews, or Codex
+drafts and Claude reviews. That second opinion catches vague
+requirements, weak architecture choices, missed edge cases, UI drift,
+and incomplete implementation details early enough to fix them in the
+right stage.
 
 Every stage is observable: pending prompts surface in the CLI, the
 HTTP API, or Telegram; artefacts are written to disk per run; events
@@ -35,6 +45,11 @@ Items now pause in a dedicated **Merge** column after per-project handoff and on
 - **Staged agents** — brainstorm, visual-companion, frontend-design,
   requirements, architecture, planning, execution, project-review,
   QA, documentation
+- **Cross-provider review loops** — each LLM-producing stage drafts,
+  gets critiqued by an independent reviewer role, revises, and only
+  then passes its artefact downstream. Configuring two providers makes
+  this an actual second opinion instead of the same model grading its
+  own work
 - **Design fidelity controls** — frontend-design emits
   `design-tokens.css`, execution receives owner-scoped mockup HTML, and
   story review rejects hardcoded palette drift and rounded corners
@@ -84,6 +99,13 @@ use. Most operators set up just one or two of these:
 | `claude-sdk-first` | `ANTHROPIC_API_KEY` env var | per-token API billing on the Anthropic API |
 | `codex-sdk-first` | `OPENAI_API_KEY` env var | per-token API billing on the OpenAI API |
 | `self` (mix per role) | any combination of the above | each role is billed by its own runtime |
+
+For the strongest quality profile, configure at least two providers.
+The `*-first` presets intentionally split author and reviewer across
+vendors: `claude-first` uses Claude for the main work and Codex for
+review; `codex-first` does the inverse. The `*-only` presets are useful
+when only one provider is available, but they lose that cross-provider
+review effect.
 
 The SDK adapters wrap `@anthropic-ai/claude-agent-sdk` /
 `@openai/codex-sdk` and run the agent loop in-process — no subprocess
