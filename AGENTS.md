@@ -127,6 +127,7 @@ npm run dev:ui                                    # Next.js on :3000
 
 ## PROJ QA Rules
 
+- <!-- AGENTS-PROJ1-QA-001 --> Public CLI acceptance tests must verify end-to-end side effects for the documented command, not only helper behavior or parse/output shape.
 - <!-- AGENTS-PROJ2-QA-001 --> Browser first-run flows need UI controls for every PRD-required engine mutation; backend-only success is not enough.
 - <!-- AGENTS-PROJ2-QA-002 --> Capture 375px mobile screenshots for every new top-level UI surface before marking a UI wave green.
 - <!-- AGENTS-PROJ2-QA-003 --> If an engine error response includes a redacted user-facing `message`, show it before generic fallback copy.

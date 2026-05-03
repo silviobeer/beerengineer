@@ -225,7 +225,7 @@
 
 ## AGENTS.md Candidates
 
-- [PROPOSED] AGENTS-PROJ1-QA-001: Public CLI acceptance tests must verify end-to-end side effects for the documented command, not only lower-level helper behavior or parse/output shape. — source: Marcus Weber (Principal) + Thomas Müller (Reliability)
+- [MERGED] AGENTS-PROJ1-QA-001: Public CLI acceptance tests must verify end-to-end side effects for the documented command, not only lower-level helper behavior or parse/output shape. — source: Marcus Weber (Principal) + Thomas Müller (Reliability)
 
 ## PROJ Retrospective
 
