@@ -306,6 +306,57 @@
       margin: 0 auto;
       text-align: center;
     }
+    .gate-card {
+      max-width: 640px;
+      margin: 0 auto;
+      border: 1px solid var(--accent);
+      background: var(--panel);
+      padding: 22px;
+      display: grid;
+      gap: 18px;
+    }
+    .gate-card.blocked { border-color: var(--bad); }
+    .gate-card.ready { border-color: var(--ok); }
+    .gate-card .status-mark {
+      width: 42px;
+      height: 42px;
+      border: 1px solid var(--line);
+      display: grid;
+      place-items: center;
+      font-weight: 700;
+      color: var(--bad);
+    }
+    .gate-card.ready .status-mark { color: var(--ok); }
+    .gate-title {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 14px;
+      align-items: start;
+    }
+    .button-row {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .support-zone {
+      max-width: 760px;
+      margin: 18px auto 0;
+      display: grid;
+      gap: 12px;
+    }
+    .support-heading {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      color: var(--muted);
+    }
+    .link-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
     .info-list {
       display: grid;
       gap: 10px;
@@ -335,8 +386,11 @@
     }
     @media (max-width: 860px) {
       .stepper { grid-template-columns: 1fr; }
-      .grid2, .rail-layout, .formgrid { grid-template-columns: 1fr; }
+      .grid2, .rail-layout, .formgrid, .link-grid { grid-template-columns: 1fr; }
       .wizard-head, .footer, .between { align-items: stretch; flex-direction: column; }
+      .gate-title { grid-template-columns: 1fr; }
+      .button-row { justify-content: stretch; }
+      .button-row button { flex: 1; }
     }
   </style>
 </head>
@@ -349,7 +403,7 @@
   <div class="tabs">
     <button class="active" data-tab="a">A. Centered Wizard</button>
     <button data-tab="b">B. Rail Wizard</button>
-    <button data-tab="c">C. Single-Task Wizard</button>
+    <button data-tab="c">C. Gate Box Wizard</button>
     <button data-tab="d">D. Runbook Wizard</button>
   </div>
 
@@ -453,8 +507,8 @@
       <div class="wizard-frame">
         <header class="wizard-head">
           <div>
-            <h1>Single-task wizard</h1>
-            <p class="muted">Step 2 of 5 is almost full-screen. This maximizes focus and removes surrounding app chrome.</p>
+            <h1>Gate box wizard</h1>
+            <p class="muted">Step 2 of 5 has one central decision box. Help sits below, outside the box.</p>
           </div>
           <span class="pill">2 / 5</span>
         </header>
@@ -466,46 +520,62 @@
             <div class="step-token locked"><span class="step-num">4</span><strong>Secrets</strong><span class="step-state"><span class="dot"></span>Locked</span></div>
             <div class="step-token locked"><span class="step-num">5</span><strong>Finish</strong><span class="step-state"><span class="dot"></span>Locked</span></div>
           </div>
-          <div class="giant-step stack">
-            <div id="gate-c" class="gate-banner blocked">
-              <div class="gate-icon">!</div>
-              <div>
-                <strong>Step 2 is not complete yet</strong>
-                <p class="muted" style="margin-top: 4px">Install Codex CLI or make another required harness available, then run verification. Step 3 stays locked until this passes.</p>
+          <div class="stack">
+            <div id="gate-c" class="gate-card blocked">
+              <div class="gate-title">
+                <div class="status-mark">!</div>
+                <div>
+                  <h2>Git is not installed</h2>
+                  <p class="muted" style="margin-top: 8px">This step is required. beerengineer_ cannot create work branches, inspect changes, or recover safely without Git on PATH.</p>
+                </div>
               </div>
-              <span class="pill"><span class="dot bad"></span>Cannot continue</span>
-            </div>
-            <div class="hero-copy">
-              <h2>Install Codex CLI</h2>
-              <p class="muted">beerengineer_ needs at least one working AI harness before it can run implementation work. Codex is missing on this machine, so this step explains what it is, where to get it, and how to verify it.</p>
-            </div>
-            <div class="info-list">
-              <div class="info-item">
-                <h3>Recommended install</h3>
-                <p class="muted" style="margin-top: 6px">Use npm when Node.js is already available. The wizard will not install it for you; it gives you the exact command and then verifies the result.</p>
-                <div class="command" style="margin-top: 10px"><span class="mono">npm i -g @openai/codex</span><button class="primary" data-toast="toast-c">Copy command</button></div>
+              <div class="mini-state-grid">
+                <div class="mini-state"><strong>Current step</strong><div class="muted">2 of 5</div></div>
+                <div class="mini-state"><strong>Status</strong><div class="muted">Blocked</div></div>
+                <div class="mini-state"><strong>Next step</strong><div class="muted">Locked</div></div>
               </div>
-              <div class="info-item">
-                <h3>Where to download or read docs</h3>
-                <p class="muted" style="margin-top: 6px">OpenAI Codex CLI package: <span class="mono">https://www.npmjs.com/package/@openai/codex</span></p>
-                <p class="muted" style="margin-top: 6px">If npm itself is missing, install Node.js first from <span class="mono">https://nodejs.org/</span>, then return to this step.</p>
+              <div class="button-row">
+                <button disabled title="Git is required for beerengineer_">Skip</button>
+                <button>Re-check</button>
+                <button id="continue-c" class="primary" disabled>Next</button>
+              </div>
+            </div>
+
+            <div class="support-zone">
+              <div class="support-heading">
+                <h3>Installation options</h3>
+                <span class="pill"><span class="dot bad"></span>Outside the wizard gate</span>
+              </div>
+              <div class="link-grid">
+                <div class="info-item">
+                  <h3>macOS</h3>
+                  <p class="muted" style="margin-top: 6px">Install Apple command line tools or use Homebrew.</p>
+                  <div class="command" style="margin-top: 10px"><span class="mono">xcode-select --install</span><button class="primary" data-toast="toast-c">Copy</button></div>
+                </div>
+                <div class="info-item">
+                  <h3>Linux</h3>
+                  <p class="muted" style="margin-top: 6px">Use your package manager, then return and run the check.</p>
+                  <div class="command" style="margin-top: 10px"><span class="mono">sudo apt install git</span><button class="primary" data-toast="toast-c">Copy</button></div>
+                </div>
+                <div class="info-item">
+                  <h3>Windows</h3>
+                  <p class="muted" style="margin-top: 6px">Install Git for Windows and reopen your terminal.</p>
+                  <div class="command" style="margin-top: 10px"><span class="mono">winget install Git.Git</span><button class="primary" data-toast="toast-c">Copy</button></div>
+                </div>
               </div>
               <div class="info-item">
                 <h3>Prompt for your local agent</h3>
-                <p class="muted" style="margin: 6px 0 10px">If you are using an agent in this machine, copy this prompt instead of copying only the command.</p>
-                <div class="agent-prompt mono">Install the OpenAI Codex CLI on this machine if it is missing, using the official npm package @openai/codex. After installation, run `codex --version` and report whether the command is available on PATH. Do not modify this project repository.</div>
+                <p class="muted" style="margin: 6px 0 10px">Use this only if a local agent is allowed to install system packages on this machine.</p>
+                <div class="agent-prompt mono">Install Git on this machine using the official or OS package-manager route. After installation, run `git --version` and confirm Git is available on PATH. Do not modify this project repository.</div>
                 <button style="margin-top: 10px" data-toast="toast-c-agent">Copy agent prompt</button>
               </div>
-              <div class="info-item">
-                <h3>Verification</h3>
-                <p class="muted" style="margin-top: 6px">After installing, run the check. The wizard unlocks Step 3 only when a required harness is ready.</p>
-                <div class="verification-card" style="margin-top: 10px">
-                  <div class="mini-state-grid">
-                    <div class="mini-state"><strong>Current</strong><div class="muted">Blocked</div></div>
-                    <div class="mini-state"><strong>After check</strong><div class="muted">Done or still blocked</div></div>
-                    <div class="mini-state"><strong>Next</strong><div class="muted">Step 3 unlocks</div></div>
+              <div class="verification-card">
+                <div class="between">
+                  <div>
+                    <strong>Verification</strong>
+                    <p class="muted" style="margin-top: 4px">The central box changes state only after beerengineer_ re-checks the machine.</p>
                   </div>
-                  <div class="row"><button data-gate="checking">Run verification</button><button data-gate="ready">Simulate passed check</button><button id="continue-c" class="primary" disabled>Continue to Step 3</button></div>
+                  <div class="row"><button data-gate="checking">Run verification</button><button data-gate="ready">Simulate passed check</button></div>
                 </div>
               </div>
             </div>
@@ -514,7 +584,7 @@
           </div>
         </div>
         <footer class="footer"><button>Back</button><button id="footer-continue-c" disabled>Step 3 is locked</button></footer>
-        <div class="notes">C. Best for absolute focus. It is the most wizard-like, but may feel slow when a step has multiple fields.</div>
+        <div class="notes">C. Best when the wizard must feel like a guided sequence: the central box owns blocker, skip, and next; installation options stay below it as supporting material.</div>
       </div>
     </section>
 
@@ -579,14 +649,14 @@
         gate.classList.remove("blocked", "ready", "checking");
         if (button.dataset.gate === "checking") {
           gate.classList.add("checking");
-          gate.innerHTML = '<div class="gate-icon">...</div><div><strong>Verification is running</strong><p class="muted" style="margin-top: 4px">beerengineer_ is checking the local command and auth state. Continue stays locked while this runs.</p></div><span class="pill"><span class="dot warn"></span>Checking</span>';
+          gate.innerHTML = '<div class="gate-title"><div class="status-mark">...</div><div><h2>Checking Git installation</h2><p class="muted" style="margin-top: 8px">beerengineer_ is checking whether Git is available on PATH. Next stays locked while this runs.</p></div></div><div class="mini-state-grid"><div class="mini-state"><strong>Current step</strong><div class="muted">2 of 5</div></div><div class="mini-state"><strong>Status</strong><div class="muted">Checking</div></div><div class="mini-state"><strong>Next step</strong><div class="muted">Locked</div></div></div><div class="button-row"><button disabled>Skip</button><button disabled>Re-check</button><button class="primary" disabled>Next</button></div>';
           main.disabled = true;
           footer.disabled = true;
           footer.textContent = "Verification running";
         }
         if (button.dataset.gate === "ready") {
           gate.classList.add("ready");
-          gate.innerHTML = '<div class="gate-icon">✓</div><div><strong>Step 2 is complete</strong><p class="muted" style="margin-top: 4px">A required AI harness is available. You can continue to app configuration.</p></div><span class="pill"><span class="dot ok"></span>Continue unlocked</span>';
+          gate.innerHTML = '<div class="gate-title"><div class="status-mark">✓</div><div><h2>Git is installed</h2><p class="muted" style="margin-top: 8px">Git is available on PATH. This required gate is complete, so the next setup step is unlocked.</p></div></div><div class="mini-state-grid"><div class="mini-state"><strong>Current step</strong><div class="muted">2 of 5</div></div><div class="mini-state"><strong>Status</strong><div class="muted">Done</div></div><div class="mini-state"><strong>Next step</strong><div class="muted">Unlocked</div></div></div><div class="button-row"><button disabled>Skip</button><button>Re-check</button><button class="primary">Next</button></div>';
           main.disabled = false;
           footer.disabled = false;
           footer.classList.add("primary");

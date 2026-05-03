@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { spawnSync } from "node:child_process"
@@ -9,8 +9,7 @@ import { fileURLToPath } from "node:url"
 import { initDatabase } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
 import { layout } from "../src/core/workspaceLayout.js"
-
-const CLEANUP_RM_OPTIONS = { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as const
+import { removeTempDir } from "./helpers/fs.js"
 
 function seedCliRepo(repoRoot: string): void {
   mkdirSync(repoRoot, { recursive: true })
@@ -74,7 +73,7 @@ test("beerengineer item action start_brainstorm runs to completion through the t
     assert.equal(runs[0]?.status, "completed")
     verifyDb.close()
   } finally {
-    rmSync(dir, CLEANUP_RM_OPTIONS)
+    removeTempDir(dir)
   }
 })
 
@@ -114,7 +113,7 @@ test("beerengineer item action start_implementation resumes from brainstorm arti
     try {
       process.chdir(engineRoot)
       const brainstormDir = layout.stageArtifactsDir({ workspaceId, workspaceRoot: repoRoot, runId: seedRun.id }, "brainstorm")
-      rmSync(layout.workspaceDir({ workspaceId, workspaceRoot: repoRoot }), CLEANUP_RM_OPTIONS)
+      removeTempDir(layout.workspaceDir({ workspaceId, workspaceRoot: repoRoot }))
       mkdirSync(brainstormDir, { recursive: true })
       writeFileSync(
         join(brainstormDir, "projects.json"),
@@ -173,11 +172,11 @@ test("beerengineer item action start_implementation resumes from brainstorm arti
     const previousCwd = process.cwd()
     try {
       process.chdir(engineRoot)
-      if (workspaceIdForCleanup) rmSync(layout.workspaceDir({ workspaceId: workspaceIdForCleanup, workspaceRoot: repoRoot }), CLEANUP_RM_OPTIONS)
+      if (workspaceIdForCleanup) removeTempDir(layout.workspaceDir({ workspaceId: workspaceIdForCleanup, workspaceRoot: repoRoot }))
     } finally {
       process.chdir(previousCwd)
     }
-    rmSync(dir, CLEANUP_RM_OPTIONS)
+    removeTempDir(dir)
   }
 })
 
@@ -212,7 +211,7 @@ test("beerengineer item action resume_run exits 75 without remediation summary i
     assert.match(result.stderr ?? "", /Missing --remediation-summary/)
     assert.match(result.stderr ?? "", /Run .* is blocked\./)
   } finally {
-    rmSync(dir, CLEANUP_RM_OPTIONS)
+    removeTempDir(dir)
   }
 })
 
@@ -261,6 +260,6 @@ test("beerengineer item action start_brainstorm fails early on dirty workspace r
     assert.equal(verifyRepos.listRuns().length, 0)
     verifyDb.close()
   } finally {
-    rmSync(dir, CLEANUP_RM_OPTIONS)
+    removeTempDir(dir)
   }
 })

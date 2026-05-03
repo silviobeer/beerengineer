@@ -410,6 +410,10 @@ export class Repos {
     return this.getAll("SELECT * FROM runs WHERE status = 'running' ORDER BY created_at ASC")
   }
 
+  listRunningApiOwnedRuns(): RunRow[] {
+    return this.getAll("SELECT * FROM runs WHERE status = 'running' AND owner = 'api' ORDER BY created_at ASC")
+  }
+
   createStageRun(input: { id?: string; runId: string; stageKey: string; projectId?: string | null }): StageRunRow {
     const timestamp = now()
     const row: StageRunRow = this.withTimestamps({

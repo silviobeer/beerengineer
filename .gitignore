@@ -10,6 +10,7 @@ apps/*/.beerengineer/
 apps/ui/tests/.tmp/
 apps/ui/test-results/
 apps/ui/playwright-report/
+.playwright-mcp/
 apps/engine/dist/
 *.tsbuildinfo
 .DS_Store
@@ -29,6 +30,12 @@ coverage/
 # Logs
 *.log
 *.log.*
+
+# QA / browser evidence artifacts
+/qa-rerun-*
+/proj2-*.png
+/settings-mobile.png
+/setup-mobile.png
 
 # OS metadata
 Thumbs.db

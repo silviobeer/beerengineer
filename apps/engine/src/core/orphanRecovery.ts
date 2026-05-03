@@ -2,10 +2,16 @@
  * Orphan recovery — called once at API startup before `server.listen`.
  *
  * When the Node process hosting the HTTP server crashes or is restarted, any
- * run with `status='running'` is left with no live worker. These runs can
- * never complete on their own. This module finds them and marks them
- * `status='failed'` with a resume-compatible recovery projection so that
- * `POST /runs/:id/resume` accepts them without a manual DB patch.
+ * `owner='api'` run with `status='running'` is left with no live worker
+ * because the API server *was* the worker. This module finds those and
+ * marks them `status='failed'` with a resume-compatible recovery projection
+ * so that `POST /runs/:id/resume` accepts them without a manual DB patch.
+ *
+ * `owner='cli'` runs are *not* killed: the CLI process is independent of
+ * the API server, so a server restart says nothing about whether the CLI
+ * worker is alive. CLI workers install their own SIGINT/SIGTERM/SIGHUP
+ * handlers in `cli/commands/itemActions.ts` to mark their run as failed
+ * when the CLI process actually dies.
  *
  * The recovery payload uses `recovery_scope='run'` (run-level scope). The
  * resume path in `loadResumeReadiness` synthesises a minimal RecoveryRecord
@@ -36,7 +42,7 @@ const RECOVERY_SUMMARY =
  * see the recovery at startup without digging into DB or logs.
  */
 export async function markOrphanedRunsFailed(repos: Repos): Promise<OrphanRecoveryResult> {
-  const orphaned = repos.listRunningRuns()
+  const orphaned = repos.listRunningApiOwnedRuns()
 
   if (orphaned.length === 0) {
     return { recovered: 0 }

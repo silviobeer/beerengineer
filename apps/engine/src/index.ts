@@ -122,7 +122,21 @@ const COMMAND_REGISTRY: CommandHandlers = {
   "item-action": cmd => runItemAction(cmd.itemRef, cmd.action, cmd.resume),
 }
 
+const epipeSilencedStreams = new WeakSet<NodeJS.WriteStream>()
+
+function silenceEpipe(stream: NodeJS.WriteStream): void {
+  if (epipeSilencedStreams.has(stream)) return
+  epipeSilencedStreams.add(stream)
+
+  stream.on("error", err => {
+    if ((err as NodeJS.ErrnoException).code === "EPIPE") return
+    throw err
+  })
+}
+
 export async function main(argv = process.argv.slice(2)): Promise<void> {
+  silenceEpipe(process.stdout)
+  silenceEpipe(process.stderr)
   const cmd = parseArgs(argv)
 
   if (cmd.kind === "help") {

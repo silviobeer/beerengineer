@@ -74,7 +74,38 @@ const PORT = Number(process.env.PORT ?? 4100)
 const HOST = process.env.HOST ?? "127.0.0.1"
 const API_TOKEN = process.env.BEERENGINEER_API_TOKEN ?? randomBytes(24).toString("hex")
 const API_TOKEN_WAS_PROVIDED = Boolean(process.env.BEERENGINEER_API_TOKEN)
-const ALLOWED_ORIGIN = process.env.BEERENGINEER_UI_ORIGIN ?? "http://127.0.0.1:3100"
+// `publicBaseUrl` is the operator-configured Tailscale/LAN address. Promote
+// it to BEERENGINEER_PUBLIC_BASE_URL so downstream readers (previewHost,
+// CORS allow-list, …) don't need to load the config file themselves.
+function exportPublicBaseUrlFromConfig(): void {
+  if (process.env.BEERENGINEER_PUBLIC_BASE_URL?.trim()) return
+  try {
+    const config = loadEffectiveConfig()
+    const fromConfig = config?.publicBaseUrl?.trim()
+    if (fromConfig) process.env.BEERENGINEER_PUBLIC_BASE_URL = fromConfig
+  } catch {
+    // missing or malformed config — `setup` will surface the warning elsewhere
+  }
+}
+
+exportPublicBaseUrlFromConfig()
+
+function defaultAllowedOrigins(): string {
+  const origins = ["http://127.0.0.1:3100", "http://localhost:3100"]
+  const publicBase = process.env.BEERENGINEER_PUBLIC_BASE_URL?.trim()
+  if (publicBase) {
+    try {
+      const url = new URL(publicBase)
+      const port = url.port || "3100"
+      origins.push(`${url.protocol}//${url.hostname}:${port}`)
+    } catch {
+      // ignore malformed BEERENGINEER_PUBLIC_BASE_URL — config validator will surface it elsewhere
+    }
+  }
+  return origins.join(",")
+}
+
+const ALLOWED_ORIGIN = process.env.BEERENGINEER_UI_ORIGIN ?? defaultAllowedOrigins()
 
 const OPENAPI_PATH = resolvePath(dirname(fileURLToPath(import.meta.url)), "openapi.json")
 let cachedOpenApi: string | null = null

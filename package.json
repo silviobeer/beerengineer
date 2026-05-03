@@ -12,6 +12,10 @@
     "start:api": "npm run start:api --workspace=@beerengineer/engine",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
-    "coverage": "rm -rf coverage && npm run coverage --workspaces --if-present && node scripts/normalize-lcov-paths.mjs"
+    "test:all": "npm run test:all --workspaces --if-present",
+    "test:unit": "npm run test:unit --workspaces --if-present",
+    "test:integration": "npm run test:integration --workspaces --if-present",
+    "coverage": "npm run coverage:sonar",
+    "coverage:sonar": "rm -rf coverage && npm run coverage:sonar --workspaces --if-present && node scripts/normalize-lcov-paths.mjs"
   }
 }

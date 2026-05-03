@@ -41,13 +41,13 @@
 - Existing-fit: Similar to operational navigation but not tied to workspace board.
 - Mobile: Rail stacks above content.
 
-### C. Single-Task Wizard
+### C. Gate Box Wizard
 
-- Flow: Full-page wizard with one nearly full-screen task. It still shows a compact 5-step indicator, but the current action dominates the page. The active step includes explanation, download/source links, direct command, an optional agent prompt, and verification.
-- Pros: Most wizard-like and least distracting; ideal for first-time users who should do exactly one thing. Rich text keeps the step educational instead of reducing it to a terminal command.
-- Cons: Can feel slow or oversized for form-heavy steps like app config and secrets. Needs careful content hierarchy so "single task" does not become a wall of text.
-- Existing-fit: Biggest departure from current board UI, but that is acceptable for first-run setup.
-- Mobile: Strong, because one task at a time maps cleanly to narrow screens.
+- Flow: Dedicated wizard where the current step has one central gate box. The box states the blocker, for example "Git is not installed", and owns the navigation buttons: `Skip` only if the check is optional, and `Next` only when the required gate passes. Installation options, command snippets, links, and local-agent prompts live underneath the gate box, outside the main decision area.
+- Pros: Feels more like a true wizard than a content page; the user can immediately see whether the current step is blocked, skippable, or ready to continue. Separating the gate from installation help keeps the action model simple.
+- Cons: Requires disciplined content hierarchy. If every step adds too much supporting material below the box, the page can still become long.
+- Existing-fit: Still departs from the board layout, but keeps the operator-console status language and button states.
+- Mobile: Strong, because the central gate box remains first and support material stacks below it.
 
 ### D. Runbook Wizard
 
@@ -63,21 +63,23 @@
 |---|---:|---:|---:|---:|---:|---:|---:|
 | A. Centered Wizard | 5 | 5 | 4 | 4 | 4 | 4 | 2 |
 | B. Rail Wizard | 5 | 5 | 4 | 4 | 3 | 4 | 2 |
-| C. Single-Task Wizard | 5 | 4 | 5 | 2 | 5 | 3 | 3 |
+| C. Gate Box Wizard | 5 | 5 | 5 | 3 | 5 | 4 | 2 |
 | D. Runbook Wizard | 4 | 4 | 4 | 3 | 4 | 4 | 3 |
 
 ## Recommendation
 
-Use **C. Single-Task Wizard** as the selected `/setup` shape, with richer instructional content inside each step.
+Use **C. Gate Box Wizard** as the selected `/setup` shape.
 
-This responds directly to the desired mental model: the user should immediately see "Step 2 of 5" and understand there are three steps left. The setup surface should feel like a dedicated wizard, not a board or dashboard. Each step should be focused, but not thin: for dependency/auth steps it should explain what is missing, where to download/read more, what command to run, what prompt to give a local agent, and how beerengineer_ will verify the result.
+This responds directly to the desired mental model: the user should immediately see "Step 2 of 5" and understand there are three steps left, but the current step should not feel like a general information page. The central box is the wizard decision point: it says what is wrong, whether the step can be skipped, and whether `Next` is available. For a required dependency such as Git, `Skip` is disabled and `Next` is disabled until verification passes. Installation options sit below the box as supporting material, not inside the core gate.
 
 For later Eigenschaften, reuse the same ordered sections and status model, but allow direct section selection once setup is complete. The first-run wizard can be strict; maintenance mode can be more navigable.
 
 ## Selected Direction
 
-- Selected: **C. Single-Task Wizard**.
-- Refinement: use more explanatory text than the first C variant. A step is not just a terminal command; it includes context, official download/docs source, command, optional local-agent prompt, and verification gate.
+- Selected: **C. Gate Box Wizard**.
+- Refinement: make the wizard feel more like a true stepper flow. Each active step has one central gate box with the current blocker, `Skip`, `Re-check`, and `Next`.
+- Refinement: keep installation options, docs/source links, command snippets, and optional local-agent prompts underneath the gate box, outside the central decision area.
+- Refinement: `Skip` is shown only as an action affordance where it helps the mental model, but it is disabled for required checks such as Git. `Next` is disabled until the required gate passes.
 - Refinement: every step needs an explicit gate indicator. The user must immediately know whether the current step is done and they can continue, or whether it is blocked and why.
 - Setup may intentionally move away from the existing board layout. Existing UI patterns still matter for tone, status language, and API safety, but not for the primary first-run container.
 - Step count should remain visible at all times, e.g. "Step 2 of 5" plus visible remaining locked steps.
@@ -87,9 +89,9 @@ For later Eigenschaften, reuse the same ordered sections and status model, but a
 - Primary job: guide a new local user through app-level setup one step at a time, with visible progress and hard gates for required checks.
 - User context: no workspace or incomplete setup; likely switching between UI and terminal.
 - Information shape: five ordered steps, current step number, remaining step count, explicit step state, required/optional status, command remedies, verification state, app-config fields, secret metadata.
-- Interaction container: dedicated `/setup` full-page single-task wizard, not the board layout.
+- Interaction container: dedicated `/setup` full-page gate-box wizard, not the board layout.
 - Existing components to preserve: beerengineer_ brand/topbar, status/check language, API proxy boundary, sharp operator-console styling, concise command remedies.
-- New component candidates: wizard shell, horizontal/stacked progress stepper, locked/focused/done step token, current-step gate banner, rich step content panel, download/docs link block, command block, agent-prompt block, verification gate, continue-unlocked state, partial-save summary, secret maintenance row.
+- New component candidates: wizard shell, horizontal/stacked progress stepper, locked/focused/done step token, central gate box, disabled/enabled skip and next states, support-material zone, installation option cards, command block, agent-prompt block, verification gate, continue-unlocked state, partial-save summary, secret maintenance row.
 - Design constraints: low-fidelity here; final UI should stay operational and direct, not marketing onboarding.
 - Anti-goals: board-like dashboard as primary setup, automatic external tool installation, workspace/project setup in v1, SonarCloud project creation, live engine-port migration.
 
@@ -103,6 +105,7 @@ For later Eigenschaften, reuse the same ordered sections and status model, but a
   - After seeing the second exploration, clarified that all variants were still not wizard-like enough. The desired shape should show "I am now in step 2 and have 3 steps ahead"; it may move away from the board layout.
   - Selected C, with more explanatory text, download/source guidance, and a prompt for the local agent.
   - Requested clearer indicators for whether the current step is completed and the user can continue, or not completed and blocked.
+  - Clarified that the wizard form itself still was not right: the active step should show a central box such as "Git is not installed", with `Skip` disabled when not allowed and `Next` disabled while blocked; installation options should appear below, outside the central box.
 - Assumptions:
   - The concept from `1_brainstorm/PROJ-2-concept.md` is accepted.
   - `/setup` should optimize first-time clarity more than existing board continuity.
@@ -115,3 +118,4 @@ For later Eigenschaften, reuse the same ordered sections and status model, but a
 - Decide whether the first-run setup should have exactly five steps or whether the step count should adapt when optional services are skipped.
 - Decide whether future locked steps should be visible as names or only as generic remaining-step markers.
 - Decide whether Eigenschaften should reuse the same wizard shell in maintenance mode or switch to a denser section editor after setup is complete.
+- Decide whether required steps should still show a disabled `Skip` button for consistency, or hide `Skip` entirely when skipping is impossible.

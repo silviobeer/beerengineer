@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { createServer } from "node:http"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
@@ -13,6 +13,7 @@ import { main, parseArgs, resolveItemReference, resolveUiLaunchUrl, resolveUiWor
 import { assignPort } from "../src/core/portAllocator.js"
 import { resolveConfiguredDbPath } from "../src/setup/config.js"
 import { layout } from "../src/core/workspaceLayout.js"
+import { removeTempDir } from "./helpers/fs.js"
 
 function makeStubBin(dir: string, name: string, body: string): void {
   mkdirSync(dir, { recursive: true })
@@ -185,7 +186,7 @@ test("doctor --json reports blocked status when the app config is uninitialized"
     else process.env.BEERENGINEER_DATA_DIR = previousDataDir
     if (previousPath === undefined) delete process.env.PATH
     else process.env.PATH = previousPath
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -225,7 +226,7 @@ test("setup --no-interactive provisions config and database", () => {
     assert.match(result.stdout ?? "", /App setup initialized config, data dir, and database\./)
     assert.match(result.stdout ?? "", /Next: beerengineer workspace add <path>/)
   } finally {
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -267,7 +268,7 @@ fi`)
     assert.match(result.stdout ?? "", /App setup initialized config, data dir, and database\./)
     assert.doesNotMatch(result.stdout ?? "", /ANTHROPIC_API_KEY is not set/)
   } finally {
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -350,7 +351,7 @@ test("notifications test telegram sends a smoke message through the configured b
     assert.match(requests[0].body, /beerengineer_ test notification/)
   } finally {
     await new Promise<void>((resolve, reject) => server.close(err => err ? reject(err) : resolve()))
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -409,7 +410,7 @@ test("item open and run open print UI URLs based on publicBaseUrl", async () => 
     assert.match(stdout, new RegExp(`http://100\\.80\\.38\\.41:3100/runs/${run.id}`))
   } finally {
     db.close()
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -477,7 +478,7 @@ test("item wireframes and item design print artifact info and support --json", (
     assert.equal(design.status, 0, design.stderr)
     assert.match(design.stdout, /design-preview:/)
   } finally {
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -560,7 +561,7 @@ test("item preview prints and starts and stops the item worktree preview", async
   } finally {
     if (previousDbPath === undefined) delete process.env.BEERENGINEER_UI_DB_PATH
     else process.env.BEERENGINEER_UI_DB_PATH = previousDbPath
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -618,7 +619,7 @@ test("update --check prints machine-readable release info", async () => {
     assert.equal(parsed.status.install.root, join(dataDir, "install"))
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()))
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -725,7 +726,7 @@ test("update --dry-run reclaims a stale lock and reports stage results", async (
     assert.ok(parsed.dryRun.warnings.includes("stale-update-lock-reclaimed"))
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()))
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -819,7 +820,7 @@ test("update --dry-run fails closed when BEERENGINEER_UPDATE_EXPECTED_TARBALL_SH
     }
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()))
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -885,7 +886,7 @@ test("update --dry-run fails closed when the tarball redirect leaves the trusted
     }
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()))
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -920,7 +921,7 @@ test("update --rollback returns the reserved unsupported response in json mode",
     assert.equal(parsed.error, "post-migration-rollback-unsupported")
     assert.equal(parsed.code, "post-migration-rollback-unsupported")
   } finally {
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -1012,7 +1013,7 @@ test("update prepares a staged apply attempt and returns machine-readable metada
     assert.equal(existsSync(parsed.apply.switcherPath), true)
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()))
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -1053,7 +1054,7 @@ test("chat answer reads the answer body from stdin when --text is omitted", () =
     assert.equal(repos.getPendingPrompt("p-stdin")?.answer, "Answer from stdin")
   } finally {
     db.close()
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -1093,7 +1094,7 @@ test("chat answer supports explicit multiline stdin mode", () => {
     assert.equal(repos.getPendingPrompt("p-multiline")?.answer, "Line one\nLine two")
   } finally {
     db.close()
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -1180,7 +1181,7 @@ test("workspace add/register/open/remove work end-to-end through the CLI", () =>
     assert.equal(remove.status, 0, `${remove.stdout ?? ""}\n${remove.stderr ?? ""}`)
     assert.match(remove.stdout ?? "", /Removed workspace demo-app/)
   } finally {
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -1223,7 +1224,7 @@ test("workspace backfill writes missing workspace.json files for existing rows",
     assert.equal(config.harnessProfile.mode, "fast")
     assert.equal(config.runtimePolicy.coderExecution, "unsafe-autonomous-write")
   } finally {
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 
@@ -1245,7 +1246,7 @@ test("resolveItemReference rejects ambiguous item codes across workspaces", () =
     assert.equal(resolved.kind, "ambiguous")
     db.close()
   } finally {
-    rmSync(dir, { recursive: true, force: true })
+    removeTempDir(dir)
   }
 })
 

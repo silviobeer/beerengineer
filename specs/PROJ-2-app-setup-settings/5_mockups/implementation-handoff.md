@@ -18,7 +18,7 @@ hybrid
 
 ## Selected UI Direction
 
-Use a dedicated `/setup` full-page **Single-Task Wizard**. The setup page may move away from the board layout. The user must always see the current step number, total steps, future locked steps, and a strong gate indicator that says whether the current step is blocked, checking, done, or ready to continue. Dependency/auth steps include explanation, official download/docs source, command, optional local-agent prompt, and verification gate.
+Use a dedicated `/setup` full-page **Gate Box Wizard**. The setup page may move away from the board layout. The user must always see the current step number, total steps, future locked steps, and a central gate box that says whether the current step is blocked, checking, done, or ready to continue. The gate box owns the immediate navigation decision: `Skip`, `Re-check`, and `Next`. For required checks such as Git, `Skip` is disabled and `Next` remains disabled until verification passes. Installation options, command snippets, docs/source links, and optional local-agent prompts sit underneath the gate box as support material.
 
 The later Eigenschaften page reuses the same ordered setup sections and status language, but works in maintenance mode with direct section navigation and partial-save feedback.
 
@@ -34,10 +34,12 @@ The later Eigenschaften page reuses the same ordered setup sections and status l
 
 - `SetupWizardShell` — dedicated full-page setup container with no board columns.
 - `SetupProgressStepper` — large five-step progress indicator with done/current/locked labels.
-- `SetupGateBanner` — explicit current-step state: blocked, checking, complete, continue unlocked.
-- `SetupInstructionPanel` — rich single-task content with explanation, command, docs/download link, agent prompt, and verification.
+- `SetupGateBox` — central current-step decision box with blocker message, skip/re-check/next controls, and blocked/checking/done states.
+- `SetupSupportZone` — support material below the central gate; keeps instructions out of the core wizard decision area.
+- `InstallationOptionCard` — OS/package-manager install option with command and source/remedy copy.
 - `CommandCopyBlock` — copyable shell command with status feedback.
 - `AgentPromptBlock` — copyable prompt for local agents; no execution by UI.
+- `VerificationGateControls` — re-check trigger and visible checking/done/blocked result feedback.
 - `SecretMaintenanceRow` — redacted secret metadata with replace/test/disable/delete actions.
 - `PartialSaveSummary` — shows which fields saved and which were rejected.
 
@@ -64,10 +66,12 @@ The later Eigenschaften page reuses the same ordered setup sections and status l
 - `/setup`:
   - Shows current step as `Step N of 5`.
   - Shows all five step names with state: done, current/blocked, locked, finished.
-  - Current step has a gate banner.
-  - Continue is disabled while the gate is blocked or checking.
+  - Current step has one central gate box.
+  - The central gate box shows the blocker, whether skipping is possible, and whether Next is available.
+  - `Skip` is disabled for required checks such as Git; optional checks may enable it.
+  - `Next` is disabled while the gate is blocked or checking.
   - Verification can move the gate to success and unlock Continue.
-  - Technical steps include explanation, download/docs source, command, local-agent prompt, and verification.
+  - Technical steps place explanation, download/docs source, command, local-agent prompt, and install options below the gate box.
   - Required checks block; optional checks can be skipped or deferred.
 - `/settings`:
   - Uses direct section navigation after setup.
@@ -76,7 +80,7 @@ The later Eigenschaften page reuses the same ordered setup sections and status l
 
 ## Required States
 
-- Normal: current step blocked with instructions.
+- Normal: current step blocked with central gate box and support material below.
 - Loading: verification running, continue disabled.
 - Error: verification failed or partial save rejected some fields.
 - Success: current step complete and continue unlocked.
@@ -85,7 +89,7 @@ The later Eigenschaften page reuses the same ordered setup sections and status l
 ## Responsive/Mobile Behavior
 
 - `/setup` stacks the stepper vertically on narrow screens.
-- The active step remains above long instructional content.
+- The active gate box remains above long instructional content.
 - Commands and agent prompts must wrap without horizontal overflow.
 - `/settings` side navigation stacks above section content.
 
@@ -99,12 +103,13 @@ The later Eigenschaften page reuses the same ordered setup sections and status l
 ## Demo-Only In Mockup
 
 - `Simulate passed check` is only a visual state toggle.
-- The npm/package URLs are example copy for visual review; implementation should use canonical docs/remedy data from engine where available.
+- The Git install commands and package-manager examples are visual review copy; implementation should use canonical docs/remedy data from engine where available.
 - Labels such as `[Normal State]` and `[New candidate: ...]` are mockup annotations, not production UI.
 
 ## Open UI Risks
 
 - Whether `/setup` always has exactly five steps or adapts when optional services are skipped remains open.
 - Whether locked future steps show exact names or generic remaining markers remains open.
+- Whether required steps show a disabled `Skip` button for consistency or hide `Skip` entirely remains open.
 - Maintenance mode may need a denser layout than the wizard for frequent operators.
 - The UI needs backend support for app-config patching, setup initialization, secret metadata, and explicit secret tests before production behavior can match the mockups.

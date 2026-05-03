@@ -84,7 +84,7 @@ function derivePipelineState(c: RawBoardCard): string {
 }
 
 export function buildSseUrl(workspaceKey: string): string {
-  return `${ENGINE_URL}/events?workspace=${encodeURIComponent(workspaceKey)}&level=2`;
+  return `/api/events?workspace=${encodeURIComponent(workspaceKey)}&level=2`;
 }
 
 interface RawWorkspace {
