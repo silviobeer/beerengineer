@@ -124,3 +124,9 @@ npm run dev:ui                                    # Next.js on :3000
   repo does not deploy to Vercel.
 - A pre-commit hook blocks a commit → fix the underlying issue and
   create a NEW commit. Never use `--no-verify`.
+
+## PROJ QA Rules
+
+- <!-- AGENTS-PROJ2-QA-001 --> Browser first-run flows need UI controls for every PRD-required engine mutation; backend-only success is not enough.
+- <!-- AGENTS-PROJ2-QA-002 --> Capture 375px mobile screenshots for every new top-level UI surface before marking a UI wave green.
+- <!-- AGENTS-PROJ2-QA-003 --> If an engine error response includes a redacted user-facing `message`, show it before generic fallback copy.

@@ -1,6 +1,6 @@
 # Technical Reference
 
-**Last updated:** 2026-05-01
+**Last updated:** 2026-05-03
 
 ## Architecture
 
@@ -18,6 +18,17 @@ User or Agent
 
 The public installer is releases-only. It does not install prerequisites, edit shell profiles, delete global npm installs, mutate development checkouts, or move workspace artifacts into the managed install root.
 
+PROJ-2 adds app-level setup/settings without moving authority into the browser:
+
+```text
+Browser
+  -> Next.js UI and app/api proxy routes
+  -> Engine HTTP setup/config/secret endpoints
+  -> app config, SQLite state, doctor checks, local secret store
+```
+
+The engine remains the source of truth for readiness, initialization, app config, secret storage, and tool/check execution. The UI presents setup state and sends writes through server-side proxy routes so browser code never receives the engine token or stored secret values.
+
 ## Data Model
 
 - **Release Target:** resolved GitHub repository, stable release tag, version, tarball URL, and trusted download metadata for one install attempt.
@@ -25,6 +36,12 @@ The public installer is releases-only. It does not install prerequisites, edit s
 - **Managed Install State:** versioned releases under the OS-aware app-data install root, an active `install/current` pointer, a stable wrapper under the app-data bin area, and shared lock state with updates.
 - **Existing App Data:** config and SQLite data outside release payloads; preserved across install, setup, failed release validation, and reruns.
 - **Diagnostic Phase:** structured and human-rendered phase records for prerequisites, download, install, setup, engine start, and UI start.
+- **App Setup State:** derived engine readiness projection for uninitialized, blocked, partial, and complete setup.
+- **Setup Check / Group:** required, recommended, or optional checks with stable IDs, status, detail, and UI-safe remedies.
+- **App Config:** app-wide editable settings such as allowed roots, engine port, public base URL, default LLM profile, and integration flags; workspace/project settings stay out of this model.
+- **Secret Reference:** non-sensitive ref and redacted metadata shown in setup/config responses.
+- **Secret Value:** sensitive local value stored only in the engine-owned secret store and resolved only for explicit checks/tool execution.
+- **Partial Save Result:** accepted and rejected app-config fields returned together so the settings UI can explain mixed outcomes.
 
 ## Cross-cutting Decisions
 
@@ -35,6 +52,14 @@ The public installer is releases-only. It does not install prerequisites, edit s
 - **User data is not install payload:** config and SQLite state are preserved; adoption and repair only touch managed install pointers/wrappers when the safe action is unambiguous.
 - **Warnings are distinct from hard failures:** prerequisite, release, validation, setup, risky state, and lock errors fail; engine/UI startup issues after successful install/setup remain recoverable warnings.
 - **Diagnostics are a contract:** JSON output includes a schema version, operation ID, target metadata, phase list, summary, warnings, next commands, and exit code.
+- **Engine-owned setup is the only readiness authority:** setup and settings pages render engine reports and request fresh rechecks instead of inferring readiness from local UI state.
+- **Browser writes stay behind Next.js proxies:** setup initialization, config patches, rechecks, and secret actions attach privileged credentials server-side.
+- **Setup is modeled as gates:** required gates block progress; optional gates can be skipped/deferred; recommended gates should not be shown as required blockers.
+- **Secret values and metadata are separate:** config and HTTP responses carry refs/status only; values stay in the local secret store and out of logs, responses, and normal config.
+- **Secret resolution is scoped:** stored secrets are injected only for checks or tool executions that explicitly need them; disabled/deleted/missing secrets are not injected.
+- **Partial saves are product behavior:** valid app-config fields persist while invalid fields remain unchanged and get field-level errors.
+- **Initialization is conservative and idempotent:** missing config/data/DB state can be created; valid existing state is preserved; invalid config is reported for repair.
+- **No automatic external tool installs:** setup surfaces remedies and commands but never installs Git, CLIs, scanners, or auth tooling automatically.
 
 ## Directory Structure
 
@@ -44,19 +69,37 @@ apps/engine/src/core/managedInstall/           — release, download, validation
 apps/engine/bin/install.sh                     — POSIX public bootstrap delegate
 apps/engine/bin/install.ps1                    — Windows public bootstrap delegate
 apps/engine/test/managedInstall*.test.ts       — managed first-install contract and regression suite
+apps/engine/src/setup/                         — setup status, app config, secret store, secret tests, and doctor checks
+apps/engine/src/api/routes/setup.ts            — setup/config/recheck/secret HTTP handlers
+apps/ui/app/setup/page.tsx                     — first-run setup wizard route
+apps/ui/app/settings/page.tsx                  — app settings maintenance route
+apps/ui/app/api/setup/*                        — server-side setup mutation proxies
+apps/ui/app/api/settings/*                     — server-side settings/config/secret proxies
+apps/ui/components/setup/                      — setup wizard, gate box, stepper, support material, verification controls
+apps/ui/components/settings/                   — settings page sections, config form, secret rows, status rechecks
 specs/PROJ-1-managed-install/                  — concept, PRDs, architecture, wave plans, and progress log
+specs/PROJ-2-app-setup-settings/               — setup/settings PRDs, architecture, wave plans, and QA log
 ```
 
 ## Dependencies
 
 PROJ-1 added no new runtime package dependencies. It uses Node standard-library filesystem, HTTPS, child-process, and path APIs plus the engine's existing TypeScript, SQLite, app-path, update-lock, and command infrastructure.
 
+PROJ-2 added no new npm package dependencies. It uses the existing engine stack (`better-sqlite3`, `env-paths`, TypeScript) and the existing UI stack (Next.js, React, Tailwind v4, Vitest).
+
 ## Deployment
 
 The public install path assumes GitHub Releases publish the POSIX and PowerShell bootstrap assets and a stable release tarball. A successful managed install creates the local app-data layout, runs setup through the managed wrapper, attempts engine start, and either starts the UI or prints the exact UI command and URL.
+
+For local setup/settings, the engine defaults to `127.0.0.1:4100` and writes/reads app config, SQLite state, and secret-store files under OS-aware app paths unless overridden by environment variables. Mutating HTTP calls require the engine token; browser clients should call the Next.js proxy routes instead of the engine directly.
 
 ## Gotchas
 
 - Unit-level wave gates can pass while the documented public command remains thin. PROJ-1 fixed this with an entrypoint integration test that asserts durable side effects: `install/versions/<tag>`, `install/current`, wrapper creation, and full phase sequencing.
 - Tarball entry names are not enough to prove archive safety. The release-tree validator also rejects symlinked `root`, `apps`, `apps/engine`, and `apps/ui` paths before realpath-based checks.
 - Full engine regression and SonarCloud can report unrelated repo-level failures while the managed-install scope is green; PROJ-1 documentation records those as deferred background risk rather than managed-install blockers.
+- Backend setup mutations are not complete until the browser has a visible proxy-backed action for them. PROJ-2 initially had `POST /setup/init` without a first-run UI action.
+- Recommended/optional setup vocabulary is easy to collapse into blocked/done labels. UI status chips should reserve `Blocked` for required gates that actually disable progress.
+- Engine responses may include safe, redacted `message` fields; settings UI should display those before generic fallback errors.
+- 375px screenshots are useful for every new top-level UI surface because shared chrome can overlap even when component tests pass.
+- The optional-skip route is currently UI-local; if skip state matters beyond immediate UX, it should become engine-owned or be removed.

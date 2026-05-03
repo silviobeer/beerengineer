@@ -1,7 +1,7 @@
 # PROJ-2 Progress
 
-## Status: fixes implemented; pending QA re-run
-## Current Wave: QA fix pass
+## Status: QA passed with one Medium deferred
+## Current Wave: QA re-run
 ## BASE_SHA: 35b6ee5c43f6b871b832ad6800c704562149b242
 
 ---
@@ -99,7 +99,7 @@
 |----------|:-----:|:-----:|:--------:|
 | P0 Critical | 0 | 0 | 0 |
 | P1 High | 1 | 1 | 0 |
-| P2 Medium | 3 | 3 | 0 |
+| P2 Medium | 3 | 2 | 1 |
 | P3 Low | 2 | 2 | 0 |
 
 ### SonarCloud
@@ -113,25 +113,24 @@
 - P1: `BUG-PROJ2-QA-001` — fresh `/setup` can now initialize missing app state through a UI proxy and gate action.
 - P2: `BUG-PROJ2-QA-002` — mobile topbar hides decorative brand under `sm` to avoid 375px overlap.
 - P2: `BUG-PROJ2-QA-003` — secret test failures now display the engine-provided `message`.
-- P2: `BUG-PROJ2-QA-004` — recommended gates now render as `Recommended` without blocking `Next`.
 - P3: `BUG-PROJ2-QA-005` — settings status now separates passed check totals from required thresholds.
 - P3: `BUG-PROJ2-QA-006` — optional-skip route now rejects non-optional group ids.
 
 ### Deferred (user decision)
-- None yet.
+- P2: `BUG-PROJ2-QA-004` — real engine-backed browser flow still renders the recommended review gate status as `Blocked`; `Next` remains enabled.
 
 ---
 
 ## QA Results
 
 - Bugs found: 6 (Critical: 0, High: 1, Medium: 3, Low: 2)
-- Fixed: 6
-- Deferred: 0
+- Fixed: 5
+- Deferred: 1
 
 ---
 
 ## Open Blockers
-- None after QA fix pass; full browser QA re-run still pending.
+- None. One Medium UX issue remains deferred for implementation triage.
 
 ---
 
@@ -450,6 +449,17 @@
 - Verification passed: `npm run typecheck`; `npm test --workspace=@beerengineer/ui -- tests/setupEntry.test.tsx tests/setupGateBox.test.tsx tests/setupSupportZone.test.tsx tests/settingsSecrets.test.tsx tests/settingsConfig.test.tsx tests/settingsRecheck.test.tsx`; `npm run test:file --workspace=@beerengineer/engine -- test/setupApi.test.ts test/appConfigPatch.test.ts test/secretStore.test.ts test/secretMetadata.test.ts test/secretTests.test.ts`.
 - Fix-pass verification passed: `npm test --workspace=@beerengineer/ui -- tests/setupEntry.test.tsx tests/setupGateBox.test.tsx tests/setupSupportZone.test.tsx tests/setupOptionalGates.test.tsx tests/setupRecheckFlow.test.tsx tests/settingsSecrets.test.tsx tests/settingsConfig.test.tsx tests/settingsRecheck.test.tsx tests/settingsPage.test.tsx tests/settingsPartialSave.test.tsx tests/setupProgressStepper.test.tsx`; `npm run typecheck`.
 
+## QA Re-run — 2026-05-03
+
+- Verdict: production-ready by severity gate, with one Medium UX issue deferred. No Critical or High bugs remain.
+- Environment: isolated engine on `127.0.0.1:4723`, isolated UI on `127.0.0.1:3123`, temp state under `/tmp/be2-qa-rerun-h1y2KM`.
+- Evidence: `qa-rerun-setup-initial.yml`, `qa-rerun-setup-after-init.yml`, `qa-rerun-settings-initial.yml`, `qa-rerun-settings-secret-test.yml`, `qa-rerun-setup-mobile.png`, `qa-rerun-settings-mobile.png`, `qa-rerun-console-errors.log`, `qa-rerun-network.log`.
+- Verified fixed: `BUG-PROJ2-QA-001` setup initialization button/proxy; `BUG-PROJ2-QA-002` 375px topbar no longer overlaps; `BUG-PROJ2-QA-003` secret test displays the engine not-implemented message; `BUG-PROJ2-QA-005` settings status displays checks plus threshold; `BUG-PROJ2-QA-006` optional skip rejects `review` and accepts `notifications`.
+- Still open: `BUG-PROJ2-QA-004` recommended review gate still shows status chip `Blocked` in the real engine-backed browser flow while `Next` is enabled.
+- Root cause observed: `GET /setup/status` reports the review group as `level: "recommended"` and `ideal: true`, but `currentSetupGroup()` falls back to that last group and `groupPrimaryCheck()` picks the missing `SONAR_TOKEN` check; the status chip then maps `missing` to `Blocked`.
+- Console/network notes: only expected favicon `404` and expected `501` from the explicit unimplemented secret test were observed; no secret values appeared in snapshots or network summaries.
+- Verification passed: `npm test --workspace=@beerengineer/ui -- tests/setupEntry.test.tsx tests/setupGateBox.test.tsx tests/setupSupportZone.test.tsx tests/setupOptionalGates.test.tsx tests/setupRecheckFlow.test.tsx tests/settingsSecrets.test.tsx tests/settingsConfig.test.tsx tests/settingsRecheck.test.tsx tests/settingsPage.test.tsx tests/settingsPartialSave.test.tsx tests/setupProgressStepper.test.tsx`; `npm run typecheck`; `npm run test:file --workspace=@beerengineer/engine -- test/setupApi.test.ts test/appConfigPatch.test.ts test/secretStore.test.ts test/secretMetadata.test.ts test/secretTests.test.ts`.
+
 ### BUG-PROJ2-QA-001 — [High] Fresh setup page cannot initialize missing app state
 - **File:** `apps/ui/components/setup/SetupGateBox.tsx`; `apps/ui/app/api/setup/`
 - **Anchor:** `export function SetupGateBox`
@@ -484,10 +494,11 @@
 - **File:** `apps/ui/components/setup/SetupGateBox.tsx`
 - **Anchor:** `const status = checking ? "checking"`
 - **Source:** Playwright E2E + Elena Rodriguez (Architecture)
-- **Status:** fixed
+- **Status:** open
 - **Fix attempts:** 1
 - **Description:** After required setup passes, the wizard can show the recommended review-tools gate as `Blocked`, with `Skip unavailable`, while `Next` is enabled. The behavior is technically non-blocking, but the vocabulary contradicts the action state and blurs required vs recommended semantics.
 - **Repro:** Initialize app state directly, navigate to `/setup`, observe `Review tool recommendations` with `Blocked` and enabled `Next`.
+- **QA re-run:** Reproduced after browser `Initialize app` on isolated UI `127.0.0.1:3123`; engine status had `level: "recommended"`, `ideal: true`, and a missing `SONAR_TOKEN` check, so the UI still rendered `Blocked`.
 - **Fix sketch:** Map non-required unsatisfied gates to `Recommended`, `Needs attention`, or `Optional`, and reserve `Blocked` for required gates that disable progression.
 
 ### BUG-PROJ2-QA-005 — [Low] Settings status counts read as impossible required totals
@@ -512,9 +523,9 @@
 
 ## AGENTS.md Candidates
 
-- [PROPOSED] AGENTS-PROJ2-QA-001: Browser first-run flows must expose UI controls for every PRD-required engine mutation; backend-only success is not enough. — source: Elena Rodriguez (Architecture)
-- [PROPOSED] AGENTS-PROJ2-QA-002: Capture 375px mobile screenshots for every new top-level UI surface before marking a UI wave green. — source: Priya Sharma (Performance/UI Runtime)
-- [PROPOSED] AGENTS-PROJ2-QA-003: When an engine error response includes a redacted user-facing `message`, UI components should display it before falling back to generic copy. — source: Thomas Mueller (Reliability)
+- [MERGED] AGENTS-PROJ2-QA-001: Browser first-run flows must expose UI controls for every PRD-required engine mutation; backend-only success is not enough. — source: Elena Rodriguez (Architecture)
+- [MERGED] AGENTS-PROJ2-QA-002: Capture 375px mobile screenshots for every new top-level UI surface before marking a UI wave green. — source: Priya Sharma (Performance/UI Runtime)
+- [MERGED] AGENTS-PROJ2-QA-003: When an engine error response includes a redacted user-facing `message`, UI components should display it before falling back to generic copy. — source: Thomas Mueller (Reliability)
 
 ## PROJ Retrospective
 
