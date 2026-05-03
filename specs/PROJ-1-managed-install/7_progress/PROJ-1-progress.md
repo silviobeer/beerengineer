@@ -1,7 +1,7 @@
 # PROJ-1 Progress
 
-## Status: blocked
-## Current Wave: 5
+## Status: QA passed
+## Current Wave: QA/documentation cleanup complete
 ## BASE_SHA: b16815407a08bb74ce49bff2bc5125faf88fe766
 
 ---
@@ -200,7 +200,7 @@
 ## QA Results
 
 - Bugs found: 1 (Critical: 1, High: 0, Medium: 0, Low: 0)
-- Fixed: 0
+- Fixed: 1
 - Deferred: 0
 - Browser E2E: not applicable for PROJ-1; architecture states there is no UI scope and all wave `frontend_routes` are empty.
 - Managed-install regression suite: PASS — `npm run test:managed-install --workspace=@beerengineer/engine` (54/54 tests passing).
@@ -601,3 +601,9 @@
 - SonarCloud quality-gate scan: BLOCKED — `sonar-scanner -Dsonar.qualitygate.wait=true -Dsonar.qualitygate.timeout=300` exits 1. Scanner reports project `silviobeer_beerengineer` is not accessible and asks to check `sonar.projectKey`, `sonar.organization`, `SONAR_TOKEN`, or project permissions. `SONAR_TOKEN` is missing in the current environment.
 - Follow-up after loading `.env.local`: SonarCloud authentication succeeds, and managed-install Critical/Major findings were fixed locally. Rechecks PASS for `npm run test:managed-install --workspace=@beerengineer/engine` and `npm run typecheck`.
 - SonarCloud quality-gate status remains ERROR because of repo-level gate conditions outside the managed-install feature scope: new coverage 65.1% (<80), new security hotspots reviewed 0%, total security hotspots reviewed 80%, and 10 remaining open issues. Remaining Critical/Major issues are in `apps/engine/src/cli/commands/itemActions.ts` and `apps/engine/src/core/runService.ts`; one managed-install Minor remains in `apps/engine/src/core/managedInstall/prerequisites.ts`.
+
+## Final Verification — 2026-05-03
+
+- Managed-install regression suite: PASS — `npm run test:managed-install --workspace=@beerengineer/engine` (54/54 tests passing).
+- Workspace typecheck: PASS — `npm run typecheck`.
+- Scope decision: PROJ-1 managed-install is QA-passed. SonarCloud repo-level failures remain deferred background risk by prior user instruction and are not open managed-install blockers.

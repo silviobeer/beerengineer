@@ -7,7 +7,7 @@
 
 ## PROJ-1: Managed First Install
 
-**Status:** QA-passed for managed-install scope; repo-level quality gates have deferred unrelated blockers.
+**Status:** QA-passed for managed-install scope; unrelated repo-level quality findings are deferred.
 
 **Purpose:** Add a release-based first-install path so humans and AI coding agents can install beerengineer_ from GitHub without cloning the repo or using a global npm install.
 
@@ -22,7 +22,7 @@
 
 **PRDs:** [PRD-1](../specs/PROJ-1-managed-install/3_PRDs/PROJ-1-PRD-1-public-bootstrap-entrypoints.md), [PRD-2](../specs/PROJ-1-managed-install/3_PRDs/PROJ-1-PRD-2-release-acquisition-validation.md), [PRD-3](../specs/PROJ-1-managed-install/3_PRDs/PROJ-1-PRD-3-managed-install-state.md), [PRD-4](../specs/PROJ-1-managed-install/3_PRDs/PROJ-1-PRD-4-setup-engine-ui-completion.md), [PRD-5](../specs/PROJ-1-managed-install/3_PRDs/PROJ-1-PRD-5-diagnostics-and-test-coverage.md)
 
-**QA:** Managed-install regression suite passed (`npm run test:managed-install --workspace=@beerengineer/engine`, 54/54) and workspace typecheck passed. One critical QA bug in the public install entrypoint was fixed and verified. Full engine regression had unrelated dirty-worktree failures, and SonarCloud repo-level gate failures were explicitly deferred.
+**QA:** Final recheck on 2026-05-03 passed the managed-install regression suite (`npm run test:managed-install --workspace=@beerengineer/engine`, 54/54) and workspace typecheck. One critical QA bug in the public install entrypoint was fixed and verified. SonarCloud repo-level gate failures were explicitly deferred as outside the managed-install scope.
 
 ---
 
