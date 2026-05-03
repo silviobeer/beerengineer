@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { FailureIndicator } from "@/components/FailureIndicator";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { StatusChip } from "@/components/StatusChip";
 import {
   currentSetupGroup,
@@ -37,13 +37,17 @@ async function readJsonResponse(res: Response): Promise<unknown | null> {
 }
 
 export function SetupGateBox({ initialReport, initialError = null, onCheckingChange }: Readonly<SetupGateBoxProps>) {
+  const router = useRouter();
   const [report, setReport] = useState(initialReport);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState(initialError);
   const [skipped, setSkipped] = useState<string[]>([]);
+  const [skipBusy, setSkipBusy] = useState(false);
+  const activeRequest = useRef<AbortController | null>(null);
   useEffect(() => {
     setReport(initialReport);
   }, [initialReport]);
+  useEffect(() => () => activeRequest.current?.abort(), []);
 
   function setCheckingState(next: boolean) {
     setChecking(next);
@@ -63,6 +67,9 @@ export function SetupGateBox({ initialReport, initialError = null, onCheckingCha
   }, [detail]);
 
   async function recheck() {
+    activeRequest.current?.abort();
+    const controller = new AbortController();
+    activeRequest.current = controller;
     setCheckingState(true);
     setError(null);
     try {
@@ -70,6 +77,7 @@ export function SetupGateBox({ initialReport, initialError = null, onCheckingCha
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(group?.id ? { group: group.id } : {}),
+        signal: controller.signal,
       });
       const body = await readJsonResponse(res);
       if (!body || typeof body !== "object") {
@@ -86,37 +94,51 @@ export function SetupGateBox({ initialReport, initialError = null, onCheckingCha
         return;
       }
       setReport(nextReport);
-    } catch {
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
       setError("Re-check failed.");
     } finally {
-      setCheckingState(false);
+      if (activeRequest.current === controller) {
+        activeRequest.current = null;
+        setCheckingState(false);
+      }
     }
   }
 
   async function skip() {
-    if (!optional || !group) return;
+    if (!optional || !group || skipBusy) return;
+    const controller = new AbortController();
+    activeRequest.current?.abort();
+    activeRequest.current = controller;
+    setSkipBusy(true);
     setSkipped((prev) => [...prev, group.id]);
     try {
       const res = await fetch("/api/setup/optional", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ group: group.id }),
+        signal: controller.signal,
       });
       if (!res.ok) throw new Error("Optional skip failed.");
     } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
       setSkipped((prev) => prev.filter((id) => id !== group.id));
       setError(err instanceof Error ? err.message : "Optional skip failed.");
+    } finally {
+      if (activeRequest.current === controller) activeRequest.current = null;
+      setSkipBusy(false);
     }
   }
 
   function next() {
-    window.location.href = "/settings";
+    router.push("/settings");
   }
 
   return (
     <section
       data-testid="setup-gate-box"
       data-state={statusLabel(status)}
+      aria-live="polite"
       className="space-y-5 border border-zinc-700 bg-zinc-900 p-5"
     >
       <div className="flex items-start justify-between gap-4">
@@ -126,13 +148,13 @@ export function SetupGateBox({ initialReport, initialError = null, onCheckingCha
           <p className="text-sm text-zinc-300">{secretSafeText}</p>
           {skipped.length > 0 ? <p className="text-sm text-zinc-400">Optional service skipped; setup can continue.</p> : null}
         </div>
-        {status === "misconfigured" || status === "missing" || error ? <FailureIndicator /> : <StatusChip state={statusLabel(status)} />}
+        <StatusChip state={statusLabel(status)} />
       </div>
       <VerificationGateControls
         required={group?.level !== "optional"}
         optional={optional}
         blocked={blocked && !optional}
-        checking={checking}
+        checking={checking || skipBusy}
         onRecheck={recheck}
         onSkip={skip}
         onNext={next}

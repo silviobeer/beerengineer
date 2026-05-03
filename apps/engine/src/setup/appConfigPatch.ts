@@ -1,3 +1,4 @@
+import { isAbsolute, parse as parsePath, resolve as resolvePath } from "node:path"
 import {
   defaultAppConfig,
   normalizePublicBaseUrl,
@@ -64,6 +65,14 @@ export function patchAppConfig(overrides: SetupOverrides = {}, patch: unknown = 
   const resolved = resolveOverrides(overrides)
   const configPath = resolveConfigPath(resolved)
   const state = readConfigFile(configPath)
+  if (state.kind === "missing") {
+    return {
+      ok: false,
+      saved: [],
+      rejected: [{ field: "config", error: "setup_config_missing" }],
+      config: defaultAppConfig(),
+    }
+  }
   const current = resolveMergedConfig(state, resolved) ?? defaultAppConfig()
   const next: AppConfig = structuredClone(current)
   const input = optionalObject(patch)
@@ -79,7 +88,14 @@ export function patchAppConfig(overrides: SetupOverrides = {}, patch: unknown = 
       ) {
         throw new TypeError("allowedRoots must be a non-empty string array")
       }
-      next.allowedRoots = input.allowedRoots.map(root => root.trim())
+      next.allowedRoots = input.allowedRoots.map(root => {
+        const trimmed = root.trim()
+        if (trimmed.split(/[\\/]+/).includes("..")) throw new TypeError("allowedRoots must not contain traversal segments")
+        if (!isAbsolute(trimmed)) throw new TypeError("allowedRoots must contain absolute paths")
+        const resolvedRoot = resolvePath(trimmed)
+        if (resolvedRoot === parsePath(resolvedRoot).root) throw new TypeError("allowedRoots must not include filesystem root")
+        return resolvedRoot
+      })
     })
   }
 

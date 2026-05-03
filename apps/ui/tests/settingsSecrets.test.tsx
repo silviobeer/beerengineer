@@ -33,6 +33,9 @@ describe("SecretMaintenanceRow", () => {
     fireEvent.change(input, { target: { value: "sk-live-secret" } });
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
     await waitFor(() => expect(input).toHaveValue(""));
+    expect(globalThis.fetch).toHaveBeenCalledWith("/api/settings/secrets", expect.objectContaining({
+      body: JSON.stringify({ ref: "ANTHROPIC_API_KEY", action: "replace", value: "sk-live-secret" }),
+    }));
   });
 
   it("AC-15 lifecycle actions update visible secret status", async () => {
@@ -55,5 +58,18 @@ describe("SecretMaintenanceRow", () => {
     render(<SecretMaintenanceRow label="Telegram bot token" secret={{ ref: "TELEGRAM_BOT_TOKEN", present: false }} fallbackRef="TELEGRAM_BOT_TOKEN" />);
     expect(screen.getByText("TELEGRAM_BOT_TOKEN")).toBeInTheDocument();
     expect(screen.getByTestId("status-chip")).toHaveTextContent(/blocked|missing|unknown/i);
+  });
+
+  it("requires a second click before deleting a stored secret", async () => {
+    globalThis.fetch = vi.fn(async () => Response.json({ ref: "ANTHROPIC_API_KEY", status: "missing", present: false })) as unknown as typeof fetch;
+    render(<SecretMaintenanceRow label="LLM API key" secret={{ ref: "ANTHROPIC_API_KEY", present: true }} fallbackRef="ANTHROPIC_API_KEY" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm delete" }));
+
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith("/api/settings/secrets", expect.objectContaining({
+      body: JSON.stringify({ ref: "ANTHROPIC_API_KEY", action: "delete" }),
+    })));
   });
 });

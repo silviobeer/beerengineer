@@ -9,6 +9,7 @@ describe("Setup entry", () => {
     render(<SetupWizardShell report={blockedReport()} />);
     expect(screen.getByText("/setup")).toBeInTheDocument();
     expect(screen.getByText("Setup wizard")).toBeInTheDocument();
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
   });
 
   it("AC-2 exposes visible Setup and Settings navigation entries", () => {

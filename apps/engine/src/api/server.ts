@@ -16,7 +16,7 @@ import {
   resolveOverrides,
 } from "../setup/config.js"
 import type { AppConfig } from "../setup/types.js"
-import { json, requireCsrfToken, setCors } from "./http.js"
+import { json, RequestBodyTooLargeError, requireCsrfToken, setCors } from "./http.js"
 import { handleCreatePreparedImportItem, handleGetItem, handleGetItemDesign, handleGetItemPreview, handleGetItemWireframes, handleItemActionNamed, handleListItems, handleStartItemPreview, handleStopItemPreview } from "./routes/items.js"
 import {
   handleAnswer,
@@ -371,6 +371,9 @@ const server = createServer(async (req: ApiRequest, res) => {
 
     json(res, 404, { error: "not found" })
   } catch (err) {
+    if (err instanceof RequestBodyTooLargeError) {
+      return json(res, err.statusCode, { error: "request_body_too_large" })
+    }
     console.error("[api]", err)
     json(res, 500, { error: "internal_server_error" })
   }
@@ -419,7 +422,6 @@ server.listen(PORT, HOST, () => {
   console.error(`[engine] wrote pid file to ${pidPath}`)
   if (!API_TOKEN_WAS_PROVIDED) {
     const tokenPath = writeApiTokenFile(API_TOKEN)
-    console.error(`[engine] BEERENGINEER_API_TOKEN=${API_TOKEN}`)
-    console.error(`[engine] wrote token to ${tokenPath}`)
+    console.error(`[engine] wrote API token to ${tokenPath}`)
   }
 })

@@ -37,6 +37,6 @@ describe("AppConfigSection", () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ok: true, saved: ["enginePort"], rejected: [], config: { enginePort: 4200 } })));
     render(<AppConfigSection initialView={configView()} />);
     fireEvent.click(screen.getByRole("button", { name: /save app config/i }));
-    await waitFor(() => expect(screen.getByLabelText(/Engine port/i)).toHaveValue("4200"));
+    await waitFor(() => expect(screen.getByLabelText(/Engine port/i)).toHaveValue(4200));
   });
 });

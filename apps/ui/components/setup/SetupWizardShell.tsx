@@ -18,7 +18,7 @@ export function SetupWizardShell({
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-4 py-6">
         <div className="space-y-1">
           <p className="font-mono text-xs uppercase text-zinc-500">/setup</p>
-          <h1 className="font-display text-3xl">Setup wizard</h1>
+          <h2 className="font-display text-3xl">Setup wizard</h2>
         </div>
         <SetupProgressStepper report={report} checking={checking} />
         <SetupGateBox initialReport={report} initialError={error} onCheckingChange={setChecking} />

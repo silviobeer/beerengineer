@@ -53,6 +53,34 @@ test("AC-13 partial-save rejects empty allowedRoots instead of persisting it", (
   }
 })
 
+test("AC-13 partial-save rejects filesystem root and traversal allowedRoots", () => {
+  const paths = tempSetupPaths()
+  try {
+    writeConfigFile(paths.configPath, { ...defaultAppConfig(), dataDir: paths.dataDir })
+
+    const result = patchAppConfig({ configPath: paths.configPath, dataDir: paths.dataDir }, { allowedRoots: ["/", "../workspace"] })
+
+    assert.equal(result.ok, false)
+    assert.deepEqual(result.saved, [])
+    assert.deepEqual(result.rejected.map(entry => entry.field), ["allowedRoots"])
+  } finally {
+    rmSync(paths.dir, { recursive: true, force: true })
+  }
+})
+
+test("AC-13 partial-save refuses to create config before setup init", () => {
+  const paths = tempSetupPaths()
+  try {
+    const result = patchAppConfig({ configPath: paths.configPath, dataDir: paths.dataDir }, { browser: { enabled: true } })
+
+    assert.equal(result.ok, false)
+    assert.deepEqual(result.saved, [])
+    assert.deepEqual(result.rejected, [{ field: "config", error: "setup_config_missing" }])
+  } finally {
+    rmSync(paths.dir, { recursive: true, force: true })
+  }
+})
+
 test("AC-14 invalid fields remain unchanged in persisted config", () => {
   const paths = tempSetupPaths()
   try {

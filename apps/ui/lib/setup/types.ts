@@ -90,9 +90,9 @@ export interface AppConfigPatchResult {
 export interface SecretMetadata {
   ref: string;
   status: "missing" | "active" | "disabled" | "invalid" | "suspicious" | "unknown";
-  present?: boolean;
-  active?: boolean;
-  lastUpdatedAt?: number;
+  present: boolean;
+  active: boolean;
+  updatedAt?: number;
   lastTestedAt?: number;
   source?: string;
 }

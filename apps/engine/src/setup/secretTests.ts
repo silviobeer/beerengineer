@@ -35,7 +35,7 @@ export async function runSecretTest(ref: string, options: SecretTestOptions = {}
   }
   const tester = options.testers?.[ref]
   if (!tester) {
-    const secret = markSecretTested(ref, "unknown", options)
+    const secret = getSecretMetadata(ref, options)
     return { ok: false, ref, status: "not_implemented", message: new SecretTestNotImplementedError(ref).message, secret }
   }
 

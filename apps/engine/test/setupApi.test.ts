@@ -100,9 +100,48 @@ test("AC-16 PATCH /setup/config requires the engine CSRF token", async () => {
       headers: { "content-type": "application/json", "x-beerengineer-token": TEST_API_TOKEN },
       body: JSON.stringify({ browser: { enabled: true } }),
     })
-    assert.equal(accepted.status, 200)
-    const body = await accepted.json() as { saved: string[] }
+    assert.equal(accepted.status, 409)
+
+    const initialized = await fetch(`${base}/setup/init`, {
+      method: "POST",
+      headers: { "x-beerengineer-token": TEST_API_TOKEN },
+    })
+    assert.equal(initialized.status, 200)
+
+    const patched = await fetch(`${base}/setup/config`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", "x-beerengineer-token": TEST_API_TOKEN },
+      body: JSON.stringify({ browser: { enabled: true } }),
+    })
+    assert.equal(patched.status, 200)
+    const body = await patched.json() as { saved: string[] }
     assert.deepEqual(body.saved, ["browser.enabled"])
+  } finally {
+    await stopServer(proc)
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("setup JSON endpoints reject oversized request bodies", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-setup-api-body-limit-"))
+  const dbPath = join(dir, "server.sqlite")
+  initDatabase(dbPath).close()
+  const { proc, base } = startServer({
+    BEERENGINEER_UI_DB_PATH: dbPath,
+    BEERENGINEER_CONFIG_PATH: join(dir, "config.json"),
+    BEERENGINEER_DATA_DIR: join(dir, "data"),
+  })
+  try {
+    await waitForHealth(base)
+    const rejected = await fetch(`${base}/setup/config`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", "x-beerengineer-token": TEST_API_TOKEN },
+      body: JSON.stringify({ payload: "x".repeat(1024 * 1024 + 1) }),
+    })
+
+    assert.equal(rejected.status, 413)
+    const body = await rejected.json() as { error: string }
+    assert.equal(body.error, "request_body_too_large")
   } finally {
     await stopServer(proc)
     rmSync(dir, { recursive: true, force: true })

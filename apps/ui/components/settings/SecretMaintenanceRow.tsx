@@ -29,6 +29,7 @@ export function SecretMaintenanceRow({
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   useEffect(() => {
     setMeta(initialMeta(secret, fallbackRef));
@@ -49,6 +50,7 @@ export function SecretMaintenanceRow({
         return;
       }
       setValue("");
+      setConfirmDelete(false);
       const nextMeta = body.metadata ?? body.secret ?? body;
       if (isSecretMetadata(nextMeta)) {
         setMeta((prev) => ({
@@ -91,13 +93,26 @@ export function SecretMaintenanceRow({
       </label>
       {error ? <p className="text-sm text-amber-300">{error}</p> : null}
       <div className="flex flex-wrap gap-2">
-        <button type="button" disabled={busy || !value} onClick={() => action(meta.present ? "replace" : "store", value)} className="border border-amber-500 px-2 py-1 text-xs text-amber-300 disabled:opacity-45">
+        <button type="button" disabled={busy || !value} onClick={() => action("replace", value)} className="border border-amber-500 px-2 py-1 text-xs text-amber-300 disabled:opacity-45">
           {meta.present ? "Replace" : "Add"}
         </button>
         <button type="button" disabled={busy || !meta.present} onClick={() => action("test")} className="border border-zinc-700 px-2 py-1 text-xs text-zinc-200 disabled:opacity-45">Test</button>
         <button type="button" disabled={busy || !meta.present || meta.status === "disabled"} onClick={() => action("disable")} className="border border-zinc-700 px-2 py-1 text-xs text-zinc-200 disabled:opacity-45">Disable</button>
         <button type="button" disabled={busy || meta.status !== "disabled"} onClick={() => action("reactivate")} className="border border-zinc-700 px-2 py-1 text-xs text-zinc-200 disabled:opacity-45">Reactivate</button>
-        <button type="button" disabled={busy || !meta.present} onClick={() => action("delete")} className="border border-red-800 px-2 py-1 text-xs text-red-300 disabled:opacity-45">Delete</button>
+        <button
+          type="button"
+          disabled={busy || !meta.present}
+          onClick={() => {
+            if (!confirmDelete) {
+              setConfirmDelete(true);
+              return;
+            }
+            void action("delete");
+          }}
+          className="border border-red-800 px-2 py-1 text-xs text-red-300 disabled:opacity-45"
+        >
+          {confirmDelete ? "Confirm delete" : "Delete"}
+        </button>
       </div>
     </article>
   );

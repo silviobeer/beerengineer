@@ -31,6 +31,10 @@ export async function handleSetupConfig(res: ServerResponse): Promise<void> {
 export async function handleSetupConfigPatch(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const body = await readJson(req)
   const result = patchAppConfig({}, body)
+  if (result.rejected.some(entry => entry.error === "setup_config_missing")) {
+    json(res, 409, result)
+    return
+  }
   json(res, result.rejected.length > 0 ? 207 : 200, result)
 }
 

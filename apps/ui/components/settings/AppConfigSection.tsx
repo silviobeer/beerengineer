@@ -99,7 +99,7 @@ export function AppConfigSection({ initialView }: Readonly<AppConfigSectionProps
         </label>
         <label className="space-y-1 text-sm">
           <span className="text-zinc-300">Engine port</span>
-          <input className="w-full border border-zinc-800 bg-zinc-950 p-2" value={form.enginePort} onChange={(e) => setField("enginePort", e.target.value)} />
+          <input type="number" inputMode="numeric" className="w-full border border-zinc-800 bg-zinc-950 p-2" value={form.enginePort} onChange={(e) => setField("enginePort", e.target.value)} />
           {rejected.get("enginePort") ? <span className="text-xs text-amber-300">{rejected.get("enginePort")}</span> : null}
         </label>
         <label className="space-y-1 text-sm">

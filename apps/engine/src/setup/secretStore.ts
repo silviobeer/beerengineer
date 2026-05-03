@@ -7,6 +7,7 @@ export type SecretStatus = "missing" | "active" | "disabled" | "invalid" | "susp
 export type SecretMetadata = {
   ref: string
   status: SecretStatus
+  present: boolean
   active: boolean
   updatedAt?: number
   lastTestedAt?: number
@@ -30,6 +31,7 @@ type SecretStoreFile = {
 }
 
 const paths = envPaths("beerengineer")
+const activeMutations = new Set<string>()
 
 export function secretStorePath(options: SecretStoreOptions = {}): string {
   const explicit = options.storePath ?? process.env.BEERENGINEER_SECRET_STORE_PATH
@@ -60,11 +62,26 @@ function writeStore(store: SecretStoreFile, options: SecretStoreOptions = {}): v
   renameSync(tmp, path)
 }
 
+function mutateStore(options: SecretStoreOptions, mutate: (store: SecretStoreFile) => SecretMetadata): SecretMetadata {
+  const path = secretStorePath(options)
+  if (activeMutations.has(path)) throw new Error("secret store mutation already in progress")
+  activeMutations.add(path)
+  try {
+    const store = readStore(options)
+    const result = mutate(store)
+    writeStore(store, options)
+    return result
+  } finally {
+    activeMutations.delete(path)
+  }
+}
+
 function metadataFor(ref: string, record: SecretRecord | undefined): SecretMetadata {
-  if (!record) return { ref, status: "missing", active: false }
+  if (!record) return { ref, status: "missing", present: false, active: false }
   return {
     ref,
     status: metadataStatus(record),
+    present: true,
     active: record.active,
     updatedAt: record.updatedAt,
     lastTestedAt: record.lastTestedAt,
@@ -82,10 +99,10 @@ function metadataStatus(record: SecretRecord): SecretStatus {
 export function storeSecret(ref: string, value: string, options: SecretStoreOptions = {}): SecretMetadata {
   if (!ref.trim()) throw new TypeError("secret ref must be non-empty")
   if (typeof value !== "string" || value.length === 0) throw new TypeError("secret value must be non-empty")
-  const store = readStore(options)
-  store.secrets[ref] = { value, active: true, updatedAt: Date.now() }
-  writeStore(store, options)
-  return metadataFor(ref, store.secrets[ref])
+  return mutateStore(options, store => {
+    store.secrets[ref] = { value, active: true, updatedAt: Date.now() }
+    return metadataFor(ref, store.secrets[ref])
+  })
 }
 
 export function getSecretMetadata(ref: string, options: SecretStoreOptions = {}): SecretMetadata {
@@ -94,20 +111,20 @@ export function getSecretMetadata(ref: string, options: SecretStoreOptions = {})
 }
 
 export function setSecretActive(ref: string, active: boolean, options: SecretStoreOptions = {}): SecretMetadata {
-  const store = readStore(options)
-  const record = store.secrets[ref]
-  if (!record) return metadataFor(ref, undefined)
-  record.active = active
-  record.updatedAt = Date.now()
-  writeStore(store, options)
-  return metadataFor(ref, record)
+  return mutateStore(options, store => {
+    const record = store.secrets[ref]
+    if (!record) return metadataFor(ref, undefined)
+    record.active = active
+    record.updatedAt = Date.now()
+    return metadataFor(ref, record)
+  })
 }
 
 export function deleteSecret(ref: string, options: SecretStoreOptions = {}): SecretMetadata {
-  const store = readStore(options)
-  delete store.secrets[ref]
-  writeStore(store, options)
-  return metadataFor(ref, undefined)
+  return mutateStore(options, store => {
+    delete store.secrets[ref]
+    return metadataFor(ref, undefined)
+  })
 }
 
 export function markSecretTested(
@@ -115,15 +132,15 @@ export function markSecretTested(
   status: "valid" | "invalid" | "suspicious" | "unknown",
   options: SecretStoreOptions = {},
 ): SecretMetadata {
-  const store = readStore(options)
-  const record = store.secrets[ref]
-  if (!record) return metadataFor(ref, undefined)
-  record.lastTestedAt = Date.now()
-  record.testStatus = status
-  if (status === "invalid") record.active = false
-  record.updatedAt = Date.now()
-  writeStore(store, options)
-  return metadataFor(ref, record)
+  return mutateStore(options, store => {
+    const record = store.secrets[ref]
+    if (!record) return metadataFor(ref, undefined)
+    record.lastTestedAt = Date.now()
+    record.testStatus = status
+    if (status === "invalid") record.active = false
+    record.updatedAt = Date.now()
+    return metadataFor(ref, record)
+  })
 }
 
 export function readActiveSecretValue(ref: string, options: SecretStoreOptions = {}): string | null {

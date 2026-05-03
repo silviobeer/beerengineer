@@ -8,6 +8,8 @@ describe("SetupGateBox", () => {
     render(<SetupGateBox initialReport={blockedReport()} />);
     expect(screen.getAllByTestId("setup-gate-box")).toHaveLength(1);
     expect(screen.getByText("Git")).toBeInTheDocument();
+    expect(screen.getByTestId("status-chip")).toHaveAttribute("data-state", "blocked");
+    expect(screen.queryByLabelText("Run failed")).not.toBeInTheDocument();
   });
 
   it("AC-10 disables Skip for required gates", () => {

@@ -1,13 +1,32 @@
 import type { IncomingMessage, ServerResponse } from "node:http"
 
+const DEFAULT_JSON_BODY_LIMIT_BYTES = 1024 * 1024
+
+export class RequestBodyTooLargeError extends Error {
+  readonly statusCode = 413
+
+  constructor(limit: number) {
+    super(`request body exceeds ${limit} bytes`)
+    this.name = "RequestBodyTooLargeError"
+  }
+}
+
 export function json(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { "content-type": "application/json" })
   res.end(JSON.stringify(body))
 }
 
-export async function readJson(req: IncomingMessage): Promise<unknown> {
+export async function readJson(req: IncomingMessage, limit = DEFAULT_JSON_BODY_LIMIT_BYTES): Promise<unknown> {
   const chunks: Buffer[] = []
-  for await (const chunk of req) chunks.push(chunk as Buffer)
+  let size = 0
+  for await (const chunk of req) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+    size += buffer.byteLength
+    if (size > limit) {
+      throw new RequestBodyTooLargeError(limit)
+    }
+    chunks.push(buffer)
+  }
   const raw = Buffer.concat(chunks).toString("utf8")
   if (!raw) return {}
   try {
@@ -36,7 +55,7 @@ export function setCors(res: ServerResponse, req: IncomingMessage, allowedOrigin
     res.setHeader("vary", "origin")
     res.setHeader("access-control-allow-credentials", "true")
   }
-  res.setHeader("access-control-allow-methods", "GET,POST,DELETE,OPTIONS")
+  res.setHeader("access-control-allow-methods", "GET,POST,PATCH,DELETE,OPTIONS")
   res.setHeader("access-control-allow-headers", "content-type, x-beerengineer-token")
 }
 

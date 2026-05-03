@@ -1,16 +1,30 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { StatusChip } from "@/components/StatusChip";
 import { statusLabel, type SetupReport } from "@/lib/setup/types";
+
+function isSetupReport(value: unknown): value is SetupReport {
+  return Boolean(value)
+    && typeof value === "object"
+    && (value as { reportVersion?: unknown }).reportVersion === 1
+    && Array.isArray((value as { groups?: unknown }).groups)
+    && typeof (value as { overall?: unknown }).overall === "string";
+}
 
 export function SetupStatusSection({ initialReport }: Readonly<{ initialReport: SetupReport | null }>) {
   const [report, setReport] = useState(initialReport);
   const [loading, setLoading] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const activeRequest = useRef<AbortController | null>(null);
+
+  useEffect(() => () => activeRequest.current?.abort(), []);
 
   async function recheck(group?: string) {
     const key = group ?? "all";
+    activeRequest.current?.abort();
+    const controller = new AbortController();
+    activeRequest.current = controller;
     setLoading(key);
     setErrors((prev) => ({ ...prev, [key]: "" }));
     try {
@@ -18,20 +32,29 @@ export function SetupStatusSection({ initialReport }: Readonly<{ initialReport: 
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(group ? { group } : {}),
+        signal: controller.signal,
       });
       const body = await res.json();
       if (!res.ok || body.ok === false) {
         setErrors((prev) => ({ ...prev, [key]: typeof body.error === "string" ? body.error : "Re-check failed." }));
         return;
       }
-      setReport(body.report as SetupReport);
+      if (!isSetupReport(body.report)) {
+        setErrors((prev) => ({ ...prev, [key]: "Invalid setup report." }));
+        return;
+      }
+      setReport(body.report);
     } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
       setErrors((prev) => ({
         ...prev,
         [key]: err instanceof Error ? err.message : "Re-check failed.",
       }));
     } finally {
-      setLoading(null);
+      if (activeRequest.current === controller) {
+        activeRequest.current = null;
+        setLoading(null);
+      }
     }
   }
 
@@ -46,7 +69,7 @@ export function SetupStatusSection({ initialReport }: Readonly<{ initialReport: 
           {loading === "all" ? "Checking" : "Re-check all"}
         </button>
       </div>
-      <div className="grid gap-2">
+      <div className="grid gap-2" aria-live="polite">
         {(report?.groups ?? []).map((group) => (
           <article key={group.id} className="flex flex-wrap items-center justify-between gap-3 border border-zinc-800 bg-zinc-900 p-3">
             <div>
