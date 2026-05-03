@@ -1,15 +1,13 @@
-import { execFile } from "node:child_process"
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
-import { promisify } from "node:util"
 import type { Finding } from "../types.js"
 import { commandExists, runCommand } from "./commandRunner.js"
 import { reviewCycleArtifactsDir, writeArtifactJson, writeArtifactText } from "./artifacts.js"
 import type { GateCondition, ReviewScope, SonarCloudResult } from "./types.js"
+import { readActiveSecretValue } from "../setup/secretStore.js"
 
 const DEFAULT_TIMEOUT_MS = 5 * 60_000
 const branchLocks = new Map<string, Promise<void>>()
-const execFileAsync = promisify(execFile)
 
 function basicAuthHeader(token: string): string {
   const credentials = `${token}:`
@@ -43,41 +41,6 @@ async function withBranchLock<T>(key: string, work: () => Promise<T>): Promise<T
     release()
     if (branchLocks.get(key) === chained) branchLocks.delete(key)
   }
-}
-
-function readTokenFromEnvFile(raw: string): string | undefined {
-  for (const line of raw.split(/\r?\n/)) {
-    const match = /^SONAR_TOKEN=(.*)$/.exec(line.trim())
-    if (match?.[1]) return match[1].replaceAll(/^["']|["']$/g, "")
-  }
-  return undefined
-}
-
-async function readTokenFromFile(path: string): Promise<string | undefined> {
-  try {
-    return readTokenFromEnvFile(await readFile(path, "utf8"))
-  } catch {
-    return undefined
-  }
-}
-
-async function readGitConfigToken(workspaceRoot: string): Promise<string | undefined> {
-  try {
-    const { stdout } = await execFileAsync("git", ["config", "--get", "beerengineer.sonarToken"], {
-      cwd: workspaceRoot,
-      encoding: "utf8",
-    })
-    const value = stdout.trim()
-    return value || undefined
-  } catch {
-    return undefined
-  }
-}
-
-async function readLocalEnvToken(workspaceRoot: string): Promise<string | undefined> {
-  return await readTokenFromFile(resolve(workspaceRoot, ".env.local"))
-    ?? await readTokenFromFile(resolve(workspaceRoot, ".env"))
-    ?? await readGitConfigToken(workspaceRoot)
 }
 
 function mapSeverity(severity: string | undefined): Finding<"sonarqube">["severity"] {
@@ -229,7 +192,7 @@ export async function runSonarCloudReview(input: ReviewScope): Promise<SonarClou
     }
   }
 
-  const token = process.env.SONAR_TOKEN ?? await readLocalEnvToken(input.workspaceRoot)
+  const token = readActiveSecretValue("SONAR_TOKEN")
   if (!token) {
     const rawScanPath = await writeArtifactText(artifactsDir, "sonar-scan.raw.txt", "failed: SONAR_TOKEN missing\n")
     const rawGatePath = await writeArtifactText(artifactsDir, "sonar-gate.raw.json", "{\n  \"status\": \"failed\",\n  \"reason\": \"sonar-token-missing\"\n}\n")

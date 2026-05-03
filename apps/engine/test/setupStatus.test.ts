@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { test } from "node:test"
 
 import { generateSetupReport } from "../src/setup/doctor.js"
+import { storeSecret } from "../src/setup/secretStore.js"
 
 function tempSetupPaths() {
   const dir = mkdtempSync(join(tmpdir(), "be2-setup-status-"))
@@ -108,6 +109,56 @@ test("AC-5 all LLM groups does not make inactive providers required blockers", a
     assert.equal(inactiveLlmGroups.length, 2)
     assert.equal(inactiveLlmGroups.every(group => group.level === "optional"), true)
   } finally {
+    rmSync(paths.dir, { recursive: true, force: true })
+  }
+})
+
+test("review setup checks accept SONAR_TOKEN from the local secret store", async () => {
+  const paths = tempSetupPaths()
+  const originalSecretStorePath = process.env.BEERENGINEER_SECRET_STORE_PATH
+  const originalSonarToken = process.env.SONAR_TOKEN
+  try {
+    delete process.env.SONAR_TOKEN
+    process.env.BEERENGINEER_SECRET_STORE_PATH = join(paths.dir, "secrets.json")
+    storeSecret("SONAR_TOKEN", "stored-token")
+
+    const report = await generateSetupReport({
+      group: "review",
+      overrides: { configPath: paths.configPath, dataDir: paths.dataDir },
+    })
+    const tokenCheck = report.groups.flatMap(group => group.checks).find(check => check.id === "review.sonar-token")
+
+    assert.equal(tokenCheck?.status, "ok")
+    assert.equal(tokenCheck?.detail, "Token available for scanner/API auth")
+  } finally {
+    if (originalSecretStorePath === undefined) delete process.env.BEERENGINEER_SECRET_STORE_PATH
+    else process.env.BEERENGINEER_SECRET_STORE_PATH = originalSecretStorePath
+    if (originalSonarToken === undefined) delete process.env.SONAR_TOKEN
+    else process.env.SONAR_TOKEN = originalSonarToken
+    rmSync(paths.dir, { recursive: true, force: true })
+  }
+})
+
+test("review setup checks do not treat env-only SONAR_TOKEN as configured", async () => {
+  const paths = tempSetupPaths()
+  const originalSecretStorePath = process.env.BEERENGINEER_SECRET_STORE_PATH
+  const originalSonarToken = process.env.SONAR_TOKEN
+  try {
+    process.env.SONAR_TOKEN = "env-only-token"
+    process.env.BEERENGINEER_SECRET_STORE_PATH = join(paths.dir, "secrets.json")
+
+    const report = await generateSetupReport({
+      group: "review",
+      overrides: { configPath: paths.configPath, dataDir: paths.dataDir },
+    })
+    const tokenCheck = report.groups.flatMap(group => group.checks).find(check => check.id === "review.sonar-token")
+
+    assert.equal(tokenCheck?.status, "missing")
+  } finally {
+    if (originalSecretStorePath === undefined) delete process.env.BEERENGINEER_SECRET_STORE_PATH
+    else process.env.BEERENGINEER_SECRET_STORE_PATH = originalSecretStorePath
+    if (originalSonarToken === undefined) delete process.env.SONAR_TOKEN
+    else process.env.SONAR_TOKEN = originalSonarToken
     rmSync(paths.dir, { recursive: true, force: true })
   }
 })

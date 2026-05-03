@@ -1,4 +1,5 @@
 import type { CheckResult } from "../types.js"
+import { readActiveSecretValue } from "../secretStore.js"
 import { createCheck, probeCommand, remedyForTool } from "./shared.js"
 
 export async function runReviewChecks(): Promise<CheckResult[]> {
@@ -7,7 +8,7 @@ export async function runReviewChecks(): Promise<CheckResult[]> {
     probeCommand("sonar-scanner", ["--version"]),
     probeCommand("sonar", ["--version"]),
   ])
-  const sonarTokenPresent = Boolean(process.env.SONAR_TOKEN)
+  const sonarTokenPresent = readActiveSecretValue("SONAR_TOKEN") !== null
 
   return [
     createCheck("review.coderabbit", "CodeRabbit CLI", coderabbit.ok ? "ok" : "missing", coderabbit.version ?? coderabbit.detail, {
