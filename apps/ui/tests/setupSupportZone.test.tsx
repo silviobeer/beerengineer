@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { SonarSetupCard } from "@/components/setup/SonarSetupCard";
 import { SetupSupportZone } from "@/components/setup/SetupSupportZone";
 import { blockedReport, configView, idealRecommendedReport } from "./setupFixtures";
 
@@ -67,5 +68,69 @@ describe("SetupSupportZone", () => {
         body: JSON.stringify({ ref: "SONAR_TOKEN", action: "replace", value: "token-value" }),
       })),
     );
+  });
+
+  it("shows a semantic output when Sonar config saves successfully", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ok: true, saved: ["llm.defaultSonarOrganization"], rejected: [], config: {} })));
+    render(<SonarSetupCard defaultOrganization="beer" />);
+
+    fireEvent.click(screen.getByRole("button", { name: /save sonar config/i }));
+
+    await waitFor(() => expect(screen.getByText("Sonar organization saved.").tagName).toBe("OUTPUT"));
+  });
+
+  it("surfaces rejected Sonar config fields from partial-save responses", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json(
+      { ok: false, saved: [], rejected: [{ field: "llm.defaultSonarOrganization", error: "Organization is invalid." }], config: {} },
+      { status: 207 },
+    )));
+    render(<SonarSetupCard defaultOrganization="beer" />);
+
+    fireEvent.click(screen.getByRole("button", { name: /save sonar config/i }));
+
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Organization is invalid."));
+  });
+
+  it("surfaces non-JSON Sonar config failures with the fallback message", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("not json", { status: 500 })));
+    render(<SonarSetupCard defaultOrganization="beer" />);
+
+    fireEvent.click(screen.getByRole("button", { name: /save sonar config/i }));
+
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Sonar config could not be saved."));
+  });
+
+  it("clears the token input after saving SONAR_TOKEN", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ok: true, secret: { ref: "SONAR_TOKEN", present: true, active: true } })));
+    render(<SonarSetupCard defaultOrganization="beer" />);
+
+    fireEvent.change(screen.getByLabelText("SONAR_TOKEN"), { target: { value: "token-value" } });
+    fireEvent.click(screen.getByRole("button", { name: /save sonar_token/i }));
+
+    await waitFor(() => expect(screen.getByText("SONAR_TOKEN saved.").tagName).toBe("OUTPUT"));
+    expect(screen.getByLabelText("SONAR_TOKEN")).toHaveValue("");
+  });
+
+  it("surfaces secret-store errors while keeping the token input intact", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ok: false, message: "Secret store unavailable." }, { status: 500 })));
+    render(<SonarSetupCard defaultOrganization="beer" />);
+
+    fireEvent.change(screen.getByLabelText("SONAR_TOKEN"), { target: { value: "token-value" } });
+    fireEvent.click(screen.getByRole("button", { name: /save sonar_token/i }));
+
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Secret store unavailable."));
+    expect(screen.getByLabelText("SONAR_TOKEN")).toHaveValue("token-value");
+  });
+
+  it("surfaces network errors from Sonar token saves", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("network down");
+    }));
+    render(<SonarSetupCard defaultOrganization="beer" />);
+
+    fireEvent.change(screen.getByLabelText("SONAR_TOKEN"), { target: { value: "token-value" } });
+    fireEvent.click(screen.getByRole("button", { name: /save sonar_token/i }));
+
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("network down"));
   });
 });

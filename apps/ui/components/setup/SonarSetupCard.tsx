@@ -90,7 +90,7 @@ export function SonarSetupCard({ defaultOrganization }: Readonly<{ defaultOrgani
           Optional review-gate settings used when workspaces enable SonarCloud.
         </p>
       </div>
-      {message ? <p role="status" className="text-sm text-emerald-300">{message}</p> : null}
+      {message ? <output className="block text-sm text-emerald-300">{message}</output> : null}
       {error ? <p role="alert" className="text-sm text-amber-300">{error}</p> : null}
       <label className="block space-y-1 text-sm">
         <span className="text-zinc-300">Default Sonar organization</span>
