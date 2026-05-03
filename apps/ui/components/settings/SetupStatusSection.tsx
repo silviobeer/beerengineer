@@ -74,7 +74,7 @@ export function SetupStatusSection({ initialReport }: Readonly<{ initialReport: 
           <article key={group.id} className="flex flex-wrap items-center justify-between gap-3 border border-zinc-800 bg-zinc-900 p-3">
             <div>
               <h3 className="text-sm font-medium text-zinc-100">{group.label}</h3>
-              <p className="font-mono text-xs uppercase text-zinc-500">{group.level} · {group.passed}/{group.minOk} required · {group.satisfied ? "done" : "blocked"}</p>
+              <p className="font-mono text-xs uppercase text-zinc-500">{group.level} · {group.passed}/{group.checks.length} checks · threshold {group.minOk} · {group.satisfied ? "done" : "blocked"}</p>
               {errors[group.id] ? <p role="alert" className="text-sm text-amber-300">{errors[group.id]}</p> : null}
             </div>
             <div className="flex items-center gap-2">

@@ -26,6 +26,10 @@ export function deriveStatusLabel(
     case "blocked":
     case "run-blocked":
       return "Blocked";
+    case "recommended":
+      return "Recommended";
+    case "attention":
+      return "Needs Attention";
     case "review":
     case "review-gate-waiting":
       return "Awaiting Review";

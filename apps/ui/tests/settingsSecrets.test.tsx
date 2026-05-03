@@ -72,4 +72,17 @@ describe("SecretMaintenanceRow", () => {
       body: JSON.stringify({ ref: "ANTHROPIC_API_KEY", action: "delete" }),
     })));
   });
+
+  it("shows the engine message for unimplemented secret tests", async () => {
+    globalThis.fetch = vi.fn(async () => Response.json(
+      { ok: false, status: "not_implemented", message: "No secret tester is registered for this secret yet." },
+      { status: 501 },
+    )) as unknown as typeof fetch;
+    render(<SecretMaintenanceRow label="LLM API key" secret={{ ref: "ANTHROPIC_API_KEY", present: true }} fallbackRef="ANTHROPIC_API_KEY" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Test" }));
+
+    await screen.findByText("No secret tester is registered for this secret yet.");
+    expect(screen.queryByText("Secret action failed.")).not.toBeInTheDocument();
+  });
 });

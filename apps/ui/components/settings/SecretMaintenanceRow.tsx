@@ -46,7 +46,7 @@ export function SecretMaintenanceRow({
       });
       const body = await res.json();
       if (!res.ok || body.ok === false) {
-        setError(typeof body.error === "string" ? body.error : "Secret action failed.");
+        setError(typeof body.message === "string" ? body.message : typeof body.error === "string" ? body.error : "Secret action failed.");
         return;
       }
       setValue("");

@@ -66,6 +66,28 @@ export function readyReport(): SetupReport {
   };
 }
 
+export function recommendedReport(): SetupReport {
+  const report = readyReport();
+  return {
+    ...report,
+    overall: "warning",
+    groups: [
+      ...report.groups,
+      {
+        id: "review",
+        label: "Review tool recommendations",
+        level: "recommended",
+        minOk: 0,
+        idealOk: 1,
+        passed: 0,
+        satisfied: true,
+        ideal: false,
+        checks: [{ id: "coderabbit", label: "CodeRabbit", status: "missing", detail: "CodeRabbit CLI is not installed." }],
+      },
+    ],
+  };
+}
+
 export function optionalReport(): SetupReport {
   const report = readyReport();
   return {
@@ -111,5 +133,14 @@ export function configView(): AppConfigView {
         },
       },
     },
+  };
+}
+
+export function uninitializedConfigView(): AppConfigView {
+  const view = configView();
+  return {
+    ...view,
+    setupState: "uninitialized",
+    configFile: { kind: "missing", path: view.configPath },
   };
 }

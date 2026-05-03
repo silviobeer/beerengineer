@@ -37,4 +37,11 @@ describe("Settings re-check controls", () => {
     fireEvent.click(screen.getByRole("button", { name: /Re-check all/i }));
     await waitFor(() => expect(screen.getAllByTestId("status-chip")[0]).toHaveTextContent(/done/i));
   });
+
+  it("shows check totals separately from required thresholds", () => {
+    render(<SetupStatusSection initialReport={blockedReport()} />);
+
+    expect(screen.getByText(/required · 1\/1 checks · threshold 1/i)).toBeInTheDocument();
+    expect(screen.queryByText(/1\/1 required/i)).not.toBeInTheDocument();
+  });
 });

@@ -110,6 +110,7 @@ export function statusLabel(status: string): string {
     unknown: "unknown",
     uninitialized: "blocked",
     checking: "checking",
+    recommended: "recommended",
     active: "configured",
     disabled: "disabled",
     invalid: "invalid",

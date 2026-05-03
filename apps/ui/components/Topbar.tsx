@@ -17,7 +17,7 @@ export function Topbar() {
       </div>
       <span
         aria-hidden="true"
-        className="inline-flex shrink-0 items-center gap-1.5 font-mono text-[11px] tracking-[0.18em] text-zinc-400 select-none"
+        className="hidden shrink-0 items-center gap-1.5 font-mono text-[11px] tracking-[0.18em] text-zinc-400 select-none sm:inline-flex"
       >
         <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-400" />
         <span>beerengineer_</span>

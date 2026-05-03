@@ -8,12 +8,14 @@ import {
   firstBlockingGroup,
   groupPrimaryCheck,
   statusLabel,
+  type AppConfigView,
   type SetupReport,
 } from "@/lib/setup/types";
 import { VerificationGateControls } from "./VerificationGateControls";
 
 interface SetupGateBoxProps {
   readonly initialReport: SetupReport | null;
+  readonly initialConfigView?: AppConfigView | null;
   readonly initialError?: string | null;
   readonly onCheckingChange?: (checking: boolean) => void;
 }
@@ -36,10 +38,12 @@ async function readJsonResponse(res: Response): Promise<unknown | null> {
   }
 }
 
-export function SetupGateBox({ initialReport, initialError = null, onCheckingChange }: Readonly<SetupGateBoxProps>) {
+export function SetupGateBox({ initialReport, initialConfigView = null, initialError = null, onCheckingChange }: Readonly<SetupGateBoxProps>) {
   const router = useRouter();
   const [report, setReport] = useState(initialReport);
+  const [configView, setConfigView] = useState(initialConfigView);
   const [checking, setChecking] = useState(false);
+  const [initializing, setInitializing] = useState(false);
   const [error, setError] = useState(initialError);
   const [skipped, setSkipped] = useState<string[]>([]);
   const [skipBusy, setSkipBusy] = useState(false);
@@ -47,6 +51,9 @@ export function SetupGateBox({ initialReport, initialError = null, onCheckingCha
   useEffect(() => {
     setReport(initialReport);
   }, [initialReport]);
+  useEffect(() => {
+    setConfigView(initialConfigView);
+  }, [initialConfigView]);
   useEffect(() => () => activeRequest.current?.abort(), []);
 
   function setCheckingState(next: boolean) {
@@ -56,11 +63,21 @@ export function SetupGateBox({ initialReport, initialError = null, onCheckingCha
   const requiredBlocker = firstBlockingGroup(report);
   const group = currentSetupGroup(report);
   const check = groupPrimaryCheck(group);
-  const blocked = Boolean(requiredBlocker) || Boolean(error) || checking;
+  const needsInit = configView?.setupState === "uninitialized";
+  const blocked = Boolean(requiredBlocker) || Boolean(error) || checking || initializing || needsInit;
   const optional = group?.level === "optional";
-  const status = checking ? "checking" : error ? "misconfigured" : check?.status ?? (report?.overall === "ok" ? "ok" : "unknown");
-  const title = error ? "App-level setup blocker" : group?.label ?? "Setup finished";
-  const detail = error ?? check?.detail ?? check?.remedy?.hint ?? "All required checks are ready.";
+  const recommended = group?.level === "recommended";
+  const status = checking || initializing
+    ? "checking"
+    : error
+      ? "misconfigured"
+      : recommended && !group?.ideal
+        ? "recommended"
+        : needsInit
+          ? "uninitialized"
+          : check?.status ?? (report?.overall === "ok" ? "ok" : "unknown");
+  const title = error ? "App-level setup blocker" : needsInit ? "Initialize app state" : group?.label ?? "Setup finished";
+  const detail = error ?? (needsInit ? "Create the local config file, data directory, and database before continuing." : check?.detail ?? check?.remedy?.hint ?? "All required checks are ready.");
 
   const secretSafeText = useMemo(() => {
     return detail.replace(/\bsk(?:-proj|-admin)?-[A-Za-z0-9_-]+/g, "redacted");
@@ -101,6 +118,54 @@ export function SetupGateBox({ initialReport, initialError = null, onCheckingCha
       if (activeRequest.current === controller) {
         activeRequest.current = null;
         setCheckingState(false);
+      }
+    }
+  }
+
+  async function initialize() {
+    activeRequest.current?.abort();
+    const controller = new AbortController();
+    activeRequest.current = controller;
+    setInitializing(true);
+    setError(null);
+    try {
+      const initRes = await fetch("/api/setup/init", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+        signal: controller.signal,
+      });
+      const initBody = await readJsonResponse(initRes);
+      if (!initRes.ok || (initBody && typeof initBody === "object" && (initBody as { ok?: unknown }).ok === false)) {
+        setError(
+          initBody && typeof initBody === "object" && typeof (initBody as { error?: unknown }).error === "string"
+            ? (initBody as { error: string }).error
+            : "App initialization failed.",
+        );
+        return;
+      }
+      const res = await fetch("/api/setup/recheck", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+        signal: controller.signal,
+      });
+      const body = await readJsonResponse(res);
+      const nextReport = body && typeof body === "object" ? (body as { report?: unknown }).report : null;
+      if (!res.ok || !isSetupReport(nextReport)) {
+        setError("App initialized, but setup status could not be refreshed.");
+        return;
+      }
+      setReport(nextReport);
+      setConfigView((prev) => prev ? { ...prev, setupState: "complete" } : prev);
+      router.refresh();
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      setError(err instanceof Error ? err.message : "App initialization failed.");
+    } finally {
+      if (activeRequest.current === controller) {
+        activeRequest.current = null;
+        setInitializing(false);
       }
     }
   }
@@ -154,8 +219,10 @@ export function SetupGateBox({ initialReport, initialError = null, onCheckingCha
         required={group?.level !== "optional"}
         optional={optional}
         blocked={blocked && !optional}
-        checking={checking || skipBusy}
+        checking={checking || initializing || skipBusy}
+        initializing={needsInit}
         onRecheck={recheck}
+        onInitialize={initialize}
         onSkip={skip}
         onNext={next}
       />

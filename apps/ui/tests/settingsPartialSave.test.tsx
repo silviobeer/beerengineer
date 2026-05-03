@@ -38,6 +38,6 @@ describe("Partial save feedback", () => {
     render(<AppConfigSection initialView={configView()} />);
     fireEvent.change(screen.getByLabelText(/Engine port/i), { target: { value: "99999" } });
     fireEvent.click(screen.getByRole("button", { name: /save app config/i }));
-    await waitFor(() => expect(screen.getByLabelText(/Engine port/i)).toHaveValue("99999"));
+    await waitFor(() => expect(screen.getByLabelText(/Engine port/i)).toHaveValue(99999));
   });
 });

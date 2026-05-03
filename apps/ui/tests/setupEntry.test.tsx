@@ -16,6 +16,7 @@ describe("Setup entry", () => {
     render(<Topbar />);
     expect(screen.getByRole("link", { name: "Setup" })).toHaveAttribute("href", "/setup");
     expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
+    expect(screen.getByText("beerengineer_").closest("span[aria-hidden='true']")).toHaveClass("hidden");
   });
 
   it("AC-3 remains usable through the printed setup URL", () => {

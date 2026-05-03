@@ -1,7 +1,7 @@
 # PROJ-2 Progress
 
-## Status: in progress
-## Current Wave: 5
+## Status: fixes implemented; pending QA re-run
+## Current Wave: QA fix pass
 ## BASE_SHA: 35b6ee5c43f6b871b832ad6800c704562149b242
 
 ---
@@ -98,9 +98,9 @@
 | Severity | Found | Fixed | Deferred |
 |----------|:-----:|:-----:|:--------:|
 | P0 Critical | 0 | 0 | 0 |
-| P1 High | 0 | 0 | 0 |
-| P2 Medium | 0 | 0 | 0 |
-| P3 Low | 0 | 0 | 0 |
+| P1 High | 1 | 1 | 0 |
+| P2 Medium | 3 | 3 | 0 |
+| P3 Low | 2 | 2 | 0 |
 
 ### SonarCloud
 | Severity | Found | Fixed | Deferred |
@@ -110,7 +110,12 @@
 | Info | 0 | 0 | 0 |
 
 ### Fixed Issues
-- None yet.
+- P1: `BUG-PROJ2-QA-001` — fresh `/setup` can now initialize missing app state through a UI proxy and gate action.
+- P2: `BUG-PROJ2-QA-002` — mobile topbar hides decorative brand under `sm` to avoid 375px overlap.
+- P2: `BUG-PROJ2-QA-003` — secret test failures now display the engine-provided `message`.
+- P2: `BUG-PROJ2-QA-004` — recommended gates now render as `Recommended` without blocking `Next`.
+- P3: `BUG-PROJ2-QA-005` — settings status now separates passed check totals from required thresholds.
+- P3: `BUG-PROJ2-QA-006` — optional-skip route now rejects non-optional group ids.
 
 ### Deferred (user decision)
 - None yet.
@@ -119,14 +124,14 @@
 
 ## QA Results
 
-- Bugs found: 0 (Critical: 0, High: 0, Medium: 0, Low: 0)
-- Fixed: 0
+- Bugs found: 6 (Critical: 0, High: 1, Medium: 3, Low: 2)
+- Fixed: 6
 - Deferred: 0
 
 ---
 
 ## Open Blockers
-- None.
+- None after QA fix pass; full browser QA re-run still pending.
 
 ---
 
@@ -434,3 +439,94 @@
 - [x] Build: `npm run typecheck`
 - [x] CodeRabbit: 0 non-advisory findings (advisory severities: medium,low)
 - [x] Smoke: /settings
+
+---
+
+## QA Results — 2026-05-03
+
+- Verdict: fail for user release. Automated gates pass, but browser QA found one High first-run blocker and several Medium/Low UX/contract defects.
+- Environment: isolated engine on `127.0.0.1:4713`, isolated UI on `127.0.0.1:3113`, temp state under `/tmp/be2-qa-proj2-Bx7x3O`.
+- Evidence: `.playwright-mcp/setup-after-recheck.yml`, `.playwright-mcp/setup-after-init.yml`, `.playwright-mcp/settings-initial.yml`, `.playwright-mcp/settings-secret-tested.yml`, `setup-mobile.png`, `settings-mobile.png`, `.playwright-mcp/network-settings.log`.
+- Verification passed: `npm run typecheck`; `npm test --workspace=@beerengineer/ui -- tests/setupEntry.test.tsx tests/setupGateBox.test.tsx tests/setupSupportZone.test.tsx tests/settingsSecrets.test.tsx tests/settingsConfig.test.tsx tests/settingsRecheck.test.tsx`; `npm run test:file --workspace=@beerengineer/engine -- test/setupApi.test.ts test/appConfigPatch.test.ts test/secretStore.test.ts test/secretMetadata.test.ts test/secretTests.test.ts`.
+- Fix-pass verification passed: `npm test --workspace=@beerengineer/ui -- tests/setupEntry.test.tsx tests/setupGateBox.test.tsx tests/setupSupportZone.test.tsx tests/setupOptionalGates.test.tsx tests/setupRecheckFlow.test.tsx tests/settingsSecrets.test.tsx tests/settingsConfig.test.tsx tests/settingsRecheck.test.tsx tests/settingsPage.test.tsx tests/settingsPartialSave.test.tsx tests/setupProgressStepper.test.tsx`; `npm run typecheck`.
+
+### BUG-PROJ2-QA-001 — [High] Fresh setup page cannot initialize missing app state
+- **File:** `apps/ui/components/setup/SetupGateBox.tsx`; `apps/ui/app/api/setup/`
+- **Anchor:** `export function SetupGateBox`
+- **Source:** Playwright E2E + Marcus Weber (Principal Engineer) + Elena Rodriguez (Architecture)
+- **Status:** fixed
+- **Fix attempts:** 1
+- **Description:** With a missing config, `/setup` shows the config-missing blocker, a disabled `Next`, and `Re-check`, but no UI action or Next.js proxy route invokes `POST /setup/init`. The engine endpoint exists and succeeds when called directly, so the browser first-run flow cannot satisfy PRD-1 US-2 without CLI/API knowledge.
+- **Repro:** Start engine with `BEERENGINEER_CONFIG_PATH` pointing to a nonexistent file, navigate to `/setup`, observe only `Skip unavailable`, `Re-check`, and disabled `Next`.
+- **Fix sketch:** Add a protected Next.js proxy route for setup initialization and a visible primary action in the gate box when config state is uninitialized/missing; refresh setup status/config after success.
+
+### BUG-PROJ2-QA-002 — [Medium] Mobile topbar overlaps navigation and brand
+- **File:** `apps/ui/components/Topbar.tsx`
+- **Anchor:** `export function Topbar`
+- **Source:** Playwright mobile screenshot + Priya Sharma (Performance/UI Runtime)
+- **Status:** fixed
+- **Fix attempts:** 1
+- **Description:** At 375x812, the workspace selector, `Setup`/`Settings` nav, and `beerengineer_` brand collide visually. This makes the first-run and settings surfaces look broken on a required mobile viewport.
+- **Repro:** Resize browser to 375x812 and capture `/setup` or `/settings`; see `setup-mobile.png` and `settings-mobile.png`.
+- **Fix sketch:** Let the topbar wrap or hide the decorative brand at narrow widths; keep nav and workspace controls readable without overlap.
+
+### BUG-PROJ2-QA-003 — [Medium] Secret test failure discards the engine's UI-friendly message
+- **File:** `apps/ui/components/settings/SecretMaintenanceRow.tsx`
+- **Anchor:** `async function action`
+- **Source:** Playwright E2E + Dr. Sarah Chen (Security) + Thomas Mueller (Reliability)
+- **Status:** fixed
+- **Fix attempts:** 1
+- **Description:** Clicking `Test` for an active `ANTHROPIC_API_KEY` returns `501` with `{ status: "not_implemented", message: "No secret tester is registered..." }`, but the UI renders only `Secret action failed.` This violates the PRD expectation that explicit test results contain UI-understandable status/error text without cleartext secrets.
+- **Repro:** Add an LLM secret on `/settings`, click `Test`, inspect `.playwright-mcp/settings-secret-tested.yml` and `.playwright-mcp/secret-test-501-response.txt`.
+- **Fix sketch:** Prefer `body.message`, `body.status`, or known `not_implemented` copy before the generic fallback; keep secret values redacted.
+
+### BUG-PROJ2-QA-004 — [Medium] Recommended gate is labelled Blocked while still allowing Next
+- **File:** `apps/ui/components/setup/SetupGateBox.tsx`
+- **Anchor:** `const status = checking ? "checking"`
+- **Source:** Playwright E2E + Elena Rodriguez (Architecture)
+- **Status:** fixed
+- **Fix attempts:** 1
+- **Description:** After required setup passes, the wizard can show the recommended review-tools gate as `Blocked`, with `Skip unavailable`, while `Next` is enabled. The behavior is technically non-blocking, but the vocabulary contradicts the action state and blurs required vs recommended semantics.
+- **Repro:** Initialize app state directly, navigate to `/setup`, observe `Review tool recommendations` with `Blocked` and enabled `Next`.
+- **Fix sketch:** Map non-required unsatisfied gates to `Recommended`, `Needs attention`, or `Optional`, and reserve `Blocked` for required gates that disable progression.
+
+### BUG-PROJ2-QA-005 — [Low] Settings status counts read as impossible required totals
+- **File:** `apps/ui/components/settings/SetupStatusSection.tsx`
+- **Anchor:** `heading "Core app checks"`
+- **Source:** Playwright E2E + Ken Takahashi (Minimalism)
+- **Status:** fixed
+- **Fix attempts:** 1
+- **Description:** The settings page displayed `Core app checks required · 7/6 required · done`. The numerator is passed checks while the denominator is `minOk`, so the phrase looks like more required checks passed than exist.
+- **Repro:** After direct `POST /setup/init`, navigate to `/settings`; inspect `.playwright-mcp/settings-initial.yml`.
+- **Fix sketch:** Label the metric as readiness threshold, or show `passed/total` plus a separate required threshold.
+
+### BUG-PROJ2-QA-006 — [Low] Local optional-skip route can report success for non-optional groups
+- **File:** `apps/ui/app/api/setup/optional/route.ts`
+- **Anchor:** `export async function POST`
+- **Source:** API probe + Thomas Mueller (Reliability)
+- **Status:** fixed
+- **Fix attempts:** 1
+- **Description:** The local stub rejects obvious required IDs but returns `{ ok: true, status: "skipped" }` for a recommended group such as `review`, with no engine persistence. The UI currently does not expose that button for recommended gates, but the route contract can still lie to callers.
+- **Repro:** `curl -X POST http://127.0.0.1:3113/api/setup/optional -d '{"group":"review"}' -H 'content-type: application/json'`.
+- **Fix sketch:** Restrict the route to known optional group IDs and either persist skip state through the engine or name/document it as UI-local only.
+
+## AGENTS.md Candidates
+
+- [PROPOSED] AGENTS-PROJ2-QA-001: Browser first-run flows must expose UI controls for every PRD-required engine mutation; backend-only success is not enough. — source: Elena Rodriguez (Architecture)
+- [PROPOSED] AGENTS-PROJ2-QA-002: Capture 375px mobile screenshots for every new top-level UI surface before marking a UI wave green. — source: Priya Sharma (Performance/UI Runtime)
+- [PROPOSED] AGENTS-PROJ2-QA-003: When an engine error response includes a redacted user-facing `message`, UI components should display it before falling back to generic copy. — source: Thomas Mueller (Reliability)
+
+## PROJ Retrospective
+
+### Elena Rodriguez (Principal Architect)
+- PROJ-2 built the right backend ownership boundary: engine owns setup, config, secrets, and readiness; UI proxies mutations.
+- The main integration gap is first-run orchestration. The engine has initialization, but the user-visible wizard does not offer the matching action.
+- Recommended/optional gate vocabulary needs a clearer domain model in the UI. Treating every non-ok check as visually blocked makes the state machine harder to trust.
+- OpenAPI and prose docs now cover the setup routes, but UI docs still contain stale assumptions about setup initialization and should be reconciled in documentation handoff.
+- For PROJ-3, define the browser journey for every backend mutation before wave slicing, not after backend waves pass.
+
+### Ken Takahashi (Minimalism)
+- The optional-skip API route is currently a stub with little product value. Either give it real engine state or remove the route until persistence exists.
+- The settings status count should be simpler: users need to know whether a group is ready and what failed, not threshold math.
+- The secret test UI should not invent generic error language when the engine already sends a safe, specific explanation.
+- The topbar is shared chrome; fix it once with responsive behavior rather than patching individual pages.

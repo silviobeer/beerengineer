@@ -1,9 +1,16 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { SetupGateBox } from "@/components/setup/SetupGateBox";
-import { blockedReport, readyReport } from "./setupFixtures";
+import { blockedReport, readyReport, recommendedReport, uninitializedConfigView } from "./setupFixtures";
 
 describe("SetupGateBox", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    globalThis.fetch = originalFetch;
+  });
+
   it("AC-9 renders one central required blocker gate", () => {
     render(<SetupGateBox initialReport={blockedReport()} />);
     expect(screen.getAllByTestId("setup-gate-box")).toHaveLength(1);
@@ -39,5 +46,29 @@ describe("SetupGateBox", () => {
 
     expect(screen.getByText("Keys redacted and redacted failed validation.")).toBeInTheDocument();
     expect(screen.queryByText(/sk-proj-secret_token|sk-admin-secret_token/)).not.toBeInTheDocument();
+  });
+
+  it("initializes missing app state from the setup gate", async () => {
+    globalThis.fetch = vi.fn(async (input) => {
+      if (String(input).endsWith("/api/setup/init")) return Response.json({ ok: true, configState: "created" });
+      return Response.json({ ok: true, report: readyReport() });
+    }) as unknown as typeof fetch;
+
+    render(<SetupGateBox initialReport={blockedReport()} initialConfigView={uninitializedConfigView()} />);
+    expect(screen.getByRole("button", { name: "Initialize app" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Initialize app" }));
+
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledWith("/api/setup/init", expect.objectContaining({ method: "POST" })));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Next" })).not.toBeDisabled());
+  });
+
+  it("labels recommended gates without blocking Next", () => {
+    render(<SetupGateBox initialReport={recommendedReport()} />);
+
+    expect(screen.getByText("recommended gate")).toBeInTheDocument();
+    expect(screen.getByTestId("status-chip")).toHaveAttribute("data-state", "recommended");
+    expect(screen.getByTestId("status-chip")).toHaveTextContent("Recommended");
+    expect(screen.getByRole("button", { name: "Next" })).not.toBeDisabled();
   });
 });
