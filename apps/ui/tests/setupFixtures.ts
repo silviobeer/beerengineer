@@ -88,6 +88,30 @@ export function recommendedReport(): SetupReport {
   };
 }
 
+export function idealRecommendedReport(): SetupReport {
+  const report = recommendedReport();
+  return {
+    ...report,
+    groups: report.groups.map((group) =>
+      group.id === "review"
+        ? {
+            ...group,
+            ideal: true,
+            idealOk: 3,
+            passed: 3,
+            checks: [
+              { id: "review.coderabbit", label: "CodeRabbit CLI", status: "ok", detail: "0.4.4" },
+              { id: "review.sonar-scanner", label: "sonar-scanner", status: "ok", detail: "4.3.6" },
+              { id: "review.sonarqube-cli", label: "sonarqube-cli", status: "ok", detail: "0.9.0" },
+              { id: "review.sonar-token", label: "SONAR_TOKEN", status: "missing", detail: "Missing SONAR_TOKEN." },
+              { id: "review.sonar-plan", label: "Sonar branch-analysis plan tier", status: "unknown", detail: "Branch analysis requires a paid plan." },
+            ],
+          }
+        : group,
+    ),
+  };
+}
+
 export function optionalReport(): SetupReport {
   const report = readyReport();
   return {

@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SetupGateBox } from "@/components/setup/SetupGateBox";
-import { blockedReport, readyReport, recommendedReport, uninitializedConfigView } from "./setupFixtures";
+import { blockedReport, idealRecommendedReport, readyReport, recommendedReport, uninitializedConfigView } from "./setupFixtures";
 
 describe("SetupGateBox", () => {
   const originalFetch = globalThis.fetch;
@@ -69,6 +69,16 @@ describe("SetupGateBox", () => {
     expect(screen.getByText("recommended gate")).toBeInTheDocument();
     expect(screen.getByTestId("status-chip")).toHaveAttribute("data-state", "recommended");
     expect(screen.getByTestId("status-chip")).toHaveTextContent("Recommended");
+    expect(screen.getByRole("button", { name: "Next" })).not.toBeDisabled();
+  });
+
+  it("keeps ideal recommended groups from showing as blocked when a non-required check is missing", () => {
+    render(<SetupGateBox initialReport={idealRecommendedReport()} />);
+
+    expect(screen.getByText("recommended gate")).toBeInTheDocument();
+    expect(screen.getByTestId("status-chip")).toHaveAttribute("data-state", "recommended");
+    expect(screen.getByTestId("status-chip")).toHaveTextContent("Recommended");
+    expect(screen.getByText("Missing SONAR_TOKEN.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Next" })).not.toBeDisabled();
   });
 });

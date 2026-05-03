@@ -28,7 +28,7 @@
 
 ## PROJ-2: App Setup Settings
 
-**Status:** QA-passed by severity gate with one Medium UX issue deferred.
+**Status:** QA-passed.
 
 **Purpose:** Add engine-owned setup, settings, and local secret maintenance so first-time users can initialize beerengineer_ and returning operators can repair app-level configuration safely.
 
@@ -42,6 +42,6 @@
 
 **PRDs:** [PRD-1](../specs/PROJ-2-app-setup-settings/3_PRDs/PROJ-2-PRD-1-app-setup-backend.md), [PRD-2](../specs/PROJ-2-app-setup-settings/3_PRDs/PROJ-2-PRD-2-local-secret-store.md), [PRD-3](../specs/PROJ-2-app-setup-settings/3_PRDs/PROJ-2-PRD-3-setup-wizard-ui.md), [PRD-4](../specs/PROJ-2-app-setup-settings/3_PRDs/PROJ-2-PRD-4-settings-maintenance-ui.md)
 
-**QA:** Browser QA re-run passed the first-run initialization, mobile topbar, secret-message, settings-count, optional-skip, typecheck, UI focused tests, and engine setup/secret tests. One Medium remains deferred: recommended review gates can still show `Blocked` while `Next` is enabled.
+**QA:** Browser QA re-runs passed first-run initialization, mobile topbar, secret-message, recommended-gate status, settings-count, optional-skip, typecheck, UI focused tests, and engine setup/secret tests. No PROJ-2 QA bugs remain open.
 
 ---

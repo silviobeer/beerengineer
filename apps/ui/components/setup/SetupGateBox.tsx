@@ -71,7 +71,7 @@ export function SetupGateBox({ initialReport, initialConfigView = null, initialE
     ? "checking"
     : error
       ? "misconfigured"
-      : recommended && !group?.ideal
+      : recommended
         ? "recommended"
         : needsInit
           ? "uninitialized"
