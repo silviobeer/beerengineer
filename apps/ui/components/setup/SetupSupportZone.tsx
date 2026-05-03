@@ -1,9 +1,18 @@
-import { currentSetupGroup, type SetupReport } from "@/lib/setup/types";
+import { currentSetupGroup, type AppConfigView, type SetupReport } from "@/lib/setup/types";
 import { InstallationOptionCard } from "./InstallationOptionCard";
+import { SonarSetupCard } from "./SonarSetupCard";
 
-export function SetupSupportZone({ report }: Readonly<{ report: SetupReport | null }>) {
+function hasSonarChecks(report: SetupReport | null): boolean {
+  return report?.groups.some((group) =>
+    group.id.includes("sonar")
+    || group.checks.some((check) => check.id.includes("sonar") || check.label.toLowerCase().includes("sonar")),
+  ) ?? false;
+}
+
+export function SetupSupportZone({ report, configView }: Readonly<{ report: SetupReport | null; configView?: AppConfigView | null }>) {
   const group = currentSetupGroup(report);
   const checks = group?.checks.filter((check) => check.status !== "ok") ?? [];
+  const showSonarConfig = hasSonarChecks(report) || configView?.config.llm.defaultSonarOrganization !== undefined;
   return (
     <section data-testid="setup-support-zone" className="space-y-3">
       <div className="border-t border-zinc-800 pt-5">
@@ -13,6 +22,7 @@ export function SetupSupportZone({ report }: Readonly<{ report: SetupReport | nu
         </p>
       </div>
       <div className="grid gap-3">
+        {showSonarConfig ? <SonarSetupCard defaultOrganization={configView?.config.llm.defaultSonarOrganization} /> : null}
         {(checks.length > 0 ? checks : [{ id: "empty", label: "No blocker", status: "ok" as const }]).map((check) => (
           <InstallationOptionCard key={check.id} check={check} />
         ))}

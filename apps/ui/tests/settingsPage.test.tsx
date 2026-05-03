@@ -9,11 +9,14 @@ describe("AppSettingsPage", () => {
     expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
   });
 
-  it("AC-2 shows app-wide setup, config, secrets, and optional services sections", () => {
+  it("AC-2 shows app-wide setup, config, secrets, Sonar, and optional services sections", () => {
     render(<AppSettingsPage report={blockedReport()} configView={configView()} />);
     expect(screen.getAllByText("Setup status").length).toBeGreaterThan(0);
     expect(screen.getAllByText("App config").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Secrets").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Sonar").length).toBeGreaterThan(0);
+    expect(screen.getByTestId("settings-sonar")).toBeInTheDocument();
+    expect(screen.getByLabelText("SONAR_TOKEN")).toBeInTheDocument();
     expect(screen.getAllByText("Optional services").length).toBeGreaterThan(0);
   });
 

@@ -23,7 +23,7 @@ export function SetupWizardShell({
         </div>
         <SetupProgressStepper report={report} checking={checking} />
         <SetupGateBox initialReport={report} initialConfigView={configView ?? null} initialError={error} onCheckingChange={setChecking} />
-        <SetupSupportZone report={report} />
+        <SetupSupportZone report={report} configView={configView ?? null} />
       </div>
     </main>
   );
