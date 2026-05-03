@@ -40,9 +40,10 @@ export async function handleSetupConfigPatch(req: IncomingMessage, res: ServerRe
 
 export async function handleSetupRecheck(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const body = await readJson(req)
-  const group = body && typeof body === "object" && typeof (body as { group?: unknown }).group === "string"
-    ? (body as { group: string }).group
-    : undefined
+  let group: string | undefined
+  if (body && typeof body === "object" && typeof (body as { group?: unknown }).group === "string") {
+    group = (body as { group: string }).group
+  }
   const result = await runSetupRecheck({ group })
   json(res, result.ok ? 200 : 400, result)
 }
@@ -56,7 +57,8 @@ export async function handleSecretAction(req: IncomingMessage, res: ServerRespon
   }
   if (body && typeof body === "object" && (body as { action?: unknown }).action === "test") {
     const result = await runSecretTest(decoded)
-    json(res, result.ok ? 200 : result.status === "not_implemented" ? 501 : 409, result)
+    const statusCode = result.ok ? 200 : secretTestFailureStatus(result.status)
+    json(res, statusCode, result)
     return
   }
   const result = applySecretAction(decoded, body)
@@ -82,4 +84,9 @@ function parseSecretRef(raw: string): string | null {
   const trimmed = decoded.trim()
   if (!trimmed || trimmed.includes("\0")) return null
   return trimmed
+}
+
+function secretTestFailureStatus(status: string): number {
+  if (status === "not_implemented") return 501
+  return 409
 }

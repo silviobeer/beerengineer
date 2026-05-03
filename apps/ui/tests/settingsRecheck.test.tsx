@@ -26,7 +26,7 @@ describe("Settings re-check controls", () => {
     globalThis.fetch = vi.fn(async () => Response.json({ ok: false, error: "unknown_group" }, { status: 400 })) as unknown as typeof fetch;
     render(<SetupStatusSection initialReport={blockedReport()} />);
     fireEvent.click(screen.getAllByRole("button", { name: "Re-check" })[0]);
-    await screen.findByText("unknown_group");
+    expect(await screen.findByText("unknown_group")).toBeInTheDocument();
   });
 
   it("AC-20 uses wizard vocabulary for blocked, checking, done, skipped, and optional", async () => {

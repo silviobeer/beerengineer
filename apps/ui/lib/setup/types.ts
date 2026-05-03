@@ -126,7 +126,7 @@ export function firstBlockingGroup(report: SetupReport | null): SetupGroup | nul
 
 export function currentSetupGroup(report: SetupReport | null): SetupGroup | null {
   if (!report) return null;
-  return firstBlockingGroup(report) ?? report.groups.find((group) => !group.ideal) ?? report.groups[report.groups.length - 1] ?? null;
+  return firstBlockingGroup(report) ?? report.groups.find((group) => !group.ideal) ?? report.groups.at(-1) ?? null;
 }
 
 export function deriveCurrentStep(report: SetupReport | null): number {

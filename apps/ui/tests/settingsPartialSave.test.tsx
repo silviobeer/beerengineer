@@ -15,7 +15,7 @@ describe("Partial save feedback", () => {
     globalThis.fetch = vi.fn(async () => Response.json(partial, { status: 207 })) as unknown as typeof fetch;
     render(<AppConfigSection initialView={configView()} />);
     fireEvent.click(screen.getByRole("button", { name: /save app config/i }));
-    await screen.findByText(/Partial save/i);
+    expect(await screen.findByText(/Partial save/i)).toBeInTheDocument();
   });
 
   it("AC-10 keeps rejected fields visible with field-near errors", async () => {
@@ -23,7 +23,7 @@ describe("Partial save feedback", () => {
     render(<AppConfigSection initialView={configView()} />);
     fireEvent.change(screen.getByLabelText(/Engine port/i), { target: { value: "99999" } });
     fireEvent.click(screen.getByRole("button", { name: /save app config/i }));
-    await screen.findByText(/between 1 and 65535/i);
+    expect(await screen.findByText(/between 1 and 65535/i)).toBeInTheDocument();
   });
 
   it("AC-11 does not mark saved fields as failed", async () => {

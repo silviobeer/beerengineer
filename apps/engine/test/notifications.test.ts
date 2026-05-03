@@ -449,7 +449,7 @@ test("telegram test does not write a notification delivery row for synthetic run
   db.close()
 })
 
-test("setup report is blocked when telegram is enabled but required fields are missing", async () => {
+test("setup report warns when optional telegram is enabled but fields are missing", async () => {
   const prevConfigPath = process.env.BEERENGINEER_CONFIG_PATH
   const prevToken = process.env.TELEGRAM_BOT_TOKEN
   const dir = mkdtempSync(join(tmpdir(), "be2-notify-report-"))
@@ -464,10 +464,12 @@ test("setup report is blocked when telegram is enabled but required fields are m
       },
     })
 
-    assert.equal(report.overall, "blocked")
+    assert.equal(report.overall, "warning")
     const group = report.groups.find(entry => entry.id === "notifications")
     assert.ok(group)
-    assert.equal(group?.satisfied, false)
+    assert.equal(group?.level, "optional")
+    assert.equal(group?.satisfied, true)
+    assert.equal(group?.ideal, false)
     assert.equal(group?.checks.find(check => check.id === "notifications.telegram.default-chat-id")?.status, "missing")
   } finally {
     if (prevConfigPath === undefined) delete process.env.BEERENGINEER_CONFIG_PATH

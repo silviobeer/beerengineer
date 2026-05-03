@@ -10,7 +10,7 @@ import { fetchSetupReport } from "@/lib/setup/server";
 export default async function HomePage() {
   const [workspaceResult, setupResult] = await Promise.all([fetchWorkspacesResult(), fetchSetupReport()]);
   const { workspaces, error } = workspaceResult;
-  if (setupResult.data && setupResult.data.overall === "blocked") redirect("/setup");
+  if (setupResult.data?.overall === "blocked") redirect("/setup");
   const first = workspaces[0]?.key;
   if (first) redirect(`/w/${encodeURIComponent(first)}`);
   if (!error) redirect("/setup");

@@ -70,7 +70,13 @@ export function AppConfigSection({ initialView }: Readonly<AppConfigSectionProps
       const patch = (await res.json()) as AppConfigPatchResult;
       setResult(patch);
       if (patch.config && patch.rejected.length === 0) {
-        setForm((prev) => ({ ...prev, enginePort: String((patch.config as { enginePort?: unknown }).enginePort ?? prev.enginePort) }));
+        const nextEnginePort = (patch.config as { enginePort?: unknown }).enginePort;
+        setForm((prev) => ({
+          ...prev,
+          enginePort: typeof nextEnginePort === "number" || typeof nextEnginePort === "string"
+            ? String(nextEnginePort)
+            : prev.enginePort,
+        }));
       }
     } catch (err) {
       setResult({

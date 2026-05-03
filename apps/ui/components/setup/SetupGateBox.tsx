@@ -28,7 +28,7 @@ function isSetupReport(value: unknown): value is SetupReport {
     && typeof (value as { overall?: unknown }).overall === "string";
 }
 
-async function readJsonResponse(res: Response): Promise<unknown | null> {
+async function readJsonResponse(res: Response): Promise<unknown> {
   const contentType = res.headers.get("content-type") ?? "";
   if (!contentType.includes("application/json")) return null;
   try {
@@ -36,6 +36,36 @@ async function readJsonResponse(res: Response): Promise<unknown | null> {
   } catch {
     return null;
   }
+}
+
+function gateStatus(input: {
+  checking: boolean;
+  initializing: boolean;
+  error: string | null;
+  recommended: boolean;
+  needsInit: boolean;
+  checkStatus?: string;
+  overall?: string;
+}): string {
+  if (input.checking || input.initializing) return "checking";
+  if (input.error) return "misconfigured";
+  if (input.recommended) return "recommended";
+  if (input.needsInit) return "uninitialized";
+  if (input.checkStatus) return input.checkStatus;
+  if (input.overall === "ok") return "ok";
+  return "unknown";
+}
+
+function gateTitle(error: string | null, needsInit: boolean, groupLabel?: string): string {
+  if (error) return "App-level setup blocker";
+  if (needsInit) return "Initialize app state";
+  return groupLabel ?? "Setup finished";
+}
+
+function gateDetail(error: string | null, needsInit: boolean, check: ReturnType<typeof groupPrimaryCheck>): string {
+  if (error) return error;
+  if (needsInit) return "Create the local config file, data directory, and database before continuing.";
+  return check?.detail ?? check?.remedy?.hint ?? "All required checks are ready.";
 }
 
 export function SetupGateBox({ initialReport, initialConfigView = null, initialError = null, onCheckingChange }: Readonly<SetupGateBoxProps>) {
@@ -67,20 +97,20 @@ export function SetupGateBox({ initialReport, initialConfigView = null, initialE
   const blocked = Boolean(requiredBlocker) || Boolean(error) || checking || initializing || needsInit;
   const optional = group?.level === "optional";
   const recommended = group?.level === "recommended";
-  const status = checking || initializing
-    ? "checking"
-    : error
-      ? "misconfigured"
-      : recommended
-        ? "recommended"
-        : needsInit
-          ? "uninitialized"
-          : check?.status ?? (report?.overall === "ok" ? "ok" : "unknown");
-  const title = error ? "App-level setup blocker" : needsInit ? "Initialize app state" : group?.label ?? "Setup finished";
-  const detail = error ?? (needsInit ? "Create the local config file, data directory, and database before continuing." : check?.detail ?? check?.remedy?.hint ?? "All required checks are ready.");
+  const status = gateStatus({
+    checking,
+    initializing,
+    error,
+    recommended,
+    needsInit,
+    checkStatus: check?.status,
+    overall: report?.overall,
+  });
+  const title = gateTitle(error, needsInit, group?.label);
+  const detail = gateDetail(error, needsInit, check);
 
   const secretSafeText = useMemo(() => {
-    return detail.replace(/\bsk(?:-proj|-admin)?-[A-Za-z0-9_-]+/g, "redacted");
+    return detail.replaceAll(/\bsk(?:-proj|-admin)?-[A-Za-z0-9_-]+/g, "redacted");
   }, [detail]);
 
   async function recheck() {

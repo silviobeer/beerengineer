@@ -20,6 +20,14 @@ function isSecretMetadata(value: unknown): value is SecretMetadata {
   return typeof candidate.ref === "string" && typeof candidate.status === "string";
 }
 
+function secretActionError(body: unknown): string {
+  if (!body || typeof body !== "object") return "Secret action failed.";
+  const candidate = body as { message?: unknown; error?: unknown };
+  if (typeof candidate.message === "string") return candidate.message;
+  if (typeof candidate.error === "string") return candidate.error;
+  return "Secret action failed.";
+}
+
 export function SecretMaintenanceRow({
   label,
   secret,
@@ -46,7 +54,7 @@ export function SecretMaintenanceRow({
       });
       const body = await res.json();
       if (!res.ok || body.ok === false) {
-        setError(typeof body.message === "string" ? body.message : typeof body.error === "string" ? body.error : "Secret action failed.");
+        setError(secretActionError(body));
         return;
       }
       setValue("");

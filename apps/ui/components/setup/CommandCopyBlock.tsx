@@ -12,8 +12,8 @@ export function CommandCopyBlock({ command, label = "Command" }: Readonly<Comman
   const [copied, setCopied] = useState(false);
   useEffect(() => {
     if (!copied) return undefined;
-    const timer = window.setTimeout(() => setCopied(false), 2000);
-    return () => window.clearTimeout(timer);
+    const timer = globalThis.setTimeout(() => setCopied(false), 2000);
+    return () => globalThis.clearTimeout(timer);
   }, [copied]);
   async function copy() {
     if (!navigator.clipboard) {
@@ -36,7 +36,7 @@ export function CommandCopyBlock({ command, label = "Command" }: Readonly<Comman
           {copied ? "Copied" : "Copy"}
         </button>
       </div>
-      <span id={statusId} role="status" className="sr-only">{copied ? "Copied" : ""}</span>
+      <output id={statusId} className="sr-only">{copied ? "Copied" : ""}</output>
       <pre className="whitespace-pre-wrap break-words bg-zinc-950 p-3 font-mono text-xs text-zinc-200">{command}</pre>
     </div>
   );

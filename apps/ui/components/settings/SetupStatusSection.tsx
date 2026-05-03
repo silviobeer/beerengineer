@@ -12,6 +12,12 @@ function isSetupReport(value: unknown): value is SetupReport {
     && typeof (value as { overall?: unknown }).overall === "string";
 }
 
+function groupChipState(group: SetupReport["groups"][number]): string {
+  if (group.satisfied) return "ok";
+  if (group.level === "optional") return "skipped";
+  return "missing";
+}
+
 export function SetupStatusSection({ initialReport }: Readonly<{ initialReport: SetupReport | null }>) {
   const [report, setReport] = useState(initialReport);
   const [loading, setLoading] = useState<string | null>(null);
@@ -78,7 +84,7 @@ export function SetupStatusSection({ initialReport }: Readonly<{ initialReport: 
               {errors[group.id] ? <p role="alert" className="text-sm text-amber-300">{errors[group.id]}</p> : null}
             </div>
             <div className="flex items-center gap-2">
-              <StatusChip state={statusLabel(group.satisfied ? "ok" : group.level === "optional" ? "skipped" : "missing")} />
+              <StatusChip state={statusLabel(groupChipState(group))} />
               <button type="button" disabled={loading !== null} onClick={() => recheck(group.id)} className="border border-zinc-700 px-2 py-1 text-xs text-zinc-200 disabled:opacity-45">
                 {loading === group.id ? "Checking" : "Re-check"}
               </button>

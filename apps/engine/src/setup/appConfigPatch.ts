@@ -61,6 +61,125 @@ function applyField(
   }
 }
 
+type PatchContext = {
+  input: Record<string, unknown>
+  next: AppConfig
+  saved: string[]
+  rejected: AppConfigPatchResult["rejected"]
+}
+
+function applyRootPatch({ input, next, saved, rejected }: PatchContext): void {
+  if (!("allowedRoots" in input)) return
+  applyField(saved, rejected, "allowedRoots", () => {
+    if (
+      !Array.isArray(input.allowedRoots)
+      || input.allowedRoots.length === 0
+      || input.allowedRoots.some(root => typeof root !== "string" || root.trim().length === 0)
+    ) {
+      throw new TypeError("allowedRoots must be a non-empty string array")
+    }
+    next.allowedRoots = input.allowedRoots.map(root => {
+      const trimmed = root.trim()
+      if (trimmed.split(/[\\/]+/).includes("..")) throw new TypeError("allowedRoots must not contain traversal segments")
+      if (!isAbsolute(trimmed)) throw new TypeError("allowedRoots must contain absolute paths")
+      const resolvedRoot = resolvePath(trimmed)
+      if (resolvedRoot === parsePath(resolvedRoot).root) throw new TypeError("allowedRoots must not include filesystem root")
+      return resolvedRoot
+    })
+  })
+}
+
+function applyEnginePatch({ input, next, saved, rejected }: PatchContext): void {
+  if (!("enginePort" in input)) return
+  applyField(saved, rejected, "enginePort", () => {
+    if (!Number.isInteger(input.enginePort) || Number(input.enginePort) <= 0 || Number(input.enginePort) > 65535) {
+      throw new TypeError("enginePort must be an integer between 1 and 65535")
+    }
+    next.enginePort = Number(input.enginePort)
+  })
+}
+
+function applyPublicUrlPatch({ input, next, saved, rejected }: PatchContext): void {
+  if (!("publicBaseUrl" in input)) return
+  applyField(saved, rejected, "publicBaseUrl", () => {
+    if (input.publicBaseUrl === undefined || input.publicBaseUrl === null || input.publicBaseUrl === "") {
+      next.publicBaseUrl = undefined
+      return
+    }
+    next.publicBaseUrl = normalizePublicBaseUrl(parseString(input.publicBaseUrl, "publicBaseUrl"))
+  })
+}
+
+function applyLlmPatch({ input, next, saved, rejected }: PatchContext): void {
+  const llm = optionalObject(input.llm)
+  if ("provider" in llm) applyField(saved, rejected, "llm.provider", () => { next.llm.provider = parseProvider(llm.provider) })
+  if ("model" in llm) applyField(saved, rejected, "llm.model", () => { next.llm.model = parseString(llm.model, "llm.model") })
+  if ("apiKeyRef" in llm) applyField(saved, rejected, "llm.apiKeyRef", () => { next.llm.apiKeyRef = parseString(llm.apiKeyRef, "llm.apiKeyRef") })
+  if ("defaultSonarOrganization" in llm) {
+    applyField(saved, rejected, "llm.defaultSonarOrganization", () => {
+      if (llm.defaultSonarOrganization === undefined || llm.defaultSonarOrganization === null || llm.defaultSonarOrganization === "") {
+        next.llm.defaultSonarOrganization = undefined
+        return
+      }
+      next.llm.defaultSonarOrganization = parseString(llm.defaultSonarOrganization, "llm.defaultSonarOrganization")
+    })
+  }
+}
+
+function applyVcsPatch({ input, next, saved, rejected }: PatchContext): void {
+  const github = optionalObject(optionalObject(input.vcs).github)
+  if (!("enabled" in github)) return
+  applyField(saved, rejected, "vcs.github.enabled", () => {
+    next.vcs ??= { github: { enabled: false } }
+    next.vcs.github ??= { enabled: false }
+    next.vcs.github.enabled = parseBoolean(github.enabled, "vcs.github.enabled")
+  })
+}
+
+function applyBrowserPatch({ input, next, saved, rejected }: PatchContext): void {
+  const browser = optionalObject(input.browser)
+  if (!("enabled" in browser)) return
+  applyField(saved, rejected, "browser.enabled", () => {
+    next.browser ??= { enabled: false }
+    next.browser.enabled = parseBoolean(browser.enabled, "browser.enabled")
+  })
+}
+
+function applyNotificationsPatch({ input, next, saved, rejected }: PatchContext): void {
+  const telegram = optionalObject(optionalObject(input.notifications).telegram)
+  const inbound = optionalObject(telegram.inbound)
+  if (Object.keys(telegram).length === 0 && Object.keys(inbound).length === 0) return
+  next.notifications ??= { telegram: { enabled: false, level: 2, inbound: { enabled: false } } }
+  next.notifications.telegram ??= { enabled: false, level: 2, inbound: { enabled: false } }
+  const nextTelegram = next.notifications.telegram
+
+  if ("enabled" in telegram) applyField(saved, rejected, "notifications.telegram.enabled", () => { nextTelegram.enabled = parseBoolean(telegram.enabled, "notifications.telegram.enabled") })
+  if ("level" in telegram) applyField(saved, rejected, "notifications.telegram.level", () => { nextTelegram.level = parseTelegramLevel(telegram.level) })
+  if ("defaultChatId" in telegram) {
+    applyField(saved, rejected, "notifications.telegram.defaultChatId", () => {
+      nextTelegram.defaultChatId = telegram.defaultChatId === undefined || telegram.defaultChatId === null || telegram.defaultChatId === ""
+        ? undefined
+        : parseString(telegram.defaultChatId, "notifications.telegram.defaultChatId")
+    })
+  }
+  if ("botTokenEnv" in telegram) {
+    applyField(saved, rejected, "notifications.telegram.botTokenEnv", () => {
+      nextTelegram.botTokenEnv = telegram.botTokenEnv === undefined || telegram.botTokenEnv === null || telegram.botTokenEnv === ""
+        ? undefined
+        : parseString(telegram.botTokenEnv, "notifications.telegram.botTokenEnv")
+    })
+  }
+  nextTelegram.inbound ??= { enabled: false }
+  if ("enabled" in inbound) applyField(saved, rejected, "notifications.telegram.inbound.enabled", () => { nextTelegram.inbound!.enabled = parseBoolean(inbound.enabled, "notifications.telegram.inbound.enabled") })
+  if ("webhookSecretEnv" in inbound) {
+    applyField(saved, rejected, "notifications.telegram.inbound.webhookSecretEnv", () => {
+      nextTelegram.inbound!.webhookSecretEnv = inbound.webhookSecretEnv === undefined || inbound.webhookSecretEnv === null || inbound.webhookSecretEnv === ""
+        ? undefined
+        : parseString(inbound.webhookSecretEnv, "notifications.telegram.inbound.webhookSecretEnv")
+    })
+  }
+}
+
 export function patchAppConfig(overrides: SetupOverrides = {}, patch: unknown = {}): AppConfigPatchResult {
   const resolved = resolveOverrides(overrides)
   const configPath = resolveConfigPath(resolved)
@@ -75,110 +194,21 @@ export function patchAppConfig(overrides: SetupOverrides = {}, patch: unknown = 
   }
   const current = resolveMergedConfig(state, resolved) ?? defaultAppConfig()
   const next: AppConfig = structuredClone(current)
-  const input = optionalObject(patch)
-  const saved: string[] = []
-  const rejected: AppConfigPatchResult["rejected"] = []
-
-  if ("allowedRoots" in input) {
-    applyField(saved, rejected, "allowedRoots", () => {
-      if (
-        !Array.isArray(input.allowedRoots)
-        || input.allowedRoots.length === 0
-        || input.allowedRoots.some(root => typeof root !== "string" || root.trim().length === 0)
-      ) {
-        throw new TypeError("allowedRoots must be a non-empty string array")
-      }
-      next.allowedRoots = input.allowedRoots.map(root => {
-        const trimmed = root.trim()
-        if (trimmed.split(/[\\/]+/).includes("..")) throw new TypeError("allowedRoots must not contain traversal segments")
-        if (!isAbsolute(trimmed)) throw new TypeError("allowedRoots must contain absolute paths")
-        const resolvedRoot = resolvePath(trimmed)
-        if (resolvedRoot === parsePath(resolvedRoot).root) throw new TypeError("allowedRoots must not include filesystem root")
-        return resolvedRoot
-      })
-    })
+  const context: PatchContext = {
+    input: optionalObject(patch),
+    next,
+    saved: [],
+    rejected: [],
   }
 
-  if ("enginePort" in input) {
-    applyField(saved, rejected, "enginePort", () => {
-      if (!Number.isInteger(input.enginePort) || Number(input.enginePort) <= 0 || Number(input.enginePort) > 65535) {
-        throw new TypeError("enginePort must be an integer between 1 and 65535")
-      }
-      next.enginePort = Number(input.enginePort)
-    })
-  }
+  applyRootPatch(context)
+  applyEnginePatch(context)
+  applyPublicUrlPatch(context)
+  applyLlmPatch(context)
+  applyVcsPatch(context)
+  applyBrowserPatch(context)
+  applyNotificationsPatch(context)
 
-  if ("publicBaseUrl" in input) {
-    applyField(saved, rejected, "publicBaseUrl", () => {
-      next.publicBaseUrl = input.publicBaseUrl === undefined || input.publicBaseUrl === null || input.publicBaseUrl === ""
-        ? undefined
-        : normalizePublicBaseUrl(parseString(input.publicBaseUrl, "publicBaseUrl"))
-    })
-  }
-
-  const llm = optionalObject(input.llm)
-  if ("provider" in llm) applyField(saved, rejected, "llm.provider", () => { next.llm.provider = parseProvider(llm.provider) })
-  if ("model" in llm) applyField(saved, rejected, "llm.model", () => { next.llm.model = parseString(llm.model, "llm.model") })
-  if ("apiKeyRef" in llm) applyField(saved, rejected, "llm.apiKeyRef", () => { next.llm.apiKeyRef = parseString(llm.apiKeyRef, "llm.apiKeyRef") })
-  if ("defaultSonarOrganization" in llm) {
-    applyField(saved, rejected, "llm.defaultSonarOrganization", () => {
-      next.llm.defaultSonarOrganization = llm.defaultSonarOrganization === undefined || llm.defaultSonarOrganization === null || llm.defaultSonarOrganization === ""
-        ? undefined
-        : parseString(llm.defaultSonarOrganization, "llm.defaultSonarOrganization")
-    })
-  }
-
-  const vcs = optionalObject(input.vcs)
-  const github = optionalObject(vcs.github)
-  if ("enabled" in github) {
-    applyField(saved, rejected, "vcs.github.enabled", () => {
-      next.vcs ??= { github: { enabled: false } }
-      next.vcs.github ??= { enabled: false }
-      next.vcs.github.enabled = parseBoolean(github.enabled, "vcs.github.enabled")
-    })
-  }
-
-  const browser = optionalObject(input.browser)
-  if ("enabled" in browser) {
-    applyField(saved, rejected, "browser.enabled", () => {
-      next.browser ??= { enabled: false }
-      next.browser.enabled = parseBoolean(browser.enabled, "browser.enabled")
-    })
-  }
-
-  const notifications = optionalObject(input.notifications)
-  const telegram = optionalObject(notifications.telegram)
-  const inbound = optionalObject(telegram.inbound)
-  if (Object.keys(telegram).length > 0 || Object.keys(inbound).length > 0) {
-    next.notifications ??= { telegram: { enabled: false, level: 2, inbound: { enabled: false } } }
-    next.notifications.telegram ??= { enabled: false, level: 2, inbound: { enabled: false } }
-    if ("enabled" in telegram) applyField(saved, rejected, "notifications.telegram.enabled", () => { next.notifications!.telegram!.enabled = parseBoolean(telegram.enabled, "notifications.telegram.enabled") })
-    if ("level" in telegram) applyField(saved, rejected, "notifications.telegram.level", () => { next.notifications!.telegram!.level = parseTelegramLevel(telegram.level) })
-    if ("defaultChatId" in telegram) {
-      applyField(saved, rejected, "notifications.telegram.defaultChatId", () => {
-        next.notifications!.telegram!.defaultChatId = telegram.defaultChatId === undefined || telegram.defaultChatId === null || telegram.defaultChatId === ""
-          ? undefined
-          : parseString(telegram.defaultChatId, "notifications.telegram.defaultChatId")
-      })
-    }
-    if ("botTokenEnv" in telegram) {
-      applyField(saved, rejected, "notifications.telegram.botTokenEnv", () => {
-        next.notifications!.telegram!.botTokenEnv = telegram.botTokenEnv === undefined || telegram.botTokenEnv === null || telegram.botTokenEnv === ""
-          ? undefined
-          : parseString(telegram.botTokenEnv, "notifications.telegram.botTokenEnv")
-      })
-    }
-    next.notifications.telegram.inbound ??= { enabled: false }
-    if ("enabled" in inbound) applyField(saved, rejected, "notifications.telegram.inbound.enabled", () => { next.notifications!.telegram!.inbound!.enabled = parseBoolean(inbound.enabled, "notifications.telegram.inbound.enabled") })
-    if ("webhookSecretEnv" in inbound) {
-      applyField(saved, rejected, "notifications.telegram.inbound.webhookSecretEnv", () => {
-        next.notifications!.telegram!.inbound!.webhookSecretEnv = inbound.webhookSecretEnv === undefined || inbound.webhookSecretEnv === null || inbound.webhookSecretEnv === ""
-          ? undefined
-          : parseString(inbound.webhookSecretEnv, "notifications.telegram.inbound.webhookSecretEnv")
-      })
-    }
-  }
-
-  if (saved.length > 0) writeConfigFile(configPath, next)
-  return { ok: rejected.length === 0, saved, rejected, config: next }
+  if (context.saved.length > 0) writeConfigFile(configPath, next)
+  return { ok: context.rejected.length === 0, saved: context.saved, rejected: context.rejected, config: next }
 }

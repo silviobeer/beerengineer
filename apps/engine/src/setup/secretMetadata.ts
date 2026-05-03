@@ -13,11 +13,16 @@ export function readSecretMetadata(ref: string, options: SecretStoreOptions = {}
 
 export function optionalSecretGate(ref: string, options: SecretStoreOptions = {}): OptionalSecretGate {
   const secret = readSecretMetadata(ref, options)
-  const failed = secret.status === "invalid" || secret.status === "suspicious" || secret.status === "unknown"
   return {
     ref,
-    status: secret.status === "missing" || secret.status === "disabled" ? "skipped" : failed ? "failed" : "configured",
+    status: optionalSecretGateStatus(secret),
     skippable: secret.status === "missing" || secret.status === "disabled",
     secret,
   }
+}
+
+function optionalSecretGateStatus(secret: SecretMetadata): OptionalSecretGate["status"] {
+  if (secret.status === "missing" || secret.status === "disabled") return "skipped"
+  if (secret.status === "invalid" || secret.status === "suspicious" || secret.status === "unknown") return "failed"
+  return "configured"
 }
