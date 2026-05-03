@@ -27,6 +27,12 @@ consumed by tooling.
 
 - `GET /health` → `{ ok: true }`
 - `GET /setup/status` (existing)
+- `POST /setup/init` — token-protected app-state initialization. Creates missing app config, data directory, and SQLite state. Existing valid config is preserved; invalid existing config returns `409`.
+- `GET /setup/config` — effective app-wide config view for setup/settings screens. Secret fields are returned only as refs or redacted presence metadata, never plaintext values.
+- `PATCH /setup/config` — token-protected partial app-config update. Returns `200` when all fields are saved, `207` when some fields are rejected, and `409` when setup has not been initialized yet. `allowedRoots` must be absolute non-root paths without traversal segments.
+- `POST /setup/recheck` — token-protected setup/doctor recheck. Request may include `{ group }` to limit checks to one known setup group; response contains a fresh setup report or a typed error.
+- `GET /setup/secrets/:ref` — redacted metadata for one URL-encoded secret ref.
+- `POST /setup/secrets/:ref` — token-protected secret action. Supported actions are `replace`, `disable`, `reactivate`, `delete`, and `test`; responses never include plaintext secret values.
 - `GET /update/status` — read-only updater status snapshot (current version, DB path source/warnings, managed install paths, preflight summary, cached latest release if present, whether an update is available, the latest managed backup manifest if any, readiness/auth summary for engine/DB/GitHub/LLM/Sonar, and the latest persisted attempt)
 - `GET /update/preflight` — fast updater probe `{ idle, activeRuns, lockHeld, lockStale, pid, httpPort }`
 - `POST /update/check` — hits GitHub and returns current vs latest release metadata. Read-only despite being `POST`; intended to bypass caches and refresh the 60s on-disk release cache.
