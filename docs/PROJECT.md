@@ -1,7 +1,7 @@
 # Project — Features
 
 **Last updated:** 2026-05-04
-**Features implemented:** 3
+**Features implemented:** 4
 
 ---
 
@@ -64,5 +64,30 @@
 **PRDs:** [PRD-1](../specs/PROJ-3-capabilities/3_PRDs/PROJ-3-PRD-1-capability-port-foundation.md), [PRD-2](../specs/PROJ-3-capabilities/3_PRDs/PROJ-3-PRD-2-workspace-capability-orchestration.md), [PRD-3](../specs/PROJ-3-capabilities/3_PRDs/PROJ-3-PRD-3-sonar-capability-lifecycle.md), [PRD-4](../specs/PROJ-3-capabilities/3_PRDs/PROJ-3-PRD-4-review-capability-orchestration.md), [PRD-5](../specs/PROJ-3-capabilities/3_PRDs/PROJ-3-PRD-5-capability-cli-and-update-readiness.md)
 
 **QA:** QA rerun on 2026-05-04 passed all 112 ACs, focused capability tests (75/75), engine typecheck, full engine suite (798 total; 796 passed, 2 skipped), manual CLI checks, and adversarial custom Sonar project-key enable/repair checks. No Critical, High, Medium, or Low PROJ-3 QA bugs remain open.
+
+---
+
+## PROJ-4: Supabase Branch Databases
+
+**Status:** QA-passed (Round 2) — orchestrator activation deferred to PRD-10.
+
+**Purpose:** Add a Supabase Cloud Branching capability so DB-relevant work is implemented and tested against an isolated branch database while production is updated only through versioned repo migrations at merge time.
+
+**Scope:** Ships the `supabase` capability identity, setup/persistent-test-branch flow, settings surface, DB-relevance classification, wave-branch lifecycle, worker dotenv handoff, two-gate merge with production migration, cleanup/audit/recovery, and a run/wave/merge status surface. Out of scope: a generic plugin framework, alternate DB backends (PROJ-5), and the runtime orchestrator wiring of PRD-5/6/7 helpers (deferred to PRD-10).
+
+**User stories implemented:**
+- PROJ-4-PRD-1 US-1..5: stable `supabase` capability ID, port-vs-adapter split, cheap availability, secret-store reuse, and crash-free behavior without setup.
+- PROJ-4-PRD-2 US-1..6: setup connect, plan-branching probe, persistent test branch creation/adoption, safe takeover, default-off production switch, and PAT renewal from setup.
+- PROJ-4-PRD-3 US-1..5: project/branch overview, granularity/cleanup/protection config, cost-risk warnings, recreate-test-branch action, and PAT rotation.
+- PROJ-4-PRD-4 US-1..5: explicit DB-relevance markers, implicit detection, `dbRelevanceOverride`, mismatch blocking, and per-wave visibility.
+- PROJ-4-PRD-5 US-1..5: per-wave branch provisioning, polled status, deterministic migration/seed order, branch-validation gate, and sequential DB-wave execution.
+- PROJ-4-PRD-6 US-1..4: branch-scoped dotenv handoff, restrictive permissions, success/failure-aware cleanup, and worker-load visibility.
+- PROJ-4-PRD-7 US-1..5: final wave-branch validation gate, protection-switch second gate, per-merge destructive confirmation, repo-migrations-only/no-seeds, and abort-on-failure.
+- PROJ-4-PRD-8 US-1..5: policy-driven success cleanup, failed-branch retention, lost-branch reconciliation, persistent-branch drift detection, and TTL-after-success traceability.
+- PROJ-4-PRD-9 US-1..5: per-wave lifecycle status, Supabase-vs-non-Supabase wave indicator, merge-readiness/protection display, inline diagnose/cleanup actions, and cost-risk warnings in status.
+
+**PRDs:** [PRD-1](../specs/PROJ-4-supabase-branch-databases/3_PRDs/PROJ-4-PRD-1-supabase-capability-foundation.md), [PRD-2](../specs/PROJ-4-supabase-branch-databases/3_PRDs/PROJ-4-PRD-2-setup-and-persistent-test-branch.md), [PRD-3](../specs/PROJ-4-supabase-branch-databases/3_PRDs/PROJ-4-PRD-3-settings-surface.md), [PRD-4](../specs/PROJ-4-supabase-branch-databases/3_PRDs/PROJ-4-PRD-4-db-relevance-classification.md), [PRD-5](../specs/PROJ-4-supabase-branch-databases/3_PRDs/PROJ-4-PRD-5-wave-branch-lifecycle.md), [PRD-6](../specs/PROJ-4-supabase-branch-databases/3_PRDs/PROJ-4-PRD-6-worker-environment-handoff.md), [PRD-7](../specs/PROJ-4-supabase-branch-databases/3_PRDs/PROJ-4-PRD-7-merge-and-production-migration.md), [PRD-8](../specs/PROJ-4-supabase-branch-databases/3_PRDs/PROJ-4-PRD-8-cleanup-audit-and-recovery.md), [PRD-9](../specs/PROJ-4-supabase-branch-databases/3_PRDs/PROJ-4-PRD-9-run-wave-merge-status-surface.md)
+
+**QA:** Round 1 closed all surface bugs; Round 2 found 1 Critical orchestrator-wiring gap plus Critical/High/Medium/Low security and UX bugs, all fixed in commits b4dcc3b through 1a85e37. Final run: engine suite 796/798 passing (2 skipped), UI suite 328/328 passing, build clean, typecheck green. The orchestrator activation of PRD-5/6/7 helpers in `runService.ts`/`runOrchestrator.ts` is deferred to PRD-10; data model, gates, and UI are correct and ready to wire.
 
 ---

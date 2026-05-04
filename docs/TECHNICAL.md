@@ -40,6 +40,17 @@ CLI / UI / Engine API
 
 Workspace registration and preflight now orchestrate named capabilities. Review orchestration collects capability envelopes while each adapter keeps its tool-specific result. Update-mode shares readiness vocabulary where meanings overlap, but remains a separate self-update flow.
 
+### PROJ-4: Supabase Branch Databases
+
+PROJ-4 layers Supabase Cloud Branching onto the PROJ-3 capability model without extending the closed port set. DB-relevant runs gain isolated branch databases, deterministic migration ordering, and a two-gate path to production migration; non-DB-relevant runs remain unchanged.
+
+- **SupabaseCapability** — closed port set reused from PROJ-3: `availability`, `preflight`, `connect`, `audit`, `repair`. `availability` is local-only (cheap participation check, no network); `preflight` is network-bound and probes the Management API.
+- **SupabaseAdapter** — Supabase-specific verbs that do not fit a generic port live behind one adapter surface: `provisionBranch`, `pollBranchStatus`, `validateBranch`, `destroyBranch`, `migrateProduction`, `recreatePersistentTestBranch`, `reconcile`. The capability ports and the workflow runtime invoke the adapter directly.
+- **SupabaseManagementClient** — thin HTTP client over the Supabase Management API v1 endpoint family. Per-call timeout override (default extended to 30s for `createBranch` because branch creation regularly takes >8s); exponential backoff on 5xx responses; a `parseRetryAfter` helper normalizes 429 `Retry-After` headers (delta-seconds and HTTP-date forms) before the next attempt. Per-branch Postgres connections use the connection strings returned by the Management API.
+- **SupabaseWorkflowHook** — optional integration object threaded through `runWorkflow`. It carries `repos`, the `SupabaseAdapter`, the workspace identifiers (`workspaceId`, `projectRef`, `parentBranchRef`), the `protectionSwitch`, the `cleanupPolicy`/`cleanupTtlHours`, and an optional `handoffClient`. When the hook is present, `waveExecution` calls `provisionWaveIfDbRelevant` for DB-relevant waves; `mergeGate/index.ts` runs the gate stack (final-validation, destructive-confirmation, `mergeWithProtectionSwitch`, `completeMergeWithProductionMigration`). When the hook is `undefined`, every wiring point is a no-op and the workflow falls through to the existing git-only path. Modularity is preserved: non-Supabase workflows do not import or instantiate any Supabase code.
+- **Production-migration tracking** — production migrations are applied transactionally, file-by-file, and recorded in a `__beerengineer_migrations` table on the target Supabase project. The table is created on first migrate; subsequent runs are idempotent across retries because already-applied files are skipped.
+- **Startup catch-up scheduler** — at engine boot, `runDueSupabaseCleanups` runs once per Supabase-connected workspace; a `setInterval` (5 min, `unref()`-ed so it does not hold the process open) re-runs the catch-up so deferred TTL cleanups recover after crashes and restarts.
+
 ## Data Model
 
 - **Release Target:** resolved GitHub repository, stable release tag, version, tarball URL, and trusted download metadata for one install attempt.
@@ -61,6 +72,14 @@ Workspace registration and preflight now orchestrate named capabilities. Review 
 - **Sonar Repair Plan:** dry-run/apply report that separates safe deterministic repairs from risky or ambiguous candidates.
 - **Review Capability Envelope:** shared review wrapper carrying capability ID, lifecycle/phase, closed-set outcome, blocking intent, summary, reason, artifacts, and optional tool-specific result.
 - **Update Readiness Result:** self-update readiness report that reuses capability terminology without becoming workspace capability orchestration.
+
+PROJ-4 additions:
+
+- **Workspaces (Supabase columns):** `workspaces.supabase_project_ref`, `supabase_region`, `supabase_persistent_test_branch_ref`, `supabase_persistent_test_branch_name`, `supabase_persistent_test_branch_status`, `supabase_last_checked_at`, `supabase_cleanup_policy` (`on-success-immediate` | `ttl-after-success` | `manual`), `supabase_cleanup_ttl_hours`, `supabase_branch_quota_usage`, `supabase_branch_quota_limit`, `supabase_protection_switch` (`off` | `on`), `supabase_settings_version`. Added through the engine's idempotent `ALTER TABLE … ADD COLUMN` rule (PRAGMA-guarded).
+- **Runs (Supabase columns):** `runs.supabase_branch_ref`, `supabase_branch_name`, `supabase_branch_lifecycle_state`. The lifecycle state column carries the closed set defined by PROJ-4 architecture (`provisioning`, `ready`, `validating`, `validated`, `retained-pending-cleanup`, `failed`, `retained-for-diagnosis`, `quota-exceeded`, `destroying`, `destroyed`).
+- **`supabase_deferred_cleanup` table:** persistent queue for branches awaiting TTL or manual cleanup. Columns: `workspaceId`, `runId`, `branchRef`, `dueAt`, `handoffPath`, `policy` (plus `scheduled_at` index). Survives engine restarts so the catch-up scheduler can drain pending entries.
+- **`__beerengineer_migrations`:** Supabase-side bookkeeping table created on first production migration. Tracks applied migration filenames so retried merges skip already-applied files. Lives on the target Supabase project, not in engine SQLite.
+- **MergeStatus shape:** read-side projection at `GET /merge-status` exposes `supabaseRelevant` plus the gate stack state. For non-Supabase workspaces it short-circuits to `{ supabaseRelevant: false }` so the UI hides the panel without further engine round-trips.
 
 ## Cross-cutting Decisions
 
@@ -89,6 +108,25 @@ Workspace registration and preflight now orchestrate named capabilities. Review 
 - **Sonar lifecycle is conservative:** Sonar owns enablement, audit, repair planning, safe repair apply, readiness, and review adaptation. Scanner config uses configured Sonar identity; GitHub repo identity is only a default.
 - **Workspace/API compatibility is frozen by default:** setup, settings, workspace, and review API shapes remain additive unless an explicit architecture/wave decision pairs a breaking change with UI compatibility work.
 - **Update-mode stays separate:** self-update readiness can share helper terms with capabilities, but it does not call workspace capability orchestration.
+- **Supabase capability is optional:** `not_configured` is a clean state, not an error. Workspaces without a Supabase connection skip every Supabase code path.
+- **Supabase orchestration is hook-based, not a hard dependency:** `SupabaseWorkflowHook` is the single integration seam. When `undefined`, the workflow runtime, merge gate, and wave execution all fall through to their existing git-only behavior. Non-Supabase workflows do not import any Supabase module at runtime.
+- **Read-side `mergeStatus` short-circuits for non-Supabase workspaces:** the projection returns `{ supabaseRelevant: false }` and the UI hides the panel. Read-side and runtime gate logic must call the same predicate functions so the UI cannot disagree with the engine.
+- **Destructive SQL detection scans, does not strip:** the detector inspects dollar-quoted PL/pgSQL bodies in place rather than stripping them so embedded `DROP`/`TRUNCATE` is not hidden by quoting; it treats `\` as a literal per PostgreSQL's `standard_conforming_strings=on` default; it preserves block-comment whitespace so `DROP/**/TABLE` remains detectable.
+- **Settings UI gates post-connection controls behind `state.projectRef`:** rotate, refresh-preflight, cleanup-policy, protection-toggle, and recreate-from-scratch are only rendered once a project ref exists. The not-connected branch shows only the connect CTA so first-time users cannot interact with controls that have no target.
+- **Supabase Cloud Branching only in v1:** local and self-hosted Supabase deployments are out of scope for the capability adapter and the test matrix.
+- **Persistent test branch is the only parent for wave branches:** wave branches always fork from the persistent test branch, never from production/main and never from a previous wave's branch.
+- **Two-gate production migration with destructive override:** final wave validation green plus protection switch on are persistent gates; destructive operations require an additional per-merge typed confirmation.
+- **DB-relevant waves run sequentially per item:** scheduler enforces sequencing because migrations cross wave boundaries; non-DB-relevant waves remain parallelizable.
+- **Async branch lifecycle is pinned:** 5s initial poll, exponential backoff capped at 30s, 10 minute hard timeout per branch operation, retained-for-diagnosis on timeout or run abort.
+- **Migrations apply to production, seeds never do:** only `supabase/migrations/**` is applied at merge; `supabase/seed.sql` and `supabase/seeds/**` are branch-only.
+- **DB relevance is explicit with a single override:** every story carries `dbRelevant`; a safety-net detector inspects changed paths; `dbRelevanceOverride: not-db-relevant` plus a reason is the only escape hatch.
+- **Reconcile uses a deterministic ownership prefix:** beerengineer-owned Supabase branches are named with a prefix that includes workspace, run, item, project, and wave components so reconcile can find and classify them without relying on local state alone.
+- **`retained-for-diagnosis` is first-class:** persistent state in workspace metadata; no automatic flow destroys a branch in this state.
+- **Repair is non-destructive:** `repair` may re-apply pending repo migrations and re-run idempotent seeds. Destructive realignment requires the explicit recreate-from-scratch action behind a typed confirmation.
+- **Handoff dotenv is a first-class artifact:** structured state, 0600 file / 0700 directory permissions, gitignore enforcement, lifecycle parity with the wave branch (deleted on success, retained on failure). v1 is POSIX-only.
+- **Reuse the existing event channel:** all Supabase lifecycle events flow through the existing engine event channel under canonical names from `docs/messaging-levels.md`. No shadow names, no parallel transport.
+- **Token entry is at CLI/UI parity with pre-persist validation:** every entry point validates against the Management API before the secret store is touched; rotation never mutates other workspace metadata; `supabase.token.rotated` is emitted with the originating surface (first-time connect does not emit it).
+- **One handoff written before validation:** the handoff dotenv is written immediately after the wave branch reaches `ready` and before `validateBranch` runs; validation steps and workers consume the same artifact.
 
 ## Directory Structure
 
@@ -111,9 +149,14 @@ apps/engine/src/cli/commands/capabilityRenderers.ts — shared text/JSON capabil
 apps/engine/src/cli/capabilityExitCodes.ts     — capability CLI exit-code categories
 apps/engine/src/core/workspaces/sonar.ts       — Sonar preflight, scanner config generation, and provisioning helpers
 apps/engine/src/review/registry.ts             — review capability registry and envelope construction
+apps/engine/src/core/supabase/                 — Supabase adapter, Management API client, branch poller, lifecycle events, handoff writer, deferred-cleanup store, drift/destructive detectors, migration runner, workflow hook
+apps/engine/src/core/supabase/managementClient.ts — Management API HTTP client (timeouts, backoff, retry-after parsing)
+apps/engine/src/core/supabase/workflowHook.ts  — SupabaseWorkflowHook integration object threaded through runWorkflow
+apps/engine/src/db/schema.sql                  — engine SQLite schema including PROJ-4 supabase_* columns and supabase_deferred_cleanup
 specs/PROJ-1-managed-install/                  — concept, PRDs, architecture, wave plans, and progress log
 specs/PROJ-2-app-setup-settings/               — setup/settings PRDs, architecture, wave plans, and QA log
 specs/PROJ-3-capabilities/                     — capability PRDs, architecture, wave plans, QA results, and progress log
+specs/PROJ-4-supabase-branch-databases/        — Supabase capability PRDs, architecture, wave plans, QA rounds, and progress log
 ```
 
 ## Dependencies
@@ -123,6 +166,8 @@ PROJ-1 added no new runtime package dependencies. It uses Node standard-library 
 PROJ-2 added no new npm package dependencies. It uses the existing engine stack (`better-sqlite3`, `env-paths`, TypeScript) and the existing UI stack (Next.js, React, Tailwind v4, Vitest).
 
 PROJ-3 added no new npm package dependencies. It reorganizes existing runtime integrations around local Git, GitHub/`gh`, Sonar scanner/Sonar service, and CodeRabbit CLI.
+
+PROJ-4 added no runtime dependencies — the Supabase Management API is consumed via raw `fetch` from a thin in-engine HTTP client (`apps/engine/src/core/supabase/managementClient.ts`). No `package.json` changes between the PROJ-3 baseline and the PROJ-4 head.
 
 ## Deployment
 
@@ -145,3 +190,8 @@ For local setup/settings, the engine defaults to `127.0.0.1:4100` and writes/rea
 - Review envelope fields must be behavior-backed. A `blocking` value that does not affect gate status is misleading.
 - Workflow integration fixtures should answer prompts by prompt identity/content and fail fast on unexpected prompt loops; prompt-count fixtures drift as stages evolve.
 - For CLI capability QA, test non-default configured IDs as well as generated defaults.
+- The `SupabaseWorkflowHook` is plumbed through `runWorkflow` but is **not yet constructed at the call site**. Activating PRD-5/PRD-6/PRD-7 at runtime requires a follow-up PRD-10 wiring step (~30 lines in `runService.ts`) that builds the hook from workspace metadata, the secret-store-resolved Management API token, and the adapter, then passes it into `runWorkflow`. Until that step lands, the helpers are exercised only by unit tests and produce no runtime side effects.
+- `apps/ui/apps/ui/tests/...` is a doubled-segment path: PRD-3 settings tests live at the wrong location due to a historical mistake (Rodriguez QA-RR2 finding 038). The path is kept as-is to avoid scope creep, but the correct convention is `apps/ui/tests/...`. Reject any new diff that doubles the segment.
+- Production migrations are applied file-by-file in transactions and tracked in a `__beerengineer_migrations` table on the target Supabase project. A second run of the same merge skips already-applied files; a partial failure leaves the table in a state the next run can resume from.
+- The `mergeWithProtectionSwitch` helper runs `gitMerge()` *before* `migrateProduction`, with no rollback path if the migration fails after the merge has landed. This is intentional asymmetric recovery — the operator inspects the retained branch and the `__beerengineer_migrations` table to decide next steps. Future PRDs may add a revert callback; until then, document the asymmetry on every code path that touches the helper.
+- Supabase capability code must never be imported from non-Supabase workflow paths. The hook-based seam is the only legitimate integration point; reaching past it would re-couple workflow.ts to Supabase and defeat the modularity decision.
