@@ -21,6 +21,7 @@ import type { AppConfig, SonarReadiness } from "../../setup/types.js"
 import type { Repos } from "../../db/repositories.js"
 import type { SonarConfig, WorkspacePreflightReport, WorkspacePreview } from "../../types/workspace.js"
 import { readWorkspaceConfig } from "./configFile.js"
+import { buildWorkspacePreflightCapabilities } from "../capabilities/workspacePreflight.js"
 
 const SONAR_GENERATOR_ROOTS = ["apps", "packages", "services", "libs", "src", "lib"] as const
 const SONAR_DEFAULT_TEST_INCLUSIONS = "**/*.test.ts,**/*.spec.ts,**/*.test.tsx,**/*.spec.tsx"
@@ -406,19 +407,23 @@ export async function runWorkspacePreflight(
   const sonar = await resolveWorkspaceSonarPreflight(root, options)
   const coderabbitCli = runCommand("coderabbit", ["--version"], root)
   const crCli = coderabbitCli.ok ? coderabbitCli : runCommand("cr", ["--version"], root)
+  const baseReport = {
+    git: {
+      status: gitProbe.ok && gitProbe.stdout === "true" ? "ok" : "missing",
+      detail: gitProbe.ok ? undefined : (gitProbe.stderr || undefined),
+    },
+    github,
+    gh,
+    sonar,
+    coderabbit: crCli.ok
+      ? { status: "ok", detail: `CodeRabbit CLI available (${crCli.stdout.split(/\r?\n/)[0] || "unknown version"})` }
+      : { status: "missing", detail: "CodeRabbit CLI not found — install with `npm i -g @coderabbit/cli`" },
+    checkedAt: new Date().toISOString(),
+  } satisfies Omit<WorkspacePreflightReport, "capabilities">
   return {
     report: {
-      git: {
-        status: gitProbe.ok && gitProbe.stdout === "true" ? "ok" : "missing",
-        detail: gitProbe.ok ? undefined : (gitProbe.stderr || undefined),
-      },
-      github,
-      gh,
-      sonar,
-      coderabbit: crCli.ok
-        ? { status: "ok", detail: `CodeRabbit CLI available (${crCli.stdout.split(/\r?\n/)[0] || "unknown version"})` }
-        : { status: "missing", detail: "CodeRabbit CLI not found — install with `npm i -g @coderabbit/cli`" },
-      checkedAt: new Date().toISOString(),
+      ...baseReport,
+      capabilities: buildWorkspacePreflightCapabilities(baseReport),
     },
   }
 }

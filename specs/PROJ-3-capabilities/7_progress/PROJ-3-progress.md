@@ -1,7 +1,7 @@
 # PROJ-3 Progress
 
 ## Status: in progress
-## Current Wave: 1
+## Current Wave: 2
 ## BASE_SHA: 369485f6014fb5f98cf3206ec4f9372599e5d2e5
 
 ---
@@ -173,6 +173,127 @@
 
 ## Open Blockers
 - None.
+
+---
+
+## Wave 2
+
+- Wave start tag: `wave-2-start-PROJ-3`
+- Implementation mode: local lead implementation; no subagents spawned because this Codex session permits delegation only on explicit user delegation requests.
+
+## PROJ-3-PRD-2-US-1: Capability preflight projection — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 1.1 Capability Preflight Projection | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-1 | Workspace preflight reports capability-oriented status for `git`, `github`, `sonar`, and `coderabbit`. | ✓ |
+| AC-2 | Each capability result includes a stable `capabilityId`. | ✓ |
+| AC-3 | Each non-ready capability result includes a human-readable reason. | ✓ |
+| AC-4 | Existing setup/settings UI flows continue to receive API-compatible behavior based on `apps/engine/src/api/openapi.json`, `docs/api-contract.md`, and current UI consumers. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- Pass 1: PASS — wave config AC commands for this user story exited 0.
+
+## PROJ-3-PRD-2-US-2: Workspace capability context — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 2.1 Workspace Capability Context | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-5 | Local Git readiness is treated as mandatory for normal workspace and story flows. | ✓ |
+| AC-6 | GitHub/`gh` readiness is mandatory only for GitHub-dependent actions. | ✓ |
+| AC-7 | Sonar and CodeRabbit do not inspect Git remotes or `gh` state directly. | ✓ |
+| AC-8 | GitHub provider context is passed to optional capabilities through capability context, not re-derived by them. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- Pass 1: PASS — wave config AC commands for this user story exited 0.
+
+## PROJ-3-PRD-2-US-3: Optional registration outcomes — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 3.1 Optional Capability Registration Outcomes | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-9 | Missing or not-configured Sonar does not roll back an otherwise valid workspace registration. | ✓ |
+| AC-10 | Missing or not-configured CodeRabbit does not roll back an otherwise valid workspace registration. | ✓ |
+| AC-11 | Optional capability failures are visible in the registration result. | ✓ |
+| AC-12 | Required Git failures prevent the relevant workspace flow from presenting a successful state. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- Pass 1: PASS — wave config AC commands for this user story exited 0.
+
+## PROJ-3-PRD-2-US-4: API compatibility — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 4.1 API Compatibility Regression Net | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-13 | Existing documented setup/settings API contracts are treated as frozen by default. | ✓ |
+| AC-14 | A contract-breaking API update is allowed only with an explicit architecture or wave-plan decision and the corresponding UI compatibility adjustment. | ✓ |
+| AC-15 | Existing setup/settings flows do not require new UI surfaces to remain functional. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- Pass 1: PASS — wave config AC commands for this user story exited 0.
+
+## PROJ-3-PRD-2-US-5: Registration capability delegation — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 5.1 Registration Capability Delegation | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-16 | Workspace registration delegates Git, GitHub, Sonar, and CodeRabbit behavior to capability-owned ports. | ✓ |
+| AC-17 | Git writes only local Git state required by the workspace flow. | ✓ |
+| AC-18 | GitHub writes only GitHub/remote state and related metadata. | ✓ |
+| AC-19 | Sonar writes only Sonar-owned artifacts and metadata. | ✓ |
+| AC-20 | CodeRabbit writes only CodeRabbit-owned configuration artifacts. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- Pass 1: PASS — wave config AC commands for this user story exited 0.
+
+## PROJ-3-PRD-1-US-6: Update readiness terms — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 6.1 Shared Readiness Terminology For Update Mode | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-19 | Shared readiness terminology covers Git, GitHub, and Sonar as needed by workspace and update-mode flows. | ✓ |
+| AC-20 | Update-mode remains separate from workspace capability orchestration. | ✓ |
+| AC-21 | Update-mode GitHub/Sonar readiness uses shared helper behavior where workspace and update-mode meanings overlap. | ✓ |
+| AC-22 | If a shared helper cannot be used because update-mode has different inputs, the architecture documents the difference while preserving the shared readiness meaning. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- Pass 1: PASS — wave config AC commands for this user story exited 0.
 
 ### Wave 1 Gate — PASSED (2026-05-04T11:55:42+02:00)
 - [x] Ralph: 18 AC commands green

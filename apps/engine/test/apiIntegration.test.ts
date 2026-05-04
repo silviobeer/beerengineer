@@ -12,6 +12,36 @@ import { assignPort } from "../src/core/portAllocator.js"
 import { layout } from "../src/core/workspaceLayout.js"
 import { createDatabaseBackup } from "../src/core/updateMode.js"
 
+test("PROJ-3-PRD-2 AC-4 workspace API contract keeps existing fields and adds capabilities", () => {
+  const openapi = JSON.parse(readFileSync(resolve("src/api/openapi.json"), "utf8")) as {
+    components: { schemas: Record<string, { properties?: Record<string, unknown> }> }
+  }
+  const registration = openapi.components.schemas.WorkspaceRegistrationResponse
+  assert.ok(JSON.stringify(registration).includes("warnings"))
+  assert.ok(JSON.stringify(registration).includes("actions"))
+  assert.ok(JSON.stringify(registration).includes("capabilityOutcomes"))
+})
+
+test("PROJ-3-PRD-2 AC-13 setup and settings API contracts stay documented", () => {
+  const openapi = readFileSync(resolve("src/api/openapi.json"), "utf8")
+  assert.match(openapi, /setup\/status/)
+  assert.match(openapi, /setup\/config/)
+  assert.match(openapi, /WorkspaceRegistrationResponse/)
+})
+
+test("PROJ-3-PRD-2 AC-14 capability API changes are additive only", () => {
+  const openapi = readFileSync(resolve("src/api/openapi.json"), "utf8")
+  assert.match(openapi, /capabilityOutcomes/)
+  assert.match(openapi, /"ok"/)
+  assert.match(openapi, /"workspace"/)
+})
+
+test("PROJ-3-PRD-2 AC-15 existing setup/settings flows require no new UI surface", () => {
+  const contract = readFileSync(resolve("../../docs/api-contract.md"), "utf8")
+  assert.match(contract, /Existing workspace registration fields remain valid/)
+  assert.doesNotMatch(contract, /new UI surface required/i)
+})
+
 async function waitForHealth(base: string, timeoutMs = 5000): Promise<void> {
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {

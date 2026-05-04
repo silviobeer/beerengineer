@@ -14,27 +14,21 @@ import type {
 } from "../../types/workspace.js"
 import { validateHarnessProfile } from "./harnessProfiles.js"
 import {
-  CODERABBIT_CONFIG_FILE,
   GITIGNORE_FILE,
   SONAR_PROPERTIES_FILE,
-  SONAR_WORKFLOW_FILE,
   WORKSPACE_CONFIG_DIR,
   WORKSPACE_CONFIG_FILE,
   buildPathPreview,
-  ensureGitRepo,
   ensureManagedGitignore,
   generateCodeRabbitInstallUrl,
   isInsideAllowedRootRealpath,
   pathExists,
   persistSonarTokenToGitConfig,
   previewFromDbRow,
-  renderSonarWorkflow,
-  renderCoderabbitConfig,
   runCommand,
   runGit,
   safeParseHarnessProfile,
   slugify,
-  writeFileIfMissing,
 } from "./shared.js"
 import {
   buildWorkspaceConfigFile,
@@ -45,7 +39,13 @@ import {
   readWorkspaceConfig,
   writeWorkspaceConfig,
 } from "./configFile.js"
-import { previewWorkspace, provisionSonarProject, runWorkspacePreflight, writeSonarProperties } from "./sonar.js"
+import { previewWorkspace, runWorkspacePreflight } from "./sonar.js"
+import {
+  buildWorkspaceCapabilityContext,
+  ensureWorkspaceGitCapability,
+  provisionWorkspaceCodeRabbitCapability,
+  provisionWorkspaceSonarCapability,
+} from "../capabilities/index.js"
 
 export async function scaffoldWorkspace(root: string, opts: { createGitignore: boolean }): Promise<string[]> {
   await mkdir(root, { recursive: true })
@@ -152,7 +152,7 @@ async function prepareWorkspaceFilesystem(input: RegisterWorkspaceInput, state: 
     const gitignore = await ensureManagedGitignore(state.path)
     if (gitignore.changed) actions.push(`updated ${GITIGNORE_FILE}`)
   }
-  const gitSetup = await ensureGitRepo(state.path, input.git?.defaultBranch ?? "main", initGit)
+  const gitSetup = await ensureWorkspaceGitCapability(state.path, input, initGit)
   if (!gitSetup.ok) return { ok: false, error: "git_init_failed", detail: gitSetup.detail ?? "git init failed" }
   actions.push(...gitSetup.actions)
   return null
@@ -245,28 +245,6 @@ function collectWorkspaceWarnings(
   return warnings
 }
 
-async function provisionWorkspaceSonar(
-  path: string,
-  name: string,
-  sonar: SonarConfig,
-  preflight: WorkspacePreflight,
-  actions: string[],
-  warnings: string[],
-) {
-  if (!(preflight.report.github.status === "ok" && preflight.report.github.owner && preflight.report.github.repo && sonar.enabled)) return preflight
-  const owner = preflight.report.github.owner
-  const repo = preflight.report.github.repo
-  const sonarWrite = await writeSonarProperties(path, owner, repo)
-  if (sonarWrite.changed) actions.push(`wrote ${SONAR_PROPERTIES_FILE}`)
-  warnings.push(...sonarWrite.warnings)
-  if (await writeFileIfMissing(resolve(path, SONAR_WORKFLOW_FILE), renderSonarWorkflow())) actions.push(`wrote ${SONAR_WORKFLOW_FILE}`)
-  const refreshedPreflight = await runWorkspacePreflight(path, { sonarHostUrl: sonar.hostUrl, sonarEnabled: sonar.enabled })
-  if (sonar.enabled && refreshedPreflight.report.sonar.status === "ok") {
-    await provisionSonarProject(path, name, sonar, actions, warnings)
-  }
-  return refreshedPreflight
-}
-
 export async function registerWorkspace(input: RegisterWorkspaceInput, deps: RegisterDeps): Promise<RegisterResult> {
   const resolvedState = await resolveRegisterWorkspaceState(input, deps)
   if ("ok" in resolvedState) return resolvedState
@@ -294,8 +272,9 @@ export async function registerWorkspace(input: RegisterWorkspaceInput, deps: Reg
   await writeWorkspaceConfig(state.path, workspaceConfig)
   actions.push(`wrote ${WORKSPACE_CONFIG_DIR}/${WORKSPACE_CONFIG_FILE}`)
   const warnings: string[] = []
-  preflight = await provisionWorkspaceSonar(state.path, state.name, sonar, preflight, actions, warnings)
-  if (await writeFileIfMissing(resolve(state.path, CODERABBIT_CONFIG_FILE), renderCoderabbitConfig())) actions.push(`wrote ${CODERABBIT_CONFIG_FILE}`)
+  const capabilityContext = buildWorkspaceCapabilityContext(state.path, preflight.report, { githubRequired: Boolean(input.github?.create) })
+  preflight = await provisionWorkspaceSonarCapability(capabilityContext, state.name, sonar, actions, warnings)
+  await provisionWorkspaceCodeRabbitCapability(state.path, actions)
 
   const dbRow = deps.repos.upsertWorkspace({
     key: state.key,
@@ -318,6 +297,7 @@ export async function registerWorkspace(input: RegisterWorkspaceInput, deps: Reg
     preview: await previewWorkspace(state.path, deps.config, deps.repos),
     actions,
     warnings: finalWarnings,
+    capabilityOutcomes: preflight.report.capabilities,
     preflight: preflight.report,
     sonarReadiness,
     sonarProjectUrl: generateSonarProjectUrl(state.name, sonar),

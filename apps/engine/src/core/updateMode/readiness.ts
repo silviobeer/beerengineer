@@ -6,6 +6,7 @@ import { readEnginePidFile } from "../../api/pidFile.js"
 import { resolveDbPathInfo } from "../../db/connection.js"
 import type { Repos } from "../../db/repositories.js"
 import type { AppConfig } from "../../setup/types.js"
+import { capabilityStatusFromReady, sharedReadiness } from "../capabilities/readiness.js"
 import type { UpdateReadinessState, UpdateStatus } from "./types.js"
 
 export function buildUpdateReadiness(
@@ -26,9 +27,11 @@ export function buildUpdateReadiness(
     dbOk = "failed"
   }
 
-  const githubOk: UpdateReadinessState = resolveGithubAuthToken() || config.vcs?.github?.enabled !== false
-    ? "ok"
-    : "failed"
+  const githubReadiness = sharedReadiness(
+    "github",
+    capabilityStatusFromReady(Boolean(resolveGithubAuthToken()) || config.vcs?.github?.enabled !== false),
+  )
+  const githubOk: UpdateReadinessState = updateReadinessStateFromShared(githubReadiness.status)
 
   const claudeAuth = Boolean(process.env.ANTHROPIC_API_KEY?.trim()) || commandSucceeds("claude", ["auth", "status"])
   const codexAuth = Boolean(process.env.OPENAI_API_KEY?.trim()) || commandSucceeds("codex", ["login", "status"])
@@ -56,7 +59,13 @@ export function buildUpdateReadiness(
       return false
     }
   }) || sonarTokenInGitConfig
-  const sonarOk: UpdateReadinessState = sonarEnabled ? integrationReady(sonarTokenPresent) : "not_applicable"
+  // Update mode has no selected workspace preflight context; it shares the
+  // readiness label semantics but keeps its own local input collection.
+  const sonarReadiness = sharedReadiness(
+    "sonar",
+    sonarEnabled ? capabilityStatusFromReady(sonarTokenPresent, "not_configured") : "not_applicable",
+  )
+  const sonarOk: UpdateReadinessState = updateReadinessStateFromShared(sonarReadiness.status)
 
   return {
     engineStarted,
@@ -70,6 +79,12 @@ export function buildUpdateReadiness(
 
 function integrationReady(state: boolean): UpdateReadinessState {
   return state ? "ok" : "failed"
+}
+
+function updateReadinessStateFromShared(status: ReturnType<typeof sharedReadiness>["status"]): UpdateReadinessState {
+  if (status === "ready") return "ok"
+  if (status === "not_applicable") return "not_applicable"
+  return "failed"
 }
 
 function resolveGithubAuthToken(): string | null {

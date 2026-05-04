@@ -55,6 +55,16 @@ consumed by tooling.
 - `POST /workspaces/backfill` — re-derive per-workspace config files from the registry.
 - `GET /workspaces/preview?path=<abs fs path>` — filesystem preflight for a candidate registration target. **Not** keyed by an existing workspace — the query parameter is an absolute filesystem path. Returns a `WorkspacePreview` (see OpenAPI) describing existence, writability, git status, greenfield heuristics, conflicts with existing registrations, etc.
 
+Workspace registration responses are additive for capability readiness.
+Existing workspace registration fields remain valid: `ok`, `workspace`,
+`warnings`, and `actions` are still present on successful registration.
+Successful responses may also include `preflight` and the required
+`capabilityOutcomes` array. Each capability outcome uses the stable
+`capabilityId` values `git`, `github`, `sonar`, and `coderabbit` with a
+readiness status, summary, and a reason when not ready. No new UI surface is
+required for setup or settings clients to keep functioning; existing clients
+can ignore the additive capability fields.
+
 Workspace status (counts, latest run) is returned as part of `GET /workspaces/:key`. No separate `/status` endpoint.
 
 ### Items

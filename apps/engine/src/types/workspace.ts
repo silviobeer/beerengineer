@@ -1,4 +1,5 @@
 import type { SonarReadiness } from "../setup/types.js"
+import type { CapabilityId, CapabilityPreflightStatus } from "../core/capabilities/types.js"
 
 export type HarnessRole = "coder" | "reviewer" | "merge-resolver"
 
@@ -177,7 +178,15 @@ export type WorkspacePreflightReport = {
   gh: WorkspaceGhPreflight
   sonar: WorkspaceSonarPreflight
   coderabbit: WorkspacePreflightCheck
+  capabilities: WorkspaceCapabilityResult[]
   checkedAt: string
+}
+
+export type WorkspaceCapabilityResult = {
+  capabilityId: CapabilityId
+  status: CapabilityPreflightStatus
+  summary: string
+  reason?: string
 }
 
 export type RegisterWorkspaceInput = {
@@ -256,6 +265,7 @@ export type RegisterResult =
       preview: WorkspacePreview
       actions: string[]
       warnings: string[]
+      capabilityOutcomes: WorkspaceCapabilityResult[]
       preflight: WorkspacePreflightReport
       sonarReadiness: SonarReadiness
       sonarProjectUrl?: string
