@@ -1,5 +1,8 @@
 import type { Finding } from "../types.js"
 import type { WorkspaceReviewPolicy } from "../types/workspace.js"
+import type { ReviewCapabilityEnvelope } from "../core/capabilities/index.js"
+
+export type { ReviewCapabilityEnvelope } from "../core/capabilities/index.js"
 
 export type GateCondition = {
   metric: string
@@ -70,6 +73,10 @@ export type ReviewToolRegistryResult = {
   coderabbit: CodeRabbitResult
   sonarcloud: SonarCloudResult
 }
+
+export type ReviewCapabilityResult =
+  | ReviewCapabilityEnvelope<CodeRabbitResult>
+  | ReviewCapabilityEnvelope<SonarCloudResult>
 
 export type ReviewToolAdapters = {
   coderabbit: (input: ReviewScope) => Promise<CodeRabbitResult>

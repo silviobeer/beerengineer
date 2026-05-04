@@ -1,4 +1,5 @@
 export { validateHarnessProfile } from "./workspaces/harnessProfiles.js"
+export * from "./capabilities/index.js"
 export {
   defaultWorkspaceRuntimePolicy,
   generateSonarMcpSnippet,
