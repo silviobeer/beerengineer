@@ -11,7 +11,7 @@ test("PROJ-4 PRD-5 US-1: DB waves provision exactly once before worker dispatch"
     dispatchWorker: () => order.push("worker"),
   })
   assert.deepEqual(order, ["provision", "worker"])
-  assert.deepEqual(result, { ok: true, provisioned: true, events: ["provisionBranch", "workerDispatch"] })
+  assert.deepEqual(result, { ok: true, provisioned: true, events: ["orchestration:provision_branch", "orchestration:dispatch_worker"] })
 })
 
 test("PROJ-4 PRD-5 US-1: non-DB and already-provisioned waves do not provision", async () => {

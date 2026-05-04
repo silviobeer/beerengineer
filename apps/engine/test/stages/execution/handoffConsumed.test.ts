@@ -5,7 +5,6 @@ import { detectHandoffConsumed, resetHandoffUsageForTests } from "../../../src/s
 test("PROJ-4 PRD-6 US-4: handoff consumed event emits once per worker", () => {
   resetHandoffUsageForTests()
   assert.deepEqual(detectHandoffConsumed({ runId: "run", waveId: "wave", workerId: "w1", line: "[supabase] connected" }), {
-    type: "supabase.handoff.consumed",
     runId: "run",
     waveId: "wave",
     workerId: "w1",

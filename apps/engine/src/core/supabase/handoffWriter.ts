@@ -1,5 +1,4 @@
-import { existsSync } from "node:fs"
-import { chmod, mkdir, rename, writeFile } from "node:fs/promises"
+import { chmod, mkdir, open, readFile, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { readActiveSecretValue, type SecretStoreOptions } from "../../setup/secretStore.js"
 import { SUPABASE_MANAGEMENT_TOKEN_SECRET_REF } from "../../setup/secretMetadata.js"
@@ -26,7 +25,6 @@ export async function writeSupabaseHandoff(input: {
   const token = readActiveSecretValue(SUPABASE_MANAGEMENT_TOKEN_SECRET_REF, input.secretStore)
   if (!token) throw new Error("Supabase management token missing")
   const path = supabaseHandoffPath(input.workspaceRoot, input.runId, input.waveId)
-  if (existsSync(path)) throw new Error(`Supabase handoff already exists: ${path}`)
   const keys = await input.client.getProjectKeys(input.projectRef, input.branchRef)
   const dbUrl = await input.client.getBranchConnectionString(input.projectRef, input.branchRef)
   const content = [
@@ -38,10 +36,18 @@ export async function writeSupabaseHandoff(input: {
   ].join("\n")
   await mkdir(dirname(path), { recursive: true, mode: 0o700 })
   await chmod(dirname(path), 0o700)
-  const tmp = `${path}.${process.pid}.tmp`
-  await writeFile(tmp, content, { mode: 0o600 })
-  await chmod(tmp, 0o600)
-  await rename(tmp, path)
+  let handle
+  try {
+    handle = await open(path, "wx", 0o600)
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "EEXIST") throw new Error(`Supabase handoff already exists: ${path}`)
+    throw err
+  }
+  try {
+    await handle.writeFile(content)
+  } finally {
+    await handle.close()
+  }
   await chmod(path, 0o600)
   return { path, env: { SUPABASE_HANDOFF_ENV: path } }
 }
@@ -51,7 +57,7 @@ export async function ensureSupabaseHandoffGitignore(workspaceRoot: string): Pro
   const entry = ".beerengineer/handoff/supabase/"
   let current = ""
   try {
-    current = await import("node:fs/promises").then(fs => fs.readFile(path, "utf8"))
+    current = await readFile(path, "utf8")
   } catch {
     current = ""
   }

@@ -30,6 +30,17 @@ test("PROJ-4 PRD-5 US-3: validateBranch applies migrations and seed, retaining o
     assert.equal((await adapter.validateBranch({ workspaceRoot: dir, projectRef: "proj", branchRef: "br", runId: run.id })).ok, true)
     assert.deepEqual(sql, ["select 1", "select seed"])
     assert.equal(repos.getRun(run.id)?.supabase_branch_lifecycle_state, "validated")
+    const failedRun = repos.createRun({ workspaceId: workspace.id, itemId: item.id, title: "Failed run" })
+    const failingAdapter = createSupabaseAdapter({
+      repos,
+      client: {
+        listBranches: async () => [],
+        createBranch: async () => ({ id: "br", ref: "br" }),
+        runQuery: async () => { throw new Error("migration failed") },
+      },
+    })
+    assert.equal((await failingAdapter.validateBranch({ workspaceRoot: dir, projectRef: "proj", branchRef: "br", runId: failedRun.id })).ok, false)
+    assert.equal(repos.getRun(failedRun.id)?.supabase_branch_lifecycle_state, "retained-for-diagnosis")
   } finally {
     db.close()
     rmSync(dir, { recursive: true, force: true })
