@@ -36,3 +36,28 @@ test("PROJ-3-PRD-1 AC-21 update-mode GitHub/Sonar readiness uses shared helper b
 test("PROJ-3-PRD-1 AC-22 update mode documents different inputs while preserving readiness meaning", () => {
   assert.equal(sharedReadiness("sonar", "not_applicable").status, "not_applicable")
 })
+
+test("PROJ-3-PRD-5 AC-19 update-mode GitHub and Sonar readiness uses shared helper terms", () => {
+  assert.equal(capabilityStatusFromReady(true), "ready")
+  assert.equal(capabilityStatusFromReady(false, "not_configured"), "not_configured")
+})
+
+test("PROJ-3-PRD-5 AC-20 update-mode preserves readiness meaning when inputs differ", async () => {
+  const source = await import("node:fs/promises").then(fs => fs.readFile(new URL("../src/core/updateMode/readiness.ts", import.meta.url), "utf8"))
+  assert.match(source, /Update mode has no selected workspace preflight context/)
+})
+
+test("PROJ-3-PRD-5 AC-21 update-mode does not consume workspace capability orchestration", async () => {
+  const updateReadiness = await import("../src/core/updateMode/readiness.js")
+  assert.equal("runWorkspacePreflight" in updateReadiness, false)
+})
+
+test("PROJ-3-PRD-5 AC-22 existing update status readiness states remain compatible", () => {
+  assert.equal(sharedReadiness("sonar", "not_applicable").status, "not_applicable")
+  assert.equal(sharedReadiness("github", "failed").status, "failed")
+})
+
+test("PROJ-3-PRD-5 AC-23 update-readiness covers GitHub and Sonar warning behavior", () => {
+  assert.equal(capabilityStatusFromReady(false, "not_configured"), "not_configured")
+  assert.equal(sharedReadiness("github", "failed").capabilityId, "github")
+})

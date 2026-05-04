@@ -1,7 +1,7 @@
 # PROJ-3 Progress
 
 ## Status: in progress
-## Current Wave: 4
+## Current Wave: 5
 ## BASE_SHA: 369485f6014fb5f98cf3206ec4f9372599e5d2e5
 
 ---
@@ -558,3 +558,114 @@
 - [x] Build: `npm run typecheck`
 - [x] CodeRabbit: 0 non-advisory findings (advisory severities: medium,low,minor)
 - [x] Smoke: backend-only
+
+---
+
+## Wave 5
+
+- Wave start tag: `wave-5-start-PROJ-3`
+- Implementation mode: local lead implementation; no subagents spawned because this Codex session permits delegation only on explicit user delegation requests.
+
+## PROJ-3-PRD-5-US-1: Dedicated capability command groups — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 1.1 Dedicated Capability Command Groups | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-1 | Public command groups use `workspace git`, `workspace github`, `workspace sonar`, and `workspace coderabbit` where commands exist. | ✓ |
+| AC-2 | This PROJ does not introduce a generic `workspace capability ...` command. | ✓ |
+| AC-3 | Help text describes these command groups as workspace capabilities. | ✓ |
+| AC-4 | Commands route to capability behavior rather than duplicating generic command logic. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- Pass 1: PASS — targeted AC-1 through AC-4 commands exited 0.
+
+## PROJ-3-PRD-5-US-2: Capability CLI renderers — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 2.1 Capability CLI Renderers | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-5 | JSON output includes `capabilityId`. | ✓ |
+| AC-6 | JSON output uses closed status/outcome values where applicable. | ✓ |
+| AC-7 | Text output distinguishes ready, disabled, not configured, failed, skipped, and not meaningful states where applicable. | ✓ |
+| AC-8 | Non-ready text output includes a reason and next action when available. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- Pass 1: PASS — targeted AC-5 through AC-8 commands exited 0.
+
+## PROJ-3-PRD-5-US-3: Public Sonar CLI acceptance — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 3.1 Public Sonar CLI Acceptance Tests | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-9 | `workspace sonar audit` is available with text and JSON output. | ✓ |
+| AC-10 | `workspace sonar repair` is dry-run by default with text and JSON output. | ✓ |
+| AC-11 | `workspace sonar repair --apply` writes only safe deterministic repairs. | ✓ |
+| AC-12 | Public CLI tests verify end-to-end side effects for `repair --apply`. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- Pass 1: PASS — targeted AC-9 through AC-12 commands exited 0.
+
+## PROJ-3-PRD-5-US-4: Capability CLI exit codes — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 4.1 Capability CLI Exit Codes | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-13 | Capability CLI success exits with `0`. | ✓ |
+| AC-14 | Capability CLI usage or workspace-selection errors exit with `20`. | ✓ |
+| AC-15 | Capability CLI transport or API communication errors exit with `30`. | ✓ |
+| AC-16 | Required capability failures exit with `40`. | ✓ |
+| AC-17 | Optional capability warning/skipped/not-meaningful states exit with `41` when surfaced. | ✓ |
+| AC-18 | Optional capability warning/skipped states do not reuse required failure semantics. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- Pass 1: PASS — targeted AC-13 through AC-18 commands exited 0.
+
+## PROJ-3-PRD-5-US-5: Update readiness compatibility — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 5.1 Update Readiness Compatibility Coverage | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-19 | Update-mode GitHub/Sonar readiness uses shared terms and helper behavior where they overlap. | ✓ |
+| AC-20 | Update-mode preserves the same readiness meaning when inputs differ. | ✓ |
+| AC-21 | Update-mode does not consume workspace capability orchestration. | ✓ |
+| AC-22 | Existing update status behavior remains compatible. | ✓ |
+| AC-23 | Update-readiness tests cover GitHub/Sonar warning behavior after alignment. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- Pass 1: PASS — targeted AC-19 through AC-23 commands exited 0.
+
+### Wave 5 Local Verification
+- Ralph AC commands: PASS — all 23 Wave 5 `ac_commands` from `wave-gate-config.json` exited 0.
+- Focused suites: PASS — `test/capabilityCli.test.ts`, targeted `test/cli.test.ts`, and targeted `test/updateMode.test.ts` exited 0.
+- Build: PASS — `npm run typecheck --workspace=@beerengineer/engine`.
+- Diff hygiene: PASS — `git diff --check`.

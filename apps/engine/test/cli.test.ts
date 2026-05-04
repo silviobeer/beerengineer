@@ -10,9 +10,12 @@ import { fileURLToPath } from "node:url"
 import { initDatabase } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
 import { main, parseArgs, resolveItemReference, resolveUiLaunchUrl, resolveUiWorkspacePath } from "../src/index.js"
+import { printHelp } from "../src/cli/parse.js"
 import { assignPort } from "../src/core/portAllocator.js"
 import { resolveConfiguredDbPath } from "../src/setup/config.js"
 import { layout } from "../src/core/workspaceLayout.js"
+import { writeWorkspaceConfig } from "../src/core/workspaces.js"
+import { buildWorkspaceConfigFile } from "../src/core/workspaces/configFile.js"
 import { removeTempDir } from "./helpers/fs.js"
 
 function makeStubBin(dir: string, name: string, body: string): void {
@@ -152,6 +155,20 @@ test("parseArgs recognizes help, doctor, start ui, workflow, item action, and un
 test("PROJ-3-PRD-3 AC-4 generic workspace capability commands are not required", () => {
   assert.deepEqual(parseArgs(["workspace", "sonar", "enable", "demo", "--json"]), { kind: "workspace-sonar-enable", key: "demo", json: true })
   assert.deepEqual(parseArgs(["workspace", "capability", "sonar", "enable", "demo"]), { kind: "unknown", token: "workspace capability sonar enable demo" })
+})
+
+test("PROJ-3-PRD-5 AC-3 help text describes workspace capability command groups", () => {
+  const lines: string[] = []
+  const original = console.log
+  console.log = value => lines.push(String(value))
+  try {
+    printHelp()
+  } finally {
+    console.log = original
+  }
+  assert.match(lines.join("\n"), /workspace git status/)
+  assert.match(lines.join("\n"), /workspace coderabbit status/)
+  assert.match(lines.join("\n"), /workspace capability readiness/)
 })
 
 test("doctor --json reports blocked status when the app config is uninitialized", async () => {
@@ -1231,6 +1248,46 @@ test("workspace backfill writes missing workspace.json files for existing rows",
     assert.equal(config.key, "legacy")
     assert.equal(config.harnessProfile.mode, "fast")
     assert.equal(config.runtimePolicy.coderExecution, "unsafe-autonomous-write")
+  } finally {
+    removeTempDir(dir)
+  }
+})
+
+test("PROJ-3-PRD-5 AC-12 public CLI verifies repair apply side effects", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-cap-"))
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
+  const dbPath = join(dir, "cap.sqlite")
+  const rootPath = join(dir, "project")
+
+  try {
+    mkdirSync(join(rootPath, "src"), { recursive: true })
+    await writeWorkspaceConfig(rootPath, buildWorkspaceConfigFile({
+      key: "demo",
+      name: "Demo",
+      harnessProfile: { mode: "fast" },
+      sonar: { enabled: true, organization: "acme", projectKey: "acme_demo" },
+    }))
+    const db = initDatabase(dbPath)
+    const repos = new Repos(db)
+    repos.upsertWorkspace({
+      key: "demo",
+      name: "Demo",
+      rootPath,
+      harnessProfileJson: JSON.stringify({ mode: "fast" }),
+      sonarEnabled: true,
+    })
+    db.close()
+
+    const result = spawnSync(process.execPath, [binPath, "workspace", "sonar", "repair", "demo", "--apply", "--json"], {
+      cwd: engineRoot,
+      encoding: "utf8",
+      env: { ...process.env, BEERENGINEER_UI_DB_PATH: dbPath },
+    })
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`)
+    assert.equal(existsSync(join(rootPath, "sonar-project.properties")), true)
+    assert.equal(existsSync(join(rootPath, ".github", "workflows", "sonar.yml")), true)
   } finally {
     removeTempDir(dir)
   }

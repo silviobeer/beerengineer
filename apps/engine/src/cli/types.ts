@@ -57,9 +57,12 @@ export type Command =
   | { kind: "workspace-open"; key?: string }
   | { kind: "workspace-backfill"; json?: boolean }
   | { kind: "workspace-worktree-gc"; key?: string; json?: boolean }
+  | { kind: "workspace-git-status"; key?: string; json?: boolean }
+  | { kind: "workspace-github-status"; key?: string; json?: boolean }
   | { kind: "workspace-sonar-enable"; key?: string; json?: boolean }
   | { kind: "workspace-sonar-audit"; key?: string; json?: boolean }
   | { kind: "workspace-sonar-repair"; key?: string; json?: boolean; apply?: boolean }
+  | { kind: "workspace-coderabbit-status"; key?: string; json?: boolean }
   | { kind: "status"; workspaceKey?: string; json?: boolean; all?: boolean }
   | { kind: "chat-list"; workspaceKey?: string; json?: boolean; all?: boolean; compact?: boolean }
   | { kind: "chat-send"; runId?: string; text?: string; json?: boolean }

@@ -1,4 +1,5 @@
 import { createGitAdapterFromMode } from "../../core/gitAdapter.js"
+import type { CapabilityId } from "../../core/capabilities/index.js"
 import {
   applyWorkspaceSonarRepair,
   auditWorkspaceSonarCapability,
@@ -16,11 +17,14 @@ import {
   registerWorkspace,
   removeWorkspace,
   readWorkspaceConfig,
+  runWorkspacePreflight,
 } from "../../core/workspaces.js"
 import { generateSetupReport } from "../../setup/doctor.js"
 import type { AppConfig } from "../../setup/types.js"
 import type { RegisterWorkspaceInput } from "../../types/workspace.js"
+import { capabilityExitCode } from "../capabilityExitCodes.js"
 import type { Command } from "../types.js"
+import { renderCapabilityJson, renderCapabilityText, stateNeedsAttention, type CapabilityCliResult } from "./capabilityRenderers.js"
 import {
   confirmWorkspacePurge,
   indentBlock,
@@ -355,34 +359,96 @@ export async function runWorkspaceWorktreeGcCommand(key: string | undefined, jso
 }
 
 async function loadRegisteredWorkspaceConfig(repos: Parameters<typeof getRegisteredWorkspace>[0], key: string | undefined) {
-  if (!key) return { ok: false as const, status: 2, message: "Missing key: beerengineer workspace sonar <enable|audit|repair> <key>" }
+  if (!key) return { ok: false as const, status: capabilityExitCode("usage"), message: "Missing workspace key for capability command" }
   const workspace = getRegisteredWorkspace(repos, key)
-  if (!workspace?.rootPath) return { ok: false as const, status: 1, message: `Workspace not found: ${key}` }
+  if (!workspace?.rootPath) return { ok: false as const, status: capabilityExitCode("usage"), message: `Workspace not found: ${key}` }
   const config = await readWorkspaceConfig(workspace.rootPath)
-  if (!config) return { ok: false as const, status: 1, message: `.beerengineer/workspace.json is missing or invalid for ${key}` }
+  if (!config) return { ok: false as const, status: capabilityExitCode("usage"), message: `.beerengineer/workspace.json is missing or invalid for ${key}` }
   return { ok: true as const, workspace, config }
+}
+
+function capabilityResultFromPreflight(rootPath: string, capabilityId: CapabilityId, preflight: Awaited<ReturnType<typeof runWorkspacePreflight>>["report"]): CapabilityCliResult {
+  const capability = preflight.capabilities.find(item => item.capabilityId === capabilityId)
+  if (!capability) {
+    return {
+      capabilityId,
+      status: "failed",
+      summary: `${capabilityId} failed readiness checks`,
+      reason: "Capability was not present in workspace preflight output",
+      details: { rootPath },
+    }
+  }
+  return {
+    capabilityId,
+    status: capability.status,
+    summary: capability.summary,
+    reason: capability.reason,
+    nextActions: capability.status === "ready" ? [] : [`Run workspace ${capabilityId} status after fixing the reported issue`],
+    details: { rootPath, preflight: preflight[capabilityId === "github" ? "github" : capabilityId] },
+  }
+}
+
+async function runWorkspaceCapabilityStatusCommand(
+  key: string | undefined,
+  capabilityId: Extract<CapabilityId, "git" | "github" | "coderabbit">,
+  json = false,
+): Promise<number> {
+  return withRepos(async repos => {
+    const loaded = await loadRegisteredWorkspaceConfig(repos, key)
+    if (!loaded.ok) {
+      console.error(`  ${loaded.message}`)
+      return loaded.status
+    }
+    const preflight = await runWorkspacePreflight(loaded.workspace.rootPath, {
+      sonarHostUrl: loaded.config.sonar.hostUrl,
+      sonarEnabled: loaded.config.sonar.enabled,
+    })
+    const result = capabilityResultFromPreflight(loaded.workspace.rootPath, capabilityId, preflight.report)
+    process.stdout.write(json ? renderCapabilityJson(result) : renderCapabilityText(result))
+    if (!stateNeedsAttention(result)) return capabilityExitCode("success")
+    return capabilityId === "git" ? capabilityExitCode("requiredFailure") : capabilityExitCode("optionalWarning")
+  })
+}
+
+export async function runWorkspaceGitStatusCommand(key: string | undefined, json = false): Promise<number> {
+  return runWorkspaceCapabilityStatusCommand(key, "git", json)
+}
+
+export async function runWorkspaceGithubStatusCommand(key: string | undefined, json = false): Promise<number> {
+  return runWorkspaceCapabilityStatusCommand(key, "github", json)
+}
+
+export async function runWorkspaceCodeRabbitStatusCommand(key: string | undefined, json = false): Promise<number> {
+  return runWorkspaceCapabilityStatusCommand(key, "coderabbit", json)
 }
 
 export async function runWorkspaceSonarEnableCommand(key: string | undefined, json = false): Promise<number> {
   if (!key) {
     console.error("  Missing key: beerengineer workspace sonar enable <key>")
-    return 2
+    return capabilityExitCode("usage")
   }
   return withRepos(async repos => {
     const result = await enableRegisteredWorkspaceSonarCapability(repos, key)
     if (json) {
-      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
-      return result.ok ? 0 : 1
+      process.stdout.write(renderCapabilityJson({
+        capabilityId: "sonar",
+        status: result.capability.status,
+        summary: result.capability.summary,
+        reason: result.capability.reason,
+        nextActions: result.nextActions,
+        details: result,
+      }))
+      return result.ok ? capabilityExitCode("success") : capabilityExitCode("optionalWarning")
     }
     for (const action of result.actions) console.log(`  ${action}`)
     for (const warning of result.warnings) console.log(`  ! ${warning}`)
     if (!result.ok) {
       console.error(`  Sonar enable incomplete: ${result.capability.reason ?? result.capability.summary}`)
       for (const action of result.nextActions) console.error(`  next: ${action}`)
-      return 1
+      return capabilityExitCode("optionalWarning")
     }
     console.log(`  Sonar enabled for ${key}`)
-    return 0
+    return capabilityExitCode("success")
   })
 }
 
@@ -396,14 +462,14 @@ export async function runWorkspaceSonarAuditCommand(key: string | undefined, jso
     const report = await auditWorkspaceSonarCapability(loaded.workspace.rootPath, loaded.config)
     if (json) {
       process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
-      return report.status === "failed" ? 1 : 0
+      return report.status === "ready" ? capabilityExitCode("success") : capabilityExitCode("optionalWarning")
     }
     console.log(`  Sonar audit for ${loaded.workspace.key}: ${report.status}`)
     console.log(`  sources: ${report.sourceRoots.join(", ") || "(none)"}`)
     console.log(`  tests: ${report.testRoots.join(", ") || "(none)"}`)
     console.log(`  coverage: ${report.coverageReports.join(", ") || "(none)"}`)
     for (const finding of report.findings) console.log(`  ! ${finding.id}: ${finding.message} (${finding.risk}, ${finding.repairability})`)
-    return report.status === "failed" ? 1 : 0
+    return report.status === "ready" ? capabilityExitCode("success") : capabilityExitCode("optionalWarning")
   })
 }
 
@@ -433,13 +499,13 @@ export async function runWorkspaceSonarRepairCommand(key: string | undefined, ap
     }
     if (json) {
       process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
-      return 0
+      return apply || report.actions.length === 0 ? capabilityExitCode("success") : capabilityExitCode("optionalWarning")
     }
     console.log(`  Sonar repair ${report.mode} for ${loaded.workspace.key}: ${report.status}`)
     for (const action of report.actions) {
       const suffix = action.applied ? "applied" : action.reason ?? "planned"
       console.log(`  - ${action.id}: ${action.description} (${action.repairability}, ${suffix})`)
     }
-    return 0
+    return apply || report.actions.length === 0 ? capabilityExitCode("success") : capabilityExitCode("optionalWarning")
   })
 }
