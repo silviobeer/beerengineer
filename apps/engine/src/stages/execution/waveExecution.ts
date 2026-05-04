@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
-import { branchNameStory } from "../../core/branchNames.js"
+import { branchNameStory, branchNameWave, branchNameProject } from "../../core/branchNames.js"
 import { createGitAdapter, type GitAdapter } from "../../core/gitAdapter.js"
 import { emitEvent, getActiveRun } from "../../core/runContext.js"
 import { writeRecoveryRecord } from "../../core/recovery.js"
@@ -13,6 +13,10 @@ import { runSetupStory } from "./setupStory.js"
 import { buildStoryExecutionContext, createScreenOwners, executionStageLlmForStory } from "./storyContext.js"
 import { writeStoryTestPlan } from "./testWriter.js"
 import { createWaveCoordinator, type WaveCoordinator } from "./waveCoordinator.js"
+import { isDbRelevantWave, provisionWaveIfDbRelevant } from "./supabaseWaveGate.js"
+import { canStartDbRelevantWave } from "./dbWaveScheduler.js"
+import { cleanupSuccessfulBranch } from "../../core/supabase/cleanupOrchestrator.js"
+import type { SupabaseWorkflowHook } from "../../core/supabase/workflowHook.js"
 import type { ExecutionLlmOptions } from "./index.js"
 import type { StoryTestPlanArtifact } from "./types.js"
 import type {
@@ -51,6 +55,7 @@ export async function execution(
   resume?: ExecutionResumeOptions,
   llm?: ExecutionLlmOptions,
   git: GitAdapter = createGitAdapter(ctx),
+  supabaseHook?: SupabaseWorkflowHook,
 ): Promise<WaveSummary[]> {
   stagePresent.header(`execution — ${ctx.project.name}`)
 
@@ -64,6 +69,10 @@ export async function execution(
 
   const summaries: WaveSummary[] = []
   const completedWaveIds = new Set<string>()
+  // BUG-PROJ4-QA-005 wiring point 3: sequential DB-relevant wave tracking.
+  // At most one DB-relevant wave can be active at a time per item.
+  const activeDbRelevantWaveIds: string[] = []
+
   for (const wave of orderedWaves) {
     if (resume?.waveNumber && wave.number < resume.waveNumber) {
       const persisted = await readJsonIfExists<WaveSummary>(layout.waveSummaryFile(ctx, wave.number))
@@ -73,9 +82,28 @@ export async function execution(
       continue
     }
 
+    // Sequential DB-wave scheduling (architecture decision 5).
+    if (supabaseHook && isDbRelevantWave(wave)) {
+      const scheduleResult = canStartDbRelevantWave({
+        dbRelevant: true,
+        activeDbRelevantWaveIds,
+      })
+      if (!scheduleResult.ok) {
+        // This should never happen in sequential execution (one wave at a time),
+        // but guard defensively in case parallelism is introduced later.
+        throw new Error(`[supabase] ${scheduleResult.message} (wave=${wave.id})`)
+      }
+      activeDbRelevantWaveIds.push(wave.id)
+    }
+
     assertWaveDependenciesSatisfied(wave, completedWaveIds)
-    summaries.push(await executeWave(ctx, wave, storyById, screenOwners, git, resume, llm))
+    summaries.push(await executeWave(ctx, wave, storyById, screenOwners, git, resume, llm, supabaseHook))
     completedWaveIds.add(wave.id)
+
+    // Remove from active list once the wave is complete.
+    const idx = activeDbRelevantWaveIds.indexOf(wave.id)
+    if (idx !== -1) activeDbRelevantWaveIds.splice(idx, 1)
+
     if (resume?.waveNumber === wave.number) resume = undefined
   }
 
@@ -113,6 +141,7 @@ async function executeWave(
   git: GitAdapter,
   resume?: ExecutionResumeOptions,
   llm?: ExecutionLlmOptions,
+  supabaseHook?: SupabaseWorkflowHook,
 ): Promise<WaveSummary> {
   const waveEntries = wave.kind === "setup"
     ? (wave.tasks ?? []).map(task => ({ id: task.id, title: task.title }))
@@ -127,6 +156,52 @@ async function executeWave(
   }
   stagePresent.step(`\nWave ${wave.number} ${tag}: ${waveEntries.map(s => s.id).join(", ")}`)
   git.ensureWaveBranch(ctx.project.id, wave.number)
+
+  // BUG-PROJ4-QA-005 wiring point 1: provision → poll → handoff → validate
+  // for DB-relevant waves BEFORE dispatching workers.
+  let waveBranchRef: string | undefined
+  let waveHandoffPath: string | undefined
+  if (supabaseHook && isDbRelevantWave(wave)) {
+    const activeRun = getActiveRun()
+    const context = {
+      workspaceId: supabaseHook.workspaceId,
+      workspaceRoot: ctx.workspaceRoot,
+      projectRef: supabaseHook.projectRef,
+      parentBranchRef: supabaseHook.parentBranchRef,
+      runId: activeRun?.runId ?? ctx.runId,
+      itemId: activeRun?.itemId,
+      projectId: ctx.project.id,
+      waveId: wave.id,
+    }
+    stagePresent.dim(`[supabase] provisioning wave branch for wave ${wave.id}`)
+    const provisionResult = await provisionWaveIfDbRelevant({
+      wave,
+      adapter: supabaseHook.adapter,
+      context,
+      repos: supabaseHook.repos,
+      handoffClient: supabaseHook.handoffClient,
+    })
+    if (!provisionResult.ok) {
+      // Mark retained-for-diagnosis and abort the wave — do not dispatch workers.
+      const runId = activeRun?.runId ?? ctx.runId
+      if (runId) supabaseHook.repos.setRunSupabaseLifecycleState(runId, "retained-for-diagnosis")
+      stagePresent.warn(`[supabase] wave ${wave.id} provision/validate failed: ${provisionResult.error}`)
+      // Build a summary with all stories blocked so the run transitions correctly.
+      const blockedSummary: WaveSummary = {
+        waveId: wave.id,
+        waveBranch: branchNameWave(ctx, ctx.project.id, wave.number),
+        projectBranch: branchNameProject(ctx, ctx.project.id),
+        storiesMerged: [],
+        storiesBlocked: waveEntries.map(s => s.id),
+      }
+      await recordBlockedWave(ctx, wave, blockedSummary)
+      assertWaveSucceeded(wave, blockedSummary) // throws
+    } else {
+      waveBranchRef = (provisionResult as { branchRef: string }).branchRef || undefined
+      waveHandoffPath = (provisionResult as { handoffPath: string }).handoffPath || undefined
+      stagePresent.dim(`[supabase] wave branch provisioned and validated: ${waveBranchRef}`)
+    }
+  }
 
   const mergeResolverHarness = llm?.executionCoder
     ? (() => {
@@ -212,6 +287,34 @@ async function executeWave(
     mergeResolver: mergeResolverHarness,
     resolverLogDir: layout.executionWaveDir(ctx, wave.number),
   })
+
+  // BUG-PROJ4-QA-005 wiring point 5: cleanup after successful wave completion.
+  if (supabaseHook && isDbRelevantWave(wave) && waveBranchRef) {
+    const activeRun = getActiveRun()
+    const runId = activeRun?.runId ?? ctx.runId
+    const run = runId ? supabaseHook.repos.getRun(runId) : undefined
+    const lifecycleState = run?.supabase_branch_lifecycle_state ?? null
+    try {
+      await cleanupSuccessfulBranch({
+        repos: supabaseHook.repos,
+        adapter: supabaseHook.adapter,
+        workspaceId: supabaseHook.workspaceId,
+        projectRef: supabaseHook.projectRef,
+        branchRef: waveBranchRef,
+        branchName: run?.supabase_branch_name ?? null,
+        runId,
+        waveId: wave.id,
+        lifecycleState,
+        policy: supabaseHook.cleanupPolicy,
+        ttlHours: supabaseHook.cleanupTtlHours,
+        handoffPath: waveHandoffPath ?? null,
+      })
+    } catch (err) {
+      // Cleanup failure is non-fatal — wave already succeeded; log and continue.
+      stagePresent.dim(`[supabase] cleanup failed for wave ${wave.id}: ${(err as Error).message}`)
+    }
+  }
+
   return summary
 }
 

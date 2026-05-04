@@ -25,6 +25,7 @@ import { projectReview } from "../stages/project-review/index.js"
 import { qa } from "../stages/qa/index.js"
 import { requirements } from "../stages/requirements/index.js"
 import type { RunLlmConfig } from "../llm/registry.js"
+import type { SupabaseWorkflowHook } from "./supabase/workflowHook.js"
 import type {
   ArchitectureArtifact,
   DocumentationArtifact,
@@ -82,6 +83,8 @@ export type StageDeps = {
   resume?: ProjectResumePlan
   /** Git adapter — passed through so stages don't construct their own. */
   git: GitAdapter
+  /** Optional Supabase integration hook — threaded through to wiring points. */
+  supabaseHook?: SupabaseWorkflowHook
 }
 
 /**
@@ -271,6 +274,7 @@ const executionNode: ProjectStageNode = {
       deps.resume?.execution,
       deps.llm?.execution,
       deps.git,
+      deps.supabaseHook,
     ),
   }),
   resumeFromDisk: async ctx => ({

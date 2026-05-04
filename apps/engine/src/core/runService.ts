@@ -12,6 +12,14 @@ import { resolveWorkflowContextForItemRun, resolveWorkflowContextForRun } from "
 import type { Repos, ItemRow, RunRow, ExternalRemediationRow, WorkspaceRow } from "../db/repositories.js"
 import type { WorkflowIO } from "./io.js"
 import type { WorkflowResumeInput } from "../workflow.js"
+import type { SupabaseAdapter } from "./supabase/types.js"
+import type { SupabaseHandoffClient } from "./supabase/handoffWriter.js"
+
+/** Factory type re-exported so server.ts can build it without importing from runOrchestrator. */
+export type SupabaseAdapterFactory = (deps: { workspaceId: string; projectRef: string }) => {
+  adapter: SupabaseAdapter
+  handoffClient?: SupabaseHandoffClient
+} | null
 
 /**
  * The engine-side run orchestration service. Hosts workflows inside the engine
@@ -122,7 +130,13 @@ function resolveWorkspaceMeta(
  */
 export function startRunFromIdea(
   repos: Repos,
-  input: { title: string; description: string; workspaceKey?: string; onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void },
+  input: {
+    title: string
+    description: string
+    workspaceKey?: string
+    onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
+    supabaseAdapterFactory?: SupabaseAdapterFactory
+  },
 ): StartRunResult {
   const meta = resolveWorkspaceMeta(repos, input.workspaceKey)
   if ("error" in meta) return { ok: false, status: 404, error: "unknown_workspace" }
@@ -132,7 +146,7 @@ export function startRunFromIdea(
     { id: "new", title: input.title, description: input.description },
     repos,
     io,
-    { owner: "api", ...meta, onItemColumnChanged: input.onItemColumnChanged },
+    { owner: "api", ...meta, onItemColumnChanged: input.onItemColumnChanged, supabaseAdapterFactory: input.supabaseAdapterFactory },
   )
   fireInBackground(io, "startRunFromIdea", prepared.start)
   return { ok: true, runId: prepared.runId, itemId: prepared.itemId }
@@ -205,7 +219,12 @@ function prepareStartRunAction(repos: Repos, item: ItemRow, action: StartRunActi
 
 export function startRunForItem(
   repos: Repos,
-  input: { itemId: string; action: StartRunAction; onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void },
+  input: {
+    itemId: string
+    action: StartRunAction
+    onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
+    supabaseAdapterFactory?: SupabaseAdapterFactory
+  },
 ): StartRunResult {
   const item = repos.getItem(input.itemId)
   if (!item) return { ok: false, status: 404, error: "item_not_found" }
@@ -218,7 +237,7 @@ export function startRunForItem(
     { id: item.id, title: item.title, description: item.description },
     repos,
     io,
-    { owner: "api", itemId: item.id, resume: preparedAction.resume, onItemColumnChanged: input.onItemColumnChanged },
+    { owner: "api", itemId: item.id, resume: preparedAction.resume, onItemColumnChanged: input.onItemColumnChanged, supabaseAdapterFactory: input.supabaseAdapterFactory },
   )
 
   if (preparedAction.sourceRun && preparedAction.seedStages.length > 0) {

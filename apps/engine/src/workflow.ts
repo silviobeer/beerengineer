@@ -37,6 +37,7 @@ import {
 } from "./core/projectStageRegistry.js"
 import { branchNameItem } from "./core/branchNames.js"
 import { itemSlug, workflowWorkspaceId } from "./core/itemIdentity.js"
+import type { SupabaseWorkflowHook } from "./core/supabase/workflowHook.js"
 
 type ItemResumePlan = {
   startStage: "brainstorm" | "visual-companion" | "frontend-design" | "projects" | "merge-gate"
@@ -113,6 +114,11 @@ export type WorkflowResumeInput = {
 }
 
 export type WorkflowLlmOptions = StageLlmOptions
+
+/** Optional Supabase hook injected by the run orchestrator. When present,
+ * the workflow wires provisioning, validation, merge gates, and cleanup.
+ * When absent, the workflow runs as before with no Supabase side effects. */
+export type WorkflowSupabaseHook = SupabaseWorkflowHook
 
 class BlockedRunError extends Error {
   constructor(message: string) {
@@ -308,7 +314,7 @@ async function assertDesignPrepProjectFreeze(context: WorkflowContext, projects:
   throw new BlockedRunError(summary)
 }
 
-export async function runWorkflow(item: Item, options?: { resume?: WorkflowResumeInput; llm?: WorkflowLlmOptions; workspaceRoot?: string }): Promise<void> {
+export async function runWorkflow(item: Item, options?: { resume?: WorkflowResumeInput; llm?: WorkflowLlmOptions; workspaceRoot?: string; supabaseHook?: SupabaseWorkflowHook }): Promise<void> {
   const slug = itemSlug(item)
   const activeRun = getActiveRun()
   const { branch: baseBranch, source: baseBranchSource } = resolveBaseBranchForItem(item.baseBranch, options?.workspaceRoot)
@@ -369,10 +375,11 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
         itemSnapshot,
         resumePlan,
         llm: itemWorktreeLlm,
+        supabaseHook: options?.supabaseHook,
       })
     }
 
-    await withStageLifecycle("merge-gate", () => mergeGate(context, git, blockRunForWorkspaceState), {})
+    await withStageLifecycle("merge-gate", () => mergeGate(context, git, blockRunForWorkspaceState, options?.supabaseHook), {})
 
     stagePresent.header("DONE")
     stagePresent.ok(`Item "${item.title}" is done ✓`)
@@ -493,9 +500,10 @@ async function runWorkflowProjects(
     itemSnapshot: ReturnType<typeof buildItemSnapshot>
     resumePlan: ReturnType<typeof normalizeProjectResume> | null
     llm: WorkflowLlmOptions | undefined
+    supabaseHook?: SupabaseWorkflowHook
   },
 ): Promise<void> {
-  const { context, projects, git, wireframes, design, itemSnapshot, resumePlan, llm } = options
+  const { context, projects, git, wireframes, design, itemSnapshot, resumePlan, llm, supabaseHook } = options
   const conceptAmendments = [
     ...(wireframes?.conceptAmendments ?? []),
     ...(design?.conceptAmendments ?? []),
@@ -519,6 +527,7 @@ async function runWorkflowProjects(
       git,
       projectResumePlan ?? undefined,
       llm,
+      supabaseHook,
     )
   }
 }
@@ -627,10 +636,11 @@ async function runProject(
   git: GitAdapter,
   resume?: ProjectResumePlan,
   llm?: WorkflowLlmOptions,
+  supabaseHook?: SupabaseWorkflowHook,
 ): Promise<void> {
   let ctx = initialCtx
   const projectId = ctx.project.id
-  const deps = { llm, resume, git }
+  const deps = { llm, resume, git, supabaseHook }
 
   for (const node of PROJECT_STAGE_REGISTRY) {
     ctx = shouldRunProjectStage(resume, node.id)

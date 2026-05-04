@@ -7,6 +7,9 @@ import { runWithWorkflowIO, type WorkflowIO } from "./io.js"
 import { attachRunSubscribers, resolveWorkflowLlmOptions } from "./runSubscribers.js"
 import { runWithActiveRun } from "./runContext.js"
 import { persistWorkflowRunState } from "./stageRuntime.js"
+import type { SupabaseWorkflowHook } from "./supabase/workflowHook.js"
+import type { SupabaseAdapter } from "./supabase/types.js"
+import type { SupabaseHandoffClient } from "./supabase/handoffWriter.js"
 
 export { attachDbSync, type AttachDbSyncOptions } from "./dbSync.js"
 /* c8 ignore next -- pure re-export */
@@ -32,6 +35,21 @@ export function prepareRun(
     resume?: WorkflowResumeInput
     /** Forwarded to `attachRunSubscribers`; see `AttachDbSyncOptions.onItemColumnChanged`. */
     onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
+    /**
+     * BUG-PROJ4-QA-005: optional factory that builds a Supabase adapter for
+     * the workspace. When provided AND the workspace has a projectRef AND a
+     * persistent test branch, the workflow is wired through the Supabase gate
+     * helpers (provision, validate, merge gates, cleanup).
+     *
+     * The factory receives the workspace id + projectRef so the caller can
+     * construct it lazily (the token may change between run start and the
+     * actual adapter invocation, but that's acceptable — the factory is called
+     * once per run at `start()` time).
+     */
+    supabaseAdapterFactory?: (deps: { workspaceId: string; projectRef: string }) => {
+      adapter: SupabaseAdapter
+      handoffClient?: SupabaseHandoffClient
+    } | null
   } = {}
 ) {
   const itemRow = opts.itemId
@@ -70,6 +88,29 @@ export function prepareRun(
       })
     }
 
+    // BUG-PROJ4-QA-005: build the Supabase workflow hook when the workspace
+    // has a project ref and a persistent test branch.
+    let supabaseHook: SupabaseWorkflowHook | undefined
+    if (opts.supabaseAdapterFactory && workspaceRow?.supabase_project_ref && workspaceRow.supabase_persistent_test_branch_ref) {
+      const built = opts.supabaseAdapterFactory({
+        workspaceId,
+        projectRef: workspaceRow.supabase_project_ref,
+      })
+      if (built) {
+        supabaseHook = {
+          repos,
+          adapter: built.adapter,
+          workspaceId,
+          projectRef: workspaceRow.supabase_project_ref,
+          parentBranchRef: workspaceRow.supabase_persistent_test_branch_ref,
+          protectionSwitch: workspaceRow.supabase_protection_switch ?? "off",
+          cleanupPolicy: workspaceRow.supabase_cleanup_policy ?? "on-success-immediate",
+          cleanupTtlHours: workspaceRow.supabase_cleanup_ttl_hours ?? null,
+          handoffClient: built.handoffClient,
+        }
+      }
+    }
+
     const detach = attachRunSubscribers(
       bus,
       repos,
@@ -88,6 +129,7 @@ export function prepareRun(
                 resume: opts.resume,
                 llm,
                 workspaceRoot: workspaceRow?.root_path ?? undefined,
+                supabaseHook,
               },
             )
             const finalRun = repos.getRun(runRow.id)
