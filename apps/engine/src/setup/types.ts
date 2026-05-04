@@ -20,6 +20,15 @@ export type SonarReadiness = SonarReadinessState & {
   details?: Partial<Record<keyof SonarReadinessState, string>>
 }
 
+export const DEFAULT_SONAR_READINESS = {
+  scanner: "unknown",
+  token: "unknown",
+  config: "missing",
+  coverage: "unknown",
+  warnings: [],
+  details: {},
+} satisfies SonarReadiness
+
 export type SetupRemedy = {
   hint: string
   command?: string

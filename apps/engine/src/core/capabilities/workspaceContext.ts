@@ -28,7 +28,7 @@ export function buildWorkspaceCapabilityContext(
     git: {
       ready: report.git.status === "ok",
       mandatory: true,
-      defaultBranch: report.github.defaultBranch ?? null,
+      defaultBranch: report.git.defaultBranch ?? report.github.defaultBranch ?? null,
     },
     github: {
       ready: report.github.status === "ok" && report.gh.status === "ok",

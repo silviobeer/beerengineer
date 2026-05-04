@@ -125,7 +125,10 @@ function summarizeReviewResult(review: Awaited<ReturnType<typeof runStoryReviewT
   const designSystem = designSystemGate(review.designSystem)
   const coderabbit = coderabbitGate(review.coderabbit)
   const sonar = sonarGate(review.sonarcloud)
-  const failedBecause = reviewFailureReasons(designSystem, coderabbit, sonar)
+  const failedBecause = [
+    ...reviewFailureReasons(designSystem, coderabbit, sonar),
+    ...capabilityBlockingReasons(review.capabilities),
+  ]
   return {
     designSystemFindings,
     coderabbitFindings,
@@ -138,6 +141,12 @@ function summarizeReviewResult(review: Awaited<ReturnType<typeof runStoryReviewT
     outcome: reviewOutcome(designSystem, coderabbit, sonar, failedBecause),
     reviewCapabilities: review.capabilities,
   }
+}
+
+function capabilityBlockingReasons(capabilities: ReviewCapabilityResult[]): string[] {
+  return capabilities
+    .filter(capability => capability.blocking)
+    .map(capability => `${capability.capabilityId} review capability blocked the story gate: ${capability.summary}`)
 }
 
 function buildFeedbackSummary(result: StoryReviewRun): string[] {

@@ -1,8 +1,9 @@
 import { resolve } from "node:path"
 import { readFile } from "node:fs/promises"
 import type { Repos } from "../../db/repositories.js"
+import { DEFAULT_SONAR_READINESS } from "../../setup/types.js"
 import type { SonarReadiness } from "../../setup/types.js"
-import type { SonarConfig, WorkspaceCapabilityResult, WorkspaceConfigFile } from "../../types/workspace.js"
+import type { SonarConfig, WorkspaceCapabilityResult, WorkspaceConfigFile, WorkspacePreflightReport } from "../../types/workspace.js"
 import {
   SONAR_PROPERTIES_FILE,
   SONAR_WORKFLOW_FILE,
@@ -59,7 +60,7 @@ export type SonarAuditReport = {
   sourceRoots: string[]
   testRoots: string[]
   coverageReports: string[]
-  readiness: NonNullable<Awaited<ReturnType<typeof runWorkspacePreflight>>["report"]["sonar"]["readiness"]>
+  readiness: SonarReadiness
   findings: SonarAuditFinding[]
   checkedAt: string
 }
@@ -83,15 +84,6 @@ export type SonarEnableResult = {
   nextActions: string[]
   preflight: Awaited<ReturnType<typeof runWorkspacePreflight>>["report"]
 }
-
-const DEFAULT_READINESS = {
-  scanner: "unknown",
-  token: "unknown",
-  config: "missing",
-  coverage: "unknown",
-  warnings: [],
-  details: {},
-} satisfies SonarReadiness
 
 function sonarConfigForContext(sonar: SonarConfig, context: WorkspaceCapabilityContext): SonarConfig {
   if (!sonar.enabled) return { enabled: false }
@@ -200,7 +192,7 @@ export async function auditWorkspaceSonarCapability(root: string, config: Worksp
   const sonar = currentSonarConfig(config)
   const preflight = await runWorkspacePreflight(root, { sonarHostUrl: sonar.hostUrl, sonarEnabled: sonar.enabled })
   const props = await loadWorkspaceSonarProperties(root)
-  const readiness: SonarReadiness = preflight.report.sonar.readiness ?? DEFAULT_READINESS
+  const readiness: SonarReadiness = preflight.report.sonar.readiness ?? DEFAULT_SONAR_READINESS
   const sourceRoots = props ? splitConfigList(props["sonar.sources"]) : await detectSonarSourceRoots(root)
   const testRoots = props ? splitConfigList(props["sonar.tests"]) : []
   const coverageReports = props ? splitConfigList(props["sonar.javascript.lcov.reportPaths"]) : []
@@ -299,10 +291,28 @@ export async function applyWorkspaceSonarRepair(root: string, config: WorkspaceC
         createdAt: config.createdAt,
       }))
       action.applied = true
+    } else {
+      action.applied = false
+      action.reason = `No automatic repair handler is available for ${action.id}`
     }
   }
   const refreshedConfig = await readWorkspaceConfig(root) ?? config
   return { ...planned, mode: "apply", status: (await auditWorkspaceSonarCapability(root, refreshedConfig)).status }
+}
+
+function missingWorkspacePreflight(key: string): WorkspacePreflightReport {
+  const reason = `Workspace not found: ${key}`
+  return {
+    git: { status: "skipped", detail: reason, defaultBranch: null },
+    github: { status: "skipped", detail: reason, defaultBranch: null },
+    gh: { status: "skipped", detail: reason },
+    sonar: { status: "skipped", detail: reason, readiness: DEFAULT_SONAR_READINESS },
+    coderabbit: { status: "skipped", detail: reason },
+    capabilities: [
+      { capabilityId: "sonar", status: "failed", summary: "sonar failed readiness checks", reason },
+    ],
+    checkedAt: new Date().toISOString(),
+  }
 }
 
 export async function enableRegisteredWorkspaceSonarCapability(
@@ -317,7 +327,7 @@ export async function enableRegisteredWorkspaceSonarCapability(
       actions: [],
       warnings: [],
       nextActions: [`Register workspace ${key} first`],
-      preflight: (await runWorkspacePreflight(process.cwd(), { sonarEnabled: true })).report,
+      preflight: missingWorkspacePreflight(key),
     }
   }
   const config = await readWorkspaceConfig(row.root_path)

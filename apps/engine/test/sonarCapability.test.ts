@@ -8,6 +8,7 @@ import {
   applyWorkspaceSonarRepair,
   auditWorkspaceSonarCapability,
   buildWorkspaceCapabilityContext,
+  enableRegisteredWorkspaceSonarCapability,
   enableWorkspaceSonarCapability,
   initGit,
   planWorkspaceSonarRepair,
@@ -95,6 +96,28 @@ test("PROJ-3-PRD-3 AC-1 workspace sonar enable uses the explicit Sonar enablemen
     rmSync(root, { recursive: true, force: true })
   }
 }))
+
+test("workspace sonar enable for a missing workspace returns a static preflight sentinel", async () => {
+  const root = mkdtempSync(join(tmpdir(), "be2-sonar-cap-"))
+  const db = initDatabase(join(root, "db.sqlite"))
+  try {
+    const result = await enableRegisteredWorkspaceSonarCapability(new Repos(db), "missing-demo")
+    assert.equal(result.ok, false)
+    assert.equal(result.capability.reason, "Workspace not found: missing-demo")
+    assert.equal(result.preflight.git.status, "skipped")
+    assert.equal(result.preflight.git.defaultBranch, null)
+    assert.equal(result.preflight.sonar.readiness?.config, "missing")
+    assert.deepEqual(result.preflight.capabilities, [{
+      capabilityId: "sonar",
+      status: "failed",
+      summary: "sonar failed readiness checks",
+      reason: "Workspace not found: missing-demo",
+    }])
+  } finally {
+    db.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
 
 test("PROJ-3-PRD-3 AC-2 Sonar enablement writes only Sonar-owned artifacts and metadata", () => withoutAmbientSonarToken(async () => {
   const { root } = await makeWorkspace()

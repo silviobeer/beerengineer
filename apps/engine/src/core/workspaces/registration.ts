@@ -3,6 +3,7 @@ import { stdin as input, stdout as output } from "node:process"
 import { basename, resolve } from "node:path"
 import { mkdir, rm } from "node:fs/promises"
 import type { Repos } from "../../db/repositories.js"
+import { DEFAULT_SONAR_READINESS } from "../../setup/types.js"
 import type { AppConfig, SetupReport, SonarReadiness } from "../../setup/types.js"
 import type {
   HarnessProfile,
@@ -96,14 +97,6 @@ type RegisterWorkspaceState = {
   validation: ReturnType<typeof validateHarnessProfile> & { ok: true }
   byKey: ReturnType<Repos["getWorkspaceByKey"]>
 }
-
-const DEFAULT_SONAR_READINESS = {
-  scanner: "unknown",
-  token: "unknown",
-  config: "missing",
-  coverage: "unknown",
-  warnings: [],
-} satisfies SonarReadiness
 
 const HARNESS_PROFILE_OPTIONS = [
   ["1", { mode: "codex-first" }, "codex-first"],

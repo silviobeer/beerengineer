@@ -1,6 +1,6 @@
 import type { CapabilityId, ReviewCapabilityEnvelope, ReviewOutcome } from "./types.js"
 
-function reviewOutcome<ToolResult>(
+function makeReviewOutcome<ToolResult>(
   capabilityId: CapabilityId,
   phase: string,
   outcome: Exclude<ReviewOutcome, "ran">,
@@ -23,12 +23,13 @@ export function reviewRan<ToolResult>(
   phase: string,
   summary: string,
   toolResult?: ToolResult,
+  options: { blocking?: boolean } = {},
 ): ReviewCapabilityEnvelope<ToolResult> {
   return {
     capabilityId,
     phase,
     outcome: "ran",
-    blocking: false,
+    blocking: options.blocking ?? false,
     summary,
     artifacts: [],
     ...(toolResult === undefined ? {} : { toolResult }),
@@ -40,7 +41,7 @@ export function skippedReviewOutcome<ToolResult = unknown>(
   phase: string,
   reason: string,
 ): ReviewCapabilityEnvelope<ToolResult> {
-  return reviewOutcome(capabilityId, phase, "skipped", reason)
+  return makeReviewOutcome(capabilityId, phase, "skipped", reason)
 }
 
 export function notConfiguredReviewOutcome<ToolResult = unknown>(
@@ -48,7 +49,7 @@ export function notConfiguredReviewOutcome<ToolResult = unknown>(
   phase: string,
   reason: string,
 ): ReviewCapabilityEnvelope<ToolResult> {
-  return reviewOutcome(capabilityId, phase, "not_configured", reason)
+  return makeReviewOutcome(capabilityId, phase, "not_configured", reason)
 }
 
 export function failedReviewOutcome<ToolResult = unknown>(
@@ -56,7 +57,7 @@ export function failedReviewOutcome<ToolResult = unknown>(
   phase: string,
   reason: string,
 ): ReviewCapabilityEnvelope<ToolResult> {
-  return reviewOutcome(capabilityId, phase, "failed", reason)
+  return makeReviewOutcome(capabilityId, phase, "failed", reason)
 }
 
 export function notMeaningfulReviewOutcome<ToolResult = unknown>(
@@ -64,5 +65,5 @@ export function notMeaningfulReviewOutcome<ToolResult = unknown>(
   phase: string,
   reason: string,
 ): ReviewCapabilityEnvelope<ToolResult> {
-  return reviewOutcome(capabilityId, phase, "not_meaningful", reason)
+  return makeReviewOutcome(capabilityId, phase, "not_meaningful", reason)
 }

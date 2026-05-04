@@ -6,9 +6,10 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { runRalphStory, writeWaveSummary, type StoryArtifacts } from "../src/stages/execution/ralphRuntime.js"
+import { runStoryReview } from "../src/stages/execution/ralphStoryReview.js"
 import { layout } from "../src/core/workspaceLayout.js"
 import { resetTestReviewAdapters, setTestReviewAdapters } from "../src/review/registry.js"
-import type { StoryExecutionContext, StoryTestPlanArtifact } from "../src/types.js"
+import type { StoryExecutionContext, StoryImplementationArtifact, StoryTestPlanArtifact } from "../src/types.js"
 
 function makeCtx(root: string) {
   return { workspaceId: "ws-ralph", workspaceRoot: root, runId: "run-ralph", itemSlug: "ralph-item", baseBranch: "main" as const }
@@ -201,6 +202,55 @@ test("PROJ-3-PRD-4 AC-12 required non-review failures can still block by their o
     })
     assert.equal(result.implementation.status, "blocked")
     assert.match(result.implementation.finalSummary, /required branch precondition failed/)
+  })
+})
+
+test("blocking review capability envelopes close the story gate", async () => {
+  await withTmpCwd(async () => {
+    setTestReviewAdapters({
+      coderabbit: async () => ({
+        status: "ran",
+        findings: [{ source: "coderabbit", severity: "critical", message: "blocking finding" }],
+        summary: "CodeRabbit reported blocking findings.",
+        rawPath: "coderabbit.raw.txt",
+        command: [],
+        exitCode: 0,
+      }),
+      sonarcloud: async () => ({
+        status: "ran",
+        passed: true,
+        conditions: [],
+        findings: [],
+        rawScanPath: "sonar-scan.raw.txt",
+        rawGatePath: "sonar-gate.raw.json",
+        command: [],
+        exitCode: 0,
+      }),
+    })
+    try {
+      const result = await runStoryReview({
+        reviewCycle: 1,
+        storyContext: storyContext("US-CAP-BLOCK"),
+        artifactsDir: process.cwd(),
+        baselinePath: join(process.cwd(), "missing-baseline.json"),
+        implementation: {
+          story: { id: "US-CAP-BLOCK", title: "Story US-CAP-BLOCK" },
+          mode: "ralph-wiggum",
+          status: "passed",
+          implementationGoal: "",
+          maxIterations: 1,
+          maxReviewCycles: 1,
+          currentReviewCycle: 0,
+          iterations: [],
+          changedFiles: ["src/demo.ts"],
+          finalSummary: "implemented",
+        } satisfies StoryImplementationArtifact,
+      })
+      assert.equal(result.outcome, "revise")
+      assert.ok(result.failedBecause.some(reason => reason.includes("coderabbit review capability blocked the story gate")))
+    } finally {
+      resetTestReviewAdapters()
+    }
   })
 })
 

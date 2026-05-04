@@ -155,6 +155,10 @@ export type WorkspacePreflightCheck = {
   detail?: string
 }
 
+export type WorkspaceGitPreflight = WorkspacePreflightCheck & {
+  defaultBranch?: string | null
+}
+
 export type WorkspaceGitHubPreflight = WorkspacePreflightCheck & {
   owner?: string
   repo?: string
@@ -173,7 +177,7 @@ export type WorkspaceSonarPreflight = WorkspacePreflightCheck & {
 }
 
 export type WorkspacePreflightReport = {
-  git: WorkspacePreflightCheck
+  git: WorkspaceGitPreflight
   github: WorkspaceGitHubPreflight
   gh: WorkspaceGhPreflight
   sonar: WorkspaceSonarPreflight

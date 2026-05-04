@@ -411,6 +411,7 @@ export async function runWorkspacePreflight(
     git: {
       status: gitProbe.ok && gitProbe.stdout === "true" ? "ok" : "missing",
       detail: gitProbe.ok ? undefined : (gitProbe.stderr || undefined),
+      defaultBranch,
     },
     github,
     gh,
