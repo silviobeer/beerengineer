@@ -121,6 +121,7 @@ export class Repos {
   }
 
   upsertWorkspace(input: {
+    id?: string
     key: string
     name: string
     description?: string | null
@@ -132,7 +133,7 @@ export class Repos {
     const existing = this.getWorkspaceByKey(input.key)
     if (!existing) {
       const row: WorkspaceRow = this.withTimestamps({
-        id: randomUUID(),
+        id: input.id ?? randomUUID(),
         key: input.key,
         name: input.name,
         description: input.description ?? null,
@@ -368,9 +369,9 @@ export class Repos {
     return this.getAll("SELECT * FROM runs WHERE item_id = ? ORDER BY created_at DESC", itemId)
   }
 
-  createItem(input: { workspaceId: string; code?: string; title: string; description: string }): ItemRow {
+  createItem(input: { id?: string; workspaceId: string; code?: string; title: string; description: string }): ItemRow {
     const row: ItemRow = this.withTimestamps({
-      id: randomUUID(),
+      id: input.id ?? randomUUID(),
       workspace_id: input.workspaceId,
       code: input.code ?? this.nextItemCode(input.workspaceId),
       title: input.title,
@@ -412,9 +413,9 @@ export class Repos {
     return this.insertRow("projects", row)
   }
 
-  createRun(input: { workspaceId: string; itemId: string; title: string; owner?: RunOwner; workspaceFsId?: string | null }): RunRow {
+  createRun(input: { id?: string; workspaceId: string; itemId: string; title: string; owner?: RunOwner; workspaceFsId?: string | null }): RunRow {
     const row: RunRow = this.withTimestamps({
-      id: randomUUID(),
+      id: input.id ?? randomUUID(),
       workspace_id: input.workspaceId,
       item_id: input.itemId,
       title: input.title,
