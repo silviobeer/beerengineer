@@ -49,7 +49,11 @@ describe("SetupSupportZone", () => {
   it("passes the setup workspace id into Supabase validation", async () => {
     const fetchSpy = vi.fn(async () => Response.json({ ok: true, projectRef: "proj_1", region: "eu" }));
     vi.stubGlobal("fetch", fetchSpy);
-    render(<SetupSupportZone report={blockedReport()} configView={configView()} />);
+    const view = configView();
+    render(<SetupSupportZone report={blockedReport()} configView={{
+      ...view,
+      supabase: { ...view.supabase, projectRef: undefined, region: undefined, tokenPresent: false },
+    }} />);
 
     fireEvent.change(screen.getByLabelText("Supabase Management API token"), { target: { value: "sbp_token" } });
     fireEvent.change(screen.getByLabelText("Supabase project ref"), { target: { value: "proj_1" } });
