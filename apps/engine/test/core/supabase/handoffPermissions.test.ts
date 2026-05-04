@@ -8,7 +8,7 @@ import { storeSecret } from "../../../src/setup/secretStore.js"
 import { SUPABASE_MANAGEMENT_TOKEN_SECRET_REF } from "../../../src/setup/secretMetadata.js"
 
 test("PROJ-4 PRD-6 US-2: handoff directory and file permissions are restrictive", async (t) => {
-  if (process.platform === "win32") t.skip("POSIX permissions only")
+  if (process.platform === "win32") return t.skip("POSIX permissions only")
   const dir = mkdtempSync(join(tmpdir(), "be2-handoff-perms-"))
   const storePath = join(dir, "secrets.json")
   storeSecret(SUPABASE_MANAGEMENT_TOKEN_SECRET_REF, "sbp", { storePath })
