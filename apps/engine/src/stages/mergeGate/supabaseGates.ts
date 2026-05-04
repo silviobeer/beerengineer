@@ -4,6 +4,10 @@ import type { DestructiveMigrationFinding } from "../../core/supabase/destructiv
 
 export type MergeGateResult = { ok: true; message?: string } | { ok: false; error: string; details?: unknown }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
 export function finalWaveValidationGate(input: { dbRelevant: boolean; lifecycleState?: string | null; failingStep?: string; providerMessage?: string }): MergeGateResult {
   if (!input.dbRelevant) return { ok: true }
   if (input.lifecycleState === "validated") return { ok: true }
@@ -48,6 +52,8 @@ export async function completeMergeWithProductionMigration(input: {
 }): Promise<MergeGateResult> {
   let result = await input.adapter.migrateProduction(input.context)
   if (!result.ok && result.context?.retryAfter) {
+    const delayMs = Number(result.context.retryAfter) * 1_000
+    if (Number.isFinite(delayMs) && delayMs > 0) await sleep(delayMs)
     result = await input.adapter.migrateProduction(input.context)
   }
   if (!result.ok) {
