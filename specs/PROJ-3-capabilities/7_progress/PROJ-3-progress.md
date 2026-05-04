@@ -173,3 +173,9 @@
 
 ## Open Blockers
 - None.
+
+### Wave 1 Gate — PASSED (2026-05-04T11:55:42+02:00)
+- [x] Ralph: 18 AC commands green
+- [x] Build: `npm run typecheck`
+- [x] CodeRabbit: 0 non-advisory findings (advisory severities: medium,low,minor)
+- [x] Smoke: backend-only
