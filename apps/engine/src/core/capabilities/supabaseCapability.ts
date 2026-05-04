@@ -79,7 +79,7 @@ export function createSupabaseCapability(options: SupabaseCapabilityOptions = {}
       return preflightReady("supabase", {
         projectRef: localConfig(options).projectRef,
         plan: project.plan ?? "unknown",
-        branchingEnabled: project.branchingEnabled !== false,
+        branchingEnabled: project.branchingEnabled ?? true,
         branchQuotaUsage: branches.length,
         branchQuotaLimit: project.branchQuotaLimit ?? null,
       })
