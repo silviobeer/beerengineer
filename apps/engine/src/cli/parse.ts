@@ -86,6 +86,13 @@ function parseWorkspaceSubcommand(context: ParseArgsContext): Command | null {
   if (second === "open") return { kind: "workspace-open", key: argv[2] }
   if (second === "backfill") return { kind: "workspace-backfill", json }
   if (second === "gc-worktrees") return { kind: "workspace-worktree-gc", key: argv[2], json }
+  if (second === "sonar") {
+    const action = argv[2]
+    if (action === "enable") return { kind: "workspace-sonar-enable", key: argv[3], json }
+    if (action === "audit") return { kind: "workspace-sonar-audit", key: argv[3], json }
+    if (action === "repair") return { kind: "workspace-sonar-repair", key: argv[3], json, apply: argv.includes("--apply") }
+    return { kind: "unknown", token: argv.join(" ") }
+  }
   return null
 }
 
@@ -304,6 +311,9 @@ export function printHelp(): void {
     "    beerengineer workspace open <key>                    Print the workspace root path",
     "    beerengineer workspace backfill [--json]             Write missing .beerengineer/workspace.json files",
     "    beerengineer workspace gc-worktrees <key> [--json]   Remove orphaned beerengineer_ story worktrees",
+    "    beerengineer workspace sonar enable <key> [--json]   Enable the Sonar workspace capability",
+    "    beerengineer workspace sonar audit <key> [--json]    Audit Sonar scope and readiness",
+    "    beerengineer workspace sonar repair <key> [--apply]  Plan or apply safe Sonar repairs",
     "    beerengineer projects [--json]                       Alias for workspace list",
     "    beerengineer project get <key> [--json]              Alias for workspace get",
     "    beerengineer item get <id|code> [--workspace <key>]  Show one item",

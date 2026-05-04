@@ -106,6 +106,9 @@ test("parseArgs recognizes help, doctor, start ui, workflow, item action, and un
   assert.deepEqual(parseArgs(["workspace", "remove", "demo", "--purge", "--yes"]), { kind: "workspace-remove", key: "demo", json: false, purge: true, yes: true, noInteractive: false })
   assert.deepEqual(parseArgs(["workspace", "open", "demo"]), { kind: "workspace-open", key: "demo" })
   assert.deepEqual(parseArgs(["workspace", "backfill", "--json"]), { kind: "workspace-backfill", json: true })
+  assert.deepEqual(parseArgs(["workspace", "sonar", "enable", "demo", "--json"]), { kind: "workspace-sonar-enable", key: "demo", json: true })
+  assert.deepEqual(parseArgs(["workspace", "sonar", "audit", "demo", "--json"]), { kind: "workspace-sonar-audit", key: "demo", json: true })
+  assert.deepEqual(parseArgs(["workspace", "sonar", "repair", "demo", "--apply", "--json"]), { kind: "workspace-sonar-repair", key: "demo", json: true, apply: true })
   assert.deepEqual(parseArgs(["chat", "list", "--workspace", "demo", "--json"]), { kind: "chat-list", workspaceKey: "demo", json: true, all: false, compact: false })
   assert.deepEqual(parseArgs(["chat", "list", "--all", "--json"]), { kind: "chat-list", workspaceKey: undefined, json: true, all: true, compact: false })
   assert.deepEqual(parseArgs(["chat", "list", "--all", "--compact"]), { kind: "chat-list", workspaceKey: undefined, json: false, all: true, compact: true })
@@ -144,6 +147,11 @@ test("parseArgs recognizes help, doctor, start ui, workflow, item action, and un
   })
   assert.deepEqual(parseArgs(["item", "action"]), { kind: "unknown", token: "item action" })
   assert.deepEqual(parseArgs(["wat"]), { kind: "unknown", token: "wat" })
+})
+
+test("PROJ-3-PRD-3 AC-4 generic workspace capability commands are not required", () => {
+  assert.deepEqual(parseArgs(["workspace", "sonar", "enable", "demo", "--json"]), { kind: "workspace-sonar-enable", key: "demo", json: true })
+  assert.deepEqual(parseArgs(["workspace", "capability", "sonar", "enable", "demo"]), { kind: "unknown", token: "workspace capability sonar enable demo" })
 })
 
 test("doctor --json reports blocked status when the app config is uninitialized", async () => {

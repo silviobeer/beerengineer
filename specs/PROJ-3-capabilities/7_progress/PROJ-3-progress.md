@@ -1,7 +1,7 @@
 # PROJ-3 Progress
 
 ## Status: in progress
-## Current Wave: 2
+## Current Wave: 3
 ## BASE_SHA: 369485f6014fb5f98cf3206ec4f9372599e5d2e5
 
 ---
@@ -306,3 +306,135 @@
 - [x] Build: `npm run typecheck`
 - [x] CodeRabbit: 0 non-advisory findings (advisory severities: medium,low,minor)
 - [x] Smoke: backend-only
+
+---
+
+## Wave 3
+
+- Wave start tag: `wave-3-start-PROJ-3`
+- Implementation mode: local lead implementation; no subagents spawned because this Codex session permits delegation only on explicit user delegation requests.
+
+## PROJ-3-PRD-3-US-1: Explicit Sonar enablement — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 1.1 Sonar Enable Capability Core | ✓ | ✓ | ✓ |
+| 1.2 CLI Parse And Dispatch | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-1 | `workspace sonar enable` exists as the explicit Sonar capability enablement path. | ✓ |
+| AC-2 | Sonar enablement writes only Sonar-owned artifacts/metadata. | ✓ |
+| AC-3 | Missing prerequisites return capability status plus next actions. | ✓ |
+| AC-4 | A generic `workspace capability ...` command is not required. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- Pass 1: PASS — targeted AC-1 through AC-4 commands exited 0.
+
+## PROJ-3-PRD-3-US-2: Workspace add Sonar convenience path — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 2.1 Shared Sonar Enablement Core | ✓ | ✓ | ✓ |
+| 2.2 Optional Failure Outcomes | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-5 | `workspace add --sonar` and `workspace sonar enable` share the same Sonar enablement behavior. | ✓ |
+| AC-6 | Optional Sonar failure does not roll back otherwise valid registration. | ✓ |
+| AC-7 | Failed/not-configured capability outcomes include a reason. | ✓ |
+| AC-8 | Best-effort Sonar writes can be audited and recovered. | ✓ |
+| AC-9 | Partial Sonar states can be recovered by rerunning enablement or repair. | ✓ |
+| AC-10 | Audit detects partial Sonar states. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- Pass 1: PASS — targeted AC-5 through AC-10 commands exited 0.
+
+## PROJ-3-PRD-3-US-3: Sonar audit — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 3.1 Sonar Audit Report | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-11 | `workspace sonar audit` reports Sonar source roots, test roots, coverage reports, and relevant readiness. | ✓ |
+| AC-12 | Audit reports drift structurally without throwing. | ✓ |
+| AC-13 | Audit classifies drift by risk and repairability. | ✓ |
+| AC-14 | Audit is read-only. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- Pass 1: PASS — targeted AC-11 through AC-14 commands exited 0.
+
+## PROJ-3-PRD-3-US-4: Sonar repair dry run — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 4.1 Sonar Repair Plan | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-15 | `workspace sonar repair` produces a dry-run plan by default. | ✓ |
+| AC-16 | Dry-run repair separates safe repairs from risky and ambiguous cases. | ✓ |
+| AC-17 | Risky or ambiguous candidates include reasons. | ✓ |
+| AC-18 | Dry-run repair does not modify files. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- Pass 1: PASS — targeted AC-15 through AC-18 commands exited 0.
+
+## PROJ-3-PRD-3-US-5: Sonar repair apply — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 5.1 Safe Sonar Repair Apply | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-19 | `repair --apply` writes only safe deterministic repairs. | ✓ |
+| AC-20 | Risky or ambiguous candidates are not applied. | ✓ |
+| AC-21 | Config and workspace metadata are treated as one repair unit. | ✓ |
+| AC-22 | Partial repair failure is detectable and recomputable. | ✓ |
+| AC-23 | `repair --apply` is idempotent. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- Pass 1: PASS — targeted AC-19 through AC-23 commands exited 0.
+
+## PROJ-3-PRD-3-US-6: Sonar lifecycle ownership — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 6.1 Sonar Lifecycle Ownership | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-24 | Sonar lifecycle logic is owned by the Sonar capability. | ✓ |
+| AC-25 | Registration and review orchestrate through Sonar capability contracts. | ✓ |
+| AC-26 | Review orchestration can consume Sonar capability lifecycle ownership. | ✓ |
+| AC-27 | The lifecycle covers the workspace quality lifecycle primitives. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- Pass 1: PASS — targeted AC-24 through AC-27 commands exited 0.
+
+### Wave 3 Local Verification
+- Ralph AC commands: PASS — all 27 Wave 3 `ac_commands` from `wave-gate-config.json` exited 0.
+- Focused suites: PASS — `test/sonarCapability.test.ts`, `test/workspaceCapabilities.test.ts`, and workspace-matching `test/cli.test.ts` checks exited 0.
+- Build: PASS — `npm run typecheck --workspace=@beerengineer/engine`.
+- Diff hygiene: PASS — `git diff --check`.

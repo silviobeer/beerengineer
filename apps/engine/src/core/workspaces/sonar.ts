@@ -34,7 +34,7 @@ type CoverageProducerDetection = {
   reasons: string[]
 }
 
-async function detectCoverageProducer(root: string): Promise<CoverageProducerDetection> {
+export async function detectCoverageProducer(root: string): Promise<CoverageProducerDetection> {
   const rootPkgPath = new URL(`file://${root}/package.json`).pathname
   if (!(await pathExists(rootPkgPath))) return { stack: "unknown", hasProducer: false, reasons: [] }
   const rootPkg = await readJsonIfPresent<{
@@ -51,7 +51,7 @@ async function detectCoverageProducer(root: string): Promise<CoverageProducerDet
   return { stack: "js-ts", hasProducer: reasons.size > 0, reasons: Array.from(reasons) }
 }
 
-async function detectSonarSourceRoots(root: string): Promise<string[]> {
+export async function detectSonarSourceRoots(root: string): Promise<string[]> {
   const roots: string[] = []
   for (const candidate of SONAR_GENERATOR_ROOTS) {
     if (await pathExists(new URL(`file://${root}/${candidate}`).pathname)) roots.push(candidate)
@@ -59,7 +59,7 @@ async function detectSonarSourceRoots(root: string): Promise<string[]> {
   return roots
 }
 
-async function loadWorkspaceSonarProperties(root: string) {
+export async function loadWorkspaceSonarProperties(root: string) {
   try {
     return parseSonarProperties(await readFile(sonarPropertiesPath(root), "utf8"))
   } catch {
@@ -133,7 +133,7 @@ async function validateSonarCoverage(
   return "unknown"
 }
 
-async function validateSonarProperties(root: string, props: Record<string, string> | null): Promise<SonarReadiness> {
+export async function validateSonarProperties(root: string, props: Record<string, string> | null): Promise<SonarReadiness> {
   const warnings: string[] = []
   const details: NonNullable<SonarReadiness["details"]> = {}
   const coverageProducer = await detectCoverageProducer(root)
@@ -428,7 +428,7 @@ export async function runWorkspacePreflight(
   }
 }
 
-async function buildGeneratedSonarProperties(root: string, owner: string, repo: string): Promise<{ content?: string; warnings: string[] }> {
+export async function buildGeneratedSonarProperties(root: string, owner: string, repo: string): Promise<{ content?: string; warnings: string[] }> {
   const sourceRoots = await detectSonarSourceRoots(root)
   if (sourceRoots.length === 0) {
     return { warnings: ["Sonar config generation skipped: no supported source roots were detected. Add sonar-project.properties manually if your repo uses a non-standard layout."] }

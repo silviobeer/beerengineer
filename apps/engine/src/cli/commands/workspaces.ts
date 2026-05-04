@@ -1,4 +1,10 @@
 import { createGitAdapterFromMode } from "../../core/gitAdapter.js"
+import {
+  applyWorkspaceSonarRepair,
+  auditWorkspaceSonarCapability,
+  enableRegisteredWorkspaceSonarCapability,
+  planWorkspaceSonarRepair,
+} from "../../core/capabilities/index.js"
 import { layout } from "../../core/workspaceLayout.js"
 import {
   backfillWorkspaceConfigs,
@@ -9,6 +15,7 @@ import {
   promptForWorkspaceAddDefaults,
   registerWorkspace,
   removeWorkspace,
+  readWorkspaceConfig,
 } from "../../core/workspaces.js"
 import { generateSetupReport } from "../../setup/doctor.js"
 import type { AppConfig } from "../../setup/types.js"
@@ -342,6 +349,96 @@ export async function runWorkspaceWorktreeGcCommand(key: string | undefined, jso
       result.removed.forEach(path => console.log(`    removed ${path}`))
       console.log(`  Kept worktrees: ${result.kept.length}`)
       result.kept.forEach(entry => console.log(`    kept ${entry.path} (${entry.reason})`))
+    }
+    return 0
+  })
+}
+
+async function loadRegisteredWorkspaceConfig(repos: Parameters<typeof getRegisteredWorkspace>[0], key: string | undefined) {
+  if (!key) return { ok: false as const, status: 2, message: "Missing key: beerengineer workspace sonar <enable|audit|repair> <key>" }
+  const workspace = getRegisteredWorkspace(repos, key)
+  if (!workspace?.rootPath) return { ok: false as const, status: 1, message: `Workspace not found: ${key}` }
+  const config = await readWorkspaceConfig(workspace.rootPath)
+  if (!config) return { ok: false as const, status: 1, message: `.beerengineer/workspace.json is missing or invalid for ${key}` }
+  return { ok: true as const, workspace, config }
+}
+
+export async function runWorkspaceSonarEnableCommand(key: string | undefined, json = false): Promise<number> {
+  if (!key) {
+    console.error("  Missing key: beerengineer workspace sonar enable <key>")
+    return 2
+  }
+  return withRepos(async repos => {
+    const result = await enableRegisteredWorkspaceSonarCapability(repos, key)
+    if (json) {
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
+      return result.ok ? 0 : 1
+    }
+    for (const action of result.actions) console.log(`  ${action}`)
+    for (const warning of result.warnings) console.log(`  ! ${warning}`)
+    if (!result.ok) {
+      console.error(`  Sonar enable incomplete: ${result.capability.reason ?? result.capability.summary}`)
+      for (const action of result.nextActions) console.error(`  next: ${action}`)
+      return 1
+    }
+    console.log(`  Sonar enabled for ${key}`)
+    return 0
+  })
+}
+
+export async function runWorkspaceSonarAuditCommand(key: string | undefined, json = false): Promise<number> {
+  return withRepos(async repos => {
+    const loaded = await loadRegisteredWorkspaceConfig(repos, key)
+    if (!loaded.ok) {
+      console.error(`  ${loaded.message}`)
+      return loaded.status
+    }
+    const report = await auditWorkspaceSonarCapability(loaded.workspace.rootPath, loaded.config)
+    if (json) {
+      process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
+      return report.status === "failed" ? 1 : 0
+    }
+    console.log(`  Sonar audit for ${loaded.workspace.key}: ${report.status}`)
+    console.log(`  sources: ${report.sourceRoots.join(", ") || "(none)"}`)
+    console.log(`  tests: ${report.testRoots.join(", ") || "(none)"}`)
+    console.log(`  coverage: ${report.coverageReports.join(", ") || "(none)"}`)
+    for (const finding of report.findings) console.log(`  ! ${finding.id}: ${finding.message} (${finding.risk}, ${finding.repairability})`)
+    return report.status === "failed" ? 1 : 0
+  })
+}
+
+export async function runWorkspaceSonarRepairCommand(key: string | undefined, apply = false, json = false): Promise<number> {
+  return withRepos(async repos => {
+    const loaded = await loadRegisteredWorkspaceConfig(repos, key)
+    if (!loaded.ok) {
+      console.error(`  ${loaded.message}`)
+      return loaded.status
+    }
+    const report = apply
+      ? await applyWorkspaceSonarRepair(loaded.workspace.rootPath, loaded.config)
+      : await planWorkspaceSonarRepair(loaded.workspace.rootPath, loaded.config)
+    if (apply && report.actions.some(action => action.id === "sonar-disabled" && action.applied)) {
+      const updatedConfig = await readWorkspaceConfig(loaded.workspace.rootPath)
+      const currentRow = repos.getWorkspaceByKey(loaded.workspace.key)
+      if (updatedConfig) {
+        repos.upsertWorkspace({
+          key: updatedConfig.key,
+          name: updatedConfig.name,
+          description: currentRow?.description ?? null,
+          rootPath: loaded.workspace.rootPath,
+          harnessProfileJson: JSON.stringify(updatedConfig.harnessProfile),
+          sonarEnabled: updatedConfig.sonar.enabled,
+        })
+      }
+    }
+    if (json) {
+      process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
+      return 0
+    }
+    console.log(`  Sonar repair ${report.mode} for ${loaded.workspace.key}: ${report.status}`)
+    for (const action of report.actions) {
+      const suffix = action.applied ? "applied" : action.reason ?? "planned"
+      console.log(`  - ${action.id}: ${action.description} (${action.repairability}, ${suffix})`)
     }
     return 0
   })

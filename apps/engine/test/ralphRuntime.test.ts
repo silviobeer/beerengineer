@@ -123,6 +123,12 @@ test("runRalphStory goes through 3 review cycles, ending in passed + merged bran
   })
 })
 
+test("PROJ-3-PRD-3 AC-26 review orchestration can consume Sonar capability lifecycle ownership", async () => {
+  const sonar = await import("../src/core/capabilities/sonarCapability.js")
+  assert.equal(typeof sonar.auditWorkspaceSonarCapability, "function")
+  assert.equal(typeof sonar.enableWorkspaceSonarCapability, "function")
+})
+
 test("runRalphStory resumes from persisted state (no duplicate work)", async () => {
   await withTmpCwd(async () => {
     const ctx = makeCtx(process.cwd())
