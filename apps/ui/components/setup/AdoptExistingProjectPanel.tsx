@@ -13,7 +13,9 @@ export type AdoptExistingProjectState = {
 export function AdoptExistingProjectPanel({
   state,
   onConfirmChange,
-}: Readonly<{ state: AdoptExistingProjectState; onConfirmChange?: (confirmed: boolean) => void }>) {
+  onCreateBranch = () => undefined,
+  onCancel = () => undefined,
+}: Readonly<{ state: AdoptExistingProjectState; onConfirmChange?: (confirmed: boolean) => void; onCreateBranch?: () => void; onCancel?: () => void }>) {
   const [confirmed, setConfirmed] = useState(false);
   if (!state.occupancy) return null;
   const blocked = state.requiresBaseline;
@@ -43,8 +45,11 @@ export function AdoptExistingProjectPanel({
           <span>I understand beerengineer will adopt this existing project and create a persistent test branch.</span>
         </label>
       )}
-      <button type="button" disabled={blocked || !confirmed} className="border border-amber-500 px-2 py-1 text-xs text-amber-200 disabled:opacity-45">
+      <button type="button" disabled={blocked || !confirmed} onClick={onCreateBranch} className="border border-amber-500 px-2 py-1 text-xs text-amber-200 disabled:opacity-45">
         Create persistent test branch
+      </button>
+      <button type="button" onClick={onCancel} className="ml-2 border border-zinc-700 px-2 py-1 text-xs text-zinc-200">
+        Cancel
       </button>
     </section>
   );

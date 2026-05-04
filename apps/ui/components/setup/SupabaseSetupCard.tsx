@@ -19,10 +19,11 @@ export function SupabaseSetupCard({ workspaceId = "default", supabase }: Readonl
   const [token, setToken] = useState("");
   const [projectRef, setProjectRef] = useState("");
   const [mode, setMode] = useState<"leave" | "rotate" | "disconnect">("leave");
+  const [isConnected, setIsConnected] = useState(Boolean(supabase?.projectRef));
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const connected = Boolean(supabase?.projectRef);
+  const connected = isConnected && Boolean(supabase?.projectRef);
 
   async function validate() {
     setBusy(true);
@@ -68,6 +69,31 @@ export function SupabaseSetupCard({ workspaceId = "default", supabase }: Readonl
       setMessage("Supabase Management API token rotated.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Supabase token rotation failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function disconnect() {
+    setBusy(true);
+    setMessage(null);
+    setError(null);
+    try {
+      const res = await fetch("/api/setup/supabase/disconnect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspaceId }),
+      });
+      const body = await readJson(res);
+      if (!res.ok || (body && typeof body === "object" && (body as { ok?: unknown }).ok === false)) {
+        setError(responseMessage(body, "Supabase disconnect failed."));
+        return;
+      }
+      setIsConnected(false);
+      setMode("leave");
+      setMessage("Supabase project disconnected.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Supabase disconnect failed.");
     } finally {
       setBusy(false);
     }
@@ -123,9 +149,20 @@ export function SupabaseSetupCard({ workspaceId = "default", supabase }: Readonl
       </label>
       ) : null}
       <button type="button" disabled={busy || !token.trim() || (!connected && !projectRef.trim())} onClick={connected ? rotate : validate} className="border border-emerald-500 px-2 py-1 text-xs text-emerald-300 disabled:opacity-45">
-        {busy ? "Validating" : connected ? "Rotate token" : "Validate Supabase"}
+        {busy ? (connected ? "Rotating" : "Validating") : connected ? "Rotate token" : "Validate Supabase"}
       </button>
         </>
+      ) : null}
+      {connected && mode === "disconnect" ? (
+        <div className="space-y-2 border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-100">
+          <p>Disconnecting keeps the secret store untouched but removes Supabase project metadata from this workspace.</p>
+          <button type="button" disabled={busy} onClick={disconnect} className="border border-amber-500 px-2 py-1 text-xs text-amber-200 disabled:opacity-45">
+            {busy ? "Disconnecting" : "Confirm disconnect"}
+          </button>
+          <button type="button" disabled={busy} onClick={() => setMode("leave")} className="ml-2 border border-zinc-700 px-2 py-1 text-xs text-zinc-200 disabled:opacity-45">
+            Cancel
+          </button>
+        </div>
       ) : null}
     </article>
   );

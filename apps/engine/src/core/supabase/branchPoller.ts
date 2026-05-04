@@ -22,7 +22,7 @@ export async function pollSupabaseBranch(input: {
   timeoutMs?: number
 }): Promise<SupabaseBranch> {
   const clock = input.clock ?? { now: () => Date.now(), sleep: (ms: number) => new Promise(resolve => setTimeout(resolve, ms)) }
-  const isReady = input.isReady ?? ((branch: SupabaseBranch) => branch.status === "ACTIVE_HEALTHY" || branch.status === "ready")
+  const isReady = input.isReady ?? ((branch: SupabaseBranch) => branch.status === "ACTIVE_HEALTHY")
   const startedAt = clock.now()
   const timeoutMs = input.timeoutMs ?? 10 * 60_000
   let delayMs = input.initialDelayMs ?? 5_000
@@ -34,7 +34,8 @@ export async function pollSupabaseBranch(input: {
       if (isReady(branch)) return branch
     } catch (err) {
       if (!(err instanceof SupabaseManagementError && err.kind === "rate_limit" && err.retryAfter)) throw err
-      delayMs = Math.max(delayMs, Number(err.retryAfter) * 1_000 || delayMs)
+      const retryMs = Number(err.retryAfter) * 1_000
+      delayMs = Math.max(delayMs, Number.isFinite(retryMs) ? retryMs : delayMs)
     }
     if (clock.now() - startedAt + delayMs > timeoutMs) throw new SupabaseBranchPollTimeoutError()
     await clock.sleep(delayMs)

@@ -51,6 +51,7 @@ import {
   handleSetupRecheck,
   handleSetupStatus,
   handleSupabaseConnect,
+  handleSupabaseDisconnect,
   handleSupabaseRotate,
   handleSupabaseSettingsPatch,
 } from "./routes/setup.js"
@@ -234,6 +235,7 @@ function topLevelRouteHandlers(context: RouteContext): Partial<Record<string, ()
     "POST /setup/init": () => handleSetupInit(context.res),
     "POST /setup/recheck": () => handleSetupRecheck(context.req, context.res),
     "POST /setup/supabase/connect": () => handleSupabaseConnect(repos, context.req, context.res),
+    "POST /setup/supabase/disconnect": () => handleSupabaseDisconnect(repos, context.req, context.res),
     "POST /setup/supabase/rotate": () => handleSupabaseRotate(context.req, context.res),
     "PATCH /setup/supabase/settings": () => handleSupabaseSettingsPatch(repos, context.req, context.res),
     "GET /update/status": () => handleUpdateStatus(repos, context.appConfig, context.res, { pid: process.pid }),

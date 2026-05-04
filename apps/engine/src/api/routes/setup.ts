@@ -74,7 +74,7 @@ export async function handleSupabaseConnect(repos: Repos, req: IncomingMessage, 
 
 export async function handleSupabaseRotate(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const body = await readJson(req) as { token?: unknown; surface?: unknown }
-  const token = typeof body?.token === "string" ? body.token : ""
+  const token = typeof body?.token === "string" ? body.token.trim() : ""
   const surface = parseSurface(body?.surface)
   if (!surface) {
     json(res, 400, { ok: false, error: "invalid_surface", message: "surface is required" })
@@ -86,6 +86,17 @@ export async function handleSupabaseRotate(req: IncomingMessage, res: ServerResp
     client: new SupabaseManagementClient({ token }),
   })
   json(res, result.ok ? 200 : 400, result)
+}
+
+export async function handleSupabaseDisconnect(repos: Repos, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const body = await readJson(req) as { workspaceId?: unknown }
+  const workspaceId = typeof body?.workspaceId === "string" ? body.workspaceId.trim() : ""
+  if (!workspaceId) {
+    json(res, 400, { ok: false, error: "workspace_required", message: "workspaceId is required" })
+    return
+  }
+  const workspace = repos.disconnectWorkspaceSupabase(workspaceId)
+  json(res, workspace ? 200 : 404, workspace ? { ok: true } : { ok: false, error: "workspace_not_found", message: "Workspace not found" })
 }
 
 export async function handleSupabaseSettingsPatch(repos: Repos, req: IncomingMessage, res: ServerResponse): Promise<void> {

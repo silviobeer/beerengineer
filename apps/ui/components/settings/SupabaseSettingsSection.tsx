@@ -20,6 +20,7 @@ export function SupabaseSettingsSection({ supabase }: Readonly<{ supabase: Supab
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmProtection, setConfirmProtection] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   async function saveSettings(next: Partial<SupabaseView> & { confirmed?: boolean }) {
     setError(null);
@@ -61,6 +62,24 @@ export function SupabaseSettingsSection({ supabase }: Readonly<{ supabase: Supab
     setToken("");
     setRotateOpen(false);
     setMessage("Supabase Management API token rotated.");
+  }
+
+  async function refreshPreflight() {
+    setRefreshing(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const res = await fetch("/api/setup/recheck", { method: "POST" });
+      if (!res.ok) {
+        setError(`Supabase preflight refresh failed: ${res.status}`);
+        return;
+      }
+      setMessage("Supabase preflight refreshed.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Supabase preflight refresh failed.");
+    } finally {
+      setRefreshing(false);
+    }
   }
 
   return (
@@ -118,7 +137,9 @@ export function SupabaseSettingsSection({ supabase }: Readonly<{ supabase: Supab
           <button type="button" disabled={!token.trim()} onClick={() => void rotate()} className="border border-amber-500 px-2 py-1 text-xs text-amber-300 disabled:opacity-45">Save rotated token</button>
         </div>
       ) : null}
-      <button type="button" onClick={() => fetch("/api/setup/recheck", { method: "POST" })} className="border border-zinc-700 px-2 py-1 text-xs text-zinc-200">Refresh preflight</button>
+      <button type="button" disabled={refreshing} aria-busy={refreshing} onClick={() => void refreshPreflight()} className="border border-zinc-700 px-2 py-1 text-xs text-zinc-200 disabled:opacity-45">
+        {refreshing ? "Refreshing" : "Refresh preflight"}
+      </button>
       {message ? <output className="block text-sm text-emerald-300">{message}</output> : null}
       {error ? <p role="alert" className="text-sm text-amber-300">{error}</p> : null}
     </section>

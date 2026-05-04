@@ -19,7 +19,13 @@ export function persistentTestBranchName(workspaceKey: string): string {
 }
 
 function branchReady(branch: SupabaseBranch): boolean {
-  return branch.status === undefined || branch.status === "ACTIVE_HEALTHY" || branch.status === "ready"
+  return branch.status === "ACTIVE_HEALTHY"
+}
+
+function isAlreadyExistsError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err)
+  const status = typeof err === "object" && err ? (err as { status?: unknown }).status : undefined
+  return status === 409 || /already exists|already_exists|conflict/i.test(message)
 }
 
 export async function createOrAttachPersistentTestBranch(input: {
@@ -47,7 +53,18 @@ export async function createOrAttachPersistentTestBranch(input: {
   }
 
   const existing = (await input.client.listBranches(workspace.supabase_project_ref)).find(branch => branch.name === name)
-  const branch = existing ?? await input.client.createBranch(workspace.supabase_project_ref, { name, parentRef: input.parentRef })
+  let branch = existing
+  let action: "created" | "attached" = existing ? "attached" : "created"
+  if (!branch) {
+    try {
+      branch = await input.client.createBranch(workspace.supabase_project_ref, { name, parentRef: input.parentRef })
+    } catch (err) {
+      if (!isAlreadyExistsError(err)) throw err
+      branch = (await input.client.listBranches(workspace.supabase_project_ref)).find(candidate => candidate.name === name)
+      if (!branch) throw err
+      action = "attached"
+    }
+  }
   if (!branchReady(branch)) {
     return { ok: false, error: "branch_not_ready", message: `Persistent test branch ${name} is not ready` }
   }
@@ -56,5 +73,5 @@ export async function createOrAttachPersistentTestBranch(input: {
     name,
     status: branch.status ?? "ACTIVE_HEALTHY",
   })
-  return { ok: true, action: existing ? "attached" : "created", branch, name }
+  return { ok: true, action, branch, name }
 }

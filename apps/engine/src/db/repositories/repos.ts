@@ -261,27 +261,44 @@ export class Repos {
     productionMigrationProtection: WorkspaceRow["supabase_protection_switch"]
     expectedVersion: number
   }): { ok: true; workspace: WorkspaceRow } | { ok: false; error: "workspace_not_found" | "settings_changed" } {
-    const current = this.getWorkspace(workspaceId)
-    if (!current) return { ok: false, error: "workspace_not_found" }
-    if ((current.supabase_settings_version ?? 1) !== input.expectedVersion) return { ok: false, error: "settings_changed" }
     const nextVersion = input.expectedVersion + 1
     const timestamp = now()
-    this.run(
+    const result = this.db.prepare(
       `UPDATE workspaces
        SET supabase_cleanup_policy = ?,
            supabase_cleanup_ttl_hours = ?,
            supabase_protection_switch = ?,
            supabase_settings_version = ?,
            updated_at = ?
-       WHERE id = ?`,
+       WHERE id = ? AND COALESCE(supabase_settings_version, 1) = ?`,
+    ).run(
       input.cleanupPolicy,
       input.cleanupTtlHours,
       input.productionMigrationProtection,
       nextVersion,
       timestamp,
       workspaceId,
+      input.expectedVersion,
     )
+    if (result.changes === 0) return { ok: false, error: this.getWorkspace(workspaceId) ? "settings_changed" : "workspace_not_found" }
     return { ok: true, workspace: this.getWorkspace(workspaceId)! }
+  }
+
+  disconnectWorkspaceSupabase(workspaceId: string): WorkspaceRow | undefined {
+    this.run(
+      `UPDATE workspaces
+       SET supabase_project_ref = NULL,
+           supabase_region = NULL,
+           supabase_persistent_test_branch_ref = NULL,
+           supabase_persistent_test_branch_name = NULL,
+           supabase_persistent_test_branch_status = NULL,
+           supabase_last_checked_at = NULL,
+           updated_at = ?
+       WHERE id = ?`,
+      now(),
+      workspaceId,
+    )
+    return this.getWorkspace(workspaceId)
   }
 
   preserveWorkspaceSupabaseProtection(workspaceId: string): "off" | "on" | null {
