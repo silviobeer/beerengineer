@@ -56,3 +56,26 @@ test("PROJ-4 PRD-2 US-1: management requests time out instead of hanging", async
     && err.message === "Supabase Management API request timed out after 5ms",
   )
 })
+
+test("PROJ-4 QA-021: createBranch uses a 30s timeout independent of the global 8s default", async () => {
+  // Track the timeout used: a global 5ms timeout would abort instantly,
+  // but createBranch should still complete after a 50ms upstream delay.
+  const client = new SupabaseManagementClient({
+    token: "sbp_secret",
+    timeoutMs: 5,
+    fetch: (async (_url, init) => {
+      // Simulate a slow Supabase create-branch — would blow through a 5ms
+      // global timeout, but must succeed under createBranch's 30s override.
+      await new Promise<void>((resolve, reject) => {
+        const t = setTimeout(resolve, 50)
+        init?.signal?.addEventListener("abort", () => {
+          clearTimeout(t)
+          reject(new DOMException("aborted", "AbortError"))
+        }, { once: true })
+      })
+      return Response.json({ id: "br", ref: "br_ref", name: "test" })
+    }) as typeof fetch,
+  })
+  const branch = await client.createBranch("proj", { name: "test" })
+  assert.equal(branch.ref, "br_ref")
+})

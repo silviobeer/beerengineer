@@ -1,6 +1,7 @@
 import type { Repos } from "../../db/repositories.js"
 import type { SupabaseAdapter, SupabaseAdapterResult } from "../../core/supabase/types.js"
 import type { DestructiveMigrationFinding } from "../../core/supabase/destructiveDetector.js"
+import { parseRetryAfter } from "../../core/supabase/retryAfter.js"
 
 export type MergeGateResult = { ok: true; message?: string } | { ok: false; error: string; details?: unknown }
 
@@ -27,6 +28,15 @@ export async function mergeWithProtectionSwitch(input: {
   migrateProduction: () => Promise<SupabaseAdapterResult>
 }): Promise<MergeGateResult> {
   const snapshot = input.protectionSwitch
+  // QA-009: irreversible-ordering hazard. The git merge runs before the
+  // production migration here, so a failed migration leaves master ahead
+  // of production with no automatic rollback. This is acceptable today
+  // because the gate is not yet wired into the merge stage — Wave E will
+  // wire it. TODO(Wave E): when wiring this gate, the caller MUST supply a
+  // revertMerge callback (e.g. `git reset --hard <previous-master>` plus
+  // `git push --force-with-lease`) and invoke it when migrateProduction
+  // returns ok=false. Until then, callers must treat a migration failure
+  // here as "operator-driven recovery required".
   input.gitMerge()
   if (snapshot === "off") {
     return { ok: true, message: "production migration skipped: protection switch off; enable in settings if desired" }
@@ -52,8 +62,14 @@ export async function completeMergeWithProductionMigration(input: {
 }): Promise<MergeGateResult> {
   let result = await input.adapter.migrateProduction(input.context)
   if (!result.ok && result.context?.retryAfter) {
-    const delayMs = Number(result.context.retryAfter) * 1_000
-    if (Number.isFinite(delayMs) && delayMs > 0) await sleep(delayMs)
+    // QA-027: previously `Number(retryAfter)` returned NaN for the RFC 7231
+    // HTTP-date form, defeating the backoff. The shared helper handles
+    // both numeric seconds and HTTP-date and clamps to a sane ceiling.
+    const retryAfterValue = typeof result.context.retryAfter === "string"
+      ? result.context.retryAfter
+      : String(result.context.retryAfter)
+    const delayMs = parseRetryAfter(retryAfterValue)
+    if (delayMs !== null && delayMs > 0) await sleep(delayMs)
     result = await input.adapter.migrateProduction(input.context)
   }
   if (!result.ok) {

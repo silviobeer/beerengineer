@@ -59,13 +59,17 @@ export class SupabaseManagementClient {
   }
 
   async createBranch(projectRef: string, input: { name: string; parentRef?: string }): Promise<SupabaseBranch> {
+    // QA-021: createBranch occasionally takes >8s on the Supabase side
+    // (provisioning a database). Override the global timeout for this
+    // single call so we don't spuriously fail-fast and orphan a branch
+    // that's actually in-flight.
     return await this.request(managementEndpoints.createBranch(projectRef), {
       method: "POST",
       body: JSON.stringify({
         name: input.name,
         parent_ref: input.parentRef,
       }),
-    }) as SupabaseBranch
+    }, { timeoutMs: 30_000 }) as SupabaseBranch
   }
 
   async getBranch(projectRef: string, branchRef: string): Promise<SupabaseBranch> {
@@ -103,10 +107,11 @@ export class SupabaseManagementClient {
     return body.connectionString ?? body.connection_string ?? ""
   }
 
-  private async request(path: string, init: RequestInit = {}): Promise<unknown> {
+  private async request(path: string, init: RequestInit = {}, options: { timeoutMs?: number } = {}): Promise<unknown> {
     let response: Response
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), this.timeoutMs)
+    const effectiveTimeoutMs = options.timeoutMs ?? this.timeoutMs
+    const timeout = setTimeout(() => controller.abort(), effectiveTimeoutMs)
     try {
       response = await this.fetchImpl(`${this.baseUrl}${path}`, {
         ...init,
@@ -120,7 +125,7 @@ export class SupabaseManagementClient {
       })
     } catch (err) {
       if (controller.signal.aborted) {
-        throw new SupabaseManagementError("timeout", `Supabase Management API request timed out after ${this.timeoutMs}ms`)
+        throw new SupabaseManagementError("timeout", `Supabase Management API request timed out after ${effectiveTimeoutMs}ms`)
       }
       throw new SupabaseManagementError("network", err instanceof Error ? err.message : "Supabase request failed")
     } finally {

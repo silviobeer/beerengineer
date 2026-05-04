@@ -7,8 +7,88 @@ import { applySupabaseMigrationsAndSeeds, type SupabaseMigrationClient } from ".
 import { listSupabaseSqlFiles } from "./migrationRunner.js"
 import { migrationSmoke } from "./dbTests/migrationSmoke.js"
 import { recordSupabaseLifecycle } from "./lifecycleEvents.js"
+import { SupabaseManagementError } from "./managementClient.js"
 import { readFileSync } from "node:fs"
 import { relative } from "node:path"
+
+/**
+ * QA-009: production migrations are tracked in the target Supabase project
+ * itself. Idempotent CREATE makes startup safe to re-run; the single
+ * canonical location means the engine survives DB resets without losing
+ * the applied-migration ledger.
+ */
+const MIGRATION_TRACKING_TABLE_SQL =
+  "CREATE TABLE IF NOT EXISTS __beerengineer_migrations ("
+  + " filename TEXT PRIMARY KEY,"
+  + " applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"
+  + ");"
+
+const MIGRATION_TRACKING_SELECT_SQL = "SELECT filename FROM __beerengineer_migrations;"
+
+/**
+ * Escape a migration filename for safe embedding in a single-quoted SQL
+ * literal. Filenames are derived from the workspace tree and timestamps —
+ * this guards against the rare case of an apostrophe in a filename rather
+ * than a deliberate injection vector.
+ */
+function escapeSqlLiteral(value: string): string {
+  return value.replaceAll("'", "''")
+}
+
+/**
+ * Wrap a migration body in BEGIN ... <body> ... INSERT ... COMMIT so the
+ * tracking-table write is atomic with the schema change. If the body fails,
+ * the whole transaction rolls back, including the tracking INSERT — a
+ * subsequent run will re-attempt the file.
+ */
+function wrapMigrationInTransaction(body: string, filename: string): string {
+  const trimmed = body.trim()
+  const bodyWithSeparator = trimmed.endsWith(";") ? trimmed : `${trimmed};`
+  return [
+    "BEGIN;",
+    bodyWithSeparator,
+    `INSERT INTO __beerengineer_migrations (filename) VALUES ('${escapeSqlLiteral(filename)}');`,
+    "COMMIT;",
+  ].join("\n")
+}
+
+async function fetchAppliedMigrationFilenames(
+  client: SupabaseMigrationClient,
+  projectRef: string,
+  branchRef: string,
+): Promise<Set<string>> {
+  const result = await client.runQuery(projectRef, branchRef, MIGRATION_TRACKING_SELECT_SQL)
+  return extractFilenamesFromQueryResult(result)
+}
+
+/**
+ * The Supabase Management runQuery shape is not formally typed — different
+ * deployments return slightly different envelopes. Defensively unwrap the
+ * common ones (`{ rows: [{filename: ...}] }`, bare `[{filename: ...}]`,
+ * `{ result: [...] }`) so the caller doesn't crash on cosmetic differences.
+ */
+function extractFilenamesFromQueryResult(result: unknown): Set<string> {
+  const rows = pickRowsArray(result)
+  const filenames = new Set<string>()
+  for (const row of rows) {
+    if (row && typeof row === "object" && "filename" in row) {
+      const value = (row as { filename: unknown }).filename
+      if (typeof value === "string") filenames.add(value)
+    }
+  }
+  return filenames
+}
+
+function pickRowsArray(result: unknown): unknown[] {
+  if (Array.isArray(result)) return result
+  if (result && typeof result === "object") {
+    const obj = result as Record<string, unknown>
+    if (Array.isArray(obj.rows)) return obj.rows
+    if (Array.isArray(obj.result)) return obj.result
+    if (Array.isArray(obj.data)) return obj.data
+  }
+  return []
+}
 
 export class NotImplementedError extends Error {
   constructor(operation: string) {
@@ -121,7 +201,10 @@ export function createSupabaseAdapter(deps: { repos: Repos; client: WaveClient }
         return { ok: true, context: { status: "destroyed", branchRef: context.branchRef } }
       } catch (err) {
         const status = (err as { status?: number }).status
-        if (status === 404) {
+        // QA-023: Supabase has been observed to return 410 Gone for branches
+        // already deleted (race between two destroy attempts, or replay after
+        // a crash). Treat 410 as success — same semantics as 404.
+        if (status === 404 || status === 410) {
           recordSupabaseLifecycle({ repos: deps.repos, runId: context.runId, waveId: context.waveId, branchRef: context.branchRef, step: "cleanup", status: "passed" })
           return { ok: true, context: { status: "destroyed", branchRef: context.branchRef, idempotent: true } }
         }
@@ -149,16 +232,37 @@ export function createSupabaseAdapter(deps: { repos: Repos; client: WaveClient }
     },
     async migrateProduction(context: SupabaseWorkspaceContext): Promise<SupabaseAdapterResult> {
       if (!context.workspaceRoot || !context.projectRef) return { ok: false, context: { error: "production_migration_context_required" } }
+      const branchRef = context.branchRef ?? "production"
       try {
         const files = listSupabaseSqlFiles(context.workspaceRoot)
+        // QA-009: ensure the tracking table exists before consulting it.
+        // CREATE TABLE IF NOT EXISTS makes this safe across reruns and
+        // across cold-starts on a fresh production database.
+        await deps.client.runQuery(context.projectRef, branchRef, MIGRATION_TRACKING_TABLE_SQL)
+        const alreadyApplied = await fetchAppliedMigrationFilenames(deps.client, context.projectRef, branchRef)
         const applied: string[] = []
         for (const file of files.migrations) {
-          await deps.client.runQuery(context.projectRef, context.branchRef ?? "production", readFileSync(file, "utf8"))
-          applied.push(relative(context.workspaceRoot, file))
+          const filename = relative(context.workspaceRoot, file)
+          if (alreadyApplied.has(filename)) continue
+          // Each migration runs inside its own BEGIN/COMMIT alongside the
+          // tracking-table INSERT. A failure rolls back both the schema
+          // change and the tracking row, so a subsequent retry only
+          // re-attempts files that did not commit.
+          const body = readFileSync(file, "utf8")
+          const wrapped = wrapMigrationInTransaction(body, filename)
+          await deps.client.runQuery(context.projectRef, branchRef, wrapped)
+          applied.push(filename)
         }
         return { ok: true, context: { applied } }
       } catch (err) {
-        return { ok: false, context: { error: "production_migration_failed", message: err instanceof Error ? err.message : "Production migration failed" } }
+        const failureContext: Record<string, unknown> = {
+          error: "production_migration_failed",
+          message: err instanceof Error ? err.message : "Production migration failed",
+        }
+        if (err instanceof SupabaseManagementError && err.kind === "rate_limit" && err.retryAfter) {
+          failureContext.retryAfter = err.retryAfter
+        }
+        return { ok: false, context: failureContext }
       }
     },
   }

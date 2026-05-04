@@ -210,6 +210,17 @@ export class Repos {
     return this.getAll("SELECT * FROM workspaces ORDER BY key ASC")
   }
 
+  /**
+   * QA-010: list every workspace currently connected to a Supabase project.
+   * Used at boot by the deferred-cleanup catch-up scheduler — without this
+   * helper, workspaces with elapsed TTLs never get their cleanup re-driven
+   * after a process restart and the `supabase_deferred_cleanup` queue grows
+   * without bound.
+   */
+  listWorkspacesWithSupabase(): WorkspaceRow[] {
+    return this.getAll("SELECT * FROM workspaces WHERE supabase_project_ref IS NOT NULL ORDER BY key ASC")
+  }
+
   getWorkspace(id: string): WorkspaceRow | undefined {
     return this.byId("workspaces", id)
   }

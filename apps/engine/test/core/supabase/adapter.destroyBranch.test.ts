@@ -7,6 +7,34 @@ import { initDatabase } from "../../../src/db/connection.js"
 import { Repos } from "../../../src/db/repositories.js"
 import { createSupabaseAdapter } from "../../../src/core/supabase/adapter.js"
 
+test("PROJ-4 QA-023: destroyBranch treats provider 410 Gone as success (idempotent)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-destroy-410-"))
+  const db = initDatabase(join(dir, "db.sqlite"))
+  const repos = new Repos(db)
+  try {
+    const adapter = createSupabaseAdapter({
+      repos,
+      client: {
+        listBranches: async () => [],
+        createBranch: async () => ({ id: "br", ref: "br" }),
+        runQuery: async () => undefined,
+        deleteBranch: async () => {
+          const err = new Error("gone") as Error & { status: number }
+          err.status = 410
+          throw err
+        },
+      },
+    })
+    const result = await adapter.destroyBranch({ projectRef: "proj", branchRef: "br" })
+    assert.equal(result.ok, true)
+    assert.equal(result.context?.idempotent, true)
+    assert.equal(result.context?.status, "destroyed")
+  } finally {
+    db.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test("PROJ-4 PRD-8 US-1: destroyBranch is idempotent and retains on provider failure", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-destroy-"))
   const db = initDatabase(join(dir, "db.sqlite"))
