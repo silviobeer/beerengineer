@@ -86,7 +86,7 @@ test("PROJ-3-PRD-2 AC-1 workspace preflight reports all workspace capabilities",
     const gitInit = await initGit(dir, { defaultBranch: "main" })
     assert.equal(gitInit.ok, true)
     const preflight = await runWorkspacePreflight(dir)
-    assert.deepEqual(preflight.report.capabilities.map(cap => cap.capabilityId).sort(), ["coderabbit", "git", "github", "sonar"])
+    assert.deepEqual(preflight.report.capabilities.map(cap => cap.capabilityId).sort(), ["coderabbit", "git", "github", "sonar", "supabase"])
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -185,7 +185,7 @@ test("PROJ-3-PRD-2 AC-11 optional capability outcomes are visible in registratio
       { repos, config, appReport: readyReport() },
     )
     assert.equal(result.ok, true)
-    if (result.ok) assert.deepEqual(result.capabilityOutcomes.map(cap => cap.capabilityId).sort(), ["coderabbit", "git", "github", "sonar"])
+    if (result.ok) assert.deepEqual(result.capabilityOutcomes.map(cap => cap.capabilityId).sort(), ["coderabbit", "git", "github", "sonar", "supabase"])
   } finally {
     db.close()
     rmSync(dir, { recursive: true, force: true })

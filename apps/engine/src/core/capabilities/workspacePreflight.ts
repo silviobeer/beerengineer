@@ -58,5 +58,6 @@ export function buildWorkspacePreflightCapabilities(report: Omit<WorkspacePrefli
     capabilityResult("github", statusFromCheck(report.github, "not_configured"), report.github.detail),
     capabilityResult("sonar", sonarStatus, report.sonar.detail),
     capabilityResult("coderabbit", statusFromCheck(report.coderabbit, "not_configured"), report.coderabbit.detail),
+    capabilityResult("supabase", "not_configured", "Supabase project is not connected"),
   ]
 }

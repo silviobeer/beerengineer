@@ -368,12 +368,13 @@ async function loadRegisteredWorkspaceConfig(repos: Parameters<typeof getRegiste
 }
 
 function capabilityResultFromPreflight(rootPath: string, capabilityId: CapabilityId, preflight: Awaited<ReturnType<typeof runWorkspacePreflight>>["report"]): CapabilityCliResult {
-  const preflightKeys = {
+  type PreflightDetailKey = "git" | "github" | "sonar" | "coderabbit"
+  const preflightKeys: Partial<Record<CapabilityId, PreflightDetailKey>> = {
     git: "git",
     github: "github",
     sonar: "sonar",
     coderabbit: "coderabbit",
-  } as const satisfies Record<CapabilityId, "git" | "github" | "sonar" | "coderabbit">
+  }
   const capability = preflight.capabilities.find(item => item.capabilityId === capabilityId)
   if (!capability) {
     return {
@@ -384,13 +385,14 @@ function capabilityResultFromPreflight(rootPath: string, capabilityId: Capabilit
       details: { rootPath },
     }
   }
+  const preflightKey = preflightKeys[capabilityId]
   return {
     capabilityId,
     status: capability.status,
     summary: capability.summary,
     reason: capability.reason,
     nextActions: capability.status === "ready" ? [] : [`Run workspace ${capabilityId} status after fixing the reported issue`],
-    details: { rootPath, preflight: preflight[preflightKeys[capabilityId]] },
+    details: preflightKey ? { rootPath, preflight: preflight[preflightKey] } : { rootPath },
   }
 }
 
