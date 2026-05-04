@@ -5,11 +5,12 @@ export type SupabaseManagementClientOptions = {
   token: string
   fetch?: typeof fetch
   baseUrl?: string
+  timeoutMs?: number
 }
 
 export class SupabaseManagementError extends Error {
   constructor(
-    public readonly kind: "provider" | "rate_limit" | "network",
+    public readonly kind: "provider" | "rate_limit" | "network" | "timeout",
     message: string,
     public readonly status?: number,
     public readonly retryAfter?: string | null,
@@ -37,10 +38,12 @@ async function readProviderMessage(response: Response): Promise<string> {
 export class SupabaseManagementClient {
   private readonly fetchImpl: typeof fetch
   private readonly baseUrl: string
+  private readonly timeoutMs: number
 
   constructor(private readonly options: SupabaseManagementClientOptions) {
     this.fetchImpl = options.fetch ?? fetch
     this.baseUrl = (options.baseUrl ?? SUPABASE_MANAGEMENT_API_BASE_URL).replace(/\/$/, "")
+    this.timeoutMs = options.timeoutMs ?? 8_000
   }
 
   async listProjects(): Promise<SupabaseProject[]> {
@@ -57,15 +60,23 @@ export class SupabaseManagementClient {
 
   private async request(path: string): Promise<unknown> {
     let response: Response
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs)
     try {
       response = await this.fetchImpl(`${this.baseUrl}${path}`, {
+        signal: controller.signal,
         headers: {
           Authorization: `Bearer ${this.options.token}`,
           Accept: "application/json",
         },
       })
     } catch (err) {
+      if (controller.signal.aborted) {
+        throw new SupabaseManagementError("timeout", `Supabase Management API request timed out after ${this.timeoutMs}ms`)
+      }
       throw new SupabaseManagementError("network", err instanceof Error ? err.message : "Supabase request failed")
+    } finally {
+      clearTimeout(timeout)
     }
     if (response.ok) return await response.json()
     const message = await readProviderMessage(response)

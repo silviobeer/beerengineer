@@ -26,3 +26,17 @@ test("PROJ-4 PRD-4 US-2: detector excludes vendored paths", () => {
   }).signals.length, 0)
 })
 
+test("PROJ-4 PRD-4 US-2: detector ignores unchanged workspace Postgres client imports", () => {
+  assert.equal(detectDbRelevance({
+    changedFiles: ["src/db.ts"],
+    workspacePostgresClients: ["postgres"],
+    previousFileContents: { "src/db.ts": "import postgres from 'postgres'" },
+    fileContents: { "src/db.ts": "import postgres from 'postgres'\nexport const touched = true" },
+  }).signals.length, 0)
+  assert.equal(detectDbRelevance({
+    changedFiles: ["src/new-db.ts"],
+    workspacePostgresClients: ["postgres"],
+    previousFileContents: { "src/new-db.ts": "" },
+    fileContents: { "src/new-db.ts": "import postgres from 'postgres'" },
+  }).signals.length, 1)
+})

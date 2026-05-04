@@ -39,3 +39,20 @@ test("PROJ-4 PRD-2 US-1: rate limit errors include Retry-After", async () => {
   )
 })
 
+test("PROJ-4 PRD-2 US-1: management requests time out instead of hanging", async () => {
+  const client = new SupabaseManagementClient({
+    token: "sbp_secret",
+    timeoutMs: 5,
+    fetch: (async (_url, init) => {
+      await new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true })
+      })
+      return Response.json([])
+    }) as typeof fetch,
+  })
+  await assert.rejects(() => client.listProjects(), (err: unknown) =>
+    err instanceof SupabaseManagementError
+    && err.kind === "timeout"
+    && err.message === "Supabase Management API request timed out after 5ms",
+  )
+})

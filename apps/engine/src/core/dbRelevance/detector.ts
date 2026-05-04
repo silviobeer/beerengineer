@@ -27,7 +27,9 @@ export function detectDbRelevance(input: {
       signals.push({ kind: "import", path, reason: "New @supabase/supabase-js import" })
     }
     for (const client of input.workspacePostgresClients ?? []) {
-      if (content.includes(`"${client}"`) || content.includes(`'${client}'`)) {
+      const inCurrent = content.includes(`"${client}"`) || content.includes(`'${client}'`)
+      const inPrevious = previous.includes(`"${client}"`) || previous.includes(`'${client}'`)
+      if (inCurrent && !inPrevious) {
         signals.push({ kind: "import", path, reason: `Postgres client import: ${client}` })
       }
     }
