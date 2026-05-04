@@ -81,6 +81,7 @@ import { pruneMissingWorktreeAssignments } from "../core/portAllocator.js"
 import { markPreparedUpdateInFlight, releaseUpdateLock, type UpdateApplyResult } from "../core/updateMode.js"
 import { readActiveSecretValue } from "../setup/secretStore.js"
 import { SUPABASE_MANAGEMENT_TOKEN_SECRET_REF } from "../setup/secretMetadata.js"
+import { runStartupCleanupCatchup } from "../core/supabase/cleanupCatchup.js"
 
 const PORT = Number(process.env.PORT ?? 4100)
 const HOST = process.env.HOST ?? "127.0.0.1"
@@ -211,6 +212,42 @@ try {
 }
 pruneMissingWorktreeAssignments()
 
+// QA-010: drive any elapsed TTL cleanups that accumulated while the engine
+// was not running.  Each workspace is wrapped individually so a single
+// failure does not abort the others or crash boot.
+try {
+  const catchupSummaries = await runStartupCleanupCatchup({
+    repos,
+    db,
+    adapterFor: ({ supabaseProjectRef }) => {
+      const token = readActiveSecretValue(SUPABASE_MANAGEMENT_TOKEN_SECRET_REF) ?? ""
+      if (!token) return null
+      return createSupabaseAdapter({ repos, client: new SupabaseManagementClient({ token }) })
+    },
+  })
+  const total = catchupSummaries.reduce((n, s) => n + s.processed, 0)
+  console.error(`[supabase] startup cleanup catch-up complete: ${catchupSummaries.length} workspace(s), ${total} branch(es) processed`)
+} catch (err) {
+  console.error("[supabase] startup cleanup catch-up failed:", (err as Error).message)
+}
+
+// QA-010: periodic tick — re-drive cleanup every 5 minutes so new TTL
+// expirations that happen while the engine is running are always processed
+// in a timely fashion, not just at next boot.
+const cleanupTick = setInterval(() => {
+  void runStartupCleanupCatchup({
+    repos,
+    db,
+    adapterFor: ({ supabaseProjectRef: _ref }) => {
+      const token = readActiveSecretValue(SUPABASE_MANAGEMENT_TOKEN_SECRET_REF) ?? ""
+      if (!token) return null
+      return createSupabaseAdapter({ repos, client: new SupabaseManagementClient({ token }) })
+    },
+  }).catch(err => {
+    console.error("[supabase] periodic cleanup tick failed:", (err as Error).message)
+  })
+}, 5 * 60_000).unref()
+
 type ApiRequest = IncomingMessage & {
   repos?: Repos
   appConfig?: AppConfig
@@ -244,7 +281,7 @@ function topLevelRouteHandlers(context: RouteContext): Partial<Record<string, ()
     "POST /setup/recheck": () => handleSetupRecheck(context.req, context.res),
     "POST /setup/supabase/connect": () => handleSupabaseConnect(repos, context.req, context.res),
     "POST /setup/supabase/disconnect": () => handleSupabaseDisconnect(repos, context.req, context.res),
-    "POST /setup/supabase/destroy": () => handleSupabaseDestroyBranch(repos, context.req, context.res),
+    "POST /setup/supabase/destroy": () => handleSupabaseDestroyBranch({ repos, req: context.req, res: context.res }),
     "POST /setup/supabase/recreate": () => handleSupabaseRecreate(repos, context.req, context.res),
     "POST /setup/supabase/rotate": () => handleSupabaseRotate(context.req, context.res),
     "PATCH /setup/supabase/settings": () => handleSupabaseSettingsPatch(repos, context.req, context.res),
@@ -456,6 +493,7 @@ server.on("connection", socket => {
 async function gracefulShutdown(reason: string): Promise<void> {
   if (shutdownInFlight) return
   shutdownInFlight = true
+  clearInterval(cleanupTick)
   console.error(`[engine] graceful shutdown requested: ${reason}`)
   server.close(async closeErr => {
     if (closeErr) console.error("[engine] server close error:", closeErr.message)
