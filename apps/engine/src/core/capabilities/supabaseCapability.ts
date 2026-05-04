@@ -71,19 +71,23 @@ export function createSupabaseCapability(options: SupabaseCapabilityOptions = {}
   }
 
   const preflight = async (): Promise<CapabilityPreflightResult> => {
-    const available = availability()
-    if (!available.available) {
-      return preflightNotConfigured("supabase", available.reason ?? "supabase is not configured")
+    const config = localConfig(options)
+    if (!config.hasToken || !config.projectRef) {
+      return preflightNotConfigured("supabase", config.missingReason || "supabase is not configured")
     }
-    if (!options.managementClient || !localConfig(options).projectRef) return preflightReady("supabase", available.context)
+    if (!options.managementClient) {
+      return preflightReady("supabase", { projectRef: config.projectRef })
+    }
     try {
-      const project = await options.managementClient.getProject(localConfig(options).projectRef!)
-      const branches = await options.managementClient.listBranches(localConfig(options).projectRef!)
+      const [project, branches] = await Promise.all([
+        options.managementClient.getProject(config.projectRef),
+        options.managementClient.listBranches(config.projectRef),
+      ])
       if (project.branchingEnabled === false) {
         return { capabilityId: "supabase", status: "failed", reason: "Supabase branching is not enabled for this project" }
       }
       return preflightReady("supabase", {
-        projectRef: localConfig(options).projectRef,
+        projectRef: config.projectRef,
         plan: project.plan ?? "unknown",
         branchingEnabled: project.branchingEnabled ?? true,
         branchQuotaUsage: branches.length,

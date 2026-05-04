@@ -17,6 +17,7 @@ import type {
   ItemState,
   LogEntry,
 } from "./types";
+import { applyLifecycleEvent, type LifecycleStateByWave } from "@/lib/lifecycleEvents";
 
 type ConversationListener = (entry: ChatEntry) => void;
 type LogListener = (entry: LogEntry) => void;
@@ -26,6 +27,7 @@ type ListenerRef<T> = { current: Set<T> };
 type SSEContextValue = {
   isOffline: boolean;
   itemState: Record<string, ItemState>;
+  lifecycleState: LifecycleStateByWave;
   setRunId: (runId: string | null) => void;
   registerConversationListener: (cb: ConversationListener) => () => void;
   registerLogListener: (cb: LogListener) => () => void;
@@ -61,6 +63,21 @@ const STAGE_TO_STEP: Record<string, number> = {
   exec: 3,
   review: 4,
 };
+
+const SUPABASE_LIFECYCLE_EVENTS = [
+  "supabase.branch.provisioning_started",
+  "supabase.branch.ready",
+  "supabase.branch.migration_started",
+  "supabase.branch.migration_passed",
+  "supabase.branch.seed_started",
+  "supabase.branch.seed_passed",
+  "supabase.branch.db_tests_started",
+  "supabase.branch.db_tests_passed",
+  "supabase.branch.failed",
+  "supabase.branch.retained",
+  "supabase.branch.destroying",
+  "supabase.branch.destroyed",
+] as const;
 
 /**
  * Engine SSE envelopes (`MessageEntry`) carry their interesting fields under
@@ -187,6 +204,7 @@ export function SSEConnectionManager({
   }, [initialItems]);
 
   const [itemState, setItemState] = useState<Record<string, ItemState>>(initialMap);
+  const [lifecycleState, setLifecycleState] = useState<LifecycleStateByWave>({});
   const [isOffline, setIsOffline] = useState(false);
   const [currentRunId, setCurrentRunId] = useState<string | null>(initialRunId);
 
@@ -287,6 +305,11 @@ export function SSEConnectionManager({
       }
       applyItemUpdate(update);
     };
+    const onSupabaseLifecycle = (e: MessageEvent) => {
+      const data = parseData(e.data);
+      if (!data || typeof data !== "object") return;
+      setLifecycleState(prev => applyLifecycleEvent(prev, data as Parameters<typeof applyLifecycleEvent>[1]));
+    };
 
     const onErr = () => goOffline();
     const onOpen = () => goOnline();
@@ -304,12 +327,12 @@ export function SSEConnectionManager({
     sourceRef.addEventListener("run_started", onAttentionOff);
     // Stepper progression.
     sourceRef.addEventListener("phase_started", onPhaseStarted);
+    for (const event of SUPABASE_LIFECYCLE_EVENTS) sourceRef.addEventListener(event, onSupabaseLifecycle);
     // Workspace-level chat / log feeds (consumed by detail page).
     sourceRef.addEventListener("agent_message", createChatDispatcher(conversationListeners, "agent_message"));
     sourceRef.addEventListener("user_message", createChatDispatcher(conversationListeners, "user_message"));
     sourceRef.addEventListener("artifact_written", createLogDispatcher(logListeners, "artifact_written"));
     sourceRef.addEventListener("log", createLogDispatcher(logListeners, "log"));
-
     sourceRef.onopen = onOpen;
     sourceRef.onerror = onErr;
     sourceRef.onclose = onClose;
@@ -342,6 +365,11 @@ export function SSEConnectionManager({
     const onErr = () => goOffline();
     const onOpen = () => goOnline();
     const onClose = () => goOffline();
+    const onSupabaseLifecycle = (e: MessageEvent) => {
+      const data = parseData(e.data);
+      if (!data || typeof data !== "object") return;
+      setLifecycleState(prev => applyLifecycleEvent(prev, data as Parameters<typeof applyLifecycleEvent>[1]));
+    };
 
     sourceRef.addEventListener("agent_message", createChatDispatcher(conversationListeners, "agent_message"));
     sourceRef.addEventListener("user_message", createChatDispatcher(conversationListeners, "user_message"));
@@ -349,6 +377,7 @@ export function SSEConnectionManager({
     sourceRef.addEventListener("prompt_answered", createChatDispatcher(conversationListeners, "prompt_answered"));
     sourceRef.addEventListener("artifact_written", createLogDispatcher(logListeners, "artifact_written"));
     sourceRef.addEventListener("log", createLogDispatcher(logListeners, "log"));
+    for (const event of SUPABASE_LIFECYCLE_EVENTS) sourceRef.addEventListener(event, onSupabaseLifecycle);
     sourceRef.onopen = onOpen;
     sourceRef.onerror = onErr;
     sourceRef.onclose = onClose;
@@ -391,6 +420,7 @@ export function SSEConnectionManager({
     () => ({
       isOffline,
       itemState,
+      lifecycleState,
       setRunId,
       registerConversationListener,
       registerLogListener,
@@ -399,6 +429,7 @@ export function SSEConnectionManager({
     [
       isOffline,
       itemState,
+      lifecycleState,
       setRunId,
       registerConversationListener,
       registerLogListener,

@@ -111,71 +111,85 @@ export function SupabaseSettingsSection({ supabase }: Readonly<{ supabase: Supab
         <h2 className="font-display text-xl">Supabase</h2>
         <p className="text-sm text-zinc-400">Cloud Branching connection and branch database controls.</p>
       </div>
-      <RetainedBranchBanner count={state.costRisk?.retainedBranchCount ?? 0} deepLinkHref="#supabase-diagnosis" />
-      <PlanLimitBanner ratio={state.costRisk?.planLimitRatio ?? 0} />
       {state.projectRef ? (
-        <div className="grid gap-3 border border-zinc-800 bg-zinc-900 p-4 md:grid-cols-2">
-          <p className="text-sm"><span className="text-zinc-400">Project ref</span><br /><span className="font-mono">{state.projectRef}</span></p>
-          <p className="text-sm"><span className="text-zinc-400">Region</span><br /><span>{state.region ?? "unknown"}</span></p>
-          <p className="text-sm"><span className="text-zinc-400">Persistent test branch</span><br /><span className="font-mono">{state.persistentTestBranchName ?? "not created"}</span></p>
-          <div className="text-sm"><span className="text-zinc-400">Branch status</span><br /><StatusChip state={state.persistentTestBranchStatus ?? "not-configured"} /></div>
-          <p className="text-sm"><span className="text-zinc-400">Last checked</span><br />{state.lastCheckedAt ? new Date(state.lastCheckedAt).toLocaleString() : "Never"}</p>
-          <p className="text-sm"><span className="text-zinc-400">Token</span><br />{state.tokenPresent ? "Present" : "Missing"}</p>
-        </div>
-      ) : (
-        <p className="border border-zinc-800 bg-zinc-900 p-4 text-sm text-zinc-300">Supabase is not connected for this workspace.</p>
-      )}
-      <CleanupPolicySelector
-        policy={state.cleanupPolicy}
-        ttlHours={state.cleanupTtlHours}
-        onChange={(next) => {
-          if (next.valid) void saveSettings(next);
-        }}
-      />
-      <div className="space-y-2 border border-zinc-800 bg-zinc-900 p-4">
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={state.productionMigrationProtection === "on"}
-            onChange={(event) => {
-              if (event.target.checked) setConfirmProtection(true);
-              else void saveSettings({ productionMigrationProtection: "off" });
+        <>
+          <RetainedBranchBanner count={state.costRisk?.retainedBranchCount ?? 0} deepLinkHref="#supabase-diagnosis" />
+          <PlanLimitBanner ratio={state.costRisk?.planLimitRatio ?? 0} />
+          <div className="grid gap-3 border border-zinc-800 bg-zinc-900 p-4 md:grid-cols-2">
+            <p className="text-sm"><span className="text-zinc-400">Project ref</span><br /><span className="font-mono">{state.projectRef}</span></p>
+            <p className="text-sm"><span className="text-zinc-400">Region</span><br /><span>{state.region ?? "unknown"}</span></p>
+            <p className="text-sm"><span className="text-zinc-400">Persistent test branch</span><br /><span className="font-mono">{state.persistentTestBranchName ?? "not created"}</span></p>
+            <div className="text-sm"><span className="text-zinc-400">Branch status</span><br /><StatusChip state={state.persistentTestBranchStatus ?? "not-configured"} /></div>
+            <p className="text-sm"><span className="text-zinc-400">Last checked</span><br />{state.lastCheckedAt ? new Date(state.lastCheckedAt).toLocaleString() : "Never"}</p>
+            <p className="text-sm"><span className="text-zinc-400">Token</span><br />{state.tokenPresent ? "Present" : "Missing"}</p>
+          </div>
+          <CleanupPolicySelector
+            policy={state.cleanupPolicy}
+            ttlHours={state.cleanupTtlHours}
+            onChange={(next) => {
+              if (next.valid) void saveSettings(next);
             }}
           />
-          <span>Production migration protection</span>
-        </label>
-        {confirmProtection ? (
-          <div className="space-y-2 border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-100">
-            <p>Merge will apply migrations to production/main automatically when other guards pass.</p>
-            <button type="button" onClick={() => void saveSettings({ productionMigrationProtection: "on", confirmed: true })} className="border border-amber-500 px-2 py-1 text-xs text-amber-200">Confirm enable</button>
-            <button type="button" onClick={() => setConfirmProtection(false)} className="ml-2 border border-zinc-700 px-2 py-1 text-xs text-zinc-200">Cancel</button>
+          <div className="space-y-2 border border-zinc-800 bg-zinc-900 p-4">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={state.productionMigrationProtection === "on"}
+                onChange={(event) => {
+                  if (event.target.checked) setConfirmProtection(true);
+                  else void saveSettings({ productionMigrationProtection: "off" });
+                }}
+              />
+              <span>Production migration protection</span>
+            </label>
+            {confirmProtection ? (
+              <div className="space-y-2 border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-100">
+                <p>Merge will apply migrations to production/main automatically when other guards pass.</p>
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={() => void saveSettings({ productionMigrationProtection: "on", confirmed: true })} className="border border-amber-500 px-2 py-1 text-xs text-amber-200">Confirm enable</button>
+                  <button type="button" onClick={() => setConfirmProtection(false)} className="border border-zinc-700 px-2 py-1 text-xs text-zinc-200">Cancel</button>
+                </div>
+              </div>
+            ) : null}
           </div>
-        ) : null}
-      </div>
-      <button type="button" onClick={() => setRotateOpen((open) => !open)} className="border border-zinc-700 px-2 py-1 text-xs text-zinc-200">Rotate Management API token</button>
-      {rotateOpen ? (
-        <div className="space-y-2 border border-zinc-800 bg-zinc-900 p-4">
-          <label className="block space-y-1 text-sm">
-            <span className="text-zinc-300">supabase.management_token</span>
-            <input type="password" value={token} onChange={(event) => setToken(event.target.value)} className="w-full border border-zinc-800 bg-zinc-950 p-2" />
-          </label>
-          <button type="button" disabled={!token.trim()} onClick={() => void rotate()} className="border border-amber-500 px-2 py-1 text-xs text-amber-300 disabled:opacity-45">Save rotated token</button>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => setRotateOpen((open) => !open)} className="border border-zinc-700 px-2 py-1 text-xs text-zinc-200">Rotate Management API token</button>
+            <button type="button" disabled={refreshing} aria-busy={refreshing} onClick={() => void refreshPreflight()} className="border border-zinc-700 px-2 py-1 text-xs text-zinc-200 disabled:opacity-45">
+              {refreshing ? "Refreshing" : "Refresh preflight"}
+            </button>
+            {state.persistentTestBranchName ? (
+              <button type="button" onClick={() => setRecreateOpen(true)} className="border border-red-700 px-2 py-1 text-xs text-red-200">Recreate persistent test branch</button>
+            ) : null}
+          </div>
+          {rotateOpen ? (
+            <div className="space-y-2 border border-zinc-800 bg-zinc-900 p-4">
+              <label className="block space-y-1 text-sm">
+                <span className="text-zinc-300">supabase.management_token</span>
+                <input type="password" value={token} onChange={(event) => setToken(event.target.value)} className="w-full border border-zinc-800 bg-zinc-950 p-2" />
+              </label>
+              <button type="button" disabled={!token.trim()} onClick={() => void rotate()} className="border border-amber-500 px-2 py-1 text-xs text-amber-300 disabled:opacity-45">Save rotated token</button>
+            </div>
+          ) : null}
+          {recreateOpen && state.persistentTestBranchName ? (
+            <DestroyConfirmDialog
+              expectedName={state.persistentTestBranchName}
+              actionLabel="Recreate persistent test branch"
+              onCancel={() => setRecreateOpen(false)}
+              onConfirm={() => void recreatePersistentBranch()}
+            />
+          ) : null}
+        </>
+      ) : (
+        <div className="space-y-3">
+          <p className="border border-zinc-800 bg-zinc-900 p-4 text-sm text-zinc-300">Supabase is not connected for this workspace.</p>
+          <a
+            href="/setup#supabase"
+            className="inline-block border border-amber-500 px-3 py-1.5 text-xs text-amber-300 hover:bg-amber-950/30"
+          >
+            Connect Supabase
+          </a>
         </div>
-      ) : null}
-      <button type="button" disabled={refreshing} aria-busy={refreshing} onClick={() => void refreshPreflight()} className="border border-zinc-700 px-2 py-1 text-xs text-zinc-200 disabled:opacity-45">
-        {refreshing ? "Refreshing" : "Refresh preflight"}
-      </button>
-      {state.persistentTestBranchName ? (
-        <button type="button" onClick={() => setRecreateOpen(true)} className="ml-2 border border-red-700 px-2 py-1 text-xs text-red-200">Recreate persistent test branch</button>
-      ) : null}
-      {recreateOpen && state.persistentTestBranchName ? (
-        <DestroyConfirmDialog
-          expectedName={state.persistentTestBranchName}
-          actionLabel="Recreate persistent test branch"
-          onCancel={() => setRecreateOpen(false)}
-          onConfirm={() => void recreatePersistentBranch()}
-        />
-      ) : null}
+      )}
       {message ? <output className="block text-sm text-emerald-300">{message}</output> : null}
       {error ? <p role="alert" className="text-sm text-amber-300">{error}</p> : null}
     </section>

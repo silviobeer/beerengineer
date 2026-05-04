@@ -84,6 +84,8 @@ export type WorkflowEvent =
       branchRef: string
       action: "retry_validation" | "destroy_branch"
       workspaceLocalOperatorId: string
+      outcome?: "accepted" | "rejected"
+      reason?: string
       timestamp: number
     } & WorkflowEventMeta)
 

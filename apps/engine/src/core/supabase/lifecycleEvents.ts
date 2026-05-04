@@ -55,6 +55,8 @@ export function recordSupabaseOperatorAction(input: {
   branchRef: string
   action: Extract<WorkflowEvent, { type: "supabase_operator_action" }>["action"]
   workspaceLocalOperatorId?: string
+  outcome?: "accepted" | "rejected"
+  reason?: string
   timestamp?: number
 }): Extract<WorkflowEvent, { type: "supabase_operator_action" }> {
   const event: Extract<WorkflowEvent, { type: "supabase_operator_action" }> = {
@@ -64,6 +66,8 @@ export function recordSupabaseOperatorAction(input: {
     branchRef: input.branchRef,
     action: input.action,
     workspaceLocalOperatorId: input.workspaceLocalOperatorId ?? "local-operator",
+    outcome: input.outcome,
+    reason: input.reason,
     timestamp: input.timestamp ?? Date.now(),
   }
   if (hasWorkflowIO()) {
@@ -78,6 +82,8 @@ export function recordSupabaseOperatorAction(input: {
         branchRef: event.branchRef,
         action: event.action,
         workspaceLocalOperatorId: event.workspaceLocalOperatorId,
+        outcome: event.outcome,
+        reason: event.reason,
         timestamp: event.timestamp,
       },
     })

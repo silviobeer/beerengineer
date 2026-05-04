@@ -27,4 +27,29 @@ describe("SupabaseSettingsSection", () => {
     render(<SupabaseSettingsSection supabase={{ ...configView().supabase, projectRef: undefined, tokenPresent: false }} />);
     expect(screen.getByText(/not connected/i)).toBeInTheDocument();
   });
+
+  it("hides post-connection controls and shows connect CTA when not connected", () => {
+    render(
+      <SupabaseSettingsSection
+        supabase={{ ...configView().supabase, projectRef: undefined, tokenPresent: false }}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /Rotate Management API token/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Refresh preflight/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Recreate persistent test branch/i })).toBeNull();
+    expect(screen.queryByLabelText(/Production migration protection/i)).toBeNull();
+    expect(screen.queryByText(/Cleanup policy/i)).toBeNull();
+    expect(screen.queryByText(/Retained Supabase branches/i)).toBeNull();
+    expect(screen.queryByText(/plan limit/i)).toBeNull();
+    const cta = screen.getByRole("link", { name: /connect supabase|set up supabase|configure supabase/i });
+    expect(cta).toHaveAttribute("href", "/setup#supabase");
+  });
+
+  it("renders all controls when connected", () => {
+    globalThis.fetch = vi.fn(async () => Response.json({ ok: true })) as unknown as typeof fetch;
+    render(<SupabaseSettingsSection supabase={configView().supabase} />);
+    expect(screen.getByRole("button", { name: /Rotate Management API token/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Refresh preflight/i })).toBeInTheDocument();
+    expect(screen.getByLabelText(/Production migration protection/i)).toBeInTheDocument();
+  });
 });

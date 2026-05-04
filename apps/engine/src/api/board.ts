@@ -64,6 +64,12 @@ export type BoardCardDTO = {
   hasReviewGateWaiting?: boolean
   hasBlockedRun?: boolean
   previewUrl?: string
+  latestRunId?: string
+  workspaceId?: string
+  workspaceRoot?: string | null
+  supabaseProjectRef?: string | null
+  dbRelevance?: { value: boolean; source: "detector"; reason: string }
+  supabaseBranch?: { ref: string; name: string; lifecycleState: string | null }
   meta: Array<{ label: string; value: string }>
 }
 
@@ -98,8 +104,8 @@ function workspaceCostRisk(db: Db, workspaceId?: string): BoardDTO["costRisk"] {
 
 export function getBoard(db: Db, workspaceKey?: string | null): BoardDTO {
   const workspace = workspaceKey
-    ? (db.prepare("SELECT * FROM workspaces WHERE key = ?").get(workspaceKey) as { id: string; key: string; root_path: string | null } | undefined)
-    : (db.prepare("SELECT * FROM workspaces ORDER BY created_at ASC LIMIT 1").get() as { id: string; key: string; root_path: string | null } | undefined)
+    ? (db.prepare("SELECT * FROM workspaces WHERE key = ?").get(workspaceKey) as { id: string; key: string; root_path: string | null; supabase_project_ref: string | null } | undefined)
+    : (db.prepare("SELECT * FROM workspaces ORDER BY created_at ASC LIMIT 1").get() as { id: string; key: string; root_path: string | null; supabase_project_ref: string | null } | undefined)
 
   if (!workspace) {
     return {
@@ -142,10 +148,14 @@ export function getBoard(db: Db, workspaceKey?: string | null): BoardDTO {
     recovery_status: string | null
     recovery_scope_ref: string | null
     workspace_fs_id: string | null
+    supabase_branch_ref: string | null
+    supabase_branch_name: string | null
+    supabase_branch_lifecycle_state: string | null
   }>()
   const runRows = db
     .prepare(
-      `SELECT id, item_id, status, recovery_status, recovery_scope_ref, workspace_fs_id, created_at
+      `SELECT id, item_id, status, recovery_status, recovery_scope_ref, workspace_fs_id,
+              supabase_branch_ref, supabase_branch_name, supabase_branch_lifecycle_state, created_at
        FROM runs
        WHERE workspace_id = ?
        ORDER BY created_at DESC`
@@ -157,6 +167,9 @@ export function getBoard(db: Db, workspaceKey?: string | null): BoardDTO {
       recovery_status: string | null
       recovery_scope_ref: string | null
       workspace_fs_id: string | null
+      supabase_branch_ref: string | null
+      supabase_branch_name: string | null
+      supabase_branch_lifecycle_state: string | null
       created_at: number
     }>
   for (const run of runRows) {
@@ -188,6 +201,13 @@ export function getBoard(db: Db, workspaceKey?: string | null): BoardDTO {
         .map<BoardCardDTO>(i => {
           const latestRun = latestRuns.get(i.id)
           const openPrompt = latestRun ? openPromptsByRun.get(latestRun.id) : undefined
+          const supabaseBranch = latestRun?.supabase_branch_ref
+            ? {
+                ref: latestRun.supabase_branch_ref,
+                name: latestRun.supabase_branch_name ?? latestRun.supabase_branch_ref,
+                lifecycleState: latestRun.supabase_branch_lifecycle_state,
+              }
+            : undefined
           return {
           ...boardCardMeta(workspace.root_path ?? null, latestRun, openPrompt, { title: i.title, id: i.id }),
           itemCode: i.code,
@@ -197,6 +217,16 @@ export function getBoard(db: Db, workspaceKey?: string | null): BoardDTO {
           column: i.current_column,
           phaseStatus: i.phase_status,
           currentStage: i.current_stage ?? null,
+          latestRunId: latestRun?.id,
+          workspaceId: workspace.id,
+          workspaceRoot: workspace.root_path ?? null,
+          supabaseProjectRef: workspace.supabase_project_ref ?? null,
+          dbRelevance: {
+            value: Boolean(supabaseBranch),
+            source: "detector" as const,
+            reason: supabaseBranch ? "Supabase branch provisioned" : "No Supabase branch provisioned",
+          },
+          supabaseBranch,
           meta: [
             { label: "phase", value: i.phase_status },
             { label: "projects", value: String(projectCounts.get(i.id) ?? 0) }

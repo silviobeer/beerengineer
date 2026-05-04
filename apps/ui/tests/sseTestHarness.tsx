@@ -11,6 +11,7 @@ import { SSEContext, type SSEContextValue } from "@/lib/sse/SSEContext";
 export const noopSSEContext: SSEContextValue = {
   isOffline: false,
   itemState: {},
+  lifecycleState: {},
   setRunId: () => {},
   registerConversationListener: () => () => {},
   registerLogListener: () => () => {},

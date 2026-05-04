@@ -3,6 +3,9 @@
 import { useState } from "react";
 import type { AppConfigView } from "@/lib/setup/types";
 
+const PROJECT_REF_PATTERN = /^[a-z]{20}$/;
+const PROJECT_REF_ERROR = "Project ref must be 20 lowercase letters (e.g. abcdefghijklmnopqrst)";
+
 async function readJson(res: Response): Promise<unknown> {
   try { return await res.json(); } catch { return null; }
 }
@@ -24,8 +27,14 @@ export function SupabaseSetupCard({ workspaceId = "default", supabase }: Readonl
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const connected = isConnected && Boolean(supabase?.projectRef);
+  const projectRefInvalid = projectRef.length > 0 && !PROJECT_REF_PATTERN.test(projectRef);
 
   async function validate() {
+    if (!PROJECT_REF_PATTERN.test(projectRef)) {
+      setMessage(null);
+      setError(PROJECT_REF_ERROR);
+      return;
+    }
     setBusy(true);
     setMessage(null);
     setError(null);
@@ -106,7 +115,9 @@ export function SupabaseSetupCard({ workspaceId = "default", supabase }: Readonl
         <p className="text-sm text-zinc-400">Connect a Supabase project for DB-relevant wave isolation.</p>
       </div>
       {message ? <output className="block text-sm text-emerald-300">{message}</output> : null}
-      {error ? <p role="alert" className="text-sm text-amber-300">{error}</p> : null}
+      {error || projectRefInvalid ? (
+        <p role="alert" className="text-sm text-amber-300">{projectRefInvalid ? PROJECT_REF_ERROR : error}</p>
+      ) : null}
       {connected ? (
         <fieldset className="space-y-2 text-sm">
           <legend className="text-zinc-300">Existing connection</legend>
@@ -145,10 +156,10 @@ export function SupabaseSetupCard({ workspaceId = "default", supabase }: Readonl
       {!connected ? (
       <label className="block space-y-1 text-sm">
         <span className="text-zinc-300">Project ref</span>
-        <input aria-label="Supabase project ref" className="w-full border border-zinc-800 bg-zinc-950 p-2" value={projectRef} onChange={(event) => setProjectRef(event.target.value)} />
+        <input aria-label="Supabase project ref" pattern="^[a-z]{20}$" maxLength={20} className="w-full border border-zinc-800 bg-zinc-950 p-2" value={projectRef} onChange={(event) => setProjectRef(event.target.value)} />
       </label>
       ) : null}
-      <button type="button" disabled={busy || !token.trim() || (!connected && !projectRef.trim())} onClick={connected ? rotate : validate} className="border border-emerald-500 px-2 py-1 text-xs text-emerald-300 disabled:opacity-45">
+      <button type="button" disabled={busy || !token.trim() || (!connected && (!projectRef.trim() || !PROJECT_REF_PATTERN.test(projectRef)))} onClick={connected ? rotate : validate} className="border border-emerald-500 px-2 py-1 text-xs text-emerald-300 disabled:opacity-45">
         {busy ? (connected ? "Rotating" : "Validating") : connected ? "Rotate token" : "Validate Supabase"}
       </button>
         </>

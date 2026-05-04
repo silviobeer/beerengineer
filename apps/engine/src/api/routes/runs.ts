@@ -49,7 +49,10 @@ export function handleGetRunTree(repos: Repos, res: ServerResponse, runId: strin
 
 export function handleGetMergeStatus(repos: Repos, res: ServerResponse, runId: string): void {
   const status = buildMergeStatus({ repos, runId })
-  if (!status) {
+  // `null` is the run-not-found sentinel; `{ supabaseRelevant: false }` is a
+  // valid 200 response that tells the UI to suppress the gate panel for
+  // workspaces with no Supabase context (BUG-PROJ4-QA-011).
+  if (status === null) {
     json(res, 404, { error: "run_not_found" })
     return
   }

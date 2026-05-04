@@ -278,6 +278,8 @@ const STAGE_LOG_EVENT_PARSERS: Record<string, StageLogEventParser> = {
     branchRef: typeof data.branchRef === "string" ? data.branchRef : "",
     action: data.action === "destroy_branch" ? "destroy_branch" : "retry_validation",
     workspaceLocalOperatorId: typeof data.workspaceLocalOperatorId === "string" ? data.workspaceLocalOperatorId : "local-operator",
+    outcome: data.outcome === "accepted" || data.outcome === "rejected" ? data.outcome : undefined,
+    reason: typeof data.reason === "string" ? data.reason : undefined,
     timestamp: typeof data.timestamp === "number" ? data.timestamp : row.created_at,
   }),
 }

@@ -23,7 +23,7 @@ export function AdoptExistingProjectPanel({
     <section data-testid="adopt-existing-project-panel" className="space-y-3 border border-amber-700 bg-amber-950/30 p-4">
       <div className="flex flex-wrap items-center gap-2">
         <h3 className="text-sm font-medium text-amber-100">Existing Supabase project data detected</h3>
-        <StatusChip state={blocked ? "blocked" : "warning"} />
+        <StatusChip state={blocked ? "blocked" : "attention"} />
       </div>
       {blocked ? (
         <>

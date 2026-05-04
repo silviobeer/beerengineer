@@ -12,7 +12,23 @@ export function WaveRow({
   title,
   dbRelevance,
   lifecycleSteps,
-}: Readonly<{ title: string; dbRelevance: WaveRowDbRelevance; lifecycleSteps?: LifecycleStepState[] }>) {
+  branchRef,
+  branchName,
+  projectRef,
+  runId,
+  workspaceId,
+  workspaceRoot,
+}: Readonly<{
+  title: string;
+  dbRelevance: WaveRowDbRelevance;
+  lifecycleSteps?: LifecycleStepState[];
+  branchRef?: string;
+  branchName?: string;
+  projectRef?: string;
+  runId?: string;
+  workspaceId?: string;
+  workspaceRoot?: string | null;
+}>) {
   const label = dbRelevance.value ? "DB" : "non-DB";
   const tooltip = `${dbRelevance.source}${dbRelevance.reason ? `: ${dbRelevance.reason}` : ""}`;
   return (
@@ -23,7 +39,17 @@ export function WaveRow({
           <StatusChip state={label} />
         </span>
       </div>
-      {dbRelevance.value && lifecycleSteps ? <BranchLifecycleStepper steps={lifecycleSteps} /> : null}
+      {dbRelevance.value && lifecycleSteps ? (
+        <BranchLifecycleStepper
+          steps={lifecycleSteps}
+          branchRef={branchRef}
+          branchName={branchName}
+          projectRef={projectRef}
+          runId={runId}
+          workspaceId={workspaceId}
+          workspaceRoot={workspaceRoot ?? undefined}
+        />
+      ) : null}
     </div>
   );
 }

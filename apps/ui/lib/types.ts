@@ -157,6 +157,20 @@ export interface BoardCardDTO {
   hasReviewGateWaiting?: boolean;
   hasBlockedRun?: boolean;
   previewUrl?: string;
+  latestRunId?: string;
+  workspaceId?: string;
+  workspaceRoot?: string | null;
+  supabaseProjectRef?: string | null;
+  dbRelevance?: {
+    value: boolean;
+    source: "explicit" | "override" | "detector";
+    reason?: string;
+  };
+  supabaseBranch?: {
+    ref: string;
+    name: string;
+    lifecycleState?: string | null;
+  };
   /** Live override from SSE; when defined, wins over the static flags. */
   liveAttention?: boolean | null;
 }

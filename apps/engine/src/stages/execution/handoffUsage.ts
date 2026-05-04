@@ -4,32 +4,86 @@ export type HandoffUsageRecord = {
   workerId: string
 }
 
-const seen = new Map<string, number>()
 const DEFAULT_HANDOFF_USAGE_TTL_MS = 10 * 60 * 1000
-let ttlMs = DEFAULT_HANDOFF_USAGE_TTL_MS
-let cleanupTimer: ReturnType<typeof setInterval> | null = null
+const DEFAULT_HANDOFF_USAGE_MAX_ENTRIES = 10_000
 
-export function resetHandoffUsageForTests(): void {
-  seen.clear()
-  ttlMs = DEFAULT_HANDOFF_USAGE_TTL_MS
-  if (cleanupTimer) clearInterval(cleanupTimer)
-  cleanupTimer = null
+export type HandoffUsageDetector = {
+  detect(input: {
+    runId: string
+    waveId: string
+    workerId: string
+    line: string
+  }): HandoffUsageRecord | null
+  dispose(): void
 }
 
-export function configureHandoffUsageRetentionForTests(input: { ttlMs?: number } = {}): void {
-  ttlMs = input.ttlMs ?? DEFAULT_HANDOFF_USAGE_TTL_MS
-}
+export function createHandoffUsageDetector(
+  input: { ttlMs?: number; maxEntries?: number } = {},
+): HandoffUsageDetector {
+  const seen = new Map<string, number>()
+  const ttlMs = input.ttlMs ?? DEFAULT_HANDOFF_USAGE_TTL_MS
+  const maxEntries = input.maxEntries ?? DEFAULT_HANDOFF_USAGE_MAX_ENTRIES
+  let cleanupTimer: ReturnType<typeof setInterval> | null = null
+  let disposed = false
 
-function cleanupExpired(now: number): void {
-  for (const [key, ts] of seen) {
-    if (now - ts > ttlMs) seen.delete(key)
+  const cleanupExpired = (now: number): void => {
+    for (const [key, ts] of seen) {
+      if (now - ts > ttlMs) seen.delete(key)
+    }
+  }
+
+  const ensureCleanupTimer = (): void => {
+    if (cleanupTimer || disposed) return
+    cleanupTimer = setInterval(() => cleanupExpired(Date.now()), Math.min(ttlMs, 60_000))
+    cleanupTimer.unref?.()
+  }
+
+  const evictIfOverCapacity = (): void => {
+    while (seen.size > maxEntries) {
+      // Map preserves insertion order — first key is the oldest.
+      const oldest = seen.keys().next()
+      if (oldest.done) return
+      seen.delete(oldest.value)
+    }
+  }
+
+  return {
+    detect(input): HandoffUsageRecord | null {
+      if (disposed) return null
+      if (!input.line.includes("[supabase]") && !/https?:\/\/[^ ]*supabase/i.test(input.line)) return null
+      const now = Date.now()
+      const key = `${input.runId}:${input.waveId}:${input.workerId}`
+      if (seen.has(key)) return null
+      seen.set(key, now)
+      evictIfOverCapacity()
+      ensureCleanupTimer()
+      return { runId: input.runId, waveId: input.waveId, workerId: input.workerId }
+    },
+    dispose(): void {
+      if (disposed) return
+      disposed = true
+      if (cleanupTimer) {
+        clearInterval(cleanupTimer)
+        cleanupTimer = null
+      }
+      seen.clear()
+    },
   }
 }
 
-function ensureCleanupTimer(): void {
-  if (cleanupTimer) return
-  cleanupTimer = setInterval(() => cleanupExpired(Date.now()), Math.min(ttlMs, 60_000))
-  cleanupTimer.unref?.()
+// Module-level default detector preserved for the existing log-stream wiring
+// and the legacy `detectHandoffConsumed` API. The factory above is the path
+// forward; new call sites should construct their own bounded detector.
+let defaultDetector: HandoffUsageDetector = createHandoffUsageDetector()
+
+export function resetHandoffUsageForTests(): void {
+  defaultDetector.dispose()
+  defaultDetector = createHandoffUsageDetector()
+}
+
+export function configureHandoffUsageRetentionForTests(input: { ttlMs?: number; maxEntries?: number } = {}): void {
+  defaultDetector.dispose()
+  defaultDetector = createHandoffUsageDetector(input)
 }
 
 export function detectHandoffConsumed(input: {
@@ -38,14 +92,7 @@ export function detectHandoffConsumed(input: {
   workerId: string
   line: string
 }): HandoffUsageRecord | null {
-  if (!input.line.includes("[supabase]") && !/https?:\/\/[^ ]*supabase/i.test(input.line)) return null
-  const now = Date.now()
-  cleanupExpired(now)
-  const key = `${input.runId}:${input.waveId}:${input.workerId}`
-  if (seen.has(key)) return null
-  seen.set(key, now)
-  ensureCleanupTimer()
-  return { runId: input.runId, waveId: input.waveId, workerId: input.workerId }
+  return defaultDetector.detect(input)
 }
 
 export function handoffUsageWarning(input: { dbRelevantWave: boolean; consumedEvents: HandoffUsageRecord[] }): string | null {

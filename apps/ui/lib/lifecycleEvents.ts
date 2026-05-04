@@ -23,6 +23,64 @@ export function emptyLifecycleSteps(): LifecycleStepState[] {
   return LIFECYCLE_STEPS.map(step => ({ ...step, status: "idle" }));
 }
 
+export function lifecycleStepsFromBranchState(lifecycleState?: string | null): LifecycleStepState[] {
+  const steps = emptyLifecycleSteps();
+  const set = (id: LifecycleStepId, status: LifecycleStepStatus, reason?: string) => {
+    const step = steps.find(candidate => candidate.id === id);
+    if (step) {
+      step.status = status;
+      step.reason = status === "passed" ? undefined : reason;
+    }
+  };
+  switch (lifecycleState) {
+    case "provisioning":
+      set("branch_creation", "in_progress");
+      break;
+    case "ready":
+      set("branch_creation", "passed");
+      break;
+    case "validating":
+      set("branch_creation", "passed");
+      set("migrations", "in_progress");
+      break;
+    case "validated":
+      set("branch_creation", "passed");
+      set("migrations", "passed");
+      set("seed", "passed");
+      set("db_tests", "passed");
+      break;
+    case "retained-pending-cleanup":
+      set("branch_creation", "passed");
+      set("migrations", "passed");
+      set("seed", "passed");
+      set("db_tests", "passed");
+      set("cleanup", "retained", "cleanup pending");
+      break;
+    case "destroying":
+      set("branch_creation", "passed");
+      set("migrations", "passed");
+      set("seed", "passed");
+      set("db_tests", "passed");
+      set("cleanup", "in_progress");
+      break;
+    case "destroyed":
+      set("branch_creation", "passed");
+      set("migrations", "passed");
+      set("seed", "passed");
+      set("db_tests", "passed");
+      set("cleanup", "passed");
+      break;
+    case "failed":
+    case "retained-for-diagnosis":
+    case "quota-exceeded":
+      set("branch_creation", "passed");
+      set("db_tests", "retained", lifecycleState);
+      set("cleanup", "retained", "retained for diagnosis");
+      break;
+  }
+  return steps;
+}
+
 type SupabaseLifecycleEnvelope = {
   type?: string;
   ts?: string;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useContext, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import {
   DESIGN_PREP_STAGES,
   DESIGN_PREP_STAGE_LABELS,
@@ -12,6 +12,10 @@ import { MiniStepper } from "./MiniStepper";
 import { BoardCardActions } from "./BoardCardActions";
 import { ItemChat } from "./ItemChat";
 import { ItemMessages } from "./ItemMessages";
+import { WaveRow } from "./WaveRow";
+import { MergeGatePanel, type MergeGatePanelProps } from "./merge/MergeGatePanel";
+import { lifecycleStepsFromBranchState } from "@/lib/lifecycleEvents";
+import { SSEContext } from "@/lib/sse/SSEContext";
 
 interface BoardItemModalProps {
   readonly card: BoardCardDTO;
@@ -46,6 +50,16 @@ interface PreviewInfo {
     cwd: string;
     source: string;
   } | null;
+}
+
+type MergeStatusView =
+  | { supabaseRelevant: false }
+  | { gates: MergeGatePanelProps["gates"] };
+
+function mergeStatusHasGates(
+  status: MergeStatusView | null,
+): status is { gates: MergeGatePanelProps["gates"] } {
+  return status !== null && (status as { supabaseRelevant?: false }).supabaseRelevant !== false;
 }
 
 async function fetchPreviewInfo(url: string, requestInit?: RequestInit): Promise<PreviewInfo> {
@@ -169,6 +183,112 @@ function useDesignArtifactState(card: BoardCardDTO, supportsDesignArtifacts: boo
   }, [card.id, supportsDesignArtifacts]);
 
   return { wireframes, design, artifactError };
+}
+
+const MERGE_STATUS_REFETCH_DEBOUNCE_MS = 500;
+
+function useMergeStatus(runId: string | undefined, enabled: boolean) {
+  const [mergeStatus, setMergeStatus] = useState<MergeStatusView | null>(null);
+  const [mergeStatusError, setMergeStatusError] = useState<string | null>(null);
+  const sse = useContext(SSEContext);
+  const lifecycleState = sse?.lifecycleState;
+  // Stable ref to the latest mergeStatus so the debounced refetch effect can
+  // skip work when the engine reported supabaseRelevant: false without forcing
+  // the effect to re-run on every status change.
+  const mergeStatusRef = useRef<MergeStatusView | null>(null);
+  mergeStatusRef.current = mergeStatus;
+
+  // Initial fetch on mount / runId change.
+  useEffect(() => {
+    if (!enabled || !runId) return;
+    let cancelled = false;
+    setMergeStatus(null);
+    setMergeStatusError(null);
+    fetch(`/api/runs/${encodeURIComponent(runId)}/merge-status`, { cache: "no-store" })
+      .then(async res => {
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error((body as { error?: string }).error ?? `engine_${res.status}`);
+        if (!cancelled) setMergeStatus(body as MergeStatusView);
+      })
+      .catch(err => {
+        if (!cancelled) setMergeStatusError(err instanceof Error ? err.message : "merge_status_failed");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, runId]);
+
+  // Refetch (debounced) when SSE delivers a lifecycle update — the gates may
+  // have flipped on the engine side. Skipped when the engine has already told
+  // us this run is not Supabase-relevant.
+  useEffect(() => {
+    if (!enabled || !runId) return;
+    const status = mergeStatusRef.current;
+    if (status && (status as { supabaseRelevant?: false }).supabaseRelevant === false) return;
+    if (!lifecycleState) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      fetch(`/api/runs/${encodeURIComponent(runId)}/merge-status`, { cache: "no-store" })
+        .then(async res => {
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error((body as { error?: string }).error ?? `engine_${res.status}`);
+          if (!cancelled) setMergeStatus(body as MergeStatusView);
+        })
+        .catch(err => {
+          if (!cancelled) setMergeStatusError(err instanceof Error ? err.message : "merge_status_failed");
+        });
+    }, MERGE_STATUS_REFETCH_DEBOUNCE_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [enabled, runId, lifecycleState]);
+
+
+  return { mergeStatus, mergeStatusError };
+}
+
+function SupabaseStatusPanel({
+  card,
+  mergeStatus,
+  mergeStatusError,
+}: Readonly<{
+  card: BoardCardDTO;
+  mergeStatus: MergeStatusView | null;
+  mergeStatusError: string | null;
+}>) {
+  const sse = useContext(SSEContext);
+  const dbRelevance = card.dbRelevance ?? {
+    value: Boolean(card.supabaseBranch),
+    source: "detector" as const,
+    reason: card.supabaseBranch ? "Supabase branch provisioned" : "No Supabase branch provisioned",
+  };
+  const liveSteps = useMemo(() => {
+    const states = Object.values(sse?.lifecycleState ?? {});
+    return states.find(steps => steps.length > 0);
+  }, [sse?.lifecycleState]);
+  const lifecycleSteps = liveSteps ?? lifecycleStepsFromBranchState(card.supabaseBranch?.lifecycleState);
+  const shouldRender = Boolean(card.dbRelevance || card.supabaseBranch || card.latestRunId);
+  if (!shouldRender) return null;
+
+  return (
+    <div className="space-y-3 border border-zinc-800 bg-zinc-950/40 p-3">
+      <h3 className="text-xs uppercase tracking-wider text-zinc-500">Supabase status</h3>
+      <WaveRow
+        title="Latest run"
+        dbRelevance={dbRelevance}
+        lifecycleSteps={lifecycleSteps}
+        branchRef={card.supabaseBranch?.ref}
+        branchName={card.supabaseBranch?.name}
+        projectRef={card.supabaseProjectRef ?? undefined}
+        runId={card.latestRunId}
+        workspaceId={card.workspaceId}
+        workspaceRoot={card.workspaceRoot}
+      />
+      {card.column === "merge" && mergeStatusHasGates(mergeStatus) ? <MergeGatePanel gates={mergeStatus.gates} /> : null}
+      {card.column === "merge" && mergeStatusError ? <p className="text-xs text-amber-300">{mergeStatusError}</p> : null}
+    </div>
+  );
 }
 
 function StageProgress({ card }: Readonly<{ card: BoardCardDTO }>) {
@@ -434,6 +554,7 @@ export function BoardItemModal({ card, workspaceKey, onClose }: Readonly<BoardIt
   const supportsDesignArtifacts = supportsDesignArtifactsForCard(card);
   const { preview, previewError, isPreviewPending, handleStartPreview, handleStopPreview } = usePreviewState(card, supportsPreviewControls);
   const { wireframes, design, artifactError } = useDesignArtifactState(card, supportsDesignArtifacts);
+  const { mergeStatus, mergeStatusError } = useMergeStatus(card.latestRunId, card.column === "merge");
 
   // ESC closes.
   useEffect(() => {
@@ -551,6 +672,7 @@ export function BoardItemModal({ card, workspaceKey, onClose }: Readonly<BoardIt
                   effectivePreviewUrl={effectivePreviewUrl}
                 />
               ) : null}
+              <SupabaseStatusPanel card={card} mergeStatus={mergeStatus} mergeStatusError={mergeStatusError} />
 
               <BoardCardActions card={card} />
             </div>
