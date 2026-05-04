@@ -552,3 +552,9 @@
 - Focused suites: PASS — `test/reviewCapabilities.test.ts`, targeted `test/ralphRuntime.test.ts`, and targeted `test/apiIntegration.test.ts` exited 0.
 - Build: PASS — `npm run typecheck --workspace=@beerengineer/engine`.
 - Diff hygiene: PASS — `git diff --check`.
+
+### Wave 4 Gate — PASSED (2026-05-04T12:39:29+02:00)
+- [x] Ralph: 20 AC commands green
+- [x] Build: `npm run typecheck`
+- [x] CodeRabbit: 0 non-advisory findings (advisory severities: medium,low,minor)
+- [x] Smoke: backend-only
