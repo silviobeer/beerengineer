@@ -14,7 +14,7 @@
 - [ ] AC-1: Workspace preflight reports capability-oriented status for `git`, `github`, `sonar`, and `coderabbit`.
 - [ ] AC-2: Each capability result includes a stable `capabilityId`.
 - [ ] AC-3: Each non-ready capability result includes a human-readable reason.
-- [ ] AC-4: Existing setup/settings UI flows continue to receive compatible API behavior or are minimally adjusted in the same wave.
+- [ ] AC-4: Existing setup/settings UI flows continue to receive API-compatible behavior based on `apps/engine/src/api/openapi.json`, `docs/api-contract.md`, and current UI consumers.
 
 ### US-2: Als Maintainer moechte ich Git und GitHub getrennt sehen um lokale Pflichtlogik nicht mit Provider-Logik zu vermischen
 **Given** a workspace flow needs local repository state  
@@ -43,12 +43,12 @@
 ### US-4: Als UI-Consumer moechte ich bestehende Setup- und Settings-Flows weiter nutzen koennen um keinen UI-Ausfall durch den Refactor zu bekommen
 **Given** the UI consumes workspace/setup/settings API responses  
 **When** workspace preflight and registration become capability-oriented  
-**Then** existing endpoints, response field names, and documented OpenAPI shapes remain valid unless updated deliberately  
-**And** any required UI compatibility adjustment ships with the API change
+**Then** existing endpoints, response field names, and documented OpenAPI shapes remain valid by default
+**And** any contract-breaking change requires an explicit architecture or wave-plan decision and ships with the UI compatibility update in the same wave
 
 **Acceptance Criteria:**
-- [ ] AC-13: Existing documented setup/settings API contracts remain valid unless an explicit contract update is made.
-- [ ] AC-14: Any API contract update includes the corresponding UI compatibility adjustment.
+- [ ] AC-13: Existing documented setup/settings API contracts are treated as frozen by default.
+- [ ] AC-14: A contract-breaking API update is allowed only with an explicit architecture or wave-plan decision and the corresponding UI compatibility adjustment.
 - [ ] AC-15: Existing setup/settings flows do not require new UI surfaces to remain functional.
 
 ### US-5: Als Maintainer moechte ich Workspace-Registration als Orchestrierung sehen um Tool-Spezialfaelle leichter entfernen zu koennen
@@ -69,7 +69,7 @@
 - GitHub remote is missing: local workspace flows continue, GitHub-dependent flows report the missing provider context.
 - `gh` is unavailable: GitHub actions that need `gh` fail clearly while local detection continues where possible.
 - Sonar enablement fails during registration: registration succeeds if required preconditions pass and records the Sonar issue.
-- Existing UI expects old readiness fields: compatibility is preserved or updated together with the API contract.
+- Existing UI expects old readiness fields: compatibility is preserved; if a break is unavoidable, the API contract and UI consumer are updated in the same wave by explicit decision.
 
 ## Abhaengigkeiten
 - Benoetigt: PROJ-3-PRD-1.

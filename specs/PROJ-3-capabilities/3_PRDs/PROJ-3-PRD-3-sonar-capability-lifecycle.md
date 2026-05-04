@@ -20,13 +20,15 @@
 **Given** I register a workspace with the Sonar convenience option  
 **When** registration reaches Sonar setup  
 **Then** it delegates to the same Sonar enablement core as `workspace sonar enable`  
-**And** optional Sonar failure does not roll back otherwise valid workspace registration
+**And** optional Sonar enablement failure does not roll back otherwise valid workspace registration
 
 **Acceptance Criteria:**
 - [ ] AC-5: `workspace add --sonar` and `workspace sonar enable` share the same Sonar enablement behavior.
 - [ ] AC-6: If Sonar enablement fails but required workspace preconditions pass, workspace registration succeeds.
-- [ ] AC-7: The registration result records Sonar as failed, not configured, or not meaningful with a reason.
-- [ ] AC-8: Sonar-owned partial writes are avoided up front or recoverable through Sonar enable/audit/repair.
+- [ ] AC-7: Sonar enablement execution errors during registration are recorded as `failed` with a reason.
+- [ ] AC-8: Missing Sonar prerequisites during registration are recorded as `not_configured` with a reason.
+- [ ] AC-9: Sonar enablement uses a best-effort write strategy with audit/re-enable recovery for Sonar-owned partial states.
+- [ ] AC-10: Sonar audit detects partial enablement states that can result from interrupted or partially failed Sonar-owned writes.
 
 ### US-3: Als Operator moechte ich Sonar-Scope-Audit ausfuehren um Drift in Source-, Test- und Coverage-Konfiguration sichtbar zu machen
 **Given** a workspace has or should have Sonar configuration  
@@ -35,10 +37,10 @@
 **And** it does not rewrite files
 
 **Acceptance Criteria:**
-- [ ] AC-9: `workspace sonar audit` reports Sonar source roots, test roots, coverage reports, and relevant readiness.
-- [ ] AC-10: Audit returns drift as structured data, not by throwing for normal drift.
-- [ ] AC-11: Audit classifies findings by risk or repairability.
-- [ ] AC-12: Audit is read-only.
+- [ ] AC-11: `workspace sonar audit` reports Sonar source roots, test roots, coverage reports, and relevant readiness.
+- [ ] AC-12: Audit returns drift as structured data, not by throwing for normal drift.
+- [ ] AC-13: Audit classifies findings by risk or repairability.
+- [ ] AC-14: Audit is read-only.
 
 ### US-4: Als Operator moechte ich Sonar-Reparaturen vorab sehen um Quality-Scope-Aenderungen bewusst zu bestaetigen
 **Given** Sonar audit finds repairable drift  
@@ -47,10 +49,10 @@
 **And** no files are changed
 
 **Acceptance Criteria:**
-- [ ] AC-13: `workspace sonar repair` produces a dry-run plan by default.
-- [ ] AC-14: The plan distinguishes safe deterministic repairs from risky or ambiguous suggestions.
-- [ ] AC-15: The plan explains why each suggested change exists.
-- [ ] AC-16: Dry-run repair does not modify `sonar-project.properties` or workspace metadata.
+- [ ] AC-15: `workspace sonar repair` produces a dry-run plan by default.
+- [ ] AC-16: The plan distinguishes safe deterministic repairs from risky or ambiguous suggestions.
+- [ ] AC-17: The plan explains why each suggested change exists.
+- [ ] AC-18: Dry-run repair does not modify `sonar-project.properties` or workspace metadata.
 
 ### US-5: Als Operator moechte ich sichere Sonar-Reparaturen anwenden koennen um deterministische Drift ohne manuelle Dateiedits zu beheben
 **Given** a Sonar repair plan contains safe deterministic repairs  
@@ -59,10 +61,11 @@
 **And** risky or ambiguous suggestions remain visible and unapplied
 
 **Acceptance Criteria:**
-- [ ] AC-17: `repair --apply` writes only safe deterministic repairs.
-- [ ] AC-18: Risky or ambiguous repairs are not applied.
-- [ ] AC-19: `repair --apply` updates Sonar-owned config and Sonar workspace metadata together when both are part of the safe repair.
-- [ ] AC-20: Re-running `repair --apply` is idempotent for safe repairs.
+- [ ] AC-19: `repair --apply` writes only safe deterministic repairs.
+- [ ] AC-20: Risky or ambiguous repairs are not applied.
+- [ ] AC-21: `repair --apply` updates Sonar-owned config and Sonar workspace metadata as one repair unit when both are part of the safe repair.
+- [ ] AC-22: If one write in a Sonar repair unit fails, a subsequent audit detects the partial state and the next `repair --apply` recomputes the remaining safe repair.
+- [ ] AC-23: Re-running `repair --apply` is idempotent for safe repairs.
 
 ### US-6: Als Maintainer moechte ich den Sonar-Lifecycle als Capability sehen um Sonar aus Workspace- und Review-Spezialfaellen herauszuschneiden
 **Given** Sonar participates in onboarding, audit, repair, readiness, and review  
@@ -71,18 +74,19 @@
 **And** workspace and review modules only orchestrate Sonar through capability ports
 
 **Acceptance Criteria:**
-- [ ] AC-21: Sonar enablement, config generation, audit, repair, readiness, and review adapter behavior are owned by the Sonar capability.
-- [ ] AC-22: Workspace registration does not own Sonar-specific business logic.
-- [ ] AC-23: Story review does not own Sonar-specific scanner or gate logic.
-- [ ] AC-24: Sonar lifecycle behavior covers the intent of `specs/sonar-workspace-quality-lifecycle.md`.
+- [ ] AC-24: Sonar enablement, config generation, audit, repair, readiness, and review adapter behavior are owned by the Sonar capability.
+- [ ] AC-25: Workspace registration does not own Sonar-specific business logic.
+- [ ] AC-26: Story review does not own Sonar-specific scanner or gate logic.
+- [ ] AC-27: Sonar lifecycle behavior covers the intent of `specs/sonar-workspace-quality-lifecycle.md`.
 
 ## Edge Cases
 - `sonar-project.properties` is missing: audit reports missing configuration and possible setup actions.
+- Sonar enablement is interrupted after writing one Sonar-owned artifact: audit reports partial enablement and repair/re-enable can recover safe remaining state.
 - Source or test paths no longer exist: audit reports drift with risk classification.
-- Coverage reports are configured but missing: audit reports not meaningful or artifact missing as appropriate.
+- Coverage reports are configured but missing after the coverage-producing step: audit reports `not_meaningful` for coverage assessment.
 - LCOV paths refer outside configured source scope: audit reports high-risk drift.
-- `repair --apply` is interrupted: a rerun recomputes state and applies only remaining safe repairs.
-- Sonar token or scanner is missing: Sonar is reported as not configured or not meaningful without blocking story flows.
+- `repair --apply` is interrupted: audit reports the partial state and a rerun recomputes state before applying only remaining safe repairs.
+- Sonar token or scanner is missing: Sonar is reported as `not_configured` without blocking story flows.
 
 ## Abhaengigkeiten
 - Benoetigt: PROJ-3-PRD-1, PROJ-3-PRD-2.

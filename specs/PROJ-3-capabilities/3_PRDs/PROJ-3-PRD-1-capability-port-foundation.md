@@ -45,26 +45,41 @@
 
 **Acceptance Criteria:**
 - [ ] AC-10: The review envelope includes capability identity, lifecycle/phase, outcome, blocking indicator, summary, and artifact references.
-- [ ] AC-11: The review outcome states are a closed set that includes at least ran, skipped, failed, not configured, and not meaningful.
+- [ ] AC-11: The review outcome states are exactly `ran`, `skipped`, `failed`, `not_configured`, and `not_meaningful`.
 - [ ] AC-12: Sonar-specific gate/scope/coverage data is not forced into CodeRabbit's result shape.
 - [ ] AC-13: CodeRabbit-specific diff/finding data is not forced into Sonar's result shape.
 
-### US-5: Als Update-Mode-Betreiber moechte ich gemeinsame Readiness-Begriffe nutzen um GitHub/Sonar-Checks nicht doppelt unterschiedlich zu pflegen
+### US-5: Als Review-Orchestrator moechte ich Review-Outcomes eindeutig unterscheiden um skipped, failed und not meaningful nicht zu vermischen
+**Given** a review capability cannot produce a normal useful result
+**When** the orchestrator records its outcome
+**Then** the outcome uses the closed set consistently
+**And** each non-ran state has a distinct meaning
+
+**Acceptance Criteria:**
+- [ ] AC-14: `ran` means the capability completed and produced a meaningful tool-specific result.
+- [ ] AC-15: `skipped` means the capability was intentionally not attempted because the flow or policy said not to run it.
+- [ ] AC-16: `not_configured` means required local configuration, credentials, CLI setup, or project metadata is absent.
+- [ ] AC-17: `failed` means the capability was attempted and encountered an execution or service failure.
+- [ ] AC-18: `not_meaningful` means the capability could be reached but the available input or produced artifacts cannot support a meaningful assessment for this run.
+
+### US-6: Als Update-Mode-Betreiber moechte ich gemeinsame Readiness-Begriffe nutzen um GitHub/Sonar-Checks nicht doppelt unterschiedlich zu pflegen
 **Given** update-mode checks beerengineer self-update readiness  
 **When** it reports GitHub or Sonar readiness  
 **Then** it uses shared readiness terminology and helper behavior  
 **And** it does not become a workspace-capability orchestration consumer
 
 **Acceptance Criteria:**
-- [ ] AC-14: Shared readiness terminology covers Git, GitHub, and Sonar as needed by workspace and update-mode flows.
-- [ ] AC-15: Update-mode remains separate from workspace capability orchestration.
-- [ ] AC-16: Update-mode GitHub/Sonar readiness cannot drift into contradictory status meanings compared with workspace capability readiness.
+- [ ] AC-19: Shared readiness terminology covers Git, GitHub, and Sonar as needed by workspace and update-mode flows.
+- [ ] AC-20: Update-mode remains separate from workspace capability orchestration.
+- [ ] AC-21: Update-mode GitHub/Sonar readiness uses shared helper behavior where workspace and update-mode meanings overlap.
+- [ ] AC-22: If a shared helper cannot be used because update-mode has different inputs, the architecture documents the difference while preserving the shared readiness meaning.
 
 ## Edge Cases
 - A capability is disabled: preflight reports a disabled state as data.
 - A capability is not configured: preflight reports not configured with a user-facing reason.
 - A capability's input workspace is unreadable: the caller receives a failure appropriate to the flow rather than a false ready state.
 - A review tool returns a domain result that has no matching field in the shared envelope: the tool-specific result preserves it.
+- A tool has input but no meaningful assessment can be made: the outcome is `not_meaningful`, not `ran`.
 - Update-mode needs GitHub/Sonar readiness but no workspace is selected: shared readiness helpers still work without workspace orchestration.
 
 ## Abhaengigkeiten

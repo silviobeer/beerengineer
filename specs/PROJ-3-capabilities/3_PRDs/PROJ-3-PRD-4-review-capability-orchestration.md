@@ -8,12 +8,12 @@
 **Given** a story reaches review  
 **When** review tools are evaluated  
 **Then** Sonar and CodeRabbit return review capability envelopes  
-**And** each envelope explains whether the capability ran, skipped, failed, was not configured, or was not meaningful
+**And** each envelope explains whether the capability outcome is `ran`, `skipped`, `failed`, `not_configured`, or `not_meaningful`
 
 **Acceptance Criteria:**
 - [ ] AC-1: Sonar review output includes a review capability envelope with `capabilityId=sonar`.
 - [ ] AC-2: CodeRabbit review output includes a review capability envelope with `capabilityId=coderabbit`.
-- [ ] AC-3: The outcome uses the closed review outcome set.
+- [ ] AC-3: The outcome uses the closed review outcome set from PROJ-3-PRD-1.
 - [ ] AC-4: Each non-ran or non-meaningful outcome includes a reason and artifact reference where available.
 
 ### US-2: Als Maintainer moechte ich Tool-Ergebnisse spezifisch behalten um keine Sonar- oder CodeRabbit-Semantik zu verlieren
@@ -59,16 +59,17 @@
 **And** capability outcome data is exposed consistently in JSON
 
 **Acceptance Criteria:**
-- [ ] AC-17: Existing review API/OpenAPI behavior remains valid unless explicitly updated.
-- [ ] AC-18: Any API update needed for capability envelopes is paired with UI compatibility work in the same wave.
+- [ ] AC-17: Existing review API/OpenAPI behavior is treated as frozen by default.
+- [ ] AC-18: Any contract-breaking API update needed for capability envelopes requires an explicit architecture or wave-plan decision and is paired with UI compatibility work in the same wave.
 - [ ] AC-19: JSON output includes stable `capabilityId` and outcome values.
 - [ ] AC-20: Human-readable review summaries identify skipped or not-meaningful capabilities clearly.
 
 ## Edge Cases
-- Sonar scanner is installed but config is invalid: Sonar outcome is failed or not meaningful with details, not a generic tool failure.
+- Sonar scanner is installed but config is invalid and scan execution fails: Sonar outcome is `failed` with details, not a generic tool failure.
 - Sonar quality gate fails after a successful scan: Sonar domain result preserves gate details.
-- CodeRabbit CLI is missing: CodeRabbit outcome is skipped or not configured with a remedy.
-- CodeRabbit has no diff basis: CodeRabbit outcome records no meaningful review input.
+- CodeRabbit CLI is missing: CodeRabbit outcome is `not_configured` with a remedy.
+- CodeRabbit has no diff basis after review was selected for the story: CodeRabbit outcome is `not_meaningful`.
+- CodeRabbit is disabled by policy: CodeRabbit outcome is `skipped`.
 - One review capability fails unexpectedly while another runs: each envelope records its own outcome.
 
 ## Abhaengigkeiten

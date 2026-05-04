@@ -43,14 +43,16 @@
 ### US-4: Als Operator moechte ich Exit-Codes interpretieren koennen um Automatisierung rund um Capabilities zu bauen
 **Given** a capability CLI command completes  
 **When** the result is success, usage error, required capability failure, or optional warning  
-**Then** the exit code distinguishes these cases  
+**Then** the exit code follows the PROJ-3 capability CLI exit-code table
 **And** optional Sonar/CodeRabbit warnings do not look like required Git failures
 
 **Acceptance Criteria:**
-- [ ] AC-13: Exact exit codes are assigned before implementation.
-- [ ] AC-14: Usage errors have a distinct exit-code category.
-- [ ] AC-15: Required capability failures have a distinct exit-code category.
-- [ ] AC-16: Optional capability warning or skipped states do not reuse required capability failure semantics.
+- [ ] AC-13: Capability CLI success exits with `0`.
+- [ ] AC-14: Capability CLI usage or workspace-selection errors exit with `20`.
+- [ ] AC-15: Capability CLI transport or API communication errors exit with `30`.
+- [ ] AC-16: Required capability failures exit with `40`.
+- [ ] AC-17: Optional capability warnings, skipped states, or not-meaningful states exit with `41` when the command's purpose is to surface that warning state.
+- [ ] AC-18: Optional capability warning or skipped states do not reuse required capability failure semantics.
 
 ### US-5: Als Maintainer moechte ich Update-Mode-Readiness mit gemeinsamen Begriffen angleichen um Drift zwischen Self-Update und Workspace-Checks zu vermeiden
 **Given** update-mode reports beerengineer self-update readiness  
@@ -59,10 +61,11 @@
 **And** it remains outside workspace capability orchestration
 
 **Acceptance Criteria:**
-- [ ] AC-17: Update-mode GitHub/Sonar readiness uses shared terms or helpers where they overlap with workspace capability readiness.
-- [ ] AC-18: Update-mode does not consume workspace capability orchestration.
-- [ ] AC-19: Existing update status behavior remains compatible unless explicitly updated.
-- [ ] AC-20: Update-readiness tests cover GitHub/Sonar warning behavior after the shared readiness alignment.
+- [ ] AC-19: Update-mode GitHub/Sonar readiness uses shared terms and shared helper behavior where they overlap with workspace capability readiness.
+- [ ] AC-20: If update-mode cannot use a shared helper because its inputs differ, the same readiness meaning is preserved and the difference is documented.
+- [ ] AC-21: Update-mode does not consume workspace capability orchestration.
+- [ ] AC-22: Existing update status behavior remains compatible unless explicitly updated.
+- [ ] AC-23: Update-readiness tests cover GitHub/Sonar warning behavior after the shared readiness alignment.
 
 ## Edge Cases
 - A command is run without selecting a workspace: it reports a usage or selection error clearly.
