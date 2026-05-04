@@ -6,12 +6,11 @@ PROJ-3 introduces an explicit capability architecture for workspace and
 review integrations. The initial capabilities are `git`, `github`,
 `sonar`, and `coderabbit`.
 
-The goal is good code before more features: integrations should have clear
-module boundaries, predictable operator commands, and a structure that a
-maintainer can understand quickly. A maintainer should be able to find a
-capability entry point, understand what the capability owns, and see how to
-remove or replace it without reading unrelated workspace, CLI, and review
-internals.
+The goal is good code before more features: integrations have clear module
+boundaries, predictable operator commands, and a structure that a maintainer
+can understand quickly. A maintainer can find a capability entry point,
+understand what the capability owns, and see how to remove or replace it
+without reading unrelated workspace, CLI, and review internals.
 
 This is not a generic plugin framework. Capabilities are concrete, typed
 engine units with explicit ports that match real product flows.
@@ -57,10 +56,22 @@ Each capability implements only the ports that make sense for it.
 
 Capability ports:
 
-- `preflight(workspace)` for readiness and context.
-- `enable` or `connect` for capabilities that can be activated or connected.
-- `audit(workspace)` for drift-capable configuration.
-- `repair(workspace, plan)` for deterministic operator-controlled repair.
+- `available(workspace)` for cheap local availability. It answers whether the
+  capability can participate in the workspace without performing expensive
+  readiness work.
+- `preflight(workspace)` for detailed readiness and context. It returns
+  structured data and diagnostics instead of throwing for normal missing,
+  disabled, or not-configured states. It throws only for programming errors or
+  unreadable inputs that prevent producing a report.
+- `enable(input)` for capabilities that activate local project configuration,
+  such as Sonar.
+- `connect(input)` for capabilities that establish provider or tool context,
+  such as GitHub/`gh`.
+- `audit(workspace)` for drift-capable configuration. It returns drift as data
+  with risk classification, not as control-flow exceptions.
+- `repair(workspace, plan)` for deterministic operator-controlled repair. It is
+  idempotent for safe repairs: rerunning after a partial or completed apply
+  recomputes the current plan and only writes remaining safe changes.
 - `review(input)` for review capabilities.
 
 Classification:
@@ -73,9 +84,14 @@ Classification:
 - `sonar` is an optional review and quality-scope capability.
 - `coderabbit` is an optional review capability.
 
+CodeRabbit does not initially get an audit/repair lifecycle unless the
+architecture phase identifies a real drift surface beyond CLI/config
+readiness. Its first-class ports are availability, preflight, optional
+configuration, and review.
+
 ## Components
 
-The new core should live under a clear capability area, for example:
+The new core lives under a clear capability area, for example:
 
 ```text
 apps/engine/src/core/capabilities/
@@ -94,11 +110,12 @@ Expected component boundaries:
   readiness, and review adapter.
 - `core/capabilities/coderabbit/`: CodeRabbit CLI readiness, workspace
   configuration, and review adapter.
-- `core/capabilities/readiness/`: shared GitHub and Sonar readiness terms and
-  helper checks reused by workspace capabilities and update-mode without
-  sharing workspace orchestration.
+- `core/capabilities/readiness/`: shared Git, GitHub, and Sonar readiness terms
+  and helper checks reused by workspace capabilities and update-mode without
+  sharing workspace orchestration. Git readiness is mandatory-flow readiness,
+  not optional integration readiness.
 
-Existing mixed modules should be reduced to orchestration:
+Existing mixed modules are reduced to orchestration:
 
 - `core/workspaces/registration.ts` orchestrates workspace registration and
   calls capability ports.
@@ -121,7 +138,13 @@ Registration then passes the relevant context to Sonar and CodeRabbit through
 ports instead of letting those tools inspect remotes or `gh` themselves.
 
 `workspace add --sonar` remains a convenience path, but it delegates to the
-same Sonar enablement core as `workspace sonar enable`.
+same Sonar enablement core as `workspace sonar enable`. If Sonar enablement
+fails during workspace add, the workspace registration still succeeds when Git
+and other required workspace preconditions are satisfied. The result records
+Sonar as not configured, failed, or not meaningful with the reason and next
+action. Sonar-owned partial writes must be either avoided up front or repaired
+by rerunning Sonar enable/audit/repair; workspace registration is not rolled
+back for optional Sonar failure.
 
 Capability write boundaries:
 
@@ -137,7 +160,7 @@ review capability returns a small common orchestration envelope:
 
 - `capabilityId`
 - lifecycle or phase
-- outcome
+- outcome from a closed set locked during architecture
 - blocking flag
 - summary
 - artifact paths
@@ -145,6 +168,10 @@ review capability returns a small common orchestration envelope:
 The domain result remains tool-specific. Sonar keeps scanner, gate, condition,
 scope, and coverage semantics. CodeRabbit keeps diff and finding semantics.
 The common envelope is only for orchestration and presentation.
+
+The architecture phase must lock the exact review envelope schema first,
+because it becomes the contract between review capabilities, artifacts, CLI,
+API, and UI compatibility.
 
 Update-mode remains a beerengineer self-update flow. It does not become a
 workspace capability consumer. It uses shared readiness terms and helper
@@ -164,6 +191,11 @@ JSON output includes:
 - summary
 - tool-specific details
 
+The optional review outcome states are a closed set to be finalized in
+architecture. The concept requires at least distinct states for ran, skipped,
+failed, not configured, and not meaningful so UI, CLI, and artifacts do not
+invent prose-only variants.
+
 Blocking rules:
 
 - Missing local Git may block or fail flows that require a real workspace or
@@ -180,8 +212,9 @@ Sonar repair rules:
 - `workspace sonar repair --apply` writes only safe deterministic repairs.
 - Risky or ambiguous suggestions remain visible and are not applied.
 
-Exit codes should distinguish usage errors, required capability failures, and
-optional capability warnings.
+Exit codes distinguish usage errors, required capability failures, and
+optional capability warnings. The architecture phase must assign exact codes
+before implementation begins.
 
 ## Success Criteria
 
@@ -203,7 +236,33 @@ The project is successful when:
 - Update-mode uses shared readiness terminology and helpers where relevant,
   while remaining outside workspace capability orchestration.
 - Existing UI setup/settings flows continue working through compatible API
-  behavior or minimal API/UI compatibility adjustments.
+  behavior or minimal API/UI compatibility adjustments. Compatibility means
+  existing endpoints, response field names, and documented OpenAPI shapes remain
+  valid unless the architecture explicitly updates the API contract and the
+  existing UI consumers in the same wave.
+
+## Migration Strategy
+
+The implementation is incremental rather than a single cutover.
+
+Recommended order:
+
+1. Introduce shared capability types, readiness helpers, and fake capability
+   test doubles without changing public behavior.
+2. Extract Git and GitHub context from workspace registration into explicit
+   ports, keeping existing API and CLI outputs compatible.
+3. Move Sonar enablement, config generation, audit, repair, and review adapter
+   behavior into the Sonar capability.
+4. Move CodeRabbit readiness and review behavior into the CodeRabbit capability.
+5. Switch workspace registration/preflight to capability orchestration.
+6. Switch review orchestration to review capabilities with the locked envelope.
+7. Add dedicated CLI command groups and keep compatibility paths such as
+   `workspace add --sonar` as thin delegations.
+8. Align update-mode GitHub/Sonar readiness helpers without making update-mode
+   a workspace-capability consumer.
+
+Each step preserves existing behavior or includes the minimal API/UI
+compatibility update needed for existing flows to keep working.
 
 ## Out Of Scope
 
@@ -230,8 +289,15 @@ Required test coverage:
 
 - Unit tests for capability port implementations and classification.
 - Parser and command-runner tests for dedicated CLI groups.
+- Contract tests for the closed review envelope and optional review outcome
+  states.
 - Public CLI acceptance tests for `workspace sonar audit`, `repair`, and
   `repair --apply` with real file side effects.
+- Tests proving `repair --apply` is idempotent for safe repairs and leaves
+  risky repairs unapplied across repeated runs.
+- Tests proving `workspace add --sonar` succeeds as a workspace registration
+  when optional Sonar enablement fails, while recording the Sonar failure
+  clearly.
 - Review orchestrator tests with fake Sonar and CodeRabbit capabilities.
 - Regression tests proving optional Sonar/CodeRabbit failures are documented
   and do not block story flows.
