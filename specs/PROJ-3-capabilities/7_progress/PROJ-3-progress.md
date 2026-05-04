@@ -300,3 +300,9 @@
 - [x] Build: `npm run typecheck`
 - [x] CodeRabbit: 0 non-advisory findings (advisory severities: medium,low,minor)
 - [x] Smoke: backend-only
+
+### Wave 2 Gate — PASSED (2026-05-04T12:07:25+02:00)
+- [x] Ralph: 24 AC commands green
+- [x] Build: `npm run typecheck`
+- [x] CodeRabbit: 0 non-advisory findings (advisory severities: medium,low,minor)
+- [x] Smoke: backend-only
