@@ -1,7 +1,7 @@
 # PROJ-3 Progress
 
-## Status: quality-gate-passed
-## Current Wave: Quality Gate
+## Status: qa-blocked
+## Current Wave: QA
 ## BASE_SHA: 369485f6014fb5f98cf3206ec4f9372599e5d2e5
 
 ---
@@ -186,12 +186,76 @@
 
 ## QA Results
 
-- Not started. Quality Gate is complete; next step is Skill 6 QA handoff.
+- QA completed on 2026-05-04. Automated gates are green, but adversarial QA found one High Sonar lifecycle bug. Skill 7 documentation handoff is blocked until the High bug is fixed.
+- Total ACs assessed: 112. Passed: 111. Failed: 1.
+- Browser E2E: not applicable for PROJ-3; this PROJ adds backend/CLI/API capability behavior and no frontend routes or components.
+- UI component registry: no new `apps/ui` or component files since BASE_SHA; `docs/components.md` registry impact is none.
+- Security audit: no Critical/High security vulnerabilities found. Existing CSRF, secret redaction, trusted-host update, and allowedRoots purge regression tests passed.
+- Verification:
+  - `npm run typecheck --workspace=@beerengineer/engine`: PASS.
+  - `npm run test:file --workspace=@beerengineer/engine -- test/capabilityCli.test.ts test/sonarCapability.test.ts test/reviewCapabilities.test.ts test/workspaceCapabilities.test.ts`: PASS (73 tests, 0 failures).
+  - `npm test --workspace=@beerengineer/engine`: PASS (795 tests; 793 passed, 2 skipped, 0 failed).
+  - Adversarial custom Sonar project key repro: FAIL, see `BUG-PROJ3-QA-001`.
+
+### QA Bugs
+
+#### BUG-PROJ3-QA-001 — [High] Custom Sonar project keys are ignored when generating scanner config
+- **File:** `apps/engine/src/core/capabilities/sonarCapability.ts`
+- **Anchor:** `enableWorkspaceSonarCapability` / `writeSonarProperties(context.workspaceRoot, context.github.owner!, context.github.repo!)`
+- **Source:** Marcus Weber (Principal Engineer) + Thomas Müller (SRE/Reliability) + QA adversarial test
+- **Status:** open
+- **Fix attempts:** 0
+- **Description:** Sonar enablement accepts `SonarConfig.projectKey`, but the generated `sonar-project.properties` is written from GitHub owner/repo (`acme_demo`) instead of the configured key. The same owner/repo derivation appears in repair generation via `sonar.projectKey.replace(...)`. A workspace configured for a non-default Sonar project will provision/refer to one key but scan/report against another.
+- **Repro:** In a temp GitHub-backed workspace, call `enableWorkspaceSonarCapability(context, "Demo", { enabled: true, organization: "acme", projectKey: "custom_key" })`; observe `sonar-project.properties` contains `sonar.projectKey=acme_demo` instead of `sonar.projectKey=custom_key`.
+- **Fix sketch:** Make Sonar property generation accept the actual `organization` and `projectKey` rather than deriving a repo slug; update repair drift/apply logic and add coverage for custom project keys.
+
+#### BUG-PROJ3-QA-002 — [Low] Help omits `--json` for `workspace coderabbit status`
+- **File:** `apps/engine/src/cli/parse.ts`
+- **Anchor:** `beerengineer workspace coderabbit status <key>`
+- **Source:** Marcus Weber (Principal Engineer)
+- **Status:** open
+- **Fix attempts:** 0
+- **Description:** The parser supports `workspace coderabbit status <key> --json`, but CLI help lists the command without `[--json]`, unlike the Git/GitHub/Sonar capability status commands. This is a discoverability gap for PRD-5's consistent text/JSON output story.
+- **Repro:** Run `node apps/engine/bin/beerengineer.js --help` and inspect the capability command section.
+- **Fix sketch:** Update the help line to `beerengineer workspace coderabbit status <key> [--json]`.
+
+### Persona Review Summary
+
+- Dr. Sarah Chen — Security Lead: 0 Critical, 0 High, 0 Medium, 0 Low. No token leakage, shell injection, CSRF regression, or obvious unsafe secret handling found in the PROJ-3 diff.
+- Marcus Weber — Principal Engineer: 0 Critical, 1 High, 0 Medium, 1 Low. Raised `BUG-PROJ3-QA-001` and `BUG-PROJ3-QA-002`.
+- Priya Sharma — Performance Engineer: 0 Critical, 0 High, 0 Medium, 0 Low. No new unbounded hot path found; the slow Sonar tests are integration-style and bounded.
+- Thomas Müller — SRE / Reliability Engineer: 0 Critical, 1 High, 0 Medium, 0 Low. Raised `BUG-PROJ3-QA-001` because mismatched Sonar keys can make quality gates unreliable across re-enable/repair flows.
+- Elena Rodriguez — Principal Architect: 0 Critical, 0 High, 0 Medium, 0 Low. Retrospective appended below.
+- Ken Takahashi — Minimalism Engineer: 0 Critical, 0 High, 0 Medium, 0 Low. Retrospective appended below.
+
+## AGENTS.md Candidates
+- [PROPOSED] AGENTS-PROJ3-QA-001: Capability QA must cover non-default configured IDs, not only generated defaults. — source: BUG-PROJ3-QA-001
+
+## PROJ Retrospective
+
+### Elena Rodriguez (Principal Architect)
+- PROJ-3 successfully separated capability identity, workspace readiness, Sonar lifecycle, review envelopes, and CLI rendering into understandable ownership zones.
+- The strongest architectural improvement is that optional review tooling is now visible without being implicitly fatal to story flow.
+- The weakest pattern is that Sonar still has two identities in practice: configured Sonar project metadata and GitHub-derived project metadata. The capability boundary should make the configured identity authoritative.
+- The late manual-review fixes show that envelope fields such as `blocking` need behavioral tests, not only shape tests.
+- The full-suite stall exposed a broader lesson: workflow fixture responders should be prompt-aware and fail-fast whenever interactive stage prompts evolve.
+- The next capability PROJ should require adversarial matrix tests for default and non-default provider identifiers before quality gate, especially where provider config can be user-supplied.
+- API compatibility was preserved well; adding fields was safer than reshaping existing workspace/setup responses.
+- Documentation handoff should explicitly explain where capability results are additive versus authoritative, because UI consumers will otherwise infer too much from the old fields.
+
+### Ken Takahashi (Minimalism)
+- The explicit capability registry is the right amount of abstraction for this repo; a plugin framework would have been overbuilt.
+- `capabilityRenderers.ts` is small enough to justify itself because it prevents duplicated text/JSON output semantics.
+- Sonar lifecycle is now centralized, but it still carries duplicated project-key derivation. Delete derivation at call sites and pass the configured project key through one path.
+- The review envelope helper functions are useful only if all consumers honor their semantics. Keep future helpers behavior-backed, not shape-only.
+- Avoid adding more generic capability commands. Dedicated commands remain clearer and match the PRD.
+- The progress file is now the project memory; keep it concise after QA or it will become harder to mine for documentation.
+- Future QA should include one adversarial config variant per public option before declaring a CLI capability done.
 
 ---
 
 ## Open Blockers
-- None.
+- `BUG-PROJ3-QA-001` blocks production readiness.
 
 ---
 

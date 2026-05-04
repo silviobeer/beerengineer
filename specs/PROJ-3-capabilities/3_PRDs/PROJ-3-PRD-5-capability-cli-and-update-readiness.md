@@ -84,3 +84,21 @@
 - CLI command groups must preserve stable capability IDs in JSON.
 - Public CLI acceptance tests must verify documented commands end-to-end.
 - Update-mode readiness alignment must not turn update-mode into a workspace capability flow.
+
+## QA Test Results
+
+Date: 2026-05-04
+
+Result: PASS with one Low UX/documentation bug. QA verified dedicated command groups, no generic `workspace capability ...` command, text/JSON capability output, public Sonar audit/repair side effects, exit-code categories, and update-readiness separation.
+
+Evidence:
+- `npm test --workspace=@beerengineer/engine`: PASS (795 tests; 793 passed, 2 skipped, 0 failed).
+- Focused CLI/capability tests: PASS (73 tests, 0 failures).
+- Manual CLI checks: generic `workspace capability ...` is rejected; `workspace sonar enable` without key exits `20`; help lists dedicated capability groups.
+
+AC status: AC-1 through AC-23 PASS.
+
+Linked bug:
+- `BUG-PROJ3-QA-002` in `7_progress/PROJ-3-progress.md` (Low): help omits `[--json]` for `workspace coderabbit status`.
+
+Browser/UI note: CLI commands are the user-facing surface for this PRD; no browser route was added.

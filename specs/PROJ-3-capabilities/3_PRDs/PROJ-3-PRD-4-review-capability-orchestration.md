@@ -81,3 +81,18 @@
 - Review outcome states must be a closed set before implementation.
 - Review artifacts must preserve tool-specific detail.
 - Optional review capability states must be visible without blocking story flow.
+
+## QA Test Results
+
+Date: 2026-05-04
+
+Result: PASS. QA verified Sonar and CodeRabbit review envelopes, preservation of domain-specific results, optional non-blocking semantics, review capability port orchestration, and API compatibility.
+
+Evidence:
+- `npm test --workspace=@beerengineer/engine`: PASS (795 tests; 793 passed, 2 skipped, 0 failed).
+- Focused review/capability tests: PASS (73 tests, 0 failures).
+- Manual security review found no token leakage in review artifacts; missing Sonar token writes only a redacted reason.
+
+AC status: AC-1 through AC-20 PASS.
+
+Browser/UI note: review API/OpenAPI compatibility was tested through integration and contract tests; no new browser UI was introduced.

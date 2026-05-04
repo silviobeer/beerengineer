@@ -89,3 +89,17 @@
 ## Technische Anforderungen
 - The port foundation must avoid dynamic plugin-framework semantics.
 - Capability states and outcome labels must be stable enough for CLI, API, UI compatibility, and test assertions.
+
+## QA Test Results
+
+Date: 2026-05-04
+
+Result: PASS. QA verified the closed capability IDs, explicit non-plugin port model, availability/preflight distinction, review outcome vocabulary, and update-readiness separation through the full engine suite plus focused capability tests.
+
+Evidence:
+- `npm test --workspace=@beerengineer/engine`: PASS (795 tests; 793 passed, 2 skipped, 0 failed).
+- `npm run test:file --workspace=@beerengineer/engine -- test/capabilityCli.test.ts test/sonarCapability.test.ts test/reviewCapabilities.test.ts test/workspaceCapabilities.test.ts`: PASS (73 tests, 0 failures).
+
+AC status: AC-1 through AC-22 PASS.
+
+Browser/UI note: no frontend route or component was added for this PRD; browser E2E is not applicable.

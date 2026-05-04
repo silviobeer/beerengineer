@@ -78,3 +78,18 @@
 ## Technische Anforderungen
 - Workspace orchestration must preserve existing setup/settings API compatibility unless deliberately changed with matching UI compatibility work.
 - Mandatory and optional capability failures must be distinguishable in user-facing output and tests.
+
+## QA Test Results
+
+Date: 2026-05-04
+
+Result: PASS. QA verified additive workspace capability projection, Git/GitHub boundary handling, optional Sonar/CodeRabbit registration behavior, existing API compatibility, and capability-owned write boundaries.
+
+Evidence:
+- `npm test --workspace=@beerengineer/engine`: PASS (795 tests; 793 passed, 2 skipped, 0 failed).
+- Focused capability tests: PASS (73 tests, 0 failures).
+- Security/regression checks in the full suite covered CSRF, setup/settings compatibility, allowedRoots purge safety, and API contract preservation.
+
+AC status: AC-1 through AC-20 PASS.
+
+Browser/UI note: no new setup/settings UI surface was added; compatibility was tested through API contract and integration tests.

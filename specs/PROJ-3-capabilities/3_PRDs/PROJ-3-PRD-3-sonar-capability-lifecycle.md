@@ -96,3 +96,23 @@
 - Sonar repair must be conservative and explicit.
 - Sonar lifecycle state must be observable through text and JSON CLI output.
 - Sonar behavior must stay within Sonar-owned write boundaries.
+
+## QA Test Results
+
+Date: 2026-05-04
+
+Result: FAIL. Automated and happy-path Sonar lifecycle tests passed, but adversarial QA found that custom configured Sonar project keys are ignored when generating scanner configuration.
+
+Evidence:
+- `npm test --workspace=@beerengineer/engine`: PASS (795 tests; 793 passed, 2 skipped, 0 failed).
+- Focused Sonar/capability tests: PASS (73 tests, 0 failures).
+- Adversarial repro: `enableWorkspaceSonarCapability(..., { organization: "acme", projectKey: "custom_key" })` writes `sonar.projectKey=acme_demo` to `sonar-project.properties`.
+
+AC status:
+- PASS: AC-1, AC-3 through AC-18, AC-20 through AC-27.
+- FAIL: AC-19 for non-default configured project keys because `repair --apply`/enablement can write scanner config for a GitHub-derived key instead of the configured Sonar key.
+
+Linked bug:
+- `BUG-PROJ3-QA-001` in `7_progress/PROJ-3-progress.md`.
+
+Browser/UI note: no frontend route or component was added for this PRD; CLI/file side effects were the relevant E2E path.
