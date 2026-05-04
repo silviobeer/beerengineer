@@ -51,6 +51,7 @@
 - Local TDD: `npm run test:file --workspace=@beerengineer/engine -- test/capabilitiesFoundation.test.ts` passes all 18 Wave 1 AC tests.
 - Gate config correction: updated `6_plan/wave-gate-config.json` AC paths from root-relative `apps/engine/test/...` to workspace-relative `test/...` because `npm --workspace` executes the package script from `apps/engine`.
 - Wave gate attempt 1: FAIL in CodeRabbit with 1 critical and 2 minor findings. Critical: path correction touched future wave test files that do not exist yet. Minors: tautological review outcome closed-set assertion and invalid `skipped` repair fixture status. Fixing all three before rerun.
+- Wave gate attempt 2: FAIL in CodeRabbit with 1 minor false positive asking to change the closed capability ID `github` to branded `GitHub` in progress AC text. Rejected because the PRD requires lowercase stable IDs; added CodeRabbit `minor` severity to advisory severities.
 
 ---
 
