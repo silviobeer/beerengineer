@@ -25,7 +25,7 @@ export function SetupSupportZone({ report, configView }: Readonly<{ report: Setu
       </div>
       <div className="grid gap-3">
         {showSonarConfig ? <SonarSetupCard defaultOrganization={configView?.config.llm.defaultSonarOrganization} /> : null}
-        <SupabaseSetupCard workspaceId={workspaceId} />
+        <SupabaseSetupCard workspaceId={workspaceId} supabase={configView?.supabase} />
         {(checks.length > 0 ? checks : [{ id: "empty", label: "No blocker", status: "ok" as const }]).map((check) => (
           <InstallationOptionCard key={check.id} check={check} />
         ))}

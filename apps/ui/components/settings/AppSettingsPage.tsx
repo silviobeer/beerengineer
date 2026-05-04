@@ -4,6 +4,7 @@ import type { AppConfigView, SetupReport } from "@/lib/setup/types";
 import { AppConfigSection } from "./AppConfigSection";
 import { SecretMaintenanceRow } from "./SecretMaintenanceRow";
 import { SetupStatusSection } from "./SetupStatusSection";
+import { SupabaseSettingsSection } from "./SupabaseSettingsSection";
 
 export function AppSettingsPage({
   report,
@@ -22,6 +23,7 @@ export function AppSettingsPage({
             <a className="border border-zinc-800 px-3 py-2 text-sm text-amber-300" href="#setup-status">Setup status</a>
             <a className="border border-zinc-800 px-3 py-2 text-sm text-zinc-300" href="#app-config">App config</a>
             <a className="border border-zinc-800 px-3 py-2 text-sm text-zinc-300" href="#secrets">Secrets</a>
+            <a className="border border-zinc-800 px-3 py-2 text-sm text-zinc-300" href="#supabase">Supabase</a>
             <a className="border border-zinc-800 px-3 py-2 text-sm text-zinc-300" href="#sonar">Sonar</a>
             <a className="border border-zinc-800 px-3 py-2 text-sm text-zinc-300" href="#optional-services">Optional services</a>
           </nav>
@@ -38,6 +40,7 @@ export function AppSettingsPage({
             <SecretMaintenanceRow label="LLM API key" secret={configView?.config.llm.apiKey} fallbackRef="ANTHROPIC_API_KEY" />
             <SecretMaintenanceRow label="Telegram bot token" secret={telegram?.botToken} fallbackRef="TELEGRAM_BOT_TOKEN" />
           </section>
+          {configView ? <SupabaseSettingsSection supabase={configView.supabase} /> : null}
           <section id="sonar" className="space-y-3" data-testid="settings-sonar">
             <div>
               <h2 className="font-display text-xl">Sonar</h2>

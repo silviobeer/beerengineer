@@ -9,6 +9,8 @@ import { runSecretTest } from "../../setup/secretTests.js"
 import { KNOWN_GROUP_IDS } from "../../setup/config.js"
 import { SupabaseManagementClient } from "../../core/supabase/managementClient.js"
 import { connectSupabaseProject } from "../../setup/supabaseSetup.js"
+import { rotateSupabaseManagementToken, type SupabaseTokenRotationSurface } from "../../setup/secretActions.supabaseRotate.js"
+import { patchSupabaseSettings } from "../../setup/supabaseSettings.js"
 import type { Repos } from "../../db/repositories.js"
 import { json, readJson } from "../http.js"
 
@@ -70,6 +72,27 @@ export async function handleSupabaseConnect(repos: Repos, req: IncomingMessage, 
   json(res, result.ok ? 200 : 400, result)
 }
 
+export async function handleSupabaseRotate(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const body = await readJson(req) as { token?: unknown; surface?: unknown }
+  const token = typeof body?.token === "string" ? body.token : ""
+  const surface = parseSurface(body?.surface)
+  if (!surface) {
+    json(res, 400, { ok: false, error: "invalid_surface", message: "surface is required" })
+    return
+  }
+  const result = await rotateSupabaseManagementToken({
+    token,
+    surface,
+    client: new SupabaseManagementClient({ token }),
+  })
+  json(res, result.ok ? 200 : 400, result)
+}
+
+export async function handleSupabaseSettingsPatch(repos: Repos, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const result = patchSupabaseSettings(repos, await readJson(req) as Record<string, unknown>)
+  json(res, result.ok ? 200 : result.error === "settings_changed" ? 409 : 400, result)
+}
+
 export async function handleSecretAction(req: IncomingMessage, res: ServerResponse, ref: string): Promise<void> {
   const body = await readJson(req)
   const decoded = parseSecretRef(ref)
@@ -106,6 +129,10 @@ function parseSecretRef(raw: string): string | null {
   const trimmed = decoded.trim()
   if (!trimmed || trimmed.includes("\0")) return null
   return trimmed
+}
+
+function parseSurface(value: unknown): SupabaseTokenRotationSurface | null {
+  return value === "cli" || value === "ui" || value === "setup-cli" || value === "setup-ui" ? value : null
 }
 
 function secretTestFailureStatus(status: string): number {

@@ -141,7 +141,14 @@ export class Repos {
         sonar_enabled: input.sonarEnabled ? 1 : 0,
         supabase_project_ref: null,
         supabase_region: null,
+        supabase_persistent_test_branch_ref: null,
+        supabase_persistent_test_branch_name: null,
+        supabase_persistent_test_branch_status: null,
+        supabase_last_checked_at: null,
+        supabase_cleanup_policy: "on-success-immediate",
+        supabase_cleanup_ttl_hours: null,
         supabase_protection_switch: "off",
+        supabase_settings_version: 1,
         last_opened_at: input.lastOpenedAt ?? null,
       })
       return this.insertRow("workspaces", row)
@@ -157,7 +164,14 @@ export class Repos {
              sonar_enabled = @sonar_enabled,
              supabase_project_ref = @supabase_project_ref,
              supabase_region = @supabase_region,
+             supabase_persistent_test_branch_ref = @supabase_persistent_test_branch_ref,
+             supabase_persistent_test_branch_name = @supabase_persistent_test_branch_name,
+             supabase_persistent_test_branch_status = @supabase_persistent_test_branch_status,
+             supabase_last_checked_at = @supabase_last_checked_at,
+             supabase_cleanup_policy = @supabase_cleanup_policy,
+             supabase_cleanup_ttl_hours = @supabase_cleanup_ttl_hours,
              supabase_protection_switch = @supabase_protection_switch,
+             supabase_settings_version = @supabase_settings_version,
              last_opened_at = @last_opened_at,
              updated_at = @updated_at
          WHERE id = @id`
@@ -171,7 +185,14 @@ export class Repos {
         sonar_enabled: input.sonarEnabled === undefined ? existing.sonar_enabled : Number(input.sonarEnabled),
         supabase_project_ref: existing.supabase_project_ref,
         supabase_region: existing.supabase_region,
+        supabase_persistent_test_branch_ref: existing.supabase_persistent_test_branch_ref,
+        supabase_persistent_test_branch_name: existing.supabase_persistent_test_branch_name,
+        supabase_persistent_test_branch_status: existing.supabase_persistent_test_branch_status,
+        supabase_last_checked_at: existing.supabase_last_checked_at,
+        supabase_cleanup_policy: existing.supabase_cleanup_policy ?? "on-success-immediate",
+        supabase_cleanup_ttl_hours: existing.supabase_cleanup_ttl_hours,
         supabase_protection_switch: existing.supabase_protection_switch ?? "off",
+        supabase_settings_version: existing.supabase_settings_version ?? 1,
         last_opened_at: input.lastOpenedAt === undefined ? existing.last_opened_at : input.lastOpenedAt,
         updated_at: now(),
       })
@@ -204,13 +225,63 @@ export class Repos {
 
   connectWorkspaceSupabase(workspaceId: string, input: { projectRef: string; region: string }): WorkspaceRow | undefined {
     this.run(
-      "UPDATE workspaces SET supabase_project_ref = ?, supabase_region = ?, supabase_protection_switch = COALESCE(supabase_protection_switch, 'off'), updated_at = ? WHERE id = ?",
+      "UPDATE workspaces SET supabase_project_ref = ?, supabase_region = ?, supabase_last_checked_at = ?, supabase_protection_switch = COALESCE(supabase_protection_switch, 'off'), updated_at = ? WHERE id = ?",
       input.projectRef,
       input.region,
+      now(),
       now(),
       workspaceId,
     )
     return this.getWorkspace(workspaceId)
+  }
+
+  setWorkspaceSupabasePersistentBranch(workspaceId: string, input: { ref: string; name: string; status: string; checkedAt?: number }): WorkspaceRow | undefined {
+    const timestamp = input.checkedAt ?? now()
+    this.run(
+      `UPDATE workspaces
+       SET supabase_persistent_test_branch_ref = ?,
+           supabase_persistent_test_branch_name = ?,
+           supabase_persistent_test_branch_status = ?,
+           supabase_last_checked_at = ?,
+           updated_at = ?
+       WHERE id = ?`,
+      input.ref,
+      input.name,
+      input.status,
+      timestamp,
+      timestamp,
+      workspaceId,
+    )
+    return this.getWorkspace(workspaceId)
+  }
+
+  updateWorkspaceSupabaseSettings(workspaceId: string, input: {
+    cleanupPolicy: WorkspaceRow["supabase_cleanup_policy"]
+    cleanupTtlHours: number | null
+    productionMigrationProtection: WorkspaceRow["supabase_protection_switch"]
+    expectedVersion: number
+  }): { ok: true; workspace: WorkspaceRow } | { ok: false; error: "workspace_not_found" | "settings_changed" } {
+    const current = this.getWorkspace(workspaceId)
+    if (!current) return { ok: false, error: "workspace_not_found" }
+    if ((current.supabase_settings_version ?? 1) !== input.expectedVersion) return { ok: false, error: "settings_changed" }
+    const nextVersion = input.expectedVersion + 1
+    const timestamp = now()
+    this.run(
+      `UPDATE workspaces
+       SET supabase_cleanup_policy = ?,
+           supabase_cleanup_ttl_hours = ?,
+           supabase_protection_switch = ?,
+           supabase_settings_version = ?,
+           updated_at = ?
+       WHERE id = ?`,
+      input.cleanupPolicy,
+      input.cleanupTtlHours,
+      input.productionMigrationProtection,
+      nextVersion,
+      timestamp,
+      workspaceId,
+    )
+    return { ok: true, workspace: this.getWorkspace(workspaceId)! }
   }
 
   preserveWorkspaceSupabaseProtection(workspaceId: string): "off" | "on" | null {

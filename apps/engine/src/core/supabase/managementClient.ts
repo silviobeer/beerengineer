@@ -1,5 +1,5 @@
 import { managementEndpoints, SUPABASE_MANAGEMENT_API_BASE_URL } from "./managementEndpoints.js"
-import type { SupabaseBranch, SupabaseProject } from "./types.js"
+import type { SupabaseBranch, SupabaseProject, SupabaseSqlResult } from "./types.js"
 
 export type SupabaseManagementClientOptions = {
   token: string
@@ -58,16 +58,40 @@ export class SupabaseManagementClient {
     return asArray<SupabaseBranch>(await this.request(managementEndpoints.listBranches(projectRef)))
   }
 
-  private async request(path: string): Promise<unknown> {
+  async createBranch(projectRef: string, input: { name: string; parentRef?: string }): Promise<SupabaseBranch> {
+    return await this.request(managementEndpoints.createBranch(projectRef), {
+      method: "POST",
+      body: JSON.stringify({
+        name: input.name,
+        parent_ref: input.parentRef,
+      }),
+    }) as SupabaseBranch
+  }
+
+  async getBranch(projectRef: string, branchRef: string): Promise<SupabaseBranch> {
+    return await this.request(managementEndpoints.getBranch(projectRef, branchRef)) as SupabaseBranch
+  }
+
+  async runQuery(projectRef: string, branchRef: string, sql: string): Promise<SupabaseSqlResult> {
+    return await this.request(managementEndpoints.runQuery(projectRef, branchRef), {
+      method: "POST",
+      body: JSON.stringify({ query: sql }),
+    }) as SupabaseSqlResult
+  }
+
+  private async request(path: string, init: RequestInit = {}): Promise<unknown> {
     let response: Response
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs)
     try {
       response = await this.fetchImpl(`${this.baseUrl}${path}`, {
+        ...init,
         signal: controller.signal,
         headers: {
           Authorization: `Bearer ${this.options.token}`,
           Accept: "application/json",
+          ...(init.body ? { "Content-Type": "application/json" } : {}),
+          ...init.headers,
         },
       })
     } catch (err) {

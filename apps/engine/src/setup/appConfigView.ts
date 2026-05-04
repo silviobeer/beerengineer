@@ -6,6 +6,7 @@ import {
 } from "./config.js"
 import { readActiveSecretValue } from "./secretStore.js"
 import type { Repos } from "../db/repositories.js"
+import { SUPABASE_MANAGEMENT_TOKEN_SECRET_REF, readSecretMetadata } from "./secretMetadata.js"
 import type { AppConfig, ConfigFileState, SetupOverrides } from "./types.js"
 
 export type SecretRefView = {
@@ -24,6 +25,21 @@ export type AppConfigView = {
     key: string
     name: string
   } | null
+  supabase: {
+    workspaceId?: string
+    projectRef?: string
+    region?: string
+    persistentTestBranchName?: string
+    persistentTestBranchRef?: string
+    persistentTestBranchStatus?: string
+    lastCheckedAt?: number
+    tokenPresent: boolean
+    branchGranularity: "wave"
+    cleanupPolicy: "on-success-immediate" | "ttl-after-success" | "manual"
+    cleanupTtlHours?: number
+    productionMigrationProtection: "off" | "on"
+    settingsVersion: number
+  }
   config: {
     allowedRoots: string[]
     enginePort: number
@@ -64,12 +80,14 @@ export function getAppConfigView(overrides: SetupOverrides = {}, deps: { repos?:
   const configState = readConfigFile(configPath)
   const config = resolveMergedConfig(configState, resolved)
   const workspace = currentWorkspaceView(deps.repos)
+  const supabase = supabaseView(deps.repos)
   if (!config) {
     return {
       setupState: configState.kind === "missing" ? "uninitialized" : "partial",
       configPath,
       configFile: fileStateView(configState),
       workspace,
+      supabase,
       config: emptyConfigView(),
     }
   }
@@ -80,6 +98,7 @@ export function getAppConfigView(overrides: SetupOverrides = {}, deps: { repos?:
     configPath,
     configFile: fileStateView(configState),
     workspace,
+    supabase,
     config: {
       allowedRoots: [...config.allowedRoots],
       enginePort: config.enginePort,
@@ -117,12 +136,36 @@ export function getAppConfigView(overrides: SetupOverrides = {}, deps: { repos?:
   }
 }
 
+function supabaseView(repos: Repos | undefined): AppConfigView["supabase"] {
+  const workspace = currentWorkspaceRow(repos)
+  const token = readSecretMetadata(SUPABASE_MANAGEMENT_TOKEN_SECRET_REF)
+  return {
+    workspaceId: workspace?.id,
+    projectRef: workspace?.supabase_project_ref ?? undefined,
+    region: workspace?.supabase_region ?? undefined,
+    persistentTestBranchName: workspace?.supabase_persistent_test_branch_name ?? undefined,
+    persistentTestBranchRef: workspace?.supabase_persistent_test_branch_ref ?? undefined,
+    persistentTestBranchStatus: workspace?.supabase_persistent_test_branch_status ?? undefined,
+    lastCheckedAt: workspace?.supabase_last_checked_at ?? undefined,
+    tokenPresent: token.present && token.active,
+    branchGranularity: "wave",
+    cleanupPolicy: workspace?.supabase_cleanup_policy ?? "on-success-immediate",
+    cleanupTtlHours: workspace?.supabase_cleanup_ttl_hours ?? undefined,
+    productionMigrationProtection: workspace?.supabase_protection_switch ?? "off",
+    settingsVersion: workspace?.supabase_settings_version ?? 1,
+  }
+}
+
 function currentWorkspaceView(repos: Repos | undefined): AppConfigView["workspace"] {
-  const workspace = repos?.listWorkspaces()
-    .sort((a, b) => (b.last_opened_at ?? 0) - (a.last_opened_at ?? 0) || a.key.localeCompare(b.key))
-    .at(0)
+  const workspace = currentWorkspaceRow(repos)
   if (!workspace) return null
   return { id: workspace.id, key: workspace.key, name: workspace.name }
+}
+
+function currentWorkspaceRow(repos: Repos | undefined) {
+  return repos?.listWorkspaces()
+    .sort((a, b) => (b.last_opened_at ?? 0) - (a.last_opened_at ?? 0) || a.key.localeCompare(b.key))
+    .at(0)
 }
 
 function fileStateView(state: ConfigFileState): AppConfigView["configFile"] {

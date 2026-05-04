@@ -35,4 +35,10 @@ export type SupabaseBranch = {
   ref: string
   name?: string
   status?: string
+  parentRef?: string
+}
+
+export type SupabaseSqlResult = {
+  rows?: unknown[]
+  rowCount?: number
 }

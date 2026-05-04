@@ -53,6 +53,21 @@ export interface AppConfigView {
   configPath: string;
   configFile: { kind: "ok" | "missing" | "invalid"; path: string; error?: string };
   workspace?: { id: string; key: string; name: string } | null;
+  supabase: {
+    workspaceId?: string;
+    projectRef?: string;
+    region?: string;
+    persistentTestBranchName?: string;
+    persistentTestBranchRef?: string;
+    persistentTestBranchStatus?: string;
+    lastCheckedAt?: number;
+    tokenPresent: boolean;
+    branchGranularity: "wave";
+    cleanupPolicy: "on-success-immediate" | "ttl-after-success" | "manual";
+    cleanupTtlHours?: number;
+    productionMigrationProtection: "off" | "on";
+    settingsVersion: number;
+  };
   config: {
     allowedRoots: string[];
     enginePort: number;

@@ -8,7 +8,14 @@ export type WorkspaceRow = {
   sonar_enabled: number
   supabase_project_ref: string | null
   supabase_region: string | null
+  supabase_persistent_test_branch_ref: string | null
+  supabase_persistent_test_branch_name: string | null
+  supabase_persistent_test_branch_status: string | null
+  supabase_last_checked_at: number | null
+  supabase_cleanup_policy: "on-success-immediate" | "ttl-after-success" | "manual"
+  supabase_cleanup_ttl_hours: number | null
   supabase_protection_switch: "off" | "on"
+  supabase_settings_version: number
   last_opened_at: number | null
   created_at: number
   updated_at: number
