@@ -32,49 +32,44 @@ function makeIO(answers: {
   const promptLog: string[] = []
   const vcAnswers = answers.visualCompanion ?? DEFAULT_VISUAL_COMPANION_ANSWERS
   const fdAnswers = answers.frontendDesign ?? DEFAULT_FRONTEND_DESIGN_ANSWERS
-  // The runtime prompt text is always "  you > "; use the preceding showMessage flow
-  // via a counter-based mapping: brainstorm uses 4 asks, visual-companion uses
-  // maxClarifications+1 asks (3 clarifications + 1 user-review), frontend-design likewise,
-  // requirements uses 3 asks, qa 1, merge-gate 1.
   let brainstormIdx = 0
   let visualCompanionIdx = 0
   let frontendDesignIdx = 0
   let requirementsIdx = 0
-  let phase: "brainstorm" | "visual-companion" | "frontend-design" | "requirements" | "qa" | "merge-gate" = "brainstorm"
-  let brainstormAsks = 0
-  let requirementsAsks = 0
+  let promptCount = 0
   const io: WorkflowIO = {
     async ask(prompt) {
       promptLog.push(prompt)
       if (prompt.startsWith("Promote ")) return answers.mergeGate
-      // phase progression by ask count
-      if (phase === "brainstorm") {
-        const answer = answers.brainstorm[brainstormIdx++] ?? "ok"
-        brainstormAsks++
-        if (brainstormAsks >= answers.brainstorm.length) phase = "visual-companion"
-        return answer
+      if (prompt.startsWith("  Test, merge")) return "test"
+      promptCount++
+      if (promptCount > 80) {
+        throw new Error(`Unexpected prompt loop after ${promptCount} prompts; last prompt: ${prompt}`)
       }
-      if (phase === "visual-companion") {
-        const answer = vcAnswers[visualCompanionIdx++] ?? "approve"
-        if (visualCompanionIdx >= vcAnswers.length) phase = "frontend-design"
-        return answer
+
+      if (/wireframes or mockups/i.test(prompt)) return vcAnswers[visualCompanionIdx++] ?? "none"
+      if (/screens or flows/i.test(prompt)) return vcAnswers[visualCompanionIdx++] ?? "dashboard first"
+      if (/accessibility, responsive, or interaction constraints/i.test(prompt)) return vcAnswers[visualCompanionIdx++] ?? "WCAG AA required"
+      if (/^Wireframe summary/i.test(prompt)) return vcAnswers[visualCompanionIdx++] ?? "approve"
+
+      if (/design system, brand direction, or reference apps/i.test(prompt)) return fdAnswers[frontendDesignIdx++] ?? "none"
+      if (/visual tone or product preference/i.test(prompt)) return fdAnswers[frontendDesignIdx++] ?? "professional"
+      if (/hard constraints on color, typography, density, accessibility, or responsiveness/i.test(prompt)) {
+        return fdAnswers[frontendDesignIdx++] ?? "no brand constraints"
       }
-      if (phase === "frontend-design") {
-        const answer = fdAnswers[frontendDesignIdx++] ?? "approve"
-        if (frontendDesignIdx >= fdAnswers.length) phase = "requirements"
-        return answer
+      if (/^Design summary/i.test(prompt)) return fdAnswers[frontendDesignIdx++] ?? "approve"
+
+      if (/^Reviewer findings:/i.test(prompt)) return answers.qa === "approve" ? "accept" : answers.qa
+      if (/^What problem|^Who is|^What is the core value|^What constraints|^Why are/i.test(prompt)) {
+        return answers.brainstorm[brainstormIdx++] ?? "ok"
       }
-      if (phase === "requirements") {
-        const answer = answers.requirements[requirementsIdx++] ?? "ok"
-        requirementsAsks++
-        if (requirementsAsks >= answers.requirements.length) phase = "qa"
-        return answer
+      if (/^Which feature|^Which action|^Which important boundary/i.test(prompt)) {
+        return answers.requirements[requirementsIdx++] ?? "ok"
       }
-      if (phase === "qa") {
-        phase = "merge-gate"
-        return answers.qa
+      if (/^Which story or AC should I sharpen/i.test(prompt)) {
+        return answers.requirements[requirementsIdx++] ?? "US-02 acceptance criteria"
       }
-      return answers.mergeGate
+      throw new Error(`Unexpected workflow prompt: ${prompt}`)
     },
     emit(event) {
       events.push(event)
@@ -153,9 +148,9 @@ test("runWorkflow runs end-to-end with all review/side loops, producing artifact
         "Yes, constraints are stable enough.",
       ],
       // 3 clarification answers + 1 user-review approval
-      visualCompanion: ["no existing mockups", "dashboard first", "WCAG AA required", "approve"],
+      visualCompanion: ["none", "dashboard first", "WCAG AA required", "approve"],
       // 3 clarification answers + 1 user-review approval
-      frontendDesign: ["no design system", "professional", "no brand constraints", "approve"],
+      frontendDesign: ["none", "professional", "no brand constraints", "approve"],
       requirements: [
         "Focus: core workflow as input form.",
         "Status badges per entry.",

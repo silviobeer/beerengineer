@@ -38,30 +38,43 @@ function makeWorkflowIO(): { io: WorkflowIO & { bus: EventBus }; events: Workflo
   ]
   let brainstormIdx = 0
   let requirementsIdx = 0
-  let phase: "brainstorm" | "requirements" | "qa" | "handoff" = "brainstorm"
+  let promptCount = 0
 
   const bus = createBus()
   bus.subscribe(event => events.push(event))
 
   // Intercept `prompt_requested` and auto-answer via bus.emit(prompt_answered)
-  // using the scripted-phase state machine above.
+  // using prompt text instead of stage-length assumptions. This covers
+  // design-prep gates and fails fast if a new interactive prompt is added.
   bus.subscribe(event => {
     if (event.type !== "prompt_requested") return
-    let answer: string
-    if (event.prompt.startsWith("  Test, merge")) {
-      answer = "test"
-    } else if (phase === "brainstorm") {
-      answer = brainstormAnswers[brainstormIdx++] ?? "ok"
-      if (brainstormIdx >= brainstormAnswers.length) phase = "requirements"
-    } else if (phase === "requirements") {
-      answer = requirementsAnswers[requirementsIdx++] ?? "ok"
-      if (requirementsIdx >= requirementsAnswers.length) phase = "qa"
-    } else if (phase === "qa") {
-      phase = "handoff"
-      answer = "accept"
-    } else {
-      answer = "test"
+    promptCount++
+    if (promptCount > 80) {
+      throw new Error(`Unexpected prompt loop after ${promptCount} prompts; last prompt: ${event.prompt}`)
     }
+
+    let answer: string
+    if (event.prompt.startsWith("Promote ")) answer = "promote"
+    else if (event.prompt.startsWith("  Test, merge")) answer = "test"
+    else if (/wireframes or mockups/i.test(event.prompt)) answer = "none"
+    else if (/screens or flows/i.test(event.prompt)) answer = "dashboard first"
+    else if (/accessibility, responsive, or interaction constraints/i.test(event.prompt)) answer = "WCAG AA required"
+    else if (/^Wireframe summary/i.test(event.prompt)) answer = "approve"
+    else if (/design system, brand direction, or reference apps/i.test(event.prompt)) answer = "none"
+    else if (/visual tone or product preference/i.test(event.prompt)) answer = "professional"
+    else if (/hard constraints on color, typography, density, accessibility, or responsiveness/i.test(event.prompt)) answer = "no brand constraints"
+    else if (/^Design summary/i.test(event.prompt)) answer = "approve"
+    else if (/^Reviewer findings:/i.test(event.prompt)) answer = "accept"
+    else if (/^What problem|^Who is|^What is the core value|^What constraints|^Why are/i.test(event.prompt)) {
+      answer = brainstormAnswers[brainstormIdx++] ?? "ok"
+    } else if (/^Which feature|^Which action|^Which important boundary/i.test(event.prompt)) {
+      answer = requirementsAnswers[requirementsIdx++] ?? "ok"
+    } else if (/^Which story or AC should I sharpen/i.test(event.prompt)) {
+      answer = requirementsAnswers[requirementsIdx++] ?? "US-02 acceptance criteria"
+    } else {
+      throw new Error(`Unexpected workflow prompt: ${event.prompt}`)
+    }
+
     bus.emit({ type: "prompt_answered", runId: event.runId, promptId: event.promptId, answer })
   })
 

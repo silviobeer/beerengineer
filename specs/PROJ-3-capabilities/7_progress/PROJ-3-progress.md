@@ -1,6 +1,6 @@
 # PROJ-3 Progress
 
-## Status: blocked
+## Status: quality-gate-passed
 ## Current Wave: Quality Gate
 ## BASE_SHA: 369485f6014fb5f98cf3206ec4f9372599e5d2e5
 
@@ -170,11 +170,14 @@
 - `npm run test:unit --workspace=@beerengineer/engine`: PASS (573 tests, 0 failures).
 - `cd apps/engine && node --test --test-concurrency=1 --import tsx <integration files except resume.test.ts and workflowE2E.test.ts>`: PASS (205 tests, 0 failures).
 - `cd apps/engine && node --test --import tsx test/sdkLive.test.ts`: PASS (2 passed, 2 skipped, 0 failures).
-- Blocked: `npm test --workspace=@beerengineer/engine` did not complete because `test/resume.test.ts` and `test/workflowE2E.test.ts` each stalled with sustained CPU and no TAP progress in bounded runs. These files were unchanged by PROJ-3.
+- `cd apps/engine && timeout --foreground 240 node --test --test-concurrency=1 --import tsx test/resume.test.ts`: PASS (3 tests, 0 failures).
+- `cd apps/engine && timeout --foreground 300 node --test --test-concurrency=1 --import tsx test/workflowE2E.test.ts`: PASS (8 tests, 0 failures).
+- `npm test --workspace=@beerengineer/engine`: PASS (795 tests; 793 passed, 2 skipped, 0 failed).
 
 ### Fixed Issues
 - Code review majors from the manual review were fixed in `d7e5895`.
 - Initial SonarCloud findings were fixed in `4d14385`: `typescript:S3776` in `apps/engine/src/cli/parse.ts` and `typescript:S3358` in `apps/engine/src/core/capabilities/sonarCapability.ts`.
+- Full-suite stalls in `test/resume.test.ts` and `test/workflowE2E.test.ts` were fixed by replacing brittle prompt-count fixtures with prompt-aware responders and fail-fast prompt loop guards.
 
 ### Deferred (user decision)
 - None yet.
@@ -183,12 +186,12 @@
 
 ## QA Results
 
-- Not started. Skill 5 QA handoff is blocked until the Quality Gate is either completed or explicitly accepted with the blockers below.
+- Not started. Quality Gate is complete; next step is Skill 6 QA handoff.
 
 ---
 
 ## Open Blockers
-- Full engine test command cannot complete in this environment because `test/resume.test.ts` and `test/workflowE2E.test.ts` stall; non-blocked unit/integration coverage passed.
+- None.
 
 ---
 
