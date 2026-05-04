@@ -1,6 +1,8 @@
 import { getSecretMetadata, type SecretStoreOptions } from "../../setup/secretStore.js"
 import { SUPABASE_MANAGEMENT_TOKEN_SECRET_REF } from "../../setup/secretMetadata.js"
 import type { SupabaseAdapter } from "../supabase/types.js"
+import type { SupabaseManagementClient } from "../supabase/managementClient.js"
+import { SupabaseManagementError } from "../supabase/managementClient.js"
 import {
   preflightNotConfigured,
   preflightReady,
@@ -19,6 +21,7 @@ export type SupabaseCapabilityOptions = {
   workspace?: SupabaseWorkspaceMetadata
   secretStore?: SecretStoreOptions
   adapter?: SupabaseAdapter
+  managementClient?: Pick<SupabaseManagementClient, "getProject" | "listBranches">
 }
 
 type LocalSupabaseConfig = {
@@ -61,12 +64,32 @@ export function createSupabaseCapability(options: SupabaseCapabilityOptions = {}
     }
   }
 
-  const preflight = (): CapabilityPreflightResult => {
+  const preflight = async (): Promise<CapabilityPreflightResult> => {
     const available = availability()
     if (!available.available) {
       return preflightNotConfigured("supabase", available.reason ?? "supabase is not configured")
     }
-    return preflightReady("supabase", available.context)
+    if (!options.managementClient || !localConfig(options).projectRef) return preflightReady("supabase", available.context)
+    try {
+      const project = await options.managementClient.getProject(localConfig(options).projectRef!)
+      const branches = await options.managementClient.listBranches(localConfig(options).projectRef!)
+      if (project.branchingEnabled === false) {
+        return { capabilityId: "supabase", status: "failed", reason: "Supabase branching is not enabled for this project" }
+      }
+      return preflightReady("supabase", {
+        projectRef: localConfig(options).projectRef,
+        plan: project.plan ?? "unknown",
+        branchingEnabled: project.branchingEnabled !== false,
+        branchQuotaUsage: branches.length,
+        branchQuotaLimit: project.branchQuotaLimit ?? null,
+      })
+    } catch (err) {
+      const message = err instanceof SupabaseManagementError ? err.message : err instanceof Error ? err.message : "Supabase preflight failed"
+      const scopeHint = err instanceof SupabaseManagementError && err.status === 403
+        ? " Missing Supabase token capability: list projects and branches. Check Supabase token settings."
+        : ""
+      return { capabilityId: "supabase", status: "failed", reason: `${message}${scopeHint}` }
+    }
   }
 
   const notConfigured = (): CapabilityPreflightResult =>

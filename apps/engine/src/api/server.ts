@@ -50,6 +50,7 @@ import {
   handleSetupInit,
   handleSetupRecheck,
   handleSetupStatus,
+  handleSupabaseConnect,
 } from "./routes/setup.js"
 import {
   handleUpdateApply,
@@ -230,6 +231,7 @@ function topLevelRouteHandlers(context: RouteContext): Partial<Record<string, ()
     "PATCH /setup/config": () => handleSetupConfigPatch(context.req, context.res),
     "POST /setup/init": () => handleSetupInit(context.res),
     "POST /setup/recheck": () => handleSetupRecheck(context.req, context.res),
+    "POST /setup/supabase/connect": () => handleSupabaseConnect(repos, context.req, context.res),
     "GET /update/status": () => handleUpdateStatus(repos, context.appConfig, context.res, { pid: process.pid }),
     "GET /update/preflight": () => handleUpdatePreflight(repos, context.appConfig, context.res, { pid: process.pid }),
     "POST /update/check": () => handleUpdateCheck(context.req, context.res),

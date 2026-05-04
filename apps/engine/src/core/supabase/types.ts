@@ -20,3 +20,19 @@ export type SupabaseAdapter = {
   reconcile(context: SupabaseWorkspaceContext): Promise<SupabaseAdapterResult>
 }
 
+export type SupabaseProject = {
+  id: string
+  ref: string
+  name?: string
+  region?: string
+  plan?: string
+  branchingEnabled?: boolean
+  branchQuotaLimit?: number
+}
+
+export type SupabaseBranch = {
+  id: string
+  ref: string
+  name?: string
+  status?: string
+}

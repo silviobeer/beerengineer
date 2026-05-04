@@ -61,3 +61,60 @@ test("PROJ-4 PRD-1 US-5: preflight does not call adapter when locally not config
   }
 })
 
+test("PROJ-4 PRD-2 US-2: preflight probes branching support and returns quota context", async () => {
+  const paths = tempStore()
+  try {
+    storeSecret(SUPABASE_MANAGEMENT_TOKEN_SECRET_REF, "sbp-secret", { storePath: paths.storePath })
+    const capability = createSupabaseCapability({
+      secretStore: { storePath: paths.storePath },
+      workspace: { projectRef: "proj_1" },
+      managementClient: {
+        getProject: async () => ({ id: "1", ref: "proj_1", plan: "team", branchingEnabled: true, branchQuotaLimit: 8 }),
+        listBranches: async () => [{ id: "b1", ref: "br_1" }, { id: "b2", ref: "br_2" }],
+      },
+    })
+    assert.deepEqual(await capability.ports.preflight!(), {
+      capabilityId: "supabase",
+      status: "ready",
+      context: {
+        projectRef: "proj_1",
+        plan: "team",
+        branchingEnabled: true,
+        branchQuotaUsage: 2,
+        branchQuotaLimit: 8,
+      },
+    })
+  } finally {
+    rmSync(paths.dir, { recursive: true, force: true })
+  }
+})
+
+test("PROJ-4 PRD-2 US-2: preflight surfaces plan and token-scope failures", async () => {
+  const paths = tempStore()
+  try {
+    storeSecret(SUPABASE_MANAGEMENT_TOKEN_SECRET_REF, "sbp-secret", { storePath: paths.storePath })
+    const noBranching = createSupabaseCapability({
+      secretStore: { storePath: paths.storePath },
+      workspace: { projectRef: "proj_1" },
+      managementClient: {
+        getProject: async () => ({ id: "1", ref: "proj_1", branchingEnabled: false }),
+        listBranches: async () => [],
+      },
+    })
+    assert.equal((await noBranching.ports.preflight!()).status, "failed")
+
+    const insufficientScope = createSupabaseCapability({
+      secretStore: { storePath: paths.storePath },
+      workspace: { projectRef: "proj_1" },
+      managementClient: {
+        getProject: async () => { throw Object.assign(new Error("Forbidden"), { status: 403 }) },
+        listBranches: async () => [],
+      },
+    })
+    const result = await insufficientScope.ports.preflight!()
+    assert.equal(result.status, "failed")
+    assert.match(result.reason, /Forbidden/)
+  } finally {
+    rmSync(paths.dir, { recursive: true, force: true })
+  }
+})

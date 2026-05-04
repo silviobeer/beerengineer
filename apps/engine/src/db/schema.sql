@@ -10,6 +10,9 @@ CREATE TABLE IF NOT EXISTS workspaces (
   root_path TEXT,
   harness_profile_json TEXT NOT NULL DEFAULT '{"mode":"claude-first"}',
   sonar_enabled INTEGER NOT NULL DEFAULT 0,
+  supabase_project_ref TEXT,
+  supabase_region TEXT,
+  supabase_protection_switch TEXT NOT NULL DEFAULT 'off',
   last_opened_at INTEGER,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL

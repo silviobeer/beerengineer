@@ -6,6 +6,9 @@ export type WorkspaceRow = {
   root_path: string | null
   harness_profile_json: string
   sonar_enabled: number
+  supabase_project_ref: string | null
+  supabase_region: string | null
+  supabase_protection_switch: "off" | "on"
   last_opened_at: number | null
   created_at: number
   updated_at: number

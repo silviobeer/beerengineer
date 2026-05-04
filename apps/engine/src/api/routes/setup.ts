@@ -7,6 +7,9 @@ import { applySecretAction } from "../../setup/secretActions.js"
 import { readSecretMetadata } from "../../setup/secretMetadata.js"
 import { runSecretTest } from "../../setup/secretTests.js"
 import { KNOWN_GROUP_IDS } from "../../setup/config.js"
+import { SupabaseManagementClient } from "../../core/supabase/managementClient.js"
+import { connectSupabaseProject } from "../../setup/supabaseSetup.js"
+import type { Repos } from "../../db/repositories.js"
 import { json, readJson } from "../http.js"
 
 export async function handleSetupStatus(url: URL, res: ServerResponse): Promise<void> {
@@ -45,6 +48,25 @@ export async function handleSetupRecheck(req: IncomingMessage, res: ServerRespon
     group = (body as { group: string }).group
   }
   const result = await runSetupRecheck({ group })
+  json(res, result.ok ? 200 : 400, result)
+}
+
+export async function handleSupabaseConnect(repos: Repos, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const body = await readJson(req) as { workspaceId?: unknown; token?: unknown; projectRef?: unknown }
+  const workspaceId = typeof body?.workspaceId === "string" ? body.workspaceId.trim() : ""
+  const token = typeof body?.token === "string" ? body.token.trim() : ""
+  const projectRef = typeof body?.projectRef === "string" ? body.projectRef.trim() : ""
+  if (!workspaceId || !token || !projectRef) {
+    json(res, 400, { ok: false, error: "invalid_supabase_connect_request", message: "workspaceId, token, and projectRef are required" })
+    return
+  }
+  const result = await connectSupabaseProject({
+    repos,
+    workspaceId,
+    token,
+    projectRef,
+    client: new SupabaseManagementClient({ token }),
+  })
   json(res, result.ok ? 200 : 400, result)
 }
 

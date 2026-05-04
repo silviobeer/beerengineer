@@ -11,13 +11,21 @@ import type { PlanningState } from "./types.js"
 
 export function validatePlanStoryEnvelope(
   waveNumber: number,
-  ref: { id?: unknown; title?: unknown; dbRelevant?: unknown },
+  ref: { id?: unknown; title?: unknown; dbRelevant?: unknown; dbRelevanceOverride?: unknown; dbRelevanceOverrideReason?: unknown },
 ): string | null {
   if (!ref.id || typeof ref.id !== "string") {
     return `Wave ${waveNumber} contains a story without an \`id\` (shape must be {id, title, dbRelevant}).`
   }
   if (typeof ref.dbRelevant !== "boolean") {
     return `Wave ${waveNumber} story "${ref.id}" is missing required boolean \`dbRelevant\`.`
+  }
+  if (ref.dbRelevanceOverride !== undefined && ref.dbRelevanceOverride !== "not-db-relevant") {
+    return `Wave ${waveNumber} story "${ref.id}" has invalid \`dbRelevanceOverride\`.`
+  }
+  if (ref.dbRelevanceOverride === "not-db-relevant") {
+    if (typeof ref.dbRelevanceOverrideReason !== "string" || ref.dbRelevanceOverrideReason.trim().length === 0) {
+      return `Wave ${waveNumber} story "${ref.id}" requires non-empty \`dbRelevanceOverrideReason\`.`
+    }
   }
   return null
 }

@@ -80,6 +80,7 @@ export function applySchema(db: Db): void {
   const sql = readFileSync(schemaPath, "utf8")
   db.exec(sql)
   migrateWorkspacesColumns(db)
+  migrateWorkspacesSupabaseColumns(db)
   migrateRunsOwnerColumn(db)
   migrateRunsRecoveryColumns(db)
   migrateRunsFsWorkspaceIdColumn(db)
@@ -149,6 +150,14 @@ function migrateWorkspacesColumns(db: Db): void {
   if (!has("last_opened_at")) {
     db.exec("ALTER TABLE workspaces ADD COLUMN last_opened_at INTEGER")
   }
+}
+
+function migrateWorkspacesSupabaseColumns(db: Db): void {
+  const cols = db.prepare("PRAGMA table_info(workspaces)").all() as Array<{ name: string }>
+  const has = (name: string) => cols.some(c => c.name === name)
+  if (!has("supabase_project_ref")) db.exec("ALTER TABLE workspaces ADD COLUMN supabase_project_ref TEXT")
+  if (!has("supabase_region")) db.exec("ALTER TABLE workspaces ADD COLUMN supabase_region TEXT")
+  if (!has("supabase_protection_switch")) db.exec("ALTER TABLE workspaces ADD COLUMN supabase_protection_switch TEXT NOT NULL DEFAULT 'off'")
 }
 
 /**

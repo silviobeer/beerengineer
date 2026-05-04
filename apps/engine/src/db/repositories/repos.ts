@@ -139,6 +139,9 @@ export class Repos {
         root_path: input.rootPath ?? null,
         harness_profile_json: input.harnessProfileJson ?? JSON.stringify({ mode: "claude-first" }),
         sonar_enabled: input.sonarEnabled ? 1 : 0,
+        supabase_project_ref: null,
+        supabase_region: null,
+        supabase_protection_switch: "off",
         last_opened_at: input.lastOpenedAt ?? null,
       })
       return this.insertRow("workspaces", row)
@@ -152,6 +155,9 @@ export class Repos {
              root_path = @root_path,
              harness_profile_json = @harness_profile_json,
              sonar_enabled = @sonar_enabled,
+             supabase_project_ref = @supabase_project_ref,
+             supabase_region = @supabase_region,
+             supabase_protection_switch = @supabase_protection_switch,
              last_opened_at = @last_opened_at,
              updated_at = @updated_at
          WHERE id = @id`
@@ -163,6 +169,9 @@ export class Repos {
         root_path: input.rootPath ?? existing.root_path,
         harness_profile_json: input.harnessProfileJson ?? existing.harness_profile_json,
         sonar_enabled: input.sonarEnabled === undefined ? existing.sonar_enabled : Number(input.sonarEnabled),
+        supabase_project_ref: existing.supabase_project_ref,
+        supabase_region: existing.supabase_region,
+        supabase_protection_switch: existing.supabase_protection_switch ?? "off",
         last_opened_at: input.lastOpenedAt === undefined ? existing.last_opened_at : input.lastOpenedAt,
         updated_at: now(),
       })
@@ -191,6 +200,25 @@ export class Repos {
 
   touchWorkspaceLastOpenedAt(key: string, timestamp = now()): void {
     this.run("UPDATE workspaces SET last_opened_at = ?, updated_at = ? WHERE key = ?", timestamp, timestamp, key)
+  }
+
+  connectWorkspaceSupabase(workspaceId: string, input: { projectRef: string; region: string }): WorkspaceRow | undefined {
+    this.run(
+      "UPDATE workspaces SET supabase_project_ref = ?, supabase_region = ?, supabase_protection_switch = COALESCE(supabase_protection_switch, 'off'), updated_at = ? WHERE id = ?",
+      input.projectRef,
+      input.region,
+      now(),
+      workspaceId,
+    )
+    return this.getWorkspace(workspaceId)
+  }
+
+  preserveWorkspaceSupabaseProtection(workspaceId: string): "off" | "on" | null {
+    const row = this.getWorkspace(workspaceId)
+    if (!row) return null
+    if (row.supabase_protection_switch === "on" || row.supabase_protection_switch === "off") return row.supabase_protection_switch
+    this.run("UPDATE workspaces SET supabase_protection_switch = 'off', updated_at = ? WHERE id = ?", now(), workspaceId)
+    return "off"
   }
 
   /**

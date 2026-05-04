@@ -275,6 +275,8 @@ export type WaveDefinition = {
     id: string
     title: string
     dbRelevant?: boolean
+    dbRelevanceOverride?: "not-db-relevant"
+    dbRelevanceOverrideReason?: string
     screenIds?: string[]
     sharedFiles?: string[]
   }>
