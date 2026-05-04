@@ -148,8 +148,7 @@
 | P2 Medium | 0 | 0 | 0 |
 | P3 Low | 0 | 0 | 0 |
 
-- Full-feature CodeRabbit review from `369485f6014fb5f98cf3206ec4f9372599e5d2e5` to `4a9c915` passed with 0 non-advisory findings.
-- Advisory-only findings: 1 minor.
+- Full-feature CodeRabbit review from `369485f6014fb5f98cf3206ec4f9372599e5d2e5` to `4d14385` passed with 0 findings (`coderabbit rc=0`).
 
 ### SonarCloud
 | Severity | Found | Fixed | Deferred |
@@ -158,7 +157,10 @@
 | Minor | 0 | 0 | 0 |
 | Info | 0 | 0 | 0 |
 
-- Blocked: `sonar-scanner` and `sonar-project.properties` are present, but `SONAR_TOKEN` is not set in the environment, so the SonarCloud scan could not be run.
+- `SONAR_TOKEN` was loaded from `.env.local` without printing the token value.
+- `npm run coverage:sonar --workspace=@beerengineer/engine`: PASS (778 tests, 0 failures; statements 86.97%, branches 76.31%, functions 85.68%, lines 86.97%).
+- `sonar-scanner`: PASS; SonarCloud quality gate status `OK` for analysis task `AZ3zMAsYJMpBKVnlztqX`.
+- SonarCloud gate metrics: reliability `OK`, security `OK`, new coverage 81.5% >= 80%, new duplicated lines density 0.7% <= 3%, security hotspots reviewed 100%, new violations 0.
 
 ### Build And Tests
 - `npm run typecheck`: PASS.
@@ -171,7 +173,8 @@
 - Blocked: `npm test --workspace=@beerengineer/engine` did not complete because `test/resume.test.ts` and `test/workflowE2E.test.ts` each stalled with sustained CPU and no TAP progress in bounded runs. These files were unchanged by PROJ-3.
 
 ### Fixed Issues
-- None.
+- Code review majors from the manual review were fixed in `d7e5895`.
+- Initial SonarCloud findings were fixed in `4d14385`: `typescript:S3776` in `apps/engine/src/cli/parse.ts` and `typescript:S3358` in `apps/engine/src/core/capabilities/sonarCapability.ts`.
 
 ### Deferred (user decision)
 - None yet.
@@ -185,7 +188,6 @@
 ---
 
 ## Open Blockers
-- SonarCloud scan cannot run until `SONAR_TOKEN` is available.
 - Full engine test command cannot complete in this environment because `test/resume.test.ts` and `test/workflowE2E.test.ts` stall; non-blocked unit/integration coverage passed.
 
 ---
