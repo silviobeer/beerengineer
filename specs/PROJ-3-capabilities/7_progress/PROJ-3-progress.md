@@ -1,7 +1,7 @@
 # PROJ-3 Progress
 
-## Status: qa-fixes-applied
-## Current Wave: QA rerun pending
+## Status: qa-passed
+## Current Wave: Documentation handoff
 ## BASE_SHA: 369485f6014fb5f98cf3206ec4f9372599e5d2e5
 
 ---
@@ -202,13 +202,29 @@
   - `npm run test:file --workspace=@beerengineer/engine -- test/cli.test.ts test/workspaces.test.ts`: PASS (43 tests, 0 failures).
   - `npm test --workspace=@beerengineer/engine`: PASS (798 tests; 796 passed, 2 skipped, 0 failed).
 
+### QA Rerun Results
+
+- QA rerun completed on 2026-05-04 after `4a27c6e`.
+- Production-ready recommendation: YES.
+- Total ACs assessed: 112. Passed: 112. Failed: 0.
+- Bug count after rerun: Critical 0, High 0, Medium 0, Low 0 open.
+- Browser E2E: not applicable for PROJ-3; no browser route, UI component, or `apps/ui` surface changed. Screenshots taken: 0.
+- UI component registry: no new `apps/ui` or component files since `BASE_SHA`; `docs/components.md` registry impact is none.
+- Security audit: no Critical/High security findings. Secret review found no token values printed in CLI/help output or stored in QA docs; CSRF, redaction, trusted-host update, and allowedRoots purge tests passed in the full suite.
+- Verification:
+  - `npm run typecheck --workspace=@beerengineer/engine`: PASS.
+  - `npm run test:file --workspace=@beerengineer/engine -- test/capabilityCli.test.ts test/sonarCapability.test.ts test/reviewCapabilities.test.ts test/workspaceCapabilities.test.ts`: PASS (75 tests, 0 failures).
+  - `npm test --workspace=@beerengineer/engine`: PASS (798 tests; 796 passed, 2 skipped, 0 failed).
+  - Manual CLI: generic `workspace capability status demo` remains rejected; `workspace sonar enable` without key exits `20`; help lists `workspace coderabbit status <key> [--json]`.
+  - Adversarial custom Sonar project key repro: PASS for both enablement and `repair --apply`; generated `sonar-project.properties` contains `sonar.projectKey=custom_key`, not `acme_demo`.
+
 ### QA Bugs
 
 #### BUG-PROJ3-QA-001 — [High] Custom Sonar project keys are ignored when generating scanner config
 - **File:** `apps/engine/src/core/capabilities/sonarCapability.ts`
 - **Anchor:** `enableWorkspaceSonarCapability` / `writeSonarProperties(context.workspaceRoot, context.github.owner!, context.github.repo!)`
 - **Source:** Marcus Weber (Principal Engineer) + Thomas Müller (SRE/Reliability) + QA adversarial test
-- **Status:** fixed; QA rerun pending
+- **Status:** fixed; verified in QA rerun
 - **Fix attempts:** 1
 - **Description:** Sonar enablement accepts `SonarConfig.projectKey`, but the generated `sonar-project.properties` is written from GitHub owner/repo (`acme_demo`) instead of the configured key. The same owner/repo derivation appears in repair generation via `sonar.projectKey.replace(...)`. A workspace configured for a non-default Sonar project will provision/refer to one key but scan/report against another.
 - **Repro:** In a temp GitHub-backed workspace, call `enableWorkspaceSonarCapability(context, "Demo", { enabled: true, organization: "acme", projectKey: "custom_key" })`; observe `sonar-project.properties` contains `sonar.projectKey=acme_demo` instead of `sonar.projectKey=custom_key`.
@@ -219,7 +235,7 @@
 - **File:** `apps/engine/src/cli/parse.ts`
 - **Anchor:** `beerengineer workspace coderabbit status <key>`
 - **Source:** Marcus Weber (Principal Engineer)
-- **Status:** fixed; QA rerun pending
+- **Status:** fixed; verified in QA rerun
 - **Fix attempts:** 1
 - **Description:** The parser supports `workspace coderabbit status <key> --json`, but CLI help lists the command without `[--json]`, unlike the Git/GitHub/Sonar capability status commands. This is a discoverability gap for PRD-5's consistent text/JSON output story.
 - **Repro:** Run `node apps/engine/bin/beerengineer.js --help` and inspect the capability command section.
@@ -234,6 +250,15 @@
 - Thomas Müller — SRE / Reliability Engineer: 0 Critical, 1 High, 0 Medium, 0 Low. Raised `BUG-PROJ3-QA-001` because mismatched Sonar keys can make quality gates unreliable across re-enable/repair flows.
 - Elena Rodriguez — Principal Architect: 0 Critical, 0 High, 0 Medium, 0 Low. Retrospective appended below.
 - Ken Takahashi — Minimalism Engineer: 0 Critical, 0 High, 0 Medium, 0 Low. Retrospective appended below.
+
+### QA Rerun Persona Review Summary
+
+- Dr. Sarah Chen — Security Lead: 0 Critical, 0 High, 0 Medium, 0 Low. Rechecked token handling, command execution surfaces, CSRF/security regressions, and secret redaction tests.
+- Marcus Weber — Principal Engineer: 0 Critical, 0 High, 0 Medium, 0 Low. Verified prior custom-key and CLI-help findings are fixed; no new architecture/testability issue found.
+- Priya Sharma — Performance Engineer: 0 Critical, 0 High, 0 Medium, 0 Low. No new hot path, unbounded loop, or broad test/runtime cost regression found.
+- Thomas Müller — SRE / Reliability Engineer: 0 Critical, 0 High, 0 Medium, 0 Low. Verified Sonar enable/repair idempotency and configured identity reliability after the fix.
+- Elena Rodriguez — Principal Architect: 0 Critical, 0 High, 0 Medium, 0 Low. Rerun retrospective appended below.
+- Ken Takahashi — Minimalism Engineer: 0 Critical, 0 High, 0 Medium, 0 Low. Rerun retrospective appended below.
 
 ## AGENTS.md Candidates
 - [ACCEPTED] AGENTS-PROJ3-QA-002: Capability QA must cover non-default configured IDs, not only generated defaults. — source: BUG-PROJ3-QA-001
@@ -259,10 +284,20 @@
 - The progress file is now the project memory; keep it concise after QA or it will become harder to mine for documentation.
 - Future QA should include one adversarial config variant per public option before declaring a CLI capability done.
 
+### Elena Rodriguez (Principal Architect) — QA Rerun
+- The post-QA fix closed the main architectural gap: configured capability identity is now authoritative where Sonar scanner config is generated.
+- The capability registry, envelope, and CLI renderer abstractions now have behavior-backed tests for the risky semantics discovered in review.
+- The project is ready for documentation, with the caveat that docs should explicitly call out that GitHub repo identity and Sonar project identity may differ.
+
+### Ken Takahashi (Minimalism) — QA Rerun
+- The custom-key fix simplified the shape by deleting caller-side derivation instead of layering another translation helper.
+- No generic capability CLI was added; dedicated commands remain the leaner surface.
+- No new AGENTS.md candidates emerged from the rerun beyond the accepted non-default ID QA rule.
+
 ---
 
 ## Open Blockers
-- None after fix commit; QA rerun remains required before documentation handoff.
+- None. QA passed; documentation handoff is required.
 
 ---
 

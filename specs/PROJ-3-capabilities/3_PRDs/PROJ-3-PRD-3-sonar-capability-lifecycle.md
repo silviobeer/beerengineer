@@ -101,7 +101,7 @@
 
 Date: 2026-05-04
 
-Result: FIXED; QA rerun pending. Automated and happy-path Sonar lifecycle tests passed, and the adversarial custom-key failure has been fixed locally.
+Result: PASS after QA rerun. Automated and happy-path Sonar lifecycle tests passed, and the adversarial custom-key failure is fixed and verified.
 
 Evidence:
 - `npm test --workspace=@beerengineer/engine`: PASS (795 tests; 793 passed, 2 skipped, 0 failed).
@@ -119,3 +119,16 @@ Linked bug:
 - `BUG-PROJ3-QA-001` in `7_progress/PROJ-3-progress.md`.
 
 Browser/UI note: no frontend route or component was added for this PRD; CLI/file side effects were the relevant E2E path.
+
+### QA Rerun — 2026-05-04
+
+Result: PASS. Rerun verified AC-1 through AC-27 after the custom Sonar key fix.
+
+Evidence:
+- `npm run typecheck --workspace=@beerengineer/engine`: PASS.
+- `npm run test:file --workspace=@beerengineer/engine -- test/capabilityCli.test.ts test/sonarCapability.test.ts test/reviewCapabilities.test.ts test/workspaceCapabilities.test.ts`: PASS (75 tests, 0 failures).
+- `npm test --workspace=@beerengineer/engine`: PASS (798 tests; 796 passed, 2 skipped, 0 failed).
+- Adversarial custom-key repro: PASS for enablement and `repair --apply`; generated scanner config uses `sonar.projectKey=custom_key`.
+
+Linked bug status:
+- `BUG-PROJ3-QA-001`: fixed and verified.

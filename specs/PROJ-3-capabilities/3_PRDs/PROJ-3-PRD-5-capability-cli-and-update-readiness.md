@@ -89,7 +89,7 @@
 
 Date: 2026-05-04
 
-Result: PASS after Low bug fix; QA rerun pending. QA verified dedicated command groups, no generic `workspace capability ...` command, text/JSON capability output, public Sonar audit/repair side effects, exit-code categories, and update-readiness separation.
+Result: PASS after QA rerun. QA verified dedicated command groups, no generic `workspace capability ...` command, text/JSON capability output, public Sonar audit/repair side effects, exit-code categories, update-readiness separation, and fixed CodeRabbit status help.
 
 Evidence:
 - `npm test --workspace=@beerengineer/engine`: PASS (795 tests; 793 passed, 2 skipped, 0 failed).
@@ -104,3 +104,16 @@ Linked bug:
 - `BUG-PROJ3-QA-002` in `7_progress/PROJ-3-progress.md` (Low): fixed; help now includes `[--json]` for `workspace coderabbit status`.
 
 Browser/UI note: CLI commands are the user-facing surface for this PRD; no browser route was added.
+
+### QA Rerun — 2026-05-04
+
+Result: PASS. Rerun verified AC-1 through AC-23 after the CLI help fix.
+
+Evidence:
+- `npm run typecheck --workspace=@beerengineer/engine`: PASS.
+- `npm run test:file --workspace=@beerengineer/engine -- test/capabilityCli.test.ts test/sonarCapability.test.ts test/reviewCapabilities.test.ts test/workspaceCapabilities.test.ts`: PASS (75 tests, 0 failures).
+- `npm test --workspace=@beerengineer/engine`: PASS (798 tests; 796 passed, 2 skipped, 0 failed).
+- Manual CLI: generic `workspace capability status demo` remains rejected; `workspace sonar enable` without key exits `20`; help lists `workspace coderabbit status <key> [--json]`.
+
+Linked bug status:
+- `BUG-PROJ3-QA-002`: fixed and verified.

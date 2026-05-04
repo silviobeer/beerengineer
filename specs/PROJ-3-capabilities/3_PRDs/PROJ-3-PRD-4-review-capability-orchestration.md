@@ -96,3 +96,14 @@ Evidence:
 AC status: AC-1 through AC-20 PASS.
 
 Browser/UI note: review API/OpenAPI compatibility was tested through integration and contract tests; no new browser UI was introduced.
+
+### QA Rerun — 2026-05-04
+
+Result: PASS. Rerun verified AC-1 through AC-20 remain green after QA bug fixes.
+
+Evidence:
+- `npm run typecheck --workspace=@beerengineer/engine`: PASS.
+- `npm run test:file --workspace=@beerengineer/engine -- test/capabilityCli.test.ts test/sonarCapability.test.ts test/reviewCapabilities.test.ts test/workspaceCapabilities.test.ts`: PASS (75 tests, 0 failures).
+- `npm test --workspace=@beerengineer/engine`: PASS (798 tests; 796 passed, 2 skipped, 0 failed).
+
+Security note: missing Sonar token paths remain redacted and do not print secret values.

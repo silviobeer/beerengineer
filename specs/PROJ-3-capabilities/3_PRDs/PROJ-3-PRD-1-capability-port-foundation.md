@@ -103,3 +103,14 @@ Evidence:
 AC status: AC-1 through AC-22 PASS.
 
 Browser/UI note: no frontend route or component was added for this PRD; browser E2E is not applicable.
+
+### QA Rerun — 2026-05-04
+
+Result: PASS. Rerun verified AC-1 through AC-22 remain green after the QA bug fixes.
+
+Evidence:
+- `npm run typecheck --workspace=@beerengineer/engine`: PASS.
+- `npm run test:file --workspace=@beerengineer/engine -- test/capabilityCli.test.ts test/sonarCapability.test.ts test/reviewCapabilities.test.ts test/workspaceCapabilities.test.ts`: PASS (75 tests, 0 failures).
+- `npm test --workspace=@beerengineer/engine`: PASS (798 tests; 796 passed, 2 skipped, 0 failed).
+
+Browser/UI note: still not applicable; PROJ-3 adds backend/CLI/API behavior only.
