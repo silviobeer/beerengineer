@@ -438,3 +438,9 @@
 - Focused suites: PASS — `test/sonarCapability.test.ts`, `test/workspaceCapabilities.test.ts`, and workspace-matching `test/cli.test.ts` checks exited 0.
 - Build: PASS — `npm run typecheck --workspace=@beerengineer/engine`.
 - Diff hygiene: PASS — `git diff --check`.
+
+### Wave 3 Gate — PASSED (2026-05-04T12:27:05+02:00)
+- [x] Ralph: 27 AC commands green
+- [x] Build: `npm run typecheck`
+- [x] CodeRabbit: 0 non-advisory findings (advisory severities: medium,low,minor)
+- [x] Smoke: backend-only
