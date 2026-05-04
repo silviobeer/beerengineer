@@ -195,8 +195,8 @@ function resolveWorkspaceSonarSettings(
     ? normalizeSonarConfig({
         ...state.requestedSonar,
         enabled: true,
-        organization: preflight.report.github.owner,
-        projectKey: `${preflight.report.github.owner}_${preflight.report.github.repo}`,
+        organization: state.requestedSonar.organization ?? preflight.report.github.owner,
+        projectKey: state.requestedSonar.projectKey ?? `${preflight.report.github.owner}_${preflight.report.github.repo}`,
         baseBranch: preflight.report.github.defaultBranch ?? state.requestedSonar.baseBranch,
       }, state.key, deps.config.llm.defaultSonarOrganization)
     : normalizeSonarConfig({ enabled: false }, state.key, deps.config.llm.defaultSonarOrganization)

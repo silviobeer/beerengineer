@@ -429,15 +429,20 @@ export async function runWorkspacePreflight(
   }
 }
 
-export async function buildGeneratedSonarProperties(root: string, owner: string, repo: string): Promise<{ content?: string; warnings: string[] }> {
+export type SonarPropertiesIdentity = {
+  organization: string
+  projectKey: string
+}
+
+export async function buildGeneratedSonarProperties(root: string, identity: SonarPropertiesIdentity): Promise<{ content?: string; warnings: string[] }> {
   const sourceRoots = await detectSonarSourceRoots(root)
   if (sourceRoots.length === 0) {
     return { warnings: ["Sonar config generation skipped: no supported source roots were detected. Add sonar-project.properties manually if your repo uses a non-standard layout."] }
   }
   const coverageProducer = await detectCoverageProducer(root)
   const lines = [
-    `sonar.projectKey=${owner}_${repo}`,
-    `sonar.organization=${owner}`,
+    `sonar.projectKey=${identity.projectKey}`,
+    `sonar.organization=${identity.organization}`,
     `sonar.sources=${sourceRoots.join(",")}`,
     "sonar.tests=.",
     `sonar.test.inclusions=${SONAR_DEFAULT_TEST_INCLUSIONS}`,
@@ -447,9 +452,9 @@ export async function buildGeneratedSonarProperties(root: string, owner: string,
   return { content: `${lines.join("\n")}\n`, warnings: [] }
 }
 
-export async function writeSonarProperties(root: string, owner: string, repo: string): Promise<{ changed: boolean; warnings: string[] }> {
+export async function writeSonarProperties(root: string, identity: SonarPropertiesIdentity): Promise<{ changed: boolean; warnings: string[] }> {
   if (await pathExists(sonarPropertiesPath(root))) return { changed: false, warnings: [] }
-  const generated = await buildGeneratedSonarProperties(root, owner, repo)
+  const generated = await buildGeneratedSonarProperties(root, identity)
   if (!generated.content) return { changed: false, warnings: generated.warnings }
   await mkdir(root, { recursive: true })
   await writeFile(sonarPropertiesPath(root), generated.content, "utf8")

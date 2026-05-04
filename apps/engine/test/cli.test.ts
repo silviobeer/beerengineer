@@ -167,7 +167,7 @@ test("PROJ-3-PRD-5 AC-3 help text describes workspace capability command groups"
     console.log = original
   }
   assert.match(lines.join("\n"), /workspace git status/)
-  assert.match(lines.join("\n"), /workspace coderabbit status/)
+  assert.match(lines.join("\n"), /workspace coderabbit status <key> \[--json\]/)
   assert.match(lines.join("\n"), /workspace capability readiness/)
 })
 

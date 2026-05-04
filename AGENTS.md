@@ -132,3 +132,4 @@ npm run dev:ui                                    # Next.js on :3000
 - <!-- AGENTS-PROJ2-QA-002 --> Capture 375px mobile screenshots for every new top-level UI surface before marking a UI wave green.
 - <!-- AGENTS-PROJ2-QA-003 --> If an engine error response includes a redacted user-facing `message`, show it before generic fallback copy.
 - <!-- AGENTS-PROJ3-QA-001 --> For local Sonar/SonarCloud quality gates, load `SONAR_TOKEN` from the repo `.env.local` when it is not already exported in the shell. Never write or print the token value.
+- <!-- AGENTS-PROJ3-QA-002 --> Capability QA must cover non-default configured IDs, not only generated defaults.

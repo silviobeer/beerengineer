@@ -97,6 +97,21 @@ test("PROJ-3-PRD-3 AC-1 workspace sonar enable uses the explicit Sonar enablemen
   }
 }))
 
+test("workspace sonar enable writes the configured non-default Sonar project key", () => withoutAmbientSonarToken(async () => {
+  const { root } = await makeWorkspace()
+  try {
+    const preflight = await runWorkspacePreflight(root, { sonarEnabled: true })
+    const context = buildWorkspaceCapabilityContext(root, preflight.report, { githubRequired: true })
+    await enableWorkspaceSonarCapability(context, "Demo", { enabled: true, organization: "acme", projectKey: "custom_key" })
+    const sonarProperties = readFileSync(join(root, "sonar-project.properties"), "utf8")
+    assert.match(sonarProperties, /sonar.projectKey=custom_key/)
+    assert.match(sonarProperties, /sonar.organization=acme/)
+    assert.doesNotMatch(sonarProperties, /sonar.projectKey=acme_demo/)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+}))
+
 test("workspace sonar enable for a missing workspace returns a static preflight sentinel", async () => {
   const root = mkdtempSync(join(tmpdir(), "be2-sonar-cap-"))
   const db = initDatabase(join(root, "db.sqlite"))
@@ -334,6 +349,26 @@ test("PROJ-3-PRD-3 AC-19 repair --apply writes only safe deterministic repairs",
     const report = await applyWorkspaceSonarRepair(root, config)
     assert.ok(report.actions.filter(action => action.repairability === "safe").some(action => action.applied))
     assert.ok(report.actions.filter(action => action.repairability !== "safe").every(action => !action.applied))
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("repair --apply writes the configured non-default Sonar project key", async () => {
+  const { root, config } = await makeWorkspace()
+  try {
+    const custom = buildWorkspaceConfigFile({
+      ...config,
+      sonar: { enabled: true, organization: "acme", projectKey: "custom_key" },
+      reviewPolicy: {
+        ...config.reviewPolicy,
+        sonarcloud: { enabled: true, organization: "acme", projectKey: "custom_key" },
+      },
+    })
+    await applyWorkspaceSonarRepair(root, custom)
+    const sonarProperties = readFileSync(join(root, "sonar-project.properties"), "utf8")
+    assert.match(sonarProperties, /sonar.projectKey=custom_key/)
+    assert.doesNotMatch(sonarProperties, /sonar.projectKey=acme_demo/)
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

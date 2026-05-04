@@ -271,6 +271,50 @@ test("registerWorkspace omits LCOV import when no JS/TS coverage producer is det
   }
 })
 
+test("registerWorkspace preserves explicit Sonar organization and project key", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-workspaces-"))
+  const db = initDatabase(join(dir, "db.sqlite"))
+  try {
+    const repos = new Repos(db)
+    const config = { ...defaultAppConfig(), allowedRoots: [dir] }
+    const path = join(dir, "demo-custom-sonar")
+    mkdirSync(join(path, "apps", "api"), { recursive: true })
+    writeFileSync(join(path, "package.json"), JSON.stringify({ name: "demo-custom-sonar", private: true }), "utf8")
+    const gitInit = await initGit(path, { defaultBranch: "main", initialCommit: false })
+    assert.equal(gitInit.ok, true)
+    const remoteAdd = spawnSync("git", ["remote", "add", "origin", "https://github.com/acme/demo-custom-sonar.git"], { cwd: path, encoding: "utf8" })
+    assert.equal(remoteAdd.status, 0)
+
+    const result = await registerWorkspace(
+      {
+        path,
+        harnessProfile: { mode: "fast" },
+        sonar: { enabled: true, organization: "sonar-org", projectKey: "custom_key" },
+      },
+      { repos, config, appReport: readyReport() },
+    )
+    assert.equal(result.ok, true)
+    if (!result.ok) return
+
+    const workspaceJson = JSON.parse(readFileSync(join(path, ".beerengineer", "workspace.json"), "utf8")) as {
+      sonar: { organization?: string; projectKey?: string }
+      reviewPolicy: { sonarcloud: { organization?: string; projectKey?: string } }
+    }
+    assert.equal(workspaceJson.sonar.organization, "sonar-org")
+    assert.equal(workspaceJson.sonar.projectKey, "custom_key")
+    assert.equal(workspaceJson.reviewPolicy.sonarcloud.organization, "sonar-org")
+    assert.equal(workspaceJson.reviewPolicy.sonarcloud.projectKey, "custom_key")
+
+    const sonarProperties = readFileSync(join(path, "sonar-project.properties"), "utf8")
+    assert.match(sonarProperties, /sonar.projectKey=custom_key/)
+    assert.match(sonarProperties, /sonar.organization=sonar-org/)
+    assert.doesNotMatch(sonarProperties, /sonar.projectKey=acme_demo-custom-sonar/)
+  } finally {
+    db.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test("registerWorkspace persists SONAR_TOKEN to repo git config for shared worktrees", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-workspaces-"))
   const db = initDatabase(join(dir, "db.sqlite"))

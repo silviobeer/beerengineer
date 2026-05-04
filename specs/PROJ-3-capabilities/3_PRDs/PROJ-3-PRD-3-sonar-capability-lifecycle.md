@@ -101,16 +101,19 @@
 
 Date: 2026-05-04
 
-Result: FAIL. Automated and happy-path Sonar lifecycle tests passed, but adversarial QA found that custom configured Sonar project keys are ignored when generating scanner configuration.
+Result: FIXED; QA rerun pending. Automated and happy-path Sonar lifecycle tests passed, and the adversarial custom-key failure has been fixed locally.
 
 Evidence:
 - `npm test --workspace=@beerengineer/engine`: PASS (795 tests; 793 passed, 2 skipped, 0 failed).
 - Focused Sonar/capability tests: PASS (73 tests, 0 failures).
-- Adversarial repro: `enableWorkspaceSonarCapability(..., { organization: "acme", projectKey: "custom_key" })` writes `sonar.projectKey=acme_demo` to `sonar-project.properties`.
+- Fix verification: `npm run test:file --workspace=@beerengineer/engine -- test/sonarCapability.test.ts`: PASS (28 tests, 0 failures).
+- Fix verification: `npm run test:file --workspace=@beerengineer/engine -- test/cli.test.ts test/workspaces.test.ts`: PASS (43 tests, 0 failures).
+- Fix verification: `npm test --workspace=@beerengineer/engine`: PASS (798 tests; 796 passed, 2 skipped, 0 failed).
+- Adversarial repro: `enableWorkspaceSonarCapability(..., { organization: "acme", projectKey: "custom_key" })` now writes `sonar.projectKey=custom_key` to `sonar-project.properties`.
 
 AC status:
-- PASS: AC-1, AC-3 through AC-18, AC-20 through AC-27.
-- FAIL: AC-19 for non-default configured project keys because `repair --apply`/enablement can write scanner config for a GitHub-derived key instead of the configured Sonar key.
+- PASS after fix: AC-1, AC-3 through AC-27.
+- Fixed: AC-19 for non-default configured project keys; enablement and `repair --apply` now write scanner config for the configured Sonar key.
 
 Linked bug:
 - `BUG-PROJ3-QA-001` in `7_progress/PROJ-3-progress.md`.

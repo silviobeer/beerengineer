@@ -1,7 +1,7 @@
 # PROJ-3 Progress
 
-## Status: qa-blocked
-## Current Wave: QA
+## Status: qa-fixes-applied
+## Current Wave: QA rerun pending
 ## BASE_SHA: 369485f6014fb5f98cf3206ec4f9372599e5d2e5
 
 ---
@@ -186,8 +186,8 @@
 
 ## QA Results
 
-- QA completed on 2026-05-04. Automated gates are green, but adversarial QA found one High Sonar lifecycle bug. Skill 7 documentation handoff is blocked until the High bug is fixed.
-- Total ACs assessed: 112. Passed: 111. Failed: 1.
+- QA completed on 2026-05-04. Automated gates were green, but adversarial QA found one High Sonar lifecycle bug. The High bug and the Low CLI help bug have since been fixed; QA rerun is pending.
+- Total ACs assessed before fixes: 112. Passed: 111. Failed: 1.
 - Browser E2E: not applicable for PROJ-3; this PROJ adds backend/CLI/API capability behavior and no frontend routes or components.
 - UI component registry: no new `apps/ui` or component files since BASE_SHA; `docs/components.md` registry impact is none.
 - Security audit: no Critical/High security vulnerabilities found. Existing CSRF, secret redaction, trusted-host update, and allowedRoots purge regression tests passed.
@@ -195,7 +195,12 @@
   - `npm run typecheck --workspace=@beerengineer/engine`: PASS.
   - `npm run test:file --workspace=@beerengineer/engine -- test/capabilityCli.test.ts test/sonarCapability.test.ts test/reviewCapabilities.test.ts test/workspaceCapabilities.test.ts`: PASS (73 tests, 0 failures).
   - `npm test --workspace=@beerengineer/engine`: PASS (795 tests; 793 passed, 2 skipped, 0 failed).
-  - Adversarial custom Sonar project key repro: FAIL, see `BUG-PROJ3-QA-001`.
+  - Adversarial custom Sonar project key repro: FIXED locally, see `BUG-PROJ3-QA-001`.
+- Fix verification:
+  - `npm run typecheck --workspace=@beerengineer/engine`: PASS.
+  - `npm run test:file --workspace=@beerengineer/engine -- test/sonarCapability.test.ts`: PASS (28 tests, 0 failures).
+  - `npm run test:file --workspace=@beerengineer/engine -- test/cli.test.ts test/workspaces.test.ts`: PASS (43 tests, 0 failures).
+  - `npm test --workspace=@beerengineer/engine`: PASS (798 tests; 796 passed, 2 skipped, 0 failed).
 
 ### QA Bugs
 
@@ -203,21 +208,23 @@
 - **File:** `apps/engine/src/core/capabilities/sonarCapability.ts`
 - **Anchor:** `enableWorkspaceSonarCapability` / `writeSonarProperties(context.workspaceRoot, context.github.owner!, context.github.repo!)`
 - **Source:** Marcus Weber (Principal Engineer) + Thomas Müller (SRE/Reliability) + QA adversarial test
-- **Status:** open
-- **Fix attempts:** 0
+- **Status:** fixed; QA rerun pending
+- **Fix attempts:** 1
 - **Description:** Sonar enablement accepts `SonarConfig.projectKey`, but the generated `sonar-project.properties` is written from GitHub owner/repo (`acme_demo`) instead of the configured key. The same owner/repo derivation appears in repair generation via `sonar.projectKey.replace(...)`. A workspace configured for a non-default Sonar project will provision/refer to one key but scan/report against another.
 - **Repro:** In a temp GitHub-backed workspace, call `enableWorkspaceSonarCapability(context, "Demo", { enabled: true, organization: "acme", projectKey: "custom_key" })`; observe `sonar-project.properties` contains `sonar.projectKey=acme_demo` instead of `sonar.projectKey=custom_key`.
 - **Fix sketch:** Make Sonar property generation accept the actual `organization` and `projectKey` rather than deriving a repo slug; update repair drift/apply logic and add coverage for custom project keys.
+- **Fix:** `writeSonarProperties` and `buildGeneratedSonarProperties` now take the configured Sonar identity directly. Enablement, drift planning, repair apply, and workspace registration preserve explicit non-default Sonar organization/project keys. Regression tests cover direct enablement, repair apply, and workspace registration with `custom_key`.
 
 #### BUG-PROJ3-QA-002 — [Low] Help omits `--json` for `workspace coderabbit status`
 - **File:** `apps/engine/src/cli/parse.ts`
 - **Anchor:** `beerengineer workspace coderabbit status <key>`
 - **Source:** Marcus Weber (Principal Engineer)
-- **Status:** open
-- **Fix attempts:** 0
+- **Status:** fixed; QA rerun pending
+- **Fix attempts:** 1
 - **Description:** The parser supports `workspace coderabbit status <key> --json`, but CLI help lists the command without `[--json]`, unlike the Git/GitHub/Sonar capability status commands. This is a discoverability gap for PRD-5's consistent text/JSON output story.
 - **Repro:** Run `node apps/engine/bin/beerengineer.js --help` and inspect the capability command section.
 - **Fix sketch:** Update the help line to `beerengineer workspace coderabbit status <key> [--json]`.
+- **Fix:** CLI help now lists `beerengineer workspace coderabbit status <key> [--json]`, with a regression assertion in `test/cli.test.ts`.
 
 ### Persona Review Summary
 
@@ -229,7 +236,7 @@
 - Ken Takahashi — Minimalism Engineer: 0 Critical, 0 High, 0 Medium, 0 Low. Retrospective appended below.
 
 ## AGENTS.md Candidates
-- [PROPOSED] AGENTS-PROJ3-QA-001: Capability QA must cover non-default configured IDs, not only generated defaults. — source: BUG-PROJ3-QA-001
+- [ACCEPTED] AGENTS-PROJ3-QA-002: Capability QA must cover non-default configured IDs, not only generated defaults. — source: BUG-PROJ3-QA-001
 
 ## PROJ Retrospective
 
@@ -255,7 +262,7 @@
 ---
 
 ## Open Blockers
-- `BUG-PROJ3-QA-001` blocks production readiness.
+- None after fix commit; QA rerun remains required before documentation handoff.
 
 ---
 

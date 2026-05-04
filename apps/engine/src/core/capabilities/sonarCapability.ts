@@ -132,7 +132,10 @@ export async function enableWorkspaceSonarCapability(
     }
   }
 
-  const sonarWrite = await writeSonarProperties(context.workspaceRoot, context.github.owner!, context.github.repo!)
+  const sonarWrite = await writeSonarProperties(context.workspaceRoot, {
+    organization: configuredSonar.organization!,
+    projectKey: configuredSonar.projectKey!,
+  })
   if (sonarWrite.changed) actions.push(`wrote ${SONAR_PROPERTIES_FILE}`)
   warnings.push(...sonarWrite.warnings)
   if (await writeFileIfMissing(resolve(context.workspaceRoot, SONAR_WORKFLOW_FILE), renderSonarWorkflow())) {
@@ -239,7 +242,9 @@ async function buildSafeRepairActions(root: string, config: WorkspaceConfigFile,
   }
   if (audit.findings.length === 0) {
     const raw = await readSonarPropertiesRaw(root)
-    const generated = sonar.organization && sonar.projectKey ? await buildGeneratedSonarProperties(root, sonar.organization, sonar.projectKey.replace(`${sonar.organization}_`, "")) : { warnings: [] }
+    const generated = sonar.organization && sonar.projectKey
+      ? await buildGeneratedSonarProperties(root, { organization: sonar.organization, projectKey: sonar.projectKey })
+      : { warnings: [] }
     if (raw && generated.content && raw !== generated.content) {
       actions.push({
         id: "sonar-properties-drift",
@@ -272,8 +277,7 @@ export async function applyWorkspaceSonarRepair(root: string, config: WorkspaceC
   const sonar = currentSonarConfig(config)
   for (const action of planned.actions.filter(action => action.repairability === "safe")) {
     if (action.id === "sonar-properties-missing" && sonar.organization && sonar.projectKey) {
-      const repo = sonar.projectKey.replace(`${sonar.organization}_`, "")
-      const written = await writeSonarProperties(root, sonar.organization, repo)
+      const written = await writeSonarProperties(root, { organization: sonar.organization, projectKey: sonar.projectKey })
       action.applied = written.changed
       if (!written.changed) action.reason = "Already up to date"
     } else if (action.id === "sonar-workflow-missing") {
