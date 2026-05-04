@@ -173,7 +173,9 @@ function splitConfigList(value: string | undefined): string[] {
 }
 
 function statusFromFindings(findings: SonarAuditFinding[]): SonarLifecycleStatus {
-  return findings.some(finding => finding.risk === "high") ? "failed" : findings.length > 0 ? "not_configured" : "ready"
+  if (findings.some(finding => finding.risk === "high")) return "failed"
+  if (findings.length > 0) return "not_configured"
+  return "ready"
 }
 
 function currentSonarConfig(config: WorkspaceConfigFile): SonarConfig {

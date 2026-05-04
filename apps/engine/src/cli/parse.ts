@@ -43,6 +43,29 @@ function parseRunSubcommand(context: ParseArgsContext): Command | null {
   return { kind: "unknown", token: argv.join(" ") }
 }
 
+function parseWorkspaceGitSubcommand(argv: string[], json: boolean): Command {
+  if (argv[2] === "status") return { kind: "workspace-git-status", key: argv[3], json }
+  return { kind: "unknown", token: argv.join(" ") }
+}
+
+function parseWorkspaceGithubSubcommand(argv: string[], json: boolean): Command {
+  if (argv[2] === "status") return { kind: "workspace-github-status", key: argv[3], json }
+  return { kind: "unknown", token: argv.join(" ") }
+}
+
+function parseWorkspaceSonarSubcommand(argv: string[], json: boolean): Command {
+  const action = argv[2]
+  if (action === "enable") return { kind: "workspace-sonar-enable", key: argv[3], json }
+  if (action === "audit") return { kind: "workspace-sonar-audit", key: argv[3], json }
+  if (action === "repair") return { kind: "workspace-sonar-repair", key: argv[3], json, apply: argv.includes("--apply") }
+  return { kind: "unknown", token: argv.join(" ") }
+}
+
+function parseWorkspaceCodeRabbitSubcommand(argv: string[], json: boolean): Command {
+  if (argv[2] === "status") return { kind: "workspace-coderabbit-status", key: argv[3], json }
+  return { kind: "unknown", token: argv.join(" ") }
+}
+
 function parseWorkspaceSubcommand(context: ParseArgsContext): Command | null {
   const { first, second, argv, json } = context
   if (first !== "workspace") return null
@@ -86,25 +109,10 @@ function parseWorkspaceSubcommand(context: ParseArgsContext): Command | null {
   if (second === "open") return { kind: "workspace-open", key: argv[2] }
   if (second === "backfill") return { kind: "workspace-backfill", json }
   if (second === "gc-worktrees") return { kind: "workspace-worktree-gc", key: argv[2], json }
-  if (second === "git") {
-    if (argv[2] === "status") return { kind: "workspace-git-status", key: argv[3], json }
-    return { kind: "unknown", token: argv.join(" ") }
-  }
-  if (second === "github") {
-    if (argv[2] === "status") return { kind: "workspace-github-status", key: argv[3], json }
-    return { kind: "unknown", token: argv.join(" ") }
-  }
-  if (second === "sonar") {
-    const action = argv[2]
-    if (action === "enable") return { kind: "workspace-sonar-enable", key: argv[3], json }
-    if (action === "audit") return { kind: "workspace-sonar-audit", key: argv[3], json }
-    if (action === "repair") return { kind: "workspace-sonar-repair", key: argv[3], json, apply: argv.includes("--apply") }
-    return { kind: "unknown", token: argv.join(" ") }
-  }
-  if (second === "coderabbit") {
-    if (argv[2] === "status") return { kind: "workspace-coderabbit-status", key: argv[3], json }
-    return { kind: "unknown", token: argv.join(" ") }
-  }
+  if (second === "git") return parseWorkspaceGitSubcommand(argv, json)
+  if (second === "github") return parseWorkspaceGithubSubcommand(argv, json)
+  if (second === "sonar") return parseWorkspaceSonarSubcommand(argv, json)
+  if (second === "coderabbit") return parseWorkspaceCodeRabbitSubcommand(argv, json)
   return null
 }
 
