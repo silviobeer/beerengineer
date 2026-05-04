@@ -33,6 +33,8 @@ export function AdoptExistingProjectPanel({
           {state.reason ? <p className="text-xs text-amber-300">{state.reason}</p> : null}
         </>
       ) : (
+        <>
+        {state.reason ? <p className="text-xs text-amber-300">{state.reason}</p> : null}
         <label className="flex items-center gap-2 text-sm text-amber-100">
           <input
             type="checkbox"
@@ -44,6 +46,7 @@ export function AdoptExistingProjectPanel({
           />
           <span>I understand beerengineer will adopt this existing project and create a persistent test branch.</span>
         </label>
+        </>
       )}
       <button type="button" disabled={blocked || !confirmed} onClick={onCreateBranch} className="border border-amber-500 px-2 py-1 text-xs text-amber-200 disabled:opacity-45">
         Create persistent test branch

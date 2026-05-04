@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { AppConfigView } from "@/lib/setup/types";
 
 type CleanupPolicy = AppConfigView["supabase"]["cleanupPolicy"];
@@ -18,6 +18,11 @@ export function CleanupPolicySelector({
   const [ttl, setTtl] = useState(ttlHours ? String(ttlHours) : "");
   const ttlNumber = Number(ttl);
   const ttlInvalid = selected === "ttl-after-success" && (!Number.isInteger(ttlNumber) || ttlNumber <= 0);
+
+  useEffect(() => {
+    setSelected(policy);
+    setTtl(ttlHours ? String(ttlHours) : "");
+  }, [policy, ttlHours]);
 
   function emit(nextPolicy: CleanupPolicy, nextTtl: string) {
     const nextTtlNumber = Number(nextTtl);

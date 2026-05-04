@@ -23,7 +23,7 @@ export function AppSettingsPage({
             <a className="border border-zinc-800 px-3 py-2 text-sm text-amber-300" href="#setup-status">Setup status</a>
             <a className="border border-zinc-800 px-3 py-2 text-sm text-zinc-300" href="#app-config">App config</a>
             <a className="border border-zinc-800 px-3 py-2 text-sm text-zinc-300" href="#secrets">Secrets</a>
-            <a className="border border-zinc-800 px-3 py-2 text-sm text-zinc-300" href="#supabase">Supabase</a>
+            {configView ? <a className="border border-zinc-800 px-3 py-2 text-sm text-zinc-300" href="#supabase">Supabase</a> : null}
             <a className="border border-zinc-800 px-3 py-2 text-sm text-zinc-300" href="#sonar">Sonar</a>
             <a className="border border-zinc-800 px-3 py-2 text-sm text-zinc-300" href="#optional-services">Optional services</a>
           </nav>
