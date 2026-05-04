@@ -129,6 +129,81 @@ test("PROJ-3-PRD-3 AC-26 review orchestration can consume Sonar capability lifec
   assert.equal(typeof sonar.enableWorkspaceSonarCapability, "function")
 })
 
+test("PROJ-3-PRD-4 AC-9 missing Sonar scanner token or config does not block story flow by itself", async () => {
+  await withTmpCwd(async () => {
+    setTestReviewAdapters({
+      coderabbit: async () => ({
+        status: "ran",
+        findings: [],
+        rawPath: "coderabbit.raw.txt",
+        command: ["fake-coderabbit"],
+        exitCode: 0,
+      }),
+      sonarcloud: async () => ({
+        status: "failed",
+        reason: "sonar-token-missing",
+        passed: false,
+        conditions: [],
+        findings: [],
+        rawScanPath: "sonar-scan.raw.txt",
+        rawGatePath: "sonar-gate.raw.json",
+        command: [],
+        exitCode: 1,
+      }),
+    })
+    try {
+      const result = await runRalphStory(storyContext("US-SONAR-MISSING"), makeCtx(process.cwd()))
+      assert.equal(result.implementation.status, "passed")
+      assert.equal(result.review?.outcome, "pass-partial")
+    } finally {
+      resetTestReviewAdapters()
+    }
+  })
+})
+
+test("PROJ-3-PRD-4 AC-10 missing CodeRabbit CLI or no diff basis does not block story flow by itself", async () => {
+  await withTmpCwd(async () => {
+    setTestReviewAdapters({
+      coderabbit: async () => ({
+        status: "skipped",
+        reason: "coderabbit-no-diff",
+        findings: [],
+        rawPath: "coderabbit.raw.txt",
+        command: [],
+        exitCode: 0,
+      }),
+      sonarcloud: async () => ({
+        status: "ran",
+        passed: true,
+        conditions: [],
+        findings: [],
+        rawScanPath: "sonar-scan.raw.txt",
+        rawGatePath: "sonar-gate.raw.json",
+        command: ["fake-sonar"],
+        exitCode: 0,
+      }),
+    })
+    try {
+      const result = await runRalphStory(storyContext("US-CR-NODIFF"), makeCtx(process.cwd()))
+      assert.equal(result.implementation.status, "passed")
+      assert.equal(result.review?.reviewCapabilities?.find(capability => capability.capabilityId === "coderabbit")?.outcome, "not_meaningful")
+    } finally {
+      resetTestReviewAdapters()
+    }
+  })
+})
+
+test("PROJ-3-PRD-4 AC-12 required non-review failures can still block by their own rules", async () => {
+  await withTmpCwd(async () => {
+    const ctx = makeCtx(process.cwd())
+    const result: StoryArtifacts = await runRalphStory(storyContext("US-BOUNDARY-BLOCK"), ctx, undefined, {
+      onCycleBoundary: () => ({ ok: false, reason: "required branch precondition failed" }),
+    })
+    assert.equal(result.implementation.status, "blocked")
+    assert.match(result.implementation.finalSummary, /required branch precondition failed/)
+  })
+})
+
 test("runRalphStory resumes from persisted state (no duplicate work)", async () => {
   await withTmpCwd(async () => {
     const ctx = makeCtx(process.cwd())

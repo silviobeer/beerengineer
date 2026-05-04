@@ -4,7 +4,7 @@ import { readWorkspaceConfig } from "../../core/workspaces.js"
 import type { RunLlmConfig } from "../../llm/registry.js"
 import { shouldIgnoreTransientUntrackedPath } from "../../llm/hosted/execution/coderHarness.js"
 import { runStoryReviewTools } from "../../review/registry.js"
-import type { CodeRabbitResult, SonarCloudResult } from "../../review/types.js"
+import type { CodeRabbitResult, ReviewCapabilityResult, SonarCloudResult } from "../../review/types.js"
 import type { Finding, StoryExecutionContext, StoryImplementationArtifact, StoryReviewArtifact } from "../../types.js"
 import { readJsonIfExists, requireStoryBranch } from "./ralphRuntimeShared.js"
 
@@ -23,6 +23,7 @@ type StoryReviewRun = {
   sonar: StoryReviewArtifact["gate"]["sonar"]
   failedBecause: string[]
   outcome: StoryReviewArtifact["outcome"]
+  reviewCapabilities: ReviewCapabilityResult[]
 }
 
 export async function runStoryReview(input: {
@@ -102,6 +103,7 @@ export function buildReviewArtifact(
       sonar: result.sonar,
     },
     outcome: result.outcome,
+    reviewCapabilities: result.reviewCapabilities,
     feedbackSummary: buildFeedbackSummary(result),
   }
 }
@@ -134,6 +136,7 @@ function summarizeReviewResult(review: Awaited<ReturnType<typeof runStoryReviewT
     sonar,
     failedBecause,
     outcome: reviewOutcome(designSystem, coderabbit, sonar, failedBecause),
+    reviewCapabilities: review.capabilities,
   }
 }
 
@@ -143,6 +146,15 @@ function buildFeedbackSummary(result: StoryReviewRun): string[] {
     toolStatusLine("coderabbit", result.coderabbit),
     toolStatusLine("sonar", result.sonar),
   ]
+  for (const capability of result.reviewCapabilities) {
+    if (capability.outcome !== "ran") {
+      summary.push(`[review-capability] ${capability.capabilityId}: ${capability.outcome} (${capability.reason})`)
+    } else if (capability.blocking) {
+      summary.push(`[review-capability] ${capability.capabilityId}: ran (blocking)`)
+    } else {
+      summary.push(`[review-capability] ${capability.capabilityId}: ran`)
+    }
+  }
   for (const reason of result.failedBecause) summary.push(`[gate] ${reason}`)
   for (const finding of result.combinedFindings) summary.push(`[${finding.source}] ${finding.message}`)
   return summary

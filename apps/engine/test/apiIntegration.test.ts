@@ -42,6 +42,18 @@ test("PROJ-3-PRD-2 AC-15 existing setup/settings flows require no new UI surface
   assert.doesNotMatch(contract, /new UI surface required/i)
 })
 
+test("PROJ-3-PRD-4 AC-17 existing review API and OpenAPI behavior stays frozen by default", () => {
+  const openapi = readFileSync(resolve("src/api/openapi.json"), "utf8")
+  assert.match(openapi, /WorkspaceRegistrationResponse/)
+  assert.doesNotMatch(openapi, /ReviewCapabilityEnvelope/)
+})
+
+test("PROJ-3-PRD-4 AC-18 no contract-breaking review API update is introduced in this wave", () => {
+  const contract = readFileSync(resolve("../../docs/api-contract.md"), "utf8")
+  assert.doesNotMatch(contract, /breaking review API/i)
+  assert.doesNotMatch(contract, /remove.*review/i)
+})
+
 async function waitForHealth(base: string, timeoutMs = 5000): Promise<void> {
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {

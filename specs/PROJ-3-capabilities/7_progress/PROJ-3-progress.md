@@ -1,7 +1,7 @@
 # PROJ-3 Progress
 
 ## Status: in progress
-## Current Wave: 3
+## Current Wave: 4
 ## BASE_SHA: 369485f6014fb5f98cf3206ec4f9372599e5d2e5
 
 ---
@@ -444,3 +444,111 @@
 - [x] Build: `npm run typecheck`
 - [x] CodeRabbit: 0 non-advisory findings (advisory severities: medium,low,minor)
 - [x] Smoke: backend-only
+
+---
+
+## Wave 4
+
+- Wave start tag: `wave-4-start-PROJ-3`
+- Implementation mode: local lead implementation; no subagents spawned because this Codex session permits delegation only on explicit user delegation requests.
+
+## PROJ-3-PRD-4-US-1: Review capability envelopes — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 1.1 Review Envelope Runtime Output | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-1 | Sonar review output includes a review capability envelope with `capabilityId=sonar`. | ✓ |
+| AC-2 | CodeRabbit review output includes a review capability envelope with `capabilityId=coderabbit`. | ✓ |
+| AC-3 | The outcome uses the closed review outcome set from PROJ-3-PRD-1. | ✓ |
+| AC-4 | Each non-ran or non-meaningful outcome includes a reason and artifact reference where available. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- Pass 1: PASS — targeted AC-1 through AC-4 commands exited 0.
+
+## PROJ-3-PRD-4-US-2: Preserve review domain results — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 2.1 Preserve Tool-Specific Results | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-5 | Sonar scanner, quality gate, condition, coverage, and scope details remain Sonar-specific. | ✓ |
+| AC-6 | CodeRabbit diff and finding details remain CodeRabbit-specific. | ✓ |
+| AC-7 | The common envelope does not replace domain-specific result structures. | ✓ |
+| AC-8 | Review artifacts preserve enough detail for tool-specific debugging. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- Pass 1: PASS — targeted AC-5 through AC-8 commands exited 0.
+
+## PROJ-3-PRD-4-US-3: Optional review non-blocking semantics — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 3.1 Optional Review Non-Blocking Semantics | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-9 | Missing Sonar scanner/token/config does not block the story flow by itself. | ✓ |
+| AC-10 | Missing CodeRabbit CLI or no diff basis does not block the story flow by itself. | ✓ |
+| AC-11 | Optional capability issues are recorded in review artifacts. | ✓ |
+| AC-12 | Required non-review failures can still block according to their own flow rules. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- Pass 1: PASS — targeted AC-9 through AC-12 commands exited 0.
+
+## PROJ-3-PRD-4-US-4: Review capability orchestrator — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 4.1 Review Capability Orchestrator | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-13 | Review orchestration invokes Sonar and CodeRabbit through review capability ports. | ✓ |
+| AC-14 | Tool adapters own tool-specific command, remote, scan, or parsing behavior. | ✓ |
+| AC-15 | The review summary can list all review capability outcomes without knowing tool internals. | ✓ |
+| AC-16 | Fake review capabilities can be used to test orchestration independently from real tools. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- Pass 1: PASS — targeted AC-13 through AC-16 commands exited 0.
+
+## PROJ-3-PRD-4-US-5: Review API compatibility projection — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 5.1 Review API Compatibility Projection | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-17 | Existing review API/OpenAPI behavior is treated as frozen by default. | ✓ |
+| AC-18 | Any contract-breaking API update needed for capability envelopes requires an explicit architecture or wave-plan decision and paired UI compatibility work. | ✓ |
+| AC-19 | JSON output includes stable `capabilityId` and outcome values. | ✓ |
+| AC-20 | Human-readable review summaries identify skipped or not-meaningful capabilities clearly. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- Pass 1: PASS — targeted AC-17 through AC-20 commands exited 0.
+
+### Wave 4 Local Verification
+- Ralph AC commands: PASS — all 20 Wave 4 `ac_commands` from `wave-gate-config.json` exited 0.
+- Focused suites: PASS — `test/reviewCapabilities.test.ts`, targeted `test/ralphRuntime.test.ts`, and targeted `test/apiIntegration.test.ts` exited 0.
+- Build: PASS — `npm run typecheck --workspace=@beerengineer/engine`.
+- Diff hygiene: PASS — `git diff --check`.

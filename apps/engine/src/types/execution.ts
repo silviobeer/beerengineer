@@ -5,6 +5,7 @@ import type {
   StoryReference,
 } from "./domain.js"
 import type { Severity } from "./review.js"
+import type { ReviewCapabilityEnvelope } from "../core/capabilities/index.js"
 
 export type DesignGuidance = Pick<DesignArtifact, "tone" | "antiPatterns">
 
@@ -174,6 +175,7 @@ export type StoryReviewArtifact = {
         }
   }
   outcome: "pass" | "revise" | "pass-unreviewed" | "pass-tool-failure" | "pass-partial"
+  reviewCapabilities?: ReviewCapabilityEnvelope[]
   feedbackSummary: string[]
 }
 

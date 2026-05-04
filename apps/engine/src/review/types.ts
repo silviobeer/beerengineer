@@ -72,6 +72,7 @@ export type ReviewToolRegistryResult = {
   }
   coderabbit: CodeRabbitResult
   sonarcloud: SonarCloudResult
+  capabilities: ReviewCapabilityResult[]
 }
 
 export type ReviewCapabilityResult =
