@@ -1,7 +1,7 @@
 import type { SupabaseAdapter, SupabaseAdapterResult, SupabaseWorkspaceContext } from "./types.js"
 import { createOrAttachPersistentTestBranch, type PersistentBranchClient } from "./persistentTestBranch.js"
 import type { Repos } from "../../db/repositories.js"
-import { waveBranchName } from "./branchNaming.js"
+import { ownedWaveBranchPrefix, waveBranchName } from "./branchNaming.js"
 import { pollSupabaseBranch, SupabaseBranchPollTimeoutError } from "./branchPoller.js"
 import { applySupabaseMigrationsAndSeeds, type SupabaseMigrationClient } from "./migrationRunner.js"
 import { migrationSmoke } from "./dbTests/migrationSmoke.js"
@@ -30,6 +30,7 @@ export const defaultSupabaseAdapter: SupabaseAdapter = {
 
 type WaveClient = PersistentBranchClient & SupabaseMigrationClient & {
   getBranch?(projectRef: string, branchRef: string): Promise<{ id: string; ref: string; name?: string; status?: string }>
+  deleteBranch?(projectRef: string, branchRef: string): Promise<void>
 }
 
 export function createSupabaseAdapter(deps: { repos: Repos; client: WaveClient }): SupabaseAdapter {
@@ -98,5 +99,54 @@ export function createSupabaseAdapter(deps: { repos: Repos; client: WaveClient }
         return { ok: false, context: { status: "retained-for-diagnosis", failingStep: "migration-seed", message: err instanceof Error ? err.message : "Validation failed" } }
       }
     },
+    async destroyBranch(context: SupabaseWorkspaceContext): Promise<SupabaseAdapterResult> {
+      if (!context.projectRef || !context.branchRef || !deps.client.deleteBranch) return { ok: false, context: { error: "destroy_context_required" } }
+      try {
+        await deps.client.deleteBranch(context.projectRef, context.branchRef)
+        if (context.runId) deps.repos.setRunSupabaseLifecycleState(context.runId, "destroyed")
+        return { ok: true, context: { status: "destroyed", branchRef: context.branchRef } }
+      } catch (err) {
+        const status = (err as { status?: number }).status
+        if (status === 404) return { ok: true, context: { status: "destroyed", branchRef: context.branchRef, idempotent: true } }
+        if (context.runId) deps.repos.setRunSupabaseLifecycleState(context.runId, "retained-for-diagnosis")
+        return { ok: false, context: { status: "retained-for-diagnosis", message: err instanceof Error ? err.message : "Destroy failed" } }
+      }
+    },
+    async reconcile(context: SupabaseWorkspaceContext): Promise<SupabaseAdapterResult> {
+      if (!context.workspaceId || !context.workspaceKey || !context.projectRef) return { ok: false, context: { error: "reconcile_context_required" } }
+      const branches = await deps.client.listBranches(context.projectRef)
+      const prefix = ownedWaveBranchPrefix(context.workspaceKey)
+      const runs = deps.repos.listRuns()
+      const classifications = branches
+        .filter(branch => (branch.name ?? "").startsWith(prefix))
+        .map(branch => {
+          const run = runs.find(candidate => candidate.supabase_branch_ref === branch.ref || candidate.supabase_branch_name === branch.name)
+          const status = branch.status ?? ""
+          if (!run || /error|failed/i.test(status)) return { branchRef: branch.ref, branchName: branch.name, classification: "retained-for-diagnosis" }
+          if (run.status === "completed") return { branchRef: branch.ref, branchName: branch.name, runId: run.id, classification: "cleanup-candidate" }
+          deps.repos.setRunSupabaseBranch(run.id, { ref: branch.ref, name: branch.name ?? branch.ref, lifecycleState: status === "ACTIVE_HEALTHY" ? "ready" : run.supabase_branch_lifecycle_state ?? "provisioning" })
+          return { branchRef: branch.ref, branchName: branch.name, runId: run.id, classification: "adoptable" }
+        })
+      return { ok: true, context: { classifications } }
+    },
   }
+}
+
+export async function recreatePersistentTestBranch(input: {
+  repos: Repos
+  adapter: SupabaseAdapter
+  workspaceId: string
+  projectRef: string
+  branchRef: string
+  branchName: string
+  workspaceRoot: string
+}): Promise<SupabaseAdapterResult> {
+  const destroyed = await input.adapter.destroyBranch({ workspaceId: input.workspaceId, projectRef: input.projectRef, branchRef: input.branchRef })
+  if (!destroyed.ok) {
+    input.repos.setWorkspaceSupabasePersistentBranch(input.workspaceId, { ref: input.branchRef, name: input.branchName, status: "retained-for-diagnosis" })
+    return { ok: false, context: { status: "retained-for-diagnosis", error: "destroy_failed" } }
+  }
+  const provisioned = await input.adapter.provisionBranch({ workspaceId: input.workspaceId, projectRef: input.projectRef, workspaceRoot: input.workspaceRoot })
+  if (!provisioned.ok) return { ok: false, context: { status: "failed", error: "recreate_failed" } }
+  return { ok: true, context: { status: "ready", branchRef: provisioned.context?.branchRef } }
 }

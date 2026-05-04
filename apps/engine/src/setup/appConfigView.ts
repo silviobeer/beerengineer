@@ -39,6 +39,10 @@ export type AppConfigView = {
     cleanupTtlHours?: number
     productionMigrationProtection: "off" | "on"
     settingsVersion: number
+    costRisk: {
+      retainedBranchCount: number
+      planLimitRatio: number
+    }
   }
   config: {
     allowedRoots: string[]
@@ -153,6 +157,12 @@ function supabaseView(repos: Repos | undefined): AppConfigView["supabase"] {
     cleanupTtlHours: workspace?.supabase_cleanup_ttl_hours ?? undefined,
     productionMigrationProtection: workspace?.supabase_protection_switch ?? "off",
     settingsVersion: workspace?.supabase_settings_version ?? 1,
+    costRisk: {
+      retainedBranchCount: repos?.countSupabaseRunsByLifecycle(["retained-for-diagnosis", "quota-exceeded"]) ?? 0,
+      planLimitRatio: workspace?.supabase_branch_quota_usage != null && workspace.supabase_branch_quota_limit
+        ? workspace.supabase_branch_quota_usage / workspace.supabase_branch_quota_limit
+        : 0,
+    },
   }
 }
 

@@ -147,6 +147,8 @@ export class Repos {
         supabase_last_checked_at: null,
         supabase_cleanup_policy: "on-success-immediate",
         supabase_cleanup_ttl_hours: null,
+        supabase_branch_quota_usage: null,
+        supabase_branch_quota_limit: null,
         supabase_protection_switch: "off",
         supabase_settings_version: 1,
         last_opened_at: input.lastOpenedAt ?? null,
@@ -170,6 +172,8 @@ export class Repos {
              supabase_last_checked_at = @supabase_last_checked_at,
              supabase_cleanup_policy = @supabase_cleanup_policy,
              supabase_cleanup_ttl_hours = @supabase_cleanup_ttl_hours,
+             supabase_branch_quota_usage = @supabase_branch_quota_usage,
+             supabase_branch_quota_limit = @supabase_branch_quota_limit,
              supabase_protection_switch = @supabase_protection_switch,
              supabase_settings_version = @supabase_settings_version,
              last_opened_at = @last_opened_at,
@@ -191,6 +195,8 @@ export class Repos {
         supabase_last_checked_at: existing.supabase_last_checked_at,
         supabase_cleanup_policy: existing.supabase_cleanup_policy ?? "on-success-immediate",
         supabase_cleanup_ttl_hours: existing.supabase_cleanup_ttl_hours,
+        supabase_branch_quota_usage: existing.supabase_branch_quota_usage,
+        supabase_branch_quota_limit: existing.supabase_branch_quota_limit,
         supabase_protection_switch: existing.supabase_protection_switch ?? "off",
         supabase_settings_version: existing.supabase_settings_version ?? 1,
         last_opened_at: input.lastOpenedAt === undefined ? existing.last_opened_at : input.lastOpenedAt,
@@ -442,6 +448,27 @@ export class Repos {
   setRunSupabaseLifecycleState(runId: string, lifecycleState: string): RunRow | undefined {
     this.run("UPDATE runs SET supabase_branch_lifecycle_state = ?, updated_at = ? WHERE id = ?", lifecycleState, now(), runId)
     return this.getRun(runId)
+  }
+
+  setWorkspaceSupabaseBranchQuota(workspaceId: string, input: { usage: number | null; limit: number | null }): WorkspaceRow | undefined {
+    this.run(
+      "UPDATE workspaces SET supabase_branch_quota_usage = ?, supabase_branch_quota_limit = ?, updated_at = ? WHERE id = ?",
+      input.usage,
+      input.limit,
+      now(),
+      workspaceId,
+    )
+    return this.getWorkspace(workspaceId)
+  }
+
+  countSupabaseRunsByLifecycle(states: string[]): number {
+    if (states.length === 0) return 0
+    const placeholders = states.map(() => "?").join(", ")
+    const row = this.getOne<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM runs WHERE supabase_branch_lifecycle_state IN (${placeholders})`,
+      ...states,
+    )
+    return row?.n ?? 0
   }
 
   updateRun(

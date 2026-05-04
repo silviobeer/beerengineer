@@ -4,6 +4,7 @@ import type { SupabaseAdapter } from "../supabase/types.js"
 import type { SupabaseManagementClient } from "../supabase/managementClient.js"
 import { SupabaseManagementError } from "../supabase/managementClient.js"
 import { trackedSupabaseHandoffFiles } from "../supabase/handoffAudit.js"
+import { detectSupabaseDrift } from "../supabase/driftDetector.js"
 import {
   preflightNotConfigured,
   preflightReady,
@@ -17,13 +18,16 @@ export { SUPABASE_MANAGEMENT_TOKEN_SECRET_REF }
 export type SupabaseWorkspaceMetadata = {
   projectRef?: string | null
   rootPath?: string | null
+  persistentTestBranchRef?: string | null
 }
 
 export type SupabaseCapabilityOptions = {
   workspace?: SupabaseWorkspaceMetadata
   secretStore?: SecretStoreOptions
   adapter?: SupabaseAdapter
-  managementClient?: Pick<SupabaseManagementClient, "getProject" | "listBranches">
+  managementClient?: Pick<SupabaseManagementClient, "getProject" | "listBranches"> & {
+    runQuery?: (projectRef: string, branchRef: string, sql: string) => Promise<{ rows?: unknown[] }>
+  }
 }
 
 type LocalSupabaseConfig = {
@@ -97,7 +101,7 @@ export function createSupabaseCapability(options: SupabaseCapabilityOptions = {}
   const notConfigured = (): CapabilityPreflightResult =>
     preflightNotConfigured("supabase", localConfig(options).missingReason || "supabase is not configured")
 
-  const audit = (): CapabilityPreflightResult => {
+  const audit = async (): Promise<CapabilityPreflightResult> => {
     const root = options.workspace?.rootPath
     if (root) {
       const tracked = trackedSupabaseHandoffFiles(root)
@@ -105,7 +109,52 @@ export function createSupabaseCapability(options: SupabaseCapabilityOptions = {}
         return { capabilityId: "supabase", status: "failed", reason: "Supabase handoff files are tracked by git", context: { tracked } }
       }
     }
-    return notConfigured()
+    const config = localConfig(options)
+    if (!config.hasToken || !config.projectRef) return notConfigured()
+    const branchRef = options.workspace?.persistentTestBranchRef
+    if (!root || !branchRef || !options.managementClient?.runQuery) return preflightReady("supabase", { status: "ready" })
+    try {
+      const migrations = await options.managementClient.runQuery(config.projectRef!, branchRef, "select name from supabase_migrations.schema_migrations")
+      const appliedMigrations = (migrations.rows ?? []).map(row => {
+        if (typeof row === "string") return row
+        if (typeof row === "object" && row) {
+          const value = (row as { name?: unknown; version?: unknown }).name ?? (row as { version?: unknown }).version
+          return typeof value === "string" ? value : ""
+        }
+        return ""
+      }).filter(Boolean)
+      let identityRows: Array<{ id: string; expected: unknown; actual: unknown }> = []
+      try {
+        const identities = await options.managementClient.runQuery(config.projectRef!, branchRef, "select id, expected, actual from beerengineer_seed_identity")
+        identityRows = (identities.rows ?? []).filter((row): row is { id: string; expected: unknown; actual: unknown } => {
+          return typeof row === "object" && row !== null && typeof (row as { id?: unknown }).id === "string"
+        })
+      } catch {
+        identityRows = [{ id: "seed-identity-table-missing", expected: true, actual: false }]
+      }
+      const report = detectSupabaseDrift({ workspaceRoot: root, appliedMigrations, seedIdentityRows: identityRows })
+      return {
+        capabilityId: "supabase",
+        status: report.status === "ready" ? "ready" : "warning",
+        reason: report.status,
+        context: report,
+      }
+    } catch (err) {
+      return { capabilityId: "supabase", status: "failed", reason: err instanceof Error ? err.message : "Supabase audit failed" }
+    }
+  }
+
+  const repair = async (): Promise<CapabilityPreflightResult> => {
+    const result = await audit()
+    if (result.status === "failed" || result.status === "not_configured") return result
+    const report = result.context as { extraMigrations?: unknown[]; identityDrift?: unknown[] } | undefined
+    const insufficient = (report?.extraMigrations?.length ?? 0) > 0
+    return {
+      capabilityId: "supabase",
+      status: insufficient ? "warning" : "ready",
+      reason: insufficient ? "non-destructive-repair-insufficient" : "ready",
+      context: { status: insufficient ? "non-destructive-repair-insufficient" : "ready" },
+    }
   }
 
   return {
@@ -115,7 +164,7 @@ export function createSupabaseCapability(options: SupabaseCapabilityOptions = {}
       preflight,
       connect: notConfigured,
       audit,
-      repair: notConfigured,
+      repair,
     },
   }
 }

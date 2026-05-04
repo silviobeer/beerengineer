@@ -72,6 +72,10 @@ export class SupabaseManagementClient {
     return await this.request(managementEndpoints.getBranch(projectRef, branchRef)) as SupabaseBranch
   }
 
+  async deleteBranch(projectRef: string, branchRef: string): Promise<void> {
+    await this.request(managementEndpoints.deleteBranch(projectRef, branchRef), { method: "DELETE" })
+  }
+
   async runQuery(projectRef: string, branchRef: string, sql: string): Promise<SupabaseSqlResult> {
     return await this.request(managementEndpoints.runQuery(projectRef, branchRef), {
       method: "POST",
@@ -122,7 +126,10 @@ export class SupabaseManagementClient {
     } finally {
       clearTimeout(timeout)
     }
-    if (response.ok) return await response.json()
+    if (response.ok) {
+      if (response.status === 204) return {}
+      return await response.json()
+    }
     const message = await readProviderMessage(response)
     if (response.status === 429) {
       throw new SupabaseManagementError("rate_limit", message, response.status, response.headers.get("retry-after"))

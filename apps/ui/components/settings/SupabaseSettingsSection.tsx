@@ -2,6 +2,9 @@
 
 import { useState } from "react";
 import { StatusChip } from "@/components/StatusChip";
+import { PlanLimitBanner } from "@/components/banners/PlanLimitBanner";
+import { RetainedBranchBanner } from "@/components/banners/RetainedBranchBanner";
+import { DestroyConfirmDialog } from "@/components/dialogs/DestroyConfirmDialog";
 import type { AppConfigView } from "@/lib/setup/types";
 import { CleanupPolicySelector } from "./CleanupPolicySelector";
 
@@ -21,6 +24,7 @@ export function SupabaseSettingsSection({ supabase }: Readonly<{ supabase: Supab
   const [error, setError] = useState<string | null>(null);
   const [confirmProtection, setConfirmProtection] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [recreateOpen, setRecreateOpen] = useState(false);
 
   async function saveSettings(next: Partial<SupabaseView> & { confirmed?: boolean }) {
     setError(null);
@@ -82,12 +86,33 @@ export function SupabaseSettingsSection({ supabase }: Readonly<{ supabase: Supab
     }
   }
 
+  async function recreatePersistentBranch() {
+    setError(null);
+    setMessage(null);
+    const branchName = state.persistentTestBranchName ?? "";
+    const res = await fetch("/api/settings/supabase/recreate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workspaceId: state.workspaceId, confirmedName: branchName }),
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok || body?.ok === false) {
+      setError(messageFrom(body, "Supabase persistent test branch could not be recreated."));
+      return;
+    }
+    setRecreateOpen(false);
+    setState((prev) => ({ ...prev, persistentTestBranchStatus: "ACTIVE_HEALTHY" }));
+    setMessage("Persistent test branch recreated.");
+  }
+
   return (
     <section id="supabase" className="space-y-4" data-testid="settings-supabase">
       <div>
         <h2 className="font-display text-xl">Supabase</h2>
         <p className="text-sm text-zinc-400">Cloud Branching connection and branch database controls.</p>
       </div>
+      <RetainedBranchBanner count={state.costRisk?.retainedBranchCount ?? 0} deepLinkHref="#supabase-diagnosis" />
+      <PlanLimitBanner ratio={state.costRisk?.planLimitRatio ?? 0} />
       {state.projectRef ? (
         <div className="grid gap-3 border border-zinc-800 bg-zinc-900 p-4 md:grid-cols-2">
           <p className="text-sm"><span className="text-zinc-400">Project ref</span><br /><span className="font-mono">{state.projectRef}</span></p>
@@ -140,6 +165,17 @@ export function SupabaseSettingsSection({ supabase }: Readonly<{ supabase: Supab
       <button type="button" disabled={refreshing} aria-busy={refreshing} onClick={() => void refreshPreflight()} className="border border-zinc-700 px-2 py-1 text-xs text-zinc-200 disabled:opacity-45">
         {refreshing ? "Refreshing" : "Refresh preflight"}
       </button>
+      {state.persistentTestBranchName ? (
+        <button type="button" onClick={() => setRecreateOpen(true)} className="ml-2 border border-red-700 px-2 py-1 text-xs text-red-200">Recreate persistent test branch</button>
+      ) : null}
+      {recreateOpen && state.persistentTestBranchName ? (
+        <DestroyConfirmDialog
+          expectedName={state.persistentTestBranchName}
+          actionLabel="Recreate persistent test branch"
+          onCancel={() => setRecreateOpen(false)}
+          onConfirm={() => void recreatePersistentBranch()}
+        />
+      ) : null}
       {message ? <output className="block text-sm text-emerald-300">{message}</output> : null}
       {error ? <p role="alert" className="text-sm text-amber-300">{error}</p> : null}
     </section>

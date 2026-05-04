@@ -14,6 +14,8 @@ export type WorkspaceRow = {
   supabase_last_checked_at: number | null
   supabase_cleanup_policy: "on-success-immediate" | "ttl-after-success" | "manual"
   supabase_cleanup_ttl_hours: number | null
+  supabase_branch_quota_usage: number | null
+  supabase_branch_quota_limit: number | null
   supabase_protection_switch: "off" | "on"
   supabase_settings_version: number
   last_opened_at: number | null

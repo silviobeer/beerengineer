@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS workspaces (
   supabase_last_checked_at INTEGER,
   supabase_cleanup_policy TEXT NOT NULL DEFAULT 'on-success-immediate',
   supabase_cleanup_ttl_hours INTEGER,
+  supabase_branch_quota_usage INTEGER,
+  supabase_branch_quota_limit INTEGER,
   supabase_protection_switch TEXT NOT NULL DEFAULT 'off',
   supabase_settings_version INTEGER NOT NULL DEFAULT 1,
   last_opened_at INTEGER,
@@ -218,3 +220,17 @@ CREATE INDEX IF NOT EXISTS update_attempts_created_idx
   ON update_attempts(created_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS update_attempts_idempotency_key_idx
   ON update_attempts(idempotency_key);
+
+CREATE TABLE IF NOT EXISTS supabase_deferred_cleanup (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+  branch_ref TEXT NOT NULL,
+  run_id TEXT,
+  wave_id TEXT,
+  handoff_path TEXT,
+  scheduled_at INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  UNIQUE(workspace_id, branch_ref)
+);
+CREATE INDEX IF NOT EXISTS supabase_deferred_cleanup_due_idx
+  ON supabase_deferred_cleanup(scheduled_at);

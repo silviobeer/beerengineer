@@ -67,6 +67,10 @@ export interface AppConfigView {
     cleanupTtlHours?: number;
     productionMigrationProtection: "off" | "on";
     settingsVersion: number;
+    costRisk: {
+      retainedBranchCount: number;
+      planLimitRatio: number;
+    };
   };
   config: {
     allowedRoots: string[];

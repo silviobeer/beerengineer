@@ -91,6 +91,7 @@ export function applySchema(db: Db): void {
   migrateUpdateAttemptsColumns(db)
   migratePendingPromptActionsColumn(db)
   migrateWorktreePortAssignmentsTable(db)
+  migrateSupabaseDeferredCleanupTable(db)
   stampMigrationLevel(db)
 }
 
@@ -164,8 +165,30 @@ function migrateWorkspacesSupabaseColumns(db: Db): void {
   if (!has("supabase_last_checked_at")) db.exec("ALTER TABLE workspaces ADD COLUMN supabase_last_checked_at INTEGER")
   if (!has("supabase_cleanup_policy")) db.exec("ALTER TABLE workspaces ADD COLUMN supabase_cleanup_policy TEXT NOT NULL DEFAULT 'on-success-immediate'")
   if (!has("supabase_cleanup_ttl_hours")) db.exec("ALTER TABLE workspaces ADD COLUMN supabase_cleanup_ttl_hours INTEGER")
+  if (!has("supabase_branch_quota_usage")) db.exec("ALTER TABLE workspaces ADD COLUMN supabase_branch_quota_usage INTEGER")
+  if (!has("supabase_branch_quota_limit")) db.exec("ALTER TABLE workspaces ADD COLUMN supabase_branch_quota_limit INTEGER")
   if (!has("supabase_protection_switch")) db.exec("ALTER TABLE workspaces ADD COLUMN supabase_protection_switch TEXT NOT NULL DEFAULT 'off'")
   if (!has("supabase_settings_version")) db.exec("ALTER TABLE workspaces ADD COLUMN supabase_settings_version INTEGER NOT NULL DEFAULT 1")
+}
+
+function migrateSupabaseDeferredCleanupTable(db: Db): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS supabase_deferred_cleanup (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+      branch_ref TEXT NOT NULL,
+      run_id TEXT,
+      wave_id TEXT,
+      handoff_path TEXT,
+      scheduled_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      UNIQUE(workspace_id, branch_ref)
+    )
+  `)
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS supabase_deferred_cleanup_due_idx
+    ON supabase_deferred_cleanup(scheduled_at)
+  `)
 }
 
 /**

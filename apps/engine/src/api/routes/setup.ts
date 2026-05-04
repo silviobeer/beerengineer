@@ -8,9 +8,13 @@ import { readSecretMetadata } from "../../setup/secretMetadata.js"
 import { runSecretTest } from "../../setup/secretTests.js"
 import { KNOWN_GROUP_IDS } from "../../setup/config.js"
 import { SupabaseManagementClient } from "../../core/supabase/managementClient.js"
+import { createSupabaseAdapter, recreatePersistentTestBranch } from "../../core/supabase/adapter.js"
+import { explicitDestroyBranch } from "../../core/supabase/cleanupOrchestrator.js"
 import { connectSupabaseProject } from "../../setup/supabaseSetup.js"
 import { rotateSupabaseManagementToken, type SupabaseTokenRotationSurface } from "../../setup/secretActions.supabaseRotate.js"
 import { patchSupabaseSettings } from "../../setup/supabaseSettings.js"
+import { readActiveSecretValue } from "../../setup/secretStore.js"
+import { SUPABASE_MANAGEMENT_TOKEN_SECRET_REF } from "../../setup/secretMetadata.js"
 import type { Repos } from "../../db/repositories.js"
 import { json, readJson } from "../http.js"
 
@@ -102,6 +106,61 @@ export async function handleSupabaseDisconnect(repos: Repos, req: IncomingMessag
 export async function handleSupabaseSettingsPatch(repos: Repos, req: IncomingMessage, res: ServerResponse): Promise<void> {
   const result = patchSupabaseSettings(repos, await readJson(req) as Record<string, unknown>)
   json(res, result.ok ? 200 : result.error === "settings_changed" ? 409 : 400, result)
+}
+
+export async function handleSupabaseDestroyBranch(repos: Repos, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const body = await readJson(req) as Record<string, unknown>
+  const workspaceId = typeof body.workspaceId === "string" ? body.workspaceId : ""
+  const branchRef = typeof body.branchRef === "string" ? body.branchRef : ""
+  const branchName = typeof body.branchName === "string" ? body.branchName : branchRef
+  const confirmedName = typeof body.confirmedName === "string" ? body.confirmedName : ""
+  const workspace = workspaceId ? repos.getWorkspace(workspaceId) : undefined
+  const token = readActiveSecretValue(SUPABASE_MANAGEMENT_TOKEN_SECRET_REF)
+  if (!workspace || !workspace.supabase_project_ref || !token || !branchRef) {
+    json(res, 400, { ok: false, error: "destroy_context_required", message: "workspace, project, token, and branch are required" })
+    return
+  }
+  const adapter = createSupabaseAdapter({ repos, client: new SupabaseManagementClient({ token }) })
+  const result = await explicitDestroyBranch({
+    repos,
+    adapter,
+    workspaceId,
+    projectRef: workspace.supabase_project_ref,
+    branchRef,
+    branchName,
+    confirmedName,
+    runId: typeof body.runId === "string" ? body.runId : undefined,
+    handoffPath: typeof body.handoffPath === "string" ? body.handoffPath : undefined,
+  })
+  json(res, result.ok ? 200 : 409, result)
+}
+
+export async function handleSupabaseRecreate(repos: Repos, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const body = await readJson(req) as Record<string, unknown>
+  const workspaceId = typeof body.workspaceId === "string" ? body.workspaceId : ""
+  const confirmedName = typeof body.confirmedName === "string" ? body.confirmedName : ""
+  const workspace = workspaceId ? repos.getWorkspace(workspaceId) : undefined
+  const token = readActiveSecretValue(SUPABASE_MANAGEMENT_TOKEN_SECRET_REF)
+  if (!workspace?.supabase_project_ref || !workspace.supabase_persistent_test_branch_ref || !workspace.root_path || !token) {
+    json(res, 400, { ok: false, error: "recreate_context_required", message: "workspace, persistent branch, token, and root path are required" })
+    return
+  }
+  const branchName = workspace.supabase_persistent_test_branch_name ?? workspace.supabase_persistent_test_branch_ref
+  if (confirmedName !== branchName) {
+    json(res, 409, { ok: false, error: "confirmation_mismatch", message: "Branch name confirmation does not match" })
+    return
+  }
+  const adapter = createSupabaseAdapter({ repos, client: new SupabaseManagementClient({ token }) })
+  const result = await recreatePersistentTestBranch({
+    repos,
+    adapter,
+    workspaceId,
+    projectRef: workspace.supabase_project_ref,
+    branchRef: workspace.supabase_persistent_test_branch_ref,
+    branchName,
+    workspaceRoot: workspace.root_path,
+  })
+  json(res, result.ok ? 200 : 409, result)
 }
 
 export async function handleSecretAction(req: IncomingMessage, res: ServerResponse, ref: string): Promise<void> {

@@ -149,6 +149,7 @@ export function configView(): AppConfigView {
       cleanupPolicy: "on-success-immediate",
       productionMigrationProtection: "off",
       settingsVersion: 1,
+      costRisk: { retainedBranchCount: 0, planLimitRatio: 0 },
     },
     config: {
       allowedRoots: ["/work"],

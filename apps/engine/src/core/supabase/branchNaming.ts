@@ -18,3 +18,12 @@ export function waveBranchName(input: {
     slug(input.waveId),
   ].join("-")
 }
+
+export function ownedWaveBranchPrefix(workspace: string): string {
+  return `beerengineer-${slug(workspace)}-`
+}
+
+export function parseOwnedWaveBranchName(name: string, workspace: string): { owned: boolean; workspaceSlug: string } {
+  const prefix = ownedWaveBranchPrefix(workspace)
+  return { owned: name.startsWith(prefix), workspaceSlug: slug(workspace) }
+}
