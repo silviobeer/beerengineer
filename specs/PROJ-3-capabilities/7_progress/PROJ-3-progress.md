@@ -669,3 +669,9 @@
 - Focused suites: PASS — `test/capabilityCli.test.ts`, targeted `test/cli.test.ts`, and targeted `test/updateMode.test.ts` exited 0.
 - Build: PASS — `npm run typecheck --workspace=@beerengineer/engine`.
 - Diff hygiene: PASS — `git diff --check`.
+
+### Wave 5 Gate — PASSED (2026-05-04T12:49:15+02:00)
+- [x] Ralph: 23 AC commands green
+- [x] Build: `npm run typecheck`
+- [x] CodeRabbit: 0 non-advisory findings (advisory severities: medium,low,minor)
+- [x] Smoke: backend-only
