@@ -4,8 +4,8 @@ import { readActiveSecretValue, type SecretStoreOptions } from "../../setup/secr
 import { SUPABASE_MANAGEMENT_TOKEN_SECRET_REF } from "../../setup/secretMetadata.js"
 
 export type SupabaseHandoffClient = {
-  getProjectKeys(projectRef: string, branchRef: string): Promise<{ anonKey: string; serviceRoleKey: string; url: string }>
-  getBranchConnectionString(projectRef: string, branchRef: string): Promise<string>
+  getProjectKeys(projectRef: string, branchRef: string, managementToken: string): Promise<{ anonKey: string; serviceRoleKey: string; url: string }>
+  getBranchConnectionString(projectRef: string, branchRef: string, managementToken: string): Promise<string>
 }
 
 export function supabaseHandoffPath(workspaceRoot: string, runId: string, waveId: string): string {
@@ -25,8 +25,8 @@ export async function writeSupabaseHandoff(input: {
   const token = readActiveSecretValue(SUPABASE_MANAGEMENT_TOKEN_SECRET_REF, input.secretStore)
   if (!token) throw new Error("Supabase management token missing")
   const path = supabaseHandoffPath(input.workspaceRoot, input.runId, input.waveId)
-  const keys = await input.client.getProjectKeys(input.projectRef, input.branchRef)
-  const dbUrl = await input.client.getBranchConnectionString(input.projectRef, input.branchRef)
+  const keys = await input.client.getProjectKeys(input.projectRef, input.branchRef, token)
+  const dbUrl = await input.client.getBranchConnectionString(input.projectRef, input.branchRef, token)
   const content = [
     `SUPABASE_URL=${keys.url}`,
     `SUPABASE_ANON_KEY=${keys.anonKey}`,
@@ -58,8 +58,8 @@ export async function ensureSupabaseHandoffGitignore(workspaceRoot: string): Pro
   let current = ""
   try {
     current = await readFile(path, "utf8")
-  } catch {
-    current = ""
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err
   }
   if (current.split(/\r?\n/).includes(entry)) return false
   await writeFile(path, `${current}${current.endsWith("\n") || current.length === 0 ? "" : "\n"}${entry}\n`, { flag: "w" })

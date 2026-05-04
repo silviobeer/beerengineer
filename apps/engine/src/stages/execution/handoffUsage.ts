@@ -4,10 +4,32 @@ export type HandoffUsageRecord = {
   workerId: string
 }
 
-const seen = new Set<string>()
+const seen = new Map<string, number>()
+const DEFAULT_HANDOFF_USAGE_TTL_MS = 10 * 60 * 1000
+let ttlMs = DEFAULT_HANDOFF_USAGE_TTL_MS
+let cleanupTimer: ReturnType<typeof setInterval> | null = null
 
 export function resetHandoffUsageForTests(): void {
   seen.clear()
+  ttlMs = DEFAULT_HANDOFF_USAGE_TTL_MS
+  if (cleanupTimer) clearInterval(cleanupTimer)
+  cleanupTimer = null
+}
+
+export function configureHandoffUsageRetentionForTests(input: { ttlMs?: number } = {}): void {
+  ttlMs = input.ttlMs ?? DEFAULT_HANDOFF_USAGE_TTL_MS
+}
+
+function cleanupExpired(now: number): void {
+  for (const [key, ts] of seen) {
+    if (now - ts > ttlMs) seen.delete(key)
+  }
+}
+
+function ensureCleanupTimer(): void {
+  if (cleanupTimer) return
+  cleanupTimer = setInterval(() => cleanupExpired(Date.now()), Math.min(ttlMs, 60_000))
+  cleanupTimer.unref?.()
 }
 
 export function detectHandoffConsumed(input: {
@@ -17,9 +39,12 @@ export function detectHandoffConsumed(input: {
   line: string
 }): HandoffUsageRecord | null {
   if (!input.line.includes("[supabase]") && !/https?:\/\/[^ ]*supabase/i.test(input.line)) return null
+  const now = Date.now()
+  cleanupExpired(now)
   const key = `${input.runId}:${input.waveId}:${input.workerId}`
   if (seen.has(key)) return null
-  seen.add(key)
+  seen.set(key, now)
+  ensureCleanupTimer()
   return { runId: input.runId, waveId: input.waveId, workerId: input.workerId }
 }
 
