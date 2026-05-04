@@ -420,8 +420,28 @@ export class Repos {
       recovery_scope_ref: null,
       recovery_summary: null,
       workspace_fs_id: input.workspaceFsId ?? null,
+      supabase_branch_ref: null,
+      supabase_branch_name: null,
+      supabase_branch_lifecycle_state: null,
     })
     return this.insertRow("runs", row)
+  }
+
+  setRunSupabaseBranch(runId: string, input: { ref: string; name: string; lifecycleState: string }): RunRow | undefined {
+    this.run(
+      "UPDATE runs SET supabase_branch_ref = ?, supabase_branch_name = ?, supabase_branch_lifecycle_state = ?, updated_at = ? WHERE id = ?",
+      input.ref,
+      input.name,
+      input.lifecycleState,
+      now(),
+      runId,
+    )
+    return this.getRun(runId)
+  }
+
+  setRunSupabaseLifecycleState(runId: string, lifecycleState: string): RunRow | undefined {
+    this.run("UPDATE runs SET supabase_branch_lifecycle_state = ?, updated_at = ? WHERE id = ?", lifecycleState, now(), runId)
+    return this.getRun(runId)
   }
 
   updateRun(

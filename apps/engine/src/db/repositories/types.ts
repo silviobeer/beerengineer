@@ -61,6 +61,9 @@ export type RunRow = {
   recovery_scope_ref: string | null
   recovery_summary: string | null
   workspace_fs_id: string | null
+  supabase_branch_ref: string | null
+  supabase_branch_name: string | null
+  supabase_branch_lifecycle_state: string | null
   created_at: number
   updated_at: number
 }

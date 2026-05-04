@@ -3,6 +3,7 @@ import { SUPABASE_MANAGEMENT_TOKEN_SECRET_REF } from "../../setup/secretMetadata
 import type { SupabaseAdapter } from "../supabase/types.js"
 import type { SupabaseManagementClient } from "../supabase/managementClient.js"
 import { SupabaseManagementError } from "../supabase/managementClient.js"
+import { trackedSupabaseHandoffFiles } from "../supabase/handoffAudit.js"
 import {
   preflightNotConfigured,
   preflightReady,
@@ -15,6 +16,7 @@ export { SUPABASE_MANAGEMENT_TOKEN_SECRET_REF }
 
 export type SupabaseWorkspaceMetadata = {
   projectRef?: string | null
+  rootPath?: string | null
 }
 
 export type SupabaseCapabilityOptions = {
@@ -95,13 +97,24 @@ export function createSupabaseCapability(options: SupabaseCapabilityOptions = {}
   const notConfigured = (): CapabilityPreflightResult =>
     preflightNotConfigured("supabase", localConfig(options).missingReason || "supabase is not configured")
 
+  const audit = (): CapabilityPreflightResult => {
+    const root = options.workspace?.rootPath
+    if (root) {
+      const tracked = trackedSupabaseHandoffFiles(root)
+      if (tracked.length > 0) {
+        return { capabilityId: "supabase", status: "failed", reason: "Supabase handoff files are tracked by git", context: { tracked } }
+      }
+    }
+    return notConfigured()
+  }
+
   return {
     id: "supabase",
     ports: {
       availability,
       preflight,
       connect: notConfigured,
-      audit: notConfigured,
+      audit,
       repair: notConfigured,
     },
   }

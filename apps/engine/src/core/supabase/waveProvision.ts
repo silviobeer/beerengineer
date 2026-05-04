@@ -1,0 +1,25 @@
+import type { SupabaseAdapter, SupabaseWorkspaceContext } from "./types.js"
+
+export type WaveProvisionResult =
+  | { ok: true; provisioned: boolean; events: string[] }
+  | { ok: false; error: string }
+
+export async function provisionWaveIfDbRelevant(input: {
+  dbRelevantWave: boolean
+  existingBranchRef?: string | null
+  adapter: Pick<SupabaseAdapter, "provisionBranch">
+  context: SupabaseWorkspaceContext
+  dispatchWorker?: () => void
+}): Promise<WaveProvisionResult> {
+  const events: string[] = []
+  if (!input.dbRelevantWave || input.existingBranchRef) {
+    input.dispatchWorker?.()
+    return { ok: true, provisioned: false, events }
+  }
+  events.push("provisionBranch")
+  const result = await input.adapter.provisionBranch(input.context)
+  if (!result.ok) return { ok: false, error: String(result.context?.message ?? result.context?.error ?? "provision_failed") }
+  input.dispatchWorker?.()
+  events.push("workerDispatch")
+  return { ok: true, provisioned: true, events }
+}

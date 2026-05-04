@@ -79,6 +79,26 @@ export class SupabaseManagementClient {
     }) as SupabaseSqlResult
   }
 
+  async getProjectKeys(projectRef: string, branchRef: string): Promise<{ anonKey: string; serviceRoleKey: string; url: string }> {
+    const body = await this.request(managementEndpoints.projectKeys(projectRef, branchRef)) as {
+      anonKey?: string
+      anon_key?: string
+      serviceRoleKey?: string
+      service_role_key?: string
+      url?: string
+    }
+    return {
+      anonKey: body.anonKey ?? body.anon_key ?? "",
+      serviceRoleKey: body.serviceRoleKey ?? body.service_role_key ?? "",
+      url: body.url ?? "",
+    }
+  }
+
+  async getBranchConnectionString(projectRef: string, branchRef: string): Promise<string> {
+    const body = await this.request(managementEndpoints.branchConnectionString(projectRef, branchRef)) as { connectionString?: string; connection_string?: string }
+    return body.connectionString ?? body.connection_string ?? ""
+  }
+
   private async request(path: string, init: RequestInit = {}): Promise<unknown> {
     let response: Response
     const controller = new AbortController()

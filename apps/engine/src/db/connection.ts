@@ -84,6 +84,7 @@ export function applySchema(db: Db): void {
   migrateRunsOwnerColumn(db)
   migrateRunsRecoveryColumns(db)
   migrateRunsFsWorkspaceIdColumn(db)
+  migrateRunsSupabaseColumns(db)
   migrateStageRunsSessionColumns(db)
   migrateNotificationDeliveriesTable(db)
   migrateItemsCurrentStageColumn(db)
@@ -176,6 +177,14 @@ function migrateRunsFsWorkspaceIdColumn(db: Db): void {
   const cols = db.prepare("PRAGMA table_info(runs)").all() as Array<{ name: string }>
   if (cols.some(c => c.name === "workspace_fs_id")) return
   db.exec("ALTER TABLE runs ADD COLUMN workspace_fs_id TEXT")
+}
+
+function migrateRunsSupabaseColumns(db: Db): void {
+  const cols = db.prepare("PRAGMA table_info(runs)").all() as Array<{ name: string }>
+  const has = (name: string) => cols.some(c => c.name === name)
+  if (!has("supabase_branch_ref")) db.exec("ALTER TABLE runs ADD COLUMN supabase_branch_ref TEXT")
+  if (!has("supabase_branch_name")) db.exec("ALTER TABLE runs ADD COLUMN supabase_branch_name TEXT")
+  if (!has("supabase_branch_lifecycle_state")) db.exec("ALTER TABLE runs ADD COLUMN supabase_branch_lifecycle_state TEXT")
 }
 
 function migrateStageRunsSessionColumns(db: Db): void {

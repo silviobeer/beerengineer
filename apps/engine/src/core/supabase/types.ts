@@ -1,8 +1,13 @@
 export type SupabaseWorkspaceContext = {
   workspaceId?: string
   workspaceRoot?: string
+  workspaceKey?: string
+  runId?: string
+  itemId?: string
+  projectId?: string
   projectRef?: string
   branchRef?: string
+  parentBranchRef?: string
   waveId?: string
 }
 
