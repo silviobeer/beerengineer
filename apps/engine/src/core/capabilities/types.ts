@@ -68,6 +68,14 @@ export type ReviewOutcome =
   | "not_configured"
   | "not_meaningful"
 
+export const REVIEW_OUTCOMES = [
+  "ran",
+  "skipped",
+  "failed",
+  "not_configured",
+  "not_meaningful",
+] as const satisfies readonly ReviewOutcome[]
+
 export type ReviewArtifactRef = {
   label: string
   path: string

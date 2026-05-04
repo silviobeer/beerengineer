@@ -50,6 +50,7 @@
 - RED test command note: `npm run test:file --workspace=@beerengineer/engine -- apps/engine/test/capabilitiesFoundation.test.ts` fails before loading tests because npm runs the workspace script from `apps/engine`; local TDD uses `test/capabilitiesFoundation.test.ts` while the wave-gate config remains to be corrected before the gate.
 - Local TDD: `npm run test:file --workspace=@beerengineer/engine -- test/capabilitiesFoundation.test.ts` passes all 18 Wave 1 AC tests.
 - Gate config correction: updated `6_plan/wave-gate-config.json` AC paths from root-relative `apps/engine/test/...` to workspace-relative `test/...` because `npm --workspace` executes the package script from `apps/engine`.
+- Wave gate attempt 1: FAIL in CodeRabbit with 1 critical and 2 minor findings. Critical: path correction touched future wave test files that do not exist yet. Minors: tautological review outcome closed-set assertion and invalid `skipped` repair fixture status. Fixing all three before rerun.
 
 ---
 

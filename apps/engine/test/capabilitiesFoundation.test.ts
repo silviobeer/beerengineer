@@ -11,6 +11,7 @@ import {
   preflightDisabled,
   preflightMissing,
   preflightNotConfigured,
+  REVIEW_OUTCOMES,
   reviewRan,
   skippedReviewOutcome,
   type CapabilityDefinition,
@@ -62,7 +63,7 @@ test("PROJ-3-PRD-1 AC-4 explicit capability ports define the allowed categories"
       ports: {
         enable: async () => ({ capabilityId: "sonar", status: "ready" }),
         audit: async () => ({ capabilityId: "sonar", status: "warning", reason: "coverage missing" }),
-        repair: async () => ({ capabilityId: "sonar", status: "skipped", reason: "operator approval required" }),
+        repair: async () => ({ capabilityId: "sonar", status: "disabled", reason: "operator approval required" }),
         review: async () => reviewRan("sonar", "story", "Sonar review passed", { passed: true }),
       },
     },
@@ -164,7 +165,7 @@ test("PROJ-3-PRD-1 AC-10 review envelope includes identity, phase, outcome, bloc
 test("PROJ-3-PRD-1 AC-11 review outcome states are the exact closed set", () => {
   const expected: ReviewOutcome[] = ["ran", "skipped", "failed", "not_configured", "not_meaningful"]
 
-  assert.deepEqual(expected, ["ran", "skipped", "failed", "not_configured", "not_meaningful"])
+  assert.deepEqual([...REVIEW_OUTCOMES], expected)
 })
 
 test("PROJ-3-PRD-1 AC-12 Sonar data is preserved outside CodeRabbit result shape", () => {
