@@ -147,6 +147,9 @@ export async function recreatePersistentTestBranch(input: {
     return { ok: false, context: { status: "retained-for-diagnosis", error: "destroy_failed" } }
   }
   const provisioned = await input.adapter.provisionBranch({ workspaceId: input.workspaceId, projectRef: input.projectRef, workspaceRoot: input.workspaceRoot, branchRef: input.branchRef })
-  if (!provisioned.ok) return { ok: false, context: { status: "failed", error: "recreate_failed" } }
+  if (!provisioned.ok) {
+    input.repos.setWorkspaceSupabasePersistentBranch(input.workspaceId, { ref: input.branchRef, name: input.branchName, status: "retained-for-diagnosis" })
+    return { ok: false, context: { status: "retained-for-diagnosis", error: "recreate_failed", details: provisioned.context ?? null } }
+  }
   return { ok: true, context: { status: "ready", branchRef: provisioned.context?.branchRef } }
 }

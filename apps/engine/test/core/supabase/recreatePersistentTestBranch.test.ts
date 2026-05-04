@@ -27,6 +27,10 @@ test("PROJ-4 PRD-3 US-4: recreate persistent test branch destroys then provision
     const failing = { ...adapter, destroyBranch: async () => ({ ok: false }) }
     assert.equal((await recreatePersistentTestBranch({ repos, adapter: failing, workspaceId: workspace.id, projectRef: "proj", branchRef: "old", branchName: "old-name", workspaceRoot: dir })).ok, false)
     assert.equal(repos.getWorkspace(workspace.id)?.supabase_persistent_test_branch_status, "retained-for-diagnosis")
+    const provisionFailing = { ...adapter, provisionBranch: async () => ({ ok: false, context: { message: "create failed" } }) }
+    const failedProvision = await recreatePersistentTestBranch({ repos, adapter: provisionFailing, workspaceId: workspace.id, projectRef: "proj", branchRef: "old", branchName: "old-name", workspaceRoot: dir })
+    assert.equal(failedProvision.ok, false)
+    assert.deepEqual(failedProvision.context, { status: "retained-for-diagnosis", error: "recreate_failed", details: { message: "create failed" } })
   } finally {
     db.close()
     rmSync(dir, { recursive: true, force: true })
