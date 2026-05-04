@@ -126,15 +126,14 @@ test("AC-10b effective app config treats stored secrets as present without env e
   }
 })
 
-test("AC-11 effective app config excludes workspace and project settings", () => {
+test("AC-11 effective app config excludes workspace and project settings from editable config", () => {
   const paths = tempSetupPaths()
   try {
     writeConfigFile(paths.configPath, { ...defaultAppConfig(), dataDir: paths.dataDir })
 
     const view = getAppConfigView({ configPath: paths.configPath, dataDir: paths.dataDir })
-    const serialized = JSON.stringify(view)
 
-    assert.doesNotMatch(serialized, /workspace/i)
+    assert.equal(view.workspace, null)
     assert.equal("workspace" in view.config, false)
     assert.equal("project" in view.config, false)
   } finally {

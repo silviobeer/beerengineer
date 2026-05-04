@@ -27,8 +27,8 @@ export async function handleSetupInit(res: ServerResponse): Promise<void> {
   json(res, result.ok ? 200 : 409, result)
 }
 
-export async function handleSetupConfig(res: ServerResponse): Promise<void> {
-  json(res, 200, getAppConfigView())
+export async function handleSetupConfig(repos: Repos, res: ServerResponse): Promise<void> {
+  json(res, 200, getAppConfigView({}, { repos }))
 }
 
 export async function handleSetupConfigPatch(req: IncomingMessage, res: ServerResponse): Promise<void> {

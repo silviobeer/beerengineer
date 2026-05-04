@@ -135,6 +135,7 @@ export function configView(): AppConfigView {
     setupState: "complete",
     configPath: "/tmp/beerengineer/config.json",
     configFile: { kind: "ok", path: "/tmp/beerengineer/config.json" },
+    workspace: { id: "ws-1", key: "demo", name: "Demo" },
     config: {
       allowedRoots: ["/work"],
       enginePort: 4100,

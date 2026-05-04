@@ -46,6 +46,22 @@ describe("SetupSupportZone", () => {
     expect(screen.getByLabelText("SONAR_TOKEN")).toBeInTheDocument();
   });
 
+  it("passes the setup workspace id into Supabase validation", async () => {
+    const fetchSpy = vi.fn(async () => Response.json({ ok: true, projectRef: "proj_1", region: "eu" }));
+    vi.stubGlobal("fetch", fetchSpy);
+    render(<SetupSupportZone report={blockedReport()} configView={configView()} />);
+
+    fireEvent.change(screen.getByLabelText("Supabase Management API token"), { target: { value: "sbp_token" } });
+    fireEvent.change(screen.getByLabelText("Supabase project ref"), { target: { value: "proj_1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Validate Supabase" }));
+
+    await waitFor(() =>
+      expect(fetchSpy).toHaveBeenCalledWith("/api/setup/supabase/connect", expect.objectContaining({
+        body: JSON.stringify({ workspaceId: "ws-1", token: "sbp_token", projectRef: "proj_1" }),
+      })),
+    );
+  });
+
   it("saves Sonar organization and token through setup proxies", async () => {
     const fetchSpy = vi.fn(async () => Response.json({ ok: true, saved: ["llm.defaultSonarOrganization"], rejected: [], config: {} }));
     vi.stubGlobal("fetch", fetchSpy);

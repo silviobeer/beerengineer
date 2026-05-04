@@ -5,6 +5,7 @@ import {
   resolveOverrides,
 } from "./config.js"
 import { readActiveSecretValue } from "./secretStore.js"
+import type { Repos } from "../db/repositories.js"
 import type { AppConfig, ConfigFileState, SetupOverrides } from "./types.js"
 
 export type SecretRefView = {
@@ -18,6 +19,11 @@ export type AppConfigView = {
   setupState: AppConfigSetupState
   configPath: string
   configFile: Pick<ConfigFileState, "kind" | "path"> & { error?: string }
+  workspace?: {
+    id: string
+    key: string
+    name: string
+  } | null
   config: {
     allowedRoots: string[]
     enginePort: number
@@ -52,16 +58,18 @@ export type AppConfigView = {
   }
 }
 
-export function getAppConfigView(overrides: SetupOverrides = {}): AppConfigView {
+export function getAppConfigView(overrides: SetupOverrides = {}, deps: { repos?: Repos } = {}): AppConfigView {
   const resolved = resolveOverrides(overrides)
   const configPath = resolveConfigPath(resolved)
   const configState = readConfigFile(configPath)
   const config = resolveMergedConfig(configState, resolved)
+  const workspace = currentWorkspaceView(deps.repos)
   if (!config) {
     return {
       setupState: configState.kind === "missing" ? "uninitialized" : "partial",
       configPath,
       configFile: fileStateView(configState),
+      workspace,
       config: emptyConfigView(),
     }
   }
@@ -71,6 +79,7 @@ export function getAppConfigView(overrides: SetupOverrides = {}): AppConfigView 
     setupState: configState.kind === "missing" ? "uninitialized" : "complete",
     configPath,
     configFile: fileStateView(configState),
+    workspace,
     config: {
       allowedRoots: [...config.allowedRoots],
       enginePort: config.enginePort,
@@ -106,6 +115,14 @@ export function getAppConfigView(overrides: SetupOverrides = {}): AppConfigView 
       },
     },
   }
+}
+
+function currentWorkspaceView(repos: Repos | undefined): AppConfigView["workspace"] {
+  const workspace = repos?.listWorkspaces()
+    .sort((a, b) => (b.last_opened_at ?? 0) - (a.last_opened_at ?? 0) || a.key.localeCompare(b.key))
+    .at(0)
+  if (!workspace) return null
+  return { id: workspace.id, key: workspace.key, name: workspace.name }
 }
 
 function fileStateView(state: ConfigFileState): AppConfigView["configFile"] {

@@ -52,6 +52,7 @@ export interface AppConfigView {
   setupState: "uninitialized" | "partial" | "complete";
   configPath: string;
   configFile: { kind: "ok" | "missing" | "invalid"; path: string; error?: string };
+  workspace?: { id: string; key: string; name: string } | null;
   config: {
     allowedRoots: string[];
     enginePort: number;
