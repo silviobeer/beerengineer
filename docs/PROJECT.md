@@ -1,7 +1,7 @@
 # Project — Features
 
-**Last updated:** 2026-05-03
-**Features implemented:** 2
+**Last updated:** 2026-05-04
+**Features implemented:** 3
 
 ---
 
@@ -43,5 +43,26 @@
 **PRDs:** [PRD-1](../specs/PROJ-2-app-setup-settings/3_PRDs/PROJ-2-PRD-1-app-setup-backend.md), [PRD-2](../specs/PROJ-2-app-setup-settings/3_PRDs/PROJ-2-PRD-2-local-secret-store.md), [PRD-3](../specs/PROJ-2-app-setup-settings/3_PRDs/PROJ-2-PRD-3-setup-wizard-ui.md), [PRD-4](../specs/PROJ-2-app-setup-settings/3_PRDs/PROJ-2-PRD-4-settings-maintenance-ui.md)
 
 **QA:** Browser QA re-runs passed first-run initialization, mobile topbar, secret-message, recommended-gate status, settings-count, optional-skip, typecheck, UI focused tests, and engine setup/secret tests. No PROJ-2 QA bugs remain open.
+
+---
+
+## PROJ-3: Capabilities
+
+**Status:** QA-passed.
+
+**Purpose:** Turn Git, GitHub, Sonar, and CodeRabbit from scattered special cases into explicit workspace/review capabilities with stable CLI and API presentation.
+
+**Scope:** Ships the capability port foundation, workspace preflight/orchestration, Sonar enable/audit/repair lifecycle, review capability envelopes, dedicated capability CLI commands, exit-code categories, and update-readiness terminology alignment. Out of scope: a generic plugin framework, new UI capability-management screens, external tool installation, and CodeRabbit audit/repair lifecycle work.
+
+**User stories implemented:**
+- PROJ-3-PRD-1 US-1..6: stable capability IDs, explicit ports, availability/preflight split, review envelope, closed review outcomes, and update-readiness vocabulary.
+- PROJ-3-PRD-2 US-1..5: capability preflight projection, Git/GitHub boundary, optional registration behavior, API compatibility, and capability-owned write boundaries.
+- PROJ-3-PRD-3 US-1..6: explicit Sonar enablement, `workspace add --sonar` delegation, scope audit, repair planning, safe repair apply, and Sonar lifecycle ownership.
+- PROJ-3-PRD-4 US-1..5: Sonar/CodeRabbit review envelopes, tool-specific result preservation, optional non-blocking review behavior, adapter/orchestrator split, and review API compatibility.
+- PROJ-3-PRD-5 US-1..5: dedicated capability CLI groups, text/JSON output, Sonar audit/repair CLI acceptance, exit codes, and update-mode readiness compatibility.
+
+**PRDs:** [PRD-1](../specs/PROJ-3-capabilities/3_PRDs/PROJ-3-PRD-1-capability-port-foundation.md), [PRD-2](../specs/PROJ-3-capabilities/3_PRDs/PROJ-3-PRD-2-workspace-capability-orchestration.md), [PRD-3](../specs/PROJ-3-capabilities/3_PRDs/PROJ-3-PRD-3-sonar-capability-lifecycle.md), [PRD-4](../specs/PROJ-3-capabilities/3_PRDs/PROJ-3-PRD-4-review-capability-orchestration.md), [PRD-5](../specs/PROJ-3-capabilities/3_PRDs/PROJ-3-PRD-5-capability-cli-and-update-readiness.md)
+
+**QA:** QA rerun on 2026-05-04 passed all 112 ACs, focused capability tests (75/75), engine typecheck, full engine suite (798 total; 796 passed, 2 skipped), manual CLI checks, and adversarial custom Sonar project-key enable/repair checks. No Critical, High, Medium, or Low PROJ-3 QA bugs remain open.
 
 ---
