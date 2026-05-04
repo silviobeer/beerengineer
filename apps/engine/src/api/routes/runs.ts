@@ -4,6 +4,7 @@ import { extname, resolve as resolvePath, sep } from "node:path"
 import type { Db } from "../../db/connection.js"
 import type { Repos } from "../../db/repositories.js"
 import { getBoard, getRunTree } from "../board.js"
+import { buildMergeStatus } from "../mergeStatus.js"
 import { isResumeInFlight } from "../../core/resume.js"
 import { buildConversation, recordAnswer, recordUserMessage } from "../../core/conversation.js"
 import { MESSAGES_ENDPOINT_MAX_SCAN } from "../../core/constants.js"
@@ -44,6 +45,15 @@ export function handleGetRunTree(repos: Repos, res: ServerResponse, runId: strin
   const tree = getRunTree(repos, runId)
   if (!tree) return json(res, 404, { error: "run not found", code: "not_found" })
   json(res, 200, tree)
+}
+
+export function handleGetMergeStatus(repos: Repos, res: ServerResponse, runId: string): void {
+  const status = buildMergeStatus({ repos, runId })
+  if (!status) {
+    json(res, 404, { error: "run_not_found" })
+    return
+  }
+  json(res, 200, status)
 }
 
 export function handleGetArtifacts(repos: Repos, res: ServerResponse, runId: string): void {

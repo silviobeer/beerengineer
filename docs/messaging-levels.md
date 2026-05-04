@@ -82,6 +82,8 @@ Applied to the existing `WorkflowEvent` union (`apps/engine/src/core/io.ts`):
 | `merge_gate_cancelled` | L1 | Operator postponed promotion. |
 | `merge_completed` | L1 | Item branch landed on the base branch. |
 | `worktree_port_assigned` | L1 | Managed worktree received a preview port from the local pool. |
+| `supabase_branch_lifecycle` | L1 (force on failed/retained) | Projects to canonical `supabase.branch.*` names for branch creation, migrations, seed, DB tests, and cleanup status. |
+| `supabase_operator_action` | L1 | Workspace-local operator triggered a Supabase status action such as retry validation or destroy branch. |
 
 New synthetic events (added to `WorkflowEvent`, emitted from existing call sites, optional for L0/L1 consumers):
 
@@ -241,6 +243,18 @@ To insulate clients from incidental renames in `WorkflowEvent`, messages expose 
 | `merge_gate_cancelled` | `merge_gate_cancelled` |
 | `merge_completed` | `merge_completed` |
 | `worktree_port_assigned` | `worktree_port_assigned` |
+| `supabase_branch_lifecycle` — branch_creation/in_progress | `supabase.branch.provisioning_started` |
+| `supabase_branch_lifecycle` — branch_creation/passed | `supabase.branch.ready` |
+| `supabase_branch_lifecycle` — migrations/in_progress | `supabase.branch.migration_started` |
+| `supabase_branch_lifecycle` — migrations/passed | `supabase.branch.migration_passed` |
+| `supabase_branch_lifecycle` — seed/in_progress | `supabase.branch.seed_started` |
+| `supabase_branch_lifecycle` — seed/passed | `supabase.branch.seed_passed` |
+| `supabase_branch_lifecycle` — db_tests/in_progress | `supabase.branch.db_tests_started` |
+| `supabase_branch_lifecycle` — db_tests/passed | `supabase.branch.db_tests_passed` |
+| `supabase_branch_lifecycle` — cleanup/in_progress | `supabase.branch.destroying` |
+| `supabase_branch_lifecycle` — cleanup/passed | `supabase.branch.destroyed` |
+| `supabase_branch_lifecycle` — failed/retained | `supabase.branch.failed` / `supabase.branch.retained` |
+| `supabase_operator_action` | `supabase.operator.action` |
 
 The projection is a single function in `core/messagingProjection.ts` that maps a `StageLogRow` to a `MessageEntry`. Live consumers may still observe a local `WorkflowEvent` before persistence, but externally visible payloads come from the same projection contract.
 

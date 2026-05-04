@@ -2,6 +2,7 @@ import { unlink } from "node:fs/promises"
 import type { Repos } from "../../db/repositories.js"
 import type { SupabaseAdapter } from "./types.js"
 import { SupabaseDeferredCleanupStore } from "./deferredCleanupStore.js"
+import { recordSupabaseLifecycle } from "./lifecycleEvents.js"
 
 export type CleanupPolicy = "on-success-immediate" | "ttl-after-success" | "manual"
 
@@ -35,6 +36,7 @@ export async function cleanupSuccessfulBranch(input: {
   if (input.lifecycleState === "retained-for-diagnosis") return { ok: true, action: "skipped", warning: "retained-for-diagnosis is excluded from automatic cleanup" }
   if (input.policy === "manual") {
     if (input.runId) input.repos.setRunSupabaseLifecycleState(input.runId, "retained-pending-cleanup")
+    recordSupabaseLifecycle({ repos: input.repos, runId: input.runId, waveId: input.waveId, branchRef: input.branchRef, step: "cleanup", status: "retained", reason: "manual cleanup policy" })
     return { ok: true, action: "retained", warning: "Supabase branch retained; provider cost risk remains until manual cleanup" }
   }
   if (input.policy === "ttl-after-success") {
@@ -42,6 +44,7 @@ export async function cleanupSuccessfulBranch(input: {
     const scheduledAt = (input.now ?? Date.now()) + Math.max(1, input.ttlHours ?? 1) * 3_600_000
     input.deferredStore.schedule({ workspaceId: input.workspaceId, branchRef: input.branchRef, runId: input.runId, waveId: input.waveId, handoffPath: input.handoffPath, scheduledAt })
     if (input.runId) input.repos.setRunSupabaseLifecycleState(input.runId, "retained-pending-cleanup")
+    recordSupabaseLifecycle({ repos: input.repos, runId: input.runId, waveId: input.waveId, branchRef: input.branchRef, step: "cleanup", status: "retained", reason: "scheduled cleanup" })
     return { ok: true, action: "scheduled" }
   }
   const result = await input.adapter.destroyBranch({ workspaceId: input.workspaceId, projectRef: input.projectRef, branchRef: input.branchRef, runId: input.runId ?? undefined })

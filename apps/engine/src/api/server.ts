@@ -8,6 +8,8 @@ import { spawn } from "node:child_process"
 import { initDatabase } from "../db/connection.js"
 import { Repos } from "../db/repositories.js"
 import { createItemActionsService, type ItemActionEvent } from "../core/itemActions.js"
+import { createSupabaseAdapter } from "../core/supabase/adapter.js"
+import { SupabaseManagementClient } from "../core/supabase/managementClient.js"
 import {
   defaultAppConfig,
   readConfigFile,
@@ -26,6 +28,7 @@ import {
   handleGetBoard,
   handleGetConversation,
   handleGetMessages,
+  handleGetMergeStatus,
   handleGetRun,
   handleGetRunTree,
   handleGetRecovery,
@@ -33,6 +36,7 @@ import {
   handleListRuns,
   handleResumeRun,
 } from "./routes/runs.js"
+import { handleRetryValidation } from "./routes/branchActions.js"
 import {
   handleWorkspaceAdd,
   handleWorkspaceBackfill,
@@ -75,6 +79,8 @@ import { removeEnginePidFile, writeEnginePidFile } from "./pidFile.js"
 import { markOrphanedRunsFailed } from "../core/orphanRecovery.js"
 import { pruneMissingWorktreeAssignments } from "../core/portAllocator.js"
 import { markPreparedUpdateInFlight, releaseUpdateLock, type UpdateApplyResult } from "../core/updateMode.js"
+import { readActiveSecretValue } from "../setup/secretStore.js"
+import { SUPABASE_MANAGEMENT_TOKEN_SECRET_REF } from "../setup/secretMetadata.js"
 
 const PORT = Number(process.env.PORT ?? 4100)
 const HOST = process.env.HOST ?? "127.0.0.1"
@@ -277,6 +283,7 @@ function runRouteMatchers(context: RouteContext): Array<{ pattern: RegExp; metho
     { pattern: /^\/runs\/([^/]+)\/artifacts$/, method: "GET", handle: runId => handleGetArtifacts(repos, context.res, runId) },
     { pattern: /^\/runs\/([^/]+)$/, method: "GET", handle: runId => handleGetRun(repos, context.res, runId) },
     { pattern: /^\/runs\/([^/]+)\/tree$/, method: "GET", handle: runId => handleGetRunTree(repos, context.res, runId) },
+    { pattern: /^\/runs\/([^/]+)\/merge-status$/, method: "GET", handle: runId => handleGetMergeStatus(repos, context.res, runId) },
     { pattern: /^\/runs\/([^/]+)\/events$/, method: "GET", handle: runId => handleRunEvents(repos, context.req, context.res, runId) },
     { pattern: /^\/runs\/([^/]+)\/messages$/, method: "GET", handle: runId => handleGetMessages(repos, context.url, context.res, runId) },
     { pattern: /^\/runs\/([^/]+)\/messages$/, method: "POST", handle: runId => handlePostMessage(repos, context.req, context.res, runId) },
@@ -284,6 +291,20 @@ function runRouteMatchers(context: RouteContext): Array<{ pattern: RegExp; metho
     { pattern: /^\/runs\/([^/]+)\/answer$/, method: "POST", handle: runId => handleAnswer(repos, context.req, context.res, runId) },
     { pattern: /^\/runs\/([^/]+)\/resume$/, method: "POST", handle: runId => handleResumeRun(repos, context.req, context.res, runId, payload => board.broadcastItemColumnChanged(payload)) },
     { pattern: /^\/runs\/([^/]+)\/recovery$/, method: "GET", handle: runId => handleGetRecovery(repos, context.res, runId) },
+  ]
+}
+
+function supabaseActionRouteMatchers(context: RouteContext): Array<{ pattern: RegExp; method: string; handle: (...captures: string[]) => void }> {
+  return [
+    {
+      pattern: /^\/supabase\/branches\/([^/]+)\/retry-validation$/,
+      method: "POST",
+      handle: branchRef => {
+        const token = readActiveSecretValue(SUPABASE_MANAGEMENT_TOKEN_SECRET_REF) ?? ""
+        const adapter = createSupabaseAdapter({ repos, client: new SupabaseManagementClient({ token }) })
+        void handleRetryValidation({ repos, adapter, req: context.req, res: context.res, branchRef })
+      },
+    },
   ]
 }
 
@@ -380,6 +401,10 @@ async function handleRunRoutes(context: RouteContext): Promise<boolean> {
   return handleRouteMatchers(context, runRouteMatchers(context))
 }
 
+async function handleSupabaseActionRoutes(context: RouteContext): Promise<boolean> {
+  return handleRouteMatchers(context, supabaseActionRouteMatchers(context))
+}
+
 const server = createServer(async (req: ApiRequest, res) => {
   if (!req.url || !req.method) return json(res, 400, { error: "bad request" })
   setCors(res, req, ALLOWED_ORIGIN)
@@ -411,6 +436,7 @@ const server = createServer(async (req: ApiRequest, res) => {
     if (await handleWorkspaceRoutes(context)) return
     if (await handleItemRoutes(context)) return
     if (await handleRunRoutes(context)) return
+    if (await handleSupabaseActionRoutes(context)) return
 
     json(res, 404, { error: "not found" })
   } catch (err) {

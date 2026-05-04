@@ -67,6 +67,25 @@ export type WorkflowEvent =
   | ({ type: "merge_gate_cancelled"; runId: string; itemId: string; itemBranch: string; baseBranch: string } & WorkflowEventMeta)
   | ({ type: "merge_completed"; runId: string; itemId: string; itemBranch: string; baseBranch: string; mergeSha: string } & WorkflowEventMeta)
   | ({ type: "worktree_port_assigned"; runId?: string; branch: string; worktreePath: string; port: number } & WorkflowEventMeta)
+  | ({
+      type: "supabase_branch_lifecycle"
+      runId: string
+      waveId?: string | null
+      branchRef?: string | null
+      step: "branch_creation" | "migrations" | "seed" | "db_tests" | "cleanup"
+      status: "idle" | "in_progress" | "passed" | "failed" | "retained"
+      reason?: string
+      timestamp: number
+    } & WorkflowEventMeta)
+  | ({
+      type: "supabase_operator_action"
+      runId: string
+      workspaceId: string
+      branchRef: string
+      action: "retry_validation" | "destroy_branch"
+      workspaceLocalOperatorId: string
+      timestamp: number
+    } & WorkflowEventMeta)
 
 export type WorkflowIO = {
   /** Ask the operator a question and await a textual answer. */

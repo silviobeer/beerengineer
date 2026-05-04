@@ -6,6 +6,7 @@ import { pollSupabaseBranch, SupabaseBranchPollTimeoutError } from "./branchPoll
 import { applySupabaseMigrationsAndSeeds, type SupabaseMigrationClient } from "./migrationRunner.js"
 import { listSupabaseSqlFiles } from "./migrationRunner.js"
 import { migrationSmoke } from "./dbTests/migrationSmoke.js"
+import { recordSupabaseLifecycle } from "./lifecycleEvents.js"
 import { readFileSync } from "node:fs"
 import { relative } from "node:path"
 
@@ -59,6 +60,7 @@ export function createSupabaseAdapter(deps: { repos: Repos; client: WaveClient }
         })
         const branch = await deps.client.createBranch(context.projectRef, { name, parentRef: context.parentBranchRef })
         deps.repos.setRunSupabaseBranch(context.runId, { ref: branch.ref, name, lifecycleState: "provisioning" })
+        recordSupabaseLifecycle({ repos: deps.repos, runId: context.runId, waveId: context.waveId, branchRef: branch.ref, step: "branch_creation", status: "in_progress" })
         return { ok: true, context: { branchRef: branch.ref, branchName: name, parentBranchRef: context.parentBranchRef } }
       }
       const result = await createOrAttachPersistentTestBranch({
@@ -76,16 +78,19 @@ export function createSupabaseAdapter(deps: { repos: Repos; client: WaveClient }
       try {
         const branch = await pollSupabaseBranch({ poll: () => deps.client.getBranch!(context.projectRef!, context.branchRef!) })
         if (context.runId) deps.repos.setRunSupabaseLifecycleState(context.runId, "ready")
+        recordSupabaseLifecycle({ repos: deps.repos, runId: context.runId, waveId: context.waveId, branchRef: context.branchRef, step: "branch_creation", status: "passed" })
         return { ok: true, context: { status: "ready", branchRef: branch.ref } }
       } catch (err) {
         const status = err instanceof SupabaseBranchPollTimeoutError ? "timeout" : "failed"
         if (context.runId) deps.repos.setRunSupabaseLifecycleState(context.runId, "retained-for-diagnosis")
+        recordSupabaseLifecycle({ repos: deps.repos, runId: context.runId, waveId: context.waveId, branchRef: context.branchRef, step: "branch_creation", status: "retained", reason: err instanceof Error ? err.message : "Supabase branch polling failed" })
         return { ok: false, context: { status, reason: err instanceof Error ? err.message : "Supabase branch polling failed" } }
       }
     },
     async validateBranch(context: SupabaseWorkspaceContext): Promise<SupabaseAdapterResult> {
       if (!context.workspaceRoot || !context.projectRef || !context.branchRef) return { ok: false, context: { error: "validation_context_required" } }
       if (context.runId) deps.repos.setRunSupabaseLifecycleState(context.runId, "validating")
+      recordSupabaseLifecycle({ repos: deps.repos, runId: context.runId, waveId: context.waveId, branchRef: context.branchRef, step: "migrations", status: "in_progress" })
       try {
         const records = await applySupabaseMigrationsAndSeeds({
           workspaceRoot: context.workspaceRoot,
@@ -96,22 +101,32 @@ export function createSupabaseAdapter(deps: { repos: Repos; client: WaveClient }
         const smoke = migrationSmoke(records)
         if (!smoke.ok) throw new Error(smoke.reason)
         if (context.runId) deps.repos.setRunSupabaseLifecycleState(context.runId, "validated")
+        recordSupabaseLifecycle({ repos: deps.repos, runId: context.runId, waveId: context.waveId, branchRef: context.branchRef, step: "migrations", status: "passed" })
+        recordSupabaseLifecycle({ repos: deps.repos, runId: context.runId, waveId: context.waveId, branchRef: context.branchRef, step: "seed", status: "passed" })
+        recordSupabaseLifecycle({ repos: deps.repos, runId: context.runId, waveId: context.waveId, branchRef: context.branchRef, step: "db_tests", status: "passed" })
         return { ok: true, context: { status: "validated", applied: records } }
       } catch (err) {
         if (context.runId) deps.repos.setRunSupabaseLifecycleState(context.runId, "retained-for-diagnosis")
+        recordSupabaseLifecycle({ repos: deps.repos, runId: context.runId, waveId: context.waveId, branchRef: context.branchRef, step: "migrations", status: "retained", reason: err instanceof Error ? err.message : "Validation failed" })
         return { ok: false, context: { status: "retained-for-diagnosis", failingStep: "migration-seed", message: err instanceof Error ? err.message : "Validation failed" } }
       }
     },
     async destroyBranch(context: SupabaseWorkspaceContext): Promise<SupabaseAdapterResult> {
       if (!context.projectRef || !context.branchRef || !deps.client.deleteBranch) return { ok: false, context: { error: "destroy_context_required" } }
       try {
+        recordSupabaseLifecycle({ repos: deps.repos, runId: context.runId, waveId: context.waveId, branchRef: context.branchRef, step: "cleanup", status: "in_progress" })
         await deps.client.deleteBranch(context.projectRef, context.branchRef)
         if (context.runId) deps.repos.setRunSupabaseLifecycleState(context.runId, "destroyed")
+        recordSupabaseLifecycle({ repos: deps.repos, runId: context.runId, waveId: context.waveId, branchRef: context.branchRef, step: "cleanup", status: "passed" })
         return { ok: true, context: { status: "destroyed", branchRef: context.branchRef } }
       } catch (err) {
         const status = (err as { status?: number }).status
-        if (status === 404) return { ok: true, context: { status: "destroyed", branchRef: context.branchRef, idempotent: true } }
+        if (status === 404) {
+          recordSupabaseLifecycle({ repos: deps.repos, runId: context.runId, waveId: context.waveId, branchRef: context.branchRef, step: "cleanup", status: "passed" })
+          return { ok: true, context: { status: "destroyed", branchRef: context.branchRef, idempotent: true } }
+        }
         if (context.runId) deps.repos.setRunSupabaseLifecycleState(context.runId, "retained-for-diagnosis")
+        recordSupabaseLifecycle({ repos: deps.repos, runId: context.runId, waveId: context.waveId, branchRef: context.branchRef, step: "cleanup", status: "retained", reason: err instanceof Error ? err.message : "Destroy failed" })
         return { ok: false, context: { status: "retained-for-diagnosis", message: err instanceof Error ? err.message : "Destroy failed" } }
       }
     },

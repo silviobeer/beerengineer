@@ -261,6 +261,33 @@ const STAGE_LOG_EVENT_PARSERS: Record<string, StageLogEventParser> = {
     overlappingFiles: Array.isArray(data.overlappingFiles) ? data.overlappingFiles.filter((value): value is string => typeof value === "string") : [],
     cause: data.cause === "missing_shared_files" ? "missing_shared_files" : "shared_file_overlap",
   }),
+  supabase_branch_lifecycle: (row, data) => ({
+    type: "supabase_branch_lifecycle",
+    runId: row.run_id,
+    waveId: typeof data.waveId === "string" ? data.waveId : null,
+    branchRef: typeof data.branchRef === "string" ? data.branchRef : null,
+    step: parseSupabaseStep(data.step),
+    status: parseSupabaseLifecycleStatus(data.status),
+    reason: typeof data.reason === "string" ? data.reason : undefined,
+    timestamp: typeof data.timestamp === "number" ? data.timestamp : row.created_at,
+  }),
+  supabase_operator_action: (row, data) => ({
+    type: "supabase_operator_action",
+    runId: row.run_id,
+    workspaceId: typeof data.workspaceId === "string" ? data.workspaceId : "",
+    branchRef: typeof data.branchRef === "string" ? data.branchRef : "",
+    action: data.action === "destroy_branch" ? "destroy_branch" : "retry_validation",
+    workspaceLocalOperatorId: typeof data.workspaceLocalOperatorId === "string" ? data.workspaceLocalOperatorId : "local-operator",
+    timestamp: typeof data.timestamp === "number" ? data.timestamp : row.created_at,
+  }),
+}
+
+function parseSupabaseStep(value: unknown): Extract<WorkflowEvent, { type: "supabase_branch_lifecycle" }>["step"] {
+  return value === "migrations" || value === "seed" || value === "db_tests" || value === "cleanup" ? value : "branch_creation"
+}
+
+function parseSupabaseLifecycleStatus(value: unknown): Extract<WorkflowEvent, { type: "supabase_branch_lifecycle" }>["status"] {
+  return value === "idle" || value === "in_progress" || value === "passed" || value === "failed" || value === "retained" ? value : "idle"
 }
 
 function eventFromStageLog(row: StageLogRow): WorkflowEvent | null {

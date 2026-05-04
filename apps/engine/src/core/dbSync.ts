@@ -344,6 +344,31 @@ export function attachDbSync(
         cause: event.cause,
       },
     })),
+    supabase_branch_lifecycle: logOnly<"supabase_branch_lifecycle">(event => ({
+      runId: event.runId,
+      eventType: "supabase_branch_lifecycle",
+      message: `${event.step} ${event.status}`,
+      data: {
+        waveId: event.waveId ?? null,
+        branchRef: event.branchRef ?? null,
+        step: event.step,
+        status: event.status,
+        reason: event.reason,
+        timestamp: event.timestamp,
+      },
+    })),
+    supabase_operator_action: logOnly<"supabase_operator_action">(event => ({
+      runId: event.runId,
+      eventType: "supabase_operator_action",
+      message: `${event.action} ${event.branchRef}`,
+      data: {
+        workspaceId: event.workspaceId,
+        branchRef: event.branchRef,
+        action: event.action,
+        workspaceLocalOperatorId: event.workspaceLocalOperatorId,
+        timestamp: event.timestamp,
+      },
+    })),
   }
 
   const persist = (event: WorkflowEvent): void => {

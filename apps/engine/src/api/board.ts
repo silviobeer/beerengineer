@@ -76,6 +76,24 @@ export type BoardColumnDTO = {
 export type BoardDTO = {
   workspaceKey: string | null
   columns: BoardColumnDTO[]
+  costRisk: {
+    retainedBranchCount: number
+    planLimitRatio: number
+  }
+}
+
+function workspaceCostRisk(db: Db, workspaceId?: string): BoardDTO["costRisk"] {
+  if (!workspaceId) return { retainedBranchCount: 0, planLimitRatio: 0 }
+  const retained = db.prepare(
+    "SELECT COUNT(*) AS n FROM runs WHERE workspace_id = ? AND supabase_branch_lifecycle_state IN ('retained-for-diagnosis', 'quota-exceeded')"
+  ).get(workspaceId) as { n: number } | undefined
+  const quota = db.prepare("SELECT supabase_branch_quota_usage, supabase_branch_quota_limit FROM workspaces WHERE id = ?").get(workspaceId) as { supabase_branch_quota_usage: number | null; supabase_branch_quota_limit: number | null } | undefined
+  return {
+    retainedBranchCount: retained?.n ?? 0,
+    planLimitRatio: quota?.supabase_branch_quota_usage != null && quota.supabase_branch_quota_limit
+      ? quota.supabase_branch_quota_usage / quota.supabase_branch_quota_limit
+      : 0,
+  }
 }
 
 export function getBoard(db: Db, workspaceKey?: string | null): BoardDTO {
@@ -86,7 +104,8 @@ export function getBoard(db: Db, workspaceKey?: string | null): BoardDTO {
   if (!workspace) {
     return {
       workspaceKey: workspaceKey ?? null,
-      columns: orderedColumns.map(key => ({ key, title: columnTitles[key], cards: [] }))
+      columns: orderedColumns.map(key => ({ key, title: columnTitles[key], cards: [] })),
+      costRisk: { retainedBranchCount: 0, planLimitRatio: 0 },
     }
   }
 
@@ -160,6 +179,7 @@ export function getBoard(db: Db, workspaceKey?: string | null): BoardDTO {
 
   return {
     workspaceKey: workspace.key,
+    costRisk: workspaceCostRisk(db, workspace.id),
     columns: orderedColumns.map(col => ({
       key: col,
       title: columnTitles[col],

@@ -34,6 +34,19 @@ export type CanonicalMessageType =
   | "merge_gate_cancelled"
   | "merge_completed"
   | "worktree_port_assigned"
+  | "supabase.branch.provisioning_started"
+  | "supabase.branch.ready"
+  | "supabase.branch.migration_started"
+  | "supabase.branch.migration_passed"
+  | "supabase.branch.seed_started"
+  | "supabase.branch.seed_passed"
+  | "supabase.branch.db_tests_started"
+  | "supabase.branch.db_tests_passed"
+  | "supabase.branch.failed"
+  | "supabase.branch.retained"
+  | "supabase.branch.destroying"
+  | "supabase.branch.destroyed"
+  | "supabase.operator.action"
 
 export type LevelInfo = {
   level: MessagingLevel
@@ -132,11 +145,31 @@ export function levelOf(event: WorkflowEvent): LevelInfo {
       return { level: 1, force: false, type: "merge_completed" }
     case "worktree_port_assigned":
       return { level: 1, force: false, type: "worktree_port_assigned" }
+    case "supabase_branch_lifecycle":
+      return { level: 1, force: event.status === "failed" || event.status === "retained", type: supabaseLifecycleMessageType(event) }
+    case "supabase_operator_action":
+      return { level: 1, force: false, type: "supabase.operator.action" }
     default: {
       const exhaustive: never = event
       return exhaustive
     }
   }
+}
+
+function supabaseLifecycleMessageType(event: Extract<WorkflowEvent, { type: "supabase_branch_lifecycle" }>): CanonicalMessageType {
+  if (event.status === "failed") return "supabase.branch.failed"
+  if (event.status === "retained") return "supabase.branch.retained"
+  if (event.step === "branch_creation" && event.status === "in_progress") return "supabase.branch.provisioning_started"
+  if (event.step === "branch_creation" && event.status === "passed") return "supabase.branch.ready"
+  if (event.step === "migrations" && event.status === "in_progress") return "supabase.branch.migration_started"
+  if (event.step === "migrations" && event.status === "passed") return "supabase.branch.migration_passed"
+  if (event.step === "seed" && event.status === "in_progress") return "supabase.branch.seed_started"
+  if (event.step === "seed" && event.status === "passed") return "supabase.branch.seed_passed"
+  if (event.step === "db_tests" && event.status === "in_progress") return "supabase.branch.db_tests_started"
+  if (event.step === "db_tests" && event.status === "passed") return "supabase.branch.db_tests_passed"
+  if (event.step === "cleanup" && event.status === "in_progress") return "supabase.branch.destroying"
+  if (event.step === "cleanup" && event.status === "passed") return "supabase.branch.destroyed"
+  return "supabase.branch.retained"
 }
 
 export function messagingLevelFromQuery(input: string | null | undefined, defaultLevel: MessagingLevel): MessagingLevel {

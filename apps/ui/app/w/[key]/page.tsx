@@ -1,4 +1,5 @@
 import { Board } from "@/components/Board";
+import { RunOverviewBanners } from "@/components/run/RunOverviewBanners";
 import type { BoardCardDTO } from "@/lib/types";
 
 interface BoardApiItem {
@@ -28,6 +29,10 @@ interface BoardApiColumn {
 interface BoardApiResponse {
   items?: BoardApiItem[];
   columns?: BoardApiColumn[];
+  costRisk?: {
+    retainedBranchCount: number;
+    planLimitRatio: number;
+  };
 }
 
 function engineUrl(): string {
@@ -59,7 +64,7 @@ function toBoardCard(item: BoardApiItem): BoardCardDTO {
 
 async function fetchBoard(
   workspaceKey: string
-): Promise<{ items: BoardCardDTO[] | null; error: string | null }> {
+): Promise<{ items: BoardCardDTO[] | null; costRisk?: BoardApiResponse["costRisk"]; error: string | null }> {
   try {
     const res = await fetch(
       `${engineUrl()}/board?workspace=${encodeURIComponent(workspaceKey)}`,
@@ -81,7 +86,7 @@ async function fetchBoard(
       );
     }
     const items = flatItems.map(toBoardCard);
-    return { items, error: null };
+    return { items, costRisk: data.costRisk, error: null };
   } catch (err) {
     const message = err instanceof Error ? err.message : "network error";
     return { items: null, error: message };
@@ -94,7 +99,7 @@ interface BoardPageProps {
 
 export default async function BoardPage({ params }: Readonly<BoardPageProps>) {
   const { key } = await params;
-  const { items, error } = await fetchBoard(key);
+  const { items, costRisk, error } = await fetchBoard(key);
 
   if (error) {
     return (
@@ -110,6 +115,7 @@ export default async function BoardPage({ params }: Readonly<BoardPageProps>) {
 
   return (
     <main className="min-h-screen text-zinc-100 bg-zinc-950 overflow-x-hidden">
+      <RunOverviewBanners costRisk={costRisk} />
       <Board items={items ?? []} workspaceKey={key} />
     </main>
   );
