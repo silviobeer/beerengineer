@@ -9,7 +9,8 @@ function walk(root: string): string[] {
       if (entry.isDirectory()) return walk(full)
       return entry.isFile() && entry.name.endsWith(".sql") ? [full] : []
     })
-  } catch {
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err
     return []
   }
 }
