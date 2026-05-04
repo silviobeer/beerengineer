@@ -4,7 +4,10 @@ import type { Repos } from "../../db/repositories.js"
 import { ownedWaveBranchPrefix, waveBranchName } from "./branchNaming.js"
 import { pollSupabaseBranch, SupabaseBranchPollTimeoutError } from "./branchPoller.js"
 import { applySupabaseMigrationsAndSeeds, type SupabaseMigrationClient } from "./migrationRunner.js"
+import { listSupabaseSqlFiles } from "./migrationRunner.js"
 import { migrationSmoke } from "./dbTests/migrationSmoke.js"
+import { readFileSync } from "node:fs"
+import { relative } from "node:path"
 
 export class NotImplementedError extends Error {
   constructor(operation: string) {
@@ -128,6 +131,20 @@ export function createSupabaseAdapter(deps: { repos: Repos; client: WaveClient }
           return { branchRef: branch.ref, branchName: branch.name, runId: run.id, classification: "adoptable" }
         })
       return { ok: true, context: { classifications } }
+    },
+    async migrateProduction(context: SupabaseWorkspaceContext): Promise<SupabaseAdapterResult> {
+      if (!context.workspaceRoot || !context.projectRef) return { ok: false, context: { error: "production_migration_context_required" } }
+      try {
+        const files = listSupabaseSqlFiles(context.workspaceRoot)
+        const applied: string[] = []
+        for (const file of files.migrations) {
+          await deps.client.runQuery(context.projectRef, context.branchRef ?? "production", readFileSync(file, "utf8"))
+          applied.push(relative(context.workspaceRoot, file))
+        }
+        return { ok: true, context: { applied } }
+      } catch (err) {
+        return { ok: false, context: { error: "production_migration_failed", message: err instanceof Error ? err.message : "Production migration failed" } }
+      }
     },
   }
 }
