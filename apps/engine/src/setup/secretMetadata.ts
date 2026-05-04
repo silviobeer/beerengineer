@@ -1,5 +1,14 @@
 import { getSecretMetadata, type SecretMetadata, type SecretStoreOptions } from "./secretStore.js"
 
+export const SUPABASE_MANAGEMENT_TOKEN_SECRET_REF = "supabase.management_token"
+
+export const KNOWN_SECRET_REFS = [
+  "ANTHROPIC_API_KEY",
+  "OPENAI_API_KEY",
+  "SONAR_TOKEN",
+  SUPABASE_MANAGEMENT_TOKEN_SECRET_REF,
+] as const
+
 export type OptionalSecretGate = {
   ref: string
   status: "skipped" | "configured" | "failed"

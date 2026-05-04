@@ -23,11 +23,12 @@ import {
 import type { CodeRabbitResult, SonarCloudResult } from "../src/review/types.js"
 
 test("PROJ-3-PRD-1 AC-1 capability IDs are the closed project set", () => {
-  assert.deepEqual([...CAPABILITY_IDS].sort(), ["coderabbit", "git", "github", "sonar"])
+  assert.deepEqual([...CAPABILITY_IDS].sort(), ["coderabbit", "git", "github", "sonar", "supabase"])
   assert.equal(isCapabilityId("git"), true)
   assert.equal(isCapabilityId("github"), true)
   assert.equal(isCapabilityId("sonar"), true)
   assert.equal(isCapabilityId("coderabbit"), true)
+  assert.equal(isCapabilityId("supabase"), true)
   assert.equal(isCapabilityId("sonarcloud"), false)
   assert.equal(isCapabilityId("gh"), false)
   assert.equal(isCapabilityId("cr"), false)

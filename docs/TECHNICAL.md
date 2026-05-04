@@ -53,7 +53,7 @@ Workspace registration and preflight now orchestrate named capabilities. Review 
 - **Secret Reference:** non-sensitive ref and redacted metadata shown in setup/config responses.
 - **Secret Value:** sensitive local value stored only in the engine-owned secret store and resolved only for explicit checks/tool execution.
 - **Partial Save Result:** accepted and rejected app-config fields returned together so the settings UI can explain mixed outcomes.
-- **Capability:** stable integration identity; PROJ-3 defines `git`, `github`, `sonar`, and `coderabbit`.
+- **Capability:** stable integration identity; PROJ-3 defines `git`, `github`, `sonar`, and `coderabbit`; PROJ-4 amends that closed set with `supabase` for Supabase Cloud Branching.
 - **Capability Port:** typed behavior such as availability, preflight, enable, audit, repair, or review. Capabilities expose only the ports they own.
 - **Workspace Capability Context:** local Git, GitHub remote/default-branch, and `gh` readiness facts passed from orchestration to optional capabilities.
 - **Capability Preflight Result:** structured readiness/status output for workspace onboarding, API consumers, CLI rendering, and update-readiness alignment.
@@ -140,7 +140,7 @@ For local setup/settings, the engine defaults to `127.0.0.1:4100` and writes/rea
 - Engine responses may include safe, redacted `message` fields; settings UI should display those before generic fallback errors.
 - 375px screenshots are useful for every new top-level UI surface because shared chrome can overlap even when component tests pass.
 - The optional-skip route is currently UI-local; if skip state matters beyond immediate UX, it should become engine-owned or be removed.
-- Capability IDs are contract values. Keep `git`, `github`, `sonar`, and `coderabbit` lowercase and stable in JSON/CLI output.
+- Capability IDs are contract values. Keep `git`, `github`, `sonar`, `coderabbit`, and `supabase` lowercase and stable in JSON/CLI output.
 - Sonar project identity and GitHub repository identity can differ. Use the configured Sonar `organization` and `projectKey` for scanner config, provisioning, and repair; derive from GitHub only as a default.
 - Review envelope fields must be behavior-backed. A `blocking` value that does not affect gate status is misleading.
 - Workflow integration fixtures should answer prompts by prompt identity/content and fail fast on unexpected prompt loops; prompt-count fixtures drift as stages evolve.

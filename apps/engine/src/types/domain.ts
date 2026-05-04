@@ -274,9 +274,12 @@ export type WaveDefinition = {
   stories: Array<{
     id: string
     title: string
+    dbRelevant?: boolean
     screenIds?: string[]
     sharedFiles?: string[]
   }>
+  dbRelevantStoryCount?: number
+  dbRelevantWave?: boolean
   tasks?: Array<{
     id: string
     title: string

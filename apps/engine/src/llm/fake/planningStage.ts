@@ -72,10 +72,13 @@ function buildArtifact(project: Project, state: PlanningState): ImplementationPl
           stories: state.prd.stories.slice(0, 1).map(story => ({
             id: story.id,
             title: story.title,
+            dbRelevant: false,
             // Per-story file ownership — declared so the planner
             // post-validator can prove story-pair disjointness.
             sharedFiles: [`apps/engine/stories/${story.id}.ts`],
           })),
+          dbRelevantStoryCount: 0,
+          dbRelevantWave: false,
           internallyParallelizable: false,
           dependencies: ["W1"],
           exitCriteria: ["Core workflow works"],
@@ -88,8 +91,11 @@ function buildArtifact(project: Project, state: PlanningState): ImplementationPl
           stories: state.prd.stories.slice(1).map(story => ({
             id: story.id,
             title: story.title,
+            dbRelevant: false,
             sharedFiles: [`apps/engine/stories/${story.id}.ts`],
           })),
+          dbRelevantStoryCount: 0,
+          dbRelevantWave: false,
           internallyParallelizable: true,
           dependencies: ["W2"],
           exitCriteria: ["Lists and editing work"],

@@ -1,4 +1,4 @@
-export const CAPABILITY_IDS = ["git", "github", "sonar", "coderabbit"] as const
+export const CAPABILITY_IDS = ["git", "github", "sonar", "coderabbit", "supabase"] as const
 
 export type CapabilityId = typeof CAPABILITY_IDS[number]
 

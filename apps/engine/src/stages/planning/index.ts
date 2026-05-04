@@ -9,7 +9,43 @@ import type { ImplementationPlanArtifact, PRD, WithArchitecture } from "../../ty
 import type { ReviewAgentAdapter, ReviewAgentResponse } from "../../core/adapters.js"
 import type { PlanningState } from "./types.js"
 
+export function validatePlanStoryEnvelope(
+  waveNumber: number,
+  ref: { id?: unknown; title?: unknown; dbRelevant?: unknown },
+): string | null {
+  if (!ref.id || typeof ref.id !== "string") {
+    return `Wave ${waveNumber} contains a story without an \`id\` (shape must be {id, title, dbRelevant}).`
+  }
+  if (typeof ref.dbRelevant !== "boolean") {
+    return `Wave ${waveNumber} story "${ref.id}" is missing required boolean \`dbRelevant\`.`
+  }
+  return null
+}
+
+export function summarizeWaveDbRelevance(
+  wave: NonNullable<ImplementationPlanArtifact["plan"]>["waves"][number],
+): { dbRelevantStoryCount: number; dbRelevantWave: boolean } {
+  const storyList = Array.isArray(wave.stories) ? wave.stories : []
+  const dbRelevantStoryCount = storyList.filter(story => story.dbRelevant === true).length
+  return { dbRelevantStoryCount, dbRelevantWave: dbRelevantStoryCount > 0 }
+}
+
+export function applyDbRelevanceSummaries(artifact: ImplementationPlanArtifact): ImplementationPlanArtifact {
+  for (const wave of artifact.plan?.waves ?? []) {
+    if (wave.kind === "setup") {
+      wave.dbRelevantStoryCount = 0
+      wave.dbRelevantWave = false
+      continue
+    }
+    const summary = summarizeWaveDbRelevance(wave)
+    wave.dbRelevantStoryCount = summary.dbRelevantStoryCount
+    wave.dbRelevantWave = summary.dbRelevantWave
+  }
+  return artifact
+}
+
 function validatePlanStoryIds(artifact: ImplementationPlanArtifact, prd: PRD): string | null {
+  applyDbRelevanceSummaries(artifact)
   const prdIds = new Set(prd.stories.map(s => s.id))
   const seen = new Set<string>()
   const issues: string[] = []
@@ -105,11 +141,16 @@ function validateFeatureWave(
 
 function validateFeatureStoryRef(
   waveNumber: number,
-  ref: { id?: string; title?: string },
+  ref: { id?: string; title?: string; dbRelevant?: unknown },
   prdIds: Set<string>,
   seen: Set<string>,
   issues: string[],
 ): void {
+  const envelopeError = validatePlanStoryEnvelope(waveNumber, ref)
+  if (envelopeError) {
+    issues.push(envelopeError)
+    return
+  }
   const id = ref.id
   const title = ref.title
   if (!id || typeof id !== "string") {
