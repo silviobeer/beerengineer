@@ -16,14 +16,14 @@ test("PROJ-4 PRD-3 US-4: recreate persistent test branch destroys then provision
     const order: string[] = []
     const adapter = {
       destroyBranch: async () => { order.push("destroy"); return { ok: true } },
-      provisionBranch: async () => { order.push("provision"); return { ok: true, context: { branchRef: "new" } } },
+      provisionBranch: async (ctx) => { order.push(`provision:${ctx.branchRef}`); return { ok: true, context: { branchRef: "new" } } },
       pollBranchStatus: async () => ({ ok: true }),
       validateBranch: async () => ({ ok: true }),
       migrateProduction: async () => ({ ok: true }),
       reconcile: async () => ({ ok: true }),
     }
     assert.equal((await recreatePersistentTestBranch({ repos, adapter, workspaceId: workspace.id, projectRef: "proj", branchRef: "old", branchName: "old-name", workspaceRoot: dir })).ok, true)
-    assert.deepEqual(order, ["destroy", "provision"])
+    assert.deepEqual(order, ["destroy", "provision:old"])
     const failing = { ...adapter, destroyBranch: async () => ({ ok: false }) }
     assert.equal((await recreatePersistentTestBranch({ repos, adapter: failing, workspaceId: workspace.id, projectRef: "proj", branchRef: "old", branchName: "old-name", workspaceRoot: dir })).ok, false)
     assert.equal(repos.getWorkspace(workspace.id)?.supabase_persistent_test_branch_status, "retained-for-diagnosis")
