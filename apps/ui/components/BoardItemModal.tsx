@@ -1,6 +1,6 @@
 "use client";
 
-import { useContext, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useContext, useEffect, useRef, useState, useTransition } from "react";
 import {
   DESIGN_PREP_STAGES,
   DESIGN_PREP_STAGE_LABELS,
@@ -12,9 +12,8 @@ import { MiniStepper } from "./MiniStepper";
 import { BoardCardActions } from "./BoardCardActions";
 import { ItemChat } from "./ItemChat";
 import { ItemMessages } from "./ItemMessages";
-import { WaveRow } from "./WaveRow";
-import { MergeGatePanel, type MergeGatePanelProps } from "./merge/MergeGatePanel";
-import { lifecycleStepsFromBranchState } from "@/lib/lifecycleEvents";
+import { type MergeGatePanelProps } from "./merge/MergeGatePanel";
+import { SupabaseStatusPanel } from "./run/SupabaseStatusPanel";
 import { SSEContext } from "@/lib/sse/SSEContext";
 
 interface BoardItemModalProps {
@@ -246,49 +245,6 @@ function useMergeStatus(runId: string | undefined, enabled: boolean) {
 
 
   return { mergeStatus, mergeStatusError };
-}
-
-function SupabaseStatusPanel({
-  card,
-  mergeStatus,
-  mergeStatusError,
-}: Readonly<{
-  card: BoardCardDTO;
-  mergeStatus: MergeStatusView | null;
-  mergeStatusError: string | null;
-}>) {
-  const sse = useContext(SSEContext);
-  const dbRelevance = card.dbRelevance ?? {
-    value: Boolean(card.supabaseBranch),
-    source: "detector" as const,
-    reason: card.supabaseBranch ? "Supabase branch provisioned" : "No Supabase branch provisioned",
-  };
-  const liveSteps = useMemo(() => {
-    const states = Object.values(sse?.lifecycleState ?? {});
-    return states.find(steps => steps.length > 0);
-  }, [sse?.lifecycleState]);
-  const lifecycleSteps = liveSteps ?? lifecycleStepsFromBranchState(card.supabaseBranch?.lifecycleState);
-  const shouldRender = Boolean(card.dbRelevance || card.supabaseBranch || card.latestRunId);
-  if (!shouldRender) return null;
-
-  return (
-    <div className="space-y-3 border border-zinc-800 bg-zinc-950/40 p-3">
-      <h3 className="text-xs uppercase tracking-wider text-zinc-500">Supabase status</h3>
-      <WaveRow
-        title="Latest run"
-        dbRelevance={dbRelevance}
-        lifecycleSteps={lifecycleSteps}
-        branchRef={card.supabaseBranch?.ref}
-        branchName={card.supabaseBranch?.name}
-        projectRef={card.supabaseProjectRef ?? undefined}
-        runId={card.latestRunId}
-        workspaceId={card.workspaceId}
-        workspaceRoot={card.workspaceRoot}
-      />
-      {card.column === "merge" && mergeStatusHasGates(mergeStatus) ? <MergeGatePanel gates={mergeStatus.gates} /> : null}
-      {card.column === "merge" && mergeStatusError ? <p className="text-xs text-amber-300">{mergeStatusError}</p> : null}
-    </div>
-  );
 }
 
 function StageProgress({ card }: Readonly<{ card: BoardCardDTO }>) {
@@ -672,7 +628,11 @@ export function BoardItemModal({ card, workspaceKey, onClose }: Readonly<BoardIt
                   effectivePreviewUrl={effectivePreviewUrl}
                 />
               ) : null}
-              <SupabaseStatusPanel card={card} mergeStatus={mergeStatus} mergeStatusError={mergeStatusError} />
+              <SupabaseStatusPanel
+                card={card}
+                gates={mergeStatusHasGates(mergeStatus) ? mergeStatus.gates : null}
+                mergeStatusError={mergeStatusError}
+              />
 
               <BoardCardActions card={card} />
             </div>

@@ -71,18 +71,24 @@ export function createHandoffUsageDetector(
   }
 }
 
-// Module-level default detector preserved for the existing log-stream wiring
-// and the legacy `detectHandoffConsumed` API. The factory above is the path
-// forward; new call sites should construct their own bounded detector.
-let defaultDetector: HandoffUsageDetector = createHandoffUsageDetector()
+// Lazy default detector for the legacy `detectHandoffConsumed` API. The factory
+// above is the path forward; new call sites should construct their own bounded
+// detector. The default is allocated on first use so importing this module
+// doesn't open a setInterval handle when nobody calls the legacy API.
+let defaultDetector: HandoffUsageDetector | null = null
+
+function ensureDefaultDetector(): HandoffUsageDetector {
+  defaultDetector ??= createHandoffUsageDetector()
+  return defaultDetector
+}
 
 export function resetHandoffUsageForTests(): void {
-  defaultDetector.dispose()
+  defaultDetector?.dispose()
   defaultDetector = createHandoffUsageDetector()
 }
 
 export function configureHandoffUsageRetentionForTests(input: { ttlMs?: number; maxEntries?: number } = {}): void {
-  defaultDetector.dispose()
+  defaultDetector?.dispose()
   defaultDetector = createHandoffUsageDetector(input)
 }
 
@@ -92,7 +98,7 @@ export function detectHandoffConsumed(input: {
   workerId: string
   line: string
 }): HandoffUsageRecord | null {
-  return defaultDetector.detect(input)
+  return ensureDefaultDetector().detect(input)
 }
 
 export function handoffUsageWarning(input: { dbRelevantWave: boolean; consumedEvents: HandoffUsageRecord[] }): string | null {

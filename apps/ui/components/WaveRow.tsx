@@ -8,26 +8,25 @@ export type WaveRowDbRelevance = {
   reason?: string
 }
 
-export function WaveRow({
-  title,
-  dbRelevance,
-  lifecycleSteps,
-  branchRef,
-  branchName,
-  projectRef,
-  runId,
-  workspaceId,
-  workspaceRoot,
-}: Readonly<{
-  title: string;
-  dbRelevance: WaveRowDbRelevance;
-  lifecycleSteps?: LifecycleStepState[];
+export type WaveRowBranch = {
   branchRef?: string;
   branchName?: string;
   projectRef?: string;
   runId?: string;
   workspaceId?: string;
   workspaceRoot?: string | null;
+}
+
+export function WaveRow({
+  title,
+  dbRelevance,
+  lifecycleSteps,
+  branch,
+}: Readonly<{
+  title: string;
+  dbRelevance: WaveRowDbRelevance;
+  lifecycleSteps?: LifecycleStepState[];
+  branch?: WaveRowBranch;
 }>) {
   const label = dbRelevance.value ? "DB" : "non-DB";
   const tooltip = `${dbRelevance.source}${dbRelevance.reason ? `: ${dbRelevance.reason}` : ""}`;
@@ -42,12 +41,12 @@ export function WaveRow({
       {dbRelevance.value && lifecycleSteps ? (
         <BranchLifecycleStepper
           steps={lifecycleSteps}
-          branchRef={branchRef}
-          branchName={branchName}
-          projectRef={projectRef}
-          runId={runId}
-          workspaceId={workspaceId}
-          workspaceRoot={workspaceRoot ?? undefined}
+          branchRef={branch?.branchRef}
+          branchName={branch?.branchName}
+          projectRef={branch?.projectRef}
+          runId={branch?.runId}
+          workspaceId={branch?.workspaceId}
+          workspaceRoot={branch?.workspaceRoot ?? undefined}
         />
       ) : null}
     </div>
