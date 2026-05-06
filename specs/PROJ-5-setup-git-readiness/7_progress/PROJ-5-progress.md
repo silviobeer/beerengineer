@@ -479,3 +479,9 @@
 ### Ralph Loop
 - Iterations: 1
 - AC-18..AC-21 pass 1: PASS — `npm run test:file --workspace=@beerengineer/engine -- test/gitIdentityRepair.test.ts` and `npm run test:file --workspace=@beerengineer/engine -- test/gitSigningReadiness.test.ts`
+
+### Wave 4 Gate — PASSED (2026-05-06T13:08:17+02:00)
+- [x] Ralph: 21 AC commands green
+- [x] Build: `npm run typecheck`
+- [x] CodeRabbit: 0 non-advisory findings (advisory severities: medium,low)
+- [x] Smoke: /w/demo /w/demo/items/demo
