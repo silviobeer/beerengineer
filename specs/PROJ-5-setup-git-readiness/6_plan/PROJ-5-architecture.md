@@ -36,11 +36,32 @@ or trust client-supplied filesystem paths. It requests readiness and repair
 through the engine, and the engine resolves registered workspace roots from
 server-side state.
 
+## API Contract Capabilities
+
+Exact route naming belongs to wave planning and the OpenAPI update, but the
+Engine API needs one coherent contract family so CLI and UI do not drift:
+
+| Capability | Consumers | Purpose |
+|---|---|---|
+| Read global Git readiness | CLI setup, setup UI | Report Git installation, global identity, app-level default identity, and global repair options when no workspace is selected. |
+| Read workspace Git readiness | CLI, setup UI, workflow-start UI | Report repo-local/global/app-level identity source and workflow-blocking state for a registered workspace. |
+| Save app-level Git identity default | CLI setup, setup UI | Store the reusable beerengineer_ identity default in app config without writing global Git config. |
+| Repair workspace Git identity | CLI, setup UI, workflow-start UI | Apply a confirmed identity to a registered workspace as local Git configuration, then return fresh readiness. |
+| Report workflow-start Git blocker | CLI item actions, item UI | Block a start action before side effects and return repair metadata plus a resumable start intent descriptor. |
+
+These capabilities should share the same readiness vocabulary, validation, and
+error codes regardless of which concrete route or CLI command invokes them.
+
 ## Data Model
+
+Persisted state:
 
 - App Git Identity Default (PROJ-5-PRD-1, PRD-2, PRD-3, PRD-4) — stored in
   beerengineer_ app config and used as the reusable author identity for managed
   workspaces when the user chooses to apply it.
+
+Computed views and transient state:
+
 - Git Readiness Snapshot (PROJ-5-PRD-1, PRD-2, PRD-3, PRD-4) — computed view
   of Git installation, identity source, readiness state, and available repair
   actions. It has global and workspace-specific variants.
@@ -51,6 +72,12 @@ server-side state.
   printed setup URL.
 - Workflow Start Intent (PROJ-5-PRD-4) — the original item/workspace action
   that must remain available while Git identity repair is performed.
+
+The workflow-start intent is not a hidden server-side queue. The engine returns
+a blocked response with a stable item/action intent descriptor; the UI preserves
+that descriptor in the current item context and can reconstruct it from the item
+route if the panel refreshes. After repair, clients re-submit the same start
+action rather than invoking a separate "resume hidden intent" operation.
 
 ## Cross-Cutting Tech Decisions
 
@@ -63,6 +90,11 @@ setup, and workflow-start gating.
 Why: users should not see different answers depending on whether they use the
 terminal or browser. It also keeps test coverage focused on the real engine
 behavior instead of duplicating Git logic in clients.
+
+The canonical owner is one engine setup Git-identity domain under the existing
+setup area. It owns the readiness snapshot, identity validator, repair result,
+and error vocabulary. CLI commands, Engine API handlers, and UI-facing proxies
+consume that owner rather than redefining parallel shapes.
 
 Affected PRDs: PROJ-5-PRD-1, PROJ-5-PRD-2, PROJ-5-PRD-3, PROJ-5-PRD-4.
 
@@ -77,6 +109,11 @@ Why: first setup often happens before any workspace is registered, but workflow
 execution is workspace-specific. One overloaded status would either hide useful
 global guidance or pretend a workspace exists too early.
 
+Workspace identity precedence is repo-local Git identity, then global Git
+identity, then an app-level default that can be applied after confirmation, then
+blocked. This is restated here so the architecture can be read without jumping
+back to the concept.
+
 Affected PRDs: PROJ-5-PRD-1, PROJ-5-PRD-3, PROJ-5-PRD-4.
 
 ### 3. App-Level Identity Is Beerengineer Config, Not Global Git Config
@@ -88,6 +125,11 @@ for local workflows.
 
 Why: this lets beginners proceed without changing machine-wide state, while
 developers keep full control of existing Git configuration.
+
+Concurrent app-config edits should use the same serialized write discipline as
+the rest of setup config and always re-read after save. If two clients edit the
+default identity at the same time, the product should show the post-save state
+from disk instead of assuming the caller's submitted value is still current.
 
 Affected PRDs: PROJ-5-PRD-1, PROJ-5-PRD-2, PROJ-5-PRD-3, PROJ-5-PRD-4.
 
@@ -123,6 +165,11 @@ an in-progress assumption.
 Why: Git identity uses separate name and email settings, and either can fail.
 Fresh recheck keeps CLI and UI honest and makes failures understandable.
 
+Readiness should not be treated as a long-lived cached value. The UI can render
+the last-read snapshot, but it should explicitly recheck on user actions that
+depend on readiness and when the setup surface regains focus. This catches
+terminal-side edits to `.git/config` without adding background polling.
+
 Affected PRDs: PROJ-5-PRD-1, PROJ-5-PRD-3, PROJ-5-PRD-4.
 
 ### 7. Setup Launch Is Helpful But Degrades Gracefully
@@ -147,6 +194,9 @@ Why: failing after partial Git setup is confusing and can leave recovery work.
 Blocking early gives nontechnical users a safe repair path and gives developers
 a precise precondition.
 
+The gate applies to new workflow starts only. Runs already in progress when
+this feature ships are not interrupted or retroactively blocked.
+
 Affected PRDs: PROJ-5-PRD-1, PROJ-5-PRD-4.
 
 ### 9. Signing Failures Are Separate From Identity Readiness
@@ -161,6 +211,25 @@ precondition; it does not take ownership of all possible Git commit
 configuration failures.
 
 Affected PRDs: PROJ-5-PRD-1, PROJ-5-PRD-4.
+
+## Shared Error Vocabulary
+
+The exact transport shape belongs to the API contract, but all surfaces should
+draw from one shared vocabulary:
+
+| Error | Meaning |
+|---|---|
+| `git_not_installed` | Git itself is unavailable, so identity repair cannot run. |
+| `identity_missing` | Git exists, but no usable repo-local or global identity is available for the workflow. |
+| `identity_invalid` | Submitted display name or email failed shared validation. |
+| `workspace_not_found` | The requested workspace is not registered or no longer exists server-side. |
+| `workspace_not_git_repo` | The registered workspace cannot be treated as a Git repo for workflow execution. |
+| `workspace_path_unavailable` | The registered workspace path cannot be accessed safely. |
+| `repair_partial_failure` | Only part of the workspace-local identity repair applied; fresh readiness must be shown. |
+| `commit_signing_blocked` | A later Git commit failed because signing configuration is broken, not because author identity is missing. |
+
+Using one vocabulary keeps setup reports, API responses, CLI output, and UI copy
+aligned while still allowing each surface to render user-friendly prose.
 
 ## UI Implementation Constraints
 
@@ -183,22 +252,29 @@ Shared component candidates likely need ownership across multiple waves:
 - `WorkflowGitRepairPanel` for preserving workflow-start intent while repair
   happens.
 
-The interaction contract from the mockups and handoff should remain stable:
+`WorkflowGitRepairPanel` is a peer primitive, not a setup-wizard-only reuse of
+`SetupGateBox`. It can reuse lower-level visual patterns such as status chips,
+gate copy, and action buttons, but it must live in the workflow-start context
+rather than pulling the user into the setup wizard.
 
-- show global readiness when no workspace is selected,
-- show workspace readiness when a registered workspace is selected,
-- render a not-configured stub when Git itself is missing,
-- hide identity repair controls until Git is available,
-- recheck from the engine after saves and repairs,
-- keep workflow-start context visible when a start action is blocked,
-- allow implementation as a modal or in-place panel if the original intent is
-  preserved.
+`Topbar` is listed only because the setup Git step remains inside the existing
+setup page shell. No new topbar indicator is part of this architecture.
 
-The existing dark petrol/gold design language remains authoritative. The HTML
-mockups are structural references, not pixel-perfect specifications.
+The cross-surface UI contract is: show the correct readiness mode, use a
+not-configured stub when Git is missing, recheck after saves and repairs, and
+preserve workflow-start context when a start action is blocked. More detailed
+visual guidance stays in the UI handoff and mockups.
+
+## Test Boundary
+
+Unit tests can cover pure validation, state mapping, and presentation decisions,
+but Git configuration reads and writes should also be exercised against real
+Git binaries in ephemeral temporary repositories. That integration boundary is
+important because path derivation, repo-local config, global config isolation,
+and partial repair behavior are the failure modes this project is meant to make
+reliable.
 
 ## Dependencies
 
 No new runtime or UI packages are required by the architecture. The feature
 uses existing Node, Git, SQLite, Engine API, Next.js, and React surfaces.
-
