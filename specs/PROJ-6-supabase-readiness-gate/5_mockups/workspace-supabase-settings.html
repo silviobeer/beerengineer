@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PROJ-6 Mockup - Workspace Supabase Settings</title>
+  <style>
+    :root { --bg:#0b1517; --panel:#122024; --panel2:#0f1b1e; --border:#1a2f33; --border2:#2a4348; --text:#f0ebe0; --muted:#8fa0a4; --gold:#d4a843; --petrol:#5fb6c2; --danger:#c4603d; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); font-family:Inter, ui-sans-serif, system-ui, sans-serif; }
+    a { color:inherit; }
+    .mockup { display:flex; justify-content:space-between; gap:1rem; padding:.75rem 1rem; border-bottom:1px solid var(--border); background:#071012; color:var(--muted); font-size:.82rem; }
+    .mono { font-family:"JetBrains Mono", ui-monospace, SFMono-Regular, monospace; }
+    .topbar { position:sticky; top:0; z-index:2; display:flex; justify-content:space-between; align-items:center; gap:1rem; padding:.55rem .8rem; border-bottom:1px solid var(--border); background:rgba(11,21,23,.95); }
+    .nav { display:flex; align-items:center; gap:.5rem; color:var(--muted); font-size:.78rem; }
+    .nav a, .switcher, .button, .chip { border:1px solid var(--border2); background:var(--panel); text-decoration:none; }
+    .nav a, .switcher { padding:.38rem .55rem; }
+    .nav a.active { border-color:var(--gold); color:var(--gold); background:rgba(212,168,67,.12); }
+    .brand { color:var(--muted); font-size:.72rem; letter-spacing:.16em; }
+    main { width:min(1160px, calc(100vw - 2rem)); margin:0 auto; padding:1.2rem 0 2rem; }
+    .page-head { display:flex; justify-content:space-between; align-items:flex-start; gap:1rem; margin-bottom:1rem; }
+    h1, h2, h3 { margin:0; font-family:"Space Grotesk", Inter, sans-serif; letter-spacing:0; }
+    h1 { font-size:1.65rem; }
+    h2 { font-size:1.08rem; }
+    h3 { font-size:.94rem; }
+    p { margin:.25rem 0 0; }
+    .muted { color:var(--muted); }
+    .layout { display:grid; grid-template-columns:220px minmax(0,1fr); gap:1rem; align-items:start; }
+    .side { display:grid; gap:.45rem; }
+    .side a { border:1px solid var(--border); color:var(--muted); text-decoration:none; padding:.55rem .65rem; }
+    .side a.active { color:var(--gold); border-color:var(--gold); background:rgba(212,168,67,.12); }
+    .stack { display:grid; gap:1rem; }
+    .panel { border:1px solid var(--border); background:var(--panel); padding:.9rem; }
+    .panel.subtle { background:var(--panel2); }
+    .panel.warn { border-color:#7a5e20; background:rgba(58,44,14,.34); }
+    .panel.ok { border-color:#0e5a65; background:rgba(6,44,50,.42); }
+    .grid { display:grid; gap:.8rem; }
+    .grid.two { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    .grid.three { grid-template-columns:repeat(3,minmax(0,1fr)); }
+    .actions { display:flex; flex-wrap:wrap; gap:.45rem; margin-top:.7rem; }
+    .button { cursor:pointer; min-height:2rem; padding:.38rem .65rem; color:var(--text); font-size:.78rem; }
+    .button.primary { border-color:var(--gold); color:var(--gold); background:rgba(212,168,67,.12); }
+    .button.danger { border-color:#7a2f20; color:#e8a68f; }
+    .button[disabled] { opacity:.45; cursor:not-allowed; }
+    .chip { display:inline-flex; align-items:center; padding:.14rem .45rem; font-size:.74rem; }
+    .chip.warn { border-color:var(--gold); color:var(--gold); background:rgba(212,168,67,.12); }
+    .chip.ok { border-color:#0e5a65; color:var(--petrol); background:rgba(44,149,164,.12); }
+    .chip.muted { color:var(--muted); }
+    .check { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:.65rem; align-items:start; padding:.65rem; border:1px solid var(--border); background:var(--panel2); }
+    .dot { width:.55rem; height:.55rem; margin-top:.35rem; border-radius:50%; background:var(--gold); box-shadow:0 0 6px rgba(212,168,67,.45); }
+    .dot.ok { background:var(--petrol); box-shadow:none; }
+    .form { display:grid; gap:.7rem; margin-top:.75rem; }
+    label { display:grid; gap:.25rem; color:var(--muted); font-size:.84rem; }
+    input, select { width:100%; border:1px solid var(--border2); background:#0b1517; color:var(--text); padding:.58rem; font:inherit; }
+    .states { display:grid; gap:.9rem; }
+    .state-title { color:var(--muted); font-size:.8rem; text-transform:uppercase; letter-spacing:.08em; }
+    .source { display:inline-block; margin-top:.4rem; color:var(--muted); font-size:.72rem; }
+    .steps { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:.45rem; margin-top:.7rem; }
+    .step { border:1px solid var(--border); background:var(--panel2); padding:.55rem; font-size:.78rem; }
+    @media (max-width:760px) { .mockup, .page-head { display:grid; } .layout, .grid.two, .grid.three, .steps { grid-template-columns:1fr; } .brand { display:none; } main { width:min(100vw - 1rem, 430px); } }
+  </style>
+</head>
+<body>
+  <div class="mockup">
+    <span class="mono">PROJ-6 mockup - workspace Supabase settings</span>
+    <span><a href="sitemap.html">Sitemap</a> / <a href="board-blocked-run.html">Blocked run</a></span>
+  </div>
+  <header class="topbar">
+    <div class="nav">
+      <span class="switcher mono">workspace: alpha</span>
+      <a href="#">Setup</a>
+      <a href="#">App settings</a>
+      <a class="active" href="#">Workspace settings</a>
+    </div>
+    <span class="brand mono">beerengineer_</span>
+  </header>
+  <main>
+    <div class="page-head">
+      <div>
+        <p class="mono muted">/w/alpha/settings#supabase</p>
+        <h1>Workspace settings</h1>
+        <p class="muted">Supabase setup is scoped to workspace alpha. Values are resolved server-side.</p>
+      </div>
+      <a class="button" href="../2_visual-companion/layout-decision.md">Visual decision</a>
+    </div>
+
+    <div class="layout">
+      <nav class="side" aria-label="Workspace settings sections">
+        <a href="#">Overview</a>
+        <a class="active" href="#supabase">Supabase</a>
+        <a href="#">Git</a>
+        <a href="#">Runs</a>
+      </nav>
+
+      <div class="stack" id="supabase">
+        <section class="panel warn">
+          <p class="state-title">[Normal State]</p>
+          <h2>[New candidate: SupabaseReadinessSummary] Supabase readiness blocked</h2>
+          <p class="muted">This workspace has DB-relevant planned waves. Complete every missing setup action before retrying the blocked run.</p>
+          <div class="actions">
+            <a class="button primary" href="#setup-inputs">Go to paste inputs</a>
+            <button class="button">Recheck readiness</button>
+            <button class="button" disabled>Retry run</button>
+          </div>
+          <span class="source">Source: Concept/Core Behavior and Visual Companion selected direction.</span>
+        </section>
+
+        <section class="panel">
+          <h2>[Reuse: StatusChip] Readiness checklist</h2>
+          <div class="grid" style="margin-top:.75rem">
+            <div class="check"><span class="dot"></span><div><strong>Management token</strong><p class="muted">Missing app-level token.</p></div><span class="chip warn">Blocked</span></div>
+            <div class="check"><span class="dot"></span><div><strong>Workspace project ref</strong><p class="muted">No project connected to workspace alpha.</p></div><span class="chip warn">Blocked</span></div>
+            <div class="check"><span class="dot"></span><div><strong>Persistent test branch</strong><p class="muted">Create or attach after access is valid.</p></div><span class="chip muted">Waiting</span></div>
+          </div>
+        </section>
+
+        <section class="panel subtle" id="setup-inputs">
+          <h2>[Reuse: SupabaseSetupCard + SecretMaintenanceRow] Setup inputs</h2>
+          <p class="muted">Paste required Supabase values here. The token uses the dedicated Supabase connect/rotate path, not the generic secret handler.</p>
+          <div class="form">
+            <label>Supabase project ref <input placeholder="Paste project ref, e.g. abcdefghijklmnopqrst" /></label>
+            <label>Supabase Management API token <input type="password" placeholder="Paste sbp_... token" /></label>
+            <label>Persistent test branch <select><option>Create beerengineer-alpha-test after validation</option><option>Attach an existing branch</option></select></label>
+            <div class="actions">
+              <button class="button primary" data-success>Validate token + connect project</button>
+              <button class="button">Create / attach branch</button>
+              <button class="button" disabled>Retry run</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>[Reuse: InstallationOptionCard pattern] Manual Supabase checklist</h2>
+          <div class="grid three" style="margin-top:.75rem">
+            <div class="panel subtle"><strong>Create/select project</strong><p class="muted">Choose region and provider settings in Supabase.</p></div>
+            <div class="panel subtle"><strong>Enable branching</strong><p class="muted">Confirm the project plan supports branch databases.</p></div>
+            <div class="panel subtle"><strong>Copy credentials</strong><p class="muted">Bring project ref and management token back here.</p></div>
+          </div>
+        </section>
+
+        <section class="panel ok" id="connected-state">
+          <p class="state-title">[Success State]</p>
+          <h2>[Reuse: BranchLifecycleStepper] Ready to retry</h2>
+          <div class="grid three" style="margin-top:.75rem">
+            <p><span class="muted">Project ref</span><br><span class="mono">abcdefghijklmnopqrst</span></p>
+            <p><span class="muted">Token</span><br>Present and authorized</p>
+            <p><span class="muted">Persistent branch</span><br><span class="chip ok">ACTIVE_HEALTHY</span></p>
+          </div>
+          <div class="steps">
+            <div class="step">Project connected</div>
+            <div class="step">Token authorized</div>
+            <div class="step">Branch healthy</div>
+            <div class="step">Run can retry</div>
+          </div>
+          <div class="actions"><button class="button primary">Retry blocked run</button><button class="button">Refresh preflight</button></div>
+        </section>
+
+        <section class="states">
+          <div class="panel">
+            <p class="state-title">[Empty State]</p>
+            <h2>Supabase is not configured</h2>
+            <p class="muted">Show a not-configured stub and the visible paste inputs. Do not show connected cleanup/protection controls yet.</p>
+          </div>
+          <div class="panel">
+            <p class="state-title">[Loading State]</p>
+            <h2>Checking Supabase readiness</h2>
+            <p class="muted">Token and project access are being validated. Persistent branch health is polling for ACTIVE_HEALTHY.</p>
+          </div>
+          <div class="panel warn">
+            <p class="state-title">[Error State]</p>
+            <h2>Token cannot access this workspace project</h2>
+            <p class="muted">Show redacted provider message first, then offer Rotate management token or Re-authorize project access.</p>
+            <div class="actions"><button class="button primary">Rotate management token</button><button class="button">Recheck readiness</button></div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
+  <script>
+    document.querySelector("[data-success]").addEventListener("click", () => {
+      document.getElementById("connected-state").scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  </script>
+</body>
+</html>

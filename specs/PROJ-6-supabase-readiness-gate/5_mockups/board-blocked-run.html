@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PROJ-6 Mockup - Blocked Run Entry</title>
+  <style>
+    :root { --bg:#0b1517; --panel:#122024; --panel2:#0f1b1e; --border:#1a2f33; --border2:#2a4348; --text:#f0ebe0; --muted:#8fa0a4; --gold:#d4a843; --petrol:#5fb6c2; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); font-family:Inter, ui-sans-serif, system-ui, sans-serif; }
+    a { color:inherit; }
+    .mockup { display:flex; justify-content:space-between; gap:1rem; padding:.75rem 1rem; border-bottom:1px solid var(--border); background:#071012; color:var(--muted); font-size:.82rem; }
+    .mono { font-family:"JetBrains Mono", ui-monospace, SFMono-Regular, monospace; }
+    .topbar { position:sticky; top:0; z-index:2; display:flex; justify-content:space-between; align-items:center; gap:1rem; padding:.55rem .8rem; border-bottom:1px solid var(--border); background:rgba(11,21,23,.95); }
+    .nav { display:flex; align-items:center; gap:.5rem; color:var(--muted); font-size:.78rem; }
+    .nav a, .switcher, .button, .chip { border:1px solid var(--border2); background:var(--panel); text-decoration:none; }
+    .nav a, .switcher { padding:.38rem .55rem; }
+    .nav a.active { border-color:var(--gold); color:var(--gold); background:rgba(212,168,67,.12); }
+    .brand { color:var(--muted); font-size:.72rem; letter-spacing:.16em; }
+    main { width:min(1220px, calc(100vw - 2rem)); margin:0 auto; padding:1.2rem 0 2rem; }
+    h1, h2, h3 { margin:0; font-family:"Space Grotesk", Inter, sans-serif; }
+    h1 { font-size:1.55rem; }
+    h2 { font-size:1.05rem; }
+    h3 { font-size:.95rem; }
+    p { margin:.25rem 0 0; }
+    .muted { color:var(--muted); }
+    .board { display:grid; grid-template-columns:repeat(4,minmax(220px,1fr)); gap:.85rem; overflow-x:auto; margin-top:1rem; }
+    .column { border:1px solid var(--border); background:#0f1b1e; padding:.75rem; min-height:23rem; }
+    .column-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:.65rem; color:var(--muted); font-size:.8rem; }
+    .card { border:1px solid var(--border); background:rgba(18,32,36,.8); padding:.75rem; margin-bottom:.65rem; }
+    .card.blocked { border-color:#7a5e20; background:rgba(58,44,14,.28); }
+    .chip { display:inline-flex; padding:.14rem .45rem; font-size:.72rem; color:var(--muted); }
+    .chip.warn { border-color:var(--gold); color:var(--gold); background:rgba(212,168,67,.12); }
+    .chip.ok { border-color:#0e5a65; color:var(--petrol); background:rgba(44,149,164,.12); }
+    .button { cursor:pointer; padding:.38rem .65rem; color:var(--text); font-size:.78rem; }
+    .button.primary { border-color:var(--gold); color:var(--gold); background:rgba(212,168,67,.12); }
+    .button[disabled] { opacity:.45; cursor:not-allowed; }
+    .actions { display:flex; flex-wrap:wrap; gap:.45rem; margin-top:.7rem; }
+    .panel { border:1px solid var(--border); background:var(--panel); padding:.9rem; margin-top:1rem; }
+    .panel.warn { border-color:#7a5e20; background:rgba(58,44,14,.34); }
+    .check { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:.6rem; align-items:start; padding:.55rem 0; border-top:1px solid var(--border); }
+    .check:first-child { border-top:0; }
+    .dot { width:.5rem; height:.5rem; margin-top:.35rem; border-radius:50%; background:var(--gold); box-shadow:0 0 6px rgba(212,168,67,.45); }
+    .state-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.85rem; margin-top:1rem; }
+    .state-title { color:var(--muted); font-size:.78rem; text-transform:uppercase; letter-spacing:.08em; }
+    .source { display:inline-block; margin-top:.45rem; color:var(--muted); font-size:.72rem; }
+    @media (max-width:820px) { main { width:min(100vw - 1rem, 430px); } .mockup { display:grid; } .brand { display:none; } .board, .state-grid { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+  <div class="mockup">
+    <span class="mono">PROJ-6 mockup - blocked run entry</span>
+    <span><a href="sitemap.html">Sitemap</a> / <a href="workspace-supabase-settings.html#supabase">Workspace settings</a></span>
+  </div>
+  <header class="topbar">
+    <div class="nav">
+      <span class="switcher mono">workspace: alpha</span>
+      <a href="#">Setup</a>
+      <a href="#">App settings</a>
+      <a class="active" href="#">Board</a>
+    </div>
+    <span class="brand mono">beerengineer_</span>
+  </header>
+  <main>
+    <p class="mono muted">/w/alpha</p>
+    <h1>Board</h1>
+    <p class="muted">Compact blocker keeps item context visible and sends repair to workspace settings.</p>
+
+    <section class="board" aria-label="Kanban board">
+      <div class="column">
+        <div class="column-head"><span>Idea</span><span>1</span></div>
+        <article class="card"><span class="chip">Idea</span><h3>Improve copy</h3><p class="muted">Non-DB item.</p></article>
+      </div>
+      <div class="column">
+        <div class="column-head"><span>Implementation</span><span>1</span></div>
+        <article class="card blocked">
+          <span class="chip warn">Blocked</span>
+          <h3>Supabase Greenfield Fixes</h3>
+          <p class="muted">DB-relevant waves cannot start until workspace alpha is Supabase-ready.</p>
+          <div class="actions">
+            <button class="button primary" data-show-blocker>Show blocker</button>
+            <a class="button" href="workspace-supabase-settings.html#supabase">Open workspace settings</a>
+          </div>
+        </article>
+      </div>
+      <div class="column">
+        <div class="column-head"><span>Merge</span><span>1</span></div>
+        <article class="card"><span class="chip">Review</span><h3>Git readiness</h3><p class="muted">Existing PROJ-5 item.</p></article>
+      </div>
+      <div class="column">
+        <div class="column-head"><span>Done</span><span>1</span></div>
+        <article class="card"><span class="chip ok">Done</span><h3>Setup wizard</h3><p class="muted">Completed item.</p></article>
+      </div>
+    </section>
+
+    <section id="blocker-panel" class="panel warn" hidden>
+      <p class="state-title">[Normal State]</p>
+      <h2>[New candidate: SupabaseBlockedRunPanel] Supabase setup required</h2>
+      <p class="muted">All missing actions are visible here, but setup inputs live in workspace settings.</p>
+      <div class="check"><span class="dot"></span><div><strong>Store management token</strong><p class="muted">App-level token is missing.</p></div><span class="chip warn">Blocked</span></div>
+      <div class="check"><span class="dot"></span><div><strong>Connect Supabase project</strong><p class="muted">Workspace alpha has no project ref.</p></div><span class="chip warn">Blocked</span></div>
+      <div class="check"><span class="dot"></span><div><strong>Create persistent test branch</strong><p class="muted">Will be available after token and project validation.</p></div><span class="chip">Waiting</span></div>
+      <div class="actions">
+        <a class="button primary" href="workspace-supabase-settings.html#supabase">Open /w/alpha/settings#supabase</a>
+        <button class="button" disabled>Retry run</button>
+      </div>
+      <span class="source">Source: Visual Companion selected direction, Approach A with compact C.</span>
+    </section>
+
+    <section class="state-grid">
+      <div class="panel">
+        <p class="state-title">[Empty State]</p>
+        <h2>No blocked Supabase runs</h2>
+        <p class="muted">Board cards render normally; no Supabase blocker panel is shown.</p>
+      </div>
+      <div class="panel">
+        <p class="state-title">[Loading State]</p>
+        <h2>Checking run readiness</h2>
+        <p class="muted">Start action is waiting for engine readiness response before execution begins.</p>
+      </div>
+      <div class="panel warn">
+        <p class="state-title">[Error State]</p>
+        <h2>Readiness check failed</h2>
+        <p class="muted">Show redacted provider message and keep the workspace settings link available.</p>
+      </div>
+    </section>
+  </main>
+  <script>
+    document.querySelector("[data-show-blocker]").addEventListener("click", () => {
+      const panel = document.getElementById("blocker-panel");
+      panel.hidden = false;
+      panel.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  </script>
+</body>
+</html>
