@@ -453,3 +453,9 @@
 - Build: PASS (`npm run typecheck`)
 - CodeRabbit: FAIL — 1 `major` finding in `apps/ui/components/settings/WorkspaceSettingsPage.tsx`; the UI exposed Create vs Attach branch selection but did not send the selected mode to the backend.
 - Fix: send `mode` from the workspace settings UI, forward it through the Next proxy, and have the engine route pass attach/create intent to persistent branch setup.
+
+### Wave 4 Gate — PASSED (2026-05-06T17:48:53+02:00)
+- [x] Ralph: 7 AC commands green
+- [x] Build: `npm run typecheck`
+- [x] CodeRabbit: 0 non-advisory findings (advisory severities: minor,medium,low)
+- [x] Smoke: /w/alpha/settings#supabase
