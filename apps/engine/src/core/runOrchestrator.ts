@@ -10,6 +10,14 @@ import { persistWorkflowRunState } from "./stageRuntime.js"
 import type { SupabaseWorkflowHook } from "./supabase/workflowHook.js"
 import type { SupabaseAdapter } from "./supabase/types.js"
 import type { SupabaseHandoffClient } from "./supabase/handoffWriter.js"
+import {
+  claimWorkerLease,
+  defaultWorkerInstanceId,
+  startWorkerLeaseHeartbeat,
+  type WorkerLeaseHeartbeat,
+  type WorkerLeaseScheduler,
+} from "./workerLease.js"
+import type { WorkerOwnerKind } from "../db/repositories.js"
 
 export { attachDbSync, type AttachDbSyncOptions } from "./dbSync.js"
 /* c8 ignore next -- pure re-export */
@@ -31,6 +39,9 @@ export function prepareRun(
     workspaceKey?: string
     workspaceName?: string
     owner?: "cli" | "api"
+    workerInstanceId?: string
+    workerLeaseClock?: () => number
+    workerLeaseScheduler?: WorkerLeaseScheduler
     itemId?: string
     resume?: WorkflowResumeInput
     /** Forwarded to `attachRunSubscribers`; see `AttachDbSyncOptions.onItemColumnChanged`. */
@@ -67,12 +78,27 @@ export function prepareRun(
       })
   const workspaceId = itemRow.workspace_id
   const workspaceFsId = workflowWorkspaceId(itemRow)
+  const workerOwnerKind: WorkerOwnerKind = opts.owner ?? "api"
+  const workerInstanceId = opts.workerInstanceId ?? defaultWorkerInstanceId(workerOwnerKind)
   const runRow = repos.createRun({
     workspaceId,
     itemId: itemRow.id,
     title: item.title,
-    owner: opts.owner ?? "api",
+    owner: workerOwnerKind,
     workspaceFsId,
+  })
+  claimWorkerLease(repos, {
+    runId: runRow.id,
+    workerInstanceId,
+    workerOwnerKind,
+    now: opts.workerLeaseClock?.(),
+  })
+  let heartbeat: WorkerLeaseHeartbeat | null = startWorkerLeaseHeartbeat(repos, {
+    runId: runRow.id,
+    workerInstanceId,
+    workerOwnerKind,
+    now: opts.workerLeaseClock,
+    scheduler: opts.workerLeaseScheduler,
   })
 
   const bus = io.bus ?? createBus()
@@ -133,7 +159,7 @@ export function prepareRun(
               },
             )
             const finalRun = repos.getRun(runRow.id)
-            if (finalRun?.recovery_status === "blocked") return
+            if (finalRun?.recovery_status) return
             await persistWorkflowRunState(
               { workspaceId, runId: runRow.id, workspaceRoot: workspaceRow?.root_path ?? undefined },
               finalRun?.current_stage ?? "handoff",
@@ -149,7 +175,7 @@ export function prepareRun(
           } catch (err) {
             const message = (err as Error).message
             const finalRun = repos.getRun(runRow.id)
-            if (finalRun?.recovery_status !== "blocked") {
+            if (!finalRun?.recovery_status) {
               await persistWorkflowRunState(
                 { workspaceId, runId: runRow.id, workspaceRoot: workspaceRow?.root_path ?? undefined },
                 finalRun?.current_stage ?? "execution",
@@ -169,6 +195,8 @@ export function prepareRun(
         })
       )
     } finally {
+      heartbeat?.stop()
+      heartbeat = null
       detach()
     }
   }
@@ -185,6 +213,9 @@ export async function runWorkflowWithSync(
     workspaceKey?: string
     workspaceName?: string
     owner?: "cli" | "api"
+    workerInstanceId?: string
+    workerLeaseClock?: () => number
+    workerLeaseScheduler?: WorkerLeaseScheduler
     itemId?: string
     resume?: WorkflowResumeInput
   } = {}

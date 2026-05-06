@@ -11,9 +11,15 @@ import { layout, type WorkflowContext } from "./workspaceLayout.js"
 import { persistWorkflowRunState } from "./stageRuntime.js"
 import { resolveWorkflowContextForRun } from "./workflowContextResolver.js"
 import type { EventBus } from "./bus.js"
-import type { ExternalRemediationRow, Repos, RunRow } from "../db/repositories.js"
+import type { ExternalRemediationRow, Repos, RunRow, WorkerOwnerKind } from "../db/repositories.js"
 import { attachRunSubscribers, resolveWorkflowLlmOptions } from "./runSubscribers.js"
 import { preparedImportSourceSnapshotDir } from "./preparedImport.js"
+import {
+  claimWorkerLease,
+  defaultWorkerInstanceId,
+  startWorkerLeaseHeartbeat,
+  type WorkerLeaseScheduler,
+} from "./workerLease.js"
 
 /** Returned by load(). Centralizes the decision about whether a run can be resumed. */
 export type ResumeReadiness =
@@ -159,6 +165,10 @@ export type PerformResumeInput = {
   io: WorkflowIO & { bus?: EventBus }
   runId: string
   remediation: ExternalRemediationRow
+  workerOwnerKind?: WorkerOwnerKind
+  workerInstanceId?: string
+  workerLeaseClock?: () => number
+  workerLeaseScheduler?: WorkerLeaseScheduler
   /** Forwarded to `attachRunSubscribers` → `attachDbSync`. See `AttachDbSyncOptions.onItemColumnChanged`. */
   onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
 }
@@ -183,6 +193,21 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
       throw new Error("performResume: io must be bus-backed (runService.buildApiIo / createCliIO)")
     }
     const bus = input.io.bus
+    const workerOwnerKind = input.workerOwnerKind ?? run.owner
+    const workerInstanceId = input.workerInstanceId ?? defaultWorkerInstanceId(workerOwnerKind)
+    claimWorkerLease(input.repos, {
+      runId: run.id,
+      workerInstanceId,
+      workerOwnerKind,
+      now: input.workerLeaseClock?.(),
+    })
+    const heartbeat = startWorkerLeaseHeartbeat(input.repos, {
+      runId: run.id,
+      workerInstanceId,
+      workerOwnerKind,
+      now: input.workerLeaseClock,
+      scheduler: input.workerLeaseScheduler,
+    })
     const detach = attachRunSubscribers(bus, input.repos, { runId: run.id, itemId: run.item_id }, { onItemColumnChanged: input.onItemColumnChanged })
 
     let eventScope: WorkflowResumeInput["scope"] = { type: "run", runId: run.id }
@@ -235,32 +260,37 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
               },
             )
             const finalRun = input.repos.getRun(run.id)
-            await persistWorkflowRunState(
-              ctx,
-              finalRun?.current_stage ?? "handoff",
-              "completed",
-            )
-            bus.emit({ type: "run_finished", runId: run.id, itemId: run.item_id, title: run.title, status: "completed" })
+            if (!finalRun?.recovery_status) {
+              await persistWorkflowRunState(
+                ctx,
+                finalRun?.current_stage ?? "handoff",
+                "completed",
+              )
+              bus.emit({ type: "run_finished", runId: run.id, itemId: run.item_id, title: run.title, status: "completed" })
+            }
           } catch (err) {
             const finalRun = input.repos.getRun(run.id)
-            await persistWorkflowRunState(
-              ctx,
-              finalRun?.current_stage ?? run.current_stage ?? "execution",
-              "failed",
-            )
-            bus.emit({
-              type: "run_finished",
-              runId: run.id,
-              itemId: run.item_id,
-              title: run.title,
-              status: "failed",
-              error: (err as Error).message,
-            })
+            if (!finalRun?.recovery_status) {
+              await persistWorkflowRunState(
+                ctx,
+                finalRun?.current_stage ?? run.current_stage ?? "execution",
+                "failed",
+              )
+              bus.emit({
+                type: "run_finished",
+                runId: run.id,
+                itemId: run.item_id,
+                title: run.title,
+                status: "failed",
+                error: (err as Error).message,
+              })
+            }
             throw err
           }
         }),
       )
     } finally {
+      heartbeat.stop()
       detach()
     }
   } finally {

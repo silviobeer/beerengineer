@@ -53,6 +53,7 @@ Status: in progress
 - GREEN: `npm run test:file --workspace=@beerengineer/engine -- test/workerLease.test.ts` passed 5 tests.
 - Related regression: `npm run test:file --workspace=@beerengineer/engine -- test/reposOwnerAndIds.test.ts` passed 5 tests.
 - Typecheck: `npm run typecheck` passed.
+- Agent notes: wrote `apps/engine/src/core/agent.md` with worker lease scheduler/background-runner testing guidance.
 - Wave gate attempt 1: AC checks and build passed; CodeRabbit step failed before review because `wave-1-start-PROJ-7` was missing. Recreated the tag at `BASE_SHA`.
 
 ### Ralph Iteration 1
@@ -107,3 +108,96 @@ Status: in progress
 - [x] Build: `npm run typecheck`
 - [x] CodeRabbit: 0 non-advisory findings (advisory severities: medium,low)
 - [x] Smoke: backend-only
+
+---
+
+## Wave 2
+
+Status: in progress
+
+- Prior gate verified: `### Wave 1 Gate — PASSED`
+- Wave base tag: `wave-2-start-PROJ-7` at `9e8c4c9`
+
+## PROJ-7-PRD-1-US-1: CLI durable worker ownership — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 2.1 CLI Start And Resume Lease Claim | ✓ | ✓ | ✓ |
+| 2.2 CLI Heartbeat Loop | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-1 | CLI workflow start records worker ownership before the workflow enters its first executable stage. | ✓ |
+| AC-2 | CLI workflow resume records a new worker claim on the same run row before resumed workflow side effects proceed. | ✓ |
+| AC-3 | CLI-owned runs record `worker_owner_kind = cli`. | ✓ |
+| AC-4 | CLI-owned active runs refresh `worker_heartbeat_at` every 30 seconds during normal long-running work. | ✓ |
+| AC-5 | A public CLI acceptance test verifies the documented CLI command changes run ownership and heartbeat state end to end. | ✓ |
+
+## PROJ-7-PRD-1-US-2: API durable worker ownership — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 2.3 API Engine Instance And Start Claim | ✓ | ✓ | ✓ |
+| 2.4 API Heartbeat Loop | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-6 | API-created workflow runs record worker ownership before the create/start endpoint returns an accepted response. | ✓ |
+| AC-7 | API-created workflow runs record `worker_owner_kind = api`. | ✓ |
+| AC-8 | API-created workflow runs record the current API engine instance id in `worker_instance_id`. | ✓ |
+| AC-9 | API-owned active runs refresh `worker_heartbeat_at` every 30 seconds during normal long-running work. | ✓ |
+| AC-10 | An API acceptance test verifies that a successful start response always corresponds to a run row with active worker ownership. | ✓ |
+
+## PROJ-7-PRD-1-US-4: Heartbeat failure policy — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 2.5 Heartbeat Failure Policy | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-16 | A single heartbeat write failure is retried on the next 30-second cadence. | ✓ |
+| AC-17 | A run remains active after one or two consecutive heartbeat write failures when the worker still owns the lease. | ✓ |
+| AC-18 | After three consecutive heartbeat write failures, the worker marks its own run failed/recoverable if it can. | ✓ |
+| AC-19 | If heartbeat refresh reports that ownership no longer belongs to the worker, the worker marks the run failed/recoverable and stops workflow execution if it can. | ✓ |
+| AC-20 | Heartbeat failure behavior is covered for at least one CLI path and one API-owned path. | ✓ |
+
+## PROJ-7-PRD-1-US-5: Production caller coverage — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 2.6 Production Caller Coverage Check | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-21 | Worker lease registration has a production caller in CLI workflow start. | ✓ |
+| AC-22 | Worker lease registration has a production caller in CLI workflow resume. | ✓ |
+| AC-23 | Worker lease registration has a production caller in API workflow start. | ✓ |
+| AC-24 | Worker lease registration has a production caller in API workflow resume. | ✓ |
+| AC-25 | Code review can identify production call sites for every new worker lease lifecycle primitive introduced by this PRD. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+
+### TDD Notes
+- RED: `npm run test:file --workspace=@beerengineer/engine -- test/workerLeaseCli.test.ts test/workerLeaseApi.test.ts test/workerLeaseHeartbeat.test.ts test/workerLeaseProductionCallers.test.ts` failed because start/resume claims and `startWorkerLeaseHeartbeat` are not implemented yet.
+- GREEN: `npm run test:file --workspace=@beerengineer/engine -- test/workerLeaseCli.test.ts test/workerLeaseApi.test.ts test/workerLeaseHeartbeat.test.ts test/workerLeaseProductionCallers.test.ts` passed 7 tests.
+- Public CLI acceptance: `npm run test:file --workspace=@beerengineer/engine -- test/cli-actions.test.ts` passed 5 tests.
+- API regression: `npm run test:file --workspace=@beerengineer/engine -- test/apiIntegration.test.ts` passed 35 tests.
+- Typecheck: `npm run typecheck` passed.
+
+### Ralph Iteration 1
+- Command: wave-2 targeted worker lease tests plus `cli-actions.test.ts`, `apiIntegration.test.ts`, and `npm run typecheck`
+- Result: PASS
+- AC-1..AC-5: PASS — CLI start/resume claims and heartbeat behavior are covered by `workerLeaseCli.test.ts`, `cli-actions.test.ts`, and production caller checks.
+- AC-6..AC-10: PASS — API start ownership, API instance id, heartbeat refresh, and accepted-response ownership are covered by `workerLeaseApi.test.ts`.
+- AC-16..AC-20: PASS — retry, third-failure recovery, lost-ownership recovery, and CLI/API owner coverage are covered by `workerLeaseHeartbeat.test.ts`.
+- AC-21..AC-25: PASS — production caller coverage is enforced by `workerLeaseProductionCallers.test.ts`.
