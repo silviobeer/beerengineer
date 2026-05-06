@@ -406,6 +406,7 @@ export function persistWorkflowEvent(repos: Repos, event: WorkflowEvent): void {
       persistRunResumedEvent(repos, track, event)
       break
     case "stage_started":
+      if (repos.listStageRunsForRun(runId).some(stageRun => stageRun.id === event.stageRunId)) break
       persistStageStartedEvent(repos, track, event, {
         persistedStageIds,
         persistedProjectIds,

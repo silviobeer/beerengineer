@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdtempSync } from "node:fs"
+import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -10,15 +10,25 @@ import { claimWorkerLease } from "../src/core/workerLease.js"
 import { persistWorkflowEvent } from "../src/core/dbSync.js"
 
 function fixture() {
-  const db = initDatabase(join(mkdtempSync(join(tmpdir(), "be2-worker-resume-")), "test.sqlite"))
+  const dir = mkdtempSync(join(tmpdir(), "be2-worker-resume-"))
+  const db = initDatabase(join(dir, "test.sqlite"))
   const repos = new Repos(db)
   const ws = repos.upsertWorkspace({ key: "test", name: "Test" })
   const item = repos.createItem({ workspaceId: ws.id, title: "Resume worker", description: "" })
-  return { db, repos, ws, item }
+  return {
+    db,
+    repos,
+    ws,
+    item,
+    close() {
+      db.close()
+      rmSync(dir, { recursive: true, force: true })
+    },
+  }
 }
 
 test("lost-worker resume reuses the same run row, claims a fresh lease, and re-enters running projection", () => {
-  const { db, repos, ws, item } = fixture()
+  const { repos, ws, item, close } = fixture()
   try {
     const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "api" })
     repos.updateRun(run.id, {
@@ -59,6 +69,14 @@ test("lost-worker resume reuses the same run row, claims a fresh lease, and re-e
       stageKey: "requirements",
       stageRunId: "stage-resume",
     })
+    persistWorkflowEvent(repos, {
+      type: "stage_started",
+      runId: run.id,
+      itemId: item.id,
+      title: item.title,
+      stageKey: "requirements",
+      stageRunId: "stage-resume",
+    })
 
     const runs = repos.listRunsForItem(item.id)
     assert.equal(runs.length, 1)
@@ -67,11 +85,12 @@ test("lost-worker resume reuses the same run row, claims a fresh lease, and re-e
     assert.equal(runs[0]?.worker_heartbeat_at, 1_700_000_100_000)
     assert.equal(runs[0]?.recovery_status, null)
     assert.equal(repos.latestExternalRemediation(run.id)?.id, remediation.id)
+    assert.equal(repos.listStageRunsForRun(run.id).length, 1)
     const projected = repos.getItem(item.id)
     assert.equal(projected?.current_column, "requirements")
     assert.equal(projected?.phase_status, "running")
     assert.equal(projected?.current_stage, "requirements")
   } finally {
-    db.close()
+    close()
   }
 })

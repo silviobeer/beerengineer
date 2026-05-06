@@ -335,11 +335,13 @@ Status: in progress
 ## PROJ-7-PRD-3-US-1: Health liveness contract — complete
 
 ### Tasks
+
 | Task | Tests Written | Tests Passing | Done |
 |------|:---:|:---:|:---:|
 | 4.1 Health Contract Guard | ✓ | ✓ | ✓ |
 
 ### Acceptance Criteria
+
 | AC | Text | Verified |
 |----|------|:---:|
 | AC-1 | `GET /health` returns process/service identity and uptime. | ✓ |
@@ -351,11 +353,13 @@ Status: in progress
 ## PROJ-7-PRD-3-US-2: Workflow readiness endpoint — complete
 
 ### Tasks
+
 | Task | Tests Written | Tests Passing | Done |
 |------|:---:|:---:|:---:|
 | 4.2 Workflow Readiness Endpoint | ✓ | ✓ | ✓ |
 
 ### Acceptance Criteria
+
 | AC | Text | Verified |
 |----|------|:---:|
 | AC-6 | `GET /ready` reports unavailable before startup recovery completes. | ✓ |
@@ -367,11 +371,13 @@ Status: in progress
 ## PROJ-7-PRD-2-US-5: Graceful shutdown recovery — complete
 
 ### Tasks
+
 | Task | Tests Written | Tests Passing | Done |
 |------|:---:|:---:|:---:|
 | 4.3 Graceful Shutdown Recovery | ✓ | ✓ | ✓ |
 
 ### Acceptance Criteria
+
 | AC | Text | Verified |
 |----|------|:---:|
 | AC-21 | `/ready` becomes unavailable immediately when graceful shutdown starts. | ✓ |
@@ -383,11 +389,13 @@ Status: in progress
 ## PROJ-7-PRD-3-US-3: Readiness sentinel probe — complete
 
 ### Tasks
+
 | Task | Tests Written | Tests Passing | Done |
 |------|:---:|:---:|:---:|
 | 4.4 Readiness Sentinel Probe | ✓ | ✓ | ✓ |
 
 ### Acceptance Criteria
+
 | AC | Text | Verified |
 |----|------|:---:|
 | AC-11 | `/ready` exercises a DB write path suitable for validating worker lease writes. | ✓ |
@@ -399,11 +407,13 @@ Status: in progress
 ## PROJ-7-PRD-3-US-4: Same-run resume lease — complete
 
 ### Tasks
+
 | Task | Tests Written | Tests Passing | Done |
 |------|:---:|:---:|:---:|
 | 4.5 Same-Run Resume Lease | ✓ | ✓ | ✓ |
 
 ### Acceptance Criteria
+
 | AC | Text | Verified |
 |----|------|:---:|
 | AC-16 | Resume does not create a replacement run solely for lost-worker recovery. | ✓ |
@@ -415,12 +425,14 @@ Status: in progress
 ## PROJ-7-PRD-3-US-5: Recovery user message projection and rendering — complete
 
 ### Tasks
+
 | Task | Tests Written | Tests Passing | Done |
 |------|:---:|:---:|:---:|
 | 4.6 Recovery User Message Projection | ✓ | ✓ | ✓ |
 | 4.7 Existing UI Surface Rendering | ✓ | ✓ | ✓ |
 
 ### Acceptance Criteria
+
 | AC | Text | Verified |
 |----|------|:---:|
 | AC-21 | Board/item/run DTOs expose a projected `recovery_user_message` when lost-worker recovery exists. | ✓ |
@@ -432,11 +444,13 @@ Status: in progress
 ## PROJ-7-PRD-3-US-6: API contract documentation — complete
 
 ### Tasks
+
 | Task | Tests Written | Tests Passing | Done |
 |------|:---:|:---:|:---:|
 | 4.8 API Contract And Docs | ✓ | ✓ | ✓ |
 
 ### Acceptance Criteria
+
 | AC | Text | Verified |
 |----|------|:---:|
 | AC-26 | `GET /ready` is documented in OpenAPI. | ✓ |
@@ -455,3 +469,4 @@ Status: in progress
 - Typecheck: `npm run typecheck` passed.
 - Wave gate attempt 1: Ralph AC checks and build passed; CodeRabbit reached review phase but timed out after the configured 600s. Increased `timeouts.coderabbit_seconds` to 1200 and rerunning the official gate.
 - Wave gate attempt 2: Ralph AC checks and build passed; CodeRabbit found a valid minor issue in `test/api/ready.test.ts` where the DB-failure test double-closed the fixture DB. Fixed the fixture cleanup to be idempotent.
+- Wave gate attempt 3: Ralph AC checks and build passed; CodeRabbit found valid minor issues in `workerLeaseResume.test.ts`, Wave 4 progress table spacing, and `persistWorkflowEvent` duplicate stage handling. Fixed all three.
