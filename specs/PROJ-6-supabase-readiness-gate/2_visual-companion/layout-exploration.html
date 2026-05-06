@@ -241,9 +241,8 @@
               <h2>[New candidate: SupabaseReadinessSummary] Blocked before execution</h2>
               <p class="muted">DB-relevant waves require Supabase setup for workspace alpha.</p>
               <div class="actions" style="margin-top:.6rem">
-                <button class="button primary" data-open-form="connect-a">Connect Supabase project</button>
-                <button class="button">Store management token</button>
-                <button class="button">Create persistent test branch</button>
+                <a class="button primary" href="#setup-inputs-a">Go to setup inputs</a>
+                <button class="button">Recheck readiness</button>
                 <button class="button" disabled>Retry run</button>
               </div>
               <span class="source">Source: Concept - Core Behavior, Workspace Settings UI</span>
@@ -258,14 +257,20 @@
               </div>
             </section>
 
-            <section id="connect-a" class="panel subtle" hidden>
-              <h2>[Reuse: SupabaseSetupCard] Connect project</h2>
-              <p class="muted">Manual provider work is summarized above the form, with links in the final UI.</p>
+            <section id="setup-inputs-a" class="panel subtle">
+              <h2>[Reuse: SupabaseSetupCard + SecretMaintenanceRow] Setup inputs</h2>
+              <p class="muted">Paste the values here after creating/selecting the Supabase project manually. Token storage uses the dedicated Supabase path, not generic secrets.</p>
               <div class="form">
-                <label>Project ref <input value="abcdefghijklmnopqrst" /></label>
-                <label>Management token <input type="password" value="sbp_..." /></label>
-                <div class="actions"><button class="button primary">Validate and connect</button><button class="button ghost" data-close-form="connect-a">Cancel</button></div>
+                <label>Supabase project ref <input value="" placeholder="Paste project ref, e.g. abcdefghijklmnopqrst" /></label>
+                <label>Supabase Management API token <input type="password" value="" placeholder="Paste sbp_... token" /></label>
+                <label>Persistent test branch <select><option>Create beerengineer-alpha-test branch after validation</option><option>Attach an existing branch</option></select></label>
+                <div class="actions">
+                  <button class="button primary">Validate token + connect project</button>
+                  <button class="button">Create / attach branch</button>
+                  <button class="button" disabled>Retry run</button>
+                </div>
               </div>
+              <span class="source">User feedback: paste fields must be visible on the scannable page.</span>
             </section>
 
             <section class="panel ok">
@@ -365,12 +370,6 @@
       tabs.forEach((item) => item.classList.toggle("active", item === tab));
       approaches.forEach((item) => item.classList.toggle("active", item.id === id));
     }));
-    document.querySelectorAll("[data-open-form]").forEach((button) => {
-      button.addEventListener("click", () => document.getElementById(button.dataset.openForm).hidden = false);
-    });
-    document.querySelectorAll("[data-close-form]").forEach((button) => {
-      button.addEventListener("click", () => document.getElementById(button.dataset.closeForm).hidden = true);
-    });
     document.querySelector("[data-toggle-mobile]").addEventListener("click", () => {
       document.getElementById("frame").classList.toggle("mobile");
     });

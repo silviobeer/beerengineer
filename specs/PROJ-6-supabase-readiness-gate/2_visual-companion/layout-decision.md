@@ -71,6 +71,10 @@ The user selected the scannable settings-page direction over a step-by-step wiza
 
 Use Approach A as the primary workspace settings direction, with a compact piece of Approach C for the blocked-run origin state. The repair surface should be `/w/:key/settings#supabase`, where the operator sees a readiness summary, all missing actions, and inline setup controls. The board/item blocker should stay small and send the user to the correct workspace settings instead of duplicating setup.
 
+## Selected Direction
+
+Approach A is selected: a scannable workspace settings page at `/w/:key/settings#supabase`, plus a compact board/item blocker that deep-links to that page. Required paste/input fields are visible on the Supabase settings page rather than hidden behind a separate wizard step: Supabase project ref, Supabase Management API token, and persistent test branch create/attach choice.
+
 ## Shape Brief
 
 - Primary job: make Supabase readiness fixable for the exact workspace whose DB-relevant run is blocked.
@@ -90,7 +94,4 @@ Use Approach A as the primary workspace settings direction, with a compact piece
 
 ## Open Decisions For User
 
-- Choose whether Approach A alone is enough, or whether it should explicitly include the compact board blocker from Approach C.
-- Decide whether the Supabase readiness section should keep action forms inline by default or reveal forms only after clicking an action.
 - Decide whether long manual Supabase guidance should be always visible, collapsible, or linked from the readiness summary.
-
