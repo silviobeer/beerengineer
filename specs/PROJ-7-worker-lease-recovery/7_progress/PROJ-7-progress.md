@@ -201,3 +201,9 @@ Status: in progress
 - AC-6..AC-10: PASS — API start ownership, API instance id, heartbeat refresh, and accepted-response ownership are covered by `workerLeaseApi.test.ts`.
 - AC-16..AC-20: PASS — retry, third-failure recovery, lost-ownership recovery, and CLI/API owner coverage are covered by `workerLeaseHeartbeat.test.ts`.
 - AC-21..AC-25: PASS — production caller coverage is enforced by `workerLeaseProductionCallers.test.ts`.
+
+### Wave 2 Gate — PASSED (2026-05-06T17:08:45+02:00)
+- [x] Ralph: 20 AC commands green
+- [x] Build: `npm run typecheck`
+- [x] CodeRabbit: 0 non-advisory findings (advisory severities: medium,low)
+- [x] Smoke: backend-only
