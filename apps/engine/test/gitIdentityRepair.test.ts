@@ -85,7 +85,11 @@ test("AC-23 unavailable workspace roots fail clearly without git side effects", 
   }
 })
 
-test("AC-18 AC-19 partial repair returns fresh name/email state and is not successful", () => {
+test("AC-18 AC-19 partial repair returns fresh name/email state and is not successful", (t) => {
+  if (process.platform === "win32") {
+    t.skip("bash script not available on Windows")
+    return
+  }
   const paths = tempRepoEnv()
   try {
     const nameFile = join(paths.dir, "name.txt")

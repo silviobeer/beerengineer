@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import type { ActionResult, ItemAction, ItemDetailDTO, WorkflowGitBlockedActionResult } from "./types";
+import { ITEM_ACTIONS, type ActionResult, type ItemAction, type ItemDetailDTO, type WorkflowGitBlockedActionResult } from "./types";
 
 function engineBaseUrl(): string {
   return process.env.ENGINE_URL ?? "http://localhost:4100";
@@ -68,6 +68,18 @@ function pickString(
   return null;
 }
 
+function isItemAction(value: unknown): value is ItemAction {
+  return typeof value === "string" && (ITEM_ACTIONS as readonly string[]).includes(value);
+}
+
+function isWorkflowGitError(value: unknown): value is WorkflowGitBlockedActionResult["error"] {
+  return value === "git_not_installed"
+    || value === "git_identity_missing"
+    || value === "workspace_not_found"
+    || value === "workspace_not_git_repo"
+    || value === "workspace_path_unavailable";
+}
+
 export async function postItemAction(
   itemId: string,
   action: string,
@@ -94,17 +106,19 @@ export async function postItemAction(
   }
   if (parsed.code === "workflow_git_blocked" && typeof parsed.message === "string") {
     const blocked = parsed as Partial<WorkflowGitBlockedActionResult> & { error?: unknown; intent?: { action?: unknown; itemId?: unknown } };
+    const fallbackAction: ItemAction = isItemAction(action) ? action : "start_brainstorm";
+    const safeAction = isItemAction(blocked.intent?.action) ? blocked.intent.action : fallbackAction;
     return {
       ok: false,
       status: res.status,
-      error: error as WorkflowGitBlockedActionResult["error"],
+      error: isWorkflowGitError(blocked.error) ? blocked.error : "git_identity_missing",
       code: "workflow_git_blocked",
       message: parsed.message,
       readiness: blocked.readiness,
       repair: blocked.repair,
       intent: {
         itemId: typeof blocked.intent?.itemId === "string" ? blocked.intent.itemId : itemId,
-        action: typeof blocked.intent?.action === "string" ? blocked.intent.action as ItemAction : action as ItemAction,
+        action: safeAction,
       },
     };
   }

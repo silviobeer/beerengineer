@@ -27,7 +27,8 @@ function git(cwd: string, args: string[], env: NodeJS.ProcessEnv): string {
 }
 
 function initRepo(path: string, env: NodeJS.ProcessEnv): void {
-  spawnSync("git", ["init", "-b", "main", path], { env, encoding: "utf8" })
+  const result = spawnSync("git", ["init", "-b", "main", path], { env, encoding: "utf8" })
+  assert.equal(result.status, 0, result.stderr || result.stdout)
 }
 
 test("AC-1 AC-2 AC-3 workflow start blocks missing git identity before run side effects", () => {
