@@ -41,17 +41,35 @@ function verifyRequiredScripts(workspaceRoot: string, requiredScripts: string[])
   }
   const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as { scripts?: Record<string, string> }
   const failures: string[] = []
-  for (const script of requiredScripts) {
-    if (!packageJson.scripts?.[script]) {
-      failures.push(`missing required package.json script: ${script}`)
+  for (const requiredScript of requiredScripts) {
+    const scriptName = packageScriptName(requiredScript)
+    if (!packageJson.scripts?.[scriptName]) {
+      failures.push(`missing required package.json script: ${scriptName}`)
       continue
     }
-    const run = runShell(`npm run ${script}`, workspaceRoot)
+    const run = runShell(npmScriptCommand(scriptName), workspaceRoot)
     if (!run.ok) {
-      failures.push(`script failed: npm run ${script}${formatCommandOutput(run.output)}`)
+      failures.push(`script failed: ${npmScriptCommand(scriptName)}${formatCommandOutput(run.output)}`)
     }
   }
   return failures
+}
+
+function packageScriptName(requiredScript: string): string {
+  const trimmed = requiredScript.trim()
+  const npmRun = /^npm\s+run\s+(?:--\s+)?([^\s]+)$/.exec(trimmed)
+  if (npmRun) return npmRun[1]
+  const npmLifecycle = /^npm\s+([^\s]+)$/.exec(trimmed)
+  if (npmLifecycle) return npmLifecycle[1]
+  return trimmed
+}
+
+function npmScriptCommand(scriptName: string): string {
+  return `npm run ${shellQuote(scriptName)}`
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
 function verifyPostChecks(workspaceRoot: string, postChecks: string[]): string[] {
