@@ -21,6 +21,51 @@ async function parseJson<T>(response: Response): Promise<T | null> {
   return response.json().catch(() => null) as Promise<T | null>;
 }
 
+function modeButtonClass(active: boolean): string {
+  return active
+    ? "border border-amber-400 bg-amber-500 px-2 py-1 text-zinc-950"
+    : "border border-zinc-700 bg-zinc-900 px-2 py-1 text-zinc-200";
+}
+
+function repairUnavailableMessage(error: WorkflowGitBlockedActionResult["error"]): string {
+  if (error === "git_not_installed") return "Install Git, then recheck setup before starting this workflow.";
+  return "Reconnect this workspace to a valid Git repository before starting this workflow.";
+}
+
+function RepairModeToggle({
+  mode,
+  onMode,
+}: Readonly<{ mode: "default" | "custom"; onMode: (mode: "default" | "custom") => void }>) {
+  return (
+    <div className="flex flex-wrap gap-2 text-xs">
+      <button
+        type="button"
+        aria-pressed={mode === "default"}
+        onClick={() => onMode("default")}
+        className={modeButtonClass(mode === "default")}
+      >
+        Use saved app identity
+      </button>
+      <button
+        type="button"
+        aria-pressed={mode === "custom"}
+        onClick={() => onMode("custom")}
+        className={modeButtonClass(mode === "custom")}
+      >
+        Enter another identity
+      </button>
+    </div>
+  );
+}
+
+function WorkflowRepairUnavailable({ error }: Readonly<{ error: WorkflowGitBlockedActionResult["error"] }>) {
+  return (
+    <div className="border border-zinc-800 bg-zinc-950/40 p-3 text-zinc-400">
+      {repairUnavailableMessage(error)}
+    </div>
+  );
+}
+
 export function WorkflowGitRepairPanel({
   blocker,
   itemTitle,
@@ -128,26 +173,7 @@ export function WorkflowGitRepairPanel({
 
       {canRepair ? (
         <div className="space-y-3">
-          {appDefault ? (
-            <div className="flex flex-wrap gap-2 text-xs">
-              <button
-                type="button"
-                aria-pressed={mode === "default"}
-                onClick={() => setMode("default")}
-                className={mode === "default" ? "border border-amber-400 bg-amber-500 px-2 py-1 text-zinc-950" : "border border-zinc-700 bg-zinc-900 px-2 py-1 text-zinc-200"}
-              >
-                Use saved app identity
-              </button>
-              <button
-                type="button"
-                aria-pressed={mode === "custom"}
-                onClick={() => setMode("custom")}
-                className={mode === "custom" ? "border border-amber-400 bg-amber-500 px-2 py-1 text-zinc-950" : "border border-zinc-700 bg-zinc-900 px-2 py-1 text-zinc-200"}
-              >
-                Enter another identity
-              </button>
-            </div>
-          ) : null}
+          {appDefault ? <RepairModeToggle mode={mode} onMode={setMode} /> : null}
           <label className="flex items-start gap-2 text-xs text-zinc-300">
             <input
               type="checkbox"
@@ -168,11 +194,7 @@ export function WorkflowGitRepairPanel({
           />
         </div>
       ) : (
-        <div className="border border-zinc-800 bg-zinc-950/40 p-3 text-zinc-400">
-          {blocker.error === "git_not_installed"
-            ? "Install Git, then recheck setup before starting this workflow."
-            : "Reconnect this workspace to a valid Git repository before starting this workflow."}
-        </div>
+        <WorkflowRepairUnavailable error={blocker.error} />
       )}
 
       {alert ? (

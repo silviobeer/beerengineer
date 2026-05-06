@@ -45,18 +45,15 @@ export async function runSetupFlow(options: SetupRunOptions = {}): Promise<numbe
   let report = await refreshSetupReport(options)
 
   if (needsInitialization(report)) {
-    const initialized = initializeProvisionedState(options.overrides)
-    if (!initialized.ok) return 1
-    console.log("  App setup initialized config, data dir, and database.")
+    if (!initializeSetupState(options.overrides)) return 1
     report = await refreshSetupReport(options)
   }
 
-  const interactive = !options.noInteractive && (options.deps?.isInteractive?.() ?? Boolean(process.stdin.isTTY && process.stdout.isTTY))
+  const interactive = isInteractiveSetup(options)
   let launch: SetupLaunchResult | undefined
   const provisionedConfig = interactive ? tryBuildProvisionedConfig(resolved) : null
   if (interactive && provisionedConfig) {
-    const config = provisionedConfig
-    launch = await launchInteractiveSetup(config, options.deps)
+    launch = await launchInteractiveSetup(provisionedConfig, options.deps)
   }
 
   if (interactive && provisionedConfig && shouldOfferGitIdentityPrompt(options, launch)) {
@@ -69,18 +66,35 @@ export async function runSetupFlow(options: SetupRunOptions = {}): Promise<numbe
     report = await refreshSetupReport(options)
   }
 
-  while (interactive && report.overall === "blocked") {
-    const requiredSatisfied = report.groups.filter(group => group.level === "required").every(group => group.satisfied)
-    const action = await promptRetryAction(requiredSatisfied)
-    if (action === "quit") return doctorExitCode(report)
-    if (action === "skip") break
-    const next = await generateSetupReport(options)
-    diffPrint(report, next)
-    report = next
-  }
+  report = await retryBlockedSetup(report, options, interactive)
 
   if (report.overall !== "blocked") console.log("  Next: beerengineer workspace add <path>")
   return doctorExitCode(report)
+}
+
+function initializeSetupState(overrides: SetupOverrides | undefined): boolean {
+  const initialized = initializeProvisionedState(overrides)
+  if (!initialized.ok) return false
+  console.log("  App setup initialized config, data dir, and database.")
+  return true
+}
+
+function isInteractiveSetup(options: SetupRunOptions): boolean {
+  if (options.noInteractive) return false
+  return options.deps?.isInteractive?.() ?? Boolean(process.stdin.isTTY && process.stdout.isTTY)
+}
+
+async function retryBlockedSetup(report: SetupReport, options: SetupRunOptions, interactive: boolean): Promise<SetupReport> {
+  let current = report
+  while (interactive && current.overall === "blocked") {
+    const requiredSatisfied = current.groups.filter(group => group.level === "required").every(group => group.satisfied)
+    const action = await promptRetryAction(requiredSatisfied)
+    if (action === "quit" || action === "skip") return current
+    const next = await generateSetupReport(options)
+    diffPrint(current, next)
+    current = next
+  }
+  return current
 }
 
 async function launchInteractiveSetup(config: AppConfig, deps: SetupFlowDeps | undefined): Promise<SetupLaunchResult> {

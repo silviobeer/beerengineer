@@ -152,11 +152,7 @@ function openSetupUrl(url: string): SetupLaunchResult["browser"] {
   const headless = isHeadlessEnvironment()
   if (headless) return { status: "printed", detail: headless }
 
-  const command = process.platform === "darwin"
-    ? "open"
-    : process.platform === "win32"
-      ? "cmd"
-      : "xdg-open"
+  const command = browserOpenCommand()
   const args = process.platform === "win32" ? ["/c", "start", "", url] : [url]
   const result = spawnSync(command, args, { stdio: "ignore", timeout: 5_000 })
   if (result.status === 0 && !result.error) return { status: "opened" }
@@ -164,6 +160,12 @@ function openSetupUrl(url: string): SetupLaunchResult["browser"] {
     status: "printed",
     detail: result.error?.message ?? "Browser opener was not available.",
   }
+}
+
+function browserOpenCommand(): string {
+  if (process.platform === "darwin") return "open"
+  if (process.platform === "win32") return "cmd"
+  return "xdg-open"
 }
 
 export async function launchSetupExperience(config: Pick<AppConfig, "enginePort" | "publicBaseUrl">): Promise<SetupLaunchResult> {

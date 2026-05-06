@@ -118,7 +118,7 @@ export type WorkspaceGitRepairResult =
     }
 
 const BASIC_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-const GITHUB_NOREPLY_RE = /^(?:[0-9]+\+)?[A-Za-z0-9-]+@users\.noreply\.github\.com$/i
+const GITHUB_NOREPLY_RE = /^(?:[0-9]+\+)?[a-z0-9-]+@users\.noreply\.github\.com$/i
 
 function normalizeString(value: unknown): string {
   return typeof value === "string" ? value.trim() : ""
@@ -213,6 +213,16 @@ function appDefaultAsEffective(identity: GitIdentityDefault | undefined): Effect
   }
 }
 
+function completeRepoIdentity(identity: GitIdentityValue): EffectiveGitIdentity | undefined {
+  if (!identityComplete(identity)) return undefined
+  return { source: "repo-local", name: identity.name, email: identity.email }
+}
+
+function completeGlobalIdentity(identity: GitIdentityValue): EffectiveGitIdentity | undefined {
+  if (!identityComplete(identity)) return undefined
+  return { source: "global", name: identity.name, email: identity.email }
+}
+
 function configIdentity(config: AppConfig): GitIdentityDefault | undefined {
   return config.gitIdentityDefault
 }
@@ -254,6 +264,19 @@ function checkGitRepo(rootPath: string, options: GitCommandOptions): boolean {
   return result.status === 0 && result.stdout.trim() === "true"
 }
 
+function workspaceGitBlocker(
+  git: GlobalGitReadiness["git"],
+  pathAvailable: boolean,
+  isGitRepo: boolean,
+  effectiveIdentity: EffectiveGitIdentity | undefined,
+): GitIdentityBlocker | undefined {
+  if (!git.installed) return { error: "git_not_installed", message: "Git is not installed or not available on PATH." }
+  if (!pathAvailable) return { error: "workspace_path_unavailable", message: "Registered workspace path is unavailable." }
+  if (!isGitRepo) return { error: "workspace_not_git_repo", message: "Registered workspace is not a Git repository." }
+  if (!effectiveIdentity) return { error: "identity_missing", message: "Git identity is missing for this workspace. Repair by applying a local identity." }
+  return undefined
+}
+
 export function readWorkspaceGitReadiness(
   workspace: WorkspaceGitReadinessTarget,
   config: AppConfig,
@@ -266,24 +289,9 @@ export function readWorkspaceGitReadiness(
   const repoLocalIdentity = isGitRepo && rootPath ? readRepoLocalIdentity(rootPath, options) : {}
   const globalIdentity = git.installed ? readGlobalIdentity(options) : {}
   const appDefaultIdentity = configIdentity(config)
-  const effectiveIdentity = identityComplete(repoLocalIdentity)
-    ? { source: "repo-local" as const, name: repoLocalIdentity.name, email: repoLocalIdentity.email }
-    : identityComplete(globalIdentity)
-      ? { source: "global" as const, name: globalIdentity.name, email: globalIdentity.email }
-      : undefined
+  const effectiveIdentity = completeRepoIdentity(repoLocalIdentity) ?? completeGlobalIdentity(globalIdentity)
   const appRepairAvailable = !effectiveIdentity && Boolean(appDefaultIdentity) && isGitRepo
-  const missingGitBlocker: GitIdentityBlocker | undefined = git.installed
-    ? undefined
-    : { error: "git_not_installed", message: "Git is not installed or not available on PATH." }
-  const missingPathBlocker: GitIdentityBlocker | undefined = git.installed && !pathAvailable
-    ? { error: "workspace_path_unavailable", message: "Registered workspace path is unavailable." }
-    : undefined
-  const nonRepoBlocker: GitIdentityBlocker | undefined = git.installed && pathAvailable && !isGitRepo
-    ? { error: "workspace_not_git_repo", message: "Registered workspace is not a Git repository." }
-    : undefined
-  const missingIdentityBlocker: GitIdentityBlocker | undefined = git.installed && isGitRepo && !effectiveIdentity
-    ? { error: "identity_missing", message: "Git identity is missing for this workspace. Repair by applying a local identity." }
-    : undefined
+  const blocker = workspaceGitBlocker(git, pathAvailable, isGitRepo, effectiveIdentity)
   return {
     mode: "workspace",
     workspace: { id: workspace.id, key: workspace.key },
@@ -297,7 +305,7 @@ export function readWorkspaceGitReadiness(
     setupBlocked: !git.installed,
     workflowBlocked: !git.installed || !isGitRepo || !effectiveIdentity,
     availableActions: appRepairAvailable ? ["repair_workspace_identity"] : [],
-    blocker: missingGitBlocker ?? missingPathBlocker ?? nonRepoBlocker ?? missingIdentityBlocker,
+    blocker,
   }
 }
 

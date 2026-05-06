@@ -18,11 +18,9 @@ function stringField(value: unknown): string | undefined {
 function resolveWorkspaceFromBody(repos: Repos, body: Record<string, unknown>): WorkspaceGitReadinessTarget | null {
   const workspaceId = stringField(body.workspaceId)
   const workspaceKey = stringField(body.workspaceKey)
-  const workspace = workspaceId
-    ? repos.getWorkspace(workspaceId)
-    : workspaceKey
-      ? repos.getWorkspaceByKey(workspaceKey)
-      : undefined
+  let workspace: ReturnType<Repos["getWorkspace"]> | undefined
+  if (workspaceId) workspace = repos.getWorkspace(workspaceId)
+  else if (workspaceKey) workspace = repos.getWorkspaceByKey(workspaceKey)
   if (!workspace) return null
   return {
     id: workspace.id,
@@ -35,11 +33,9 @@ function resolveWorkspaceFromQuery(repos: Repos, url: URL): WorkspaceGitReadines
   const workspaceId = url.searchParams.get("workspaceId")?.trim()
   const workspaceKey = url.searchParams.get("workspaceKey")?.trim()
   if (!workspaceId && !workspaceKey) return null
-  const workspace = workspaceId
-    ? repos.getWorkspace(workspaceId)
-    : workspaceKey
-      ? repos.getWorkspaceByKey(workspaceKey)
-      : undefined
+  let workspace: ReturnType<Repos["getWorkspace"]> | undefined
+  if (workspaceId) workspace = repos.getWorkspace(workspaceId)
+  else if (workspaceKey) workspace = repos.getWorkspaceByKey(workspaceKey)
   if (!workspace) return { id: workspaceId || workspaceKey || "", key: workspaceKey ?? undefined, rootPath: null }
   return {
     id: workspace.id,
@@ -50,6 +46,13 @@ function resolveWorkspaceFromQuery(repos: Repos, url: URL): WorkspaceGitReadines
 
 function bodyObject(body: unknown): Record<string, unknown> {
   return body && typeof body === "object" && !Array.isArray(body) ? body as Record<string, unknown> : {}
+}
+
+function repairStatus(result: ReturnType<typeof repairWorkspaceGitIdentity>): number {
+  if (result.ok) return 200
+  if (result.error === "identity_invalid") return 400
+  if (result.error === "workspace_path_unavailable" || result.error === "workspace_not_git_repo") return 409
+  return 400
 }
 
 export function handleGitReadiness(repos: Repos, config: AppConfig, url: URL, res: ServerResponse): void {
@@ -102,12 +105,5 @@ export async function handleWorkspaceGitIdentityRepair(
     displayName: identity.displayName,
     email: identity.email,
   })
-  const status = result.ok
-    ? 200
-    : result.error === "identity_invalid"
-      ? 400
-      : result.error === "workspace_path_unavailable" || result.error === "workspace_not_git_repo"
-        ? 409
-        : 400
-  json(res, status, result)
+  json(res, repairStatus(result), result)
 }

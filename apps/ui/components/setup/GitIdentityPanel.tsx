@@ -49,6 +49,10 @@ function statusFor(readiness: GitReadiness | null): string {
   return "ok";
 }
 
+function messageRole(message: string): "alert" | "status" {
+  return message.includes("failed") || message.includes("Fix") || message.includes("partially") ? "alert" : "status";
+}
+
 function initialFormIdentity(readiness: GitReadiness | null): Partial<GitIdentityDefault> {
   if (!readiness) return {};
   if (readiness.appDefaultIdentity) return readiness.appDefaultIdentity;
@@ -77,6 +81,100 @@ async function readJson(res: Response): Promise<unknown> {
   }
 }
 
+function GitMissingStub({
+  readiness,
+  busy,
+  onRecheck,
+}: Readonly<{ readiness: GitReadiness; busy: boolean; onRecheck: () => void }>) {
+  return (
+    <div className="space-y-3 border border-zinc-800 bg-zinc-950/40 p-4" data-testid="git-missing-stub">
+      <h3 className="font-display text-lg text-zinc-100">Git is not configured</h3>
+      <p className="text-sm text-zinc-400">{readiness.blocker?.message ?? "Install Git before configuring an identity."}</p>
+      <p className="text-sm text-zinc-400">Install Git, then re-check this setup step.</p>
+      <button
+        type="button"
+        onClick={onRecheck}
+        disabled={busy}
+        className="border border-amber-500 bg-amber-500 px-3 py-2 text-sm font-medium text-zinc-950 disabled:opacity-50"
+      >
+        {busy ? "Checking" : "Re-check Git"}
+      </button>
+    </div>
+  );
+}
+
+function GitReadinessRows({ readiness }: Readonly<{ readiness: GitReadiness }>) {
+  const effective = readiness.effectiveIdentity;
+  const effectiveValue = effective
+    ? `${sourceLabel(effective.source)}: ${effective.name} <${effective.email}>`
+    : readiness.blocker?.message ?? "Blocked";
+  return (
+    <div className="grid gap-3 md:grid-cols-2" data-testid="git-source-rows">
+      <IdentityRow label="Effective source" value={effectiveValue} />
+      {readiness.mode === "workspace" ? <IdentityRow label="Repo-local" value={identityText(readiness.repoLocalIdentity)} /> : null}
+      <IdentityRow label="Global Git" value={identityText(readiness.globalIdentity)} />
+      <IdentityRow label="beerengineer_ default" value={identityText(readiness.appDefaultIdentity)} />
+    </div>
+  );
+}
+
+function GitReadinessNotes({ readiness }: Readonly<{ readiness: GitReadiness }>) {
+  const hasRepoLocalIdentity = readiness.mode === "workspace" && readiness.effectiveIdentity?.source === "repo-local";
+  const usesGlobalIdentity = readiness.effectiveIdentity?.source === "global";
+  return (
+    <>
+      {hasRepoLocalIdentity ? (
+        <p className="text-sm text-emerald-300">Repo-local identity is respected and remains authoritative for this workspace.</p>
+      ) : null}
+      {usesGlobalIdentity ? (
+        <p className="text-sm text-emerald-300">Global Git identity is ready for workflows when no repo-local identity is set.</p>
+      ) : null}
+    </>
+  );
+}
+
+function WorkspaceRepairSection({
+  workspace,
+  repairConfirmed,
+  formIdentity,
+  busy,
+  errors,
+  onConfirm,
+  onSubmit,
+}: Readonly<{
+  workspace: GitIdentityPanelProps["workspace"];
+  repairConfirmed: boolean;
+  formIdentity: Partial<GitIdentityDefault>;
+  busy: boolean;
+  errors: GitIdentityValidationError[];
+  onConfirm: (confirmed: boolean) => void;
+  onSubmit: (identity: { displayName: string; email: string }) => Promise<void>;
+}>) {
+  return (
+    <div className="space-y-3 border border-zinc-800 bg-zinc-950/40 p-4" data-testid="git-workspace-repair">
+      <label className="flex items-start gap-2 text-sm text-zinc-300">
+        <input
+          type="checkbox"
+          className="mt-1"
+          checked={repairConfirmed}
+          onChange={(event) => onConfirm(event.target.checked)}
+        />
+        <span>Confirm writing this identity as repo-local Git config for {workspace?.name ?? workspace?.key ?? "this workspace"}.</span>
+      </label>
+      <GitIdentityForm
+        title="Workspace-local repair"
+        description="The browser sends only the workspace identifier and identity values. The engine resolves the path from server-side state."
+        submitLabel="Apply to this workspace"
+        initialIdentity={formIdentity}
+        busy={busy}
+        disabled={!repairConfirmed}
+        errors={errors}
+        onSubmit={onSubmit}
+      />
+    </div>
+  );
+}
+
 export function GitIdentityPanel({ initialReadiness, workspace = null, error: initialError = null }: Readonly<GitIdentityPanelProps>) {
   const [readiness, setReadiness] = useState(initialReadiness);
   const [busy, setBusy] = useState(false);
@@ -90,7 +188,6 @@ export function GitIdentityPanel({ initialReadiness, workspace = null, error: in
     && readiness.git.installed
     && readiness.availableActions.includes("repair_workspace_identity")
     && readiness.effectiveIdentity?.source !== "repo-local";
-  const hasRepoLocalIdentity = readiness?.mode === "workspace" && readiness.effectiveIdentity?.source === "repo-local";
 
   async function recheck() {
     setBusy(true);
@@ -196,8 +293,6 @@ export function GitIdentityPanel({ initialReadiness, workspace = null, error: in
     );
   }
 
-  const effective = readiness.effectiveIdentity;
-
   return (
     <section className="space-y-5 border border-zinc-800 bg-zinc-900 p-5" data-testid="git-identity-panel">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -212,34 +307,12 @@ export function GitIdentityPanel({ initialReadiness, workspace = null, error: in
       </div>
 
       {!readiness.git.installed ? (
-        <div className="space-y-3 border border-zinc-800 bg-zinc-950/40 p-4" data-testid="git-missing-stub">
-          <h3 className="font-display text-lg text-zinc-100">Git is not configured</h3>
-          <p className="text-sm text-zinc-400">{readiness.blocker?.message ?? "Install Git before configuring an identity."}</p>
-          <p className="text-sm text-zinc-400">Install Git, then re-check this setup step.</p>
-          <button
-            type="button"
-            onClick={recheck}
-            disabled={busy}
-            className="border border-amber-500 bg-amber-500 px-3 py-2 text-sm font-medium text-zinc-950 disabled:opacity-50"
-          >
-            {busy ? "Checking" : "Re-check Git"}
-          </button>
-        </div>
+        <GitMissingStub readiness={readiness} busy={busy} onRecheck={recheck} />
       ) : (
         <>
-          <div className="grid gap-3 md:grid-cols-2" data-testid="git-source-rows">
-            <IdentityRow label="Effective source" value={effective ? `${sourceLabel(effective.source)}: ${effective.name} <${effective.email}>` : readiness.blocker?.message ?? "Blocked"} />
-            {readiness.mode === "workspace" ? <IdentityRow label="Repo-local" value={identityText(readiness.repoLocalIdentity)} /> : null}
-            <IdentityRow label="Global Git" value={identityText(readiness.globalIdentity)} />
-            <IdentityRow label="beerengineer_ default" value={identityText(readiness.appDefaultIdentity)} />
-          </div>
-          {hasRepoLocalIdentity ? (
-            <p className="text-sm text-emerald-300">Repo-local identity is respected and remains authoritative for this workspace.</p>
-          ) : null}
-          {effective?.source === "global" ? (
-            <p className="text-sm text-emerald-300">Global Git identity is ready for workflows when no repo-local identity is set.</p>
-          ) : null}
-          {message ? <p role={message.includes("failed") || message.includes("Fix") || message.includes("partially") ? "alert" : "status"} className="text-sm text-amber-200">{message}</p> : null}
+          <GitReadinessRows readiness={readiness} />
+          <GitReadinessNotes readiness={readiness} />
+          {message ? <p role={messageRole(message)} className="text-sm text-amber-200">{message}</p> : null}
           <GitIdentityForm
             title="beerengineer_ default identity"
             description="Save this in beerengineer_ config only. Global Git config is not changed."
@@ -250,27 +323,15 @@ export function GitIdentityPanel({ initialReadiness, workspace = null, error: in
             onSubmit={saveAppIdentity}
           />
           {canRepairWorkspace ? (
-            <div className="space-y-3 border border-zinc-800 bg-zinc-950/40 p-4" data-testid="git-workspace-repair">
-              <label className="flex items-start gap-2 text-sm text-zinc-300">
-                <input
-                  type="checkbox"
-                  className="mt-1"
-                  checked={repairConfirmed}
-                  onChange={(event) => setRepairConfirmed(event.target.checked)}
-                />
-                <span>Confirm writing this identity as repo-local Git config for {workspace?.name ?? workspace?.key ?? "this workspace"}.</span>
-              </label>
-              <GitIdentityForm
-                title="Workspace-local repair"
-                description="The browser sends only the workspace identifier and identity values. The engine resolves the path from server-side state."
-                submitLabel="Apply to this workspace"
-                initialIdentity={formIdentity}
-                busy={busy}
-                disabled={!repairConfirmed}
-                errors={errors}
-                onSubmit={repairWorkspace}
-              />
-            </div>
+            <WorkspaceRepairSection
+              workspace={workspace}
+              repairConfirmed={repairConfirmed}
+              formIdentity={formIdentity}
+              busy={busy}
+              errors={errors}
+              onConfirm={setRepairConfirmed}
+              onSubmit={repairWorkspace}
+            />
           ) : null}
         </>
       )}
