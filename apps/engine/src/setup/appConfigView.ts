@@ -48,6 +48,7 @@ export type AppConfigView = {
     allowedRoots: string[]
     enginePort: number
     publicBaseUrl?: string
+    gitIdentityDefault?: AppConfig["gitIdentityDefault"]
     llm: {
       provider: AppConfig["llm"]["provider"]
       model: string
@@ -107,6 +108,7 @@ export function getAppConfigView(overrides: SetupOverrides = {}, deps: { repos?:
       allowedRoots: [...config.allowedRoots],
       enginePort: config.enginePort,
       publicBaseUrl: config.publicBaseUrl,
+      gitIdentityDefault: config.gitIdentityDefault,
       llm: {
         provider: config.llm.provider,
         model: config.llm.model,
@@ -191,6 +193,7 @@ function emptyConfigView(): AppConfigView["config"] {
   return {
     allowedRoots: [],
     enginePort: 4100,
+    gitIdentityDefault: undefined,
     llm: {
       provider: "anthropic",
       model: "",

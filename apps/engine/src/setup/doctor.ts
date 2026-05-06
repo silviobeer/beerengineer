@@ -2,6 +2,7 @@ import { KNOWN_GROUP_IDS, readConfigFile, resolveConfigPath, resolveMergedConfig
 import { runBrowserChecks } from "./checks/browser.js"
 import { runCoreChecks } from "./checks/core.js"
 import { runGitHubChecks } from "./checks/github.js"
+import { gitIdentitySetupChecks } from "./gitIdentity.js"
 import { getActiveLlmGroup, runLlmChecks } from "./checks/llm.js"
 import { runNotificationChecks } from "./checks/notifications.js"
 import { runReviewChecks } from "./checks/review.js"
@@ -61,6 +62,7 @@ export async function generateSetupReport(options: DoctorOptions = {}): Promise<
 
   const groupDefs: GroupDefinition[] = [
     { id: "core", label: "Core app checks", level: "required", minOk: 6, active: true, run: () => runCoreChecks(configPath, configState, config) },
+    { id: "git", label: "Git readiness", level: "required", minOk: 1, idealOk: 2, active: true, run: () => Promise.resolve(gitIdentitySetupChecks(config)) },
     { id: "notifications", label: "Notification delivery", level: "optional", minOk: 0, idealOk: telegramEnabled ? 4 : 0, active: true, run: () => runNotificationChecks(config) },
     { id: "vcs.github", label: "GitHub workflows", level: "optional", minOk: 0, idealOk: config?.vcs?.github?.enabled ? 2 : 0, active: true, run: () => runGitHubChecks(Boolean(config?.vcs?.github?.enabled)) },
     { id: "llm.anthropic", label: "Anthropic capability", ...llmGate("llm.anthropic"), active: Boolean(config) && (options.allLlmGroups === true || llmGroup === "llm.anthropic"), run: () => runLlmChecks("anthropic", config as AppConfig) },

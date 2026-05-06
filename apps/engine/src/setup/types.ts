@@ -71,6 +71,11 @@ export type AppConfig = {
   allowedRoots: string[]
   enginePort: number
   publicBaseUrl?: string
+  gitIdentityDefault?: {
+    displayName: string
+    email: string
+    localOnly: boolean
+  }
   llm: {
     provider: LlmProvider
     model: string
@@ -112,6 +117,8 @@ export type SetupOverrides = {
   allowedRoots?: string[]
   enginePort?: number
   publicBaseUrl?: string
+  gitIdentityDefaultDisplayName?: string
+  gitIdentityDefaultEmail?: string
   llmProvider?: LlmProvider
   llmModel?: string
   llmApiKeyRef?: string

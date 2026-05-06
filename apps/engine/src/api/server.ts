@@ -62,6 +62,11 @@ import {
   handleSupabaseSettingsPatch,
 } from "./routes/setup.js"
 import {
+  handleGitIdentitySave,
+  handleGitReadiness,
+  handleWorkspaceGitIdentityRepair,
+} from "./routes/gitIdentity.js"
+import {
   handleUpdateApply,
   handleUpdateCheck,
   handleUpdateHistory,
@@ -276,7 +281,10 @@ function topLevelRouteHandlers(context: RouteContext): Partial<Record<string, ()
     "GET /board": () => handleGetBoard(db, context.url, context.res),
     "GET /setup/status": () => handleSetupStatus(context.url, context.res),
     "GET /setup/config": () => handleSetupConfig(repos, context.res),
+    "GET /setup/git-readiness": () => handleGitReadiness(repos, context.appConfig, context.url, context.res),
     "PATCH /setup/config": () => handleSetupConfigPatch(context.req, context.res),
+    "POST /setup/git-identity": () => handleGitIdentitySave(context.req, context.res),
+    "POST /setup/git-identity/repair": () => handleWorkspaceGitIdentityRepair(repos, context.appConfig, context.req, context.res),
     "POST /setup/init": () => handleSetupInit(context.res),
     "POST /setup/recheck": () => handleSetupRecheck(context.req, context.res),
     "POST /setup/supabase/connect": () => handleSupabaseConnect(repos, context.req, context.res),

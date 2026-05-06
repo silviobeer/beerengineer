@@ -9,6 +9,7 @@ import {
   writeConfigFile,
 } from "./config.js"
 import type { AppConfig, LlmProvider, SetupOverrides } from "./types.js"
+import { validateGitIdentityInput } from "./gitIdentity.js"
 
 export type AppConfigPatchResult = {
   ok: boolean
@@ -110,6 +111,29 @@ function applyPublicUrlPatch({ input, next, saved, rejected }: PatchContext): vo
   })
 }
 
+function applyGitIdentityPatch({ input, next, saved, rejected }: PatchContext): void {
+  if (!("gitIdentityDefault" in input)) return
+  applyField(saved, rejected, "gitIdentityDefault", () => {
+    if (input.gitIdentityDefault === undefined || input.gitIdentityDefault === null || input.gitIdentityDefault === "") {
+      next.gitIdentityDefault = undefined
+      return
+    }
+    if (!isObject(input.gitIdentityDefault)) throw new TypeError("gitIdentityDefault must be an object")
+    const result = validateGitIdentityInput({
+      displayName: input.gitIdentityDefault.displayName,
+      email: input.gitIdentityDefault.email,
+    })
+    if (!result.ok) {
+      throw new TypeError(result.errors.map(error => `${error.field}: ${error.message}`).join("; "))
+    }
+    next.gitIdentityDefault = {
+      displayName: result.identity.displayName,
+      email: result.identity.email,
+      localOnly: result.identity.localOnly,
+    }
+  })
+}
+
 function applyLlmPatch({ input, next, saved, rejected }: PatchContext): void {
   const llm = optionalObject(input.llm)
   if ("provider" in llm) applyField(saved, rejected, "llm.provider", () => { next.llm.provider = parseProvider(llm.provider) })
@@ -204,6 +228,7 @@ export function patchAppConfig(overrides: SetupOverrides = {}, patch: unknown = 
   applyRootPatch(context)
   applyEnginePatch(context)
   applyPublicUrlPatch(context)
+  applyGitIdentityPatch(context)
   applyLlmPatch(context)
   applyVcsPatch(context)
   applyBrowserPatch(context)

@@ -13,6 +13,7 @@ export const CONFIG_SCHEMA_VERSION = 1
 export const REQUIRED_MIGRATION_LEVEL = 1
 export const KNOWN_GROUP_IDS = [
   "core",
+  "git",
   "notifications",
   "vcs.github",
   "llm.anthropic",
@@ -92,6 +93,7 @@ export function defaultAppConfig(): AppConfig {
     allowedRoots: [resolve(homedir(), "projects")],
     enginePort: 4100,
     publicBaseUrl: undefined,
+    gitIdentityDefault: undefined,
     llm: {
       provider: "anthropic",
       model: "claude-opus-4-7",
@@ -240,12 +242,14 @@ function validateConfig(input: unknown): AppConfig {
   const llm = validateLlmConfig(config.llm)
   const defaultHarnessProfile = validateHarnessProfileShape((config.llm as AppConfig["llm"]).defaultHarnessProfile)
   const notifications = validateNotificationsConfig(config.notifications)
+  const gitIdentityDefault = validateGitIdentityDefault(config.gitIdentityDefault)
   return {
     schemaVersion: CONFIG_SCHEMA_VERSION,
     dataDir: core.dataDir,
     allowedRoots: [...core.allowedRoots],
     enginePort: core.enginePort,
     publicBaseUrl,
+    gitIdentityDefault,
     llm: {
       provider: llm.provider,
       model: llm.model,
@@ -262,6 +266,25 @@ function validateConfig(input: unknown): AppConfig {
     browser: {
       enabled: config.browser?.enabled === true,
     },
+  }
+}
+
+function validateGitIdentityDefault(value: unknown): AppConfig["gitIdentityDefault"] {
+  if (value === undefined) return undefined
+  if (!isObject(value)) throw new TypeError("gitIdentityDefault must be an object when set")
+  if (typeof value.displayName !== "string" || value.displayName.trim().length === 0) {
+    throw new TypeError("gitIdentityDefault.displayName must be a non-empty string")
+  }
+  if (typeof value.email !== "string" || value.email.trim().length === 0) {
+    throw new TypeError("gitIdentityDefault.email must be a non-empty string")
+  }
+  if (typeof value.localOnly !== "boolean") {
+    throw new TypeError("gitIdentityDefault.localOnly must be a boolean")
+  }
+  return {
+    displayName: value.displayName.trim(),
+    email: value.email.trim(),
+    localOnly: value.localOnly,
   }
 }
 
@@ -401,6 +424,8 @@ function envOverrides(): SetupOverrides {
     allowedRoots: parseAllowedRoots(process.env.BEERENGINEER_ALLOWED_ROOTS),
     enginePort: Number.isInteger(parsedPort) ? parsedPort : undefined,
     publicBaseUrl: process.env.BEERENGINEER_PUBLIC_BASE_URL,
+    gitIdentityDefaultDisplayName: process.env.BEERENGINEER_GIT_IDENTITY_NAME,
+    gitIdentityDefaultEmail: process.env.BEERENGINEER_GIT_IDENTITY_EMAIL,
     llmProvider: parseProvider(process.env.BEERENGINEER_LLM_PROVIDER),
     llmModel: process.env.BEERENGINEER_LLM_MODEL,
     llmApiKeyRef: process.env.BEERENGINEER_LLM_API_KEY_REF,
@@ -436,6 +461,13 @@ export function resolveMergedConfig(state: ConfigFileState, overrides: SetupOver
     allowedRoots: overrides.allowedRoots ?? base.allowedRoots,
     enginePort: overrides.enginePort ?? base.enginePort,
     publicBaseUrl: overrides.publicBaseUrl ?? base.publicBaseUrl,
+    gitIdentityDefault: overrides.gitIdentityDefaultDisplayName || overrides.gitIdentityDefaultEmail
+      ? {
+          displayName: overrides.gitIdentityDefaultDisplayName ?? base.gitIdentityDefault?.displayName ?? "",
+          email: overrides.gitIdentityDefaultEmail ?? base.gitIdentityDefault?.email ?? "",
+          localOnly: (overrides.gitIdentityDefaultEmail ?? base.gitIdentityDefault?.email ?? "").toLowerCase().endsWith("@local.beerengineer"),
+        }
+      : base.gitIdentityDefault,
     llm: {
       provider: overrides.llmProvider ?? base.llm.provider,
       model: overrides.llmModel ?? base.llm.model,
