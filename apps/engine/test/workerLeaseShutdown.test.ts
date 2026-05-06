@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdtempSync } from "node:fs"
+import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -10,15 +10,16 @@ import { claimWorkerLease } from "../src/core/workerLease.js"
 import { recoverApiRunsForShutdown } from "../src/core/orphanRecovery.js"
 
 function fixture() {
-  const db = initDatabase(join(mkdtempSync(join(tmpdir(), "be2-worker-shutdown-")), "test.sqlite"))
+  const tempDir = mkdtempSync(join(tmpdir(), "be2-worker-shutdown-"))
+  const db = initDatabase(join(tempDir, "test.sqlite"))
   const repos = new Repos(db)
   const ws = repos.upsertWorkspace({ key: "test", name: "Test" })
   const item = repos.createItem({ workspaceId: ws.id, title: "Shutdown recovery", description: "" })
-  return { db, repos, ws, item }
+  return { db, repos, ws, item, tempDir }
 }
 
 test("graceful API shutdown marks only current API-owned active runs recoverable", async () => {
-  const { db, repos, ws, item } = fixture()
+  const { db, repos, ws, item, tempDir } = fixture()
   try {
     const apiRun = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "api", owner: "api" })
     claimWorkerLease(repos, {
@@ -45,5 +46,6 @@ test("graceful API shutdown marks only current API-owned active runs recoverable
     assert.equal(repos.getRun(cliRun.id)?.recovery_status, null)
   } finally {
     db.close()
+    rmSync(tempDir, { recursive: true, force: true })
   }
 })

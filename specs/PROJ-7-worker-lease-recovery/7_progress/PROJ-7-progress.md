@@ -474,3 +474,4 @@ Status: in progress
 - Wave gate attempt 5: A repeated AC run failed once in `test/apiIntegration.test.ts` on the idempotent `/update/apply` replay assertion. Focused rerun of the full integration file passed all 38 tests, including that case, so rerunning the official gate.
 - Wave gate attempt 6: Ralph AC checks and build passed; CodeRabbit returned another pure rate-limit error after the full 540s wait, asking for an additional 4m10s. Updated `scripts/wave-gate.sh` to retry recoverable early-stops multiple times.
 - Wave gate attempt 7: Ralph AC checks, build, and CodeRabbit execution completed; CodeRabbit found valid non-advisory issues in rate-limit wait validation and ambiguous Wave 4 progress AC identifiers. Fixed both.
+- Wave gate attempt 8: Ralph AC checks and build passed; CodeRabbit found a valid temp-dir cleanup issue in `workerLeaseShutdown.test.ts`. Fixed the fixture cleanup.
