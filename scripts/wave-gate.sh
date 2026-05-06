@@ -151,6 +151,10 @@ while true; do
   echo "   ⚠ coderabbit stopped early; retrying (${CR_ATTEMPT}/${CR_RETRIES})"
   if grep -q '"errorType":"rate_limit"' "$CR_OUT" 2>/dev/null; then
     RATE_LIMIT_WAIT_SECONDS="${CODERABBIT_RATE_LIMIT_WAIT_SECONDS:-540}"
+    if [[ ! "$RATE_LIMIT_WAIT_SECONDS" =~ ^[0-9]+$ || "$RATE_LIMIT_WAIT_SECONDS" -le 0 ]]; then
+      echo "   ⚠ invalid CODERABBIT_RATE_LIMIT_WAIT_SECONDS='${CODERABBIT_RATE_LIMIT_WAIT_SECONDS:-}' — using 540s"
+      RATE_LIMIT_WAIT_SECONDS=540
+    fi
     echo "   waiting ${RATE_LIMIT_WAIT_SECONDS}s for coderabbit rate limit recovery"
     sleep "$RATE_LIMIT_WAIT_SECONDS"
   fi

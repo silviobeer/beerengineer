@@ -344,11 +344,11 @@ Status: in progress
 
 | AC | Text | Verified |
 |----|------|:---:|
-| AC-1 | `GET /health` returns process/service identity and uptime. | ✓ |
-| AC-2 | `GET /health` reports basic DB probe status. | ✓ |
-| AC-3 | `GET /health` does not check worker lease registration. | ✓ |
-| AC-4 | `GET /health` does not check Git, LLM, workspace, setup, or Supabase readiness. | ✓ |
-| AC-5 | Existing health endpoint behavior remains backward compatible except for documentation updates required by PROJ-7. | ✓ |
+| PRD-3-AC-1 | `GET /health` returns process/service identity and uptime. | ✓ |
+| PRD-3-AC-2 | `GET /health` reports basic DB probe status. | ✓ |
+| PRD-3-AC-3 | `GET /health` does not check worker lease registration. | ✓ |
+| PRD-3-AC-4 | `GET /health` does not check Git, LLM, workspace, setup, or Supabase readiness. | ✓ |
+| PRD-3-AC-5 | Existing health endpoint behavior remains backward compatible except for documentation updates required by PROJ-7. | ✓ |
 
 ## PROJ-7-PRD-3-US-2: Workflow readiness endpoint — complete
 
@@ -362,11 +362,11 @@ Status: in progress
 
 | AC | Text | Verified |
 |----|------|:---:|
-| AC-6 | `GET /ready` reports unavailable before startup recovery completes. | ✓ |
-| AC-7 | `GET /ready` reports unavailable while graceful shutdown is in flight. | ✓ |
-| AC-8 | `GET /ready` reports unavailable when the DB probe fails. | ✓ |
-| AC-9 | `GET /ready` reports unavailable when the worker lease write path cannot be exercised. | ✓ |
-| AC-10 | `GET /ready` reports available when DB is reachable, startup recovery completed, shutdown is not in flight, and the lease write path succeeds. | ✓ |
+| PRD-3-AC-6 | `GET /ready` reports unavailable before startup recovery completes. | ✓ |
+| PRD-3-AC-7 | `GET /ready` reports unavailable while graceful shutdown is in flight. | ✓ |
+| PRD-3-AC-8 | `GET /ready` reports unavailable when the DB probe fails. | ✓ |
+| PRD-3-AC-9 | `GET /ready` reports unavailable when the worker lease write path cannot be exercised. | ✓ |
+| PRD-3-AC-10 | `GET /ready` reports available when DB is reachable, startup recovery completed, shutdown is not in flight, and the lease write path succeeds. | ✓ |
 
 ## PROJ-7-PRD-2-US-5: Graceful shutdown recovery — complete
 
@@ -380,11 +380,11 @@ Status: in progress
 
 | AC | Text | Verified |
 |----|------|:---:|
-| AC-21 | `/ready` becomes unavailable immediately when graceful shutdown starts. | ✓ |
-| AC-22 | Graceful shutdown best-effort marks active API-owned in-process runs failed/recoverable. | ✓ |
-| AC-23 | Shutdown recovery summaries distinguish graceful shutdown from generic lost-worker startup recovery. | ✓ |
-| AC-24 | Abrupt shutdown is still recoverable on next startup through previous-instance detection. | ✓ |
-| AC-25 | Graceful API shutdown does not mark CLI-owned active runs failed/recoverable solely because the API process exits. | ✓ |
+| PRD-2-AC-21 | `/ready` becomes unavailable immediately when graceful shutdown starts. | ✓ |
+| PRD-2-AC-22 | Graceful shutdown best-effort marks active API-owned in-process runs failed/recoverable. | ✓ |
+| PRD-2-AC-23 | Shutdown recovery summaries distinguish graceful shutdown from generic lost-worker startup recovery. | ✓ |
+| PRD-2-AC-24 | Abrupt shutdown is still recoverable on next startup through previous-instance detection. | ✓ |
+| PRD-2-AC-25 | Graceful API shutdown does not mark CLI-owned active runs failed/recoverable solely because the API process exits. | ✓ |
 
 ## PROJ-7-PRD-3-US-3: Readiness sentinel probe — complete
 
@@ -398,11 +398,11 @@ Status: in progress
 
 | AC | Text | Verified |
 |----|------|:---:|
-| AC-11 | `/ready` exercises a DB write path suitable for validating worker lease writes. | ✓ |
-| AC-12 | `/ready` does not create a run row. | ✓ |
-| AC-13 | `/ready` does not create an item row. | ✓ |
-| AC-14 | Repeated `/ready` calls do not grow workflow history. | ✓ |
-| AC-15 | Readiness tests cover unavailable-before-recovery and available-after-recovery states. | ✓ |
+| PRD-3-AC-11 | `/ready` exercises a DB write path suitable for validating worker lease writes. | ✓ |
+| PRD-3-AC-12 | `/ready` does not create a run row. | ✓ |
+| PRD-3-AC-13 | `/ready` does not create an item row. | ✓ |
+| PRD-3-AC-14 | Repeated `/ready` calls do not grow workflow history. | ✓ |
+| PRD-3-AC-15 | Readiness tests cover unavailable-before-recovery and available-after-recovery states. | ✓ |
 
 ## PROJ-7-PRD-3-US-4: Same-run resume lease — complete
 
@@ -416,11 +416,11 @@ Status: in progress
 
 | AC | Text | Verified |
 |----|------|:---:|
-| AC-16 | Resume does not create a replacement run solely for lost-worker recovery. | ✓ |
-| AC-17 | Resume records remediation using the existing run recovery flow. | ✓ |
-| AC-18 | Resume claims a new worker lease on the same run row. | ✓ |
-| AC-19 | Recovery state is cleared or updated when the resumed workflow re-enters according to existing resume semantics. | ✓ |
-| AC-20 | The authoritative item moves from `*/failed` to `*/running` through normal stage/run projection after resumed work becomes active. | ✓ |
+| PRD-3-AC-16 | Resume does not create a replacement run solely for lost-worker recovery. | ✓ |
+| PRD-3-AC-17 | Resume records remediation using the existing run recovery flow. | ✓ |
+| PRD-3-AC-18 | Resume claims a new worker lease on the same run row. | ✓ |
+| PRD-3-AC-19 | Recovery state is cleared or updated when the resumed workflow re-enters according to existing resume semantics. | ✓ |
+| PRD-3-AC-20 | The authoritative item moves from `*/failed` to `*/running` through normal stage/run projection after resumed work becomes active. | ✓ |
 
 ## PROJ-7-PRD-3-US-5: Recovery user message projection and rendering — complete
 
@@ -435,11 +435,11 @@ Status: in progress
 
 | AC | Text | Verified |
 |----|------|:---:|
-| AC-21 | Board/item/run DTOs expose a projected `recovery_user_message` when lost-worker recovery exists. | ✓ |
-| AC-22 | `recovery_user_message` is derived from recovery status, cause, and summary without requiring a new DB column. | ✓ |
-| AC-23 | Existing board card or item modal surfaces can render the user-facing recovery message. | ✓ |
-| AC-24 | Existing run recovery surfaces can render the user-facing recovery message. | ✓ |
-| AC-25 | No new worker/recovery dashboard is required for PROJ-7. | ✓ |
+| PRD-3-AC-21 | Board/item/run DTOs expose a projected `recovery_user_message` when lost-worker recovery exists. | ✓ |
+| PRD-3-AC-22 | `recovery_user_message` is derived from recovery status, cause, and summary without requiring a new DB column. | ✓ |
+| PRD-3-AC-23 | Existing board card or item modal surfaces can render the user-facing recovery message. | ✓ |
+| PRD-3-AC-24 | Existing run recovery surfaces can render the user-facing recovery message. | ✓ |
+| PRD-3-AC-25 | No new worker/recovery dashboard is required for PROJ-7. | ✓ |
 
 ## PROJ-7-PRD-3-US-6: API contract documentation — complete
 
@@ -453,11 +453,11 @@ Status: in progress
 
 | AC | Text | Verified |
 |----|------|:---:|
-| AC-26 | `GET /ready` is documented in OpenAPI. | ✓ |
-| AC-27 | `GET /ready` is documented in `docs/api-contract.md`. | ✓ |
-| AC-28 | `recovery_user_message` is documented for every board/item/run DTO where it is exposed. | ✓ |
-| AC-29 | `/health` documentation remains limited to process/DB liveness. | ✓ |
-| AC-30 | UI callers prefer engine-provided `recovery_user_message` before generic fallback copy. | ✓ |
+| PRD-3-AC-26 | `GET /ready` is documented in OpenAPI. | ✓ |
+| PRD-3-AC-27 | `GET /ready` is documented in `docs/api-contract.md`. | ✓ |
+| PRD-3-AC-28 | `recovery_user_message` is documented for every board/item/run DTO where it is exposed. | ✓ |
+| PRD-3-AC-29 | `/health` documentation remains limited to process/DB liveness. | ✓ |
+| PRD-3-AC-30 | UI callers prefer engine-provided `recovery_user_message` before generic fallback copy. | ✓ |
 
 ### Ralph Loop
 - Iterations: 1
@@ -473,3 +473,4 @@ Status: in progress
 - Wave gate attempt 4: Ralph AC checks and build passed; CodeRabbit returned a pure rate-limit error asking for 8m07s, but the gate retry only waited 35s. Updated `scripts/wave-gate.sh` to wait 540s by default on CodeRabbit rate-limit retry.
 - Wave gate attempt 5: A repeated AC run failed once in `test/apiIntegration.test.ts` on the idempotent `/update/apply` replay assertion. Focused rerun of the full integration file passed all 38 tests, including that case, so rerunning the official gate.
 - Wave gate attempt 6: Ralph AC checks and build passed; CodeRabbit returned another pure rate-limit error after the full 540s wait, asking for an additional 4m10s. Updated `scripts/wave-gate.sh` to retry recoverable early-stops multiple times.
+- Wave gate attempt 7: Ralph AC checks, build, and CodeRabbit execution completed; CodeRabbit found valid non-advisory issues in rate-limit wait validation and ambiguous Wave 4 progress AC identifiers. Fixed both.
