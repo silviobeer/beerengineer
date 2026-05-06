@@ -15,6 +15,7 @@ import type {
   StageLogRow,
   StageRunRow,
   UpdateAttemptRow,
+  WorkerOwnerKind,
   WorkspaceRow,
 } from "./types.js"
 
@@ -437,6 +438,10 @@ export class Repos {
       recovery_scope: null,
       recovery_scope_ref: null,
       recovery_summary: null,
+      worker_instance_id: null,
+      worker_owner_kind: null,
+      worker_started_at: null,
+      worker_heartbeat_at: null,
       workspace_fs_id: input.workspaceFsId ?? null,
       supabase_branch_ref: null,
       supabase_branch_name: null,
@@ -531,6 +536,52 @@ export class Repos {
 
   clearRunRecovery(id: string): void {
     this.setRunRecovery(id, { status: null, scope: null, scopeRef: null, summary: null })
+  }
+
+  claimRunWorkerLease(
+    id: string,
+    input: { workerInstanceId: string; workerOwnerKind: WorkerOwnerKind; startedAt: number; heartbeatAt?: number },
+  ): RunRow | undefined {
+    const heartbeatAt = input.heartbeatAt ?? input.startedAt
+    this.run(
+      `UPDATE runs
+       SET worker_instance_id = ?,
+           worker_owner_kind = ?,
+           worker_started_at = ?,
+           worker_heartbeat_at = ?,
+           updated_at = ?
+       WHERE id = ?`,
+      input.workerInstanceId,
+      input.workerOwnerKind,
+      input.startedAt,
+      heartbeatAt,
+      heartbeatAt,
+      id,
+    )
+    return this.getRun(id)
+  }
+
+  refreshRunWorkerHeartbeat(
+    id: string,
+    input: { workerInstanceId: string; workerOwnerKind: WorkerOwnerKind; heartbeatAt: number },
+  ): { ok: true; run: RunRow } | { ok: false; reason: "not_found" | "lost_ownership"; run?: RunRow } {
+    const result = this.db.prepare(
+      `UPDATE runs
+       SET worker_heartbeat_at = ?,
+           updated_at = ?
+       WHERE id = ?
+         AND worker_instance_id = ?
+         AND worker_owner_kind = ?`,
+    ).run(
+      input.heartbeatAt,
+      input.heartbeatAt,
+      id,
+      input.workerInstanceId,
+      input.workerOwnerKind,
+    )
+    if (result.changes > 0) return { ok: true, run: this.getRun(id)! }
+    const run = this.getRun(id)
+    return run ? { ok: false, reason: "lost_ownership", run } : { ok: false, reason: "not_found" }
   }
 
   createExternalRemediation(input: {

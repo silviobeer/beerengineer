@@ -83,6 +83,7 @@ export function applySchema(db: Db): void {
   migrateWorkspacesSupabaseColumns(db)
   migrateRunsOwnerColumn(db)
   migrateRunsRecoveryColumns(db)
+  migrateRunsWorkerLeaseColumns(db)
   migrateRunsFsWorkspaceIdColumn(db)
   migrateRunsSupabaseColumns(db)
   migrateStageRunsSessionColumns(db)
@@ -138,6 +139,15 @@ function migrateRunsRecoveryColumns(db: Db): void {
   if (!has("recovery_scope")) db.exec("ALTER TABLE runs ADD COLUMN recovery_scope TEXT")
   if (!has("recovery_scope_ref")) db.exec("ALTER TABLE runs ADD COLUMN recovery_scope_ref TEXT")
   if (!has("recovery_summary")) db.exec("ALTER TABLE runs ADD COLUMN recovery_summary TEXT")
+}
+
+function migrateRunsWorkerLeaseColumns(db: Db): void {
+  const cols = db.prepare("PRAGMA table_info(runs)").all() as Array<{ name: string }>
+  const has = (name: string) => cols.some(c => c.name === name)
+  if (!has("worker_instance_id")) db.exec("ALTER TABLE runs ADD COLUMN worker_instance_id TEXT")
+  if (!has("worker_owner_kind")) db.exec("ALTER TABLE runs ADD COLUMN worker_owner_kind TEXT")
+  if (!has("worker_started_at")) db.exec("ALTER TABLE runs ADD COLUMN worker_started_at INTEGER")
+  if (!has("worker_heartbeat_at")) db.exec("ALTER TABLE runs ADD COLUMN worker_heartbeat_at INTEGER")
 }
 
 function migrateWorkspacesColumns(db: Db): void {
