@@ -338,3 +338,9 @@
 - Build: PASS (`npm run typecheck`)
 - CodeRabbit: FAIL — 1 `major` finding in `apps/engine/src/setup/supabaseSetup.ts`; the Management API validation catch also covered local persistence operations and could mislabel local failures as token-rotation actions.
 - Fix: narrow `connectSupabaseProject` error classification to the `listProjects()` Management API call only; local secret/repository persistence now runs outside that catch.
+
+### Wave 3 Gate — PASSED (2026-05-06T17:14:52+02:00)
+- [x] Ralph: 7 AC commands green
+- [x] Build: `npm run typecheck`
+- [x] CodeRabbit: 0 non-advisory findings (advisory severities: minor,medium,low)
+- [x] Smoke: backend-only
