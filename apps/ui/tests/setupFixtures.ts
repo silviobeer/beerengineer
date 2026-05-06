@@ -1,4 +1,4 @@
-import type { AppConfigView, SetupReport } from "@/lib/setup/types";
+import type { AppConfigView, GitReadiness, SetupReport, WorkspaceGitReadiness } from "@/lib/setup/types";
 
 export function blockedReport(): SetupReport {
   return {
@@ -155,6 +155,7 @@ export function configView(): AppConfigView {
       allowedRoots: ["/work"],
       enginePort: 4100,
       publicBaseUrl: "http://127.0.0.1:4100",
+      gitIdentityDefault: undefined,
       llm: {
         provider: "anthropic",
         model: "claude-sonnet",
@@ -173,6 +174,49 @@ export function configView(): AppConfigView {
         },
       },
     },
+  };
+}
+
+export function globalGitReadiness(overrides: Partial<GitReadiness> = {}): GitReadiness {
+  return {
+    mode: "global",
+    git: { installed: true, version: "git version 2.47.0" },
+    globalIdentity: {},
+    appDefaultIdentity: undefined,
+    effectiveIdentity: undefined,
+    setupBlocked: false,
+    workflowBlocked: true,
+    availableActions: ["save_app_default"],
+    blocker: { error: "identity_missing", message: "Git identity is missing." },
+    ...overrides,
+  } as GitReadiness;
+}
+
+export function missingGitReadiness(): GitReadiness {
+  return globalGitReadiness({
+    git: { installed: false },
+    setupBlocked: true,
+    workflowBlocked: true,
+    blocker: { error: "git_not_installed", message: "Git is not installed or not available on PATH." },
+  });
+}
+
+export function workspaceGitReadiness(overrides: Partial<WorkspaceGitReadiness> = {}): WorkspaceGitReadiness {
+  return {
+    mode: "workspace",
+    workspace: { id: "ws-1", key: "demo" },
+    git: { installed: true, version: "git version 2.47.0" },
+    isGitRepo: true,
+    repoLocalIdentity: {},
+    globalIdentity: {},
+    appDefaultIdentity: { displayName: "Beer Engineer", email: "beer@local.beerengineer", localOnly: true },
+    effectiveIdentity: undefined,
+    ready: false,
+    setupBlocked: false,
+    workflowBlocked: true,
+    availableActions: ["repair_workspace_identity"],
+    blocker: { error: "identity_missing", message: "Git identity is missing for this workspace." },
+    ...overrides,
   };
 }
 

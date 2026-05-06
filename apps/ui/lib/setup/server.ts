@@ -1,4 +1,4 @@
-import type { AppConfigView, SetupReport } from "./types";
+import type { AppConfigView, GitReadiness, SetupReport } from "./types";
 
 function engineBaseUrl(): string {
   return (
@@ -30,4 +30,9 @@ export function fetchSetupReport(): Promise<{ data: SetupReport | null; error: s
 
 export function fetchAppConfigView(): Promise<{ data: AppConfigView | null; error: string | null }> {
   return readJson<AppConfigView>("/setup/config");
+}
+
+export function fetchGitReadiness(workspaceId?: string): Promise<{ data: GitReadiness | null; error: string | null }> {
+  const query = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : "";
+  return readJson<GitReadiness>(`/setup/git-readiness${query}`);
 }

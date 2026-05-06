@@ -43,6 +43,85 @@ export interface SetupReport {
   generatedAt: number;
 }
 
+export interface GitIdentityDefault {
+  displayName: string;
+  email: string;
+  localOnly: boolean;
+}
+
+export interface GitIdentityValue {
+  name?: string;
+  email?: string;
+}
+
+export interface EffectiveGitIdentity {
+  source: "repo-local" | "global" | "app-default";
+  name: string;
+  email: string;
+  localOnly?: boolean;
+}
+
+export interface GitIdentityBlocker {
+  error: string;
+  message: string;
+}
+
+export interface GlobalGitReadiness {
+  mode: "global";
+  git: {
+    installed: boolean;
+    version?: string;
+  };
+  globalIdentity: GitIdentityValue;
+  appDefaultIdentity?: GitIdentityDefault;
+  effectiveIdentity?: EffectiveGitIdentity;
+  setupBlocked: boolean;
+  workflowBlocked: boolean;
+  availableActions: Array<"save_app_default">;
+  blocker?: GitIdentityBlocker;
+}
+
+export interface WorkspaceGitReadiness {
+  mode: "workspace";
+  workspace: {
+    id: string;
+    key?: string;
+  };
+  git: GlobalGitReadiness["git"];
+  isGitRepo: boolean;
+  repoLocalIdentity: GitIdentityValue;
+  globalIdentity: GitIdentityValue;
+  appDefaultIdentity?: GitIdentityDefault;
+  effectiveIdentity?: EffectiveGitIdentity;
+  ready: boolean;
+  setupBlocked: boolean;
+  workflowBlocked: boolean;
+  availableActions: Array<"repair_workspace_identity">;
+  blocker?: GitIdentityBlocker;
+}
+
+export type GitReadiness = GlobalGitReadiness | WorkspaceGitReadiness;
+
+export interface GitIdentityValidationError {
+  field: "displayName" | "email";
+  message: string;
+}
+
+export interface GitIdentityValidationResponse {
+  ok: false;
+  error: "identity_invalid";
+  errors: GitIdentityValidationError[];
+}
+
+export interface WorkspaceGitRepairResponse {
+  ok: boolean;
+  error?: string;
+  message?: string;
+  validation?: GitIdentityValidationResponse;
+  actions?: string[];
+  readiness?: WorkspaceGitReadiness;
+}
+
 export interface SecretRefView {
   ref: string;
   present: boolean;
@@ -76,6 +155,7 @@ export interface AppConfigView {
     allowedRoots: string[];
     enginePort: number;
     publicBaseUrl?: string;
+    gitIdentityDefault?: GitIdentityDefault;
     llm: {
       provider: "anthropic" | "openai" | "opencode";
       model: string;

@@ -30,6 +30,7 @@ import { Board } from "@/components/Board";
 import { BoardCard } from "@/components/BoardCard";
 import { ChatPanel } from "@/components/ChatPanel";
 import { WorkspaceSwitcher } from "@/components/WorkspaceSwitcher";
+import { GitIdentityPanel } from "@/components/setup/GitIdentityPanel";
 import { WorkspaceProvider } from "@/lib/context/WorkspaceContext";
 import {
   fullBoardItems,
@@ -38,6 +39,7 @@ import {
 } from "@/lib/fixtures";
 import type { BoardCardDTO } from "@/lib/types";
 import { SSETestProvider } from "./sseTestHarness";
+import { missingGitReadiness, workspaceGitReadiness } from "./setupFixtures";
 
 describe("S-09 mobile board layout", () => {
   it("AC-S09-01: board has a horizontally scrollable wrapper around the column grid", () => {
@@ -298,5 +300,26 @@ describe("S-09 mobile workspace switcher", () => {
         (o) => o.textContent === "Solo Workshop",
       ),
     ).toBe(true);
+  });
+});
+
+describe("PROJ-5 mobile setup Git panel", () => {
+  it("keeps Git identity controls in wrapping full-width sections at 375px", () => {
+    render(<GitIdentityPanel initialReadiness={workspaceGitReadiness()} workspace={{ id: "ws-1", key: "demo", name: "Demo" }} />);
+
+    const panel = screen.getByTestId("git-identity-panel");
+    expect(panel.className).toMatch(/space-y-5/);
+    expect(screen.getByTestId("git-source-rows").className).toMatch(/grid/);
+    for (const form of screen.getAllByTestId("git-identity-form")) {
+      expect(form.className).toMatch(/space-y-4/);
+    }
+  });
+
+  it("keeps the missing Git stub compact with no hidden repair controls", () => {
+    render(<GitIdentityPanel initialReadiness={missingGitReadiness()} />);
+
+    expect(screen.getByTestId("git-missing-stub").className).toMatch(/space-y-3/);
+    expect(screen.queryByTestId("git-workspace-repair")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("git-identity-form")).not.toBeInTheDocument();
   });
 });

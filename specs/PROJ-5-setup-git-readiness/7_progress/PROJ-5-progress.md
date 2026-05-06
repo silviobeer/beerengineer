@@ -1,7 +1,7 @@
 # PROJ-5 Progress
 
 ## Status: in progress
-## Current Wave: 2
+## Current Wave: 3
 ## BASE_SHA: a9b9cc683e6c7b3be1a3e724442634daaaa5e018
 
 ---
@@ -262,3 +262,109 @@
 - [x] Build: `npm run typecheck`
 - [x] CodeRabbit: 0 non-advisory findings (advisory severities: medium,low)
 - [x] Smoke: backend-only
+
+---
+
+## Wave 3
+
+### Wave Start
+- Tag: `wave-3-start-PROJ-5`
+- Started from: `b15417d8f55cbff1f82249e8938d4ac1ca124b92`
+
+## PROJ-5-PRD-3-US-1: Als nontechnical User moechte ich im Setup-Wizard eine verstaendliche Git-Stufe sehen um lokale Commit-Checkpoints einordnen zu koennen — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 3.1 Setup Git Step Shell | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-1 | Die Git-Stufe bleibt Teil des bestehenden `/setup` Wizards. | ✓ |
+| AC-2 | Die Git-Stufe verwendet die bestehende `Topbar`, `SetupWizardShell`, `SetupProgressStepper`, `SetupGateBox` und `StatusChip` Patterns. | ✓ |
+| AC-3 | Die Git-Erklaerung unterscheidet lokale Commit-Checkpoints von GitHub-Publishing. | ✓ |
+| AC-4 | Die Git-Stufe fuehrt keine GitHub-Remote-, Push- oder PR-Aktion ein. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- AC-1..AC-4 pass 1: PASS — `npm test --workspace=@beerengineer/ui -- tests/setupGitReadiness.test.tsx tests/setupGitIdentityForm.test.tsx tests/setupGitWorkspaceRepair.test.tsx tests/setupGitMissingStub.test.tsx tests/setupRecheckFlow.test.tsx tests/mobile-375.test.tsx && npm run typecheck --workspace=@beerengineer/ui`
+
+## PROJ-5-PRD-3-US-2: Als Setup User moechte ich die verwendete Git-Identitaetsquelle sehen um zu verstehen, ob Workspace, globale Config oder beerengineer_ Default greift — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 3.2 Setup Readiness API Proxy And Source Rows | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-5 | Ohne ausgewaehlten Workspace rendert die UI globale Git-Readiness. | ✓ |
+| AC-6 | Mit ausgewaehltem registrierten Workspace rendert die UI Workspace-Readiness. | ✓ |
+| AC-7 | Die UI zeigt die effektive Identitaetsquelle, die ein Workflow verwenden wuerde. | ✓ |
+| AC-8 | Repo-local Identitaet wird als respektiert/authoritative angezeigt. | ✓ |
+| AC-9 | Globale Git-Identitaet wird als ready angezeigt, wenn repo-local fehlt. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- AC-5..AC-9 pass 1: PASS — `npm test --workspace=@beerengineer/ui -- tests/setupGitReadiness.test.tsx tests/setupGitIdentityForm.test.tsx tests/setupGitWorkspaceRepair.test.tsx tests/setupGitMissingStub.test.tsx tests/setupRecheckFlow.test.tsx tests/mobile-375.test.tsx && npm run typecheck --workspace=@beerengineer/ui`
+
+## PROJ-5-PRD-3-US-3: Als User ohne Git-Identitaet moechte ich eine beerengineer_-Default-Identitaet speichern um spaetere Workspaces einfacher zu starten — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 3.3 App Identity Form | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-10 | Die UI bietet ein Formular fuer Display Name und Email. | ✓ |
+| AC-11 | Das Formular erklaert, dass die Identitaet in beerengineer_ Config gespeichert wird, nicht in global Git config. | ✓ |
+| AC-12 | GitHub-noreply, realistische Emails und private Placeholder werden gemaess gemeinsamem Validator behandelt. | ✓ |
+| AC-13 | Private Placeholder zeigen einen lokalen/publishing Vorsichtshinweis. | ✓ |
+| AC-14 | Nach erfolgreichem Speichern rechecked die UI Readiness aus einer frischen Engine-Antwort. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- AC-10..AC-14 pass 1: PASS — `npm test --workspace=@beerengineer/ui -- tests/setupGitReadiness.test.tsx tests/setupGitIdentityForm.test.tsx tests/setupGitWorkspaceRepair.test.tsx tests/setupGitMissingStub.test.tsx tests/setupRecheckFlow.test.tsx tests/mobile-375.test.tsx && npm run typecheck --workspace=@beerengineer/ui`
+
+## PROJ-5-PRD-3-US-4: Als Existing Repo User moechte ich fehlende Workspace-Identitaet aus der Setup-UI reparieren um den naechsten Workflow ohne Terminalkommandos starten zu koennen — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 3.4 Setup Workspace Repair Controls | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-15 | Workspace-Repair schreibt Identitaet nur nach user confirmation. | ✓ |
+| AC-16 | Die UI sendet nur Workspace-ID/Key und Identitaetsdaten, keinen vertrauenswuerdigen Workspace-Pfad. | ✓ |
+| AC-17 | Nach Repair ruft die UI Readiness neu ab. | ✓ |
+| AC-18 | Wenn nur Name oder Email geschrieben wurde, zeigt die UI die partielle frische State und passende Fehlerhinweise. | ✓ |
+| AC-19 | Bestehende repo-local Identitaet wird nicht durch die Default-Repair-Aktion ueberschrieben. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- AC-15..AC-19 pass 1: PASS — `npm test --workspace=@beerengineer/ui -- tests/setupGitReadiness.test.tsx tests/setupGitIdentityForm.test.tsx tests/setupGitWorkspaceRepair.test.tsx tests/setupGitMissingStub.test.tsx tests/setupRecheckFlow.test.tsx tests/mobile-375.test.tsx && npm run typecheck --workspace=@beerengineer/ui`
+
+## PROJ-5-PRD-3-US-5: Als User ohne Git-Installation moechte ich Installationshinweise statt eines falschen Formulars sehen um die richtige Voraussetzung zu reparieren — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 3.5 Missing Git Stub State | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-20 | Missing Git rendert eine Stub-Ansicht statt des vollen Identity-Forms. | ✓ |
+| AC-21 | Die Stub-Ansicht enthaelt Installationshinweis und Recheck-Aktion. | ✓ |
+| AC-22 | Die UI bietet keine Identity-Repair-Aktion an, solange Git fehlt. | ✓ |
+| AC-23 | Nach erfolgreichem Recheck mit installiertem Git wechselt die UI in die passende Readiness-Ansicht. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- AC-20..AC-23 pass 1: PASS — `npm test --workspace=@beerengineer/ui -- tests/setupGitReadiness.test.tsx tests/setupGitIdentityForm.test.tsx tests/setupGitWorkspaceRepair.test.tsx tests/setupGitMissingStub.test.tsx tests/setupRecheckFlow.test.tsx tests/mobile-375.test.tsx && npm run typecheck --workspace=@beerengineer/ui`
