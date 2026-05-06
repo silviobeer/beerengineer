@@ -1,7 +1,7 @@
 # PROJ-5 Progress
 
-## Status: in progress
-## Current Wave: 4
+## Status: quality gate passed; ready for QA
+## Current Wave: QA handoff
 ## BASE_SHA: a9b9cc683e6c7b3be1a3e724442634daaaa5e018
 
 ---
@@ -135,30 +135,33 @@
 | Severity | Found | Fixed | Deferred |
 |----------|:-----:|:-----:|:--------:|
 | P0 Critical | 0 | 0 | 0 |
-| P1 High | 0 | 0 | 0 |
+| P1 High | 1 | 1 | 0 |
 | P2 Medium | 0 | 0 | 0 |
-| P3 Low | 0 | 0 | 0 |
+| P3 Low | 5 | 5 | 0 |
 
 ### SonarCloud
 | Severity | Found | Fixed | Deferred |
 |----------|:-----:|:-----:|:--------:|
-| Critical/Major | 0 | 0 | 0 |
-| Minor | 0 | 0 | 0 |
+| Critical/Major | 11 | 11 | 0 |
+| Minor | 4 | 4 | 0 |
 | Info | 0 | 0 | 0 |
 
 ### Fixed Issues
-- —
+- CodeRabbit P1: docs setup endpoint index and item-action contract drift fixed in `docs/AGENTS.md` and `docs/api-contract.md`.
+- CodeRabbit P3: UI setup Git proxy malformed JSON handling now returns `400 Malformed JSON`.
+- CodeRabbit P3: app config env override now rejects partial Git identity defaults instead of silently mixing sources.
+- CodeRabbit P3: duplicate Wave 4 progress gate entry removed.
+- Sonar Critical/Major: setup Git route, setup flow, Git identity helpers, and workflow repair UI complexity/nesting findings refactored.
+- Sonar Minor: regex, unused import, negated condition, and empty-object cleanup findings fixed.
 
 ### Deferred (user decision)
-- —
+- Repo-level SonarCloud gate remains `ERROR` from existing unrelated project issues; final PROJ-5 changed-file filter reports 0 unresolved issues.
 
 ---
 
 ## QA Results
 
-- Bugs found: 0 (Critical: 0, High: 0, Medium: 0, Low: 0)
-- Fixed: 0
-- Deferred: 0
+- Not run yet. Next step is the formal QA pass after this quality gate.
 
 ---
 
