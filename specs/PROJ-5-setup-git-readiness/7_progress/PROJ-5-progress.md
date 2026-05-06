@@ -461,4 +461,21 @@
 - Iterations: 1
 - AC-14..AC-17 pass 1: PASS — `npm test --workspace=@beerengineer/ui -- tests/workflowGitRepairPanel.test.tsx`
 
-## PROJ-5-PRD-4-US-5: Als QA moechte ich Partial-Repair- und Signing-Fehler erkennen um Git-Identity-Readiness nicht mit allgemeiner Commit-Readiness zu verwechseln — pending
+## PROJ-5-PRD-4-US-5: Als QA moechte ich Partial-Repair- und Signing-Fehler erkennen um Git-Identity-Readiness nicht mit allgemeiner Commit-Readiness zu verwechseln — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 4.5 Partial Repair And Signing Diagnostics | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-18 | Partial Repair zeigt nach frischem Readiness-Read, ob nur Name oder Email geschrieben wurde. | ✓ |
+| AC-19 | Partial Repair wird nicht als erfolgreich abgeschlossen dargestellt. | ✓ |
+| AC-20 | Ein Commit-Fehler durch GPG-Signing wird nicht als fehlende Git-Identitaet umetikettiert. | ✓ |
+| AC-21 | QA-Dokumentation oder Testnamen machen `commit.gpgsign=true` als separate Failure Mode erkennbar. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- AC-18..AC-21 pass 1: PASS — `npm run test:file --workspace=@beerengineer/engine -- test/gitIdentityRepair.test.ts` and `npm run test:file --workspace=@beerengineer/engine -- test/gitSigningReadiness.test.ts`

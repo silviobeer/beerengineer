@@ -1,5 +1,13 @@
 import { runGit } from "./shared.js"
 
+export type GitCommitFailureCode = "commit_signing_blocked" | "git_commit_failed"
+
+export function classifyGitCommitFailure(stderr: string): GitCommitFailureCode {
+  return /gpg|sign(?:ed|ing)|failed to sign|cannot run/i.test(stderr)
+    ? "commit_signing_blocked"
+    : "git_commit_failed"
+}
+
 /**
  * Stage every change in `worktreePath` and commit with `message`.
  * Returns the new commit SHA on success, or `null` when the tree is already
