@@ -14,6 +14,7 @@ import { resumeRunInProcess, startRunFromIdea } from "../../core/runService.js"
 import { json, readJson } from "../http.js"
 import { layout } from "../../core/workspaceLayout.js"
 import { resolveWorkflowContextForRun } from "../../core/workflowContextResolver.js"
+import { recoveryUserMessageForRun } from "../../core/recoveryUserMessage.js"
 
 function contentTypeFor(path: string): string {
   switch (extname(path).toLowerCase()) {
@@ -38,7 +39,7 @@ export function handleGetRun(repos: Repos, res: ServerResponse, runId: string): 
   const run = repos.getRun(runId)
   if (!run) return json(res, 404, { error: "run not found", code: "not_found" })
   const conv = buildConversation(repos, runId)
-  json(res, 200, { ...run, openPrompt: conv?.openPrompt ?? null })
+  json(res, 200, { ...run, recovery_user_message: recoveryUserMessageForRun(run), openPrompt: conv?.openPrompt ?? null })
 }
 
 export function handleGetRunTree(repos: Repos, res: ServerResponse, runId: string): void {
@@ -113,7 +114,12 @@ export async function handleGetArtifactFile(
 }
 
 export function handleListRuns(repos: Repos, res: ServerResponse): void {
-  json(res, 200, { runs: repos.listRuns() })
+  json(res, 200, {
+    runs: repos.listRuns().map(run => ({
+      ...run,
+      recovery_user_message: recoveryUserMessageForRun(run),
+    })),
+  })
 }
 
 export function handleGetConversation(repos: Repos, res: ServerResponse, runId: string): void {
@@ -211,6 +217,7 @@ export function handleGetRecovery(repos: Repos, res: ServerResponse, runId: stri
       scope: run.recovery_scope,
       scopeRef: run.recovery_scope_ref,
       summary: run.recovery_summary,
+      recovery_user_message: recoveryUserMessageForRun(run),
       resumable: !isResumeInFlight(runId),
       remediations: repos.listExternalRemediations(runId),
     },

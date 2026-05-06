@@ -156,6 +156,7 @@ export interface BoardCardDTO {
   hasOpenPrompt?: boolean;
   hasReviewGateWaiting?: boolean;
   hasBlockedRun?: boolean;
+  recovery_user_message?: string | null;
   previewUrl?: string;
   latestRunId?: string;
   workspaceId?: string;

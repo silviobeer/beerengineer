@@ -1,7 +1,7 @@
 # PROJ-7 Progress
 
 ## Status: in progress
-## Current Wave: 1
+## Current Wave: 4
 ## BASE_SHA: fe45066553649e406d8fc6eb11dd61cb9aee5af6
 
 ---
@@ -321,3 +321,135 @@ Status: in progress
 - [x] Build: `npm run typecheck`
 - [x] CodeRabbit: 0 non-advisory findings (advisory severities: medium,low)
 - [x] Smoke: backend-only
+
+---
+
+## Wave 4
+
+Status: in progress
+
+- Prior gate verified: `### Wave 3 Gate — PASSED`
+- Wave base tag: `wave-4-start-PROJ-7` at `8634d41`
+- Agent notes read: `apps/engine/src/core/agent.md`
+
+## PROJ-7-PRD-3-US-1: Health liveness contract — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 4.1 Health Contract Guard | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-1 | `GET /health` returns process/service identity and uptime. | ✓ |
+| AC-2 | `GET /health` reports basic DB probe status. | ✓ |
+| AC-3 | `GET /health` does not check worker lease registration. | ✓ |
+| AC-4 | `GET /health` does not check Git, LLM, workspace, setup, or Supabase readiness. | ✓ |
+| AC-5 | Existing health endpoint behavior remains backward compatible except for documentation updates required by PROJ-7. | ✓ |
+
+## PROJ-7-PRD-3-US-2: Workflow readiness endpoint — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 4.2 Workflow Readiness Endpoint | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-6 | `GET /ready` reports unavailable before startup recovery completes. | ✓ |
+| AC-7 | `GET /ready` reports unavailable while graceful shutdown is in flight. | ✓ |
+| AC-8 | `GET /ready` reports unavailable when the DB probe fails. | ✓ |
+| AC-9 | `GET /ready` reports unavailable when the worker lease write path cannot be exercised. | ✓ |
+| AC-10 | `GET /ready` reports available when DB is reachable, startup recovery completed, shutdown is not in flight, and the lease write path succeeds. | ✓ |
+
+## PROJ-7-PRD-2-US-5: Graceful shutdown recovery — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 4.3 Graceful Shutdown Recovery | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-21 | `/ready` becomes unavailable immediately when graceful shutdown starts. | ✓ |
+| AC-22 | Graceful shutdown best-effort marks active API-owned in-process runs failed/recoverable. | ✓ |
+| AC-23 | Shutdown recovery summaries distinguish graceful shutdown from generic lost-worker startup recovery. | ✓ |
+| AC-24 | Abrupt shutdown is still recoverable on next startup through previous-instance detection. | ✓ |
+| AC-25 | Graceful API shutdown does not mark CLI-owned active runs failed/recoverable solely because the API process exits. | ✓ |
+
+## PROJ-7-PRD-3-US-3: Readiness sentinel probe — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 4.4 Readiness Sentinel Probe | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-11 | `/ready` exercises a DB write path suitable for validating worker lease writes. | ✓ |
+| AC-12 | `/ready` does not create a run row. | ✓ |
+| AC-13 | `/ready` does not create an item row. | ✓ |
+| AC-14 | Repeated `/ready` calls do not grow workflow history. | ✓ |
+| AC-15 | Readiness tests cover unavailable-before-recovery and available-after-recovery states. | ✓ |
+
+## PROJ-7-PRD-3-US-4: Same-run resume lease — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 4.5 Same-Run Resume Lease | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-16 | Resume does not create a replacement run solely for lost-worker recovery. | ✓ |
+| AC-17 | Resume records remediation using the existing run recovery flow. | ✓ |
+| AC-18 | Resume claims a new worker lease on the same run row. | ✓ |
+| AC-19 | Recovery state is cleared or updated when the resumed workflow re-enters according to existing resume semantics. | ✓ |
+| AC-20 | The authoritative item moves from `*/failed` to `*/running` through normal stage/run projection after resumed work becomes active. | ✓ |
+
+## PROJ-7-PRD-3-US-5: Recovery user message projection and rendering — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 4.6 Recovery User Message Projection | ✓ | ✓ | ✓ |
+| 4.7 Existing UI Surface Rendering | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-21 | Board/item/run DTOs expose a projected `recovery_user_message` when lost-worker recovery exists. | ✓ |
+| AC-22 | `recovery_user_message` is derived from recovery status, cause, and summary without requiring a new DB column. | ✓ |
+| AC-23 | Existing board card or item modal surfaces can render the user-facing recovery message. | ✓ |
+| AC-24 | Existing run recovery surfaces can render the user-facing recovery message. | ✓ |
+| AC-25 | No new worker/recovery dashboard is required for PROJ-7. | ✓ |
+
+## PROJ-7-PRD-3-US-6: API contract documentation — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 4.8 API Contract And Docs | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-26 | `GET /ready` is documented in OpenAPI. | ✓ |
+| AC-27 | `GET /ready` is documented in `docs/api-contract.md`. | ✓ |
+| AC-28 | `recovery_user_message` is documented for every board/item/run DTO where it is exposed. | ✓ |
+| AC-29 | `/health` documentation remains limited to process/DB liveness. | ✓ |
+| AC-30 | UI callers prefer engine-provided `recovery_user_message` before generic fallback copy. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+
+### TDD Notes
+- RED: `npm run test:file --workspace=@beerengineer/engine -- test/api/ready.test.ts test/workerLeaseShutdown.test.ts test/workerRecoverySurface.test.ts test/workerLeaseResume.test.ts` failed on missing `/ready`, shutdown recovery, recovery message helper, and resume event hook.
+- GREEN: Wave 4 unique engine tests passed (`api/health`, `api/ready`, `workerLeaseShutdown`, `workerLeaseRecovery`, `workerLeaseResume`, `resume`, `workerRecoverySurface`, `apiIntegration`).
+- UI rendering: `npm test --workspace=@beerengineer/ui -- tests/workerRecoveryMessage.test.tsx` passed 3 tests.
+- Typecheck: `npm run typecheck` passed.

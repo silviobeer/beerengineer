@@ -584,6 +584,14 @@ export function BoardItemModal({ card, workspaceKey, onClose }: Readonly<BoardIt
               {card.summary ? (
                 <p className="text-sm text-zinc-300">{card.summary}</p>
               ) : null}
+              {card.recovery_user_message ? (
+                <p
+                  data-testid="board-item-recovery-message"
+                  className="border-l-2 border-amber-400/70 bg-amber-950/20 px-3 py-2 text-sm text-amber-100"
+                >
+                  {card.recovery_user_message}
+                </p>
+              ) : null}
 
               <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-xs">
                 <dt className="text-zinc-500">Column</dt>

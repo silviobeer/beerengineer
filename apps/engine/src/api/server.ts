@@ -19,7 +19,7 @@ import {
 } from "../setup/config.js"
 import type { AppConfig } from "../setup/types.js"
 import { json, RequestBodyTooLargeError, requireCsrfToken, setCors } from "./http.js"
-import { buildHealthResponse } from "./health.js"
+import { buildHealthResponse, buildReadyResponse } from "./health.js"
 import { handleCreatePreparedImportItem, handleGetItem, handleGetItemDesign, handleGetItemPreview, handleGetItemWireframes, handleItemActionNamed, handleListItems, handleStartItemPreview, handleStopItemPreview } from "./routes/items.js"
 import {
   handleAnswer,
@@ -82,7 +82,7 @@ import { createBoardStream } from "./sse/boardStream.js"
 import { seedIfEmpty } from "./seed.js"
 import { writeApiTokenFile } from "./tokenFile.js"
 import { removeEnginePidFile, writeEnginePidFile } from "./pidFile.js"
-import { recoverLostWorkerRuns } from "../core/orphanRecovery.js"
+import { recoverApiRunsForShutdown, recoverLostWorkerRuns } from "../core/orphanRecovery.js"
 import { API_WORKER_INSTANCE_ID } from "../core/runService.js"
 import { pruneMissingWorktreeAssignments } from "../core/portAllocator.js"
 import { markPreparedUpdateInFlight, releaseUpdateLock, type UpdateApplyResult } from "../core/updateMode.js"
@@ -146,6 +146,7 @@ const itemActions = createItemActionsService(repos)
 const board = createBoardStream(repos, db)
 const sockets = new Set<Socket>()
 let shutdownInFlight = false
+let startupRecoveryComplete = false
 
 function startPreparedApplyExecution(prepared: UpdateApplyResult): void {
   try {
@@ -214,6 +215,7 @@ seedIfEmpty(db, repos)
 // POST /runs/:id/resume accepts them without a manual DB patch.
 try {
   await recoverLostWorkerRuns(repos, { apiWorkerInstanceId: API_WORKER_INSTANCE_ID })
+  startupRecoveryComplete = true
 } catch (err) {
   console.error("[orphanRecovery] startup scan failed:", (err as Error).message)
 }
@@ -311,6 +313,10 @@ function topLevelRouteHandlers(context: RouteContext): Partial<Record<string, ()
     "GET /health": () => {
       const health = buildHealthResponse(db)
       json(context.res, health.status, health.body)
+    },
+    "GET /ready": () => {
+      const ready = buildReadyResponse(db, repos, { startupRecoveryComplete, shutdownInFlight })
+      json(context.res, ready.status, ready.body)
     },
   }
 }
@@ -508,6 +514,11 @@ async function gracefulShutdown(reason: string): Promise<void> {
   shutdownInFlight = true
   clearInterval(cleanupTick)
   console.error(`[engine] graceful shutdown requested: ${reason}`)
+  try {
+    await recoverApiRunsForShutdown(repos, { apiWorkerInstanceId: API_WORKER_INSTANCE_ID })
+  } catch (err) {
+    console.error("[orphanRecovery] graceful shutdown scan failed:", (err as Error).message)
+  }
   server.close(async closeErr => {
     if (closeErr) console.error("[engine] server close error:", closeErr.message)
     try {

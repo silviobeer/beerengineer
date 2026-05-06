@@ -32,6 +32,8 @@ export type OrphanRecoveryResult = {
 
 const RECOVERY_SUMMARY =
   "API restart lost API worker ownership — no live worker; resume or abandon."
+const SHUTDOWN_RECOVERY_SUMMARY =
+  "Graceful shutdown stopped the API worker — resume or abandon."
 
 function hasOtherLiveRunForItem(repos: Repos, run: RunRow): boolean {
   return repos
@@ -95,6 +97,28 @@ export async function recoverLostWorkerRuns(
   if (recoveredRunIds.length > 0) {
     console.warn(
       `[orphanRecovery] ${recoveredRunIds.length} lost worker run(s) marked failed on startup: ${recoveredRunIds.join(", ")}`,
+    )
+  }
+
+  return { recovered: recoveredRunIds.length, recoveredRunIds }
+}
+
+export async function recoverApiRunsForShutdown(
+  repos: Repos,
+  input: { apiWorkerInstanceId: string },
+): Promise<OrphanRecoveryResult> {
+  const recoveredRunIds: string[] = []
+  for (const run of repos.listRunningRuns()) {
+    if (run.owner !== "api") continue
+    if (run.worker_owner_kind !== "api") continue
+    if (run.worker_instance_id !== input.apiWorkerInstanceId) continue
+    markRunFailedRecoverable(repos, run.id, SHUTDOWN_RECOVERY_SUMMARY)
+    recoveredRunIds.push(run.id)
+  }
+
+  if (recoveredRunIds.length > 0) {
+    console.warn(
+      `[orphanRecovery] ${recoveredRunIds.length} API worker run(s) marked recoverable for graceful shutdown: ${recoveredRunIds.join(", ")}`,
     )
   }
 

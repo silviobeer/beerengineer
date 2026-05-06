@@ -53,6 +53,15 @@ export class Repos {
     return { ...row, created_at: timestamp, updated_at: timestamp }
   }
 
+  touchWorkflowReadinessSentinel(timestamp = now()): void {
+    this.run(
+      `INSERT INTO workflow_readiness_sentinel (id, checked_at)
+       VALUES ('lease-write', ?)
+       ON CONFLICT(id) DO UPDATE SET checked_at = excluded.checked_at`,
+      timestamp,
+    )
+  }
+
   private clampLimit(limit: number | undefined, fallback = 20): number {
     return Math.max(1, Math.min(limit ?? fallback, 200))
   }

@@ -138,6 +138,13 @@ CREATE TABLE IF NOT EXISTS stage_logs (
 );
 CREATE INDEX IF NOT EXISTS stage_logs_run_created_idx ON stage_logs(run_id, created_at);
 
+-- Lightweight readiness write probe. /ready updates this single row in place
+-- to verify DB writes without creating fake workflow history.
+CREATE TABLE IF NOT EXISTS workflow_readiness_sentinel (
+  id TEXT PRIMARY KEY,
+  checked_at INTEGER NOT NULL
+);
+
 -- Pointer records for artifacts written to disk.
 CREATE TABLE IF NOT EXISTS artifact_files (
   id TEXT PRIMARY KEY,
