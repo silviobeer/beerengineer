@@ -368,3 +368,9 @@
 ### Ralph Loop
 - Iterations: 1
 - AC-20..AC-23 pass 1: PASS — `npm test --workspace=@beerengineer/ui -- tests/setupGitReadiness.test.tsx tests/setupGitIdentityForm.test.tsx tests/setupGitWorkspaceRepair.test.tsx tests/setupGitMissingStub.test.tsx tests/setupRecheckFlow.test.tsx tests/mobile-375.test.tsx && npm run typecheck --workspace=@beerengineer/ui`
+
+### Wave 3 Gate — PASSED (2026-05-06T12:07:03+02:00)
+- [x] Ralph: 23 AC commands green
+- [x] Build: `npm run typecheck`
+- [x] CodeRabbit: 0 non-advisory findings (advisory severities: medium,low)
+- [x] Smoke: /setup
