@@ -183,3 +183,25 @@ test("setup --no-interactive neither launches UI nor prompts for Git identity", 
     rmSync(paths.dir, { recursive: true, force: true })
   }
 })
+
+test("setup --group supabase prints manual project guidance without requiring browsing", async () => {
+  const paths = tempSetupPaths()
+  try {
+    const result = await withCapturedConsole(() => runSetupFlow({
+      group: "supabase",
+      noInteractive: true,
+      overrides: { configPath: paths.configPath, dataDir: paths.dataDir },
+    }))
+
+    assert.equal(result.exitCode, 0, result.output)
+    assert.match(result.output, /Create or select the Supabase Cloud project manually/)
+    assert.match(result.output, /region\/location/)
+    assert.match(result.output, /provider-side project settings/)
+    assert.match(result.output, /branching support/)
+    assert.match(result.output, /project ref/)
+    assert.match(result.output, /Management API token/)
+    assert.match(result.output, /https:\/\/supabase\.com\/dashboard/)
+  } finally {
+    rmSync(paths.dir, { recursive: true, force: true })
+  }
+})

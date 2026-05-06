@@ -355,7 +355,12 @@ test("beerengineer item action resume_run reports Supabase readiness actions wit
       {
         cwd: engineRoot,
         encoding: "utf8",
-        env: { ...process.env, BEERENGINEER_UI_DB_PATH: dbPath, BEERENGINEER_ALLOWED_ROOTS: dir },
+        env: {
+          ...process.env,
+          BEERENGINEER_UI_DB_PATH: dbPath,
+          BEERENGINEER_ALLOWED_ROOTS: dir,
+          BEERENGINEER_SECRET_STORE_PATH: join(dir, "secrets.json"),
+        },
         timeout: 10000,
       },
     )

@@ -20,6 +20,7 @@ export const KNOWN_GROUP_IDS = [
   "llm.openai",
   "llm.opencode",
   "browser-agent",
+  "supabase",
   "review",
 ] as const
 

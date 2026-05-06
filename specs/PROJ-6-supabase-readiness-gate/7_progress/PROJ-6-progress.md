@@ -1,7 +1,7 @@
 # PROJ-6 Progress
 
 ## Status: in progress
-## Current Wave: 2
+## Current Wave: 3
 ## BASE_SHA: c4e761b37ed1235cf0c25b9ec4336434791ca1b0
 
 ---
@@ -238,3 +238,97 @@
 - [x] Build: `npm run typecheck`
 - [x] CodeRabbit: 0 non-advisory findings (advisory severities: minor,medium,low)
 - [x] Smoke: backend-only
+
+---
+
+## Wave 3 — in progress
+
+- Wave base tag: `wave-3-start-PROJ-6` -> `ffd4486`
+
+### User Stories
+| User Story | Status |
+|------------|:------:|
+| PROJ-6-PRD-2-US-2: Manual Supabase setup guidance | complete |
+| PROJ-6-PRD-2-US-3: Dedicated CLI connect and rotate path | complete |
+| PROJ-6-PRD-2-US-4: Persistent test branch setup | complete |
+| PROJ-6-PRD-2-US-5: Setup completion retry instruction | complete |
+
+## PROJ-6-PRD-2-US-2: Manual Supabase setup guidance — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 3.1 Manual Supabase Guidance In CLI Setup | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-8 | CLI setup explicitly says the user must create or select the Supabase Cloud project manually. | ✓ |
+| AC-9 | CLI setup guidance mentions choosing region/location and provider-side project settings in Supabase. | ✓ |
+| AC-10 | CLI setup guidance mentions enabling/checking Supabase branching support for the project or plan. | ✓ |
+| AC-11 | CLI setup guidance tells the user to copy the project ref and create a Management API token with project access. | ✓ |
+| AC-12 | CLI setup can include useful Supabase links or references without making external browsing mandatory for automated tests. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- Pass 1: PASS — `npm run test:file --workspace=@beerengineer/engine -- test/setup/setupFlow.supabase.test.ts`; `npm run test:file --workspace=@beerengineer/engine -- test/setupInteractiveEntry.test.ts`
+
+## PROJ-6-PRD-2-US-3: Dedicated CLI connect and rotate path — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 3.2 Dedicated CLI Connect And Rotate Path | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-13 | CLI setup writes `supabase.management_token` only through dedicated Supabase connect/rotate logic, not the generic secret mutation handler. | ✓ |
+| AC-14 | The privileged Supabase token ref remains deny-listed from generic `/setup/secrets/<ref>` style mutation. | ✓ |
+| AC-15 | CLI setup validates that the token can access the entered project ref before marking the workspace connected. | ✓ |
+| AC-16 | The project ref is stored on the selected workspace, not globally and not on a current-workspace guess. | ✓ |
+| AC-17 | If validation fails, the previous active token/project metadata remains safe and the redacted provider message is shown before generic fallback copy. | ✓ |
+| AC-18 | CLI setup maps invalid/revoked/HTTP 401 token failures to `Rotate management token` and HTTP 403 permission-denied failures to `Re-authorize project access`. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- Pass 1: PASS — `npm run test:file --workspace=@beerengineer/engine -- test/setup/setupFlow.supabase.test.ts`; `npm run test:file --workspace=@beerengineer/engine -- test/setup/secretActions.supabaseRotate.test.ts`; `npm run test:file --workspace=@beerengineer/engine -- test/setup/secretMetadata.test.ts`
+
+## PROJ-6-PRD-2-US-4: Persistent test branch setup — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 3.3 Persistent Branch Setup In CLI | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-19 | CLI setup offers create or attach behavior for the persistent test branch after token/project validation. | ✓ |
+| AC-20 | CLI setup does not create new Supabase projects. | ✓ |
+| AC-21 | CLI setup shows `checking` or equivalent progress while branch health is polling interactively. | ✓ |
+| AC-22 | CLI setup treats `ACTIVE_HEALTHY` as ready and stores the persistent branch ref/status on the workspace. | ✓ |
+| AC-23 | If the interactive branch poll times out or provider state remains transient, CLI setup tells the user to recheck rather than marking execution-ready. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- Pass 1: PASS — `npm run test:file --workspace=@beerengineer/engine -- test/setup/setupFlow.supabase.test.ts`; `npm run test:file --workspace=@beerengineer/engine -- test/core/supabase/persistentTestBranch.create.test.ts`; `npm run test:file --workspace=@beerengineer/engine -- test/core/supabase/persistentTestBranch.attach.test.ts`
+
+## PROJ-6-PRD-2-US-5: Setup completion retry instruction — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 3.4 CLI Setup Completion And Retry Instruction | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-24 | CLI setup completion displays a clear retry instruction for the blocked run when run context is available. | ✓ |
+| AC-25 | Retrying after setup reuses the existing blocked `runId` semantics from PRD-1. | ✓ |
+| AC-26 | If readiness is still incomplete on retry, CLI output shows the updated missing setup action list. | ✓ |
+| AC-27 | CLI setup can also be run outside a blocked-run context to prepare a workspace ahead of time. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- Pass 1: PASS — `npm run test:file --workspace=@beerengineer/engine -- test/setup/setupFlow.supabase.test.ts`; `npm run test:file --workspace=@beerengineer/engine -- test/cli-actions.test.ts`

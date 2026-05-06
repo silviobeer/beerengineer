@@ -8,18 +8,30 @@ import {
   resolveOverrides,
   writeConfigFile,
 } from "./config.js"
-import { doctorExitCode, printDoctorReport } from "./doctorOutput.js"
+import { doctorExitCode, printDoctorReport, printSupabaseManualSetupGuidance } from "./doctorOutput.js"
 import { generateSetupReport } from "./doctor.js"
 import { initializeAppState } from "./appState.js"
 import type { AppConfig, SetupOverrides, SetupReport } from "./types.js"
 import { launchSetupExperience, type SetupLaunchResult } from "../cli/ui.js"
 import { readGlobalGitReadiness, validateGitIdentityInput, type GitCommandOptions, type GitIdentityValidationResult } from "./gitIdentity.js"
+import { initDatabase } from "../db/connection.js"
+import { Repos } from "../db/repositories.js"
+import { SupabaseManagementClient } from "../core/supabase/managementClient.js"
+import { createOrAttachPersistentTestBranch } from "../core/supabase/persistentTestBranch.js"
+import type { BranchPollerClock } from "../core/supabase/branchPoller.js"
+import { connectSupabaseProject } from "./supabaseSetup.js"
 
 export type SetupRunOptions = {
   group?: string
+  workspaceKey?: string
   overrides?: SetupOverrides
   allLlmGroups?: boolean
   noInteractive?: boolean
+  blockedRunContext?: {
+    itemRef: string
+    action: string
+    runId: string
+  }
   deps?: SetupFlowDeps
 }
 
@@ -33,7 +45,12 @@ export type SetupFlowDeps = {
   launchSetup?: (config: AppConfig) => Promise<SetupLaunchResult>
   createQuestioner?: () => SetupQuestioner
   gitCommandOptions?: GitCommandOptions
+  repos?: Repos
+  createSupabaseClient?: (token: string) => SupabaseSetupClient
+  supabaseBranchPollClock?: BranchPollerClock
 }
+
+type SupabaseSetupClient = Pick<SupabaseManagementClient, "listProjects" | "listBranches" | "createBranch" | "getBranch">
 
 export function needsInitialization(report: SetupReport): boolean {
   return report.groups.some(group => group.id === "core" && group.checks.some(check => check.status === "uninitialized"))
@@ -64,6 +81,14 @@ export async function runSetupFlow(options: SetupRunOptions = {}): Promise<numbe
   if (interactive && provisionedConfig && options.group === "notifications") {
     await maybeConfigureTelegramInteractive(configPath, provisionedConfig)
     report = await refreshSetupReport(options)
+  }
+
+  if (options.group === "supabase") {
+    printSupabaseManualSetupGuidance()
+    if (interactive && provisionedConfig) {
+      await maybeConfigureSupabaseInteractive(options)
+      report = await refreshSetupReport(options)
+    }
   }
 
   report = await retryBlockedSetup(report, options, interactive)
@@ -243,6 +268,105 @@ function diffPrint(previous: SetupReport, next: SetupReport): void {
       if (before && before !== "ok" && check.status === "ok") console.log(`  + ${check.id} now ok`)
     }
   }
+}
+
+function resolveSupabaseSetupWorkspace(repos: Repos, workspaceKey: string | undefined) {
+  if (workspaceKey) return repos.getWorkspaceByKey(workspaceKey)
+  return repos.listWorkspaces().sort((a, b) => (b.last_opened_at ?? 0) - (a.last_opened_at ?? 0) || a.key.localeCompare(b.key))[0]
+}
+
+async function withSetupRepos<T>(options: SetupRunOptions, run: (repos: Repos) => Promise<T>): Promise<T> {
+  if (options.deps?.repos) return await run(options.deps.repos)
+  const db = initDatabase()
+  try {
+    return await run(new Repos(db))
+  } finally {
+    db.close()
+  }
+}
+
+function createSupabaseSetupClient(token: string, deps: SetupFlowDeps | undefined): SupabaseSetupClient {
+  return deps?.createSupabaseClient?.(token) ?? new SupabaseManagementClient({ token })
+}
+
+export function printSupabaseSetupCompletion(input: {
+  workspaceKey: string
+  branchReady: boolean
+  blockedRunContext?: SetupRunOptions["blockedRunContext"]
+}): void {
+  if (input.branchReady) {
+    console.log(`  Supabase readiness is complete for workspace ${input.workspaceKey}.`)
+  } else {
+    console.log(`  Supabase setup saved changes for workspace ${input.workspaceKey}, but execution readiness still needs recheck.`)
+  }
+  if (input.blockedRunContext) {
+    console.log(
+      `  Retry blocked run: beerengineer item action --item ${input.blockedRunContext.itemRef} --action ${input.blockedRunContext.action} --remediation-summary "Supabase setup updated"`,
+    )
+    console.log(`  Existing run-id will be reused: ${input.blockedRunContext.runId}`)
+  }
+}
+
+async function maybeConfigureSupabaseInteractive(options: SetupRunOptions): Promise<void> {
+  await withSetupRepos(options, async repos => {
+    const workspace = resolveSupabaseSetupWorkspace(repos, options.workspaceKey)
+    if (!workspace) {
+      console.log("  No workspace configured. Run `beerengineer workspace add <path>` first.")
+      return
+    }
+
+    const questioner = options.deps?.createQuestioner?.() ?? createInterface({ input, output })
+    try {
+      console.log(`  Workspace: ${workspace.key}`)
+      const projectRef = (await questioner.question("  Supabase project ref: ")).trim()
+      const token = (await questioner.question("  Supabase Management API token: ")).trim()
+      const client = createSupabaseSetupClient(token, options.deps)
+      const connected = await connectSupabaseProject({
+        repos,
+        workspaceId: workspace.id,
+        token,
+        projectRef,
+        client,
+      })
+      if (!connected.ok) {
+        console.log(`  ${connected.message}`)
+        if (connected.recoveryAction) console.log(`  Next action: ${connected.recoveryAction}`)
+        console.log("  Supabase connection was not changed.")
+        return
+      }
+      console.log(`  Connected Supabase project ${connected.projectRef} (${connected.region}).`)
+
+      const branchAnswer = (await questioner.question("  Create or attach persistent test branch now? [Y/n] ")).trim().toLowerCase()
+      if (branchAnswer === "n" || branchAnswer === "no") {
+        printSupabaseSetupCompletion({ workspaceKey: workspace.key, branchReady: false, blockedRunContext: options.blockedRunContext })
+        return
+      }
+
+      console.log("  checking persistent test branch...")
+      const branch = await createOrAttachPersistentTestBranch({
+        repos,
+        workspaceId: workspace.id,
+        client,
+        poll: {
+          timeoutMs: 60_000,
+          initialDelayMs: 2_000,
+          maxDelayMs: 10_000,
+          clock: options.deps?.supabaseBranchPollClock,
+          onChecking: candidate => console.log(`  checking ${candidate.name ?? candidate.ref} (${candidate.status ?? "unknown"})...`),
+        },
+      })
+      if (!branch.ok) {
+        console.log(`  ${branch.message}`)
+        if (branch.recheckRecommended) console.log("  Re-run setup later to recheck branch readiness.")
+        printSupabaseSetupCompletion({ workspaceKey: workspace.key, branchReady: false, blockedRunContext: options.blockedRunContext })
+        return
+      }
+      console.log(`  Persistent test branch ${branch.name} is ready (${branch.action}).`)
+      printSupabaseSetupCompletion({ workspaceKey: workspace.key, branchReady: true, blockedRunContext: options.blockedRunContext })
+    } finally {
+      questioner.close()
+    }
+  })
 }
 
 async function maybeConfigureTelegramInteractive(configPath: string, config: AppConfig): Promise<AppConfig> {

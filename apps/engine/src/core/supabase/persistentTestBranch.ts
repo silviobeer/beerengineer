@@ -1,14 +1,21 @@
 import type { Repos } from "../../db/repositories.js"
 import type { SupabaseBranch } from "./types.js"
+import { pollSupabaseBranch, SupabaseBranchPollTimeoutError, type BranchPollerClock } from "./branchPoller.js"
 
 export type PersistentBranchClient = {
   listBranches(projectRef: string): Promise<SupabaseBranch[]>
   createBranch(projectRef: string, input: { name: string; parentRef?: string }): Promise<SupabaseBranch>
+  getBranch?(projectRef: string, branchRef: string): Promise<SupabaseBranch>
 }
 
 export type PersistentTestBranchResult =
   | { ok: true; action: "created" | "attached" | "already-connected"; branch: SupabaseBranch; name: string }
-  | { ok: false; error: "workspace_not_found" | "supabase_not_connected" | "branch_not_ready"; message: string }
+  | {
+      ok: false
+      error: "workspace_not_found" | "supabase_not_connected" | "branch_not_ready"
+      message: string
+      recheckRecommended?: boolean
+    }
 
 function slug(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48) || "workspace"
@@ -33,6 +40,13 @@ export async function createOrAttachPersistentTestBranch(input: {
   workspaceId: string
   client: PersistentBranchClient
   parentRef?: string
+  poll?: {
+    timeoutMs?: number
+    initialDelayMs?: number
+    maxDelayMs?: number
+    clock?: BranchPollerClock
+    onChecking?: (branch: SupabaseBranch) => void
+  }
 }): Promise<PersistentTestBranchResult> {
   const workspace = input.repos.getWorkspace(input.workspaceId)
   if (!workspace) return { ok: false, error: "workspace_not_found", message: "Workspace not found" }
@@ -66,7 +80,30 @@ export async function createOrAttachPersistentTestBranch(input: {
     }
   }
   if (!branchReady(branch)) {
-    return { ok: false, error: "branch_not_ready", message: `Persistent test branch ${name} is not ready` }
+    if (input.poll && input.client.getBranch) {
+      input.poll.onChecking?.(branch)
+      try {
+        branch = await pollSupabaseBranch({
+          poll: () => input.client.getBranch!(workspace.supabase_project_ref!, branch!.ref),
+          timeoutMs: input.poll.timeoutMs,
+          initialDelayMs: input.poll.initialDelayMs,
+          maxDelayMs: input.poll.maxDelayMs,
+          clock: input.poll.clock,
+        })
+      } catch (err) {
+        if (err instanceof SupabaseBranchPollTimeoutError) {
+          return {
+            ok: false,
+            error: "branch_not_ready",
+            message: `Persistent test branch ${name} is still checking; re-run setup to recheck.`,
+            recheckRecommended: true,
+          }
+        }
+        throw err
+      }
+    } else {
+      return { ok: false, error: "branch_not_ready", message: `Persistent test branch ${name} is not ready`, recheckRecommended: true }
+    }
   }
   input.repos.setWorkspaceSupabasePersistentBranch(input.workspaceId, {
     ref: branch.ref,

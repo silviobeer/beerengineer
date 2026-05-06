@@ -19,6 +19,17 @@ export function printDoctorReport(report: SetupReport, opts: { installHints: boo
   console.log("")
 }
 
+export function printSupabaseManualSetupGuidance(): void {
+  console.log("")
+  console.log("  Supabase setup")
+  console.log("    1. Create or select the Supabase Cloud project manually.")
+  console.log("    2. Choose the project region/location and provider-side project settings in Supabase.")
+  console.log("    3. Enable or check Supabase branching support for the project or plan.")
+  console.log("    4. Copy the project ref and create a Management API token with access to that project.")
+  console.log("    Reference: https://supabase.com/dashboard")
+  console.log("")
+}
+
 function formatGroupTitle(group: GroupResult): string {
   let suffix = "optional"
   if (group.level === "required") suffix = "required"

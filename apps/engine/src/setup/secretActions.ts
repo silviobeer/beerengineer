@@ -5,6 +5,7 @@ import {
   type SecretMetadata,
   type SecretStoreOptions,
 } from "./secretStore.js"
+import { SUPABASE_MANAGEMENT_TOKEN_SECRET_REF } from "./secretMetadata.js"
 
 export type SecretActionInput =
   | { action: "replace"; value?: unknown }
@@ -27,6 +28,9 @@ function parseInput(input: unknown): SecretActionInput {
 
 export function applySecretAction(ref: string, input: unknown, options: SecretStoreOptions = {}): SecretActionResult {
   try {
+    if (ref === SUPABASE_MANAGEMENT_TOKEN_SECRET_REF) {
+      return { ok: false, error: "supabase_management_token_requires_dedicated_flow" }
+    }
     const parsed = parseInput(input)
     if (parsed.action === "replace") {
       if (typeof parsed.value !== "string" || parsed.value.length === 0) {

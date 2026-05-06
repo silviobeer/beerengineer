@@ -69,6 +69,7 @@ export async function generateSetupReport(options: DoctorOptions = {}): Promise<
     { id: "llm.openai", label: "OpenAI capability", ...llmGate("llm.openai"), active: Boolean(config) && (options.allLlmGroups === true || llmGroup === "llm.openai"), run: () => runLlmChecks("openai", config as AppConfig) },
     { id: "llm.opencode", label: "OpenCode capability", ...llmGate("llm.opencode"), active: Boolean(config) && (options.allLlmGroups === true || llmGroup === "llm.opencode"), run: () => runLlmChecks("opencode", config as AppConfig) },
     { id: "browser-agent", label: "Browser agent capability", level: "optional", minOk: 0, idealOk: config?.browser?.enabled ? 2 : 0, active: true, run: () => runBrowserChecks(Boolean(config?.browser?.enabled)) },
+    { id: "supabase", label: "Supabase readiness setup", level: "optional", minOk: 0, idealOk: 0, active: true, run: async () => [] },
     { id: "review", label: "Review tool recommendations", level: "recommended", minOk: 0, idealOk: 3, active: true, run: () => runReviewChecks() },
   ]
 
