@@ -47,16 +47,28 @@ export function WorkflowGitRepairPanel({
     return "blocked";
   }, [blocker.error, canContinue]);
 
-  async function recheckReadiness(): Promise<WorkspaceGitReadiness | undefined> {
+  async function recheckReadiness(manageBusy = true): Promise<WorkspaceGitReadiness | undefined> {
+    if (manageBusy && busy) return readiness;
     if (!workspaceId) return readiness;
-    const params = new URLSearchParams({ workspaceId });
-    const response = await fetch(`/api/setup/git-readiness?${params.toString()}`, { cache: "no-store" });
-    const body = await parseJson<WorkspaceGitReadiness>(response);
-    if (body?.mode === "workspace") {
-      setReadiness(body);
-      return body;
+    if (manageBusy) {
+      setBusy(true);
+      setAlert(null);
     }
-    return readiness;
+    try {
+      const params = new URLSearchParams({ workspaceId });
+      const response = await fetch(`/api/setup/git-readiness?${params.toString()}`, { cache: "no-store" });
+      const body = await parseJson<WorkspaceGitReadiness>(response);
+      if (body?.mode === "workspace") {
+        setReadiness(body);
+        return body;
+      }
+      return readiness;
+    } catch (error) {
+      if (manageBusy) setAlert(error instanceof Error ? error.message : "Git readiness recheck failed.");
+      return readiness;
+    } finally {
+      if (manageBusy) setBusy(false);
+    }
   }
 
   async function repair(identity: { displayName: string; email: string }): Promise<void> {
@@ -76,7 +88,7 @@ export function WorkflowGitRepairPanel({
       });
       const body = await parseJson<WorkspaceGitRepairResponse>(response);
       if (body?.readiness) setReadiness(body.readiness);
-      const fresh = await recheckReadiness();
+      const fresh = await recheckReadiness(false);
       if (response.ok && body?.ok && fresh?.ready) {
         setReadyToContinue(true);
         setAlert("Git identity is ready for this workspace.");
