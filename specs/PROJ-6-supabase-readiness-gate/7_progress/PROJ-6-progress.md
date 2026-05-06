@@ -97,6 +97,14 @@
 
 ---
 
+### Wave 1 Gate Attempt 1 — FAILED
+- Ralph: PASS (3 AC commands green)
+- Build: PASS (`npm run typecheck`)
+- CodeRabbit: ERROR — timed out after 600s; raw output showed `coderabbit review` used default `--type all` and included dirty unrelated PROJ-5 files plus an unrelated PROJ-7 committed plan.
+- Fix: patch `scripts/wave-gate.sh` to call `coderabbit review --type committed` so the gate reviews the wave base committed diff and ignores unrelated worktree changes.
+
+---
+
 ## Quality Gate — PROJ-6
 
 ### Code Review
