@@ -514,29 +514,31 @@ async function gracefulShutdown(reason: string): Promise<void> {
   shutdownInFlight = true
   clearInterval(cleanupTick)
   console.error(`[engine] graceful shutdown requested: ${reason}`)
+  const closePromise = new Promise<Error | undefined>(resolve => {
+    server.close(closeErr => resolve(closeErr ?? undefined))
+  })
+  setTimeout(() => {
+    sockets.forEach(socket => socket.destroy())
+  }, 10_000).unref()
   try {
     await recoverApiRunsForShutdown(repos, { apiWorkerInstanceId: API_WORKER_INSTANCE_ID })
   } catch (err) {
     console.error("[orphanRecovery] graceful shutdown scan failed:", (err as Error).message)
   }
-  server.close(async closeErr => {
-    if (closeErr) console.error("[engine] server close error:", closeErr.message)
-    try {
-      db.pragma("wal_checkpoint(TRUNCATE)")
-    } catch (err) {
-      console.error("[engine] wal checkpoint during shutdown failed:", (err as Error).message)
-    }
-    try {
-      db.close()
-    } catch (err) {
-      console.error("[engine] db close during shutdown failed:", (err as Error).message)
-    }
-    removeEnginePidFile()
-    process.exit(closeErr ? 1 : 0)
-  })
-  setTimeout(() => {
-    sockets.forEach(socket => socket.destroy())
-  }, 10_000).unref()
+  const closeErr = await closePromise
+  if (closeErr) console.error("[engine] server close error:", closeErr.message)
+  try {
+    db.pragma("wal_checkpoint(TRUNCATE)")
+  } catch (err) {
+    console.error("[engine] wal checkpoint during shutdown failed:", (err as Error).message)
+  }
+  try {
+    db.close()
+  } catch (err) {
+    console.error("[engine] db close during shutdown failed:", (err as Error).message)
+  }
+  removeEnginePidFile()
+  process.exit(closeErr ? 1 : 0)
 }
 
 process.on("SIGTERM", () => void gracefulShutdown("sigterm"))
