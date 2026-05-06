@@ -471,3 +471,4 @@ Status: in progress
 - Wave gate attempt 2: Ralph AC checks and build passed; CodeRabbit found a valid minor issue in `test/api/ready.test.ts` where the DB-failure test double-closed the fixture DB. Fixed the fixture cleanup to be idempotent.
 - Wave gate attempt 3: Ralph AC checks and build passed; CodeRabbit found valid minor issues in `workerLeaseResume.test.ts`, Wave 4 progress table spacing, and `persistWorkflowEvent` duplicate stage handling. Fixed all three.
 - Wave gate attempt 4: Ralph AC checks and build passed; CodeRabbit returned a pure rate-limit error asking for 8m07s, but the gate retry only waited 35s. Updated `scripts/wave-gate.sh` to wait 540s by default on CodeRabbit rate-limit retry.
+- Wave gate attempt 5: A repeated AC run failed once in `test/apiIntegration.test.ts` on the idempotent `/update/apply` replay assertion. Focused rerun of the full integration file passed all 38 tests, including that case, so rerunning the official gate.
