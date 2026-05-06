@@ -388,7 +388,7 @@ export function persistWorkflowEvent(repos: Repos, event: WorkflowEvent): void {
   const runId = event.runId
   if (!runId) return
   const run = repos.getRun(runId)
-  const itemId = "itemId" in event ? event.itemId : run?.item_id
+  const itemId = ("itemId" in event ? event.itemId : undefined) ?? run?.item_id
   if (!itemId) return
   const stageRunIds = new Map<string, string>()
   const persistedStageIds = new Set<string>()

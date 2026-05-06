@@ -476,3 +476,4 @@ Status: in progress
 - Wave gate attempt 7: Ralph AC checks, build, and CodeRabbit execution completed; CodeRabbit found valid non-advisory issues in rate-limit wait validation and ambiguous Wave 4 progress AC identifiers. Fixed both.
 - Wave gate attempt 8: Ralph AC checks and build passed; CodeRabbit found a valid temp-dir cleanup issue in `workerLeaseShutdown.test.ts`. Fixed the fixture cleanup.
 - Wave gate attempt 9: Ralph AC checks and build passed; CodeRabbit found valid startup readiness completion and duplicate `run_resumed` persistence issues. Fixed both and extended resume coverage.
+- Wave gate attempt 10: Ralph AC checks and build passed; CodeRabbit found valid `itemId` fallback and `workerRecoverySurface.test.ts` temp-dir cleanup issues. Fixed both.

@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdtempSync } from "node:fs"
+import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -10,15 +10,25 @@ import { initDatabase } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
 
 function fixture() {
-  const db = initDatabase(join(mkdtempSync(join(tmpdir(), "be2-recovery-surface-")), "test.sqlite"))
+  const dir = mkdtempSync(join(tmpdir(), "be2-recovery-surface-"))
+  const db = initDatabase(join(dir, "test.sqlite"))
   const repos = new Repos(db)
   const ws = repos.upsertWorkspace({ key: "test", name: "Test" })
   const item = repos.createItem({ workspaceId: ws.id, title: "Recovered item", description: "summary" })
-  return { db, repos, ws, item }
+  return {
+    db,
+    repos,
+    ws,
+    item,
+    close() {
+      db.close()
+      rmSync(dir, { recursive: true, force: true })
+    },
+  }
 }
 
 test("board cards expose a user-facing lost-worker recovery message without a DB column", () => {
-  const { db, repos, ws, item } = fixture()
+  const { db, repos, ws, item, close } = fixture()
   try {
     const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "api" })
     repos.updateRun(run.id, {
@@ -37,12 +47,12 @@ test("board cards expose a user-facing lost-worker recovery message without a DB
       0,
     )
   } finally {
-    db.close()
+    close()
   }
 })
 
 test("recovery user message falls back safely for non-worker recovery", () => {
-  const { db, repos, ws, item } = fixture()
+  const { repos, ws, item, close } = fixture()
   try {
     const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "api" })
     repos.updateRun(run.id, {
@@ -55,6 +65,6 @@ test("recovery user message falls back safely for non-worker recovery", () => {
 
     assert.equal(recoveryUserMessageForRun(repos.getRun(run.id)!), null)
   } finally {
-    db.close()
+    close()
   }
 })
