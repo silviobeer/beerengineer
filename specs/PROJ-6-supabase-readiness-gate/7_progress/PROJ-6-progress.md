@@ -332,3 +332,9 @@
 ### Ralph Loop
 - Iterations: 1
 - Pass 1: PASS — `npm run test:file --workspace=@beerengineer/engine -- test/setup/setupFlow.supabase.test.ts`; `npm run test:file --workspace=@beerengineer/engine -- test/cli-actions.test.ts`
+
+### Wave 3 Gate Attempt 1 — FAILED
+- Ralph: PASS (7 AC commands green)
+- Build: PASS (`npm run typecheck`)
+- CodeRabbit: FAIL — 1 `major` finding in `apps/engine/src/setup/supabaseSetup.ts`; the Management API validation catch also covered local persistence operations and could mislabel local failures as token-rotation actions.
+- Fix: narrow `connectSupabaseProject` error classification to the `listProjects()` Management API call only; local secret/repository persistence now runs outside that catch.

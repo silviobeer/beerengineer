@@ -3,7 +3,7 @@ import { SUPABASE_MANAGEMENT_TOKEN_SECRET_REF } from "./secretMetadata.js"
 import { storeSecret, type SecretStoreOptions } from "./secretStore.js"
 import type { SupabaseManagementClient } from "../core/supabase/managementClient.js"
 import { SupabaseManagementError } from "../core/supabase/managementClient.js"
-import type { SupabaseReadinessSetupAction } from "../core/supabase/types.js"
+import type { SupabaseProject, SupabaseReadinessSetupAction } from "../core/supabase/types.js"
 
 export type SupabaseConnectResult =
   | { ok: true; projectRef: string; region: string }
@@ -39,22 +39,10 @@ export async function connectSupabaseProject(input: {
   if (!projectRef) return { ok: false, error: "project_ref_required", message: "Supabase project ref is required", recoveryAction: "Connect Supabase project" }
   const workspace = input.repos.getWorkspace(input.workspaceId)
   if (!workspace) return { ok: false, error: "workspace_not_found", message: "Workspace not found" }
+  let project: SupabaseProject | undefined
   try {
     const projects = await input.client.listProjects()
-    const project = projects.find(candidate => candidate.ref === projectRef || candidate.id === projectRef)
-    if (!project) {
-      return {
-        ok: false,
-        error: "validation_failed",
-        message: `Supabase project ${projectRef} was not returned by the Management API`,
-        recoveryAction: "Re-authorize project access",
-      }
-    }
-    const region = project.region ?? "unknown"
-    storeSecret(SUPABASE_MANAGEMENT_TOKEN_SECRET_REF, token, input.secretStore)
-    input.repos.connectWorkspaceSupabase(workspace.id, { projectRef, region })
-    input.repos.preserveWorkspaceSupabaseProtection(workspace.id)
-    return { ok: true, projectRef, region }
+    project = projects.find(candidate => candidate.ref === projectRef || candidate.id === projectRef)
   } catch (err) {
     const failure = classifySupabaseConnectFailure(err)
     return {
@@ -64,4 +52,17 @@ export async function connectSupabaseProject(input: {
       recoveryAction: failure.action,
     }
   }
+  if (!project) {
+    return {
+      ok: false,
+      error: "validation_failed",
+      message: `Supabase project ${projectRef} was not returned by the Management API`,
+      recoveryAction: "Re-authorize project access",
+    }
+  }
+  const region = project.region ?? "unknown"
+  storeSecret(SUPABASE_MANAGEMENT_TOKEN_SECRET_REF, token, input.secretStore)
+  input.repos.connectWorkspaceSupabase(workspace.id, { projectRef, region })
+  input.repos.preserveWorkspaceSupabaseProtection(workspace.id)
+  return { ok: true, projectRef, region }
 }
