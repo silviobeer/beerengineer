@@ -89,3 +89,40 @@
 - Design tokens: dark operator-console surfaces, amber warning panels, square bordered controls, `font-mono` for workspace/run identifiers.
 - Interaction contract: compact blocker on board/item context; all missing setup actions visible; primary link to `/w/:key/settings#supabase`; no paste inputs in the blocker.
 - Implementation tolerance: blocker may live on card, item modal, or both if it preserves compactness and links to workspace settings.
+
+## QA Test Results
+
+**Tested:** 2026-05-06  
+**Tester:** QA Engineer (AI)
+
+### Acceptance Criteria Status
+
+- AC-1 through AC-25: PASS for the main board blocker behavior in browser/API QA and UI regression tests.
+- Browser evidence: `/w/alpha` displayed `Supabase blocked`, preserved item/run context, showed the compact blocker panel, listed the PRD-1 action labels, did not render token/project inputs, kept retry disabled while blocked, and deep-linked to `/w/alpha/settings#supabase`.
+- Mobile evidence: 375px board blocker screenshot captured as `proj6-qa-board-blocker-mobile-375.png`.
+
+### Edge Cases Status
+
+- Empty/non-blocked board items did not show Supabase blocker UI.
+- Missing action labels wrapped in the compact panel at 375px without requiring blocker-local horizontal scrolling.
+- Deep-link target usability has a Medium issue on the settings page after navigation.
+
+### Security Audit Results
+
+- [ ] BUG-PROJ6-QA-001: Retry and Supabase setup mutation proxies bypass the engine CSRF gate.
+- [x] Board DTO did not expose Supabase Management token values.
+
+### Bugs Found
+
+- BUG-PROJ6-QA-001 — Critical — Next.js Supabase mutation proxies bypass the engine CSRF gate.
+- BUG-PROJ6-QA-002 — Critical — PROJ-6 UI components are missing from the component registry.
+- BUG-PROJ6-QA-003 — Medium — `/w/:key/settings#supabase` lands under the sticky topbar.
+- BUG-PROJ6-QA-004 — Medium — Board and CLI derive Supabase setup actions by parsing human recovery summary text.
+- BUG-PROJ6-QA-005 — Low — New blocker UI uses arbitrary font-size utilities outside the scale.
+
+### Summary
+
+- **Acceptance Criteria:** 25/25 functionally passed, with PROJ-level release blockers.
+- **Bugs Found:** 5 relevant (2 Critical, 2 Medium, 1 Low).
+- **Security:** Issues found.
+- **Production Ready:** NO.

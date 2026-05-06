@@ -1,6 +1,6 @@
 # PROJ-6 Progress
 
-## Status: in progress
+## Status: blocked
 ## Current Wave: 5
 ## BASE_SHA: c4e761b37ed1235cf0c25b9ec4336434791ca1b0
 
@@ -217,15 +217,85 @@
 
 ## QA Results
 
-- Bugs found: 0 (Critical: 0, High: 0, Medium: 0, Low: 0)
-- Fixed: 0
-- Deferred: 0
+- Tested: 2026-05-06
+- Bugs found: 5 (Critical: 2, High: 0, Medium: 2, Low: 1)
+- Fixed: 0 (QA is report-only)
+- Deferred: 3 (Medium: 2, Low: 1)
+- Production-ready: NO
+
+### QA Evidence
+- Browser stack: isolated engine `http://127.0.0.1:4110`, UI `http://127.0.0.1:3110`, DB `/tmp/be2-proj6-qa-RPZUGx/beerengineer.sqlite`.
+- Browser screenshots: `proj6-qa-board-blocker-mobile-375.png`, `proj6-qa-settings-mobile-375.png`, `/tmp/be2-proj6-qa-RPZUGx/settings-tablet.png`, `/tmp/be2-proj6-qa-RPZUGx/settings-desktop.png`, `/tmp/be2-proj6-qa-RPZUGx/board-mobile-cli.png`.
+- Regression commands passed: `npm run test:file --workspace=@beerengineer/engine -- test/core/supabase/preExecutionReadiness.test.ts test/workflowSupabaseReadinessGate.test.ts test/cli-actions.test.ts`; `npm test --workspace=@beerengineer/ui -- tests/workspaceSettingsPage.test.tsx tests/workspaceSupabaseSettings.test.tsx tests/workspaceSupabaseReadinessSummary.test.tsx tests/workspaceSupabaseRetry.test.tsx tests/Board.test.tsx tests/SupabaseBlockedRunPanel.test.tsx`; `npm run typecheck`.
+
+### Persona Review Summary
+| Reviewer | Critical | High | Medium | Low |
+|----------|:--------:|:----:|:------:|:---:|
+| Dr. Sarah Chen — Security Lead | 1 | 0 | 0 | 0 |
+| Marcus Weber — Principal Engineer | 1 | 0 | 1 | 1 |
+| Priya Sharma — Performance Engineer | 0 | 0 | 0 | 0 |
+| Thomas Müller — SRE / Reliability Engineer | 0 | 0 | 1 | 0 |
+| Elena Rodriguez — Principal Architect | 0 | 0 | 1 | 0 |
+| Ken Takahashi — Minimalism Engineer | 0 | 0 | 1 | 1 |
+
+### QA Bugs
+
+#### BUG-PROJ6-QA-001 — [Critical] Next.js Supabase mutation proxies bypass the engine CSRF gate
+- **File:** `apps/ui/app/api/workspaces/[key]/supabase/branch/route.ts`; `apps/ui/app/api/runs/[id]/supabase-readiness/retry/route.ts`; `apps/ui/lib/engine/proxy.ts`
+- **Anchor:** `export async function POST` / `proxyEngineMutation`
+- **Source:** Dr. Sarah Chen (Security) + QA red-team
+- **Status:** open
+- **Fix attempts:** 0
+- **Description:** PROJ-6 added Next.js mutation routes that parse any request body, default parse failures to `{}`, and forward the request to the engine with the server-side `x-beerengineer-token`. A cross-origin simple POST can reach the UI proxy and bypass the engine's own CSRF protection. Direct engine mutation correctly returns `403 csrf_token_required`; the UI proxy forwards and returns domain errors such as `token_required` or `not_resumable`, proving the protected handler ran.
+- **Repro:** `curl -i -X POST http://127.0.0.1:3110/api/workspaces/alpha/supabase/branch -H 'Origin: http://evil.test' -H 'content-type: text/plain' --data 'not-json'` returns `400 token_required`; the equivalent direct engine POST without token returns `403 csrf_token_required`.
+- **Fix sketch:** Centralize UI proxy mutation CSRF enforcement before `proxyEngineMutation`, reject unsafe origins/referers, reject body parse failures instead of converting them to `{}`, and add regression tests for cross-origin simple POSTs to every engine-token-forwarding Next route.
+
+#### BUG-PROJ6-QA-002 — [Critical] PROJ-6 UI components are missing from the component registry
+- **File:** `docs/components.md`
+- **Anchor:** `# Component Registry` / search for `WorkspaceSettingsPage`
+- **Source:** Marcus Weber (Principal) + UI consistency hard check
+- **Status:** open
+- **Fix attempts:** 0
+- **Description:** PROJ-6 added `WorkspaceSettingsPage`, `SupabaseReadinessSummary`, and `SupabaseBlockedRunPanel`, but `docs/components.md` has no entries for them. The QA skill treats registry desync for new components as a Critical process failure because future agents cannot discover or reuse the new surfaces.
+- **Repro:** `rg -n "SupabaseBlockedRunPanel|SupabaseReadinessSummary|WorkspaceSettingsPage" docs/components.md` returns no entries.
+- **Fix sketch:** Register each new component in `docs/components.md`, including ownership, reuse guidance, and semantic overlap with existing board/settings/status primitives.
+
+#### BUG-PROJ6-QA-003 — [Medium] `/w/:key/settings#supabase` lands under the sticky topbar
+- **File:** `apps/ui/components/settings/WorkspaceSettingsPage.tsx`
+- **Anchor:** `<section id="supabase"`
+- **Source:** Browser E2E + UI audit
+- **Status:** open
+- **Fix attempts:** 0
+- **Description:** The board repair link correctly navigates to `/w/alpha/settings#supabase`, but the hash target scrolls behind the sticky topbar. On 375px and 1440px screenshots, the Supabase heading/intro is partially hidden at the top edge.
+- **Repro:** Click `Open workspace Supabase settings` from the board blocker, or open `http://127.0.0.1:3110/w/alpha/settings#supabase`; compare `proj6-qa-settings-mobile-375.png` and `/tmp/be2-proj6-qa-RPZUGx/settings-desktop.png`.
+- **Fix sketch:** Add an appropriate `scroll-mt-*` offset to the Supabase section, or route the hash into a layout that accounts for the topbar height.
+
+#### BUG-PROJ6-QA-004 — [Medium] Board and CLI derive Supabase setup actions by parsing human recovery summary text
+- **File:** `apps/engine/src/api/board.ts`; `apps/engine/src/cli/commands/itemActions.ts`
+- **Anchor:** `supabaseReadinessActions` / `actionsFromSupabaseRecoverySummary`
+- **Source:** Marcus Weber (Principal) + Thomas Müller (Reliability) + Elena Rodriguez (Architecture)
+- **Status:** open
+- **Fix attempts:** 0
+- **Description:** The board blocker and CLI recovery output reconstruct `missingSetupActions` by substring-matching `recovery_summary`. That makes a user-facing sentence part of the data contract: copy edits, localization, or provider messages containing action labels can remove, add, or reorder setup actions without the readiness model changing.
+- **Repro:** Code inspection shows both surfaces filter `SUPABASE_READINESS_SETUP_ACTIONS` against `summary.includes(action)` rather than reading structured recovery metadata.
+- **Fix sketch:** Persist structured Supabase readiness metadata with the recovery projection or expose a typed recovery-readiness endpoint, then render board/CLI actions from that structure.
+
+#### BUG-PROJ6-QA-005 — [Low] New blocker UI uses arbitrary font-size utilities outside the scale
+- **File:** `apps/ui/components/SupabaseBlockedRunPanel.tsx`; `apps/ui/components/BoardCard.tsx`
+- **Anchor:** `text-[10px]` / `text-[11px]`
+- **Source:** Ken Takahashi (Minimalism) + UI consistency check
+- **Status:** open
+- **Fix attempts:** 0
+- **Description:** The new blocker chip and missing-actions label use arbitrary Tailwind text sizes. The QA design audit flags arbitrary type values because this app's compact surfaces should use the existing text scale.
+- **Repro:** `rg -n "text-\\[" apps/ui/components/SupabaseBlockedRunPanel.tsx apps/ui/components/BoardCard.tsx`.
+- **Fix sketch:** Replace with existing scale tokens such as `text-xs` plus font weight/spacing adjustments, or document a reusable chip variant in the component registry if the size is intentional.
 
 ---
 
 ## Open Blockers
 
-- None.
+- BUG-PROJ6-QA-001: Critical CSRF bypass in new Next.js Supabase mutation proxies.
+- BUG-PROJ6-QA-002: Critical component registry desync for new PROJ-6 UI components.
 
 ### Wave 1 Gate — PASSED (2026-05-06T16:22:33+02:00)
 - [x] Ralph: 3 AC commands green
@@ -538,3 +608,31 @@
 - [x] Build: `npm run typecheck`
 - [x] CodeRabbit: 0 non-advisory findings (advisory severities: minor,medium,low)
 - [x] Smoke: /w/alpha
+
+---
+
+## AGENTS.md Candidates
+
+- [PROPOSED] AGENTS-PROJ6-QA-001: Next.js API proxy mutations must enforce CSRF before forwarding engine tokens. — source: BUG-PROJ6-QA-001
+- [PROPOSED] AGENTS-PROJ6-QA-002: New UI components must be registered in docs/components.md in the same PROJ. — source: BUG-PROJ6-QA-002
+- [PROPOSED] AGENTS-PROJ6-QA-003: Recovery UIs must read structured recovery metadata, not parse human summary strings. — source: BUG-PROJ6-QA-004
+
+## PROJ Retrospective
+
+### Elena Rodriguez (Principal Architect)
+
+- PROJ-6 successfully converged on one engine-owned Supabase readiness model and reused it across execution, CLI, API, settings, and board surfaces.
+- The strongest architectural seam is the engine readiness snapshot; it kept missing-action vocabulary and workspace authority mostly coherent.
+- The weakest cross-wave seam is recovery projection: the implementation preserved only a human summary in `runs.recovery_summary`, so later surfaces had to rediscover structured state by parsing prose.
+- The UI proxy layer grew from convenience transport into a privileged mutation boundary. That boundary needs an explicit security contract before more local browser operations are added.
+- Workspace-scoped routing was the right product shape, but hash navigation should be treated as part of the interaction contract when board blockers deep-link into repair pages.
+- For the next PROJ, plan a first-class "recoverable blocker payload" shape early, not after each surface has already learned to render a summary.
+
+### Ken Takahashi (Minimalism)
+
+- The core readiness logic is compact and testable; keep that center rather than adding surface-specific readiness variants.
+- Delete the summary-parsing pattern before it spreads. It looks small today but creates hidden coupling between prose and behavior.
+- The new UI components are reasonable candidates for reuse, but they need registry entries and should avoid one-off token choices.
+- The Next proxy routes are thin, which is good, but thin wrappers around privileged tokens still need one shared guard instead of per-route assumptions.
+- Avoid adding more branch/setup modes until create vs attach has proven enough. PROJ-6 already has the necessary operator control surface.
+- In PROJ-7, prefer one durable recovery payload abstraction over adding another local parser for whichever panel needs the data next.

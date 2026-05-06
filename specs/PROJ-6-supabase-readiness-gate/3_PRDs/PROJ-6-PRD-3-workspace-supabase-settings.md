@@ -95,3 +95,40 @@
 - Design tokens: use `bg-zinc-950`, `bg-zinc-900`, `border-zinc-800`, `text-zinc-100`, `text-zinc-400`, amber warning utilities, emerald/petrol success utilities, `font-display`, and `font-mono`.
 - Interaction contract: scannable workspace settings page at `/w/:key/settings#supabase`; visible paste inputs; not-configured stub; readiness recheck; retry only after ready.
 - Implementation tolerance: mockups are structural, not pixel-perfect; existing React components and tokens take precedence; manual Supabase guidance may be collapsible or linked if paste inputs remain visible.
+
+## QA Test Results
+
+**Tested:** 2026-05-06  
+**Tester:** QA Engineer (AI)
+
+### Acceptance Criteria Status
+
+- AC-1 through AC-29: PASS for the main settings flow in browser/API QA and UI regression tests.
+- Browser evidence: `/w/alpha/settings#supabase` rendered workspace-scoped settings with project ref input, Management API token input, readiness summary, missing setup actions, branch create/attach choice, and disabled branch/retry controls while blocked.
+- Responsive evidence: 375px, 768px, and 1440px screenshots captured.
+
+### Edge Cases Status
+
+- Missing token/project/branch summary: PASS.
+- Malformed project-ref/XSS payload did not execute in the browser; direct proxy returned safe JSON error for missing token.
+- Deep-link behavior: FAIL usability polish; hash target lands partly under topbar.
+
+### Security Audit Results
+
+- [ ] BUG-PROJ6-QA-001: Next.js Supabase mutation proxies bypass the engine CSRF gate before forwarding engine tokens.
+- [x] Direct engine endpoints still enforce CSRF.
+- [x] No Supabase token value appeared in inspected readiness/board API responses.
+
+### Bugs Found
+
+- BUG-PROJ6-QA-001 — Critical — Next.js Supabase mutation proxies bypass the engine CSRF gate.
+- BUG-PROJ6-QA-002 — Critical — PROJ-6 UI components are missing from the component registry.
+- BUG-PROJ6-QA-003 — Medium — `/w/:key/settings#supabase` lands under the sticky topbar.
+- BUG-PROJ6-QA-005 — Low — New blocker UI uses arbitrary font-size utilities outside the scale.
+
+### Summary
+
+- **Acceptance Criteria:** 29/29 functionally passed, with one Medium deep-link polish bug.
+- **Bugs Found:** 4 relevant (2 Critical, 1 Medium, 1 Low).
+- **Security:** Issues found.
+- **Production Ready:** NO.

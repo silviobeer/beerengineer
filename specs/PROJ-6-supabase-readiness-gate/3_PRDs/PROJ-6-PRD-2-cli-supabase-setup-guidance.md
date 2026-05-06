@@ -90,3 +90,34 @@
 - CLI setup is the first production caller for the PROJ-6 readiness model.
 - CLI output must be deterministic enough for public CLI acceptance tests.
 - Secret values must never be printed.
+
+## QA Test Results
+
+**Tested:** 2026-05-06  
+**Tester:** QA Engineer (AI)
+
+### Acceptance Criteria Status
+
+- AC-1 through AC-27: PASS in deterministic regression (`cli-actions.test.ts`, `setupFlow.supabase.test.ts`, `setupInteractiveEntry.test.ts`, and Supabase setup/secret tests from wave gates).
+- CLI blocked-run output remained concise, named the workspace, preserved the exact PRD-1 missing-action vocabulary, and kept retry separate from missing setup actions.
+
+### Edge Cases Status
+
+- Generic secret mutation deny-list for `supabase.management_token`: PASS via direct API check and regression.
+- Invalid token/project handling: PASS in regression; previous token/project state is preserved by setup tests.
+
+### Security Audit Results
+
+- [x] Dedicated Supabase token path is enforced in engine setup code.
+- [ ] BUG-PROJ6-QA-004: CLI recovery output reconstructs setup actions from `recovery_summary` prose rather than a structured recovery payload.
+
+### Bugs Found
+
+- BUG-PROJ6-QA-004 — Medium — Board and CLI derive Supabase setup actions by parsing human recovery summary text.
+
+### Summary
+
+- **Acceptance Criteria:** 27/27 passed.
+- **Bugs Found:** 1 relevant Medium reliability/contract bug.
+- **Security:** No CLI-only token bypass found.
+- **Production Ready:** NO, because PROJ-level Critical bugs remain.

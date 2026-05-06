@@ -94,3 +94,35 @@
 - The Management API token remains app-level, but all access validation is workspace-specific.
 - No new Supabase readiness code path may import UI modules or trust browser-supplied path/ref fields.
 - The readiness model is a strict superset of existing `supabaseCapability` checks and must consume/delegate to that capability where the port shape fits; it must not duplicate a parallel token/project presence model.
+
+## QA Test Results
+
+**Tested:** 2026-05-06  
+**Tester:** QA Engineer (AI)
+
+### Acceptance Criteria Status
+
+- AC-1 through AC-29: PASS in deterministic regression (`preExecutionReadiness.test.ts`, `workflowSupabaseReadinessGate.test.ts`, `cli-actions.test.ts`) and direct API checks against an isolated QA engine.
+- Browser/API evidence: `/workspaces/alpha/supabase/readiness` returned blocked readiness with `Store management token`, `Connect Supabase project`, and `Create persistent test branch`; generic secret mutation for `supabase.management_token` remained denied.
+
+### Edge Cases Status
+
+- Cross-workspace authority and beta-vs-alpha token behavior: PASS in regression.
+- Same-run retry precondition behavior: PARTIAL; retry route exists, but QA found a UI proxy security issue before production release.
+
+### Security Audit Results
+
+- [ ] BUG-PROJ6-QA-001: Next.js Supabase mutation proxies bypass the engine CSRF gate before forwarding engine tokens.
+- [x] Direct engine mutation endpoints still reject missing `x-beerengineer-token` with `403 csrf_token_required`.
+
+### Bugs Found
+
+- BUG-PROJ6-QA-001 — Critical — Next.js Supabase mutation proxies bypass the engine CSRF gate.
+- BUG-PROJ6-QA-004 — Medium — Board and CLI derive Supabase setup actions by parsing human recovery summary text.
+
+### Summary
+
+- **Acceptance Criteria:** 29/29 passed at the engine/model level.
+- **Bugs Found:** 2 relevant to this PRD (1 Critical, 1 Medium).
+- **Security:** Issues found.
+- **Production Ready:** NO.
