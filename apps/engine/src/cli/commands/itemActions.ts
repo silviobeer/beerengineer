@@ -444,6 +444,8 @@ const handleResumeRun: CliItemActionHandler = async ctx => {
       await performResume({ repos: ctx.repos, io, runId: resumeRunId, remediation })
       const refreshed = ctx.repos.getRun(resumeRunId)
       if (refreshed?.recovery_status === "blocked") {
+        const supabaseBlockedExit = printSupabaseStartBlockerIfAny(ctx.repos, resumeRunId, ctx.itemRef, ctx.action)
+        if (supabaseBlockedExit !== 0) return supabaseBlockedExit
         printResumeBlockedOutput(resumeRunId, {
           summary: refreshed.recovery_summary,
           scope: refreshed.recovery_scope,

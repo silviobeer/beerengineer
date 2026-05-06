@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url"
 
 import { initDatabase } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
+import { writeRecoveryRecord } from "../src/core/recovery.js"
 import { layout } from "../src/core/workspaceLayout.js"
 import { removeTempDir } from "./helpers/fs.js"
 
@@ -259,6 +260,123 @@ test("beerengineer item action resume_run exits 75 without remediation summary i
     assert.equal(result.status, 75, `${result.stdout ?? ""}\n${result.stderr ?? ""}`)
     assert.match(result.stderr ?? "", /Missing --remediation-summary/)
     assert.match(result.stderr ?? "", /Run .* is blocked\./)
+  } finally {
+    removeTempDir(dir)
+  }
+})
+
+test("beerengineer item action resume_run reports Supabase readiness actions without creating a new run", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-supabase-blocked-"))
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
+  const repoRoot = join(dir, "repo")
+  seedCliRepo(repoRoot)
+
+  try {
+    const dbPath = join(dir, "workflow.sqlite")
+    const db = initDatabase(dbPath)
+    const repos = new Repos(db)
+    const ws = repos.upsertWorkspace({ key: "alpha", name: "Alpha", rootPath: repoRoot })
+    const item = repos.createItem({ workspaceId: ws.id, code: "ITEM-0001", title: "DB Workflow", description: "needs db" })
+    repos.setItemColumn(item.id, "implementation", "failed")
+    const workspaceFsId = `db-workflow-${item.id.toLowerCase()}`
+    const run = repos.createRun({
+      workspaceId: ws.id,
+      itemId: item.id,
+      title: item.title,
+      owner: "cli",
+      workspaceFsId,
+    })
+    const ctx = { workspaceId: workspaceFsId, workspaceRoot: repoRoot, runId: run.id }
+    const brainstormDir = layout.stageArtifactsDir(ctx, "brainstorm")
+    const requirementsDir = layout.stageArtifactsDir(ctx, "requirements")
+    const architectureDir = layout.stageArtifactsDir(ctx, "architecture")
+    const planningDir = layout.stageArtifactsDir(ctx, "planning")
+    mkdirSync(brainstormDir, { recursive: true })
+    mkdirSync(requirementsDir, { recursive: true })
+    mkdirSync(architectureDir, { recursive: true })
+    mkdirSync(planningDir, { recursive: true })
+    writeFileSync(layout.runFile(ctx), `${JSON.stringify({ id: run.id }, null, 2)}\n`)
+    writeFileSync(join(brainstormDir, "projects.json"), JSON.stringify([{ id: "PROJ", name: "DB Project", description: "schema", hasUi: false, concept: { summary: "db", problem: "db", users: ["ops"], constraints: [] } }], null, 2))
+    writeFileSync(join(requirementsDir, "prd.json"), JSON.stringify({ prd: { id: "PRD", title: "DB", stories: [] } }, null, 2))
+    writeFileSync(join(architectureDir, "architecture.json"), JSON.stringify({ project: { id: "PROJ", name: "DB Project", description: "schema" }, architecture: { summary: "db" } }, null, 2))
+    writeFileSync(join(planningDir, "implementation-plan.json"), JSON.stringify({
+      project: { id: "PROJ", name: "DB Project" },
+      conceptSummary: "db",
+      architectureSummary: "db",
+      plan: {
+        summary: "db",
+        assumptions: [],
+        sequencingNotes: [],
+        dependencies: [],
+        risks: [],
+        waves: [
+          {
+            id: "W1",
+            number: 1,
+            goal: "copy",
+            kind: "feature",
+            stories: [{ id: "US-1", title: "copy", dbRelevant: false }],
+            dbRelevantStoryCount: 0,
+            dbRelevantWave: false,
+            internallyParallelizable: false,
+            dependencies: [],
+            exitCriteria: [],
+          },
+          {
+            id: "W2",
+            number: 2,
+            goal: "schema",
+            kind: "feature",
+            stories: [{ id: "US-2", title: "schema", dbRelevant: true }],
+            dbRelevantStoryCount: 1,
+            dbRelevantWave: true,
+            internallyParallelizable: false,
+            dependencies: ["W1"],
+            exitCriteria: [],
+          },
+        ],
+      },
+    }, null, 2))
+    await writeRecoveryRecord(ctx, {
+      status: "blocked",
+      cause: "stage_error",
+      scope: { type: "stage", runId: run.id, stageId: "execution" },
+      summary: "Retry Supabase readiness.",
+      evidencePaths: [planningDir],
+    })
+    repos.setRunRecovery(run.id, { status: "blocked", scope: "stage", scopeRef: "execution", summary: "Retry Supabase readiness." })
+    db.close()
+
+    const result = spawnSync(
+      process.execPath,
+      [binPath, "item", "action", "--item", "ITEM-0001", "--action", "resume_run", "--remediation-summary", "setup changed"],
+      {
+        cwd: engineRoot,
+        encoding: "utf8",
+        env: { ...process.env, BEERENGINEER_UI_DB_PATH: dbPath, BEERENGINEER_ALLOWED_ROOTS: dir },
+        timeout: 10000,
+      },
+    )
+
+    assert.equal(result.status, 75, `${result.stdout ?? ""}\n${result.stderr ?? ""}`)
+    assert.match(result.stderr ?? "", /Workflow start blocked by Supabase readiness/)
+    assert.match(result.stderr ?? "", /Workspace: alpha/)
+    assert.match(result.stderr ?? "", /planned DB-relevant waves require Supabase readiness before execution workers start/)
+    assert.match(result.stderr ?? "", /Store management token/)
+    assert.match(result.stderr ?? "", /Connect Supabase project/)
+    assert.match(result.stderr ?? "", /Create persistent test branch/)
+    assert.match(result.stderr ?? "", /beerengineer setup/)
+
+    const verifyDb = initDatabase(dbPath)
+    const verifyRepos = new Repos(verifyDb)
+    const runs = verifyRepos.listRuns().filter(candidate => candidate.item_id === item.id)
+    assert.equal(runs.length, 1)
+    assert.equal(runs[0]?.id, run.id)
+    assert.equal(runs[0]?.status, "blocked")
+    assert.equal(runs[0]?.recovery_status, "blocked")
+    verifyDb.close()
   } finally {
     removeTempDir(dir)
   }

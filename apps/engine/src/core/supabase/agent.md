@@ -10,6 +10,14 @@ fail because npm executes the script from `apps/engine`. Use
 `test/...` for engine tests and `tests/...` for UI tests in
 `wave-gate-config.json`.
 
+### Empty setup waves are DB-neutral prelude metadata
+
+Discovered during PROJ-6 Wave 2 while wiring pre-execution readiness into
+resume. Fake/generated plans can include a `kind: "setup"` wave with tasks and
+no stories before feature waves. Treat that empty setup wave as DB-neutral
+prelude; keep strict `dbRelevant` / `dbRelevantWave` validation for feature
+waves and stories.
+
 ## Patterns That Work Well
 
 ### Pre-execution readiness keeps retry out of setup actions
