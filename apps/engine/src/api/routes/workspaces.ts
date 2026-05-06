@@ -14,6 +14,13 @@ import { validateHarnessProfileShape } from "../../setup/config.js"
 import type { AppConfig, SetupReport } from "../../setup/types.js"
 import type { HarnessProfile, RegisterWorkspaceInput } from "../../types/workspace.js"
 import { json, readJson } from "../http.js"
+import { readActiveSecretValue } from "../../setup/secretStore.js"
+import { SUPABASE_MANAGEMENT_TOKEN_SECRET_REF } from "../../setup/secretMetadata.js"
+import { SupabaseManagementClient } from "../../core/supabase/managementClient.js"
+import { createSupabasePreExecutionReadiness } from "../../core/supabase/preExecutionReadiness.js"
+import { connectSupabaseProject } from "../../setup/supabaseSetup.js"
+import { rotateSupabaseManagementToken } from "../../setup/secretActions.supabaseRotate.js"
+import { createOrAttachPersistentTestBranch } from "../../core/supabase/persistentTestBranch.js"
 
 function parseWorkspaceProfile(input: unknown, config: AppConfig): HarnessProfile {
   if (!input) return config.llm.defaultHarnessProfile
@@ -130,4 +137,68 @@ export function handleWorkspaceOpen(repos: Repos, res: ServerResponse, key: stri
 export async function handleWorkspaceBackfill(repos: Repos, res: ServerResponse): Promise<void> {
   const result = await backfillWorkspaceConfigs(repos)
   json(res, 200, result)
+}
+
+export async function handleWorkspaceSupabaseReadiness(repos: Repos, res: ServerResponse, key: string, runId?: string | null): Promise<void> {
+  const workspace = repos.getWorkspaceByKey(key)
+  if (!workspace) return json(res, 404, { ok: false, error: "workspace_not_found", message: "Workspace not found" })
+  const token = readActiveSecretValue(SUPABASE_MANAGEMENT_TOKEN_SECRET_REF)
+  const readiness = await createSupabasePreExecutionReadiness({
+    mode: "setup",
+    workspace: {
+      id: workspace.id,
+      key: workspace.key,
+      rootPath: workspace.root_path ?? undefined,
+      projectRef: workspace.supabase_project_ref ?? undefined,
+      persistentTestBranchRef: workspace.supabase_persistent_test_branch_ref ?? undefined,
+      persistentTestBranchName: workspace.supabase_persistent_test_branch_name ?? undefined,
+    },
+    runId: runId ?? undefined,
+    managementClient: token ? new SupabaseManagementClient({ token }) : undefined,
+  })
+  json(res, 200, { ok: true, readiness })
+}
+
+export async function handleWorkspaceSupabaseConnect(repos: Repos, req: IncomingMessage, res: ServerResponse, key: string): Promise<void> {
+  const workspace = repos.getWorkspaceByKey(key)
+  if (!workspace) return json(res, 404, { ok: false, error: "workspace_not_found", message: "Workspace not found" })
+  const body = await readJson(req) as { token?: unknown; projectRef?: unknown }
+  const token = typeof body?.token === "string" ? body.token.trim() : ""
+  const projectRef = typeof body?.projectRef === "string" ? body.projectRef.trim() : ""
+  const result = await connectSupabaseProject({
+    repos,
+    workspaceId: workspace.id,
+    token,
+    projectRef,
+    client: new SupabaseManagementClient({ token }),
+  })
+  json(res, result.ok ? 200 : 400, result)
+}
+
+export async function handleWorkspaceSupabaseRotate(repos: Repos, req: IncomingMessage, res: ServerResponse, key: string): Promise<void> {
+  const workspace = repos.getWorkspaceByKey(key)
+  if (!workspace) return json(res, 404, { ok: false, error: "workspace_not_found", message: "Workspace not found" })
+  const body = await readJson(req) as { token?: unknown }
+  const token = typeof body?.token === "string" ? body.token.trim() : ""
+  const result = await rotateSupabaseManagementToken({
+    token,
+    surface: "setup-ui",
+    client: new SupabaseManagementClient({ token }),
+  })
+  json(res, result.ok ? 200 : 400, result)
+}
+
+export async function handleWorkspaceSupabaseBranch(repos: Repos, res: ServerResponse, key: string): Promise<void> {
+  const workspace = repos.getWorkspaceByKey(key)
+  if (!workspace) return json(res, 404, { ok: false, error: "workspace_not_found", message: "Workspace not found" })
+  const token = readActiveSecretValue(SUPABASE_MANAGEMENT_TOKEN_SECRET_REF)
+  if (!token) return json(res, 400, { ok: false, error: "token_required", message: "Supabase Management API token is required" })
+  const client = new SupabaseManagementClient({ token })
+  const result = await createOrAttachPersistentTestBranch({
+    repos,
+    workspaceId: workspace.id,
+    client,
+    poll: { timeoutMs: 60_000, initialDelayMs: 2_000, maxDelayMs: 10_000 },
+  })
+  json(res, result.ok ? 200 : 409, result)
 }

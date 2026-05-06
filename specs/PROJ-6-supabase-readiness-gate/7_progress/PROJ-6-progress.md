@@ -1,7 +1,7 @@
 # PROJ-6 Progress
 
 ## Status: in progress
-## Current Wave: 3
+## Current Wave: 4
 ## BASE_SHA: c4e761b37ed1235cf0c25b9ec4336434791ca1b0
 
 ---
@@ -344,3 +344,106 @@
 - [x] Build: `npm run typecheck`
 - [x] CodeRabbit: 0 non-advisory findings (advisory severities: minor,medium,low)
 - [x] Smoke: backend-only
+
+---
+
+## Wave 4 — in progress
+
+- Wave base tag: `wave-4-start-PROJ-6` -> `58d2c6e`
+
+### User Stories
+| User Story | Status |
+|------------|:------:|
+| PROJ-6-PRD-3-US-1: Workspace-specific Supabase settings route | complete |
+| PROJ-6-PRD-3-US-2: Visible Supabase setup inputs | complete |
+| PROJ-6-PRD-3-US-3: Readiness summary | complete |
+| PROJ-6-PRD-3-US-4: Same-run retry from settings | complete |
+| PROJ-6-PRD-3-US-5: Responsive/mobile Supabase settings polish | complete |
+
+## PROJ-6-PRD-3-US-1: Workspace-specific Supabase settings route — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 4.1 Workspace Settings Route And Server Resolution | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-1 | A new workspace settings route exists at `/w/:key/settings`. | ✓ |
+| AC-2 | The route is a sibling of the existing `/w/:key` workspace board and uses the workspace shell/topbar pattern. | ✓ |
+| AC-3 | The Supabase section is reachable via `#supabase`. | ✓ |
+| AC-4 | The section navigation is forward-compatible for later workspace settings sections without requiring additional sections in PROJ-6. | ✓ |
+| AC-5 | The engine resolves workspace metadata from the workspace key server-side; browser-supplied paths/project refs/branch refs are not authoritative. | ✓ |
+| AC-6 | The `/w/:key/settings` route never trusts a body-provided workspace id over the route key/server-resolved workspace. | ✓ |
+| AC-7 | Opening settings for workspace `beta` cannot configure or unblock a run for workspace `alpha`. | ✓ |
+
+## PROJ-6-PRD-3-US-2: Visible Supabase setup inputs — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 4.2 Visible Workspace Supabase Inputs | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-8 | The page visibly provides a Supabase project ref input. | ✓ |
+| AC-9 | The page visibly provides a Supabase Management API token input or token replace/rotate control. | ✓ |
+| AC-10 | The page visibly provides a persistent test branch create/attach choice after project/token validation is available. | ✓ |
+| AC-11 | The token input uses the dedicated Supabase connect/rotate path and not a generic secret mutation route. | ✓ |
+| AC-12 | The not-configured state renders a stub plus setup inputs; it does not render the full connected cleanup/protection control set. | ✓ |
+
+## PROJ-6-PRD-3-US-3: Readiness summary — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 4.3 Workspace Readiness Summary | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-13 | The readiness summary shows blocked/ready/checking/error state for the selected workspace. | ✓ |
+| AC-14 | Missing token, missing project ref, missing branch, invalid token, and unauthorized-project states use exactly the PRD-1 missing setup action labels. | ✓ |
+| AC-15 | `Retry run` is shown only as a separate blocked-run affordance when run context exists, not as a missing setup action. | ✓ |
+| AC-16 | Invalid/revoked/HTTP 401 token failures show `Rotate management token`; HTTP 403 permission-denied project access failures show `Re-authorize project access`. | ✓ |
+| AC-17 | The UI displays redacted provider `message` text before generic fallback copy when the engine returns one. | ✓ |
+| AC-18 | The UI can show `checking` during setup/settings recheck while branch health is polling. | ✓ |
+| AC-19 | The UI does not mark the workspace ready until the engine reports `ACTIVE_HEALTHY` branch readiness. | ✓ |
+
+## PROJ-6-PRD-3-US-4: Same-run retry from settings — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 4.4 Workspace Settings Retry Flow | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-20 | Retry is disabled or absent while readiness remains blocked/checking. | ✓ |
+| AC-21 | Retry becomes available after the engine reports ready and run context is known. | ✓ |
+| AC-22 | Retry uses the existing blocked `runId` semantics from PRD-1 rather than creating a new normal run. | ✓ |
+| AC-23 | If no blocked-run context is available, the page still allows setup/recheck but does not show a misleading retry action. | ✓ |
+| AC-24 | If retry still blocks, the UI refreshes the missing setup action list instead of claiming success. | ✓ |
+
+## PROJ-6-PRD-3-US-5: Responsive/mobile Supabase settings polish — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 4.5 Responsive Workspace Settings Polish | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-25 | At 375px width, project ref, token, persistent branch choice, recheck, and retry controls remain visible and usable. | ✓ |
+| AC-26 | The workspace settings section nav stacks above content on narrow screens. | ✓ |
+| AC-27 | The UI reuses existing dark operator-console tokens and square bordered panel language. | ✓ |
+| AC-28 | Important UI elements use or are traceable to accepted reuse/new component candidates from the implementation handoff. | ✓ |
+| AC-29 | New top-level workspace settings UI has a 375px screenshot captured before QA can mark the UI wave green. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- Pass 1: PASS — `npm run test:file --workspace=@beerengineer/engine -- test/api/routes/workspaceSupabaseReadiness.test.ts`; `npm run test:file --workspace=@beerengineer/engine -- test/api/routes/workspaceSupabaseSetup.test.ts`; `npm run test:file --workspace=@beerengineer/engine -- test/api/routes/supabaseReadinessRetry.test.ts`; `npm test --workspace=@beerengineer/ui -- tests/workspaceSettingsPage.test.tsx tests/workspaceSupabaseSettings.test.tsx tests/workspaceSupabaseReadinessSummary.test.tsx tests/workspaceSupabaseRetry.test.tsx`; `npm run typecheck`; 375px screenshot captured as `proj6-wave4-settings-mobile-run-context-375.png`

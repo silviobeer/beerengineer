@@ -782,6 +782,188 @@
         }
       }
     },
+    "/workspaces/{key}/supabase/readiness": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceKey"
+        }
+      ],
+      "get": {
+        "tags": [
+          "Workspaces"
+        ],
+        "summary": "Read workspace Supabase execution-readiness state.",
+        "parameters": [
+          {
+            "name": "runId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Workspace Supabase readiness snapshot.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/workspaces/{key}/supabase/connect": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceKey"
+        }
+      ],
+      "post": {
+        "tags": [
+          "Workspaces"
+        ],
+        "summary": "Connect a workspace to a Supabase project resolved from the route key.",
+        "security": [
+          {
+            "csrfToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Project connection saved and readiness returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/workspaces/{key}/supabase/rotate": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceKey"
+        }
+      ],
+      "post": {
+        "tags": [
+          "Workspaces"
+        ],
+        "summary": "Rotate the Supabase Management API token used by readiness checks.",
+        "security": [
+          {
+            "csrfToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Management token rotated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/workspaces/{key}/supabase/branch": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceKey"
+        }
+      ],
+      "post": {
+        "tags": [
+          "Workspaces"
+        ],
+        "summary": "Create or attach a workspace persistent Supabase test branch.",
+        "security": [
+          {
+            "csrfToken": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Persistent branch setup attempted and readiness returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
     "/items": {
       "get": {
         "tags": [
@@ -1383,6 +1565,61 @@
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/runs/{id}/supabase-readiness/retry": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/RunId"
+        }
+      ],
+      "post": {
+        "tags": [
+          "Runs"
+        ],
+        "summary": "Retry the same run after Supabase readiness setup has been updated.",
+        "security": [
+          {
+            "csrfToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Run resumed from the Supabase readiness blocker.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "runId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "recoveryStatus": {
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "runId",
+                    "status"
+                  ]
+                }
+              }
+            }
           },
           "404": {
             "$ref": "#/components/responses/NotFound"

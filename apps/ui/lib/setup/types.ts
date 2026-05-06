@@ -180,6 +180,32 @@ export interface AppConfigView {
   };
 }
 
+export type SupabaseReadinessSetupAction =
+  | "Store management token"
+  | "Connect Supabase project"
+  | "Create persistent test branch"
+  | "Rotate management token"
+  | "Re-authorize project access";
+
+export interface SupabaseReadinessSnapshot {
+  status: "ready" | "blocked" | "checking" | "error";
+  missingSetupActions: SupabaseReadinessSetupAction[];
+  retry: { available: boolean; runId?: string };
+  workspace: {
+    id?: string;
+    key?: string;
+    projectRef?: string;
+    persistentTestBranchRef?: string;
+    persistentTestBranchName?: string;
+  };
+  branch?: {
+    ref?: string;
+    status: "active_healthy" | "missing" | "timeout" | "provider_error" | "unauthorized" | "degraded" | "unknown";
+    providerStatus?: string;
+  };
+  message?: string;
+}
+
 export interface AppConfigPatchResult {
   ok: boolean;
   saved: string[];

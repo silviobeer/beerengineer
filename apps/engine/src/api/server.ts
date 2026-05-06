@@ -33,6 +33,7 @@ import {
   handleGetRun,
   handleGetRunTree,
   handleGetRecovery,
+  handleSupabaseReadinessRetry,
   handlePostMessage,
   handleListRuns,
   handleResumeRun,
@@ -41,10 +42,14 @@ import { handleRetryValidation } from "./routes/branchActions.js"
 import {
   handleWorkspaceAdd,
   handleWorkspaceBackfill,
+  handleWorkspaceSupabaseBranch,
+  handleWorkspaceSupabaseConnect,
   handleWorkspaceGet,
   handleWorkspaceList,
   handleWorkspaceOpen,
   handleWorkspacePreview,
+  handleWorkspaceSupabaseReadiness,
+  handleWorkspaceSupabaseRotate,
   handleWorkspaceRemove,
 } from "./routes/workspaces.js"
 import {
@@ -339,6 +344,7 @@ function runRouteMatchers(context: RouteContext): Array<{ pattern: RegExp; metho
     { pattern: /^\/runs\/([^/]+)\/conversation$/, method: "GET", handle: runId => handleGetConversation(repos, context.res, runId) },
     { pattern: /^\/runs\/([^/]+)\/answer$/, method: "POST", handle: runId => handleAnswer(repos, context.req, context.res, runId) },
     { pattern: /^\/runs\/([^/]+)\/resume$/, method: "POST", handle: runId => handleResumeRun(repos, context.req, context.res, runId, payload => board.broadcastItemColumnChanged(payload)) },
+    { pattern: /^\/runs\/([^/]+)\/supabase-readiness\/retry$/, method: "POST", handle: runId => handleSupabaseReadinessRetry(repos, context.req, context.res, runId, payload => board.broadcastItemColumnChanged(payload)) },
     { pattern: /^\/runs\/([^/]+)\/recovery$/, method: "GET", handle: runId => handleGetRecovery(repos, context.res, runId) },
   ]
 }
@@ -428,6 +434,16 @@ async function handleWorkspaceRoutes(context: RouteContext): Promise<boolean> {
   if (path === "/workspaces" && req.method === "GET") { handleWorkspaceList(repos, res); return true }
   if (path === "/workspaces" && req.method === "POST") { handleWorkspaceAdd(repos, loadEffectiveConfig, req, res); return true }
   if (path === "/workspaces/backfill" && req.method === "POST") { handleWorkspaceBackfill(repos, res); return true }
+
+  const supabaseMatch = /^\/workspaces\/([^/]+)\/supabase\/(readiness|connect|rotate|branch)$/.exec(path)
+  if (supabaseMatch) {
+    const [, key, sub] = supabaseMatch
+    if (sub === "readiness" && req.method === "GET") { await handleWorkspaceSupabaseReadiness(repos, res, key, url.searchParams.get("runId")); return true }
+    if (sub === "connect" && req.method === "POST") { await handleWorkspaceSupabaseConnect(repos, req, res, key); return true }
+    if (sub === "rotate" && req.method === "POST") { await handleWorkspaceSupabaseRotate(repos, req, res, key); return true }
+    if (sub === "branch" && req.method === "POST") { await handleWorkspaceSupabaseBranch(repos, res, key); return true }
+    return false
+  }
 
   const workspaceMatch = /^\/workspaces\/([^/]+)(?:\/(open))?$/.exec(path)
   if (!workspaceMatch) return false

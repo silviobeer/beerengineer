@@ -253,6 +253,24 @@ export async function handleResumeRun(
   json(res, 200, { runId: result.runId, status: run?.status ?? "running" })
 }
 
+export async function handleSupabaseReadinessRetry(
+  repos: Repos,
+  req: IncomingMessage,
+  res: ServerResponse,
+  runId: string,
+  onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void,
+): Promise<void> {
+  const body = (await readJson(req)) as { summary?: string }
+  const result = await resumeRunInProcess(repos, {
+    runId,
+    summary: typeof body.summary === "string" && body.summary.trim() ? body.summary : "Supabase readiness setup updated.",
+    onItemColumnChanged,
+  })
+  if (!result.ok) return json(res, result.status, { ok: false, error: result.error })
+  const run = repos.getRun(result.runId)
+  json(res, 200, { ok: true, runId: result.runId, status: run?.status ?? "running", recoveryStatus: run?.recovery_status ?? null })
+}
+
 /** `POST /runs` — start a fresh run from a title/description + optional workspace. */
 export async function handleCreateRun(
   repos: Repos,
