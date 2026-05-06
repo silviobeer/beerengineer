@@ -478,3 +478,4 @@ Status: in progress
 - Wave gate attempt 9: Ralph AC checks and build passed; CodeRabbit found valid startup readiness completion and duplicate `run_resumed` persistence issues. Fixed both and extended resume coverage.
 - Wave gate attempt 10: Ralph AC checks and build passed; CodeRabbit found valid `itemId` fallback and `workerRecoverySurface.test.ts` temp-dir cleanup issues. Fixed both.
 - Wave gate attempt 11: Ralph AC checks and build passed; CodeRabbit found a valid graceful shutdown ordering issue where recovery ran before the listener stopped accepting requests. Reordered shutdown to close the listener before recovery.
+- Wave gate attempt 12: Ralph AC checks and build passed; CodeRabbit found ambiguous CodeRabbit retry-count naming in `scripts/wave-gate.sh`. Renamed the knob to express extra retries.
