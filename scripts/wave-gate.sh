@@ -138,7 +138,7 @@ CR_OUT=$(mktemp)
 CR_START=$(date +%s)
 set +e
 timeout --foreground "$CODERABBIT_TIMEOUT" \
-  coderabbit review --agent --config AGENTS.md apps/engine/CLAUDE.md --base-commit "$WAVE_BASE" --files "${REVIEW_FILES[@]}" > "$CR_OUT" 2>&1
+  coderabbit review --agent --config AGENTS.md apps/engine/CLAUDE.md --base-commit "$WAVE_BASE" > "$CR_OUT" 2>&1
 rc=$?
 if [[ $rc -ne 0 ]] && grep -q "stopping cli" "$CR_OUT" 2>/dev/null; then
   echo "   ⚠ coderabbit stopped early; retrying once"
@@ -148,7 +148,7 @@ if [[ $rc -ne 0 ]] && grep -q "stopping cli" "$CR_OUT" 2>/dev/null; then
   fi
   : > "$CR_OUT"
   timeout --foreground "$CODERABBIT_TIMEOUT" \
-    coderabbit review --agent --config AGENTS.md apps/engine/CLAUDE.md --base-commit "$WAVE_BASE" --files "${REVIEW_FILES[@]}" > "$CR_OUT" 2>&1
+    coderabbit review --agent --config AGENTS.md apps/engine/CLAUDE.md --base-commit "$WAVE_BASE" > "$CR_OUT" 2>&1
   rc=$?
 fi
 set -e
