@@ -315,3 +315,9 @@ Status: in progress
 - AC-6..AC-10: PASS — stale CLI heartbeat recovery fails old CLI runs, preserves fresh CLI runs, and returns/logs recovered ids.
 - AC-11..AC-20: PASS — authoritative recovery projects failed items and skips projection when a newer live run owns item state.
 - AC-26..AC-30: PASS — claim/first heartbeat setup failures after run creation produce failed/recoverable runs for CLI and API owners.
+
+### Wave 3 Gate — PASSED (2026-05-06T17:18:18+02:00)
+- [x] Ralph: 25 AC commands green
+- [x] Build: `npm run typecheck`
+- [x] CodeRabbit: 0 non-advisory findings (advisory severities: medium,low)
+- [x] Smoke: backend-only
