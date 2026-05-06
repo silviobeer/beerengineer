@@ -12,9 +12,9 @@
       "codex_effort": "high",
       "advisory_severities": ["medium", "low"],
       "ac_commands": [
-        "npm run test:file --workspace=@beerengineer/engine -- apps/engine/test/core/supabase/preExecutionReadiness.test.ts",
-        "npm run test:file --workspace=@beerengineer/engine -- apps/engine/test/core/supabase/branchPoller.test.ts",
-        "npm run test:file --workspace=@beerengineer/engine -- apps/engine/test/core/capabilities/supabaseCapability.preflight.test.ts"
+        "npm run test:file --workspace=@beerengineer/engine -- test/core/supabase/preExecutionReadiness.test.ts",
+        "npm run test:file --workspace=@beerengineer/engine -- test/core/supabase/branchPoller.test.ts",
+        "npm run test:file --workspace=@beerengineer/engine -- test/core/capabilities/supabaseCapability.preflight.test.ts"
       ],
       "frontend_routes": []
     },
@@ -22,10 +22,10 @@
       "codex_effort": "high",
       "advisory_severities": ["medium", "low"],
       "ac_commands": [
-        "npm run test:file --workspace=@beerengineer/engine -- apps/engine/test/workflowSupabaseReadinessGate.test.ts",
-        "npm run test:file --workspace=@beerengineer/engine -- apps/engine/test/stages/execution/supabaseSkip.test.ts",
-        "npm run test:file --workspace=@beerengineer/engine -- apps/engine/test/resume.test.ts",
-        "npm run test:file --workspace=@beerengineer/engine -- apps/engine/test/cli-actions.test.ts"
+        "npm run test:file --workspace=@beerengineer/engine -- test/workflowSupabaseReadinessGate.test.ts",
+        "npm run test:file --workspace=@beerengineer/engine -- test/stages/execution/supabaseSkip.test.ts",
+        "npm run test:file --workspace=@beerengineer/engine -- test/resume.test.ts",
+        "npm run test:file --workspace=@beerengineer/engine -- test/cli-actions.test.ts"
       ],
       "frontend_routes": []
     },
@@ -33,13 +33,13 @@
       "codex_effort": "high",
       "advisory_severities": ["medium", "low"],
       "ac_commands": [
-        "npm run test:file --workspace=@beerengineer/engine -- apps/engine/test/setup/setupFlow.supabase.test.ts",
-        "npm run test:file --workspace=@beerengineer/engine -- apps/engine/test/setupInteractiveEntry.test.ts",
-        "npm run test:file --workspace=@beerengineer/engine -- apps/engine/test/setup/secretActions.supabaseRotate.test.ts",
-        "npm run test:file --workspace=@beerengineer/engine -- apps/engine/test/setup/secretMetadata.test.ts",
-        "npm run test:file --workspace=@beerengineer/engine -- apps/engine/test/core/supabase/persistentTestBranch.create.test.ts",
-        "npm run test:file --workspace=@beerengineer/engine -- apps/engine/test/core/supabase/persistentTestBranch.attach.test.ts",
-        "npm run test:file --workspace=@beerengineer/engine -- apps/engine/test/cli-actions.test.ts"
+        "npm run test:file --workspace=@beerengineer/engine -- test/setup/setupFlow.supabase.test.ts",
+        "npm run test:file --workspace=@beerengineer/engine -- test/setupInteractiveEntry.test.ts",
+        "npm run test:file --workspace=@beerengineer/engine -- test/setup/secretActions.supabaseRotate.test.ts",
+        "npm run test:file --workspace=@beerengineer/engine -- test/setup/secretMetadata.test.ts",
+        "npm run test:file --workspace=@beerengineer/engine -- test/core/supabase/persistentTestBranch.create.test.ts",
+        "npm run test:file --workspace=@beerengineer/engine -- test/core/supabase/persistentTestBranch.attach.test.ts",
+        "npm run test:file --workspace=@beerengineer/engine -- test/cli-actions.test.ts"
       ],
       "frontend_routes": []
     },
@@ -47,13 +47,13 @@
       "codex_effort": "high",
       "advisory_severities": ["medium", "low"],
       "ac_commands": [
-        "npm run test:file --workspace=@beerengineer/engine -- apps/engine/test/api/routes/workspaceSupabaseReadiness.test.ts",
-        "npm run test:file --workspace=@beerengineer/engine -- apps/engine/test/api/routes/workspaceSupabaseSetup.test.ts",
-        "npm run test:file --workspace=@beerengineer/engine -- apps/engine/test/api/routes/supabaseReadinessRetry.test.ts",
-        "npm test --workspace=@beerengineer/ui -- apps/ui/tests/workspaceSettingsPage.test.tsx",
-        "npm test --workspace=@beerengineer/ui -- apps/ui/tests/workspaceSupabaseSettings.test.tsx",
-        "npm test --workspace=@beerengineer/ui -- apps/ui/tests/workspaceSupabaseReadinessSummary.test.tsx",
-        "npm test --workspace=@beerengineer/ui -- apps/ui/tests/workspaceSupabaseRetry.test.tsx"
+        "npm run test:file --workspace=@beerengineer/engine -- test/api/routes/workspaceSupabaseReadiness.test.ts",
+        "npm run test:file --workspace=@beerengineer/engine -- test/api/routes/workspaceSupabaseSetup.test.ts",
+        "npm run test:file --workspace=@beerengineer/engine -- test/api/routes/supabaseReadinessRetry.test.ts",
+        "npm test --workspace=@beerengineer/ui -- tests/workspaceSettingsPage.test.tsx",
+        "npm test --workspace=@beerengineer/ui -- tests/workspaceSupabaseSettings.test.tsx",
+        "npm test --workspace=@beerengineer/ui -- tests/workspaceSupabaseReadinessSummary.test.tsx",
+        "npm test --workspace=@beerengineer/ui -- tests/workspaceSupabaseRetry.test.tsx"
       ],
       "frontend_routes": ["/w/alpha/settings#supabase"]
     },
@@ -61,11 +61,11 @@
       "codex_effort": "high",
       "advisory_severities": ["medium", "low"],
       "ac_commands": [
-        "npm run test:file --workspace=@beerengineer/engine -- apps/engine/test/apiIntegration.test.ts",
-        "npm run test:file --workspace=@beerengineer/engine -- apps/engine/test/api/routes/supabaseReadinessRetry.test.ts",
-        "npm test --workspace=@beerengineer/ui -- apps/ui/tests/BoardCard.test.tsx",
-        "npm test --workspace=@beerengineer/ui -- apps/ui/tests/Board.test.tsx",
-        "npm test --workspace=@beerengineer/ui -- apps/ui/tests/SupabaseBlockedRunPanel.test.tsx"
+        "npm run test:file --workspace=@beerengineer/engine -- test/apiIntegration.test.ts",
+        "npm run test:file --workspace=@beerengineer/engine -- test/api/routes/supabaseReadinessRetry.test.ts",
+        "npm test --workspace=@beerengineer/ui -- tests/BoardCard.test.tsx",
+        "npm test --workspace=@beerengineer/ui -- tests/Board.test.tsx",
+        "npm test --workspace=@beerengineer/ui -- tests/SupabaseBlockedRunPanel.test.tsx"
       ],
       "frontend_routes": ["/w/alpha"]
     }

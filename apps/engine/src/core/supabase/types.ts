@@ -47,3 +47,44 @@ export type SupabaseSqlResult = {
   rows?: unknown[]
   rowCount?: number
 }
+
+export const SUPABASE_READINESS_SETUP_ACTIONS = [
+  "Store management token",
+  "Connect Supabase project",
+  "Create persistent test branch",
+  "Rotate management token",
+  "Re-authorize project access",
+] as const
+
+export type SupabaseReadinessSetupAction = typeof SUPABASE_READINESS_SETUP_ACTIONS[number]
+
+export type SupabaseReadinessStatus = "ready" | "blocked" | "checking" | "error"
+
+export type SupabaseReadinessRetry = {
+  available: boolean
+  runId?: string
+}
+
+export type SupabaseReadinessWorkspace = {
+  id?: string
+  key?: string
+  rootPath?: string
+  projectRef?: string
+  persistentTestBranchRef?: string
+  persistentTestBranchName?: string
+}
+
+export type SupabaseReadinessBranch = {
+  ref?: string
+  status: "active_healthy" | "missing" | "timeout" | "provider_error" | "unauthorized" | "degraded" | "unknown"
+  providerStatus?: string
+}
+
+export type SupabasePreExecutionReadiness = {
+  status: SupabaseReadinessStatus
+  missingSetupActions: SupabaseReadinessSetupAction[]
+  retry: SupabaseReadinessRetry
+  workspace: SupabaseReadinessWorkspace
+  branch?: SupabaseReadinessBranch
+  message?: string
+}
