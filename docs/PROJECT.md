@@ -1,7 +1,7 @@
 # Project — Features
 
-**Last updated:** 2026-05-04
-**Features implemented:** 4
+**Last updated:** 2026-05-06
+**Features implemented:** 5
 
 ---
 
@@ -89,5 +89,24 @@
 **PRDs:** [PRD-1](../specs/PROJ-4-supabase-branch-databases/3_PRDs/PROJ-4-PRD-1-supabase-capability-foundation.md), [PRD-2](../specs/PROJ-4-supabase-branch-databases/3_PRDs/PROJ-4-PRD-2-setup-and-persistent-test-branch.md), [PRD-3](../specs/PROJ-4-supabase-branch-databases/3_PRDs/PROJ-4-PRD-3-settings-surface.md), [PRD-4](../specs/PROJ-4-supabase-branch-databases/3_PRDs/PROJ-4-PRD-4-db-relevance-classification.md), [PRD-5](../specs/PROJ-4-supabase-branch-databases/3_PRDs/PROJ-4-PRD-5-wave-branch-lifecycle.md), [PRD-6](../specs/PROJ-4-supabase-branch-databases/3_PRDs/PROJ-4-PRD-6-worker-environment-handoff.md), [PRD-7](../specs/PROJ-4-supabase-branch-databases/3_PRDs/PROJ-4-PRD-7-merge-and-production-migration.md), [PRD-8](../specs/PROJ-4-supabase-branch-databases/3_PRDs/PROJ-4-PRD-8-cleanup-audit-and-recovery.md), [PRD-9](../specs/PROJ-4-supabase-branch-databases/3_PRDs/PROJ-4-PRD-9-run-wave-merge-status-surface.md)
 
 **QA:** Round 1 closed all surface bugs; Round 2 found 1 Critical orchestrator-wiring gap plus Critical/High/Medium/Low security and UX bugs, all fixed in commits b4dcc3b through 1a85e37. Final run: engine suite 796/798 passing (2 skipped), UI suite 328/328 passing, build clean, typecheck green. The orchestrator activation of PRD-5/6/7 helpers in `runService.ts`/`runOrchestrator.ts` is deferred to PRD-10; data model, gates, and UI are correct and ready to wire.
+
+---
+
+## PROJ-7: Worker Lease Recovery
+
+**Status:** QA-passed after bug fix.
+
+**Purpose:** Make CLI and API workflow ownership durable so accepted work is visibly owned, lost workers become recoverable, and callers can distinguish process liveness from workflow readiness.
+
+**Scope:** Ships run-level worker lease fields, CLI/API start and resume claims, heartbeat refresh and fatal cancellation, startup lost-worker recovery, graceful API shutdown recovery, same-run resume, `/ready`, recovery message projection, API docs, and deterministic coverage. Out of scope: durable queue execution, multi-API-process clustering, automatic stale scanning during one live engine session, and new UI recovery screens.
+
+**User stories implemented:**
+- PROJ-7-PRD-1 US-1..5: CLI/API durable ownership, queue-ready run fields without a queue, heartbeat failure policy, and production caller wiring.
+- PROJ-7-PRD-2 US-1..6: previous-instance API recovery, stale CLI startup recovery, item projection repair, authoritative-run guard, graceful shutdown recovery, and failed-start evidence.
+- PROJ-7-PRD-3 US-1..6: `/health` liveness preservation, `/ready` workflow readiness, sentinel lease write probe, same-run resume, recovery messages, and API contract documentation.
+
+**PRDs:** [PRD-1](../specs/PROJ-7-worker-lease-recovery/3_PRDs/PROJ-7-PRD-1-worker-lease-lifecycle.md), [PRD-2](../specs/PROJ-7-worker-lease-recovery/3_PRDs/PROJ-7-PRD-2-lost-worker-recovery.md), [PRD-3](../specs/PROJ-7-worker-lease-recovery/3_PRDs/PROJ-7-PRD-3-readiness-resume-surface-contract.md)
+
+**QA:** Final QA found one High bug where heartbeat fatal state stopped the lease interval but not the workflow body; it was fixed by cooperative workflow cancellation at stage/workflow boundaries. Verification passed `npm run typecheck`, the focused worker lease/recovery/readiness suite, `test/resume.test.ts`, and `test/apiIntegration.test.ts`.
 
 ---

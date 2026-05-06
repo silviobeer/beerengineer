@@ -1,6 +1,6 @@
 # Technical Reference
 
-**Last updated:** 2026-05-04
+**Last updated:** 2026-05-06
 
 ## Architecture
 
@@ -51,6 +51,30 @@ PROJ-4 layers Supabase Cloud Branching onto the PROJ-3 capability model without 
 - **Production-migration tracking** — production migrations are applied transactionally, file-by-file, and recorded in a `__beerengineer_migrations` table on the target Supabase project. The table is created on first migrate; subsequent runs are idempotent across retries because already-applied files are skipped.
 - **Startup catch-up scheduler** — at engine boot, `runDueSupabaseCleanups` runs once per Supabase-connected workspace; a `setInterval` (5 min, `unref()`-ed so it does not hold the process open) re-runs the catch-up so deferred TTL cleanups recover after crashes and restarts.
 
+### PROJ-7: Worker Lease Recovery
+
+PROJ-7 makes workflow ownership explicit for both terminal and Engine API
+workers without introducing a durable queue. Runs carry lease owner metadata;
+start and resume paths claim ownership before work is accepted; heartbeats prove
+continued ownership; startup, graceful shutdown, and failed-start paths turn
+lost ownership into recoverable run/item state.
+
+```text
+CLI workflow command
+        \
+         -> start/resume boundary -> run worker lease -> workflow runtime
+        /
+Engine API start/resume
+         -> startup/shutdown recovery -> run + item recovery projection
+         -> /health for liveness, /ready for workflow readiness
+```
+
+- **Worker lease boundary** — start paths claim in `prepareRun`, resume paths reclaim in `performResume`, and production CLI/API callers use those boundaries instead of ad hoc writes.
+- **Heartbeat lifecycle** — workers refresh every 30 seconds, CLI startup recovery treats heartbeats older than 2 minutes as stale, and 3 consecutive heartbeat write failures or explicit lost ownership makes the worker unsafe.
+- **Workflow cancellation** — fatal lease loss now trips cooperative cancellation checks in workflow and stage runtime boundaries so a workflow cannot keep committing stage progress after it has lost ownership.
+- **Startup recovery** — API-owned runs from previous engine instances are recovered immediately on boot; CLI-owned runs are recovered by heartbeat age so independent terminal workers are not misclassified just because the API server restarted.
+- **Readiness split** — `/health` stays small process/DB liveness; `/ready` proves startup recovery completed, shutdown is idle, the DB is reachable, and the lease-style sentinel write path works.
+
 ## Data Model
 
 - **Release Target:** resolved GitHub repository, stable release tag, version, tarball URL, and trusted download metadata for one install attempt.
@@ -80,6 +104,14 @@ PROJ-4 additions:
 - **`supabase_deferred_cleanup` table:** persistent queue for branches awaiting TTL or manual cleanup. Columns: `workspaceId`, `runId`, `branchRef`, `dueAt`, `handoffPath`, `policy` (plus `scheduled_at` index). Survives engine restarts so the catch-up scheduler can drain pending entries.
 - **`__beerengineer_migrations`:** Supabase-side bookkeeping table created on first production migration. Tracks applied migration filenames so retried merges skip already-applied files. Lives on the target Supabase project, not in engine SQLite.
 - **MergeStatus shape:** read-side projection at `GET /merge-status` exposes `supabaseRelevant` plus the gate stack state. For non-Supabase workspaces it short-circuits to `{ supabaseRelevant: false }` so the UI hides the panel without further engine round-trips.
+
+PROJ-7 additions:
+
+- **Run worker lease:** run-level ownership fields record owner type (`cli` or `api`), owner id, heartbeat timestamp, engine instance id for API workers, and lease status. The fields are queue-ready metadata, not queue jobs.
+- **Engine instance id:** each API boot gets an opaque process-scoped id used only to distinguish current API-owned work from previous-instance work.
+- **Worker lease sentinel:** `/ready` writes a lightweight readiness sentinel so the same class of DB write used by leases is exercised without creating fake run, item, or history rows.
+- **Recovery user message:** existing run/item/board projections expose display-safe copy derived from recovery state instead of persisting duplicate message text.
+- **Same-run resume:** lost-worker resume reclaims the existing run row and clears recovery state as part of the normal resume path; it does not create a replacement run.
 
 ## Cross-cutting Decisions
 
@@ -127,6 +159,14 @@ PROJ-4 additions:
 - **Reuse the existing event channel:** all Supabase lifecycle events flow through the existing engine event channel under canonical names from `docs/messaging-levels.md`. No shadow names, no parallel transport.
 - **Token entry is at CLI/UI parity with pre-persist validation:** every entry point validates against the Management API before the secret store is touched; rotation never mutates other workspace metadata; `supabase.token.rotated` is emitted with the originating surface (first-time connect does not emit it).
 - **One handoff written before validation:** the handoff dotenv is written immediately after the wave branch reaches `ready` and before `validateBranch` runs; validation steps and workers consume the same artifact.
+- **Worker ownership belongs to runs, not a queue:** PROJ-7 solves orphan visibility and recovery while preserving the current local CLI/API execution model. It deliberately avoids job reclaims, automatic restart-and-continue, and queue semantics.
+- **CLI and API workers share one lease vocabulary:** claim, heartbeat, lost ownership, recovery, and resume transitions are common across both surfaces. API owners are additionally tied to a boot-scoped engine instance id.
+- **Previous API ownership is lost on startup:** a fresh heartbeat from a previous API process is not trusted after restart. CLI ownership is judged by heartbeat age because CLI workers can keep running independently of the API process.
+- **Automatic stale recovery is startup-only:** PROJ-7 does not add a live stale scanner. This avoids false failures during laptop sleep, terminal suspension, and long agent calls; a restart is the recovery boundary for wedged same-session workers.
+- **Item recovery honors the authoritative-run rule:** lost-worker recovery may move the item projection out of running state only when the recovered run is still authoritative for that item.
+- **Recoverability is run metadata, not a new item phase:** items use the existing failed phase while run recovery state and projected user messages explain that resume is available.
+- **Workflow readiness is not workspace readiness:** `/ready` reports whether this engine process can accept workflow work. It does not check Git, LLM, setup, workspace, Supabase, or per-run gates.
+- **Lease-fatal work must stop cooperatively:** heartbeat fatal state must halt the workflow body at runtime boundaries, not merely stop future heartbeat writes.
 
 ## Directory Structure
 
@@ -152,11 +192,18 @@ apps/engine/src/review/registry.ts             — review capability registry an
 apps/engine/src/core/supabase/                 — Supabase adapter, Management API client, branch poller, lifecycle events, handoff writer, deferred-cleanup store, drift/destructive detectors, migration runner, workflow hook
 apps/engine/src/core/supabase/managementClient.ts — Management API HTTP client (timeouts, backoff, retry-after parsing)
 apps/engine/src/core/supabase/workflowHook.ts  — SupabaseWorkflowHook integration object threaded through runWorkflow
+apps/engine/src/core/workerLease.ts            — run ownership claims, heartbeat refreshes, lost-worker recovery helpers, and readiness sentinel write
+apps/engine/src/core/workflowCancellation.ts   — cooperative cancellation checks used after fatal lease loss
+apps/engine/src/core/recoveryUserMessage.ts    — display-safe recovery copy derived from run recovery state
+apps/engine/src/core/orphanRecovery.ts         — startup lost-worker recovery for previous API instances and stale CLI owners
+apps/engine/src/api/health.ts                  — `/health` liveness and `/ready` workflow-readiness handlers
 apps/engine/src/db/schema.sql                  — engine SQLite schema including PROJ-4 supabase_* columns and supabase_deferred_cleanup
+apps/engine/src/core/agent.md                  — core workflow runtime notes, including deterministic worker lease test patterns
 specs/PROJ-1-managed-install/                  — concept, PRDs, architecture, wave plans, and progress log
 specs/PROJ-2-app-setup-settings/               — setup/settings PRDs, architecture, wave plans, and QA log
 specs/PROJ-3-capabilities/                     — capability PRDs, architecture, wave plans, QA results, and progress log
 specs/PROJ-4-supabase-branch-databases/        — Supabase capability PRDs, architecture, wave plans, QA rounds, and progress log
+specs/PROJ-7-worker-lease-recovery/            — worker lease PRDs, architecture, wave plans, QA results, and progress log
 ```
 
 ## Dependencies
@@ -168,6 +215,9 @@ PROJ-2 added no new npm package dependencies. It uses the existing engine stack 
 PROJ-3 added no new npm package dependencies. It reorganizes existing runtime integrations around local Git, GitHub/`gh`, Sonar scanner/Sonar service, and CodeRabbit CLI.
 
 PROJ-4 added no runtime dependencies — the Supabase Management API is consumed via raw `fetch` from a thin in-engine HTTP client (`apps/engine/src/core/supabase/managementClient.ts`). No `package.json` changes between the PROJ-3 baseline and the PROJ-4 head.
+
+PROJ-7 added no npm package dependencies. It uses existing TypeScript, SQLite
+repository, HTTP routing, CLI, workflow runtime, and `node:test` infrastructure.
 
 ## Deployment
 
@@ -195,3 +245,8 @@ For local setup/settings, the engine defaults to `127.0.0.1:4100` and writes/rea
 - Production migrations are applied file-by-file in transactions and tracked in a `__beerengineer_migrations` table on the target Supabase project. A second run of the same merge skips already-applied files; a partial failure leaves the table in a state the next run can resume from.
 - The `mergeWithProtectionSwitch` helper runs `gitMerge()` *before* `migrateProduction`, with no rollback path if the migration fails after the merge has landed. This is intentional asymmetric recovery — the operator inspects the retained branch and the `__beerengineer_migrations` table to decide next steps. Future PRDs may add a revert callback; until then, document the asymmetry on every code path that touches the helper.
 - Supabase capability code must never be imported from non-Supabase workflow paths. The hook-based seam is the only legitimate integration point; reaching past it would re-couple workflow.ts to Supabase and defeat the modularity decision.
+- Lease-fatal tests must prove the workflow body stops, not only that heartbeat scheduling stops. PROJ-7 QA found that clearing the interval still allowed later workflow/stage writes until cooperative cancellation checks were added.
+- Worker lease tests should inject `WorkerLeaseScheduler` and `backgroundRunner` instead of waiting for real 30-second heartbeats or leaving fire-and-forget work alive after a test DB closes.
+- Keep lease claims at workflow boundaries: `prepareRun` for starts and `performResume` for resumes. One-off lease writes in route or command handlers are likely to bypass recovery and cancellation invariants.
+- `/ready` uses a sentinel write and should stay history-free. Do not create fake runs, items, workflow history, or workspace checks to prove workflow readiness.
+- Graceful shutdown only marks active API-owned work recoverable. CLI workers are independent process owners and must not be failed merely because the API process exits.
