@@ -28,8 +28,8 @@ The user selected the scannable settings-page direction over a step-by-step wiza
 
 ### A. Scannable Workspace Settings Page
 
-- Flow: blocked run links to `/w/:key/settings#supabase`; Supabase section shows readiness summary, visible missing actions, connected-state facts, and inline connect/token/branch controls.
-- Pros: best match for the user's requested direction; reuses `AppSettingsPage` structure and existing Supabase/settings primitives; all missing actions remain visible; shareable workspace URL.
+- Flow: blocked run links to `/w/:key/settings#supabase`; Supabase section shows readiness summary, visible missing setup actions, connected-state facts, and inline connect/token/branch controls.
+- Pros: best match for the user's requested direction; reuses `AppSettingsPage` structure and existing Supabase/settings primitives; all missing setup actions remain visible; shareable workspace URL.
 - Cons: needs careful hierarchy so the page does not become a wall of controls.
 - Existing-fit: high. Reuses `Topbar`, workspace route shell, settings section nav, `StatusChip`, `SupabaseSettingsSection`, `SupabaseSetupCard`, `SecretMaintenanceRow`, and `BranchLifecycleStepper`.
 - Mobile: nav stacks above content; actions wrap; all critical actions remain visible.
@@ -44,7 +44,7 @@ The user selected the scannable settings-page direction over a step-by-step wiza
 
 ### C. Board Blocker Plus Workspace Settings Deep Link
 
-- Flow: board/item shows a compact Supabase blocker panel with all missing actions and a primary link to workspace settings; actual setup happens on `/w/:key/settings`.
+- Flow: board/item shows a compact Supabase blocker panel with all missing setup actions and a primary link to workspace settings; actual setup happens on `/w/:key/settings`.
 - Pros: preserves item context and makes blocked-run origin obvious; useful as a companion to any settings approach.
 - Cons: cannot satisfy setup alone; risks duplicating too much settings logic if expanded.
 - Existing-fit: high for blocker display via `Board`, `BoardItemModal`, `AttentionDot`, and existing blocked-run patterns.
@@ -54,7 +54,7 @@ The user selected the scannable settings-page direction over a step-by-step wiza
 
 - Flow: Supabase section is a checklist of collapsible setup tasks: token, project, branch, retry.
 - Pros: keeps all actions visible while hiding dense guidance until needed; useful if manual setup copy is long.
-- Cons: can obscure the concept requirement that all missing actions are surfaced at once; adds accordion behavior not currently central to settings.
+- Cons: can obscure the concept requirement that all missing setup actions are surfaced at once; adds accordion behavior not currently central to settings.
 - Existing-fit: medium. Reuses settings cards and status chips, but likely needs a new accordion/checklist component.
 - Mobile: good; one task per vertical block.
 
@@ -69,7 +69,7 @@ The user selected the scannable settings-page direction over a step-by-step wiza
 
 ## Recommendation
 
-Use Approach A as the primary workspace settings direction, with a compact piece of Approach C for the blocked-run origin state. The repair surface should be `/w/:key/settings#supabase`, where the operator sees a readiness summary, all missing actions, and inline setup controls. The board/item blocker should stay small and send the user to the correct workspace settings instead of duplicating setup.
+Use Approach A as the primary workspace settings direction, with a compact piece of Approach C for the blocked-run origin state. The repair surface should be `/w/:key/settings#supabase`, where the operator sees a readiness summary, all missing setup actions, and inline setup controls. The board/item blocker should stay small and send the user to the correct workspace settings instead of duplicating setup.
 
 ## Selected Direction
 

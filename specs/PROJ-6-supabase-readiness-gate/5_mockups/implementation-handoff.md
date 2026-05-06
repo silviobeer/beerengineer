@@ -34,8 +34,8 @@ Use a scannable workspace settings page at `/w/:key/settings#supabase`, with vis
 ## New Component Candidates
 
 - `WorkspaceSettingsPage` - workspace-scoped sibling to `/w/:key`, using the settings section-nav pattern but resolving workspace by key.
-- `SupabaseReadinessSummary` - top-of-section summary for ready/blocked state, missing action list, and retry affordance.
-- `SupabaseBlockedRunPanel` - compact board/item blocker that lists missing actions and links to `/w/:key/settings#supabase`.
+- `SupabaseReadinessSummary` - top-of-section summary for ready/blocked state, missing setup action list, and retry affordance.
+- `SupabaseBlockedRunPanel` - compact board/item blocker that lists missing setup actions and links to `/w/:key/settings#supabase`.
 
 ## Design Tokens And Styling
 
@@ -52,8 +52,9 @@ Use a scannable workspace settings page at `/w/:key/settings#supabase`, with vis
   - Not-configured state shows a stub plus setup inputs; connected-only controls are hidden until the capability is present.
   - Recheck readiness uses engine readiness state and displays blocked/ready/loading/error states.
   - Retry run is disabled until readiness is ready, then re-enters the same blocked run.
+  - Retry run is a separate run affordance, not a missing setup action.
 - Board blocked-run panel:
-  - Shows all relevant missing actions in a compact panel.
+  - Shows all relevant missing setup actions in a compact panel.
   - Primary action links to `/w/:key/settings#supabase`.
   - Does not include token/project paste fields.
 - Required states:
@@ -88,4 +89,3 @@ Use a scannable workspace settings page at `/w/:key/settings#supabase`, with vis
 - `SupabaseSettingsSection` currently lives in app settings and may need extraction into workspace-scoped pieces.
 - Board blocked-run copy must stay concise so it does not become a second setup surface.
 - Retry affordance must be clearly tied to the same blocked run, not a new run.
-

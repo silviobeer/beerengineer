@@ -26,11 +26,17 @@ handoff, and validation.
 - If readiness is incomplete, the run is marked `blocked`, not `failed`.
 - The blocked state lists all relevant missing setup actions at once:
   `Connect Supabase project`, `Store management token`,
-  `Rotate management token`, `Create persistent test branch`, and `Retry run`.
+  `Rotate management token`, `Re-authorize project access`, and
+  `Create persistent test branch`.
+- `Retry run` is not part of the missing setup action list. It is a separate
+  blocked-run affordance that appears only when retrying the same blocked run
+  is valid for the caller/context.
 - The gate is workspace-bound. A run for workspace `alpha` can only be unblocked
   by configuring Supabase readiness for workspace `alpha`.
 - The persistent test branch is checked live with a short bounded poll through
-  the existing Supabase branch poller behavior. Only `ACTIVE_HEALTHY` passes.
+  the existing Supabase branch poller behavior. The readiness poll uses a named
+  `SUPABASE_READINESS_BRANCH_POLL_BUDGET_MS` budget, defaulting to 60 seconds.
+  Only `ACTIVE_HEALTHY` passes.
 - CLI setup provides a production caller for the engine readiness model in this
   PROJ. Workspace settings UI uses the same engine primitives later in the same
   PROJ, after the CLI path lands.
@@ -105,12 +111,14 @@ The gate checks:
 - The app-level token can access the workspace's Supabase project.
 - The run workspace has a persistent test branch ref.
 - A short bounded poll through the existing branch poller behavior confirms
-  that the persistent branch exists and reaches `ACTIVE_HEALTHY`.
+  that the persistent branch exists and reaches `ACTIVE_HEALTHY` within
+  `SUPABASE_READINESS_BRANCH_POLL_BUDGET_MS`.
 
 If any check fails, times out, or returns an unknown/degraded state, the run is
 blocked before execution workers are dispatched. The readiness payload includes
-all currently missing or failing actions, plus a retry action that re-enters
-the same blocked run after setup is fixed.
+all currently missing or failing setup actions. Retry metadata is carried
+separately as a run affordance that re-enters the same blocked run after setup
+is fixed.
 
 Non-DB-relevant plans do not invoke the Supabase pre-execution readiness check.
 
@@ -119,9 +127,11 @@ in parallel where possible: missing token, missing workspace project ref, and
 missing persistent branch ref can all be reported in one response. Network
 checks short-circuit when their prerequisites are absent: project access is not
 checked without a token and project ref, and branch health is not checked
-without token, project ref, and branch ref. A token that exists but cannot
-access the workspace project returns a distinct action such as
-`Rotate management token` or `Re-authorize project access`, not the misleading
+without token, project ref, and branch ref. A token that is invalid, revoked,
+expired, or rejected with an authentication error such as HTTP 401 returns
+`Rotate management token`. A token that is accepted but lacks access to the
+workspace project, such as an HTTP 403 permission denial for that project,
+returns `Re-authorize project access`. Neither case returns the misleading
 `Store management token`.
 
 ## CLI And Setup Flow
@@ -156,7 +166,7 @@ only be unblocked by configuring `alpha`. The UI identifies the workspace
 explicitly and lets the engine resolve workspace metadata server-side.
 
 The workspace Supabase settings page uses the same engine readiness/setup
-contract as CLI setup. It supports all required setup actions:
+contract as CLI setup. It supports all required setup inputs and affordances:
 
 - Connect Supabase project.
 - Store or rotate the app-level Management API token.
@@ -184,8 +194,8 @@ structured result for a specific workspace:
 - project connection status
 - project access/preflight status
 - persistent branch presence and health status
-- missing action list
-- retry/setup guidance metadata
+- missing setup action list
+- retry/setup guidance metadata, separate from missing setup actions
 
 This model is the source of truth for CLI, API, execution, and UI.
 
@@ -209,9 +219,11 @@ fields. Every retry re-reads the current workspace row and cross-checks refs
 before any adapter or Management API operation.
 
 The check uses a short bounded poll for branch health, reusing the existing
-branch polling semantics from PROJ-4. It may treat transient states such as
-coming-up or migrations-running as pending during that bounded poll, but only
-`ACTIVE_HEALTHY` is a passing final state.
+branch polling semantics from PROJ-4 under the named
+`SUPABASE_READINESS_BRANCH_POLL_BUDGET_MS` budget, defaulting to 60 seconds.
+It may treat transient states such as coming-up or migrations-running as
+pending during that bounded poll, but only `ACTIVE_HEALTHY` is a passing final
+state.
 
 ### CLI Setup Integration
 
@@ -285,14 +297,16 @@ Additional coverage:
 - All waves non-DB-relevant: no Supabase pre-execution readiness check is
   invoked.
 - Management token missing: blocked with `Store management token`.
-- Management token present but unauthorized for the workspace project: blocked
-  with `Rotate management token` or `Re-authorize project access`, not `Store
-  management token`.
+- Management token invalid/revoked/HTTP 401: blocked with `Rotate management
+  token`, not `Store management token`.
+- Management token accepted but not authorized for the workspace project/HTTP
+  403: blocked with `Re-authorize project access`, not `Store management
+  token`.
 - Workspace project ref missing: blocked with `Connect Supabase project`.
 - Project ref present but persistent test branch missing: blocked with
   `Create persistent test branch`.
-- Persistent branch transient after setup: short bounded poll waits for
-  `ACTIVE_HEALTHY`.
+- Persistent branch transient after setup: readiness poll waits up to
+  `SUPABASE_READINESS_BRANCH_POLL_BUDGET_MS` for `ACTIVE_HEALTHY`.
 - Persistent branch present but not `ACTIVE_HEALTHY` after the poll budget:
   blocked.
 - Provider timeout/error: blocked clearly without hanging.
@@ -301,7 +315,7 @@ Additional coverage:
 - Generic secret mutation endpoints cannot write `supabase.management_token`.
 - Workspace settings renders a not-configured stub before showing connected
   controls.
-- CLI setup output includes manual project guidance and all missing actions.
+- CLI setup output includes manual project guidance and all missing setup actions.
 - Workspace settings UI exposes every required engine mutation and links from
   blocked run state.
 

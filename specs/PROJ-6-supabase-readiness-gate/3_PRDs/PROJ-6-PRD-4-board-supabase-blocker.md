@@ -11,24 +11,27 @@
 **And** the operator can open blocker details without leaving the board
 
 **Acceptance Criteria:**
-- [ ] AC-1: A Supabase-readiness-blocked run is visually distinct from generic failed or review-blocked states.
-- [ ] AC-2: The blocker display preserves item title, workspace context, and run context.
-- [ ] AC-3: The board card or item detail exposes a compact Supabase blocked-run panel.
-- [ ] AC-4: The blocker panel does not render token/project paste inputs.
-- [ ] AC-5: Empty board state or items without Supabase blockers do not show the Supabase blocker UI.
+- [ ] AC-1: A Supabase-readiness-blocked run uses an amber warning status chip with a database/branch-related icon and the label `Supabase blocked`.
+- [ ] AC-2: The blocker marker is distinct from generic failed and review-blocked states by label and status variant, not color alone.
+- [ ] AC-3: The blocker display preserves item title, workspace context, and run context.
+- [ ] AC-4: The board card or item detail exposes a compact Supabase blocked-run panel.
+- [ ] AC-5: The blocker panel does not render token/project paste inputs.
+- [ ] AC-6: Empty board state or items without Supabase blockers do not show the Supabase blocker UI.
 
 ### US-2: Als Browser Operator moechte ich alle fehlenden Supabase-Aktionen im Blocker sehen um zu verstehen warum Start nicht weitergeht
 **Given** the engine returns a Supabase readiness blocked payload  
 **When** the board blocker panel opens  
-**Then** it lists all relevant missing actions from the payload  
-**And** it uses the same action vocabulary as CLI and workspace settings
+**Then** it lists all relevant missing setup actions from the payload
+**And** it uses the same missing setup action vocabulary as CLI and workspace settings
 
 **Acceptance Criteria:**
-- [ ] AC-6: Missing token, missing project ref, missing branch, unauthorized token, and branch-not-ready states map to the same labels as PRD-1.
-- [ ] AC-7: The panel names the affected workspace.
-- [ ] AC-8: The panel explains that DB-relevant planned waves require Supabase readiness before execution.
-- [ ] AC-9: Provider/auth errors show safe redacted messages before generic fallback copy.
-- [ ] AC-10: The panel remains concise and does not duplicate full manual Supabase setup guidance.
+- [ ] AC-7: Missing token, missing project ref, missing branch, invalid token, and unauthorized-project states map to exactly the PRD-1 missing setup action labels.
+- [ ] AC-8: `Retry run` is shown only as a separate blocked-run affordance when retry is valid, not as a missing setup action.
+- [ ] AC-9: Invalid/revoked/HTTP 401 token failures show `Rotate management token`; HTTP 403 permission-denied project access failures show `Re-authorize project access`.
+- [ ] AC-10: The panel names the affected workspace.
+- [ ] AC-11: The panel explains that DB-relevant planned waves require Supabase readiness before execution.
+- [ ] AC-12: Provider/auth errors show safe redacted messages before generic fallback copy.
+- [ ] AC-13: The panel remains concise and does not duplicate full manual Supabase setup guidance.
 
 ### US-3: Als Browser Operator moechte ich direkt zu den richtigen Workspace Settings wechseln um nicht versehentlich den falschen Workspace zu konfigurieren
 **Given** the blocked run belongs to workspace `alpha`  
@@ -37,22 +40,22 @@
 **And** configuring another workspace does not unblock this run
 
 **Acceptance Criteria:**
-- [ ] AC-11: The primary repair action deep-links to `/w/:key/settings#supabase` for the run workspace.
-- [ ] AC-12: The link is built from server-provided workspace identity, not a client path field.
-- [ ] AC-13: The blocker never links to app-global `/settings` as the primary Supabase repair destination.
-- [ ] AC-14: If the workspace key is unavailable, the panel shows a safe error instead of guessing current workspace.
+- [ ] AC-14: The primary repair action deep-links to `/w/:key/settings#supabase` for the run workspace.
+- [ ] AC-15: The link is built from server-provided workspace identity, not a client path field.
+- [ ] AC-16: The blocker never links to app-global `/settings` as the primary Supabase repair destination.
+- [ ] AC-17: If the workspace key is unavailable, the panel shows a safe error instead of guessing current workspace.
 
 ### US-4: Als Browser Operator moechte ich nach Setup den Run aus dem Blocker-Kontext erneut pruefen koennen um schnell weiterzuarbeiten
 **Given** the operator returns from workspace settings after completing Supabase setup  
 **When** the blocked run is ready to retry  
 **Then** the board context offers retry for the same blocked run  
-**And** if readiness is still blocked, the blocker refreshes with the updated action list
+**And** if readiness is still blocked, the blocker refreshes with the updated missing setup action list
 
 **Acceptance Criteria:**
-- [ ] AC-15: Retry is disabled while the engine reports readiness blocked/checking.
-- [ ] AC-16: Retry reuses the blocked `runId` semantics from PRD-1.
-- [ ] AC-17: A retry that remains blocked updates the panel instead of creating duplicate blocker UI.
-- [ ] AC-18: A successful retry removes or updates the Supabase blocker state once the run proceeds.
+- [ ] AC-18: Retry is disabled while the engine reports readiness blocked/checking.
+- [ ] AC-19: Retry reuses the blocked `runId` semantics from PRD-1.
+- [ ] AC-20: A retry that remains blocked updates the panel instead of creating duplicate blocker UI.
+- [ ] AC-21: Once readiness is ready and retry dispatch succeeds, the Supabase blocker panel is no longer rendered for that run; only the normal in-progress state is shown.
 
 ### US-5: Als Browser Operator moechte ich den Blocker auf Mobile lesen und bedienen koennen um Setup-Fehler auch auf schmalen Screens zu erkennen
 **Given** the board is viewed at 375px width  
@@ -60,17 +63,17 @@
 **Then** the blocker content, workspace settings link, and retry state remain readable and usable
 
 **Acceptance Criteria:**
-- [ ] AC-19: The compact blocker does not require horizontal scrolling at 375px.
-- [ ] AC-20: Missing action labels wrap without overlapping adjacent content.
-- [ ] AC-21: The workspace settings link remains visible and tappable.
-- [ ] AC-22: A 375px screenshot is captured for the board blocker UI before QA can mark the UI wave green.
+- [ ] AC-22: The compact blocker does not require horizontal scrolling at 375px.
+- [ ] AC-23: Missing setup action labels wrap without overlapping adjacent content.
+- [ ] AC-24: The workspace settings link remains visible and tappable.
+- [ ] AC-25: A 375px screenshot is captured for the board blocker UI before QA can mark the UI wave green.
 
 ## Edge Cases
 
 - Board loads while readiness is being checked: show loading/checking state, not a stale ready or failed label.
 - Blocked payload lacks workspace key due to an engine bug: show safe error and do not guess.
 - Multiple items are blocked in one workspace: each blocker links to the same workspace settings but keeps separate run context.
-- User opens blocker after another tab fixed setup: recheck/refresh updates state rather than showing stale missing actions.
+- User opens blocker after another tab fixed setup: recheck/refresh updates state rather than showing stale missing setup actions.
 - Workspace settings is unavailable/offline: keep the blocker visible and show the navigation failure/error safely.
 
 ## Abhaengigkeiten
@@ -84,6 +87,5 @@
 - Reuse: `Board`, `ItemCard`, `BoardItemModal`, `AttentionDot`, `StatusChip`, existing blocked-run/review-gate visual language.
 - New component candidates: `SupabaseBlockedRunPanel`.
 - Design tokens: dark operator-console surfaces, amber warning panels, square bordered controls, `font-mono` for workspace/run identifiers.
-- Interaction contract: compact blocker on board/item context; all missing actions visible; primary link to `/w/:key/settings#supabase`; no paste inputs in the blocker.
+- Interaction contract: compact blocker on board/item context; all missing setup actions visible; primary link to `/w/:key/settings#supabase`; no paste inputs in the blocker.
 - Implementation tolerance: blocker may live on card, item modal, or both if it preserves compactness and links to workspace settings.
-
