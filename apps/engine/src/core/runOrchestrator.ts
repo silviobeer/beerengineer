@@ -10,6 +10,7 @@ import { persistWorkflowRunState } from "./stageRuntime.js"
 import type { SupabaseWorkflowHook } from "./supabase/workflowHook.js"
 import type { SupabaseAdapter } from "./supabase/types.js"
 import type { SupabaseHandoffClient } from "./supabase/handoffWriter.js"
+import { markRunFailedRecoverable } from "./orphanRecovery.js"
 import {
   claimWorkerLease,
   defaultWorkerInstanceId,
@@ -87,19 +88,38 @@ export function prepareRun(
     owner: workerOwnerKind,
     workspaceFsId,
   })
-  claimWorkerLease(repos, {
-    runId: runRow.id,
-    workerInstanceId,
-    workerOwnerKind,
-    now: opts.workerLeaseClock?.(),
-  })
-  let heartbeat: WorkerLeaseHeartbeat | null = startWorkerLeaseHeartbeat(repos, {
-    runId: runRow.id,
-    workerInstanceId,
-    workerOwnerKind,
-    now: opts.workerLeaseClock,
-    scheduler: opts.workerLeaseScheduler,
-  })
+  try {
+    claimWorkerLease(repos, {
+      runId: runRow.id,
+      workerInstanceId,
+      workerOwnerKind,
+      now: opts.workerLeaseClock?.(),
+    })
+  } catch (error) {
+    markRunFailedRecoverable(
+      repos,
+      runRow.id,
+      `Worker start failed before ownership was durable: ${(error as Error).message}`,
+    )
+    throw error
+  }
+  let heartbeat: WorkerLeaseHeartbeat | null = null
+  try {
+    heartbeat = startWorkerLeaseHeartbeat(repos, {
+      runId: runRow.id,
+      workerInstanceId,
+      workerOwnerKind,
+      now: opts.workerLeaseClock,
+      scheduler: opts.workerLeaseScheduler,
+    })
+  } catch (error) {
+    markRunFailedRecoverable(
+      repos,
+      runRow.id,
+      `Worker start failed before heartbeat was durable: ${(error as Error).message}`,
+    )
+    throw error
+  }
 
   const bus = io.bus ?? createBus()
 

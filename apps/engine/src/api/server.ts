@@ -82,7 +82,8 @@ import { createBoardStream } from "./sse/boardStream.js"
 import { seedIfEmpty } from "./seed.js"
 import { writeApiTokenFile } from "./tokenFile.js"
 import { removeEnginePidFile, writeEnginePidFile } from "./pidFile.js"
-import { markOrphanedRunsFailed } from "../core/orphanRecovery.js"
+import { recoverLostWorkerRuns } from "../core/orphanRecovery.js"
+import { API_WORKER_INSTANCE_ID } from "../core/runService.js"
 import { pruneMissingWorktreeAssignments } from "../core/portAllocator.js"
 import { markPreparedUpdateInFlight, releaseUpdateLock, type UpdateApplyResult } from "../core/updateMode.js"
 import { readActiveSecretValue } from "../setup/secretStore.js"
@@ -212,7 +213,7 @@ seedIfEmpty(db, repos)
 // worker — the previous process died mid-flight. Mark them failed so
 // POST /runs/:id/resume accepts them without a manual DB patch.
 try {
-  await markOrphanedRunsFailed(repos)
+  await recoverLostWorkerRuns(repos, { apiWorkerInstanceId: API_WORKER_INSTANCE_ID })
 } catch (err) {
   console.error("[orphanRecovery] startup scan failed:", (err as Error).message)
 }

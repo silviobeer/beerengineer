@@ -207,3 +207,111 @@ Status: in progress
 - [x] Build: `npm run typecheck`
 - [x] CodeRabbit: 0 non-advisory findings (advisory severities: medium,low)
 - [x] Smoke: backend-only
+
+---
+
+## Wave 3
+
+Status: in progress
+
+- Prior gate verified: `### Wave 2 Gate — PASSED`
+- Wave base tag: `wave-3-start-PROJ-7` at `b9c090d`
+- Agent notes read: `apps/engine/src/core/agent.md`
+
+## PROJ-7-PRD-2-US-1: Previous-instance API recovery — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 3.1 Previous-Instance API Recovery | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-1 | API engine startup creates a fresh process-scoped engine instance id. | ✓ |
+| AC-2 | Startup recovery detects running API-owned runs whose `worker_instance_id` differs from the current engine instance id. | ✓ |
+| AC-3 | A detected previous-instance API run is marked `status = failed`. | ✓ |
+| AC-4 | A detected previous-instance API run is marked `recovery_status = failed`, `recovery_scope = run`, and `recovery_scope_ref = null`. | ✓ |
+| AC-5 | Previous-instance API recovery does not wait for the 2-minute heartbeat threshold. | ✓ |
+
+## PROJ-7-PRD-2-US-2: Stale CLI startup recovery — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 3.2 Stale CLI Startup Recovery | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-6 | Startup recovery detects CLI-owned running runs whose heartbeat is older than 2 minutes. | ✓ |
+| AC-7 | A stale CLI-owned run is marked `status = failed`. | ✓ |
+| AC-8 | A stale CLI-owned run is marked `recovery_status = failed`, `recovery_scope = run`, and `recovery_scope_ref = null`. | ✓ |
+| AC-9 | A CLI-owned run with a non-stale heartbeat is not failed solely because the API engine started. | ✓ |
+| AC-10 | Startup recovery logs or exposes enough detail to identify recovered CLI run ids. | ✓ |
+
+## PROJ-7-PRD-2-US-3: Recovery item projection — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 3.3 Recovery Item Projection | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-11 | Recovering an authoritative lost-worker run updates the item out of `*/running`. | ✓ |
+| AC-12 | The recovered item keeps the column implied by the run's current stage. | ✓ |
+| AC-13 | The recovered item has `phase_status = failed`. | ✓ |
+| AC-14 | `items.current_stage` is cleared when no live authoritative run remains. | ✓ |
+| AC-15 | An end-to-end startup recovery test verifies both `runs` and `items` side effects. | ✓ |
+
+## PROJ-7-PRD-2-US-4: Authoritative recovery guard — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 3.4 Authoritative Recovery Guard | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-16 | Recovery checks whether the lost run is authoritative before updating item projection. | ✓ |
+| AC-17 | Recovering a stale side run does not overwrite a newer live run's item column. | ✓ |
+| AC-18 | Recovering a stale side run does not overwrite a newer live run's item phase status. | ✓ |
+| AC-19 | Recovering a stale side run does not clear a newer live run's `items.current_stage`. | ✓ |
+| AC-20 | Tests cover side-run recovery while a newer authoritative run remains active. | ✓ |
+
+## PROJ-7-PRD-2-US-6: Failed start recovery invariant — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 3.5 Failed Start Recovery Invariant | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-26 | Initial lease registration failure after run creation marks the run failed/recoverable. | ✓ |
+| AC-27 | Worker start failure after run creation marks the run failed/recoverable. | ✓ |
+| AC-28 | First-heartbeat durability failure after run creation marks the run failed/recoverable when the worker cannot safely continue. | ✓ |
+| AC-29 | The item projection is updated out of `running` for authoritative failed-start runs. | ✓ |
+| AC-30 | CLI and API tests both cover a failed-start path after run creation. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+
+### TDD Notes
+- RED: `npm run test:file --workspace=@beerengineer/engine -- test/workerLeaseRecovery.test.ts test/workerLeaseStartFailure.test.ts` failed because `recoverLostWorkerRuns` does not exist and lease claim failures leave created runs in `running`.
+- GREEN: `npm run test:file --workspace=@beerengineer/engine -- test/workerLeaseRecovery.test.ts test/workerLeaseStartFailure.test.ts test/orphanRecovery.test.ts` passed 10 tests.
+- Item projection regression: `npm run test:file --workspace=@beerengineer/engine -- test/itemAggregation.test.ts` passed 4 tests.
+- API regression: `npm run test:file --workspace=@beerengineer/engine -- test/apiIntegration.test.ts` passed 35 tests.
+- Typecheck: `npm run typecheck` passed.
+
+### Ralph Iteration 1
+- Command: `npm run test:file --workspace=@beerengineer/engine -- test/workerLeaseRecovery.test.ts test/workerLeaseStartFailure.test.ts test/orphanRecovery.test.ts`
+- Result: PASS
+- AC-1..AC-5: PASS — previous API instance recovery uses `API_WORKER_INSTANCE_ID` and ignores the stale threshold.
+- AC-6..AC-10: PASS — stale CLI heartbeat recovery fails old CLI runs, preserves fresh CLI runs, and returns/logs recovered ids.
+- AC-11..AC-20: PASS — authoritative recovery projects failed items and skips projection when a newer live run owns item state.
+- AC-26..AC-30: PASS — claim/first heartbeat setup failures after run creation produce failed/recoverable runs for CLI and API owners.
