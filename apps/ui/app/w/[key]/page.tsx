@@ -18,6 +18,7 @@ interface BoardApiItem {
   previewUrl?: string;
   current_stage?: string | null;
   currentStage?: string | null;
+  supabaseBlocker?: BoardCardDTO["supabaseBlocker"];
 }
 
 interface BoardApiColumn {
@@ -59,6 +60,7 @@ function toBoardCard(item: BoardApiItem): BoardCardDTO {
     hasBlockedRun: Boolean(item.hasBlockedRun),
     previewUrl: typeof item.previewUrl === "string" ? item.previewUrl : undefined,
     current_stage: currentStage,
+    supabaseBlocker: item.supabaseBlocker,
   };
 }
 

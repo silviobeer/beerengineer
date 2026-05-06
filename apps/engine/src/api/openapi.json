@@ -3930,6 +3930,67 @@
           "hasBlockedRun": {
             "type": "boolean"
           },
+          "supabaseBlocker": {
+            "type": "object",
+            "required": [
+              "status",
+              "label",
+              "runId",
+              "workspace",
+              "missingSetupActions",
+              "retry"
+            ],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "blocked",
+                  "ready",
+                  "checking"
+                ]
+              },
+              "label": {
+                "type": "string",
+                "enum": [
+                  "Supabase blocked"
+                ]
+              },
+              "runId": {
+                "type": "string"
+              },
+              "workspace": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "key": {
+                    "type": "string"
+                  }
+                }
+              },
+              "missingSetupActions": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "message": {
+                "type": "string"
+              },
+              "retry": {
+                "type": "object",
+                "properties": {
+                  "available": {
+                    "type": "boolean"
+                  },
+                  "ready": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          },
           "previewUrl": {
             "type": "string"
           },

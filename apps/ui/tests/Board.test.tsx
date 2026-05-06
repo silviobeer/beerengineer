@@ -200,6 +200,29 @@ describe("Attention dot (S-01)", () => {
   });
 });
 
+describe("Supabase blocked board panel", () => {
+  it("renders the compact Supabase blocker for blocked items and omits it for normal items", () => {
+    const blocked = {
+      ...implementationCardWithStage("exec"),
+      id: "blocked-item",
+      title: "Blocked item",
+      hasBlockedRun: true,
+      supabaseBlocker: {
+        status: "blocked" as const,
+        label: "Supabase blocked" as const,
+        runId: "run-1",
+        workspace: { key: "alpha" },
+        missingSetupActions: ["Connect Supabase project" as const],
+        retry: { available: true, ready: false },
+      },
+    };
+    const normal = { ...nonImplementationCard("idea"), id: "normal-item", title: "Normal item" };
+    renderBoard([blocked, normal]);
+    expect(screen.getByTestId("supabase-blocked-run-panel")).toHaveTextContent("Connect Supabase project");
+    expect(within(screen.getByText("Normal item").closest("[data-testid='board-card']") as HTMLElement).queryByTestId("supabase-blocked-run-panel")).toBeNull();
+  });
+});
+
 describe("Mini-Stepper visibility on board (S-01)", () => {
   it("TC-14: Mini-Stepper is present on Implementation cards with all six labels (Merge is its own column, not a stepper segment)", () => {
     render(<BoardCard card={implementationCardWithStage("plan")} />);

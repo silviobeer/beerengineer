@@ -97,3 +97,25 @@ describe("BoardCard stepper visibility (US-02)", () => {
     }
   );
 });
+
+describe("Supabase blocked board marker", () => {
+  it("renders a distinct Supabase blocked chip and compact panel without setup inputs", () => {
+    render(<BoardCard card={{
+      ...implementationCard("exec"),
+      hasBlockedRun: true,
+      supabaseBlocker: {
+        status: "blocked",
+        label: "Supabase blocked",
+        runId: "run-1",
+        workspace: { key: "alpha" },
+        missingSetupActions: ["Store management token", "Connect Supabase project"],
+        message: "Supabase readiness blocked planned DB-relevant work. Missing setup actions: Store management token, Connect Supabase project.",
+        retry: { available: true, ready: false },
+      },
+    }} />);
+    expect(screen.getByTestId("board-card-supabase-blocked-chip")).toHaveTextContent("Supabase blocked");
+    expect(screen.getByTestId("supabase-blocked-run-panel")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Supabase Management API token")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Supabase project ref")).not.toBeInTheDocument();
+  });
+});

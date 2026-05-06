@@ -156,6 +156,21 @@ export interface BoardCardDTO {
   hasOpenPrompt?: boolean;
   hasReviewGateWaiting?: boolean;
   hasBlockedRun?: boolean;
+  supabaseBlocker?: {
+    status: "blocked" | "ready" | "checking";
+    label: "Supabase blocked";
+    runId: string;
+    workspace: { id?: string; key?: string };
+    missingSetupActions: Array<
+      | "Store management token"
+      | "Connect Supabase project"
+      | "Create persistent test branch"
+      | "Rotate management token"
+      | "Re-authorize project access"
+    >;
+    message?: string;
+    retry: { available: boolean; ready: boolean };
+  };
   previewUrl?: string;
   latestRunId?: string;
   workspaceId?: string;

@@ -1,7 +1,7 @@
 # PROJ-6 Progress
 
 ## Status: in progress
-## Current Wave: 4
+## Current Wave: 5
 ## BASE_SHA: c4e761b37ed1235cf0c25b9ec4336434791ca1b0
 
 ---
@@ -459,3 +459,60 @@
 - [x] Build: `npm run typecheck`
 - [x] CodeRabbit: 0 non-advisory findings (advisory severities: minor,medium,low)
 - [x] Smoke: /w/alpha/settings#supabase
+
+---
+
+## Wave 5 — in progress
+
+- Wave base tag: `wave-5-start-PROJ-6` -> `076f277`
+
+### User Stories
+| User Story | Status |
+|------------|:------:|
+| PROJ-6-PRD-4-US-1: Board Supabase blocker marker | complete |
+| PROJ-6-PRD-4-US-2: Blocker action list and messages | complete |
+| PROJ-6-PRD-4-US-3: Workspace settings deep link | complete |
+| PROJ-6-PRD-4-US-4: Board retry state | complete |
+| PROJ-6-PRD-4-US-5: Mobile blocker polish | complete |
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 5.1 Board DTO And Compact Marker | ✓ | ✓ | ✓ |
+| 5.2 Blocker Action List And Message Projection | ✓ | ✓ | ✓ |
+| 5.3 Workspace Settings Deep Link | ✓ | ✓ | ✓ |
+| 5.4 Board Retry State | ✓ | ✓ | ✓ |
+| 5.5 Mobile Blocker Polish | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-1 | A Supabase-readiness-blocked run uses an amber warning status chip with a database/branch-related icon and the label `Supabase blocked`. | ✓ |
+| AC-2 | The blocker marker is distinct from generic failed and review-blocked states by label and status variant, not color alone. | ✓ |
+| AC-3 | The blocker display preserves item title, workspace context, and run context. | ✓ |
+| AC-4 | The board card or item detail exposes a compact Supabase blocked-run panel. | ✓ |
+| AC-5 | The blocker panel does not render token/project paste inputs. | ✓ |
+| AC-6 | Empty board state or items without Supabase blockers do not show the Supabase blocker UI. | ✓ |
+| AC-7 | Missing token, missing project ref, missing branch, invalid token, and unauthorized-project states map to exactly the PRD-1 missing setup action labels. | ✓ |
+| AC-8 | `Retry run` is shown only as a separate blocked-run affordance when retry is valid, not as a missing setup action. | ✓ |
+| AC-9 | Invalid/revoked/HTTP 401 token failures show `Rotate management token`; HTTP 403 permission-denied project access failures show `Re-authorize project access`. | ✓ |
+| AC-10 | The panel names the affected workspace. | ✓ |
+| AC-11 | The panel explains that DB-relevant planned waves require Supabase readiness before execution. | ✓ |
+| AC-12 | Provider/auth errors show safe redacted messages before generic fallback copy. | ✓ |
+| AC-13 | The panel remains concise and does not duplicate full manual Supabase setup guidance. | ✓ |
+| AC-14 | The primary repair action deep-links to `/w/:key/settings#supabase` for the run workspace. | ✓ |
+| AC-15 | The link is built from server-provided workspace identity, not a client path field. | ✓ |
+| AC-16 | The blocker never links to app-global `/settings` as the primary Supabase repair destination. | ✓ |
+| AC-17 | If the workspace key is unavailable, the panel shows a safe error instead of guessing current workspace. | ✓ |
+| AC-18 | Retry is disabled while the engine reports readiness blocked/checking. | ✓ |
+| AC-19 | Retry reuses the blocked `runId` semantics from PRD-1. | ✓ |
+| AC-20 | A retry that remains blocked updates the panel instead of creating duplicate blocker UI. | ✓ |
+| AC-21 | Once readiness is ready and retry dispatch succeeds, the Supabase blocker panel is no longer rendered for that run; only the normal in-progress state is shown. | ✓ |
+| AC-22 | The compact blocker does not require horizontal scrolling at 375px. | ✓ |
+| AC-23 | Missing setup action labels wrap without overlapping adjacent content. | ✓ |
+| AC-24 | The workspace settings link remains visible and tappable. | ✓ |
+| AC-25 | A 375px screenshot is captured for the board blocker UI before QA can mark the UI wave green. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- Pass 1: PASS — `npm run test:file --workspace=@beerengineer/engine -- test/apiIntegration.test.ts`; `npm run test:file --workspace=@beerengineer/engine -- test/api/routes/supabaseReadinessRetry.test.ts`; `npm test --workspace=@beerengineer/ui -- tests/BoardCard.test.tsx tests/Board.test.tsx tests/SupabaseBlockedRunPanel.test.tsx`; `npm run typecheck`; 375px screenshot captured as `proj6-wave5-board-blocker-mobile-375.png`

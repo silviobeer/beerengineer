@@ -11,6 +11,7 @@ import { Repos } from "../src/db/repositories.js"
 import { assignPort } from "../src/core/portAllocator.js"
 import { layout } from "../src/core/workspaceLayout.js"
 import { createDatabaseBackup } from "../src/core/updateMode.js"
+import { getBoard } from "../src/api/board.js"
 
 test("PROJ-3-PRD-2 AC-4 workspace API contract keeps existing fields and adds capabilities", () => {
   const openapi = JSON.parse(readFileSync(resolve("src/api/openapi.json"), "utf8")) as {
@@ -20,6 +21,32 @@ test("PROJ-3-PRD-2 AC-4 workspace API contract keeps existing fields and adds ca
   assert.ok(JSON.stringify(registration).includes("warnings"))
   assert.ok(JSON.stringify(registration).includes("actions"))
   assert.ok(JSON.stringify(registration).includes("capabilityOutcomes"))
+})
+
+test("PROJ-6 PRD-4: board DTO projects Supabase readiness blocker metadata", () => {
+  const dbPath = tmpDbPath()
+  const db = initDatabase(dbPath)
+  const repos = new Repos(db)
+  try {
+    const workspace = repos.upsertWorkspace({ key: "alpha", name: "Alpha", rootPath: mkdtempSync(join(tmpdir(), "be2-board-supabase-")) })
+    const item = repos.createItem({ workspaceId: workspace.id, title: "Blocked DB item", description: "db" })
+    const run = repos.createRun({ workspaceId: workspace.id, itemId: item.id, title: item.title })
+    repos.updateRun(run.id, {
+      status: "blocked",
+      recovery_status: "blocked",
+      recovery_scope: "run",
+      recovery_summary: "Supabase readiness blocked planned DB-relevant work. Missing setup actions: Rotate management token, Re-authorize project access.",
+    })
+
+    const card = getBoard(db, "alpha").columns.flatMap(col => col.cards).find(candidate => candidate.itemId === item.id)
+    assert.ok(card?.supabaseBlocker)
+    assert.equal(card.supabaseBlocker.label, "Supabase blocked")
+    assert.equal(card.supabaseBlocker.workspace.key, "alpha")
+    assert.equal(card.supabaseBlocker.runId, run.id)
+    assert.deepEqual(card.supabaseBlocker.missingSetupActions, ["Rotate management token", "Re-authorize project access"])
+  } finally {
+    db.close()
+  }
 })
 
 test("PROJ-3-PRD-2 AC-13 setup and settings API contracts stay documented", () => {
@@ -240,6 +267,31 @@ test("POST /items/:id/actions/:action returns 404 on unknown item", async () => 
     assert.equal(body.error, "item_not_found")
   } finally {
     await stopServer(proc)
+  }
+})
+
+test("GET /items/:id includes allowed actions for the item detail toolbar", async () => {
+  const dbPath = tmpDbPath()
+  const rootPath = mkdtempSync(join(tmpdir(), "be2-item-detail-root-"))
+  const db = initDatabase(dbPath)
+  const repos = new Repos(db)
+  const workspace = repos.upsertWorkspace({ key: "demo", name: "Demo", rootPath })
+  const item = repos.createItem({ workspaceId: workspace.id, title: "Detail item", description: "toolbar" })
+  db.close()
+  const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
+  try {
+    await waitForHealth(base)
+    const res = await fetch(`${base}/items/${encodeURIComponent(item.id)}`, {
+      headers: authHeaders(),
+    })
+    assert.equal(res.status, 200)
+    const body = await res.json() as { allowedActions?: string[] }
+    assert.ok(Array.isArray(body.allowedActions))
+    assert.ok(body.allowedActions.includes("start_brainstorm"))
+    assert.ok(body.allowedActions.includes("import_prepared"))
+  } finally {
+    await stopServer(proc)
+    rmSync(rootPath, { recursive: true, force: true })
   }
 })
 

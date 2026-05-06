@@ -3,6 +3,7 @@ import { itemSlug } from "../core/itemIdentity.js"
 import type { Db } from "../db/connection.js"
 import { previewUrlForWorktree } from "../core/portAllocator.js"
 import { layout } from "../core/workspaceLayout.js"
+import { SUPABASE_READINESS_SETUP_ACTIONS, type SupabaseReadinessSetupAction } from "../core/supabase/types.js"
 
 const orderedColumns = ["idea", "brainstorm", "frontend", "requirements", "implementation", "merge", "done"] as const
 const columnTitles: Record<(typeof orderedColumns)[number], string> = {
@@ -36,6 +37,27 @@ function reviewGateWaiting(actionsJson: string | null | undefined): boolean {
   }
 }
 
+function supabaseReadinessActions(summary: string | null | undefined): SupabaseReadinessSetupAction[] {
+  if (!summary?.includes("Supabase readiness blocked")) return []
+  return SUPABASE_READINESS_SETUP_ACTIONS.filter(action => summary.includes(action))
+}
+
+function supabaseBlocker(
+  workspace: { id: string; key: string },
+  latestRun: { id: string; recovery_status: string | null; recovery_summary: string | null } | undefined,
+): BoardCardDTO["supabaseBlocker"] {
+  if (latestRun?.recovery_status !== "blocked" || !latestRun.recovery_summary?.includes("Supabase readiness blocked")) return undefined
+  return {
+    status: "blocked",
+    label: "Supabase blocked",
+    runId: latestRun.id,
+    workspace: { id: workspace.id, key: workspace.key },
+    missingSetupActions: supabaseReadinessActions(latestRun.recovery_summary),
+    message: latestRun.recovery_summary,
+    retry: { available: true, ready: false },
+  }
+}
+
 function boardCardMeta(
   workspaceRoot: string | null,
   latestRun: { id: string; workspace_fs_id: string | null; recovery_status: string | null } | undefined,
@@ -63,6 +85,15 @@ export type BoardCardDTO = {
   hasOpenPrompt?: boolean
   hasReviewGateWaiting?: boolean
   hasBlockedRun?: boolean
+  supabaseBlocker?: {
+    status: "blocked" | "ready" | "checking"
+    label: "Supabase blocked"
+    runId: string
+    workspace: { id?: string; key?: string }
+    missingSetupActions: SupabaseReadinessSetupAction[]
+    message?: string
+    retry: { available: boolean; ready: boolean }
+  }
   previewUrl?: string
   latestRunId?: string
   workspaceId?: string
@@ -147,6 +178,7 @@ export function getBoard(db: Db, workspaceKey?: string | null): BoardDTO {
     status: string
     recovery_status: string | null
     recovery_scope_ref: string | null
+    recovery_summary: string | null
     workspace_fs_id: string | null
     supabase_branch_ref: string | null
     supabase_branch_name: string | null
@@ -154,7 +186,7 @@ export function getBoard(db: Db, workspaceKey?: string | null): BoardDTO {
   }>()
   const runRows = db
     .prepare(
-      `SELECT id, item_id, status, recovery_status, recovery_scope_ref, workspace_fs_id,
+      `SELECT id, item_id, status, recovery_status, recovery_scope_ref, recovery_summary, workspace_fs_id,
               supabase_branch_ref, supabase_branch_name, supabase_branch_lifecycle_state, created_at
        FROM runs
        WHERE workspace_id = ?
@@ -166,6 +198,7 @@ export function getBoard(db: Db, workspaceKey?: string | null): BoardDTO {
       status: string
       recovery_status: string | null
       recovery_scope_ref: string | null
+      recovery_summary: string | null
       workspace_fs_id: string | null
       supabase_branch_ref: string | null
       supabase_branch_name: string | null
@@ -210,6 +243,7 @@ export function getBoard(db: Db, workspaceKey?: string | null): BoardDTO {
             : undefined
           return {
           ...boardCardMeta(workspace.root_path ?? null, latestRun, openPrompt, { title: i.title, id: i.id }),
+          supabaseBlocker: supabaseBlocker(workspace, latestRun),
           itemCode: i.code,
           itemId: i.id,
           title: i.title,

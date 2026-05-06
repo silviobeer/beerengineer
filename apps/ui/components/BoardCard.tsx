@@ -9,6 +9,7 @@ import {
 } from "../lib/types";
 import { MiniStepper } from "./MiniStepper";
 import { BoardCardActions } from "./BoardCardActions";
+import { SupabaseBlockedRunPanel } from "./SupabaseBlockedRunPanel";
 
 interface BoardCardProps {
   readonly card: BoardCardDTO;
@@ -28,7 +29,7 @@ function hasAttention(card: BoardCardDTO): boolean {
   if (card.liveAttention === true) return true;
   if (card.liveAttention === false) return false;
   return Boolean(
-    card.hasOpenPrompt || card.hasReviewGateWaiting || card.hasBlockedRun
+    card.hasOpenPrompt || card.hasReviewGateWaiting || card.hasBlockedRun || card.supabaseBlocker
   );
 }
 
@@ -128,6 +129,15 @@ export function BoardCard({ card, workspaceKey, onOpen }: Readonly<BoardCardProp
             {card.phase_status}
           </span>
         ) : null}
+        {card.supabaseBlocker ? (
+          <span
+            data-testid="board-card-supabase-blocked-chip"
+            className="inline-flex items-center gap-1 px-1.5 py-0.5 mt-2 text-[10px] uppercase tracking-wider border border-amber-600 bg-amber-950/30 text-amber-200"
+          >
+            <span aria-hidden="true" className="font-mono tracking-normal">DB</span>
+            Supabase blocked
+          </span>
+        ) : null}
         {card.column === "implementation" ? (
           <div className="mt-2">
             <MiniStepper
@@ -149,6 +159,7 @@ export function BoardCard({ card, workspaceKey, onOpen }: Readonly<BoardCardProp
           </div>
         ) : null}
       </Body>
+      {card.supabaseBlocker ? <SupabaseBlockedRunPanel blocker={card.supabaseBlocker} compact /> : null}
       <BoardCardActions card={card} />
     </article>
   );
