@@ -48,6 +48,8 @@ Prefer concise documentation that explains:
 
 Link ideas across sections without duplicating full detail. If a deeper artifact already holds the nuance, summarize it briefly instead of restating it in full.
 
+When referencing project-review findings, preserve their exact severity and count from the supplied `projectReview.findings`. Prefer putting residual findings in `knownIssues` or a Known Issues/Risks section. Do not enumerate finding counts or severities in `featuresDoc.summary`; point readers to the grounded Known Issues section instead.
+
 ## Quality Bar
 
 Good documentation should let:

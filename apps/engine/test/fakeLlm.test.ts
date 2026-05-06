@@ -19,6 +19,7 @@ import { FakeProjectReviewStageAdapter } from "../src/llm/fake/projectReviewStag
 import { FakeProjectReviewReviewAdapter } from "../src/llm/fake/projectReviewReview.js"
 import { FakeDocumentationStageAdapter } from "../src/llm/fake/documentationStage.js"
 import { FakeDocumentationReviewAdapter } from "../src/llm/fake/documentationReview.js"
+import { groundDocumentationArtifactInProjectReview } from "../src/stages/documentation/grounding.js"
 import type { Project, Concept, PRD } from "../src/types.js"
 import { loadPrompt, clearPromptCache } from "../src/llm/prompts/loader.js"
 
@@ -406,6 +407,51 @@ test("documentation reviewer enforces Known Risks when project-review findings e
     technicalDoc: { ...artifactWithoutRisks.technicalDoc, sections: [{ heading: "Known Risks", content: "..." }] },
   }
   assert.equal((await review.review({ artifact: artifactWithRisks, state: stateWithFindings })).kind, "pass")
+})
+
+test("documentation grounding preserves authoritative project-review findings", () => {
+  const projectReview = {
+    project: { id: "P01", name: "P" },
+    scope: "project-wide-code-review" as const,
+    overallStatus: "pass_with_risks" as const,
+    summary: "",
+    findings: [
+      { id: "F-01", source: "project-review-llm" as const, severity: "medium" as const, category: "architecture" as const, message: "architecture doc drift", evidence: "e", recommendation: "r" },
+      { id: "F-02", source: "project-review-llm" as const, severity: "medium" as const, category: "maintainability" as const, message: "package name drift", evidence: "e", recommendation: "r" },
+      { id: "F-03", source: "project-review-llm" as const, severity: "low" as const, category: "test-design" as const, message: "duplicate test assertions", evidence: "e", recommendation: "r" },
+    ],
+    recommendations: [],
+  }
+  const artifact = {
+    project: { id: "P01", name: "P" },
+    mode: "generate" as const,
+    technicalDoc: { title: "t", summary: "s", sections: [] },
+    featuresDoc: {
+      title: "f",
+      summary: "Project review status: pass_with_risks - one medium-severity cleanup item remains.",
+      sections: [{ heading: "Implemented Features", content: "US-01" }],
+    },
+    compactReadme: { title: "r", summary: "s", sections: [] },
+    knownIssues: ["F-02 (medium): package name drift"],
+  }
+
+  const grounded = groundDocumentationArtifactInProjectReview(artifact, projectReview)
+
+  assert.deepEqual(grounded.knownIssues, [
+    "F-01 (medium, architecture): architecture doc drift",
+    "F-02 (medium, maintainability): package name drift",
+    "F-03 (low, test-design): duplicate test assertions",
+  ])
+  assert.doesNotMatch(grounded.featuresDoc.summary, /one medium-severity/)
+  assert.match(grounded.featuresDoc.summary, /Project review status: pass_with_risks/)
+  assert.match(
+    grounded.featuresDoc.sections.find(section => section.heading === "Known Issues")?.content ?? "",
+    /F-01 \(medium, architecture\): architecture doc drift/,
+  )
+  assert.match(
+    grounded.technicalDoc.sections.find(section => section.heading === "Known Risks")?.content ?? "",
+    /F-03 \(low, test-design\): duplicate test assertions/,
+  )
 })
 
 test("documentation reviewer flags missing stories in features doc and oversized README", async () => {

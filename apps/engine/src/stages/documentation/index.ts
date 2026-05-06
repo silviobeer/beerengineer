@@ -13,6 +13,8 @@ import { buildDocFiles } from "../../render/documentation.js"
 import type { DocumentationArtifact, WithProjectReview } from "../../types.js"
 import type { DocumentationState } from "./types.js"
 import { layout, type WorkflowContext } from "../../core/workspaceLayout.js"
+import type { StageAgentAdapter, StageAgentInput, StageAgentResponse } from "../../core/adapters.js"
+import { groundDocumentationArtifactInProjectReview } from "./grounding.js"
 
 type ExistingDocs = DocumentationState["existingDocs"]
 
@@ -55,6 +57,27 @@ async function writeProjectDocs(ctx: WorkflowContext, artifact: DocumentationArt
   }
 }
 
+function withProjectReviewGrounding(
+  delegate: StageAgentAdapter<DocumentationState, DocumentationArtifact>,
+): StageAgentAdapter<DocumentationState, DocumentationArtifact> {
+  return {
+    async step(input: StageAgentInput<DocumentationState>): Promise<StageAgentResponse<DocumentationArtifact>> {
+      const response = await delegate.step(input)
+      if (response.kind !== "artifact") return response
+      return {
+        kind: "artifact",
+        artifact: groundDocumentationArtifactInProjectReview(response.artifact, input.state.projectReview),
+      }
+    },
+    getSessionId() {
+      return delegate.getSessionId?.() ?? null
+    },
+    setSessionId(sessionId) {
+      delegate.setSessionId?.(sessionId)
+    },
+  }
+}
+
 export async function documentation(ctx: WithProjectReview, llm?: RunLlmConfig): Promise<DocumentationArtifact> {
   stagePresent.header(`documentation — ${ctx.project.name}`)
 
@@ -77,7 +100,7 @@ export async function documentation(ctx: WithProjectReview, llm?: RunLlmConfig):
       revisionCount: 0,
       existingDocs,
     }),
-    stageAgent: createDocumentationStage(ctx.project, llm),
+    stageAgent: withProjectReviewGrounding(createDocumentationStage(ctx.project, llm)),
     reviewer: createDocumentationReview(llm),
     askUser: async () => "",
     async persistArtifacts(run, artifact) {
