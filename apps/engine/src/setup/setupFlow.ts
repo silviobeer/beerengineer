@@ -207,7 +207,7 @@ export async function maybeConfigureGitIdentityInteractive(configPath: string, c
         console.log("  Saved beerengineer_ Git identity default.")
         return saved.config
       }
-      console.log("  Saved beerengineer_ Git identity default.")
+      console.log(`  Saved beerengineer_ Git identity default, but config re-read returned ${saved.kind} for ${configPath}.`)
       return next
     }
   } finally {
