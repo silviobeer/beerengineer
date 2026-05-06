@@ -9,7 +9,6 @@ import type {
   GitIdentityValidationResponse,
   GitIdentityValue,
   GitReadiness,
-  WorkspaceGitReadiness,
   WorkspaceGitRepairResponse,
 } from "@/lib/setup/types";
 import { GitIdentityForm } from "./GitIdentityForm";
@@ -306,9 +305,7 @@ export function GitIdentityPanel({ initialReadiness, workspace = null, error: in
         <StatusChip state={statusFor(readiness)} />
       </div>
 
-      {!readiness.git.installed ? (
-        <GitMissingStub readiness={readiness} busy={busy} onRecheck={recheck} />
-      ) : (
+      {readiness.git.installed ? (
         <>
           <GitReadinessRows readiness={readiness} />
           <GitReadinessNotes readiness={readiness} />
@@ -334,6 +331,8 @@ export function GitIdentityPanel({ initialReadiness, workspace = null, error: in
             />
           ) : null}
         </>
+      ) : (
+        <GitMissingStub readiness={readiness} busy={busy} onRecheck={recheck} />
       )}
     </section>
   );

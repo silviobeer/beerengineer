@@ -53,7 +53,7 @@ function normalizeReviewPolicy(
 }
 
 function mergeDefined<T extends Record<string, unknown>>(base: T | undefined, override: T): T {
-  const merged = { ...(base ?? {}) } as T
+  const merged = base ? { ...base } : {} as T
   for (const [key, value] of Object.entries(override)) {
     if (value !== undefined) (merged as Record<string, unknown>)[key] = value
   }

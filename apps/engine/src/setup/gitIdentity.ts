@@ -118,7 +118,7 @@ export type WorkspaceGitRepairResult =
     }
 
 const BASIC_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-const GITHUB_NOREPLY_RE = /^(?:[0-9]+\+)?[a-z0-9-]+@users\.noreply\.github\.com$/i
+const GITHUB_NOREPLY_RE = /^(?:\d+\+)?[a-z0-9-]+@users\.noreply\.github\.com$/i
 
 function normalizeString(value: unknown): string {
   return typeof value === "string" ? value.trim() : ""
