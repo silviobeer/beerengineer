@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import type { ItemDetailDTO } from "./types";
+import type { ActionResult, ItemAction, ItemDetailDTO, WorkflowGitBlockedActionResult } from "./types";
 
 function engineBaseUrl(): string {
   return process.env.ENGINE_URL ?? "http://localhost:4100";
@@ -72,7 +72,7 @@ export async function postItemAction(
   itemId: string,
   action: string,
   body: Record<string, string> = {},
-): Promise<{ ok: boolean; status: number; error: string | null }> {
+): Promise<ActionResult> {
   const url = `${engineBaseUrl()}/items/${encodeURIComponent(itemId)}/actions/${encodeURIComponent(action)}`;
   const headers: Record<string, string> = { "content-type": "application/json" };
   const token = readToken();
@@ -83,13 +83,30 @@ export async function postItemAction(
     body: JSON.stringify(body),
     cache: "no-store",
   });
-  if (res.ok) return { ok: true, status: res.status, error: null };
+  if (res.ok) return { ok: true, status: res.status };
   let error = `engine_${res.status}`;
+  let parsed: Record<string, unknown> = {};
   try {
-    const body = (await res.json()) as { error?: unknown };
-    if (typeof body.error === "string" && body.error.length > 0) error = body.error;
+    parsed = (await res.json()) as Record<string, unknown>;
+    if (typeof parsed.error === "string" && parsed.error.length > 0) error = parsed.error;
   } catch {
     // body was not JSON; keep generic error
+  }
+  if (parsed.code === "workflow_git_blocked" && typeof parsed.message === "string") {
+    const blocked = parsed as Partial<WorkflowGitBlockedActionResult> & { error?: unknown; intent?: { action?: unknown; itemId?: unknown } };
+    return {
+      ok: false,
+      status: res.status,
+      error: error as WorkflowGitBlockedActionResult["error"],
+      code: "workflow_git_blocked",
+      message: parsed.message,
+      readiness: blocked.readiness,
+      repair: blocked.repair,
+      intent: {
+        itemId: typeof blocked.intent?.itemId === "string" ? blocked.intent.itemId : itemId,
+        action: typeof blocked.intent?.action === "string" ? blocked.intent.action as ItemAction : action as ItemAction,
+      },
+    };
   }
   return { ok: false, status: res.status, error };
 }

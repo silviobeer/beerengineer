@@ -422,8 +422,43 @@
 - Iterations: 1
 - AC-5..AC-8 pass 1: PASS — `npm run test:file --workspace=@beerengineer/engine -- test/workflowGitGate.test.ts`
 
-## PROJ-5-PRD-4-US-3: Als nontechnical User moechte ich fehlende Identitaet direkt aus dem blockierten Start reparieren um nicht meinen Start-Kontext zu verlieren — pending
+## PROJ-5-PRD-4-US-3: Als nontechnical User moechte ich fehlende Identitaet direkt aus dem blockierten Start reparieren um nicht meinen Start-Kontext zu verlieren — complete
 
-## PROJ-5-PRD-4-US-4: Als User moechte ich nach erfolgreichem Repair zum urspruenglichen Start zurueckkehren um den Workflow ohne erneutes Navigieren zu starten — pending
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 4.3 Contextual Workflow Repair Panel | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-9 | Die UI zeigt den Blocker im Kontext des urspruenglichen Items oder Start-Controls. | ✓ |
+| AC-10 | Die UI bietet App-Level-Default-Auswahl oder Identitaetseingabe an, wenn verfuegbar/noetig. | ✓ |
+| AC-11 | Repair schreibt repo-local Identitaet nur nach Bestaetigung. | ✓ |
+| AC-12 | Das blockierte Item oder die Startabsicht bleibt waehrend Repair sichtbar. | ✓ |
+| AC-13 | Die CLI gibt fuer denselben Blocker reparierbare naechste Schritte aus. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- AC-9..AC-13 pass 1: PASS — `npm test --workspace=@beerengineer/ui -- tests/workflowGitRepairPanel.test.tsx` and `npm run test:file --workspace=@beerengineer/engine -- test/cli-actions.test.ts`
+
+## PROJ-5-PRD-4-US-4: Als User moechte ich nach erfolgreichem Repair zum urspruenglichen Start zurueckkehren um den Workflow ohne erneutes Navigieren zu starten — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 4.4 Continue Original Start After Repair | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-14 | Nach Repair wird Workspace-Git-Readiness neu abgefragt. | ✓ |
+| AC-15 | Wenn Readiness danach ready ist, wird der urspruengliche Start als Fortsetzen-Aktion verfuegbar. | ✓ |
+| AC-16 | Wenn Readiness weiterhin blockiert ist, bleibt der Blocker mit frischem Grund sichtbar. | ✓ |
+| AC-17 | Die Fortsetzen-Aktion verwendet die urspruengliche Item-/Workspace-Intent-Information, nicht neu eingegebene Pfade. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- AC-14..AC-17 pass 1: PASS — `npm test --workspace=@beerengineer/ui -- tests/workflowGitRepairPanel.test.tsx`
 
 ## PROJ-5-PRD-4-US-5: Als QA moechte ich Partial-Repair- und Signing-Fehler erkennen um Git-Identity-Readiness nicht mit allgemeiner Commit-Readiness zu verwechseln — pending

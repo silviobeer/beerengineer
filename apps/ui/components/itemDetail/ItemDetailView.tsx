@@ -20,6 +20,8 @@ export function ItemDetailView({ item, onAction }: Readonly<Props>): React.React
       />
       <ItemDetailToolbar
         allowedActions={item.allowedActions}
+        itemTitle={item.title}
+        itemCode={item.itemCode}
         onAction={onAction}
       />
     </div>

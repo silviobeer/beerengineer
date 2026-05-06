@@ -12,10 +12,6 @@ export async function performItemAction(
     return { ok: false, status: 400, error: "unknown_action" };
   }
   const result = await postItemAction(itemId, action, payload);
-  if (result.ok) return { ok: true, status: result.status };
-  return {
-    ok: false,
-    status: result.status,
-    error: result.error ?? "request_failed",
-  };
+  if (result.ok) return result;
+  return result.error ? result : { ok: false, status: result.status, error: "request_failed" };
 }

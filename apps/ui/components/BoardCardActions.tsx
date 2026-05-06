@@ -2,6 +2,8 @@
 
 import { useState, useTransition } from "react";
 import type { BoardCardDTO } from "../lib/types";
+import type { WorkflowGitBlockedActionResult } from "@/lib/engine/types";
+import { WorkflowGitRepairPanel } from "@/components/WorkflowGitRepairPanel";
 
 type ActionDef = { action: string; label: string };
 
@@ -54,9 +56,16 @@ function parseActionError(body: unknown, status: number): string {
   return (body as { error?: string }).error ?? `engine_${status}`;
 }
 
+function parseWorkflowGitBlocker(body: unknown, status: number): WorkflowGitBlockedActionResult | null {
+  const candidate = body as Partial<WorkflowGitBlockedActionResult>;
+  if (candidate.code !== "workflow_git_blocked" || !candidate.intent || typeof candidate.message !== "string") return null;
+  return { ...candidate, ok: false, status } as WorkflowGitBlockedActionResult;
+}
+
 export function BoardCardActions({ card }: Readonly<BoardCardActionsProps>) {
   const actions = actionsFor(card);
   const [error, setError] = useState<string | null>(null);
+  const [gitBlocker, setGitBlocker] = useState<WorkflowGitBlockedActionResult | null>(null);
   const [isPending, startTransition] = useTransition();
 
   if (actions.length === 0) return null;
@@ -75,8 +84,19 @@ export function BoardCardActions({ card }: Readonly<BoardCardActionsProps>) {
         `/api/items/${encodeURIComponent(itemId)}/actions/${encodeURIComponent(action)}`,
         { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
       );
+      if (res.ok) {
+        setError(null);
+        setGitBlocker(null);
+        return;
+      }
       if (!res.ok) {
         const body = await res.json().catch(() => ({} as { error?: string }));
+        const blocker = parseWorkflowGitBlocker(body, res.status);
+        if (blocker) {
+          setGitBlocker(blocker);
+          setError(null);
+          return;
+        }
         setError(parseActionError(body, res.status));
       }
       // No client-side optimistic state; the SSE workspace stream will
@@ -91,6 +111,7 @@ export function BoardCardActions({ card }: Readonly<BoardCardActionsProps>) {
     e.preventDefault();
     e.stopPropagation();
     setError(null);
+    setGitBlocker(null);
     startTransition(() => {
       void runAction(action);
     });
@@ -116,6 +137,14 @@ export function BoardCardActions({ card }: Readonly<BoardCardActionsProps>) {
         <div data-testid="board-card-action-error" className="text-[10px] text-red-400">
           {error}
         </div>
+      ) : null}
+      {gitBlocker ? (
+        <WorkflowGitRepairPanel
+          blocker={gitBlocker}
+          itemTitle={card.title}
+          itemCode={card.itemCode}
+          onContinue={(action) => runAction(action)}
+        />
       ) : null}
     </div>
   );

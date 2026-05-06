@@ -1,7 +1,8 @@
 "use client";
 
 import { useRef, useState } from "react";
-import type { ActionResult, ItemAction, ItemActionPayload } from "@/lib/engine/types";
+import { isWorkflowGitBlockedActionResult, type ActionResult, type ItemAction, type ItemActionPayload, type WorkflowGitBlockedActionResult } from "@/lib/engine/types";
+import { WorkflowGitRepairPanel } from "@/components/WorkflowGitRepairPanel";
 
 const BUTTONS: { action: ItemAction; label: string }[] = [
   { action: "start_brainstorm", label: "Start Brainstorm" },
@@ -14,12 +15,15 @@ const BUTTONS: { action: ItemAction; label: string }[] = [
 
 type Props = {
   readonly allowedActions: string[];
+  readonly itemTitle?: string;
+  readonly itemCode?: string;
   readonly onAction: (action: ItemAction, payload?: ItemActionPayload) => Promise<ActionResult>;
 };
 
-export function ItemDetailToolbar({ allowedActions, onAction }: Readonly<Props>): React.ReactElement {
+export function ItemDetailToolbar({ allowedActions, itemTitle, itemCode, onAction }: Readonly<Props>): React.ReactElement {
   const allowed = new Set(allowedActions);
   const [error, setError] = useState<string | null>(null);
+  const [gitBlocker, setGitBlocker] = useState<WorkflowGitBlockedActionResult | null>(null);
   const inFlight = useRef(false);
 
   async function handleClick(action: ItemAction): Promise<void> {
@@ -36,6 +40,10 @@ export function ItemDetailToolbar({ allowedActions, onAction }: Readonly<Props>)
       const result = await onAction(action, payload);
       if (result.ok) {
         setError(null);
+        setGitBlocker(null);
+      } else if (isWorkflowGitBlockedActionResult(result)) {
+        setError(null);
+        setGitBlocker(result);
       } else {
         setError(formatError(result.status, result.error));
       }
@@ -82,6 +90,14 @@ export function ItemDetailToolbar({ allowedActions, onAction }: Readonly<Props>)
         >
           {error}
         </p>
+      ) : null}
+      {gitBlocker ? (
+        <WorkflowGitRepairPanel
+          blocker={gitBlocker}
+          itemTitle={itemTitle}
+          itemCode={itemCode}
+          onContinue={(action) => handleClick(action)}
+        />
       ) : null}
     </div>
   );
