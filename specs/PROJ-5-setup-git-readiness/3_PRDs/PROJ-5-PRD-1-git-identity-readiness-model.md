@@ -87,3 +87,38 @@
 - Repo-local Identitaet darf nicht automatisch ueberschrieben werden.
 - Globale Git-Identitaet ist fuer lokale Workflows ausreichend.
 
+## QA Test Results
+
+**Tested:** 2026-05-06  
+**Tester:** QA Engineer (AI)
+
+### Acceptance Criteria Status
+
+- [x] AC-1..AC-4: Global Git readiness was exercised through `/setup` and `GET /setup/git-readiness`; missing identity rendered as actionable readiness, not a crash.
+- [x] AC-5..AC-9: Workspace readiness was exercised against an isolated registered Git repo with no local/global identity and an app-level default. The API reported `repair_workspace_identity` and a workflow blocker.
+- [x] AC-10..AC-14: Saving `QA Local User <qa@local.beerengineer>` persisted `localOnly: true` in beerengineer_ config and did not write global Git config.
+- [x] AC-15..AC-19: Invalid browser input (`bad-email` with an XSS display name) produced field-specific validation and did not execute script.
+- [x] AC-20..AC-23: Direct repair with an unknown workspace and malicious `path`/`rootPath` fields returned `workspace_not_found` and did not touch the supplied path.
+
+### Edge Cases Status
+
+- [x] Missing identity with Git installed is distinguishable from setup failure.
+- [x] Private placeholder email shows a publishing caution.
+- [ ] BUG-PROJ5-QA-005: A registered workspace row without `rootPath` makes the setup Git card show a generic `engine responded 404` instead of a global or not-configured readiness state.
+
+### Security Audit Results
+
+- [x] Direct engine mutation without `x-beerengineer-token` returned `403 csrf_token_required`.
+- [x] Browser cookies/localStorage/sessionStorage did not expose the API token.
+- [x] Malicious repair path fields were ignored for an unknown workspace.
+- [x] XSS payload was treated as text input and validation feedback; no alert executed.
+
+### Bugs Found
+
+- BUG-PROJ5-QA-005 — Medium, see progress log.
+
+### Summary
+
+- **Acceptance Criteria:** 23/23 passed for the core readiness model.
+- **Security:** Pass for PRD-1 scope.
+- **Production Ready:** NO, because cross-PRD QA found Critical/High bugs in PRD-4 and UI registry governance.

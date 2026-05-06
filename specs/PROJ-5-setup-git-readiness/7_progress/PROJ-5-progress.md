@@ -1,7 +1,7 @@
 # PROJ-5 Progress
 
-## Status: quality gate passed; ready for QA
-## Current Wave: QA handoff
+## Status: QA failed; fixes required
+## Current Wave: QA bug triage
 ## BASE_SHA: a9b9cc683e6c7b3be1a3e724442634daaaa5e018
 
 ---
@@ -161,7 +161,97 @@
 
 ## QA Results
 
-- Not run yet. Next step is the formal QA pass after this quality gate.
+- Tested: 2026-05-06
+- Browser evidence: `specs/PROJ-5-setup-git-readiness/8_qa/proj5-qa-setup-app-default-saved.png`, `proj5-qa-setup-mobile-375.png`, `proj5-qa-setup-tablet-768.png`, `proj5-qa-item-detail-actions-disabled.png`, `proj5-qa-setup-seeded-workspace-404.png`.
+- Acceptance criteria: 85 total; 73 passed, 12 failed or unproven in QA.
+- Bugs found: 5 (Critical: 1, High: 2, Medium: 2, Low: 0)
+- Security findings: 0 direct security vulnerabilities found. CSRF rejected direct unauthenticated engine mutations; browser storage did not expose the API token; repair ignored malicious path fields for unknown workspace.
+- Production ready: NO.
+
+### QA Bugs
+
+### BUG-PROJ5-QA-001 — [Critical] PROJ-5 UI components are missing from the shared component registry
+- **File:** `docs/components.md`
+- **Anchor:** `## New Component Candidates From PROJ-4`
+- **Source:** Marcus Weber (Principal Engineer) + UI registry hard check
+- **Status:** open
+- **Fix attempts:** 0
+- **Description:** `apps/ui/components/WorkflowGitRepairPanel.tsx`, `apps/ui/components/setup/GitIdentityForm.tsx`, and `apps/ui/components/setup/GitIdentityPanel.tsx` were added after `BASE_SHA`, but `docs/components.md` has no PROJ-5 entries for them. The QA skill classifies a missing registry entry for new shared components as Critical because future UI work cannot reliably discover or reuse them.
+- **Repro:** `git diff --name-status a9b9cc683e6c7b3be1a3e724442634daaaa5e018..HEAD -- apps/ui/components docs/components.md`, then search `docs/components.md` for `WorkflowGitRepairPanel`, `GitIdentityForm`, and `GitIdentityPanel`.
+- **Fix sketch:** Add a PROJ-5 component-candidate section documenting these components, their ownership, and which existing primitives they compose.
+
+### BUG-PROJ5-QA-002 — [High] Prepared-import starts bypass the workflow Git readiness gate
+- **File:** `apps/engine/src/core/runService.ts`
+- **Anchor:** `export async function startPreparedImportForItem`
+- **Source:** Browser E2E + Thomas Müller (SRE/Reliability) + Dr. Sarah Chen (Security)
+- **Status:** open
+- **Fix attempts:** 0
+- **Description:** With no repo-local or global Git identity, the browser `Import prepared` action returned `200 OK`, moved the item to `implementation/running`, created a blocked run row, wrote `.beerengineer/workspaces/...` directories, and emitted run logs. This violates PRD-4 AC-1 and AC-2 because workflow-start side effects occurred before the Git identity gate.
+- **Repro:** In an isolated workspace with app-level identity only, unset local `user.name`/`user.email`, open `/w/proj5qa`, click `Import prepared`, provide a prepared artifact directory, and inspect the item/run rows.
+- **Evidence:** `specs/PROJ-5-setup-git-readiness/8_qa/proj5-qa-item-detail-actions-disabled.png` plus DB evidence captured during QA: run `d9895eab-7a31-468f-944e-f1547039fa82` was created with status `blocked`.
+- **Fix sketch:** Apply `checkWorkflowStartGitReadiness` before `loadPreparedImportBundleWithLlmFallback`, `prepareRun`, item column changes, and artifact seeding in `startPreparedImportForItem`.
+
+### BUG-PROJ5-QA-003 — [High] Full item detail cannot trigger the workflow Git repair panel
+- **File:** `apps/engine/src/api/routes/items.ts`
+- **Anchor:** `export function handleGetItem`
+- **Source:** Browser E2E + Marcus Weber (Principal Engineer)
+- **Status:** open
+- **Fix attempts:** 0
+- **Description:** The full item detail page renders all toolbar actions disabled because `GET /items/:id` returns the raw item row without `allowedActions`; `apps/ui/lib/engine/server.ts` therefore normalizes `allowedActions` to an empty array. The PRD-4 contextual repair panel cannot be reached from the full detail start controls.
+- **Repro:** Navigate to `/w/proj5qa/items/<idea-item-id>` for an idea/draft item. `Start Brainstorm`, `Import Prepared`, and all other toolbar buttons are disabled even though the engine transition matrix permits `start_brainstorm` and `import_prepared`.
+- **Evidence:** `specs/PROJ-5-setup-git-readiness/8_qa/proj5-qa-item-detail-actions-disabled.png`.
+- **Fix sketch:** Return allowed item actions from the engine detail endpoint or compute the same action availability in the UI from the item state before rendering disabled controls.
+
+### BUG-PROJ5-QA-004 — [Medium] UI engine URL environment variables are inconsistent across setup and workflow surfaces
+- **File:** `apps/ui/lib/engine/server.ts`
+- **Anchor:** `function engineBaseUrl()`
+- **Source:** Browser E2E + Elena Rodriguez (Principal Architect)
+- **Status:** open
+- **Fix attempts:** 0
+- **Description:** Setup server helpers honor `BEERENGINEER_ENGINE_URL`, but the board/item engine helpers only honor `ENGINE_URL` or `NEXT_PUBLIC_ENGINE_URL`. With a non-default engine port, `/setup` works while `/w/:key` talks to the default `localhost:4100`, causing false `Workspace not found` / workspace-loading failures.
+- **Repro:** Start the UI with `BEERENGINEER_ENGINE_URL=http://127.0.0.1:4211` but without `ENGINE_URL`; `/setup` reads the QA engine, while `/w/proj5qa` fails until `ENGINE_URL` is also set.
+- **Fix sketch:** Centralize UI engine URL resolution and support the same env precedence in setup, board, item-detail, and proxy helpers.
+
+### BUG-PROJ5-QA-005 — [Medium] Setup Git card renders a generic 404 for an active workspace row without a root path
+- **File:** `apps/ui/app/setup/page.tsx`
+- **Anchor:** `fetchGitReadiness(config.data?.workspace?.id)`
+- **Source:** Browser E2E + Thomas Müller (SRE/Reliability)
+- **Status:** open
+- **Fix attempts:** 0
+- **Description:** When the dev seed creates a workspace row without `rootPath`, `/setup` passes that workspace ID into Git readiness and renders `engine responded 404` instead of global readiness or a clear workspace-path stub. The topbar simultaneously says `no workspaces`, which makes the page contradictory.
+- **Repro:** Start a fresh dev DB with `BEERENGINEER_SEED=1` and open `/setup`.
+- **Evidence:** `specs/PROJ-5-setup-git-readiness/8_qa/proj5-qa-setup-seeded-workspace-404.png`.
+- **Fix sketch:** Treat config workspace rows without a usable root as "no selected workspace" for setup Git readiness, or render the shared not-configured workspace stub instead of a transport error.
+
+### Persona Review Summary
+- Dr. Sarah Chen — Security Lead: 1 High finding (prepared-import bypass produces unintended filesystem/DB side effects before the gate).
+- Marcus Weber — Principal Engineer: 1 Critical finding (component registry drift), 1 High finding (item detail allowed actions contract gap).
+- Priya Sharma — Performance Engineer: 0 findings.
+- Thomas Müller — SRE/Reliability Engineer: 1 High finding (prepared-import bypass), 1 Medium finding (seeded/rootless workspace 404).
+- Elena Rodriguez — Principal Architect: 1 Medium finding (split UI engine URL resolution); retrospective appended below.
+- Ken Takahashi — Minimalism Engineer: 0 blocking findings; retrospective appended below.
+
+## AGENTS.md Candidates
+- [PROPOSED] AGENTS-PROJ5-QA-001: Gate every start-run path before run rows, item moves, worktrees, or artifacts. — source: BUG-PROJ5-QA-002
+- [PROPOSED] AGENTS-PROJ5-QA-002: UI engine clients must share one engine URL resolver and env precedence. — source: BUG-PROJ5-QA-004
+- [PROPOSED] AGENTS-PROJ5-QA-003: Register new shared UI components in docs/components.md before QA. — source: BUG-PROJ5-QA-001
+
+## PROJ Retrospective
+
+### Elena Rodriguez (Principal Architect)
+- PROJ-5 correctly centralized Git identity semantics in the engine; the shared readiness model held up under direct API/security tests.
+- The assembled feature exposed a second integration axis: UI server helpers are not yet centralized, so setup and board surfaces can disagree about the engine base URL.
+- The workflow gate was implemented for normal item actions, but prepared import lived on a neighboring path and escaped the cross-cutting invariant. Future architecture docs should name all "start-run" entry points, not only the obvious action names.
+- The setup UI successfully preserves the nontechnical local-checkpoint story, including the no-GitHub/no-push message.
+- The feature is close structurally, but release readiness depends on making the gate invariant impossible to bypass.
+- Component registry drift suggests the design-system governance step needs to run as part of implementation, not only QA.
+
+### Ken Takahashi (Minimalism)
+- The concept stayed small: no GitHub, no pushing, no global Git writes. That restraint paid off.
+- The code now has multiple engine URL resolvers in the UI; this is accidental complexity and should collapse to one helper.
+- Prepared import should reuse the same start-run preflight helper instead of having a parallel orchestration path.
+- The item-detail action model should either consume engine-provided allowed actions everywhere or derive them consistently in one UI helper, not half of each.
+- Avoid adding another setup-specific error display for rootless workspaces; route that through the same readiness/stub vocabulary already built for Git.
 
 ---
 

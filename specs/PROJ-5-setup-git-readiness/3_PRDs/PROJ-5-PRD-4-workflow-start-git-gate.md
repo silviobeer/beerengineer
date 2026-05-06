@@ -89,3 +89,39 @@
 - Interaction contract: block before side effects, preserve original intent, confirm workspace-local write, recheck from fresh state, continue original start after success.
 - Implementation tolerance: Existing modal or in-place blocker is acceptable if it remains contextual and preserves the original start action.
 
+## QA Test Results
+
+**Tested:** 2026-05-06  
+**Tester:** QA Engineer (AI)
+
+### Acceptance Criteria Status
+
+- [x] AC-1..AC-4: Direct `start_brainstorm` API calls with missing Git identity returned `409 workflow_git_blocked`, included repair metadata, and created no run rows or item movement.
+- [x] AC-5..AC-8: A malicious `workspaceRoot` in the start payload was ignored; readiness used the registered workspace state and side effects stayed at zero for `start_brainstorm`.
+- [ ] AC-1..AC-2 regression: BUG-PROJ5-QA-002 shows `import_prepared` bypasses the gate and creates run/filesystem side effects before Git identity is ready.
+- [ ] AC-9..AC-13: BUG-PROJ5-QA-003 prevents the full item detail start controls from reaching the contextual repair panel because all toolbar actions are disabled.
+- [ ] AC-14..AC-17: Continue-original-start after repair could not be proven from the full detail start controls because of BUG-PROJ5-QA-003. Setup workspace repair itself did recheck successfully.
+- [x] AC-18..AC-21: Signing failure separation was covered by implementation tests; QA did not reproduce a live broken GPG environment in browser.
+
+### Edge Cases Status
+
+- [x] Direct start with injected path stayed server-side and produced no side effects.
+- [ ] BUG-PROJ5-QA-002: Prepared import created a blocked run and `.beerengineer/workspaces/...` artifacts despite missing Git identity.
+- [ ] BUG-PROJ5-QA-003: Full item detail actions are disabled because allowed actions are absent from the item detail API response.
+
+### Security Audit Results
+
+- [x] CSRF token required for direct engine mutation.
+- [x] Request-body path injection did not affect `start_brainstorm` gate behavior.
+- [ ] BUG-PROJ5-QA-002 is a reliability/security-boundary concern because an alternate start-run path performs side effects before the gate.
+
+### Bugs Found
+
+- BUG-PROJ5-QA-002 — High, see progress log.
+- BUG-PROJ5-QA-003 — High, see progress log.
+
+### Summary
+
+- **Acceptance Criteria:** 13/21 passed; 8 failed or could not be proven because of the two High bugs.
+- **Security:** No token leak or CSRF bypass found, but prepared-import side effects before readiness are release-blocking.
+- **Production Ready:** NO.

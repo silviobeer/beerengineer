@@ -91,3 +91,40 @@
 - Interaction contract: global/workspace modes, missing-Git stub, app-level save, workspace-local repair, fresh recheck, partial failure display.
 - Implementation tolerance: HTML mockup is structural; existing React components and tokens take precedence.
 
+## QA Test Results
+
+**Tested:** 2026-05-06  
+**Tester:** QA Engineer (AI)
+
+### Acceptance Criteria Status
+
+- [x] AC-1..AC-4: `/setup` includes the Git step inside the existing setup wizard and clearly says local Git checkpoints are not GitHub remotes, pushes, or pull requests.
+- [x] AC-5: With no selected workspace, `/setup` rendered global Git readiness.
+- [x] AC-6..AC-9: With an isolated registered workspace, `/setup` rendered workspace readiness, repo-local/global/app-default rows, and effective source.
+- [x] AC-10..AC-14: The UI saved a beerengineer_ default identity, showed the local placeholder warning, and re-rendered fresh readiness as `ok`.
+- [x] AC-15..AC-19: Workspace repair required confirmation, sent workspace identity through the proxy, rechecked readiness, and showed repo-local identity as authoritative after repair.
+- [ ] AC-20..AC-23: Missing-Git stub was not browser-tested in this QA run because the live QA engine had Git installed. Existing automated coverage remains in place, but QA did not independently prove it in browser.
+
+### Edge Cases Status
+
+- [x] Empty/invalid email produced field-level error.
+- [x] Mobile 375px, tablet 768px, and desktop layouts were captured.
+- [ ] BUG-PROJ5-QA-001: New setup Git components are missing from `docs/components.md`.
+- [ ] BUG-PROJ5-QA-005: Rootless seeded workspace rows produce a generic 404 in the Git card.
+
+### Security Audit Results
+
+- [x] XSS payload in the identity form did not execute.
+- [x] No API token found in browser cookies/localStorage/sessionStorage.
+- [x] Direct engine mutation without CSRF token was rejected.
+
+### Bugs Found
+
+- BUG-PROJ5-QA-001 — Critical, see progress log.
+- BUG-PROJ5-QA-005 — Medium, see progress log.
+
+### Summary
+
+- **Acceptance Criteria:** 19/23 independently passed in browser; 4 missing-Git ACs remain unproven by this browser run.
+- **Security:** Pass for tested setup wizard scope.
+- **Production Ready:** NO.
