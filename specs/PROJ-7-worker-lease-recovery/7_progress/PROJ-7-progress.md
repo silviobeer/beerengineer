@@ -454,3 +454,4 @@ Status: in progress
 - UI rendering: `npm test --workspace=@beerengineer/ui -- tests/workerRecoveryMessage.test.tsx` passed 3 tests.
 - Typecheck: `npm run typecheck` passed.
 - Wave gate attempt 1: Ralph AC checks and build passed; CodeRabbit reached review phase but timed out after the configured 600s. Increased `timeouts.coderabbit_seconds` to 1200 and rerunning the official gate.
+- Wave gate attempt 2: Ralph AC checks and build passed; CodeRabbit found a valid minor issue in `test/api/ready.test.ts` where the DB-failure test double-closed the fixture DB. Fixed the fixture cleanup to be idempotent.

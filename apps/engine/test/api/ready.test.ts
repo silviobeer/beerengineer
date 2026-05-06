@@ -12,11 +12,18 @@ function fixture() {
   const dir = mkdtempSync(join(tmpdir(), "be2-ready-"))
   const db = initDatabase(join(dir, "test.sqlite"))
   const repos = new Repos(db)
+  let closed = false
   return {
     db,
     repos,
-    close() {
+    closeDb() {
+      if (closed) return
+      closed = true
       db.close()
+    },
+    close() {
+      if (!closed) db.close()
+      closed = true
       rmSync(dir, { recursive: true, force: true })
     },
   }
@@ -59,8 +66,8 @@ test("/ready is unavailable during graceful shutdown", () => {
 })
 
 test("/ready is unavailable when DB probe fails", () => {
-  const { db, repos, close } = fixture()
-  db.close()
+  const { db, repos, close, closeDb } = fixture()
+  closeDb()
   try {
     const response = buildReadyResponse(db, repos, {
       startupRecoveryComplete: true,
