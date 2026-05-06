@@ -1,5 +1,6 @@
 import * as readline from "node:readline"
 import type { EventBus } from "../bus.js"
+import { NON_INTERACTIVE_NO_ANSWER_SENTINEL } from "../constants.js"
 import type { WorkflowEvent } from "../io.js"
 
 /**
@@ -53,6 +54,8 @@ export function attachNdjsonRenderer(bus: EventBus, opts: NdjsonOptions = {}): (
   const err = opts.err ?? process.stderr
   const input = opts.in ?? process.stdin
   const mode: NdjsonMode = opts.mode ?? "agent"
+  const pendingPromptIds = new Set<string>()
+  let inputEnded = false
 
   const emitLine = (payload: Record<string, unknown>): void => {
     try {
@@ -77,6 +80,19 @@ export function attachNdjsonRenderer(bus: EventBus, opts: NdjsonOptions = {}): (
   }
 
   const unsubscribe = bus.subscribe((event: WorkflowEvent) => {
+    if (event.type === "prompt_requested") {
+      if (inputEnded) {
+        queueMicrotask(() => {
+          bus.answer(event.promptId, NON_INTERACTIVE_NO_ANSWER_SENTINEL)
+        })
+      } else {
+        pendingPromptIds.add(event.promptId)
+      }
+    } else if (event.type === "prompt_answered") {
+      pendingPromptIds.delete(event.promptId)
+    }
+
+    if (event.type === "prompt_answered" && event.answer === NON_INTERACTIVE_NO_ANSWER_SENTINEL) return
     if (mode === "agent" && !AGENT_EVENT_TYPES.has(event.type)) return
     emitLine(event as unknown as Record<string, unknown>)
 
@@ -106,6 +122,12 @@ export function attachNdjsonRenderer(bus: EventBus, opts: NdjsonOptions = {}): (
       }
     } catch (parseErr) {
       err.write(`[ndjson] invalid input line (ignored): ${(parseErr as Error).message}\n`)
+    }
+  })
+  rl.on("close", () => {
+    inputEnded = true
+    for (const promptId of Array.from(pendingPromptIds)) {
+      bus.answer(promptId, NON_INTERACTIVE_NO_ANSWER_SENTINEL)
     }
   })
 

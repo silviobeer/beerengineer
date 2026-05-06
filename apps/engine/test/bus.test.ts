@@ -6,6 +6,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { createBus } from "../src/core/bus.js"
+import { NON_INTERACTIVE_NO_ANSWER_SENTINEL } from "../src/core/constants.js"
 import { attachHumanCliRenderer } from "../src/core/renderers/humanCli.js"
 import { attachNdjsonRenderer } from "../src/core/renderers/ndjson.js"
 import { withPromptPersistence } from "../src/core/promptPersistence.js"
@@ -79,6 +80,20 @@ test("ndjson renderer emits one JSON line per event and parses prompt_answered f
     const obj = JSON.parse(line)
     assert.ok(typeof obj.type === "string")
   }
+  bus.close()
+})
+
+test("ndjson renderer resolves prompts with sentinel after stdin closes", async () => {
+  const bus = createBus()
+  const out = new PassThrough()
+  const input = new PassThrough()
+  attachNdjsonRenderer(bus, { out, in: input })
+
+  input.end()
+  await new Promise(resolve => setImmediate(resolve))
+
+  const answer = await bus.request("Q?", { promptId: "p-eof", runId: "r1" })
+  assert.equal(answer, NON_INTERACTIVE_NO_ANSWER_SENTINEL)
   bus.close()
 })
 

@@ -1,4 +1,5 @@
 import { ask, close } from "../sim/human.js"
+import { NON_INTERACTIVE_NO_ANSWER_SENTINEL } from "../core/constants.js"
 import { createCliIO } from "../core/ioCli.js"
 import { getRegisteredWorkspace } from "../core/workspaces.js"
 import { runWorkflowWithSync } from "../core/runOrchestrator.js"
@@ -56,8 +57,8 @@ async function runJsonWorkflow(opts: { workspaceKey?: string } = {}): Promise<vo
   })
 
   try {
-    const title = await io.ask("Idea (title)")
-    const description = await io.ask("Idea (description)")
+    const title = requireJsonPromptAnswer(await io.ask("Idea (title)"), "Idea (title)")
+    const description = requireJsonPromptAnswer(await io.ask("Idea (description)"), "Idea (description)")
 
     const workspaceMeta = resolveWorkspaceMeta(repos, opts.workspaceKey)
     const runId = await runWorkflowWithSync(
@@ -71,4 +72,13 @@ async function runJsonWorkflow(opts: { workspaceKey?: string } = {}): Promise<vo
     io.close?.()
     db.close()
   }
+}
+
+function requireJsonPromptAnswer(answer: string, prompt: string): string {
+  if (answer !== NON_INTERACTIVE_NO_ANSWER_SENTINEL) return answer
+  throw new Error(
+    `Prompt "${prompt}" was not answered before stdin closed. ` +
+    "In --json mode, reply on stdin with a JSON line: " +
+    '{"type":"prompt_answered","promptId":"<from prompt_requested>","answer":"<answer>"}.',
+  )
 }
