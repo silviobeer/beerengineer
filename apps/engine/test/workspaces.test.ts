@@ -204,7 +204,7 @@ test("registerWorkspace persists preflight and writes quality config once GitHub
     assert.match(sonarProperties, /sonar.organization=acme/)
     assert.match(sonarProperties, /sonar\.sources=apps/)
     assert.match(sonarProperties, /sonar\.javascript\.lcov\.reportPaths=coverage\/\*\*\/lcov\.info/)
-    assert.match(sonarProperties, /sonar\.test\.inclusions=\*\*\/\*\.test\.ts,\*\*\/\*\.spec\.ts,\*\*\/\*\.test\.tsx,\*\*\/\*\.spec\.tsx/)
+    assert.match(sonarProperties, /sonar\.test\.inclusions=\*\*\/\*\.test\.js,\*\*\/\*\.spec\.js,\*\*\/\*\.test\.jsx,\*\*\/\*\.spec\.jsx,\*\*\/\*\.test\.ts,\*\*\/\*\.spec\.ts,\*\*\/\*\.test\.tsx,\*\*\/\*\.spec\.tsx/)
     const sonarWorkflow = readFileSync(join(path, ".github", "workflows", "sonar.yml"), "utf8")
     assert.match(sonarWorkflow, /SonarCloud Scan/)
     const coderabbit = readFileSync(join(path, ".coderabbit.yaml"), "utf8")

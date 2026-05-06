@@ -24,7 +24,7 @@ import { readWorkspaceConfig } from "./configFile.js"
 import { buildWorkspacePreflightCapabilities } from "../capabilities/workspacePreflight.js"
 
 const SONAR_GENERATOR_ROOTS = ["apps", "packages", "services", "libs", "src", "lib"] as const
-const SONAR_DEFAULT_TEST_INCLUSIONS = "**/*.test.ts,**/*.spec.ts,**/*.test.tsx,**/*.spec.tsx"
+const SONAR_DEFAULT_TEST_INCLUSIONS = "**/*.test.js,**/*.spec.js,**/*.test.jsx,**/*.spec.jsx,**/*.test.ts,**/*.spec.ts,**/*.test.tsx,**/*.spec.tsx"
 const SONAR_DEFAULT_EXCLUSIONS = "**/node_modules/**,**/dist/**,**/.next/**"
 const SONAR_DEFAULT_LCOV_PATH = "coverage/**/lcov.info"
 
