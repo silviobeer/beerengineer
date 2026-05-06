@@ -85,13 +85,17 @@ function makeWorkflowIO(): { io: WorkflowIO & { bus: EventBus }; events: Workflo
 async function withTmpCwd<T>(fn: () => Promise<T>): Promise<T> {
   const dir = mkdtempSync(join(tmpdir(), "be2-resume-"))
   const prev = process.cwd()
+  const previousDbPath = process.env.BEERENGINEER_UI_DB_PATH
   process.chdir(dir)
+  process.env.BEERENGINEER_UI_DB_PATH = join(dir, "beerengineer-test.sqlite")
   const originalLog = console.log
   console.log = () => {}
   try {
     return await fn()
   } finally {
     console.log = originalLog
+    if (previousDbPath === undefined) delete process.env.BEERENGINEER_UI_DB_PATH
+    else process.env.BEERENGINEER_UI_DB_PATH = previousDbPath
     process.chdir(prev)
     rmSync(dir, { recursive: true, force: true })
   }

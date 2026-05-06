@@ -81,10 +81,14 @@ function makeIO(answers: {
 async function withTmpCwd<T>(fn: () => Promise<T>): Promise<T> {
   const dir = mkdtempSync(join(tmpdir(), "be2-e2e-"))
   const prev = process.cwd()
+  const previousDbPath = process.env.BEERENGINEER_UI_DB_PATH
   process.chdir(dir)
+  process.env.BEERENGINEER_UI_DB_PATH = join(dir, "beerengineer-test.sqlite")
   try {
     return await fn()
   } finally {
+    if (previousDbPath === undefined) delete process.env.BEERENGINEER_UI_DB_PATH
+    else process.env.BEERENGINEER_UI_DB_PATH = previousDbPath
     process.chdir(prev)
     rmSync(dir, { recursive: true, force: true })
   }

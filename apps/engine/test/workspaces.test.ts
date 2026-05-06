@@ -525,6 +525,8 @@ test("workspace preflight and preview prefer origin HEAD over current story bran
 
     const gitInit = await initGit(path, { defaultBranch: "main", initialCommit: false })
     assert.equal(gitInit.ok, true)
+    assert.equal(spawnSync("git", ["config", "user.email", "test@example.invalid"], { cwd: path, encoding: "utf8" }).status, 0)
+    assert.equal(spawnSync("git", ["config", "user.name", "test"], { cwd: path, encoding: "utf8" }).status, 0)
     assert.equal(spawnSync("git", ["commit", "--allow-empty", "-m", "init"], { cwd: path, encoding: "utf8" }).status, 0)
     assert.equal(spawnSync("git", ["checkout", "-b", "story/demo__proj__w1__branching"], { cwd: path, encoding: "utf8" }).status, 0)
     assert.equal(spawnSync("git", ["remote", "add", "origin", "https://github.com/acme/demo.git"], { cwd: path, encoding: "utf8" }).status, 0)
