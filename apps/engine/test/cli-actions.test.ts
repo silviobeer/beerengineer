@@ -77,6 +77,55 @@ test("beerengineer item action start_brainstorm runs to completion through the t
   }
 })
 
+test("beerengineer item action start_brainstorm prints git identity repair steps before starting", () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-git-gate-"))
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
+  const repoRoot = join(dir, "repo")
+  const gitEnv = { ...process.env, GIT_CONFIG_GLOBAL: join(dir, "global.gitconfig") }
+  mkdirSync(repoRoot, { recursive: true })
+  spawnSync("git", ["init", "--initial-branch=main"], { cwd: repoRoot, encoding: "utf8", env: gitEnv })
+
+  try {
+    const dbPath = join(dir, "workflow.sqlite")
+    const db = initDatabase(dbPath)
+    const repos = new Repos(db)
+    const ws = repos.upsertWorkspace({ key: "default", name: "Default Workspace", rootPath: repoRoot })
+    repos.createItem({ workspaceId: ws.id, code: "ITEM-0001", title: "CLI Workflow", description: "smoke" })
+    db.close()
+
+    const result = spawnSync(
+      process.execPath,
+      [binPath, "item", "action", "--item", "ITEM-0001", "--action", "start_brainstorm"],
+      {
+        cwd: engineRoot,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          BEERENGINEER_UI_DB_PATH: dbPath,
+          BEERENGINEER_CONFIG_PATH: join(dir, "missing-config.json"),
+          GIT_CONFIG_GLOBAL: join(dir, "global.gitconfig"),
+        },
+        timeout: 5000,
+      },
+    )
+
+    assert.equal(result.status, 75, `${result.stdout ?? ""}\n${result.stderr ?? ""}`)
+    assert.match(result.stderr ?? "", /Workflow start blocked by Git readiness/)
+    assert.match(result.stderr ?? "", /Git identity/i)
+    assert.match(result.stderr ?? "", /beerengineer setup/)
+    assert.match(result.stderr ?? "", /Retry: beerengineer item action --item ITEM-0001 --action start_brainstorm/)
+
+    const verifyDb = initDatabase(dbPath)
+    const verifyRepos = new Repos(verifyDb)
+    assert.equal(verifyRepos.listRuns().length, 0)
+    verifyDb.close()
+  } finally {
+    removeTempDir(dir)
+  }
+})
+
 test("beerengineer item action start_implementation resumes from brainstorm artifacts as a cli-owned run", () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-cli-"))
   const testDir = dirname(fileURLToPath(import.meta.url))

@@ -5,6 +5,7 @@ import type { ItemAction } from "../../core/itemActions.js"
 import { inspectWorkspaceState } from "../../core/git.js"
 import { layout } from "../../core/workspaceLayout.js"
 import { prepareRun, runWorkflowWithSync } from "../../core/runOrchestrator.js"
+import { checkWorkflowStartGitReadiness, type WorkflowStartGitBlockedResult, type StartRunAction } from "../../core/runService.js"
 import { deriveProjectStartStages, loadPreparedImportBundleWithLlmFallback, seedPreparedImportArtifacts } from "../../core/preparedImport.js"
 import { resolveWorkflowLlmOptions } from "../../core/runSubscribers.js"
 import { resolveWorkflowContextForItemRun } from "../../core/workflowContextResolver.js"
@@ -160,6 +161,29 @@ function preflightCliBranchingStart(repos: Repos, workspaceId: string, ignoredPa
   return printDirtyRepoPreflight(rootPath, ignoredPaths)
 }
 
+function printWorkflowGitBlocker(blocker: WorkflowStartGitBlockedResult, itemRef: string): number {
+  console.error("\n  Workflow start blocked by Git readiness.")
+  console.error(`  Reason: ${blocker.message}`)
+  if (blocker.readiness?.workspace.key) console.error(`  Workspace: ${blocker.readiness.workspace.key}`)
+  if (blocker.error === "git_not_installed") {
+    console.error("  Next steps: install Git, then retry the same item action.")
+    return 75
+  }
+  if (blocker.error === "git_identity_missing") {
+    console.error("  Repair options:")
+    if (blocker.repair?.appDefaultIdentityAvailable) {
+      console.error("    - Open `beerengineer setup` and apply the saved app-level identity to this workspace.")
+    } else {
+      console.error("    - Open `beerengineer setup` and save a Git identity default, then apply it to this workspace.")
+    }
+    console.error("    - Or run `git config --local user.name \"Your Name\"` and `git config --local user.email \"you@example.com\"` in the workspace.")
+    console.error(`  Retry: beerengineer item action --item ${itemRef} --action ${blocker.intent.action}`)
+    return 75
+  }
+  console.error("  Next steps: reconnect the registered workspace or choose a Git repository, then retry the item action.")
+  return 75
+}
+
 function hasStageArtifacts(repos: Repos, item: Pick<ItemRow, "workspace_id">, runId: string, stageId: string): boolean {
   const run = repos.getRun(runId)
   const ctx = run ? resolveWorkflowContextForItemRun(repos, item, run) : null
@@ -196,6 +220,8 @@ function startRunPrelude(ctx: CliItemActionContext): number {
     console.error(`  Invalid transition: ${ctx.action} from ${ctx.item.current_column}/${ctx.item.phase_status}`)
     return 1
   }
+  const gitGate = checkWorkflowStartGitReadiness(ctx.repos, ctx.item, ctx.action as StartRunAction)
+  if (!gitGate.ok) return printWorkflowGitBlocker(gitGate, ctx.itemRef)
   return preflightCliBranchingStart(ctx.repos, ctx.item.workspace_id)
 }
 

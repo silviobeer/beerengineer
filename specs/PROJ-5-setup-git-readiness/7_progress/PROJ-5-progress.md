@@ -1,7 +1,7 @@
 # PROJ-5 Progress
 
 ## Status: in progress
-## Current Wave: 3
+## Current Wave: 4
 ## BASE_SHA: a9b9cc683e6c7b3be1a3e724442634daaaa5e018
 
 ---
@@ -374,3 +374,56 @@
 - [x] Build: `npm run typecheck`
 - [x] CodeRabbit: 0 non-advisory findings (advisory severities: medium,low)
 - [x] Smoke: /setup
+
+---
+
+## Wave 4
+
+### Wave Start
+- Tag: `wave-4-start-PROJ-5`
+- Started from: `94c15ac067c33713060911a56a5415262010bd1c`
+
+## PROJ-5-PRD-4-US-1: Als Workspace User moechte ich vor Workflow-Start auf fehlende Git-Identitaet gestoppt werden um keine halb gestarteten Runs oder Git-Fehler zu erzeugen — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 4.1 Workflow Start Readiness Gate | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-1 | Workflow-Start prueft Workspace-Git-Readiness vor Branch-, Worktree- oder LLM-Ausfuehrung. | ✓ |
+| AC-2 | Fehlende Git-Identitaet blockiert den Start vor Ausfuehrungsnebenwirkungen. | ✓ |
+| AC-3 | Der Blocker nennt Git-Identitaet als Ursache und verweist auf Reparatur. | ✓ |
+| AC-4 | Missing Git wird als Voraussetzung/Setup-Blocker getrennt von Missing Identity dargestellt. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- AC-1..AC-8 pass 1: FAIL — `npm run test:file --workspace=@beerengineer/engine -- test/workflowGitGate.test.ts` shows workflow starts still proceed to `prepareRun`, creating runs and background DB work instead of returning Git readiness blockers.
+- AC-1..AC-4 pass 2: PASS — `npm run test:file --workspace=@beerengineer/engine -- test/workflowGitGate.test.ts`
+
+## PROJ-5-PRD-4-US-2: Als Security-conscious Operator moechte ich, dass Workflow-Start den Workspace serverseitig aufloest um keine Pfadangriffe ueber Start-Payloads zuzulassen — complete
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 4.2 Server-Side Start Workspace Resolution | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-5 | Workflow-Start prueft Readiness gegen den serverseitig aufgeloesten Workspace des Items oder Requests. | ✓ |
+| AC-6 | Der Start-Request akzeptiert keinen vertrauenswuerdigen `workspaceRoot` fuer Git-Readiness. | ✓ |
+| AC-7 | Ein unbekannter oder geloeschter Workspace blockiert mit klarer Fehlermeldung vor Git-Nebenwirkungen. | ✓ |
+| AC-8 | Tests decken manipulierte Pfadfelder im Start-Payload ab. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- AC-5..AC-8 pass 1: PASS — `npm run test:file --workspace=@beerengineer/engine -- test/workflowGitGate.test.ts`
+
+## PROJ-5-PRD-4-US-3: Als nontechnical User moechte ich fehlende Identitaet direkt aus dem blockierten Start reparieren um nicht meinen Start-Kontext zu verlieren — pending
+
+## PROJ-5-PRD-4-US-4: Als User moechte ich nach erfolgreichem Repair zum urspruenglichen Start zurueckkehren um den Workflow ohne erneutes Navigieren zu starten — pending
+
+## PROJ-5-PRD-4-US-5: Als QA moechte ich Partial-Repair- und Signing-Fehler erkennen um Git-Identity-Readiness nicht mit allgemeiner Commit-Readiness zu verwechseln — pending

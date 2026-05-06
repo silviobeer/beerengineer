@@ -12,6 +12,9 @@ import { resolveWorkflowContextForItemRun, resolveWorkflowContextForRun } from "
 import type { Repos, ItemRow, RunRow, ExternalRemediationRow, WorkspaceRow } from "../db/repositories.js"
 import type { WorkflowIO } from "./io.js"
 import type { WorkflowResumeInput } from "../workflow.js"
+import { defaultAppConfig, readConfigFile, resolveConfigPath, resolveMergedConfig, resolveOverrides } from "../setup/config.js"
+import { readWorkspaceGitReadiness, type GitCommandOptions, type WorkspaceGitReadiness } from "../setup/gitIdentity.js"
+import type { AppConfig } from "../setup/types.js"
 import type { SupabaseAdapter } from "./supabase/types.js"
 import type { SupabaseHandoffClient } from "./supabase/handoffWriter.js"
 
@@ -36,8 +39,28 @@ export type SupabaseAdapterFactory = (deps: { workspaceId: string; projectRef: s
  *     engine process stays up across failing runs.
  */
 
+export type WorkflowStartGitBlockedResult = {
+  ok: false
+  status: 404 | 409 | 422
+  error: "git_not_installed" | "git_identity_missing" | "workspace_not_found" | "workspace_not_git_repo" | "workspace_path_unavailable"
+  code: "workflow_git_blocked"
+  message: string
+  readiness?: WorkspaceGitReadiness
+  repair?: {
+    action: "repair_workspace_identity"
+    workspaceId: string
+    workspaceKey?: string
+    appDefaultIdentityAvailable: boolean
+  }
+  intent: {
+    itemId: string
+    action: string
+  }
+}
+
 export type StartRunResult =
   | { ok: true; runId: string; itemId: string }
+  | WorkflowStartGitBlockedResult
   | { ok: false; status: 404 | 409 | 422; error: string }
 
 export type ResumeRunResult =
@@ -168,6 +191,91 @@ export type StartRunAction =
   | "start_implementation"
   | "rerun_design_prep"
 
+export function isWorkflowStartGitBlockedResult(result: StartRunResult): result is WorkflowStartGitBlockedResult {
+  return !result.ok && "code" in result && result.code === "workflow_git_blocked"
+}
+
+function loadWorkflowGitGateConfig(): AppConfig {
+  const overrides = resolveOverrides()
+  const configPath = resolveConfigPath(overrides)
+  return resolveMergedConfig(readConfigFile(configPath), overrides) ?? defaultAppConfig()
+}
+
+function workflowGitBlockerMessage(error: WorkflowStartGitBlockedResult["error"], fallback?: string): string {
+  if (error === "git_identity_missing") {
+    return fallback ?? "Git identity is missing for this workspace. Repair it before starting the workflow."
+  }
+  if (error === "git_not_installed") {
+    return fallback ?? "Git is not installed or not available on PATH. Install Git before starting workflows."
+  }
+  if (error === "workspace_not_found") {
+    return "The item's registered workspace could not be found. Reconnect or select a valid workspace before starting."
+  }
+  if (error === "workspace_not_git_repo") {
+    return fallback ?? "The registered workspace is not a Git repository. Select a Git workspace before starting."
+  }
+  return fallback ?? "The registered workspace path is unavailable. Reconnect the workspace before starting."
+}
+
+function workflowGitErrorFromReadiness(readiness: WorkspaceGitReadiness): WorkflowStartGitBlockedResult["error"] {
+  const blocker = readiness.blocker?.error
+  if (blocker === "identity_missing") return "git_identity_missing"
+  if (blocker === "git_not_installed") return "git_not_installed"
+  if (blocker === "workspace_not_git_repo") return "workspace_not_git_repo"
+  if (blocker === "workspace_path_unavailable") return "workspace_path_unavailable"
+  return "git_identity_missing"
+}
+
+export function checkWorkflowStartGitReadiness(
+  repos: Repos,
+  item: Pick<ItemRow, "id" | "workspace_id">,
+  action: StartRunAction,
+  options: {
+    appConfig?: AppConfig
+    gitCommandOptions?: GitCommandOptions
+  } = {},
+): { ok: true; readiness: WorkspaceGitReadiness } | WorkflowStartGitBlockedResult {
+  const workspace = repos.getWorkspace(item.workspace_id)
+  const intent = { itemId: item.id, action }
+  if (!workspace) {
+    return {
+      ok: false,
+      status: 404,
+      error: "workspace_not_found",
+      code: "workflow_git_blocked",
+      message: workflowGitBlockerMessage("workspace_not_found"),
+      intent,
+    }
+  }
+
+  const appConfig = options.appConfig ?? loadWorkflowGitGateConfig()
+  const readiness = readWorkspaceGitReadiness(
+    { id: workspace.id, key: workspace.key, rootPath: workspace.root_path },
+    appConfig,
+    options.gitCommandOptions,
+  )
+  if (!readiness.workflowBlocked) return { ok: true, readiness }
+
+  const error = workflowGitErrorFromReadiness(readiness)
+  return {
+    ok: false,
+    status: 409,
+    error,
+    code: "workflow_git_blocked",
+    message: workflowGitBlockerMessage(error, readiness.blocker?.message),
+    readiness,
+    repair: readiness.isGitRepo
+      ? {
+          action: "repair_workspace_identity",
+          workspaceId: workspace.id,
+          workspaceKey: workspace.key,
+          appDefaultIdentityAvailable: Boolean(readiness.appDefaultIdentity),
+        }
+      : undefined,
+    intent,
+  }
+}
+
 type StartRunPreparation = {
   sourceRun?: RunRow
   resume?: WorkflowResumeInput
@@ -222,6 +330,8 @@ export function startRunForItem(
   input: {
     itemId: string
     action: StartRunAction
+    appConfig?: AppConfig
+    gitCommandOptions?: GitCommandOptions
     onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
     supabaseAdapterFactory?: SupabaseAdapterFactory
   },
@@ -231,6 +341,12 @@ export function startRunForItem(
 
   const preparedAction = prepareStartRunAction(repos, item, input.action)
   if (preparedAction.error) return preparedAction.error
+
+  const gitGate = checkWorkflowStartGitReadiness(repos, item, input.action, {
+    appConfig: input.appConfig,
+    gitCommandOptions: input.gitCommandOptions,
+  })
+  if (!gitGate.ok) return gitGate
 
   const io = buildApiIo(repos)
   const prepared = prepareRun(

@@ -6,7 +6,7 @@ import { isPortListening, readManagedPreviewPid, resolvePreviewLaunchSpec, start
 import { resolveItemPreviewContext } from "../../core/itemPreview.js"
 import { isItemAction, lookupTransition, type ItemActionsService } from "../../core/itemActions.js"
 import { latestRunForItemWithStageArtifact } from "../../core/itemWorkspace.js"
-import { resumeRunInProcess, startPreparedImportForItem, startRunForItem, type StartRunAction } from "../../core/runService.js"
+import { isWorkflowStartGitBlockedResult, resumeRunInProcess, startPreparedImportForItem, startRunForItem, type StartRunAction } from "../../core/runService.js"
 import { layout } from "../../core/workspaceLayout.js"
 import { resolveWorkflowContextForRun } from "../../core/workflowContextResolver.js"
 import { json, readJson } from "../http.js"
@@ -197,6 +197,18 @@ function handleStartRunItemAction(
   }
   const result = startRunForItem(repos, { itemId, action, onItemColumnChanged })
   if (!result.ok) {
+    if (isWorkflowStartGitBlockedResult(result)) {
+      json(res, result.status, {
+        error: result.error,
+        code: result.code,
+        action,
+        message: result.message,
+        readiness: result.readiness,
+        repair: result.repair,
+        intent: result.intent,
+      })
+      return
+    }
     json(res, result.status, { error: result.error, action })
     return
   }
