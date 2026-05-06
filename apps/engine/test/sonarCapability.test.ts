@@ -24,10 +24,16 @@ import type { WorkspaceConfigFile } from "../src/types/workspace.js"
 
 function withoutAmbientSonarToken<T>(fn: () => Promise<T>): Promise<T> {
   const previous = process.env.SONAR_TOKEN
+  const previousSecretStore = process.env.BEERENGINEER_SECRET_STORE_PATH
+  const secretStoreDir = mkdtempSync(join(tmpdir(), "be2-sonar-secrets-"))
   delete process.env.SONAR_TOKEN
+  process.env.BEERENGINEER_SECRET_STORE_PATH = join(secretStoreDir, "secrets.json")
   return fn().finally(() => {
     if (previous === undefined) delete process.env.SONAR_TOKEN
     else process.env.SONAR_TOKEN = previous
+    if (previousSecretStore === undefined) delete process.env.BEERENGINEER_SECRET_STORE_PATH
+    else process.env.BEERENGINEER_SECRET_STORE_PATH = previousSecretStore
+    rmSync(secretStoreDir, { recursive: true, force: true })
   })
 }
 

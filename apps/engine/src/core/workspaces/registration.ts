@@ -3,6 +3,7 @@ import { stdin as input, stdout as output } from "node:process"
 import { basename, resolve } from "node:path"
 import { mkdir, rm } from "node:fs/promises"
 import type { Repos } from "../../db/repositories.js"
+import { storeSecret } from "../../setup/secretStore.js"
 import { DEFAULT_SONAR_READINESS } from "../../setup/types.js"
 import type { AppConfig, SetupReport, SonarReadiness } from "../../setup/types.js"
 import type {
@@ -24,7 +25,6 @@ import {
   generateCodeRabbitInstallUrl,
   isInsideAllowedRootRealpath,
   pathExists,
-  persistSonarTokenToGitConfig,
   previewFromDbRow,
   runCommand,
   runGit,
@@ -151,12 +151,11 @@ async function prepareWorkspaceFilesystem(input: RegisterWorkspaceInput, state: 
   return null
 }
 
-function seedWorkspaceSonarToken(path: string, sonarToken: RegisterWorkspaceInput["sonarToken"], actions: string[]): void {
+function seedWorkspaceSonarToken(sonarToken: RegisterWorkspaceInput["sonarToken"], actions: string[]): void {
   if (!sonarToken?.value) return
-  if (!process.env.SONAR_TOKEN) process.env.SONAR_TOKEN = sonarToken.value
   if (!sonarToken.persist) return
-  persistSonarTokenToGitConfig(path, sonarToken.value)
-  actions.push("wrote SONAR_TOKEN to repo git config for shared worktree access")
+  storeSecret("SONAR_TOKEN", sonarToken.value)
+  actions.push("stored SONAR_TOKEN in the beerengineer secret store")
 }
 
 async function refreshWorkspacePreflight(path: string, requestedSonar: SonarConfig | undefined, hasSonarProperties: boolean) {
@@ -229,7 +228,7 @@ function collectWorkspaceWarnings(
   if (requestedSonar?.enabled && !githubReady) warnings.push("SonarCloud config generation skipped until a GitHub origin remote is configured")
   if (preflight.report.gh.status !== "ok") warnings.push("GitHub CLI is not authenticated; repo creation and secret sync remain manual")
   if (requestedSonar?.enabled && sonarReadiness.token === "invalid") warnings.push("SONAR_TOKEN is present but failed Sonar validation")
-  else if (requestedSonar?.enabled && sonarReadiness.token === "missing") warnings.push("SONAR_TOKEN is not configured yet; local scans and project provisioning will remain incomplete")
+  else if (requestedSonar?.enabled && sonarReadiness.token === "missing") warnings.push("SONAR_TOKEN is not configured in the beerengineer secret store yet; local scans and project provisioning will remain incomplete")
   if (requestedSonar?.enabled && sonarReadiness.config === "invalid" && sonarReadiness.details?.config) warnings.push(`Sonar config invalid: ${sonarReadiness.details.config}`)
   if (requestedSonar?.enabled && sonarReadiness.config === "missing") warnings.push("Sonar config was not generated; add sonar-project.properties manually for this workspace layout")
   if (sonarReadiness.coverage === "producer-missing") warnings.push("Coverage import configured but no coverage command was detected")
@@ -245,7 +244,7 @@ export async function registerWorkspace(input: RegisterWorkspaceInput, deps: Reg
   const actions: string[] = []
   const prepError = await prepareWorkspaceFilesystem(input, state, actions)
   if (prepError) return prepError
-  seedWorkspaceSonarToken(state.path, input.sonarToken, actions)
+  seedWorkspaceSonarToken(input.sonarToken, actions)
 
   let preflight = await refreshWorkspacePreflight(state.path, state.requestedSonar, state.preview.hasSonarProperties)
   preflight = await maybeCreateGithubRepoForWorkspace(input, state, preflight, actions)
@@ -439,7 +438,7 @@ async function promptSonarTokenValue(
   console.log("  Generate one at https://sonarcloud.io/account/security")
   const value = (await promptLine(rl, "SONAR_TOKEN (blank to skip)", "")).trim()
   if (!value) return undefined
-  const persist = await promptYesNo(rl, "Write SONAR_TOKEN to repo git config for all worktrees of this workspace?", true)
+  const persist = await promptYesNo(rl, "Store SONAR_TOKEN in beerengineer secret store?", true)
   return { value, persist }
 }
 

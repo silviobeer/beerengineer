@@ -85,21 +85,27 @@ export type SonarEnableResult = {
   preflight: Awaited<ReturnType<typeof runWorkspacePreflight>>["report"]
 }
 
-function sonarConfigForContext(sonar: SonarConfig, context: WorkspaceCapabilityContext): SonarConfig {
+function sonarConfigForContext(
+  sonar: SonarConfig,
+  context: WorkspaceCapabilityContext,
+  options: { defaultSonarOrganization?: string } = {},
+): SonarConfig {
   if (!sonar.enabled) return { enabled: false }
   return normalizeSonarConfig({
     ...sonar,
     organization: sonar.organization ?? context.github.owner,
     projectKey: sonar.projectKey ?? (context.github.owner && context.github.repo ? `${context.github.owner}_${context.github.repo}` : undefined),
     baseBranch: sonar.baseBranch ?? context.github.defaultBranch ?? undefined,
-  }, context.github.repo ?? "workspace")
+  }, context.github.repo ?? "workspace", options.defaultSonarOrganization)
 }
 
 function missingPrerequisites(context: WorkspaceCapabilityContext, sonar: SonarConfig): string[] {
   const missing: string[] = []
   if (!sonar.enabled) missing.push("Sonar is disabled for this workspace")
   if (!context.git.ready) missing.push("Git repository is not ready")
-  if (!context.github.owner || !context.github.repo) missing.push("GitHub origin remote is not configured")
+  if ((!sonar.organization || !sonar.projectKey) && (!context.github.owner || !context.github.repo)) {
+    missing.push("GitHub origin remote is not configured")
+  }
   return missing
 }
 
@@ -112,10 +118,11 @@ export async function enableWorkspaceSonarCapability(
   context: WorkspaceCapabilityContext,
   name: string,
   sonar: SonarConfig,
+  options: { defaultSonarOrganization?: string } = {},
 ): Promise<SonarEnableResult> {
   const actions: string[] = []
   const warnings: string[] = []
-  const configuredSonar = sonarConfigForContext(sonar, context)
+  const configuredSonar = sonarConfigForContext(sonar, context, options)
   const missing = missingPrerequisites(context, configuredSonar)
   if (missing.length > 0) {
     const preflight = await runWorkspacePreflight(context.workspaceRoot, {
@@ -324,6 +331,7 @@ function missingWorkspacePreflight(key: string): WorkspacePreflightReport {
 export async function enableRegisteredWorkspaceSonarCapability(
   repos: Repos,
   key: string,
+  options: { defaultSonarOrganization?: string } = {},
 ): Promise<SonarEnableResult & { workspaceRoot?: string }> {
   const row = repos.getWorkspaceByKey(key)
   if (!row?.root_path) {
@@ -351,7 +359,7 @@ export async function enableRegisteredWorkspaceSonarCapability(
   const preflight = await runWorkspacePreflight(row.root_path, { sonarHostUrl: config.sonar.hostUrl, sonarEnabled: true })
   const context = buildWorkspaceCapabilityContext(row.root_path, preflight.report, { githubRequired: true })
   const sonar = normalizeSonarConfig({ ...config.sonar, enabled: true }, config.key)
-  const result = await enableWorkspaceSonarCapability(context, config.name, sonar)
+  const result = await enableWorkspaceSonarCapability(context, config.name, sonar, options)
   if (result.actions.length > 0 || config.sonar.enabled !== true) {
     const updatedConfig = buildWorkspaceConfigFile({
       key: config.key,

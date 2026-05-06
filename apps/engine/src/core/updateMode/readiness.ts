@@ -1,10 +1,9 @@
 import Database from "better-sqlite3"
 import { spawnSync } from "node:child_process"
-import { existsSync, readFileSync } from "node:fs"
-import { join } from "node:path"
 import { readEnginePidFile } from "../../api/pidFile.js"
 import { resolveDbPathInfo } from "../../db/connection.js"
 import type { Repos } from "../../db/repositories.js"
+import { readActiveSecretValue } from "../../setup/secretStore.js"
 import type { AppConfig } from "../../setup/types.js"
 import { capabilityStatusFromReady, sharedReadiness } from "../capabilities/readiness.js"
 import type { UpdateReadinessState, UpdateStatus } from "./types.js"
@@ -47,18 +46,7 @@ export function buildUpdateReadiness(
     })
     return probe.status === 0 && Boolean(probe.stdout.trim())
   })
-  const sonarTokenPresent = Boolean(process.env.SONAR_TOKEN?.trim()) || repos.listWorkspaces().some(workspace => {
-    if (!workspace.root_path) return false
-    try {
-      const envLocal = join(workspace.root_path, ".env.local")
-      if (!existsSync(envLocal)) return false
-      return readFileSync(envLocal, "utf8")
-        .split(/\r?\n/)
-        .some(line => /^SONAR_TOKEN=.+$/.test(line.trim()))
-    } catch {
-      return false
-    }
-  }) || sonarTokenInGitConfig
+  const sonarTokenPresent = readActiveSecretValue("SONAR_TOKEN") !== null || sonarTokenInGitConfig
   // Update mode has no selected workspace preflight context; it shares the
   // readiness label semantics but keeps its own local input collection.
   const sonarReadiness = sharedReadiness(

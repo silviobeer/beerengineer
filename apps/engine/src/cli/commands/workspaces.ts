@@ -155,8 +155,8 @@ function printWorkspaceAddNextSteps(result: {
     console.log("    SonarQube Cloud")
     console.log(`    1. Create or import the project in SonarQube Cloud: ${result.sonarProjectUrl}`)
     console.log("    2. Check whether your org uses the EU default or the US region.")
-    console.log("    3. Create an analysis token and export it locally: export SONAR_TOKEN=...")
-    console.log("       Prefer repo-local git config for workspace sharing across worktrees; never commit it to the repo.")
+    console.log("    3. Create an analysis token and store it in the beerengineer secret store.")
+    console.log("       Do not commit tokens or place them in the workspace .env.local file.")
     console.log("    4. Mark the project as AI-generated: Project settings > AI-generated code >")
     console.log("       enable \"Contains AI-generated code\" (adds the +Contains AI code label).")
     console.log("    5. Apply an AI-qualified quality gate: Project settings > Quality Gate >")
@@ -435,8 +435,15 @@ export async function runWorkspaceSonarEnableCommand(key: string | undefined, js
     console.error("  Missing key: beerengineer workspace sonar enable <key>")
     return capabilityExitCode("usage")
   }
+  const config = loadEffectiveConfig()
+  if (!config) {
+    console.error("  App config is missing or invalid. Run `beerengineer setup` first.")
+    return capabilityExitCode("requiredFailure")
+  }
   return withRepos(async repos => {
-    const result = await enableRegisteredWorkspaceSonarCapability(repos, key)
+    const result = await enableRegisteredWorkspaceSonarCapability(repos, key, {
+      defaultSonarOrganization: config.llm.defaultSonarOrganization,
+    })
     if (json) {
       process.stdout.write(renderCapabilityJson({
         capabilityId: "sonar",

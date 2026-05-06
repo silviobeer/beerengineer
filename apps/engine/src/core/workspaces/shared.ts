@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto"
 import { access, glob, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises"
 import { dirname, relative, resolve, sep } from "node:path"
 import type { WorkspaceRow as DbWorkspaceRow } from "../../db/repositories.js"
+import { readActiveSecretValue } from "../../setup/secretStore.js"
 import type { HarnessProfile, WorkspacePreview, WorkspaceRow } from "../../types/workspace.js"
 
 export const WORKSPACE_SCHEMA_VERSION = 2 as const
@@ -313,15 +314,12 @@ function readGitConfigSonarToken(root: string): string | undefined {
   return value || undefined
 }
 
-export async function detectSonarToken(root: string): Promise<{ value?: string; source?: "env" | ".env.local" | "git-config" }> {
-  if (process.env.SONAR_TOKEN) return { value: process.env.SONAR_TOKEN, source: "env" }
-  try {
-    const envLocal = await readFile(resolve(root, ".env.local"), "utf8")
-    const value = readEnvFileValue(envLocal, "SONAR_TOKEN")
-    if (value) return { value, source: ".env.local" }
-  } catch {
-    // ignore
-  }
+export async function detectSonarToken(root: string): Promise<{ value?: string; source?: "store" | "git-config" }> {
+  const stored = readActiveSecretValue("SONAR_TOKEN")
+  if (stored) return { value: stored, source: "store" }
+
+  // Legacy fallback for workspaces that were configured before the app-level
+  // secret store existed. New Sonar setup should store tokens in the CLI store.
   const gitConfigValue = readGitConfigSonarToken(root)
   if (gitConfigValue) return { value: gitConfigValue, source: "git-config" }
   return {}

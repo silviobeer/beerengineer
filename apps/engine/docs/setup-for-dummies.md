@@ -78,10 +78,9 @@ often miss:**
   coverage producer, it will warn instead of pretending Sonar is ready.
 - If possible, import the repository into SonarQube Cloud instead of creating
   the project by hand.
-- After that, create an analysis token and export it locally as
-  `SONAR_TOKEN`.
-- Keep `SONAR_TOKEN` out of the repo. Store it in your shell environment,
-  keychain, or another operator-local secret store.
+- After that, create an analysis token and store it as `SONAR_TOKEN` in
+  beerengineer_'s local secret store.
+- Keep `SONAR_TOKEN` out of the repo and out of workspace `.env.local` files.
 - If your organization uses the US SonarQube Cloud instance instead of the
   EU default, that must be selected explicitly during setup.
 
@@ -387,7 +386,7 @@ If you enable Sonar, beerengineer_ should also tell you:
 
 1. Create or import the repo in SonarQube Cloud.
 2. Check whether your org is on the EU default site or the US site.
-3. Create an analysis token and export `SONAR_TOKEN`.
+3. Create an analysis token and store `SONAR_TOKEN` in beerengineer_'s local secret store.
 4. Keep durable analysis settings in the SonarQube Cloud UI when possible.
 
 **Brownfield (existing project):**

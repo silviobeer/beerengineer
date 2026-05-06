@@ -72,7 +72,7 @@ function samplePreflight(overrides: Partial<WorkspacePreflightReport> = {}): Wor
     git: { status: "ok" },
     github: { status: "missing", detail: "origin remote is not configured", defaultBranch: "main" },
     gh: { status: "missing", detail: "gh auth status failed" },
-    sonar: { status: "missing", detail: "SONAR_TOKEN was not found in env, .env.local, or repo git config" },
+    sonar: { status: "missing", detail: "SONAR_TOKEN was not found in the beerengineer secret store or legacy repo git config" },
     coderabbit: { status: "missing", detail: "CodeRabbit CLI not found" },
     capabilities: [],
     checkedAt: new Date(0).toISOString(),
@@ -141,6 +141,8 @@ test("PROJ-3-PRD-2 AC-8 GitHub provider context is passed to optional capability
 test("PROJ-3-PRD-2 AC-9 missing Sonar does not roll back valid registration", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-workspace-cap-"))
   const db = initDatabase(join(dir, "db.sqlite"))
+  const previousSecretStore = process.env.BEERENGINEER_SECRET_STORE_PATH
+  process.env.BEERENGINEER_SECRET_STORE_PATH = join(dir, "missing-secrets.json")
   try {
     const repos = new Repos(db)
     const config = { ...defaultAppConfig(), allowedRoots: [dir] }
@@ -151,6 +153,8 @@ test("PROJ-3-PRD-2 AC-9 missing Sonar does not roll back valid registration", as
     assert.equal(result.ok, true)
     if (result.ok) assert.equal(result.capabilityOutcomes.some(cap => cap.capabilityId === "sonar" && cap.status !== "ready"), true)
   } finally {
+    if (previousSecretStore === undefined) delete process.env.BEERENGINEER_SECRET_STORE_PATH
+    else process.env.BEERENGINEER_SECRET_STORE_PATH = previousSecretStore
     db.close()
     rmSync(dir, { recursive: true, force: true })
   }

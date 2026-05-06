@@ -314,7 +314,7 @@ function buildSonarReadiness(
   sonarHost: string,
 ): SonarReadiness {
   let tokenStatus: "ok" | "invalid" | "missing" = "missing"
-  let tokenDetail = "SONAR_TOKEN was not found in env, .env.local, or repo git config"
+  let tokenDetail = "SONAR_TOKEN was not found in the beerengineer secret store or legacy repo git config"
   if (tokenValue) {
     tokenStatus = sonarValid ? "ok" : "invalid"
     tokenDetail = sonarValid ? `SONAR_TOKEN validated against ${sonarHost}` : `SONAR_TOKEN failed validation against ${sonarHost}`
@@ -348,7 +348,7 @@ function sonarDetail(
   if (localSonarReadiness.config === "invalid") return localSonarReadiness.details?.config
   if (tokenValue && sonarValid) return sonarReadiness.details?.coverage
   if (tokenValue) return "SONAR_TOKEN failed Sonar validation"
-  return "SONAR_TOKEN was not found in env, .env.local, or repo git config"
+  return "SONAR_TOKEN was not found in the beerengineer secret store or legacy repo git config"
 }
 
 async function resolveWorkspaceSonarPreflight(

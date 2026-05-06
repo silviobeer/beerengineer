@@ -171,7 +171,7 @@ export type WorkspaceGhPreflight = WorkspacePreflightCheck & {
 }
 
 export type WorkspaceSonarPreflight = WorkspacePreflightCheck & {
-  tokenSource?: "env" | ".env.local" | "git-config"
+  tokenSource?: "store" | "git-config"
   tokenValid?: boolean
   readiness?: SonarReadiness
 }

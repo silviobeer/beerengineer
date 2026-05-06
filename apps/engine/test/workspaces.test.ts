@@ -17,6 +17,7 @@ import {
 import { initDatabase } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
 import { defaultAppConfig } from "../src/setup/config.js"
+import { getSecretMetadata, storeSecret } from "../src/setup/secretStore.js"
 import type { SetupReport } from "../src/setup/types.js"
 
 function readyReport(): SetupReport {
@@ -315,9 +316,11 @@ test("registerWorkspace preserves explicit Sonar organization and project key", 
   }
 })
 
-test("registerWorkspace persists SONAR_TOKEN to repo git config for shared worktrees", async () => {
+test("registerWorkspace persists SONAR_TOKEN to the app secret store", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-workspaces-"))
   const db = initDatabase(join(dir, "db.sqlite"))
+  const prevStorePath = process.env.BEERENGINEER_SECRET_STORE_PATH
+  process.env.BEERENGINEER_SECRET_STORE_PATH = join(dir, "secrets.json")
   try {
     const repos = new Repos(db)
     const config = { ...defaultAppConfig(), allowedRoots: [dir] }
@@ -345,14 +348,13 @@ test("registerWorkspace persists SONAR_TOKEN to repo git config for shared workt
     assert.equal(result.ok, true)
     if (!result.ok) return
 
-    assert.match(result.actions.join("\n"), /repo git config/)
-    const persisted = spawnSync("git", ["config", "--local", "--get", "beerengineer.sonarToken"], {
-      cwd: path,
-      encoding: "utf8",
-    })
-    assert.equal(persisted.status, 0, persisted.stderr ?? "")
-    assert.equal(persisted.stdout.trim(), "persisted-token")
+    assert.match(result.actions.join("\n"), /beerengineer secret store/)
+    const persisted = getSecretMetadata("SONAR_TOKEN")
+    assert.equal(persisted.present, true)
+    assert.equal(persisted.active, true)
   } finally {
+    if (prevStorePath === undefined) delete process.env.BEERENGINEER_SECRET_STORE_PATH
+    else process.env.BEERENGINEER_SECRET_STORE_PATH = prevStorePath
     db.close()
     rmSync(dir, { recursive: true, force: true })
   }
@@ -361,8 +363,11 @@ test("registerWorkspace persists SONAR_TOKEN to repo git config for shared workt
 test("runWorkspacePreflight falls back to Basic auth after Bearer 401 for self-hosted sonar", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-workspaces-"))
   const prevToken = process.env.SONAR_TOKEN
+  const prevStorePath = process.env.BEERENGINEER_SECRET_STORE_PATH
   const prevFetch = globalThis.fetch
-  process.env.SONAR_TOKEN = "test-token"
+  delete process.env.SONAR_TOKEN
+  process.env.BEERENGINEER_SECRET_STORE_PATH = join(dir, "secrets.json")
+  storeSecret("SONAR_TOKEN", "test-token")
   const authHeaders: string[] = []
   globalThis.fetch = (async (input, init) => {
     authHeaders.push(String((init?.headers as Record<string, string> | undefined)?.authorization ?? ""))
@@ -382,6 +387,8 @@ test("runWorkspacePreflight falls back to Basic auth after Bearer 401 for self-h
     assert.match(authHeaders[1] ?? "", /^Basic /)
   } finally {
     globalThis.fetch = prevFetch
+    if (prevStorePath === undefined) delete process.env.BEERENGINEER_SECRET_STORE_PATH
+    else process.env.BEERENGINEER_SECRET_STORE_PATH = prevStorePath
     if (prevToken === undefined) delete process.env.SONAR_TOKEN
     else process.env.SONAR_TOKEN = prevToken
     rmSync(dir, { recursive: true, force: true })
@@ -391,8 +398,10 @@ test("runWorkspacePreflight falls back to Basic auth after Bearer 401 for self-h
 test("runWorkspacePreflight reads SONAR_TOKEN from repo git config", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-workspaces-"))
   const prevToken = process.env.SONAR_TOKEN
+  const prevStorePath = process.env.BEERENGINEER_SECRET_STORE_PATH
   const prevFetch = globalThis.fetch
   delete process.env.SONAR_TOKEN
+  process.env.BEERENGINEER_SECRET_STORE_PATH = join(dir, "missing-secrets.json")
   globalThis.fetch = (async input => {
     const url = String(input)
     if (url.includes("/api/authentication/validate")) {
@@ -416,6 +425,8 @@ test("runWorkspacePreflight reads SONAR_TOKEN from repo git config", async () =>
     assert.equal(report.report.sonar.tokenValid, true)
   } finally {
     globalThis.fetch = prevFetch
+    if (prevStorePath === undefined) delete process.env.BEERENGINEER_SECRET_STORE_PATH
+    else process.env.BEERENGINEER_SECRET_STORE_PATH = prevStorePath
     if (prevToken === undefined) delete process.env.SONAR_TOKEN
     else process.env.SONAR_TOKEN = prevToken
     rmSync(dir, { recursive: true, force: true })
