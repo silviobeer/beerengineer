@@ -91,3 +91,53 @@
 - The stale threshold for startup recovery is 2 minutes.
 - The product remains in the local single-engine-process model; multiple API engine processes sharing one SQLite DB are out of scope.
 - Worker ownership is stored directly on `runs` for this project.
+
+## QA Test Results
+
+**Tested:** 2026-05-06
+**Tester:** QA Engineer (AI)
+
+### Acceptance Criteria Status
+
+- [x] Lease persistence, CLI/API owner kind, heartbeat cadence, failed-start, startup recovery, readiness, and recovery-message tests passed in targeted QA commands.
+- [ ] BUG: AC-19 is not production-safe yet. `startWorkerLeaseHeartbeat()` can call `onFatal`, but `prepareRun()` and `performResume()` do not pass a fatal handler or cancellation signal, so a worker that loses ownership can mark the run failed/recoverable while the original workflow keeps executing side effects.
+
+### Edge Cases Status
+
+- [x] Single and double heartbeat write failures keep the run active; third failure marks recoverable.
+- [x] Lost ownership marks the run failed/recoverable and stops the heartbeat interval.
+- [ ] BUG: Stopping the heartbeat interval is not the same as stopping the workflow execution path.
+
+### Security Audit Results
+
+- [x] `/ready` and `/health` return only liveness/readiness fields and do not expose worker instance ids or secrets.
+- [x] Mutating route smoke rejected unsupported `POST /ready`; no token value was printed.
+
+### Bugs Found
+
+#### BUG-PROJ7-QA-001: Lost-lease workers can continue executing after marking the run recoverable
+- **Severity:** High
+- **File:** `apps/engine/src/core/runOrchestrator.ts`
+- **Anchor:** `heartbeat = startWorkerLeaseHeartbeat(repos, {`
+- **Source:** Dr. Sarah Chen persona review / code review
+- **Status:** open
+- **Fix attempts:** 0
+- **Steps to Reproduce:**
+  1. Start or resume a workflow so `prepareRun()` or `performResume()` starts a lease heartbeat.
+  2. Change the run lease to another worker instance or force three heartbeat write failures while the workflow body is still executing.
+  3. Observe that `workerLease.ts` marks the run failed/recoverable and stops only the heartbeat loop.
+- **Expected:** The active workflow stops executing after lost ownership or fatal heartbeat failure when the engine can detect it.
+- **Actual:** Production callers do not pass `onFatal`, an abort signal, or another stop mechanism, so workflow side effects can continue after the run has been marked recoverable.
+- **Priority:** Fix before release
+
+### Summary
+
+- **Acceptance Criteria:** Blocked by BUG-PROJ7-QA-001
+- **Bugs Found:** 1 total (0 critical, 1 high, 0 medium, 0 low)
+- **Security:** Pass
+- **Production Ready:** NO
+- **Recommendation:** Fix high bug first
+
+### AGENTS.md Candidates (for Skill 7 review)
+
+- [ ] Lease-fatal tests must prove the workflow body stops, not only that the heartbeat interval stops. — **why:** BUG-PROJ7-QA-001 shows interval-only assertions can miss duplicate worker side effects.

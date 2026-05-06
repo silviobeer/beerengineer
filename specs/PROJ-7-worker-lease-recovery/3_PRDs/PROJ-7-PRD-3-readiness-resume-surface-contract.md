@@ -112,3 +112,44 @@
 - Design tokens: Existing status and recovery visual treatment.
 - Interaction contract: Show engine-provided `recovery_user_message` before generic fallback copy when available.
 - Implementation tolerance: Copy may vary, but it must clearly communicate that the worker was lost and resume is required.
+
+## QA Test Results
+
+**Tested:** 2026-05-06
+**Tester:** QA Engineer (AI)
+
+### Acceptance Criteria Status
+
+- [x] Live `/health` returned liveness-only JSON; live `/ready` returned available with `startupRecovery: "complete"`, `shutdown: "idle"`, and `leaseWrite: "ok"`.
+- [x] Five repeated `/ready` calls did not increase run count (`runs_before=8`, `runs_after=8`).
+- [x] OpenAPI exposes `/ready` and `recovery_user_message` on `Run`, `RecoveryDetail`, and `BoardCard`.
+- [x] Browser E2E confirmed board card and item modal render `Worker lost. Resume this run to continue.` on desktop, tablet, and 375px mobile.
+- [ ] BUG: Same-run resume lease safety is blocked by the shared lease-fatal issue in BUG-PROJ7-QA-001.
+
+### Edge Cases Status
+
+- [x] Direct unsupported `POST /ready` returned 404, not a mutating readiness action.
+- [x] Browser localStorage was empty and no recovery message was stored client-side.
+- [x] Mobile 375px screenshot captured the recovery card after horizontal board scroll; text remained readable and non-overlapping.
+
+### Security Audit Results
+
+- [x] Console review found one unrelated `/favicon.ico` 404 and no app runtime errors.
+- [x] Network review for the board/modal path showed successful run and message requests.
+- [x] No token values were printed or exposed in browser state.
+
+### Bugs Found
+
+- See BUG-PROJ7-QA-001 in PROJ-7-PRD-1.
+
+### Summary
+
+- **Acceptance Criteria:** Blocked by BUG-PROJ7-QA-001
+- **Bugs Found:** 1 total (0 critical, 1 high, 0 medium, 0 low)
+- **Security:** Pass
+- **Production Ready:** NO
+- **Recommendation:** Fix high bug first
+
+### AGENTS.md Candidates (for Skill 7 review)
+
+- [ ] Lease-fatal tests must prove the workflow body stops, not only that the heartbeat interval stops. — **why:** BUG-PROJ7-QA-001 shows interval-only assertions can miss duplicate worker side effects.

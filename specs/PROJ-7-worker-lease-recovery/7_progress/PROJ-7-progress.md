@@ -94,9 +94,10 @@ Status: in progress
 
 ## QA Results
 
-- Bugs found: 0 (Critical: 0, High: 0, Medium: 0, Low: 0)
+- Bugs found: 1 (Critical: 0, High: 1, Medium: 0, Low: 0)
 - Fixed: 0
 - Deferred: 0
+- BUG-PROJ7-QA-001: Lost-lease workers can continue executing after marking the run recoverable. Status: open.
 
 ---
 
@@ -485,3 +486,58 @@ Status: in progress
 - [x] Build: `npm run typecheck`
 - [x] CodeRabbit: 0 non-advisory findings (advisory severities: medium,low)
 - [x] Smoke: /w/test
+
+---
+
+## Final QA Results — 2026-05-06
+
+### Browser / API Evidence
+
+- Live `/health`: PASS (`ok: true`, DB liveness only).
+- Live `/ready`: PASS (`ok: true`, startup recovery complete, shutdown idle, lease write ok).
+- Readiness sentinel: PASS (`runs_before=8`, `runs_after=8` after five `/ready` calls).
+- Browser E2E: PASS for board card and item modal recovery message rendering.
+- Responsive QA: PASS at desktop 1440px, tablet 768px, and mobile 375px.
+- Screenshots: `proj7-qa-desktop.png`, `proj7-qa-modal.png`, `proj7-qa-tablet.png`, `proj7-qa-mobile-recovery.png`.
+- Console/network: PASS except unrelated `/favicon.ico` 404.
+
+### Verification Commands
+
+- PASS: `npm run typecheck`
+- PASS: `npm run test:file --workspace=@beerengineer/engine -- test/api/health.test.ts test/api/ready.test.ts test/workerLeaseHeartbeat.test.ts test/workerRecoverySurface.test.ts`
+- PASS: `npm run test:file --workspace=@beerengineer/engine -- test/workerLeaseRecovery.test.ts test/workerLeaseResume.test.ts test/workerLeaseShutdown.test.ts test/workerLeaseStartFailure.test.ts`
+- PASS: `npm test --workspace=@beerengineer/ui -- tests/workerRecoveryMessage.test.tsx`
+- PASS: `npm test --workspace=@beerengineer/ui -- tests/workerRecoveryMessage.test.tsx apps/ui/tests/run/runOverview.banners.test.tsx`
+
+### Persona Review Panel
+
+- Dr. Sarah Chen (backend reliability): FAIL — BUG-PROJ7-QA-001.
+- Marcus Weber (frontend UX): PASS — recovery copy is visible on board and modal without overlap in tested viewports.
+- Priya Sharma (security): PASS — no secret exposure or unsafe HTML rendering found.
+- Thomas Müller (performance): PASS — `/ready` uses a sentinel write and does not grow workflow history.
+- Elena Rodriguez (product): FAIL — lost-lease duplicate execution risk undermines the resume-required operator story.
+- Ken Takahashi (maintainability): FAIL — tests assert heartbeat-loop stop but not workflow-body stop.
+
+### Bugs Found
+
+#### BUG-PROJ7-QA-001: Lost-lease workers can continue executing after marking the run recoverable
+- **Severity:** High
+- **File:** `apps/engine/src/core/runOrchestrator.ts`
+- **Anchor:** `heartbeat = startWorkerLeaseHeartbeat(repos, {`
+- **Source:** Dr. Sarah Chen persona review / code review
+- **Status:** open
+- **Fix attempts:** 0
+- **Expected:** The active workflow stops executing after lost ownership or fatal heartbeat failure when the engine can detect it.
+- **Actual:** Production callers do not pass `onFatal`, an abort signal, or another stop mechanism, so workflow side effects can continue after the run has been marked recoverable.
+- **Priority:** Fix before release
+
+### Summary
+
+- **Bugs Found:** 1 total (0 critical, 1 high, 0 medium, 0 low)
+- **Security:** Pass
+- **Production Ready:** NO
+- **Recommendation:** Fix BUG-PROJ7-QA-001 before documentation handoff.
+
+### AGENTS.md Candidates (for Skill 7 review)
+
+- [ ] Lease-fatal tests must prove the workflow body stops, not only that the heartbeat interval stops. — **why:** BUG-PROJ7-QA-001 shows interval-only assertions can miss duplicate worker side effects.
