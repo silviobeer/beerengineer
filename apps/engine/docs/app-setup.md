@@ -46,6 +46,7 @@ npm exec --workspace=@beerengineer/engine beerengineer -- notifications test tel
 - `setup --group notifications` re-runs only the notification setup flow and guides you through `publicBaseUrl`, the Telegram bot-token env var name, and the default chat id.
 - `notifications test telegram` sends a smoke-test message through the configured Telegram bot/chat, using the same engine delivery path as real run events.
 - `GET /setup/status` returns the same JSON contract as `doctor --json`. Passing `?group=` with an unknown id responds `400 { "error": "unknown_group" }`; the CLI equivalent exits with code 2.
+- To check that the local engine process and SQLite database are reachable, run `curl -s http://127.0.0.1:4100/health`.
 - Prepared-requirements import is a workflow command, not a setup check:
   `beerengineer item import-prepared <item> --from <dir>`. `doctor` remains
   system-readiness only. `<dir>` may be a prepared Engine artifact folder or a

@@ -25,7 +25,7 @@ consumed by tooling.
 
 ### Health / setup
 
-- `GET /health` → `{ ok: true }`
+- `GET /health` → `200 { ok: true, service: "beerengineer-engine", uptimeMs: number, db: "ok" }`; if the engine process answers but the local SQLite probe fails, returns `503 { ok: false, service: "beerengineer-engine", uptimeMs: number, db: "failed" }`. No workspace/project data or external integrations are checked.
 - `GET /setup/status` (existing)
 - `POST /setup/init` — token-protected app-state initialization. Creates missing app config, data directory, and SQLite state. Existing valid config is preserved; invalid existing config returns `409`.
 - `GET /setup/config` — effective app-wide config view for setup/settings screens. Secret fields are returned only as refs or redacted presence metadata, never plaintext values.

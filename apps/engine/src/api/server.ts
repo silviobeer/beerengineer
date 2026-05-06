@@ -19,6 +19,7 @@ import {
 } from "../setup/config.js"
 import type { AppConfig } from "../setup/types.js"
 import { json, RequestBodyTooLargeError, requireCsrfToken, setCors } from "./http.js"
+import { buildHealthResponse } from "./health.js"
 import { handleCreatePreparedImportItem, handleGetItem, handleGetItemDesign, handleGetItemPreview, handleGetItemWireframes, handleItemActionNamed, handleListItems, handleStartItemPreview, handleStopItemPreview } from "./routes/items.js"
 import {
   handleAnswer,
@@ -306,7 +307,10 @@ function topLevelRouteHandlers(context: RouteContext): Partial<Record<string, ()
       requestShutdown: operationId => void gracefulShutdown(`update:${operationId}`)
     }),
     "GET /events": () => board.handle(context.req, context.res),
-    "GET /health": () => json(context.res, 200, { ok: true }),
+    "GET /health": () => {
+      const health = buildHealthResponse(db)
+      json(context.res, health.status, health.body)
+    },
   }
 }
 

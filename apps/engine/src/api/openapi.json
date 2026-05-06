@@ -64,22 +64,75 @@
         "tags": [
           "Health"
         ],
-        "summary": "Liveness probe.",
+        "summary": "Liveness and local DB reachability probe.",
         "responses": {
           "200": {
-            "description": "Engine is up.",
+            "description": "Engine is up and the local SQLite database is reachable.",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "properties": {
                     "ok": {
-                      "type": "boolean",
-                      "const": true
+                      "type": "boolean"
+                    },
+                    "service": {
+                      "type": "string",
+                      "enum": [
+                        "beerengineer-engine"
+                      ]
+                    },
+                    "uptimeMs": {
+                      "type": "number"
+                    },
+                    "db": {
+                      "type": "string",
+                      "enum": [
+                        "ok"
+                      ]
                     }
                   },
                   "required": [
-                    "ok"
+                    "ok",
+                    "service",
+                    "uptimeMs",
+                    "db"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Engine process answered but the local SQLite database probe failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "service": {
+                      "type": "string",
+                      "enum": [
+                        "beerengineer-engine"
+                      ]
+                    },
+                    "uptimeMs": {
+                      "type": "number"
+                    },
+                    "db": {
+                      "type": "string",
+                      "enum": [
+                        "failed"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "service",
+                    "uptimeMs",
+                    "db"
                   ]
                 }
               }

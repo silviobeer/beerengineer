@@ -29,6 +29,36 @@ test("PROJ-3-PRD-2 AC-13 setup and settings API contracts stay documented", () =
   assert.match(openapi, /WorkspaceRegistrationResponse/)
 })
 
+test("GET /health OpenAPI contract documents service, uptime, and DB status", () => {
+  const openapi = JSON.parse(readFileSync(resolve("src/api/openapi.json"), "utf8")) as {
+    paths: {
+      "/health": {
+        get: {
+          responses: Record<string, { content?: { "application/json"?: { schema?: { properties?: Record<string, { const?: unknown; enum?: string[] }>; required?: string[] } } } }>
+        }
+      }
+    }
+  }
+  const responses = openapi.paths["/health"].get.responses
+  const successSchema = responses["200"]?.content?.["application/json"]?.schema
+  const degradedSchema = responses["503"]?.content?.["application/json"]?.schema
+
+  assert.ok(successSchema)
+  assert.ok(degradedSchema)
+  assert.equal(successSchema.properties?.ok?.const, undefined)
+  assert.equal(degradedSchema.properties?.ok?.const, undefined)
+  assert.deepEqual(successSchema.required, ["ok", "service", "uptimeMs", "db"])
+  assert.deepEqual(degradedSchema.required, ["ok", "service", "uptimeMs", "db"])
+  assert.deepEqual(successSchema.properties?.service?.enum, ["beerengineer-engine"])
+  assert.deepEqual(degradedSchema.properties?.service?.enum, ["beerengineer-engine"])
+  assert.deepEqual(successSchema.properties?.db?.enum, ["ok"])
+  assert.deepEqual(degradedSchema.properties?.db?.enum, ["failed"])
+  for (const field of ["service", "uptimeMs", "db"]) {
+    assert.ok(successSchema.properties?.[field], `200 schema must document ${field}`)
+    assert.ok(degradedSchema.properties?.[field], `503 schema must document ${field}`)
+  }
+})
+
 test("PROJ-3-PRD-2 AC-14 capability API changes are additive only", () => {
   const openapi = readFileSync(resolve("src/api/openapi.json"), "utf8")
   assert.match(openapi, /capabilityOutcomes/)
@@ -104,6 +134,32 @@ function stopServer(proc: ChildProcess): Promise<void> {
 function tmpDbPath(): string {
   return join(mkdtempSync(join(tmpdir(), "be2-api-")), "db.sqlite")
 }
+
+test("GET /health returns service, uptime, and DB reachability without a token", async () => {
+  const dbPath = tmpDbPath()
+  initDatabase(dbPath).close()
+  const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
+  try {
+    await waitForHealth(base)
+    const res = await fetch(`${base}/health`)
+    assert.equal(res.status, 200)
+    const body = await res.json() as {
+      ok: boolean
+      service: string
+      uptimeMs: number
+      db: string
+    }
+    assert.deepEqual(Object.keys(body).sort(), ["db", "ok", "service", "uptimeMs"].sort())
+    assert.equal(body.ok, true)
+    assert.equal(body.service, "beerengineer-engine")
+    assert.equal(body.db, "ok")
+    assert.equal(typeof body.uptimeMs, "number")
+    assert.ok(Number.isFinite(body.uptimeMs))
+    assert.ok(body.uptimeMs >= 0)
+  } finally {
+    await stopServer(proc)
+  }
+})
 
 async function collectSseEvents(url: string, until: (events: string[]) => boolean): Promise<string[]> {
   const controller = new AbortController()
