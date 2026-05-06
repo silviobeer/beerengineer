@@ -23,6 +23,15 @@ Both files are consumed by **both** the engine and the UI — that's the
 test for "lives here". If a topic only matters on one side, it belongs in
 that side's docs subtree.
 
+### Setup API Entries
+
+For full request/response details, use [`api-contract.md`](./api-contract.md).
+
+- `GET /setup/git-readiness` — global or server-resolved workspace Git identity readiness.
+- `POST /setup/git-identity` — save beerengineer_ app-level Git identity default without writing global Git config.
+- `POST /setup/git-identity/repair` — apply repo-local Git identity to a registered workspace resolved server-side.
+- `POST /setup/recheck` — run a fresh setup/doctor recheck, optionally scoped by setup group.
+
 ## Where else to look
 
 | Topic | Folder |

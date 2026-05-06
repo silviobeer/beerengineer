@@ -7,7 +7,7 @@ import { test } from "node:test"
 
 import { getAppConfigView } from "../src/setup/appConfigView.js"
 import { patchAppConfig } from "../src/setup/appConfigPatch.js"
-import { defaultAppConfig, readConfigFile, writeConfigFile } from "../src/setup/config.js"
+import { defaultAppConfig, readConfigFile, resolveMergedConfig, writeConfigFile } from "../src/setup/config.js"
 import { readGlobalGitReadiness } from "../src/setup/gitIdentity.js"
 
 function tempSetupPaths() {
@@ -120,4 +120,20 @@ test("AC-14 real and GitHub noreply emails can be localOnly false", () => {
   } finally {
     rmSync(paths.dir, { recursive: true, force: true })
   }
+})
+
+test("env overrides for app-level identity must resolve to a complete default", () => {
+  const base = defaultAppConfig()
+  assert.throws(
+    () => resolveMergedConfig({ kind: "ok", path: "config.json", config: base }, { gitIdentityDefaultDisplayName: "Only Name" }),
+    /git identity default override is invalid: gitIdentityDefault\.email must be a non-empty string/,
+  )
+
+  const merged = resolveMergedConfig({ kind: "ok", path: "config.json", config: base }, {
+    gitIdentityDefaultDisplayName: "Env User",
+    gitIdentityDefaultEmail: "env@local.beerengineer",
+  })
+  assert.equal(merged?.gitIdentityDefault?.localOnly, true)
+  assert.equal(merged?.gitIdentityDefault?.displayName, "Env User")
+  assert.equal(merged?.gitIdentityDefault?.email, "env@local.beerengineer")
 })

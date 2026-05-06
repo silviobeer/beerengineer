@@ -455,19 +455,14 @@ export function resolveConfigPath(overrides: SetupOverrides = {}): string {
 export function resolveMergedConfig(state: ConfigFileState, overrides: SetupOverrides = {}): AppConfig | null {
   if (state.kind === "invalid") return null
   const base = state.kind === "ok" ? state.config : defaultAppConfig()
+  const gitIdentityDefault = resolveGitIdentityDefault(base, overrides)
   return {
     schemaVersion: CONFIG_SCHEMA_VERSION,
     dataDir: overrides.dataDir ?? base.dataDir,
     allowedRoots: overrides.allowedRoots ?? base.allowedRoots,
     enginePort: overrides.enginePort ?? base.enginePort,
     publicBaseUrl: overrides.publicBaseUrl ?? base.publicBaseUrl,
-    gitIdentityDefault: overrides.gitIdentityDefaultDisplayName || overrides.gitIdentityDefaultEmail
-      ? {
-          displayName: overrides.gitIdentityDefaultDisplayName ?? base.gitIdentityDefault?.displayName ?? "",
-          email: overrides.gitIdentityDefaultEmail ?? base.gitIdentityDefault?.email ?? "",
-          localOnly: (overrides.gitIdentityDefaultEmail ?? base.gitIdentityDefault?.email ?? "").toLowerCase().endsWith("@local.beerengineer"),
-        }
-      : base.gitIdentityDefault,
+    gitIdentityDefault,
     llm: {
       provider: overrides.llmProvider ?? base.llm.provider,
       model: overrides.llmModel ?? base.llm.model,
@@ -497,6 +492,24 @@ export function resolveMergedConfig(state: ConfigFileState, overrides: SetupOver
     browser: {
       enabled: overrides.browserEnabled ?? base.browser?.enabled ?? false,
     },
+  }
+}
+
+function resolveGitIdentityDefault(base: AppConfig, overrides: SetupOverrides): AppConfig["gitIdentityDefault"] {
+  const hasNameOverride = overrides.gitIdentityDefaultDisplayName !== undefined
+  const hasEmailOverride = overrides.gitIdentityDefaultEmail !== undefined
+  if (!hasNameOverride && !hasEmailOverride) return base.gitIdentityDefault
+
+  const email = overrides.gitIdentityDefaultEmail ?? base.gitIdentityDefault?.email ?? ""
+  const candidate = {
+    displayName: overrides.gitIdentityDefaultDisplayName ?? base.gitIdentityDefault?.displayName ?? "",
+    email,
+    localOnly: email.toLowerCase().endsWith("@local.beerengineer"),
+  }
+  try {
+    return validateGitIdentityDefault(candidate)
+  } catch (error) {
+    throw new TypeError(`git identity default override is invalid: ${(error as Error).message}`)
   }
 }
 
