@@ -43,12 +43,21 @@ function normalizeReviewPolicy(
   coderabbitCliAvailable: boolean = false,
 ): WorkspaceReviewPolicy {
   const coderabbitExplicit = policy?.coderabbit?.enabled
+  const sonarcloud = policy?.sonarcloud ? mergeDefined(legacySonar, policy.sonarcloud) : legacySonar
   return {
     coderabbit: {
       enabled: coderabbitExplicit === false ? false : (coderabbitExplicit === true || coderabbitCliAvailable),
     },
-    sonarcloud: normalizeSonarConfig(legacySonar, key, defaultOrg),
+    sonarcloud: normalizeSonarConfig(sonarcloud, key, defaultOrg),
   }
+}
+
+function mergeDefined<T extends Record<string, unknown>>(base: T | undefined, override: T): T {
+  const merged = { ...(base ?? {}) } as T
+  for (const [key, value] of Object.entries(override)) {
+    if (value !== undefined) (merged as Record<string, unknown>)[key] = value
+  }
+  return merged
 }
 
 function isRuntimePolicyMode(value: unknown): value is RuntimePolicyMode {

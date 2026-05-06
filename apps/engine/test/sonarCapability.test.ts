@@ -15,7 +15,7 @@ import {
   registerWorkspace,
   runWorkspacePreflight,
 } from "../src/core/workspaces.js"
-import { buildWorkspaceConfigFile } from "../src/core/workspaces/configFile.js"
+import { buildWorkspaceConfigFile, writeWorkspaceConfig } from "../src/core/workspaces/configFile.js"
 import { initDatabase } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
 import { defaultAppConfig } from "../src/setup/config.js"
@@ -117,6 +117,47 @@ test("workspace sonar enable writes the configured non-default Sonar project key
     rmSync(root, { recursive: true, force: true })
   }
 }))
+
+test("registered sonar enable persists default organization into review metadata", async () => {
+  const root = mkdtempSync(join(tmpdir(), "be2-sonar-cap-"))
+  const db = initDatabase(join(root, "db.sqlite"))
+  try {
+    const workspaceRoot = join(root, "workspace")
+    mkdirSync(join(workspaceRoot, "src"), { recursive: true })
+    writeFileSync(join(workspaceRoot, "package.json"), JSON.stringify({ private: true }), "utf8")
+    const git = await initGit(workspaceRoot, { defaultBranch: "main" })
+    assert.equal(git.ok, true)
+    const config = buildWorkspaceConfigFile({
+      key: "demo",
+      name: "Demo",
+      harnessProfile: { mode: "fast" },
+      sonar: { enabled: true },
+    })
+    await writeWorkspaceConfig(workspaceRoot, config)
+    const repos = new Repos(db)
+    repos.upsertWorkspace({
+      key: "demo",
+      name: "Demo",
+      rootPath: workspaceRoot,
+      harnessProfileJson: JSON.stringify({ mode: "fast" }),
+      sonarEnabled: true,
+    })
+
+    await enableRegisteredWorkspaceSonarCapability(repos, "demo", { defaultSonarOrganization: "acme" })
+
+    const workspaceJson = JSON.parse(readFileSync(join(workspaceRoot, ".beerengineer", "workspace.json"), "utf8")) as {
+      sonar: { organization?: string; projectKey?: string }
+      reviewPolicy: { sonarcloud: { organization?: string; projectKey?: string } }
+    }
+    assert.equal(workspaceJson.sonar.organization, "acme")
+    assert.equal(workspaceJson.sonar.projectKey, "demo")
+    assert.equal(workspaceJson.reviewPolicy.sonarcloud.organization, "acme")
+    assert.equal(workspaceJson.reviewPolicy.sonarcloud.projectKey, "demo")
+  } finally {
+    db.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
 
 test("workspace sonar enable for a missing workspace returns a static preflight sentinel", async () => {
   const root = mkdtempSync(join(tmpdir(), "be2-sonar-cap-"))

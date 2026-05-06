@@ -358,17 +358,26 @@ export async function enableRegisteredWorkspaceSonarCapability(
   }
   const preflight = await runWorkspacePreflight(row.root_path, { sonarHostUrl: config.sonar.hostUrl, sonarEnabled: true })
   const context = buildWorkspaceCapabilityContext(row.root_path, preflight.report, { githubRequired: true })
-  const sonar = normalizeSonarConfig({ ...config.sonar, enabled: true }, config.key)
+  const sonar = sonarConfigForContext(
+    normalizeSonarConfig({ ...config.sonar, enabled: true }, config.key, options.defaultSonarOrganization),
+    context,
+    options,
+  )
   const result = await enableWorkspaceSonarCapability(context, config.name, sonar, options)
-  if (result.actions.length > 0 || config.sonar.enabled !== true) {
+  const resolvedSonar = { ...sonar, enabled: result.ok || result.actions.length > 0 }
+  const resolvedReviewPolicy = normalizeReviewPolicy(config.reviewPolicy, resolvedSonar, config.key)
+  const metadataChanged =
+    JSON.stringify(config.sonar) !== JSON.stringify(resolvedSonar) ||
+    JSON.stringify(config.reviewPolicy) !== JSON.stringify(resolvedReviewPolicy)
+  if (result.actions.length > 0 || config.sonar.enabled !== true || metadataChanged) {
     const updatedConfig = buildWorkspaceConfigFile({
       key: config.key,
       name: config.name,
       harnessProfile: config.harnessProfile,
       runtimePolicy: config.runtimePolicy,
       preview: config.preview,
-      sonar: { ...sonar, enabled: result.ok || result.actions.length > 0 },
-      reviewPolicy: normalizeReviewPolicy(config.reviewPolicy, { ...sonar, enabled: result.ok || result.actions.length > 0 }, config.key),
+      sonar: resolvedSonar,
+      reviewPolicy: resolvedReviewPolicy,
       preflight: result.preflight,
       createdAt: config.createdAt,
     })

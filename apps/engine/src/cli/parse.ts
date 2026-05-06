@@ -300,7 +300,7 @@ export function printHelp(): void {
     "    beerengineer --json                                  Harness mode: NDJSON events on stdout, prompt answers on stdin",
     "    beerengineer run --json                              Same as `beerengineer --json`",
     "    beerengineer start                                   Start the local engine HTTP API (http://127.0.0.1:4100)",
-    "    beerengineer start ui                                Start the local UI dev server (http://127.0.0.1:3100)",
+    "    beerengineer start ui                                Start the local UI dev server (:3100, LAN URL printed)",
     "    beerengineer status [--all] [--json]                Workspace status overview",
     "    beerengineer items [--all] [--compact]              List items",
     "    beerengineer chats [--all] [--compact]              List open chats",

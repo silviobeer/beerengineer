@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process"
 import { existsSync } from "node:fs"
+import { networkInterfaces } from "node:os"
 import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -16,12 +17,21 @@ function hostnameFromPublicBaseUrl(): string | null {
   }
 }
 
+function lanHostname(): string | null {
+  for (const entries of Object.values(networkInterfaces())) {
+    for (const entry of entries ?? []) {
+      if (entry.family === "IPv4" && !entry.internal) return entry.address
+    }
+  }
+  return null
+}
+
 export function resolveUiWorkspacePath(): string {
   return resolve(fileURLToPath(new URL("../../../ui", import.meta.url)))
 }
 
 export function resolveUiLaunchUrl(): string {
-  const displayHost = hostnameFromPublicBaseUrl() ?? (UI_DEV_HOST === "0.0.0.0" ? "127.0.0.1" : UI_DEV_HOST)
+  const displayHost = hostnameFromPublicBaseUrl() ?? (UI_DEV_HOST === "0.0.0.0" ? (lanHostname() ?? "127.0.0.1") : UI_DEV_HOST)
   return `http://${displayHost}:${UI_DEV_PORT}`
 }
 

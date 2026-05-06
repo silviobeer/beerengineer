@@ -1293,7 +1293,8 @@ test("PROJ-3-PRD-5 AC-12 public CLI verifies repair apply side effects", async (
 })
 
 test("resolveUiLaunchUrl uses the dedicated UI operator port", () => {
-  assert.equal(resolveUiLaunchUrl(), "http://127.0.0.1:3100")
+  assert.equal(new URL(resolveUiLaunchUrl()).port, "3100")
+  assert.notEqual(new URL(resolveUiLaunchUrl()).hostname, "0.0.0.0")
 })
 
 test("resolveItemReference rejects ambiguous item codes across workspaces", () => {
