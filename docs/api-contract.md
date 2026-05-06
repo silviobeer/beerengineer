@@ -79,6 +79,10 @@ Workspace status (counts, latest run) is returned as part of `GET /workspaces/:k
   - `:action` ∈ `start_brainstorm | start_implementation | import_prepared | rerun_design_prep | promote_to_requirements | promote_to_base | cancel_promotion | mark_done`
   - Request: `{}` for most actions.
   - `import_prepared` request: `{ path: string }`, where `path` is a local directory readable by the engine process. The path may point at Engine artifacts or a whole skill-process `specs/PROJ-*` folder with `1_brainstorm/`, `2_visual-companion/`, `5_mockups/`, and optional `3_PRDs/`. The engine snapshots the original source folder into the run at `imports/prepared-source`, imports prepared concept/project/PRD artifacts, uses the configured workspace LLM as a fallback Markdown normalizer when needed, moves the item to `implementation/running`, and starts each project at `architecture` when a PRD was imported or `requirements` when it was not.
+  - `404` response schema: `Error | WorkflowGitBlocked`. Description: "Item not found or workflow Git readiness blocked."
+  - `409` response schema: `Error | WorkflowGitBlocked` for invalid transition, conflicting state, or workflow Git readiness blocked.
+  - `422` response schema: `Error | WorkflowGitBlocked` for domain-rule rejection or workflow Git readiness blocked.
+  - `WorkflowGitBlocked` includes `error`, `code: "workflow_git_blocked"`, `message`, optional `readiness`, optional `repair`, and `intent`. Clients should preserve `intent.itemId` / `intent.action` and retry the same action after repair, without sending filesystem paths.
 
 No generic `POST /items/:id/actions` with an action string in the body. Explicit routes only.
 
