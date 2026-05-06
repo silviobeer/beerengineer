@@ -37,7 +37,7 @@ import {
 } from "./core/projectStageRegistry.js"
 import { branchNameItem } from "./core/branchNames.js"
 import { itemSlug, workflowWorkspaceId } from "./core/itemIdentity.js"
-import type { SupabaseWorkflowHook } from "./core/supabase/workflowHook.js"
+import type { SupabaseWorkflowHook, SupabaseWorkflowReadinessHook } from "./core/supabase/workflowHook.js"
 
 type ItemResumePlan = {
   startStage: "brainstorm" | "visual-companion" | "frontend-design" | "projects" | "merge-gate"
@@ -314,7 +314,7 @@ async function assertDesignPrepProjectFreeze(context: WorkflowContext, projects:
   throw new BlockedRunError(summary)
 }
 
-export async function runWorkflow(item: Item, options?: { resume?: WorkflowResumeInput; llm?: WorkflowLlmOptions; workspaceRoot?: string; supabaseHook?: SupabaseWorkflowHook }): Promise<void> {
+export async function runWorkflow(item: Item, options?: { resume?: WorkflowResumeInput; llm?: WorkflowLlmOptions; workspaceRoot?: string; supabaseHook?: SupabaseWorkflowHook; supabaseReadiness?: SupabaseWorkflowReadinessHook }): Promise<void> {
   const slug = itemSlug(item)
   const activeRun = getActiveRun()
   const { branch: baseBranch, source: baseBranchSource } = resolveBaseBranchForItem(item.baseBranch, options?.workspaceRoot)
@@ -376,6 +376,7 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
         resumePlan,
         llm: itemWorktreeLlm,
         supabaseHook: options?.supabaseHook,
+        supabaseReadiness: options?.supabaseReadiness,
       })
     }
 
@@ -501,9 +502,10 @@ async function runWorkflowProjects(
     resumePlan: ReturnType<typeof normalizeProjectResume> | null
     llm: WorkflowLlmOptions | undefined
     supabaseHook?: SupabaseWorkflowHook
+    supabaseReadiness?: SupabaseWorkflowReadinessHook
   },
 ): Promise<void> {
-  const { context, projects, git, wireframes, design, itemSnapshot, resumePlan, llm, supabaseHook } = options
+  const { context, projects, git, wireframes, design, itemSnapshot, resumePlan, llm, supabaseHook, supabaseReadiness } = options
   const conceptAmendments = [
     ...(wireframes?.conceptAmendments ?? []),
     ...(design?.conceptAmendments ?? []),
@@ -528,6 +530,7 @@ async function runWorkflowProjects(
       projectResumePlan ?? undefined,
       llm,
       supabaseHook,
+      supabaseReadiness,
     )
   }
 }
@@ -637,10 +640,11 @@ async function runProject(
   resume?: ProjectResumePlan,
   llm?: WorkflowLlmOptions,
   supabaseHook?: SupabaseWorkflowHook,
+  supabaseReadiness?: SupabaseWorkflowReadinessHook,
 ): Promise<void> {
   let ctx = initialCtx
   const projectId = ctx.project.id
-  const deps = { llm, resume, git, supabaseHook }
+  const deps = { llm, resume, git, supabaseHook, supabaseReadiness }
 
   for (const node of PROJECT_STAGE_REGISTRY) {
     ctx = shouldRunProjectStage(resume, node.id)

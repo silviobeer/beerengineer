@@ -80,11 +80,18 @@ export type SupabaseReadinessBranch = {
   providerStatus?: string
 }
 
+export type SupabaseDbRelevanceTrigger = {
+  waveId: string
+  waveNumber: number
+  storyId?: string
+}
+
 export type SupabasePreExecutionReadiness = {
   status: SupabaseReadinessStatus
   missingSetupActions: SupabaseReadinessSetupAction[]
   retry: SupabaseReadinessRetry
   workspace: SupabaseReadinessWorkspace
   branch?: SupabaseReadinessBranch
+  dbRelevanceTrigger?: SupabaseDbRelevanceTrigger
   message?: string
 }

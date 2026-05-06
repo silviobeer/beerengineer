@@ -24,8 +24,14 @@ import { planning } from "../stages/planning/index.js"
 import { projectReview } from "../stages/project-review/index.js"
 import { qa } from "../stages/qa/index.js"
 import { requirements } from "../stages/requirements/index.js"
+import {
+  createSupabasePreExecutionReadiness,
+  evaluateSupabaseReadinessForExecutionPlan,
+  recordSupabaseReadinessBlockedRun,
+  supabaseReadinessRecoverySummary,
+} from "./supabase/preExecutionReadiness.js"
 import type { RunLlmConfig } from "../llm/registry.js"
-import type { SupabaseWorkflowHook } from "./supabase/workflowHook.js"
+import type { SupabaseWorkflowHook, SupabaseWorkflowReadinessHook } from "./supabase/workflowHook.js"
 import type {
   ArchitectureArtifact,
   DocumentationArtifact,
@@ -85,6 +91,8 @@ export type StageDeps = {
   git: GitAdapter
   /** Optional Supabase integration hook — threaded through to wiring points. */
   supabaseHook?: SupabaseWorkflowHook
+  /** Always-available pre-execution readiness hook. Blocks before execution side effects. */
+  supabaseReadiness?: SupabaseWorkflowReadinessHook
 }
 
 /**
@@ -267,20 +275,44 @@ const planningNode: ProjectStageNode = {
 
 const executionNode: ProjectStageNode = {
   id: "execution",
-  run: async (ctx, deps) => ({
-    ...ctx,
-    executionSummaries: await execution(
-      assertWithPlan(ctx),
-      deps.resume?.execution,
-      deps.llm?.execution,
-      deps.git,
-      deps.supabaseHook,
-    ),
-  }),
+  run: async (ctx, deps) => {
+    const planned = assertWithPlan(ctx)
+    await assertSupabaseReadyBeforeExecution(planned, deps.supabaseReadiness)
+    return {
+      ...ctx,
+      executionSummaries: await execution(
+        planned,
+        deps.resume?.execution,
+        deps.llm?.execution,
+        deps.git,
+        deps.supabaseHook,
+      ),
+    }
+  },
   resumeFromDisk: async ctx => ({
     ...ctx,
     executionSummaries: await loadExecutionSummaries(ctx, assertWithPlan(ctx).plan),
   }),
+}
+
+async function assertSupabaseReadyBeforeExecution(ctx: WithPlan, hook: SupabaseWorkflowReadinessHook | undefined): Promise<void> {
+  if (!hook) return
+  const result = await evaluateSupabaseReadinessForExecutionPlan({
+    plan: ctx.plan,
+    evaluateReadiness: async trigger => ({
+      ...(await createSupabasePreExecutionReadiness({
+        mode: "execution",
+        repos: hook.repos,
+        runId: hook.runId,
+        secretStore: hook.secretStore,
+        managementClient: hook.managementClient,
+      })),
+      dbRelevanceTrigger: trigger,
+    }),
+  })
+  if (result.status === "ready") return
+  recordSupabaseReadinessBlockedRun({ repos: hook.repos, runId: hook.runId, readiness: result })
+  throw new Error(supabaseReadinessRecoverySummary(result))
 }
 
 const projectReviewNode: ProjectStageNode = {

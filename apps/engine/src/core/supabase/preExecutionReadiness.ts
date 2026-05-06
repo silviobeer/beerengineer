@@ -4,7 +4,12 @@ import type { RunRow, WorkspaceRow } from "../../db/repositories.js"
 import { SupabaseBranchPollTimeoutError, pollSupabaseBranch, type BranchPollerClock } from "./branchPoller.js"
 import { SupabaseManagementError } from "./managementClient.js"
 import type {
+  ImplementationPlanArtifact,
+  WaveDefinition,
+} from "../../types.js"
+import type {
   SupabaseBranch,
+  SupabaseDbRelevanceTrigger,
   SupabasePreExecutionReadiness,
   SupabaseReadinessSetupAction,
   SupabaseReadinessWorkspace,
@@ -21,6 +26,7 @@ export type SupabaseReadinessManagementClient = {
 export type SupabaseReadinessRepos = {
   getRun(id: string): RunRow | undefined
   getWorkspace(id: string): WorkspaceRow | undefined
+  updateRun(id: string, patch: Partial<Pick<RunRow, "status" | "current_stage" | "recovery_status" | "recovery_scope" | "recovery_scope_ref" | "recovery_summary">>): void
 }
 
 export type SupabaseReadinessRequestRefs = {
@@ -41,6 +47,10 @@ export type SupabasePreExecutionReadinessInput = {
   branchPollBudgetMs?: number
   clock?: BranchPollerClock
   env?: Record<string, string | undefined>
+}
+
+export type SupabaseExecutionReadinessResult = SupabasePreExecutionReadiness & {
+  dbRelevanceTrigger?: SupabaseDbRelevanceTrigger
 }
 
 function normalize(value: string | null | undefined): string | undefined {
@@ -189,4 +199,111 @@ export async function createSupabasePreExecutionReadiness(input: SupabasePreExec
       },
     })
   }
+}
+
+function malformedPlan(message: string): SupabaseExecutionReadinessResult {
+  return {
+    status: "blocked",
+    missingSetupActions: [],
+    retry: { available: false },
+    workspace: {},
+    message,
+  }
+}
+
+export function findSupabaseDbRelevanceTrigger(
+  plan: Pick<ImplementationPlanArtifact, "plan">,
+): { kind: "none" } | { kind: "trigger"; trigger: SupabaseDbRelevanceTrigger } | { kind: "malformed"; message: string } {
+  for (const wave of plan.plan.waves) {
+    const trigger = triggerForWave(wave)
+    if (trigger.kind !== "none") return trigger
+  }
+  return { kind: "none" }
+}
+
+function triggerForWave(wave: WaveDefinition): ReturnType<typeof findSupabaseDbRelevanceTrigger> {
+  if (wave.kind === "setup" && wave.stories.length === 0 && typeof wave.dbRelevantWave !== "boolean") return { kind: "none" }
+  for (const story of wave.stories) {
+    if (typeof story.dbRelevant !== "boolean") {
+      return { kind: "malformed", message: `Wave ${wave.id} story ${story.id} is missing required boolean dbRelevant metadata.` }
+    }
+    if (story.dbRelevant === true) {
+      return { kind: "trigger", trigger: { waveId: wave.id, waveNumber: wave.number, storyId: story.id } }
+    }
+  }
+  if (typeof wave.dbRelevantWave !== "boolean") {
+    return { kind: "malformed", message: `Wave ${wave.id} is missing required boolean dbRelevantWave metadata.` }
+  }
+  if (wave.dbRelevantWave === true) {
+    return { kind: "trigger", trigger: { waveId: wave.id, waveNumber: wave.number } }
+  }
+  return { kind: "none" }
+}
+
+export async function evaluateSupabaseReadinessForExecutionPlan(input: {
+  plan: ImplementationPlanArtifact
+  evaluateReadiness: (trigger: SupabaseDbRelevanceTrigger) => Promise<SupabasePreExecutionReadiness>
+}): Promise<SupabaseExecutionReadinessResult> {
+  const relevance = findSupabaseDbRelevanceTrigger(input.plan)
+  if (relevance.kind === "none") {
+    return { status: "ready", missingSetupActions: [], retry: { available: false }, workspace: {} }
+  }
+  if (relevance.kind === "malformed") return malformedPlan(relevance.message)
+  const readiness = await input.evaluateReadiness(relevance.trigger)
+  return { ...readiness, dbRelevanceTrigger: relevance.trigger }
+}
+
+export function supabaseReadinessRecoverySummary(readiness: SupabaseExecutionReadinessResult): string {
+  const actions = readiness.missingSetupActions.length > 0
+    ? readiness.missingSetupActions.join(", ")
+    : "No setup action available"
+  const trigger = readiness.dbRelevanceTrigger
+    ? `wave ${readiness.dbRelevanceTrigger.waveNumber}${readiness.dbRelevanceTrigger.storyId ? ` story ${readiness.dbRelevanceTrigger.storyId}` : ""}`
+    : "planned DB-relevant work"
+  return `Supabase readiness blocked ${trigger}. Missing setup actions: ${actions}.`
+}
+
+export function recordSupabaseReadinessBlockedRun(input: {
+  repos: SupabaseReadinessRepos
+  runId: string
+  readiness: SupabaseExecutionReadinessResult
+}): RunRow {
+  const run = input.repos.getRun(input.runId)
+  if (!run) throw new Error(`run_not_found:${input.runId}`)
+  const summary = supabaseReadinessRecoverySummary(input.readiness)
+  input.repos.updateRun(input.runId, {
+    status: "blocked",
+    recovery_status: "blocked",
+    recovery_scope: "run",
+    recovery_scope_ref: null,
+    recovery_summary: summary,
+  })
+  return input.repos.getRun(input.runId) ?? run
+}
+
+export function formatSupabaseReadinessBlockedCliOutput(input: {
+  itemRef: string
+  action: string
+  runId: string
+  readiness: SupabaseExecutionReadinessResult
+}): string {
+  const lines = [
+    "",
+    "  Workflow start blocked by Supabase readiness.",
+    `  Workspace: ${input.readiness.workspace.key ?? input.readiness.workspace.id ?? "unknown"}`,
+    "  Reason: planned DB-relevant waves require Supabase readiness before execution workers start.",
+  ]
+  if (input.readiness.dbRelevanceTrigger) {
+    const trigger = input.readiness.dbRelevanceTrigger
+    lines.push(`  Trigger: wave ${trigger.waveNumber}${trigger.storyId ? `, story ${trigger.storyId}` : ""}`)
+  }
+  if (input.readiness.missingSetupActions.length > 0) {
+    lines.push("  Missing setup actions:")
+    for (const action of input.readiness.missingSetupActions) lines.push(`    - ${action}`)
+  }
+  lines.push("  Next command: beerengineer setup")
+  if (input.readiness.retry.available) {
+    lines.push(`  Retry: beerengineer item action --item ${input.itemRef} --action ${input.action}`)
+  }
+  return lines.join("\n")
 }

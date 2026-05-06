@@ -130,6 +130,10 @@ export function prepareRun(
                 llm,
                 workspaceRoot: workspaceRow?.root_path ?? undefined,
                 supabaseHook,
+                supabaseReadiness: {
+                  repos,
+                  runId: runRow.id,
+                },
               },
             )
             const finalRun = repos.getRun(runRow.id)
@@ -163,6 +167,8 @@ export function prepareRun(
                 status: "failed",
                 error: message,
               })
+            } else {
+              return
             }
             throw err
           }

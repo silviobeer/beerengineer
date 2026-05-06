@@ -9,6 +9,8 @@ import { checkWorkflowStartGitReadiness, type WorkflowStartGitBlockedResult, typ
 import { deriveProjectStartStages, loadPreparedImportBundleWithLlmFallback, seedPreparedImportArtifacts } from "../../core/preparedImport.js"
 import { resolveWorkflowLlmOptions } from "../../core/runSubscribers.js"
 import { resolveWorkflowContextForItemRun } from "../../core/workflowContextResolver.js"
+import { formatSupabaseReadinessBlockedCliOutput } from "../../core/supabase/preExecutionReadiness.js"
+import { SUPABASE_READINESS_SETUP_ACTIONS, type SupabaseReadinessSetupAction } from "../../core/supabase/types.js"
 import type { ItemRow, Repos, WorkspaceRow } from "../../db/repositories.js"
 import { initDatabase } from "../../db/connection.js"
 import type { ResumeFlags } from "../types.js"
@@ -184,6 +186,34 @@ function printWorkflowGitBlocker(blocker: WorkflowStartGitBlockedResult, itemRef
   return 75
 }
 
+function actionsFromSupabaseRecoverySummary(summary: string | null): SupabaseReadinessSetupAction[] {
+  if (!summary?.startsWith("Supabase readiness blocked")) return []
+  return SUPABASE_READINESS_SETUP_ACTIONS.filter(action => summary.includes(action))
+}
+
+function printSupabaseStartBlockerIfAny(
+  repos: Repos,
+  runId: string,
+  itemRef: string,
+  action: string,
+): number {
+  const run = repos.getRun(runId)
+  if (run?.recovery_status !== "blocked" || !run.recovery_summary?.startsWith("Supabase readiness blocked")) return 0
+  const workspace = repos.getWorkspace(run.workspace_id)
+  console.error(formatSupabaseReadinessBlockedCliOutput({
+    itemRef,
+    action,
+    runId,
+    readiness: {
+      status: "blocked",
+      missingSetupActions: actionsFromSupabaseRecoverySummary(run.recovery_summary),
+      retry: { available: true, runId },
+      workspace: { id: workspace?.id, key: workspace?.key },
+    },
+  }))
+  return 75
+}
+
 function hasStageArtifacts(repos: Repos, item: Pick<ItemRow, "workspace_id">, runId: string, stageId: string): boolean {
   const run = repos.getRun(runId)
   const ctx = run ? resolveWorkflowContextForItemRun(repos, item, run) : null
@@ -236,6 +266,8 @@ const handleStartBrainstorm: CliItemActionHandler = async ctx => {
       io,
       { owner: "cli", itemId: ctx.item.id },
     )
+    const blockedExit = printSupabaseStartBlockerIfAny(ctx.repos, runId, ctx.itemRef, ctx.action)
+    if (blockedExit !== 0) return blockedExit
     console.log(`  ${ctx.action} applied`)
     console.log(`  run-id: ${runId}`)
     return 0
@@ -275,6 +307,8 @@ const handleStartImplementationOrRerunDesignPrep: CliItemActionHandler = async c
     seedStageFromPreviousRun(ctx.repos, ctx.item, sourceRun.id, prepared.runId, "visual-companion")
     seedStageFromPreviousRun(ctx.repos, ctx.item, sourceRun.id, prepared.runId, "frontend-design")
     await prepared.start()
+    const blockedExit = printSupabaseStartBlockerIfAny(ctx.repos, prepared.runId, ctx.itemRef, ctx.action)
+    if (blockedExit !== 0) return blockedExit
     console.log(`  ${ctx.action} applied`)
     console.log(`  run-id: ${prepared.runId}`)
     return 0
@@ -313,6 +347,8 @@ const handleStartVisualCompanion: CliItemActionHandler = async ctx => {
       return 1
     }
     await prepared.start()
+    const blockedExit = printSupabaseStartBlockerIfAny(ctx.repos, prepared.runId, ctx.itemRef, ctx.action)
+    if (blockedExit !== 0) return blockedExit
     console.log(`  ${ctx.action} applied`)
     console.log(`  run-id: ${prepared.runId}`)
     return 0
@@ -352,6 +388,8 @@ const handleStartFrontendDesign: CliItemActionHandler = async ctx => {
     }
     seedStageFromPreviousRun(ctx.repos, ctx.item, sourceRun.id, prepared.runId, "visual-companion")
     await prepared.start()
+    const blockedExit = printSupabaseStartBlockerIfAny(ctx.repos, prepared.runId, ctx.itemRef, ctx.action)
+    if (blockedExit !== 0) return blockedExit
     console.log(`  ${ctx.action} applied`)
     console.log(`  run-id: ${prepared.runId}`)
     return 0

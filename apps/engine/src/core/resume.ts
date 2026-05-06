@@ -232,6 +232,10 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
                 resume: buildWorkflowResumeInput(run, record, ctx),
                 llm,
                 workspaceRoot: workspaceRow?.root_path ?? undefined,
+                supabaseReadiness: {
+                  repos: input.repos,
+                  runId: run.id,
+                },
               },
             )
             const finalRun = input.repos.getRun(run.id)
@@ -243,6 +247,7 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
             bus.emit({ type: "run_finished", runId: run.id, itemId: run.item_id, title: run.title, status: "completed" })
           } catch (err) {
             const finalRun = input.repos.getRun(run.id)
+            if (finalRun?.recovery_status === "blocked") return
             await persistWorkflowRunState(
               ctx,
               finalRun?.current_stage ?? run.current_stage ?? "execution",

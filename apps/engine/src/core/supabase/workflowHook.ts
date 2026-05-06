@@ -13,8 +13,17 @@
  */
 
 import type { Repos } from "../../db/repositories.js"
+import type { SecretStoreOptions } from "../../setup/secretStore.js"
+import type { SupabaseReadinessManagementClient } from "./preExecutionReadiness.js"
 import type { SupabaseAdapter } from "./types.js"
 import type { SupabaseHandoffClient } from "./handoffWriter.js"
+
+export type SupabaseWorkflowReadinessHook = {
+  repos: Repos
+  runId: string
+  secretStore?: SecretStoreOptions
+  managementClient?: SupabaseReadinessManagementClient
+}
 
 export type SupabaseWorkflowHook = {
   repos: Repos
