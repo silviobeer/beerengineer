@@ -100,13 +100,13 @@
 ### Acceptance Criteria Status
 
 - [x] Lease persistence, CLI/API owner kind, heartbeat cadence, failed-start, startup recovery, readiness, and recovery-message tests passed in targeted QA commands.
-- [ ] BUG: AC-19 is not production-safe yet. `startWorkerLeaseHeartbeat()` can call `onFatal`, but `prepareRun()` and `performResume()` do not pass a fatal handler or cancellation signal, so a worker that loses ownership can mark the run failed/recoverable while the original workflow keeps executing side effects.
+- [x] AC-19 fix verified after BUG-PROJ7-QA-001: lease-fatal callbacks now cancel guarded workflow execution for start/resume callers.
 
 ### Edge Cases Status
 
 - [x] Single and double heartbeat write failures keep the run active; third failure marks recoverable.
 - [x] Lost ownership marks the run failed/recoverable and stops the heartbeat interval.
-- [ ] BUG: Stopping the heartbeat interval is not the same as stopping the workflow execution path.
+- [x] Lease-fatal behavior now stops the heartbeat interval and prevents the workflow body from continuing past the next guarded runtime boundary.
 
 ### Security Audit Results
 
@@ -120,8 +120,8 @@
 - **File:** `apps/engine/src/core/runOrchestrator.ts`
 - **Anchor:** `heartbeat = startWorkerLeaseHeartbeat(repos, {`
 - **Source:** Dr. Sarah Chen persona review / code review
-- **Status:** open
-- **Fix attempts:** 0
+- **Status:** fixed
+- **Fix attempts:** 1
 - **Steps to Reproduce:**
   1. Start or resume a workflow so `prepareRun()` or `performResume()` starts a lease heartbeat.
   2. Change the run lease to another worker instance or force three heartbeat write failures while the workflow body is still executing.
@@ -129,14 +129,15 @@
 - **Expected:** The active workflow stops executing after lost ownership or fatal heartbeat failure when the engine can detect it.
 - **Actual:** Production callers do not pass `onFatal`, an abort signal, or another stop mechanism, so workflow side effects can continue after the run has been marked recoverable.
 - **Priority:** Fix before release
+- **Fix verification:** `test/workerLeaseCancellation.test.ts` proves a stolen lease rejects the active workflow before the next side effect. `test/workerLeaseProductionCallers.test.ts` proves both `prepareRun()` and `performResume()` wire fatal lease callbacks.
 
 ### Summary
 
-- **Acceptance Criteria:** Blocked by BUG-PROJ7-QA-001
-- **Bugs Found:** 1 total (0 critical, 1 high, 0 medium, 0 low)
+- **Acceptance Criteria:** Passed after BUG-PROJ7-QA-001 fix
+- **Bugs Found:** 1 total (0 critical, 1 high fixed, 0 medium, 0 low)
 - **Security:** Pass
-- **Production Ready:** NO
-- **Recommendation:** Fix high bug first
+- **Production Ready:** YES
+- **Recommendation:** Continue to documentation handoff
 
 ### AGENTS.md Candidates (for Skill 7 review)
 

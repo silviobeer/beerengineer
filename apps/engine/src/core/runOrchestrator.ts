@@ -19,6 +19,12 @@ import {
   type WorkerLeaseScheduler,
 } from "./workerLease.js"
 import type { WorkerOwnerKind } from "../db/repositories.js"
+import {
+  assertWorkflowNotCancelled,
+  createWorkflowCancellation,
+  runWithWorkflowCancellation,
+  withWorkflowCancellation,
+} from "./workflowCancellation.js"
 
 export { attachDbSync, type AttachDbSyncOptions } from "./dbSync.js"
 /* c8 ignore next -- pure re-export */
@@ -43,6 +49,7 @@ export function prepareRun(
     workerInstanceId?: string
     workerLeaseClock?: () => number
     workerLeaseScheduler?: WorkerLeaseScheduler
+    workflowRunner?: typeof runWorkflow
     itemId?: string
     resume?: WorkflowResumeInput
     /** Forwarded to `attachRunSubscribers`; see `AttachDbSyncOptions.onItemColumnChanged`. */
@@ -81,6 +88,7 @@ export function prepareRun(
   const workspaceFsId = workflowWorkspaceId(itemRow)
   const workerOwnerKind: WorkerOwnerKind = opts.owner ?? "api"
   const workerInstanceId = opts.workerInstanceId ?? defaultWorkerInstanceId(workerOwnerKind)
+  const cancellation = createWorkflowCancellation()
   const runRow = repos.createRun({
     workspaceId,
     itemId: itemRow.id,
@@ -111,6 +119,7 @@ export function prepareRun(
       workerOwnerKind,
       now: opts.workerLeaseClock,
       scheduler: opts.workerLeaseScheduler,
+      onFatal: (reason, error) => cancellation.cancel(reason, error),
     })
   } catch (error) {
     markRunFailedRecoverable(
@@ -122,8 +131,11 @@ export function prepareRun(
   }
 
   const bus = io.bus ?? createBus()
+  const workflowIo = withWorkflowCancellation(io, cancellation)
+  const workflowRunner = opts.workflowRunner ?? runWorkflow
 
   const start = async (): Promise<void> => {
+    assertWorkflowNotCancelled()
     const workspaceRow = repos.getWorkspace(workspaceId)
     const llm = await resolveWorkflowLlmOptions(workspaceRow)
     if (workspaceRow?.root_path && !llm) {
@@ -165,11 +177,13 @@ export function prepareRun(
     )
 
     try {
-      await runWithWorkflowIO(io, async () =>
-        runWithActiveRun({ runId: runRow.id, itemId: itemRow.id, title: item.title }, async () => {
+      await runWithWorkflowIO(workflowIo, async () =>
+        runWithWorkflowCancellation(cancellation, () =>
+          runWithActiveRun({ runId: runRow.id, itemId: itemRow.id, title: item.title }, async () => {
+          assertWorkflowNotCancelled()
           bus.emit({ type: "run_started", runId: runRow.id, itemId: itemRow.id, title: item.title })
           try {
-            await runWorkflow(
+            await workflowRunner(
               { ...item, id: itemRow.id },
               {
                 resume: opts.resume,
@@ -178,6 +192,7 @@ export function prepareRun(
                 supabaseHook,
               },
             )
+            assertWorkflowNotCancelled()
             const finalRun = repos.getRun(runRow.id)
             if (finalRun?.recovery_status) return
             await persistWorkflowRunState(
@@ -212,7 +227,7 @@ export function prepareRun(
             }
             throw err
           }
-        })
+        }))
       )
     } finally {
       heartbeat?.stop()
@@ -236,6 +251,7 @@ export async function runWorkflowWithSync(
     workerInstanceId?: string
     workerLeaseClock?: () => number
     workerLeaseScheduler?: WorkerLeaseScheduler
+    workflowRunner?: typeof runWorkflow
     itemId?: string
     resume?: WorkflowResumeInput
   } = {}

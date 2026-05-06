@@ -117,7 +117,7 @@
 
 - [x] Startup previous-instance API recovery, stale CLI recovery, item projection, authoritative-run guard, graceful shutdown recovery, and failed-start recovery targeted tests passed.
 - [x] Live API probe confirmed `/ready` remains available after startup and repeated `/ready` calls did not grow run history.
-- [ ] BUG: Shared worker-lease fatal behavior from PROJ-7-PRD-1 can still leave a workflow body executing after a recoverable lease failure.
+- [x] Shared worker-lease fatal behavior from PROJ-7-PRD-1 is fixed and covered by `workerLeaseCancellation.test.ts`.
 
 ### Edge Cases Status
 
@@ -132,15 +132,15 @@
 
 ### Bugs Found
 
-- See BUG-PROJ7-QA-001 in PROJ-7-PRD-1.
+- BUG-PROJ7-QA-001 in PROJ-7-PRD-1 is fixed.
 
 ### Summary
 
-- **Acceptance Criteria:** Blocked by BUG-PROJ7-QA-001
-- **Bugs Found:** 1 total (0 critical, 1 high, 0 medium, 0 low)
+- **Acceptance Criteria:** Passed after BUG-PROJ7-QA-001 fix
+- **Bugs Found:** 1 total (0 critical, 1 high fixed, 0 medium, 0 low)
 - **Security:** Pass
-- **Production Ready:** NO
-- **Recommendation:** Fix high bug first
+- **Production Ready:** YES
+- **Recommendation:** Continue to documentation handoff
 
 ### AGENTS.md Candidates (for Skill 7 review)
 

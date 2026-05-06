@@ -38,6 +38,7 @@ import {
 import { branchNameItem } from "./core/branchNames.js"
 import { itemSlug, workflowWorkspaceId } from "./core/itemIdentity.js"
 import type { SupabaseWorkflowHook } from "./core/supabase/workflowHook.js"
+import { assertWorkflowNotCancelled } from "./core/workflowCancellation.js"
 
 type ItemResumePlan = {
   startStage: "brainstorm" | "visual-companion" | "frontend-design" | "projects" | "merge-gate"
@@ -315,6 +316,7 @@ async function assertDesignPrepProjectFreeze(context: WorkflowContext, projects:
 }
 
 export async function runWorkflow(item: Item, options?: { resume?: WorkflowResumeInput; llm?: WorkflowLlmOptions; workspaceRoot?: string; supabaseHook?: SupabaseWorkflowHook }): Promise<void> {
+  assertWorkflowNotCancelled()
   const slug = itemSlug(item)
   const activeRun = getActiveRun()
   const { branch: baseBranch, source: baseBranchSource } = resolveBaseBranchForItem(item.baseBranch, options?.workspaceRoot)
@@ -347,11 +349,13 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
     // visual-companion / frontend-design also receive it.
     const codebaseSnapshot = loadCodebaseSnapshot(options?.workspaceRoot)
     const projects = await resolveWorkflowProjects(item, context, git, itemResumePlan, itemWorktreeLlm?.stage, codebaseSnapshot)
+    assertWorkflowNotCancelled()
     if (itemResumePlan.startStage === "projects") {
       await assertDesignPrepProjectFreeze(context, projects)
     }
     emitWorkflowPreviewPort(context, activeRun)
     const itemConcept = await loadConcept(context)
+    assertWorkflowNotCancelled()
     const itemHasUi = projects.some(project => project.hasUi === true)
     const itemSnapshot = buildItemSnapshot(codebaseSnapshot, itemHasUi, options?.workspaceRoot)
     const { wireframes, design } = await resolveDesignPrepArtifacts(
@@ -363,6 +367,7 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
       itemWorktreeLlm?.stage,
       itemSnapshot,
     )
+    assertWorkflowNotCancelled()
     emitWorkflowProjectsCreated(activeRun, projects)
 
     if (itemResumePlan.startStage !== "merge-gate") {
@@ -380,6 +385,7 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
     }
 
     await withStageLifecycle("merge-gate", () => mergeGate(context, git, blockRunForWorkspaceState, options?.supabaseHook), {})
+    assertWorkflowNotCancelled()
 
     stagePresent.header("DONE")
     stagePresent.ok(`Item "${item.title}" is done ✓`)
@@ -643,8 +649,10 @@ async function runProject(
   const deps = { llm, resume, git, supabaseHook }
 
   for (const node of PROJECT_STAGE_REGISTRY) {
+    assertWorkflowNotCancelled()
     ctx = shouldRunProjectStage(resume, node.id)
       ? await withStageLifecycle(node.id, () => node.run(ctx, deps), { projectId })
       : await node.resumeFromDisk(ctx)
+    assertWorkflowNotCancelled()
   }
 }

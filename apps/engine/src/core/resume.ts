@@ -20,6 +20,12 @@ import {
   startWorkerLeaseHeartbeat,
   type WorkerLeaseScheduler,
 } from "./workerLease.js"
+import {
+  assertWorkflowNotCancelled,
+  createWorkflowCancellation,
+  runWithWorkflowCancellation,
+  withWorkflowCancellation,
+} from "./workflowCancellation.js"
 
 /** Returned by load(). Centralizes the decision about whether a run can be resumed. */
 export type ResumeReadiness =
@@ -169,6 +175,7 @@ export type PerformResumeInput = {
   workerInstanceId?: string
   workerLeaseClock?: () => number
   workerLeaseScheduler?: WorkerLeaseScheduler
+  workflowRunner?: typeof runWorkflow
   /** Forwarded to `attachRunSubscribers` → `attachDbSync`. See `AttachDbSyncOptions.onItemColumnChanged`. */
   onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
 }
@@ -188,6 +195,7 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
   const llm = await resolveWorkflowLlmOptions(workspaceRow)
 
   inflightResumes.add(input.runId)
+  const cancellation = createWorkflowCancellation()
   try {
     if (!input.io.bus) {
       throw new Error("performResume: io must be bus-backed (runService.buildApiIo / createCliIO)")
@@ -207,7 +215,10 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
       workerOwnerKind,
       now: input.workerLeaseClock,
       scheduler: input.workerLeaseScheduler,
+      onFatal: (reason, error) => cancellation.cancel(reason, error),
     })
+    const workflowIo = withWorkflowCancellation(input.io, cancellation)
+    const workflowRunner = input.workflowRunner ?? runWorkflow
     const detach = attachRunSubscribers(bus, input.repos, { runId: run.id, itemId: run.item_id }, { onItemColumnChanged: input.onItemColumnChanged })
 
     let eventScope: WorkflowResumeInput["scope"] = { type: "run", runId: run.id }
@@ -247,11 +258,13 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
         scope: eventScope,
       })
 
-      await runWithWorkflowIO(input.io, async () =>
-        runWithActiveRun({ runId: run.id, itemId: run.item_id, title: run.title }, async () => {
+      await runWithWorkflowIO(workflowIo, async () =>
+        runWithWorkflowCancellation(cancellation, () =>
+          runWithActiveRun({ runId: run.id, itemId: run.item_id, title: run.title }, async () => {
+          assertWorkflowNotCancelled()
           input.repos.updateRun(run.id, { status: "running" })
           try {
-            await runWorkflow(
+            await workflowRunner(
               { id: run.item_id, title: run.title, description: "" },
               {
                 resume: buildWorkflowResumeInput(run, record, ctx),
@@ -259,6 +272,7 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
                 workspaceRoot: workspaceRow?.root_path ?? undefined,
               },
             )
+            assertWorkflowNotCancelled()
             const finalRun = input.repos.getRun(run.id)
             if (!finalRun?.recovery_status) {
               await persistWorkflowRunState(
@@ -287,7 +301,7 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
             }
             throw err
           }
-        }),
+        })),
       )
     } finally {
       heartbeat.stop()

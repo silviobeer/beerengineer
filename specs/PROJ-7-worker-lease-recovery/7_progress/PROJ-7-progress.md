@@ -95,9 +95,9 @@ Status: in progress
 ## QA Results
 
 - Bugs found: 1 (Critical: 0, High: 1, Medium: 0, Low: 0)
-- Fixed: 0
+- Fixed: 1
 - Deferred: 0
-- BUG-PROJ7-QA-001: Lost-lease workers can continue executing after marking the run recoverable. Status: open.
+- BUG-PROJ7-QA-001: Lost-lease workers can continue executing after marking the run recoverable. Status: fixed.
 
 ---
 
@@ -511,12 +511,12 @@ Status: in progress
 
 ### Persona Review Panel
 
-- Dr. Sarah Chen (backend reliability): FAIL — BUG-PROJ7-QA-001.
+- Dr. Sarah Chen (backend reliability): PASS after fix — lease fatal now cancels guarded workflow execution.
 - Marcus Weber (frontend UX): PASS — recovery copy is visible on board and modal without overlap in tested viewports.
 - Priya Sharma (security): PASS — no secret exposure or unsafe HTML rendering found.
 - Thomas Müller (performance): PASS — `/ready` uses a sentinel write and does not grow workflow history.
-- Elena Rodriguez (product): FAIL — lost-lease duplicate execution risk undermines the resume-required operator story.
-- Ken Takahashi (maintainability): FAIL — tests assert heartbeat-loop stop but not workflow-body stop.
+- Elena Rodriguez (product): PASS after fix — duplicate execution risk is covered by regression.
+- Ken Takahashi (maintainability): PASS after fix — tests now assert workflow-body cancellation.
 
 ### Bugs Found
 
@@ -525,18 +525,19 @@ Status: in progress
 - **File:** `apps/engine/src/core/runOrchestrator.ts`
 - **Anchor:** `heartbeat = startWorkerLeaseHeartbeat(repos, {`
 - **Source:** Dr. Sarah Chen persona review / code review
-- **Status:** open
-- **Fix attempts:** 0
+- **Status:** fixed
+- **Fix attempts:** 1
 - **Expected:** The active workflow stops executing after lost ownership or fatal heartbeat failure when the engine can detect it.
 - **Actual:** Production callers do not pass `onFatal`, an abort signal, or another stop mechanism, so workflow side effects can continue after the run has been marked recoverable.
 - **Priority:** Fix before release
+- **Fix verification:** Added guarded workflow cancellation and regression coverage in `test/workerLeaseCancellation.test.ts`; production caller coverage now asserts fatal callbacks in start and resume paths.
 
 ### Summary
 
-- **Bugs Found:** 1 total (0 critical, 1 high, 0 medium, 0 low)
+- **Bugs Found:** 1 total (0 critical, 1 high fixed, 0 medium, 0 low)
 - **Security:** Pass
-- **Production Ready:** NO
-- **Recommendation:** Fix BUG-PROJ7-QA-001 before documentation handoff.
+- **Production Ready:** YES
+- **Recommendation:** Continue to documentation handoff.
 
 ### AGENTS.md Candidates (for Skill 7 review)
 

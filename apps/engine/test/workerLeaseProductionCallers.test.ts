@@ -15,8 +15,10 @@ test("worker lease primitives have production callers in start and resume paths"
 
   assert.match(orchestrator, /claimWorkerLease\(/, "prepareRun must claim leases for CLI/API starts")
   assert.match(orchestrator, /startWorkerLeaseHeartbeat\(/, "prepareRun must start heartbeat lifecycle for starts")
+  assert.match(orchestrator, /onFatal:\s*\(reason,\s*error\)\s*=>\s*cancellation\.cancel\(reason,\s*error\)/, "prepareRun must cancel workflow execution on lease fatal")
   assert.match(resume, /claimWorkerLease\(/, "performResume must reclaim the same run row before side effects")
   assert.match(resume, /startWorkerLeaseHeartbeat\(/, "performResume must heartbeat resumed work")
+  assert.match(resume, /onFatal:\s*\(reason,\s*error\)\s*=>\s*cancellation\.cancel\(reason,\s*error\)/, "performResume must cancel workflow execution on lease fatal")
   assert.match(runService, /apiWorkerInstanceId/, "API start/resume must thread the API engine instance id")
   assert.match(cliActions, /workerOwnerKind:\s*"cli"/, "CLI resume must request CLI worker ownership")
 })

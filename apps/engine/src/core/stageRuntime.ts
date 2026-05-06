@@ -23,6 +23,7 @@ import {
   workflowContextForRun,
   writeArtifactFiles,
 } from "./stageRuntimePersistence.js"
+import { assertWorkflowNotCancelled, isWorkflowCancelledError } from "./workflowCancellation.js"
 
 export { persistWorkflowRunState, writeArtifactFiles } from "./stageRuntimePersistence.js"
 
@@ -164,7 +165,9 @@ async function advanceStageAgent<TState, TArtifact, TResult>(
   phase: "begin" | "user-message" | "review-feedback",
   input: Parameters<StageAgentAdapter<TState, TArtifact>["step"]>[0],
 ): Promise<StageAgentResponse<TArtifact>> {
+  assertWorkflowNotCancelled()
   const response = await definition.stageAgent.step(input)
+  assertWorkflowNotCancelled()
   emitLoopIteration(run, phase, run.stageAgentTurnCount + 1)
   run.stageAgentTurnCount++
   syncSessions(definition, run)
@@ -221,6 +224,7 @@ export async function runStage<TState, TArtifact, TResult>(
   try {
     return await runStageBody(definition, run)
   } catch (err) {
+    if (isWorkflowCancelledError(err)) throw err
     // Unhandled exceptions (adapter errors, etc.) become `failed` recovery
     // records. Reviewer-driven blocks already wrote their own record before
     // throwing — we detect that by checking run.status.
@@ -240,6 +244,7 @@ async function runStageBody<TState, TArtifact, TResult>(
   definition: StageDefinition<TState, TArtifact, TResult>,
   run: StageRun<TState, TArtifact>,
 ): Promise<{ result: TResult; run: StageRun<TState, TArtifact> }> {
+  assertWorkflowNotCancelled()
   definition.stageAgent.setSessionId?.(run.stageAgentSessionId ?? null)
   definition.reviewer.setSessionId?.(run.reviewerSessionId ?? null)
 
@@ -256,6 +261,7 @@ async function runStageBody<TState, TArtifact, TResult>(
     }
 
     run.artifact = response.artifact
+    assertWorkflowNotCancelled()
     setStatus(run, "artifact_ready")
     pushLog(run, { type: "artifact_created", message: "Artifact created." })
 
@@ -265,11 +271,13 @@ async function runStageBody<TState, TArtifact, TResult>(
     run.reviewIteration++
     await persistRun(run)
 
+    assertWorkflowNotCancelled()
     const review = await definition.reviewer.review({
       artifact: response.artifact,
       state: run.state,
       reviewContext: buildReviewContext(run, definition.maxReviews),
     })
+    assertWorkflowNotCancelled()
     emitLoopIteration(run, "review", run.reviewIteration)
     syncSessions(definition, run)
     await persistRun(run)
@@ -288,6 +296,7 @@ async function persistRunArtifacts<TState, TArtifact, TResult>(
   artifact: TArtifact,
 ): Promise<void> {
   const artifactContents = await definition.persistArtifacts(run, artifact)
+  assertWorkflowNotCancelled()
   run.files = await writeArtifactFiles(run.stageArtifactsDir, artifactContents)
   emitArtifactWrittenEvents(run, pushLog)
 }
@@ -302,10 +311,13 @@ async function handleReviewOutcome<TState, TArtifact, TResult>(
   | { kind: "revise"; response: StageAgentResponse<TArtifact> }
 > {
   if (review.kind === "pass") {
+    assertWorkflowNotCancelled()
     pushLog(run, { type: "review_pass", message: "Review passed." })
     setStatus(run, "approved")
     await persistRun(run)
-    return { kind: "approved", result: await definition.onApproved(artifact, run) }
+    const result = await definition.onApproved(artifact, run)
+    assertWorkflowNotCancelled()
+    return { kind: "approved", result }
   }
 
   if (review.kind === "block") {
@@ -374,6 +386,7 @@ async function continueStageAfterUserMessage<TState, TArtifact, TResult>(
   // event above, so the CLI can safely suppress duplicate echo when it
   // sees the same text come back through `prompt_requested`.
   const userMessage = await definition.askUser(message)
+  assertWorkflowNotCancelled()
   if (userMessage === NON_INTERACTIVE_NO_ANSWER_SENTINEL) {
     throw new Error(
       `Stage "${run.stage}" emitted a prompt but this is a non-interactive run with no stdin answers queued. ` +

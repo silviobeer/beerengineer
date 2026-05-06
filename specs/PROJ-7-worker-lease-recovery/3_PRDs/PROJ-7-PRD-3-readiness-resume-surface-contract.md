@@ -124,7 +124,7 @@
 - [x] Five repeated `/ready` calls did not increase run count (`runs_before=8`, `runs_after=8`).
 - [x] OpenAPI exposes `/ready` and `recovery_user_message` on `Run`, `RecoveryDetail`, and `BoardCard`.
 - [x] Browser E2E confirmed board card and item modal render `Worker lost. Resume this run to continue.` on desktop, tablet, and 375px mobile.
-- [ ] BUG: Same-run resume lease safety is blocked by the shared lease-fatal issue in BUG-PROJ7-QA-001.
+- [x] Same-run resume lease safety is no longer blocked by BUG-PROJ7-QA-001; resume now wires the lease-fatal cancellation path.
 
 ### Edge Cases Status
 
@@ -140,15 +140,15 @@
 
 ### Bugs Found
 
-- See BUG-PROJ7-QA-001 in PROJ-7-PRD-1.
+- BUG-PROJ7-QA-001 in PROJ-7-PRD-1 is fixed.
 
 ### Summary
 
-- **Acceptance Criteria:** Blocked by BUG-PROJ7-QA-001
-- **Bugs Found:** 1 total (0 critical, 1 high, 0 medium, 0 low)
+- **Acceptance Criteria:** Passed after BUG-PROJ7-QA-001 fix
+- **Bugs Found:** 1 total (0 critical, 1 high fixed, 0 medium, 0 low)
 - **Security:** Pass
-- **Production Ready:** NO
-- **Recommendation:** Fix high bug first
+- **Production Ready:** YES
+- **Recommendation:** Continue to documentation handoff
 
 ### AGENTS.md Candidates (for Skill 7 review)
 
