@@ -516,3 +516,14 @@
 ### Ralph Loop
 - Iterations: 1
 - Pass 1: PASS — `npm run test:file --workspace=@beerengineer/engine -- test/apiIntegration.test.ts`; `npm run test:file --workspace=@beerengineer/engine -- test/api/routes/supabaseReadinessRetry.test.ts`; `npm test --workspace=@beerengineer/ui -- tests/BoardCard.test.tsx tests/Board.test.tsx tests/SupabaseBlockedRunPanel.test.tsx`; `npm run typecheck`; 375px screenshot captured as `proj6-wave5-board-blocker-mobile-375.png`
+
+### Wave 5 Gate Attempt 1 — FAILED
+- Ralph: PASS (5 AC commands green)
+- Build: PASS (`npm run typecheck`)
+- CodeRabbit: ERROR — recoverable rate limit; waited for the requested recovery window and reran the gate.
+
+### Wave 5 Gate Attempt 2 — FAILED
+- Ralph: PASS (5 AC commands green)
+- Build: PASS (`npm run typecheck`)
+- CodeRabbit: FAIL — 3 `major` findings: board DTO hard-coded retry readiness false, OpenAPI omitted required retry booleans, and the blocker panel did not resync when a new blocker prop arrived.
+- Fix: derive retry readiness from the missing action list, require `retry.available`/`retry.ready` in OpenAPI, and resync panel state on blocker changes.

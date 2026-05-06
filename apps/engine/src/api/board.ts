@@ -47,14 +47,15 @@ function supabaseBlocker(
   latestRun: { id: string; recovery_status: string | null; recovery_summary: string | null } | undefined,
 ): BoardCardDTO["supabaseBlocker"] {
   if (latestRun?.recovery_status !== "blocked" || !latestRun.recovery_summary?.includes("Supabase readiness blocked")) return undefined
+  const missingSetupActions = supabaseReadinessActions(latestRun.recovery_summary)
   return {
     status: "blocked",
     label: "Supabase blocked",
     runId: latestRun.id,
     workspace: { id: workspace.id, key: workspace.key },
-    missingSetupActions: supabaseReadinessActions(latestRun.recovery_summary),
+    missingSetupActions,
     message: latestRun.recovery_summary,
-    retry: { available: true, ready: false },
+    retry: { available: true, ready: missingSetupActions.length === 0 },
   }
 }
 

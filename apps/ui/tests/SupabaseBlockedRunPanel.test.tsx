@@ -60,4 +60,14 @@ describe("SupabaseBlockedRunPanel", () => {
     expect(screen.getByText(/Create persistent test branch/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open workspace Supabase settings" })).toBeVisible();
   });
+
+  it("resets hidden retry state when a new blocker arrives", async () => {
+    globalThis.fetch = vi.fn(async () => Response.json({ recoveryStatus: null })) as unknown as typeof fetch;
+    const { rerender } = render(<SupabaseBlockedRunPanel blocker={{ ...blocker, retry: { available: true, ready: true } }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Retry blocked run" }));
+    await waitFor(() => expect(screen.queryByTestId("supabase-blocked-run-panel")).not.toBeInTheDocument());
+
+    rerender(<SupabaseBlockedRunPanel blocker={{ ...blocker, runId: "run-2", workspace: { key: "beta" } }} />);
+    expect(screen.getByText("workspace beta")).toBeInTheDocument();
+  });
 });

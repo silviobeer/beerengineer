@@ -3980,6 +3980,10 @@
               },
               "retry": {
                 "type": "object",
+                "required": [
+                  "available",
+                  "ready"
+                ],
                 "properties": {
                   "available": {
                     "type": "boolean"

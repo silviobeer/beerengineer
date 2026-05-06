@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { BoardCardDTO } from "@/lib/types";
 
 type SupabaseBlocker = NonNullable<BoardCardDTO["supabaseBlocker"]>;
@@ -19,6 +19,12 @@ export function SupabaseBlockedRunPanel({
   const [current, setCurrent] = useState(blocker);
   const [hidden, setHidden] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  useEffect(() => {
+    setCurrent(blocker);
+    setHidden(false);
+    setRetrying(false);
+  }, [blocker]);
+
   if (hidden || !current) return null;
 
   const blockerState = current;
