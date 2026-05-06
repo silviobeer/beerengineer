@@ -12,20 +12,28 @@ It introduces a shared engine readiness contract used by CLI first and UI
 second, so browser surfaces never invent a different answer than the execution
 runtime.
 
+The implementation name for the new runtime check should be distinct from the
+existing per-wave branch provisioning code in
+`apps/engine/src/stages/execution/supabaseWaveGate.ts`. Use a name such as
+`supabasePreExecutionReadiness` or `supabaseReadiness` for the new setup
+readiness model; keep `supabaseWaveGate` focused on per-wave provision, poll,
+handoff, and validation.
+
 ## Success Criteria
 
 - When any planned wave has `dbRelevant: true`, execution runs a pre-execution
-  Supabase readiness gate before workers or wave execution side effects start.
+  Supabase readiness check before workers or wave execution side effects start.
 - If readiness is incomplete, the run is marked `blocked`, not `failed`.
 - The blocked state lists all relevant missing setup actions at once:
   `Connect Supabase project`, `Store management token`,
-  `Create persistent test branch`, and `Retry run`.
+  `Rotate management token`, `Create persistent test branch`, and `Retry run`.
 - The gate is workspace-bound. A run for workspace `alpha` can only be unblocked
   by configuring Supabase readiness for workspace `alpha`.
-- The persistent test branch is checked live with a bounded Supabase Management
-  API call. Only `ACTIVE_HEALTHY` passes.
-- CLI setup provides the first complete repair path; workspace settings UI uses
-  the same engine primitives afterward.
+- The persistent test branch is checked live with a short bounded poll through
+  the existing Supabase branch poller behavior. Only `ACTIVE_HEALTHY` passes.
+- CLI setup provides a production caller for the engine readiness model in this
+  PROJ. Workspace settings UI uses the same engine primitives later in the same
+  PROJ, after the CLI path lands.
 
 ## Primary Personas And Scenarios
 
@@ -59,6 +67,9 @@ workspace does not unblock this run.
 - Local or self-hosted Supabase deployments.
 - Changing planning's `dbRelevant` schema or classification model.
 - Making the Supabase Management API token workspace-specific.
+- Changing existing post-gate per-wave Supabase provisioning, validation, or
+  cleanup semantics beyond what is needed to stop DB-relevant runs before setup
+  is ready.
 
 ## Manual Supabase Project Guidance
 
@@ -79,8 +90,13 @@ with useful Supabase links.
 ## Core Behavior
 
 For every workflow start, the engine inspects planned waves before execution.
-If any wave is DB-relevant, the engine runs a workspace-bound Supabase readiness
-gate before execution waves start.
+If any wave is DB-relevant, including a later wave after an earlier non-DB wave,
+the engine blocks or passes the whole run before any execution wave starts. This
+is an intentional fail-fast choice: beerengineer does not run non-DB waves first
+and then discover missing Supabase setup at the first DB-relevant wave.
+
+When DB-relevant work exists, the engine runs a workspace-bound Supabase
+pre-execution readiness check before execution waves start.
 
 The gate checks:
 
@@ -88,15 +104,25 @@ The gate checks:
 - The run workspace has `supabase_project_ref`.
 - The app-level token can access the workspace's Supabase project.
 - The run workspace has a persistent test branch ref.
-- A live bounded Supabase Management API check confirms that persistent branch
-  exists and has status `ACTIVE_HEALTHY`.
+- A short bounded poll through the existing branch poller behavior confirms
+  that the persistent branch exists and reaches `ACTIVE_HEALTHY`.
 
 If any check fails, times out, or returns an unknown/degraded state, the run is
 blocked before execution workers are dispatched. The readiness payload includes
-all currently missing or failing actions, plus a retry action that re-submits
-the same run after setup is fixed.
+all currently missing or failing actions, plus a retry action that re-enters
+the same blocked run after setup is fixed.
 
-Non-DB-relevant plans do not invoke the Supabase readiness gate.
+Non-DB-relevant plans do not invoke the Supabase pre-execution readiness check.
+
+The readiness action list is deterministic. Local prerequisites are collected
+in parallel where possible: missing token, missing workspace project ref, and
+missing persistent branch ref can all be reported in one response. Network
+checks short-circuit when their prerequisites are absent: project access is not
+checked without a token and project ref, and branch health is not checked
+without token, project ref, and branch ref. A token that exists but cannot
+access the workspace project returns a distinct action such as
+`Rotate management token` or `Re-authorize project access`, not the misleading
+`Store management token`.
 
 ## CLI And Setup Flow
 
@@ -111,7 +137,12 @@ stores the project ref on the workspace, validates that the token can access
 that workspace project, and creates or attaches the workspace's persistent test
 branch after confirmation.
 
-After setup, the user retries the run. Retry performs the same readiness gate
+The Management API token must be written only through the dedicated Supabase
+connect/rotate setup path, not through the generic `/setup/secrets/<ref>`
+handler. The privileged secret ref remains deny-listed from generic secret
+mutation routes.
+
+After setup, the user retries the run. Retry performs the same readiness check
 again and only proceeds when the workspace is ready.
 
 ## Workspace Settings UI
@@ -133,12 +164,18 @@ contract as CLI setup. It supports all required setup actions:
 - Recheck readiness.
 - Return to retry the blocked run.
 
+When the workspace has no Supabase capability/configuration, the settings page
+renders a not-configured stub with setup guidance and connect actions. It does
+not render the full connected control set until the underlying capability is
+present for that workspace.
+
 ## Architecture And Components
 
-### Engine Supabase Readiness Model
+### Engine Supabase Pre-Execution Readiness Model
 
-Add a shared readiness model in the engine Supabase/setup domain. It should
-return a structured result for a specific workspace:
+Add a shared readiness model in the engine Supabase/setup domain under a
+distinct name such as `supabasePreExecutionReadiness`. It should return a
+structured result for a specific workspace:
 
 - readiness status: ready or blocked
 - workspace id/key
@@ -152,12 +189,29 @@ return a structured result for a specific workspace:
 
 This model is the source of truth for CLI, API, execution, and UI.
 
+This model is a strict superset of the existing `supabaseCapability` checks and
+should consume or delegate to that capability where the port shape already fits.
+It must not become an unrelated parallel readiness shape. The generic capability
+continues to expose the PROJ-3 port envelope; the pre-execution readiness model
+adds workspace-specific action labels, retry metadata, and branch-health detail
+for execution/setup consumers.
+
 ### Pre-Execution Gate
 
 Wire the readiness model into workflow start/execution after planning has
 produced waves and before execution waves begin. The gate uses the run's
 workspace id and planned wave metadata. If no planned wave is DB-relevant, it
 short-circuits without Supabase calls.
+
+The pre-execution check must read `projectRef` and persistent `branchRef` from
+the workspace row for the run. It must never trust request-body project/branch
+fields. Every retry re-reads the current workspace row and cross-checks refs
+before any adapter or Management API operation.
+
+The check uses a short bounded poll for branch health, reusing the existing
+branch polling semantics from PROJ-4. It may treat transient states such as
+coming-up or migrations-running as pending during that bounded poll, but only
+`ACTIVE_HEALTHY` is a passing final state.
 
 ### CLI Setup Integration
 
@@ -167,9 +221,10 @@ workspace Supabase readiness mutations through engine-owned primitives.
 
 ### Workspace Settings
 
-Introduce a workspace-specific settings route at `/w/:key/settings`. The route
-must carry the workspace explicitly, and the engine must resolve workspace
-metadata from that key server-side.
+Introduce a workspace-specific settings route at `/w/:key/settings` as a new
+sibling route to the existing `/w/:key` workspace board. The route must carry
+the workspace explicitly, and the engine must resolve workspace metadata from
+that key server-side.
 
 The existing app settings page remains for app-global configuration. Supabase
 workspace setup moves to the workspace settings surface or is clearly
@@ -179,7 +234,7 @@ workspace-scoped there.
 
 1. Planning emits waves with `dbRelevant`/`dbRelevantWave` preserved.
 2. Workflow start creates the run and resolves its workspace.
-3. Before execution waves, the Supabase readiness gate checks whether any
+3. Before execution waves, the Supabase pre-execution readiness check verifies whether any
    planned wave is DB-relevant.
 4. If no DB-relevant wave exists, execution proceeds without Supabase setup.
 5. If DB-relevant work exists, the gate validates token, workspace project ref,
@@ -189,7 +244,13 @@ workspace-scoped there.
 7. If blocked, the run stores a blocked recovery state and surfaces all missing
    setup actions to CLI/API/UI.
 8. The user completes setup in CLI or workspace settings.
-9. Retry re-runs the same gate and proceeds only after readiness passes.
+9. Retry inherits the PROJ-5 intent principle but uses the existing blocked
+   run because PROJ-6 blocks after planning has already created run artifacts.
+   The blocked `runId` is reused; the retry/recovery action re-enters that run
+   at the pre-execution readiness point, re-reads fresh workspace rows, and
+   proceeds only if readiness passes. It is not a hidden server-side setup
+   queue and does not accept client-supplied filesystem, project, or branch
+   paths/refs as authority.
 
 ## Error Handling
 
@@ -206,6 +267,12 @@ CLI output should be concise: one grouped missing-action block and one primary
 next command. Detailed manual setup guidance belongs in setup screens/checklist
 content, not in every blocked-run error.
 
+Post-gate Supabase failures remain owned by the existing per-wave Supabase
+branch lifecycle. If readiness passes and a later wave branch provision,
+migration, seed, handoff, validation, cleanup, or production-migration step
+fails, that failure is handled by the existing per-wave gate/lifecycle code and
+is not reclassified as a PROJ-6 setup-readiness blocker.
+
 ## Testing Strategy
 
 The core acceptance test creates a plan with at least one `dbRelevant: true`
@@ -215,16 +282,25 @@ Supabase branch provisioning run.
 
 Additional coverage:
 
-- All waves non-DB-relevant: no Supabase readiness gate is invoked.
+- All waves non-DB-relevant: no Supabase pre-execution readiness check is
+  invoked.
 - Management token missing: blocked with `Store management token`.
+- Management token present but unauthorized for the workspace project: blocked
+  with `Rotate management token` or `Re-authorize project access`, not `Store
+  management token`.
 - Workspace project ref missing: blocked with `Connect Supabase project`.
-- Token present but no access to the workspace project: blocked for that
-  workspace.
 - Project ref present but persistent test branch missing: blocked with
   `Create persistent test branch`.
-- Persistent branch present but not `ACTIVE_HEALTHY`: blocked.
+- Persistent branch transient after setup: short bounded poll waits for
+  `ACTIVE_HEALTHY`.
+- Persistent branch present but not `ACTIVE_HEALTHY` after the poll budget:
+  blocked.
 - Provider timeout/error: blocked clearly without hanging.
 - Workspace `alpha` run is not unblocked by configuring workspace `beta`.
+- Request bodies cannot override workspace/run `projectRef` or `branchRef`.
+- Generic secret mutation endpoints cannot write `supabase.management_token`.
+- Workspace settings renders a not-configured stub before showing connected
+  controls.
 - CLI setup output includes manual project guidance and all missing actions.
 - Workspace settings UI exposes every required engine mutation and links from
   blocked run state.
@@ -241,3 +317,6 @@ Additional coverage:
   group them cleanly with one primary next command.
 - Persistent branch health uses a strict pass rule: only `ACTIVE_HEALTHY`
   passes; missing, degraded, unknown, or timeout states block.
+- Function/module naming must stay distinct from `supabaseWaveGate`; do not add
+  another exported function with the same name and a different signature in a
+  different path.
