@@ -4,7 +4,7 @@
   "timeouts": {
     "ac_seconds": 300,
     "build_seconds": 600,
-    "coderabbit_seconds": 600,
+    "coderabbit_seconds": 1200,
     "browser_seconds": 120
   },
   "waves": {

@@ -453,3 +453,4 @@ Status: in progress
 - GREEN: Wave 4 unique engine tests passed (`api/health`, `api/ready`, `workerLeaseShutdown`, `workerLeaseRecovery`, `workerLeaseResume`, `resume`, `workerRecoverySurface`, `apiIntegration`).
 - UI rendering: `npm test --workspace=@beerengineer/ui -- tests/workerRecoveryMessage.test.tsx` passed 3 tests.
 - Typecheck: `npm run typecheck` passed.
+- Wave gate attempt 1: Ralph AC checks and build passed; CodeRabbit reached review phase but timed out after the configured 600s. Increased `timeouts.coderabbit_seconds` to 1200 and rerunning the official gate.
