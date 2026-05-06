@@ -1,7 +1,7 @@
 # PROJ-5 Progress
 
 ## Status: in progress
-## Current Wave: 1
+## Current Wave: 2
 ## BASE_SHA: a9b9cc683e6c7b3be1a3e724442634daaaa5e018
 
 ---
@@ -170,3 +170,89 @@
 - [x] Build: `npm run typecheck`
 - [x] CodeRabbit: 0 non-advisory findings (advisory severities: medium,low)
 - [x] Smoke: backend-only
+
+---
+
+## Wave 2
+
+### Wave Start
+- Tag: `wave-2-start-PROJ-5`
+- Started from: `ac21c2b7de8331f440cb584ff29205323af8812e`
+
+## PROJ-5-PRD-2-US-1: Als nontechnical User moechte ich mit `beerengineer setup` direkt in die Setup-UI gelangen um ohne Terminalwissen starten zu koennen — in progress
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 2.1 Interactive Setup Launch Or Reuse | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-1 | Interaktives `beerengineer setup` initialisiert fehlende App-Config und DB wie bisher. | ✓ |
+| AC-2 | Interaktives `beerengineer setup` startet oder verwendet eine laufende Engine. | ✓ |
+| AC-3 | Interaktives `beerengineer setup` startet oder verwendet eine laufende UI. | ✓ |
+| AC-4 | Die geoeffnete URL wird aus Runtime/Config ermittelt und nicht hartcodiert. | ✓ |
+| AC-5 | Erfolgreicher Browser-Open wird mit der verwendeten URL gemeldet. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- AC-1..AC-5 pass 1: PASS — `npm run test:file --workspace=@beerengineer/engine -- test/setupInteractiveEntry.test.ts test/nonInteractivePrompt.test.ts test/setupStatus.test.ts test/setupCliGitIdentity.test.ts && npm run typecheck --workspace=@beerengineer/engine`
+
+## PROJ-5-PRD-2-US-2: Als Developer in SSH, CI oder Container moechte ich Setup ohne Browser-Fehler nutzen um die echte Setup-URL manuell oeffnen zu koennen — pending
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 2.2 Headless Setup Degradation | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-6 | Headless-, CI-, SSH-, Container- oder No-Opener-Situationen degradieren zu "URL drucken". | ✓ |
+| AC-7 | Die gedruckte URL ist die tatsaechlich entdeckte URL inklusive Host und Port. | ✓ |
+| AC-8 | Engine und UI bleiben verfuegbar, wenn sie erfolgreich gestartet oder gefunden wurden. | ✓ |
+| AC-9 | Browser-Open-Fehler wird als recoverable Setup-Hinweis gemeldet, nicht als harter Core-Fehler. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- AC-6..AC-9 pass 1: PASS — `npm run test:file --workspace=@beerengineer/engine -- test/setupInteractiveEntry.test.ts test/nonInteractivePrompt.test.ts test/setupStatus.test.ts test/setupCliGitIdentity.test.ts && npm run typecheck --workspace=@beerengineer/engine`
+
+## PROJ-5-PRD-2-US-3: Als Automation oder Install-Validator moechte ich `setup --no-interactive` ohne UI-Start verwenden um reproduzierbare Checks zu erhalten — pending
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 2.3 Non-Interactive Setup Readiness Output | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-10 | `setup --no-interactive` versucht keinen Browser-Open. | ✓ |
+| AC-11 | `setup --no-interactive` startet keine interaktive Eingabe fuer Git-Identitaet. | ✓ |
+| AC-12 | `setup --no-interactive` kann fehlende Git-Identitaet als actionable readiness melden. | ✓ |
+| AC-13 | `setup --no-interactive` bleibt fuer bestehende Install- und Doctor-Tests deterministisch. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- AC-10..AC-13 pass 1: PASS — `npm run test:file --workspace=@beerengineer/engine -- test/setupInteractiveEntry.test.ts test/nonInteractivePrompt.test.ts test/setupStatus.test.ts test/setupCliGitIdentity.test.ts && npm run typecheck --workspace=@beerengineer/engine`
+
+## PROJ-5-PRD-2-US-4: Als CLI User moechte ich App-Level-Git-Identitaet im Terminal speichern koennen um den Engine-first Setup-Pfad vollstaendig zu nutzen — pending
+
+### Tasks
+| Task | Tests Written | Tests Passing | Done |
+|------|:---:|:---:|:---:|
+| 2.4 CLI App Identity Prompt | ✓ | ✓ | ✓ |
+
+### Acceptance Criteria
+| AC | Text | Verified |
+|----|------|:---:|
+| AC-14 | Interaktives CLI-Setup bietet eine Eingabe fuer App-Level-Default-Name und Email. | ✓ |
+| AC-15 | CLI-Validierungsfehler sind feldspezifisch und erklaeren die Korrektur. | ✓ |
+| AC-16 | Eine gespeicherte CLI-Identitaet erscheint danach im Setup-Readiness-Status. | ✓ |
+| AC-17 | CLI-Setup schreibt keine globale Git-Konfiguration. | ✓ |
+| AC-18 | CLI-Setup kann aus globaler Git-Identitaet vorbefuellen und trotzdem Edit/Skip erlauben. | ✓ |
+
+### Ralph Loop
+- Iterations: 1
+- AC-14..AC-18 pass 1: PASS — `npm run test:file --workspace=@beerengineer/engine -- test/setupInteractiveEntry.test.ts test/nonInteractivePrompt.test.ts test/setupStatus.test.ts test/setupCliGitIdentity.test.ts && npm run typecheck --workspace=@beerengineer/engine`

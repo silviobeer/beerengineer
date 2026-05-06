@@ -12,12 +12,27 @@ import { doctorExitCode, printDoctorReport } from "./doctorOutput.js"
 import { generateSetupReport } from "./doctor.js"
 import { initializeAppState } from "./appState.js"
 import type { AppConfig, SetupOverrides, SetupReport } from "./types.js"
+import { launchSetupExperience, type SetupLaunchResult } from "../cli/ui.js"
+import { readGlobalGitReadiness, validateGitIdentityInput, type GitCommandOptions, type GitIdentityValidationResult } from "./gitIdentity.js"
 
 export type SetupRunOptions = {
   group?: string
   overrides?: SetupOverrides
   allLlmGroups?: boolean
   noInteractive?: boolean
+  deps?: SetupFlowDeps
+}
+
+export type SetupQuestioner = {
+  question(prompt: string): Promise<string>
+  close(): void
+}
+
+export type SetupFlowDeps = {
+  isInteractive?: () => boolean
+  launchSetup?: (config: AppConfig) => Promise<SetupLaunchResult>
+  createQuestioner?: () => SetupQuestioner
+  gitCommandOptions?: GitCommandOptions
 }
 
 export function needsInitialization(report: SetupReport): boolean {
@@ -36,9 +51,21 @@ export async function runSetupFlow(options: SetupRunOptions = {}): Promise<numbe
     report = await refreshSetupReport(options)
   }
 
-  const interactive = !options.noInteractive && Boolean(process.stdin.isTTY && process.stdout.isTTY)
-  if (interactive && (!options.group || options.group === "notifications")) {
-    await maybeConfigureTelegramInteractive(configPath, buildProvisionedConfig(resolved))
+  const interactive = !options.noInteractive && (options.deps?.isInteractive?.() ?? Boolean(process.stdin.isTTY && process.stdout.isTTY))
+  let launch: SetupLaunchResult | undefined
+  const provisionedConfig = interactive ? tryBuildProvisionedConfig(resolved) : null
+  if (interactive && provisionedConfig) {
+    const config = provisionedConfig
+    launch = await launchInteractiveSetup(config, options.deps)
+  }
+
+  if (interactive && provisionedConfig && shouldOfferGitIdentityPrompt(options, launch)) {
+    await maybeConfigureGitIdentityInteractive(configPath, provisionedConfig, options.deps)
+    report = await refreshSetupReport(options)
+  }
+
+  if (interactive && provisionedConfig && options.group === "notifications") {
+    await maybeConfigureTelegramInteractive(configPath, provisionedConfig)
     report = await refreshSetupReport(options)
   }
 
@@ -56,11 +83,54 @@ export async function runSetupFlow(options: SetupRunOptions = {}): Promise<numbe
   return doctorExitCode(report)
 }
 
+async function launchInteractiveSetup(config: AppConfig, deps: SetupFlowDeps | undefined): Promise<SetupLaunchResult> {
+  const launch = await (deps?.launchSetup ?? launchSetupExperience)(config)
+  console.log("")
+  console.log(`  Engine API: ${formatServiceStatus(launch.engine.status)} at ${launch.engine.url}`)
+  if (launch.engine.detail) console.log(`    hint: ${launch.engine.detail}`)
+  console.log(`  Setup UI: ${formatServiceStatus(launch.ui.status)} at ${launch.ui.url}`)
+  if (launch.ui.detail) console.log(`    hint: ${launch.ui.detail}`)
+  if (launch.browser.status === "opened") {
+    console.log(`  Opened setup UI: ${launch.setupUrl}`)
+  } else {
+    console.log(`  Setup UI URL: ${launch.setupUrl}`)
+    if (launch.browser.detail) console.log(`    hint: ${launch.browser.detail}`)
+  }
+  console.log("")
+  return launch
+}
+
+function formatServiceStatus(status: SetupLaunchResult["engine"]["status"]): string {
+  switch (status) {
+    case "running":
+      return "already running"
+    case "started":
+      return "started"
+    case "unavailable":
+      return "unavailable"
+  }
+}
+
+function shouldOfferGitIdentityPrompt(options: SetupRunOptions, launch: SetupLaunchResult | undefined): boolean {
+  if (options.group === "git") return true
+  if (options.group) return false
+  return launch?.browser.status === "printed"
+}
+
 function buildProvisionedConfig(overrides: SetupOverrides = {}): AppConfig {
   const resolved = resolveOverrides(overrides)
   const state = readConfigFile(resolveConfigPath(resolved))
   if (state.kind === "invalid") throw new Error(`config at ${state.path} is invalid: ${state.error}`)
   return resolveMergedConfig(state, resolved) as AppConfig
+}
+
+function tryBuildProvisionedConfig(overrides: SetupOverrides = {}): AppConfig | null {
+  try {
+    return buildProvisionedConfig(overrides)
+  } catch (err) {
+    console.error(`  Setup launch skipped: ${(err as Error).message}`)
+    return null
+  }
 }
 
 function initializeProvisionedState(overrides: SetupOverrides | undefined): { ok: true } | { ok: false } {
@@ -93,6 +163,61 @@ async function promptRetryAction(requiredSatisfied: boolean): Promise<"retry-fai
     return "skip"
   } finally {
     rl.close()
+  }
+}
+
+export async function maybeConfigureGitIdentityInteractive(configPath: string, config: AppConfig, deps: SetupFlowDeps = {}): Promise<AppConfig> {
+  const readiness = readGlobalGitReadiness(config, deps.gitCommandOptions)
+  const questioner = deps.createQuestioner?.() ?? createInterface({ input, output })
+  try {
+    const existing = config.gitIdentityDefault
+    const defaults = {
+      displayName: existing?.displayName ?? readiness.globalIdentity.name ?? "",
+      email: existing?.email ?? readiness.globalIdentity.email ?? "",
+    }
+    console.log("")
+    console.log("  Git identity lets beerengineer_ create local workflow checkpoints.")
+    console.log("  Existing repo-local or global Git identity remains unchanged.")
+    const defaultChoice = existing ? "n" : "y"
+    const configure = (await questioner.question(`  Save beerengineer_ app-level Git identity? [${existing ? "y/N" : "Y/n"}] `)).trim().toLowerCase()
+    if (configure === "n" || configure === "no" || (configure === "" && defaultChoice === "n")) return config
+
+    while (true) {
+      const displayName = (await questioner.question(`  Display name [${defaults.displayName}]: `)).trim() || defaults.displayName
+      const email = (await questioner.question(`  Email [${defaults.email}]: `)).trim() || defaults.email
+      const validation = validateGitIdentityInput({ displayName, email })
+      if (!validation.ok) {
+        printGitIdentityValidation(validation)
+        const again = (await questioner.question("  Try again? [Y/n] ")).trim().toLowerCase()
+        if (again === "n" || again === "no") return config
+        continue
+      }
+
+      const next: AppConfig = {
+        ...config,
+        gitIdentityDefault: {
+          displayName: validation.identity.displayName,
+          email: validation.identity.email,
+          localOnly: validation.identity.localOnly,
+        },
+      }
+      writeConfigFile(configPath, next)
+      const saved = readConfigFile(configPath)
+      if (saved.kind === "ok") {
+        console.log("  Saved beerengineer_ Git identity default.")
+        return saved.config
+      }
+      console.log("  Saved beerengineer_ Git identity default.")
+      return next
+    }
+  } finally {
+    questioner.close()
+  }
+}
+
+function printGitIdentityValidation(validation: Extract<GitIdentityValidationResult, { ok: false }>): void {
+  for (const error of validation.errors) {
+    console.log(`  ${error.field}: ${error.message}`)
   }
 }
 
