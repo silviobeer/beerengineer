@@ -138,6 +138,7 @@ function migrateRunsRecoveryColumns(db: Db): void {
   if (!has("recovery_scope")) db.exec("ALTER TABLE runs ADD COLUMN recovery_scope TEXT")
   if (!has("recovery_scope_ref")) db.exec("ALTER TABLE runs ADD COLUMN recovery_scope_ref TEXT")
   if (!has("recovery_summary")) db.exec("ALTER TABLE runs ADD COLUMN recovery_summary TEXT")
+  if (!has("recovery_payload_json")) db.exec("ALTER TABLE runs ADD COLUMN recovery_payload_json TEXT")
 }
 
 function migrateWorkspacesColumns(db: Db): void {

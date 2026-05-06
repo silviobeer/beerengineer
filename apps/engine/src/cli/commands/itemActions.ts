@@ -10,7 +10,7 @@ import { deriveProjectStartStages, loadPreparedImportBundleWithLlmFallback, seed
 import { resolveWorkflowLlmOptions } from "../../core/runSubscribers.js"
 import { resolveWorkflowContextForItemRun } from "../../core/workflowContextResolver.js"
 import { formatSupabaseReadinessBlockedCliOutput } from "../../core/supabase/preExecutionReadiness.js"
-import { SUPABASE_READINESS_SETUP_ACTIONS, type SupabaseReadinessSetupAction } from "../../core/supabase/types.js"
+import { parseSupabaseReadinessRecoveryPayload } from "../../core/supabase/recoveryPayload.js"
 import type { ItemRow, Repos, WorkspaceRow } from "../../db/repositories.js"
 import { initDatabase } from "../../db/connection.js"
 import type { ResumeFlags } from "../types.js"
@@ -186,11 +186,6 @@ function printWorkflowGitBlocker(blocker: WorkflowStartGitBlockedResult, itemRef
   return 75
 }
 
-function actionsFromSupabaseRecoverySummary(summary: string | null): SupabaseReadinessSetupAction[] {
-  if (!summary?.startsWith("Supabase readiness blocked")) return []
-  return SUPABASE_READINESS_SETUP_ACTIONS.filter(action => summary.includes(action))
-}
-
 function printSupabaseStartBlockerIfAny(
   repos: Repos,
   runId: string,
@@ -198,17 +193,23 @@ function printSupabaseStartBlockerIfAny(
   action: string,
 ): number {
   const run = repos.getRun(runId)
-  if (run?.recovery_status !== "blocked" || !run.recovery_summary?.startsWith("Supabase readiness blocked")) return 0
+  if (run?.recovery_status !== "blocked") return 0
+  const payload = parseSupabaseReadinessRecoveryPayload(run.recovery_payload_json)
+  if (!payload) return 0
   const workspace = repos.getWorkspace(run.workspace_id)
   console.error(formatSupabaseReadinessBlockedCliOutput({
     itemRef,
     action,
     runId,
     readiness: {
+      ...payload,
       status: "blocked",
-      missingSetupActions: actionsFromSupabaseRecoverySummary(run.recovery_summary),
-      retry: { available: true, runId },
-      workspace: { id: workspace?.id, key: workspace?.key },
+      retry: { ...payload.retry, runId: payload.retry.runId ?? runId },
+      workspace: {
+        ...payload.workspace,
+        id: payload.workspace.id ?? workspace?.id,
+        key: payload.workspace.key ?? workspace?.key,
+      },
     },
   }))
   return 75

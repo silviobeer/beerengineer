@@ -17,7 +17,7 @@ describe("WorkspaceSettingsPage", () => {
     expect(screen.getByRole("heading", { name: "Workspace settings" })).toBeInTheDocument();
     expect(screen.getByText("/w/alpha/settings")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Supabase" })).toHaveAttribute("href", "#supabase");
-    expect(screen.getByTestId("workspace-settings-supabase")).toBeInTheDocument();
+    expect(screen.getByTestId("workspace-settings-supabase")).toHaveClass("scroll-mt-24");
     expect(screen.queryByText(/app-global/i)).not.toBeInTheDocument();
   });
 });

@@ -15,6 +15,7 @@ import type {
   SupabaseReadinessWorkspace,
   SupabaseProject,
 } from "./types.js"
+import { buildSupabaseReadinessRecoveryPayload } from "./recoveryPayload.js"
 
 export const SUPABASE_READINESS_BRANCH_POLL_BUDGET_MS = 60_000
 
@@ -26,7 +27,7 @@ export type SupabaseReadinessManagementClient = {
 export type SupabaseReadinessRepos = {
   getRun(id: string): RunRow | undefined
   getWorkspace(id: string): WorkspaceRow | undefined
-  updateRun(id: string, patch: Partial<Pick<RunRow, "status" | "current_stage" | "recovery_status" | "recovery_scope" | "recovery_scope_ref" | "recovery_summary">>): void
+  updateRun(id: string, patch: Partial<Pick<RunRow, "status" | "current_stage" | "recovery_status" | "recovery_scope" | "recovery_scope_ref" | "recovery_summary" | "recovery_payload_json">>): void
 }
 
 export type SupabaseReadinessRequestRefs = {
@@ -277,6 +278,7 @@ export function recordSupabaseReadinessBlockedRun(input: {
     recovery_scope: "run",
     recovery_scope_ref: null,
     recovery_summary: summary,
+    recovery_payload_json: buildSupabaseReadinessRecoveryPayload(input.readiness),
   })
   return input.repos.getRun(input.runId) ?? run
 }

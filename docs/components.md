@@ -71,6 +71,14 @@ PROJ-3 capability work (Sonar, CodeRabbit, GitHub capability CLI) is entirely en
 
 ---
 
+## New Component Candidates From PROJ-6
+
+- `WorkspaceSettingsPage` — **built**; `@/components/settings/WorkspaceSettingsPage`; workspace-scoped Supabase readiness surface reached from `/w/:key/settings#supabase`. It composes the readiness summary with project/token/branch controls and uses a sticky-anchor offset for hash navigation.
+- `SupabaseReadinessSummary` — **built**; `@/components/settings/SupabaseReadinessSummary`; compact readiness state panel for blocked/checking/ready Supabase pre-execution status, retry availability, and missing setup actions.
+- `SupabaseBlockedRunPanel` — **built**; `@/components/SupabaseBlockedRunPanel`; board-card recovery panel for DB-relevant runs blocked by Supabase readiness. Links to workspace Supabase settings and retries when structured recovery metadata says the run is ready.
+
+---
+
 ## New Component Candidates From PROJ-4
 
 - `BranchLifecycleStepper` — PRD-5 + PRD-9; horizontal step indicator for branch states (creating → ready → in-use → retained → destroying); `MiniStepper` and `SetupProgressStepper` are both wrong shapes — no existing stepper maps cleanly.

@@ -124,7 +124,7 @@ export function BoardCard({ card, workspaceKey, onOpen }: Readonly<BoardCardProp
         {card.phase_status ? (
           <span
             data-testid="board-card-status-chip"
-            className="inline-flex items-center px-1.5 py-0.5 mt-2 text-[10px] uppercase tracking-wider border border-zinc-700 bg-zinc-800 text-zinc-300"
+            className="inline-flex items-center px-1.5 py-0.5 mt-2 text-xs uppercase tracking-wider border border-zinc-700 bg-zinc-800 text-zinc-300"
           >
             {card.phase_status}
           </span>
@@ -132,7 +132,7 @@ export function BoardCard({ card, workspaceKey, onOpen }: Readonly<BoardCardProp
         {card.supabaseBlocker ? (
           <span
             data-testid="board-card-supabase-blocked-chip"
-            className="inline-flex items-center gap-1 px-1.5 py-0.5 mt-2 text-[10px] uppercase tracking-wider border border-amber-600 bg-amber-950/30 text-amber-200"
+            className="inline-flex items-center gap-1 px-1.5 py-0.5 mt-2 text-xs uppercase tracking-wider border border-amber-600 bg-amber-950/30 text-amber-200"
           >
             <span aria-hidden="true" className="font-mono tracking-normal">DB</span>
             Supabase blocked

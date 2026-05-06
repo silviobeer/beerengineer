@@ -36,6 +36,13 @@ test("PROJ-6 PRD-4: board DTO projects Supabase readiness blocker metadata", () 
       recovery_status: "blocked",
       recovery_scope: "run",
       recovery_summary: "Supabase readiness blocked planned DB-relevant work. Missing setup actions: Rotate management token, Re-authorize project access.",
+      recovery_payload_json: JSON.stringify({
+        type: "supabase_readiness",
+        status: "blocked",
+        missingSetupActions: ["Rotate management token", "Re-authorize project access"],
+        retry: { available: true, runId: run.id },
+        workspace: { id: workspace.id, key: "alpha" },
+      }),
     })
 
     const card = getBoard(db, "alpha").columns.flatMap(col => col.cards).find(candidate => candidate.itemId === item.id)
@@ -44,6 +51,28 @@ test("PROJ-6 PRD-4: board DTO projects Supabase readiness blocker metadata", () 
     assert.equal(card.supabaseBlocker.workspace.key, "alpha")
     assert.equal(card.supabaseBlocker.runId, run.id)
     assert.deepEqual(card.supabaseBlocker.missingSetupActions, ["Rotate management token", "Re-authorize project access"])
+  } finally {
+    db.close()
+  }
+})
+
+test("PROJ-6 QA: board ignores Supabase action labels when recovery payload is missing", () => {
+  const dbPath = tmpDbPath()
+  const db = initDatabase(dbPath)
+  const repos = new Repos(db)
+  try {
+    const workspace = repos.upsertWorkspace({ key: "alpha", name: "Alpha", rootPath: mkdtempSync(join(tmpdir(), "be2-board-supabase-")) })
+    const item = repos.createItem({ workspaceId: workspace.id, title: "Legacy blocked DB item", description: "db" })
+    const run = repos.createRun({ workspaceId: workspace.id, itemId: item.id, title: item.title })
+    repos.updateRun(run.id, {
+      status: "blocked",
+      recovery_status: "blocked",
+      recovery_scope: "run",
+      recovery_summary: "Supabase readiness blocked planned DB-relevant work. Missing setup actions: Rotate management token, Re-authorize project access.",
+    })
+
+    const card = getBoard(db, "alpha").columns.flatMap(col => col.cards).find(candidate => candidate.itemId === item.id)
+    assert.equal(card?.supabaseBlocker, undefined)
   } finally {
     db.close()
   }

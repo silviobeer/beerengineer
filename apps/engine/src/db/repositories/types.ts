@@ -62,6 +62,7 @@ export type RunRow = {
   recovery_scope: "run" | "stage" | "story" | null
   recovery_scope_ref: string | null
   recovery_summary: string | null
+  recovery_payload_json: string | null
   workspace_fs_id: string | null
   supabase_branch_ref: string | null
   supabase_branch_name: string | null

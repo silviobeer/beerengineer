@@ -437,6 +437,7 @@ export class Repos {
       recovery_scope: null,
       recovery_scope_ref: null,
       recovery_summary: null,
+      recovery_payload_json: null,
       workspace_fs_id: input.workspaceFsId ?? null,
       supabase_branch_ref: null,
       supabase_branch_name: null,
@@ -485,7 +486,7 @@ export class Repos {
 
   updateRun(
     id: string,
-    patch: Partial<Pick<RunRow, "status" | "current_stage" | "recovery_status" | "recovery_scope" | "recovery_scope_ref" | "recovery_summary">>
+    patch: Partial<Pick<RunRow, "status" | "current_stage" | "recovery_status" | "recovery_scope" | "recovery_scope_ref" | "recovery_summary" | "recovery_payload_json">>
   ): void {
     const existing = this.getRun(id)
     if (!existing) return
@@ -493,7 +494,7 @@ export class Repos {
     this.db
       .prepare(
         `UPDATE runs
-         SET status = ?, current_stage = ?, recovery_status = ?, recovery_scope = ?, recovery_scope_ref = ?, recovery_summary = ?, updated_at = ?
+         SET status = ?, current_stage = ?, recovery_status = ?, recovery_scope = ?, recovery_scope_ref = ?, recovery_summary = ?, recovery_payload_json = ?, updated_at = ?
          WHERE id = ?`
       )
       .run(
@@ -503,6 +504,7 @@ export class Repos {
         next.recovery_scope,
         next.recovery_scope_ref,
         next.recovery_summary,
+        next.recovery_payload_json,
         next.updated_at,
         id
       )
@@ -514,23 +516,24 @@ export class Repos {
    */
   setRunRecovery(
     id: string,
-    patch: { status: RunRow["recovery_status"]; scope: RunRow["recovery_scope"]; scopeRef: string | null; summary: string | null }
+    patch: { status: RunRow["recovery_status"]; scope: RunRow["recovery_scope"]; scopeRef: string | null; summary: string | null; payloadJson?: string | null }
   ): void {
     this.run(
       `UPDATE runs
-       SET recovery_status = ?, recovery_scope = ?, recovery_scope_ref = ?, recovery_summary = ?, updated_at = ?
+       SET recovery_status = ?, recovery_scope = ?, recovery_scope_ref = ?, recovery_summary = ?, recovery_payload_json = ?, updated_at = ?
        WHERE id = ?`,
       patch.status,
       patch.scope,
       patch.scopeRef,
       patch.summary,
+      patch.payloadJson ?? null,
       now(),
       id
     )
   }
 
   clearRunRecovery(id: string): void {
-    this.setRunRecovery(id, { status: null, scope: null, scopeRef: null, summary: null })
+    this.setRunRecovery(id, { status: null, scope: null, scopeRef: null, summary: null, payloadJson: null })
   }
 
   createExternalRemediation(input: {

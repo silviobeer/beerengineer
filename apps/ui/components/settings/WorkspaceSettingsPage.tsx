@@ -113,7 +113,7 @@ export function WorkspaceSettingsPage({
           </nav>
         </aside>
         <div className="space-y-6">
-          <section id="supabase" className="space-y-4" data-testid="workspace-settings-supabase">
+          <section id="supabase" className="scroll-mt-24 space-y-4" data-testid="workspace-settings-supabase">
             <div>
               <h2 className="font-display text-xl">Supabase</h2>
               <p className="text-sm text-zinc-400">Workspace-scoped project access and persistent test branch readiness.</p>

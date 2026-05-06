@@ -9,6 +9,7 @@ import {
   formatSupabaseReadinessBlockedCliOutput,
   recordSupabaseReadinessBlockedRun,
 } from "../src/core/supabase/preExecutionReadiness.js"
+import { parseSupabaseReadinessRecoveryPayload } from "../src/core/supabase/recoveryPayload.js"
 import { initDatabase } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
 import type { ImplementationPlanArtifact, WaveDefinition } from "../src/types.js"
@@ -122,6 +123,9 @@ test("PROJ-6 PRD-1 US-4: readiness blocker marks the same run blocked and retry 
     assert.equal(first.id, ctx.run.id)
     assert.equal(ctx.repos.getRun(ctx.run.id)?.status, "blocked")
     assert.equal(ctx.repos.getRun(ctx.run.id)?.recovery_status, "blocked")
+    const firstPayload = parseSupabaseReadinessRecoveryPayload(ctx.repos.getRun(ctx.run.id)?.recovery_payload_json)
+    assert.deepEqual(firstPayload?.missingSetupActions, ["Store management token", "Connect Supabase project"])
+    assert.equal(firstPayload?.dbRelevanceTrigger?.storyId, "US-2")
     assert.equal(ctx.repos.listRuns().length, 1)
 
     recordSupabaseReadinessBlockedRun({
@@ -138,6 +142,8 @@ test("PROJ-6 PRD-1 US-4: readiness blocker marks the same run blocked and retry 
     const updated = ctx.repos.getRun(ctx.run.id)
     assert.equal(updated?.id, ctx.run.id)
     assert.match(updated?.recovery_summary ?? "", /Create persistent test branch/)
+    const updatedPayload = parseSupabaseReadinessRecoveryPayload(updated?.recovery_payload_json)
+    assert.deepEqual(updatedPayload?.missingSetupActions, ["Create persistent test branch"])
     assert.equal(ctx.repos.listRuns().length, 1)
   } finally {
     ctx.db.close()

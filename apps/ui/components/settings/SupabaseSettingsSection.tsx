@@ -106,7 +106,7 @@ export function SupabaseSettingsSection({ supabase }: Readonly<{ supabase: Supab
   }
 
   return (
-    <section id="supabase" className="space-y-4" data-testid="settings-supabase">
+    <section id="supabase" className="scroll-mt-24 space-y-4" data-testid="settings-supabase">
       <div>
         <h2 className="font-display text-xl">Supabase</h2>
         <p className="text-sm text-zinc-400">Cloud Branching connection and branch database controls.</p>

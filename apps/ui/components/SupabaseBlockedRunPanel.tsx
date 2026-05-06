@@ -62,7 +62,7 @@ export function SupabaseBlockedRunPanel({
           data-testid="supabase-blocked-chip"
           className="inline-flex items-center gap-1 border border-amber-600 bg-zinc-950 px-2 py-0.5 text-xs font-medium text-amber-200"
         >
-          <span aria-hidden="true" className="font-mono text-[10px]">DB</span>
+          <span aria-hidden="true" className="font-mono text-xs">DB</span>
           Supabase blocked
         </span>
         {workspaceKey ? <span className="font-mono text-xs text-amber-200">workspace {workspaceKey}</span> : null}
@@ -70,7 +70,7 @@ export function SupabaseBlockedRunPanel({
       <p className="text-xs text-amber-100/90">{fallbackMessage(blockerState)}</p>
       {blockerState.missingSetupActions.length > 0 ? (
         <div>
-          <p className="text-[11px] uppercase text-amber-200/70">Missing setup actions</p>
+          <p className="text-xs uppercase text-amber-200/70">Missing setup actions</p>
           <ul className="mt-1 space-y-1 break-words">
             {blockerState.missingSetupActions.map(action => <li key={action}>- {action}</li>)}
           </ul>

@@ -1,4 +1,4 @@
-import { proxyEngineGet, proxyEngineMutation } from "@/lib/engine/proxy";
+import { proxyEngineGet, proxyEngineMutation, readProxyMutationBody } from "@/lib/engine/proxy";
 
 export async function GET(
   request: Request,
@@ -14,15 +14,12 @@ export async function POST(
   context: { params: Promise<{ id: string }> }
 ): Promise<Response> {
   const { id } = await context.params;
-  let body: unknown = {};
-  try {
-    body = await request.json();
-  } catch {
-    body = {};
-  }
+  const payload = await readProxyMutationBody(request);
+  if (!payload.ok) return payload.response;
+  const body = payload.body ?? {};
   const normalized =
     body && typeof body === "object" && typeof (body as { message?: unknown }).message === "string"
       ? { text: (body as { message: string }).message }
       : body;
-  return proxyEngineMutation(`/runs/${encodeURIComponent(id)}/messages`, normalized);
+  return proxyEngineMutation(request, `/runs/${encodeURIComponent(id)}/messages`, normalized);
 }

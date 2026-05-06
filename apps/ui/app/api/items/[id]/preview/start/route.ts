@@ -5,14 +5,5 @@ export async function POST(
   context: { params: Promise<{ id: string }> }
 ): Promise<Response> {
   const { id } = await context.params;
-  let body: unknown = {};
-  try {
-    body = await request.json();
-  } catch {
-    body = {};
-  }
-  return proxyEngineMutation(
-    `/items/${encodeURIComponent(id)}/preview/start`,
-    body
-  );
+  return proxyEngineMutation(request, `/items/${encodeURIComponent(id)}/preview/start`);
 }

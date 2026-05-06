@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS runs (
   recovery_scope TEXT,
   recovery_scope_ref TEXT,
   recovery_summary TEXT,
+  recovery_payload_json TEXT,
   workspace_fs_id TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
