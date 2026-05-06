@@ -53,6 +53,7 @@ Status: in progress
 - GREEN: `npm run test:file --workspace=@beerengineer/engine -- test/workerLease.test.ts` passed 5 tests.
 - Related regression: `npm run test:file --workspace=@beerengineer/engine -- test/reposOwnerAndIds.test.ts` passed 5 tests.
 - Typecheck: `npm run typecheck` passed.
+- Wave gate attempt 1: AC checks and build passed; CodeRabbit step failed before review because `wave-1-start-PROJ-7` was missing. Recreated the tag at `BASE_SHA`.
 
 ### Ralph Iteration 1
 - Command: `npm run test:file --workspace=@beerengineer/engine -- test/workerLease.test.ts`
@@ -100,3 +101,9 @@ Status: in progress
 
 ## Open Blockers
 - None.
+
+### Wave 1 Gate — PASSED (2026-05-06T16:47:50+02:00)
+- [x] Ralph: 5 AC commands green
+- [x] Build: `npm run typecheck`
+- [x] CodeRabbit: 0 non-advisory findings (advisory severities: medium,low)
+- [x] Smoke: backend-only
