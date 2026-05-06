@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PROJ-5 Mockup - Setup Git Readiness</title>
+  <style>
+    :root {
+      --bg: #0b1517;
+      --panel: #122024;
+      --panel-2: #0f1b1f;
+      --border: #1a2f33;
+      --border-strong: #2a4348;
+      --text: #f0ebe0;
+      --text-strong: #faf8f3;
+      --muted: #8fa0a4;
+      --gold: #d4a843;
+      --gold-dark: #3a2c0e;
+      --petrol: #2c95a4;
+      --petrol-dark: #062c32;
+      --red: #ef4444;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+    a { color: inherit; }
+    button, input, select { font: inherit; }
+    .mock-banner { border-bottom: 1px solid var(--border); background: #081113; padding: 10px 14px; color: var(--muted); font: 12px ui-monospace, monospace; }
+    .mock-banner a { color: var(--gold); }
+    .topbar { position: sticky; top: 0; z-index: 2; display: flex; justify-content: space-between; align-items: center; gap: 12px; border-bottom: 1px solid var(--border); background: rgba(11,21,23,.94); padding: 9px 12px; }
+    .top-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .workspace { border: 1px solid var(--border-strong); background: var(--panel); padding: 7px 10px; font-size: 13px; }
+    .nav { display: flex; gap: 10px; color: var(--muted); font-size: 12px; }
+    .brand { color: var(--muted); font: 11px ui-monospace, monospace; letter-spacing: .16em; }
+    .page { max-width: 1040px; margin: 0 auto; padding: 24px 16px 44px; }
+    .eyebrow { color: var(--muted); font: 11px ui-monospace, monospace; letter-spacing: .12em; text-transform: uppercase; }
+    h1, h2, h3 { color: var(--text-strong); margin: 0; line-height: 1.15; }
+    h1 { font-size: 30px; margin-top: 6px; }
+    h2 { font-size: 22px; }
+    h3 { font-size: 15px; }
+    p { color: var(--muted); line-height: 1.5; margin: 8px 0 0; }
+    .stepper { display: grid; gap: 8px; grid-template-columns: repeat(5, minmax(0, 1fr)); margin: 22px 0; }
+    .step { border: 1px solid var(--border); background: var(--panel); padding: 10px; min-width: 0; }
+    .step.active { border-color: var(--gold); }
+    .step span { display: block; }
+    .step .num { color: var(--muted); font: 11px ui-monospace, monospace; }
+    .step .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; margin-top: 4px; }
+    .step .state { color: var(--muted); font: 10px ui-monospace, monospace; text-transform: uppercase; margin-top: 6px; }
+    .gate { border: 1px solid var(--border-strong); background: var(--panel); padding: 20px; }
+    .gate-head { display: flex; justify-content: space-between; gap: 14px; align-items: flex-start; }
+    .chip { display: inline-flex; border: 1px solid var(--border-strong); background: #1a2f33; color: var(--text); padding: 3px 7px; font-size: 12px; white-space: nowrap; }
+    .chip.warn { border-color: var(--gold); background: var(--gold-dark); color: var(--gold); }
+    .chip.ok { border-color: var(--petrol); background: var(--petrol-dark); color: #9fd8e0; }
+    .grid { display: grid; gap: 14px; grid-template-columns: 1.15fr .85fr; margin-top: 18px; }
+    .panel { border: 1px solid var(--border); background: var(--panel-2); padding: 14px; }
+    .source-list { display: grid; gap: 8px; margin-top: 12px; }
+    .source { display: flex; justify-content: space-between; gap: 10px; border: 1px solid var(--border); padding: 10px; }
+    .source b { font-size: 13px; }
+    .source small { display: block; color: var(--muted); margin-top: 3px; }
+    .form { display: grid; gap: 10px; margin-top: 12px; }
+    label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }
+    input { border: 1px solid var(--border-strong); background: var(--bg); color: var(--text); padding: 9px; min-width: 0; }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+    .btn { border: 1px solid var(--border-strong); background: transparent; color: var(--text); padding: 9px 11px; cursor: pointer; }
+    .btn.primary { border-color: var(--gold); background: var(--gold); color: #0b1517; font-weight: 700; }
+    .btn.ok { border-color: var(--petrol); color: #9fd8e0; }
+    .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+    .tabs .btn[data-active="true"] { border-color: var(--gold); color: var(--gold); }
+    .state { display: none; margin-top: 12px; border: 1px dashed var(--border-strong); padding: 14px; }
+    .state[data-visible="true"] { display: block; }
+    .state-title { color: var(--gold); font: 11px ui-monospace, monospace; text-transform: uppercase; margin-bottom: 8px; }
+    .loading { height: 11px; background: linear-gradient(90deg, #1a2f33, #2a4348, #1a2f33); margin: 8px 0; }
+    .source-ref { margin-top: 12px; color: var(--muted); font: 11px ui-monospace, monospace; }
+    @media (max-width: 780px) {
+      .stepper, .grid { grid-template-columns: 1fr; }
+      .brand { display: none; }
+      .gate-head { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <div class="mock-banner">PROJ-5 mockup / Setup Git readiness / <a href="sitemap.html">Back to sitemap</a></div>
+  <header class="topbar">
+    <div class="top-left">
+      <div class="workspace">[Reuse: WorkspaceSwitcher] demo-workspace</div>
+      <nav class="nav" aria-label="App navigation"><a href="#">Setup</a><a href="#">Settings</a></nav>
+    </div>
+    <div class="brand">beerengineer_</div>
+  </header>
+  <main class="page">
+    <div class="eyebrow">/setup</div>
+    <h1>Setup wizard</h1>
+
+    <section class="stepper" aria-label="Setup progress">
+      <div class="step"><span class="num">01</span><span class="name">Core</span><span class="state">done</span></div>
+      <div class="step"><span class="num">02</span><span class="name">LLM</span><span class="state">done</span></div>
+      <div class="step active"><span class="num">03</span><span class="name">Git</span><span class="state">blocked</span></div>
+      <div class="step"><span class="num">04</span><span class="name">Optional services</span><span class="state">locked</span></div>
+      <div class="step"><span class="num">05</span><span class="name">Finish</span><span class="state">locked</span></div>
+    </section>
+
+    <section class="gate">
+      <div class="gate-head">
+        <div>
+          <div class="eyebrow">required gate</div>
+          <h2>[Reuse: SetupGateBox] Git readiness</h2>
+          <p>beerengineer_ uses local Git commits as checkpoints. Nothing is pushed unless a future publishing flow explicitly does that.</p>
+        </div>
+        <span class="chip warn">blocked</span>
+      </div>
+
+      <div class="grid">
+        <article class="panel">
+          <h3>[New candidate: GitIdentityPanel] Identity source</h3>
+          <div class="source-list">
+            <div class="source">
+              <div><b>Repo-local identity</b><small>Not configured for this workspace</small></div>
+              <span class="chip warn">missing</span>
+            </div>
+            <div class="source">
+              <div><b>Global Git identity</b><small>Not configured on this machine</small></div>
+              <span class="chip warn">missing</span>
+            </div>
+            <div class="source">
+              <div><b>beerengineer_ default</b><small>Available for managed workspaces only</small></div>
+              <span class="chip ok">ready</span>
+            </div>
+          </div>
+          <div class="actions">
+            <button class="btn primary" type="button">Apply default to workspace</button>
+            <button class="btn" type="button">Edit default identity</button>
+            <button class="btn ok" type="button">Re-check</button>
+          </div>
+          <div class="source-ref">Source: Concept / Identity Resolution Order + Setup UI Flow</div>
+        </article>
+
+        <aside class="panel">
+          <h3>[New candidate: GitIdentityForm] App-level default</h3>
+          <div class="form">
+            <label>Display name<input value="Silvio Beer"></label>
+            <label>Email<input value="silvio@users.noreply.github.com"></label>
+          </div>
+          <p>Saved in beerengineer_ config, not global Git config.</p>
+          <div class="actions">
+            <button class="btn primary" type="button">Save default</button>
+          </div>
+          <div class="source-ref">Source: Concept / App-Level Identity Config</div>
+        </aside>
+      </div>
+
+      <div class="tabs" role="tablist" aria-label="State variants">
+        <button class="btn" data-target="normal" data-active="true" type="button">Normal</button>
+        <button class="btn" data-target="empty" type="button">Empty</button>
+        <button class="btn" data-target="loading" type="button">Loading</button>
+        <button class="btn" data-target="error" type="button">Error</button>
+      </div>
+
+      <section id="normal" class="state" data-visible="true">
+        <div class="state-title">[Normal State]</div>
+        <p>Git is installed. Identity is missing for this workspace, but the app-level default can be applied after confirmation.</p>
+      </section>
+      <section id="empty" class="state">
+        <div class="state-title">[Empty State]</div>
+        <p>No workspace is selected yet. Show global setup readiness: Git installation, global identity, and app-level default identity only.</p>
+      </section>
+      <section id="loading" class="state">
+        <div class="state-title">[Loading State]</div>
+        <div class="loading"></div>
+        <div class="loading"></div>
+        <p>Rechecking Git readiness from the engine.</p>
+      </section>
+      <section id="error" class="state">
+        <div class="state-title">[Error State]</div>
+        <p>Git is not available. Render a not-configured stub with install guidance and hide the identity form until Git is installed.</p>
+      </section>
+    </section>
+  </main>
+  <script>
+    document.querySelectorAll('[data-target]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        document.querySelectorAll('[data-target]').forEach(function (b) { b.dataset.active = 'false'; });
+        document.querySelectorAll('.state').forEach(function (s) { s.dataset.visible = 'false'; });
+        button.dataset.active = 'true';
+        document.getElementById(button.dataset.target).dataset.visible = 'true';
+      });
+    });
+  </script>
+</body>
+</html>
+
