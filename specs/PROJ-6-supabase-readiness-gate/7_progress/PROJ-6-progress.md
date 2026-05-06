@@ -527,3 +527,14 @@
 - Build: PASS (`npm run typecheck`)
 - CodeRabbit: FAIL — 3 `major` findings: board DTO hard-coded retry readiness false, OpenAPI omitted required retry booleans, and the blocker panel did not resync when a new blocker prop arrived.
 - Fix: derive retry readiness from the missing action list, require `retry.available`/`retry.ready` in OpenAPI, and resync panel state on blocker changes.
+
+### Wave 5 Gate Attempt 3 — FAILED
+- Ralph: PASS (5 AC commands green)
+- Build: PASS (`npm run typecheck`)
+- CodeRabbit: ERROR — recoverable rate limit; requested wait window was 4 minutes 24 seconds.
+
+### Wave 5 Gate — PASSED (2026-05-06T18:34:32+02:00)
+- [x] Ralph: 5 AC commands green
+- [x] Build: `npm run typecheck`
+- [x] CodeRabbit: 0 non-advisory findings (advisory severities: minor,medium,low)
+- [x] Smoke: /w/alpha
