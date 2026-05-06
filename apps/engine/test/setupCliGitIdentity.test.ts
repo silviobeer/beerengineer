@@ -62,6 +62,7 @@ exit 1`)
     writeConfigFile(paths.configPath, config)
 
     await maybeConfigureGitIdentityInteractive(paths.configPath, config, {
+      gitCommandOptions: { gitBin },
       createQuestioner: () => fakeQuestioner(["", "CLI Person", "cli@local.beerengineer"]),
     })
 
@@ -162,8 +163,8 @@ exit 1`)
     assert.equal(prompts.some(prompt => prompt.includes("[Global Person]")), true)
     assert.equal(prompts.some(prompt => prompt.includes("[global@example.test]")), true)
     const gitLog = readFileSync(paths.gitLogPath, "utf8")
-    assert.doesNotMatch(gitLog, /config --global user\.name/)
-    assert.doesNotMatch(gitLog, /config --global user\.email/)
+    assert.doesNotMatch(gitLog, /config --global (?!--get).*user\.name/)
+    assert.doesNotMatch(gitLog, /config --global (?!--get).*user\.email/)
   } finally {
     rmSync(paths.dir, { recursive: true, force: true })
   }

@@ -179,7 +179,7 @@
 - Tag: `wave-2-start-PROJ-5`
 - Started from: `ac21c2b7de8331f440cb584ff29205323af8812e`
 
-## PROJ-5-PRD-2-US-1: Als nontechnical User moechte ich mit `beerengineer setup` direkt in die Setup-UI gelangen um ohne Terminalwissen starten zu koennen — in progress
+## PROJ-5-PRD-2-US-1: Als nontechnical User moechte ich mit `beerengineer setup` direkt in die Setup-UI gelangen um ohne Terminalwissen starten zu koennen — complete
 
 ### Tasks
 | Task | Tests Written | Tests Passing | Done |
@@ -199,7 +199,7 @@
 - Iterations: 1
 - AC-1..AC-5 pass 1: PASS — `npm run test:file --workspace=@beerengineer/engine -- test/setupInteractiveEntry.test.ts test/nonInteractivePrompt.test.ts test/setupStatus.test.ts test/setupCliGitIdentity.test.ts && npm run typecheck --workspace=@beerengineer/engine`
 
-## PROJ-5-PRD-2-US-2: Als Developer in SSH, CI oder Container moechte ich Setup ohne Browser-Fehler nutzen um die echte Setup-URL manuell oeffnen zu koennen — pending
+## PROJ-5-PRD-2-US-2: Als Developer in SSH, CI oder Container moechte ich Setup ohne Browser-Fehler nutzen um die echte Setup-URL manuell oeffnen zu koennen — complete
 
 ### Tasks
 | Task | Tests Written | Tests Passing | Done |
@@ -218,7 +218,7 @@
 - Iterations: 1
 - AC-6..AC-9 pass 1: PASS — `npm run test:file --workspace=@beerengineer/engine -- test/setupInteractiveEntry.test.ts test/nonInteractivePrompt.test.ts test/setupStatus.test.ts test/setupCliGitIdentity.test.ts && npm run typecheck --workspace=@beerengineer/engine`
 
-## PROJ-5-PRD-2-US-3: Als Automation oder Install-Validator moechte ich `setup --no-interactive` ohne UI-Start verwenden um reproduzierbare Checks zu erhalten — pending
+## PROJ-5-PRD-2-US-3: Als Automation oder Install-Validator moechte ich `setup --no-interactive` ohne UI-Start verwenden um reproduzierbare Checks zu erhalten — complete
 
 ### Tasks
 | Task | Tests Written | Tests Passing | Done |
@@ -237,7 +237,7 @@
 - Iterations: 1
 - AC-10..AC-13 pass 1: PASS — `npm run test:file --workspace=@beerengineer/engine -- test/setupInteractiveEntry.test.ts test/nonInteractivePrompt.test.ts test/setupStatus.test.ts test/setupCliGitIdentity.test.ts && npm run typecheck --workspace=@beerengineer/engine`
 
-## PROJ-5-PRD-2-US-4: Als CLI User moechte ich App-Level-Git-Identitaet im Terminal speichern koennen um den Engine-first Setup-Pfad vollstaendig zu nutzen — pending
+## PROJ-5-PRD-2-US-4: Als CLI User moechte ich App-Level-Git-Identitaet im Terminal speichern koennen um den Engine-first Setup-Pfad vollstaendig zu nutzen — complete
 
 ### Tasks
 | Task | Tests Written | Tests Passing | Done |
