@@ -17,6 +17,7 @@
 - [ ] AC-4: CLI output provides one primary next command: run the existing setup flow.
 - [ ] AC-5: CLI blocked-run output stays concise and does not include the full manual Supabase tutorial every time.
 - [ ] AC-6: `Retry run` is shown only as a separate blocked-run affordance or instruction when run context exists, not as a missing setup action.
+- [ ] AC-7: At least one non-test production CLI entrypoint invokes the engine readiness model for DB-relevant blocked runs before PRD-2 can be accepted.
 
 ### US-2: Als CLI Operator moechte ich im Setup erfahren was ich manuell in Supabase erledigen muss um Projektregion und Provider-Optionen selbst zu waehlen
 **Given** the operator enters CLI setup for a workspace with missing Supabase readiness  
@@ -25,11 +26,11 @@
 **And** it provides concise guidance for creating/selecting a project, enabling branching, copying the project ref, and creating a Management API token
 
 **Acceptance Criteria:**
-- [ ] AC-7: CLI setup explicitly says the user must create or select the Supabase Cloud project manually.
-- [ ] AC-8: CLI setup guidance mentions choosing region/location and provider-side project settings in Supabase.
-- [ ] AC-9: CLI setup guidance mentions enabling/checking Supabase branching support for the project or plan.
-- [ ] AC-10: CLI setup guidance tells the user to copy the project ref and create a Management API token with project access.
-- [ ] AC-11: CLI setup can include useful Supabase links or references without making external browsing mandatory for automated tests.
+- [ ] AC-8: CLI setup explicitly says the user must create or select the Supabase Cloud project manually.
+- [ ] AC-9: CLI setup guidance mentions choosing region/location and provider-side project settings in Supabase.
+- [ ] AC-10: CLI setup guidance mentions enabling/checking Supabase branching support for the project or plan.
+- [ ] AC-11: CLI setup guidance tells the user to copy the project ref and create a Management API token with project access.
+- [ ] AC-12: CLI setup can include useful Supabase links or references without making external browsing mandatory for automated tests.
 
 ### US-3: Als CLI Operator moechte ich Project Ref und Management Token im Setup eingeben um die Workspace-Verbindung zu validieren
 **Given** the operator has a Supabase project ref and Management API token  
@@ -38,12 +39,12 @@
 **And** stores the project ref on the selected workspace after validation
 
 **Acceptance Criteria:**
-- [ ] AC-12: CLI setup writes `supabase.management_token` only through dedicated Supabase connect/rotate logic, not the generic secret mutation handler.
-- [ ] AC-13: The privileged Supabase token ref remains deny-listed from generic `/setup/secrets/<ref>` style mutation.
-- [ ] AC-14: CLI setup validates that the token can access the entered project ref before marking the workspace connected.
-- [ ] AC-15: The project ref is stored on the selected workspace, not globally and not on a current-workspace guess.
-- [ ] AC-16: If validation fails, the previous active token/project metadata remains safe and the redacted provider message is shown before generic fallback copy.
-- [ ] AC-17: CLI setup maps invalid/revoked/HTTP 401 token failures to `Rotate management token` and HTTP 403 permission-denied failures to `Re-authorize project access`.
+- [ ] AC-13: CLI setup writes `supabase.management_token` only through dedicated Supabase connect/rotate logic, not the generic secret mutation handler.
+- [ ] AC-14: The privileged Supabase token ref remains deny-listed from generic `/setup/secrets/<ref>` style mutation.
+- [ ] AC-15: CLI setup validates that the token can access the entered project ref before marking the workspace connected.
+- [ ] AC-16: The project ref is stored on the selected workspace, not globally and not on a current-workspace guess.
+- [ ] AC-17: If validation fails, the previous active token/project metadata remains safe and the redacted provider message is shown before generic fallback copy.
+- [ ] AC-18: CLI setup maps invalid/revoked/HTTP 401 token failures to `Rotate management token` and HTTP 403 permission-denied failures to `Re-authorize project access`.
 
 ### US-4: Als CLI Operator moechte ich eine persistent test branch erstellen oder anhaengen um DB-relevante Runs starten zu koennen
 **Given** the workspace has a validated Supabase project connection  
@@ -52,11 +53,11 @@
 **And** shows progress until it is ready or needs recheck
 
 **Acceptance Criteria:**
-- [ ] AC-18: CLI setup offers create or attach behavior for the persistent test branch after token/project validation.
-- [ ] AC-19: CLI setup does not create new Supabase projects.
-- [ ] AC-20: CLI setup shows `checking` or equivalent progress while branch health is polling interactively.
-- [ ] AC-21: CLI setup treats `ACTIVE_HEALTHY` as ready and stores the persistent branch ref/status on the workspace.
-- [ ] AC-22: If the interactive branch poll times out or provider state remains transient, CLI setup tells the user to recheck rather than marking execution-ready.
+- [ ] AC-19: CLI setup offers create or attach behavior for the persistent test branch after token/project validation.
+- [ ] AC-20: CLI setup does not create new Supabase projects.
+- [ ] AC-21: CLI setup shows `checking` or equivalent progress while branch health is polling interactively.
+- [ ] AC-22: CLI setup treats `ACTIVE_HEALTHY` as ready and stores the persistent branch ref/status on the workspace.
+- [ ] AC-23: If the interactive branch poll times out or provider state remains transient, CLI setup tells the user to recheck rather than marking execution-ready.
 
 ### US-5: Als CLI Operator moechte ich nach Setup denselben Run erneut pruefen um Execution ohne neue Artefakte fortzusetzen
 **Given** a Supabase-readiness-blocked run exists  
@@ -65,10 +66,10 @@
 **And** retry reuses the existing blocked run readiness flow
 
 **Acceptance Criteria:**
-- [ ] AC-23: CLI setup completion displays a clear retry instruction for the blocked run when run context is available.
-- [ ] AC-24: Retrying after setup reuses the existing blocked `runId` semantics from PRD-1.
-- [ ] AC-25: If readiness is still incomplete on retry, CLI output shows the updated missing setup action list.
-- [ ] AC-26: CLI setup can also be run outside a blocked-run context to prepare a workspace ahead of time.
+- [ ] AC-24: CLI setup completion displays a clear retry instruction for the blocked run when run context is available.
+- [ ] AC-25: Retrying after setup reuses the existing blocked `runId` semantics from PRD-1.
+- [ ] AC-26: If readiness is still incomplete on retry, CLI output shows the updated missing setup action list.
+- [ ] AC-27: CLI setup can also be run outside a blocked-run context to prepare a workspace ahead of time.
 
 ## Edge Cases
 

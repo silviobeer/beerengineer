@@ -41,7 +41,9 @@ rather than calling the engine directly.
 
 Exact route naming belongs to wave planning and the OpenAPI update, but PROJ-6
 needs one coherent capability family so the CLI, setup page, workspace
-settings, and board do not drift:
+settings, and board do not drift. Wave planning must reconcile each capability
+against the current OpenAPI contract and explicitly mark whether it reuses an
+existing route family or requires a new/changed route.
 
 | Capability | Consumers | Purpose |
 |---|---|---|
@@ -51,8 +53,8 @@ settings, and board do not drift:
 | Block DB-relevant execution before side effects | workflow runtime, CLI item actions, board UI | Stop a DB-relevant run before execution workers or per-wave branch provisioning and store a recoverable blocked state. |
 | Retry a blocked Supabase-readiness run | CLI, workspace settings, board blocker | Re-enter the same blocked run at the readiness point after setup has changed. |
 
-All capabilities share one missing setup action vocabulary. `Retry run` is a
-separate run affordance, not a missing setup action.
+All capabilities share one missing setup action vocabulary defined in Decision
+7.
 
 ## Data Model
 
@@ -172,9 +174,13 @@ Affected PRDs: PROJ-6-PRD-1, PROJ-6-PRD-2, PROJ-6-PRD-3, PROJ-6-PRD-4.
 Execution readiness performs a live persistent-branch health check with a named
 budget and only treats `ACTIVE_HEALTHY` as execution-ready. Setup and settings
 may show checking/recheck states while the provider is still transitioning.
+The timeout budget is owned by the engine readiness domain, not by individual
+CLI commands, UI routes, or board components.
 
 Why: stale workspace metadata is not enough for DB execution, but a bounded
 check prevents the operator from waiting indefinitely on provider states.
+Using one engine-owned budget prevents each caller from inventing a different
+definition of "ready enough to execute."
 
 Affected PRDs: PROJ-6-PRD-1, PROJ-6-PRD-2, PROJ-6-PRD-3, PROJ-6-PRD-4.
 
@@ -224,8 +230,8 @@ draw from one shared vocabulary:
 | Checking | Setup or settings is polling a transient provider state; execution turns an exhausted budget into blocked. |
 | Error | A provider/auth/engine failure occurred and should be shown with redacted user-safe messaging. |
 
-Missing setup actions and retry affordances should be carried separately so
-operators can distinguish "what to fix" from "what to do after it is fixed."
+Surfaces should render these states from the shared readiness snapshot rather
+than deriving readiness locally.
 
 ## UI Implementation Constraints
 
@@ -244,9 +250,7 @@ setup/settings controls, branch lifecycle display, and board/item modal
 patterns. New shared UI ownership is likely around a workspace settings page, a
 readiness summary, and a compact Supabase blocker panel.
 
-UI surfaces must keep retry visually and semantically separate from the missing
-setup action list. Board blocker UI must stay compact and must not become a
-second setup form.
+Board blocker UI must stay compact and must not become a second setup form.
 
 At 375px width, the workspace settings page and board blocker must remain
 usable without horizontal scrolling, with required inputs and repair links still
@@ -257,3 +261,7 @@ visible.
 No new package dependencies are required by the architecture. PROJ-6 builds on
 the existing engine, Next.js UI, SQLite state, local secret storage, and
 Supabase Management API integration already present in the project.
+
+There is still implementation work, but not package work: the readiness model
+must route persistent-branch health through the existing Supabase Management
+API client and branch poller under the engine-owned readiness budget.
