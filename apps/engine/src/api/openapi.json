@@ -952,35 +952,56 @@
             "$ref": "#/components/responses/BadRequest"
           },
           "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
-          "409": {
-            "description": "Invalid transition or conflicting state.",
+            "description": "Item not found or workflow Git readiness blocked.",
             "content": {
               "application/json": {
                 "schema": {
-                  "allOf": [
+                  "oneOf": [
                     {
                       "$ref": "#/components/schemas/Error"
                     },
                     {
-                      "type": "object",
-                      "properties": {
-                        "current": {
+                      "$ref": "#/components/schemas/WorkflowGitBlocked"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Invalid transition, conflicting state, or workflow Git readiness blocked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/components/schemas/Error"
+                        },
+                        {
                           "type": "object",
                           "properties": {
-                            "column": {
-                              "type": "string"
+                            "current": {
+                              "type": "object",
+                              "properties": {
+                                "column": {
+                                  "type": "string"
+                                },
+                                "phaseStatus": {
+                                  "type": "string"
+                                }
+                              }
                             },
-                            "phaseStatus": {
+                            "action": {
                               "type": "string"
                             }
                           }
-                        },
-                        "action": {
-                          "type": "string"
                         }
-                      }
+                      ]
+                    },
+                    {
+                      "$ref": "#/components/schemas/WorkflowGitBlocked"
                     }
                   ]
                 }
@@ -988,11 +1009,18 @@
             }
           },
           "422": {
-            "description": "Operation rejected by domain rules.",
+            "description": "Operation rejected by domain rules or workflow Git readiness blocked.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Error"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WorkflowGitBlocked"
+                    }
+                  ]
                 }
               }
             }
@@ -2907,6 +2935,79 @@
           },
           "phaseStatus": {
             "type": "string"
+          }
+        }
+      },
+      "WorkflowGitBlocked": {
+        "type": "object",
+        "required": [
+          "error",
+          "code",
+          "message",
+          "intent"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "enum": [
+              "git_not_installed",
+              "git_identity_missing",
+              "workspace_not_found",
+              "workspace_not_git_repo",
+              "workspace_path_unavailable"
+            ]
+          },
+          "code": {
+            "type": "string",
+            "const": "workflow_git_blocked"
+          },
+          "action": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "readiness": {
+            "type": "object",
+            "description": "Workspace Git readiness snapshot returned by the engine setup git-identity domain."
+          },
+          "repair": {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "const": "repair_workspace_identity"
+              },
+              "workspaceId": {
+                "type": "string"
+              },
+              "workspaceKey": {
+                "type": "string"
+              },
+              "appDefaultIdentityAvailable": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "action",
+              "workspaceId",
+              "appDefaultIdentityAvailable"
+            ]
+          },
+          "intent": {
+            "type": "object",
+            "required": [
+              "itemId",
+              "action"
+            ],
+            "properties": {
+              "itemId": {
+                "type": "string"
+              },
+              "action": {
+                "type": "string"
+              }
+            }
           }
         }
       },

@@ -400,7 +400,7 @@
 
 ### Ralph Loop
 - Iterations: 1
-- AC-1..AC-8 pass 1: FAIL — `npm run test:file --workspace=@beerengineer/engine -- test/workflowGitGate.test.ts` shows workflow starts still proceed to `prepareRun`, creating runs and background DB work instead of returning Git readiness blockers.
+- AC-1..AC-4 pass 1: FAIL — `npm run test:file --workspace=@beerengineer/engine -- test/workflowGitGate.test.ts` shows workflow starts still proceed to `prepareRun`, creating runs and background DB work instead of returning Git readiness blockers.
 - AC-1..AC-4 pass 2: PASS — `npm run test:file --workspace=@beerengineer/engine -- test/workflowGitGate.test.ts`
 
 ## PROJ-5-PRD-4-US-2: Als Security-conscious Operator moechte ich, dass Workflow-Start den Workspace serverseitig aufloest um keine Pfadangriffe ueber Start-Payloads zuzulassen — complete
