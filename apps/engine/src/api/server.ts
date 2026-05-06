@@ -441,7 +441,7 @@ async function handleWorkspaceRoutes(context: RouteContext): Promise<boolean> {
     if (sub === "readiness" && req.method === "GET") { await handleWorkspaceSupabaseReadiness(repos, res, key, url.searchParams.get("runId")); return true }
     if (sub === "connect" && req.method === "POST") { await handleWorkspaceSupabaseConnect(repos, req, res, key); return true }
     if (sub === "rotate" && req.method === "POST") { await handleWorkspaceSupabaseRotate(repos, req, res, key); return true }
-    if (sub === "branch" && req.method === "POST") { await handleWorkspaceSupabaseBranch(repos, res, key); return true }
+    if (sub === "branch" && req.method === "POST") { await handleWorkspaceSupabaseBranch(repos, req, res, key); return true }
     return false
   }
 

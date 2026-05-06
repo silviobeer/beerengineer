@@ -447,3 +447,9 @@
 ### Ralph Loop
 - Iterations: 1
 - Pass 1: PASS — `npm run test:file --workspace=@beerengineer/engine -- test/api/routes/workspaceSupabaseReadiness.test.ts`; `npm run test:file --workspace=@beerengineer/engine -- test/api/routes/workspaceSupabaseSetup.test.ts`; `npm run test:file --workspace=@beerengineer/engine -- test/api/routes/supabaseReadinessRetry.test.ts`; `npm test --workspace=@beerengineer/ui -- tests/workspaceSettingsPage.test.tsx tests/workspaceSupabaseSettings.test.tsx tests/workspaceSupabaseReadinessSummary.test.tsx tests/workspaceSupabaseRetry.test.tsx`; `npm run typecheck`; 375px screenshot captured as `proj6-wave4-settings-mobile-run-context-375.png`
+
+### Wave 4 Gate Attempt 1 — FAILED
+- Ralph: PASS (7 AC commands green)
+- Build: PASS (`npm run typecheck`)
+- CodeRabbit: FAIL — 1 `major` finding in `apps/ui/components/settings/WorkspaceSettingsPage.tsx`; the UI exposed Create vs Attach branch selection but did not send the selected mode to the backend.
+- Fix: send `mode` from the workspace settings UI, forward it through the Next proxy, and have the engine route pass attach/create intent to persistent branch setup.

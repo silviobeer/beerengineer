@@ -76,7 +76,11 @@ export function WorkspaceSettingsPage({
   async function setupBranch() {
     setError(null);
     setMessage("checking persistent test branch...");
-    const res = await fetch(`/api/workspaces/${encodeURIComponent(workspaceKey)}/supabase/branch`, { method: "POST" });
+    const res = await fetch(`/api/workspaces/${encodeURIComponent(workspaceKey)}/supabase/branch`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ mode: branchMode }),
+    });
     const body = await res.json().catch(() => null);
     if (!res.ok || body?.ok === false) {
       setError(messageFrom(body, "Persistent test branch still needs recheck."));

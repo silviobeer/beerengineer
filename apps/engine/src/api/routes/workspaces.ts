@@ -188,16 +188,19 @@ export async function handleWorkspaceSupabaseRotate(repos: Repos, req: IncomingM
   json(res, result.ok ? 200 : 400, result)
 }
 
-export async function handleWorkspaceSupabaseBranch(repos: Repos, res: ServerResponse, key: string): Promise<void> {
+export async function handleWorkspaceSupabaseBranch(repos: Repos, req: IncomingMessage, res: ServerResponse, key: string): Promise<void> {
   const workspace = repos.getWorkspaceByKey(key)
   if (!workspace) return json(res, 404, { ok: false, error: "workspace_not_found", message: "Workspace not found" })
   const token = readActiveSecretValue(SUPABASE_MANAGEMENT_TOKEN_SECRET_REF)
   if (!token) return json(res, 400, { ok: false, error: "token_required", message: "Supabase Management API token is required" })
+  const body = await readJson(req) as { mode?: unknown }
+  const mode = body.mode === "attach" ? "attach" : "create"
   const client = new SupabaseManagementClient({ token })
   const result = await createOrAttachPersistentTestBranch({
     repos,
     workspaceId: workspace.id,
     client,
+    mode,
     poll: { timeoutMs: 60_000, initialDelayMs: 2_000, maxDelayMs: 10_000 },
   })
   json(res, result.ok ? 200 : 409, result)

@@ -12,7 +12,7 @@ export type PersistentTestBranchResult =
   | { ok: true; action: "created" | "attached" | "already-connected"; branch: SupabaseBranch; name: string }
   | {
       ok: false
-      error: "workspace_not_found" | "supabase_not_connected" | "branch_not_ready"
+      error: "workspace_not_found" | "supabase_not_connected" | "branch_not_found" | "branch_not_ready"
       message: string
       recheckRecommended?: boolean
     }
@@ -39,6 +39,7 @@ export async function createOrAttachPersistentTestBranch(input: {
   repos: Repos
   workspaceId: string
   client: PersistentBranchClient
+  mode?: "create" | "attach"
   parentRef?: string
   poll?: {
     timeoutMs?: number
@@ -67,6 +68,14 @@ export async function createOrAttachPersistentTestBranch(input: {
   }
 
   const existing = (await input.client.listBranches(workspace.supabase_project_ref)).find(branch => branch.name === name)
+  if (!existing && input.mode === "attach") {
+    return {
+      ok: false,
+      error: "branch_not_found",
+      message: `Persistent test branch ${name} was not found; choose Create to create it.`,
+      recheckRecommended: true,
+    }
+  }
   let branch = existing
   let action: "created" | "attached" = existing ? "attached" : "created"
   if (!branch) {
