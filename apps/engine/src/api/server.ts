@@ -215,10 +215,10 @@ seedIfEmpty(db, repos)
 // POST /runs/:id/resume accepts them without a manual DB patch.
 try {
   await recoverLostWorkerRuns(repos, { apiWorkerInstanceId: API_WORKER_INSTANCE_ID })
-  startupRecoveryComplete = true
 } catch (err) {
   console.error("[orphanRecovery] startup scan failed:", (err as Error).message)
 }
+startupRecoveryComplete = true
 pruneMissingWorktreeAssignments()
 
 // QA-010: drive any elapsed TTL cleanups that accumulated while the engine

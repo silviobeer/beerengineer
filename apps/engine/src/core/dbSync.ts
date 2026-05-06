@@ -403,6 +403,10 @@ export function persistWorkflowEvent(repos: Repos, event: WorkflowEvent): void {
 
   switch (event.type) {
     case "run_resumed":
+      if (repos.listLogsForRun(runId).some(log => log.event_type === "run_resumed")) {
+        repos.clearRunRecovery(runId)
+        break
+      }
       persistRunResumedEvent(repos, track, event)
       break
     case "stage_started":
