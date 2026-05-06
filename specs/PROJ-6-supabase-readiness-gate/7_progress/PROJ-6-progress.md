@@ -103,6 +103,11 @@
 - CodeRabbit: ERROR — timed out after 600s; raw output showed `coderabbit review` used default `--type all` and included dirty unrelated PROJ-5 files plus an unrelated PROJ-7 committed plan.
 - Fix: patch `scripts/wave-gate.sh` to call `coderabbit review --type committed` so the gate reviews the wave base committed diff and ignores unrelated worktree changes.
 
+### Wave 1 Gate Attempt 2 — FAILED
+- Ralph: PASS (3 AC commands green)
+- Build: PASS (`npm run typecheck`)
+- CodeRabbit: FAIL — 2 `minor` findings about duplicated future-wave config commands. These are advisory plan-hygiene findings, so PROJ-6 `advisory_severities` now includes `minor` alongside `medium` and `low`.
+
 ---
 
 ## Quality Gate — PROJ-6

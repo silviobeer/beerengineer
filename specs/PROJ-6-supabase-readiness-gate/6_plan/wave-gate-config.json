@@ -10,7 +10,7 @@
   "waves": {
     "1": {
       "codex_effort": "high",
-      "advisory_severities": ["medium", "low"],
+      "advisory_severities": ["minor", "medium", "low"],
       "ac_commands": [
         "npm run test:file --workspace=@beerengineer/engine -- test/core/supabase/preExecutionReadiness.test.ts",
         "npm run test:file --workspace=@beerengineer/engine -- test/core/supabase/branchPoller.test.ts",
@@ -20,7 +20,7 @@
     },
     "2": {
       "codex_effort": "high",
-      "advisory_severities": ["medium", "low"],
+      "advisory_severities": ["minor", "medium", "low"],
       "ac_commands": [
         "npm run test:file --workspace=@beerengineer/engine -- test/workflowSupabaseReadinessGate.test.ts",
         "npm run test:file --workspace=@beerengineer/engine -- test/stages/execution/supabaseSkip.test.ts",
@@ -31,7 +31,7 @@
     },
     "3": {
       "codex_effort": "high",
-      "advisory_severities": ["medium", "low"],
+      "advisory_severities": ["minor", "medium", "low"],
       "ac_commands": [
         "npm run test:file --workspace=@beerengineer/engine -- test/setup/setupFlow.supabase.test.ts",
         "npm run test:file --workspace=@beerengineer/engine -- test/setupInteractiveEntry.test.ts",
@@ -45,7 +45,7 @@
     },
     "4": {
       "codex_effort": "high",
-      "advisory_severities": ["medium", "low"],
+      "advisory_severities": ["minor", "medium", "low"],
       "ac_commands": [
         "npm run test:file --workspace=@beerengineer/engine -- test/api/routes/workspaceSupabaseReadiness.test.ts",
         "npm run test:file --workspace=@beerengineer/engine -- test/api/routes/workspaceSupabaseSetup.test.ts",
@@ -59,7 +59,7 @@
     },
     "5": {
       "codex_effort": "high",
-      "advisory_severities": ["medium", "low"],
+      "advisory_severities": ["minor", "medium", "low"],
       "ac_commands": [
         "npm run test:file --workspace=@beerengineer/engine -- test/apiIntegration.test.ts",
         "npm run test:file --workspace=@beerengineer/engine -- test/api/routes/supabaseReadinessRetry.test.ts",
