@@ -470,3 +470,4 @@ Status: in progress
 - Wave gate attempt 1: Ralph AC checks and build passed; CodeRabbit reached review phase but timed out after the configured 600s. Increased `timeouts.coderabbit_seconds` to 1200 and rerunning the official gate.
 - Wave gate attempt 2: Ralph AC checks and build passed; CodeRabbit found a valid minor issue in `test/api/ready.test.ts` where the DB-failure test double-closed the fixture DB. Fixed the fixture cleanup to be idempotent.
 - Wave gate attempt 3: Ralph AC checks and build passed; CodeRabbit found valid minor issues in `workerLeaseResume.test.ts`, Wave 4 progress table spacing, and `persistWorkflowEvent` duplicate stage handling. Fixed all three.
+- Wave gate attempt 4: Ralph AC checks and build passed; CodeRabbit returned a pure rate-limit error asking for 8m07s, but the gate retry only waited 35s. Updated `scripts/wave-gate.sh` to wait 540s by default on CodeRabbit rate-limit retry.

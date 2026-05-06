@@ -143,8 +143,9 @@ rc=$?
 if [[ $rc -ne 0 ]] && grep -q "stopping cli" "$CR_OUT" 2>/dev/null; then
   echo "   ⚠ coderabbit stopped early; retrying once"
   if grep -q '"errorType":"rate_limit"' "$CR_OUT" 2>/dev/null; then
-    echo "   waiting 35s for coderabbit rate limit recovery"
-    sleep 35
+    RATE_LIMIT_WAIT_SECONDS="${CODERABBIT_RATE_LIMIT_WAIT_SECONDS:-540}"
+    echo "   waiting ${RATE_LIMIT_WAIT_SECONDS}s for coderabbit rate limit recovery"
+    sleep "$RATE_LIMIT_WAIT_SECONDS"
   fi
   : > "$CR_OUT"
   timeout --foreground "$CODERABBIT_TIMEOUT" \
