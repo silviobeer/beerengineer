@@ -44,7 +44,7 @@ describe("ItemMessages", () => {
           ],
         });
       }
-      if (url === "/api/runs/run-1/messages?level=0") {
+      if (url === "/api/runs/run-1/messages?level=0&limit=500") {
         return jsonResponse({
           runId: "run-1",
           schema: "beerengineer.messages.v1",
@@ -83,5 +83,93 @@ describe("ItemMessages", () => {
     const entries = screen.getAllByTestId("item-messages-entry");
     expect(within(entries[0]).getByText("newer message")).toBeInTheDocument();
     expect(within(entries[1]).getByText("older message")).toBeInTheDocument();
+  });
+
+  it("backfills paged history and tails SSE from the last seen message", async () => {
+    const eventSourceUrls: string[] = [];
+    class MockEventSource {
+      readonly url: string;
+      constructor(url: string) {
+        this.url = url;
+        eventSourceUrls.push(url);
+      }
+      addEventListener = vi.fn();
+      close = vi.fn();
+    }
+    vi.stubGlobal("EventSource", MockEventSource);
+
+    const fetchSpy = vi.fn(async (input: FetchInput) => {
+      const url = urlOf(input);
+      if (url === "/api/runs") {
+        return jsonResponse({
+          runs: [
+            {
+              id: "run-1",
+              item_id: "item-1",
+              status: "running",
+              created_at: 10,
+            },
+          ],
+        });
+      }
+      if (url === "/api/runs/run-1/messages?level=0&limit=500") {
+        return jsonResponse({
+          runId: "run-1",
+          schema: "beerengineer.messages.v1",
+          nextSince: "page-1",
+          entries: [
+            {
+              id: "page-1",
+              ts: "2026-04-29T10:00:00.000Z",
+              runId: "run-1",
+              stageRunId: null,
+              type: "agent_message",
+              level: 1,
+              payload: { message: "first page" },
+            },
+          ],
+        });
+      }
+      if (url === "/api/runs/run-1/messages?level=0&limit=500&since=page-1") {
+        return jsonResponse({
+          runId: "run-1",
+          schema: "beerengineer.messages.v1",
+          nextSince: null,
+          entries: [
+            {
+              id: "page-2",
+              ts: "2026-04-29T10:01:00.000Z",
+              runId: "run-1",
+              stageRunId: null,
+              type: "agent_message",
+              level: 1,
+              payload: { message: "second page" },
+            },
+          ],
+        });
+      }
+      return jsonResponse({});
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    render(<ItemMessages itemId="item-1" />);
+
+    await waitFor(() =>
+      expect(screen.getAllByTestId("item-messages-entry")).toHaveLength(2)
+    );
+    await waitFor(() =>
+      expect(eventSourceUrls).toEqual([
+        "/api/runs/run-1/events?level=0&since=page-2",
+      ])
+    );
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/runs/run-1/messages?level=0&limit=500",
+      { cache: "no-store" }
+    );
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/runs/run-1/messages?level=0&limit=500&since=page-1",
+      { cache: "no-store" }
+    );
   });
 });

@@ -34,6 +34,8 @@ const LEVEL_BADGE_CLASS: Record<MessagingLevel, string> = {
   1: "border-amber-700 bg-amber-900/20 text-amber-300",
   0: "border-zinc-700 bg-zinc-900 text-zinc-400",
 };
+const MESSAGE_BACKFILL_LIMIT = 500;
+const MAX_MESSAGE_BACKFILL_PAGES = 40;
 
 interface EngineRun {
   id: string;
@@ -83,6 +85,42 @@ function formatTime(ts: string): string {
   }
 }
 
+function runMessagesUrl(runId: string, since: string | null): string {
+  const params = new URLSearchParams({
+    level: "0",
+    limit: String(MESSAGE_BACKFILL_LIMIT),
+  });
+  if (since) params.set("since", since);
+  return `/api/runs/${encodeURIComponent(runId)}/messages?${params.toString()}`;
+}
+
+async function fetchBackfilledMessages(runId: string): Promise<{
+  entries: EngineMessageEntry[];
+  lastSeenId: string | null;
+}> {
+  const entries: EngineMessageEntry[] = [];
+  const seen = new Set<string>();
+  let cursor: string | null = null;
+  let lastSeenId: string | null = null;
+
+  for (let page = 0; page < MAX_MESSAGE_BACKFILL_PAGES; page += 1) {
+    const res = await fetch(runMessagesUrl(runId, cursor), { cache: "no-store" });
+    if (!res.ok) throw new Error(`messages_${res.status}`);
+    const body = (await res.json()) as EngineMessagesResponse;
+    for (const entry of body.entries) {
+      lastSeenId = entry.id;
+      if (seen.has(entry.id)) continue;
+      seen.add(entry.id);
+      entries.push(entry);
+    }
+    if (!body.nextSince) break;
+    cursor = body.nextSince;
+    lastSeenId = body.nextSince;
+  }
+
+  return { entries, lastSeenId };
+}
+
 export function ItemMessages({ itemId }: Readonly<ItemMessagesProps>) {
   const [runId, setRunId] = useState<string | null>(null);
   const [entries, setEntries] = useState<EngineMessageEntry[]>([]);
@@ -93,12 +131,14 @@ export function ItemMessages({ itemId }: Readonly<ItemMessagesProps>) {
   // default of level 1.
   const [level, setLevel] = useState<MessagingLevel>(1);
   const seenIdsRef = useRef<Set<string>>(new Set());
+  const streamSinceRef = useRef<string | null>(null);
 
   // Resolve the latest run + backfill messages. Always backfills at L0 so the
   // client can switch levels without re-fetching; we filter locally below.
   useEffect(() => {
     let cancelled = false;
     seenIdsRef.current = new Set();
+    streamSinceRef.current = null;
     setRunId(null);
     setEntries([]);
     setError(null);
@@ -117,14 +157,10 @@ export function ItemMessages({ itemId }: Readonly<ItemMessagesProps>) {
           setLoaded(true);
           return;
         }
-        const res = await fetch(
-          `/api/runs/${encodeURIComponent(latest.id)}/messages?level=0`,
-          { cache: "no-store" }
-        );
-        if (!res.ok) throw new Error(`messages_${res.status}`);
-        const body = (await res.json()) as EngineMessagesResponse;
+        const body = await fetchBackfilledMessages(latest.id);
         if (cancelled) return;
         for (const e of body.entries) seenIdsRef.current.add(e.id);
+        streamSinceRef.current = body.lastSeenId;
         setRunId(latest.id);
         setEntries(body.entries);
         setLoaded(true);
@@ -148,7 +184,9 @@ export function ItemMessages({ itemId }: Readonly<ItemMessagesProps>) {
     const Ctor = (globalThis as { EventSource?: new (u: string) => EventSource })
       .EventSource;
     if (!Ctor) return;
-    const url = `/api/runs/${encodeURIComponent(runId)}/events?level=0`;
+    const params = new URLSearchParams({ level: "0" });
+    if (streamSinceRef.current) params.set("since", streamSinceRef.current);
+    const url = `/api/runs/${encodeURIComponent(runId)}/events?${params.toString()}`;
     const es = new Ctor(url);
     const append = (e: MessageEvent) => {
       try {
