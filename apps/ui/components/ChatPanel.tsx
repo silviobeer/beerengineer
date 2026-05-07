@@ -249,8 +249,14 @@ export function ChatPanel({
 
   const activePrompt = displayedConversation.find(
     (entry) =>
+      (entry.type === "agent" || entry.type === "review-gate") &&
       typeof entry.promptId === "string" &&
-      !answeredPromptIds.includes(entry.promptId)
+      !answeredPromptIds.includes(entry.promptId) &&
+      !conversation.some(
+        (candidate) =>
+          candidate.answerTo === entry.promptId ||
+          (candidate.type === "user" && candidate.promptId === entry.promptId)
+      )
   );
   const activeReviewPrompt = activePrompt?.type === "review-gate" ? activePrompt : null;
   const activeQuestionPrompt = activePrompt && activePrompt.type !== "review-gate" ? activePrompt : null;

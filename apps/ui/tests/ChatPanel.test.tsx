@@ -353,6 +353,24 @@ describe("ChatPanel free-form messages", () => {
     );
   });
 
+  it("TC-5.4a.regression: answered historical prompts do not keep the composer in answer mode", async () => {
+    const { calls } = installMockFetch({ defaultStatus: 200 });
+    const user = userEvent.setup();
+    const conversation: ConversationEntry[] = [
+      { id: "q1", type: "agent", promptId: "p-1", text: "Which screens are highest priority?" },
+      { id: "a1", type: "user", answerTo: "p-1", text: "Home and workflow" },
+    ];
+    render(<ChatPanel activeRunId="run-42" conversation={conversation} />);
+    expect(screen.queryByTestId("chat-prompt-banner")).toBeNull();
+    expect(screen.getByTestId("chat-send")).toHaveTextContent("Send");
+    await user.type(screen.getByTestId("chat-textarea"), "extra context");
+    await user.click(screen.getByTestId("chat-send"));
+    await waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(1));
+    const last = calls.at(-1)!;
+    expect(last.url).toBe("/api/runs/run-42/messages");
+    expect(JSON.parse(String(last.init?.body))).toEqual({ text: "extra context" });
+  });
+
   it("TC-5.4b: typing and clicking Send POSTs to /api/runs/:id/messages with body", async () => {
     const { calls } = installMockFetch({ defaultStatus: 200 });
     const user = userEvent.setup();

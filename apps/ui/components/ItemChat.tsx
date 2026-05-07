@@ -60,7 +60,7 @@ function toUiEntry(e: EngineConversationEntry): ConversationEntry {
     id: e.id,
     type: e.actor,
     text: e.text,
-    promptId: e.kind === "answer" ? (e.answerTo ?? e.promptId) : undefined,
+    answerTo: e.kind === "answer" ? (e.answerTo ?? e.promptId) : undefined,
     createdAt: e.createdAt,
   };
 }
@@ -84,7 +84,7 @@ function chatEntryToUi(e: ChatEntry): ConversationEntry {
     id: e.id,
     type,
     text: e.content,
-    promptId: e.kind === "answer" ? e.promptId : undefined,
+    answerTo: e.kind === "answer" ? e.promptId : undefined,
     createdAt,
   };
 }
@@ -239,7 +239,8 @@ export function ItemChat({ itemId }: Readonly<ItemChatProps>) {
           (existing) =>
             existing.type === ui.type &&
             existing.text === ui.text &&
-            existing.promptId === ui.promptId
+            existing.promptId === ui.promptId &&
+            existing.answerTo === ui.answerTo
         )
       ) {
         return;

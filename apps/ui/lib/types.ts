@@ -211,6 +211,7 @@ export interface ConversationEntry {
   type: string;
   text: string;
   promptId?: string;
+  answerTo?: string;
   actions?: Array<string | ConversationAction>;
   /** ISO-8601 timestamp from the engine. Rendered in the chat as HH:MM:SS. */
   createdAt?: string;
