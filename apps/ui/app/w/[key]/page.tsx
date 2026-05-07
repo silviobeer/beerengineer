@@ -113,7 +113,9 @@ export default async function BoardPage({ params }: Readonly<BoardPageProps>) {
   return (
     <main className="min-h-screen text-zinc-100 bg-zinc-950 overflow-x-hidden">
       <RunOverviewBanners costRisk={costRisk} />
-      <Board items={items ?? []} workspaceKey={key} />
+      <section data-testid="board-workspace-shell" data-selected-workspace={key}>
+        <Board items={items ?? []} workspaceKey={key} />
+      </section>
     </main>
   );
 }

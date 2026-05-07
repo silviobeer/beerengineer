@@ -511,6 +511,7 @@ export function BoardItemModal({ card, workspaceKey, onClose }: Readonly<BoardIt
   const { preview, previewError, isPreviewPending, handleStartPreview, handleStopPreview } = usePreviewState(card, supportsPreviewControls);
   const { wireframes, design, artifactError } = useDesignArtifactState(card, supportsDesignArtifacts);
   const { mergeStatus, mergeStatusError } = useMergeStatus(card.latestRunId, card.column === "merge");
+  const modalTitle = card.title.trim() || "Opening item...";
 
   // ESC closes.
   useEffect(() => {
@@ -544,7 +545,7 @@ export function BoardItemModal({ card, workspaceKey, onClose }: Readonly<BoardIt
       data-testid="board-item-modal-backdrop"
       open
       aria-modal="true"
-      aria-label={card.title || "Item detail"}
+      aria-label={modalTitle}
       tabIndex={-1}
       className="fixed inset-0 z-50 flex items-start justify-center p-4 sm:p-8 bg-black/70 backdrop-blur-sm overflow-y-auto"
     >
@@ -558,7 +559,7 @@ export function BoardItemModal({ card, workspaceKey, onClose }: Readonly<BoardIt
               <span className="text-xs text-zinc-400 font-mono">{card.itemCode}</span>
             ) : null}
             <h2 className="text-lg font-semibold font-display tracking-tight break-words">
-              {card.title}
+              {modalTitle}
             </h2>
           </div>
           <button

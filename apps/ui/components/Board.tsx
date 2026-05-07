@@ -1,22 +1,39 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { BoardCard } from "./BoardCard";
 import { BoardItemModal } from "./BoardItemModal";
 import { KanbanColumn } from "./KanbanColumn";
 import { BOARD_COLUMNS, type BoardCardDTO } from "../lib/types";
+import {
+  BOARD_MUTATION_CONVERGENCE_WINDOW_MS,
+  BOARD_MUTATION_REFRESH_INTERVAL_MS,
+  type BoardLauncherMutationSuccess,
+} from "@/lib/api";
 import { useSSE } from "@/lib/sse/SSEContext";
+
+export interface BoardLauncherRenderContext {
+  readonly selectedWorkspaceKey: string | null;
+  readonly isWorkspaceSelected: boolean;
+  readonly openItemModalFromMutation: (result: BoardLauncherMutationSuccess) => void;
+}
 
 interface BoardProps {
   readonly items: BoardCardDTO[];
   readonly workspaceKey?: string;
+  readonly renderLauncher?: (context: BoardLauncherRenderContext) => ReactNode;
 }
 
-export function Board({ items, workspaceKey }: Readonly<BoardProps>) {
+export function Board({ items, workspaceKey, renderLauncher }: Readonly<BoardProps>) {
   const { itemState } = useSSE();
   const router = useRouter();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [pendingSelectedCard, setPendingSelectedCard] = useState<BoardCardDTO | null>(null);
+  const [pendingMutation, setPendingMutation] = useState<{
+    itemId: string;
+    startedAt: number;
+  } | null>(null);
   const [isRefreshing, startTransition] = useTransition();
   const pendingUnknownIdsRef = useRef<Set<string>>(new Set());
 
@@ -35,6 +52,10 @@ export function Board({ items, workspaceKey }: Readonly<BoardProps>) {
       };
     });
   }, [items, itemState]);
+
+  const isKnownItemId = useCallback((itemId: string) => {
+    return items.some((item) => item.id === itemId) || Object.hasOwn(itemState, itemId);
+  }, [itemState, items]);
 
   useEffect(() => {
     if (isRefreshing) return;
@@ -56,47 +77,124 @@ export function Board({ items, workspaceKey }: Readonly<BoardProps>) {
     });
   }, [itemState, items, isRefreshing, router]);
 
+  useEffect(() => {
+    if (!pendingMutation) return;
+    if (!isKnownItemId(pendingMutation.itemId)) return;
+    setPendingMutation(null);
+    setPendingSelectedCard((current) =>
+      current?.id === pendingMutation.itemId ? null : current,
+    );
+  }, [isKnownItemId, pendingMutation]);
+
+  useEffect(() => {
+    if (!pendingMutation || isRefreshing) return;
+    if (isKnownItemId(pendingMutation.itemId)) return;
+
+    const elapsedMs = Date.now() - pendingMutation.startedAt;
+    if (elapsedMs >= BOARD_MUTATION_CONVERGENCE_WINDOW_MS) {
+      setPendingMutation(null);
+      return;
+    }
+
+    const timer = globalThis.setTimeout(() => {
+      startTransition(() => {
+        router.refresh();
+      });
+    }, Math.min(
+      BOARD_MUTATION_REFRESH_INTERVAL_MS,
+      BOARD_MUTATION_CONVERGENCE_WINDOW_MS - elapsedMs,
+    ));
+
+    return () => globalThis.clearTimeout(timer);
+  }, [isKnownItemId, isRefreshing, pendingMutation, router, startTransition]);
+
+  const openItemModalFromMutation = useCallback((result: BoardLauncherMutationSuccess) => {
+    setSelectedId(result.itemId);
+    setPendingSelectedCard({
+      id: result.itemId,
+      title: "",
+      column: "idea",
+      summary: null,
+      phase_status: result.status,
+      hasOpenPrompt: false,
+      hasReviewGateWaiting: false,
+      hasBlockedRun: false,
+      current_stage: null,
+      latestRunId: result.runId,
+    });
+    setPendingMutation({ itemId: result.itemId, startedAt: Date.now() });
+    startTransition(() => {
+      router.refresh();
+    });
+  }, [router, startTransition]);
+
   const onOpen = useCallback((card: BoardCardDTO) => {
     setSelectedId(card.id);
   }, []);
   const onClose = useCallback(() => {
     setSelectedId(null);
+    setPendingMutation(null);
+    setPendingSelectedCard(null);
   }, []);
 
   // Re-derive the selected card from the live items map so the modal stays
   // in sync with SSE updates while it is open.
   const selectedCard = useMemo<BoardCardDTO | null>(() => {
     if (!selectedId) return null;
-    return liveItems.find((it) => it.id === selectedId) ?? null;
-  }, [liveItems, selectedId]);
+    const liveCard = liveItems.find((it) => it.id === selectedId);
+    if (liveCard) return liveCard;
+    if (pendingSelectedCard?.id === selectedId) return pendingSelectedCard;
+    return null;
+  }, [liveItems, pendingSelectedCard, selectedId]);
+
+  const launcherContext = useMemo<BoardLauncherRenderContext>(() => ({
+    selectedWorkspaceKey: workspaceKey ?? null,
+    isWorkspaceSelected: Boolean(workspaceKey),
+    openItemModalFromMutation,
+  }), [openItemModalFromMutation, workspaceKey]);
 
   return (
-    <div
-      data-testid="kanban-board-scroll"
-      className="w-full overflow-x-auto overflow-y-hidden"
-    >
-      <div
-        data-testid="kanban-board"
-        className="grid gap-3 p-3"
-        style={{
-          gridTemplateColumns: `repeat(${BOARD_COLUMNS.length}, minmax(16rem, 1fr))`,
-        }}
+    <div className="flex flex-col gap-3">
+      <section
+        data-testid="board-launcher-shell"
+        data-selected-workspace={workspaceKey ?? ""}
+        data-workspace-selected={workspaceKey ? "true" : "false"}
+        className="flex flex-wrap items-start gap-3 px-3 pt-3"
       >
-        {BOARD_COLUMNS.map((column) => {
-          const columnItems = liveItems.filter((item) => item.column === column);
-          return (
-            <KanbanColumn key={column} column={column}>
-              {columnItems.map((item) => (
-                <BoardCard
-                  key={item.id}
-                  card={item}
-                  workspaceKey={workspaceKey}
-                  onOpen={onOpen}
-                />
-              ))}
-            </KanbanColumn>
-          );
-        })}
+        <div
+          data-testid="board-launcher-slot"
+          className="flex min-w-0 flex-1 flex-wrap items-start gap-3"
+        >
+          {renderLauncher?.(launcherContext)}
+        </div>
+      </section>
+      <div
+        data-testid="kanban-board-scroll"
+        className="w-full overflow-x-auto overflow-y-hidden"
+      >
+        <div
+          data-testid="kanban-board"
+          className="grid gap-3 p-3"
+          style={{
+            gridTemplateColumns: `repeat(${BOARD_COLUMNS.length}, minmax(16rem, 1fr))`,
+          }}
+        >
+          {BOARD_COLUMNS.map((column) => {
+            const columnItems = liveItems.filter((item) => item.column === column);
+            return (
+              <KanbanColumn key={column} column={column}>
+                {columnItems.map((item) => (
+                  <BoardCard
+                    key={item.id}
+                    card={item}
+                    workspaceKey={workspaceKey}
+                    onOpen={onOpen}
+                  />
+                ))}
+              </KanbanColumn>
+            );
+          })}
+        </div>
       </div>
       {selectedCard && workspaceKey ? (
         <BoardItemModal
