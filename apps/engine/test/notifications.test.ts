@@ -131,6 +131,7 @@ test("dispatcher maps canonical events into telegram messages", async () => {
   assert.deepEqual(result, { delivered: true, eventType: "run_blocked" })
   assert.equal(sent.length, 1)
   assert.match(sent[0].text, /beerengineer_ run blocked/)
+  assert.match(sent[0].text, /Run: run-1 - Fix login/)
   assert.match(sent[0].text, /Open: http:\/\/100.64.0.7:3100\/runs\/run-1/)
   assert.doesNotMatch(sent[0].text, /sk-abcdefghijklmnopqrstuvwxyz012345/)
   const delivery = repos.getNotificationDelivery("run-1:run_blocked:story:2:US-01")
@@ -185,6 +186,7 @@ test("dispatcher falls back to generic blocked guidance when there is no open pr
 
   assert.deepEqual(result, { delivered: true, eventType: "run_blocked" })
   assert.equal(sent.length, 1)
+  assert.match(sent[0].text, new RegExp(`Run: ${item.code} / ${run.id.slice(0, 8)} - Fix login`))
   assert.match(sent[0].text, /What's stuck: Workspace is dirty/)
   assert.doesNotMatch(sent[0].text, /Question:/)
   assert.match(sent[0].text, /Open the run for the next detail\./)

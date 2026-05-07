@@ -139,6 +139,7 @@ test("dispatcher appends openPrompt.text to run_blocked messages and persists te
 
   assert.equal(result.delivered, true)
   assert.equal(sent.length, 1)
+  assert.match(sent[0].text, new RegExp(`Run: ITEM-0001 / ${run.id.slice(0, 8)} - T`))
   assert.match(sent[0].text, /Question: Which branch should we resume from\?/)
   assert.match(sent[0].text, /Reply to answer/)
 

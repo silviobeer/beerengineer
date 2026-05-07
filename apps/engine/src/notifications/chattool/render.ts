@@ -12,6 +12,7 @@ function shortRunId(runId: string): string {
 }
 
 const OPEN_PROMPT_SUMMARY_MAX_CHARS = 240
+const RUN_TITLE_MAX_CHARS = 80
 
 function truncate(value: string, maxChars = OPEN_PROMPT_SUMMARY_MAX_CHARS): string {
   if (value.length <= maxChars) return value
@@ -91,7 +92,16 @@ function summaryHeader(presentation: MessagePresentation): string {
   return `${presentation.icon} beerengineer_ ${presentation.label}`
 }
 
-function renderPhaseStatusMessage(entry: MessageEntry, presentation: MessagePresentation): ChatToolMessage {
+function runIdentityLine(entry: MessageEntry, repos?: Repos): string {
+  const run = repos?.getRun(entry.runId)
+  const itemId = run?.item_id || entry.itemId
+  const item = itemId ? repos?.getItem(itemId) : undefined
+  const title = s(run?.title ?? item?.title ?? entry.payload.title, entry.runId)
+  const itemPrefix = item?.code ? `${item.code} / ` : ""
+  return `Run: ${itemPrefix}${shortRunId(entry.runId)} - ${truncate(title, RUN_TITLE_MAX_CHARS)}`
+}
+
+function renderPhaseStatusMessage(entry: MessageEntry, presentation: MessagePresentation, repos?: Repos): ChatToolMessage {
   const failed = entry.type === "phase_failed"
   const stageKey = s(entry.payload.stageKey)
   return {
@@ -99,6 +109,7 @@ function renderPhaseStatusMessage(entry: MessageEntry, presentation: MessagePres
       `${presentation.icon} beerengineer_ stage ${failed ? "failed" : "completed"}`,
       "",
       `Stage: ${stageKey}`,
+      runIdentityLine(entry, repos),
       "",
       failed
         ? `${stageKey} hit trouble in run ${shortRunId(entry.runId)}.`
@@ -134,7 +145,7 @@ export function describeChatMessage(entry: MessageEntry, repos?: Repos): ChatToo
           summaryHeader(presentation),
           "",
           `Heads up: ${s(entry.payload.title, entry.runId)} is underway.`,
-          `Run ${shortRunId(entry.runId)}`,
+          runIdentityLine(entry, repos),
           "",
           "I’ll keep you posted when something interesting happens.",
         ]),
@@ -146,7 +157,7 @@ export function describeChatMessage(entry: MessageEntry, repos?: Repos): ChatToo
           summaryHeader(presentation),
           "",
           `${s(entry.payload.title, entry.runId)} hit a blocker.`,
-          `Run ${shortRunId(entry.runId)}`,
+          runIdentityLine(entry, repos),
           "",
           `What's stuck: ${s(entry.payload.summary)}`,
           "",
@@ -161,7 +172,7 @@ export function describeChatMessage(entry: MessageEntry, repos?: Repos): ChatToo
           summaryHeader(presentation),
           "",
           `${s(entry.payload.title, entry.runId)} is done.`,
-          `Run ${shortRunId(entry.runId)}`,
+          runIdentityLine(entry, repos),
           "",
           entry.payload.status === "completed" ? "Nice. This one is wrapped up." : "This one ended rough.",
           typeof entry.payload.error === "string" ? `Error: ${entry.payload.error}` : undefined,
@@ -174,7 +185,7 @@ export function describeChatMessage(entry: MessageEntry, repos?: Repos): ChatToo
           `${presentation.icon} beerengineer_ stage started`,
           "",
           `Stage: ${s(entry.payload.stageKey)}`,
-          `Run ${shortRunId(entry.runId)}`,
+          runIdentityLine(entry, repos),
           "",
           `${s(entry.payload.stageKey)} is up — working on it.`,
         ]),
@@ -182,13 +193,13 @@ export function describeChatMessage(entry: MessageEntry, repos?: Repos): ChatToo
       }
     case "phase_completed":
     case "phase_failed":
-      return renderPhaseStatusMessage(entry, presentation)
+      return renderPhaseStatusMessage(entry, presentation, repos)
     case "prompt_requested":
       return {
         text: joinTelegramLines([
           `${presentation.icon} beerengineer_ needs an answer`,
           "",
-          `Run ${shortRunId(entry.runId)}`,
+          runIdentityLine(entry, repos),
           "",
           `Question: ${s(prompt.text ?? entry.payload.prompt)}`,
           "",
