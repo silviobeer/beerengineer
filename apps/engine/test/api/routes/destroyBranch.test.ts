@@ -3,14 +3,19 @@ import assert from "node:assert/strict"
 import { Readable } from "node:stream"
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join, resolve } from "node:path"
+import { fileURLToPath } from "node:url"
 import { initDatabase } from "../../../src/db/connection.js"
 import { Repos } from "../../../src/db/repositories.js"
 import { handleSupabaseDestroyBranch, resolveDestroyBranchTarget } from "../../../src/api/routes/setup.js"
 
+const here = dirname(fileURLToPath(import.meta.url))
+const serverSourcePath = resolve(here, "../../../src/api/server.ts")
+const setupRoutesSourcePath = resolve(here, "../../../src/api/routes/setup.ts")
+
 test("PROJ-4 PRD-8 US-2: engine exposes typed-confirm destroy route", () => {
-  const server = readFileSync("apps/engine/src/api/server.ts", "utf8")
-  const routes = readFileSync("apps/engine/src/api/routes/setup.ts", "utf8")
+  const server = readFileSync(serverSourcePath, "utf8")
+  const routes = readFileSync(setupRoutesSourcePath, "utf8")
   assert.match(server, /POST \/setup\/supabase\/destroy/)
   assert.match(routes, /confirmedName/)
   assert.match(routes, /confirmation_mismatch/)
