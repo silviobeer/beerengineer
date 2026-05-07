@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { readdirSync } from "node:fs"
+import { mkdtempSync, readdirSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
@@ -63,6 +64,45 @@ const mode = process.argv[2] ?? "all"
 const files = selectedTests(mode).map(file => join("test", file))
 const nodeArgs = ["--test", "--import", "tsx"]
 
+function isolatedTestEnv() {
+  if (process.env.BEERENGINEER_TEST_USE_REAL_CONFIG === "1") return process.env
+
+  const dir = mkdtempSync(join(tmpdir(), "be2-engine-tests-"))
+  const dataDir = join(dir, "data")
+  const configPath = join(dir, "config.json")
+
+  writeFileSync(
+    configPath,
+    `${JSON.stringify({
+      schemaVersion: 1,
+      dataDir,
+      allowedRoots: [repoRoot],
+      enginePort: 4100,
+      llm: {
+        provider: "anthropic",
+        model: "claude-opus-4-7",
+        apiKeyRef: "ANTHROPIC_API_KEY",
+        defaultHarnessProfile: { mode: "claude-first" },
+      },
+      notifications: {
+        telegram: {
+          enabled: false,
+          level: 2,
+          inbound: { enabled: false },
+        },
+      },
+      vcs: { github: { enabled: false } },
+      browser: { enabled: false },
+    }, null, 2)}\n`,
+    "utf8",
+  )
+
+  return {
+    ...process.env,
+    BEERENGINEER_CONFIG_PATH: configPath,
+  }
+}
+
 if (process.argv.includes("--list") || process.argv.includes("--dry-run")) {
   console.log(files.join("\n"))
   process.exit(0)
@@ -74,6 +114,7 @@ if (mode === "integration" || mode === "sonar-coverage") {
 
 const result = spawnSync(process.execPath, [...nodeArgs, ...files], {
   cwd: engineRoot,
+  env: isolatedTestEnv(),
   stdio: "inherit",
 })
 
