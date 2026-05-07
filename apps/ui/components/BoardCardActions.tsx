@@ -6,6 +6,7 @@ import type { WorkflowGitBlockedActionResult } from "@/lib/engine/types";
 import { WorkflowGitRepairPanel } from "@/components/WorkflowGitRepairPanel";
 
 type ActionDef = { action: string; label: string };
+const ACTION_ERROR_FALLBACK = "Action could not be completed.";
 
 /**
  * Decide which manual-progression buttons to surface for a card based on its
@@ -14,7 +15,7 @@ type ActionDef = { action: string; label: string };
  * dead buttons. The engine remains authoritative; if the prediction is wrong
  * the click will get a 409 and we surface it.
  */
-function actionsFor(card: BoardCardDTO): ActionDef[] {
+export function actionsFor(card: BoardCardDTO): ActionDef[] {
   const phase = card.phase_status ?? "";
   const stage = card.current_stage ?? null;
 
@@ -52,8 +53,11 @@ interface BoardCardActionsProps {
   card: BoardCardDTO;
 }
 
-function parseActionError(body: unknown, status: number): string {
-  return (body as { error?: string }).error ?? `engine_${status}`;
+function parseActionError(body: unknown): string {
+  const candidate = body as { message?: unknown };
+  return typeof candidate.message === "string" && candidate.message.trim()
+    ? candidate.message
+    : ACTION_ERROR_FALLBACK;
 }
 
 function parseWorkflowGitBlocker(body: unknown, status: number): WorkflowGitBlockedActionResult | null {
@@ -97,7 +101,7 @@ export function BoardCardActions({ card }: Readonly<BoardCardActionsProps>) {
           setError(null);
           return;
         }
-        setError(parseActionError(body, res.status));
+        setError(parseActionError(body));
       }
       // No client-side optimistic state; the SSE workspace stream will
       // emit `item_column_changed` and the live overlay re-buckets the
@@ -134,7 +138,12 @@ export function BoardCardActions({ card }: Readonly<BoardCardActionsProps>) {
         ))}
       </div>
       {error ? (
-        <div data-testid="board-card-action-error" className="text-[10px] text-red-400">
+        <div
+          role="alert"
+          data-testid="board-card-action-error"
+          className="text-[10px]"
+          style={{ color: "var(--color-coral)" }}
+        >
           {error}
         </div>
       ) : null}
