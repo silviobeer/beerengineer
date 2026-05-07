@@ -46,12 +46,15 @@ The goal is for the UI to render engine-owned facts for key workflow state, whil
 ## Scope
 ### In Scope
 - Engine-owned visible item action facts for board and item detail use.
-- Engine-owned latest item run summary sufficient for chat and message entry points.
-- Engine-owned setup/readiness display mode for setup UI decisions.
-- UI normal paths updated to consume engine facts.
+- Engine-owned latest item run entry points for chat and messages. Treat chat-entry and messages-entry as two named facts unless requirements prove a single fact suffices with explicit tie-breaker rules (e.g., active conversation vs. last-output-producing run).
+- Engine-owned setup/readiness display mode for setup UI decisions, with the fact set enumerated by requirements (e.g., display-mode enum values, the specific panels — Git identity, workspace presence, secrets stub — that consume them).
+- UI normal paths updated to consume engine facts. UI consumption of every new engine read model is a hard acceptance gate (no engine-only surface ships without its production caller, per the CLAUDE.md rule on test-only engine modules).
+- Freshness/invalidation declared per fact: each new fact must specify whether it rides the existing SSE board/event stream, is fetched per-request, or has a documented staleness window. Stale-button regression coverage is part of scope.
 - Temporary compatibility fallbacks when engine facts are absent from older or partial responses.
+- Fallback-drift detection: each fallback path must increment an observable counter (or emit a structured log) when it fires, and a test must assert the counter stays at zero on the happy path.
 - Tests proving normal paths use engine facts and fallback paths remain compatibility-only.
 - Additive API contract documentation for new response fields or focused read endpoints.
+- Board-response budget: additive per-card fields stay under a soft cap (architecture sets the number); facts exceeding the cap move to a focused read endpoint instead of bloating `/board`.
 
 ### Out Of Scope
 - UI redesign.
@@ -80,9 +83,10 @@ This direction is larger than a board-only cleanup because it also addresses lat
 
 ## Key Behaviors And Flows
 - When a board card or item detail renders actions, the normal path uses engine-provided visible action facts.
-- When an item chat or item messages surface opens, the normal path uses an engine-provided latest item run summary or run entry point instead of fetching all runs and filtering in the UI.
-- When setup renders Git/readiness guidance, the normal path uses the engine-selected display mode and associated facts.
-- When engine facts are missing because of an older or partial response, the UI may use temporary fallback logic to preserve compatibility.
+- When an item chat or item messages surface opens, the normal path uses an engine-provided run entry point (chat-entry and messages-entry treated as separate named facts unless requirements collapse them) instead of fetching all runs and filtering in the UI.
+- When setup renders Git/readiness guidance, the normal path uses the engine-selected display mode and associated facts; the panel-to-fact mapping is enumerated in requirements.
+- When engine state changes (lease taken, run completes, readiness flips), the UI receives the updated facts through the existing SSE/event stream rather than re-deriving from card state. Freshness mechanism per fact is declared in requirements and covered by a stale-button/stale-entry test.
+- When engine facts are missing because of an older or partial response, the UI may use temporary fallback logic to preserve compatibility, and the fallback path emits an observable signal so drift is detectable.
 - When workflow rules change in the engine, the UI should not need a matching rule-table edit for the normal visible-action path.
 
 ## Data, Permissions, And Constraints
@@ -111,8 +115,8 @@ This direction is larger than a board-only cleanup because it also addresses lat
 ## Downstream Handoff Notes
 - For visual-companion: no UI layout exploration is needed because screens remain structurally the same.
 - Mockup-relevant product inputs: preserve current visual/screen behavior; this is a source-of-truth change, not a redesign.
-- For requirements-engineer: specify visible item action facts, latest item run/chat/message entry facts, setup/readiness display-mode facts, fallback rules, and non-leakage constraints.
-- For architecture/planning: choose whether facts live in additive board/item/setup responses or focused read endpoints; update API docs for introduced fields; avoid broad route/OpenAPI parity and full board projection refactor.
+- For requirements-engineer: specify visible item action facts; chat-entry and messages-entry run facts (separate or unified-with-tie-breaker); the enumerated setup/readiness display-mode fact set with the panel mapping; per-fact freshness/invalidation channel; fallback rules including the observable drift signal; PROJ-8 sequencing decision (depends-on-first vs additive compose); and non-leakage constraints.
+- For architecture/planning: choose whether facts live in additive board/item/setup responses or focused read endpoints; set the per-card additive-field cap and decide which facts overflow to focused endpoints; update API docs for introduced fields; avoid broad route/OpenAPI parity and full board projection refactor.
 
 ## Explored Alternatives
 ### Alternative A
@@ -140,17 +144,22 @@ This direction is larger than a board-only cleanup because it also addresses lat
 
 ## Risks And Trade-Offs
 - The work could accidentally become a board rewrite. This concept keeps screens visually and structurally the same.
-- Temporary fallback can become permanent duplicated logic. Requirements and tests should prove normal paths use engine facts and mark fallback as compatibility-only.
-- Adding facts to `/board` could bloat the board response. Architecture may choose additive board fields or focused endpoints later.
-- Setup/readiness mode could pull in too much setup refactor. This concept moves display-mode ownership only.
+- Temporary fallback can become permanent duplicated logic. Mitigated by a fallback-fired observable signal plus a happy-path zero-count assertion; full removal still tracked under Later.
+- Adding facts to `/board` could bloat the board response. Mitigated by a soft per-card field cap with overflow moving to focused endpoints; architecture sets the number.
+- Latest-run summary computed naively risks an N+1 in the projector. Mitigated by a perf/load test covering boards with many items and many runs per item.
+- Setup/readiness mode could pull in too much setup refactor. This concept moves display-mode ownership only and requirements enumerate exactly which panels and which fact values are in scope.
+- Stale-button regression: engine-emitted action sets that don't invalidate on state change can show out-of-date buttons. Mitigated by per-fact freshness declaration and explicit stale-state tests.
+- PROJ-8 sequencing: PROJ-8 (workflow capability safety) is still concept-stage. Requirements must declare whether PROJ-9 depends on PROJ-8 shipping first or composes additively, so visible-action facts here do not duplicate or contradict PROJ-8's capability-safety facts.
 - Existing useful actions could disappear if the engine model is too strict. Visible behavior should be preserved unless requirements explicitly remove an action.
 
 ## Testing Focus
 - Board and item detail action rendering uses engine-provided facts on the normal path.
 - UI does not render locally invented actions when engine facts are present.
-- Item chat and item messages use engine-provided latest-run entry points instead of all-runs client filtering on the normal path.
-- Setup/readiness mode rendering uses engine-owned display mode on the normal path.
-- Compatibility fallback behavior is covered for missing facts.
+- Item chat and item messages use engine-provided run entry points instead of all-runs client filtering on the normal path; chat-entry and messages-entry tested independently.
+- Setup/readiness mode rendering uses engine-owned display mode on the normal path, with per-panel coverage matching the enumerated fact set.
+- Stale-state coverage: simulated state transitions (lease taken, run finished, readiness flipped) update emitted facts and the UI re-renders without a manual refresh.
+- Compatibility fallback behavior is covered for missing facts, and the fallback-fired counter/log is asserted to remain at zero on the happy path.
+- Performance: board projector with many items and many runs per item does not regress (no N+1 in latest-run summary computation).
 - API docs or OpenAPI entries are updated for introduced additive fields/endpoints.
 - Secret/path/token non-leakage is covered for new engine read facts.
 
