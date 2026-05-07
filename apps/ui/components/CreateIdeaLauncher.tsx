@@ -28,6 +28,68 @@ interface CreateIdeaFormProps {
   readonly onIdeaTextChange: (value: string) => void;
 }
 
+interface CreateIdeaHeaderProps {
+  readonly isOpen: boolean;
+  readonly isWorkspaceSelected: boolean;
+  readonly isSubmitting: boolean;
+  readonly inputId: string;
+  readonly onToggle: () => void;
+}
+
+interface CreateIdeaLauncherState {
+  readonly isOpen: boolean;
+  readonly ideaText: string;
+  readonly validationError: string | null;
+  readonly submitError: string | null;
+  readonly isSubmitting: boolean;
+  readonly openOrClose: () => void;
+  readonly submit: (event: FormSubmitEvent) => void;
+  readonly updateIdeaText: (value: string) => void;
+}
+
+function CreateIdeaHeader({
+  isOpen,
+  isWorkspaceSelected,
+  isSubmitting,
+  inputId,
+  onToggle,
+}: Readonly<CreateIdeaHeaderProps>) {
+  return (
+    <div className="flex flex-wrap items-start gap-3">
+      <div className="min-w-0 flex-1">
+        <h2
+          className="text-sm uppercase tracking-[0.16em]"
+          style={{ color: "var(--color-zinc-300)", fontFamily: "var(--font-display)" }}
+        >
+          Create idea
+        </h2>
+        <p
+          className="mt-1 text-sm"
+          style={{ color: "var(--color-zinc-400)", fontFamily: "var(--font-body, var(--font-sans))" }}
+        >
+          Start a new board item from a single idea note.
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={onToggle}
+        disabled={!isWorkspaceSelected || isSubmitting}
+        aria-expanded={isOpen ? "true" : "false"}
+        aria-controls={inputId}
+        className="min-h-10 border px-3 py-2 text-sm font-semibold"
+        style={{
+          borderColor: "var(--color-amber-500)",
+          backgroundColor: isOpen ? "var(--color-amber-500)" : "transparent",
+          color: isOpen ? "var(--color-zinc-950)" : "var(--color-amber-300)",
+          fontFamily: "var(--font-display)",
+        }}
+      >
+        Create idea
+      </button>
+    </div>
+  );
+}
+
 function CreateIdeaForm({
   inputId,
   ideaText,
@@ -116,25 +178,23 @@ function CreateIdeaForm({
   );
 }
 
-export function CreateIdeaLauncher({
-  selectedWorkspaceKey,
-  isWorkspaceSelected,
-  openItemModalFromMutation,
-}: Readonly<BoardLauncherRenderContext>) {
-  const inputId = useId();
+function useCreateIdeaLauncherState(
+  selectedWorkspaceKey: string | null,
+  openItemModalFromMutation: BoardLauncherRenderContext["openItemModalFromMutation"],
+): CreateIdeaLauncherState {
   const [isOpen, setIsOpen] = useState(false);
   const [ideaText, setIdeaText] = useState("");
   const [validationError, setValidationError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  function onIdeaTextChange(value: string) {
+  function updateIdeaText(value: string) {
     setIdeaText(value);
     if (validationError) setValidationError(null);
     if (submitError) setSubmitError(null);
   }
 
-  async function handleSubmit(event: FormSubmitEvent) {
+  async function submit(event: FormSubmitEvent) {
     event.preventDefault();
     if (isSubmitting || !selectedWorkspaceKey) return;
 
@@ -166,6 +226,26 @@ export function CreateIdeaLauncher({
     setSubmitError(result.message ?? GENERIC_CREATE_IDEA_FAILURE);
   }
 
+  return {
+    isOpen,
+    ideaText,
+    validationError,
+    submitError,
+    isSubmitting,
+    openOrClose: () => setIsOpen((current) => !current),
+    submit: (event) => void submit(event),
+    updateIdeaText,
+  };
+}
+
+export function CreateIdeaLauncher({
+  selectedWorkspaceKey,
+  isWorkspaceSelected,
+  openItemModalFromMutation,
+}: Readonly<BoardLauncherRenderContext>) {
+  const inputId = useId();
+  const launcher = useCreateIdeaLauncherState(selectedWorkspaceKey, openItemModalFromMutation);
+
   return (
     <section
       data-testid="create-idea-launcher"
@@ -176,48 +256,23 @@ export function CreateIdeaLauncher({
         color: "var(--color-zinc-100)",
       }}
     >
-      <div className="flex flex-wrap items-start gap-3">
-        <div className="min-w-0 flex-1">
-          <h2
-            className="text-sm uppercase tracking-[0.16em]"
-            style={{ color: "var(--color-zinc-300)", fontFamily: "var(--font-display)" }}
-          >
-            Create idea
-          </h2>
-          <p
-            className="mt-1 text-sm"
-            style={{ color: "var(--color-zinc-400)", fontFamily: "var(--font-body, var(--font-sans))" }}
-          >
-            Start a new board item from a single idea note.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => setIsOpen((current) => !current)}
-          disabled={!isWorkspaceSelected || isSubmitting}
-          aria-expanded={isOpen ? "true" : "false"}
-          aria-controls={inputId}
-          className="min-h-10 border px-3 py-2 text-sm font-semibold"
-          style={{
-            borderColor: "var(--color-amber-500)",
-            backgroundColor: isOpen ? "var(--color-amber-500)" : "transparent",
-            color: isOpen ? "var(--color-zinc-950)" : "var(--color-amber-300)",
-            fontFamily: "var(--font-display)",
-          }}
-        >
-          Create idea
-        </button>
-      </div>
+      <CreateIdeaHeader
+        isOpen={launcher.isOpen}
+        isWorkspaceSelected={isWorkspaceSelected}
+        isSubmitting={launcher.isSubmitting}
+        inputId={inputId}
+        onToggle={launcher.openOrClose}
+      />
 
-      {isOpen ? (
+      {launcher.isOpen ? (
         <CreateIdeaForm
           inputId={inputId}
-          ideaText={ideaText}
-          validationError={validationError}
-          submitError={submitError}
-          isSubmitting={isSubmitting}
-          onSubmit={(event) => void handleSubmit(event)}
-          onIdeaTextChange={onIdeaTextChange}
+          ideaText={launcher.ideaText}
+          validationError={launcher.validationError}
+          submitError={launcher.submitError}
+          isSubmitting={launcher.isSubmitting}
+          onSubmit={launcher.submit}
+          onIdeaTextChange={launcher.updateIdeaText}
         />
       ) : null}
     </section>
