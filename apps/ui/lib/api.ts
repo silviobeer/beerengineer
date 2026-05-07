@@ -1,7 +1,7 @@
 import type { Item, Phase, Workspace } from "./types";
 import { engineBaseUrl } from "./engine/baseUrl";
 
-export const BOARD_MUTATION_CONVERGENCE_WINDOW_MS = 1500;
+export const BOARD_MUTATION_CONVERGENCE_WINDOW_MS = 3000;
 export const BOARD_MUTATION_REFRESH_INTERVAL_MS = 250;
 
 export interface BoardLauncherMutationSuccess {
