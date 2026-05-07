@@ -138,7 +138,7 @@ function promptEntry(input: {
  * SSE chat entries the SSEConnectionManager dispatches.
  */
 export function ItemChat({ itemId }: Readonly<ItemChatProps>) {
-  const { registerConversationListener } = useSSE();
+  const { registerConversationListener, setRunId: setSseRunId } = useSSE();
 
   const [runId, setRunId] = useState<string | null>(null);
   const [entries, setEntries] = useState<ConversationEntry[]>([]);
@@ -170,6 +170,7 @@ export function ItemChat({ itemId }: Readonly<ItemChatProps>) {
   useEffect(() => {
     let cancelled = false;
     seenIdsRef.current = new Set();
+    setSseRunId(null);
     setLoadError(null);
     setLoaded(false);
     setEntries([]);
@@ -199,6 +200,7 @@ export function ItemChat({ itemId }: Readonly<ItemChatProps>) {
         const conv = (await convRes.json()) as EngineConversationResponse;
         if (cancelled) return;
         setRunId(latest.id);
+        setSseRunId(latest.id);
         adoptConversation(conv);
         setLoaded(true);
       } catch (err) {
@@ -211,8 +213,9 @@ export function ItemChat({ itemId }: Readonly<ItemChatProps>) {
 
     return () => {
       cancelled = true;
+      setSseRunId(null);
     };
-  }, [itemId]);
+  }, [itemId, setSseRunId]);
 
   useEffect(() => {
     if (!runId) return;
