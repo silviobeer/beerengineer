@@ -45,16 +45,16 @@ The goal is to create a small, durable decision map and add low-noise freshness 
 - Create `docs/adr/` and update `docs/AGENTS.md`.
 - Add concise ADRs for high-stakes decisions:
   - real git is mandatory;
-  - engine-owned readiness, secrets, and browser proxy boundary;
+  - engine-owned readiness and browser proxy boundary (secrets handled in the same ADR's context, not as a separate title; requirements may split if the secrets policy proves long enough to stand alone);
   - closed capabilities with adapter escape hatches;
   - workflow capability builder direction/status;
   - merge gate policy direction/status;
   - worker lease semantics;
   - Supabase production migration recovery policy.
 - Add low-noise documentation freshness checks for:
-  - completed PROJs reflected in `docs/PROJECT.md` or explicitly excluded;
-  - package dependency claims matching package files;
-  - docs not referencing deleted active directories without historical note.
+  - completed PROJs reflected in `docs/PROJECT.md` or explicitly excluded (a "completed PROJ" is defined deterministically by requirements; a working default is "PROJ has a `specs/PROJ-*/7_progress/` directory with at least one progress log");
+  - package dependency claims matching package files, scoped narrowly to (a) explicit version-pinned tables or fenced lists in docs and (b) existence checks for named packages — prose mentions and version-drift heuristics are out of scope to keep the check low-noise;
+  - docs not referencing deleted active directories without an explicit historical marker; the marker must be a deterministic signal (e.g., a `Historical` section heading, a `<!-- historical -->` HTML comment, or strikethrough) chosen by requirements rather than a prose heuristic.
 - Update docs proven stale by code/spec evidence.
 
 ### Out Of Scope
@@ -93,6 +93,8 @@ This direction is broader than ADRs-only because stale docs still mislead future
 - Cross-cutting ADRs live under `docs/adr/`; app-specific future ADRs may belong under app docs only if they are not cross-cutting.
 - New docs under `docs/` require `docs/AGENTS.md` index updates.
 - Freshness checks should be deterministic and runnable locally with the existing repo toolchain.
+- Freshness checks must have a real production caller (e.g., a `pnpm` script, pre-commit hook, or CI gate); engine modules with no caller outside their own tests are not features and would violate the repo engineering rule.
+- ADRs for decisions still moving through the chain (PROJ-8/10/11 in particular) must not preempt those concepts; they record direction/status only, with `proposed | deferred | accepted-after-implementation` (or the requirements-chosen equivalent) and a link to the in-flight PROJ.
 
 ## Error Handling And Edge Cases
 - If a doc contradicts code, update the doc to match verified code rather than changing behavior to match stale prose.
@@ -112,8 +114,16 @@ This direction is broader than ADRs-only because stale docs still mislead future
 ## Downstream Handoff Notes
 - For visual-companion: no UI layout exploration is needed.
 - Mockup-relevant product inputs: none.
-- For requirements-engineer: specify ADR template, status taxonomy, initial ADR list, freshness check rules, explicit exclusion formats, and docs-to-code evidence rules.
-- For architecture/planning: keep checks narrow and deterministic; update docs only from verified evidence; update `docs/AGENTS.md` when adding `docs/adr/`.
+- For requirements-engineer: specify
+  - ADR template (MADR vs Y-statement vs custom) and numbering scheme (`ADR-0001-...` vs date-prefixed vs topic-named);
+  - status taxonomy — evaluate `accepted-after-implementation` against the simpler `proposed (pending PROJ-X)` and pick one;
+  - initial ADR list and whether engine-owned readiness/secrets is one ADR or two;
+  - the deterministic definition of "completed PROJ" used by the freshness check;
+  - the explicit historical-reference marker (heading, HTML comment, or strikethrough);
+  - the dependency-claim check input shape (which doc regions are in-scope, which are ignored);
+  - explicit exclusion formats for `docs/PROJECT.md` omissions and intentionally historical references;
+  - docs-to-code evidence rules.
+- For architecture/planning: keep checks narrow and deterministic; pick the execution layer (script, pnpm task, pre-commit, CI gate) before implementation so checks have a real caller; update docs only from verified evidence; update `docs/AGENTS.md` when adding `docs/adr/`.
 
 ## Explored Alternatives
 ### Alternative A
@@ -141,10 +151,12 @@ This direction is broader than ADRs-only because stale docs still mislead future
 
 ## Risks And Trade-Offs
 - ADRs could duplicate `docs/TECHNICAL.md`. Mitigation: keep ADRs short and link back to detailed docs/code instead of replacing them.
-- Freshness checks can become noisy. Mitigation: keep checks narrow and evidence-based.
+- Freshness checks can become noisy. Mitigation: keep checks narrow and evidence-based; the dependency-claim check is the highest-risk for false positives and is restricted to version-pinned tables/lists and existence checks.
 - Future decisions could be recorded as if already shipped. Mitigation: require explicit ADR status.
+- ADRs for decisions in active PROJs (PROJ-8/10/11) could preempt downstream chain work. Mitigation: only record direction/status with `proposed | deferred | accepted-after-implementation` and link to the in-flight PROJ; defer the accepted ADR text until the source PROJ ships.
 - Adding `docs/adr/` can violate docs index rules if forgotten. Mitigation: `docs/AGENTS.md` update is part of scope and success.
 - Docs may contradict code during cleanup. Mitigation: code wins; stale docs are updated to match verified evidence.
+- Freshness check could ship as test-only engine code. Mitigation: requirements/architecture must name the production caller (pnpm task, pre-commit, or CI gate) before implementation.
 
 ## Testing Focus
 - ADR files follow the chosen template and include status, context, decision, alternatives, consequences, and evidence links.
