@@ -110,14 +110,25 @@ Return an `artifact` object matching `ImplementationPlanArtifact`:
 - `conceptSummary`: string
 - `architectureSummary`: string
 - `plan`: `{ summary, assumptions, sequencingNotes, dependencies, risks, waves }`
+- `plan.waves` MUST be a non-empty array. Never return `plan: null`,
+  `plan.waves: null`, or omit `waves`.
 
 For each feature wave:
 - use `{ id, number, kind, goal, stories, dependencies, exitCriteria, internallyParallelizable }`
 - `id` MUST be `"W<number>"` (e.g., `"W1"`, `"W2"`, …); `number` MUST match
 - `kind` should be `"feature"` unless the wave is a shared-infra setup wave
-- `stories` MUST be `Array<{ id: string, title: string }>` — never `Array<string>` and never wrapped shapes
+- `stories` MUST be `Array<{ id: string, title: string, dbRelevant: boolean, dbRelevanceOverride?: "not-db-relevant", dbRelevanceOverrideReason?: string }>` — never `Array<string>` and never wrapped shapes
 - every `stories[*].id` MUST be the exact `id` of an existing story in the supplied PRD; do NOT invent new stories, do NOT omit the `id`, do NOT synthesize scaffold or placeholder stories
 - every `stories[*].title` must match the corresponding PRD story's title
+- every `stories[*].dbRelevant` MUST be a boolean:
+  - use `true` only when that story's implementation is expected to create,
+    modify, validate, provision, migrate, or otherwise exercise database
+    behavior
+  - use `false` for non-database stories
+  - when a story might sound database-adjacent but architecture says it should
+    not exercise DB behavior, set `dbRelevant: false`,
+    `dbRelevanceOverride: "not-db-relevant"`, and a concise
+    `dbRelevanceOverrideReason`
 - every project story must appear in exactly one wave
 - `dependencies` MUST be `Array<string>` containing ONLY existing wave ids of EARLIER waves (e.g., `["W1"]`). Never prose, never story ids, never wrapped shapes. An empty array `[]` means no prerequisite waves.
 
