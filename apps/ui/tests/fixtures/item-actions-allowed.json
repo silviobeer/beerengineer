@@ -1,0 +1,18 @@
+{
+  "merge/review_required": [
+    "resume_run",
+    "promote_to_base",
+    "cancel_promotion"
+  ],
+  "implementation/failed": [
+    "rerun_design_prep",
+    "resume_run"
+  ],
+  "implementation/running": [
+    "rerun_design_prep",
+    "resume_run"
+  ],
+  "done/completed": [
+    "rerun_design_prep"
+  ]
+}
