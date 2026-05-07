@@ -35,10 +35,12 @@ This concept protects route coverage. It does not claim to prove every request o
 ## Success Criteria
 - Real engine route declarations and `apps/engine/src/api/openapi.json` are compared for method/path coverage.
 - Unknown method/path drift fails the check.
-- Intentional exceptions are narrow, explicit, and include a reason.
-- Public route additions, changes, and removals update both `openapi.json` and relevant sections of `docs/api-contract.md`, or are explicitly excluded with a reason.
+- Intentional exceptions are narrow, explicit, per-route entries with a reason; broad category-level wildcards are not allowed.
+- Public route additions, changes, and removals update both `openapi.json` and `docs/api-contract.md`. The prose update rule is concrete: the literal `METHOD /path` (or its normalized template form) must appear in `docs/api-contract.md`, or the route must carry a per-route exception with reason.
 - Special route categories are handled deliberately, including `/openapi.json`, SSE routes, webhooks, private/internal routes, and local-only surfaces.
-- The check avoids brittle parsing of today's large `server.ts` and is designed to consume PROJ-10's clearer route ownership shape or an equivalent stable route declaration source.
+- The parity input is a single committed source of route truth; requirements must pick exactly one of: (a) a programmatic registry exported by PROJ-10's route ownership shape, (b) an AST scan of `apps/engine/src/api/routes/*`, or (c) runtime introspection by booting the engine in a test harness. Brittle text scraping of `server.ts` is not allowed.
+- The exception list is a single committed file (location and schema pinned by requirements) with fields `{ method, path, reason, category }` per entry; entries are reviewed in PR diff like any other code change.
+- The check runs as part of the standard test command (no separate manual script required) so CI and local development cover it the same way.
 - The concept stays lightweight: no generated router, generated client, full schema validation, API rewrite, or broad behavior smoke suite.
 
 ## Scope
@@ -90,10 +92,11 @@ This direction is smaller than generated API tooling and narrower than full sche
 
 ## Error Handling And Edge Cases
 - Method/path parity does not prove schema truth; failures and documentation should name that limit.
-- Dynamic route syntax differences must normalize to comparable path shapes without pretending to validate schemas.
+- Dynamic route syntax differences normalize to a single canonical template form. The committed rule: regex captures and engine path-parameter syntax map to `{paramN}` (or named `{name}` when the engine declaration provides one), and OpenAPI `{name}` parameters are compared against that normalized template string. Requirements pin the exact mapping table.
+- Renames (path or method change) must surface as a paired failure — one stale OpenAPI entry plus one missing route entry — and the failure message should explicitly suggest "rename?" so implementers do not silently add an exception for the stale half.
 - SSE routes may need explicit treatment because their behavior differs from ordinary JSON routes.
 - Webhooks may use channel-specific authentication and may need explicit exception or contract handling.
-- `/openapi.json` is both a route and the machine contract surface, so it should be handled deliberately.
+- `/openapi.json` is both a route and the machine contract surface; it carries a permanent per-route exception with reason "machine contract surface, not described in itself."
 - Private/internal/local-only routes must either be intentionally undocumented with a reason or documented as local/private surfaces.
 - Unknown drift fails rather than warning.
 
@@ -107,8 +110,8 @@ This direction is smaller than generated API tooling and narrower than full sche
 ## Downstream Handoff Notes
 - For visual-companion: no UI layout exploration is needed.
 - Mockup-relevant product inputs: none.
-- For requirements-engineer: specify parity inputs/outputs, exception categories, failure behavior, docs update rules, and limits of method/path-only checking.
-- For architecture/planning: consume PROJ-10 route ownership shape; avoid generated routing/client work; keep `openapi.json` authoritative.
+- For requirements-engineer: must pin (1) the single parity input source — registry export vs AST scan vs runtime introspection; (2) the exact path normalization mapping table; (3) the prose update rule as literal `METHOD /path` presence in `docs/api-contract.md`; (4) the exception file location and `{ method, path, reason, category }` schema; (5) the test command the gate hooks into; (6) explicit rename failure messaging; (7) the permanent `/openapi.json` exception entry. Also specify parity outputs, failure behavior, and the documented limits of method/path-only checking.
+- For architecture/planning: consume PROJ-10 route ownership shape; if PROJ-10 does not export a programmatic registry, planning must add the chosen input source as the first wave before any parity check work. Avoid generated routing/client work; keep `openapi.json` authoritative.
 
 ## Explored Alternatives
 ### Alternative A
@@ -136,10 +139,12 @@ This direction is smaller than generated API tooling and narrower than full sche
 
 ## Risks And Trade-Offs
 - Method/path parity can create false confidence. Mitigation: state clearly that PROJ-11 protects route coverage only, not full schema truth.
-- Exception lists can hide drift. Mitigation: exceptions must be narrow, explicit, reasoned, and reviewed.
-- Depending on PROJ-10 can make sequencing tricky. Mitigation: implementation should start after PROJ-10 or first add a stable route declaration source.
-- Prose docs enforcement can get fuzzy. Mitigation: require updates only to clearly identified `docs/api-contract.md` sections and leave broad docs freshness to PROJ-12.
+- Exception lists can hide drift. Mitigation: exceptions must be narrow, explicit, reasoned, and reviewed; per-route only, no category wildcards.
+- Depending on PROJ-10 can make sequencing tricky. Mitigation: requirements commit to one parity input source (registry export, AST scan, or runtime introspection) before planning; implementation begins only after the chosen source exists.
+- Prose docs enforcement can get fuzzy. Mitigation: enforce literal `METHOD /path` presence in `docs/api-contract.md` rather than "relevant section" judgement; leave broad docs freshness to PROJ-12.
 - Special routes are easy to mishandle. Mitigation: explicitly account for `/openapi.json`, SSE routes, webhooks, private/internal routes, and local-only surfaces.
+- UI proxy routes can mask engine-side route drift from external consumers. Out of scope here, but named so a future PROJ knows engine parity does not imply UI proxy parity.
+- Path normalization is the most fragile mechanic. Mitigation: pin a single canonical template form and document the mapping table in the PRD, so engine and OpenAPI sides are compared on identical strings.
 
 ## Testing Focus
 - Route declaration to OpenAPI method/path parity.
