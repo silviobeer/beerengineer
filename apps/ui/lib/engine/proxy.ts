@@ -35,19 +35,32 @@ function jsonResponse(error: string, status: number): Response {
   return Response.json({ error }, { status });
 }
 
-function requestOrigin(request: Request): string {
-  return new URL(request.url).origin;
+function originFromHost(request: Request, host: string | null): string | null {
+  if (!host) return null;
+  const proto = request.headers.get("x-forwarded-proto") ?? new URL(request.url).protocol.replace(/:$/, "");
+  return `${proto}://${host}`;
+}
+
+function requestOrigins(request: Request): Set<string> {
+  const url = new URL(request.url);
+  return new Set(
+    [
+      url.origin,
+      originFromHost(request, request.headers.get("host")),
+      originFromHost(request, request.headers.get("x-forwarded-host")),
+    ].filter((origin): origin is string => Boolean(origin))
+  );
 }
 
 function validateProxyMutationRequest(request: Request): Response | null {
-  const expectedOrigin = requestOrigin(request);
+  const expectedOrigins = requestOrigins(request);
   const origin = request.headers.get("origin");
-  if (origin && origin !== expectedOrigin) return jsonResponse("csrf_token_required", 403);
+  if (origin && !expectedOrigins.has(origin)) return jsonResponse("csrf_token_required", 403);
 
   const referer = request.headers.get("referer");
   if (!origin && referer) {
     try {
-      if (new URL(referer).origin !== expectedOrigin) return jsonResponse("csrf_token_required", 403);
+      if (!expectedOrigins.has(new URL(referer).origin)) return jsonResponse("csrf_token_required", 403);
     } catch {
       return jsonResponse("csrf_token_required", 403);
     }

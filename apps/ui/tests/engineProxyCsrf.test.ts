@@ -82,4 +82,32 @@ describe("engine mutation proxy CSRF guard", () => {
       body: JSON.stringify({ group: "supabase" }),
     }));
   });
+
+  it("accepts LAN/Tailscale origins from the Host header when Next normalizes request.url", async () => {
+    process.env.BEERENGINEER_API_TOKEN = "secret-token";
+    process.env.BEERENGINEER_ENGINE_URL = "http://127.0.0.1:4999";
+    const fetchSpy = vi.fn(async () => Response.json({ ok: true }));
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    const res = await proxyEngineMutation(
+      new Request("http://localhost:3100/api/runs/run-1/answer", {
+        method: "POST",
+        headers: {
+          host: "100.80.38.41:3100",
+          origin: "http://100.80.38.41:3100",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ promptId: "p-1", answer: "B" }),
+      }),
+      "/runs/run-1/answer",
+    );
+
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledWith("http://127.0.0.1:4999/runs/run-1/answer", expect.objectContaining({
+      method: "POST",
+      headers: expect.objectContaining({
+        "x-beerengineer-token": "secret-token",
+      }),
+    }));
+  });
 });
