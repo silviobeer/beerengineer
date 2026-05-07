@@ -136,21 +136,30 @@ mapfile -t REVIEW_FILES < <(git diff --name-only "${WAVE_BASE}..HEAD" 2>/dev/nul
 
 CR_OUT=$(mktemp)
 CR_START=$(date +%s)
+CR_EXTRA_RETRIES="${CODERABBIT_RATE_LIMIT_EXTRA_RETRIES:-3}"
+[[ "$CR_EXTRA_RETRIES" =~ ^[0-9]+$ ]] || fail "invalid CODERABBIT_RATE_LIMIT_EXTRA_RETRIES='${CR_EXTRA_RETRIES}'"
 set +e
-timeout --foreground "$CODERABBIT_TIMEOUT" \
-  coderabbit review --agent --type committed --config AGENTS.md apps/engine/CLAUDE.md --base-commit "$WAVE_BASE" > "$CR_OUT" 2>&1
-rc=$?
-if [[ $rc -ne 0 ]] && grep -q "stopping cli" "$CR_OUT" 2>/dev/null; then
-  echo "   ⚠ coderabbit stopped early; retrying once"
-  if grep -q '"errorType":"rate_limit"' "$CR_OUT" 2>/dev/null; then
-    echo "   waiting 35s for coderabbit rate limit recovery"
-    sleep 35
-  fi
-  : > "$CR_OUT"
+CR_RETRY=0
+while true; do
   timeout --foreground "$CODERABBIT_TIMEOUT" \
     coderabbit review --agent --type committed --config AGENTS.md apps/engine/CLAUDE.md --base-commit "$WAVE_BASE" > "$CR_OUT" 2>&1
   rc=$?
-fi
+  [[ $rc -eq 0 ]] && break
+  [[ "$CR_RETRY" -lt "$CR_EXTRA_RETRIES" ]] || break
+  grep -q "stopping cli" "$CR_OUT" 2>/dev/null || break
+  CR_RETRY=$((CR_RETRY + 1))
+  echo "   ⚠ coderabbit stopped early; retrying (${CR_RETRY}/${CR_EXTRA_RETRIES})"
+  if grep -q '"errorType":"rate_limit"' "$CR_OUT" 2>/dev/null; then
+    RATE_LIMIT_WAIT_SECONDS="${CODERABBIT_RATE_LIMIT_WAIT_SECONDS:-540}"
+    if [[ ! "$RATE_LIMIT_WAIT_SECONDS" =~ ^[0-9]+$ || "$RATE_LIMIT_WAIT_SECONDS" -le 0 ]]; then
+      echo "   ⚠ invalid CODERABBIT_RATE_LIMIT_WAIT_SECONDS='${CODERABBIT_RATE_LIMIT_WAIT_SECONDS:-}' — using 540s"
+      RATE_LIMIT_WAIT_SECONDS=540
+    fi
+    echo "   waiting ${RATE_LIMIT_WAIT_SECONDS}s for coderabbit rate limit recovery"
+    sleep "$RATE_LIMIT_WAIT_SECONDS"
+  fi
+  : > "$CR_OUT"
+done
 set -e
 if [[ $rc -ne 0 ]]; then
   elapsed=$(( $(date +%s) - CR_START ))

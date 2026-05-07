@@ -171,6 +171,7 @@ export interface BoardCardDTO {
     message?: string;
     retry: { available: boolean; ready: boolean };
   };
+  recovery_user_message?: string | null;
   previewUrl?: string;
   latestRunId?: string;
   workspaceId?: string;

@@ -141,6 +141,37 @@
         }
       }
     },
+    "/ready": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "summary": "Workflow readiness probe for accepting engine work.",
+        "description": "Reports unavailable until startup recovery has completed, during graceful shutdown, when the local DB probe fails, or when the lightweight worker-lease write sentinel cannot be updated. This endpoint does not check Git, LLM, workspace, setup, or Supabase readiness.",
+        "responses": {
+          "200": {
+            "description": "Engine can accept workflow work.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadyResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Engine process is alive but workflow work should not be accepted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadyResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/openapi.json": {
       "get": {
         "tags": [
@@ -2977,6 +3008,62 @@
           }
         }
       },
+      "ReadyResponse": {
+        "type": "object",
+        "required": [
+          "ok",
+          "service",
+          "uptimeMs",
+          "db",
+          "startupRecovery",
+          "shutdown",
+          "leaseWrite"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "service": {
+            "type": "string",
+            "enum": [
+              "beerengineer-engine"
+            ]
+          },
+          "uptimeMs": {
+            "type": "number"
+          },
+          "db": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "failed"
+            ]
+          },
+          "startupRecovery": {
+            "type": "string",
+            "enum": [
+              "complete",
+              "pending"
+            ]
+          },
+          "shutdown": {
+            "type": "string",
+            "enum": [
+              "idle",
+              "in_progress"
+            ]
+          },
+          "leaseWrite": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "failed",
+              "skipped"
+            ],
+            "description": "Result of the lightweight readiness sentinel write. `skipped` means an earlier readiness precondition already failed."
+          }
+        }
+      },
       "Workspace": {
         "type": "object",
         "required": [
@@ -3367,6 +3454,13 @@
             "type": "string",
             "nullable": true
           },
+          "recovery_user_message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Projected user-facing recovery message. Present for lost-worker recoveries; null for other recovery causes. Derived from recovery status/cause/summary, not stored as a DB column."
+          },
           "created_at": {
             "type": "integer"
           },
@@ -3662,6 +3756,13 @@
           "summary": {
             "type": "string",
             "nullable": true
+          },
+          "recovery_user_message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Projected user-facing recovery message to display before generic fallback copy when present."
           },
           "resumable": {
             "type": "boolean"
@@ -3994,6 +4095,13 @@
                 }
               }
             }
+          },
+          "recovery_user_message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Projected user-facing recovery message for the latest run on the card. Clients should prefer this before generic fallback copy."
           },
           "previewUrl": {
             "type": "string"

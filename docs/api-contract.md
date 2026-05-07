@@ -26,6 +26,7 @@ consumed by tooling.
 ### Health / setup
 
 - `GET /health` → `200 { ok: true, service: "beerengineer-engine", uptimeMs: number, db: "ok" }`; if the engine process answers but the local SQLite probe fails, returns `503 { ok: false, service: "beerengineer-engine", uptimeMs: number, db: "failed" }`. No workspace/project data or external integrations are checked.
+- `GET /ready` → workflow readiness. Returns `200` only when the DB probe is ok, startup lost-worker recovery has completed, graceful shutdown is not in flight, and the lightweight worker-lease write sentinel succeeds. Returns `503` with the same shape when any readiness precondition fails. Response: `{ ok, service, uptimeMs, db: "ok" | "failed", startupRecovery: "complete" | "pending", shutdown: "idle" | "in_progress", leaseWrite: "ok" | "failed" | "skipped" }`. `/ready` does not create run/item/history rows and does not check Git, LLM, workspace, setup, or Supabase readiness.
 - `GET /setup/status` (existing)
 - `POST /setup/init` — token-protected app-state initialization. Creates missing app config, data directory, and SQLite state. Existing valid config is preserved; invalid existing config returns `409`.
 - `GET /setup/config` — effective app-wide config view for setup/settings screens. Secret fields are returned only as refs or redacted presence metadata, never plaintext values.
@@ -88,7 +89,7 @@ No generic `POST /items/:id/actions` with an action string in the body. Explicit
 
 ### Runs
 
-- `GET /runs` — returns `{ runs: [...] }`, newest first. **No filter parameters today** — `workspace`/`itemId`/`status`/`owner`/`limit`/`cursor` are ignored by the current handler. They will be added when a concrete client surface motivates them; see `apps/engine/src/api/routes/runs.ts:handleListRuns`.
+- `GET /runs` — returns `{ runs: [...] }`, newest first. Run DTOs include projected `recovery_user_message: string | null` when a lost-worker recovery exists. **No filter parameters today** — `workspace`/`itemId`/`status`/`owner`/`limit`/`cursor` are ignored by the current handler. They will be added when a concrete client surface motivates them; see `apps/engine/src/api/routes/runs.ts:handleListRuns`.
 - `POST /runs` — create run
   - Request: `{ workspaceKey, title, description? }`
   - Response: `{ runId, itemId, status }`
@@ -99,7 +100,7 @@ No generic `POST /items/:id/actions` with an action string in the body. Explicit
   - Request: `{ summary, branch?, commit?, reviewNotes? }`
   - Response: `{ runId, status }`
 
-`GET /runs/:id` response includes `openPrompt` when the run is waiting on operator input, so UIs that only show "is it waiting on me?" don't need a second call. Prompt objects may also carry structured `actions` for button-style responses.
+`GET /runs/:id` response includes `openPrompt` when the run is waiting on operator input, so UIs that only show "is it waiting on me?" don't need a second call. Prompt objects may also carry structured `actions` for button-style responses. `GET /runs/:id` and `GET /runs/:id/recovery` expose `recovery_user_message: string | null`; clients should render that engine-provided copy before generic fallback text.
 
 ### Conversation (run-scoped)
 
@@ -184,7 +185,7 @@ No channel-binding CRUD.
 
 ### Board
 
-- `GET /board?workspace=:key` — columns + cards aggregate for a workspace. Columns are `idea | brainstorm | frontend | requirements | implementation | merge | done`.
+- `GET /board?workspace=:key` — columns + cards aggregate for a workspace. Columns are `idea | brainstorm | frontend | requirements | implementation | merge | done`. Board cards expose `recovery_user_message: string | null` for lost-worker recovery using existing recovery fields; this is a projected API field, not a DB column.
 
 ### Spec
 

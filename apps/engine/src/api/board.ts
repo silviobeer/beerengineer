@@ -1,10 +1,11 @@
-import type { Repos } from "../db/repositories.js"
+import type { Repos, RunRow } from "../db/repositories.js"
 import { itemSlug } from "../core/itemIdentity.js"
 import type { Db } from "../db/connection.js"
 import { previewUrlForWorktree } from "../core/portAllocator.js"
 import { layout } from "../core/workspaceLayout.js"
 import { parseSupabaseReadinessRecoveryPayload } from "../core/supabase/recoveryPayload.js"
 import type { SupabaseReadinessSetupAction } from "../core/supabase/types.js"
+import { recoveryUserMessageForRun } from "../core/recoveryUserMessage.js"
 
 const orderedColumns = ["idea", "brainstorm", "frontend", "requirements", "implementation", "merge", "done"] as const
 const columnTitles: Record<(typeof orderedColumns)[number], string> = {
@@ -59,7 +60,7 @@ function supabaseBlocker(
 
 function boardCardMeta(
   workspaceRoot: string | null,
-  latestRun: { id: string; workspace_fs_id: string | null; recovery_status: string | null } | undefined,
+  latestRun: { id: string; workspace_fs_id: string | null; recovery_status: RunRow["recovery_status"]; recovery_summary: string | null } | undefined,
   openPrompt: { actions_json: string | null } | undefined,
   item: { title: string; id: string },
 ): Pick<BoardCardDTO, "hasOpenPrompt" | "hasReviewGateWaiting" | "hasBlockedRun" | "previewUrl"> {
@@ -93,6 +94,7 @@ export type BoardCardDTO = {
     message?: string
     retry: { available: boolean; ready: boolean }
   }
+  recovery_user_message?: string | null
   previewUrl?: string
   latestRunId?: string
   workspaceId?: string
@@ -175,9 +177,9 @@ export function getBoard(db: Db, workspaceKey?: string | null): BoardDTO {
     id: string
     item_id: string
     status: string
-    recovery_status: string | null
-    recovery_scope_ref: string | null
+    recovery_status: RunRow["recovery_status"]
     recovery_summary: string | null
+    recovery_scope_ref: string | null
     recovery_payload_json: string | null
     workspace_fs_id: string | null
     supabase_branch_ref: string | null
@@ -196,9 +198,9 @@ export function getBoard(db: Db, workspaceKey?: string | null): BoardDTO {
       id: string
       item_id: string
       status: string
-      recovery_status: string | null
-      recovery_scope_ref: string | null
+      recovery_status: RunRow["recovery_status"]
       recovery_summary: string | null
+      recovery_scope_ref: string | null
       recovery_payload_json: string | null
       workspace_fs_id: string | null
       supabase_branch_ref: string | null
@@ -245,6 +247,7 @@ export function getBoard(db: Db, workspaceKey?: string | null): BoardDTO {
           return {
           ...boardCardMeta(workspace.root_path ?? null, latestRun, openPrompt, { title: i.title, id: i.id }),
           supabaseBlocker: supabaseBlocker(workspace, latestRun),
+          recovery_user_message: latestRun ? recoveryUserMessageForRun(latestRun) : null,
           itemCode: i.code,
           itemId: i.id,
           title: i.title,

@@ -384,6 +384,46 @@ export function attachDbSync(
   })
 }
 
+export function persistWorkflowEvent(repos: Repos, event: WorkflowEvent): void {
+  const runId = event.runId
+  if (!runId) return
+  const run = repos.getRun(runId)
+  const itemId = ("itemId" in event ? event.itemId : undefined) ?? run?.item_id
+  if (!itemId) return
+  const stageRunIds = new Map<string, string>()
+  const persistedStageIds = new Set<string>()
+  const persistedProjectIds = new Map<string, string>()
+  const track: TrackLogRow = () => {}
+  const isAuthoritative = (thisRunStatus?: string): boolean => {
+    if (thisRunStatus === "failed") return false
+    return !repos.listRunsForItem(itemId).some(
+      r => r.id !== runId && (r.status === "running" || r.status === "blocked"),
+    )
+  }
+
+  switch (event.type) {
+    case "run_resumed":
+      if (repos.listLogsForRun(runId).some(log => log.event_type === "run_resumed")) {
+        repos.clearRunRecovery(runId)
+        break
+      }
+      persistRunResumedEvent(repos, track, event)
+      break
+    case "stage_started":
+      if (repos.listStageRunsForRun(runId).some(stageRun => stageRun.id === event.stageRunId)) break
+      persistStageStartedEvent(repos, track, event, {
+        persistedStageIds,
+        persistedProjectIds,
+        stageRunIds,
+        itemId,
+        isAuthoritative,
+      })
+      break
+    default:
+      break
+  }
+}
+
 function persistRunStartedEvent(
   repos: Repos,
   track: TrackLogRow,

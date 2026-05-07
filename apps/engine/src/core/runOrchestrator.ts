@@ -10,6 +10,22 @@ import { persistWorkflowRunState } from "./stageRuntime.js"
 import type { SupabaseWorkflowHook } from "./supabase/workflowHook.js"
 import type { SupabaseAdapter } from "./supabase/types.js"
 import type { SupabaseHandoffClient } from "./supabase/handoffWriter.js"
+import { markRunFailedRecoverable } from "./orphanRecovery.js"
+import {
+  claimWorkerLease,
+  defaultWorkerInstanceId,
+  startWorkerLeaseHeartbeat,
+  type WorkerLeaseHeartbeat,
+  type WorkerLeaseScheduler,
+} from "./workerLease.js"
+import type { WorkerOwnerKind } from "../db/repositories.js"
+import {
+  assertWorkflowNotCancelled,
+  createWorkflowCancellation,
+  isWorkflowCancelledError,
+  runWithWorkflowCancellation,
+  withWorkflowCancellation,
+} from "./workflowCancellation.js"
 
 export { attachDbSync, type AttachDbSyncOptions } from "./dbSync.js"
 /* c8 ignore next -- pure re-export */
@@ -31,6 +47,10 @@ export function prepareRun(
     workspaceKey?: string
     workspaceName?: string
     owner?: "cli" | "api"
+    workerInstanceId?: string
+    workerLeaseClock?: () => number
+    workerLeaseScheduler?: WorkerLeaseScheduler
+    workflowRunner?: typeof runWorkflow
     itemId?: string
     resume?: WorkflowResumeInput
     /** Forwarded to `attachRunSubscribers`; see `AttachDbSyncOptions.onItemColumnChanged`. */
@@ -67,17 +87,56 @@ export function prepareRun(
       })
   const workspaceId = itemRow.workspace_id
   const workspaceFsId = workflowWorkspaceId(itemRow)
+  const workerOwnerKind: WorkerOwnerKind = opts.owner ?? "api"
+  const workerInstanceId = opts.workerInstanceId ?? defaultWorkerInstanceId(workerOwnerKind)
+  const cancellation = createWorkflowCancellation()
   const runRow = repos.createRun({
     workspaceId,
     itemId: itemRow.id,
     title: item.title,
-    owner: opts.owner ?? "api",
+    owner: workerOwnerKind,
     workspaceFsId,
   })
+  try {
+    claimWorkerLease(repos, {
+      runId: runRow.id,
+      workerInstanceId,
+      workerOwnerKind,
+      now: opts.workerLeaseClock?.(),
+    })
+  } catch (error) {
+    markRunFailedRecoverable(
+      repos,
+      runRow.id,
+      `Worker start failed before ownership was durable: ${(error as Error).message}`,
+    )
+    throw error
+  }
+  let heartbeat: WorkerLeaseHeartbeat | null = null
+  try {
+    heartbeat = startWorkerLeaseHeartbeat(repos, {
+      runId: runRow.id,
+      workerInstanceId,
+      workerOwnerKind,
+      now: opts.workerLeaseClock,
+      scheduler: opts.workerLeaseScheduler,
+      onFatal: (reason, error) => cancellation.cancel(reason, error),
+    })
+  } catch (error) {
+    markRunFailedRecoverable(
+      repos,
+      runRow.id,
+      `Worker start failed before heartbeat was durable: ${(error as Error).message}`,
+    )
+    throw error
+  }
 
   const bus = io.bus ?? createBus()
+  const workflowIo = withWorkflowCancellation(io, cancellation)
+  const workflowRunner = opts.workflowRunner ?? runWorkflow
 
   const start = async (): Promise<void> => {
+    assertWorkflowNotCancelled()
     const workspaceRow = repos.getWorkspace(workspaceId)
     const llm = await resolveWorkflowLlmOptions(workspaceRow)
     if (workspaceRow?.root_path && !llm) {
@@ -119,11 +178,13 @@ export function prepareRun(
     )
 
     try {
-      await runWithWorkflowIO(io, async () =>
-        runWithActiveRun({ runId: runRow.id, itemId: itemRow.id, title: item.title }, async () => {
+      await runWithWorkflowIO(workflowIo, async () =>
+        runWithWorkflowCancellation(cancellation, () =>
+          runWithActiveRun({ runId: runRow.id, itemId: itemRow.id, title: item.title }, async () => {
+          assertWorkflowNotCancelled()
           bus.emit({ type: "run_started", runId: runRow.id, itemId: itemRow.id, title: item.title })
           try {
-            await runWorkflow(
+            await workflowRunner(
               { ...item, id: itemRow.id },
               {
                 resume: opts.resume,
@@ -136,8 +197,9 @@ export function prepareRun(
                 },
               },
             )
+            assertWorkflowNotCancelled()
             const finalRun = repos.getRun(runRow.id)
-            if (finalRun?.recovery_status === "blocked") return
+            if (finalRun?.recovery_status) return
             await persistWorkflowRunState(
               { workspaceId, runId: runRow.id, workspaceRoot: workspaceRow?.root_path ?? undefined },
               finalRun?.current_stage ?? "handoff",
@@ -153,28 +215,30 @@ export function prepareRun(
           } catch (err) {
             const message = (err as Error).message
             const finalRun = repos.getRun(runRow.id)
-            if (finalRun?.recovery_status !== "blocked") {
-              await persistWorkflowRunState(
-                { workspaceId, runId: runRow.id, workspaceRoot: workspaceRow?.root_path ?? undefined },
-                finalRun?.current_stage ?? "execution",
-                "failed",
-              )
-              bus.emit({
-                type: "run_finished",
-                runId: runRow.id,
-                itemId: itemRow.id,
-                title: item.title,
-                status: "failed",
-                error: message,
-              })
-            } else {
+            if (finalRun?.recovery_status) {
+              if (isWorkflowCancelledError(err)) throw err
               return
             }
+            await persistWorkflowRunState(
+              { workspaceId, runId: runRow.id, workspaceRoot: workspaceRow?.root_path ?? undefined },
+              finalRun?.current_stage ?? "execution",
+              "failed",
+            )
+            bus.emit({
+              type: "run_finished",
+              runId: runRow.id,
+              itemId: itemRow.id,
+              title: item.title,
+              status: "failed",
+              error: message,
+            })
             throw err
           }
-        })
+        }))
       )
     } finally {
+      heartbeat?.stop()
+      heartbeat = null
       detach()
     }
   }
@@ -191,6 +255,10 @@ export async function runWorkflowWithSync(
     workspaceKey?: string
     workspaceName?: string
     owner?: "cli" | "api"
+    workerInstanceId?: string
+    workerLeaseClock?: () => number
+    workerLeaseScheduler?: WorkerLeaseScheduler
+    workflowRunner?: typeof runWorkflow
     itemId?: string
     resume?: WorkflowResumeInput
   } = {}

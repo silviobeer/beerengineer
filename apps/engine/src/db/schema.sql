@@ -84,6 +84,10 @@ CREATE TABLE IF NOT EXISTS runs (
   recovery_scope_ref TEXT,
   recovery_summary TEXT,
   recovery_payload_json TEXT,
+  worker_instance_id TEXT,
+  worker_owner_kind TEXT,
+  worker_started_at INTEGER,
+  worker_heartbeat_at INTEGER,
   workspace_fs_id TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
@@ -134,6 +138,13 @@ CREATE TABLE IF NOT EXISTS stage_logs (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS stage_logs_run_created_idx ON stage_logs(run_id, created_at);
+
+-- Lightweight readiness write probe. /ready updates this single row in place
+-- to verify DB writes without creating fake workflow history.
+CREATE TABLE IF NOT EXISTS workflow_readiness_sentinel (
+  id TEXT PRIMARY KEY,
+  checked_at INTEGER NOT NULL
+);
 
 -- Pointer records for artifacts written to disk.
 CREATE TABLE IF NOT EXISTS artifact_files (

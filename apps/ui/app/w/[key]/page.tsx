@@ -16,6 +16,7 @@ interface BoardApiItem {
   hasOpenPrompt?: boolean;
   hasReviewGateWaiting?: boolean;
   hasBlockedRun?: boolean;
+  recovery_user_message?: string | null;
   previewUrl?: string;
   current_stage?: string | null;
   currentStage?: string | null;
@@ -51,6 +52,7 @@ function toBoardCard(item: BoardApiItem): BoardCardDTO {
     hasOpenPrompt: Boolean(item.hasOpenPrompt),
     hasReviewGateWaiting: Boolean(item.hasReviewGateWaiting),
     hasBlockedRun: Boolean(item.hasBlockedRun),
+    recovery_user_message: item.recovery_user_message ?? null,
     previewUrl: typeof item.previewUrl === "string" ? item.previewUrl : undefined,
     current_stage: currentStage,
     supabaseBlocker: item.supabaseBlocker,

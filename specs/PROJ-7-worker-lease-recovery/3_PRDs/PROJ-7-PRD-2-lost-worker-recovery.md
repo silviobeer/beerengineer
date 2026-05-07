@@ -107,3 +107,41 @@
 - A wedged worker in an otherwise alive API process is an accepted out-of-scope case until engine restart.
 - Recovered runs use existing run-level recovery fields: `recovery_status = failed`, `recovery_scope = run`, and `recovery_scope_ref = null`.
 - Item recoverability is represented as `phase_status = failed` plus run recovery metadata; no new item phase is introduced.
+
+## QA Test Results
+
+**Tested:** 2026-05-06
+**Tester:** QA Engineer (AI)
+
+### Acceptance Criteria Status
+
+- [x] Startup previous-instance API recovery, stale CLI recovery, item projection, authoritative-run guard, graceful shutdown recovery, and failed-start recovery targeted tests passed.
+- [x] Live API probe confirmed `/ready` remains available after startup and repeated `/ready` calls did not grow run history.
+- [x] Shared worker-lease fatal behavior from PROJ-7-PRD-1 is fixed and covered by `workerLeaseCancellation.test.ts`.
+
+### Edge Cases Status
+
+- [x] Previous API instance recovery does not wait for the stale heartbeat threshold.
+- [x] Fresh CLI heartbeat remains active across API startup.
+- [x] Shutdown recovery preserves CLI-owned active runs.
+
+### Security Audit Results
+
+- [x] Recovery messages are projected from known recovery summaries and rendered as React text, not HTML.
+- [x] Browser console/network review found no recovery-message request failures; only an unrelated missing favicon 404 appeared.
+
+### Bugs Found
+
+- BUG-PROJ7-QA-001 in PROJ-7-PRD-1 is fixed.
+
+### Summary
+
+- **Acceptance Criteria:** Passed after BUG-PROJ7-QA-001 fix
+- **Bugs Found:** 1 total (0 critical, 1 high fixed, 0 medium, 0 low)
+- **Security:** Pass
+- **Production Ready:** YES
+- **Recommendation:** Continue to documentation handoff
+
+### AGENTS.md Candidates (for Skill 7 review)
+
+- [ ] Lease-fatal tests must prove the workflow body stops, not only that the heartbeat interval stops. — **why:** BUG-PROJ7-QA-001 shows interval-only assertions can miss duplicate worker side effects.

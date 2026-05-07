@@ -138,6 +138,14 @@ export function BoardCard({ card, workspaceKey, onOpen }: Readonly<BoardCardProp
             Supabase blocked
           </span>
         ) : null}
+        {card.recovery_user_message ? (
+          <p
+            data-testid="board-card-recovery-message"
+            className="mt-2 border-l-2 border-amber-400/70 pl-2 text-xs text-amber-100"
+          >
+            {card.recovery_user_message}
+          </p>
+        ) : null}
         {card.column === "implementation" ? (
           <div className="mt-2">
             <MiniStepper

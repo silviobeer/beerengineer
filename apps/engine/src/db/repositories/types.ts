@@ -49,6 +49,7 @@ export type ProjectRow = {
 }
 
 export type RunOwner = "cli" | "api"
+export type WorkerOwnerKind = "cli" | "api"
 
 export type RunRow = {
   id: string
@@ -63,6 +64,10 @@ export type RunRow = {
   recovery_scope_ref: string | null
   recovery_summary: string | null
   recovery_payload_json: string | null
+  worker_instance_id: string | null
+  worker_owner_kind: WorkerOwnerKind | null
+  worker_started_at: number | null
+  worker_heartbeat_at: number | null
   workspace_fs_id: string | null
   supabase_branch_ref: string | null
   supabase_branch_name: string | null

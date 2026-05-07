@@ -71,6 +71,10 @@ test("beerengineer item action start_brainstorm runs to completion through the t
     const runs = verifyRepos.listRuns()
     assert.equal(runs.length, 1)
     assert.equal(runs[0]?.owner, "cli")
+    assert.equal(runs[0]?.worker_owner_kind, "cli")
+    assert.ok(runs[0]?.worker_instance_id, "CLI command must persist a worker instance id")
+    assert.equal(typeof runs[0]?.worker_started_at, "number")
+    assert.equal(typeof runs[0]?.worker_heartbeat_at, "number")
     assert.equal(runs[0]?.status, "completed")
     verifyDb.close()
   } finally {

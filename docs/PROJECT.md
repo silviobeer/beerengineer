@@ -1,7 +1,7 @@
 # Project — Features
 
-**Last updated:** 2026-05-06
-**Features implemented:** 5
+**Last updated:** 2026-05-07
+**Features implemented:** 6
 
 ---
 
@@ -109,5 +109,24 @@
 **PRDs:** [PRD-1](../specs/PROJ-5-setup-git-readiness/3_PRDs/PROJ-5-PRD-1-git-identity-readiness-model.md), [PRD-2](../specs/PROJ-5-setup-git-readiness/3_PRDs/PROJ-5-PRD-2-interactive-setup-entry.md), [PRD-3](../specs/PROJ-5-setup-git-readiness/3_PRDs/PROJ-5-PRD-3-setup-wizard-git-readiness.md), [PRD-4](../specs/PROJ-5-setup-git-readiness/3_PRDs/PROJ-5-PRD-4-workflow-start-git-gate.md)
 
 **QA:** Final rerun on 2026-05-06 passed focused engine tests (68/68), focused UI tests (14/14), engine/UI typechecks, and browser verification of the rootless-workspace setup recheck fix. Six QA bugs were found across the project (1 Critical, 3 High, 2 Medium); all are fixed and verified.
+
+---
+
+## PROJ-7: Worker Lease Recovery
+
+**Status:** QA-passed after bug fix.
+
+**Purpose:** Make CLI and API workflow ownership durable so accepted work is visibly owned, lost workers become recoverable, and callers can distinguish process liveness from workflow readiness.
+
+**Scope:** Ships run-level worker lease fields, CLI/API start and resume claims, heartbeat refresh and fatal cancellation, startup lost-worker recovery, graceful API shutdown recovery, same-run resume, `/ready`, recovery message projection, API docs, and deterministic coverage. Out of scope: durable queue execution, multi-API-process clustering, automatic stale scanning during one live engine session, and new UI recovery screens.
+
+**User stories implemented:**
+- PROJ-7-PRD-1 US-1..5: CLI/API durable ownership, queue-ready run fields without a queue, heartbeat failure policy, and production caller wiring.
+- PROJ-7-PRD-2 US-1..6: previous-instance API recovery, stale CLI startup recovery, item projection repair, authoritative-run guard, graceful shutdown recovery, and failed-start evidence.
+- PROJ-7-PRD-3 US-1..6: `/health` liveness preservation, `/ready` workflow readiness, sentinel lease write probe, same-run resume, recovery messages, and API contract documentation.
+
+**PRDs:** [PRD-1](../specs/PROJ-7-worker-lease-recovery/3_PRDs/PROJ-7-PRD-1-worker-lease-lifecycle.md), [PRD-2](../specs/PROJ-7-worker-lease-recovery/3_PRDs/PROJ-7-PRD-2-lost-worker-recovery.md), [PRD-3](../specs/PROJ-7-worker-lease-recovery/3_PRDs/PROJ-7-PRD-3-readiness-resume-surface-contract.md)
+
+**QA:** Final QA found one High bug where heartbeat fatal state stopped the lease interval but not the workflow body; it was fixed by cooperative workflow cancellation at stage/workflow boundaries. Verification passed `npm run typecheck`, the focused worker lease/recovery/readiness suite, `test/resume.test.ts`, and `test/apiIntegration.test.ts`.
 
 ---

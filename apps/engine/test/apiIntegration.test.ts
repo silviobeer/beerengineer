@@ -113,6 +113,38 @@ test("GET /health OpenAPI contract documents service, uptime, and DB status", ()
     assert.ok(successSchema.properties?.[field], `200 schema must document ${field}`)
     assert.ok(degradedSchema.properties?.[field], `503 schema must document ${field}`)
   }
+  assert.equal(JSON.stringify(successSchema).includes("leaseWrite"), false)
+  assert.equal(JSON.stringify(successSchema).includes("startupRecovery"), false)
+})
+
+test("GET /ready OpenAPI and prose contract document workflow readiness", () => {
+  const openapi = JSON.parse(readFileSync(resolve("src/api/openapi.json"), "utf8")) as {
+    paths: Record<string, unknown>
+    components: { schemas: Record<string, { properties?: Record<string, unknown> }> }
+  }
+  const contract = readFileSync(resolve("../../docs/api-contract.md"), "utf8")
+
+  assert.ok(openapi.paths["/ready"])
+  const readySchema = openapi.components.schemas.ReadyResponse
+  for (const field of ["ok", "service", "uptimeMs", "db", "startupRecovery", "shutdown", "leaseWrite"]) {
+    assert.ok(readySchema.properties?.[field], `ReadyResponse must document ${field}`)
+  }
+  assert.match(contract, /GET \/ready/)
+  assert.match(contract, /startup lost-worker recovery has completed/)
+  assert.match(contract, /lightweight worker-lease write sentinel/)
+})
+
+test("OpenAPI and prose document recovery_user_message on board and run DTOs", () => {
+  const openapi = JSON.parse(readFileSync(resolve("src/api/openapi.json"), "utf8")) as {
+    components: { schemas: Record<string, { properties?: Record<string, unknown> }> }
+  }
+  const contract = readFileSync(resolve("../../docs/api-contract.md"), "utf8")
+
+  assert.ok(openapi.components.schemas.Run.properties?.recovery_user_message)
+  assert.ok(openapi.components.schemas.RecoveryDetail.properties?.recovery_user_message)
+  assert.ok(openapi.components.schemas.BoardCard.properties?.recovery_user_message)
+  assert.match(contract, /recovery_user_message: string \| null/)
+  assert.match(contract, /clients should render that engine-provided copy before generic fallback text/)
 })
 
 test("PROJ-3-PRD-2 AC-14 capability API changes are additive only", () => {
@@ -214,6 +246,40 @@ test("GET /health returns service, uptime, and DB reachability without a token",
     assert.ok(body.uptimeMs >= 0)
   } finally {
     await stopServer(proc)
+  }
+})
+
+test("GET /ready returns workflow readiness without growing workflow history", async () => {
+  const dbPath = tmpDbPath()
+  const db = initDatabase(dbPath)
+  const beforeRuns = db.prepare("SELECT COUNT(*) AS n FROM runs").get() as { n: number }
+  const beforeItems = db.prepare("SELECT COUNT(*) AS n FROM items").get() as { n: number }
+  db.close()
+  const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
+  try {
+    await waitForHealth(base)
+    const res = await fetch(`${base}/ready`)
+    assert.equal(res.status, 200)
+    const body = await res.json() as {
+      ok: boolean
+      startupRecovery: string
+      shutdown: string
+      leaseWrite: string
+    }
+    assert.equal(body.ok, true)
+    assert.equal(body.startupRecovery, "complete")
+    assert.equal(body.shutdown, "idle")
+    assert.equal(body.leaseWrite, "ok")
+  } finally {
+    await stopServer(proc)
+  }
+  const after = initDatabase(dbPath)
+  try {
+    assert.equal((after.prepare("SELECT COUNT(*) AS n FROM runs").get() as { n: number }).n, beforeRuns.n)
+    assert.equal((after.prepare("SELECT COUNT(*) AS n FROM items").get() as { n: number }).n, beforeItems.n)
+    assert.equal((after.prepare("SELECT COUNT(*) AS n FROM workflow_readiness_sentinel").get() as { n: number }).n, 1)
+  } finally {
+    after.close()
   }
 })
 

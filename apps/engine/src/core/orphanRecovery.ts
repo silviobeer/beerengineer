@@ -19,15 +19,111 @@
  * required here — only the DB columns matter.
  */
 
-import type { Repos } from "../db/repositories.js"
+import type { Repos, RunRow } from "../db/repositories.js"
+import { mapStageToColumn } from "./boardColumns.js"
+import { STALE_WORKER_HEARTBEAT_MS } from "./workerLease.js"
 
 export type OrphanRecoveryResult = {
   /** Number of runs that were found orphaned and marked failed. */
   recovered: number
+  /** Run ids recovered during this pass, in scan order. */
+  recoveredRunIds: string[]
 }
 
 const RECOVERY_SUMMARY =
-  "API restart while run was in flight — no live worker; resume or abandon."
+  "API restart lost API worker ownership — no live worker; resume or abandon."
+const SHUTDOWN_RECOVERY_SUMMARY =
+  "Graceful shutdown stopped the API worker — resume or abandon."
+
+function hasOtherLiveRunForItem(repos: Repos, run: RunRow): boolean {
+  return repos
+    .listRunsForItem(run.item_id)
+    .some(candidate => candidate.id !== run.id && (candidate.status === "running" || candidate.status === "blocked"))
+}
+
+function projectRecoveredRunToItem(repos: Repos, run: RunRow): void {
+  if (hasOtherLiveRunForItem(repos, run)) return
+  const item = repos.getItem(run.item_id)
+  if (!item) return
+  const mapped = run.current_stage
+    ? mapStageToColumn(run.current_stage, "failed")
+    : { column: item.current_column, phaseStatus: "failed" as const }
+  repos.setItemColumn(item.id, mapped.column, "failed")
+  repos.setItemCurrentStage(item.id, null)
+}
+
+export function markRunFailedRecoverable(repos: Repos, runId: string, summary: string): void {
+  const run = repos.getRun(runId)
+  if (!run) return
+  repos.updateRun(run.id, {
+    status: "failed",
+    recovery_status: "failed",
+    recovery_scope: "run",
+    recovery_scope_ref: null,
+    recovery_summary: summary,
+  })
+  projectRecoveredRunToItem(repos, run)
+}
+
+function shouldRecoverLostWorker(
+  run: RunRow,
+  input: { apiWorkerInstanceId: string; now: number },
+): boolean {
+  if (run.status !== "running") return false
+  if (run.owner === "api") {
+    return run.worker_instance_id !== input.apiWorkerInstanceId
+  }
+  const heartbeatAt = run.worker_heartbeat_at
+  return heartbeatAt == null || input.now - heartbeatAt > STALE_WORKER_HEARTBEAT_MS
+}
+
+function recoverySummary(run: RunRow): string {
+  if (run.owner === "api") return RECOVERY_SUMMARY
+  return "CLI worker heartbeat is stale — no live worker; resume or abandon."
+}
+
+export async function recoverLostWorkerRuns(
+  repos: Repos,
+  input: { apiWorkerInstanceId: string; now?: number },
+): Promise<OrphanRecoveryResult> {
+  const now = input.now ?? Date.now()
+  const recoveredRunIds: string[] = []
+  for (const run of repos.listRunningRuns()) {
+    if (!shouldRecoverLostWorker(run, { apiWorkerInstanceId: input.apiWorkerInstanceId, now })) continue
+    markRunFailedRecoverable(repos, run.id, recoverySummary(run))
+    recoveredRunIds.push(run.id)
+  }
+
+  if (recoveredRunIds.length > 0) {
+    console.warn(
+      `[orphanRecovery] ${recoveredRunIds.length} lost worker run(s) marked failed on startup: ${recoveredRunIds.join(", ")}`,
+    )
+  }
+
+  return { recovered: recoveredRunIds.length, recoveredRunIds }
+}
+
+export async function recoverApiRunsForShutdown(
+  repos: Repos,
+  input: { apiWorkerInstanceId: string },
+): Promise<OrphanRecoveryResult> {
+  const recoveredRunIds: string[] = []
+  for (const run of repos.listRunningRuns()) {
+    if (run.owner !== "api") continue
+    if (run.worker_owner_kind !== "api") continue
+    if (run.worker_instance_id !== input.apiWorkerInstanceId) continue
+    markRunFailedRecoverable(repos, run.id, SHUTDOWN_RECOVERY_SUMMARY)
+    recoveredRunIds.push(run.id)
+  }
+
+  if (recoveredRunIds.length > 0) {
+    console.warn(
+      `[orphanRecovery] ${recoveredRunIds.length} API worker run(s) marked recoverable for graceful shutdown: ${recoveredRunIds.join(", ")}`,
+    )
+  }
+
+  return { recovered: recoveredRunIds.length, recoveredRunIds }
+}
 
 /**
  * Scan the DB for all runs with `status='running'`. By definition these are
@@ -42,27 +138,5 @@ const RECOVERY_SUMMARY =
  * see the recovery at startup without digging into DB or logs.
  */
 export async function markOrphanedRunsFailed(repos: Repos): Promise<OrphanRecoveryResult> {
-  const orphaned = repos.listRunningApiOwnedRuns()
-
-  if (orphaned.length === 0) {
-    return { recovered: 0 }
-  }
-
-  const ids: string[] = []
-  for (const run of orphaned) {
-    repos.updateRun(run.id, {
-      status: "failed",
-      recovery_status: "failed",
-      recovery_scope: "run",
-      recovery_scope_ref: null,
-      recovery_summary: RECOVERY_SUMMARY,
-    })
-    ids.push(run.id)
-  }
-
-  console.warn(
-    `[orphanRecovery] ${ids.length} orphaned run(s) marked failed on startup: ${ids.join(", ")}`,
-  )
-
-  return { recovered: ids.length }
+  return recoverLostWorkerRuns(repos, { apiWorkerInstanceId: "current-api-process" })
 }

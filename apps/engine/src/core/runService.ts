@@ -1,4 +1,5 @@
 import { cpSync, existsSync } from "node:fs"
+import { randomUUID } from "node:crypto"
 import { busToWorkflowIO, createBus, type EventBus } from "./bus.js"
 import { appendItemDecision } from "./itemDecisions.js"
 import { withPromptPersistence } from "./promptPersistence.js"
@@ -17,12 +18,15 @@ import { readWorkspaceGitReadiness, type GitCommandOptions, type WorkspaceGitRea
 import type { AppConfig } from "../setup/types.js"
 import type { SupabaseAdapter } from "./supabase/types.js"
 import type { SupabaseHandoffClient } from "./supabase/handoffWriter.js"
+import type { WorkerLeaseScheduler } from "./workerLease.js"
 
 /** Factory type re-exported so server.ts can build it without importing from runOrchestrator. */
 export type SupabaseAdapterFactory = (deps: { workspaceId: string; projectRef: string }) => {
   adapter: SupabaseAdapter
   handoffClient?: SupabaseHandoffClient
 } | null
+
+export const API_WORKER_INSTANCE_ID = process.env.BEERENGINEER_API_INSTANCE_ID ?? `api-${randomUUID()}`
 
 /**
  * The engine-side run orchestration service. Hosts workflows inside the engine
@@ -97,6 +101,8 @@ function fireInBackground(io: WorkflowIO & { bus?: EventBus }, label: string, ta
     })
 }
 
+type BackgroundRunner = typeof fireInBackground
+
 function hasStageArtifacts(
   repos: Repos,
   item: Pick<ItemRow, "id" | "workspace_id">,
@@ -158,6 +164,10 @@ export function startRunFromIdea(
     title: string
     description: string
     workspaceKey?: string
+    apiWorkerInstanceId?: string
+    workerLeaseClock?: () => number
+    workerLeaseScheduler?: WorkerLeaseScheduler
+    backgroundRunner?: BackgroundRunner
     onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
     supabaseAdapterFactory?: SupabaseAdapterFactory
   },
@@ -170,9 +180,18 @@ export function startRunFromIdea(
     { id: "new", title: input.title, description: input.description },
     repos,
     io,
-    { owner: "api", ...meta, onItemColumnChanged: input.onItemColumnChanged, supabaseAdapterFactory: input.supabaseAdapterFactory },
+    {
+      owner: "api",
+      workerInstanceId: input.apiWorkerInstanceId ?? API_WORKER_INSTANCE_ID,
+      workerLeaseClock: input.workerLeaseClock,
+      workerLeaseScheduler: input.workerLeaseScheduler,
+      ...meta,
+      onItemColumnChanged: input.onItemColumnChanged,
+      supabaseAdapterFactory: input.supabaseAdapterFactory,
+    },
   )
-  fireInBackground(io, "startRunFromIdea", prepared.start)
+  const runInBackground = input.backgroundRunner ?? fireInBackground
+  runInBackground(io, "startRunFromIdea", prepared.start)
   return { ok: true, runId: prepared.runId, itemId: prepared.itemId }
 }
 
@@ -343,6 +362,9 @@ export function startRunForItem(
     action: StartRunAction
     appConfig?: AppConfig
     gitCommandOptions?: GitCommandOptions
+    apiWorkerInstanceId?: string
+    workerLeaseClock?: () => number
+    workerLeaseScheduler?: WorkerLeaseScheduler
     onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
     supabaseAdapterFactory?: SupabaseAdapterFactory
   },
@@ -364,7 +386,16 @@ export function startRunForItem(
     { id: item.id, title: item.title, description: item.description },
     repos,
     io,
-    { owner: "api", itemId: item.id, resume: preparedAction.resume, onItemColumnChanged: input.onItemColumnChanged, supabaseAdapterFactory: input.supabaseAdapterFactory },
+    {
+      owner: "api",
+      workerInstanceId: input.apiWorkerInstanceId ?? API_WORKER_INSTANCE_ID,
+      workerLeaseClock: input.workerLeaseClock,
+      workerLeaseScheduler: input.workerLeaseScheduler,
+      itemId: item.id,
+      resume: preparedAction.resume,
+      onItemColumnChanged: input.onItemColumnChanged,
+      supabaseAdapterFactory: input.supabaseAdapterFactory,
+    },
   )
 
   if (preparedAction.sourceRun && preparedAction.seedStages.length > 0) {
@@ -397,6 +428,9 @@ export async function startPreparedImportForItem(
     owner?: "cli" | "api"
     appConfig?: AppConfig
     gitCommandOptions?: GitCommandOptions
+    apiWorkerInstanceId?: string
+    workerLeaseClock?: () => number
+    workerLeaseScheduler?: WorkerLeaseScheduler
     onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
   },
 ): Promise<PreparedImportRunResult> {
@@ -447,6 +481,9 @@ export async function startPreparedImportForItem(
     io,
     {
       owner: input.owner ?? "api",
+      workerInstanceId: input.owner === "cli" ? undefined : input.apiWorkerInstanceId ?? API_WORKER_INSTANCE_ID,
+      workerLeaseClock: input.workerLeaseClock,
+      workerLeaseScheduler: input.workerLeaseScheduler,
       itemId: existingItem?.id,
       ...newItemWorkspaceFields(existingItem, workspace),
       resume,
@@ -518,6 +555,9 @@ export async function resumeRunInProcess(
     branch?: string
     commit?: string
     reviewNotes?: string
+    apiWorkerInstanceId?: string
+    workerLeaseClock?: () => number
+    workerLeaseScheduler?: WorkerLeaseScheduler
     onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
   },
 ): Promise<ResumeRunResult> {
@@ -568,7 +608,17 @@ export async function resumeRunInProcess(
 
   const io = buildApiIo(repos)
   fireInBackground(io, "resumeRunInProcess", () =>
-    performResume({ repos, io, runId: input.runId, remediation, onItemColumnChanged: input.onItemColumnChanged }),
+    performResume({
+      repos,
+      io,
+      runId: input.runId,
+      remediation,
+      workerOwnerKind: "api",
+      workerInstanceId: input.apiWorkerInstanceId ?? API_WORKER_INSTANCE_ID,
+      workerLeaseClock: input.workerLeaseClock,
+      workerLeaseScheduler: input.workerLeaseScheduler,
+      onItemColumnChanged: input.onItemColumnChanged,
+    }),
   )
   return { ok: true, runId: input.runId, remediationId: remediation.id }
 }

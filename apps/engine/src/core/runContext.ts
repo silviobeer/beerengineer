@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks"
 import { randomUUID } from "node:crypto"
 import { getWorkflowIO, hasWorkflowIO, type WorkflowEvent } from "./io.js"
+import { assertWorkflowNotCancelled } from "./workflowCancellation.js"
 
 /**
  * Active run context — set by the orchestrator (or test harness) before
@@ -32,15 +33,19 @@ export async function withStageLifecycle<T>(
   fn: () => Promise<T>,
   opts: { projectId?: string | null } = {},
 ): Promise<T> {
+  assertWorkflowNotCancelled()
   const current = getActiveRun()
   if (!current || !hasWorkflowIO()) {
-    return fn()
+    const result = await fn()
+    assertWorkflowNotCancelled()
+    return result
   }
   const stageRunId = randomUUID()
   return runWithActiveRun({ ...current, stageRunId }, async () => {
     emitEvent({ type: "stage_started", runId: current.runId, stageRunId, stageKey, projectId: opts.projectId ?? null })
     try {
       const result = await fn()
+      assertWorkflowNotCancelled()
       emitEvent({ type: "stage_completed", runId: current.runId, stageRunId, stageKey, status: "completed" })
       return result
     } catch (err) {
