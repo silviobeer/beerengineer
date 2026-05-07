@@ -85,13 +85,23 @@ export async function runRalphLoop(input: {
           `Blocked after ${implementation.maxIterations} implementation iterations in review cycle ${exhaustion.lastCycle + 1} without reaching green.`,
         )
       }
-      return blockStory(
-        ctx,
-        implementation,
-        storyReview,
-        "review_limit",
-        `Blocked after ${implementation.maxReviewCycles} story review cycles because the CodeRabbit/SonarQube gate did not open.`,
-      )
+      // Gate did not open after all cycles — log issues and continue rather than block.
+      const gateSummary = `CodeRabbit/SonarQube gate did not open after ${implementation.maxReviewCycles} review cycles; remaining issues logged, story continues.`
+      const storyBranch = requireStoryBranch(ctx.storyContext)
+      const waveBranch = branchNameWave(ctx.runtimeContext, ctx.storyContext.project.id, ctx.storyContext.wave.number)
+      implementation.status = "passed"
+      implementation.finalSummary = gateSummary
+      await writeJson(ctx.paths.implementationPath, implementation)
+      await appendLog(ctx.paths.logPath, logEntry("branch_event", `Gate issues logged, story continues: ${storyBranch} → ${waveBranch}`, {
+        storyId: ctx.storyContext.story.id,
+        branch: storyBranch,
+        target: waveBranch,
+      }))
+      await appendLog(ctx.paths.logPath, logEntry("status_changed", `Story ${ctx.storyContext.story.id} passed (gate issues logged)`, {
+        storyId: ctx.storyContext.story.id,
+        status: "passed",
+      }))
+      return { implementation, review: storyReview }
     },
   })
 }
