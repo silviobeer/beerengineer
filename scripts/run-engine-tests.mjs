@@ -1,14 +1,15 @@
 #!/usr/bin/env node
-import { readdirSync } from "node:fs"
-import { dirname, join } from "node:path"
+import { readdirSync, readFileSync } from "node:fs"
+import { dirname, join, sep } from "node:path"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)))
 const engineRoot = join(repoRoot, "apps", "engine")
 const testDir = join(engineRoot, "test")
+const manifestPath = join(testDir, "_mode-manifest.json")
 
-const integrationTests = new Set([
+const integrationLegacyBasenames = new Set([
   "apiIntegration.test.ts",
   "baseBranch.test.ts",
   "cli-actions.test.ts",
@@ -36,31 +37,82 @@ const integrationTests = new Set([
   "workspaces.test.ts",
 ])
 
-const sonarCoverageExclusions = new Set([
+const sonarCoverageSkipBasenames = new Set([
   "messagingLevel.test.ts",
   "resume.test.ts",
   "sdkLive.test.ts",
   "workflowE2E.test.ts",
 ])
 
-function allTests() {
-  return readdirSync(testDir)
-    .filter(file => file.endsWith(".test.ts"))
-    .sort()
+function toPosix(p) {
+  return p.split(sep).join("/")
+}
+
+function basename(rel) {
+  const idx = rel.lastIndexOf("/")
+  return idx === -1 ? rel : rel.slice(idx + 1)
+}
+
+function discoverAllTests() {
+  const entries = readdirSync(testDir, { recursive: true, withFileTypes: true })
+  const result = []
+  for (const entry of entries) {
+    if (!entry.isFile()) continue
+    if (!entry.name.endsWith(".test.ts")) continue
+    const parent = entry.parentPath ?? entry.path
+    const abs = join(parent, entry.name)
+    const rel = toPosix(abs.slice(engineRoot.length + 1))
+    result.push(rel)
+  }
+  return result.sort()
+}
+
+function loadManifest() {
+  let text
+  try {
+    text = readFileSync(manifestPath, "utf8")
+  } catch (err) {
+    if (err.code === "ENOENT") return { integrationOnly: [], sonarCoverageOnly: [] }
+    throw err
+  }
+  const parsed = JSON.parse(text)
+  return {
+    integrationOnly: parsed.integrationOnly ?? [],
+    sonarCoverageOnly: parsed.sonarCoverageOnly ?? [],
+  }
 }
 
 function selectedTests(mode) {
-  const tests = allTests()
-  if (mode === "all") return tests
-  if (mode === "unit") return tests.filter(file => !integrationTests.has(file) && file !== "sdkLive.test.ts")
-  if (mode === "integration") return tests.filter(file => integrationTests.has(file))
-  if (mode === "managed-install") return tests.filter(file => file.startsWith("managedInstall"))
-  if (mode === "sonar-coverage") return tests.filter(file => !sonarCoverageExclusions.has(file))
+  const all = discoverAllTests()
+  const manifest = loadManifest()
+  const integrationOnly = new Set(manifest.integrationOnly.map(e => e.path))
+  const sonarCoverageOnly = new Set(manifest.sonarCoverageOnly.map(e => e.path))
+
+  if (mode === "all") {
+    return all.filter(p => !integrationOnly.has(p) && !sonarCoverageOnly.has(p))
+  }
+  if (mode === "unit") {
+    return all.filter(p => {
+      if (integrationOnly.has(p) || sonarCoverageOnly.has(p)) return false
+      if (integrationLegacyBasenames.has(basename(p))) return false
+      if (basename(p) === "sdkLive.test.ts") return false
+      return true
+    })
+  }
+  if (mode === "integration") {
+    return all.filter(p => integrationOnly.has(p) || integrationLegacyBasenames.has(basename(p)))
+  }
+  if (mode === "managed-install") {
+    return all.filter(p => /(^|\/)managedInstall[A-Z]/.test(p))
+  }
+  if (mode === "sonar-coverage") {
+    return all.filter(p => !sonarCoverageSkipBasenames.has(basename(p)))
+  }
   throw new Error(`Unknown test mode: ${mode}`)
 }
 
 const mode = process.argv[2] ?? "all"
-const files = selectedTests(mode).map(file => join("test", file))
+const files = selectedTests(mode)
 const nodeArgs = ["--test", "--import", "tsx"]
 
 if (process.argv.includes("--list") || process.argv.includes("--dry-run")) {
@@ -71,6 +123,13 @@ if (process.argv.includes("--list") || process.argv.includes("--dry-run")) {
 if (mode === "integration" || mode === "sonar-coverage") {
   nodeArgs.splice(1, 0, "--test-concurrency=1")
 }
+
+// Emit a stable, machine-greppable selection manifest before running. Node's
+// default TAP reporter omits file paths for passing tests, so this header is
+// the only way callers (acceptance scripts, fitness checks) can verify which
+// files the runner actually selected from the on-disk discovery.
+console.log(`# engine-tests: mode=${mode} selected=${files.length}`)
+for (const f of files) console.log(`# selected: ${f}`)
 
 const result = spawnSync(process.execPath, [...nodeArgs, ...files], {
   cwd: engineRoot,
