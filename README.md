@@ -30,7 +30,9 @@ The quality loop is not a final rubber stamp. At every LLM-produced
 stage, a separate reviewer LLM checks the result before the next stage
 may consume it. In the recommended `*-first` profiles, that reviewer is
 from the other provider: Claude drafts and Codex reviews, or Codex
-drafts and Claude reviews. That second opinion catches vague
+drafts and Claude reviews. QA flips that split: the normal reviewer LLM
+becomes the QA stage agent, and the normal author reviews QA. That
+second opinion catches vague
 requirements, weak architecture choices, missed edge cases, UI drift,
 and incomplete implementation details early enough to fix them in the
 right stage.
@@ -103,7 +105,9 @@ use. Most operators set up just one or two of these:
 For the strongest quality profile, configure at least two providers.
 The `*-first` presets intentionally split author and reviewer across
 vendors: `claude-first` uses Claude for the main work and Codex for
-review; `codex-first` does the inverse. The `*-only` presets are useful
+review; `codex-first` does the inverse. QA flips that split so the
+normal reviewer LLM drives QA and the normal author reviews it. The
+`*-only` presets are useful
 when only one provider is available, but they lose that cross-provider
 review effect.
 

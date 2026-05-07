@@ -32,12 +32,24 @@
     "codex-first": {
       "coder": { "harness": "codex", "provider": "openai", "model": "gpt-5.4" },
       "reviewer": { "harness": "claude", "provider": "anthropic", "model": "claude-sonnet-4-6" },
-      "merge-resolver": { "harness": "codex", "provider": "openai", "model": "gpt-5.4" }
+      "merge-resolver": { "harness": "codex", "provider": "openai", "model": "gpt-5.4" },
+      "stageOverrides": {
+        "qa": {
+          "coder": { "harness": "claude", "provider": "anthropic", "model": "claude-sonnet-4-6" },
+          "reviewer": { "harness": "codex", "provider": "openai", "model": "gpt-5.4" }
+        }
+      }
     },
     "claude-first": {
       "coder": { "harness": "claude", "provider": "anthropic", "model": "claude-sonnet-4-6" },
       "reviewer": { "harness": "codex", "provider": "openai", "model": "gpt-5.4" },
-      "merge-resolver": { "harness": "claude", "provider": "anthropic", "model": "claude-sonnet-4-6" }
+      "merge-resolver": { "harness": "claude", "provider": "anthropic", "model": "claude-sonnet-4-6" },
+      "stageOverrides": {
+        "qa": {
+          "coder": { "harness": "codex", "provider": "openai", "model": "gpt-5.4" },
+          "reviewer": { "harness": "claude", "provider": "anthropic", "model": "claude-sonnet-4-6" }
+        }
+      }
     },
     "codex-only": {
       "coder": { "harness": "codex", "provider": "openai", "model": "gpt-5.4" },
@@ -67,7 +79,13 @@
     "opencode-china": {
       "coder": { "harness": "opencode", "provider": "openrouter", "model": "qwen/qwen3.5-coder" },
       "reviewer": { "harness": "opencode", "provider": "openrouter", "model": "deepseek/deepseek-v3.2" },
-      "merge-resolver": { "harness": "opencode", "provider": "openrouter", "model": "qwen/qwen3.5-coder" }
+      "merge-resolver": { "harness": "opencode", "provider": "openrouter", "model": "qwen/qwen3.5-coder" },
+      "stageOverrides": {
+        "qa": {
+          "coder": { "harness": "opencode", "provider": "openrouter", "model": "deepseek/deepseek-v3.2" },
+          "reviewer": { "harness": "opencode", "provider": "openrouter", "model": "qwen/qwen3.5-coder" }
+        }
+      }
     },
     "opencode-euro": {
       "coder": { "harness": "opencode", "provider": "openrouter", "model": "mistralai/codestral-2501" },

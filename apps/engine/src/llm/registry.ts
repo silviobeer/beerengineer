@@ -122,6 +122,7 @@ type PresetEntry = {
   // Optional so older / external preset files keep loading; resolveFromPreset
   // falls back to `coder` when a role is missing.
   "merge-resolver"?: PresetRoleEntry
+  stageOverrides?: Partial<Record<StageId, Partial<Record<HarnessRole, PresetRoleEntry>>>>
 }
 const PRESETS = (presetsJson as { presets: Record<string, PresetEntry> }).presets
 
@@ -130,7 +131,7 @@ function resolveFromPreset(presetKey: string, role: HarnessRole, stage: StageId,
   if (!preset) throw new Error(`Unknown preset key "${presetKey}"`)
   // Roles new to the schema (e.g. "merge-resolver") may be absent from older
   // preset files. Fall back to the coder role so mainline runs keep working.
-  const entry = preset[role] ?? preset.coder
+  const entry = preset.stageOverrides?.[stage]?.[role] ?? preset[role] ?? preset.coder
   if (entry.harness === "opencode") {
     throw new Error(`Preset "${presetKey}" resolves to opencode for role "${role}", which is not implemented yet`)
   }

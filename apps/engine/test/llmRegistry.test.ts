@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 
 import { resolveHarness } from "../src/llm/registry.js"
 import { defaultWorkspaceRuntimePolicy } from "../src/core/workspaces.js"
+import presetsJson from "../src/core/harness/presets.json" with { type: "json" }
 
 function expectHosted(resolved: ReturnType<typeof resolveHarness>) {
   if (resolved.kind !== "hosted") {
@@ -95,6 +96,76 @@ test("resolveHarness codex-first splits coder=codex and reviewer=claude per pres
 
   assert.equal(coder.harness, "codex")
   assert.equal(reviewer.harness, "claude")
+})
+
+test("resolveHarness claude-first uses the reviewer LLM as qa stage author", () => {
+  const coder = expectHosted(
+    resolveHarness({
+      workspaceRoot: "/tmp/demo",
+      harnessProfile: { mode: "claude-first" },
+      runtimePolicy: defaultWorkspaceRuntimePolicy(),
+      role: "coder",
+      stage: "qa",
+    }),
+  )
+  const reviewer = expectHosted(
+    resolveHarness({
+      workspaceRoot: "/tmp/demo",
+      harnessProfile: { mode: "claude-first" },
+      runtimePolicy: defaultWorkspaceRuntimePolicy(),
+      role: "reviewer",
+      stage: "qa",
+    }),
+  )
+
+  assert.equal(coder.harness, "codex")
+  assert.equal(coder.model, "gpt-5.4")
+  assert.equal(reviewer.harness, "claude")
+  assert.equal(reviewer.model, "claude-sonnet-4-6")
+})
+
+test("resolveHarness codex-first uses the reviewer LLM as qa stage author", () => {
+  const coder = expectHosted(
+    resolveHarness({
+      workspaceRoot: "/tmp/demo",
+      harnessProfile: { mode: "codex-first" },
+      runtimePolicy: defaultWorkspaceRuntimePolicy(),
+      role: "coder",
+      stage: "qa",
+    }),
+  )
+  const reviewer = expectHosted(
+    resolveHarness({
+      workspaceRoot: "/tmp/demo",
+      harnessProfile: { mode: "codex-first" },
+      runtimePolicy: defaultWorkspaceRuntimePolicy(),
+      role: "reviewer",
+      stage: "qa",
+    }),
+  )
+
+  assert.equal(coder.harness, "claude")
+  assert.equal(coder.model, "claude-sonnet-4-6")
+  assert.equal(reviewer.harness, "codex")
+  assert.equal(reviewer.model, "gpt-5.4")
+})
+
+test("opencode-china declares the same qa reviewer-as-author override", () => {
+  const presets = presetsJson.presets as Record<
+    string,
+    {
+      stageOverrides?: {
+        qa?: {
+          coder?: { model?: string }
+          reviewer?: { model?: string }
+        }
+      }
+    }
+  >
+  const qaOverride = presets["opencode-china"].stageOverrides?.qa
+
+  assert.equal(qaOverride?.coder?.model, "deepseek/deepseek-v3.2")
+  assert.equal(qaOverride?.reviewer?.model, "qwen/qwen3.5-coder")
 })
 
 test("resolveHarness rejects opencode until the provider is implemented", () => {

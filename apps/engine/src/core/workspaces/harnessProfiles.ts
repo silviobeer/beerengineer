@@ -1,13 +1,14 @@
 import { isKnownModel } from "../harness/models.js"
 import presetsJson from "../harness/presets.json" with { type: "json" }
 import type { SetupReport } from "../../setup/types.js"
-import type { HarnessProfile, KnownHarness, ValidationResult } from "../../types/workspace.js"
+import type { HarnessProfile, HarnessRole, KnownHarness, ValidationResult } from "../../types/workspace.js"
 
 type PresetRoleEntry = { harness: KnownHarness; runtime?: "cli" | "sdk" }
 type PresetEntry = {
   coder: PresetRoleEntry
   reviewer: PresetRoleEntry
   "merge-resolver"?: PresetRoleEntry
+  stageOverrides?: Record<string, Partial<Record<HarnessRole, PresetRoleEntry>>>
 }
 
 const PRESETS = (presetsJson as { presets: Record<string, PresetEntry> }).presets
@@ -15,7 +16,13 @@ const PRESETS = (presetsJson as { presets: Record<string, PresetEntry> }).preset
 function pairsFromPreset(presetKey: string): Array<{ harness: KnownHarness; runtime: "cli" | "sdk" }> {
   const preset = PRESETS[presetKey]
   if (!preset) return []
-  const roles: Array<PresetRoleEntry | undefined> = [preset.coder, preset.reviewer, preset["merge-resolver"]]
+  const stageOverrideRoles = Object.values(preset.stageOverrides ?? {}).flatMap(stageOverride => Object.values(stageOverride))
+  const roles: Array<PresetRoleEntry | undefined> = [
+    preset.coder,
+    preset.reviewer,
+    preset["merge-resolver"],
+    ...stageOverrideRoles,
+  ]
   return roles
     .filter((r): r is PresetRoleEntry => Boolean(r))
     .map(r => ({ harness: r.harness, runtime: r.runtime ?? "cli" }))

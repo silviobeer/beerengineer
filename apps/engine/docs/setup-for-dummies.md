@@ -346,8 +346,8 @@ You'll get an interactive flow:
 1. Preview — shows what beerengineer_ thinks about the path.
 2. Name + key — defaults to the folder name, usually fine.
 3. Harness profile — pick one:
-   - `claude-first` — Claude does the work, Codex reviews *(recommended default)*
-   - `codex-first` — Codex does the work, Claude reviews
+   - `claude-first` — Claude does the work, Codex reviews; QA flips to Codex with Claude review *(recommended default)*
+   - `codex-first` — Codex does the work, Claude reviews; QA flips to Claude with Codex review
    - `claude-only` / `codex-only` — single harness
    - `fast` — gpt-4o coder + Haiku reviewer for quick iteration
    - `claude-sdk-first` — same shape as `claude-first`, but Claude runs
