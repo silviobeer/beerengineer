@@ -125,9 +125,12 @@ Return an `artifact` object matching `QaArtifact`:
 
 - `accepted`: boolean
 - `loops`: number
-- `findings`: array of review findings
+- `findings`: array of `{ source, severity, message }`
 
 Rules:
+- every finding `source` must be `"qa-llm"`
+- every finding `severity` must be `"critical" | "high" | "medium" | "low"`
+- every finding `message` must include the concrete behavior, reproduction or evidence, and the impact
 - the artifact must reflect whether the tested project is acceptable in its current state
 - findings should be concrete, reproducible, and severity-aware
 - do not mark the project accepted if critical acceptance outcomes remain unverified or failing

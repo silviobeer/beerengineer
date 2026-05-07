@@ -71,9 +71,25 @@ Working rules for stories that come after a setup wave:
 
 ## Return Format
 
-Return a concise summary that includes:
+Return exactly one JSON object matching this shape:
 
-- what was implemented
-- tests and checks run
-- key implementation notes
-- blockers, risks, or escalations
+```json
+{
+  "summary": "string",
+  "testsRun": [
+    {
+      "command": "string",
+      "status": "passed | failed | not_run"
+    }
+  ],
+  "implementationNotes": ["string"],
+  "blockers": ["string"]
+}
+```
+
+Field rules:
+
+- `summary`: what was implemented, stated concisely
+- `testsRun`: every test or check actually run; use `not_run` only when a relevant check was intentionally skipped or unavailable
+- `implementationNotes`: key implementation notes, risks, or tradeoffs
+- `blockers`: blockers or escalations; use an empty array when there are none

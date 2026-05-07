@@ -42,6 +42,9 @@ Return an `artifact` object matching `ProjectReviewArtifact`:
 - `recommendations`: string[]
 
 Rules:
+- every finding `source` must be `"project-review-llm"`
+- every finding `severity` must be `"critical" | "high" | "medium" | "low"`
+- every finding `category` must be `"architecture" | "security" | "maintainability" | "consistency" | "integration"`
 - every finding must be actionable and traceable to the upstream bundle
 - keep the finding list small and specific
 - use `pass_with_risks` when QA and documentation may proceed but notable gaps remain
