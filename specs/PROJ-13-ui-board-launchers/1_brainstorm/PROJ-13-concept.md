@@ -10,7 +10,7 @@ The beerengineer UI lacks first-class Create idea and Import feature entry point
 - Existing system: beerengineer_ is a local-first workflow engine with a CLI, HTTP/SSE API, Next.js UI, SQLite state, and an operator board at `/w/:key`.
 - Relevant constraints: the UI must talk to the engine through HTTP/SSE and Next.js proxy routes; production UI code must not import engine internals; all browser writes go through `apps/ui/app/api/**`; the board uses workspace SSE plus server refresh; item detail is an existing client modal owned by `Board.tsx`.
 - Prior related specs: PROJ-8 covers workflow capability safety across start/import surfaces; PROJ-9 covers engine-owned read models for existing board facts; PROJ-10 and PROJ-11 cover API boundary and contract safety. None of those adds the missing top-level operator launchers.
-- Existing API support discovered: `POST /runs` starts a fresh run from `{ workspaceKey, title, description? }`; `POST /items/import-prepared` creates and starts a prepared import item from `{ workspaceKey?, path }`; per-card `import_prepared` already exists but is not a top-level board launcher.
+- Existing API support discovered: `POST /runs` starts a fresh run from `{ workspaceKey, title, description? }` and synchronously returns `{ runId, itemId, status }` (HTTP 202); `POST /items/import-prepared` creates and starts a prepared import item from `{ workspaceKey?, path }` and synchronously returns `{ kind: "started", itemId, runId, action, column, phaseStatus, warnings }` (HTTP 200); per-card `import_prepared` already exists but is not a top-level board launcher. Synchronous `itemId` return makes auto-open deterministic — the UI does not have to wait for SSE to discover the new item.
 
 ## Problem And Goal
 Today, the UI is good at observing and steering work that already exists, but it does not give the operator an obvious way to create a new idea or import prepared feature artifacts from the board.
@@ -31,7 +31,7 @@ The goal is to add compact board-level launchers for Create idea and Import feat
 - The board already owns item selection and opens `BoardItemModal`, so new work should reuse that surface instead of adding a second conversation UI.
 
 ## Success Criteria
-- The board offers both Create idea and Import feature entry points for the current workspace.
+- The board offers both Create idea and Import feature entry points for the current workspace; both are hidden or disabled with a brief reason when no workspace is selected.
 - Create idea accepts one required free-form idea text field and starts a brainstorm run without CLI use.
 - Import feature accepts one required pasted local folder path and starts prepared import without CLI use.
 - On success, the newly created item opens automatically in the existing item detail modal/conversation flow.
@@ -44,15 +44,16 @@ The goal is to add compact board-level launchers for Create idea and Import feat
 ### In Scope
 - Top-level board launchers for Create idea and Import feature in the current workspace context.
 - A minimal Create idea input that accepts one free-form text value.
-- Deriving a short engine run/item title from the first non-empty line or short prefix of the idea text.
-- Sending the full idea text as the engine description when starting the run.
+- Deriving a short engine run/item title from the first non-empty line of the idea text, trimmed and capped at 80 characters; if no non-empty line exists, the launcher fails the non-empty validation rather than fabricating a title.
+- Sending the full untrimmed idea text as the engine description when starting the run.
 - A minimal Import feature input that accepts a pasted local folder path.
 - Inline non-empty validation for both launchers.
 - Inline display of engine errors, including Git readiness, invalid folder, and domain-rule failures.
 - Preserving entered idea/path after validation or engine failure.
 - Starting existing engine workflows through UI proxy routes.
 - Refreshing or following the board's existing SSE behavior after success.
-- Automatically opening the newly created item in the existing item detail modal when available.
+- Automatically opening the newly created item in the existing item detail modal using the synchronously returned `itemId`, with a bounded wait (target: 3 s) for SSE/board state to converge before falling back to a recoverable state.
+- Deciding the fate of the existing per-card `import_prepared` action (`BoardCardActions.tsx` `window.prompt`): keep, hide, or remove. Default position for v1: hide the per-card action once the top-level launcher exists, since prepared import creates a new item rather than acting on an existing card. Requirements may revisit.
 
 ### Out Of Scope
 - Saving ideas as drafts without starting a run.
@@ -82,10 +83,10 @@ This direction is selected because it solves the missing UI workflow without cre
 
 ## Key Behaviors And Flows
 - Create idea opens an entry surface from the board, accepts one free-form idea text field, and requires non-empty input.
-- When Create idea submits, the UI derives a short title from the first non-empty line or short prefix, sends the full text as the run description, and starts the brainstorm run for the current workspace.
+- When Create idea submits, the UI derives a short title from the first non-empty line (trimmed, capped at 80 characters), sends the full text as the run description, and starts the brainstorm run for the current workspace.
 - Import feature opens an entry surface from the board, accepts one pasted local folder path, and requires non-empty input.
 - When Import feature submits, the UI sends the folder path and current workspace to prepared import.
-- After either success response returns an `itemId`, the UI refreshes or waits for existing live board state and opens the matching item in the existing item detail modal.
+- After either success response returns an `itemId` synchronously, the UI opens the matching item in the existing item detail modal, refreshing or waiting on live board state up to ~3 s if the card has not yet appeared.
 - If the item is not visible immediately because server refresh or SSE has not caught up, the UI shows a short starting/opening state rather than asking the operator to find the card manually.
 - Once the item detail modal is open, existing conversation, message, prompt, and progress behavior continues to own the operator workflow.
 - If an engine call fails, the launcher remains open, keeps the user's entered value, and shows the engine error inline.
@@ -98,16 +99,19 @@ This direction is selected because it solves the missing UI workflow without cre
 - Production UI code must not import engine internals.
 - No new auth or multi-user permissions are introduced; beerengineer remains a local operator console.
 - The input path is local-machine data and should be displayed only as needed for the operator's current action.
+- **Path-from-body exception.** The repo rule "always derive filesystem paths from server-side state; never trust path/ID fields from request bodies" exists for multi-tenant safety. Import feature is a documented exception that already applies to `POST /items/import-prepared`: the operator pastes a local path on a single-operator console, the engine resolves and validates it, and the UI never touches the filesystem itself. The launcher inherits this posture; it does not extend the exception to other endpoints.
+- **PROJ-8 capability gating coordination.** PROJ-8 owns workflow capability safety across start/import surfaces. v1 of these launchers takes the attempt-then-engine-error path (always enabled, errors surface inline). If PROJ-8 ships a board-readable capability flag (e.g. Git not ready ⇒ disable start), the launcher must respect that flag and surface the reason rather than letting the operator submit only to fail. This is a coordination point, not a hard dependency; ordering is decided at architecture time.
 
 ## Error Handling And Edge Cases
 - Empty idea text blocks submit and keeps focus in the create launcher.
 - Empty import path blocks submit and keeps focus in the import launcher.
+- No workspace selected: launchers are hidden or disabled with a brief reason; submit is unreachable.
 - Missing Git readiness, workspace path problems, invalid prepared folder, unreadable path, or engine workflow rejection show inline engine error text where possible.
 - Engine errors do not clear the idea text or folder path.
 - Duplicate submit attempts are disabled while a start/import request is pending.
 - If the board does not yet contain the returned item after success, the UI enters an opening state and resolves it through refresh/SSE rather than silently doing nothing.
-- If auto-open fails after a bounded wait, the board should still show a recoverable state and the new item should remain findable after refresh.
-- Long idea text should not overflow controls; the derived title should be bounded and the full text preserved as description.
+- If auto-open does not resolve within ~3 s, the board exits the opening state, surfaces a "started — open from board" hint linking to the returned `itemId`, and remains usable.
+- Long idea text should not overflow controls; the derived title is capped at 80 characters and the full text preserved as description.
 
 ## High-Level Implementation Success
 - User/stakeholder success: operators can start new ideas and import prepared features from the board, then immediately continue in the normal item detail/conversation workflow.
@@ -117,10 +121,10 @@ This direction is selected because it solves the missing UI workflow without cre
 - Downstream attention needed: visual-companion should explore where these board-level launchers live and how the entry surface opens without cluttering the board; requirements-engineer should define exact validation, pending, success, auto-open, and error expectations.
 
 ## Downstream Handoff Notes
-- For visual-companion: explore the UI container and interaction shape for two top-level board launchers, including how Create idea remains "already open" as it transitions into the created item's detail modal. Preserve board density and avoid a separate conversation surface.
+- For visual-companion: explore the UI container and interaction shape for two top-level board launchers, including how Create idea remains "already open" as it transitions into the created item's detail modal. Preserve board density and avoid a separate conversation surface. Account for the "no workspace selected" empty state.
 - Mockup-relevant product inputs: launcher labels are Create idea and Import feature; Create idea has one free-form text input; Import feature has one local folder path input; both show inline errors and pending states; success should lead into the existing item detail modal.
-- For requirements-engineer: specify user stories for create, import, validation, engine error display, duplicate-submit prevention, success refresh/SSE behavior, auto-open timing, and bounded failure recovery if the item is not immediately visible.
-- For architecture/planning: use existing engine endpoints where possible; add UI proxy routes only where missing; keep the UI/engine boundary intact; ensure board refresh/selection behavior can target a returned `itemId` without depending on engine internals.
+- For requirements-engineer: specify user stories for create, import, validation, engine error display, duplicate-submit prevention, success refresh/SSE behavior, auto-open timing (~3 s bound), bounded failure recovery if the item is not immediately visible, the no-workspace state, and the per-card `import_prepared` deprecation/hide decision (default: hide once top-level launcher exists).
+- For architecture/planning: use existing engine endpoints where possible; add UI proxy routes only where missing; keep the UI/engine boundary intact; ensure board refresh/selection behavior can target the synchronously returned `itemId` without depending on engine internals; coordinate with PROJ-8 on whether a board-readable capability flag should pre-emptively disable launchers vs. relying on engine-error feedback.
 
 ## Explored Alternatives
 ### Alternative A
@@ -165,8 +169,10 @@ This direction is selected because it solves the missing UI workflow without cre
 - Engine error responses are shown inline before generic fallback copy where a user-facing message is available.
 - Pending state prevents duplicate submit for both launchers.
 - Successful create/import refreshes or follows SSE and opens the returned item in the existing item detail modal.
-- Auto-open handles delayed board visibility for the returned item.
-- Existing per-card actions and item detail conversation behavior continue to work.
+- Auto-open handles delayed board visibility for the returned item within the ~3 s bound and surfaces a recoverable hint after timeout.
+- Workspace-not-selected state hides or disables both launchers.
+- Per-card `import_prepared` deprecation/hide is verified per the requirements decision.
+- Existing per-card actions (other than `import_prepared`) and item detail conversation behavior continue to work.
 - 375px mobile screenshots are captured for the new top-level UI surface before QA marks the UI work green.
 
 ## Next Step
