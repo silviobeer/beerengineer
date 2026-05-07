@@ -22,55 +22,117 @@ function fixtureActionsFor(matrixKey: string): string[] {
   return (allowedActionsByState as Record<string, string[]>)[matrixKey] ?? [];
 }
 
+type DriftGuardResult = {
+  stateId: string;
+  matrixKey: string;
+  visibleActions: string[];
+  engineAllowedActions: string[];
+  unexpectedVisibleActions: string[];
+  hiddenEngineAllowedActions: string[];
+};
+
+function analyzeDrift({
+  stateId,
+  matrixKey,
+  visibleActions,
+}: {
+  stateId: string;
+  matrixKey: string;
+  visibleActions: string[];
+}): DriftGuardResult {
+  const engineAllowedActions = fixtureActionsFor(matrixKey);
+  return {
+    stateId,
+    matrixKey,
+    visibleActions,
+    engineAllowedActions,
+    unexpectedVisibleActions: visibleActions.filter((action) => !engineAllowedActions.includes(action)),
+    hiddenEngineAllowedActions: engineAllowedActions.filter((action) => !visibleActions.includes(action)),
+  };
+}
+
+function analyzeRenderedState(stateId: string): DriftGuardResult {
+  const state = representativeBoardActionStates.find((entry) => entry.id === stateId);
+  expect(state).toBeDefined();
+
+  const { unmount } = renderActions(state!.card);
+  const result = analyzeDrift({
+    stateId: state!.id,
+    matrixKey: state!.matrixKey,
+    visibleActions: visibleActions(),
+  });
+  unmount();
+  return result;
+}
+
+function expectNoUnsafeVisibleActions(result: DriftGuardResult) {
+  expect(
+    result.unexpectedVisibleActions,
+    `Unsafe visible actions for ${result.stateId} (${result.matrixKey}): ${
+      result.unexpectedVisibleActions.join(", ") || "none"
+    }. Hidden engine-allowed actions are tolerated: ${
+      result.hiddenEngineAllowedActions.join(", ") || "none"
+    }.`,
+  ).toEqual([]);
+}
+
 describe("BoardDriftGuard", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("covers representative blocked states with fixture-backed expectations", () => {
-    const state = representativeBoardActionStates.find((entry) => entry.id === "blocked_merge_review_required");
-    expect(state).toBeDefined();
-    expect(fixtureActionsFor(state!.matrixKey).length).toBeGreaterThan(0);
-
-    renderActions(state!.card);
-
-    const actions = visibleActions();
-    expect(actions.length).toBeGreaterThan(0);
-    expect(actions).toEqual(expect.arrayContaining(["cancel_promotion", "promote_to_base"]));
-    expect(actions.every((action) => fixtureActionsFor(state!.matrixKey).includes(action))).toBe(true);
+  it("checks rendered visible actions as a subset of the committed engine allowlist", () => {
+    for (const stateId of [
+      "blocked_merge_review_required",
+      "recoverable_implementation_failed",
+      "running_implementation_running",
+      "terminal_done_completed",
+    ] as const) {
+      const result = analyzeRenderedState(stateId);
+      expect(result.engineAllowedActions.length).toBeGreaterThan(0);
+      expectNoUnsafeVisibleActions(result);
+    }
   });
 
-  it("covers representative failed or recoverable states without unsafe recovery actions", () => {
-    const state = representativeBoardActionStates.find((entry) => entry.id === "recoverable_implementation_failed");
-    expect(state).toBeDefined();
-    expect(fixtureActionsFor(state!.matrixKey).length).toBeGreaterThan(0);
+  it("tolerates representative states where the UI intentionally hides engine-allowed actions", () => {
+    const strictSubsetStates = representativeBoardActionStates
+      .map((state) => analyzeRenderedState(state.id))
+      .filter((result) => result.hiddenEngineAllowedActions.length > 0);
 
-    renderActions(state!.card);
+    expect(
+      strictSubsetStates.length,
+      "No strict-subset representative state exists. If the current UI shows every engine-allowed action, document that explicitly before removing AC-22 coverage.",
+    ).toBeGreaterThan(0);
 
-    const actions = visibleActions();
-    expect(actions.every((action) => fixtureActionsFor(state!.matrixKey).includes(action))).toBe(true);
+    const blockedMergeState = strictSubsetStates.find((result) => result.stateId === "blocked_merge_review_required");
+    expect(blockedMergeState).toBeDefined();
+    expect(blockedMergeState!.visibleActions).toEqual(
+      expect.arrayContaining(["cancel_promotion", "promote_to_base"]),
+    );
+    expect(blockedMergeState!.hiddenEngineAllowedActions).toContain("resume_run");
+    expectNoUnsafeVisibleActions(blockedMergeState!);
   });
 
-  it("covers representative running states without stale completion or recovery actions", () => {
-    const state = representativeBoardActionStates.find((entry) => entry.id === "running_implementation_running");
-    expect(state).toBeDefined();
-    expect(fixtureActionsFor(state!.matrixKey).length).toBeGreaterThan(0);
+  it("fails only for unsafe visible actions and reports the affected state", () => {
+    const baseline = analyzeRenderedState("blocked_merge_review_required");
+    const unsafeResult = analyzeDrift({
+      stateId: baseline.stateId,
+      matrixKey: baseline.matrixKey,
+      visibleActions: [...baseline.visibleActions, "unsafe_extra_action"],
+    });
 
-    renderActions(state!.card);
-
-    const actions = visibleActions();
-    expect(actions.every((action) => fixtureActionsFor(state!.matrixKey).includes(action))).toBe(true);
+    expect(unsafeResult.hiddenEngineAllowedActions).toContain("resume_run");
+    expect(() => expectNoUnsafeVisibleActions(unsafeResult)).toThrowError(
+      /Unsafe visible actions for blocked_merge_review_required \(merge\/review_required\): unsafe_extra_action/,
+    );
   });
 
-  it("covers representative terminal states without further unsafe actions", () => {
-    const state = representativeBoardActionStates.find((entry) => entry.id === "terminal_done_completed");
-    expect(state).toBeDefined();
-    expect(fixtureActionsFor(state!.matrixKey).length).toBeGreaterThan(0);
+  it("treats empty visible action sets as a valid subset of the engine allowlist", () => {
+    const result = analyzeRenderedState("terminal_done_completed");
 
-    renderActions(state!.card);
-
-    const actions = visibleActions();
-    expect(actions.every((action) => fixtureActionsFor(state!.matrixKey).includes(action))).toBe(true);
+    expect(result.visibleActions).toEqual([]);
+    expect(result.hiddenEngineAllowedActions).toContain("rerun_design_prep");
+    expectNoUnsafeVisibleActions(result);
   });
 });
 
