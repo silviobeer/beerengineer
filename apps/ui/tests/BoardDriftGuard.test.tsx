@@ -36,6 +36,7 @@ describe("BoardDriftGuard", () => {
 
     const actions = visibleActions();
     expect(actions.length).toBeGreaterThan(0);
+    expect(actions).toEqual(expect.arrayContaining(["cancel_promotion", "promote_to_base"]));
     expect(actions.every((action) => fixtureActionsFor(state!.matrixKey).includes(action))).toBe(true);
   });
 

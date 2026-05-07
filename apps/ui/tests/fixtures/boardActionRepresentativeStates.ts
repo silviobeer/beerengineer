@@ -18,7 +18,7 @@ export const representativeBoardActionStates: RepresentativeBoardActionState[] =
       phase_status: "review_required",
       current_stage: null,
       hasOpenPrompt: false,
-      hasReviewGateWaiting: false,
+      hasReviewGateWaiting: true,
       hasBlockedRun: true,
     },
   },

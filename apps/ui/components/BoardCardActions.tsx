@@ -138,7 +138,12 @@ export function BoardCardActions({ card }: Readonly<BoardCardActionsProps>) {
         ))}
       </div>
       {error ? (
-        <div role="alert" data-testid="board-card-action-error" className="text-[10px] text-red-400">
+        <div
+          role="alert"
+          data-testid="board-card-action-error"
+          className="text-[10px]"
+          style={{ color: "var(--color-coral)" }}
+        >
           {error}
         </div>
       ) : null}
