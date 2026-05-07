@@ -125,6 +125,11 @@ For each feature wave:
     modify, validate, provision, migrate, or otherwise exercise database
     behavior
   - use `false` for non-database stories
+  - references to database capability code, Supabase readiness logic, hook
+    wiring, policy gates, or no-op behavior are not enough by themselves to
+    make a story DB-relevant; if the implementation can be verified with local
+    tests, fakes, fixtures, static checks, or policy-unit tests and does not
+    require a live external database branch, mark it `false`
   - when a story might sound database-adjacent but architecture says it should
     not exercise DB behavior, set `dbRelevant: false`,
     `dbRelevanceOverride: "not-db-relevant"`, and a concise
