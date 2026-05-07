@@ -33,39 +33,67 @@ function verifyExpectedFiles(workspaceRoot: string, expectedFiles: string[]): st
   return failures
 }
 
+type ParsedScript =
+  | { kind: "workspace"; scriptName: string; workspaceKey: string; runCommand: string }
+  | { kind: "root"; scriptName: string; runCommand: string }
+
+function parseRequiredScript(requiredScript: string): ParsedScript {
+  const trimmed = requiredScript.trim()
+  // npm <lifecycle> --workspace=<pkg> (with optional extra flags)
+  const wsLifecycle = /^npm\s+([^\s-][^\s]*)\s+.*--workspace[=\s](\S+)/.exec(trimmed)
+  if (wsLifecycle) {
+    return { kind: "workspace", scriptName: wsLifecycle[1], workspaceKey: wsLifecycle[2], runCommand: trimmed }
+  }
+  // npm run <name> (no workspace flag)
+  const npmRun = /^npm\s+run\s+(?:--\s+)?([^\s]+)$/.exec(trimmed)
+  if (npmRun) return { kind: "root", scriptName: npmRun[1], runCommand: `npm run ${shellQuote(npmRun[1])}` }
+  // npm <lifecycle> (no workspace flag)
+  const npmLifecycle = /^npm\s+([^\s]+)$/.exec(trimmed)
+  if (npmLifecycle) return { kind: "root", scriptName: npmLifecycle[1], runCommand: `npm run ${shellQuote(npmLifecycle[1])}` }
+  return { kind: "root", scriptName: trimmed, runCommand: `npm run ${shellQuote(trimmed)}` }
+}
+
+function resolvePackageJson(
+  workspaceRoot: string,
+  parsed: ParsedScript,
+): { scripts?: Record<string, string> } | null {
+  if (parsed.kind === "workspace") {
+    const pkgBasename = parsed.workspaceKey.replace(/^@[^/]+\//, "")
+    const candidates = [
+      join(workspaceRoot, "apps", pkgBasename, "package.json"),
+      join(workspaceRoot, "packages", pkgBasename, "package.json"),
+    ]
+    for (const candidate of candidates) {
+      if (existsSync(candidate)) {
+        return JSON.parse(readFileSync(candidate, "utf8")) as { scripts?: Record<string, string> }
+      }
+    }
+    return null
+  }
+  const rootPath = join(workspaceRoot, "package.json")
+  if (!existsSync(rootPath)) return null
+  return JSON.parse(readFileSync(rootPath, "utf8")) as { scripts?: Record<string, string> }
+}
+
 function verifyRequiredScripts(workspaceRoot: string, requiredScripts: string[]): string[] {
   if (requiredScripts.length === 0) return []
-  const packageJsonPath = join(workspaceRoot, "package.json")
-  if (!existsSync(packageJsonPath)) {
+  if (!existsSync(join(workspaceRoot, "package.json"))) {
     return ["missing package.json required to verify setup scripts"]
   }
-  const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as { scripts?: Record<string, string> }
   const failures: string[] = []
   for (const requiredScript of requiredScripts) {
-    const scriptName = packageScriptName(requiredScript)
-    if (!packageJson.scripts?.[scriptName]) {
-      failures.push(`missing required package.json script: ${scriptName}`)
+    const parsed = parseRequiredScript(requiredScript)
+    const pkgJson = resolvePackageJson(workspaceRoot, parsed)
+    if (!pkgJson?.scripts?.[parsed.scriptName]) {
+      failures.push(`missing required package.json script: ${parsed.scriptName}`)
       continue
     }
-    const run = runShell(npmScriptCommand(scriptName), workspaceRoot)
+    const run = runShell(parsed.runCommand, workspaceRoot)
     if (!run.ok) {
-      failures.push(`script failed: ${npmScriptCommand(scriptName)}${formatCommandOutput(run.output)}`)
+      failures.push(`script failed: ${parsed.runCommand}${formatCommandOutput(run.output)}`)
     }
   }
   return failures
-}
-
-function packageScriptName(requiredScript: string): string {
-  const trimmed = requiredScript.trim()
-  const npmRun = /^npm\s+run\s+(?:--\s+)?([^\s]+)$/.exec(trimmed)
-  if (npmRun) return npmRun[1]
-  const npmLifecycle = /^npm\s+([^\s]+)$/.exec(trimmed)
-  if (npmLifecycle) return npmLifecycle[1]
-  return trimmed
-}
-
-function npmScriptCommand(scriptName: string): string {
-  return `npm run ${shellQuote(scriptName)}`
 }
 
 function shellQuote(value: string): string {
