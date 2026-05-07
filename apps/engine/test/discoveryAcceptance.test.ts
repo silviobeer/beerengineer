@@ -73,16 +73,128 @@ function loadManifest(): Manifest {
   return JSON.parse(readFileSync(path, "utf8")) as Manifest
 }
 
-function baselineDirectChildren(): string[] {
-  // FX-1 baseline derived from the on-disk direct-child `.test.ts` files
-  // currently present under apps/engine/test/. PROJ-8-PRD-1-US-1 is the first
-  // story in PROJ-8, so today's root-level set is the pre-PROJ-8 baseline.
-  return readdirSync(testDir, { withFileTypes: true })
-    .filter(e => e.isFile() && e.name.endsWith(".test.ts"))
-    .map(e => e.name)
-    .filter(name => !name.startsWith("_"))
-    .sort()
-}
+// FX-1: static committed array of direct-child .test.ts filenames at the
+// pre-PROJ-8 baseline (PROJ-8-PRD-1-US-1 is the first PROJ-8 story, so this
+// snapshot captures the working tree prior to any PROJ-8 change). Files
+// classified outside the ordinary mode are flagged via the manifest and TC-2
+// skips them at assertion time.
+const FX1_BASELINE: string[] = [
+  "apiIntegration.test.ts",
+  "appConfigPatch.test.ts",
+  "appConfigView.test.ts",
+  "appSetupInit.test.ts",
+  "baseBranch.test.ts",
+  "brainstormNormalize.test.ts",
+  "branchNames.test.ts",
+  "bus.test.ts",
+  "capabilitiesFoundation.test.ts",
+  "capabilityCli.test.ts",
+  "claudeProvider.test.ts",
+  "cli-actions.test.ts",
+  "cli-navigation.test.ts",
+  "cli.test.ts",
+  "codexProvider.test.ts",
+  "dbConnection.test.ts",
+  "dbSync.test.ts",
+  "designPrep.test.ts",
+  "designPrepClarificationMode.test.ts",
+  "designPrepIteration.test.ts",
+  "designValidation.test.ts",
+  "engineReliability.test.ts",
+  "execution.test.ts",
+  "executionSequential.test.ts",
+  "fakeLlm.test.ts",
+  "flowDefinition.test.ts",
+  "frontendSnapshot.test.ts",
+  "git.test.ts",
+  "gitIdentityApi.test.ts",
+  "gitIdentityConfig.test.ts",
+  "gitIdentityReadiness.test.ts",
+  "gitIdentityRepair.test.ts",
+  "gitIdentityValidation.test.ts",
+  "gitInspect.test.ts",
+  "gitSigningReadiness.test.ts",
+  "interop.test.ts",
+  "ioContract.test.ts",
+  "itemActions.test.ts",
+  "itemAggregation.test.ts",
+  "itemDecisions.test.ts",
+  "itemIdentity.test.ts",
+  "iterationLoop.test.ts",
+  "llmRegistry.test.ts",
+  "loopConfig.test.ts",
+  "managedInstallDiagnostics.test.ts",
+  "managedInstallDocs.test.ts",
+  "managedInstallDownload.test.ts",
+  "managedInstallEntrypoint.test.ts",
+  "managedInstallLock.test.ts",
+  "managedInstallPath.test.ts",
+  "managedInstallPrerequisites.test.ts",
+  "managedInstallRelease.test.ts",
+  "managedInstallState.test.ts",
+  "managedInstallValidation.test.ts",
+  "managedInstallWorkflow.test.ts",
+  "mergeGate.test.ts",
+  "messagingLevel.test.ts",
+  "nonInteractivePrompt.test.ts",
+  "notifications.test.ts",
+  "optionalSecretReadiness.test.ts",
+  "orphanRecovery.test.ts",
+  "planValidator.test.ts",
+  "portAllocator.test.ts",
+  "preparedImport.test.ts",
+  "previewLauncher.test.ts",
+  "projectReview.test.ts",
+  "projectStageRegistry.test.ts",
+  "promptEnvelope.test.ts",
+  "promptLoader.test.ts",
+  "ralphRuntime.test.ts",
+  "renderDesignPrep.test.ts",
+  "reposOwnerAndIds.test.ts",
+  "resume.test.ts",
+  "reviewCapabilities.test.ts",
+  "sdkLive.test.ts",
+  "secretActions.test.ts",
+  "secretApi.test.ts",
+  "secretMetadata.test.ts",
+  "secretResolver.test.ts",
+  "secretStore.test.ts",
+  "secretTests.test.ts",
+  "setupApi.test.ts",
+  "setupCliGitIdentity.test.ts",
+  "setupContractVerifier.test.ts",
+  "setupInteractiveEntry.test.ts",
+  "setupRecheck.test.ts",
+  "setupStatus.test.ts",
+  "setupTaskCommit.test.ts",
+  "sonarCapability.test.ts",
+  "stageRuntime.test.ts",
+  "stageWithUserReview.test.ts",
+  "styledMockup.test.ts",
+  "telegramRefactor.test.ts",
+  "updateMode.test.ts",
+  "updateSwitcher.test.ts",
+  "waveCoordinator.test.ts",
+  "wireframeValidation.test.ts",
+  "workerLease.test.ts",
+  "workerLeaseApi.test.ts",
+  "workerLeaseCancellation.test.ts",
+  "workerLeaseCli.test.ts",
+  "workerLeaseHeartbeat.test.ts",
+  "workerLeaseProductionCallers.test.ts",
+  "workerLeaseRecovery.test.ts",
+  "workerLeaseResume.test.ts",
+  "workerLeaseShutdown.test.ts",
+  "workerLeaseStartFailure.test.ts",
+  "workerRecoverySurface.test.ts",
+  "workflowContextResolver.test.ts",
+  "workflowE2E.test.ts",
+  "workflowGitGate.test.ts",
+  "workflowSupabaseReadinessGate.test.ts",
+  "workspaceCapabilities.test.ts",
+  "workspaceLayout.test.ts",
+  "workspaces.test.ts",
+]
 
 function nonOrdinaryDirectChildBasenames(manifest: Manifest): Set<string> {
   // Manifest entries with normalized paths like "test/foo.test.ts" — only
@@ -114,7 +226,7 @@ test("PROJ-8-PRD-1-US-1 TC-2: pre-PROJ-8 direct-child filenames still appear in 
   const result = runOrdinaryCommand()
   const excluded = nonOrdinaryDirectChildBasenames(loadManifest())
   const missing: string[] = []
-  for (const filename of baselineDirectChildren()) {
+  for (const filename of FX1_BASELINE) {
     if (excluded.has(filename)) continue
     if (!result.combined.includes(filename)) missing.push(filename)
   }
