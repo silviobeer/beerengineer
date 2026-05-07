@@ -2,15 +2,8 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BoardCardActions } from "@/components/BoardCardActions";
 import type { BoardCardDTO } from "@/lib/types";
-import fixture from "./fixtures/item-actions-allowed.json";
-
-type RepresentativeState = {
-  id: string;
-  allowedActions: string[];
-  card: BoardCardDTO;
-};
-
-const representativeStates = fixture.representativeStates as RepresentativeState[];
+import allowedActionsByState from "./fixtures/item-actions-allowed.json";
+import { representativeBoardActionStates } from "./fixtures/boardActionRepresentativeStates";
 
 function renderActions(card: BoardCardDTO) {
   return render(<BoardCardActions card={card} />);
@@ -25,56 +18,63 @@ function visibleActions(): string[] {
     .filter((action): action is string => Boolean(action));
 }
 
-describe("BoardCardActions drift guard", () => {
+function fixtureActionsFor(matrixKey: string): string[] {
+  return (allowedActionsByState as Record<string, string[]>)[matrixKey] ?? [];
+}
+
+describe("BoardDriftGuard", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
   it("covers representative blocked states with fixture-backed expectations", () => {
-    const state = representativeStates.find((entry) => entry.id === "blocked_merge_review_required");
+    const state = representativeBoardActionStates.find((entry) => entry.id === "blocked_merge_review_required");
     expect(state).toBeDefined();
-    expect(state?.allowedActions.length).toBeGreaterThan(0);
+    expect(fixtureActionsFor(state!.matrixKey).length).toBeGreaterThan(0);
 
     renderActions(state!.card);
 
     const actions = visibleActions();
     expect(actions.length).toBeGreaterThan(0);
-    expect(actions.every((action) => state!.allowedActions.includes(action))).toBe(true);
+    expect(actions.every((action) => fixtureActionsFor(state!.matrixKey).includes(action))).toBe(true);
   });
 
   it("covers representative failed or recoverable states without unsafe recovery actions", () => {
-    const state = representativeStates.find((entry) => entry.id === "recoverable_implementation_failed");
+    const state = representativeBoardActionStates.find((entry) => entry.id === "recoverable_implementation_failed");
     expect(state).toBeDefined();
+    expect(fixtureActionsFor(state!.matrixKey).length).toBeGreaterThan(0);
 
     renderActions(state!.card);
 
     const actions = visibleActions();
-    expect(actions.every((action) => state!.allowedActions.includes(action))).toBe(true);
+    expect(actions.every((action) => fixtureActionsFor(state!.matrixKey).includes(action))).toBe(true);
   });
 
   it("covers representative running states without stale completion or recovery actions", () => {
-    const state = representativeStates.find((entry) => entry.id === "running_implementation_running");
+    const state = representativeBoardActionStates.find((entry) => entry.id === "running_implementation_running");
     expect(state).toBeDefined();
+    expect(fixtureActionsFor(state!.matrixKey).length).toBeGreaterThan(0);
 
     renderActions(state!.card);
 
     const actions = visibleActions();
-    expect(actions.every((action) => state!.allowedActions.includes(action))).toBe(true);
+    expect(actions.every((action) => fixtureActionsFor(state!.matrixKey).includes(action))).toBe(true);
   });
 
   it("covers representative terminal states without further unsafe actions", () => {
-    const state = representativeStates.find((entry) => entry.id === "terminal_done_completed");
+    const state = representativeBoardActionStates.find((entry) => entry.id === "terminal_done_completed");
     expect(state).toBeDefined();
+    expect(fixtureActionsFor(state!.matrixKey).length).toBeGreaterThan(0);
 
     renderActions(state!.card);
 
     const actions = visibleActions();
-    expect(actions.every((action) => state!.allowedActions.includes(action))).toBe(true);
+    expect(actions.every((action) => fixtureActionsFor(state!.matrixKey).includes(action))).toBe(true);
   });
 });
 
 describe("BoardCardActions rejection messaging", () => {
-  const actionCard: BoardCardDTO = representativeStates.find((entry) => entry.id === "blocked_merge_review_required")!.card;
+  const actionCard = representativeBoardActionStates.find((entry) => entry.id === "blocked_merge_review_required")!.card;
   const originalFetch = globalThis.fetch;
 
   afterEach(() => {

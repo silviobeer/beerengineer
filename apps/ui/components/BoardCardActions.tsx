@@ -15,7 +15,7 @@ const ACTION_ERROR_FALLBACK = "Action could not be completed.";
  * dead buttons. The engine remains authoritative; if the prediction is wrong
  * the click will get a 409 and we surface it.
  */
-function actionsFor(card: BoardCardDTO): ActionDef[] {
+export function actionsFor(card: BoardCardDTO): ActionDef[] {
   const phase = card.phase_status ?? "";
   const stage = card.current_stage ?? null;
 

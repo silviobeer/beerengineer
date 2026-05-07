@@ -1,64 +1,18 @@
 {
-  "representativeStates": [
-    {
-      "id": "blocked_merge_review_required",
-      "allowedActions": ["promote_to_base"],
-      "card": {
-        "id": "item-blocked",
-        "itemCode": "UI-BLOCKED",
-        "title": "Blocked merge item",
-        "column": "merge",
-        "phase_status": "review_required",
-        "current_stage": null,
-        "hasOpenPrompt": false,
-        "hasReviewGateWaiting": false,
-        "hasBlockedRun": true
-      }
-    },
-    {
-      "id": "recoverable_implementation_failed",
-      "allowedActions": [],
-      "card": {
-        "id": "item-failed",
-        "itemCode": "UI-FAILED",
-        "title": "Recoverable implementation item",
-        "column": "implementation",
-        "phase_status": "failed",
-        "current_stage": "exec",
-        "hasOpenPrompt": false,
-        "hasReviewGateWaiting": false,
-        "hasBlockedRun": false
-      }
-    },
-    {
-      "id": "running_implementation_running",
-      "allowedActions": [],
-      "card": {
-        "id": "item-running",
-        "itemCode": "UI-RUNNING",
-        "title": "Running implementation item",
-        "column": "implementation",
-        "phase_status": "running",
-        "current_stage": "exec",
-        "hasOpenPrompt": false,
-        "hasReviewGateWaiting": false,
-        "hasBlockedRun": false
-      }
-    },
-    {
-      "id": "terminal_done_completed",
-      "allowedActions": [],
-      "card": {
-        "id": "item-done",
-        "itemCode": "UI-DONE",
-        "title": "Completed terminal item",
-        "column": "done",
-        "phase_status": "completed",
-        "current_stage": null,
-        "hasOpenPrompt": false,
-        "hasReviewGateWaiting": false,
-        "hasBlockedRun": false
-      }
-    }
+  "merge/review_required": [
+    "resume_run",
+    "promote_to_base",
+    "cancel_promotion"
+  ],
+  "implementation/failed": [
+    "rerun_design_prep",
+    "resume_run"
+  ],
+  "implementation/running": [
+    "rerun_design_prep",
+    "resume_run"
+  ],
+  "done/completed": [
+    "rerun_design_prep"
   ]
 }
