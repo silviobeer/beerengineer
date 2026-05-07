@@ -44,12 +44,17 @@ The goal is to keep the app behaving the same on the outside, while making API c
 - Board projection is internally split by concern while preserving the same `/board` response shape.
 - Representative route behavior, error mapping, token/CORS behavior, readiness/startup surfaces, SSE basics, shutdown/lifecycle behavior, and `/board` responses remain compatible.
 - Route/OpenAPI parity remains deferred to a later PROJ.
+- `src/api/openapi.json` remains the authoritative source of request/response shapes and is **not** regenerated from any new route registration; route registry, if introduced, consumes openapi.json as the contract, never the inverse.
+- CSRF token enforcement remains a structural property of the HTTP shell (a wrapper that no domain route registration can bypass), not a per-handler opt-in.
+- After the split, the engine still does not import from `apps/ui`; sub-projectors live entirely under `apps/engine`.
 
 ## Scope
 ### In Scope
 - Characterization tests or snapshots for important public routes and representative `/board` responses.
 - Coverage around error mapping, token/auth behavior, CORS behavior, `/health`, `/ready`, `/openapi.json`, SSE basics, startup recovery, cleanup scheduler startup, token/pid file behavior, and shutdown handling.
 - Internal split of API server ownership into HTTP shell, route registration, privileged dependency composition, and lifecycle coordination.
+- Domain ownership for notification routes and the Telegram chat-tool webhook (currently inlined in `api/server.ts`); these go through the same domain-route registration path as items/runs/workspaces/setup/update.
+- A named seam between the update-mode routes and the lifecycle owner for the prepared-apply handoff (currently `startPreparedApplyExecution` lives inline in `api/server.ts` and triggers `gracefulShutdown`).
 - Internal split of board projection concerns behind the same `/board` response.
 - Documentation of new internal ownership if needed for future implementers.
 
@@ -61,6 +66,8 @@ The goal is to keep the app behaving the same on the outside, while making API c
 - Intentional auth/token/CORS behavior changes.
 - Intentional setup, update, Supabase, or startup behavior changes.
 - UI visual changes or board redesign.
+- Splitting the UI-side `BoardCardDTO` (`apps/ui/lib/types.ts`) into per-concern types — engine-internal split only; UI consumes the same aggregate DTO.
+- Generating `openapi.json` from registered routes (it stays hand-maintained and authoritative).
 - Full board replacement.
 - Route/OpenAPI parity fitness system.
 - Generated routing system.
@@ -115,8 +122,8 @@ This is broader than a server-only split because board projection is also a majo
 ## Downstream Handoff Notes
 - For visual-companion: no UI layout exploration is needed because UI visuals and board behavior remain unchanged.
 - Mockup-relevant product inputs: none.
-- For requirements-engineer: specify compatibility expectations, characterization targets, route/lifecycle/board edge cases, and non-goals for public behavior changes.
-- For architecture/planning: design internal ownership boundaries for HTTP shell, route registration, composition, lifecycle coordination, and board projection; keep route/OpenAPI parity deferred.
+- For requirements-engineer: specify compatibility expectations, characterization targets, route/lifecycle/board edge cases, and non-goals for public behavior changes. Make the structural CSRF invariant, the openapi.json authority direction, and the byte-equal `/board` golden-file requirement explicit acceptance criteria. Confirm Telegram-webhook + notification routes flow through the new domain-route registration.
+- For architecture/planning: design internal ownership boundaries for HTTP shell, route registration, composition, lifecycle coordination, and board projection; place the prepared-apply update handoff in a single named owner (update routes vs. lifecycle); keep route/OpenAPI parity deferred and openapi.json as the authoritative contract.
 
 ## Explored Alternatives
 ### Alternative A
@@ -143,18 +150,21 @@ This is broader than a server-only split because board projection is also a majo
 - The selected direction is Characterized Internal Split.
 
 ## Risks And Trade-Offs
-- Same behavior can be hard to prove. Mitigation: require characterization coverage for representative public routes, error mapping, token/CORS behavior, readiness/startup surfaces, SSE basics, shutdown/lifecycle behavior, and representative `/board` responses before moving internals.
-- Splitting files can create abstraction theater. Mitigation: split only by real ownership.
+- Same behavior can be hard to prove. Mitigation: require characterization coverage for representative public routes, error mapping, token/CORS behavior, readiness/startup surfaces, SSE basics, shutdown/lifecycle behavior, and representative `/board` responses before moving internals. For `/board` specifically, require golden-file equality between the pre-split and post-split projection over a fixture set covering no workspace, empty board, open prompts, blocked runs, recovery messages, preview URLs, Supabase blockers, retained branches, and merge-state facts.
+- Splitting files can create abstraction theater. Mitigation: split only by real ownership. Sub-projector count is appetite-bounded — prefer a small set of concern-owned modules over fine-grained one-fact-per-file fragmentation.
 - Board projection splitting could accidentally change the board. Mitigation: keep `/board` response shape compatible and test representative before/after examples.
-- Route refactor could become OpenAPI parity work. Mitigation: preserve `/openapi.json` behavior and defer full route/OpenAPI parity fitness.
+- Route refactor could become OpenAPI parity work. Mitigation: preserve `/openapi.json` behavior, treat `src/api/openapi.json` as the authoritative contract, and defer full route/OpenAPI parity fitness.
+- CSRF token check could be accidentally bypassed when a domain registers its own routes. Mitigation: keep token enforcement at the HTTP shell wrapper so route modules cannot opt out; characterize unauthenticated mutations as 401.
+- Update-mode handoff is subtle. Mitigation: name the seam between update routes and lifecycle (prepared-apply spawn + graceful shutdown) so the handoff is owned in one place after the split.
 - Startup/lifecycle extraction can break subtle local process behavior. Mitigation: require checks around token/pid file behavior, startup recovery, cleanup scheduler startup, shutdown handling, `/health`, and `/ready`.
 
 ## Testing Focus
 - Characterization for public route URLs and representative responses.
 - Error mapping, token/auth behavior, CORS behavior, `/health`, `/ready`, and `/openapi.json`.
-- SSE stream attach/emit/close basics.
-- Startup recovery, cleanup scheduler startup, token/pid file behavior, and shutdown handling.
-- Representative `/board` responses: no workspace, empty board, normal item states, open prompts, blocked runs, recovery messages, preview URLs, Supabase blockers, retained branches, and merge-state facts.
+- Unauthenticated mutation attempts must remain 401 after the shell/route split (structural CSRF invariant).
+- SSE stream attach/emit/close basics, pinned to the canonical event names in `docs/messaging-levels.md` and `src/core/messagingProjection.ts` to prevent alias drift during the split.
+- Startup recovery, cleanup scheduler startup, token/pid file behavior, shutdown handling, and the prepared-apply update handoff.
+- Representative `/board` responses: no workspace, empty board, normal item states, open prompts, blocked runs, recovery messages, preview URLs, Supabase blockers, retained branches, and merge-state facts. Pre-split vs post-split projection must be byte-equal over this fixture set.
 - Internal board projectors tested by concern while preserving the aggregate response.
 
 ## Next Step
