@@ -94,6 +94,8 @@ export type StageRun<TState, TArtifact> = {
   updatedAt: string
 }
 
+const MAX_IDENTICAL_STAGE_PROMPTS = 2
+
 export type StageDefinition<TState, TArtifact, TResult> = {
   stageId: string
   stageAgentLabel: string
@@ -344,6 +346,35 @@ async function blockReviewRun<TState, TArtifact>(
   throw new Error(reason)
 }
 
+async function blockRepeatedStagePrompt<TState, TArtifact>(
+  run: StageRun<TState, TArtifact>,
+  message: string,
+  priorCount: number,
+): Promise<never> {
+  const summary = `Blocked: stage agent repeated the same response-required prompt ${priorCount + 1} times`
+  setStatus(run, "blocked")
+  pushLog(run, {
+    type: "status_changed",
+    message: summary,
+    data: { cause: "repeated_stage_prompt", repeatedPrompt: message, repeatedCount: priorCount + 1 },
+  })
+  await persistRun(run)
+  await recordStageBlocked(run, "stage_error", summary, {
+    detail:
+      "The stage agent kept asking the same question after receiving user input. " +
+      "The run was paused to avoid an infinite clarification loop.",
+    findings: [{ source: "stage-runtime", severity: "high", message }],
+  })
+  throw new Error(summary)
+}
+
+function countPriorIdenticalStagePrompts<TState, TArtifact>(
+  run: StageRun<TState, TArtifact>,
+  message: string,
+): number {
+  return run.logs.filter(entry => entry.type === "stage_message" && entry.message === message).length
+}
+
 async function requestRevision<TState, TArtifact, TResult>(
   definition: StageDefinition<TState, TArtifact, TResult>,
   run: StageRun<TState, TArtifact>,
@@ -375,6 +406,11 @@ async function continueStageAfterUserMessage<TState, TArtifact, TResult>(
   run: StageRun<TState, TArtifact>,
   message: string,
 ): Promise<StageAgentResponse<TArtifact>> {
+  const priorIdenticalPrompts = countPriorIdenticalStagePrompts(run, message)
+  if (priorIdenticalPrompts >= MAX_IDENTICAL_STAGE_PROMPTS) {
+    await blockRepeatedStagePrompt(run, message, priorIdenticalPrompts)
+  }
+
   setStatus(run, "waiting_for_user")
   pushLog(run, { type: "stage_message", message })
   await persistRun(run)

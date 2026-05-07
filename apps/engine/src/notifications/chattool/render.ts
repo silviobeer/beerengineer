@@ -94,7 +94,8 @@ function summaryHeader(presentation: MessagePresentation): string {
 
 function runIdentityLine(entry: MessageEntry, repos?: Repos): string {
   const run = repos?.getRun(entry.runId)
-  const itemId = run?.item_id || entry.itemId
+  const payloadItemId = typeof entry.payload.itemId === "string" ? entry.payload.itemId : ""
+  const itemId = run?.item_id || payloadItemId
   const item = itemId ? repos?.getItem(itemId) : undefined
   const title = s(run?.title ?? item?.title ?? entry.payload.title, entry.runId)
   const itemPrefix = item?.code ? `${item.code} / ` : ""

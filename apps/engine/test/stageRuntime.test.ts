@@ -175,6 +175,49 @@ test("message loop: begin -> message -> user-message -> artifact", async () => {
   }
 })
 
+test("repeated identical response-required prompts block instead of looping", async () => {
+  const env = withTmpCwd()
+  try {
+    const stage = new ScriptedStage([
+      { kind: "message", message: "Need AC-21 clarification" },
+      { kind: "message", message: "Need AC-21 clarification" },
+      { kind: "message", message: "Need AC-21 clarification" },
+    ])
+    const reviewer = new ScriptedReviewer([])
+    const answers = ["first answer", "second answer", "third answer"]
+    let capturedRun: Awaited<ReturnType<typeof runStage<State, Art, string>>>["run"] | undefined
+
+    await assert.rejects(
+      async () => {
+        try {
+          const result = await runStage(baseDefinition({
+            stageAgent: stage,
+            reviewer,
+            askUser: async () => answers.shift()!,
+          }))
+          capturedRun = result.run
+        } catch (error) {
+          const ctx = { workspaceId: "ws-1", workspaceRoot: process.cwd(), runId: "run-1" }
+          capturedRun = JSON.parse(await readFile(layout.stageRunFile(ctx, "testing"), "utf8"))
+          throw error
+        }
+      },
+      /Blocked: stage agent repeated the same response-required prompt 3 times/,
+    )
+
+    assert.equal(capturedRun?.status, "blocked")
+    assert.equal(capturedRun?.userTurnCount, 2)
+    assert.deepEqual(answers, ["third answer"])
+    assert.equal(
+      capturedRun?.logs.filter(l => l.type === "stage_message" && l.message === "Need AC-21 clarification").length,
+      2,
+    )
+    assert.ok(capturedRun?.logs.some(l => l.message.includes("repeated the same response-required prompt 3 times")))
+  } finally {
+    env.restore()
+  }
+})
+
 test("revise -> chat_in_progress -> artifact -> pass", async () => {
   const env = withTmpCwd()
   try {
