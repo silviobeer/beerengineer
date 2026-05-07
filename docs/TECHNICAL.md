@@ -1,6 +1,6 @@
 # Technical Reference
 
-**Last updated:** 2026-05-04
+**Last updated:** 2026-05-06
 
 ## Architecture
 
@@ -51,6 +51,24 @@ PROJ-4 layers Supabase Cloud Branching onto the PROJ-3 capability model without 
 - **Production-migration tracking** — production migrations are applied transactionally, file-by-file, and recorded in a `__beerengineer_migrations` table on the target Supabase project. The table is created on first migrate; subsequent runs are idempotent across retries because already-applied files are skipped.
 - **Startup catch-up scheduler** — at engine boot, `runDueSupabaseCleanups` runs once per Supabase-connected workspace; a `setInterval` (5 min, `unref()`-ed so it does not hold the process open) re-runs the catch-up so deferred TTL cleanups recover after crashes and restarts.
 
+### PROJ-5: Setup Git Readiness
+
+PROJ-5 promotes Git author identity to a setup and workflow-start precondition without changing beerengineer_'s local real-Git model. The engine owns the readiness truth and every surface consumes the same snapshot:
+
+```text
+CLI setup / item commands
+        \
+         -> Engine setup Git identity domain -> app config, workspace registry, Git CLI
+        /
+Next.js setup + item UI -> Next.js API proxy -> Engine API
+```
+
+- **Global readiness mode** reports Git installation, global Git identity, app-level default identity, and global setup actions when no usable workspace is selected.
+- **Workspace readiness mode** adds repo-local identity, registered workspace Git status, and the exact identity source a workflow would use.
+- **Identity precedence** is repo-local, then global, then app-level default as a confirmed repair source, then blocked.
+- **Workflow-start gate** runs before run rows, item moves, branches, worktrees, artifacts, or LLM work. Blocked responses preserve the original item/action intent so the UI can repair and continue.
+- **Next.js proxy boundary** keeps browser code away from engine tokens; the engine resolves workspace paths from SQLite state before any Git read/write.
+
 ## Data Model
 
 - **Release Target:** resolved GitHub repository, stable release tag, version, tarball URL, and trusted download metadata for one install attempt.
@@ -72,6 +90,10 @@ PROJ-4 layers Supabase Cloud Branching onto the PROJ-3 capability model without 
 - **Sonar Repair Plan:** dry-run/apply report that separates safe deterministic repairs from risky or ambiguous candidates.
 - **Review Capability Envelope:** shared review wrapper carrying capability ID, lifecycle/phase, closed-set outcome, blocking intent, summary, reason, artifacts, and optional tool-specific result.
 - **Update Readiness Result:** self-update readiness report that reuses capability terminology without becoming workspace capability orchestration.
+- **App Git Identity Default:** optional app-config identity with display name, email, and `localOnly` semantics. It is never written to global Git config.
+- **Git Readiness Snapshot:** computed global or workspace view containing Git install state, repo-local/global/app-default identity values, effective source, blockers, and available repair actions.
+- **Workspace Git Repair Result:** confirmed local Git config write result for a registered workspace, followed by a fresh readiness read so partial name/email failures are visible.
+- **Workflow Git Blocker:** workflow-start response shape carrying a shared blocker code, readiness snapshot, repair metadata, and the original item/action intent.
 
 PROJ-4 additions:
 
@@ -127,6 +149,11 @@ PROJ-4 additions:
 - **Reuse the existing event channel:** all Supabase lifecycle events flow through the existing engine event channel under canonical names from `docs/messaging-levels.md`. No shadow names, no parallel transport.
 - **Token entry is at CLI/UI parity with pre-persist validation:** every entry point validates against the Management API before the secret store is touched; rotation never mutates other workspace metadata; `supabase.token.rotated` is emitted with the originating surface (first-time connect does not emit it).
 - **One handoff written before validation:** the handoff dotenv is written immediately after the wave branch reaches `ready` and before `validateBranch` runs; validation steps and workers consume the same artifact.
+- **Git identity readiness is engine-owned:** UI and CLI surfaces render the engine snapshot rather than computing Git state themselves.
+- **App-level Git identity is local app config:** beerengineer_ can store a reusable identity default, but it does not mutate global Git configuration.
+- **Workspace repair paths are server-resolved:** clients may submit workspace IDs/keys and identity values, but never trusted filesystem roots.
+- **Readiness rechecks preserve initial fallback rules:** if setup renders global readiness because the selected workspace has no usable root, client refreshes must also request global readiness.
+- **Commit signing remains separate:** `commit.gpgsign=true` failures are not relabeled as missing author identity; signing readiness is a distinct future concern.
 
 ## Directory Structure
 
@@ -153,10 +180,19 @@ apps/engine/src/core/supabase/                 — Supabase adapter, Management 
 apps/engine/src/core/supabase/managementClient.ts — Management API HTTP client (timeouts, backoff, retry-after parsing)
 apps/engine/src/core/supabase/workflowHook.ts  — SupabaseWorkflowHook integration object threaded through runWorkflow
 apps/engine/src/db/schema.sql                  — engine SQLite schema including PROJ-4 supabase_* columns and supabase_deferred_cleanup
+apps/engine/src/setup/gitIdentity.ts           — PROJ-5 Git identity readiness, validation, and workspace repair domain
+apps/engine/src/api/routes/gitIdentity.ts      — Git readiness/app-identity/repair HTTP handlers
+apps/engine/src/setup/setupFlow.ts             — interactive/headless setup launch behavior
+apps/engine/src/core/runService.ts             — workflow-start Git readiness gate before side effects
+apps/ui/components/setup/GitIdentityPanel.tsx  — setup wizard Git readiness and app-default save surface
+apps/ui/components/setup/GitIdentityForm.tsx   — shared Git identity input and validation feedback
+apps/ui/components/WorkflowGitRepairPanel.tsx  — inline blocked-start repair and continue-start panel
+apps/ui/lib/engine/baseUrl.ts                  — shared UI engine URL resolver for setup, board, item, and proxy clients
 specs/PROJ-1-managed-install/                  — concept, PRDs, architecture, wave plans, and progress log
 specs/PROJ-2-app-setup-settings/               — setup/settings PRDs, architecture, wave plans, and QA log
 specs/PROJ-3-capabilities/                     — capability PRDs, architecture, wave plans, QA results, and progress log
 specs/PROJ-4-supabase-branch-databases/        — Supabase capability PRDs, architecture, wave plans, QA rounds, and progress log
+specs/PROJ-5-setup-git-readiness/              — Git readiness concept, PRDs, architecture, wave plans, QA evidence, and progress log
 ```
 
 ## Dependencies
@@ -168,6 +204,8 @@ PROJ-2 added no new npm package dependencies. It uses the existing engine stack 
 PROJ-3 added no new npm package dependencies. It reorganizes existing runtime integrations around local Git, GitHub/`gh`, Sonar scanner/Sonar service, and CodeRabbit CLI.
 
 PROJ-4 added no runtime dependencies — the Supabase Management API is consumed via raw `fetch` from a thin in-engine HTTP client (`apps/engine/src/core/supabase/managementClient.ts`). No `package.json` changes between the PROJ-3 baseline and the PROJ-4 head.
+
+PROJ-5 added no runtime dependencies. It uses the existing Git CLI boundary, app config, SQLite workspace registry, engine HTTP API, Next.js proxy routes, React setup components, and Vitest/node:test coverage.
 
 ## Deployment
 
@@ -195,3 +233,8 @@ For local setup/settings, the engine defaults to `127.0.0.1:4100` and writes/rea
 - Production migrations are applied file-by-file in transactions and tracked in a `__beerengineer_migrations` table on the target Supabase project. A second run of the same merge skips already-applied files; a partial failure leaves the table in a state the next run can resume from.
 - The `mergeWithProtectionSwitch` helper runs `gitMerge()` *before* `migrateProduction`, with no rollback path if the migration fails after the merge has landed. This is intentional asymmetric recovery — the operator inspects the retained branch and the `__beerengineer_migrations` table to decide next steps. Future PRDs may add a revert callback; until then, document the asymmetry on every code path that touches the helper.
 - Supabase capability code must never be imported from non-Supabase workflow paths. The hook-based seam is the only legitimate integration point; reaching past it would re-couple workflow.ts to Supabase and defeat the modularity decision.
+- Workflow Git gates must cover every start-run entry point, including less-obvious neighbors such as prepared import. The invariant is "gate before run rows, item moves, worktrees, or artifacts," not just "gate before brainstorm."
+- UI engine clients should share one engine URL resolver. PROJ-5 found setup and board/item clients drifting on non-default ports before `apps/ui/lib/engine/baseUrl.ts` centralized precedence.
+- Client refresh paths must preserve server-render fallback rules. The setup Git card renders global readiness when the current workspace has no usable root; its client recheck must do the same.
+- New shared UI components belong in `docs/components.md` before QA. PROJ-5 added `GitIdentityForm`, `GitIdentityPanel`, and `WorkflowGitRepairPanel` there after the registry check caught drift.
+- Placeholder Git emails ending in `@local.beerengineer` are acceptable for local checkpoints and marked `localOnly`; future publishing flows must not blindly publish them.

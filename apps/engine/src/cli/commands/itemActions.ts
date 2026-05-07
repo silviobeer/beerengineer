@@ -5,7 +5,7 @@ import type { ItemAction } from "../../core/itemActions.js"
 import { inspectWorkspaceState } from "../../core/git.js"
 import { layout } from "../../core/workspaceLayout.js"
 import { prepareRun, runWorkflowWithSync } from "../../core/runOrchestrator.js"
-import { checkWorkflowStartGitReadiness, type WorkflowStartGitBlockedResult, type StartRunAction } from "../../core/runService.js"
+import { checkWorkflowStartGitReadiness, checkWorkflowStartGitReadinessForWorkspace, type WorkflowStartGitBlockedResult, type StartRunAction } from "../../core/runService.js"
 import { deriveProjectStartStages, loadPreparedImportBundleWithLlmFallback, seedPreparedImportArtifacts } from "../../core/preparedImport.js"
 import { resolveWorkflowLlmOptions } from "../../core/runSubscribers.js"
 import { resolveWorkflowContextForItemRun } from "../../core/workflowContextResolver.js"
@@ -15,12 +15,15 @@ import type { ItemRow, Repos, WorkspaceRow } from "../../db/repositories.js"
 import { initDatabase } from "../../db/connection.js"
 import type { ResumeFlags } from "../types.js"
 import { resolveItemReference, resolveSelectedWorkspace } from "../common.js"
+import { defaultAppConfig, readConfigFile, resolveConfigPath, resolveMergedConfig, resolveOverrides } from "../../setup/config.js"
+import type { AppConfig } from "../../setup/types.js"
 
 type CliItemActionContext = {
   item: ItemRow
   action: ItemAction
   repos: Repos
   itemRef: string
+  appConfig: AppConfig
   resumeFlags?: ResumeFlags
 }
 
@@ -251,7 +254,9 @@ function startRunPrelude(ctx: CliItemActionContext): number {
     console.error(`  Invalid transition: ${ctx.action} from ${ctx.item.current_column}/${ctx.item.phase_status}`)
     return 1
   }
-  const gitGate = checkWorkflowStartGitReadiness(ctx.repos, ctx.item, ctx.action as StartRunAction)
+  const gitGate = checkWorkflowStartGitReadiness(ctx.repos, ctx.item, ctx.action as StartRunAction, {
+    appConfig: ctx.appConfig,
+  })
   if (!gitGate.ok) return printWorkflowGitBlocker(gitGate, ctx.itemRef)
   return preflightCliBranchingStart(ctx.repos, ctx.item.workspace_id)
 }
@@ -519,6 +524,7 @@ async function startPreparedImportFromCli(
   item: ItemRow | undefined,
   sourceDir: string,
   workspaceKey: string | undefined,
+  appConfig: AppConfig,
   json: boolean,
 ): Promise<number> {
   const workspace = item ? repos.getWorkspace(item.workspace_id) : resolveSelectedWorkspace(repos, workspaceKey)
@@ -526,6 +532,12 @@ async function startPreparedImportFromCli(
 
   const transitionExit = validatePreparedImportTransition(item)
   if (transitionExit !== 0) return transitionExit
+  const gitGate = checkWorkflowStartGitReadinessForWorkspace(
+    workspace,
+    { itemId: item?.id ?? "new", action: "import_prepared" },
+    { appConfig },
+  )
+  if (!gitGate.ok) return printWorkflowGitBlocker(gitGate, item?.code ?? item?.id ?? "new")
   const exit = preflightCliBranchingStart(repos, workspace.id, [sourceDir])
   if (exit !== 0) return exit
   const llm = await resolveWorkflowLlmOptions(workspace)
@@ -620,6 +632,11 @@ function firstLine(value: string): string {
   return value.split(/\r?\n/).map(line => line.trim()).find(Boolean) ?? ""
 }
 
+function loadCliAppConfig(): AppConfig {
+  const overrides = resolveOverrides()
+  return resolveMergedConfig(readConfigFile(resolveConfigPath(overrides)), overrides) ?? defaultAppConfig()
+}
+
 export async function runItemImportPrepared(itemRef: string | undefined, sourceDir: string | undefined, workspaceKey?: string, json = false): Promise<number> {
   if (!sourceDir) {
     console.error("  Usage: beerengineer item import-prepared [item] --from <dir>")
@@ -629,15 +646,16 @@ export async function runItemImportPrepared(itemRef: string | undefined, sourceD
   lookupTransitionSync = itemActions.lookupTransition
   const db = initDatabase()
   const repos = new (await import("../../db/repositories.js")).Repos(db)
+  const appConfig = loadCliAppConfig()
   try {
-    if (!itemRef) return await startPreparedImportFromCli(repos, undefined, sourceDir, workspaceKey, json)
+    if (!itemRef) return await startPreparedImportFromCli(repos, undefined, sourceDir, workspaceKey, appConfig, json)
     const resolvedWorkspace = workspaceKey ? undefined : repos.getWorkspaceByKey(itemRef)
     const resolved = resolveItemReference(repos, itemRef)
     if (resolved.kind === "found") {
-      return await startPreparedImportFromCli(repos, resolved.item, sourceDir, workspaceKey, json)
+      return await startPreparedImportFromCli(repos, resolved.item, sourceDir, workspaceKey, appConfig, json)
     }
     if (resolved.kind === "missing" && resolvedWorkspace) {
-      return await startPreparedImportFromCli(repos, undefined, sourceDir, resolvedWorkspace.key, json)
+      return await startPreparedImportFromCli(repos, undefined, sourceDir, resolvedWorkspace.key, appConfig, json)
     }
     if (resolved.kind === "missing") {
       console.error(`  Item not found: ${itemRef}`)
@@ -666,6 +684,7 @@ export async function runItemAction(itemRef: string, action: string, resumeFlags
   createItemActionsService = itemActions.createItemActionsService
   const db = initDatabase()
   const repos = new (await import("../../db/repositories.js")).Repos(db)
+  const appConfig = loadCliAppConfig()
   try {
     const resolved = resolveItemReference(repos, itemRef)
     if (resolved.kind === "missing") {
@@ -683,6 +702,7 @@ export async function runItemAction(itemRef: string, action: string, resumeFlags
       action,
       repos,
       itemRef,
+      appConfig,
       resumeFlags,
     }
     const handler = CLI_ITEM_ACTION_HANDLERS[action] ?? runDefaultItemAction

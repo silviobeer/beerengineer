@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdtempSync, rmSync } from "node:fs"
+import { existsSync, mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { spawnSync } from "node:child_process"
@@ -7,7 +7,7 @@ import { test } from "node:test"
 
 import { initDatabase } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
-import { startRunForItem } from "../src/core/runService.js"
+import { startPreparedImportForItem, startRunForItem } from "../src/core/runService.js"
 import { defaultAppConfig } from "../src/setup/config.js"
 
 function tempWorkflowGitEnv() {
@@ -18,6 +18,10 @@ function tempWorkflowGitEnv() {
     attackerRepo: join(dir, "attacker"),
     globalGitConfig: join(dir, "global.gitconfig"),
   }
+}
+
+function configForRoot(rootPath: string) {
+  return { ...defaultAppConfig(), allowedRoots: [rootPath] }
 }
 
 function git(cwd: string, args: string[], env: NodeJS.ProcessEnv): string {
@@ -44,7 +48,7 @@ test("AC-1 AC-2 AC-3 workflow start blocks missing git identity before run side 
     const result = startRunForItem(repos, {
       itemId: item.id,
       action: "start_brainstorm",
-      appConfig: defaultAppConfig(),
+      appConfig: configForRoot(paths.dir),
       gitCommandOptions: { env },
     })
 
@@ -77,7 +81,7 @@ test("AC-4 workflow start reports missing git separately from missing identity",
     const result = startRunForItem(repos, {
       itemId: item.id,
       action: "start_brainstorm",
-      appConfig: defaultAppConfig(),
+      appConfig: configForRoot(paths.dir),
       gitCommandOptions: { gitBin: "__beerengineer_missing_git__" },
     })
 
@@ -111,7 +115,7 @@ test("AC-5 AC-6 AC-8 workflow start ignores client-supplied workspaceRoot and ch
       itemId: item.id,
       action: "start_brainstorm",
       workspaceRoot: paths.attackerRepo,
-      appConfig: defaultAppConfig(),
+      appConfig: configForRoot(paths.dir),
       gitCommandOptions: { env },
     } as Parameters<typeof startRunForItem>[1] & { workspaceRoot: string })
 
@@ -140,7 +144,7 @@ test("AC-7 workflow start blocks deleted workspace paths before git side effects
     const result = startRunForItem(repos, {
       itemId: item.id,
       action: "start_brainstorm",
-      appConfig: defaultAppConfig(),
+      appConfig: configForRoot(paths.dir),
       gitCommandOptions: { env },
     })
 
@@ -150,6 +154,39 @@ test("AC-7 workflow start blocks deleted workspace paths before git side effects
       assert.equal(result.error, "workspace_path_unavailable")
     }
     assert.equal(repos.listRuns().length, 0)
+  } finally {
+    db.close()
+    rmSync(paths.dir, { recursive: true, force: true })
+  }
+})
+
+test("prepared import blocks missing git identity before run, item, and artifact side effects", async () => {
+  const paths = tempWorkflowGitEnv()
+  const db = initDatabase(":memory:")
+  try {
+    const env = { ...process.env, GIT_CONFIG_GLOBAL: paths.globalGitConfig }
+    initRepo(paths.repo, env)
+    const repos = new Repos(db)
+    const workspace = repos.upsertWorkspace({ key: "default", name: "Default", rootPath: paths.repo })
+    const item = repos.createItem({ workspaceId: workspace.id, title: "Prepared import", description: "start" })
+
+    const result = await startPreparedImportForItem(repos, {
+      itemId: item.id,
+      sourceDir: join(paths.dir, "missing-import-source"),
+      appConfig: configForRoot(paths.dir),
+      gitCommandOptions: { env },
+    })
+
+    assert.equal(result.ok, false)
+    if (!result.ok) {
+      assert.equal(result.status, 409)
+      assert.equal(result.error, "git_identity_missing")
+      assert.equal(result.code, "workflow_git_blocked")
+      assert.deepEqual(result.intent, { itemId: item.id, action: "import_prepared" })
+    }
+    assert.equal(repos.listRuns().length, 0)
+    assert.equal(repos.getItem(item.id)?.current_column, "idea")
+    assert.equal(existsSync(join(paths.repo, ".beerengineer")), false)
   } finally {
     db.close()
     rmSync(paths.dir, { recursive: true, force: true })

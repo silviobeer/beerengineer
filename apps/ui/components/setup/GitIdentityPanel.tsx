@@ -72,6 +72,10 @@ function validationErrors(body: unknown): GitIdentityValidationError[] {
   return [];
 }
 
+function readinessQuery(readiness: GitReadiness | null, workspace: GitIdentityPanelProps["workspace"]): string {
+  return readiness?.mode === "workspace" && workspace?.id ? `?workspaceId=${encodeURIComponent(workspace.id)}` : "";
+}
+
 async function readJson(res: Response): Promise<unknown> {
   try {
     return await res.json();
@@ -193,7 +197,7 @@ export function GitIdentityPanel({ initialReadiness, workspace = null, error: in
     setErrors([]);
     setMessage(null);
     try {
-      const query = workspace?.id ? `?workspaceId=${encodeURIComponent(workspace.id)}` : "";
+      const query = readinessQuery(readiness, workspace);
       const res = await fetch(`/api/setup/git-readiness${query}`, { cache: "no-store" });
       const body = await readJson(res);
       if (!res.ok || !body || typeof body !== "object") {

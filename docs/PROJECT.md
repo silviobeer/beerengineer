@@ -1,7 +1,7 @@
 # Project — Features
 
-**Last updated:** 2026-05-04
-**Features implemented:** 4
+**Last updated:** 2026-05-06
+**Features implemented:** 5
 
 ---
 
@@ -89,5 +89,25 @@
 **PRDs:** [PRD-1](../specs/PROJ-4-supabase-branch-databases/3_PRDs/PROJ-4-PRD-1-supabase-capability-foundation.md), [PRD-2](../specs/PROJ-4-supabase-branch-databases/3_PRDs/PROJ-4-PRD-2-setup-and-persistent-test-branch.md), [PRD-3](../specs/PROJ-4-supabase-branch-databases/3_PRDs/PROJ-4-PRD-3-settings-surface.md), [PRD-4](../specs/PROJ-4-supabase-branch-databases/3_PRDs/PROJ-4-PRD-4-db-relevance-classification.md), [PRD-5](../specs/PROJ-4-supabase-branch-databases/3_PRDs/PROJ-4-PRD-5-wave-branch-lifecycle.md), [PRD-6](../specs/PROJ-4-supabase-branch-databases/3_PRDs/PROJ-4-PRD-6-worker-environment-handoff.md), [PRD-7](../specs/PROJ-4-supabase-branch-databases/3_PRDs/PROJ-4-PRD-7-merge-and-production-migration.md), [PRD-8](../specs/PROJ-4-supabase-branch-databases/3_PRDs/PROJ-4-PRD-8-cleanup-audit-and-recovery.md), [PRD-9](../specs/PROJ-4-supabase-branch-databases/3_PRDs/PROJ-4-PRD-9-run-wave-merge-status-surface.md)
 
 **QA:** Round 1 closed all surface bugs; Round 2 found 1 Critical orchestrator-wiring gap plus Critical/High/Medium/Low security and UX bugs, all fixed in commits b4dcc3b through 1a85e37. Final run: engine suite 796/798 passing (2 skipped), UI suite 328/328 passing, build clean, typecheck green. The orchestrator activation of PRD-5/6/7 helpers in `runService.ts`/`runOrchestrator.ts` is deferred to PRD-10; data model, gates, and UI are correct and ready to wire.
+
+---
+
+## PROJ-5: Setup Git Readiness
+
+**Status:** QA-passed.
+
+**Purpose:** Make Git identity readiness understandable and repairable before setup or workflow starts create confusing Git failures.
+
+**Scope:** Ships engine-owned global/workspace Git readiness, app-level Git identity defaults, shared identity validation, server-side workspace repair, interactive/headless setup entry behavior, setup-wizard Git UI, and workflow-start Git gates with inline repair. Out of scope: GitHub publishing, pushing branches, writing global Git config, and taking ownership of all commit-signing failures.
+
+**User stories implemented:**
+- PROJ-5-PRD-1 US-1..5: global/workspace readiness modes, identity precedence, app-level defaults, shared validation, and server-resolved workspace repair.
+- PROJ-5-PRD-2 US-1..4: UI-first interactive setup, headless URL fallback, deterministic `--no-interactive`, and CLI app-identity entry.
+- PROJ-5-PRD-3 US-1..5: setup wizard Git step, source display, app-default save, workspace-local repair, and missing-Git stub behavior.
+- PROJ-5-PRD-4 US-1..5: workflow-start preflight gate, path-injection-safe workspace resolution, contextual repair, continue-start intent, and signing-failure separation.
+
+**PRDs:** [PRD-1](../specs/PROJ-5-setup-git-readiness/3_PRDs/PROJ-5-PRD-1-git-identity-readiness-model.md), [PRD-2](../specs/PROJ-5-setup-git-readiness/3_PRDs/PROJ-5-PRD-2-interactive-setup-entry.md), [PRD-3](../specs/PROJ-5-setup-git-readiness/3_PRDs/PROJ-5-PRD-3-setup-wizard-git-readiness.md), [PRD-4](../specs/PROJ-5-setup-git-readiness/3_PRDs/PROJ-5-PRD-4-workflow-start-git-gate.md)
+
+**QA:** Final rerun on 2026-05-06 passed focused engine tests (68/68), focused UI tests (14/14), engine/UI typechecks, and browser verification of the rootless-workspace setup recheck fix. Six QA bugs were found across the project (1 Critical, 3 High, 2 Medium); all are fixed and verified.
 
 ---

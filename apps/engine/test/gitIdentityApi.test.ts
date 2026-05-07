@@ -67,7 +67,7 @@ test("AC-20/21/22 workspace repair API resolves root server-side and ignores inj
   const env = { ...process.env, GIT_CONFIG_GLOBAL: globalGitConfig }
   spawnSync("git", ["init", "-b", "main", realRepo], { env, encoding: "utf8" })
   spawnSync("git", ["init", "-b", "main", injectedRepo], { env, encoding: "utf8" })
-  writeConfigFile(configPath, { ...defaultAppConfig(), dataDir })
+  writeConfigFile(configPath, { ...defaultAppConfig(), dataDir, allowedRoots: [dir] })
   const db = initDatabase(dbPath)
   const repos = new Repos(db)
   const workspace = repos.upsertWorkspace({ key: "demo", name: "Demo", rootPath: realRepo })

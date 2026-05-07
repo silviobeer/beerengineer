@@ -71,6 +71,14 @@ PROJ-3 capability work (Sonar, CodeRabbit, GitHub capability CLI) is entirely en
 
 ---
 
+## New Component Candidates From PROJ-5
+
+- `GitIdentityForm` — **built**; `@/components/setup/GitIdentityForm`; shared Git identity entry for display name, email, validation feedback, and local-only wording. Used by setup Git readiness and workflow repair.
+- `GitIdentityPanel` — **built**; `@/components/setup/GitIdentityPanel`; setup wizard Git step that displays the effective identity source, missing-Git stub, app-default save flow, and workspace-local repair flow. Composes `GitIdentityForm`, `StatusChip`, and setup card/button language.
+- `WorkflowGitRepairPanel` — **built**; `@/components/WorkflowGitRepairPanel`; contextual workflow-start blocker panel that preserves the original item action while the user repairs Git identity. It is a peer primitive for board/item-detail starts and composes `GitIdentityForm` rather than reusing the whole setup wizard shell.
+
+---
+
 ## New Component Candidates From PROJ-6
 
 - `WorkspaceSettingsPage` — **built**; `@/components/settings/WorkspaceSettingsPage`; workspace-scoped Supabase readiness surface reached from `/w/:key/settings#supabase`. It composes the readiness summary with project/token/branch controls and uses a sticky-anchor offset for hash navigation.

@@ -8,7 +8,7 @@ import { generateSetupReport, runSetupRecheck } from "../../setup/doctor.js"
 import { applySecretAction } from "../../setup/secretActions.js"
 import { readSecretMetadata } from "../../setup/secretMetadata.js"
 import { runSecretTest } from "../../setup/secretTests.js"
-import { KNOWN_GROUP_IDS } from "../../setup/config.js"
+import { KNOWN_GROUP_IDS, resolveOverrides } from "../../setup/config.js"
 import { SupabaseManagementClient } from "../../core/supabase/managementClient.js"
 import { createSupabaseAdapter, recreatePersistentTestBranch } from "../../core/supabase/adapter.js"
 import { explicitDestroyBranch } from "../../core/supabase/cleanupOrchestrator.js"
@@ -50,7 +50,7 @@ export async function handleSetupConfig(repos: Repos, res: ServerResponse): Prom
 
 export async function handleSetupConfigPatch(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const body = await readJson(req)
-  const result = patchAppConfig({}, body)
+  const result = patchAppConfig(resolveOverrides(), body)
   if (result.rejected.some(entry => entry.error === "setup_config_missing")) {
     json(res, 409, result)
     return

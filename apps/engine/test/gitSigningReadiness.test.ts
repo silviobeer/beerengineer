@@ -30,7 +30,7 @@ test("AC-20 AC-21 commit.gpgsign=true is commit_signing_blocked, not missing ide
     assert.notEqual(commit.status, 0)
     assert.equal(classifyGitCommitFailure(commit.stderr), "commit_signing_blocked")
 
-    const readiness = readWorkspaceGitReadiness({ id: "ws-1", key: "demo", rootPath: repo }, defaultAppConfig(), { env })
+    const readiness = readWorkspaceGitReadiness({ id: "ws-1", key: "demo", rootPath: repo }, { ...defaultAppConfig(), allowedRoots: [dir] }, { env })
     assert.equal(readiness.ready, true)
     assert.equal(readiness.effectiveIdentity?.source, "repo-local")
     assert.notEqual(readiness.blocker?.error, "identity_missing")

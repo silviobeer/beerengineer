@@ -1,10 +1,10 @@
 import type { IncomingMessage, ServerResponse } from "node:http"
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
-import type { Repos } from "../../db/repositories.js"
+import type { ItemRow, Repos } from "../../db/repositories.js"
 import { isPortListening, readManagedPreviewPid, resolvePreviewLaunchSpec, startPreviewServer, stopPreviewServer } from "../../core/previewLauncher.js"
 import { resolveItemPreviewContext } from "../../core/itemPreview.js"
-import { isItemAction, lookupTransition, type ItemActionsService } from "../../core/itemActions.js"
+import { ITEM_ACTIONS, isItemAction, lookupTransition, type ItemActionsService } from "../../core/itemActions.js"
 import { latestRunForItemWithStageArtifact } from "../../core/itemWorkspace.js"
 import { isWorkflowStartGitBlockedResult, resumeRunInProcess, startPreparedImportForItem, startRunForItem, type StartRunAction } from "../../core/runService.js"
 import { layout } from "../../core/workspaceLayout.js"
@@ -34,7 +34,27 @@ export function handleListItems(repos: Repos, url: URL, res: ServerResponse): vo
 export function handleGetItem(repos: Repos, res: ServerResponse, itemId: string): void {
   const item = repos.getItem(itemId)
   if (!item) return json(res, 404, { error: "item_not_found", code: "not_found" })
-  json(res, 200, item)
+  json(res, 200, { ...item, allowedActions: allowedActionsForItem(item) })
+}
+
+function allowedActionsForItem(item: ItemRow): string[] {
+  return ITEM_ACTIONS.filter(action => lookupTransition(action, item.current_column, item.phase_status).kind !== "reject")
+}
+
+function respondWorkflowGitBlocker(
+  res: ServerResponse,
+  result: Extract<Awaited<ReturnType<typeof startRunForItem>> | Awaited<ReturnType<typeof startPreparedImportForItem>>, { ok: false; code: "workflow_git_blocked" }>,
+  action: string,
+): void {
+  json(res, result.status, {
+    error: result.error,
+    code: result.code,
+    action,
+    message: result.message,
+    readiness: result.readiness,
+    repair: result.repair,
+    intent: result.intent,
+  })
 }
 
 function respondInvalidItemAction(res: ServerResponse): void {
@@ -85,6 +105,10 @@ export async function handleCreatePreparedImportItem(
     onItemColumnChanged,
   })
   if (!result.ok) {
+    if (isWorkflowStartGitBlockedResult(result)) {
+      respondWorkflowGitBlocker(res, result, "import_prepared")
+      return
+    }
     json(res, result.status, { error: result.error, action: "import_prepared" })
     return
   }
@@ -129,6 +153,10 @@ async function handlePreparedImportAction(
   }
   const result = await startPreparedImportForItem(repos, { itemId, sourceDir: path, onItemColumnChanged })
   if (!result.ok) {
+    if (isWorkflowStartGitBlockedResult(result)) {
+      respondWorkflowGitBlocker(res, result, "import_prepared")
+      return
+    }
     json(res, result.status, { error: result.error, action: "import_prepared" })
     return
   }
@@ -198,15 +226,7 @@ function handleStartRunItemAction(
   const result = startRunForItem(repos, { itemId, action, onItemColumnChanged })
   if (!result.ok) {
     if (isWorkflowStartGitBlockedResult(result)) {
-      json(res, result.status, {
-        error: result.error,
-        code: result.code,
-        action,
-        message: result.message,
-        readiness: result.readiness,
-        repair: result.repair,
-        intent: result.intent,
-      })
+      respondWorkflowGitBlocker(res, result, action)
       return
     }
     json(res, result.status, { error: result.error, action })

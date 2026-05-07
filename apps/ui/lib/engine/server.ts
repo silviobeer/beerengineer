@@ -1,11 +1,8 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { engineBaseUrl } from "@/lib/engine/baseUrl";
 import { ITEM_ACTIONS, type ActionResult, type ItemAction, type ItemDetailDTO, type WorkflowGitBlockedActionResult } from "./types";
-
-function engineBaseUrl(): string {
-  return process.env.ENGINE_URL ?? "http://localhost:4100";
-}
 
 function tokenPath(): string {
   const envPath = process.env.BEERENGINEER_API_TOKEN_FILE;

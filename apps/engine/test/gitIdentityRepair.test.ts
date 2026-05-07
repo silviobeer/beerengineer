@@ -25,6 +25,10 @@ function git(cwd: string, args: string[], env: NodeJS.ProcessEnv): void {
   assert.equal(result.status, 0, result.stderr || result.stdout)
 }
 
+function configForRoot(rootPath: string) {
+  return { ...defaultAppConfig(), allowedRoots: [rootPath] }
+}
+
 test("AC-20 workspace repair accepts workspace identity and git identity data, not trusted root path", () => {
   const paths = tempRepoEnv()
   try {
@@ -33,13 +37,13 @@ test("AC-20 workspace repair accepts workspace identity and git identity data, n
 
     const result = repairWorkspaceGitIdentity(
       { id: "workspace-id", key: "demo", rootPath: paths.repo },
-      defaultAppConfig(),
+      configForRoot(paths.dir),
       { displayName: "Repo User", email: "repo@example.test" },
       { env },
     )
 
     assert.equal(result.ok, true)
-    assert.equal(readWorkspaceGitReadiness({ id: "workspace-id", key: "demo", rootPath: paths.repo }, defaultAppConfig(), { env }).repoLocalIdentity.email, "repo@example.test")
+    assert.equal(readWorkspaceGitReadiness({ id: "workspace-id", key: "demo", rootPath: paths.repo }, configForRoot(paths.dir), { env }).repoLocalIdentity.email, "repo@example.test")
   } finally {
     rmSync(paths.dir, { recursive: true, force: true })
   }
@@ -53,7 +57,7 @@ test("AC-21 repair writes to the server-resolved workspace root", () => {
 
     const result = repairWorkspaceGitIdentity(
       { id: "workspace-id", key: "demo", rootPath: paths.repo },
-      defaultAppConfig(),
+      configForRoot(paths.dir),
       { displayName: "Repo User", email: "repo@example.test" },
       { env },
     )
@@ -73,13 +77,38 @@ test("AC-23 unavailable workspace roots fail clearly without git side effects", 
 
     const result = repairWorkspaceGitIdentity(
       { id: "workspace-id", key: "demo", rootPath: join(paths.dir, "missing") },
-      defaultAppConfig(),
+      configForRoot(paths.dir),
       { displayName: "Repo User", email: "repo@example.test" },
       { env },
     )
 
     assert.equal(result.ok, false)
     if (!result.ok) assert.equal(result.error, "workspace_path_unavailable")
+  } finally {
+    rmSync(paths.dir, { recursive: true, force: true })
+  }
+})
+
+test("workspace repair refuses registered paths outside allowed roots before git config writes", () => {
+  const paths = tempRepoEnv()
+  try {
+    const env = { ...process.env, GIT_CONFIG_GLOBAL: paths.globalGitConfig }
+    spawnSync("git", ["init", "-b", "main", paths.repo], { env, encoding: "utf8" })
+
+    const result = repairWorkspaceGitIdentity(
+      { id: "workspace-id", key: "demo", rootPath: paths.repo },
+      configForRoot(join(paths.dir, "allowed")),
+      { displayName: "Repo User", email: "repo@example.test" },
+      { env },
+    )
+
+    assert.equal(result.ok, false)
+    if (!result.ok) {
+      assert.equal(result.error, "workspace_path_unavailable")
+      assert.match(result.message, /allowed roots/)
+    }
+    const email = spawnSync("git", ["config", "--local", "--get", "user.email"], { cwd: paths.repo, env, encoding: "utf8" })
+    assert.equal(email.stdout.trim(), "")
   } finally {
     rmSync(paths.dir, { recursive: true, force: true })
   }
@@ -116,7 +145,7 @@ exit 1
 
     const result = repairWorkspaceGitIdentity(
       { id: "workspace-id", key: "demo", rootPath: paths.repo },
-      defaultAppConfig(),
+      configForRoot(paths.dir),
       { displayName: "Only Name", email: "repair@example.test" },
       { gitBin },
     )

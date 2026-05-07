@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { WorkspaceGitReadiness, WorkspaceGitRepairResponse } from "@/lib/setup/types";
 import type { ItemAction, WorkflowGitBlockedActionResult } from "@/lib/engine/types";
 import { GitIdentityForm } from "@/components/setup/GitIdentityForm";
@@ -85,6 +85,10 @@ export function WorkflowGitRepairPanel({
   const workspaceKey = blocker.repair?.workspaceKey ?? readiness?.workspace.key;
   const canRepair = blocker.error === "git_identity_missing" && Boolean(workspaceId) && readiness?.git.installed !== false;
   const canContinue = readyToContinue && readiness?.ready === true;
+
+  useEffect(() => {
+    if (readiness?.appDefaultIdentity && !readyToContinue) setMode("default");
+  }, [readiness?.appDefaultIdentity, readyToContinue]);
 
   const status = useMemo(() => {
     if (blocker.error === "git_not_installed") return "missing";
@@ -210,7 +214,7 @@ export function WorkflowGitRepairPanel({
           disabled={busy}
           className="border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 disabled:opacity-50"
         >
-          Recheck
+          {busy ? "Rechecking" : "Recheck"}
         </button>
         <button
           type="button"

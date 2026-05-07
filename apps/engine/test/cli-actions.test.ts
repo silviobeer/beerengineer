@@ -46,7 +46,7 @@ test("beerengineer item action start_brainstorm runs to completion through the t
       {
         cwd: engineRoot,
         encoding: "utf8",
-        env: { ...process.env, BEERENGINEER_UI_DB_PATH: dbPath },
+        env: { ...process.env, BEERENGINEER_UI_DB_PATH: dbPath, BEERENGINEER_ALLOWED_ROOTS: dir },
         // Fake brainstorm + visual-companion + frontend-design + requirements etc.
         // each ask follow-up prompts; feed enough generic answers to carry the
         // whole flow to completion. Extras are harmless once stdin is closed.
@@ -106,6 +106,7 @@ test("beerengineer item action start_brainstorm prints git identity repair steps
           ...process.env,
           BEERENGINEER_UI_DB_PATH: dbPath,
           BEERENGINEER_CONFIG_PATH: join(dir, "missing-config.json"),
+          BEERENGINEER_ALLOWED_ROOTS: dir,
           GIT_CONFIG_GLOBAL: join(dir, "global.gitconfig"),
         },
         timeout: 5000,
@@ -195,7 +196,7 @@ test("beerengineer item action start_implementation resumes from brainstorm arti
       {
         cwd: engineRoot,
         encoding: "utf8",
-        env: { ...process.env, BEERENGINEER_UI_DB_PATH: dbPath },
+        env: { ...process.env, BEERENGINEER_UI_DB_PATH: dbPath, BEERENGINEER_ALLOWED_ROOTS: dir },
         input: [
           "Focus on a single static greeting page.",
           "Keep CLI and browser entry points separate.",
@@ -253,7 +254,7 @@ test("beerengineer item action resume_run exits 75 without remediation summary i
       {
         cwd: engineRoot,
         encoding: "utf8",
-        env: { ...process.env, BEERENGINEER_UI_DB_PATH: dbPath },
+        env: { ...process.env, BEERENGINEER_UI_DB_PATH: dbPath, BEERENGINEER_ALLOWED_ROOTS: dir },
       }
     )
 
@@ -417,7 +418,7 @@ test("beerengineer item action start_brainstorm fails early on dirty workspace r
       {
         cwd: engineRoot,
         encoding: "utf8",
-        env: { ...process.env, BEERENGINEER_UI_DB_PATH: dbPath },
+        env: { ...process.env, BEERENGINEER_UI_DB_PATH: dbPath, BEERENGINEER_ALLOWED_ROOTS: dir },
       }
     )
 

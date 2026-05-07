@@ -1,7 +1,5 @@
 import type { Item, Phase, Workspace } from "./types";
-
-const ENGINE_URL =
-  process.env.ENGINE_URL ?? process.env.NEXT_PUBLIC_ENGINE_URL ?? "http://localhost:4100";
+import { engineBaseUrl } from "./engine/baseUrl";
 
 const STAGE_TO_PHASE: Record<string, Phase> = {
   brainstorm: "Frontend",
@@ -50,7 +48,7 @@ interface RawBoardCard {
 }
 
 export async function fetchBoard(workspaceKey: string): Promise<Item[]> {
-  const url = `${ENGINE_URL}/board?workspace=${encodeURIComponent(workspaceKey)}`;
+  const url = `${engineBaseUrl()}/board?workspace=${encodeURIComponent(workspaceKey)}`;
   try {
     const res = await fetch(url, { cache: "no-store" });
     if (!res.ok) return [];
@@ -103,7 +101,7 @@ export interface FetchWorkspacesResult {
 }
 
 export async function fetchWorkspacesResult(): Promise<FetchWorkspacesResult> {
-  const url = `${ENGINE_URL}/workspaces`;
+  const url = `${engineBaseUrl()}/workspaces`;
   try {
     const res = await fetch(url, { cache: "no-store" });
     if (!res.ok) return { workspaces: [], error: true };

@@ -69,6 +69,7 @@ export type ResumeRunResult =
 
 export type PreparedImportRunResult =
   | { ok: true; runId: string; itemId: string; warnings: string[] }
+  | WorkflowStartGitBlockedResult
   | { ok: false; status: 404 | 409 | 422; error: string }
 
 function buildApiIo(repos: Repos): WorkflowIO & { bus: EventBus } {
@@ -191,7 +192,7 @@ export type StartRunAction =
   | "start_implementation"
   | "rerun_design_prep"
 
-export function isWorkflowStartGitBlockedResult(result: StartRunResult): result is WorkflowStartGitBlockedResult {
+export function isWorkflowStartGitBlockedResult(result: StartRunResult | PreparedImportRunResult): result is WorkflowStartGitBlockedResult {
   return !result.ok && "code" in result && result.code === "workflow_git_blocked"
 }
 
@@ -229,14 +230,24 @@ function workflowGitErrorFromReadiness(readiness: WorkspaceGitReadiness): Workfl
 export function checkWorkflowStartGitReadiness(
   repos: Repos,
   item: Pick<ItemRow, "id" | "workspace_id">,
-  action: StartRunAction,
+  action: string,
   options: {
     appConfig?: AppConfig
     gitCommandOptions?: GitCommandOptions
   } = {},
 ): { ok: true; readiness: WorkspaceGitReadiness } | WorkflowStartGitBlockedResult {
   const workspace = repos.getWorkspace(item.workspace_id)
-  const intent = { itemId: item.id, action }
+  return checkWorkflowStartGitReadinessForWorkspace(workspace, { itemId: item.id, action }, options)
+}
+
+export function checkWorkflowStartGitReadinessForWorkspace(
+  workspace: WorkspaceRow | undefined,
+  intent: WorkflowStartGitBlockedResult["intent"],
+  options: {
+    appConfig?: AppConfig
+    gitCommandOptions?: GitCommandOptions
+  } = {},
+): { ok: true; readiness: WorkspaceGitReadiness } | WorkflowStartGitBlockedResult {
   if (!workspace) {
     return {
       ok: false,
@@ -384,6 +395,8 @@ export async function startPreparedImportForItem(
     sourceDir: string
     workspaceKey?: string
     owner?: "cli" | "api"
+    appConfig?: AppConfig
+    gitCommandOptions?: GitCommandOptions
     onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
   },
 ): Promise<PreparedImportRunResult> {
@@ -393,6 +406,13 @@ export async function startPreparedImportForItem(
   const workspaceResult = resolvePreparedImportWorkspace(repos, existingItem, input.workspaceKey)
   if (!workspaceResult.ok) return workspaceResult.error
   const workspace = workspaceResult.workspace
+
+  const gitGate = checkWorkflowStartGitReadinessForWorkspace(
+    workspace,
+    { itemId: existingItem?.id ?? "new", action: "import_prepared" },
+    { appConfig: input.appConfig, gitCommandOptions: input.gitCommandOptions },
+  )
+  if (!gitGate.ok) return gitGate
 
   let bundle: PreparedImportBundle
   try {

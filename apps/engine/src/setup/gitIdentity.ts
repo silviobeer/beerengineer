@@ -1,6 +1,8 @@
 import { existsSync } from "node:fs"
 import { spawnSync, type SpawnSyncReturns } from "node:child_process"
 import type { AppConfig, CheckResult } from "./types.js"
+import { defaultAppConfig } from "./config.js"
+import { isInsideAllowedRoot } from "../core/workspaces/shared.js"
 
 export const GIT_IDENTITY_ERROR_CODES = [
   "git_not_installed",
@@ -151,10 +153,6 @@ export function validateGitIdentityInput(input: GitIdentityInput): GitIdentityVa
   }
 }
 
-export function normalizeGitIdentityDefault(input: GitIdentityInput): GitIdentityValidationResult {
-  return validateGitIdentityInput(input)
-}
-
 function gitBin(options: GitCommandOptions): string {
   return options.gitBin ?? "git"
 }
@@ -266,12 +264,14 @@ function checkGitRepo(rootPath: string, options: GitCommandOptions): boolean {
 
 function workspaceGitBlocker(
   git: GlobalGitReadiness["git"],
-  pathAvailable: boolean,
+  pathExists: boolean,
+  insideAllowedRoot: boolean,
   isGitRepo: boolean,
   effectiveIdentity: EffectiveGitIdentity | undefined,
 ): GitIdentityBlocker | undefined {
   if (!git.installed) return { error: "git_not_installed", message: "Git is not installed or not available on PATH." }
-  if (!pathAvailable) return { error: "workspace_path_unavailable", message: "Registered workspace path is unavailable." }
+  if (!pathExists) return { error: "workspace_path_unavailable", message: "Registered workspace path is unavailable." }
+  if (!insideAllowedRoot) return { error: "workspace_path_unavailable", message: "Registered workspace path is outside allowed roots." }
   if (!isGitRepo) return { error: "workspace_not_git_repo", message: "Registered workspace is not a Git repository." }
   if (!effectiveIdentity) return { error: "identity_missing", message: "Git identity is missing for this workspace. Repair by applying a local identity." }
   return undefined
@@ -284,14 +284,16 @@ export function readWorkspaceGitReadiness(
 ): WorkspaceGitReadiness {
   const git = readGitInstall(options)
   const rootPath = workspace.rootPath?.trim()
-  const pathAvailable = Boolean(rootPath && existsSync(rootPath))
+  const pathExists = Boolean(rootPath && existsSync(rootPath))
+  const insideAllowedRoot = Boolean(rootPath && pathExists && isInsideAllowedRoot(rootPath, config.allowedRoots))
+  const pathAvailable = pathExists && insideAllowedRoot
   const isGitRepo = Boolean(git.installed && pathAvailable && rootPath && checkGitRepo(rootPath, options))
   const repoLocalIdentity = isGitRepo && rootPath ? readRepoLocalIdentity(rootPath, options) : {}
   const globalIdentity = git.installed ? readGlobalIdentity(options) : {}
   const appDefaultIdentity = configIdentity(config)
   const effectiveIdentity = completeRepoIdentity(repoLocalIdentity) ?? completeGlobalIdentity(globalIdentity)
-  const appRepairAvailable = !effectiveIdentity && Boolean(appDefaultIdentity) && isGitRepo
-  const blocker = workspaceGitBlocker(git, pathAvailable, isGitRepo, effectiveIdentity)
+  const appRepairAvailable = !effectiveIdentity && isGitRepo
+  const blocker = workspaceGitBlocker(git, pathExists, insideAllowedRoot, isGitRepo, effectiveIdentity)
   return {
     mode: "workspace",
     workspace: { id: workspace.id, key: workspace.key },
@@ -363,7 +365,7 @@ export function repairWorkspaceGitIdentity(
 export function gitIdentitySetupChecks(config: AppConfig | null): CheckResult[] {
   const readiness = config
     ? readGlobalGitReadiness(config)
-    : readGlobalGitReadiness({} as AppConfig)
+    : readGlobalGitReadiness(defaultAppConfig())
   const checks: CheckResult[] = [
     {
       id: "git.install",

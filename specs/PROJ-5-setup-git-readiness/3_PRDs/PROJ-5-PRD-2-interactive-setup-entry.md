@@ -90,7 +90,7 @@
 
 ### Edge Cases Status
 
-- [ ] BUG-PROJ5-QA-004: Non-default engine URL handling is inconsistent between setup and board/item UI helpers.
+- [x] BUG-PROJ5-QA-004: Non-default engine URL handling is centralized across setup, board/item, API, and proxy helpers.
 
 ### Security Audit Results
 
@@ -106,3 +106,10 @@
 - **Acceptance Criteria:** 18/18 passed for setup entry behavior tested in QA.
 - **Security:** Pass for PRD-2 scope.
 - **Production Ready:** NO, because cross-PRD QA found Critical/High bugs.
+
+### QA Rerun 2026-05-06
+
+- [x] Non-default engine/UI ports were verified with isolated live services (`127.0.0.1:4231` and `127.0.0.1:3131`) using the centralized UI engine URL resolver.
+- [x] Browser storage check found no API token in cookies, `localStorage`, or `sessionStorage`.
+- [x] Previous engine URL drift regression (BUG-PROJ5-QA-004) is verified fixed.
+- **Production Ready:** NO, because PRD-3 has BUG-PROJ5-QA-006 open.

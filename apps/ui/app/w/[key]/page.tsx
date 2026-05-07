@@ -1,5 +1,6 @@
 import { Board } from "@/components/Board";
 import { RunOverviewBanners } from "@/components/run/RunOverviewBanners";
+import { engineBaseUrl } from "@/lib/engine/baseUrl";
 import type { BoardCardDTO } from "@/lib/types";
 
 interface BoardApiItem {
@@ -36,14 +37,6 @@ interface BoardApiResponse {
   };
 }
 
-function engineUrl(): string {
-  const url =
-    process.env.ENGINE_URL ||
-    process.env.NEXT_PUBLIC_ENGINE_URL ||
-    "http://127.0.0.1:4100";
-  return url.replace(/\/$/, "");
-}
-
 function toBoardCard(item: BoardApiItem): BoardCardDTO {
   const id = item.itemId ?? item.id ?? item.itemCode ?? "";
   const engineColumn = item.phase ?? item.column ?? "idea";
@@ -69,7 +62,7 @@ async function fetchBoard(
 ): Promise<{ items: BoardCardDTO[] | null; costRisk?: BoardApiResponse["costRisk"]; error: string | null }> {
   try {
     const res = await fetch(
-      `${engineUrl()}/board?workspace=${encodeURIComponent(workspaceKey)}`,
+      `${engineBaseUrl()}/board?workspace=${encodeURIComponent(workspaceKey)}`,
       { cache: "no-store" }
     );
     if (!res.ok) {

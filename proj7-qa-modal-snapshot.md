@@ -1,0 +1,61 @@
+- generic [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - generic [ref=e4]:
+        - combobox "Workspace" [ref=e5]:
+          - option "Alpha Workspace"
+          - option "beerengineer_website"
+          - option "HelloWorld"
+          - option "HelloWorld2"
+          - option "Test Workspace" [selected]
+          - option "Trendradar2"
+        - navigation "App navigation" [ref=e6]:
+          - link "Setup" [ref=e7] [cursor=pointer]:
+            - /url: /setup
+          - link "Settings" [ref=e8] [cursor=pointer]:
+            - /url: /settings
+      - generic [ref=e11]: beerengineer_
+    - main [ref=e12]:
+      - generic [ref=e14]:
+        - generic [ref=e15]:
+          - region "Idea" [ref=e16]:
+            - generic [ref=e17]: Idea
+          - region "Brainstorm" [ref=e19]:
+            - generic [ref=e20]: Brainstorm
+          - region "Frontend" [ref=e22]:
+            - generic [ref=e23]: Frontend
+          - region "Requirements" [ref=e25]:
+            - generic [ref=e26]: Requirements
+            - article [ref=e28]:
+              - button "ITEM-0001 QA lost worker card Browser QA seeded lost-worker recovery card failed Worker lost. Resume this run to continue." [active] [ref=e29] [cursor=pointer]:
+                - generic [ref=e30]: ITEM-0001
+                - generic [ref=e31]: QA lost worker card
+                - generic [ref=e32]: Browser QA seeded lost-worker recovery card
+                - generic [ref=e33]: failed
+                - paragraph [ref=e34]: Worker lost. Resume this run to continue.
+              - button "Import prepared" [ref=e37] [cursor=pointer]
+          - region "Implementation" [ref=e38]:
+            - generic [ref=e39]: Implementation
+          - region "Merge" [ref=e41]:
+            - generic [ref=e42]: Merge
+          - region "Done" [ref=e44]:
+            - generic [ref=e45]: Done
+        - dialog "QA lost worker card" [ref=e57]:
+          - generic [ref=e58]:
+            - generic [ref=e59]:
+              - generic [ref=e60]:
+                - generic [ref=e61]: ITEM-0001
+                - heading "QA lost worker card" [level=2] [ref=e62]
+              - button "Close" [ref=e63] [cursor=pointer]: ✕
+            - generic [ref=e64]:
+              - generic [ref=e65]:
+                - heading "Conversation" [level=3] [ref=e66]
+                - region "Chat panel" [ref=e67]
+              - generic [ref=e73]:
+                - generic [ref=e74]
+                - generic [ref=e89]
+                - link "Open full detail page" [ref=e100] [cursor=pointer]:
+                  - /url: /w/test/items/2f81f8e2-3d7a-4ab6-a99d-cd9c57e5111e
+  - button "Open Next.js Dev Tools" [ref=e52] [cursor=pointer]:
+    - img [ref=e53]
+  - alert [ref=e56]

@@ -1,0 +1,19 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - generic [ref=e4]:
+        - combobox "Workspace" [ref=e5]
+        - navigation "App navigation" [ref=e6]
+      - generic [ref=e11]: beerengineer_
+    - main [ref=e12]:
+      - generic [ref=e15]:
+        - region "Idea" [ref=e16]
+        - region "Brainstorm" [ref=e19]
+        - region "Frontend" [ref=e22]
+        - region "Requirements" [ref=e25]
+        - region "Implementation" [ref=e38]
+        - region "Merge" [ref=e41]
+        - region "Done" [ref=e44]
+  - button "Open Next.js Dev Tools" [ref=e52] [cursor=pointer]:
+    - img [ref=e53]
+  - alert [ref=e56]

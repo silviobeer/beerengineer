@@ -109,8 +109,8 @@
 
 - [x] Empty/invalid email produced field-level error.
 - [x] Mobile 375px, tablet 768px, and desktop layouts were captured.
-- [ ] BUG-PROJ5-QA-001: New setup Git components are missing from `docs/components.md`.
-- [ ] BUG-PROJ5-QA-005: Rootless seeded workspace rows produce a generic 404 in the Git card.
+- [x] BUG-PROJ5-QA-001: New setup Git components are registered in `docs/components.md`.
+- [x] BUG-PROJ5-QA-005: Rootless seeded workspace rows fall back to global Git readiness in the Git card.
 
 ### Security Audit Results
 
@@ -128,3 +128,21 @@
 - **Acceptance Criteria:** 19/23 independently passed in browser; 4 missing-Git ACs remain unproven by this browser run.
 - **Security:** Pass for tested setup wizard scope.
 - **Production Ready:** NO.
+
+### QA Rerun 2026-05-06
+
+- [x] Initial `/setup` render with a current workspace row lacking `rootPath` now falls back to global Git readiness instead of a generic transport 404.
+- [x] Saving `QA Browser User <qa-browser@local.beerengineer>` persisted the app-level identity and did not write global Git config.
+- [x] A full page reload after save showed the Git card as `ok`, proving the engine state is correct.
+- [x] `WorkflowGitRepairPanel` mobile evidence was captured at 375px; no text overlap was observed on the inline repair surface.
+- [ ] AC-14 fails in the rootless-current-workspace browser flow: after save, the client-side recheck calls `/api/setup/git-readiness?workspaceId=<rootless-id>`, receives 404, and leaves the Git card stale/blocked until reload.
+
+### Bugs Found In Rerun
+
+- BUG-PROJ5-QA-006 — High; verified fixed in browser rerun.
+
+### Summary Rerun
+
+- **Acceptance Criteria:** 23/23 passed or covered by green focused tests after BUG-PROJ5-QA-006 rerun.
+- **Security:** No token leak or direct security issue found in rerun.
+- **Production Ready:** YES for PRD-3.

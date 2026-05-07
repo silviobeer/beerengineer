@@ -1,12 +1,5 @@
 import type { AppConfigView, GitReadiness, SetupReport } from "./types";
-
-function engineBaseUrl(): string {
-  return (
-    process.env.BEERENGINEER_ENGINE_URL ||
-    process.env.ENGINE_URL ||
-    "http://127.0.0.1:4100"
-  ).replace(/\/$/, "");
-}
+import { engineBaseUrl } from "@/lib/engine/baseUrl";
 
 async function readJson<T>(path: string): Promise<{ data: T | null; error: string | null }> {
   try {
@@ -35,4 +28,24 @@ export function fetchAppConfigView(): Promise<{ data: AppConfigView | null; erro
 export function fetchGitReadiness(workspaceId?: string): Promise<{ data: GitReadiness | null; error: string | null }> {
   const query = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : "";
   return readJson<GitReadiness>(`/setup/git-readiness${query}`);
+}
+
+type WorkspaceLookup = {
+  id?: string;
+  key?: string;
+  rootPath?: string | null;
+  root_path?: string | null;
+};
+
+function usableRootPath(workspace: WorkspaceLookup | null): boolean {
+  const rootPath = workspace?.rootPath ?? workspace?.root_path;
+  return typeof rootPath === "string" && rootPath.trim().length > 0;
+}
+
+export async function resolveSetupGitReadinessWorkspaceId(configView: AppConfigView | null): Promise<string | undefined> {
+  const workspace = configView?.workspace;
+  if (!workspace?.id || !workspace.key) return undefined;
+  const result = await readJson<WorkspaceLookup>(`/workspaces/${encodeURIComponent(workspace.key)}`);
+  if (!usableRootPath(result.data)) return undefined;
+  return workspace.id;
 }

@@ -29,6 +29,10 @@ function initRepo(dir: string, env: NodeJS.ProcessEnv): void {
   git(dir, ["init", "-b", "main"], env)
 }
 
+function configForRoot(rootPath: string) {
+  return { ...defaultAppConfig(), allowedRoots: [rootPath] }
+}
+
 test("AC-1 global readiness reports git install, global identity, app default, and actions", () => {
   const paths = tempGitEnv()
   try {
@@ -99,8 +103,8 @@ test("AC-5 workspace readiness reports whether registered workspace is a git rep
     initRepo(repo, env)
     mkdirSync(nonRepo, { recursive: true })
 
-    assert.equal(readWorkspaceGitReadiness({ id: "w1", key: "repo", rootPath: repo }, defaultAppConfig(), { env }).isGitRepo, true)
-    assert.equal(readWorkspaceGitReadiness({ id: "w2", key: "non-repo", rootPath: nonRepo }, defaultAppConfig(), { env }).isGitRepo, false)
+    assert.equal(readWorkspaceGitReadiness({ id: "w1", key: "repo", rootPath: repo }, configForRoot(paths.dir), { env }).isGitRepo, true)
+    assert.equal(readWorkspaceGitReadiness({ id: "w2", key: "non-repo", rootPath: nonRepo }, configForRoot(paths.dir), { env }).isGitRepo, false)
   } finally {
     rmSync(paths.dir, { recursive: true, force: true })
   }
@@ -119,7 +123,7 @@ test("AC-6 repo-local identity wins before global and app-level identity", () =>
 
     const readiness = readWorkspaceGitReadiness(
       { id: "w1", key: "repo", rootPath: repo },
-      { ...defaultAppConfig(), gitIdentityDefault: { displayName: "App User", email: "app@example.test", localOnly: false } },
+      { ...configForRoot(paths.dir), gitIdentityDefault: { displayName: "App User", email: "app@example.test", localOnly: false } },
       { env },
     )
 
@@ -139,7 +143,7 @@ test("AC-7 global identity makes workspace ready when repo-local is absent", () 
     spawnSync("git", ["config", "--global", "user.name", "Global User"], { env })
     spawnSync("git", ["config", "--global", "user.email", "global@example.test"], { env })
 
-    const readiness = readWorkspaceGitReadiness({ id: "w1", key: "repo", rootPath: repo }, defaultAppConfig(), { env })
+    const readiness = readWorkspaceGitReadiness({ id: "w1", key: "repo", rootPath: repo }, configForRoot(paths.dir), { env })
 
     assert.equal(readiness.ready, true)
     assert.equal(readiness.effectiveIdentity?.source, "global")
@@ -157,7 +161,7 @@ test("AC-8 app-level default exposes workspace repair action instead of ready st
 
     const readiness = readWorkspaceGitReadiness(
       { id: "w1", key: "repo", rootPath: repo },
-      { ...defaultAppConfig(), gitIdentityDefault: { displayName: "App User", email: "app@example.test", localOnly: false } },
+      { ...configForRoot(paths.dir), gitIdentityDefault: { displayName: "App User", email: "app@example.test", localOnly: false } },
       { env },
     )
 
@@ -176,11 +180,37 @@ test("AC-9 missing all identity sources reports workflow blocker with repair hin
     const env = { ...process.env, GIT_CONFIG_GLOBAL: paths.globalGitConfig }
     initRepo(repo, env)
 
-    const readiness = readWorkspaceGitReadiness({ id: "w1", key: "repo", rootPath: repo }, defaultAppConfig(), { env })
+    const readiness = readWorkspaceGitReadiness({ id: "w1", key: "repo", rootPath: repo }, configForRoot(paths.dir), { env })
 
     assert.equal(readiness.workflowBlocked, true)
+    assert.deepEqual(readiness.availableActions, ["repair_workspace_identity"])
     assert.equal(readiness.blocker?.error, "identity_missing")
     assert.match(readiness.blocker?.message ?? "", /Git identity/)
+  } finally {
+    rmSync(paths.dir, { recursive: true, force: true })
+  }
+})
+
+test("workspace readiness refuses registered paths outside allowed roots before reading repo identity", () => {
+  const paths = tempGitEnv()
+  try {
+    const repo = join(paths.dir, "repo")
+    const env = { ...process.env, GIT_CONFIG_GLOBAL: paths.globalGitConfig }
+    initRepo(repo, env)
+    git(repo, ["config", "--local", "user.name", "Repo User"], env)
+    git(repo, ["config", "--local", "user.email", "repo@example.test"], env)
+
+    const readiness = readWorkspaceGitReadiness(
+      { id: "w1", key: "repo", rootPath: repo },
+      configForRoot(join(paths.dir, "allowed")),
+      { env },
+    )
+
+    assert.equal(readiness.isGitRepo, false)
+    assert.equal(readiness.repoLocalIdentity.email, undefined)
+    assert.equal(readiness.workflowBlocked, true)
+    assert.equal(readiness.blocker?.error, "workspace_path_unavailable")
+    assert.match(readiness.blocker?.message ?? "", /allowed roots/)
   } finally {
     rmSync(paths.dir, { recursive: true, force: true })
   }

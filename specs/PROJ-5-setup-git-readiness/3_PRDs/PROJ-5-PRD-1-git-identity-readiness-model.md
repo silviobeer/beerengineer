@@ -104,7 +104,7 @@
 
 - [x] Missing identity with Git installed is distinguishable from setup failure.
 - [x] Private placeholder email shows a publishing caution.
-- [ ] BUG-PROJ5-QA-005: A registered workspace row without `rootPath` makes the setup Git card show a generic `engine responded 404` instead of a global or not-configured readiness state.
+- [x] BUG-PROJ5-QA-005: A registered workspace row without `rootPath` falls back to global Git readiness instead of a generic `engine responded 404`.
 
 ### Security Audit Results
 
@@ -122,3 +122,10 @@
 - **Acceptance Criteria:** 23/23 passed for the core readiness model.
 - **Security:** Pass for PRD-1 scope.
 - **Production Ready:** NO, because cross-PRD QA found Critical/High bugs in PRD-4 and UI registry governance.
+
+### QA Rerun 2026-05-06
+
+- [x] Focused engine tests for readiness, repair, API, signing separation, CLI action gating, setup API, and integration behavior passed (68 tests).
+- [x] Workspace readiness refused outside-allowed-root rows and workspace repair ignored caller-supplied path fields in automated coverage.
+- [x] Browser rerun confirmed app-level identity persisted without writing global Git config and workflow repair wrote repo-local Git config only.
+- **Production Ready:** NO, because PRD-3 has BUG-PROJ5-QA-006 open.

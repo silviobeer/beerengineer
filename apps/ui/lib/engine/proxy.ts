@@ -1,14 +1,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-
-function engineBaseUrl(): string {
-  const url =
-    process.env.BEERENGINEER_ENGINE_URL ||
-    process.env.ENGINE_URL ||
-    "http://127.0.0.1:4100";
-  return url.replace(/\/$/, "");
-}
+import { engineBaseUrl } from "./baseUrl";
 
 function tokenPath(): string {
   const envPath = process.env.BEERENGINEER_API_TOKEN_FILE;

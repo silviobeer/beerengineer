@@ -98,22 +98,22 @@
 
 - [x] AC-1..AC-4: Direct `start_brainstorm` API calls with missing Git identity returned `409 workflow_git_blocked`, included repair metadata, and created no run rows or item movement.
 - [x] AC-5..AC-8: A malicious `workspaceRoot` in the start payload was ignored; readiness used the registered workspace state and side effects stayed at zero for `start_brainstorm`.
-- [ ] AC-1..AC-2 regression: BUG-PROJ5-QA-002 shows `import_prepared` bypasses the gate and creates run/filesystem side effects before Git identity is ready.
-- [ ] AC-9..AC-13: BUG-PROJ5-QA-003 prevents the full item detail start controls from reaching the contextual repair panel because all toolbar actions are disabled.
-- [ ] AC-14..AC-17: Continue-original-start after repair could not be proven from the full detail start controls because of BUG-PROJ5-QA-003. Setup workspace repair itself did recheck successfully.
+- [x] AC-1..AC-2 regression fixed: `import_prepared` is gated before run/filesystem side effects when Git identity is missing.
+- [x] AC-9..AC-13 regression fixed: full item detail receives `allowedActions` from `GET /items/:id`, so permitted start controls can reach the contextual repair panel.
+- [x] AC-14..AC-17 regression unblocked: continue-original-start can now be reached from full detail controls after `allowedActions` are returned.
 - [x] AC-18..AC-21: Signing failure separation was covered by implementation tests; QA did not reproduce a live broken GPG environment in browser.
 
 ### Edge Cases Status
 
 - [x] Direct start with injected path stayed server-side and produced no side effects.
-- [ ] BUG-PROJ5-QA-002: Prepared import created a blocked run and `.beerengineer/workspaces/...` artifacts despite missing Git identity.
-- [ ] BUG-PROJ5-QA-003: Full item detail actions are disabled because allowed actions are absent from the item detail API response.
+- [x] BUG-PROJ5-QA-002: Prepared import now stops at `workflow_git_blocked` before run, item, and artifact side effects.
+- [x] BUG-PROJ5-QA-003: Full item detail actions are enabled from the engine `allowedActions` response.
 
 ### Security Audit Results
 
 - [x] CSRF token required for direct engine mutation.
 - [x] Request-body path injection did not affect `start_brainstorm` gate behavior.
-- [ ] BUG-PROJ5-QA-002 is a reliability/security-boundary concern because an alternate start-run path performs side effects before the gate.
+- [x] BUG-PROJ5-QA-002 reliability/security-boundary concern fixed by gating the alternate prepared-import start path before side effects.
 
 ### Bugs Found
 
@@ -125,3 +125,22 @@
 - **Acceptance Criteria:** 13/21 passed; 8 failed or could not be proven because of the two High bugs.
 - **Security:** No token leak or CSRF bypass found, but prepared-import side effects before readiness are release-blocking.
 - **Production Ready:** NO.
+
+### QA Rerun 2026-05-06
+
+- [x] Focused engine test rerun verified `start_brainstorm` and `import_prepared` block on missing Git identity before run, item, artifact, branch, worktree, or LLM side effects.
+- [x] Direct API rerun against an isolated item returned `409 workflow_git_blocked` for `import_prepared`; the item stayed `idea/draft` and `currentRunId` remained absent.
+- [x] Full item detail now receives `allowedActions`; `Start Brainstorm` and `Import Prepared` were enabled for an `idea/draft` item.
+- [x] Browser rerun showed the contextual workflow Git repair panel, preserved the original item/action, required confirmation, wrote repo-local Git config, rechecked readiness, and enabled `Continue start`.
+- [x] 375px mobile screenshot captured the inline repair panel without overlapping text.
+
+### Bugs Verified Fixed In Rerun
+
+- BUG-PROJ5-QA-002 — verified fixed.
+- BUG-PROJ5-QA-003 — verified fixed.
+
+### Summary Rerun
+
+- **Acceptance Criteria:** 21/21 passed for PRD-4.
+- **Security:** Pass for PRD-4 scope.
+- **Production Ready:** YES for PRD-4, but overall PROJ-5 remains blocked by BUG-PROJ5-QA-006 in PRD-3.

@@ -111,8 +111,13 @@ function isInteractiveSetup(options: SetupRunOptions): boolean {
 
 async function retryBlockedSetup(report: SetupReport, options: SetupRunOptions, interactive: boolean): Promise<SetupReport> {
   let current = report
+  let printedGitSkipHint = false
   while (interactive && current.overall === "blocked") {
     const requiredSatisfied = current.groups.filter(group => group.level === "required").every(group => group.satisfied)
+    if (!printedGitSkipHint && hasMissingGitInstall(current)) {
+      console.log("  Git is used for workflow checkpoints. Press `s` to skip setup for now if you only want to continue with non-Git setup.")
+      printedGitSkipHint = true
+    }
     const action = await promptRetryAction(requiredSatisfied)
     if (action === "quit" || action === "skip") return current
     const next = await generateSetupReport(options)
@@ -120,6 +125,10 @@ async function retryBlockedSetup(report: SetupReport, options: SetupRunOptions, 
     current = next
   }
   return current
+}
+
+function hasMissingGitInstall(report: SetupReport): boolean {
+  return report.groups.some(group => group.id === "git" && group.checks.some(check => check.id === "git.install" && check.status === "missing"))
 }
 
 async function launchInteractiveSetup(config: AppConfig, deps: SetupFlowDeps | undefined): Promise<SetupLaunchResult> {
@@ -153,7 +162,7 @@ function formatServiceStatus(status: SetupLaunchResult["engine"]["status"]): str
 function shouldOfferGitIdentityPrompt(options: SetupRunOptions, launch: SetupLaunchResult | undefined): boolean {
   if (options.group === "git") return true
   if (options.group) return false
-  return launch?.browser.status === "printed"
+  return launch?.browser.status === "printed" || launch?.browser.status === "opened"
 }
 
 function buildProvisionedConfig(overrides: SetupOverrides = {}): AppConfig {

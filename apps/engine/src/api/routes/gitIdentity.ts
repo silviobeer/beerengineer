@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http"
 import type { Repos } from "../../db/repositories.js"
 import type { AppConfig } from "../../setup/types.js"
+import { resolveOverrides } from "../../setup/config.js"
 import { patchAppConfig } from "../../setup/appConfigPatch.js"
 import {
   readGlobalGitReadiness,
@@ -36,7 +37,7 @@ function resolveWorkspaceFromQuery(repos: Repos, url: URL): WorkspaceGitReadines
   let workspace: ReturnType<Repos["getWorkspace"]> | undefined
   if (workspaceId) workspace = repos.getWorkspace(workspaceId)
   else if (workspaceKey) workspace = repos.getWorkspaceByKey(workspaceKey)
-  if (!workspace) return { id: workspaceId || workspaceKey || "", key: workspaceKey ?? undefined, rootPath: null }
+  if (!workspace) return null
   return {
     id: workspace.id,
     key: workspace.key,
@@ -57,6 +58,10 @@ function repairStatus(result: ReturnType<typeof repairWorkspaceGitIdentity>): nu
 
 export function handleGitReadiness(repos: Repos, config: AppConfig, url: URL, res: ServerResponse): void {
   const workspace = resolveWorkspaceFromQuery(repos, url)
+  if ((url.searchParams.has("workspaceId") || url.searchParams.has("workspaceKey")) && !workspace) {
+    json(res, 404, { ok: false, error: "workspace_not_found", message: "Workspace not found" })
+    return
+  }
   if (workspace) {
     if (!workspace.rootPath) {
       json(res, 404, { ok: false, error: "workspace_not_found", message: "Workspace not found" })
@@ -79,7 +84,7 @@ export async function handleGitIdentitySave(req: IncomingMessage, res: ServerRes
     json(res, 400, validation)
     return
   }
-  const result = patchAppConfig({}, {
+  const result = patchAppConfig(resolveOverrides(), {
     gitIdentityDefault: {
       displayName: validation.identity.displayName,
       email: validation.identity.email,
