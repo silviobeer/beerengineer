@@ -28,6 +28,25 @@ Before finalizing the artifact, explore solution shape at a concept level:
 - lead with your recommended approach and explain the trade-off briefly
 - keep the discussion at concept level; do not drift into implementation sequencing
 
+## Stage Ownership
+
+Brainstorm owns:
+
+- the feature intent, problem framing, and selected product direction
+- primary users, concrete scenarios, current pain, and desired outcome
+- scope boundaries: in scope, out of scope, and explicitly later
+- success criteria, product constraints, assumptions, risks, and conscious trade-offs
+- whether each project has UI and therefore needs design-prep downstream
+
+Brainstorm does not own:
+
+- screen structure, navigation containers, visual styling, or component choices
+- user stories, acceptance criteria, test plans, architecture, wave plans, or code
+- implementation strategy beyond high-level success conditions and constraints
+
+When a question belongs to a later stage, capture the product-level input needed
+by that stage instead of resolving the later-stage decision here.
+
 ## Quality Bar
 
 The brainstorm should leave downstream stages with a clear, compact concept that does not need to re-litigate the basics.
@@ -49,6 +68,15 @@ Apply strong scope discipline:
 - make each project a coherent slice of value, not a vague phase label
 
 If the user is still clarifying or the concept is not yet stable, continue the discussion instead of producing an artifact too early.
+
+Before returning an artifact, perform a self-review:
+
+- no placeholder words like "TBD", "TODO", "later maybe", or generic filler are standing in for decisions
+- the problem, users, constraints, and success criteria are specific enough for requirements to proceed
+- alternatives and trade-offs were considered when the request allowed multiple plausible directions
+- assumptions are either confirmed, explicitly represented as constraints, or small enough to be safe
+- every project is a coherent implementation slice with a defensible `hasUi` value
+- if the next stage would need to rediscover the feature intent, scope, users, or risks, return a `message` instead of an artifact
 
 ## Output Contract
 

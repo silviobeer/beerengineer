@@ -27,6 +27,26 @@ Keep the plan focused on sequencing and execution structure:
 - call out where work is parallelizable versus where coordination is required
 - ensure every story appears exactly once in the plan
 
+## Stage Ownership
+
+Planning owns:
+
+- the project-wide dependency graph across all approved stories
+- grouping stories into waves that can safely execute in parallel
+- sequencing notes, coordination risks, setup/shared-infra waves, and concrete exit criteria
+- machine-readable metadata that execution uses to avoid collisions and verify wave completion
+
+Planning does not own:
+
+- rewriting requirements or inventing missing stories
+- redesigning architecture or choosing a different technical direction
+- writing implementation code, detailed file contents, or test code
+- adding speculative setup work that the existing repo or approved architecture does not need
+
+If a missing requirement, unclear architecture decision, or shared-file conflict
+prevents a safe plan, ask to revisit the upstream artifact instead of papering
+over it with a vague wave.
+
 ## Scope Discipline
 
 Stay at planning level, not implementation level:
@@ -65,6 +85,15 @@ When a story unlocks multiple later stories, place it as early as practical.
 
 When two stories are logically independent but likely to collide on the same module or shared contract, treat that as a coordination risk instead of assuming easy parallelism.
 
+Before returning an artifact, perform a self-review:
+
+- every PRD story appears exactly once in a feature wave, and no extra feature story was invented
+- wave dependencies point only to earlier wave ids and never to prose or story ids
+- every wave has a specific goal and exit criteria tied to requirement coverage
+- same-wave stories are genuinely parallelizable or the coordination risk is explicitly surfaced
+- setup waves exist only when shared infrastructure, scaffold ownership, design-token handoff, or collision avoidance requires them
+- `sequencingNotes`, `dependencies`, and `risks` explain the real delivery order rather than restating the wave list
+
 ## Operator Decisions
 
 The payload may include a `decisions` array — durable scope answers from the operator across previous runs of the same item.
@@ -98,12 +127,12 @@ For setup waves:
 - each `contract` MUST be `{ expectedFiles: string[], requiredScripts: string[], postChecks: string[] }`
 - setup tasks are implementation-plan-only shared-infra work; they are not PRD stories
 
-Mandatory project-scaffold setup wave (W1):
-- EVERY plan MUST start with `kind: "setup"` as `W1` (`number: 1`, `id: "W1"`, `dependencies: []`).
-- W1 owns the project scaffold: `package.json` (with chosen test/build/lint scripts), `package-lock.json`, `tsconfig.json` (when TypeScript is in use), `.gitignore` baselines, the test runner config, and the canonical source layout (`src/`, `tests/`, etc).
-- W1 also OWNS the copy of `design-tokens.css` into the worktree (e.g. `apps/ui/app/design-tokens.css`). Do not let later stories re-derive design tokens.
-- Every later feature wave MUST list its `dependencies` as including `W1` (transitively or directly).
-- Feature stories MUST NOT include any of W1's `sharedFiles` in their own `sharedFiles`. The scaffold is owned by setup; stories add to it via additive JSON edits (e.g. one new dev-dependency, one new script) only.
+Setup wave rule:
+- Use a setup wave when the approved work needs shared infrastructure before feature stories can execute safely.
+- Common reasons include greenfield scaffold creation, test/build script setup, shared migration or configuration work, design-token handoff, or shared-file ownership needed to avoid same-wave collisions.
+- Do not emit a setup wave just because setup waves are supported. For brownfield work in an existing repo, start with the first feature wave unless there is a real shared prerequisite.
+- When a setup wave exists, it must own only the shared files named in its `tasks[*].sharedFiles`. Later feature stories should avoid wholesale rewrites of those files and use additive edits only when necessary.
+- If the setup wave creates or copies shared design tokens, later feature stories must consume that artifact rather than re-derive the design system.
 
 Shared-infra wave rule:
 - if two or more feature stories in the same wave would edit the same shared file, emit a setup wave before that feature wave

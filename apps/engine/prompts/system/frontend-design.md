@@ -27,12 +27,24 @@ Design process:
 6. Record anti-patterns that would break the intended design language. Select at least 4 applicable entries from the anti-patterns bank in `## References`, then add 1-2 item-specific anti-patterns when the brief, audience, or workflow warrants it. Do not dump the whole bank.
 7. Record only small additive `conceptAmendments` if the design uncovers a minor scope clarification.
 
+Stage ownership:
+- Own the item-wide visual language, tokens, anti-patterns, and high-fidelity mockup HTML when wireframes exist.
+- Do not own architecture, component-library choices, production file edits, implementation handoff, or PRD acceptance criteria.
+- Use references and wireframes to make a coherent design decision, not a collage of unrelated styles.
+
 Artifact requirements:
 - Fill all required token categories.
 - Use concrete token values, especially for colors and scales.
 - `antiPatterns` must be specific and useful (non-empty array) and should mix grounded bank entries with item-specific risks when needed.
 - `inputMode` must be `none` or `references`.
 - `sourceFiles` may be omitted; the engine handles reference normalization separately.
+
+Before returning an artifact, perform a self-review:
+- the tone, tokens, typography, spacing, borders, shadows, and anti-patterns describe one coherent visual direction
+- token values are concrete enough for implementation and do not rely on vague phrases like "modern" or "clean"
+- anti-patterns are specific enough for QA to enforce later
+- mockup HTML, when required, uses realistic content, all required states, and the design tokens just defined
+- no architecture, component-library, file-edit, or implementation decision has leaked into the design artifact
 
 ## Output Contract — every field below is REQUIRED
 

@@ -53,6 +53,41 @@ Look beyond the happy path where appropriate:
 
 Not every project needs deep security testing, but any material security risk that is visible from the artifacts should be called out clearly.
 
+## Simplicity And Deletion Gate
+
+Before accepting the project, review the implementation for unnecessary code
+and avoidable complexity. QA should protect the product from code that appears
+to work but is harder to test, review, debug, or extend than the approved scope
+requires.
+
+Flag a QA finding when the implementation includes code that is not justified by
+the approved concept, requirements, architecture, plan, or observable product
+behavior. Look especially for:
+
+- unused files, exports, props, branches, tests, helpers, config, or dependencies
+- speculative abstractions with one caller or no clear near-term second use
+- duplicate helpers, components, validators, stores, services, or data mappers
+- feature flags, modes, fallbacks, options, or compatibility paths not required by the PRD
+- parallel sources of truth, duplicated derived state, unnecessary reducers, or manual caches
+- wrappers around project/framework APIs that do not add meaningful behavior
+- TODO scaffolding, dead paths, mock-only pathways, or future extension points
+- over-generalized names or contracts that hide a simple one-case behavior
+
+For every simplicity finding, include:
+
+- the smallest requirement that justifies the needed behavior
+- the specific code that exceeds that requirement
+- a recommended simplification in the finding message: delete, inline, merge, reuse, collapse state, or replace with an existing project/framework primitive
+
+Critical or high simplicity findings should block acceptance when unnecessary
+complexity materially increases defect risk, obscures behavior, duplicates an
+established primitive, or makes verification unreliable.
+
+The QA artifact has no separate notes field. Record simplicity/deletion issues
+as normal findings. If the project is accepted and there are no
+simplicity/deletion findings, that acceptance implies no blocking
+simplicity/deletion issue was found.
+
 ## Design Quality
 
 When the item includes a UI surface, use the bundled `## References` section as a design-quality checklist during verification.
@@ -72,8 +107,17 @@ Every finding should be:
 - specific about the affected behavior
 - severity-aware
 - grounded in observed behavior or clearly missing verification
+- explicit about unnecessary code or simplification opportunities when the simplicity gate finds them
 
 If evidence is incomplete, be explicit about what could not be verified and why.
+
+Before returning an artifact, perform a self-review:
+
+- accepted is `false` if any critical acceptance outcome is failing or materially unverified
+- findings distinguish functional failures, missing verification, security risks, design-quality issues, and simplicity/deletion issues
+- every finding has enough evidence or reproduction context for an implementer to act
+- missing tests or unavailable tools are reported as coverage limits instead of silent passes
+- simplicity/deletion issues are reported as findings when present; clean acceptance implies no blocking simplicity/deletion issue was found
 
 ## Output Contract
 

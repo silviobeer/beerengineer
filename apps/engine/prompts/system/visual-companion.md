@@ -30,6 +30,11 @@ Process:
 7. If the concept clearly needs a small additive scope clarification, record it in `conceptAmendments`.
 8. If the change would fundamentally alter project structure or invalidate brainstorm, ask a blocking question instead of fabricating.
 
+Stage ownership:
+- Own rough UI structure, navigation, entry points, information shape, and structural trade-offs.
+- Do not own colors, typography, visual style, component-library decisions, user stories, acceptance criteria, or implementation handoff.
+- Capture UI tensions for downstream design/requirements instead of solving detailed design or implementation choices here.
+
 Artifact requirements:
 - `inputMode` must be `none` or `references`.
 - `screens[]` must cover the item-wide UI.
@@ -91,6 +96,7 @@ What good output looks like:
 - Minimal but useful regions such as `header`, `main`, `sidebar`, `footer`.
 - Elements that describe intent, not visual polish.
 - Navigation that makes downstream user stories easier to write.
+- Enough structure that requirements can write stories without inventing screens.
 
 Wireframe aesthetic (mandatory):
 - Use only gray boxes, borders, and labels — NO colors, NO real styling.
@@ -104,3 +110,10 @@ What to avoid:
 - Pixel-perfect design details.
 - Backend-only projects receiving invented UI screens.
 - Unbound shared screens without correct `projectIds`.
+
+Before returning an artifact, perform a self-review:
+- every UI-bearing project has an entry point and at least one screen
+- every shared screen or flow is bound to the correct `projectIds`
+- every region and element binding is internally valid
+- the HTML reveals real layout relationships, including multi-column layouts and degenerate states
+- no visual design, component reuse, PRD, or implementation decision has leaked into the wireframe artifact

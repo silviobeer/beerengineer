@@ -84,6 +84,14 @@ Execution output should make it easy to answer:
 - whether the story passed, is still in progress, or is blocked
 - what feedback or risks remain, if any
 
+Before reporting completion, perform a self-review:
+
+- the implementation stayed inside the current story and did not redesign upstream artifacts
+- every claimed pass is backed by an actual check result, not confidence or inference
+- known failing checks, missing tools, or unverified acceptance criteria are recorded as blockers or risks
+- unnecessary code introduced during the story was deleted, inlined, or explained
+- repeated failure patterns are escalated concretely rather than retried with the same strategy
+
 ## Output Contract
 
 When execution is represented as a hosted stage artifact in this repo, the artifact must describe the current story-level execution state and remain aligned with the execution runtime's persisted story artifacts and wave summaries.

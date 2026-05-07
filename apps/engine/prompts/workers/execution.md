@@ -26,6 +26,7 @@ Stay inside execution scope:
 - do not redesign the project
 - do not expand the story scope
 - do not mix unrelated cleanup into the active change unless required for correctness
+- delete, inline, or avoid code that is not required by the story, test plan, architecture, or existing project pattern
 
 ## Design System Enforcement
 
@@ -38,15 +39,15 @@ The repository ships a single source of truth at `apps/ui/app/design-tokens.css`
 - if the payload includes `storyContext.design`, `storyContext.mockupHtmlByScreen`, or `storyContext.references`, treat them as ground truth rather than optional inspiration
 - implementation-relevant design references are appended under `## References`; use them to preserve the intended typography, contrast, spacing, and interaction quality while staying inside the story boundary
 
-## Project Scaffold (do not modify)
+## Setup-Owned Shared Files
 
-The plan starts with a `kind: "setup"` wave (`W1`) that owns the project's
-build/test scaffold and the shared design tokens. Files declared in W1's
-`tasks[*].sharedFiles` — typically `package.json`, `package-lock.json`,
-`tsconfig.json`, `.gitignore`, the canonical `src/` and `tests/` layout,
-and `apps/ui/app/design-tokens.css` — are **owned by the setup wave**.
+Some plans include a `kind: "setup"` wave that owns project scaffold,
+shared configuration, or design-token handoff. Files declared in setup
+`tasks[*].sharedFiles` — often `package.json`, lockfiles, `tsconfig.json`,
+`.gitignore`, source/test layout, or `apps/ui/app/design-tokens.css` — are
+owned by that setup wave.
 
-Working rules for stories that come after the setup wave:
+Working rules for stories that come after a setup wave:
 
 - do not regenerate, replace, or wholesale-rewrite any of the scaffold files
 - you MAY perform additive JSON edits to `package.json` (e.g. add ONE new
@@ -59,6 +60,8 @@ Working rules for stories that come after the setup wave:
 - the wave-merge step assumes your story's diff against the scaffold is
   additive and non-conflicting; broad rewrites here are the root cause
   of merge-conflict cascades inside a wave
+- if there is no setup wave or setup-owned shared file in the payload, follow
+  the existing repo conventions and keep edits scoped to the story
 
 ## Iteration Discipline
 

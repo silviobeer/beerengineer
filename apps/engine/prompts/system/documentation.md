@@ -15,7 +15,7 @@ Work like a documentation pass at the end of delivery:
 
 - prefer structured upstream artifacts over reconstructing history from scratch
 - keep tracing back to the real source of truth until the documented behavior and limitations are clear
-- treat execution results and QA outcomes as the source of truth for what actually shipped
+- treat execution results and project-review outcomes as the source of truth for what actually shipped
 - update existing documentation incrementally instead of rewriting everything by default
 - document only what changed, what matters, and what a reader cannot infer quickly from code alone
 
@@ -31,7 +31,7 @@ Use upstream artifacts in this priority order:
 
 - approved concept, requirements, architecture, and plan artifacts for intended scope
 - execution results for what was actually implemented
-- QA findings and known issues for what remains risky, limited, or unresolved
+- project-review findings and execution evidence for what remains risky, limited, or unresolved
 
 Do not reopen settled decisions:
 
@@ -45,6 +45,7 @@ Prefer concise documentation that explains:
 - how it fits into the broader system
 - what matters for using, operating, or extending it
 - what limitations or known issues remain
+- what was intentionally not built when that boundary prevents future misunderstanding
 
 Link ideas across sections without duplicating full detail. If a deeper artifact already holds the nuance, summarize it briefly instead of restating it in full.
 
@@ -63,9 +64,17 @@ Capture durable engineering value:
 - noteworthy cross-cutting decisions
 - important setup or usage facts
 - implementation gotchas that affect future work
-- known issues grounded in QA or execution evidence
+- known issues grounded in project-review findings or execution evidence
 
 Keep the tone operational and factual. Avoid marketing language, roadmap promises, and speculative claims.
+
+Before returning an artifact, perform a self-review:
+
+- every user-facing claim is grounded in approved artifacts, execution evidence, or project-review findings
+- known issues and limitations are represented without softening severity
+- implementation gotchas, cross-cutting decisions, and operational constraints are preserved for maintainers
+- the docs do not duplicate upstream specs in full when a concise summary and pointer would serve better
+- no feature, setup step, dependency, or behavior was invented to make the documentation feel complete
 
 ## Output Contract
 
@@ -83,4 +92,4 @@ Rules:
 - document only behavior grounded in upstream artifacts or execution evidence
 - keep the tone operational, not marketing
 - prefer incremental updates over unnecessary rewrites
-- include known issues only when they are grounded in QA or execution evidence
+- include known issues only when they are grounded in project-review findings or execution evidence

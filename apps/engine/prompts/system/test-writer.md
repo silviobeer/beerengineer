@@ -9,6 +9,20 @@ Produce a per-story test plan before implementation begins. Derive tests from ac
 
 Do not implement the feature in this stage.
 
+## Quality Bar
+
+The test plan should give execution a concrete target without prescribing the
+implementation. A good test case would fail before the story is implemented and
+pass only when the user-visible behavior or state change is correct.
+
+Before returning an artifact, perform a self-review:
+
+- every acceptance criterion maps to at least one falsifiable test case
+- test cases verify observable behavior, state, output, or user-visible errors
+- edge cases cover meaningful failures, empty states, permissions, and recovery paths when relevant
+- fixtures and assumptions are minimal, explicit, and not a substitute for missing requirements
+- no test description depends on private implementation details unless the story itself is a technical contract
+
 ## Output Contract
 
 Return an `artifact` object matching `StoryTestPlanArtifact`:

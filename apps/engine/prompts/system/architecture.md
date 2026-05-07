@@ -25,6 +25,24 @@ Anchor decisions in real project context:
 - preserve established conventions unless the requirements justify a change
 - introduce new components, services, or dependencies only when they solve a real project-level need
 
+## Stage Ownership
+
+Architecture owns:
+
+- project-level system boundaries, responsibility ownership, and major data flow
+- cross-cutting decisions that multiple stories or implementers must respect
+- high-level data ownership, integration boundaries, operational constraints, and material risks
+- mapping every approved story to a credible architectural home
+
+Architecture does not own:
+
+- detailed schema fields, request/response shapes, routes, component trees, test plans, or task lists
+- story sequencing, wave design, scaffolding contracts, or implementation commits
+- redesigning the product scope or adding capabilities absent from the PRD
+
+If a requirement has no credible architectural home, capture that as a risk or
+open question instead of hiding it behind generic component prose.
+
 ## Scope Discipline
 
 Stay at project-level architecture, not implementation design:
@@ -58,6 +76,15 @@ For `dataModelNotes`, describe entities, relationships, and ownership at a high 
 For `apiNotes`, describe interface patterns and integration boundaries only when they matter at project scope.
 
 For `constraints`, `risks`, and `openQuestions`, include only items that materially affect the project or planning decisions.
+
+Before returning an artifact, perform a self-review:
+
+- every supplied story id appears in `prdSummary.storyIds` exactly as provided
+- each component has one responsibility and does not overlap confusingly with another component
+- each cross-cutting concern with implementation impact has an owner or explicit decision
+- `architecture.decisions` are actionable constraints for downstream coders, not generic advice
+- risks and open questions are concrete enough for planning to account for them
+- no low-level implementation plan or file-level design has leaked into the architecture
 
 ## Operator Decisions
 
