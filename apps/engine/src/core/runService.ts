@@ -67,12 +67,30 @@ export type StartRunResult =
   | WorkflowStartGitBlockedResult
   | { ok: false; status: 404 | 409 | 422; error: string }
 
+type StartRunFailureResult = Exclude<StartRunResult, { ok: true; runId: string; itemId: string }>
+
+export type PreparedForegroundRunResult =
+  | { ok: true; runId: string; itemId: string; start: () => Promise<void> }
+  | WorkflowStartGitBlockedResult
+  | { ok: false; status: 404 | 409 | 422; error: string }
+
 export type ResumeRunResult =
   | { ok: true; runId: string; remediationId: string }
   | { ok: false; status: 404 | 409 | 422; error: string }
 
+export type PreparedForegroundResumeRunResult =
+  | { ok: true; runId: string; remediationId: string; start: () => Promise<void> }
+  | { ok: false; status: 404 | 409 | 422; error: string }
+
 export type PreparedImportRunResult =
   | { ok: true; runId: string; itemId: string; warnings: string[] }
+  | WorkflowStartGitBlockedResult
+  | { ok: false; status: 404 | 409 | 422; error: string }
+
+type PreparedImportFailureResult = Exclude<PreparedImportRunResult, { ok: true; runId: string; itemId: string; warnings: string[] }>
+
+export type PreparedForegroundImportRunResult =
+  | { ok: true; runId: string; itemId: string; warnings: string[]; start: () => Promise<void> }
   | WorkflowStartGitBlockedResult
   | { ok: false; status: 404 | 409 | 422; error: string }
 
@@ -172,17 +190,52 @@ export function startRunFromIdea(
     supabaseAdapterFactory?: SupabaseAdapterFactory
   },
 ): StartRunResult {
+  const io = buildApiIo(repos)
+  const prepared = prepareForegroundIdeaRun(repos, io, {
+    title: input.title,
+    description: input.description,
+    workspaceKey: input.workspaceKey,
+    owner: "api",
+    workerInstanceId: input.apiWorkerInstanceId ?? API_WORKER_INSTANCE_ID,
+    workerLeaseClock: input.workerLeaseClock,
+    workerLeaseScheduler: input.workerLeaseScheduler,
+    onItemColumnChanged: input.onItemColumnChanged,
+    supabaseAdapterFactory: input.supabaseAdapterFactory,
+  })
+  if (!prepared.ok) {
+    io.close?.()
+    return prepared
+  }
+  const runInBackground = input.backgroundRunner ?? fireInBackground
+  runInBackground(io, "startRunFromIdea", prepared.start)
+  return { ok: true, runId: prepared.runId, itemId: prepared.itemId }
+}
+
+export function prepareForegroundIdeaRun(
+  repos: Repos,
+  io: WorkflowIO & { bus?: EventBus },
+  input: {
+    title: string
+    description: string
+    workspaceKey?: string
+    owner?: "cli" | "api"
+    workerInstanceId?: string
+    workerLeaseClock?: () => number
+    workerLeaseScheduler?: WorkerLeaseScheduler
+    onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
+    supabaseAdapterFactory?: SupabaseAdapterFactory
+  },
+): PreparedForegroundRunResult {
   const meta = resolveWorkspaceMeta(repos, input.workspaceKey)
   if ("error" in meta) return { ok: false, status: 404, error: "unknown_workspace" }
 
-  const io = buildApiIo(repos)
   const prepared = prepareRun(
     { id: "new", title: input.title, description: input.description },
     repos,
     io,
     {
-      owner: "api",
-      workerInstanceId: input.apiWorkerInstanceId ?? API_WORKER_INSTANCE_ID,
+      owner: input.owner ?? "api",
+      workerInstanceId: input.workerInstanceId,
       workerLeaseClock: input.workerLeaseClock,
       workerLeaseScheduler: input.workerLeaseScheduler,
       ...meta,
@@ -190,9 +243,7 @@ export function startRunFromIdea(
       supabaseAdapterFactory: input.supabaseAdapterFactory,
     },
   )
-  const runInBackground = input.backgroundRunner ?? fireInBackground
-  runInBackground(io, "startRunFromIdea", prepared.start)
-  return { ok: true, runId: prepared.runId, itemId: prepared.itemId }
+  return { ok: true, runId: prepared.runId, itemId: prepared.itemId, start: prepared.start }
 }
 
 /**
@@ -310,7 +361,7 @@ type StartRunPreparation = {
   sourceRun?: RunRow
   resume?: WorkflowResumeInput
   seedStages: ReadonlyArray<string>
-  error?: StartRunResult
+  error?: StartRunFailureResult
 }
 
 function prepareStartRunAction(repos: Repos, item: ItemRow, action: StartRunAction): StartRunPreparation {
@@ -369,6 +420,43 @@ export function startRunForItem(
     supabaseAdapterFactory?: SupabaseAdapterFactory
   },
 ): StartRunResult {
+  const io = buildApiIo(repos)
+  const prepared = prepareForegroundItemRun(repos, io, {
+    itemId: input.itemId,
+    action: input.action,
+    appConfig: input.appConfig,
+    gitCommandOptions: input.gitCommandOptions,
+    owner: "api",
+    workerInstanceId: input.apiWorkerInstanceId ?? API_WORKER_INSTANCE_ID,
+    workerLeaseClock: input.workerLeaseClock,
+    workerLeaseScheduler: input.workerLeaseScheduler,
+    onItemColumnChanged: input.onItemColumnChanged,
+    supabaseAdapterFactory: input.supabaseAdapterFactory,
+  })
+  if (!prepared.ok) {
+    io.close?.()
+    return prepared
+  }
+  fireInBackground(io, `startRunForItem:${input.action}`, prepared.start)
+  return { ok: true, runId: prepared.runId, itemId: prepared.itemId }
+}
+
+export function prepareForegroundItemRun(
+  repos: Repos,
+  io: WorkflowIO & { bus?: EventBus },
+  input: {
+    itemId: string
+    action: StartRunAction
+    appConfig?: AppConfig
+    gitCommandOptions?: GitCommandOptions
+    owner?: "cli" | "api"
+    workerInstanceId?: string
+    workerLeaseClock?: () => number
+    workerLeaseScheduler?: WorkerLeaseScheduler
+    onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
+    supabaseAdapterFactory?: SupabaseAdapterFactory
+  },
+): PreparedForegroundRunResult {
   const item = repos.getItem(input.itemId)
   if (!item) return { ok: false, status: 404, error: "item_not_found" }
 
@@ -381,14 +469,13 @@ export function startRunForItem(
   })
   if (!gitGate.ok) return gitGate
 
-  const io = buildApiIo(repos)
   const prepared = prepareRun(
     { id: item.id, title: item.title, description: item.description },
     repos,
     io,
     {
-      owner: "api",
-      workerInstanceId: input.apiWorkerInstanceId ?? API_WORKER_INSTANCE_ID,
+      owner: input.owner ?? "api",
+      workerInstanceId: input.workerInstanceId,
       workerLeaseClock: input.workerLeaseClock,
       workerLeaseScheduler: input.workerLeaseScheduler,
       itemId: item.id,
@@ -415,8 +502,7 @@ export function startRunForItem(
     }
   }
 
-  fireInBackground(io, `startRunForItem:${input.action}`, prepared.start)
-  return { ok: true, runId: prepared.runId, itemId: item.id }
+  return { ok: true, runId: prepared.runId, itemId: item.id, start: prepared.start }
 }
 
 export async function startPreparedImportForItem(
@@ -434,6 +520,43 @@ export async function startPreparedImportForItem(
     onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
   },
 ): Promise<PreparedImportRunResult> {
+  const io = buildApiIo(repos)
+  const prepared = await prepareForegroundPreparedImportRun(repos, io, {
+    itemId: input.itemId,
+    sourceDir: input.sourceDir,
+    workspaceKey: input.workspaceKey,
+    owner: input.owner ?? "api",
+    appConfig: input.appConfig,
+    gitCommandOptions: input.gitCommandOptions,
+    workerInstanceId: input.owner === "cli" ? undefined : input.apiWorkerInstanceId ?? API_WORKER_INSTANCE_ID,
+    workerLeaseClock: input.workerLeaseClock,
+    workerLeaseScheduler: input.workerLeaseScheduler,
+    onItemColumnChanged: input.onItemColumnChanged,
+  })
+  if (!prepared.ok) {
+    io.close?.()
+    return prepared
+  }
+  fireInBackground(io, "startPreparedImportForItem", prepared.start)
+  return { ok: true, runId: prepared.runId, itemId: prepared.itemId, warnings: prepared.warnings }
+}
+
+export async function prepareForegroundPreparedImportRun(
+  repos: Repos,
+  io: WorkflowIO & { bus?: EventBus },
+  input: {
+    itemId?: string
+    sourceDir: string
+    workspaceKey?: string
+    owner?: "cli" | "api"
+    appConfig?: AppConfig
+    gitCommandOptions?: GitCommandOptions
+    workerInstanceId?: string
+    workerLeaseClock?: () => number
+    workerLeaseScheduler?: WorkerLeaseScheduler
+    onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
+  },
+): Promise<PreparedForegroundImportRunResult> {
   const existingItem = input.itemId ? repos.getItem(input.itemId) : undefined
   if (input.itemId && !existingItem) return { ok: false, status: 404, error: "item_not_found" }
 
@@ -463,7 +586,6 @@ export async function startPreparedImportForItem(
     return { ok: false, status: 422, error: (error as Error).message }
   }
 
-  const io = buildApiIo(repos)
   const resume = {
     scope: { type: "run", runId: "pending" } as const,
     currentStage: "projects",
@@ -481,7 +603,7 @@ export async function startPreparedImportForItem(
     io,
     {
       owner: input.owner ?? "api",
-      workerInstanceId: input.owner === "cli" ? undefined : input.apiWorkerInstanceId ?? API_WORKER_INSTANCE_ID,
+      workerInstanceId: input.workerInstanceId,
       workerLeaseClock: input.workerLeaseClock,
       workerLeaseScheduler: input.workerLeaseScheduler,
       itemId: existingItem?.id,
@@ -496,15 +618,14 @@ export async function startPreparedImportForItem(
   const ctx = targetRun ? resolveWorkflowContextForItemRun(repos, item, targetRun) : null
   if (!ctx) return { ok: false, status: 409, error: "seed_failed" }
   const seeded = seedPreparedImportArtifacts(ctx, bundle, { sourceDir: input.sourceDir })
-  fireInBackground(io, "startPreparedImportForItem", prepared.start)
-  return { ok: true, runId: prepared.runId, itemId: item.id, warnings: seeded.warnings }
+  return { ok: true, runId: prepared.runId, itemId: item.id, warnings: seeded.warnings, start: prepared.start }
 }
 
 function resolvePreparedImportWorkspace(
   repos: Repos,
   existingItem: ItemRow | undefined,
   workspaceKey: string | undefined,
-): { ok: true; workspace: WorkspaceRow | undefined } | { ok: false; error: PreparedImportRunResult } {
+): { ok: true; workspace: WorkspaceRow | undefined } | { ok: false; error: PreparedImportFailureResult } {
   if (existingItem) return { ok: true, workspace: repos.getWorkspace(existingItem.workspace_id) }
   if (!workspaceKey) {
     return {
@@ -561,6 +682,43 @@ export async function resumeRunInProcess(
     onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
   },
 ): Promise<ResumeRunResult> {
+  const io = buildApiIo(repos)
+  const prepared = await prepareForegroundResumeRun(repos, io, {
+    runId: input.runId,
+    summary: input.summary,
+    branch: input.branch,
+    commit: input.commit,
+    reviewNotes: input.reviewNotes,
+    workerOwnerKind: "api",
+    workerInstanceId: input.apiWorkerInstanceId ?? API_WORKER_INSTANCE_ID,
+    workerLeaseClock: input.workerLeaseClock,
+    workerLeaseScheduler: input.workerLeaseScheduler,
+    onItemColumnChanged: input.onItemColumnChanged,
+  })
+  if (!prepared.ok) {
+    io.close?.()
+    return prepared
+  }
+  fireInBackground(io, "resumeRunInProcess", prepared.start)
+  return { ok: true, runId: prepared.runId, remediationId: prepared.remediationId }
+}
+
+export async function prepareForegroundResumeRun(
+  repos: Repos,
+  io: WorkflowIO & { bus?: EventBus },
+  input: {
+    runId: string
+    summary: string
+    branch?: string
+    commit?: string
+    reviewNotes?: string
+    workerOwnerKind?: "cli" | "api"
+    workerInstanceId?: string
+    workerLeaseClock?: () => number
+    workerLeaseScheduler?: WorkerLeaseScheduler
+    onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
+  },
+): Promise<PreparedForegroundResumeRunResult> {
   const summary = input.summary.trim()
   if (!summary) return { ok: false, status: 422, error: "remediation_required" }
 
@@ -606,21 +764,23 @@ export async function resumeRunInProcess(
     })
   }
 
-  const io = buildApiIo(repos)
-  fireInBackground(io, "resumeRunInProcess", () =>
-    performResume({
-      repos,
-      io,
-      runId: input.runId,
-      remediation,
-      workerOwnerKind: "api",
-      workerInstanceId: input.apiWorkerInstanceId ?? API_WORKER_INSTANCE_ID,
-      workerLeaseClock: input.workerLeaseClock,
-      workerLeaseScheduler: input.workerLeaseScheduler,
-      onItemColumnChanged: input.onItemColumnChanged,
-    }),
-  )
-  return { ok: true, runId: input.runId, remediationId: remediation.id }
+  return {
+    ok: true,
+    runId: input.runId,
+    remediationId: remediation.id,
+    start: () =>
+      performResume({
+        repos,
+        io,
+        runId: input.runId,
+        remediation,
+        workerOwnerKind: input.workerOwnerKind ?? "api",
+        workerInstanceId: input.workerInstanceId,
+        workerLeaseClock: input.workerLeaseClock,
+        workerLeaseScheduler: input.workerLeaseScheduler,
+        onItemColumnChanged: input.onItemColumnChanged,
+      }),
+  }
 }
 
 // Re-export the event type for convenience.
