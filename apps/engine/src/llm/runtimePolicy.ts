@@ -29,6 +29,11 @@ const TOOL_USING_STAGES = new Set([
 ])
 
 export function stageAuthoringPolicy(_policy: WorkspaceRuntimePolicy, stageId?: string): RuntimePolicy {
+  // QA must execute verification commands. A read-only/plan runtime can inspect
+  // artifacts, but it cannot reliably run tests that write temp files, coverage,
+  // or framework caches. The QA prompt still forbids code fixes; this policy is
+  // about allowing evidence collection.
+  if (stageId === "qa") return { mode: "safe-workspace-write" }
   if (stageId && TOOL_USING_STAGES.has(stageId)) return { mode: "safe-readonly" }
   return { mode: "no-tools" }
 }
