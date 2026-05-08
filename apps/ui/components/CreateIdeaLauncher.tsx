@@ -1,7 +1,7 @@
 "use client";
 
 import type { ComponentProps } from "react";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { postBoardLauncherMutation } from "@/lib/api";
 import type { BoardLauncherRenderContext } from "./Board";
 
@@ -187,6 +187,15 @@ function useCreateIdeaLauncherState(
   const [validationError, setValidationError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (selectedWorkspaceKey) return;
+
+    setIsOpen(false);
+    setIsSubmitting(false);
+    setValidationError(null);
+    setSubmitError(null);
+  }, [selectedWorkspaceKey]);
 
   function updateIdeaText(value: string) {
     setIdeaText(value);

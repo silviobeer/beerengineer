@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useId, useState } from "react";
+import { type FormEvent, useEffect, useId, useState } from "react";
 import { postBoardLauncherMutation } from "@/lib/api";
 import type { BoardLauncherRenderContext } from "./Board";
 
@@ -17,9 +17,17 @@ export function BoardImportLauncher({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (selectedWorkspaceKey) return;
+
+    setIsOpen(false);
+    setIsSubmitting(false);
+    setErrorMessage(null);
+  }, [selectedWorkspaceKey]);
+
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (isSubmitting) return;
+    if (isSubmitting || !selectedWorkspaceKey) return;
 
     const trimmedPath = path.trim();
     if (!trimmedPath) {
