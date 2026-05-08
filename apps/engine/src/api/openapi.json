@@ -2448,6 +2448,118 @@
         }
       }
     },
+    "/setup/telegram/webhook": {
+      "post": {
+        "tags": [
+          "Setup"
+        ],
+        "summary": "Register or update the Telegram webhook against the effective setup scope.",
+        "security": [
+          {
+            "csrfToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspaceKey",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Optional workspace key. When provided, resolves effective Telegram overrides for that workspace before calling Telegram."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Telegram webhook matches the configured callback URL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TelegramSetupActionResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Local validation failed, Telegram rejected the request, or the resulting provider state did not match the expected callback URL.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TelegramSetupActionResult"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Workspace key was provided but no matching workspace exists.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TelegramSetupActionResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/setup/telegram/verification": {
+      "post": {
+        "tags": [
+          "Setup"
+        ],
+        "summary": "Start a live Telegram verification round-trip for the effective setup scope.",
+        "security": [
+          {
+            "csrfToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspaceKey",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Optional workspace key. When provided, resolves effective Telegram overrides for that workspace before starting live verification."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Live verification was started and is now pending a matching Telegram reply.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TelegramSetupActionResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Baseline setup is not ready or Telegram rejected the outbound verification message.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TelegramSetupActionResult"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Workspace key was provided but no matching workspace exists.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TelegramSetupActionResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/setup/recheck": {
       "post": {
         "tags": [
@@ -4500,6 +4612,8 @@
         "required": [
           "scope",
           "readiness",
+          "baseline",
+          "liveVerification",
           "fields"
         ],
         "properties": {
@@ -4528,6 +4642,18 @@
               }
             }
           },
+          "baseline": {
+            "$ref": "#/components/schemas/TelegramBaselineView"
+          },
+          "liveVerification": {
+            "$ref": "#/components/schemas/TelegramLiveVerificationView"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/TelegramProviderWebhookState"
+          },
+          "providerCheckedAt": {
+            "type": "integer"
+          },
           "fields": {
             "type": "object",
             "required": [
@@ -4550,6 +4676,128 @@
                 "$ref": "#/components/schemas/TelegramInboundPublicWebhookFieldView"
               }
             }
+          }
+        }
+      },
+      "TelegramBaselineView": {
+        "type": "object",
+        "required": [
+          "state"
+        ],
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "not-run",
+              "ready",
+              "blocked"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "checkedAt": {
+            "type": "integer"
+          }
+        }
+      },
+      "TelegramLiveVerificationView": {
+        "type": "object",
+        "required": [
+          "state"
+        ],
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "not-run",
+              "pending",
+              "succeeded",
+              "failed",
+              "timed_out"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": "integer"
+          },
+          "completedAt": {
+            "type": "integer"
+          },
+          "deadlineAt": {
+            "type": "integer"
+          }
+        }
+      },
+      "TelegramProviderWebhookState": {
+        "type": "object",
+        "required": [
+          "pendingUpdateCount",
+          "hasCustomCertificate"
+        ],
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "pendingUpdateCount": {
+            "type": "integer"
+          },
+          "hasCustomCertificate": {
+            "type": "boolean"
+          },
+          "ipAddress": {
+            "type": "string"
+          },
+          "lastErrorDate": {
+            "type": "integer"
+          },
+          "lastErrorMessage": {
+            "type": "string"
+          },
+          "lastSynchronizationErrorDate": {
+            "type": "integer"
+          },
+          "maxConnections": {
+            "type": "integer"
+          },
+          "allowedUpdates": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "TelegramSetupActionResult": {
+        "type": "object",
+        "required": [
+          "ok",
+          "baseline",
+          "liveVerification"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "baseline": {
+            "$ref": "#/components/schemas/TelegramBaselineView"
+          },
+          "liveVerification": {
+            "$ref": "#/components/schemas/TelegramLiveVerificationView"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/TelegramProviderWebhookState"
+          },
+          "providerCheckedAt": {
+            "type": "integer"
           }
         }
       },

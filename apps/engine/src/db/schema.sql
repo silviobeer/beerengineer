@@ -208,6 +208,26 @@ CREATE INDEX IF NOT EXISTS notification_deliveries_channel_created_idx
 -- for pre-existing DBs. Keeping them there (not here) lets the migration run
 -- in the right order: columns first, then indexes that depend on them.
 
+CREATE TABLE IF NOT EXISTS telegram_setup_states (
+  scope_key TEXT PRIMARY KEY,
+  workspace_key TEXT,
+  expected_webhook_url TEXT,
+  baseline_status TEXT NOT NULL DEFAULT 'not-run',
+  baseline_message TEXT,
+  provider_state_json TEXT,
+  baseline_checked_at INTEGER,
+  verification_status TEXT NOT NULL DEFAULT 'not-run',
+  verification_message TEXT,
+  verification_started_at INTEGER,
+  verification_completed_at INTEGER,
+  verification_deadline_at INTEGER,
+  verification_delivery_key TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS telegram_setup_states_verification_delivery_idx
+  ON telegram_setup_states(verification_delivery_key);
+
 -- Durable audit trail for updater operations. The first shipped updater slice
 -- mainly uses this as a status/history foundation.
 CREATE TABLE IF NOT EXISTS update_attempts (

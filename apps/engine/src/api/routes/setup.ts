@@ -18,9 +18,11 @@ import { rotateSupabaseManagementToken, type SupabaseTokenRotationSurface } from
 import { patchSupabaseSettings } from "../../setup/supabaseSettings.js"
 import { readActiveSecretValue } from "../../setup/secretStore.js"
 import { SUPABASE_MANAGEMENT_TOKEN_SECRET_REF } from "../../setup/secretMetadata.js"
+import type { AppConfig } from "../../setup/types.js"
 import type { Repos } from "../../db/repositories.js"
 import { json, readJson } from "../http.js"
 import { resolveTelegramWorkspaceTarget } from "../../setup/telegramInboundStatus.js"
+import { registerTelegramWebhook, startTelegramLiveVerification } from "../../setup/telegramWebhookSetup.js"
 
 /**
  * BUG-PROJ4-QA-006: only IDs that consist solely of alphanumerics, dots,
@@ -53,6 +55,64 @@ export async function handleSetupConfig(repos: Repos, url: URL, res: ServerRespo
     return
   }
   json(res, 200, getAppConfigView({}, { repos, workspaceKey }))
+}
+
+export async function handleSetupTelegramWebhook(
+  repos: Repos,
+  appConfig: AppConfig,
+  url: URL,
+  res: ServerResponse,
+): Promise<void> {
+  const workspaceKey = url.searchParams.get("workspaceKey")?.trim() || undefined
+  const result = await registerTelegramWebhook({ repos, config: appConfig, workspaceKey })
+  if (!result.ok) {
+    json(res, result.status, {
+      ok: false,
+      error: result.error,
+      message: result.message,
+      baseline: result.baseline,
+      liveVerification: result.liveVerification,
+      provider: result.provider,
+      providerCheckedAt: result.providerCheckedAt,
+    })
+    return
+  }
+  json(res, 200, {
+    ok: true,
+    baseline: result.baseline,
+    liveVerification: result.liveVerification,
+    provider: result.provider,
+    providerCheckedAt: result.providerCheckedAt,
+  })
+}
+
+export async function handleSetupTelegramVerification(
+  repos: Repos,
+  appConfig: AppConfig,
+  url: URL,
+  res: ServerResponse,
+): Promise<void> {
+  const workspaceKey = url.searchParams.get("workspaceKey")?.trim() || undefined
+  const result = await startTelegramLiveVerification({ repos, config: appConfig, workspaceKey })
+  if (!result.ok) {
+    json(res, result.status, {
+      ok: false,
+      error: result.error,
+      message: result.message,
+      baseline: result.baseline,
+      liveVerification: result.liveVerification,
+      provider: result.provider,
+      providerCheckedAt: result.providerCheckedAt,
+    })
+    return
+  }
+  json(res, 200, {
+    ok: true,
+    baseline: result.baseline,
+    liveVerification: result.liveVerification,
+    provider: result.provider,
+    providerCheckedAt: result.providerCheckedAt,
+  })
 }
 
 export async function handleSetupConfigPatch(req: IncomingMessage, res: ServerResponse): Promise<void> {
