@@ -226,6 +226,39 @@ function workflowCapabilityFailureFixture(): WorkflowCapabilityBlockedResult | n
   }
 }
 
+function missingSupabaseCapabilityRequirements(workspace: WorkspaceRow, token: string | null): string[] {
+  const missing: string[] = []
+  if (!token) missing.push("management token")
+  if (!workspace.supabase_persistent_test_branch_ref?.trim()) missing.push("persistent test branch")
+  return missing
+}
+
+function configuredSupabaseCapabilityFailure(workspace: WorkspaceRow, token: string | null): WorkflowCapabilityBlockedResult | null {
+  const missing = missingSupabaseCapabilityRequirements(workspace, token)
+  if (missing.length === 0) return null
+  return buildWorkflowCapabilityBlockedResult({
+    status: 400,
+    reason: "incomplete_config",
+    message: `Supabase capability is configured but incomplete. Missing ${missing.join(" and ")}.`,
+  })
+}
+
+function defaultSupabaseAdapterFactory(
+  repos: Repos,
+  token: string,
+  providedFactory?: SupabaseAdapterFactory,
+): WorkflowCapabilityBag {
+  if (providedFactory) return { supabaseAdapterFactory: providedFactory }
+  return {
+    supabaseAdapterFactory: () => ({
+      adapter: createSupabaseAdapter({
+        repos,
+        client: new SupabaseManagementClient({ token }),
+      }),
+    }),
+  }
+}
+
 export function resolveWorkflowCapabilities(input: WorkflowCapabilityResolverInput): WorkflowCapabilityResolution {
   if (!input.workspace?.supabase_project_ref) {
     return { supabaseAdapterFactory: null }
@@ -234,30 +267,10 @@ export function resolveWorkflowCapabilities(input: WorkflowCapabilityResolverInp
   if (injectedFailure) return injectedFailure
 
   const token = readActiveSecretValue(SUPABASE_MANAGEMENT_TOKEN_SECRET_REF)
-  const missing: string[] = []
-  if (!token) missing.push("management token")
-  if (!input.workspace.supabase_persistent_test_branch_ref?.trim()) missing.push("persistent test branch")
-  if (missing.length > 0) {
-    return buildWorkflowCapabilityBlockedResult({
-      status: 400,
-      reason: "incomplete_config",
-      message: `Supabase capability is configured but incomplete. Missing ${missing.join(" and ")}.`,
-    })
-  }
-  const resolvedToken = token as string
+  const configuredFailure = configuredSupabaseCapabilityFailure(input.workspace, token)
+  if (configuredFailure) return configuredFailure
 
-  if (input.supabaseAdapterFactory) {
-    return { supabaseAdapterFactory: input.supabaseAdapterFactory }
-  }
-
-  return {
-    supabaseAdapterFactory: () => ({
-      adapter: createSupabaseAdapter({
-        repos: input.repos,
-        client: new SupabaseManagementClient({ token: resolvedToken }),
-      }),
-    }),
-  }
+  return defaultSupabaseAdapterFactory(input.repos, token as string, input.supabaseAdapterFactory)
 }
 
 // Test-only smoke hook: forces every reviewed runService entry surface to
