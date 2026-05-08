@@ -1,4 +1,4 @@
-import type { Repos, StageLogRow } from "../db/repositories.js"
+import type { PendingPromptRow, Repos, StageLogRow } from "../db/repositories.js"
 import { appendItemDecision } from "./itemDecisions.js"
 import { parsePromptActions, type PromptAction } from "./io.js"
 import { parseLogData } from "./jsonEnvelope.js"
@@ -15,6 +15,52 @@ export type UserMessageResult =
   | { ok: true; conversation: ConversationResponse; entryId: string }
   | { ok: false; code: "run_not_found" | "empty_message" }
 
+type AnsweredPromptRow = PendingPromptRow & { answered_at: number }
+
+function resolveAnswerTarget(
+  repos: Repos,
+  input: { runId: string; promptId?: string; answer: string; source: AnswerSource },
+): { ok: true; promptId: string; answeredPrompt: AnsweredPromptRow } | { ok: false; code: "prompt_not_open" | "prompt_mismatch" } {
+  const open = repos.getOpenPrompt(input.runId)
+  const requestedPrompt = input.promptId ? repos.getPendingPrompt(input.promptId) : undefined
+  const promptId = input.promptId ?? open?.id
+  if (!promptId) return { ok: false, code: "prompt_not_open" }
+  if (input.promptId && (requestedPrompt?.run_id !== input.runId || requestedPrompt.answered_at !== null)) {
+    return { ok: false, code: "prompt_not_open" }
+  }
+  if (input.promptId && open?.id !== input.promptId) {
+    return { ok: false, code: "prompt_mismatch" }
+  }
+
+  const answeredPrompt = repos.answerPendingPrompt(promptId, input.answer)
+  if (!answeredPrompt || answeredPrompt.answered_at === null) {
+    return { ok: false, code: "prompt_not_open" }
+  }
+
+  return { ok: true, promptId, answeredPrompt: answeredPrompt as AnsweredPromptRow }
+}
+
+function persistItemDecisionForAnswer(
+  repos: Repos,
+  input: { runId: string; promptId: string; answer: string; answeredPrompt: AnsweredPromptRow },
+): void {
+  const run = repos.getRun(input.runId)
+  const ctx = run ? resolveWorkflowContextForRun(repos, run) : null
+  if (!ctx) return
+
+  const stageKey = input.answeredPrompt.stage_run_id
+    ? repos.listStageRunsForRun(input.runId).find(sr => sr.id === input.answeredPrompt.stage_run_id)?.stage_key ?? null
+    : null
+  appendItemDecision(ctx, {
+    id: input.promptId,
+    stage: stageKey,
+    question: input.answeredPrompt.prompt,
+    answer: input.answer,
+    runId: input.runId,
+    answeredAt: new Date(input.answeredPrompt.answered_at).toISOString(),
+  })
+}
+
 /**
  * The one place that marks a pending prompt as answered. Every caller — the
  * HTTP `POST /runs/:id/answer` route, the CLI `chat answer` command, a future
@@ -29,21 +75,13 @@ export function recordAnswer(
   if (!answer) return { ok: false, code: "empty_answer" }
   if (!repos.getRun(input.runId)) return { ok: false, code: "run_not_found" }
 
-  const open = repos.getOpenPrompt(input.runId)
-  const promptId = input.promptId ?? open?.id
-  if (!promptId) return { ok: false, code: "prompt_not_open" }
-  if (input.promptId && open && open.id !== input.promptId) {
-    return { ok: false, code: "prompt_mismatch" }
-  }
-
-  const answered = repos.answerPendingPrompt(promptId, answer)
-  if (answered?.answered_at === null || !answered) {
-    return { ok: false, code: "prompt_not_open" }
-  }
+  const target = resolveAnswerTarget(repos, { ...input, answer })
+  if (!target.ok) return target
+  const { promptId, answeredPrompt } = target
 
   repos.appendLog({
     runId: input.runId,
-    stageRunId: answered.stage_run_id,
+    stageRunId: answeredPrompt.stage_run_id,
     eventType: "prompt_answered",
     message: answer,
     data: { promptId, source: input.source },
@@ -52,21 +90,7 @@ export function recordAnswer(
   // Persist the operator's decision at the workspace level so future runs of
   // the same item inherit it. Without this, every fresh run rediscovers the
   // same scope conflicts (e.g. "Cancel Run is out of scope") and re-asks.
-  const run = repos.getRun(input.runId)
-  const ctx = run ? resolveWorkflowContextForRun(repos, run) : null
-  if (ctx) {
-    const stageKey = answered.stage_run_id
-      ? repos.listStageRunsForRun(input.runId).find(sr => sr.id === answered.stage_run_id)?.stage_key ?? null
-      : null
-    appendItemDecision(ctx, {
-      id: promptId,
-      stage: stageKey,
-      question: answered.prompt,
-      answer,
-      runId: input.runId,
-      answeredAt: new Date(answered.answered_at).toISOString(),
-    })
-  }
+  persistItemDecisionForAnswer(repos, { runId: input.runId, promptId, answer, answeredPrompt })
 
   const conversation = buildConversation(repos, input.runId)
   if (!conversation) return { ok: false, code: "run_not_found" }
