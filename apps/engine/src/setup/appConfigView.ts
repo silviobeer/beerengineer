@@ -92,9 +92,10 @@ export function getAppConfigView(
   const workspace = currentWorkspaceView(deps.repos, deps.workspaceKey)
   const supabase = supabaseView(deps.repos)
   const telegramInbound = resolveTelegramInboundStatus(config, deps)
+  const setupState = resolveSetupState(configState.kind, config)
   if (!config) {
     return {
-      setupState: configState.kind === "missing" ? "uninitialized" : "partial",
+      setupState,
       configPath,
       configFile: fileStateView(configState),
       workspace,
@@ -104,48 +105,65 @@ export function getAppConfigView(
     }
   }
 
-  const telegram = config.notifications?.telegram
   return {
-    setupState: configState.kind === "missing" ? "uninitialized" : "complete",
+    setupState,
     configPath,
     configFile: fileStateView(configState),
     workspace,
     telegramInbound,
     supabase,
-    config: {
-      allowedRoots: [...config.allowedRoots],
-      enginePort: config.enginePort,
-      publicBaseUrl: config.publicBaseUrl,
-      gitIdentityDefault: config.gitIdentityDefault,
-      llm: {
-        provider: config.llm.provider,
-        model: config.llm.model,
-        defaultHarnessProfile: config.llm.defaultHarnessProfile,
-        defaultSonarOrganization: config.llm.defaultSonarOrganization,
-        apiKey: secretRef(config.llm.apiKeyRef),
+    config: configView(config),
+  }
+}
+
+function resolveSetupState(
+  configStateKind: ConfigFileState["kind"],
+  config: AppConfig | null,
+): AppConfigSetupState {
+  if (!config) return configStateKind === "missing" ? "uninitialized" : "partial"
+  return configStateKind === "missing" ? "uninitialized" : "complete"
+}
+
+function configView(config: AppConfig): AppConfigView["config"] {
+  return {
+    allowedRoots: [...config.allowedRoots],
+    enginePort: config.enginePort,
+    publicBaseUrl: config.publicBaseUrl,
+    gitIdentityDefault: config.gitIdentityDefault,
+    llm: {
+      provider: config.llm.provider,
+      model: config.llm.model,
+      defaultHarnessProfile: config.llm.defaultHarnessProfile,
+      defaultSonarOrganization: config.llm.defaultSonarOrganization,
+      apiKey: secretRef(config.llm.apiKeyRef),
+    },
+    vcs: {
+      github: {
+        enabled: config.vcs?.github?.enabled === true,
       },
-      vcs: {
-        github: {
-          enabled: config.vcs?.github?.enabled === true,
-        },
-      },
-      browser: {
-        enabled: config.browser?.enabled === true,
-      },
-      notifications: {
-        telegram: {
-          enabled: telegram?.enabled === true,
-          level: telegram?.level ?? 2,
-          defaultChatId: telegram?.defaultChatId,
-          botToken: telegram?.botTokenEnv ? secretRef(telegram.botTokenEnv) : undefined,
-          inbound: {
-            enabled: telegram?.inbound?.enabled === true,
-            webhookSecret: telegram?.inbound?.webhookSecretEnv
-              ? secretRef(telegram.inbound.webhookSecretEnv)
-              : undefined,
-          },
-        },
-      },
+    },
+    browser: {
+      enabled: config.browser?.enabled === true,
+    },
+    notifications: {
+      telegram: telegramConfigView(config.notifications?.telegram),
+    },
+  }
+}
+
+function telegramConfigView(
+  config: NonNullable<AppConfig["notifications"]>["telegram"] | undefined,
+): AppConfigView["config"]["notifications"]["telegram"] {
+  return {
+    enabled: config?.enabled === true,
+    level: config?.level ?? 2,
+    defaultChatId: config?.defaultChatId,
+    botToken: config?.botTokenEnv ? secretRef(config.botTokenEnv) : undefined,
+    inbound: {
+      enabled: config?.inbound?.enabled === true,
+      webhookSecret: config?.inbound?.webhookSecretEnv
+        ? secretRef(config.inbound.webhookSecretEnv)
+        : undefined,
     },
   }
 }
