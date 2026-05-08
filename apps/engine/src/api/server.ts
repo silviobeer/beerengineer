@@ -289,7 +289,7 @@ function topLevelRouteHandlers(context: RouteContext): Partial<Record<string, ()
     "POST /items/import-prepared": () => handleCreatePreparedImportItem(repos, context.req, context.res, payload => board.broadcastItemColumnChanged(payload)),
     "GET /board": () => handleGetBoard(db, context.url, context.res),
     "GET /setup/status": () => handleSetupStatus(context.url, context.res),
-    "GET /setup/config": () => handleSetupConfig(repos, context.res),
+    "GET /setup/config": () => handleSetupConfig(repos, context.url, context.res),
     "GET /setup/git-readiness": () => handleGitReadiness(repos, context.appConfig, context.url, context.res),
     "PATCH /setup/config": () => handleSetupConfigPatch(context.req, context.res),
     "POST /setup/git-identity": () => handleGitIdentitySave(context.req, context.res),

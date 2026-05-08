@@ -1,4 +1,5 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { readFileSync } from "node:fs"
 import { dirname } from "node:path"
 import { DEFAULT_WORKSPACE_RUNTIME_POLICY, defaultRuntimePolicyForHarnessProfile } from "../../types/workspace.js"
 import type {
@@ -10,6 +11,7 @@ import type {
   WorkspacePreflightReport,
   WorkspaceReviewPolicy,
   WorkspaceRuntimePolicy,
+  WorkspaceTelegramInboundConfig,
 } from "../../types/workspace.js"
 import {
   SONAR_DEFAULT_HOST,
@@ -101,6 +103,36 @@ function normalizePreviewConfig(raw: unknown): WorkspacePreviewConfig | undefine
   }
 }
 
+function normalizeWorkspaceTelegramConfig(raw: unknown): WorkspaceTelegramInboundConfig | undefined {
+  if (!raw || typeof raw !== "object") return undefined
+  const telegram = raw as Partial<WorkspaceTelegramInboundConfig>
+  const inbound = telegram.inbound && typeof telegram.inbound === "object"
+    ? telegram.inbound as NonNullable<WorkspaceTelegramInboundConfig["inbound"]>
+    : undefined
+
+  const normalized: WorkspaceTelegramInboundConfig = {}
+  if (typeof telegram.enabled === "boolean") normalized.enabled = telegram.enabled
+  if (typeof telegram.botTokenEnv === "string" && telegram.botTokenEnv.trim().length > 0) {
+    normalized.botTokenEnv = telegram.botTokenEnv.trim()
+  }
+  if (typeof telegram.defaultChatId === "string" && telegram.defaultChatId.trim().length > 0) {
+    normalized.defaultChatId = telegram.defaultChatId.trim()
+  }
+  if (typeof telegram.publicBaseUrl === "string" && telegram.publicBaseUrl.trim().length > 0) {
+    normalized.publicBaseUrl = telegram.publicBaseUrl.trim()
+  }
+  if (inbound) {
+    const normalizedInbound: NonNullable<WorkspaceTelegramInboundConfig["inbound"]> = {}
+    if (typeof inbound.enabled === "boolean") normalizedInbound.enabled = inbound.enabled
+    if (typeof inbound.webhookSecretEnv === "string" && inbound.webhookSecretEnv.trim().length > 0) {
+      normalizedInbound.webhookSecretEnv = inbound.webhookSecretEnv.trim()
+    }
+    if (Object.keys(normalizedInbound).length > 0) normalized.inbound = normalizedInbound
+  }
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined
+}
+
 function isValidHarnessProfile(raw: unknown): raw is HarnessProfile {
   if (!raw || typeof raw !== "object") return false
   const mode = (raw as { mode?: unknown }).mode
@@ -135,6 +167,7 @@ export function buildWorkspaceConfigFile(input: {
   runtimePolicy?: WorkspaceRuntimePolicy
   preview?: WorkspacePreviewConfig
   sonar: SonarConfig
+  telegram?: WorkspaceTelegramInboundConfig
   reviewPolicy?: WorkspaceReviewPolicy
   preflight?: WorkspacePreflightReport
   createdAt?: number
@@ -147,51 +180,67 @@ export function buildWorkspaceConfigFile(input: {
     runtimePolicy: input.runtimePolicy ?? defaultWorkspaceRuntimePolicyForHarnessProfile(input.harnessProfile),
     preview: input.preview,
     sonar: input.sonar,
+    telegram: input.telegram,
     reviewPolicy: input.reviewPolicy ?? normalizeReviewPolicy(undefined, input.sonar, input.key),
     preflight: input.preflight,
     createdAt: input.createdAt ?? Date.now(),
   }
 }
 
+function parseWorkspaceConfigFile(raw: {
+  schemaVersion?: number
+  key?: unknown
+  name?: unknown
+  harnessProfile?: unknown
+  runtimePolicy?: unknown
+  preview?: unknown
+  sonar?: unknown
+  telegram?: unknown
+  reviewPolicy?: unknown
+  preflight?: unknown
+  createdAt?: unknown
+}): WorkspaceConfigFile | null {
+  if ((raw.schemaVersion !== 1 && raw.schemaVersion !== WORKSPACE_SCHEMA_VERSION) || typeof raw.key !== "string" || typeof raw.name !== "string") {
+    return null
+  }
+  if (!isValidHarnessProfile(raw.harnessProfile)) return null
+  const runtimePolicy =
+    normalizeRuntimePolicy(raw.runtimePolicy) ?? defaultWorkspaceRuntimePolicyForHarnessProfile(raw.harnessProfile)
+  const preview = normalizePreviewConfig(raw.preview)
+  const sonar = normalizeSonarConfig(
+    raw.sonar && typeof raw.sonar === "object" ? (raw.sonar as SonarConfig) : undefined,
+    raw.key,
+  )
+  const reviewPolicy =
+    raw.reviewPolicy && typeof raw.reviewPolicy === "object" ? (raw.reviewPolicy as WorkspaceReviewPolicy) : undefined
+  return {
+    schemaVersion: WORKSPACE_SCHEMA_VERSION,
+    key: raw.key,
+    name: raw.name,
+    harnessProfile: raw.harnessProfile,
+    runtimePolicy,
+    preview,
+    sonar,
+    telegram: normalizeWorkspaceTelegramConfig(raw.telegram),
+    reviewPolicy: normalizeReviewPolicy(reviewPolicy, sonar, raw.key),
+    preflight: raw.preflight && typeof raw.preflight === "object" ? raw.preflight as WorkspacePreflightReport : undefined,
+    createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
+  }
+}
+
 export async function readWorkspaceConfig(root: string): Promise<WorkspaceConfigFile | null> {
   try {
-    const raw = JSON.parse(await readFile(workspaceConfigPath(root), "utf8")) as {
-      schemaVersion?: number
-      key?: unknown
-      name?: unknown
-      harnessProfile?: unknown
-      runtimePolicy?: unknown
-      preview?: unknown
-      sonar?: unknown
-      reviewPolicy?: unknown
-      preflight?: unknown
-      createdAt?: unknown
-    }
-    if ((raw.schemaVersion !== 1 && raw.schemaVersion !== WORKSPACE_SCHEMA_VERSION) || typeof raw.key !== "string" || typeof raw.name !== "string") {
-      return null
-    }
-    if (!isValidHarnessProfile(raw.harnessProfile)) return null
-    const runtimePolicy =
-      normalizeRuntimePolicy(raw.runtimePolicy) ?? defaultWorkspaceRuntimePolicyForHarnessProfile(raw.harnessProfile)
-    const preview = normalizePreviewConfig(raw.preview)
-    const sonar = normalizeSonarConfig(
-      raw.sonar && typeof raw.sonar === "object" ? (raw.sonar as SonarConfig) : undefined,
-      raw.key,
-    )
-    const reviewPolicy =
-      raw.reviewPolicy && typeof raw.reviewPolicy === "object" ? (raw.reviewPolicy as WorkspaceReviewPolicy) : undefined
-    return {
-      schemaVersion: WORKSPACE_SCHEMA_VERSION,
-      key: raw.key,
-      name: raw.name,
-      harnessProfile: raw.harnessProfile,
-      runtimePolicy,
-      preview,
-      sonar,
-      reviewPolicy: normalizeReviewPolicy(reviewPolicy, sonar, raw.key),
-      preflight: raw.preflight && typeof raw.preflight === "object" ? raw.preflight as WorkspacePreflightReport : undefined,
-      createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
-    }
+    const raw = JSON.parse(await readFile(workspaceConfigPath(root), "utf8")) as Parameters<typeof parseWorkspaceConfigFile>[0]
+    return parseWorkspaceConfigFile(raw)
+  } catch {
+    return null
+  }
+}
+
+export function readWorkspaceConfigSync(root: string): WorkspaceConfigFile | null {
+  try {
+    const raw = JSON.parse(readFileSync(workspaceConfigPath(root), "utf8")) as Parameters<typeof parseWorkspaceConfigFile>[0]
+    return parseWorkspaceConfigFile(raw)
   } catch {
     return null
   }

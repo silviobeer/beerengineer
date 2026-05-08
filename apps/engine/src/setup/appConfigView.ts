@@ -8,6 +8,7 @@ import { readActiveSecretValue } from "./secretStore.js"
 import type { Repos } from "../db/repositories.js"
 import { SUPABASE_MANAGEMENT_TOKEN_SECRET_REF, readSecretMetadata } from "./secretMetadata.js"
 import type { AppConfig, ConfigFileState, SetupOverrides } from "./types.js"
+import { resolveTelegramInboundStatus, type TelegramInboundStatusView } from "./telegramInboundStatus.js"
 
 export type SecretRefView = {
   ref: string
@@ -25,6 +26,7 @@ export type AppConfigView = {
     key: string
     name: string
   } | null
+  telegramInbound: TelegramInboundStatusView | null
   supabase: {
     workspaceId?: string
     projectRef?: string
@@ -79,19 +81,24 @@ export type AppConfigView = {
   }
 }
 
-export function getAppConfigView(overrides: SetupOverrides = {}, deps: { repos?: Repos } = {}): AppConfigView {
+export function getAppConfigView(
+  overrides: SetupOverrides = {},
+  deps: { repos?: Repos; workspaceKey?: string } = {},
+): AppConfigView {
   const resolved = resolveOverrides(overrides)
   const configPath = resolveConfigPath(resolved)
   const configState = readConfigFile(configPath)
   const config = resolveMergedConfig(configState, resolved)
-  const workspace = currentWorkspaceView(deps.repos)
+  const workspace = currentWorkspaceView(deps.repos, deps.workspaceKey)
   const supabase = supabaseView(deps.repos)
+  const telegramInbound = resolveTelegramInboundStatus(config, deps)
   if (!config) {
     return {
       setupState: configState.kind === "missing" ? "uninitialized" : "partial",
       configPath,
       configFile: fileStateView(configState),
       workspace,
+      telegramInbound,
       supabase,
       config: emptyConfigView(),
     }
@@ -103,6 +110,7 @@ export function getAppConfigView(overrides: SetupOverrides = {}, deps: { repos?:
     configPath,
     configFile: fileStateView(configState),
     workspace,
+    telegramInbound,
     supabase,
     config: {
       allowedRoots: [...config.allowedRoots],
@@ -168,13 +176,14 @@ function supabaseView(repos: Repos | undefined): AppConfigView["supabase"] {
   }
 }
 
-function currentWorkspaceView(repos: Repos | undefined): AppConfigView["workspace"] {
-  const workspace = currentWorkspaceRow(repos)
+function currentWorkspaceView(repos: Repos | undefined, workspaceKey?: string): AppConfigView["workspace"] {
+  const workspace = currentWorkspaceRow(repos, workspaceKey)
   if (!workspace) return null
   return { id: workspace.id, key: workspace.key, name: workspace.name }
 }
 
-function currentWorkspaceRow(repos: Repos | undefined) {
+function currentWorkspaceRow(repos: Repos | undefined, workspaceKey?: string) {
+  if (workspaceKey) return repos?.getWorkspaceByKey(workspaceKey)
   return repos?.listWorkspaces()
     .sort((a, b) => (b.last_opened_at ?? 0) - (a.last_opened_at ?? 0) || a.key.localeCompare(b.key))
     .at(0)

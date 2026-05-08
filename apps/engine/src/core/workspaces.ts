@@ -5,6 +5,7 @@ export {
   generateSonarMcpSnippet,
   generateSonarProjectUrl,
   readWorkspaceConfig,
+  readWorkspaceConfigSync,
   writeWorkspaceConfig,
 } from "./workspaces/configFile.js"
 export {
