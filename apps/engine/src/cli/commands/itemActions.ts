@@ -7,7 +7,7 @@ import { layout } from "../../core/workspaceLayout.js"
 import {
   checkWorkflowStartGitReadiness,
   checkWorkflowStartGitReadinessForWorkspace,
-  isWorkflowCapabilityOwnershipBlockedResult,
+  isWorkflowCapabilityBlockedResult,
   prepareForegroundItemRun,
   prepareForegroundPreparedImportRun,
   prepareForegroundResumeRun,
@@ -210,15 +210,15 @@ function printWorkflowGitBlocker(blocker: WorkflowStartGitBlockedResult, itemRef
   return 75
 }
 
-function printWorkflowCapabilityOwnershipBlocker(message: string): number {
-  console.error("\n  Workflow capability ownership blocked the requested action.")
+function printWorkflowCapabilityBlocker(message: string): number {
+  console.error("\n  Workflow capability blocked the requested action.")
   console.error(`  Reason: ${message}`)
   return 75
 }
 
 function printPreparedResumeFailure(result: FailedPreparedResumeRunResult): number {
-  if (isWorkflowCapabilityOwnershipBlockedResult(result)) {
-    return printWorkflowCapabilityOwnershipBlocker(result.message)
+  if (isWorkflowCapabilityBlockedResult(result)) {
+    return printWorkflowCapabilityBlocker(result.message)
   }
   if (result.error === "resume_in_progress" || result.error === "not_resumable") {
     console.error(`  Not resumable: ${result.error}`)
@@ -319,8 +319,8 @@ const handleStartBrainstorm: CliItemActionHandler = async ctx => {
       appConfig: ctx.appConfig,
     })
     if (!prepared.ok) {
-      if (isWorkflowCapabilityOwnershipBlockedResult(prepared)) {
-        return printWorkflowCapabilityOwnershipBlocker(prepared.message)
+      if (isWorkflowCapabilityBlockedResult(prepared)) {
+        return printWorkflowCapabilityBlocker(prepared.message)
       }
       console.error(`  ${prepared.error}`)
       return 1
@@ -354,8 +354,8 @@ const handleStartImplementationOrRerunDesignPrep: CliItemActionHandler = async c
       appConfig: ctx.appConfig,
     })
     if (!prepared.ok) {
-      if (isWorkflowCapabilityOwnershipBlockedResult(prepared)) {
-        return printWorkflowCapabilityOwnershipBlocker(prepared.message)
+      if (isWorkflowCapabilityBlockedResult(prepared)) {
+        return printWorkflowCapabilityBlocker(prepared.message)
       }
       console.error(`  ${prepared.error}`)
       return 1
@@ -389,8 +389,8 @@ const handleStartVisualCompanion: CliItemActionHandler = async ctx => {
       appConfig: ctx.appConfig,
     })
     if (!prepared.ok) {
-      if (isWorkflowCapabilityOwnershipBlockedResult(prepared)) {
-        return printWorkflowCapabilityOwnershipBlocker(prepared.message)
+      if (isWorkflowCapabilityBlockedResult(prepared)) {
+        return printWorkflowCapabilityBlocker(prepared.message)
       }
       console.error(`  ${prepared.error}`)
       return 1
@@ -424,8 +424,8 @@ const handleStartFrontendDesign: CliItemActionHandler = async ctx => {
       appConfig: ctx.appConfig,
     })
     if (!prepared.ok) {
-      if (isWorkflowCapabilityOwnershipBlockedResult(prepared)) {
-        return printWorkflowCapabilityOwnershipBlocker(prepared.message)
+      if (isWorkflowCapabilityBlockedResult(prepared)) {
+        return printWorkflowCapabilityBlocker(prepared.message)
       }
       console.error(`  ${prepared.error}`)
       return 1
@@ -584,8 +584,8 @@ function preparePreparedImportCliStart(
 }
 
 function reportPreparedImportFailure(prepared: FailedPreparedImportRunResult, item: ItemRow | undefined): number {
-  if (isWorkflowCapabilityOwnershipBlockedResult(prepared)) {
-    return printWorkflowCapabilityOwnershipBlocker(prepared.message)
+  if (isWorkflowCapabilityBlockedResult(prepared)) {
+    return printWorkflowCapabilityBlocker(prepared.message)
   }
   if ("code" in prepared && prepared.code === "workflow_git_blocked") {
     return printWorkflowGitBlocker(prepared, item?.code ?? item?.id ?? "new")

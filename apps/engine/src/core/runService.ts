@@ -15,8 +15,12 @@ import type { WorkflowIO } from "./io.js"
 import type { WorkflowResumeInput } from "../workflow.js"
 import { defaultAppConfig, readConfigFile, resolveConfigPath, resolveMergedConfig, resolveOverrides } from "../setup/config.js"
 import { readWorkspaceGitReadiness, type GitCommandOptions, type WorkspaceGitReadiness } from "../setup/gitIdentity.js"
+import { SUPABASE_MANAGEMENT_TOKEN_SECRET_REF } from "../setup/secretMetadata.js"
+import { readActiveSecretValue } from "../setup/secretStore.js"
 import type { AppConfig } from "../setup/types.js"
 import type { WorkerLeaseScheduler } from "./workerLease.js"
+import { createSupabaseAdapter } from "./supabase/adapter.js"
+import { SupabaseManagementClient } from "./supabase/managementClient.js"
 
 export type { SupabaseAdapterFactory } from "./runOrchestrator.js"
 
@@ -64,10 +68,22 @@ export type WorkflowCapabilityOwnershipBlockedResult = {
   message: string
 }
 
+export type WorkflowCapabilityBlockedReason = "incomplete_config" | "blocked_readiness" | "gate_blocked"
+
+export type WorkflowCapabilityBlockedResult = {
+  ok: false
+  status: 400 | 409 | 503
+  error: "workflow_capability_blocked"
+  code: "workflow_capability_blocked"
+  reason: WorkflowCapabilityBlockedReason
+  message: string
+}
+
 export type StartRunResult =
   | { ok: true; runId: string; itemId: string }
   | WorkflowStartGitBlockedResult
   | WorkflowCapabilityOwnershipBlockedResult
+  | WorkflowCapabilityBlockedResult
   | { ok: false; status: 404 | 409 | 422; error: string }
 
 type StartRunFailureResult = Exclude<StartRunResult, { ok: true; runId: string; itemId: string }>
@@ -76,22 +92,26 @@ export type PreparedForegroundRunResult =
   | { ok: true; runId: string; itemId: string; start: () => Promise<void> }
   | WorkflowStartGitBlockedResult
   | WorkflowCapabilityOwnershipBlockedResult
+  | WorkflowCapabilityBlockedResult
   | { ok: false; status: 404 | 409 | 422; error: string }
 
 export type ResumeRunResult =
   | { ok: true; runId: string; remediationId: string }
   | WorkflowCapabilityOwnershipBlockedResult
+  | WorkflowCapabilityBlockedResult
   | { ok: false; status: 404 | 409 | 422; error: string }
 
 export type PreparedForegroundResumeRunResult =
   | { ok: true; runId: string; remediationId: string; start: () => Promise<void> }
   | WorkflowCapabilityOwnershipBlockedResult
+  | WorkflowCapabilityBlockedResult
   | { ok: false; status: 404 | 409 | 422; error: string }
 
 export type PreparedImportRunResult =
   | { ok: true; runId: string; itemId: string; warnings: string[] }
   | WorkflowStartGitBlockedResult
   | WorkflowCapabilityOwnershipBlockedResult
+  | WorkflowCapabilityBlockedResult
   | { ok: false; status: 404 | 409 | 422; error: string }
 
 type PreparedImportFailureResult = Exclude<PreparedImportRunResult, { ok: true; runId: string; itemId: string; warnings: string[] }>
@@ -100,6 +120,7 @@ export type PreparedForegroundImportRunResult =
   | { ok: true; runId: string; itemId: string; warnings: string[]; start: () => Promise<void> }
   | WorkflowStartGitBlockedResult
   | WorkflowCapabilityOwnershipBlockedResult
+  | WorkflowCapabilityBlockedResult
   | { ok: false; status: 404 | 409 | 422; error: string }
 
 type WorkflowCapabilityBag = {
@@ -107,17 +128,149 @@ type WorkflowCapabilityBag = {
 }
 
 export type WorkflowCapabilityResolverInput = {
+  repos: Repos
   workspace: WorkspaceRow | undefined
   supabaseAdapterFactory?: SupabaseAdapterFactory
 }
 
-export type WorkflowCapabilityResolver = (input: WorkflowCapabilityResolverInput) => WorkflowCapabilityBag
+type WorkflowCapabilityResolution =
+  | WorkflowCapabilityBag
+  | WorkflowCapabilityOwnershipBlockedResult
+  | WorkflowCapabilityBlockedResult
 
-export function resolveWorkflowCapabilities(input: WorkflowCapabilityResolverInput): WorkflowCapabilityBag {
+export type WorkflowCapabilityResolver = (input: WorkflowCapabilityResolverInput) => WorkflowCapabilityResolution
+
+type WorkflowCapabilityFailureFixture = {
+  status?: number
+  reason?: unknown
+  message?: unknown
+  secrets?: unknown
+}
+
+function redactCapabilityMessage(value: string, secrets: string[] = []): string {
+  let redacted = value
+  for (const secret of secrets) {
+    if (secret) redacted = redacted.split(secret).join("[redacted]")
+  }
+  return redacted
+    .replaceAll(/\bsbp_[A-Za-z0-9_-]+\b/g, "sbp_[redacted]")
+    .replaceAll(/\bsb_service_role_[A-Za-z0-9._-]+\b/g, "sb_service_role_[redacted]")
+    .replaceAll(/\bsk-[A-Za-z0-9._-]+\b/g, "sk-[redacted]")
+    .replaceAll(/(?:[A-Za-z]:)?(?:[\\/][^\s"'`]+)+/g, "[redacted-path]")
+}
+
+function buildWorkflowCapabilityBlockedResult(input: {
+  status: 400 | 409 | 503
+  reason: WorkflowCapabilityBlockedReason
+  message: string
+  secrets?: string[]
+}): WorkflowCapabilityBlockedResult {
+  return {
+    ok: false,
+    status: input.status,
+    error: "workflow_capability_blocked",
+    code: "workflow_capability_blocked",
+    reason: input.reason,
+    message: redactCapabilityMessage(input.message, input.secrets),
+  }
+}
+
+function isWorkflowCapabilityBag(result: WorkflowCapabilityResolution): result is WorkflowCapabilityBag {
+  return "supabaseAdapterFactory" in result
+}
+
+function workflowCapabilityFailureStatus(reason: WorkflowCapabilityBlockedReason, status: number | undefined): 400 | 409 | 503 {
+  if (status === 400 || status === 409 || status === 503) return status
+  if (reason === "incomplete_config") return 400
+  if (reason === "gate_blocked") return 409
+  return 503
+}
+
+function workflowCapabilityFailureSecrets(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
+    : []
+}
+
+function workflowCapabilityFailureMessage(value: unknown): string {
+  return typeof value === "string" && value.trim()
+    ? value
+    : "Supabase capability is blocked."
+}
+
+function workflowCapabilityFailureFixture(): WorkflowCapabilityBlockedResult | null {
+  const raw = process.env.BEERENGINEER_TEST_WORKFLOW_CAPABILITY_FAILURE?.trim()
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as WorkflowCapabilityFailureFixture
+    const reason = parsed.reason
+    if (reason !== "incomplete_config" && reason !== "blocked_readiness" && reason !== "gate_blocked") {
+      return buildWorkflowCapabilityBlockedResult({
+        status: 503,
+        reason: "blocked_readiness",
+        message: "Supabase capability is blocked by an invalid test fixture.",
+      })
+    }
+    return buildWorkflowCapabilityBlockedResult({
+      status: workflowCapabilityFailureStatus(reason, parsed.status),
+      reason,
+      message: workflowCapabilityFailureMessage(parsed.message),
+      secrets: workflowCapabilityFailureSecrets(parsed.secrets),
+    })
+  } catch {
+    return buildWorkflowCapabilityBlockedResult({
+      status: 503,
+      reason: "blocked_readiness",
+      message: "Supabase capability is blocked by an unreadable test fixture.",
+    })
+  }
+}
+
+function missingSupabaseCapabilityRequirements(workspace: WorkspaceRow, token: string | null): string[] {
+  const missing: string[] = []
+  if (!token) missing.push("management token")
+  if (!workspace.supabase_persistent_test_branch_ref?.trim()) missing.push("persistent test branch")
+  return missing
+}
+
+function configuredSupabaseCapabilityFailure(workspace: WorkspaceRow, token: string | null): WorkflowCapabilityBlockedResult | null {
+  const missing = missingSupabaseCapabilityRequirements(workspace, token)
+  if (missing.length === 0) return null
+  return buildWorkflowCapabilityBlockedResult({
+    status: 400,
+    reason: "incomplete_config",
+    message: `Supabase capability is configured but incomplete. Missing ${missing.join(" and ")}.`,
+  })
+}
+
+function defaultSupabaseAdapterFactory(
+  repos: Repos,
+  token: string,
+  providedFactory?: SupabaseAdapterFactory,
+): WorkflowCapabilityBag {
+  if (providedFactory) return { supabaseAdapterFactory: providedFactory }
+  return {
+    supabaseAdapterFactory: () => ({
+      adapter: createSupabaseAdapter({
+        repos,
+        client: new SupabaseManagementClient({ token }),
+      }),
+    }),
+  }
+}
+
+export function resolveWorkflowCapabilities(input: WorkflowCapabilityResolverInput): WorkflowCapabilityResolution {
   if (!input.workspace?.supabase_project_ref) {
     return { supabaseAdapterFactory: null }
   }
-  return { supabaseAdapterFactory: input.supabaseAdapterFactory ?? null }
+  const injectedFailure = workflowCapabilityFailureFixture()
+  if (injectedFailure) return injectedFailure
+
+  const token = readActiveSecretValue(SUPABASE_MANAGEMENT_TOKEN_SECRET_REF)
+  const configuredFailure = configuredSupabaseCapabilityFailure(input.workspace, token)
+  if (configuredFailure) return configuredFailure
+
+  return defaultSupabaseAdapterFactory(input.repos, token as string, input.supabaseAdapterFactory)
 }
 
 // Test-only smoke hook: forces every reviewed runService entry surface to
@@ -273,10 +426,13 @@ export function prepareForegroundIdeaRun(
   const meta = resolveWorkspaceMeta(repos, input.workspaceKey)
   if ("error" in meta) return { ok: false, status: 404, error: "unknown_workspace" }
   const workspace = input.workspaceKey ? repos.getWorkspaceByKey(input.workspaceKey) : undefined
-  const capabilities = (input.capabilityResolver ?? resolveWorkflowCapabilities)({
+  const capabilitiesResult = (input.capabilityResolver ?? resolveWorkflowCapabilities)({
+    repos,
     workspace,
     supabaseAdapterFactory: input.supabaseAdapterFactory,
   })
+  if (!isWorkflowCapabilityBag(capabilitiesResult)) return capabilitiesResult
+  const capabilities = capabilitiesResult
   const blocker = workflowCapabilityOwnershipBlocker()
   if (blocker) return blocker
 
@@ -321,6 +477,12 @@ export function isWorkflowStartGitBlockedResult(result: StartRunResult | Prepare
 export function isWorkflowCapabilityOwnershipBlockedResult(
   result: StartRunResult | ResumeRunResult | PreparedImportRunResult | PreparedForegroundRunResult | PreparedForegroundResumeRunResult | PreparedForegroundImportRunResult,
 ): result is WorkflowCapabilityOwnershipBlockedResult {
+  return !result.ok && "code" in result && result.code === "workflow_capability_blocked" && !("reason" in result)
+}
+
+export function isWorkflowCapabilityBlockedResult(
+  result: StartRunResult | ResumeRunResult | PreparedImportRunResult | PreparedForegroundRunResult | PreparedForegroundResumeRunResult | PreparedForegroundImportRunResult,
+): result is WorkflowCapabilityOwnershipBlockedResult | WorkflowCapabilityBlockedResult {
   return !result.ok && "code" in result && result.code === "workflow_capability_blocked"
 }
 
@@ -520,10 +682,13 @@ export function prepareForegroundItemRun(
   const item = repos.getItem(input.itemId)
   if (!item) return { ok: false, status: 404, error: "item_not_found" }
   const workspace = repos.getWorkspace(item.workspace_id)
-  const capabilities = (input.capabilityResolver ?? resolveWorkflowCapabilities)({
+  const capabilitiesResult = (input.capabilityResolver ?? resolveWorkflowCapabilities)({
+    repos,
     workspace,
     supabaseAdapterFactory: input.supabaseAdapterFactory,
   })
+  if (!isWorkflowCapabilityBag(capabilitiesResult)) return capabilitiesResult
+  const capabilities = capabilitiesResult
 
   const preparedAction = prepareStartRunAction(repos, item, input.action)
   if (preparedAction.error) return preparedAction.error
@@ -640,10 +805,13 @@ export async function prepareForegroundPreparedImportRun(
   const workspaceResult = resolvePreparedImportWorkspace(repos, existingItem, input.workspaceKey)
   if (!workspaceResult.ok) return workspaceResult.error
   const workspace = workspaceResult.workspace
-  const capabilities = (input.capabilityResolver ?? resolveWorkflowCapabilities)({
+  const capabilitiesResult = (input.capabilityResolver ?? resolveWorkflowCapabilities)({
+    repos,
     workspace,
     supabaseAdapterFactory: input.supabaseAdapterFactory,
   })
+  if (!isWorkflowCapabilityBag(capabilitiesResult)) return capabilitiesResult
+  const capabilities = capabilitiesResult
 
   const gitGate = checkWorkflowStartGitReadinessForWorkspace(
     workspace,
@@ -823,10 +991,13 @@ export async function prepareForegroundResumeRun(
     return { ok: false, status: 409, error: readiness.reason }
   }
   const workspace = repos.getWorkspace(readiness.run.workspace_id)
-  const capabilities = (input.capabilityResolver ?? resolveWorkflowCapabilities)({
+  const capabilitiesResult = (input.capabilityResolver ?? resolveWorkflowCapabilities)({
+    repos,
     workspace,
     supabaseAdapterFactory: input.supabaseAdapterFactory,
   })
+  if (!isWorkflowCapabilityBag(capabilitiesResult)) return capabilitiesResult
+  const capabilities = capabilitiesResult
   const blocker = workflowCapabilityOwnershipBlocker()
   if (blocker) return blocker
 

@@ -54,10 +54,14 @@ interface BoardCardActionsProps {
 }
 
 function parseActionError(body: unknown): string {
-  const candidate = body as { message?: unknown };
-  return typeof candidate.message === "string" && candidate.message.trim()
-    ? candidate.message
-    : ACTION_ERROR_FALLBACK;
+  const candidate = body as { message?: unknown; error?: unknown };
+  const message = typeof candidate.message === "string" ? candidate.message.trim() : "";
+  if (message) return message;
+
+  const error = typeof candidate.error === "string" ? candidate.error.trim() : "";
+  if (error && /[^a-z0-9_]/i.test(error)) return error;
+
+  return ACTION_ERROR_FALLBACK;
 }
 
 function parseWorkflowGitBlocker(body: unknown, status: number): WorkflowGitBlockedActionResult | null {
