@@ -6,7 +6,8 @@ import { join } from "node:path"
 
 import { initDatabase } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
-import { markOrphanedRunsFailed } from "../src/core/orphanRecovery.js"
+import { recoverLostWorkerRuns, markOrphanedRunsFailed } from "../src/core/orphanRecovery.js"
+import { claimWorkerLease } from "../src/core/workerLease.js"
 
 function tmpDb() {
   const dir = mkdtempSync(join(tmpdir(), "be2-orphan-"))
@@ -92,4 +93,32 @@ test("markOrphanedRunsFailed — multiple orphaned runs are all recovered", asyn
     assert.equal(updated?.recovery_status, "failed")
     assert.equal(updated?.recovery_scope, "run")
   }
+})
+
+test("recoverLostWorkerRuns treats worker_owner_kind as authoritative after API resume of a CLI run", async () => {
+  const db = tmpDb()
+  const repos = new Repos(db)
+  const ws = repos.upsertWorkspace({ key: "test", name: "Test" })
+  const item = repos.createItem({ workspaceId: ws.id, title: "Resumed CLI item", description: "d" })
+
+  const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "Resumed CLI item", owner: "cli" })
+  repos.updateRun(run.id, { current_stage: "execution" })
+  claimWorkerLease(repos, {
+    runId: run.id,
+    workerInstanceId: "api-old",
+    workerOwnerKind: "api",
+    now: 1_700_000_000_000,
+  })
+  db.prepare("UPDATE runs SET owner = 'cli' WHERE id = ?").run(run.id)
+
+  const result = await recoverLostWorkerRuns(repos, {
+    apiWorkerInstanceId: "api-current",
+    now: 1_700_000_030_000,
+  })
+
+  assert.equal(result.recovered, 1)
+  const recovered = repos.getRun(run.id)
+  assert.equal(recovered?.status, "failed")
+  assert.equal(recovered?.recovery_scope, "run")
+  assert.ok(recovered?.recovery_summary?.includes("API restart"), "actual API lease owner should get API recovery")
 })

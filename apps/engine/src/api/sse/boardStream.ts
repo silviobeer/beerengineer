@@ -48,7 +48,8 @@ export function createBoardStream(repos: Repos, db: Db): BoardStream {
       if (client.workspaceId && workspaceId && client.workspaceId !== workspaceId) continue
       if (level !== undefined && level < client.level) continue
       try {
-        writeSse(client.res, event, data)
+        if (writeSse(client.res, event, data)) continue
+        clients.delete(client)
       } catch {
         clients.delete(client)
       }
@@ -76,7 +77,7 @@ export function createBoardStream(repos: Repos, db: Db): BoardStream {
         "cache-control": "no-cache",
         connection: "keep-alive",
       })
-      res.write(`event: hello\ndata: ${JSON.stringify({ at: Date.now(), workspace: workspaceKey })}\n\n`)
+      writeSse(res, "hello", { at: Date.now(), workspace: workspaceKey })
 
       const client: BoardSseClient = { res, id: Math.random().toString(36).slice(2), workspaceId, level }
       clients.add(client)

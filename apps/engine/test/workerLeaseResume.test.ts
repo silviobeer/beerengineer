@@ -27,7 +27,7 @@ function fixture() {
   }
 }
 
-test("lost-worker resume reuses the same run row, claims a fresh lease, and re-enters running projection", () => {
+test("lost-worker resume reuses the same run row, claims a fresh lease, updates owner, and re-enters running projection", () => {
   const { repos, ws, item, close } = fixture()
   try {
     const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "api" })
@@ -88,6 +88,7 @@ test("lost-worker resume reuses the same run row, claims a fresh lease, and re-e
     const runs = repos.listRunsForItem(item.id)
     assert.equal(runs.length, 1)
     assert.equal(runs[0]?.id, run.id)
+    assert.equal(runs[0]?.owner, "api")
     assert.equal(runs[0]?.worker_instance_id, "api-new")
     assert.equal(runs[0]?.worker_heartbeat_at, 1_700_000_100_000)
     assert.equal(runs[0]?.recovery_status, null)

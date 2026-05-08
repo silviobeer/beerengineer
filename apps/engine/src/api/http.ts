@@ -68,8 +68,13 @@ export function requireCsrfToken(req: IncomingMessage, token: string): boolean {
   return typeof value === "string" && value === token
 }
 
-export function writeSse(res: ServerResponse, event: string, data: unknown): void {
-  res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+export function writeSse(res: ServerResponse, event: string, data: unknown): boolean {
+  if (res.destroyed || res.writableEnded) return false
+  try {
+    return res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+  } catch {
+    return false
+  }
 }
 
 export { parseLogData } from "../core/jsonEnvelope.js"

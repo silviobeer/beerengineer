@@ -557,12 +557,14 @@ export class Repos {
     const heartbeatAt = input.heartbeatAt ?? input.startedAt
     this.run(
       `UPDATE runs
-       SET worker_instance_id = ?,
+       SET owner = ?,
+           worker_instance_id = ?,
            worker_owner_kind = ?,
            worker_started_at = ?,
            worker_heartbeat_at = ?,
            updated_at = ?
        WHERE id = ?`,
+      input.workerOwnerKind,
       input.workerInstanceId,
       input.workerOwnerKind,
       input.startedAt,

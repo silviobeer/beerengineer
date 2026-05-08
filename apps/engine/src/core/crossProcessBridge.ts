@@ -32,12 +32,16 @@ export function attachCrossProcessBridge(
 
   const interval = opts.intervalMs ?? LOG_TAIL_INTERVAL_MS
   const timer = setInterval(() => {
-    const rows = repos.listLogsForRun(runId, cursor)
-    for (const row of rows) {
-      cursor = Math.max(cursor, row.created_at + 1)
-      if (opts.writtenLogIds.has(row.id)) continue
-      const event = rehydrate(row)
-      if (event) bus.emit(event)
+    try {
+      const rows = repos.listLogsForRun(runId, cursor)
+      for (const row of rows) {
+        cursor = Math.max(cursor, row.created_at + 1)
+        if (opts.writtenLogIds.has(row.id)) continue
+        const event = rehydrate(row)
+        if (event) bus.emit(event)
+      }
+    } catch (err) {
+      console.error("[crossProcessBridge] poll error:", (err as Error).message)
     }
   }, interval)
   // Deliberately **not** `unref()`-ing: the bridge holds the CLI's event

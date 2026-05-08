@@ -146,6 +146,27 @@ function silenceEpipe(stream: NodeJS.WriteStream): void {
   })
 }
 
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
+
+function isProcessExitSentinel(err: unknown): boolean {
+  return err instanceof Error && /^EXIT:\d+$/.test(err.message)
+}
+
+function commandWantsJson(cmd: Command): boolean {
+  return "json" in cmd && cmd.json === true
+}
+
+function printCommandError(cmd: Command, err: unknown): void {
+  const message = errorMessage(err)
+  if (commandWantsJson(cmd)) {
+    process.stderr.write(`${JSON.stringify({ type: "cli_error", message })}\n`)
+    return
+  }
+  console.error("\n  FEHLER:", message)
+}
+
 export async function main(argv = process.argv.slice(2)): Promise<void> {
   silenceEpipe(process.stdout)
   silenceEpipe(process.stderr)
@@ -165,9 +186,9 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       await runInteractiveWorkflow({ json: cmd.json, workspaceKey: cmd.workspaceKey })
     } catch (err) {
       if (cmd.json) {
-        process.stderr.write(`${JSON.stringify({ type: "cli_error", message: (err as Error).message })}\n`)
+        process.stderr.write(`${JSON.stringify({ type: "cli_error", message: errorMessage(err) })}\n`)
       } else {
-        console.error("\n  FEHLER:", (err as Error).message)
+        console.error("\n  FEHLER:", errorMessage(err))
       }
       process.exit(1)
     }
@@ -179,11 +200,20 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     console.error(`  No handler registered for command kind: ${cmd.kind}`)
     process.exit(1)
   }
-  process.exit(await (handler as (c: Command) => Promise<number>)(cmd))
+  try {
+    process.exit(await (handler as (c: Command) => Promise<number>)(cmd))
+  } catch (err) {
+    if (isProcessExitSentinel(err)) throw err
+    printCommandError(cmd, err)
+    process.exit(1)
+  }
 }
 
 const isEntrypoint = process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(process.argv[1])
 
 if (isEntrypoint) {
-  await main()
+  await main().catch(err => {
+    console.error("\n  FEHLER:", errorMessage(err))
+    process.exit(1)
+  })
 }

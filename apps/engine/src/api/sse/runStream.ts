@@ -18,7 +18,7 @@ export function handleRunEvents(repos: Repos, req: IncomingMessage, res: ServerR
     "cache-control": "no-cache",
     connection: "keep-alive",
   })
-  res.write(`event: hello\ndata: ${JSON.stringify({ runId, at: Date.now() })}\n\n`)
+  writeSse(res, "hello", { runId, at: Date.now() })
 
   let closed = false
   // Bounded ring: `tailStageLogs` already advances a rowid cursor, so this
@@ -50,7 +50,10 @@ export function handleRunEvents(repos: Repos, req: IncomingMessage, res: ServerR
       return
     }
     markSeen(row.id)
-    writeSse(res, entry.type, entry)
+    if (!writeSse(res, entry.type, entry)) {
+      close()
+      return
+    }
     if (entry.type === "run_finished" || entry.type === "run_failed" || entry.type === "run_blocked") close()
   })
 

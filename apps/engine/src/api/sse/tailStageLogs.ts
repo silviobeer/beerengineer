@@ -41,8 +41,16 @@ export function tailStageLogs(
         ? repos.listLogsForRunAfterCursor(opts.scope.runId, cursor)
         : repos.listLogsForWorkspaceAfterCursor(opts.scope.workspaceId, cursor)
     for (const row of rows) {
+      if (stopped) break
       cursor = row.log_rowid
-      onRow(row)
+      try {
+        onRow(row)
+      } catch (err) {
+        console.error("[tailStageLogs] onRow error:", (err as Error).message)
+        stopped = true
+        clearInterval(timer)
+        break
+      }
     }
   }
 

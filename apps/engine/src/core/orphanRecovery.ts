@@ -70,7 +70,8 @@ function shouldRecoverLostWorker(
   input: { apiWorkerInstanceId: string; now: number },
 ): boolean {
   if (run.status !== "running") return false
-  if (run.owner === "api") {
+  const owner = run.worker_owner_kind ?? run.owner
+  if (owner === "api") {
     return run.worker_instance_id !== input.apiWorkerInstanceId
   }
   const heartbeatAt = run.worker_heartbeat_at
@@ -78,7 +79,8 @@ function shouldRecoverLostWorker(
 }
 
 function recoverySummary(run: RunRow): string {
-  if (run.owner === "api") return RECOVERY_SUMMARY
+  const owner = run.worker_owner_kind ?? run.owner
+  if (owner === "api") return RECOVERY_SUMMARY
   return "CLI worker heartbeat is stale — no live worker; resume or abandon."
 }
 

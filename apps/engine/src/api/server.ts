@@ -477,31 +477,42 @@ async function handleSupabaseActionRoutes(context: RouteContext): Promise<boolea
   return handleRouteMatchers(context, supabaseActionRouteMatchers(context))
 }
 
-const server = createServer(async (req: ApiRequest, res) => {
-  if (!req.url || !req.method) return json(res, 400, { error: "bad request" })
-  setCors(res, req, ALLOWED_ORIGIN)
-  if (req.method === "OPTIONS") {
-    res.writeHead(204)
-    res.end()
+function writeUnhandledRouteError(res: ServerResponse, err: unknown): void {
+  if (err instanceof RequestBodyTooLargeError) {
+    if (!res.headersSent) json(res, err.statusCode, { error: "request_body_too_large" })
+    else res.destroy()
     return
   }
+  console.error("[api]", err)
+  if (!res.headersSent) json(res, 500, { error: "internal_server_error" })
+  else res.destroy()
+}
 
-  const url = new URL(req.url, `http://${HOST}:${PORT}`)
-  const path = url.pathname
-  const appConfig = loadEffectiveConfig()
-  attachRouteContext(req, appConfig)
-  const context: RouteContext = { req, res, url, path, appConfig }
-
-  // Inbound webhooks authenticate via a channel-specific secret header
-  // (Telegram sends `x-telegram-bot-api-secret-token`), not the engine's
-  // CSRF token. Route them before the CSRF gate.
-  if (await handlePreCsrfRoutes(context)) return
-
-  if (!requireCsrfToken(req, API_TOKEN)) {
-    return json(res, 403, { error: "csrf_token_required" })
-  }
-
+const server = createServer(async (req: ApiRequest, res) => {
   try {
+    if (!req.url || !req.method) return json(res, 400, { error: "bad request" })
+    setCors(res, req, ALLOWED_ORIGIN)
+    if (req.method === "OPTIONS") {
+      res.writeHead(204)
+      res.end()
+      return
+    }
+
+    const url = new URL(req.url, `http://${HOST}:${PORT}`)
+    const path = url.pathname
+    const appConfig = loadEffectiveConfig()
+    attachRouteContext(req, appConfig)
+    const context: RouteContext = { req, res, url, path, appConfig }
+
+    // Inbound webhooks authenticate via a channel-specific secret header
+    // (Telegram sends `x-telegram-bot-api-secret-token`), not the engine's
+    // CSRF token. Route them before the CSRF gate.
+    if (await handlePreCsrfRoutes(context)) return
+
+    if (!requireCsrfToken(req, API_TOKEN)) {
+      return json(res, 403, { error: "csrf_token_required" })
+    }
+
     if (await handleTopLevelRoutes(context)) return
     if (await handleSetupRoutes(context)) return
     if (await handleNotificationRoutes(context)) return
@@ -512,11 +523,7 @@ const server = createServer(async (req: ApiRequest, res) => {
 
     json(res, 404, { error: "not found" })
   } catch (err) {
-    if (err instanceof RequestBodyTooLargeError) {
-      return json(res, err.statusCode, { error: "request_body_too_large" })
-    }
-    console.error("[api]", err)
-    json(res, 500, { error: "internal_server_error" })
+    writeUnhandledRouteError(res, err)
   }
 })
 
@@ -559,6 +566,13 @@ async function gracefulShutdown(reason: string): Promise<void> {
 
 process.on("SIGTERM", () => void gracefulShutdown("sigterm"))
 process.on("SIGINT", () => void gracefulShutdown("sigint"))
+process.on("unhandledRejection", reason => {
+  console.error("[engine] unhandled rejection:", reason)
+})
+process.on("uncaughtException", err => {
+  console.error("[engine] uncaught exception:", err)
+  void gracefulShutdown("uncaughtException")
+})
 
 server.listen(PORT, HOST, () => {
   console.log(`beerengineer_ engine listening on http://${HOST}:${PORT}`)
