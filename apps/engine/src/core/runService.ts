@@ -179,6 +179,25 @@ function isWorkflowCapabilityBag(result: WorkflowCapabilityResolution): result i
   return "supabaseAdapterFactory" in result
 }
 
+function workflowCapabilityFailureStatus(reason: WorkflowCapabilityBlockedReason, status: number | undefined): 400 | 409 | 503 {
+  if (status === 400 || status === 409 || status === 503) return status
+  if (reason === "incomplete_config") return 400
+  if (reason === "gate_blocked") return 409
+  return 503
+}
+
+function workflowCapabilityFailureSecrets(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
+    : []
+}
+
+function workflowCapabilityFailureMessage(value: unknown): string {
+  return typeof value === "string" && value.trim()
+    ? value
+    : "Supabase capability is blocked."
+}
+
 function workflowCapabilityFailureFixture(): WorkflowCapabilityBlockedResult | null {
   const raw = process.env.BEERENGINEER_TEST_WORKFLOW_CAPABILITY_FAILURE?.trim()
   if (!raw) return null
@@ -192,23 +211,11 @@ function workflowCapabilityFailureFixture(): WorkflowCapabilityBlockedResult | n
         message: "Supabase capability is blocked by an invalid test fixture.",
       })
     }
-    const status = parsed.status === 400 || parsed.status === 409 || parsed.status === 503
-      ? parsed.status
-      : reason === "incomplete_config"
-        ? 400
-        : reason === "gate_blocked"
-          ? 409
-          : 503
-    const secrets = Array.isArray(parsed.secrets)
-      ? parsed.secrets.filter((value): value is string => typeof value === "string" && value.length > 0)
-      : []
     return buildWorkflowCapabilityBlockedResult({
-      status,
+      status: workflowCapabilityFailureStatus(reason, parsed.status),
       reason,
-      message: typeof parsed.message === "string" && parsed.message.trim()
-        ? parsed.message
-        : "Supabase capability is blocked.",
-      secrets,
+      message: workflowCapabilityFailureMessage(parsed.message),
+      secrets: workflowCapabilityFailureSecrets(parsed.secrets),
     })
   } catch {
     return buildWorkflowCapabilityBlockedResult({

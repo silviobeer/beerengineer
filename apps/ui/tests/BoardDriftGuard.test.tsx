@@ -190,6 +190,27 @@ describe("BoardCardActions rejection messaging", () => {
     expect(screen.getByTestId("board-card-action-error")).not.toHaveTextContent("raw engine detail");
   });
 
+  it("uses a human-readable error field when no message is present", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      Response.json(
+        {
+          error: "Promotion is blocked by workspace policy.",
+          details: "raw engine detail",
+        },
+        { status: 409 },
+      )) as unknown as typeof fetch;
+
+    renderActions(actionCard);
+    fireEvent.click(screen.getByRole("button", { name: "Promote to base" }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("board-card-action-error")).toHaveTextContent(
+        "Promotion is blocked by workspace policy.",
+      ),
+    );
+    expect(screen.getByTestId("board-card-action-error")).not.toHaveTextContent("raw engine detail");
+  });
+
   it("keeps service-role keys and secret file paths out of the visible browser error", async () => {
     globalThis.fetch = vi.fn(async () =>
       Response.json(
