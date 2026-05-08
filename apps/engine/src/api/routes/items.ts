@@ -7,7 +7,7 @@ import { resolveItemPreviewContext } from "../../core/itemPreview.js"
 import { ITEM_ACTIONS, isItemAction, lookupTransition, type ItemActionsService } from "../../core/itemActions.js"
 import { latestRunForItemWithStageArtifact } from "../../core/itemWorkspace.js"
 import {
-  isWorkflowCapabilityOwnershipBlockedResult,
+  isWorkflowCapabilityBlockedResult,
   isWorkflowStartGitBlockedResult,
   resumeRunInProcess,
   startPreparedImportForItem,
@@ -116,8 +116,8 @@ export async function handleCreatePreparedImportItem(
       respondWorkflowGitBlocker(res, result, "import_prepared")
       return
     }
-    json(res, result.status, isWorkflowCapabilityOwnershipBlockedResult(result)
-      ? { error: result.error, code: result.code, message: result.message, action: "import_prepared" }
+    json(res, result.status, isWorkflowCapabilityBlockedResult(result)
+      ? { error: result.error, code: result.code, message: result.message, reason: "reason" in result ? result.reason : undefined, action: "import_prepared" }
       : { error: result.error, action: "import_prepared" })
     return
   }
@@ -166,8 +166,8 @@ async function handlePreparedImportAction(
       respondWorkflowGitBlocker(res, result, "import_prepared")
       return
     }
-    json(res, result.status, isWorkflowCapabilityOwnershipBlockedResult(result)
-      ? { error: result.error, code: result.code, message: result.message, action: "import_prepared" }
+    json(res, result.status, isWorkflowCapabilityBlockedResult(result)
+      ? { error: result.error, code: result.code, message: result.message, reason: "reason" in result ? result.reason : undefined, action: "import_prepared" }
       : { error: result.error, action: "import_prepared" })
     return
   }
@@ -240,8 +240,8 @@ function handleStartRunItemAction(
       respondWorkflowGitBlocker(res, result, action)
       return
     }
-    json(res, result.status, isWorkflowCapabilityOwnershipBlockedResult(result)
-      ? { error: result.error, code: result.code, message: result.message, action }
+    json(res, result.status, isWorkflowCapabilityBlockedResult(result)
+      ? { error: result.error, code: result.code, message: result.message, reason: "reason" in result ? result.reason : undefined, action }
       : { error: result.error, action })
     return
   }
@@ -269,8 +269,8 @@ async function maybeResumeItemActionRun(
     reviewNotes: result.reviewNotes,
   })
   if (!resumed.ok) {
-    json(res, resumed.status, isWorkflowCapabilityOwnershipBlockedResult(resumed)
-      ? { error: resumed.error, code: resumed.code, message: resumed.message }
+    json(res, resumed.status, isWorkflowCapabilityBlockedResult(resumed)
+      ? { error: resumed.error, code: resumed.code, message: resumed.message, reason: "reason" in resumed ? resumed.reason : undefined }
       : { error: resumed.error, code: resumed.error })
     return true
   }

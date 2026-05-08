@@ -10,7 +10,7 @@ import { buildConversation, recordAnswer, recordUserMessage } from "../../core/c
 import { MESSAGES_ENDPOINT_MAX_SCAN } from "../../core/constants.js"
 import { messagingLevelFromQuery, shouldDeliverAtLevel } from "../../core/messagingLevel.js"
 import { projectStageLogRow } from "../../core/messagingProjection.js"
-import { isWorkflowCapabilityOwnershipBlockedResult, resumeRunInProcess, startRunFromIdea } from "../../core/runService.js"
+import { isWorkflowCapabilityBlockedResult, resumeRunInProcess, startRunFromIdea } from "../../core/runService.js"
 import { json, readJson } from "../http.js"
 import { layout } from "../../core/workspaceLayout.js"
 import { resolveWorkflowContextForRun } from "../../core/workflowContextResolver.js"
@@ -254,8 +254,8 @@ export async function handleResumeRun(
     onItemColumnChanged,
   })
   if (!result.ok) {
-    return json(res, result.status, isWorkflowCapabilityOwnershipBlockedResult(result)
-      ? { error: result.error, code: result.code, message: result.message }
+    return json(res, result.status, isWorkflowCapabilityBlockedResult(result)
+      ? { error: result.error, code: result.code, message: result.message, reason: "reason" in result ? result.reason : undefined }
       : { error: result.error })
   }
   const run = repos.getRun(result.runId)
@@ -276,8 +276,8 @@ export async function handleSupabaseReadinessRetry(
     onItemColumnChanged,
   })
   if (!result.ok) {
-    return json(res, result.status, isWorkflowCapabilityOwnershipBlockedResult(result)
-      ? { ok: false, error: result.error, code: result.code, message: result.message }
+    return json(res, result.status, isWorkflowCapabilityBlockedResult(result)
+      ? { ok: false, error: result.error, code: result.code, message: result.message, reason: "reason" in result ? result.reason : undefined }
       : { ok: false, error: result.error })
   }
   const run = repos.getRun(result.runId)
@@ -308,8 +308,8 @@ export async function handleCreateRun(
     onItemColumnChanged,
   })
   if (!result.ok) {
-    return json(res, result.status, isWorkflowCapabilityOwnershipBlockedResult(result)
-      ? { error: result.error, code: result.code, message: result.message }
+    return json(res, result.status, isWorkflowCapabilityBlockedResult(result)
+      ? { error: result.error, code: result.code, message: result.message, reason: "reason" in result ? result.reason : undefined }
       : { error: result.error })
   }
   const run = repos.getRun(result.runId)
