@@ -170,8 +170,10 @@ test("resolveDbPath - tier 3: warns about ambiguity when both legacy and config 
   }
 
   const stderr = capturingStderr(() => resolveDbPath())
+  const secondStderr = capturingStderr(() => resolveDbPath())
   assert.ok(
     stderr.includes("ambig") || stderr.includes("both"),
     `Expected ambiguity warning on stderr but got: ${JSON.stringify(stderr)}`,
   )
+  assert.equal(secondStderr, "")
 })

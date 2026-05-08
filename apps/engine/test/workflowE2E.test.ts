@@ -201,6 +201,17 @@ test("runWorkflow runs end-to-end with all review/side loops, producing artifact
     // parallel-eligible expansion wave.
     assert.equal(plan.plan.waves.length, 3)
     assert.equal(plan.plan.waves[0].kind, "setup")
+    assert.deepEqual(
+      plan.plan.waves.map((wave: { dbRelevantStoryCount?: number; dbRelevantWave?: boolean }) => ({
+        dbRelevantStoryCount: wave.dbRelevantStoryCount,
+        dbRelevantWave: wave.dbRelevantWave,
+      })),
+      [
+        { dbRelevantStoryCount: 0, dbRelevantWave: false },
+        { dbRelevantStoryCount: 0, dbRelevantWave: false },
+        { dbRelevantStoryCount: 0, dbRelevantWave: false },
+      ],
+    )
     assert.equal(plan.plan.waves[1].stories.length, 1)
     assert.equal(plan.plan.waves[2].internallyParallelizable, true)
 

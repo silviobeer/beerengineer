@@ -14,6 +14,13 @@ export type ResolvedDbPathInfo = {
 }
 
 const legacyDbPath = () => resolve(homedir(), ".local", "share", "beerengineer", "beerengineer.sqlite")
+const emittedDbPathWarnings = new Set<string>()
+
+function emitDbPathWarningOnce(key: string, message: string): void {
+  if (emittedDbPathWarnings.has(key)) return
+  emittedDbPathWarnings.add(key)
+  process.stderr.write(message)
+}
 
 /**
  * Resolve the SQLite database path using a four-tier priority order:
@@ -46,7 +53,8 @@ export function resolveDbPathInfo(override?: string | null): ResolvedDbPathInfo 
     // Warn when both files exist so the user knows they may be looking at stale data.
     if (existsSync(configuredDb) && existsSync(legacy) && configuredDb !== legacy) {
       warnings.push(`legacy-db-shadow:${legacy}`)
-      process.stderr.write(
+      emitDbPathWarningOnce(
+        `legacy-db-shadow:${configuredDb}:${legacy}`,
         `[engine] WARNING: both the configured DB (${configuredDb}) and the legacy DB (${legacy}) exist. ` +
         `The engine will use the configured path. If you have data in the legacy location, ` +
         `copy it manually before removing the old file.\n`,

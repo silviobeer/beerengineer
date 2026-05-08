@@ -232,6 +232,7 @@ export async function planning(ctx: WithArchitecture, llm?: RunLlmConfig): Promi
     reviewer: validatingReviewer(createPlanningReview(llm), artifact => validatePlanStoryIds(artifact, ctx.prd)),
     askUser: async () => "",
     async persistArtifacts(run, artifact) {
+      applyDbRelevanceSummaries(artifact)
       return [
         {
           kind: "json",
