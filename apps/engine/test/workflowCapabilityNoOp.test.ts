@@ -17,8 +17,10 @@ import {
 } from "../src/core/runService.js"
 import { writeRecoveryRecord } from "../src/core/recovery.js"
 import { prepareRun, busToWorkflowIO, type SupabaseAdapterFactory } from "../src/core/runOrchestrator.js"
+import type { GitAdapter } from "../src/core/gitAdapter.js"
 import { layout } from "../src/core/workspaceLayout.js"
 import { defaultAppConfig } from "../src/setup/config.js"
+import { mergeGate } from "../src/stages/mergeGate/index.js"
 import { removeTempDir } from "./helpers/fs.js"
 
 const TEST_API_TOKEN = "test-token"
@@ -237,6 +239,159 @@ test("PROJ-8-PRD-3-US-1 item-action starts resolve an explicit null capability b
     assert.equal(resolverCalls, 1)
     assert.equal(capturedFactory, null)
     assert.equal(factoryCounter.count, 0)
+  } finally {
+    db.close()
+    removeTempDir(dir)
+  }
+})
+
+test("PROJ-8-PRD-3-US-3: public item-action path still blocks destructive production migration after capability resolution", async () => {
+  const { dir, db, repos } = tempRepos("be2-capability-merge-")
+  const repoRoot = join(dir, "repo")
+  seedGitRepo(repoRoot)
+  mkdirSync(join(repoRoot, "supabase", "migrations"), { recursive: true })
+  writeFileSync(join(repoRoot, "supabase", "migrations", "20260508010101_drop_users.sql"), "drop table users;")
+
+  try {
+    const workspace = repos.upsertWorkspace({ key: "alpha", name: "Alpha", rootPath: repoRoot })
+    repos.connectWorkspaceSupabase(workspace.id, { projectRef: "proj_alpha", region: "eu-central-1" })
+    repos.setWorkspaceSupabasePersistentBranch(workspace.id, {
+      ref: "branch_alpha",
+      name: "branch-alpha",
+      status: "ACTIVE_HEALTHY",
+    })
+    const workspaceAfterConnect = repos.getWorkspace(workspace.id)
+    assert.ok(workspaceAfterConnect)
+    const settings = repos.updateWorkspaceSupabaseSettings(workspace.id, {
+      cleanupPolicy: workspaceAfterConnect.supabase_cleanup_policy,
+      cleanupTtlHours: workspaceAfterConnect.supabase_cleanup_ttl_hours,
+      productionMigrationProtection: "on",
+      expectedVersion: workspaceAfterConnect.supabase_settings_version,
+    })
+    assert.equal(settings.ok, true)
+
+    const item = repos.createItem({ workspaceId: workspace.id, title: "Protected item", description: "merge safety" })
+    const scheduler = fakeScheduler()
+    const io = {
+      ask: async () => "promote",
+      emit: () => {},
+      close: () => {},
+    }
+
+    let publicRunId = ""
+    let merged = false
+    let migrationAttempts = 0
+    let factoryBuilds = 0
+    let blocked: { summary: string; cause?: string } | null = null
+
+    const prepared = prepareForegroundItemRun(repos, io, {
+      itemId: item.id,
+      action: "start_brainstorm",
+      owner: "cli",
+      appConfig: appConfigFor(dir),
+      workerLeaseScheduler: scheduler,
+      supabaseAdapterFactory: () => {
+        factoryBuilds += 1
+        return {
+          adapter: {
+            provisionBranch: async () => ({ ok: true }),
+            pollBranchStatus: async () => ({ ok: true }),
+            validateBranch: async () => ({ ok: true }),
+            destroyBranch: async () => ({ ok: true }),
+            migrateProduction: async () => {
+              migrationAttempts += 1
+              return { ok: true }
+            },
+            reconcile: async () => ({ ok: true }),
+          },
+        }
+      },
+      prepareRunImpl: (workflowItem, workflowRepos, workflowIo, opts) =>
+        prepareRun(workflowItem, workflowRepos, workflowIo, {
+          ...opts,
+          workflowRunner: async (_item, options) => {
+            const git: GitAdapter = {
+              enabled: true,
+              mode: {
+                enabled: true,
+                kind: "workspace-root",
+                workspaceRoot: repoRoot,
+                baseBranch: "main",
+                itemWorktreeRoot: join(repoRoot, ".beerengineer", "worktrees"),
+              },
+              ensureItemBranch() {},
+              ensureProjectBranch() {},
+              mergeProjectIntoItem() {},
+              mergeItemIntoBase() {
+                merged = true
+                return { mergeSha: "deadbeef" }
+              },
+              ensureWaveBranch() {
+                return "wave"
+              },
+              ensureStoryBranch() {
+                return "story"
+              },
+              ensureStoryWorktree() {
+                return join(repoRoot, ".beerengineer", "story")
+              },
+              mergeStoryIntoWave() {},
+              mergeWaveIntoProject() {},
+              rebaseStoryOntoWave() {
+                return { ok: true }
+              },
+              abandonStoryBranch() {
+                return null
+              },
+              removeStoryWorktree() {},
+              exitRunToItemBranch() {
+                return "item/protected-item"
+              },
+              assertWorkspaceRootOnBaseBranch() {},
+              gcManagedStoryWorktrees() {
+                return { removed: [], kept: [], errors: [] }
+              },
+            }
+
+            await mergeGate(
+              {
+                workspaceId: workspace.id,
+                workspaceRoot: options.workspaceRoot ?? repoRoot,
+                runId: publicRunId,
+                itemSlug: "protected-item",
+                baseBranch: "main",
+              },
+              git,
+              async (_ctx, summary, blockOpts) => {
+                blocked = { summary, cause: blockOpts?.cause }
+                throw new Error(summary)
+              },
+              options.supabaseHook,
+            )
+          },
+        }),
+    })
+
+    assert.equal(prepared.ok, true)
+    if (!prepared.ok) return
+    publicRunId = prepared.runId
+    repos.setRunSupabaseBranch(prepared.runId, {
+      ref: "branch_run_alpha",
+      name: "branch-run-alpha",
+      lifecycleState: "validated",
+    })
+
+    await assert.rejects(
+      prepared.start(),
+      /destructive migration operations require per-merge confirmation/i,
+    )
+
+    assert.equal(factoryBuilds, 1)
+    assert.equal(blocked?.cause, "merge_gate_failed")
+    assert.match(blocked?.summary ?? "", /destructive migration operations require per-merge confirmation/i)
+    assert.equal(merged, false)
+    assert.equal(migrationAttempts, 0)
+    assert.equal(repos.getRun(prepared.runId)?.supabase_branch_lifecycle_state, "validated")
   } finally {
     db.close()
     removeTempDir(dir)
