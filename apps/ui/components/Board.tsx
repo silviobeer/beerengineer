@@ -49,6 +49,13 @@ export function Board({ items, workspaceKey, renderLauncher }: Readonly<BoardPro
         column: live.column ?? item.column,
         phase_status: live.phaseStatus ?? item.phase_status,
         current_stage: currentStage,
+        hasOpenPrompt: live.hasOpenPrompt ?? item.hasOpenPrompt,
+        hasReviewGateWaiting: live.hasReviewGateWaiting ?? item.hasReviewGateWaiting,
+        hasBlockedRun: live.hasBlockedRun ?? item.hasBlockedRun,
+        recovery_user_message: live.recoveryUserMessage !== undefined
+          ? live.recoveryUserMessage
+          : item.recovery_user_message,
+        latestRunId: live.latestRunId ?? live.runId ?? item.latestRunId,
         // Pass attention through as-is so BoardCard can clear stale SSR flags.
         liveAttention: live.attention ?? null,
       };

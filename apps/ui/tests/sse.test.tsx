@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import { Board } from "@/components/Board";
 import { fullBoardItems, implementationCardWithStage } from "@/lib/fixtures";
+import { MockEventSource, makeMockEventSourceFactory } from "@/lib/sse/mockEventSource";
+import { SSEConnectionManager } from "@/lib/sse/SSEContext";
 import type { ItemState } from "@/lib/sse/types";
 import { SSETestProvider, noopSSEContext } from "./sseTestHarness";
 
@@ -89,6 +91,82 @@ describe("SSE live overlay (Board reads itemState from SSEContext)", () => {
     );
     const exec = screen.getByTestId("mini-stepper-segment-exec");
     expect(exec.dataset.active).toBe("true");
+  });
+
+  it("overlays prompt, blocker, recovery, and latest-run fields used by cards", () => {
+    const items = [
+      {
+        ...implementationCardWithStage("exec"),
+        hasOpenPrompt: false,
+        hasReviewGateWaiting: false,
+        hasBlockedRun: false,
+        phase_status: "running",
+        recovery_user_message: null,
+      },
+    ];
+    render(
+      <SSETestProvider
+        value={buildContext({
+          [items[0].id]: {
+            attention: true,
+            hasOpenPrompt: true,
+            hasReviewGateWaiting: true,
+            hasBlockedRun: true,
+            phaseStatus: "failed",
+            recoveryUserMessage: "Worker lost. Resume this run to continue.",
+            latestRunId: "run-live",
+          },
+        })}
+      >
+        <Board items={items} />
+      </SSETestProvider>,
+    );
+
+    const card = getCard(items[0].id);
+    expect(within(card).getByTestId("attention-dot")).toBeInTheDocument();
+    expect(within(card).getByTestId("board-card-status-chip")).toHaveTextContent("failed");
+    expect(within(card).getByTestId("board-card-recovery-message")).toHaveTextContent(
+      "Worker lost. Resume this run to continue.",
+    );
+  });
+
+  it("updates a card from workspace SSE lifecycle events without a refresh", () => {
+    const items = [implementationCardWithStage("exec")];
+    const factory = makeMockEventSourceFactory();
+    render(
+      <SSEConnectionManager workspaceKey="beerengineer" eventSourceFactory={factory}>
+        <Board items={items} workspaceKey="beerengineer" />
+      </SSEConnectionManager>,
+    );
+
+    const source = MockEventSource.instances[0];
+    act(() => {
+      source.simulateEvent("phase_started", {
+        id: "log-1",
+        runId: "run-1",
+        itemId: items[0].id,
+        type: "phase_started",
+        payload: { stageKey: "qa" },
+      });
+    });
+    expect(screen.getByTestId("mini-stepper-segment-qa").dataset.active).toBe("true");
+
+    act(() => {
+      source.simulateEvent("run_blocked", {
+        id: "log-2",
+        runId: "run-1",
+        itemId: items[0].id,
+        type: "run_blocked",
+        payload: {
+          itemId: items[0].id,
+          summary: "QA blocked waiting for operator input",
+        },
+      });
+    });
+
+    const card = getCard(items[0].id);
+    expect(within(card).getByTestId("board-card-status-chip")).toHaveTextContent("failed");
+    expect(within(card).getByTestId("attention-dot")).toBeInTheDocument();
   });
 
   it("ignores itemState entries for unknown card ids without throwing", () => {

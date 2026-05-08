@@ -7,6 +7,11 @@ export type ItemState = {
   attention?: boolean;
   step?: number;
   runId?: string | null;
+  hasOpenPrompt?: boolean;
+  hasReviewGateWaiting?: boolean;
+  hasBlockedRun?: boolean;
+  recoveryUserMessage?: string | null;
+  latestRunId?: string | null;
 };
 
 export type ChatEntry = {

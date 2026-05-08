@@ -178,6 +178,79 @@ function parseData(raw: unknown): unknown {
   return raw;
 }
 
+function recordOf(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+}
+
+function payloadOf(data: unknown): Record<string, unknown> {
+  const record = recordOf(data);
+  const payload = recordOf(record?.payload);
+  return payload ?? record ?? {};
+}
+
+function stringField(record: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.length > 0) return value;
+  }
+  return undefined;
+}
+
+function actionsContainPromote(actions: unknown): boolean {
+  return Array.isArray(actions)
+    && actions.some(action => recordOf(action)?.value === "promote");
+}
+
+const LOST_WORKER_MESSAGE = "Worker lost. Resume this run to continue.";
+
+function recoveryUserMessageForSummary(summary: unknown): string | null {
+  if (typeof summary !== "string") return null;
+  const lower = summary.toLowerCase();
+  const workerLossSignals = [
+    "lost api worker",
+    "cli worker heartbeat is stale",
+    "worker heartbeat",
+    "worker start failed",
+    "graceful shutdown stopped the api worker",
+    "no live worker",
+  ];
+  return workerLossSignals.some(signal => lower.includes(signal))
+    ? LOST_WORKER_MESSAGE
+    : null;
+}
+
+function cardStateForStage(
+  stageKey: string | undefined,
+  outcome: "running" | "completed" | "failed",
+): Pick<ItemState, "column" | "phaseStatus"> {
+  let phaseStatus: string = "completed";
+  if (outcome === "running") phaseStatus = "running";
+  else if (outcome === "failed") phaseStatus = "failed";
+
+  switch (stageKey) {
+    case "brainstorm":
+      return { column: "brainstorm", phaseStatus };
+    case "visual-companion":
+    case "frontend-design":
+      return { column: "frontend", phaseStatus };
+    case "requirements":
+      return { column: "requirements", phaseStatus };
+    case "architecture":
+    case "planning":
+    case "execution":
+    case "project-review":
+    case "qa":
+    case "documentation":
+    case "handoff":
+      return { column: "implementation", phaseStatus };
+    case "merge-gate":
+      if (outcome === "completed") return { column: "done", phaseStatus: "completed" };
+      return { column: "merge", phaseStatus: "review_required" };
+    default:
+      return { phaseStatus };
+  }
+}
+
 export type SSEConnectionManagerProps = {
   readonly workspaceKey: string;
   readonly initialItems?: ItemState[];
@@ -260,31 +333,129 @@ export function SSEConnectionManager({
       return typeof top === "string" && top.length > 0 ? top : null;
     };
 
-    // item_column_changed is a bare payload: { itemId, from, to, phaseStatus }
+    // item_column_changed is usually a bare payload from item actions, but the
+    // canonical stream can also deliver an envelope with fields under payload.
     const onColumnChanged = (e: MessageEvent) => {
-      const data = parseData(e.data) as
-        | { itemId?: string; to?: string; phaseStatus?: string }
-        | null;
-      if (!data?.itemId || !data.to) return;
+      const data = parseData(e.data);
+      const payload = payloadOf(data);
+      const itemId = itemIdOf(data);
+      const column = stringField(payload, ["to", "column"]);
+      if (!itemId || !column) return;
       applyItemUpdate({
-        id: data.itemId,
-        column: data.to,
-        phaseStatus: data.phaseStatus,
+        id: itemId,
+        column,
+        phaseStatus: stringField(payload, ["phaseStatus", "phase_status"]),
+        latestRunId: runIdOf(data) ?? undefined,
       });
     };
 
-    const onAttentionOn = (e: MessageEvent) => {
+    const onPromptRequested = (e: MessageEvent) => {
       const data = parseData(e.data);
       const id = itemIdOf(data);
       if (!id) return;
-      applyItemUpdate({ id, attention: true, runId: runIdOf(data) ?? undefined });
+      const payload = payloadOf(data);
+      const isReviewGate = actionsContainPromote(payload.actions);
+      applyItemUpdate({
+        id,
+        attention: true,
+        hasOpenPrompt: true,
+        hasReviewGateWaiting: isReviewGate || undefined,
+        runId: runIdOf(data) ?? undefined,
+        latestRunId: runIdOf(data) ?? undefined,
+      });
     };
 
-    const onAttentionOff = (e: MessageEvent) => {
+    const onPromptAnswered = (e: MessageEvent) => {
       const data = parseData(e.data);
       const id = itemIdOf(data);
       if (!id) return;
-      applyItemUpdate({ id, attention: false, runId: runIdOf(data) ?? undefined });
+      applyItemUpdate({
+        id,
+        attention: false,
+        hasOpenPrompt: false,
+        hasReviewGateWaiting: false,
+        runId: runIdOf(data) ?? undefined,
+        latestRunId: runIdOf(data) ?? undefined,
+      });
+    };
+
+    const onRunStarted = (e: MessageEvent) => {
+      const data = parseData(e.data);
+      const id = itemIdOf(data);
+      if (!id) return;
+      applyItemUpdate({
+        id,
+        attention: false,
+        phaseStatus: "running",
+        hasBlockedRun: false,
+        recoveryUserMessage: null,
+        runId: runIdOf(data) ?? undefined,
+        latestRunId: runIdOf(data) ?? undefined,
+      });
+    };
+
+    const onRunResumed = (e: MessageEvent) => {
+      const data = parseData(e.data);
+      const id = itemIdOf(data);
+      if (!id) return;
+      applyItemUpdate({
+        id,
+        attention: false,
+        phaseStatus: "running",
+        hasBlockedRun: false,
+        recoveryUserMessage: null,
+        runId: runIdOf(data) ?? undefined,
+        latestRunId: runIdOf(data) ?? undefined,
+      });
+    };
+
+    const onRunFinished = (e: MessageEvent) => {
+      const data = parseData(e.data);
+      const id = itemIdOf(data);
+      if (!id) return;
+      applyItemUpdate({
+        id,
+        attention: false,
+        phaseStatus: "completed",
+        currentStage: null,
+        hasBlockedRun: false,
+        recoveryUserMessage: null,
+        runId: runIdOf(data) ?? undefined,
+        latestRunId: runIdOf(data) ?? undefined,
+      });
+    };
+
+    const onRunBlocked = (e: MessageEvent) => {
+      const data = parseData(e.data);
+      const id = itemIdOf(data);
+      if (!id) return;
+      applyItemUpdate({
+        id,
+        attention: true,
+        phaseStatus: "failed",
+        currentStage: null,
+        hasBlockedRun: true,
+        recoveryUserMessage: null,
+        runId: runIdOf(data) ?? undefined,
+        latestRunId: runIdOf(data) ?? undefined,
+      });
+    };
+
+    const onRunFailed = (e: MessageEvent) => {
+      const data = parseData(e.data);
+      const id = itemIdOf(data);
+      if (!id) return;
+      const payload = payloadOf(data);
+      applyItemUpdate({
+        id,
+        attention: true,
+        phaseStatus: "failed",
+        currentStage: null,
+        hasBlockedRun: false,
+        recoveryUserMessage: recoveryUserMessageForSummary(payload.summary),
+        runId: runIdOf(data) ?? undefined,
+        latestRunId: runIdOf(data) ?? undefined,
+      });
     };
 
     // phase_started: payload.stageKey identifies the implementation stage.
@@ -292,18 +463,54 @@ export function SSEConnectionManager({
       const data = parseData(e.data);
       const id = itemIdOf(data);
       if (!id) return;
-      const stageKey = (data as { payload?: { stageKey?: unknown } } | null)
-        ?.payload?.stageKey;
+      const payload = payloadOf(data);
+      const stageKey = stringField(payload, ["stageKey", "stage"]);
       const update: Partial<ItemState> & { id: string } = {
         id,
+        ...cardStateForStage(stageKey, "running"),
+        attention: false,
+        hasBlockedRun: false,
+        recoveryUserMessage: null,
         runId: runIdOf(data) ?? undefined,
+        latestRunId: runIdOf(data) ?? undefined,
       };
-      if (typeof stageKey === "string") {
+      if (stageKey) {
         update.currentStage = stageKey;
         const step = STAGE_TO_STEP[stageKey.toLowerCase()];
         if (step) update.step = step;
       }
       applyItemUpdate(update);
+    };
+
+    const onPhaseCompleted = (e: MessageEvent) => {
+      const data = parseData(e.data);
+      const id = itemIdOf(data);
+      if (!id) return;
+      const payload = payloadOf(data);
+      const stageKey = stringField(payload, ["stageKey", "stage"]);
+      applyItemUpdate({
+        id,
+        ...cardStateForStage(stageKey, "completed"),
+        currentStage: stageKey === "merge-gate" ? null : undefined,
+        attention: false,
+        runId: runIdOf(data) ?? undefined,
+        latestRunId: runIdOf(data) ?? undefined,
+      });
+    };
+
+    const onPhaseFailed = (e: MessageEvent) => {
+      const data = parseData(e.data);
+      const id = itemIdOf(data);
+      if (!id) return;
+      const payload = payloadOf(data);
+      const stageKey = stringField(payload, ["stageKey", "stage"]);
+      applyItemUpdate({
+        id,
+        ...cardStateForStage(stageKey, "failed"),
+        attention: true,
+        runId: runIdOf(data) ?? undefined,
+        latestRunId: runIdOf(data) ?? undefined,
+      });
     };
     const onSupabaseLifecycle = (e: MessageEvent) => {
       const data = parseData(e.data);
@@ -317,16 +524,19 @@ export function SSEConnectionManager({
 
     // Item placement.
     sourceRef.addEventListener("item_column_changed", onColumnChanged);
-    // Attention flips.
-    sourceRef.addEventListener("prompt_requested", onAttentionOn);
-    sourceRef.addEventListener("run_blocked", onAttentionOn);
-    sourceRef.addEventListener("prompt_answered", onAttentionOff);
-    sourceRef.addEventListener("run_resumed", onAttentionOff);
-    sourceRef.addEventListener("run_finished", onAttentionOff);
-    sourceRef.addEventListener("run_failed", onAttentionOff);
-    sourceRef.addEventListener("run_started", onAttentionOff);
+    // Prompt / recovery state.
+    sourceRef.addEventListener("prompt_requested", onPromptRequested);
+    sourceRef.addEventListener("prompt_answered", onPromptAnswered);
+    sourceRef.addEventListener("run_blocked", onRunBlocked);
+    sourceRef.addEventListener("run_resumed", onRunResumed);
+    sourceRef.addEventListener("run_finished", onRunFinished);
+    sourceRef.addEventListener("run_failed", onRunFailed);
+    sourceRef.addEventListener("run_started", onRunStarted);
     // Stepper progression.
     sourceRef.addEventListener("phase_started", onPhaseStarted);
+    sourceRef.addEventListener("stage_started", onPhaseStarted);
+    sourceRef.addEventListener("phase_completed", onPhaseCompleted);
+    sourceRef.addEventListener("phase_failed", onPhaseFailed);
     for (const event of SUPABASE_LIFECYCLE_EVENTS) sourceRef.addEventListener(event, onSupabaseLifecycle);
     // Workspace-level chat / log feeds (consumed by detail page).
     sourceRef.addEventListener("agent_message", createChatDispatcher(conversationListeners, "agent_message"));
