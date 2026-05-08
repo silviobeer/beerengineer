@@ -5,7 +5,8 @@ import {
   branchNameStory,
   branchNameWave,
 } from "../branchNames.js"
-import { resolveMergeConflictsViaLlm } from "../mergeResolver.js"
+import { resolveMergeConflictsViaLlmAsync } from "../mergeResolver.js"
+import { stagePresent } from "../stagePresentation.js"
 import { type GitMergeOptions, type GitMode, branchExists, itemRoot, runGit } from "./shared.js"
 import { assertActiveBranch } from "./inspect.js"
 import { listWorktrees } from "./worktrees.js"
@@ -32,7 +33,19 @@ function tryResolveAndCommit(
 ): boolean {
   if (!opts.mergeResolver) return false
   if (!/CONFLICT|Automatic merge failed/i.test(stderr)) return false
-  const resolution = resolveMergeConflictsViaLlm({
+  stagePresent.warn("merge-resolver skipped on synchronous merge path; use the async GitAdapter merge methods")
+  return false
+}
+
+async function tryResolveAndCommitAsync(
+  root: string,
+  message: string,
+  opts: MergeBranchOptions,
+  stderr: string,
+): Promise<boolean> {
+  if (!opts.mergeResolver) return false
+  if (!/CONFLICT|Automatic merge failed/i.test(stderr)) return false
+  const resolution = await resolveMergeConflictsViaLlmAsync({
     workspaceRoot: root,
     mergeMessage: message,
     harness: opts.mergeResolver,
@@ -74,6 +87,30 @@ function mergeBranchInto(
   throw new Error(`git: merge ${source} → ${target} failed: ${stderr}`)
 }
 
+async function mergeBranchIntoAsync(
+  mode: GitMode,
+  target: string,
+  source: string,
+  message: string,
+  opts: MergeBranchOptions = {},
+): Promise<{ mergeSha: string }> {
+  const root = opts.root ?? itemRoot(mode)
+  const co = runGit(root, ["checkout", target])
+  if (!co.ok) throw new Error(`git: checkout ${target} for merge failed: ${co.stderr || co.stdout}`)
+  if (root === itemRoot(mode)) assertActiveBranch(mode, target, `checking out merge target ${target}`)
+  const head = tipSha(root, "HEAD")
+  const sourceHead = tipSha(root, source)
+  if (head && head === sourceHead) return { mergeSha: head }
+  const ancestor = runGit(root, ["merge-base", "--is-ancestor", source, target])
+  if (ancestor.ok) return { mergeSha: tipSha(root, target) }
+  const merge = runGit(root, ["merge", "--no-ff", "-m", message, source])
+  if (merge.ok) return { mergeSha: tipSha(root, "HEAD") }
+  const stderr = merge.stderr || merge.stdout
+  if (await tryResolveAndCommitAsync(root, message, opts, stderr)) return { mergeSha: tipSha(root, "HEAD") }
+  runGit(root, ["merge", "--abort"])
+  throw new Error(`git: merge ${source} → ${target} failed: ${stderr}`)
+}
+
 export function mergeStoryIntoWave(
   mode: GitMode,
   context: WorkflowContext,
@@ -91,6 +128,23 @@ export function mergeStoryIntoWave(
   )
 }
 
+export async function mergeStoryIntoWaveAsync(
+  mode: GitMode,
+  context: WorkflowContext,
+  projectId: string,
+  waveNumber: number,
+  storyId: string,
+  opts: GitMergeOptions = {},
+): Promise<void> {
+  await mergeBranchIntoAsync(
+    mode,
+    branchNameWave(context, projectId, waveNumber),
+    branchNameStory(context, projectId, waveNumber, storyId),
+    `Merge story ${storyId} into wave ${waveNumber}`,
+    opts,
+  )
+}
+
 export function mergeWaveIntoProject(
   mode: GitMode,
   context: WorkflowContext,
@@ -99,6 +153,22 @@ export function mergeWaveIntoProject(
   opts: GitMergeOptions = {},
 ): void {
   mergeBranchInto(
+    mode,
+    branchNameProject(context, projectId),
+    branchNameWave(context, projectId, waveNumber),
+    `Merge wave ${waveNumber} into project ${projectId}`,
+    opts,
+  )
+}
+
+export async function mergeWaveIntoProjectAsync(
+  mode: GitMode,
+  context: WorkflowContext,
+  projectId: string,
+  waveNumber: number,
+  opts: GitMergeOptions = {},
+): Promise<void> {
+  await mergeBranchIntoAsync(
     mode,
     branchNameProject(context, projectId),
     branchNameWave(context, projectId, waveNumber),

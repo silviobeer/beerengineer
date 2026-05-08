@@ -25,8 +25,8 @@ import {
   gcManagedStoryWorktrees,
   mergeItemIntoBase,
   mergeProjectIntoItem,
-  mergeStoryIntoWave,
-  mergeWaveIntoProject,
+  mergeStoryIntoWaveAsync,
+  mergeWaveIntoProjectAsync,
   rebaseStoryOntoWave,
   removeStoryWorktree,
   type ManagedWorktreeGcResult,
@@ -67,12 +67,12 @@ export interface GitAdapter {
     waveNumber: number,
     storyId: string,
     opts?: GitMergeOptions,
-  ): void
+  ): Promise<void>
   mergeWaveIntoProject(
     projectId: string,
     waveNumber: number,
     opts?: GitMergeOptions,
-  ): void
+  ): Promise<void>
   /**
    * Rebase a story branch onto its wave HEAD inside the story worktree.
    * Used by the parallel-stories runtime to keep in-flight stories aligned
@@ -151,10 +151,10 @@ export function createGitAdapterFromMode(
       return ensureStoryWorktree(mode, context, projectId, waveNumber, storyId, worktreeRoot)
     },
     mergeStoryIntoWave(projectId, waveNumber, storyId, opts = {}) {
-      mergeStoryIntoWave(mode, context, projectId, waveNumber, storyId, opts)
+      return mergeStoryIntoWaveAsync(mode, context, projectId, waveNumber, storyId, opts)
     },
     mergeWaveIntoProject(projectId, waveNumber, opts = {}) {
-      mergeWaveIntoProject(mode, context, projectId, waveNumber, opts)
+      return mergeWaveIntoProjectAsync(mode, context, projectId, waveNumber, opts)
     },
     rebaseStoryOntoWave(projectId, waveNumber, storyId) {
       return rebaseStoryOntoWave(mode, context, projectId, waveNumber, storyId)

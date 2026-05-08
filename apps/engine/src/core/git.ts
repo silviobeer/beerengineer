@@ -34,7 +34,9 @@ export {
   mergeItemIntoBase,
   mergeProjectIntoItem,
   mergeStoryIntoWave,
+  mergeStoryIntoWaveAsync,
   mergeWaveIntoProject,
+  mergeWaveIntoProjectAsync,
   rebaseStoryOntoWave,
 } from "./git/merge.js"
 

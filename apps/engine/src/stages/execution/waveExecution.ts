@@ -283,7 +283,7 @@ async function executeWave(
   stagePresent.ok(`Wave ${wave.number} complete — merged: ${summary.storiesMerged.length}, blocked: ${summary.storiesBlocked.length}`)
   if (summary.storiesBlocked.length > 0) await recordBlockedWave(ctx, wave, summary)
   assertWaveSucceeded(wave, summary)
-  git.mergeWaveIntoProject(ctx.project.id, wave.number, {
+  await git.mergeWaveIntoProject(ctx.project.id, wave.number, {
     mergeResolver: mergeResolverHarness,
     resolverLogDir: layout.executionWaveDir(ctx, wave.number),
   })

@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process"
+import { spawn, spawnSync, type SpawnSyncReturns } from "node:child_process"
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 
@@ -12,13 +12,9 @@ export type MergeResolverHarness = {
    */
   harness: "claude" | "codex" | "opencode" | "fake"
   /**
-   * Invocation runtime. The resolver is currently CLI-only because
-   * `resolveMergeConflictsViaLlm` runs synchronously inside the sync
-   * `GitAdapter.mergeStoryIntoWave` path. Profiles that select
-   * `runtime: "sdk"` for the merge-resolver role are rejected with a
-   * clear error rather than silently degrading to CLI — the operator
-   * either accepts CLI for merge-resolver or waits for the async
-   * conversion to land.
+   * Invocation runtime. The resolver is currently CLI-only. Profiles
+   * that select `runtime: "sdk"` for the merge-resolver role are
+   * rejected with a clear error rather than silently degrading to CLI.
    */
   runtime?: "cli" | "sdk"
   model?: string
@@ -27,6 +23,8 @@ export type MergeResolverHarness = {
 export type MergeResolverResult =
   | { ok: true; resolvedFiles: string[] }
   | { ok: false; reason: string }
+
+type ResolverCommandResult = Pick<SpawnSyncReturns<string>, "status" | "signal" | "stdout" | "stderr">
 
 function git(args: string[], cwd: string): { ok: boolean; stdout: string; stderr: string } {
   const result = spawnSync("git", args, { cwd, encoding: "utf8" })
@@ -148,6 +146,113 @@ function writeResolverLog(logDir: string | undefined, payload: Record<string, un
   }
 }
 
+function runResolverCommandAsync(command: string[], cwd: string, timeoutMs: number): Promise<ResolverCommandResult> {
+  return new Promise(resolve => {
+    const child = spawn(command[0], command.slice(1), {
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+    })
+    const stdoutChunks: Buffer[] = []
+    const stderrChunks: Buffer[] = []
+    let settled = false
+    let timedOut = false
+    const timeout = setTimeout(() => {
+      timedOut = true
+      child.kill("SIGTERM")
+    }, timeoutMs)
+    timeout.unref()
+    const finish = (result: ResolverCommandResult) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      resolve(result)
+    }
+    child.stdout.on("data", chunk => stdoutChunks.push(chunk as Buffer))
+    child.stderr.on("data", chunk => stderrChunks.push(chunk as Buffer))
+    child.once("error", err => {
+      finish({
+        status: 1,
+        signal: null,
+        stdout: Buffer.concat(stdoutChunks).toString("utf8"),
+        stderr: `${Buffer.concat(stderrChunks).toString("utf8")}\n${err.message}`.trim(),
+      })
+    })
+    child.once("close", (code, signal) => {
+      finish({
+        status: timedOut ? 143 : code,
+        signal: signal ?? null,
+        stdout: Buffer.concat(stdoutChunks).toString("utf8"),
+        stderr: Buffer.concat(stderrChunks).toString("utf8"),
+      })
+    })
+  })
+}
+
+function resolverTimeoutMs(inputTimeoutMs: number | undefined, conflictedCount: number): number {
+  const baselineMs = readPositiveIntEnv("BEERENGINEER_MERGE_RESOLVER_BASE_MS", 90_000)
+  const perFileMs = readPositiveIntEnv("BEERENGINEER_MERGE_RESOLVER_PER_FILE_MS", 120_000)
+  const capMs = readPositiveIntEnv("BEERENGINEER_MERGE_RESOLVER_CAP_MS", 1_800_000)
+  const computedTimeoutMs = Math.min(baselineMs + conflictedCount * perFileMs, capMs)
+  return inputTimeoutMs ?? computedTimeoutMs
+}
+
+function finishResolution(input: {
+  workspaceRoot: string
+  mergeMessage: string
+  harness: MergeResolverHarness
+  logDir?: string
+}, conflicted: string[], builtCommand: string[], startedAt: number, result: ResolverCommandResult): MergeResolverResult {
+  const durationMs = Date.now() - startedAt
+
+  // Order matters here. The resolver mutates working-tree files; the index
+  // still records them as unmerged until we `git add`. So:
+  //   1. Check working-tree files for conflict markers (cheap correctness gate).
+  //   2. `git add -A` to take the resolution into the index.
+  //   3. NOW ask git for unmerged paths — only after staging is the index honest.
+  // Inverting (2) and (3) caused every successful resolution to look failed.
+  const markerStillIn = conflicted.find(file => fileHasConflictMarkers(input.workspaceRoot, file))
+  const addResult = markerStillIn
+    ? { ok: false, stdout: "", stderr: "skipped: markers still present" }
+    : git(["add", "-A"], input.workspaceRoot)
+  const remaining = addResult.ok ? listConflictedFiles(input.workspaceRoot) : conflicted
+  const noConflictMarkersRemain = markerStillIn === undefined
+  // Trust the post-resolution filesystem state, not the CLI exit code. A
+  // sonnet timeout (SIGTERM=143) sometimes lands AFTER the model has written
+  // clean files; rejecting on exit !== 0 throws away a valid resolution.
+  const ok = noConflictMarkersRemain && addResult.ok && remaining.length === 0
+
+  writeResolverLog(input.logDir, {
+    harness: input.harness.harness,
+    model: input.harness.model,
+    workspaceRoot: input.workspaceRoot,
+    mergeMessage: input.mergeMessage,
+    conflicted,
+    command: builtCommand,
+    durationMs,
+    exitStatus: result.status,
+    signal: result.signal ?? null,
+    stdoutSnippet: (result.stdout ?? "").slice(0, 4000),
+    stderrSnippet: (result.stderr ?? "").slice(0, 4000),
+    addOk: addResult.ok,
+    addStderr: addResult.stderr.slice(0, 400),
+    remainingAfter: remaining,
+    markerStillIn: markerStillIn ?? null,
+    ok,
+  })
+
+  if (markerStillIn) {
+    return { ok: false, reason: `marker remains in ${markerStillIn}` }
+  }
+  if (!addResult.ok) {
+    return { ok: false, reason: `git add -A failed: ${addResult.stderr.slice(0, 400)}` }
+  }
+  if (remaining.length > 0) {
+    return { ok: false, reason: `conflicts remain after resolver: ${remaining.join(", ")}` }
+  }
+  // Filesystem says clean, index says clean — accept regardless of CLI exit.
+  return { ok: true, resolvedFiles: conflicted }
+}
+
 export function resolveMergeConflictsViaLlm(input: {
   workspaceRoot: string
   mergeMessage: string
@@ -166,7 +271,7 @@ export function resolveMergeConflictsViaLlm(input: {
     return {
       ok: false,
       reason:
-        `merge-resolver: ${input.harness.harness}:sdk is not implemented (the resolver runs synchronously inside the git adapter; SDK adapters are async). ` +
+        `merge-resolver: ${input.harness.harness}:sdk is not implemented. ` +
         `Configure the merge-resolver role to runtime: "cli" — the SDK runtime for coder/reviewer is unaffected.`,
     }
   }
@@ -196,64 +301,61 @@ export function resolveMergeConflictsViaLlm(input: {
   // 90s baseline + 120s per file, capped at 30 minutes. Override per call via
   // `input.timeoutMs`, or per environment via the BEERENGINEER_MERGE_RESOLVER_*
   // env vars below — useful for bumping budgets without recompiling.
-  const baselineMs = readPositiveIntEnv("BEERENGINEER_MERGE_RESOLVER_BASE_MS", 90_000)
-  const perFileMs = readPositiveIntEnv("BEERENGINEER_MERGE_RESOLVER_PER_FILE_MS", 120_000)
-  const capMs = readPositiveIntEnv("BEERENGINEER_MERGE_RESOLVER_CAP_MS", 1_800_000)
-  const computedTimeoutMs = Math.min(baselineMs + conflicted.length * perFileMs, capMs)
-  const timeoutMs = input.timeoutMs ?? computedTimeoutMs
+  const timeoutMs = resolverTimeoutMs(input.timeoutMs, conflicted.length)
   const startedAt = Date.now()
   const result = spawnSync(built.command[0], built.command.slice(1), {
     cwd: input.workspaceRoot,
     encoding: "utf8",
     timeout: timeoutMs,
   })
-  const durationMs = Date.now() - startedAt
 
-  // Order matters here. The resolver mutates working-tree files; the index
-  // still records them as unmerged until we `git add`. So:
-  //   1. Check working-tree files for conflict markers (cheap correctness gate).
-  //   2. `git add -A` to take the resolution into the index.
-  //   3. NOW ask git for unmerged paths — only after staging is the index honest.
-  // Inverting (2) and (3) caused every successful resolution to look failed.
-  const markerStillIn = conflicted.find(file => fileHasConflictMarkers(input.workspaceRoot, file))
-  const addResult = markerStillIn
-    ? { ok: false, stdout: "", stderr: "skipped: markers still present" }
-    : git(["add", "-A"], input.workspaceRoot)
-  const remaining = addResult.ok ? listConflictedFiles(input.workspaceRoot) : conflicted
-  const noConflictMarkersRemain = markerStillIn === undefined
-  // Trust the post-resolution filesystem state, not the CLI exit code. A
-  // sonnet timeout (SIGTERM=143) sometimes lands AFTER the model has written
-  // clean files; rejecting on exit !== 0 throws away a valid resolution.
-  const ok = noConflictMarkersRemain && addResult.ok && remaining.length === 0
+  return finishResolution(input as typeof input & { harness: MergeResolverHarness }, conflicted, built.command, startedAt, result)
+}
 
-  writeResolverLog(input.logDir, {
-    harness: input.harness.harness,
-    model: input.harness.model,
-    workspaceRoot: input.workspaceRoot,
-    mergeMessage: input.mergeMessage,
-    conflicted,
-    command: built.command,
-    durationMs,
-    exitStatus: result.status,
-    signal: result.signal ?? null,
-    stdoutSnippet: (result.stdout ?? "").slice(0, 4000),
-    stderrSnippet: (result.stderr ?? "").slice(0, 4000),
-    addOk: addResult.ok,
-    addStderr: addResult.stderr.slice(0, 400),
-    remainingAfter: remaining,
-    markerStillIn: markerStillIn ?? null,
-    ok,
-  })
+export async function resolveMergeConflictsViaLlmAsync(input: {
+  workspaceRoot: string
+  mergeMessage: string
+  harness?: MergeResolverHarness
+  timeoutMs?: number
+  logDir?: string
+  expectedSharedFiles?: string[]
+}): Promise<MergeResolverResult> {
+  if (process.env.BEERENGINEER_DISABLE_LLM_MERGE_RESOLVER === "1") {
+    return { ok: false, reason: "llm-merge-resolver-disabled" }
+  }
+  if (!input.harness) {
+    return { ok: false, reason: "merge-resolver: no harness configured" }
+  }
+  if (input.harness.runtime === "sdk") {
+    return {
+      ok: false,
+      reason:
+        `merge-resolver: ${input.harness.harness}:sdk is not implemented. ` +
+        `Configure the merge-resolver role to runtime: "cli" — the SDK runtime for coder/reviewer is unaffected.`,
+    }
+  }
 
-  if (markerStillIn) {
-    return { ok: false, reason: `marker remains in ${markerStillIn}` }
+  const conflicted = listConflictedFiles(input.workspaceRoot)
+  if (conflicted.length === 0) {
+    return { ok: true, resolvedFiles: [] }
   }
-  if (!addResult.ok) {
-    return { ok: false, reason: `git add -A failed: ${addResult.stderr.slice(0, 400)}` }
-  }
-  if (remaining.length > 0) {
-    return { ok: false, reason: `conflicts remain after resolver: ${remaining.join(", ")}` }
-  }
-  // Filesystem says clean, index says clean — accept regardless of CLI exit.
-  return { ok: true, resolvedFiles: conflicted }
+
+  const prompt = buildPrompt(input.mergeMessage, conflicted, input.expectedSharedFiles)
+  const built = buildCommandForProvider(
+    input.harness.harness,
+    input.harness.model,
+    input.workspaceRoot,
+    prompt,
+  )
+  if (!built.ok) return built
+
+  const modelSuffix = input.harness.model ? `/${input.harness.model}` : ""
+  const fileLabel = conflicted.length === 1 ? "file" : "files"
+  stagePresent.dim(`merge-resolver: ${input.harness.harness}${modelSuffix} on ${conflicted.length} conflicted ${fileLabel}`)
+
+  const timeoutMs = resolverTimeoutMs(input.timeoutMs, conflicted.length)
+  const startedAt = Date.now()
+  const result = await runResolverCommandAsync(built.command, input.workspaceRoot, timeoutMs)
+
+  return finishResolution(input as typeof input & { harness: MergeResolverHarness }, conflicted, built.command, startedAt, result)
 }
