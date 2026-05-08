@@ -29,8 +29,10 @@ consumed by tooling.
 - `GET /ready` → workflow readiness. Returns `200` only when the DB probe is ok, startup lost-worker recovery has completed, graceful shutdown is not in flight, and the lightweight worker-lease write sentinel succeeds. Returns `503` with the same shape when any readiness precondition fails. Response: `{ ok, service, uptimeMs, db: "ok" | "failed", startupRecovery: "complete" | "pending", shutdown: "idle" | "in_progress", leaseWrite: "ok" | "failed" | "skipped" }`. `/ready` does not create run/item/history rows and does not check Git, LLM, workspace, setup, or Supabase readiness.
 - `GET /setup/status` (existing)
 - `POST /setup/init` — token-protected app-state initialization. Creates missing app config, data directory, and SQLite state. Existing valid config is preserved; invalid existing config returns `409`.
-- `GET /setup/config` — effective setup/settings config view. Supports optional `workspaceKey=<key>` for workspace-scoped Telegram inbound status with field-level provenance, inheritance/override semantics, readiness blockers, and secret redaction. Secret fields are returned only as refs or redacted presence metadata, never plaintext values.
+- `GET /setup/config` — effective setup/settings config view. Supports optional `workspaceKey=<key>` for workspace-scoped Telegram inbound status with field-level provenance, inheritance/override semantics, readiness blockers, secret redaction, last baseline webhook outcome, last Telegram provider webhook snapshot, and distinct live-verification state (`not-run`, `pending`, `succeeded`, `failed`, `timed_out`). Secret fields are returned only as refs or redacted presence metadata, never plaintext values.
 - `PATCH /setup/config` — token-protected partial app-config update. Returns `200` when all fields are saved, `207` when some fields are rejected, and `409` when setup has not been initialized yet. `allowedRoots` must be absolute non-root paths without traversal segments.
+- `POST /setup/telegram/webhook` — token-protected Telegram webhook registration/update. Supports optional `workspaceKey=<key>` to resolve workspace overrides before calling Telegram. Performs local callback validation first, then returns the resulting baseline readiness, provider webhook snapshot, and the still-separate live-verification state.
+- `POST /setup/telegram/verification` — token-protected live Telegram verification trigger. Supports optional `workspaceKey=<key>`. Starts a reply-based verification round-trip only when baseline setup is ready and returns the distinct live-verification state without collapsing it into baseline readiness.
 - `GET /setup/git-readiness?workspaceId=&workspaceKey=` — Git identity readiness. Without a workspace identifier, returns global readiness: Git install state, global identity, app-level default, available actions, and workflow blocker state. With a workspace identifier, resolves the registered workspace root server-side and returns repo-local/global/app-default sources plus effective workflow identity.
 - `POST /setup/git-identity` — token-protected save of beerengineer_ app-level Git identity default. Stores display name, email, and `localOnly` in app config. Does not write global Git config.
 - `POST /setup/git-identity/repair` — token-protected workspace-local identity repair. Request identifies a workspace by `workspaceId` or `workspaceKey` and sends identity data. The engine ignores any request-body path/root fields and resolves the filesystem root from the workspace registry before running `git config --local`.
@@ -174,7 +176,7 @@ No channel-binding CRUD.
 
 ### Webhooks (inbound, channel-authenticated)
 
-- `POST /webhooks/telegram` — authenticates with `x-telegram-bot-api-secret-token`, bypasses the CSRF gate. Only reachable when `telegram.inbound.enabled` is set.
+- `POST /webhooks/telegram` — authenticates with `x-telegram-bot-api-secret-token`, bypasses the CSRF gate. Only reachable when `telegram.inbound.enabled` is set. The same ingress path resolves both normal prompt-answer replies and the optional live-verification reply round-trip.
 
 ### Artifacts
 
