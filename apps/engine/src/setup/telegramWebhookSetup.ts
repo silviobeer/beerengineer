@@ -76,6 +76,11 @@ type TelegramApiResponse<T> =
   | { ok: true; result: T }
   | { ok: false; error: string; message: string }
 
+type TelegramFetchFailure = {
+  ok: false
+  error: unknown
+}
+
 type TelegramActionResult =
   | {
       ok: true
@@ -238,41 +243,44 @@ function appendWebhookSecretBlockers(blockers: string[], webhookSecretRef: strin
   }
 }
 
+function isTelegramFetchFailure(response: Response | TelegramFetchFailure): response is TelegramFetchFailure {
+  return !(response instanceof Response)
+}
+
 async function callTelegramApi<T>(
   token: string,
   method: string,
   opts: { httpMethod?: "GET" | "POST"; body?: Record<string, unknown>; secrets?: string[] } = {},
 ): Promise<TelegramApiResponse<T>> {
-  const response = await fetch(`${resolveTelegramApiBaseUrl()}/bot${encodeURIComponent(token)}/${method}`, {
+  const response: Response | TelegramFetchFailure = await fetch(`${resolveTelegramApiBaseUrl()}/bot${encodeURIComponent(token)}/${method}`, {
     method: opts.httpMethod ?? "POST",
     headers: opts.body ? { "content-type": "application/json" } : undefined,
     body: opts.body ? JSON.stringify(opts.body) : undefined,
     signal: AbortSignal.timeout(TELEGRAM_TIMEOUT_MS),
   }).catch(error => ({ ok: false, error } as const))
 
-  if (!("ok" in response) || response instanceof Response) {
-    // no-op
-  } else {
+  if (isTelegramFetchFailure(response)) {
     return {
       ok: false,
       error: "telegram_request_failed",
       message: redactTelegramMessage(`Telegram request failed: ${(response.error as Error).message}`, opts.secrets ?? []),
     }
   }
+  const telegramResponse = response
 
   let body: { ok?: boolean; result?: T; description?: string; error_code?: number }
   try {
-    body = await response.json() as { ok?: boolean; result?: T; description?: string; error_code?: number }
+    body = await telegramResponse.json() as { ok?: boolean; result?: T; description?: string; error_code?: number }
   } catch {
     return {
       ok: false,
       error: "telegram_response_invalid",
-      message: redactTelegramMessage(`Telegram returned HTTP ${response.status} with an unreadable response body.`, opts.secrets ?? []),
+      message: redactTelegramMessage(`Telegram returned HTTP ${telegramResponse.status} with an unreadable response body.`, opts.secrets ?? []),
     }
   }
 
-  if (!response.ok || body.ok !== true) {
-    const detail = body.description?.trim() || `Telegram returned HTTP ${response.status}.`
+  if (!telegramResponse.ok || body.ok !== true) {
+    const detail = body.description?.trim() || `Telegram returned HTTP ${telegramResponse.status}.`
     return {
       ok: false,
       error: "telegram_request_failed",
@@ -455,7 +463,55 @@ function persistVerificationFailure(
 }
 
 function hasTimedOut(deadlineAt: number | null): deadlineAt is number {
-  return deadlineAt != null && deadlineAt <= now()
+  if (deadlineAt == null) return false
+  return deadlineAt <= now()
+}
+
+function resolveWebhookRegistrationInputs(
+  scope: ResolvedTelegramSetupScope,
+): { ok: true; scope: ResolvedTelegramSetupScopeOk & { expectedWebhookUrl: string; token: string; webhookSecret: string } }
+  | { ok: false; result: TelegramActionResult } {
+  if (scope.ok === false) {
+    return { ok: false, result: workspaceNotFoundResult(scope.workspaceKey) }
+  }
+  if (scope.localBlockers.length > 0 || !scope.expectedWebhookUrl || !scope.token || !scope.webhookSecret) {
+    return { ok: false, result: invalidWebhookSetupResult(scope) }
+  }
+  return {
+    ok: true,
+    scope: scope as ResolvedTelegramSetupScopeOk & { expectedWebhookUrl: string; token: string; webhookSecret: string },
+  }
+}
+
+function resolveLiveVerificationInputs(
+  scope: ResolvedTelegramSetupScope,
+  statusViews: TelegramSetupStatusViews | undefined,
+): { ok: true; scope: ResolvedTelegramSetupScopeOk & { token: string; chatId: string }; statusViews: TelegramSetupStatusViews }
+  | { ok: false; result: TelegramActionResult } {
+  if (scope.ok === false) {
+    return { ok: false, result: workspaceNotFoundResult(scope.workspaceKey) }
+  }
+  const resolvedStatusViews = statusViews ?? readTelegramSetupStatusViews(scope, undefined)
+  if (resolvedStatusViews.baseline.state !== "ready" || !scope.token || !scope.chatId) {
+    return {
+      ok: false,
+      result: {
+        ok: false,
+        status: 400,
+        error: "telegram_baseline_not_ready",
+        message: resolvedStatusViews.baseline.message ?? "Telegram baseline setup is not ready.",
+        baseline: resolvedStatusViews.baseline,
+        liveVerification: resolvedStatusViews.liveVerification,
+        provider: resolvedStatusViews.provider,
+        providerCheckedAt: resolvedStatusViews.providerCheckedAt,
+      },
+    }
+  }
+  return {
+    ok: true,
+    scope: scope as ResolvedTelegramSetupScopeOk & { token: string; chatId: string },
+    statusViews: resolvedStatusViews,
+  }
 }
 
 export async function registerTelegramWebhook(input: {
@@ -463,11 +519,11 @@ export async function registerTelegramWebhook(input: {
   config: AppConfig | null
   workspaceKey?: string
 }): Promise<TelegramActionResult> {
-  const scope = resolveTelegramSetupScope(input.config, { repos: input.repos, workspaceKey: input.workspaceKey })
-  if (!scope.ok) return workspaceNotFoundResult(scope.workspaceKey)
-  if (scope.localBlockers.length > 0 || !scope.expectedWebhookUrl || !scope.token || !scope.webhookSecret) {
-    return invalidWebhookSetupResult(scope)
-  }
+  const resolved = resolveWebhookRegistrationInputs(
+    resolveTelegramSetupScope(input.config, { repos: input.repos, workspaceKey: input.workspaceKey }),
+  )
+  if (resolved.ok === false) return resolved.result
+  const { scope } = resolved
 
   const secrets = [scope.token, scope.webhookSecret]
   const setWebhook = await callTelegramApi<boolean>(scope.token, "setWebhook", {
@@ -535,35 +591,27 @@ export async function startTelegramLiveVerification(input: {
   workspaceKey?: string
 }): Promise<TelegramActionResult> {
   const scope = resolveTelegramSetupScope(input.config, { repos: input.repos, workspaceKey: input.workspaceKey })
-  if (!scope.ok) return workspaceNotFoundResult(scope.workspaceKey)
+  const resolved = resolveLiveVerificationInputs(
+    scope,
+    scope.ok ? readTelegramSetupStatusViews(scope, input.repos) : undefined,
+  )
+  if (resolved.ok === false) return resolved.result
+  const { statusViews } = resolved
+  const readyScope = resolved.scope
 
-  const statusViews = readTelegramSetupStatusViews(scope, input.repos)
-  if (statusViews.baseline.state !== "ready" || !scope.token || !scope.chatId) {
-    return {
-      ok: false,
-      status: 400,
-      error: "telegram_baseline_not_ready",
-      message: statusViews.baseline.message ?? "Telegram baseline setup is not ready.",
-      baseline: statusViews.baseline,
-      liveVerification: statusViews.liveVerification,
-      provider: statusViews.provider,
-      providerCheckedAt: statusViews.providerCheckedAt,
-    }
-  }
-
-  const deliveryKey = `telegram-verification:${scope.scopeKey}`
+  const deliveryKey = `telegram-verification:${readyScope.scopeKey}`
   input.repos.claimNotificationDelivery({
     dedupKey: deliveryKey,
     channel: "telegram",
-    chatId: scope.chatId,
+    chatId: readyScope.chatId,
   })
 
   const startedAt = now()
   const deadlineAt = startedAt + verificationTimeoutMs()
   input.repos.upsertTelegramSetupState({
-    scopeKey: scope.scopeKey,
-    workspaceKey: scope.workspaceKey ?? null,
-    expectedWebhookUrl: scope.expectedWebhookUrl ?? null,
+    scopeKey: readyScope.scopeKey,
+    workspaceKey: readyScope.workspaceKey ?? null,
+    expectedWebhookUrl: readyScope.expectedWebhookUrl ?? null,
     verificationStatus: "pending",
     verificationMessage: "Live verification is waiting for a Telegram reply to the verification prompt.",
     verificationStartedAt: startedAt,
@@ -572,21 +620,21 @@ export async function startTelegramLiveVerification(input: {
     verificationDeliveryKey: deliveryKey,
   })
 
-  const message = await callTelegramApi<{ message_id?: number }>(scope.token, "sendMessage", {
+  const message = await callTelegramApi<{ message_id?: number }>(readyScope.token, "sendMessage", {
     body: {
-      chat_id: scope.chatId,
-      text: sanitizeTelegramText("beerengineer_ live verification: reply to this message to confirm inbound Telegram setup.", [scope.token]),
+      chat_id: readyScope.chatId,
+      text: sanitizeTelegramText("beerengineer_ live verification: reply to this message to confirm inbound Telegram setup.", [readyScope.token]),
     },
-    secrets: [scope.token, scope.webhookSecret ?? ""],
+    secrets: [readyScope.token, readyScope.webhookSecret ?? ""],
   })
-  if (!message.ok) return persistVerificationFailure(input.repos, scope, deliveryKey, deadlineAt, message.message)
+  if (!message.ok) return persistVerificationFailure(input.repos, readyScope, deliveryKey, deadlineAt, message.message)
 
   const telegramMessageId = typeof message.result?.message_id === "number" ? message.result.message_id : null
   input.repos.completeNotificationDelivery(deliveryKey, { status: "delivered", telegramMessageId })
-  const persisted = input.repos.getTelegramSetupState(scope.scopeKey)
+  const persisted = input.repos.getTelegramSetupState(readyScope.scopeKey)
   return {
     ok: true,
-    scopeKey: scope.scopeKey,
+    scopeKey: readyScope.scopeKey,
     baseline: statusViews.baseline,
     liveVerification: resolveLiveVerificationView(persisted),
     provider: statusViews.provider ?? { pendingUpdateCount: 0, hasCustomCertificate: false },
