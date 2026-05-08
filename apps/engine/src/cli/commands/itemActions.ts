@@ -34,6 +34,10 @@ type CliItemActionContext = {
 }
 
 type CliItemActionHandler = (ctx: CliItemActionContext) => Promise<number>
+type FailedPreparedResumeRunResult = Exclude<
+  Awaited<ReturnType<typeof prepareForegroundResumeRun>>,
+  { ok: true; runId: string; remediationId: string; start: () => Promise<void> }
+>
 
 const CLI_RUN_DEATH_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const
 
@@ -201,6 +205,22 @@ function printWorkflowCapabilityOwnershipBlocker(message: string): number {
   return 75
 }
 
+function printPreparedResumeFailure(result: FailedPreparedResumeRunResult): number {
+  if (isWorkflowCapabilityOwnershipBlockedResult(result)) {
+    return printWorkflowCapabilityOwnershipBlocker(result.message)
+  }
+  if (result.error === "resume_in_progress" || result.error === "not_resumable") {
+    console.error(`  Not resumable: ${result.error}`)
+    return 2
+  }
+  if (result.error === "remediation_required") {
+    console.error("  Missing remediation summary (pass --remediation-summary).")
+    return 75
+  }
+  console.error(`  ${result.error}`)
+  return 1
+}
+
 function printSupabaseStartBlockerIfAny(
   repos: Repos,
   runId: string,
@@ -259,6 +279,21 @@ function startRunPrelude(ctx: CliItemActionContext): number {
   })
   if (!gitGate.ok) return printWorkflowGitBlocker(gitGate, ctx.itemRef)
   return preflightCliBranchingStart(ctx.repos, ctx.item.workspace_id)
+}
+
+function printBlockedResumeIfAny(ctx: CliItemActionContext, runId: string): number {
+  const refreshed = ctx.repos.getRun(runId)
+  if (refreshed?.recovery_status !== "blocked") return 0
+
+  const supabaseBlockedExit = printSupabaseStartBlockerIfAny(ctx.repos, runId, ctx.itemRef, ctx.action)
+  if (supabaseBlockedExit !== 0) return supabaseBlockedExit
+
+  printResumeBlockedOutput(runId, {
+    summary: refreshed.recovery_summary,
+    scope: refreshed.recovery_scope,
+    scopeRef: refreshed.recovery_scope_ref,
+  }, ctx.itemRef)
+  return 0
 }
 
 const handleStartBrainstorm: CliItemActionHandler = async ctx => {
@@ -414,35 +449,13 @@ const handleResumeRun: CliItemActionHandler = async ctx => {
         reviewNotes: resumePayload.reviewNotes,
         workerOwnerKind: "cli",
       })
-      if (!prepared.ok) {
-        if (isWorkflowCapabilityOwnershipBlockedResult(prepared)) {
-          return printWorkflowCapabilityOwnershipBlocker(prepared.message)
-        }
-        if (prepared.error === "resume_in_progress" || prepared.error === "not_resumable") {
-          console.error(`  Not resumable: ${prepared.error}`)
-          return 2
-        }
-        if (prepared.error === "remediation_required") {
-          console.error("  Missing remediation summary (pass --remediation-summary).")
-          return 75
-        }
-        console.error(`  ${prepared.error}`)
-        return 1
-      }
+      if (!prepared.ok) return printPreparedResumeFailure(prepared)
       console.log(`  ${ctx.action} applied`)
       console.log(`  run-id: ${prepared.runId}`)
       console.log(`  remediation-id: ${prepared.remediationId}`)
       await prepared.start()
-      const refreshed = ctx.repos.getRun(prepared.runId)
-      if (refreshed?.recovery_status === "blocked") {
-        const supabaseBlockedExit = printSupabaseStartBlockerIfAny(ctx.repos, prepared.runId, ctx.itemRef, ctx.action)
-        if (supabaseBlockedExit !== 0) return supabaseBlockedExit
-        printResumeBlockedOutput(prepared.runId, {
-          summary: refreshed.recovery_summary,
-          scope: refreshed.recovery_scope,
-          scopeRef: refreshed.recovery_scope_ref,
-        }, ctx.itemRef)
-      }
+      const blockedExit = printBlockedResumeIfAny(ctx, prepared.runId)
+      if (blockedExit !== 0) return blockedExit
       return 0
     } finally {
       io.close?.()
