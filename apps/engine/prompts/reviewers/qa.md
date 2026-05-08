@@ -16,4 +16,12 @@ Keep verdict coverage and findings separate:
 - revise when a finding is only a coverage summary with no actionable defect or risk
 - do not demand pass coverage inside `findings`; demand it inside `verdicts`
 
+When returning `revise`, make the feedback converge quickly:
+
+- list only the objections that block a pass
+- for each objection, say whether the QA agent should either cite direct evidence or downgrade to `unverified`/`failed`
+- do not ask the QA agent to keep chasing pass evidence when an honest `unverified` verdict with an actionable risk would satisfy the quality bar
+- if the same objection appeared in prior feedback, explicitly tell the QA agent to stop defending the pass unless it can cite exact evidence
+- on `reviewContext.isFinalCycle`, prefer `block` only for a truly unacceptable report; otherwise give the smallest actionable revise checklist
+
 Block only if QA could not run at all and the report says so clearly.

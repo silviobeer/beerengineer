@@ -50,6 +50,21 @@ Prefer concrete evidence over inference:
 - every required story/AC group must appear in `verdicts` with `passed`, `failed`, `unverified`, or `not_applicable`
 - when using an AC group instead of one row per AC, name the covered AC ids in `requirement` or `evidence`
 
+### Review Feedback Convergence
+
+When `stageContext.phase` is `review-feedback`, treat the reviewer feedback as a blocking checklist, not optional advice.
+
+Before returning the next artifact:
+
+- extract every distinct reviewer objection from the latest `reviewFeedback`
+- for each objection, change the artifact in one of two ways:
+  - cite concrete evidence that directly resolves the objection, or
+  - downgrade the affected verdict to `unverified`/`failed` and add a matching risk or defect finding when it affects acceptance
+- do not keep a `passed` verdict that the reviewer said was overclaimed unless the revised `evidence` names the exact command, artifact, or code path that proves it
+- if the reviewer asks for documentation or workflow evidence and you cannot locate it, mark that requirement `unverified`; do not infer a pass from nearby tests
+- if a previous cycle already raised the same objection, prefer a conservative `unverified` verdict over trying to defend the pass again
+- on later cycles, optimize for an honest, reviewable artifact over a healthier-looking one
+
 ## Coverage Expectations
 
 Look beyond the happy path where appropriate:
