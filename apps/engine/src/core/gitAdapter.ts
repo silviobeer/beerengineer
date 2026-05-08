@@ -92,7 +92,7 @@ export interface GitAdapter {
   removeStoryWorktree(worktreeRoot: string): void
 
   // ---------- run lifecycle ----------
-  exitRunToItemBranch(): string
+  exitRunToItemBranch(options?: { preserveActiveBranch?: boolean }): string
   assertWorkspaceRootOnBaseBranch(label: string): void
 
   // ---------- maintenance ----------
@@ -166,8 +166,8 @@ export function createGitAdapterFromMode(
       removeStoryWorktree(mode, worktreeRoot)
     },
 
-    exitRunToItemBranch() {
-      return exitRunToItemBranch(mode, context)
+    exitRunToItemBranch(options = {}) {
+      return exitRunToItemBranch(mode, context, options)
     },
     assertWorkspaceRootOnBaseBranch(label: string) {
       assertWorkspaceRootOnBaseBranchReal(mode, label)

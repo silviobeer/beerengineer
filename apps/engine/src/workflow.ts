@@ -334,6 +334,7 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
   // Above blockRunForWorkspaceState always throws, so `git` is defined here.
   stagePresent.dim(`→ Real git mode: branches will be created in ${git.mode.workspaceRoot}`)
 
+  let failed = false
   try {
     git.ensureItemBranch()
     git.assertWorkspaceRootOnBaseBranch("after ensureItemBranch (run start)")
@@ -391,10 +392,11 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
     stagePresent.header("DONE")
     stagePresent.ok(`Item "${item.title}" is done ✓`)
   } catch (error) {
+    failed = true
     await handleWorkflowFailure(context, item.title, error)
     throw error
   } finally {
-    restoreWorkflowExitState(git)
+    restoreWorkflowExitState(git, { preserveActiveBranch: failed })
   }
 }
 
@@ -563,9 +565,12 @@ async function handleWorkflowFailure(context: WorkflowContext, itemTitle: string
   }
 }
 
-function restoreWorkflowExitState(git: ReturnType<typeof createGitAdapter>): void {
+function restoreWorkflowExitState(
+  git: ReturnType<typeof createGitAdapter>,
+  options: { preserveActiveBranch?: boolean } = {},
+): void {
   try {
-    const exitBranch = git.exitRunToItemBranch()
+    const exitBranch = git.exitRunToItemBranch(options)
     stagePresent.dim(`→ Run exit branch: ${exitBranch}`)
   } catch (error) {
     stagePresent.warn(`Run exit branch restore failed: ${(error as Error).message}`)

@@ -98,6 +98,11 @@ test("git creates item/project/wave/story branches and merges them back", () => 
     assert.equal(exitRunToItemBranch(mode, ctx), "item/demo-item")
     assert.equal(sh(root, ["branch", "--show-current"]), "main")
     assert.equal(sh(mode.itemWorktreeRoot!, ["branch", "--show-current"]), "item/demo-item")
+
+    sh(mode.itemWorktreeRoot!, ["checkout", "proj/demo-item__proj-a"])
+    assert.equal(exitRunToItemBranch(mode, ctx, { preserveActiveBranch: true }), "proj/demo-item__proj-a")
+    assert.equal(sh(root, ["branch", "--show-current"]), "main")
+    assert.equal(sh(mode.itemWorktreeRoot!, ["branch", "--show-current"]), "proj/demo-item__proj-a")
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

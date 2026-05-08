@@ -54,12 +54,18 @@ export function ensureStoryBranch(
   return name
 }
 
-export function exitRunToItemBranch(mode: GitMode, context: WorkflowContext): string {
+export function exitRunToItemBranch(
+  mode: GitMode,
+  context: WorkflowContext,
+  options: { preserveActiveBranch?: boolean } = {},
+): string {
   const item = branchNameItem(context)
   const root = itemRoot(mode)
   if (!branchExists(root, item)) {
     throw new Error(`branch_gate: cannot exit run because item branch ${item} does not exist`)
   }
+  const activeBranch = currentBranch(root)
+  if (options.preserveActiveBranch && activeBranch && activeBranch !== item) return activeBranch
   const co = runGit(root, ["checkout", item])
   if (!co.ok) throw new Error(`git: checkout ${item} on run exit failed: ${co.stderr}`)
   assertActiveBranch(mode, item, `exiting run to item branch ${item}`)
