@@ -14,6 +14,7 @@ import type { EventBus } from "./bus.js"
 import type { ExternalRemediationRow, Repos, RunRow, WorkerOwnerKind } from "../db/repositories.js"
 import { attachRunSubscribers, resolveWorkflowLlmOptions } from "./runSubscribers.js"
 import { preparedImportSourceSnapshotDir } from "./preparedImport.js"
+import { buildSupabaseWorkflowHook, type SupabaseAdapterFactory } from "./runOrchestrator.js"
 import {
   claimWorkerLease,
   defaultWorkerInstanceId,
@@ -177,6 +178,7 @@ export type PerformResumeInput = {
   workerLeaseClock?: () => number
   workerLeaseScheduler?: WorkerLeaseScheduler
   workflowRunner?: typeof runWorkflow
+  supabaseAdapterFactory?: SupabaseAdapterFactory | null
   /** Forwarded to `attachRunSubscribers` → `attachDbSync`. See `AttachDbSyncOptions.onItemColumnChanged`. */
   onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
 }
@@ -194,6 +196,12 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
   const { run, record, ctx } = readiness
   const workspaceRow = input.repos.getWorkspace(run.workspace_id)
   const llm = await resolveWorkflowLlmOptions(workspaceRow)
+  const supabaseHook = buildSupabaseWorkflowHook(
+    input.repos,
+    run.workspace_id,
+    workspaceRow,
+    input.supabaseAdapterFactory,
+  )
 
   inflightResumes.add(input.runId)
   const cancellation = createWorkflowCancellation()
@@ -271,6 +279,7 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
                 resume: buildWorkflowResumeInput(run, record, ctx),
                 llm,
                 workspaceRoot: workspaceRow?.root_path ?? undefined,
+                supabaseHook,
                 supabaseReadiness: {
                   repos: input.repos,
                   runId: run.id,
