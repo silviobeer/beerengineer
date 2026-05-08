@@ -5,6 +5,8 @@ import type { BoardCardDTO } from "@/lib/types";
 import allowedActionsByState from "./fixtures/item-actions-allowed.json";
 import { representativeBoardActionStates } from "./fixtures/boardActionRepresentativeStates";
 
+const allowedActionsByMatrixKey = allowedActionsByState as Record<string, string[]>;
+
 function renderActions(card: BoardCardDTO) {
   return render(<BoardCardActions card={card} />);
 }
@@ -16,10 +18,6 @@ function visibleActions(): string[] {
     .queryAllByRole("button")
     .map((button) => button.getAttribute("data-testid")?.replace("board-card-action-", ""))
     .filter((action): action is string => Boolean(action));
-}
-
-function fixtureActionsFor(matrixKey: string): string[] {
-  return (allowedActionsByState as Record<string, string[]>)[matrixKey] ?? [];
 }
 
 type DriftSource = "none" | "ui_rendering" | "engine_transition_rules";
@@ -35,6 +33,29 @@ type DriftGuardResult = {
   driftSource: DriftSource;
 };
 
+function readFixtureState(matrixKey: string): string[] | null {
+  return allowedActionsByMatrixKey[matrixKey] ?? null;
+}
+
+function resolveDriftSource(missingFixtureState: boolean, unexpectedVisibleActions: string[]): DriftSource {
+  if (missingFixtureState) return "engine_transition_rules";
+  if (unexpectedVisibleActions.length > 0) return "ui_rendering";
+  return "none";
+}
+
+function unknownStateMessage(result: DriftGuardResult): string {
+  return `Unknown committed allowlist state for ${result.stateId} (${result.matrixKey}). Source: engine transition rules or stale fixture.`;
+}
+
+function unsafeVisibleActionsMessage(result: DriftGuardResult): string {
+  const source = result.driftSource === "ui_rendering" ? "UI rendering" : "unknown";
+  return `Unsafe visible actions for ${result.stateId} (${result.matrixKey}): ${
+    result.unexpectedVisibleActions.join(", ") || "none"
+  }. Source: ${source}. Hidden engine-allowed actions are tolerated: ${
+    result.hiddenEngineAllowedActions.join(", ") || "none"
+  }.`;
+}
+
 function analyzeDrift({
   stateId,
   matrixKey,
@@ -44,7 +65,7 @@ function analyzeDrift({
   matrixKey: string;
   visibleActions: string[];
 }): DriftGuardResult {
-  const fixtureState = (allowedActionsByState as Record<string, string[]>)[matrixKey];
+  const fixtureState = readFixtureState(matrixKey);
   const engineAllowedActions = fixtureState ?? [];
   const missingFixtureState = !fixtureState;
   const unexpectedVisibleActions = visibleActions.filter((action) => !engineAllowedActions.includes(action));
@@ -56,11 +77,7 @@ function analyzeDrift({
     unexpectedVisibleActions,
     hiddenEngineAllowedActions: engineAllowedActions.filter((action) => !visibleActions.includes(action)),
     missingFixtureState,
-    driftSource: missingFixtureState
-      ? "engine_transition_rules"
-      : unexpectedVisibleActions.length > 0
-        ? "ui_rendering"
-        : "none",
+    driftSource: resolveDriftSource(missingFixtureState, unexpectedVisibleActions),
   };
 }
 
@@ -80,18 +97,9 @@ function analyzeRenderedState(stateId: string): DriftGuardResult {
 
 function expectNoUnsafeVisibleActions(result: DriftGuardResult) {
   if (result.missingFixtureState) {
-    throw new Error(
-      `Unknown committed allowlist state for ${result.stateId} (${result.matrixKey}). Source: engine transition rules or stale fixture.`,
-    );
+    throw new Error(unknownStateMessage(result));
   }
-  expect(
-    result.unexpectedVisibleActions,
-    `Unsafe visible actions for ${result.stateId} (${result.matrixKey}): ${
-      result.unexpectedVisibleActions.join(", ") || "none"
-    }. Source: ${result.driftSource === "ui_rendering" ? "UI rendering" : "unknown"}. Hidden engine-allowed actions are tolerated: ${
-      result.hiddenEngineAllowedActions.join(", ") || "none"
-    }.`,
-  ).toEqual([]);
+  expect(result.unexpectedVisibleActions, unsafeVisibleActionsMessage(result)).toEqual([]);
 }
 
 describe("BoardDriftGuard", () => {

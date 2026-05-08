@@ -4,6 +4,10 @@ const PHASES = ["draft", "running", "review_required", "completed", "failed"] as
 
 export type AllowedItemActionsByState = Record<string, ItemAction[]>
 
+function compareAlphabetically(left: string, right: string): number {
+  return left.localeCompare(right)
+}
+
 function expandStateKey(key: string): string[] {
   const [column, phase] = key.split("/")
   if (!column || !phase) throw new Error(`Invalid item action matrix key: ${key}`)
@@ -25,7 +29,7 @@ export function buildAllowedItemActionsByState(): AllowedItemActionsByState {
 
   return Object.fromEntries(
     [...byState.entries()]
-      .sort(([left], [right]) => left.localeCompare(right))
+      .sort(([left], [right]) => compareAlphabetically(left, right))
       .map(([key, actions]) => [key, ITEM_ACTIONS.filter(action => actions.has(action))]),
   )
 }
@@ -43,7 +47,7 @@ export function diffAllowedItemActionsByState(
   generated: AllowedItemActionsByState,
 ): string | null {
   const keys = new Set([...Object.keys(committed), ...Object.keys(generated)])
-  for (const key of [...keys].sort()) {
+  for (const key of [...keys].sort(compareAlphabetically)) {
     const committedActions = committed[key] ?? []
     const generatedActions = generated[key] ?? []
     if (JSON.stringify(committedActions) === JSON.stringify(generatedActions)) continue
