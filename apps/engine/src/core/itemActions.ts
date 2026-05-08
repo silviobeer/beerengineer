@@ -97,7 +97,7 @@ type PhaseKey = ItemRow["phase_status"]
  * Action / state transition matrix. Keys are `${column}/${phase}` or a
  * wildcard `${column}/*`. Lookup tries the specific key first, then wildcard.
  */
-const MATRIX: Record<ItemAction, Record<string, Transition>> = {
+export const ITEM_ACTION_MATRIX: Record<ItemAction, Record<string, Transition>> = {
   start_brainstorm: {
     "idea/draft": { kind: "start-run", column: "brainstorm" }
   },
@@ -157,7 +157,7 @@ const MATRIX: Record<ItemAction, Record<string, Transition>> = {
 }
 
 export function lookupTransition(action: ItemAction, column: ColumnKey, phase: PhaseKey): Transition {
-  const table = MATRIX[action]
+  const table = ITEM_ACTION_MATRIX[action]
   return table[`${column}/${phase}`] ?? table[`${column}/*`] ?? { kind: "reject" }
 }
 

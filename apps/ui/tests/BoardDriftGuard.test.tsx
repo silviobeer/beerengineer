@@ -22,6 +22,8 @@ function fixtureActionsFor(matrixKey: string): string[] {
   return (allowedActionsByState as Record<string, string[]>)[matrixKey] ?? [];
 }
 
+type DriftSource = "none" | "ui_rendering" | "engine_transition_rules";
+
 type DriftGuardResult = {
   stateId: string;
   matrixKey: string;
@@ -29,6 +31,8 @@ type DriftGuardResult = {
   engineAllowedActions: string[];
   unexpectedVisibleActions: string[];
   hiddenEngineAllowedActions: string[];
+  missingFixtureState: boolean;
+  driftSource: DriftSource;
 };
 
 function analyzeDrift({
@@ -40,14 +44,23 @@ function analyzeDrift({
   matrixKey: string;
   visibleActions: string[];
 }): DriftGuardResult {
-  const engineAllowedActions = fixtureActionsFor(matrixKey);
+  const fixtureState = (allowedActionsByState as Record<string, string[]>)[matrixKey];
+  const engineAllowedActions = fixtureState ?? [];
+  const missingFixtureState = !fixtureState;
+  const unexpectedVisibleActions = visibleActions.filter((action) => !engineAllowedActions.includes(action));
   return {
     stateId,
     matrixKey,
     visibleActions,
     engineAllowedActions,
-    unexpectedVisibleActions: visibleActions.filter((action) => !engineAllowedActions.includes(action)),
+    unexpectedVisibleActions,
     hiddenEngineAllowedActions: engineAllowedActions.filter((action) => !visibleActions.includes(action)),
+    missingFixtureState,
+    driftSource: missingFixtureState
+      ? "engine_transition_rules"
+      : unexpectedVisibleActions.length > 0
+        ? "ui_rendering"
+        : "none",
   };
 }
 
@@ -66,11 +79,16 @@ function analyzeRenderedState(stateId: string): DriftGuardResult {
 }
 
 function expectNoUnsafeVisibleActions(result: DriftGuardResult) {
+  if (result.missingFixtureState) {
+    throw new Error(
+      `Unknown committed allowlist state for ${result.stateId} (${result.matrixKey}). Source: engine transition rules or stale fixture.`,
+    );
+  }
   expect(
     result.unexpectedVisibleActions,
     `Unsafe visible actions for ${result.stateId} (${result.matrixKey}): ${
       result.unexpectedVisibleActions.join(", ") || "none"
-    }. Hidden engine-allowed actions are tolerated: ${
+    }. Source: ${result.driftSource === "ui_rendering" ? "UI rendering" : "unknown"}. Hidden engine-allowed actions are tolerated: ${
       result.hiddenEngineAllowedActions.join(", ") || "none"
     }.`,
   ).toEqual([]);
@@ -113,7 +131,7 @@ describe("BoardDriftGuard", () => {
     expectNoUnsafeVisibleActions(blockedMergeState!);
   });
 
-  it("fails only for unsafe visible actions and reports the affected state", () => {
+  it("fails only for unsafe visible actions and reports the affected state, action, and UI source", () => {
     const baseline = analyzeRenderedState("blocked_merge_review_required");
     const unsafeResult = analyzeDrift({
       stateId: baseline.stateId,
@@ -122,8 +140,9 @@ describe("BoardDriftGuard", () => {
     });
 
     expect(unsafeResult.hiddenEngineAllowedActions).toContain("resume_run");
+    expect(unsafeResult.driftSource).toBe("ui_rendering");
     expect(() => expectNoUnsafeVisibleActions(unsafeResult)).toThrowError(
-      /Unsafe visible actions for blocked_merge_review_required \(merge\/review_required\): unsafe_extra_action/,
+      /Unsafe visible actions for blocked_merge_review_required \(merge\/review_required\): unsafe_extra_action\. Source: UI rendering\./,
     );
   });
 
@@ -133,6 +152,19 @@ describe("BoardDriftGuard", () => {
     expect(result.visibleActions).toEqual([]);
     expect(result.hiddenEngineAllowedActions).toContain("rerun_design_prep");
     expectNoUnsafeVisibleActions(result);
+  });
+
+  it("fails loudly when the committed allowlist fixture does not define the rendered state", () => {
+    const unknownState = analyzeDrift({
+      stateId: "unknown_merge_completed",
+      matrixKey: "merge/completed",
+      visibleActions: ["promote_to_base"],
+    });
+
+    expect(unknownState.driftSource).toBe("engine_transition_rules");
+    expect(() => expectNoUnsafeVisibleActions(unknownState)).toThrowError(
+      /Unknown committed allowlist state for unknown_merge_completed \(merge\/completed\)\. Source: engine transition rules or stale fixture\./,
+    );
   });
 });
 
