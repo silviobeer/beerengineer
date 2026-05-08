@@ -7,6 +7,36 @@ import { WorkflowGitRepairPanel } from "@/components/WorkflowGitRepairPanel";
 
 type ActionDef = { action: string; label: string };
 const ACTION_ERROR_FALLBACK = "Action could not be completed.";
+const IMPORT_PREPARED_ACTIONS: ActionDef[] = [{ action: "import_prepared", label: "Import prepared" }];
+const BRAINSTORM_ACTIONS: ActionDef[] = [
+  { action: "start_visual_companion", label: "Start visual companion" },
+  { action: "import_prepared", label: "Import prepared" },
+];
+const START_FRONTEND_DESIGN_ACTIONS: ActionDef[] = [{ action: "start_frontend_design", label: "Start frontend design" }];
+const PROMOTE_TO_REQUIREMENTS_ACTIONS: ActionDef[] = [{ action: "promote_to_requirements", label: "Promote to requirements" }];
+const CANCEL_PROMOTION_ACTION: ActionDef = { action: "cancel_promotion", label: "Cancel" };
+const PROMOTE_TO_BASE_ACTION: ActionDef = { action: "promote_to_base", label: "Promote to base" };
+
+function isSettledPhase(phase: string): boolean {
+  return phase === "completed" || phase === "review_required";
+}
+
+function isImportPreparedColumn(column: BoardCardDTO["column"]): boolean {
+  return column === "idea" || column === "requirements";
+}
+
+function frontendActionsForStage(stage: BoardCardDTO["current_stage"] | null): ActionDef[] {
+  if (stage === "visual-companion") return START_FRONTEND_DESIGN_ACTIONS;
+  if (stage === "frontend-design" || stage == null) return PROMOTE_TO_REQUIREMENTS_ACTIONS;
+  return [];
+}
+
+function mergeActionsFor(card: BoardCardDTO): ActionDef[] {
+  const actions: ActionDef[] = [];
+  if (card.hasReviewGateWaiting) actions.push(CANCEL_PROMOTION_ACTION);
+  if (card.hasReviewGateWaiting || card.hasBlockedRun || card.hasOpenPrompt) actions.push(PROMOTE_TO_BASE_ACTION);
+  return actions;
+}
 
 /**
  * Decide which manual-progression buttons to surface for a card based on its
@@ -19,33 +49,10 @@ export function actionsFor(card: BoardCardDTO): ActionDef[] {
   const phase = card.phase_status ?? "";
   const stage = card.current_stage ?? null;
 
-  if ((card.column === "idea" || card.column === "requirements") && phase !== "running") {
-    return [{ action: "import_prepared", label: "Import prepared" }];
-  }
-  if (card.column === "brainstorm" && (phase === "completed" || phase === "review_required")) {
-    return [
-      { action: "start_visual_companion", label: "Start visual companion" },
-      { action: "import_prepared", label: "Import prepared" },
-    ];
-  }
-  if (card.column === "frontend" && (phase === "review_required" || phase === "completed")) {
-    if (stage === "visual-companion") {
-      return [{ action: "start_frontend_design", label: "Start frontend design" }];
-    }
-    if (stage === "frontend-design" || stage == null) {
-      return [{ action: "promote_to_requirements", label: "Promote to requirements" }];
-    }
-  }
-  if (card.column === "merge") {
-    const actions: ActionDef[] = [];
-    if (card.hasReviewGateWaiting) {
-      actions.push({ action: "cancel_promotion", label: "Cancel" });
-    }
-    if (card.hasReviewGateWaiting || card.hasBlockedRun || card.hasOpenPrompt) {
-      actions.push({ action: "promote_to_base", label: "Promote to base" });
-    }
-    return actions;
-  }
+  if (isImportPreparedColumn(card.column) && phase !== "running") return IMPORT_PREPARED_ACTIONS;
+  if (card.column === "brainstorm" && isSettledPhase(phase)) return BRAINSTORM_ACTIONS;
+  if (card.column === "frontend" && isSettledPhase(phase)) return frontendActionsForStage(stage);
+  if (card.column === "merge") return mergeActionsFor(card);
   return [];
 }
 
@@ -54,10 +61,14 @@ interface BoardCardActionsProps {
 }
 
 function parseActionError(body: unknown): string {
-  const candidate = body as { message?: unknown };
-  return typeof candidate.message === "string" && candidate.message.trim()
-    ? candidate.message
-    : ACTION_ERROR_FALLBACK;
+  const candidate = body as { message?: unknown; error?: unknown };
+  const message = typeof candidate.message === "string" ? candidate.message.trim() : "";
+  if (message) return message;
+
+  const error = typeof candidate.error === "string" ? candidate.error.trim() : "";
+  if (error && /[^a-z0-9_]/i.test(error)) return error;
+
+  return ACTION_ERROR_FALLBACK;
 }
 
 function parseWorkflowGitBlocker(body: unknown, status: number): WorkflowGitBlockedActionResult | null {

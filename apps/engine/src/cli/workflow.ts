@@ -2,7 +2,7 @@ import { ask, close } from "../sim/human.js"
 import { NON_INTERACTIVE_NO_ANSWER_SENTINEL } from "../core/constants.js"
 import { createCliIO } from "../core/ioCli.js"
 import { getRegisteredWorkspace } from "../core/workspaces.js"
-import { runWorkflowWithSync } from "../core/runOrchestrator.js"
+import { prepareForegroundIdeaRun } from "../core/runService.js"
 import { initDatabase } from "../db/connection.js"
 import { Repos } from "../db/repositories.js"
 
@@ -33,13 +33,15 @@ export async function runInteractiveWorkflow(opts: { json?: boolean; workspaceKe
 
   try {
     const workspaceMeta = resolveWorkspaceMeta(repos, opts.workspaceKey)
-    const runId = await runWorkflowWithSync(
-      { id: "new", title, description },
-      repos,
-      io,
-      { owner: "cli", ...workspaceMeta }
-    )
-    console.log(`\n  run-id: ${runId}`)
+    const prepared = prepareForegroundIdeaRun(repos, io, {
+      title,
+      description,
+      owner: "cli",
+      ...workspaceMeta,
+    })
+    if (!prepared.ok) throw new Error("message" in prepared ? prepared.message : prepared.error)
+    await prepared.start()
+    console.log(`\n  run-id: ${prepared.runId}`)
   } finally {
     io.close?.()
     close()
@@ -61,13 +63,15 @@ async function runJsonWorkflow(opts: { workspaceKey?: string } = {}): Promise<vo
     const description = requireJsonPromptAnswer(await io.ask("Idea (description)"), "Idea (description)")
 
     const workspaceMeta = resolveWorkspaceMeta(repos, opts.workspaceKey)
-    const runId = await runWorkflowWithSync(
-      { id: "new", title, description },
-      repos,
-      io,
-      { owner: "cli", ...workspaceMeta }
-    )
-    process.stdout.write(`${JSON.stringify({ type: "cli_finished", runId })}\n`)
+    const prepared = prepareForegroundIdeaRun(repos, io, {
+      title,
+      description,
+      owner: "cli",
+      ...workspaceMeta,
+    })
+    if (!prepared.ok) throw new Error("message" in prepared ? prepared.message : prepared.error)
+    await prepared.start()
+    process.stdout.write(`${JSON.stringify({ type: "cli_finished", runId: prepared.runId })}\n`)
   } finally {
     io.close?.()
     db.close()
