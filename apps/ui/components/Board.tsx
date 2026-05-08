@@ -19,6 +19,8 @@ export interface BoardLauncherRenderContext {
   readonly openItemModalFromMutation: (result: BoardLauncherMutationSuccess) => void;
 }
 
+const WORKSPACE_SELECTION_REQUIRED_MESSAGE = "Select a workspace before starting new work.";
+
 interface BoardProps {
   readonly items: BoardCardDTO[];
   readonly workspaceKey?: string;
@@ -167,6 +169,20 @@ export function Board({ items, workspaceKey, renderLauncher }: Readonly<BoardPro
         >
           {renderLauncher?.(launcherContext)}
         </div>
+        {!workspaceKey ? (
+          <p
+            data-testid="board-launcher-gate-message"
+            className="w-full border px-3 py-2 text-sm"
+            style={{
+              borderColor: "var(--color-zinc-700)",
+              backgroundColor: "var(--color-zinc-950)",
+              color: "var(--color-zinc-300)",
+              fontFamily: "var(--font-body, var(--font-sans))",
+            }}
+          >
+            {WORKSPACE_SELECTION_REQUIRED_MESSAGE}
+          </p>
+        ) : null}
       </section>
       <div
         data-testid="kanban-board-scroll"
