@@ -1,4 +1,4 @@
-import { Board } from "@/components/Board";
+import { BoardWorkspaceView } from "@/components/BoardWorkspaceView";
 import { RunOverviewBanners } from "@/components/run/RunOverviewBanners";
 import { engineBaseUrl } from "@/lib/engine/baseUrl";
 import type { BoardCardDTO } from "@/lib/types";
@@ -113,7 +113,9 @@ export default async function BoardPage({ params }: Readonly<BoardPageProps>) {
   return (
     <main className="min-h-screen text-zinc-100 bg-zinc-950 overflow-x-hidden">
       <RunOverviewBanners costRisk={costRisk} />
-      <Board items={items ?? []} workspaceKey={key} />
+      <section data-testid="board-workspace-shell" data-selected-workspace={key}>
+        <BoardWorkspaceView items={items ?? []} workspaceKey={key} />
+      </section>
     </main>
   );
 }
