@@ -390,6 +390,26 @@ test("GET /items/:id includes allowed actions for the item detail toolbar", asyn
   }
 })
 
+test("POST /items/import-prepared scopes new imports by workspace key", async () => {
+  const dbPath = tmpDbPath()
+  initDatabase(dbPath).close()
+  const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
+  try {
+    await waitForHealth(base)
+    const res = await fetch(`${base}/items/import-prepared`, {
+      method: "POST",
+      headers: authHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({ workspaceKey: "missing-workspace", path: "/tmp/prepared-import" }),
+    })
+
+    assert.equal(res.status, 404)
+    const body = await res.json() as { error: string }
+    assert.equal(body.error, "unknown_workspace")
+  } finally {
+    await stopServer(proc)
+  }
+})
+
 test("GET /setup/status returns the doctor report contract", async () => {
   const dbPath = tmpDbPath()
   initDatabase(dbPath).close()

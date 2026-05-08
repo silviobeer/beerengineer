@@ -67,6 +67,26 @@ describe("BoardImportLauncher", () => {
     expect(screen.getByText("Folder path is required.")).toBeInTheDocument();
   });
 
+  it("keeps the import launcher controls full-width for a 375px viewport", () => {
+    vi.stubGlobal("innerWidth", 375);
+    const view = renderBoardWithImportLauncher();
+
+    const launcherButton = screen.getByRole("button", { name: "Import feature" });
+    expect(launcherButton.className).toContain("w-full");
+
+    openImportLauncher();
+
+    const input = screen.getByLabelText("Local folder path");
+    const submitButton = screen.getByRole("button", { name: "Start import" });
+    const panel = view.container.querySelector("#board-import-launcher-panel");
+
+    expect(panel).not.toBeNull();
+    expect(panel?.className).toContain("w-full");
+    expect(input.className).toContain("w-full");
+    expect(input.className).toContain("min-w-0");
+    expect(submitButton.className).toContain("w-full");
+  });
+
   it("submits any non-empty path, disables re-submission while pending, and preserves engine failures", async () => {
     let resolveFetch: ((value: Response) => void) | null = null;
     const fetchMock = vi.fn(() => new Promise<Response>((resolve) => {

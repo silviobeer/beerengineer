@@ -48,7 +48,7 @@ function ImportLauncherButton({
       disabled={isWorkspaceSelected === false || isSubmitting}
       aria-expanded={isOpen}
       aria-controls="board-import-launcher-panel"
-      className="min-h-10 border px-3 py-2 text-left text-sm font-semibold"
+      className="min-h-10 w-full border px-3 py-2 text-left text-sm font-semibold sm:w-auto"
       style={{
         backgroundColor: "var(--color-zinc-900)",
         borderColor: "var(--color-zinc-700)",
@@ -75,7 +75,7 @@ function ImportLauncherPanel({
       onSubmit={onSubmit}
       noValidate
       aria-busy={isSubmitting}
-      className="flex min-w-0 flex-col gap-3 border p-3"
+      className="flex w-full min-w-0 flex-col gap-3 border p-3"
       style={{
         backgroundColor: "var(--color-zinc-950)",
         borderColor: "var(--color-zinc-700)",
@@ -99,7 +99,7 @@ function ImportLauncherPanel({
           value={path}
           onChange={(event) => onPathChange(event.target.value)}
           placeholder="/path/to/prepared-feature"
-          className="min-h-10 border px-3 py-2 text-sm"
+          className="min-h-10 w-full min-w-0 border px-3 py-2 text-sm"
           style={{
             backgroundColor: "var(--color-zinc-900)",
             borderColor: errorMessage ? "var(--color-coral)" : "var(--color-zinc-700)",
@@ -112,7 +112,7 @@ function ImportLauncherPanel({
         <button
           type="submit"
           disabled={isSubmitting}
-          className="min-h-10 border px-3 py-2 text-sm font-semibold"
+          className="min-h-10 w-full border px-3 py-2 text-sm font-semibold sm:w-auto"
           style={{
             backgroundColor: isSubmitting ? "var(--color-zinc-800)" : "var(--color-petrol)",
             borderColor: isSubmitting ? "var(--color-zinc-700)" : "var(--color-petrol-bright)",
@@ -224,7 +224,7 @@ export function BoardImportLauncher({
   );
 
   return (
-    <div className="flex min-w-0 flex-1 basis-full flex-col gap-2 md:max-w-xl">
+    <div className="flex w-full min-w-0 flex-1 basis-full flex-col gap-2 md:max-w-xl">
       <div className="flex flex-wrap items-start gap-2">
         <ImportLauncherButton
           isOpen={launcher.isOpen}
