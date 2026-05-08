@@ -30,6 +30,13 @@ type BlockRunFn = (
   },
 ) => Promise<never>
 
+function normalizeMergeGateAnswer(answer: string): "promote" | "cancel" | string {
+  const normalized = answer.trim().toLowerCase()
+  if (["promote", "approve", "approved", "yes", "y"].includes(normalized)) return "promote"
+  if (["cancel", "no", "n"].includes(normalized)) return "cancel"
+  return answer.trim()
+}
+
 /**
  * BUG-PROJ4-QA-005 wiring point 4: Supabase gate stack before mergeItemIntoBase.
  *
@@ -88,7 +95,7 @@ export async function mergeGate(
         actions: [...actions],
       })
     : io.ask(prompt, { promptId, actions: [...actions] })
-  const answer = (await answerPromise).trim()
+  const answer = normalizeMergeGateAnswer(await answerPromise)
 
   if (answer === "cancel") {
     emitEvent({

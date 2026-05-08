@@ -90,3 +90,27 @@ test("mergeGate blocks instead of merging on unexpected free-text answers", asyn
   assert.equal(blocked?.cause, "merge_gate_failed")
   assert.match(blocked?.summary ?? "", /unsupported answer/i)
 })
+
+test("mergeGate accepts common approval wording as promotion", async () => {
+  const git = makeGit()
+  let merged = false
+  git.mergeItemIntoBase = () => {
+    merged = true
+    return { mergeSha: "deadbeef" }
+  }
+
+  await runWithWorkflowIO(
+    {
+      ask: async () => "approve",
+      emit: () => {},
+    },
+    () =>
+      runWithActiveRun({ runId: "run-1", itemId: "ITEM-1", stageRunId: "stage-1" }, () =>
+        mergeGate(context, git, async () => {
+          throw new Error("blocked")
+        }),
+      ),
+  )
+
+  assert.equal(merged, true)
+})
