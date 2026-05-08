@@ -1,7 +1,7 @@
 "use client";
 
 import type { ComponentProps } from "react";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { postBoardLauncherMutation } from "@/lib/api";
 import type { BoardLauncherRenderContext } from "./Board";
 
@@ -73,8 +73,8 @@ function CreateIdeaHeader({
       <button
         type="button"
         onClick={onToggle}
-        disabled={!isWorkspaceSelected || isSubmitting}
-        aria-expanded={isOpen ? "true" : "false"}
+        disabled={isWorkspaceSelected === false || isSubmitting}
+        aria-expanded={isOpen}
         aria-controls={inputId}
         className="min-h-10 border px-3 py-2 text-sm font-semibold"
         style={{
@@ -116,7 +116,7 @@ function CreateIdeaForm({
           value={ideaText}
           onChange={(event) => onIdeaTextChange(event.target.value)}
           aria-multiline="true"
-          aria-invalid={validationError ? "true" : "false"}
+          aria-invalid={validationError !== null}
           disabled={isSubmitting}
           className="w-full border px-3 py-2 text-sm"
           style={{
@@ -188,15 +188,24 @@ function useCreateIdeaLauncherState(
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  useEffect(() => {
+    if (selectedWorkspaceKey !== null) return;
+
+    setIsOpen(false);
+    setIsSubmitting(false);
+    setValidationError(null);
+    setSubmitError(null);
+  }, [selectedWorkspaceKey]);
+
   function updateIdeaText(value: string) {
     setIdeaText(value);
-    if (validationError) setValidationError(null);
-    if (submitError) setSubmitError(null);
+    if (validationError !== null) setValidationError(null);
+    if (submitError !== null) setSubmitError(null);
   }
 
   async function submit(event: FormSubmitEvent) {
     event.preventDefault();
-    if (isSubmitting || !selectedWorkspaceKey) return;
+    if (isSubmitting || selectedWorkspaceKey === null) return;
 
     if (ideaText.trim().length === 0) {
       setValidationError(REQUIRED_IDEA_MESSAGE);
@@ -232,7 +241,7 @@ function useCreateIdeaLauncherState(
     validationError,
     submitError,
     isSubmitting,
-    openOrClose: () => setIsOpen((current) => !current),
+    openOrClose: () => setIsOpen((current) => current === false),
     submit: (event) => void submit(event),
     updateIdeaText,
   };
