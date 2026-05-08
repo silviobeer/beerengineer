@@ -1,18 +1,152 @@
 {
-  "merge/review_required": [
-    "resume_run",
-    "promote_to_base",
-    "cancel_promotion"
-  ],
-  "implementation/failed": [
+  "brainstorm/completed": [
+    "start_visual_companion",
+    "promote_to_requirements",
+    "import_prepared",
     "rerun_design_prep",
     "resume_run"
   ],
-  "implementation/running": [
+  "brainstorm/draft": [
+    "promote_to_requirements",
+    "import_prepared",
+    "rerun_design_prep",
+    "resume_run"
+  ],
+  "brainstorm/failed": [
+    "promote_to_requirements",
+    "import_prepared",
+    "rerun_design_prep",
+    "resume_run"
+  ],
+  "brainstorm/review_required": [
+    "start_visual_companion",
+    "promote_to_requirements",
+    "import_prepared",
+    "rerun_design_prep",
+    "resume_run"
+  ],
+  "brainstorm/running": [
+    "promote_to_requirements",
+    "import_prepared",
     "rerun_design_prep",
     "resume_run"
   ],
   "done/completed": [
     "rerun_design_prep"
+  ],
+  "done/draft": [
+    "rerun_design_prep"
+  ],
+  "done/failed": [
+    "rerun_design_prep"
+  ],
+  "done/review_required": [
+    "rerun_design_prep"
+  ],
+  "done/running": [
+    "rerun_design_prep"
+  ],
+  "frontend/completed": [
+    "start_visual_companion",
+    "start_frontend_design",
+    "promote_to_requirements",
+    "import_prepared",
+    "rerun_design_prep",
+    "resume_run"
+  ],
+  "frontend/draft": [
+    "promote_to_requirements",
+    "import_prepared",
+    "rerun_design_prep",
+    "resume_run"
+  ],
+  "frontend/failed": [
+    "promote_to_requirements",
+    "import_prepared",
+    "rerun_design_prep",
+    "resume_run"
+  ],
+  "frontend/review_required": [
+    "start_visual_companion",
+    "start_frontend_design",
+    "promote_to_requirements",
+    "import_prepared",
+    "rerun_design_prep",
+    "resume_run"
+  ],
+  "frontend/running": [
+    "promote_to_requirements",
+    "import_prepared",
+    "rerun_design_prep",
+    "resume_run"
+  ],
+  "idea/completed": [
+    "import_prepared"
+  ],
+  "idea/draft": [
+    "start_brainstorm",
+    "import_prepared"
+  ],
+  "idea/failed": [
+    "import_prepared"
+  ],
+  "idea/review_required": [
+    "import_prepared"
+  ],
+  "idea/running": [
+    "import_prepared"
+  ],
+  "implementation/completed": [
+    "rerun_design_prep"
+  ],
+  "implementation/draft": [
+    "rerun_design_prep"
+  ],
+  "implementation/failed": [
+    "rerun_design_prep",
+    "resume_run"
+  ],
+  "implementation/review_required": [
+    "rerun_design_prep",
+    "mark_done"
+  ],
+  "implementation/running": [
+    "rerun_design_prep",
+    "resume_run"
+  ],
+  "merge/review_required": [
+    "resume_run",
+    "promote_to_base",
+    "cancel_promotion"
+  ],
+  "requirements/completed": [
+    "start_implementation",
+    "import_prepared",
+    "rerun_design_prep",
+    "resume_run"
+  ],
+  "requirements/draft": [
+    "start_implementation",
+    "import_prepared",
+    "rerun_design_prep",
+    "resume_run"
+  ],
+  "requirements/failed": [
+    "start_implementation",
+    "import_prepared",
+    "rerun_design_prep",
+    "resume_run"
+  ],
+  "requirements/review_required": [
+    "start_implementation",
+    "import_prepared",
+    "rerun_design_prep",
+    "resume_run"
+  ],
+  "requirements/running": [
+    "start_implementation",
+    "import_prepared",
+    "rerun_design_prep",
+    "resume_run"
   ]
 }
