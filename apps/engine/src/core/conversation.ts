@@ -30,8 +30,12 @@ export function recordAnswer(
   if (!repos.getRun(input.runId)) return { ok: false, code: "run_not_found" }
 
   const open = repos.getOpenPrompt(input.runId)
+  const requestedPrompt = input.promptId ? repos.getPendingPrompt(input.promptId) : undefined
   const promptId = input.promptId ?? open?.id
   if (!promptId) return { ok: false, code: "prompt_not_open" }
+  if (input.promptId && (!requestedPrompt || requestedPrompt.run_id !== input.runId || requestedPrompt.answered_at !== null)) {
+    return { ok: false, code: "prompt_not_open" }
+  }
   if (input.promptId && open && open.id !== input.promptId) {
     return { ok: false, code: "prompt_mismatch" }
   }
