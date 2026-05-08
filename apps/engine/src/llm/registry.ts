@@ -132,9 +132,6 @@ function resolveFromPreset(presetKey: string, role: HarnessRole, stage: StageId,
   // Roles new to the schema (e.g. "merge-resolver") may be absent from older
   // preset files. Fall back to the coder role so mainline runs keep working.
   const entry = preset.stageOverrides?.[stage]?.[role] ?? preset[role] ?? preset.coder
-  if (entry.harness === "opencode") {
-    throw new Error(`Preset "${presetKey}" resolves to opencode for role "${role}", which is not implemented yet`)
-  }
   const runtime: InvocationRuntime = entry.runtime ?? "cli"
   // Execution stage writes real code and needs the strongest coder model,
   // while design-prep / requirements / planning stages are text generation
@@ -169,20 +166,28 @@ export function resolveHarness(input: AdapterFactoryInput): ResolvedHarness {
     case "fast":
     case "claude-sdk-first":
     case "codex-sdk-first":
-      return resolveFromPreset(input.harnessProfile.mode, input.role, input.stage, input.workspaceRoot)
-    case "opencode":
     case "opencode-china":
     case "opencode-euro":
-      throw new Error(`Harness profile mode "${input.harnessProfile.mode}" is not implemented yet`)
+    case "langdock-gpt5-5-first":
+      return resolveFromPreset(input.harnessProfile.mode, input.role, input.stage, input.workspaceRoot)
+    case "opencode": {
+      const roles = input.harnessProfile.roles as Record<string, { provider: string; model: string }>
+      const selected = roles[input.role] ?? roles.coder
+      return {
+        kind: "hosted",
+        harness: "opencode",
+        provider: selected.provider ?? "",
+        runtime: "cli",
+        model: selected.model,
+        workspaceRoot: input.workspaceRoot,
+      }
+    }
     case "self": {
       const roles = input.harnessProfile.roles as Record<
         string,
         { harness: KnownHarness; provider?: string; model?: string; runtime?: InvocationRuntime }
       >
       const selected = roles[input.role] ?? roles.coder
-      if (selected.harness === "opencode") {
-        throw new Error('Harness profile resolves to "opencode", which is not implemented yet')
-      }
       const runtime: InvocationRuntime = selected.runtime ?? "cli"
       return {
         kind: "hosted",

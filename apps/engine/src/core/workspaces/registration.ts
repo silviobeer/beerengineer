@@ -107,7 +107,8 @@ const HARNESS_PROFILE_OPTIONS = [
   ["6", { mode: "claude-sdk-first" }, "claude-sdk-first  (Claude Agent SDK; needs ANTHROPIC_API_KEY, bills per-token)"],
   ["7", { mode: "codex-sdk-first" }, "codex-sdk-first   (Codex SDK; needs OPENAI_API_KEY, bills per-token)"],
   ["8", { mode: "opencode-china" }, "opencode-china    (qwen + deepseek via OpenRouter)"],
-  ["9", { mode: "opencode-euro" }, "opencode-euro     (mistral via OpenRouter)"],
+  ["9", { mode: "opencode-euro" }, "opencode-euro          (mistral via OpenRouter)"],
+  ["10", { mode: "langdock-gpt5-5-first" }, "langdock-gpt5-5-first (gpt-5.5 coder + sonnet-4.6 reviewer via Langdock)"],
 ] as const satisfies ReadonlyArray<readonly [string, HarnessProfile, string]>
 
 async function resolveRegisterWorkspaceState(

@@ -139,7 +139,8 @@ export function validateHarnessProfileShape(input: unknown): HarnessProfile {
     input.mode === "claude-sdk-first" ||
     input.mode === "codex-sdk-first" ||
     input.mode === "opencode-china" ||
-    input.mode === "opencode-euro"
+    input.mode === "opencode-euro" ||
+    input.mode === "langdock-gpt5-5-first"
   ) {
     return { mode: input.mode }
   }

@@ -114,6 +114,7 @@ function isValidHarnessProfile(raw: unknown): raw is HarnessProfile {
     case "codex-sdk-first":
     case "opencode-china":
     case "opencode-euro":
+    case "langdock-gpt5-5-first":
       return true
     case "opencode":
     case "self": {

@@ -75,6 +75,7 @@ export type HarnessProfile =
   | { mode: "codex-sdk-first" }
   | { mode: "opencode-china" }
   | { mode: "opencode-euro" }
+  | { mode: "langdock-gpt5-5-first" }
   | {
       mode: "opencode"
       roles: {

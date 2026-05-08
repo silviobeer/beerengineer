@@ -41,6 +41,7 @@ function rolePairsForProfile(
     case "codex-sdk-first":
     case "opencode-china":
     case "opencode-euro":
+    case "langdock-gpt5-5-first":
       return pairsFromPreset(profile.mode)
     case "opencode":
       return [{ harness: "opencode", runtime: "cli" }]

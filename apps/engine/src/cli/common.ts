@@ -296,6 +296,9 @@ export function parseHarnessProfile(input: { profile?: string; profileJson?: str
     case "fast":
     case "claude-sdk-first":
     case "codex-sdk-first":
+    case "opencode-china":
+    case "opencode-euro":
+    case "langdock-gpt5-5-first":
       return { mode: input.profile }
     default:
       throw new Error(`Unsupported --profile value: ${input.profile}`)

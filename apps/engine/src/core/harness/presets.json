@@ -26,6 +26,13 @@
         { "id": "mistralai/codestral-2501" },
         { "id": "mistralai/mistral-large-2411" }
       ]
+    },
+    {
+      "name": "langdock",
+      "models": [
+        { "id": "openai/gpt-5.5", "default": { "role": "coder" } },
+        { "id": "anthropic/claude-sonnet-4-6", "default": { "role": "reviewer" } }
+      ]
     }
   ],
   "presets": {
@@ -91,6 +98,17 @@
       "coder": { "harness": "opencode", "provider": "openrouter", "model": "mistralai/codestral-2501" },
       "reviewer": { "harness": "opencode", "provider": "openrouter", "model": "mistralai/mistral-large-2411" },
       "merge-resolver": { "harness": "opencode", "provider": "openrouter", "model": "mistralai/codestral-2501" }
+    },
+    "langdock-gpt5-5-first": {
+      "coder": { "harness": "opencode", "provider": "langdock", "model": "openai/gpt-5.5" },
+      "reviewer": { "harness": "opencode", "provider": "langdock", "model": "anthropic/claude-sonnet-4-6" },
+      "merge-resolver": { "harness": "opencode", "provider": "langdock", "model": "openai/gpt-5.5" },
+      "stageOverrides": {
+        "qa": {
+          "coder": { "harness": "opencode", "provider": "langdock", "model": "anthropic/claude-sonnet-4-6" },
+          "reviewer": { "harness": "opencode", "provider": "langdock", "model": "openai/gpt-5.5" }
+        }
+      }
     }
   }
 }
