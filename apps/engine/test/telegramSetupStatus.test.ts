@@ -154,8 +154,10 @@ test("REQ-1 default and workspace Telegram setup resolve provenance, inheritance
       process.env.TELEGRAM_WEBHOOK_SECRET = "telegram-webhook-secret-value"
       return getAppConfigView({ configPath: paths.configPath, dataDir: paths.dataDir }, { repos, workspaceKey: "alpha" })
     })
-    assert.equal(alphaView.telegramInbound?.scope.kind, "workspace")
-    assert.equal(alphaView.telegramInbound?.scope.kind === "workspace" && alphaView.telegramInbound.scope.inheritance, "mixed")
+    const alphaScope = alphaView.telegramInbound?.scope
+    assert.equal(alphaScope?.kind, "workspace")
+    if (alphaScope?.kind !== "workspace") throw new Error("expected alpha Telegram scope to be workspace")
+    assert.equal(alphaScope.inheritance, "mixed")
     assert.equal(alphaView.telegramInbound?.fields.bot.source, "app-default")
     assert.equal(alphaView.telegramInbound?.fields.chat.source, "workspace-override")
     assert.equal(alphaView.telegramInbound?.fields.publicWebhook.source, "workspace-override")
@@ -168,8 +170,10 @@ test("REQ-1 default and workspace Telegram setup resolve provenance, inheritance
       process.env.TELEGRAM_WEBHOOK_SECRET = "telegram-webhook-secret-value"
       return getAppConfigView({ configPath: paths.configPath, dataDir: paths.dataDir }, { repos, workspaceKey: "beta" })
     })
-    assert.equal(betaView.telegramInbound?.scope.kind, "workspace")
-    assert.equal(betaView.telegramInbound?.scope.kind === "workspace" && betaView.telegramInbound.scope.inheritance, "inherited")
+    const betaScope = betaView.telegramInbound?.scope
+    assert.equal(betaScope?.kind, "workspace")
+    if (betaScope?.kind !== "workspace") throw new Error("expected beta Telegram scope to be workspace")
+    assert.equal(betaScope.inheritance, "inherited")
     assert.equal(betaView.telegramInbound?.fields.chat.chatId, "10001")
     assert.equal(betaView.telegramInbound?.fields.publicWebhook.webhookUrl, "https://operator.example.test/webhooks/telegram")
 

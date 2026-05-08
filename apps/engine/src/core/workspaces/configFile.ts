@@ -103,33 +103,33 @@ function normalizePreviewConfig(raw: unknown): WorkspacePreviewConfig | undefine
   }
 }
 
+function nonEmptyTrimmedString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined
+}
+
+function normalizeWorkspaceTelegramInbound(
+  raw: WorkspaceTelegramInboundConfig["inbound"],
+): WorkspaceTelegramInboundConfig["inbound"] | undefined {
+  if (!raw || typeof raw !== "object") return undefined
+  const webhookSecretEnv = nonEmptyTrimmedString(raw.webhookSecretEnv)
+  const normalized: NonNullable<WorkspaceTelegramInboundConfig["inbound"]> = {
+    ...(typeof raw.enabled === "boolean" ? { enabled: raw.enabled } : {}),
+    ...(webhookSecretEnv ? { webhookSecretEnv } : {}),
+  }
+  return Object.keys(normalized).length > 0 ? normalized : undefined
+}
+
 function normalizeWorkspaceTelegramConfig(raw: unknown): WorkspaceTelegramInboundConfig | undefined {
   if (!raw || typeof raw !== "object") return undefined
   const telegram = raw as Partial<WorkspaceTelegramInboundConfig>
-  const inbound = telegram.inbound && typeof telegram.inbound === "object"
-    ? telegram.inbound as NonNullable<WorkspaceTelegramInboundConfig["inbound"]>
-    : undefined
-
-  const normalized: WorkspaceTelegramInboundConfig = {}
-  if (typeof telegram.enabled === "boolean") normalized.enabled = telegram.enabled
-  if (typeof telegram.botTokenEnv === "string" && telegram.botTokenEnv.trim().length > 0) {
-    normalized.botTokenEnv = telegram.botTokenEnv.trim()
+  const normalized: WorkspaceTelegramInboundConfig = {
+    ...(typeof telegram.enabled === "boolean" ? { enabled: telegram.enabled } : {}),
+    ...(nonEmptyTrimmedString(telegram.botTokenEnv) ? { botTokenEnv: nonEmptyTrimmedString(telegram.botTokenEnv) } : {}),
+    ...(nonEmptyTrimmedString(telegram.defaultChatId) ? { defaultChatId: nonEmptyTrimmedString(telegram.defaultChatId) } : {}),
+    ...(nonEmptyTrimmedString(telegram.publicBaseUrl) ? { publicBaseUrl: nonEmptyTrimmedString(telegram.publicBaseUrl) } : {}),
   }
-  if (typeof telegram.defaultChatId === "string" && telegram.defaultChatId.trim().length > 0) {
-    normalized.defaultChatId = telegram.defaultChatId.trim()
-  }
-  if (typeof telegram.publicBaseUrl === "string" && telegram.publicBaseUrl.trim().length > 0) {
-    normalized.publicBaseUrl = telegram.publicBaseUrl.trim()
-  }
-  if (inbound) {
-    const normalizedInbound: NonNullable<WorkspaceTelegramInboundConfig["inbound"]> = {}
-    if (typeof inbound.enabled === "boolean") normalizedInbound.enabled = inbound.enabled
-    if (typeof inbound.webhookSecretEnv === "string" && inbound.webhookSecretEnv.trim().length > 0) {
-      normalizedInbound.webhookSecretEnv = inbound.webhookSecretEnv.trim()
-    }
-    if (Object.keys(normalizedInbound).length > 0) normalized.inbound = normalizedInbound
-  }
-
+  const inbound = normalizeWorkspaceTelegramInbound(telegram.inbound)
+  if (inbound) normalized.inbound = inbound
   return Object.keys(normalized).length > 0 ? normalized : undefined
 }
 

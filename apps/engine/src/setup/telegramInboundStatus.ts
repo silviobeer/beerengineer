@@ -26,6 +26,29 @@ type TelegramFieldBase = {
   configured: boolean
 }
 
+type TelegramFieldSources = {
+  bot: TelegramConfigSource
+  chat: TelegramConfigSource
+  webhookSecret: TelegramConfigSource
+  publicWebhook: TelegramConfigSource
+}
+
+type EffectiveTelegramInboundConfig = {
+  enabled: boolean
+  tokenRef?: string
+  chatId?: string
+  inboundEnabled: boolean
+  webhookSecretRef?: string
+  webhookSecretPresent: boolean
+  publicBaseUrl?: string
+  tokenPresent: boolean
+  publicWebhook: {
+    valid: boolean
+    error?: string
+    webhookUrl?: string
+  }
+}
+
 export type TelegramInboundStatusView = {
   scope: TelegramScopeView
   readiness: {
@@ -76,80 +99,17 @@ export function resolveTelegramInboundStatus(
   const workspaceTarget = resolveWorkspaceTarget(deps.repos, deps.workspaceKey)
   if (workspaceTarget && !workspaceTarget.ok) return null
   const workspaceOverride = workspaceTarget?.ok ? workspaceTarget.override : undefined
-
-  const botSource: TelegramConfigSource =
-    workspaceOverride && (workspaceOverride.enabled !== undefined || workspaceOverride.botTokenEnv !== undefined)
-      ? "workspace-override"
-      : "app-default"
-  const chatSource: TelegramConfigSource =
-    workspaceOverride && workspaceOverride.defaultChatId !== undefined ? "workspace-override" : "app-default"
-  const webhookSource: TelegramConfigSource =
-    workspaceOverride && (workspaceOverride.inbound?.enabled !== undefined || workspaceOverride.inbound?.webhookSecretEnv !== undefined)
-      ? "workspace-override"
-      : "app-default"
-  const publicWebhookSource: TelegramConfigSource =
-    workspaceOverride && workspaceOverride.publicBaseUrl !== undefined ? "workspace-override" : "app-default"
-
-  const effectiveEnabled = workspaceOverride?.enabled ?? config.notifications?.telegram?.enabled ?? false
-  const effectiveTokenRef = workspaceOverride?.botTokenEnv ?? config.notifications?.telegram?.botTokenEnv
-  const effectiveChatId = workspaceOverride?.defaultChatId ?? config.notifications?.telegram?.defaultChatId
-  const effectiveInboundEnabled = workspaceOverride?.inbound?.enabled ?? config.notifications?.telegram?.inbound?.enabled ?? false
-  const effectiveWebhookSecretRef = workspaceOverride?.inbound?.webhookSecretEnv ?? config.notifications?.telegram?.inbound?.webhookSecretEnv
-  const effectivePublicBaseUrl = workspaceOverride?.publicBaseUrl ?? config.publicBaseUrl
-  const tokenPresent = secretPresent(effectiveTokenRef)
-  const webhookSecretPresent = secretPresent(effectiveWebhookSecretRef)
-  const publicWebhook = resolvePublicWebhook(effectivePublicBaseUrl)
-  const blockers = collectReadinessBlockers({
-    enabled: effectiveEnabled,
-    tokenRef: effectiveTokenRef,
-    tokenPresent,
-    chatId: effectiveChatId,
-    inboundEnabled: effectiveInboundEnabled,
-    webhookSecretRef: effectiveWebhookSecretRef,
-    webhookSecretPresent,
-    publicWebhook,
-  })
+  const sources = resolveFieldSources(workspaceOverride)
+  const effectiveConfig = resolveEffectiveTelegramConfig(config, workspaceOverride)
+  const blockers = collectReadinessBlockers(effectiveConfig)
 
   return {
-    scope: buildScopeView(workspaceTarget?.ok ? workspaceTarget.workspace : undefined, [
-      botSource,
-      chatSource,
-      webhookSource,
-      publicWebhookSource,
-    ]),
+    scope: buildScopeView(workspaceTarget?.ok ? workspaceTarget.workspace : undefined, Object.values(sources)),
     readiness: {
       state: blockers.length === 0 ? "ready" : "blocked",
       blockers,
     },
-    fields: {
-      bot: {
-        source: botSource,
-        configured: effectiveEnabled && Boolean(effectiveTokenRef),
-        enabled: effectiveEnabled,
-        tokenRef: effectiveTokenRef,
-        tokenPresent,
-      },
-      chat: {
-        source: chatSource,
-        configured: Boolean(effectiveChatId),
-        chatId: effectiveChatId,
-      },
-      webhookSecret: {
-        source: webhookSource,
-        configured: effectiveInboundEnabled && Boolean(effectiveWebhookSecretRef),
-        enabled: effectiveInboundEnabled,
-        secretRef: effectiveWebhookSecretRef,
-        secretPresent: webhookSecretPresent,
-      },
-      publicWebhook: {
-        source: publicWebhookSource,
-        configured: Boolean(effectivePublicBaseUrl),
-        publicBaseUrl: effectivePublicBaseUrl,
-        valid: publicWebhook.valid,
-        error: publicWebhook.error,
-        webhookUrl: publicWebhook.webhookUrl,
-      },
-    },
+    fields: buildFieldViews(sources, effectiveConfig),
   }
 }
 
@@ -168,6 +128,80 @@ function resolveWorkspaceTarget(repos: Repos | undefined, workspaceKey: string |
   }
   const config = readWorkspaceConfigSync(workspace.root_path)
   return { ok: true, workspace, override: config?.telegram }
+}
+
+function resolveFieldSources(workspaceOverride: WorkspaceTelegramInboundConfig | undefined): TelegramFieldSources {
+  return {
+    bot: sourceForWorkspaceOverride(
+      workspaceOverride?.enabled !== undefined || workspaceOverride?.botTokenEnv !== undefined,
+    ),
+    chat: sourceForWorkspaceOverride(workspaceOverride?.defaultChatId !== undefined),
+    webhookSecret: sourceForWorkspaceOverride(
+      workspaceOverride?.inbound?.enabled !== undefined || workspaceOverride?.inbound?.webhookSecretEnv !== undefined,
+    ),
+    publicWebhook: sourceForWorkspaceOverride(workspaceOverride?.publicBaseUrl !== undefined),
+  }
+}
+
+function sourceForWorkspaceOverride(overridden: boolean): TelegramConfigSource {
+  return overridden ? "workspace-override" : "app-default"
+}
+
+function resolveEffectiveTelegramConfig(
+  config: AppConfig,
+  workspaceOverride: WorkspaceTelegramInboundConfig | undefined,
+): EffectiveTelegramInboundConfig {
+  const tokenRef = workspaceOverride?.botTokenEnv ?? config.notifications?.telegram?.botTokenEnv
+  const webhookSecretRef =
+    workspaceOverride?.inbound?.webhookSecretEnv ?? config.notifications?.telegram?.inbound?.webhookSecretEnv
+  const publicBaseUrl = workspaceOverride?.publicBaseUrl ?? config.publicBaseUrl
+
+  return {
+    enabled: workspaceOverride?.enabled ?? config.notifications?.telegram?.enabled ?? false,
+    tokenRef,
+    chatId: workspaceOverride?.defaultChatId ?? config.notifications?.telegram?.defaultChatId,
+    inboundEnabled: workspaceOverride?.inbound?.enabled ?? config.notifications?.telegram?.inbound?.enabled ?? false,
+    webhookSecretRef,
+    webhookSecretPresent: secretPresent(webhookSecretRef),
+    publicBaseUrl,
+    tokenPresent: secretPresent(tokenRef),
+    publicWebhook: resolvePublicWebhook(publicBaseUrl),
+  }
+}
+
+function buildFieldViews(
+  sources: TelegramFieldSources,
+  effectiveConfig: EffectiveTelegramInboundConfig,
+): TelegramInboundStatusView["fields"] {
+  return {
+    bot: {
+      source: sources.bot,
+      configured: effectiveConfig.enabled && Boolean(effectiveConfig.tokenRef),
+      enabled: effectiveConfig.enabled,
+      tokenRef: effectiveConfig.tokenRef,
+      tokenPresent: effectiveConfig.tokenPresent,
+    },
+    chat: {
+      source: sources.chat,
+      configured: Boolean(effectiveConfig.chatId),
+      chatId: effectiveConfig.chatId,
+    },
+    webhookSecret: {
+      source: sources.webhookSecret,
+      configured: effectiveConfig.inboundEnabled && Boolean(effectiveConfig.webhookSecretRef),
+      enabled: effectiveConfig.inboundEnabled,
+      secretRef: effectiveConfig.webhookSecretRef,
+      secretPresent: effectiveConfig.webhookSecretPresent,
+    },
+    publicWebhook: {
+      source: sources.publicWebhook,
+      configured: Boolean(effectiveConfig.publicBaseUrl),
+      publicBaseUrl: effectiveConfig.publicBaseUrl,
+      valid: effectiveConfig.publicWebhook.valid,
+      error: effectiveConfig.publicWebhook.error,
+      webhookUrl: effectiveConfig.publicWebhook.webhookUrl,
+    },
+  }
 }
 
 function buildScopeView(
@@ -227,19 +261,7 @@ function resolvePublicWebhook(publicBaseUrl: string | undefined): {
   }
 }
 
-function collectReadinessBlockers(input: {
-  enabled: boolean
-  tokenRef?: string
-  tokenPresent: boolean
-  chatId?: string
-  inboundEnabled: boolean
-  webhookSecretRef?: string
-  webhookSecretPresent: boolean
-  publicWebhook: {
-    valid: boolean
-    error?: string
-  }
-}): string[] {
+function collectReadinessBlockers(input: EffectiveTelegramInboundConfig): string[] {
   const blockers: string[] = []
   if (!input.enabled) blockers.push("Telegram notifications are disabled.")
   if (!input.tokenRef) blockers.push("Telegram bot configuration is missing the bot token env var.")
