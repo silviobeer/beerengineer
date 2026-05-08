@@ -206,7 +206,7 @@ function useBoardImportLauncherState(
     path,
     errorMessage,
     isSubmitting,
-    toggleOpen: () => setIsOpen((current) => !current),
+    toggleOpen: () => setIsOpen((current) => current === false),
     submit: (event) => void submit(event),
     updatePath,
   };

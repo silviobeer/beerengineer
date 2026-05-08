@@ -74,7 +74,7 @@ function CreateIdeaHeader({
         type="button"
         onClick={onToggle}
         disabled={isWorkspaceSelected === false || isSubmitting}
-        aria-expanded={isOpen ? "true" : "false"}
+        aria-expanded={isOpen}
         aria-controls={inputId}
         className="min-h-10 border px-3 py-2 text-sm font-semibold"
         style={{
@@ -116,7 +116,7 @@ function CreateIdeaForm({
           value={ideaText}
           onChange={(event) => onIdeaTextChange(event.target.value)}
           aria-multiline="true"
-          aria-invalid={validationError ? "true" : "false"}
+          aria-invalid={validationError !== null}
           disabled={isSubmitting}
           className="w-full border px-3 py-2 text-sm"
           style={{
@@ -199,8 +199,8 @@ function useCreateIdeaLauncherState(
 
   function updateIdeaText(value: string) {
     setIdeaText(value);
-    if (validationError) setValidationError(null);
-    if (submitError) setSubmitError(null);
+    if (validationError !== null) setValidationError(null);
+    if (submitError !== null) setSubmitError(null);
   }
 
   async function submit(event: FormSubmitEvent) {
@@ -241,7 +241,7 @@ function useCreateIdeaLauncherState(
     validationError,
     submitError,
     isSubmitting,
-    openOrClose: () => setIsOpen((current) => !current),
+    openOrClose: () => setIsOpen((current) => current === false),
     submit: (event) => void submit(event),
     updateIdeaText,
   };
