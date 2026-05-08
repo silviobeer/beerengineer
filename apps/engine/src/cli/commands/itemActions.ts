@@ -17,7 +17,7 @@ import {
 import { resolveWorkflowContextForItemRun } from "../../core/workflowContextResolver.js"
 import { formatSupabaseReadinessBlockedCliOutput } from "../../core/supabase/preExecutionReadiness.js"
 import { parseSupabaseReadinessRecoveryPayload } from "../../core/supabase/recoveryPayload.js"
-import type { ItemRow, Repos } from "../../db/repositories.js"
+import type { ItemRow, Repos, WorkspaceRow } from "../../db/repositories.js"
 import { initDatabase } from "../../db/connection.js"
 import type { ResumeFlags } from "../types.js"
 import { resolveItemReference, resolveSelectedWorkspace } from "../common.js"
@@ -38,6 +38,17 @@ type FailedPreparedResumeRunResult = Exclude<
   Awaited<ReturnType<typeof prepareForegroundResumeRun>>,
   { ok: true; runId: string; remediationId: string; start: () => Promise<void> }
 >
+type FailedPreparedImportRunResult = Exclude<
+  Awaited<ReturnType<typeof prepareForegroundPreparedImportRun>>,
+  { ok: true; runId: string; itemId: string; warnings: string[]; start: () => Promise<void> }
+>
+type SuccessfulPreparedImportRunResult = Extract<
+  Awaited<ReturnType<typeof prepareForegroundPreparedImportRun>>,
+  { ok: true; runId: string; itemId: string; warnings: string[]; start: () => Promise<void> }
+>
+type PreparedImportCliStart =
+  | { ok: true; workspace: WorkspaceRow }
+  | { ok: false; exitCode: number }
 
 const CLI_RUN_DEATH_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const
 
@@ -525,57 +536,83 @@ async function startPreparedImportFromCli(
   appConfig: AppConfig,
   json: boolean,
 ): Promise<number> {
-  const workspace = item ? repos.getWorkspace(item.workspace_id) : resolveSelectedWorkspace(repos, workspaceKey)
-  if (!workspace) return reportMissingPreparedImportWorkspace(workspaceKey)
-
-  const transitionExit = validatePreparedImportTransition(item)
-  if (transitionExit !== 0) return transitionExit
-  const gitGate = checkWorkflowStartGitReadinessForWorkspace(
-    workspace,
-    { itemId: item?.id ?? "new", action: "import_prepared" },
-    { appConfig },
-  )
-  if (!gitGate.ok) return printWorkflowGitBlocker(gitGate, item?.code ?? item?.id ?? "new")
-  const exit = preflightCliBranchingStart(repos, workspace.id, [sourceDir])
-  if (exit !== 0) return exit
+  const start = preparePreparedImportCliStart(repos, item, sourceDir, workspaceKey, appConfig)
+  if (!start.ok) return start.exitCode
   const io = createCliIO(repos)
   try {
     const prepared = await prepareForegroundPreparedImportRun(repos, io, {
       itemId: item?.id,
       sourceDir,
-      workspaceKey: item ? undefined : workspace.key,
+      workspaceKey: item ? undefined : start.workspace.key,
       owner: "cli",
       appConfig,
     })
-    if (!prepared.ok) {
-      if (isWorkflowCapabilityOwnershipBlockedResult(prepared)) {
-        return printWorkflowCapabilityOwnershipBlocker(prepared.message)
-      }
-      if ("code" in prepared && prepared.code === "workflow_git_blocked") {
-        return printWorkflowGitBlocker(prepared, item?.code ?? item?.id ?? "new")
-      }
-      console.error(`  Import failed: ${prepared.error}`)
-      return 1
-    }
-    repos.setItemColumn(prepared.itemId, "implementation", "running")
-    const releaseDeathHandlers = installCliRunDeathHandlers(repos, prepared.runId)
-    try {
-      await prepared.start()
-    } finally {
-      releaseDeathHandlers()
-    }
-    if (json) {
-      console.log(JSON.stringify({ kind: "started", itemId: prepared.itemId, runId: prepared.runId, warnings: prepared.warnings }))
-    } else {
-      console.log("  import_prepared applied")
-      console.log(`  item-id: ${prepared.itemId}`)
-      console.log(`  run-id: ${prepared.runId}`)
-      for (const warning of prepared.warnings) console.log(`  warning: ${warning}`)
-    }
+    if (!prepared.ok) return reportPreparedImportFailure(prepared, item)
+    await startPreparedImportRun(repos, prepared)
+    printPreparedImportStartOutput(prepared, json)
     return 0
   } finally {
     io.close?.()
   }
+}
+
+function preparePreparedImportCliStart(
+  repos: Repos,
+  item: ItemRow | undefined,
+  sourceDir: string,
+  workspaceKey: string | undefined,
+  appConfig: AppConfig,
+): PreparedImportCliStart {
+  const workspace = item ? repos.getWorkspace(item.workspace_id) : resolveSelectedWorkspace(repos, workspaceKey)
+  if (!workspace) return { ok: false, exitCode: reportMissingPreparedImportWorkspace(workspaceKey) }
+
+  const transitionExit = validatePreparedImportTransition(item)
+  if (transitionExit !== 0) return { ok: false, exitCode: transitionExit }
+
+  const gitGate = checkWorkflowStartGitReadinessForWorkspace(
+    workspace,
+    { itemId: item?.id ?? "new", action: "import_prepared" },
+    { appConfig },
+  )
+  if (!gitGate.ok) {
+    return { ok: false, exitCode: printWorkflowGitBlocker(gitGate, item?.code ?? item?.id ?? "new") }
+  }
+
+  const exit = preflightCliBranchingStart(repos, workspace.id, [sourceDir])
+  if (exit !== 0) return { ok: false, exitCode: exit }
+  return { ok: true, workspace }
+}
+
+function reportPreparedImportFailure(prepared: FailedPreparedImportRunResult, item: ItemRow | undefined): number {
+  if (isWorkflowCapabilityOwnershipBlockedResult(prepared)) {
+    return printWorkflowCapabilityOwnershipBlocker(prepared.message)
+  }
+  if ("code" in prepared && prepared.code === "workflow_git_blocked") {
+    return printWorkflowGitBlocker(prepared, item?.code ?? item?.id ?? "new")
+  }
+  console.error(`  Import failed: ${prepared.error}`)
+  return 1
+}
+
+async function startPreparedImportRun(repos: Repos, prepared: SuccessfulPreparedImportRunResult): Promise<void> {
+  repos.setItemColumn(prepared.itemId, "implementation", "running")
+  const releaseDeathHandlers = installCliRunDeathHandlers(repos, prepared.runId)
+  try {
+    await prepared.start()
+  } finally {
+    releaseDeathHandlers()
+  }
+}
+
+function printPreparedImportStartOutput(prepared: SuccessfulPreparedImportRunResult, json: boolean): void {
+  if (json) {
+    console.log(JSON.stringify({ kind: "started", itemId: prepared.itemId, runId: prepared.runId, warnings: prepared.warnings }))
+    return
+  }
+  console.log("  import_prepared applied")
+  console.log(`  item-id: ${prepared.itemId}`)
+  console.log(`  run-id: ${prepared.runId}`)
+  for (const warning of prepared.warnings) console.log(`  warning: ${warning}`)
 }
 
 function reportMissingPreparedImportWorkspace(workspaceKey: string | undefined): number {
