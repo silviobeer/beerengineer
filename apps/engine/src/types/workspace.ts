@@ -129,6 +129,17 @@ export type WorkspacePreviewConfig = {
   cwd?: string
 }
 
+export type WorkspaceTelegramInboundConfig = {
+  enabled?: boolean
+  botTokenEnv?: string
+  defaultChatId?: string
+  publicBaseUrl?: string
+  inbound?: {
+    enabled?: boolean
+    webhookSecretEnv?: string
+  }
+}
+
 export type WorkspacePreview = {
   schemaVersion: WorkspaceSchemaVersion
   path: string
@@ -231,6 +242,7 @@ export type WorkspaceConfigFile = {
   runtimePolicy: WorkspaceRuntimePolicy
   preview?: WorkspacePreviewConfig
   sonar: SonarConfig
+  telegram?: WorkspaceTelegramInboundConfig
   reviewPolicy: WorkspaceReviewPolicy
   preflight?: WorkspacePreflightReport
   createdAt: number

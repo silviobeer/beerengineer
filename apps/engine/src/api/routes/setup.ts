@@ -20,6 +20,7 @@ import { readActiveSecretValue } from "../../setup/secretStore.js"
 import { SUPABASE_MANAGEMENT_TOKEN_SECRET_REF } from "../../setup/secretMetadata.js"
 import type { Repos } from "../../db/repositories.js"
 import { json, readJson } from "../http.js"
+import { resolveTelegramWorkspaceTarget } from "../../setup/telegramInboundStatus.js"
 
 /**
  * BUG-PROJ4-QA-006: only IDs that consist solely of alphanumerics, dots,
@@ -44,8 +45,14 @@ export async function handleSetupInit(res: ServerResponse): Promise<void> {
   json(res, result.ok ? 200 : 409, result)
 }
 
-export async function handleSetupConfig(repos: Repos, res: ServerResponse): Promise<void> {
-  json(res, 200, getAppConfigView({}, { repos }))
+export async function handleSetupConfig(repos: Repos, url: URL, res: ServerResponse): Promise<void> {
+  const workspaceKey = url.searchParams.get("workspaceKey")?.trim() || undefined
+  const workspaceTarget = resolveTelegramWorkspaceTarget(repos, workspaceKey)
+  if (workspaceTarget && !workspaceTarget.ok) {
+    json(res, 404, { error: workspaceTarget.error, workspaceKey: workspaceTarget.workspaceKey })
+    return
+  }
+  json(res, 200, getAppConfigView({}, { repos, workspaceKey }))
 }
 
 export async function handleSetupConfigPatch(req: IncomingMessage, res: ServerResponse): Promise<void> {
