@@ -171,6 +171,24 @@ export type NotificationDeliveryRow = {
   updated_at: number
 }
 
+export type TelegramSetupStateRow = {
+  scope_key: string
+  workspace_key: string | null
+  expected_webhook_url: string | null
+  baseline_status: "not-run" | "ready" | "blocked"
+  baseline_message: string | null
+  provider_state_json: string | null
+  baseline_checked_at: number | null
+  verification_status: "not-run" | "pending" | "succeeded" | "failed" | "timed_out"
+  verification_message: string | null
+  verification_started_at: number | null
+  verification_completed_at: number | null
+  verification_deadline_at: number | null
+  verification_delivery_key: string | null
+  created_at: number
+  updated_at: number
+}
+
 export type UpdateAttemptRow = {
   operation_id: string
   idempotency_key: string | null

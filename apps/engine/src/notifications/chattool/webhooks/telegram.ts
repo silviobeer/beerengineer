@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http"
 import type { Repos } from "../../../db/repositories.js"
 import type { AppConfig } from "../../../setup/types.js"
+import { completeTelegramLiveVerificationFromReply } from "../../../setup/telegramWebhookSetup.js"
 import { sanitizeTelegramText, sendTelegramMessage } from "../../telegram.js"
 import { handleChatToolInbound } from "../inbound.js"
 import { resolveTelegramChatToolConfig, TelegramChatToolProvider, type TelegramChatToolDeps } from "../providers/telegram.js"
@@ -108,6 +109,16 @@ async function handleParsedTelegramUpdate(
   if (!allowWebhookWrite(update.channelRef)) return plainOk(res)
   if (!update.text) return plainOk(res)
   if (await maybeHandleCommandMessage(resolved, update, deps, res)) return
+  const replyToMessageId = Number(update.replyToProviderMessageId)
+  if (Number.isFinite(replyToMessageId) && completeTelegramLiveVerificationFromReply(repos, {
+    chatId: update.channelRef,
+    replyToMessageId,
+  })) {
+    if (update.providerMessageId) {
+      await provider.react(update.channelRef, update.providerMessageId, "👍")
+    }
+    return plainOk(res)
+  }
 
   const result = handleChatToolInbound(repos, "telegram", update)
   if (!result.ok) {

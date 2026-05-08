@@ -4,6 +4,13 @@ import { normalizePublicBaseUrl } from "./config.js"
 import { readActiveSecretValue } from "./secretStore.js"
 import type { AppConfig } from "./types.js"
 import type { WorkspaceTelegramInboundConfig } from "../types/workspace.js"
+import {
+  readTelegramSetupStatusViews,
+  resolveTelegramSetupScope,
+  type TelegramBaselineView,
+  type TelegramLiveVerificationView,
+  type TelegramProviderWebhookState,
+} from "./telegramWebhookSetup.js"
 
 export type TelegramConfigSource = "app-default" | "workspace-override"
 export type TelegramReadinessState = "ready" | "blocked"
@@ -55,6 +62,10 @@ export type TelegramInboundStatusView = {
     state: TelegramReadinessState
     blockers: string[]
   }
+  baseline: TelegramBaselineView
+  liveVerification: TelegramLiveVerificationView
+  provider?: TelegramProviderWebhookState
+  providerCheckedAt?: number
   fields: {
     bot: TelegramFieldBase & {
       enabled: boolean
@@ -102,6 +113,10 @@ export function resolveTelegramInboundStatus(
   const sources = resolveFieldSources(workspaceOverride)
   const effectiveConfig = resolveEffectiveTelegramConfig(config, workspaceOverride)
   const blockers = collectReadinessBlockers(effectiveConfig)
+  const setupScope = resolveTelegramSetupScope(config, deps)
+  const setupViews = setupScope.ok
+    ? readTelegramSetupStatusViews(setupScope, deps.repos)
+    : { baseline: { state: "blocked" as const, message: `Workspace not found: ${setupScope.workspaceKey}` }, liveVerification: { state: "not-run" as const } }
 
   return {
     scope: buildScopeView(workspaceTarget?.ok ? workspaceTarget.workspace : undefined, Object.values(sources)),
@@ -109,6 +124,10 @@ export function resolveTelegramInboundStatus(
       state: blockers.length === 0 ? "ready" : "blocked",
       blockers,
     },
+    baseline: setupViews.baseline,
+    liveVerification: setupViews.liveVerification,
+    provider: setupViews.provider,
+    providerCheckedAt: setupViews.providerCheckedAt,
     fields: buildFieldViews(sources, effectiveConfig),
   }
 }
