@@ -200,6 +200,10 @@ test("REQ-1 default and workspace Telegram setup resolve provenance, inheritance
     assert.match(gammaView.telegramInbound?.readiness.blockers.join("\n") ?? "", /webhook secret presence is not configured/i)
     assert.match(gammaView.telegramInbound?.readiness.blockers.join("\n") ?? "", /public webhook configuration is invalid/i)
   } finally {
+    delete process.env.TELEGRAM_BOT_TOKEN
+    delete process.env.TELEGRAM_WEBHOOK_SECRET
+    delete process.env.TEAM_TELEGRAM_TOKEN
+    delete process.env.TEAM_TELEGRAM_SECRET
     db.close()
     rmSync(paths.dir, { recursive: true, force: true })
   }
@@ -268,6 +272,10 @@ test("REQ-1 setup config API redacts raw Telegram secrets for app and workspace 
       await stopServer(proc)
     }
   } finally {
+    delete process.env.TELEGRAM_BOT_TOKEN
+    delete process.env.TELEGRAM_WEBHOOK_SECRET
+    delete process.env.TEAM_TELEGRAM_TOKEN
+    delete process.env.TEAM_TELEGRAM_SECRET
     db.close()
     rmSync(paths.dir, { recursive: true, force: true })
   }
