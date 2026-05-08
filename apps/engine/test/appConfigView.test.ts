@@ -17,6 +17,32 @@ function tempSetupPaths() {
   }
 }
 
+function withClearedTelegramSetupEnv<T>(run: () => T): T {
+  const keys = [
+    "BEERENGINEER_PUBLIC_BASE_URL",
+    "BEERENGINEER_TELEGRAM_ENABLED",
+    "BEERENGINEER_TELEGRAM_BOT_TOKEN_ENV",
+    "BEERENGINEER_TELEGRAM_DEFAULT_CHAT_ID",
+    "BEERENGINEER_TELEGRAM_LEVEL",
+    "BEERENGINEER_TELEGRAM_INBOUND_ENABLED",
+    "BEERENGINEER_TELEGRAM_WEBHOOK_SECRET_ENV",
+  ] as const
+  const previous = new Map<string, string | undefined>()
+  for (const key of keys) {
+    previous.set(key, process.env[key])
+    delete process.env[key]
+  }
+  try {
+    return run()
+  } finally {
+    for (const key of keys) {
+      const value = previous.get(key)
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  }
+}
+
 test("AC-9 effective app config exposes app-wide editable fields", () => {
   const paths = tempSetupPaths()
   try {
@@ -45,7 +71,7 @@ test("AC-9 effective app config exposes app-wide editable fields", () => {
       },
     })
 
-    const view = getAppConfigView({ configPath: paths.configPath, dataDir: paths.dataDir })
+    const view = withClearedTelegramSetupEnv(() => getAppConfigView({ configPath: paths.configPath, dataDir: paths.dataDir }))
 
     assert.equal(view.config.allowedRoots[0], "/tmp/demo-root")
     assert.equal(view.config.enginePort, 4999)
@@ -83,7 +109,7 @@ test("AC-10 effective app config returns secret references, never plaintext valu
       },
     })
 
-    const view = getAppConfigView({ configPath: paths.configPath, dataDir: paths.dataDir })
+    const view = withClearedTelegramSetupEnv(() => getAppConfigView({ configPath: paths.configPath, dataDir: paths.dataDir }))
     const serialized = JSON.stringify(view)
 
     assert.equal(view.config.llm.apiKey.ref, "OPENAI_API_KEY")
@@ -115,7 +141,7 @@ test("AC-10b effective app config treats stored secrets as present without env e
     })
     process.env.BEERENGINEER_SECRET_STORE_PATH = join(paths.dir, "secrets.json")
 
-    const view = getAppConfigView({ configPath: paths.configPath, dataDir: paths.dataDir })
+    const view = withClearedTelegramSetupEnv(() => getAppConfigView({ configPath: paths.configPath, dataDir: paths.dataDir }))
     const serialized = JSON.stringify(view)
 
     assert.equal(view.config.llm.apiKey.present, true)
@@ -131,7 +157,7 @@ test("AC-11 effective app config excludes workspace and project settings from ed
   try {
     writeConfigFile(paths.configPath, { ...defaultAppConfig(), dataDir: paths.dataDir })
 
-    const view = getAppConfigView({ configPath: paths.configPath, dataDir: paths.dataDir })
+    const view = withClearedTelegramSetupEnv(() => getAppConfigView({ configPath: paths.configPath, dataDir: paths.dataDir }))
 
     assert.equal(view.workspace, null)
     assert.equal("workspace" in view.config, false)
@@ -146,22 +172,22 @@ test("AC-12 effective app config exposes uninitialized, partial, and complete se
   const invalid = tempSetupPaths()
   const complete = tempSetupPaths()
   try {
-    assert.equal(getAppConfigView({
+    assert.equal(withClearedTelegramSetupEnv(() => getAppConfigView({
       configPath: uninitialized.configPath,
       dataDir: uninitialized.dataDir,
-    }).setupState, "uninitialized")
+    })).setupState, "uninitialized")
 
     writeFileSync(invalid.configPath, "{ invalid json", "utf8")
-    assert.equal(getAppConfigView({
+    assert.equal(withClearedTelegramSetupEnv(() => getAppConfigView({
       configPath: invalid.configPath,
       dataDir: invalid.dataDir,
-    }).setupState, "partial")
+    })).setupState, "partial")
 
     writeConfigFile(complete.configPath, { ...defaultAppConfig(), dataDir: complete.dataDir })
-    assert.equal(getAppConfigView({
+    assert.equal(withClearedTelegramSetupEnv(() => getAppConfigView({
       configPath: complete.configPath,
       dataDir: complete.dataDir,
-    }).setupState, "complete")
+    })).setupState, "complete")
   } finally {
     rmSync(uninitialized.dir, { recursive: true, force: true })
     rmSync(invalid.dir, { recursive: true, force: true })

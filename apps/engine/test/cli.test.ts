@@ -417,6 +417,7 @@ test("item open and run open print UI URLs based on publicBaseUrl", async () => 
       BEERENGINEER_CONFIG_PATH: configPath,
       BEERENGINEER_DISABLE_BROWSER_OPEN: "1",
     }
+    delete env.BEERENGINEER_PUBLIC_BASE_URL
     const itemOpen = spawnSync(process.execPath, [binPath, "item", "open", "ITEM-0600", "--workspace", "demo"], {
       cwd: engineRoot,
       encoding: "utf8",

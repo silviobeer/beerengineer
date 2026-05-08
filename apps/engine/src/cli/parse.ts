@@ -261,6 +261,7 @@ function parseSimpleTopLevelCommand(context: ParseArgsContext): Command | null {
       fromBootstrap: fromBootstrap === "posix" || fromBootstrap === "windows" ? fromBootstrap : undefined,
     }
   }
+  if (first === "setup" && second === "telegram") return { kind: "setup-telegram", workspaceKey, json }
   if (first === "setup") return { kind: "setup", group, noInteractive: argv.includes("--no-interactive") }
   const update = parseUpdateCommand(context)
   if (update) return update
@@ -310,6 +311,8 @@ export function printHelp(): void {
     "    beerengineer doctor [--json] [--group <id>]          Run machine diagnostics",
     "    beerengineer install [--json]                        Resolve stable release and start managed install",
     "    beerengineer setup [--group <id>] [--no-interactive] Provision app config/data/DB and retry checks",
+    "    beerengineer setup telegram [--workspace <key>] [--json]",
+    "                                                         Show effective Telegram inbound setup and readiness",
     "    beerengineer update [--json] [--version <tag>]       Stage and queue an update apply attempt",
     "    beerengineer update --check [--json]                 Check the newest GitHub release against the current install",
     "    beerengineer update --dry-run [--json]               Run update preflight checks without shutting the engine down",
