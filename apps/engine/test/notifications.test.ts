@@ -90,6 +90,31 @@ test("telegram client honors one retry-after on HTTP 429", async () => {
   assert.equal(calls.length, 2)
 })
 
+test("telegram client blocks real Telegram delivery when the test harness disables it", async () => {
+  const prevDisable = process.env.BEERENGINEER_TEST_DISABLE_REAL_TELEGRAM
+  const prevApiBase = process.env.BEERENGINEER_TELEGRAM_API_BASE_URL
+  process.env.BEERENGINEER_TEST_DISABLE_REAL_TELEGRAM = "1"
+  delete process.env.BEERENGINEER_TELEGRAM_API_BASE_URL
+
+  try {
+    const result = await sendTelegramMessage(
+      { token: "secret-token", chatId: "123", text: "hello" },
+      { timeoutMs: 1 },
+    )
+
+    assert.equal(result.ok, false)
+    if (!result.ok) {
+      assert.match(result.error, /disabled during engine tests/)
+      assert.equal(result.dropped, true)
+    }
+  } finally {
+    if (prevDisable === undefined) delete process.env.BEERENGINEER_TEST_DISABLE_REAL_TELEGRAM
+    else process.env.BEERENGINEER_TEST_DISABLE_REAL_TELEGRAM = prevDisable
+    if (prevApiBase === undefined) delete process.env.BEERENGINEER_TELEGRAM_API_BASE_URL
+    else process.env.BEERENGINEER_TELEGRAM_API_BASE_URL = prevApiBase
+  }
+})
+
 test("dispatcher maps canonical events into telegram messages", async () => {
   const sent: Array<{ token: string; chatId: string; text: string }> = []
   const dir = mkdtempSync(join(tmpdir(), "be2-notify-db-"))

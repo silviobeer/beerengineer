@@ -63,9 +63,27 @@ function selectedTests(mode) {
 const mode = process.argv[2] ?? "all"
 const files = selectedTests(mode).map(file => join("test", file))
 const nodeArgs = ["--test", "--import", "tsx"]
+const telegramOverrideEnvKeys = [
+  "BEERENGINEER_TELEGRAM_ENABLED",
+  "BEERENGINEER_TELEGRAM_BOT_TOKEN_ENV",
+  "BEERENGINEER_TELEGRAM_DEFAULT_CHAT_ID",
+  "BEERENGINEER_TELEGRAM_LEVEL",
+  "BEERENGINEER_TELEGRAM_INBOUND_ENABLED",
+  "BEERENGINEER_TELEGRAM_WEBHOOK_SECRET_ENV",
+]
+
+function testEnvBase() {
+  const env = { ...process.env }
+  for (const key of telegramOverrideEnvKeys) {
+    delete env[key]
+  }
+  env.BEERENGINEER_TEST_DISABLE_REAL_TELEGRAM = "1"
+  return env
+}
 
 function isolatedTestEnv() {
-  if (process.env.BEERENGINEER_TEST_USE_REAL_CONFIG === "1") return process.env
+  const env = testEnvBase()
+  if (process.env.BEERENGINEER_TEST_USE_REAL_CONFIG === "1") return env
 
   const dir = mkdtempSync(join(tmpdir(), "be2-engine-tests-"))
   const dataDir = join(dir, "data")
@@ -98,7 +116,7 @@ function isolatedTestEnv() {
   )
 
   return {
-    ...process.env,
+    ...env,
     BEERENGINEER_CONFIG_PATH: configPath,
   }
 }

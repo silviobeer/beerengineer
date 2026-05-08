@@ -23,6 +23,22 @@ function resolveTelegramApiBaseUrl(): string {
   return (process.env.BEERENGINEER_TELEGRAM_API_BASE_URL ?? "https://api.telegram.org").replace(/\/+$/, "")
 }
 
+function isRealTelegramApiBaseUrl(baseUrl: string): boolean {
+  try {
+    return new URL(baseUrl).hostname === "api.telegram.org"
+  } catch {
+    return false
+  }
+}
+
+function shouldBlockRealTelegramDuringTests(baseUrl: string, usingDefaultFetch: boolean): boolean {
+  return (
+    usingDefaultFetch &&
+    process.env.BEERENGINEER_TEST_DISABLE_REAL_TELEGRAM === "1" &&
+    isRealTelegramApiBaseUrl(baseUrl)
+  )
+}
+
 export function truncateForTelegram(value: string, maxChars = FIELD_MAX_CHARS): string {
   if (value.length <= maxChars) return value
   return `${value.slice(0, Math.max(0, maxChars - 1))}…`
@@ -68,8 +84,9 @@ async function sendOnce(
   request: TelegramDeliveryRequest,
   fetchImpl: TelegramFetchLike,
   timeoutMs: number,
+  apiBaseUrl: string,
 ): Promise<Response> {
-  return fetchImpl(`${resolveTelegramApiBaseUrl()}/bot${encodeURIComponent(request.token)}/sendMessage`, {
+  return fetchImpl(`${apiBaseUrl}/bot${encodeURIComponent(request.token)}/sendMessage`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -96,14 +113,23 @@ export async function sendTelegramMessage(
 ): Promise<TelegramDeliveryResult> {
   const fetchImpl = opts.fetchImpl ?? fetch
   const timeoutMs = opts.timeoutMs ?? TELEGRAM_TIMEOUT_MS
+  const apiBaseUrl = resolveTelegramApiBaseUrl()
+
+  if (shouldBlockRealTelegramDuringTests(apiBaseUrl, opts.fetchImpl === undefined)) {
+    return {
+      ok: false,
+      error: "real Telegram delivery is disabled during engine tests",
+      dropped: true,
+    }
+  }
 
   try {
-    let response = await sendOnce(request, fetchImpl, timeoutMs)
+    let response = await sendOnce(request, fetchImpl, timeoutMs, apiBaseUrl)
     if (response.status === 429) {
       const retryAfter = parseRetryAfter(response)
       if (retryAfter !== null) {
         await sleep(retryAfter)
-        response = await sendOnce(request, fetchImpl, timeoutMs)
+        response = await sendOnce(request, fetchImpl, timeoutMs, apiBaseUrl)
       }
     }
 
@@ -145,9 +171,12 @@ export async function sendTelegramReaction(
 ): Promise<void> {
   const fetchImpl = opts.fetchImpl ?? fetch
   const timeoutMs = opts.timeoutMs ?? TELEGRAM_TIMEOUT_MS
+  const apiBaseUrl = resolveTelegramApiBaseUrl()
+  if (shouldBlockRealTelegramDuringTests(apiBaseUrl, opts.fetchImpl === undefined)) return
+
   try {
     await fetchImpl(
-      `${resolveTelegramApiBaseUrl()}/bot${encodeURIComponent(request.token)}/setMessageReaction`,
+      `${apiBaseUrl}/bot${encodeURIComponent(request.token)}/setMessageReaction`,
       {
         method: "POST",
         headers: { "content-type": "application/json" },
