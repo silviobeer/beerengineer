@@ -62,9 +62,18 @@ export type WorkflowStartGitBlockedResult = {
   }
 }
 
+export type WorkflowCapabilityOwnershipBlockedResult = {
+  ok: false
+  status: 409
+  error: "workflow_capability_blocked"
+  code: "workflow_capability_blocked"
+  message: string
+}
+
 export type StartRunResult =
   | { ok: true; runId: string; itemId: string }
   | WorkflowStartGitBlockedResult
+  | WorkflowCapabilityOwnershipBlockedResult
   | { ok: false; status: 404 | 409 | 422; error: string }
 
 type StartRunFailureResult = Exclude<StartRunResult, { ok: true; runId: string; itemId: string }>
@@ -72,19 +81,23 @@ type StartRunFailureResult = Exclude<StartRunResult, { ok: true; runId: string; 
 export type PreparedForegroundRunResult =
   | { ok: true; runId: string; itemId: string; start: () => Promise<void> }
   | WorkflowStartGitBlockedResult
+  | WorkflowCapabilityOwnershipBlockedResult
   | { ok: false; status: 404 | 409 | 422; error: string }
 
 export type ResumeRunResult =
   | { ok: true; runId: string; remediationId: string }
+  | WorkflowCapabilityOwnershipBlockedResult
   | { ok: false; status: 404 | 409 | 422; error: string }
 
 export type PreparedForegroundResumeRunResult =
   | { ok: true; runId: string; remediationId: string; start: () => Promise<void> }
+  | WorkflowCapabilityOwnershipBlockedResult
   | { ok: false; status: 404 | 409 | 422; error: string }
 
 export type PreparedImportRunResult =
   | { ok: true; runId: string; itemId: string; warnings: string[] }
   | WorkflowStartGitBlockedResult
+  | WorkflowCapabilityOwnershipBlockedResult
   | { ok: false; status: 404 | 409 | 422; error: string }
 
 type PreparedImportFailureResult = Exclude<PreparedImportRunResult, { ok: true; runId: string; itemId: string; warnings: string[] }>
@@ -92,7 +105,22 @@ type PreparedImportFailureResult = Exclude<PreparedImportRunResult, { ok: true; 
 export type PreparedForegroundImportRunResult =
   | { ok: true; runId: string; itemId: string; warnings: string[]; start: () => Promise<void> }
   | WorkflowStartGitBlockedResult
+  | WorkflowCapabilityOwnershipBlockedResult
   | { ok: false; status: 404 | 409 | 422; error: string }
+
+// Test-only smoke hook: forces every reviewed runService entry surface to
+// surface the same clear ownership failure without requiring live Supabase.
+function workflowCapabilityOwnershipBlocker(): WorkflowCapabilityOwnershipBlockedResult | null {
+  const message = process.env.BEERENGINEER_TEST_CAPABILITY_OWNERSHIP_FAILURE?.trim()
+  if (!message) return null
+  return {
+    ok: false,
+    status: 409,
+    error: "workflow_capability_blocked",
+    code: "workflow_capability_blocked",
+    message,
+  }
+}
 
 function buildApiIo(repos: Repos): WorkflowIO & { bus: EventBus } {
   const bus = createBus()
@@ -228,6 +256,8 @@ export function prepareForegroundIdeaRun(
 ): PreparedForegroundRunResult {
   const meta = resolveWorkspaceMeta(repos, input.workspaceKey)
   if ("error" in meta) return { ok: false, status: 404, error: "unknown_workspace" }
+  const blocker = workflowCapabilityOwnershipBlocker()
+  if (blocker) return blocker
 
   const prepared = prepareRun(
     { id: "new", title: input.title, description: input.description },
@@ -264,6 +294,12 @@ export type StartRunAction =
 
 export function isWorkflowStartGitBlockedResult(result: StartRunResult | PreparedImportRunResult): result is WorkflowStartGitBlockedResult {
   return !result.ok && "code" in result && result.code === "workflow_git_blocked"
+}
+
+export function isWorkflowCapabilityOwnershipBlockedResult(
+  result: StartRunResult | ResumeRunResult | PreparedImportRunResult | PreparedForegroundRunResult | PreparedForegroundResumeRunResult | PreparedForegroundImportRunResult,
+): result is WorkflowCapabilityOwnershipBlockedResult {
+  return !result.ok && "code" in result && result.code === "workflow_capability_blocked"
 }
 
 function loadWorkflowGitGateConfig(): AppConfig {
@@ -468,6 +504,8 @@ export function prepareForegroundItemRun(
     gitCommandOptions: input.gitCommandOptions,
   })
   if (!gitGate.ok) return gitGate
+  const blocker = workflowCapabilityOwnershipBlocker()
+  if (blocker) return blocker
 
   const prepared = prepareRun(
     { id: item.id, title: item.title, description: item.description },
@@ -570,6 +608,8 @@ export async function prepareForegroundPreparedImportRun(
     { appConfig: input.appConfig, gitCommandOptions: input.gitCommandOptions },
   )
   if (!gitGate.ok) return gitGate
+  const blocker = workflowCapabilityOwnershipBlocker()
+  if (blocker) return blocker
 
   let bundle: PreparedImportBundle
   try {
@@ -728,6 +768,8 @@ export async function prepareForegroundResumeRun(
   if (readiness.kind === "not_resumable") {
     return { ok: false, status: 409, error: readiness.reason }
   }
+  const blocker = workflowCapabilityOwnershipBlocker()
+  if (blocker) return blocker
 
   const scope = readiness.record.scope
   let scopeRef: string | null = null

@@ -39,7 +39,7 @@ export async function runInteractiveWorkflow(opts: { json?: boolean; workspaceKe
       owner: "cli",
       ...workspaceMeta,
     })
-    if (!prepared.ok) throw new Error(prepared.error)
+    if (!prepared.ok) throw new Error("message" in prepared ? prepared.message : prepared.error)
     await prepared.start()
     console.log(`\n  run-id: ${prepared.runId}`)
   } finally {
@@ -69,7 +69,7 @@ async function runJsonWorkflow(opts: { workspaceKey?: string } = {}): Promise<vo
       owner: "cli",
       ...workspaceMeta,
     })
-    if (!prepared.ok) throw new Error(prepared.error)
+    if (!prepared.ok) throw new Error("message" in prepared ? prepared.message : prepared.error)
     await prepared.start()
     process.stdout.write(`${JSON.stringify({ type: "cli_finished", runId: prepared.runId })}\n`)
   } finally {

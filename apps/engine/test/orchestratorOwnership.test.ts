@@ -10,7 +10,7 @@ type OwnershipEvidence = {
   capabilityOwner: string
   allowlist: Array<{ path: string; reason: string }>
   exemptions: Array<{ path: string; reason: string }>
-  verifiedSurfaces: Array<{ id: string; path: string; via: string }>
+  verifiedSurfaces: Array<{ id: string; path: string; via: string; verification: string }>
 }
 
 type OwnershipReport = {
@@ -156,6 +156,29 @@ test("PROJ-8-PRD-2-US-5 TC-01: ImportGraphGuard rejects any unallowlisted import
   }
 })
 
+test("PROJ-8-PRD-2-US-5 TC-24-2: ImportGraphGuard rejects unreviewed barrel or aliased import paths to the orchestrator entrypoint", () => {
+  const tmp = makeRepoTempDir("be2-barrel-call-")
+  try {
+    const barrel = writeFixtureModule(tmp, "apps/engine/src/rogue/orchestrator-barrel.ts", "")
+    writeFileSync(
+      barrel,
+      `export { prepareRun, runWorkflowWithSync } from "${fixtureImportSpecifier(barrel)}"\n`,
+    )
+    const fixture = writeFixtureModule(tmp, "apps/engine/src/rogue/barrel-caller.ts", "")
+    writeFileSync(
+      fixture,
+      `import { prepareRun, runWorkflowWithSync } from "./orchestrator-barrel.js"\nexport function badCalls(item, repos, io) {\n  prepareRun(item, repos, io)\n  return runWorkflowWithSync(item, repos, io)\n}\n`,
+    )
+    const report = analyzeOwnership([barrel, fixture])
+    assert.deepEqual(
+      report.directCallers.find(entry => entry.path === normalizeRepoPath(fixture)),
+      { path: normalizeRepoPath(fixture), calls: ["prepareRun", "runWorkflowWithSync"] },
+    )
+  } finally {
+    rmSync(tmp, { recursive: true, force: true })
+  }
+})
+
 test("PROJ-8-PRD-2-US-5 TC-04 and TC-05: direct prepareRun and runWorkflowWithSync callers are blocked unless exempted", () => {
   const tmp = makeRepoTempDir("be2-direct-call-")
   try {
@@ -194,6 +217,7 @@ test("PROJ-8-PRD-2-US-5 TC-07 and TC-08: completion evidence enumerates every ve
   )
   for (const surface of evidence.verifiedSurfaces) {
     assert.equal(surface.via, evidence.capabilityOwner, `${surface.id} must document the reviewed owner path`)
+    assert.equal(surface.verification, "ownership_parity", `${surface.id} must record parity review evidence`)
     assert.equal(existsSync(resolve(repoRoot, surface.path)), true, `${surface.path} must exist`)
   }
   for (const exemption of evidence.exemptions) {

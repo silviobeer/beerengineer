@@ -12,47 +12,56 @@
     {
       "id": "cli_fresh_start",
       "path": "apps/engine/src/cli/workflow.ts",
-      "via": "apps/engine/src/core/runService.ts"
+      "via": "apps/engine/src/core/runService.ts",
+      "verification": "ownership_parity"
     },
     {
       "id": "api_post_runs",
       "path": "apps/engine/src/api/routes/runs.ts",
-      "via": "apps/engine/src/core/runService.ts"
+      "via": "apps/engine/src/core/runService.ts",
+      "verification": "ownership_parity"
     },
     {
       "id": "api_item_action",
       "path": "apps/engine/src/api/routes/items.ts",
-      "via": "apps/engine/src/core/runService.ts"
+      "via": "apps/engine/src/core/runService.ts",
+      "verification": "ownership_parity"
     },
     {
       "id": "cli_item_action",
       "path": "apps/engine/src/cli/commands/itemActions.ts",
-      "via": "apps/engine/src/core/runService.ts"
+      "via": "apps/engine/src/core/runService.ts",
+      "verification": "ownership_parity"
     },
     {
       "id": "cli_import_prepared",
       "path": "apps/engine/src/cli/commands/itemActions.ts",
-      "via": "apps/engine/src/core/runService.ts"
+      "via": "apps/engine/src/core/runService.ts",
+      "verification": "ownership_parity"
     },
     {
       "id": "api_prepared_import",
       "path": "apps/engine/src/api/routes/items.ts",
-      "via": "apps/engine/src/core/runService.ts"
+      "via": "apps/engine/src/core/runService.ts",
+      "verification": "ownership_parity"
     },
     {
       "id": "api_resume",
       "path": "apps/engine/src/api/routes/runs.ts",
-      "via": "apps/engine/src/core/runService.ts"
+      "via": "apps/engine/src/core/runService.ts",
+      "verification": "ownership_parity"
     },
     {
       "id": "cli_resume",
       "path": "apps/engine/src/cli/commands/itemActions.ts",
-      "via": "apps/engine/src/core/runService.ts"
+      "via": "apps/engine/src/core/runService.ts",
+      "verification": "ownership_parity"
     },
     {
       "id": "api_supabase_readiness_retry",
       "path": "apps/engine/src/api/routes/runs.ts",
-      "via": "apps/engine/src/core/runService.ts"
+      "via": "apps/engine/src/core/runService.ts",
+      "verification": "ownership_parity"
     }
   ]
 }
