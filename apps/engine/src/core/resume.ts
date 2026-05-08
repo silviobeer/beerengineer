@@ -168,6 +168,34 @@ async function prepareStoryScopeForResume(
   )
 }
 
+function resumeEventScope(record: RecoveryRecord, runId: string): WorkflowResumeInput["scope"] {
+  if (record.scope.type === "story") {
+    return {
+      type: "story",
+      runId,
+      waveNumber: record.scope.waveNumber,
+      storyId: record.scope.storyId,
+    }
+  }
+  if (record.scope.type === "stage") {
+    return { type: "stage", runId, stageId: record.scope.stageId }
+  }
+  return { type: "run", runId }
+}
+
+async function prepareResumeScope(
+  ctx: WorkflowContext,
+  record: RecoveryRecord,
+  remediation: ExternalRemediationRow,
+): Promise<void> {
+  if (record.scope.type !== "story") return
+  await prepareStoryScopeForResume(
+    ctx,
+    record as RecoveryRecord & { scope: { type: "story"; waveNumber: number; storyId: string } },
+    remediation,
+  )
+}
+
 export type PerformResumeInput = {
   repos: Repos
   io: WorkflowIO & { bus?: EventBus }
@@ -229,26 +257,8 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
     const workflowIo = withWorkflowCancellation(input.io, cancellation)
     const workflowRunner = input.workflowRunner ?? runWorkflow
     const detach = attachRunSubscribers(bus, input.repos, { runId: run.id, itemId: run.item_id }, { onItemColumnChanged: input.onItemColumnChanged })
-
-    let eventScope: WorkflowResumeInput["scope"] = { type: "run", runId: run.id }
-    if (record.scope.type === "story") {
-      eventScope = {
-        type: "story",
-        runId: run.id,
-        waveNumber: record.scope.waveNumber,
-        storyId: record.scope.storyId,
-      }
-    } else if (record.scope.type === "stage") {
-      eventScope = { type: "stage", runId: run.id, stageId: record.scope.stageId }
-    }
-
-    if (record.scope.type === "story") {
-      await prepareStoryScopeForResume(
-        ctx,
-        record as RecoveryRecord & { scope: { type: "story"; waveNumber: number; storyId: string } },
-        input.remediation,
-      )
-    }
+    const eventScope = resumeEventScope(record, run.id)
+    await prepareResumeScope(ctx, record, input.remediation)
 
     try {
       bus.emit({
