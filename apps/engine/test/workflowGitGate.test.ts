@@ -192,3 +192,40 @@ test("prepared import blocks missing git identity before run, item, and artifact
     rmSync(paths.dir, { recursive: true, force: true })
   }
 })
+
+test("prepared import for a new item checks git readiness in the selected workspace", async () => {
+  const paths = tempWorkflowGitEnv()
+  const betaRepo = join(paths.dir, "beta")
+  const db = initDatabase(":memory:")
+  try {
+    const env = { ...process.env, GIT_CONFIG_GLOBAL: paths.globalGitConfig }
+    initRepo(paths.repo, env)
+    initRepo(betaRepo, env)
+    git(paths.repo, ["config", "--local", "user.name", "Default User"], env)
+    git(paths.repo, ["config", "--local", "user.email", "default@example.test"], env)
+    const repos = new Repos(db)
+    const defaultWorkspace = repos.upsertWorkspace({ key: "default", name: "Default", rootPath: paths.repo })
+    const betaWorkspace = repos.upsertWorkspace({ key: "beta", name: "Beta", rootPath: betaRepo })
+
+    const result = await startPreparedImportForItem(repos, {
+      sourceDir: join(paths.dir, "prepared-import"),
+      workspaceKey: "beta",
+      appConfig: configForRoot(paths.dir),
+      gitCommandOptions: { env },
+    })
+
+    assert.equal(result.ok, false)
+    if (!result.ok) {
+      assert.equal(result.status, 409)
+      assert.equal(result.error, "git_identity_missing")
+      assert.equal(result.readiness?.workspace.id, betaWorkspace.id)
+      assert.notEqual(result.readiness?.workspace.id, defaultWorkspace.id)
+    }
+    assert.equal(repos.listRuns().length, 0)
+    assert.deepEqual(repos.listItemsForWorkspace(defaultWorkspace.id), [])
+    assert.deepEqual(repos.listItemsForWorkspace(betaWorkspace.id), [])
+  } finally {
+    db.close()
+    rmSync(paths.dir, { recursive: true, force: true })
+  }
+})

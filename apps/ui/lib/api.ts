@@ -1,6 +1,27 @@
 import type { Item, Phase, Workspace } from "./types";
 import { engineBaseUrl } from "./engine/baseUrl";
 
+export const BOARD_MUTATION_CONVERGENCE_WINDOW_MS = 3000;
+export const BOARD_MUTATION_REFRESH_INTERVAL_MS = 250;
+
+export interface BoardLauncherMutationSuccess {
+  ok: true;
+  itemId: string;
+  runId: string;
+  status: string;
+}
+
+export interface BoardLauncherMutationFailure {
+  ok: false;
+  status: number;
+  error: string;
+  message: string | null;
+}
+
+export type BoardLauncherMutationResult =
+  | BoardLauncherMutationSuccess
+  | BoardLauncherMutationFailure;
+
 const STAGE_TO_PHASE: Record<string, Phase> = {
   brainstorm: "Frontend",
   "visual-companion": "Frontend",
@@ -88,6 +109,55 @@ export function buildSseUrl(workspaceKey: string): string {
 interface RawWorkspace {
   key?: string | null;
   name?: string | null;
+}
+
+export async function postBoardLauncherMutation(
+  path: string,
+  body: unknown,
+): Promise<BoardLauncherMutationResult> {
+  try {
+    const res = await fetch(path, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body ?? {}),
+    });
+    const payload = await res.json().catch(() => ({} as Record<string, unknown>));
+    if (res.ok) {
+      const itemId = typeof payload.itemId === "string" ? payload.itemId : null;
+      const runId = typeof payload.runId === "string" ? payload.runId : null;
+      const status = typeof payload.status === "string" ? payload.status : null;
+      if (itemId && runId && status) {
+        return { ok: true, itemId, runId, status };
+      }
+      return {
+        ok: false,
+        status: res.status,
+        error: "invalid_mutation_response",
+        message: null,
+      };
+    }
+    return {
+      ok: false,
+      status: res.status,
+      error:
+        typeof payload.error === "string" && payload.error.length > 0
+          ? payload.error
+          : `engine_${res.status}`,
+      message:
+        typeof payload.message === "string" && payload.message.length > 0
+          ? payload.message
+          : null,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      status: 0,
+      error: err instanceof Error ? err.message : "network_error",
+      message: null,
+    };
+  }
 }
 
 export async function fetchWorkspaces(): Promise<Workspace[]> {
