@@ -47,16 +47,78 @@ function allowWebhookWrite(chatId: string): boolean {
 
 function inboundFailureMessage(error: string): string {
   switch (error) {
+    case "reply_required":
+      return "Your message was not applied as a prompt answer. Reply directly to a beerengineer_ prompt message."
+    case "prompt_delivery_not_found":
     case "prompt_not_open":
     case "prompt_mismatch":
-      return "That prompt was already answered."
+      return "Your reply could not be applied as a prompt answer because the referenced prompt is missing or already closed."
     case "empty_answer":
-      return "Empty answers are ignored."
+      return "Your reply could not be applied as a prompt answer because it was empty."
     case "run_not_found":
-      return "That run no longer exists."
+      return "Your reply could not be applied as a prompt answer because that run no longer exists."
     default:
-      return "Reply to a beerengineer_ prompt to answer it."
+      return "Your reply could not be applied as a prompt answer."
   }
+}
+
+function authenticateWebhookRequest(
+  config: AppConfig,
+  resolved: Extract<ReturnType<typeof resolveTelegramChatToolConfig>, { enabled: true }>,
+  req: IncomingMessage,
+): { ok: true } | { ok: false; status: number; error: string } {
+  const configuredSecretEnv = config.notifications?.telegram?.inbound?.webhookSecretEnv?.trim()
+  const headerRaw = req.headers["x-telegram-bot-api-secret-token"]
+  const header = Array.isArray(headerRaw) ? headerRaw[0] : headerRaw
+  if (configuredSecretEnv && !resolved.secretToken) {
+    return { ok: false, status: 503, error: "telegram_webhook_secret_unavailable" }
+  }
+  if (configuredSecretEnv && header !== resolved.secretToken) {
+    return { ok: false, status: 401, error: "invalid_secret_token" }
+  }
+  return { ok: true }
+}
+
+async function maybeHandleCommandMessage(
+  resolved: Extract<ReturnType<typeof resolveTelegramChatToolConfig>, { enabled: true }>,
+  update: { channelRef: string; text: string; replyToProviderMessageId: string | null },
+  deps: TelegramChatToolDeps,
+  res: ServerResponse,
+): Promise<boolean> {
+  if (!update.text.startsWith("/") || update.replyToProviderMessageId) return false
+  await softReply(
+    resolved.botToken,
+    update.channelRef,
+    "Reply to a beerengineer_ prompt to answer it. Commands are not supported yet.",
+    deps.send,
+  )
+  plainOk(res)
+  return true
+}
+
+async function handleParsedTelegramUpdate(
+  repos: Repos,
+  resolved: Extract<ReturnType<typeof resolveTelegramChatToolConfig>, { enabled: true }>,
+  provider: TelegramChatToolProvider,
+  update: Awaited<ReturnType<TelegramChatToolProvider["parseWebhook"]>>,
+  res: ServerResponse,
+  deps: TelegramChatToolDeps,
+): Promise<void> {
+  if (!update) return plainOk(res)
+  if (!allowWebhookWrite(update.channelRef)) return plainOk(res)
+  if (!update.text) return plainOk(res)
+  if (await maybeHandleCommandMessage(resolved, update, deps, res)) return
+
+  const result = handleChatToolInbound(repos, "telegram", update)
+  if (!result.ok) {
+    await softReply(resolved.botToken, update.channelRef, inboundFailureMessage(result.error), deps.send)
+    return plainOk(res)
+  }
+
+  if (result.kind === "answer" && update.providerMessageId) {
+    await provider.react(update.channelRef, update.providerMessageId, "👍")
+  }
+  plainOk(res)
 }
 
 export function resetTelegramChatToolWebhookRateLimit(): void {
@@ -75,44 +137,10 @@ export async function handleTelegramChatToolWebhook(
   if (!resolved.enabled) return plainStatus(res, 404, resolved.reason)
   if (config.notifications?.telegram?.inbound?.enabled !== true) return plainStatus(res, 404, "inbound disabled")
 
-  const headerRaw = req.headers["x-telegram-bot-api-secret-token"]
-  const header = Array.isArray(headerRaw) ? headerRaw[0] : headerRaw
-  if (resolved.secretToken && header !== resolved.secretToken) {
-    return plainStatus(res, 401, "invalid_secret_token")
-  }
+  const auth = authenticateWebhookRequest(config, resolved, req)
+  if (!auth.ok) return plainStatus(res, auth.status, auth.error)
 
   const provider = new TelegramChatToolProvider(resolved.botToken, deps)
   const update = await provider.parseWebhook(req)
-  if (!update) return plainOk(res)
-  if (update.channelRef !== resolved.chatId) return plainOk(res)
-  if (!allowWebhookWrite(update.channelRef)) return plainOk(res)
-  if (!update.text || update.text.startsWith("/")) {
-    await softReply(
-      resolved.botToken,
-      update.channelRef,
-      "Reply to a beerengineer_ prompt to answer it. Commands are not supported yet.",
-      deps.send,
-    )
-    return plainOk(res)
-  }
-
-  const result = handleChatToolInbound(repos, "telegram", update)
-  if (!result.ok) {
-    await softReply(resolved.botToken, update.channelRef, inboundFailureMessage(result.error), deps.send)
-    return plainOk(res)
-  }
-
-  if (result.kind === "ignored") {
-    await softReply(
-      resolved.botToken,
-      update.channelRef,
-      "Reply to a beerengineer_ prompt to answer it.",
-      deps.send,
-    )
-    return plainOk(res)
-  }
-  if (result.kind === "answer" && update.providerMessageId) {
-    await provider.react(update.channelRef, update.providerMessageId, "👍")
-  }
-  return plainOk(res)
+  return handleParsedTelegramUpdate(repos, resolved, provider, update, res, deps)
 }
