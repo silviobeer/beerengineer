@@ -28,7 +28,7 @@ function resolveAnswerTarget(
   if (input.promptId && (requestedPrompt?.run_id !== input.runId || requestedPrompt.answered_at !== null)) {
     return { ok: false, code: "prompt_not_open" }
   }
-  if (input.promptId && open && open.id !== input.promptId) {
+  if (input.promptId && open?.id !== input.promptId) {
     return { ok: false, code: "prompt_mismatch" }
   }
 

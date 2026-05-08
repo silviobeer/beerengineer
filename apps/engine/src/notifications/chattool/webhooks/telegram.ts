@@ -96,6 +96,31 @@ async function maybeHandleCommandMessage(
   return true
 }
 
+async function handleParsedTelegramUpdate(
+  repos: Repos,
+  resolved: Extract<ReturnType<typeof resolveTelegramChatToolConfig>, { enabled: true }>,
+  provider: TelegramChatToolProvider,
+  update: Awaited<ReturnType<TelegramChatToolProvider["parseWebhook"]>>,
+  res: ServerResponse,
+  deps: TelegramChatToolDeps,
+): Promise<void> {
+  if (!update) return plainOk(res)
+  if (!allowWebhookWrite(update.channelRef)) return plainOk(res)
+  if (!update.text) return plainOk(res)
+  if (await maybeHandleCommandMessage(resolved, update, deps, res)) return
+
+  const result = handleChatToolInbound(repos, "telegram", update)
+  if (!result.ok) {
+    await softReply(resolved.botToken, update.channelRef, inboundFailureMessage(result.error), deps.send)
+    return plainOk(res)
+  }
+
+  if (result.kind === "answer" && update.providerMessageId) {
+    await provider.react(update.channelRef, update.providerMessageId, "👍")
+  }
+  plainOk(res)
+}
+
 export function resetTelegramChatToolWebhookRateLimit(): void {
   webhookWritesByChat.clear()
 }
@@ -117,19 +142,5 @@ export async function handleTelegramChatToolWebhook(
 
   const provider = new TelegramChatToolProvider(resolved.botToken, deps)
   const update = await provider.parseWebhook(req)
-  if (!update) return plainOk(res)
-  if (!allowWebhookWrite(update.channelRef)) return plainOk(res)
-  if (!update.text) return plainOk(res)
-  if (await maybeHandleCommandMessage(resolved, update, deps, res)) return
-
-  const result = handleChatToolInbound(repos, "telegram", update)
-  if (!result.ok) {
-    await softReply(resolved.botToken, update.channelRef, inboundFailureMessage(result.error), deps.send)
-    return plainOk(res)
-  }
-
-  if (result.kind === "answer" && update.providerMessageId) {
-    await provider.react(update.channelRef, update.providerMessageId, "👍")
-  }
-  return plainOk(res)
+  return handleParsedTelegramUpdate(repos, resolved, provider, update, res, deps)
 }
