@@ -1,4 +1,4 @@
-import type { ReviewAgentAdapter, ReviewContext, StageAgentAdapter, StageAgentInput } from "../../core/adapters.js"
+import type { ReviewAgentAdapter, ReviewAgentResponse, ReviewContext, StageAgentAdapter, StageAgentInput, StageAgentResponse } from "../../core/adapters.js"
 import { emitEvent, getActiveRun } from "../../core/runContext.js"
 import type { RuntimePolicy } from "../registry.js"
 import type { InvocationRuntime } from "../types.js"
@@ -138,10 +138,11 @@ type HostedAdapterInput = {
 }
 
 /**
- * Invoke the hosted runtime and parse the response as a JSON envelope. If the
- * first invocation returns non-JSON, re-invoke once with a hardening hint
- * appended to the prompt. Session ids are threaded through both turns so
- * provider-native conversation state keeps working.
+ * Invoke the hosted runtime and parse/validate the response as a JSON envelope.
+ * If the first invocation returns non-JSON or a semantically invalid envelope,
+ * re-invoke once with a hardening hint appended to the prompt. Session ids are
+ * threaded through both turns so provider-native conversation state keeps
+ * working.
  */
 async function invokeAndParse<Env>(params: {
   request: HostedRequest
@@ -170,10 +171,10 @@ function buildRetryPrompt(prompt: string, retryHint: string, previousOutput: str
 }
 
 const STAGE_RETRY_HINT =
-  "IMPORTANT: your previous response was not valid JSON. You MUST respond with ONLY a single JSON object that matches the output envelope schema — no prose before or after, no markdown, no code fences. Respond with the JSON object now."
+  "IMPORTANT: your previous response was not valid JSON or did not match the output envelope schema. You MUST respond with ONLY a single JSON object using either {\"kind\":\"artifact\",\"artifact\":...} or {\"kind\":\"message\",\"message\":\"non-empty question\"} — no prose before or after, no markdown, no code fences. Respond with the JSON object now."
 
 const REVIEW_RETRY_HINT =
-  "IMPORTANT: your previous response was not valid JSON. You MUST respond with ONLY a single JSON object that matches the review output envelope schema — no prose before or after, no markdown, no code fences. Respond with the JSON object now."
+  "IMPORTANT: your previous response was not valid JSON or did not match the review output envelope schema. You MUST respond with ONLY a single JSON object using {\"kind\":\"pass\"}, {\"kind\":\"revise\",\"feedback\":\"non-empty feedback\"}, or {\"kind\":\"block\",\"reason\":\"non-empty reason\"} — no prose before or after, no markdown, no code fences. Respond with the JSON object now."
 
 export class HostedStageAdapter<S, A> implements StageAgentAdapter<S, A> {
   private session: HostedSession
@@ -207,14 +208,14 @@ export class HostedStageAdapter<S, A> implements StageAgentAdapter<S, A> {
       runtimePolicy: this.input.runtimePolicy,
       request,
     })
-    const { envelope, session } = await invokeAndParse<HostedStageOutputEnvelope<A>>({
+    const { envelope: response, session } = await invokeAndParse<StageAgentResponse<A>>({
       request: { kind: "stage", runtime, prompt, payload: request },
       session: this.session,
-      parse: raw => raw as HostedStageOutputEnvelope<A>,
+      parse: raw => mapStageEnvelopeToResponse(raw as HostedStageOutputEnvelope<A>),
       retryHint: STAGE_RETRY_HINT,
     })
     this.session = session
-    return mapStageEnvelopeToResponse(envelope)
+    return response
   }
 }
 
@@ -251,14 +252,14 @@ export class HostedReviewAdapter<S, A> implements ReviewAgentAdapter<S, A> {
       runtimePolicy: this.input.runtimePolicy,
       request,
     })
-    const { envelope, session } = await invokeAndParse<HostedReviewOutputEnvelope>({
+    const { envelope: response, session } = await invokeAndParse<ReviewAgentResponse>({
       request: { kind: "review", runtime, prompt, payload: request },
       session: this.session,
-      parse: raw => raw as HostedReviewOutputEnvelope,
+      parse: raw => mapReviewEnvelopeToResponse(raw as HostedReviewOutputEnvelope),
       retryHint: REVIEW_RETRY_HINT,
     })
     this.session = session
-    return mapReviewEnvelopeToResponse(envelope)
+    return response
   }
 }
 
