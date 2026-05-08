@@ -73,7 +73,7 @@ function CreateIdeaHeader({
       <button
         type="button"
         onClick={onToggle}
-        disabled={!isWorkspaceSelected || isSubmitting}
+        disabled={isWorkspaceSelected === false || isSubmitting}
         aria-expanded={isOpen ? "true" : "false"}
         aria-controls={inputId}
         className="min-h-10 border px-3 py-2 text-sm font-semibold"
@@ -189,7 +189,7 @@ function useCreateIdeaLauncherState(
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    if (selectedWorkspaceKey) return;
+    if (selectedWorkspaceKey !== null) return;
 
     setIsOpen(false);
     setIsSubmitting(false);
@@ -205,7 +205,7 @@ function useCreateIdeaLauncherState(
 
   async function submit(event: FormSubmitEvent) {
     event.preventDefault();
-    if (isSubmitting || !selectedWorkspaceKey) return;
+    if (isSubmitting || selectedWorkspaceKey === null) return;
 
     if (ideaText.trim().length === 0) {
       setValidationError(REQUIRED_IDEA_MESSAGE);
