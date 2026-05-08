@@ -1,5 +1,5 @@
 import type { StageAgentAdapter, StageAgentInput, StageAgentResponse } from "../../core/adapters.js"
-import type { QaArtifact, QaState } from "../../stages/qa/types.js"
+import type { QaArtifact, QaState, QaVerdict } from "../../stages/qa/types.js"
 import type { Finding } from "../../types/review.js"
 
 async function delay(ms: number): Promise<void> {
@@ -16,6 +16,16 @@ function findingsForLoop(loop: number): Finding[] {
   return []
 }
 
+function verdictsFor(findings: Finding[]): QaVerdict[] {
+  return [
+    {
+      requirement: "fake-qa-smoke",
+      status: findings.length === 0 ? "passed" : "failed",
+      evidence: findings.length === 0 ? "Fake QA found no open findings." : "Fake QA produced open findings.",
+    },
+  ]
+}
+
 export class FakeQaStageAdapter implements StageAgentAdapter<QaState, QaArtifact> {
   async step(input: StageAgentInput<QaState>): Promise<StageAgentResponse<QaArtifact>> {
     const state = input.state
@@ -25,7 +35,7 @@ export class FakeQaStageAdapter implements StageAgentAdapter<QaState, QaArtifact
       state.loop = 1
       state.findings = findingsForLoop(state.loop)
       if (state.findings.length === 0) {
-        return { kind: "artifact", artifact: { accepted: true, loops: state.loop, findings: [] } }
+        return { kind: "artifact", artifact: { accepted: true, loops: state.loop, verdicts: verdictsFor([]), findings: [] } }
       }
       const findingsSummary = state.findings.map(f => `[${f.source}/${f.severity}] ${f.message}`).join("; ")
       const message = `Reviewer findings: ${findingsSummary}. Fix or accept? [fix/accept]`
@@ -37,7 +47,7 @@ export class FakeQaStageAdapter implements StageAgentAdapter<QaState, QaArtifact
       if (decision === "accept") {
         return {
           kind: "artifact",
-          artifact: { accepted: true, loops: state.loop, findings: state.findings },
+          artifact: { accepted: true, loops: state.loop, verdicts: verdictsFor(state.findings), findings: state.findings },
         }
       }
 
@@ -45,7 +55,7 @@ export class FakeQaStageAdapter implements StageAgentAdapter<QaState, QaArtifact
       state.loop++
       state.findings = findingsForLoop(state.loop)
       if (state.findings.length === 0) {
-        return { kind: "artifact", artifact: { accepted: false, loops: state.loop, findings: [] } }
+        return { kind: "artifact", artifact: { accepted: false, loops: state.loop, verdicts: verdictsFor([]), findings: [] } }
       }
       const findingsSummary = state.findings.map(f => `[${f.source}/${f.severity}] ${f.message}`).join("; ")
       const message = `Reviewer findings: ${findingsSummary}. Fix or accept? [fix/accept]`
@@ -54,7 +64,12 @@ export class FakeQaStageAdapter implements StageAgentAdapter<QaState, QaArtifact
 
     return {
       kind: "artifact",
-      artifact: { accepted: state.findings.length === 0, loops: state.loop, findings: state.findings },
+      artifact: {
+        accepted: state.findings.length === 0,
+        loops: state.loop,
+        verdicts: verdictsFor(state.findings),
+        findings: state.findings,
+      },
     }
   }
 }

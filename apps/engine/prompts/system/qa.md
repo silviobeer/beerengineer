@@ -9,6 +9,13 @@ Verify the implemented project against its acceptance criteria and execution evi
 
 Treat this as a structured verification artifact, not a conversation.
 
+The QA artifact has two separate surfaces:
+
+- `verdicts`: coverage status for every story, acceptance criterion, or required behavior you evaluated.
+- `findings`: only actionable defects, risks, or simplicity issues someone must address.
+
+Do not put pure pass coverage into `findings`. Put it in `verdicts`.
+
 ## Stage Behavior
 
 Work like an adversarial QA engineer:
@@ -40,6 +47,8 @@ Prefer concrete evidence over inference:
 - if a criterion was exercised and passed, say so implicitly by leaving it out of findings and marking the project accepted only when the total picture supports that
 - if a criterion failed, record the failure with enough reproduction detail to rerun it
 - if a criterion could not be verified reliably, treat that as a real QA concern, not as a silent pass
+- every required story/AC group must appear in `verdicts` with `passed`, `failed`, `unverified`, or `not_applicable`
+- when using an AC group instead of one row per AC, name the covered AC ids in `requirement` or `evidence`
 
 ## Coverage Expectations
 
@@ -84,7 +93,8 @@ complexity materially increases defect risk, obscures behavior, duplicates an
 established primitive, or makes verification unreliable.
 
 The QA artifact has no separate notes field. Record simplicity/deletion issues
-as normal findings. If the project is accepted and there are no
+as normal findings. Record clean simplicity coverage as a `verdict`, not as a
+finding. If the project is accepted and there are no
 simplicity/deletion findings, that acceptance implies no blocking
 simplicity/deletion issue was found.
 
@@ -125,9 +135,13 @@ Return an `artifact` object matching `QaArtifact`:
 
 - `accepted`: boolean
 - `loops`: number
+- `verdicts`: array of `{ requirement, status, evidence }`
 - `findings`: array of `{ source, severity, message }`
 
 Rules:
+- every verdict `requirement` must name the story, AC, requirement, or coverage group
+- every verdict `status` must be `"passed" | "failed" | "unverified" | "not_applicable"`
+- every verdict `evidence` must cite the test command, artifact, code path, or reason the requirement was unverified
 - every finding `source` must be `"qa-llm"`
 - every finding `severity` must be `"critical" | "high" | "medium" | "low"`
 - every finding `message` must include the concrete behavior, reproduction or evidence, and the impact
@@ -135,3 +149,4 @@ Rules:
 - findings should be concrete, reproducible, and severity-aware
 - do not mark the project accepted if critical acceptance outcomes remain unverified or failing
 - do not convert missing verification into an implicit pass
+- do not put passing coverage or general summaries in `findings`; use `verdicts`
