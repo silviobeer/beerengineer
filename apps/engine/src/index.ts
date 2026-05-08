@@ -43,6 +43,7 @@ import {
   runWorkspaceUseCommand,
   runWorkspaceWorktreeGcCommand,
 } from "./cli/commands/workspaces.js"
+import { runSetupTelegramStatusCommand } from "./cli/commands/setup.js"
 import { runItemAction, runItemImportPrepared } from "./cli/commands/itemActions.js"
 import { runManagedInstallCommand } from "./cli/commands/install.js"
 import { runUpdateCommand } from "./cli/commands/update.js"
@@ -92,6 +93,7 @@ const COMMAND_REGISTRY: CommandHandlers = {
     if (exit !== null) return exit
     return runSetupCommand({ group: cmd.group, noInteractive: cmd.noInteractive })
   },
+  "setup-telegram": cmd => runSetupTelegramStatusCommand(cmd.workspaceKey, cmd.json),
   install: cmd => runManagedInstallCommand(cmd),
   update: cmd => runUpdateCommand(cmd),
   "notifications-test": cmd => runNotificationsTestCommand(cmd.channel),

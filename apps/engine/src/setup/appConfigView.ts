@@ -8,6 +8,7 @@ import { readActiveSecretValue } from "./secretStore.js"
 import type { Repos } from "../db/repositories.js"
 import { SUPABASE_MANAGEMENT_TOKEN_SECRET_REF, readSecretMetadata } from "./secretMetadata.js"
 import type { AppConfig, ConfigFileState, SetupOverrides } from "./types.js"
+import { resolveTelegramInboundStatus, type TelegramInboundStatusView } from "./telegramInboundStatus.js"
 
 export type SecretRefView = {
   ref: string
@@ -25,6 +26,7 @@ export type AppConfigView = {
     key: string
     name: string
   } | null
+  telegramInbound: TelegramInboundStatusView | null
   supabase: {
     workspaceId?: string
     projectRef?: string
@@ -79,65 +81,89 @@ export type AppConfigView = {
   }
 }
 
-export function getAppConfigView(overrides: SetupOverrides = {}, deps: { repos?: Repos } = {}): AppConfigView {
+export function getAppConfigView(
+  overrides: SetupOverrides = {},
+  deps: { repos?: Repos; workspaceKey?: string } = {},
+): AppConfigView {
   const resolved = resolveOverrides(overrides)
   const configPath = resolveConfigPath(resolved)
   const configState = readConfigFile(configPath)
   const config = resolveMergedConfig(configState, resolved)
-  const workspace = currentWorkspaceView(deps.repos)
+  const workspace = currentWorkspaceView(deps.repos, deps.workspaceKey)
   const supabase = supabaseView(deps.repos)
+  const telegramInbound = resolveTelegramInboundStatus(config, deps)
+  const setupState = resolveSetupState(configState.kind, config)
   if (!config) {
     return {
-      setupState: configState.kind === "missing" ? "uninitialized" : "partial",
+      setupState,
       configPath,
       configFile: fileStateView(configState),
       workspace,
+      telegramInbound,
       supabase,
       config: emptyConfigView(),
     }
   }
 
-  const telegram = config.notifications?.telegram
   return {
-    setupState: configState.kind === "missing" ? "uninitialized" : "complete",
+    setupState,
     configPath,
     configFile: fileStateView(configState),
     workspace,
+    telegramInbound,
     supabase,
-    config: {
-      allowedRoots: [...config.allowedRoots],
-      enginePort: config.enginePort,
-      publicBaseUrl: config.publicBaseUrl,
-      gitIdentityDefault: config.gitIdentityDefault,
-      llm: {
-        provider: config.llm.provider,
-        model: config.llm.model,
-        defaultHarnessProfile: config.llm.defaultHarnessProfile,
-        defaultSonarOrganization: config.llm.defaultSonarOrganization,
-        apiKey: secretRef(config.llm.apiKeyRef),
+    config: configView(config),
+  }
+}
+
+function resolveSetupState(
+  configStateKind: ConfigFileState["kind"],
+  config: AppConfig | null,
+): AppConfigSetupState {
+  if (!config) return configStateKind === "missing" ? "uninitialized" : "partial"
+  return configStateKind === "missing" ? "uninitialized" : "complete"
+}
+
+function configView(config: AppConfig): AppConfigView["config"] {
+  return {
+    allowedRoots: [...config.allowedRoots],
+    enginePort: config.enginePort,
+    publicBaseUrl: config.publicBaseUrl,
+    gitIdentityDefault: config.gitIdentityDefault,
+    llm: {
+      provider: config.llm.provider,
+      model: config.llm.model,
+      defaultHarnessProfile: config.llm.defaultHarnessProfile,
+      defaultSonarOrganization: config.llm.defaultSonarOrganization,
+      apiKey: secretRef(config.llm.apiKeyRef),
+    },
+    vcs: {
+      github: {
+        enabled: config.vcs?.github?.enabled === true,
       },
-      vcs: {
-        github: {
-          enabled: config.vcs?.github?.enabled === true,
-        },
-      },
-      browser: {
-        enabled: config.browser?.enabled === true,
-      },
-      notifications: {
-        telegram: {
-          enabled: telegram?.enabled === true,
-          level: telegram?.level ?? 2,
-          defaultChatId: telegram?.defaultChatId,
-          botToken: telegram?.botTokenEnv ? secretRef(telegram.botTokenEnv) : undefined,
-          inbound: {
-            enabled: telegram?.inbound?.enabled === true,
-            webhookSecret: telegram?.inbound?.webhookSecretEnv
-              ? secretRef(telegram.inbound.webhookSecretEnv)
-              : undefined,
-          },
-        },
-      },
+    },
+    browser: {
+      enabled: config.browser?.enabled === true,
+    },
+    notifications: {
+      telegram: telegramConfigView(config.notifications?.telegram),
+    },
+  }
+}
+
+function telegramConfigView(
+  config: NonNullable<AppConfig["notifications"]>["telegram"] | undefined,
+): AppConfigView["config"]["notifications"]["telegram"] {
+  return {
+    enabled: config?.enabled === true,
+    level: config?.level ?? 2,
+    defaultChatId: config?.defaultChatId,
+    botToken: config?.botTokenEnv ? secretRef(config.botTokenEnv) : undefined,
+    inbound: {
+      enabled: config?.inbound?.enabled === true,
+      webhookSecret: config?.inbound?.webhookSecretEnv
+        ? secretRef(config.inbound.webhookSecretEnv)
+        : undefined,
     },
   }
 }
@@ -168,13 +194,14 @@ function supabaseView(repos: Repos | undefined): AppConfigView["supabase"] {
   }
 }
 
-function currentWorkspaceView(repos: Repos | undefined): AppConfigView["workspace"] {
-  const workspace = currentWorkspaceRow(repos)
+function currentWorkspaceView(repos: Repos | undefined, workspaceKey?: string): AppConfigView["workspace"] {
+  const workspace = currentWorkspaceRow(repos, workspaceKey)
   if (!workspace) return null
   return { id: workspace.id, key: workspace.key, name: workspace.name }
 }
 
-function currentWorkspaceRow(repos: Repos | undefined) {
+function currentWorkspaceRow(repos: Repos | undefined, workspaceKey?: string) {
+  if (workspaceKey) return repos?.getWorkspaceByKey(workspaceKey)
   return repos?.listWorkspaces()
     .sort((a, b) => (b.last_opened_at ?? 0) - (a.last_opened_at ?? 0) || a.key.localeCompare(b.key))
     .at(0)

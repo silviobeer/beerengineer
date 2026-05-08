@@ -32,8 +32,12 @@ function tmpDb() {
 
 function seedOpenPrompt(repos: Repos, prompt: string) {
   const ws = repos.upsertWorkspace({ key: "t", name: "Test" })
-  const item = repos.createItem({ workspaceId: ws.id, title: "T", description: "D" })
-  const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "T" })
+  return seedOpenPromptForWorkspace(repos, ws.id, prompt)
+}
+
+function seedOpenPromptForWorkspace(repos: Repos, workspaceId: string, prompt: string) {
+  const item = repos.createItem({ workspaceId, title: "T", description: "D" })
+  const run = repos.createRun({ workspaceId, itemId: item.id, title: "T" })
   const stageRun = repos.createStageRun({ runId: run.id, stageKey: "requirements" })
   const pending = repos.createPendingPrompt({ runId: run.id, stageRunId: stageRun.id, prompt })
   repos.appendLog({
@@ -232,6 +236,55 @@ test("webhook rejects requests whose secret_token header does not match", async 
   db.close()
 })
 
+test("webhook rejects requests whose secret_token header is missing", async () => {
+  const db = tmpDb()
+  const repos = new Repos(db)
+  process.env.TELEGRAM_BOT_TOKEN = "bot-secret"
+  process.env.TELEGRAM_WEBHOOK_SECRET = "correct-horse"
+  resetTelegramWebhookRateLimit()
+
+  const { run, pending } = seedOpenPrompt(repos, "Which branch?")
+  repos.claimNotificationDelivery({
+    dedupKey: `${run.id}:run_blocked:stage:requirements`,
+    channel: "telegram",
+    chatId: "9001",
+    runId: run.id,
+    promptId: pending.id,
+  })
+  repos.completeNotificationDelivery(`${run.id}:run_blocked:stage:requirements`, {
+    status: "delivered",
+    telegramMessageId: 4242,
+  })
+
+  const softReplies: string[] = []
+  const req = fakeRequest({
+    body: {
+      message: {
+        message_id: 4243,
+        chat: { id: 9001 },
+        text: "use main",
+        reply_to_message: { message_id: 4242 },
+      },
+    },
+  })
+  const { res, status } = captureResponse()
+
+  await handleTelegramWebhook(repos, inboundTelegramConfig(), req, res, {
+    async send(input) {
+      softReplies.push(input.text)
+      return { ok: true, status: 200 }
+    },
+  })
+
+  assert.equal(status(), 401)
+  assert.equal(repos.getPendingPrompt(pending.id)?.answer, null)
+  assert.deepEqual(softReplies, [])
+
+  delete process.env.TELEGRAM_BOT_TOKEN
+  delete process.env.TELEGRAM_WEBHOOK_SECRET
+  db.close()
+})
+
 test("webhook reply maps to recordAnswer and reacts with 👍", async () => {
   const db = tmpDb()
   const repos = new Repos(db)
@@ -321,14 +374,189 @@ test("webhook replies with help text when the reply_to message is unknown", asyn
 
   assert.equal(status(), 200)
   assert.equal(softReplies.length, 1)
-  assert.match(softReplies[0], /Reply to a beerengineer_ prompt/)
+  assert.match(softReplies[0], /could not be applied as a prompt answer/i)
 
   delete process.env.TELEGRAM_BOT_TOKEN
   delete process.env.TELEGRAM_WEBHOOK_SECRET
   db.close()
 })
 
-test("webhook ignores updates from a different telegram chat", async () => {
+test("webhook does not fall back to the latest prompt when the inbound telegram message is not a reply", async () => {
+  const db = tmpDb()
+  const repos = new Repos(db)
+  process.env.TELEGRAM_BOT_TOKEN = "bot-secret"
+  process.env.TELEGRAM_WEBHOOK_SECRET = "correct-horse"
+  resetTelegramWebhookRateLimit()
+
+  const { run, pending } = seedOpenPrompt(repos, "Which branch?")
+  repos.claimNotificationDelivery({
+    dedupKey: `${run.id}:run_blocked:stage:requirements`,
+    channel: "telegram",
+    chatId: "9001",
+    runId: run.id,
+    promptId: pending.id,
+  })
+  repos.completeNotificationDelivery(`${run.id}:run_blocked:stage:requirements`, {
+    status: "delivered",
+    telegramMessageId: 4242,
+  })
+
+  const softReplies: string[] = []
+  const req = fakeRequest({
+    headers: { "x-telegram-bot-api-secret-token": "correct-horse" },
+    body: {
+      message: {
+        message_id: 4243,
+        chat: { id: 9001 },
+        text: "use main",
+      },
+    },
+  })
+  const { res, status } = captureResponse()
+
+  await handleTelegramWebhook(repos, inboundTelegramConfig(), req, res, {
+    async send(input) {
+      softReplies.push(input.text)
+      return { ok: true, status: 200 }
+    },
+    async react() {
+      throw new Error("no reaction expected for a non-reply message")
+    },
+  })
+
+  assert.equal(status(), 200)
+  assert.equal(repos.getPendingPrompt(pending.id)?.answer, null)
+  assert.equal(softReplies.length, 1)
+  assert.match(softReplies[0], /was not applied as a prompt answer/i)
+
+  delete process.env.TELEGRAM_BOT_TOKEN
+  delete process.env.TELEGRAM_WEBHOOK_SECRET
+  db.close()
+})
+
+test("webhook routes a reply by persisted telegram delivery even when the chat differs from the app default", async () => {
+  const db = tmpDb()
+  const repos = new Repos(db)
+  process.env.TELEGRAM_BOT_TOKEN = "bot-secret"
+  process.env.TELEGRAM_WEBHOOK_SECRET = "correct-horse"
+  resetTelegramWebhookRateLimit()
+
+  const workspaceA = repos.upsertWorkspace({ key: "a", name: "Workspace A" })
+  const workspaceB = repos.upsertWorkspace({ key: "b", name: "Workspace B" })
+  const promptA = seedOpenPromptForWorkspace(repos, workspaceA.id, "Reply for A?")
+  const promptB = seedOpenPromptForWorkspace(repos, workspaceB.id, "Reply for B?")
+  repos.claimNotificationDelivery({
+    dedupKey: `${promptA.run.id}:run_blocked:stage:requirements`,
+    channel: "telegram",
+    chatId: "9001",
+    runId: promptA.run.id,
+    promptId: promptA.pending.id,
+  })
+  repos.completeNotificationDelivery(`${promptA.run.id}:run_blocked:stage:requirements`, {
+    status: "delivered",
+    telegramMessageId: 5001,
+  })
+  repos.claimNotificationDelivery({
+    dedupKey: `${promptB.run.id}:run_blocked:stage:requirements`,
+    channel: "telegram",
+    chatId: "9002",
+    runId: promptB.run.id,
+    promptId: promptB.pending.id,
+  })
+  repos.completeNotificationDelivery(`${promptB.run.id}:run_blocked:stage:requirements`, {
+    status: "delivered",
+    telegramMessageId: 6001,
+  })
+
+  const reactions: Array<{ chatId: string; messageId: number }> = []
+  const req = fakeRequest({
+    headers: { "x-telegram-bot-api-secret-token": "correct-horse" },
+    body: {
+      message: {
+        message_id: 6002,
+        chat: { id: 9002 },
+        text: "answer B",
+        reply_to_message: { message_id: 6001 },
+      },
+    },
+  })
+  const { res, status } = captureResponse()
+
+  await handleTelegramWebhook(repos, inboundTelegramConfig(), req, res, {
+    async react(input) {
+      reactions.push({ chatId: input.chatId, messageId: input.messageId })
+    },
+    async send() {
+      throw new Error("should not send a reply on success")
+    },
+  })
+
+  assert.equal(status(), 200)
+  assert.equal(repos.getPendingPrompt(promptA.pending.id)?.answer, null)
+  assert.equal(repos.getPendingPrompt(promptB.pending.id)?.answer, "answer B")
+  assert.deepEqual(reactions, [{ chatId: "9002", messageId: 6002 }])
+
+  delete process.env.TELEGRAM_BOT_TOKEN
+  delete process.env.TELEGRAM_WEBHOOK_SECRET
+  db.close()
+})
+
+test("webhook does not reapply a reply once the target prompt is already answered", async () => {
+  const db = tmpDb()
+  const repos = new Repos(db)
+  process.env.TELEGRAM_BOT_TOKEN = "bot-secret"
+  process.env.TELEGRAM_WEBHOOK_SECRET = "correct-horse"
+  resetTelegramWebhookRateLimit()
+
+  const { run, pending } = seedOpenPrompt(repos, "Which branch?")
+  repos.claimNotificationDelivery({
+    dedupKey: `${run.id}:run_blocked:stage:requirements`,
+    channel: "telegram",
+    chatId: "9001",
+    runId: run.id,
+    promptId: pending.id,
+  })
+  repos.completeNotificationDelivery(`${run.id}:run_blocked:stage:requirements`, {
+    status: "delivered",
+    telegramMessageId: 4242,
+  })
+  repos.answerPendingPrompt(pending.id, "already answered")
+
+  const softReplies: string[] = []
+  const req = fakeRequest({
+    headers: { "x-telegram-bot-api-secret-token": "correct-horse" },
+    body: {
+      message: {
+        message_id: 4243,
+        chat: { id: 9001 },
+        text: "overwrite attempt",
+        reply_to_message: { message_id: 4242 },
+      },
+    },
+  })
+  const { res, status } = captureResponse()
+
+  await handleTelegramWebhook(repos, inboundTelegramConfig(), req, res, {
+    async send(input) {
+      softReplies.push(input.text)
+      return { ok: true, status: 200 }
+    },
+    async react() {
+      throw new Error("no reaction expected for a closed prompt")
+    },
+  })
+
+  assert.equal(status(), 200)
+  assert.equal(repos.getPendingPrompt(pending.id)?.answer, "already answered")
+  assert.equal(softReplies.length, 1)
+  assert.match(softReplies[0], /could not be applied as a prompt answer/i)
+
+  delete process.env.TELEGRAM_BOT_TOKEN
+  delete process.env.TELEGRAM_WEBHOOK_SECRET
+  db.close()
+})
+
+test("webhook sends feedback for an authenticated message from a different telegram chat when it is not a reply", async () => {
   const db = tmpDb()
   const repos = new Repos(db)
   process.env.TELEGRAM_BOT_TOKEN = "bot-secret"
@@ -357,7 +585,8 @@ test("webhook ignores updates from a different telegram chat", async () => {
 
   assert.equal(status(), 200)
   assert.equal(body(), '{"ok":true}')
-  assert.deepEqual(softReplies, [])
+  assert.equal(softReplies.length, 1)
+  assert.match(softReplies[0], /was not applied as a prompt answer/i)
 
   delete process.env.TELEGRAM_BOT_TOKEN
   delete process.env.TELEGRAM_WEBHOOK_SECRET

@@ -96,6 +96,7 @@ export function applySchema(db: Db): void {
   migrateRunsSupabaseColumns(db)
   migrateStageRunsSessionColumns(db)
   migrateNotificationDeliveriesTable(db)
+  migrateTelegramSetupStatesTable(db)
   migrateItemsCurrentStageColumn(db)
   migrateUpdateAttemptsColumns(db)
   migratePendingPromptActionsColumn(db)
@@ -269,6 +270,32 @@ function migrateNotificationDeliveriesTable(db: Db): void {
   db.exec(`
     CREATE INDEX IF NOT EXISTS notification_deliveries_run_prompt_idx
     ON notification_deliveries(run_id, prompt_id)
+  `)
+}
+
+function migrateTelegramSetupStatesTable(db: Db): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS telegram_setup_states (
+      scope_key TEXT PRIMARY KEY,
+      workspace_key TEXT,
+      expected_webhook_url TEXT,
+      baseline_status TEXT NOT NULL DEFAULT 'not-run',
+      baseline_message TEXT,
+      provider_state_json TEXT,
+      baseline_checked_at INTEGER,
+      verification_status TEXT NOT NULL DEFAULT 'not-run',
+      verification_message TEXT,
+      verification_started_at INTEGER,
+      verification_completed_at INTEGER,
+      verification_deadline_at INTEGER,
+      verification_delivery_key TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `)
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS telegram_setup_states_verification_delivery_idx
+    ON telegram_setup_states(verification_delivery_key)
   `)
 }
 
