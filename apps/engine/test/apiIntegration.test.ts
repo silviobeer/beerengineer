@@ -194,15 +194,18 @@ function startServer(env: NodeJS.ProcessEnv): { proc: ChildProcess; base: string
   const port = 4200 + Math.floor(Math.random() * 500)
   const host = "127.0.0.1"
   const serverPath = resolve(new URL(".", import.meta.url).pathname, "..", "src", "api", "server.ts")
+  const childEnv = {
+    ...process.env,
+    ...env,
+    PORT: String(port),
+    HOST: host,
+    BEERENGINEER_SEED: "0",
+    BEERENGINEER_API_TOKEN: TEST_API_TOKEN,
+  }
+  if (!("BEERENGINEER_PUBLIC_BASE_URL" in env)) delete childEnv.BEERENGINEER_PUBLIC_BASE_URL
+  if (!("BEERENGINEER_PREVIEW_HOST" in env)) delete childEnv.BEERENGINEER_PREVIEW_HOST
   const proc = spawn(process.execPath, ["--import", "tsx", serverPath], {
-    env: {
-      ...process.env,
-      ...env,
-      PORT: String(port),
-      HOST: host,
-      BEERENGINEER_SEED: "0",
-      BEERENGINEER_API_TOKEN: TEST_API_TOKEN,
-    },
+    env: childEnv,
     stdio: ["ignore", "pipe", "pipe"]
   })
   proc.stderr?.on("data", () => {})

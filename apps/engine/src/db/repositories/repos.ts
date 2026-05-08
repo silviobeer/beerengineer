@@ -14,6 +14,7 @@ import type {
   StageLogCursorRow,
   StageLogRow,
   StageRunRow,
+  TelegramSetupStateRow,
   UpdateAttemptRow,
   WorkerOwnerKind,
   WorkspaceRow,
@@ -874,6 +875,91 @@ export class Repos {
 
   getNotificationDelivery(dedupKey: string): NotificationDeliveryRow | undefined {
     return this.getOne("SELECT * FROM notification_deliveries WHERE dedup_key = ?", dedupKey)
+  }
+
+  getTelegramSetupState(scopeKey: string): TelegramSetupStateRow | undefined {
+    return this.getOne("SELECT * FROM telegram_setup_states WHERE scope_key = ?", scopeKey)
+  }
+
+  getTelegramSetupStateByVerificationDeliveryKey(deliveryKey: string): TelegramSetupStateRow | undefined {
+    return this.getOne(
+      "SELECT * FROM telegram_setup_states WHERE verification_delivery_key = ?",
+      deliveryKey,
+    )
+  }
+
+  upsertTelegramSetupState(input: {
+    scopeKey: string
+    workspaceKey?: string | null
+    expectedWebhookUrl?: string | null
+    baselineStatus?: TelegramSetupStateRow["baseline_status"]
+    baselineMessage?: string | null
+    providerStateJson?: string | null
+    baselineCheckedAt?: number | null
+    verificationStatus?: TelegramSetupStateRow["verification_status"]
+    verificationMessage?: string | null
+    verificationStartedAt?: number | null
+    verificationCompletedAt?: number | null
+    verificationDeadlineAt?: number | null
+    verificationDeliveryKey?: string | null
+  }): TelegramSetupStateRow {
+    const existing = this.getTelegramSetupState(input.scopeKey)
+    const timestamp = now()
+    const row: TelegramSetupStateRow = {
+      scope_key: input.scopeKey,
+      workspace_key: input.workspaceKey === undefined ? existing?.workspace_key ?? null : input.workspaceKey,
+      expected_webhook_url:
+        input.expectedWebhookUrl === undefined ? existing?.expected_webhook_url ?? null : input.expectedWebhookUrl,
+      baseline_status: input.baselineStatus ?? existing?.baseline_status ?? "not-run",
+      baseline_message: input.baselineMessage === undefined ? existing?.baseline_message ?? null : input.baselineMessage,
+      provider_state_json:
+        input.providerStateJson === undefined ? existing?.provider_state_json ?? null : input.providerStateJson,
+      baseline_checked_at:
+        input.baselineCheckedAt === undefined ? existing?.baseline_checked_at ?? null : input.baselineCheckedAt,
+      verification_status: input.verificationStatus ?? existing?.verification_status ?? "not-run",
+      verification_message:
+        input.verificationMessage === undefined ? existing?.verification_message ?? null : input.verificationMessage,
+      verification_started_at:
+        input.verificationStartedAt === undefined ? existing?.verification_started_at ?? null : input.verificationStartedAt,
+      verification_completed_at:
+        input.verificationCompletedAt === undefined ? existing?.verification_completed_at ?? null : input.verificationCompletedAt,
+      verification_deadline_at:
+        input.verificationDeadlineAt === undefined ? existing?.verification_deadline_at ?? null : input.verificationDeadlineAt,
+      verification_delivery_key:
+        input.verificationDeliveryKey === undefined ? existing?.verification_delivery_key ?? null : input.verificationDeliveryKey,
+      created_at: existing?.created_at ?? timestamp,
+      updated_at: timestamp,
+    }
+    this.db
+      .prepare(
+        `INSERT INTO telegram_setup_states (
+           scope_key, workspace_key, expected_webhook_url, baseline_status, baseline_message,
+           provider_state_json, baseline_checked_at, verification_status, verification_message,
+           verification_started_at, verification_completed_at, verification_deadline_at,
+           verification_delivery_key, created_at, updated_at
+         ) VALUES (
+           @scope_key, @workspace_key, @expected_webhook_url, @baseline_status, @baseline_message,
+           @provider_state_json, @baseline_checked_at, @verification_status, @verification_message,
+           @verification_started_at, @verification_completed_at, @verification_deadline_at,
+           @verification_delivery_key, @created_at, @updated_at
+         )
+         ON CONFLICT(scope_key) DO UPDATE SET
+           workspace_key = excluded.workspace_key,
+           expected_webhook_url = excluded.expected_webhook_url,
+           baseline_status = excluded.baseline_status,
+           baseline_message = excluded.baseline_message,
+           provider_state_json = excluded.provider_state_json,
+           baseline_checked_at = excluded.baseline_checked_at,
+           verification_status = excluded.verification_status,
+           verification_message = excluded.verification_message,
+           verification_started_at = excluded.verification_started_at,
+           verification_completed_at = excluded.verification_completed_at,
+           verification_deadline_at = excluded.verification_deadline_at,
+           verification_delivery_key = excluded.verification_delivery_key,
+           updated_at = excluded.updated_at`
+      )
+      .run(row)
+    return this.getTelegramSetupState(input.scopeKey)!
   }
 
   listNotificationDeliveries(opts: { channel?: string; limit?: number } = {}): NotificationDeliveryRow[] {
