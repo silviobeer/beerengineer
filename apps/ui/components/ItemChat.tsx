@@ -2,12 +2,14 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ConversationEntry } from "../lib/types";
+import { recordRunEntryFallback, type RunEntryFact } from "@/lib/runEntryFacts";
 import { useSSE } from "@/lib/sse/SSEContext";
 import type { ChatEntry } from "@/lib/sse/types";
 import { ChatPanel } from "./ChatPanel";
 
 interface ItemChatProps {
   readonly itemId: string;
+  readonly chatEntry?: RunEntryFact;
 }
 
 interface EngineRun {
@@ -137,7 +139,7 @@ function promptEntry(input: {
  * Primes the conversation from the engine, then keeps it live by appending
  * SSE chat entries the SSEConnectionManager dispatches.
  */
-export function ItemChat({ itemId }: Readonly<ItemChatProps>) {
+export function ItemChat({ itemId, chatEntry }: Readonly<ItemChatProps>) {
   const { registerConversationListener, setRunId: setSseRunId } = useSSE();
 
   const [runId, setRunId] = useState<string | null>(null);
@@ -179,28 +181,37 @@ export function ItemChat({ itemId }: Readonly<ItemChatProps>) {
 
     (async () => {
       try {
-        const runsRes = await fetch("/api/runs", { cache: "no-store" });
-        if (!runsRes.ok) throw new Error(`runs_${runsRes.status}`);
-        const runsBody = (await runsRes.json()) as { runs?: EngineRun[] };
-        const itemRuns = (runsBody.runs ?? [])
-          .filter((r) => r.item_id === itemId)
-          .sort((a, b) => b.created_at - a.created_at);
-        const latest = itemRuns[0];
+        let resolvedRunId: string | null = null;
+        if (chatEntry?.status === "resolved") {
+          resolvedRunId = chatEntry.targetRunId;
+        } else if (chatEntry?.status === "none") {
+          if (!cancelled) setLoaded(true);
+          return;
+        } else {
+          recordRunEntryFallback({ itemId, surface: "chat" });
+          const runsRes = await fetch("/api/runs", { cache: "no-store" });
+          if (!runsRes.ok) throw new Error(`runs_${runsRes.status}`);
+          const runsBody = (await runsRes.json()) as { runs?: EngineRun[] };
+          const itemRuns = (runsBody.runs ?? [])
+            .filter((r) => r.item_id === itemId)
+            .sort((a, b) => b.created_at - a.created_at);
+          resolvedRunId = itemRuns[0]?.id ?? null;
+        }
         if (cancelled) return;
-        if (!latest) {
+        if (!resolvedRunId) {
           setLoaded(true);
           return;
         }
 
         const convRes = await fetch(
-          `/api/runs/${encodeURIComponent(latest.id)}/conversation`,
+          `/api/runs/${encodeURIComponent(resolvedRunId)}/conversation`,
           { cache: "no-store" }
         );
         if (!convRes.ok) throw new Error(`conv_${convRes.status}`);
         const conv = (await convRes.json()) as EngineConversationResponse;
         if (cancelled) return;
-        setRunId(latest.id);
-        setSseRunId(latest.id);
+        setRunId(resolvedRunId);
+        setSseRunId(resolvedRunId);
         adoptConversation(conv);
         setLoaded(true);
       } catch (err) {
@@ -215,7 +226,7 @@ export function ItemChat({ itemId }: Readonly<ItemChatProps>) {
       cancelled = true;
       setSseRunId(null);
     };
-  }, [itemId, setSseRunId]);
+  }, [chatEntry, itemId, setSseRunId]);
 
   useEffect(() => {
     if (!runId) return;

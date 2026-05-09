@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { recordRunEntryFallback, type RunEntryFact } from "@/lib/runEntryFacts";
 
 interface ItemMessagesProps {
   readonly itemId: string;
+  readonly messagesEntry?: RunEntryFact;
 }
 
 /**
@@ -121,7 +123,7 @@ async function fetchBackfilledMessages(runId: string): Promise<{
   return { entries, lastSeenId };
 }
 
-export function ItemMessages({ itemId }: Readonly<ItemMessagesProps>) {
+export function ItemMessages({ itemId, messagesEntry }: Readonly<ItemMessagesProps>) {
   const [runId, setRunId] = useState<string | null>(null);
   const [entries, setEntries] = useState<EngineMessageEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -146,22 +148,31 @@ export function ItemMessages({ itemId }: Readonly<ItemMessagesProps>) {
 
     (async () => {
       try {
-        const runsRes = await fetch("/api/runs", { cache: "no-store" });
-        if (!runsRes.ok) throw new Error(`runs_${runsRes.status}`);
-        const runs = ((await runsRes.json()) as { runs?: EngineRun[] }).runs ?? [];
-        const latest = runs
-          .filter((r) => r.item_id === itemId)
-          .sort((a, b) => b.created_at - a.created_at)[0];
+        let resolvedRunId: string | null = null;
+        if (messagesEntry?.status === "resolved") {
+          resolvedRunId = messagesEntry.targetRunId;
+        } else if (messagesEntry?.status === "none") {
+          if (!cancelled) setLoaded(true);
+          return;
+        } else {
+          recordRunEntryFallback({ itemId, surface: "messages" });
+          const runsRes = await fetch("/api/runs", { cache: "no-store" });
+          if (!runsRes.ok) throw new Error(`runs_${runsRes.status}`);
+          const runs = ((await runsRes.json()) as { runs?: EngineRun[] }).runs ?? [];
+          resolvedRunId = runs
+            .filter((r) => r.item_id === itemId)
+            .sort((a, b) => b.created_at - a.created_at)[0]?.id ?? null;
+        }
         if (cancelled) return;
-        if (!latest) {
+        if (!resolvedRunId) {
           setLoaded(true);
           return;
         }
-        const body = await fetchBackfilledMessages(latest.id);
+        const body = await fetchBackfilledMessages(resolvedRunId);
         if (cancelled) return;
         for (const e of body.entries) seenIdsRef.current.add(e.id);
         streamSinceRef.current = body.lastSeenId;
-        setRunId(latest.id);
+        setRunId(resolvedRunId);
         setEntries(body.entries);
         setLoaded(true);
       } catch (err) {
@@ -174,7 +185,7 @@ export function ItemMessages({ itemId }: Readonly<ItemMessagesProps>) {
     return () => {
       cancelled = true;
     };
-  }, [itemId]);
+  }, [itemId, messagesEntry]);
 
   // Open run-scoped SSE for live appends. We bypass SSEContext here because
   // its registerLogListener only dispatches log/artifact events; we want every

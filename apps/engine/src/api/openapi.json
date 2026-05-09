@@ -3458,6 +3458,61 @@
           }
         }
       },
+      "RunEntryFact": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "status",
+              "targetRunId"
+            ],
+            "properties": {
+              "status": {
+                "type": "string",
+                "const": "resolved"
+              },
+              "targetRunId": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "status",
+              "targetRunId"
+            ],
+            "properties": {
+              "status": {
+                "type": "string",
+                "const": "none"
+              },
+              "targetRunId": {
+                "type": "null"
+              }
+            }
+          }
+        ]
+      },
+      "RunEntryFactFreshness": {
+        "type": "object",
+        "required": [
+          "strategy",
+          "invalidatedBy"
+        ],
+        "properties": {
+          "strategy": {
+            "type": "string",
+            "const": "workspace_sse"
+          },
+          "invalidatedBy": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "ItemDetail": {
         "allOf": [
           {
@@ -3477,6 +3532,18 @@
               },
               "visibleActionsFreshness": {
                 "$ref": "#/components/schemas/VisibleActionFactsFreshness"
+              },
+              "chatEntry": {
+                "$ref": "#/components/schemas/RunEntryFact"
+              },
+              "chatEntryFreshness": {
+                "$ref": "#/components/schemas/RunEntryFactFreshness"
+              },
+              "messagesEntry": {
+                "$ref": "#/components/schemas/RunEntryFact"
+              },
+              "messagesEntryFreshness": {
+                "$ref": "#/components/schemas/RunEntryFactFreshness"
               }
             }
           }
@@ -4300,6 +4367,18 @@
           },
           "previewUrl": {
             "type": "string"
+          },
+          "chatEntry": {
+            "$ref": "#/components/schemas/RunEntryFact"
+          },
+          "chatEntryFreshness": {
+            "$ref": "#/components/schemas/RunEntryFactFreshness"
+          },
+          "messagesEntry": {
+            "$ref": "#/components/schemas/RunEntryFact"
+          },
+          "messagesEntryFreshness": {
+            "$ref": "#/components/schemas/RunEntryFactFreshness"
           },
           "visibleActions": {
             "$ref": "#/components/schemas/VisibleActionIds"

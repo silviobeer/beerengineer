@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { engineBaseUrl } from "@/lib/engine/baseUrl";
 import { ITEM_ACTIONS, type ActionResult, type ItemAction, type ItemDetailDTO, type WorkflowGitBlockedActionResult } from "./types";
+import { isRunEntryFact, isRunEntryFactFreshness } from "@/lib/runEntryFacts";
 import type { VisibleActionFactsFreshness, VisibleActionId } from "@/lib/visibleActionFacts";
 
 function tokenPath(): string {
@@ -64,6 +65,10 @@ function normalizeItem(fallbackId: string, raw: Record<string, unknown>): ItemDe
       const invalidatedBy = candidate.invalidatedBy.filter((event): event is string => typeof event === "string");
       return { strategy: "workspace_sse", invalidatedBy } satisfies VisibleActionFactsFreshness;
     })(),
+    chatEntry: isRunEntryFact(raw.chatEntry) ? raw.chatEntry : undefined,
+    chatEntryFreshness: isRunEntryFactFreshness(raw.chatEntryFreshness) ? raw.chatEntryFreshness : undefined,
+    messagesEntry: isRunEntryFact(raw.messagesEntry) ? raw.messagesEntry : undefined,
+    messagesEntryFreshness: isRunEntryFactFreshness(raw.messagesEntryFreshness) ? raw.messagesEntryFreshness : undefined,
   };
 }
 

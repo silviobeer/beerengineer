@@ -1,6 +1,7 @@
 import { BoardWorkspaceView } from "@/components/BoardWorkspaceView";
 import { RunOverviewBanners } from "@/components/run/RunOverviewBanners";
 import { engineBaseUrl } from "@/lib/engine/baseUrl";
+import type { RunEntryFact, RunEntryFactFreshness } from "@/lib/runEntryFacts";
 import type { BoardCardDTO } from "@/lib/types";
 import type { VisibleActionFactsFreshness, VisibleActionId } from "@/lib/visibleActionFacts";
 
@@ -24,6 +25,10 @@ interface BoardApiItem {
   supabaseBlocker?: BoardCardDTO["supabaseBlocker"];
   visibleActions?: VisibleActionId[];
   visibleActionsFreshness?: VisibleActionFactsFreshness;
+  chatEntry?: RunEntryFact;
+  chatEntryFreshness?: RunEntryFactFreshness;
+  messagesEntry?: RunEntryFact;
+  messagesEntryFreshness?: RunEntryFactFreshness;
 }
 
 interface BoardApiColumn {
@@ -59,6 +64,10 @@ function toBoardCard(item: BoardApiItem): BoardCardDTO {
     previewUrl: typeof item.previewUrl === "string" ? item.previewUrl : undefined,
     current_stage: currentStage,
     supabaseBlocker: item.supabaseBlocker,
+    chatEntry: item.chatEntry,
+    chatEntryFreshness: item.chatEntryFreshness,
+    messagesEntry: item.messagesEntry,
+    messagesEntryFreshness: item.messagesEntryFreshness,
     visibleActions: Array.isArray(item.visibleActions) ? item.visibleActions : undefined,
     visibleActionsFreshness: item.visibleActionsFreshness,
   };

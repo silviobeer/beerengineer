@@ -1,4 +1,4 @@
-import type { Repos, RunRow } from "../db/repositories.js"
+import { Repos, type RunRow } from "../db/repositories.js"
 import { itemSlug } from "../core/itemIdentity.js"
 import type { Db } from "../db/connection.js"
 import {
@@ -6,6 +6,12 @@ import {
   type VisibleItemAction,
   visibleActionsForItem,
 } from "../core/itemActions.js"
+import {
+  CHAT_ENTRY_FACT_FRESHNESS,
+  MESSAGES_ENTRY_FACT_FRESHNESS,
+  runEntryFactsForItem,
+  type ItemRunEntryFact,
+} from "../core/itemRunEntryFacts.js"
 import { previewUrlForWorktree } from "../core/portAllocator.js"
 import { layout } from "../core/workspaceLayout.js"
 import { parseSupabaseReadinessRecoveryPayload } from "../core/supabase/recoveryPayload.js"
@@ -105,6 +111,10 @@ export type BoardCardDTO = {
   workspaceId?: string
   workspaceRoot?: string | null
   supabaseProjectRef?: string | null
+  chatEntry: ItemRunEntryFact
+  chatEntryFreshness: typeof CHAT_ENTRY_FACT_FRESHNESS
+  messagesEntry: ItemRunEntryFact
+  messagesEntryFreshness: typeof MESSAGES_ENTRY_FACT_FRESHNESS
   dbRelevance?: { value: boolean; source: "detector"; reason: string }
   supabaseBranch?: { ref: string; name: string; lifecycleState: string | null }
   visibleActions: VisibleItemAction[]
@@ -142,6 +152,7 @@ function workspaceCostRisk(db: Db, workspaceId?: string): BoardDTO["costRisk"] {
 }
 
 export function getBoard(db: Db, workspaceKey?: string | null): BoardDTO {
+  const repos = new Repos(db)
   const workspace = workspaceKey
     ? (db.prepare("SELECT * FROM workspaces WHERE key = ?").get(workspaceKey) as { id: string; key: string; root_path: string | null; supabase_project_ref: string | null } | undefined)
     : (db.prepare("SELECT * FROM workspaces ORDER BY created_at ASC LIMIT 1").get() as { id: string; key: string; root_path: string | null; supabase_project_ref: string | null } | undefined)
@@ -244,6 +255,7 @@ export function getBoard(db: Db, workspaceKey?: string | null): BoardDTO {
         .map<BoardCardDTO>(i => {
           const latestRun = latestRuns.get(i.id)
           const openPrompt = latestRun ? openPromptsByRun.get(latestRun.id) : undefined
+          const entryFacts = runEntryFactsForItem(repos, i.id)
           const supabaseBranch = latestRun?.supabase_branch_ref
             ? {
                 ref: latestRun.supabase_branch_ref,
@@ -266,6 +278,10 @@ export function getBoard(db: Db, workspaceKey?: string | null): BoardDTO {
           workspaceId: workspace.id,
           workspaceRoot: workspace.root_path ?? null,
           supabaseProjectRef: workspace.supabase_project_ref ?? null,
+          chatEntry: entryFacts.chatEntry,
+          chatEntryFreshness: entryFacts.chatEntryFreshness,
+          messagesEntry: entryFacts.messagesEntry,
+          messagesEntryFreshness: entryFacts.messagesEntryFreshness,
           visibleActions: visibleActionsForItem({
             column: i.current_column,
             phase: i.phase_status,

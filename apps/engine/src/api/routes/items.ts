@@ -12,6 +12,7 @@ import {
   visibleActionsForItem,
   type ItemActionsService,
 } from "../../core/itemActions.js"
+import { runEntryFactsForItem } from "../../core/itemRunEntryFacts.js"
 import { latestRunForItemWithStageArtifact } from "../../core/itemWorkspace.js"
 import {
   isWorkflowCapabilityBlockedResult,
@@ -46,12 +47,18 @@ export function handleListItems(repos: Repos, url: URL, res: ServerResponse): vo
 }
 
 export function handleGetItem(repos: Repos, res: ServerResponse, itemId: string): void {
+  const body = projectItemDetail(repos, itemId)
+  if (!body) return json(res, 404, { error: "item_not_found", code: "not_found" })
+  json(res, 200, body)
+}
+
+export function projectItemDetail(repos: Repos, itemId: string): Record<string, unknown> | null {
   const item = repos.getItem(itemId)
-  if (!item) return json(res, 404, { error: "item_not_found", code: "not_found" })
+  if (!item) return null
   const latestRun = repos.latestActiveRunForItem(item.id) ?? repos.latestRecoverableRunForItem(item.id)
   const openPrompt = latestRun ? repos.getOpenPrompt(latestRun.id) : undefined
   const hasReviewGateWaiting = reviewGateWaiting(openPrompt?.actions_json)
-  json(res, 200, {
+  return {
     ...item,
     allowedActions: allowedActionsForItem(item),
     visibleActions: visibleActionsForItem({
@@ -63,7 +70,8 @@ export function handleGetItem(repos: Repos, res: ServerResponse, itemId: string)
       hasBlockedRun: latestRun?.recovery_status === "blocked",
     }),
     visibleActionsFreshness: VISIBLE_ACTION_FACTS_FRESHNESS,
-  })
+    ...runEntryFactsForItem(repos, item.id),
+  }
 }
 
 function allowedActionsForItem(item: ItemRow): string[] {
