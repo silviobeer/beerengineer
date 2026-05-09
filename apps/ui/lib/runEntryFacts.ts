@@ -42,6 +42,21 @@ export const MESSAGES_ENTRY_FACT_FRESHNESS: RunEntryFactFreshness = {
 
 export type RunEntryFallbackSurface = "chat" | "messages";
 
+type EngineRunSummary = {
+  id: string;
+  item_id: string;
+  created_at: number;
+};
+
+type EngineConversationResponse = {
+  openPrompt: { promptId: string } | null;
+  entries: unknown[];
+};
+
+type EngineMessagesResponse = {
+  entries: unknown[];
+};
+
 type RunEntryFallbackEvent = {
   itemId: string;
   surface: RunEntryFallbackSurface;
@@ -110,4 +125,51 @@ export function resetRunEntryFallbackTelemetry(): void {
   telemetry.chat = 0;
   telemetry.messages = 0;
   telemetry.events = [];
+}
+
+async function listRunsForItem(itemId: string): Promise<EngineRunSummary[]> {
+  const runsRes = await fetch("/api/runs", { cache: "no-store" });
+  if (!runsRes.ok) throw new Error(`runs_${runsRes.status}`);
+  const runsBody: { runs?: EngineRunSummary[] } = await runsRes.json();
+  return (runsBody.runs ?? [])
+    .filter((run) => run.item_id === itemId)
+    .sort((left, right) => right.created_at - left.created_at);
+}
+
+export async function resolveFallbackChatRunId(itemId: string): Promise<string | null> {
+  const runs = await listRunsForItem(itemId);
+  let newestConversationRunId: string | null = null;
+
+  for (const run of runs) {
+    const response = await fetch(`/api/runs/${encodeURIComponent(run.id)}/conversation`, {
+      cache: "no-store",
+    });
+    if (!response.ok) throw new Error(`conv_${response.status}`);
+    const conversation = (await response.json()) as EngineConversationResponse;
+    if (conversation.openPrompt) return run.id;
+    if (newestConversationRunId === null && conversation.entries.length > 0) {
+      newestConversationRunId = run.id;
+    }
+  }
+
+  return newestConversationRunId;
+}
+
+export async function resolveFallbackMessagesRunId(itemId: string): Promise<string | null> {
+  const runs = await listRunsForItem(itemId);
+
+  for (const run of runs) {
+    const params = new URLSearchParams({
+      level: "2",
+      limit: "1",
+    });
+    const response = await fetch(`/api/runs/${encodeURIComponent(run.id)}/messages?${params.toString()}`, {
+      cache: "no-store",
+    });
+    if (!response.ok) throw new Error(`messages_${response.status}`);
+    const body = (await response.json()) as EngineMessagesResponse;
+    if (body.entries.length > 0) return run.id;
+  }
+
+  return null;
 }

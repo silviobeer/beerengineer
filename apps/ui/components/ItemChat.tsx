@@ -5,6 +5,7 @@ import type { ConversationEntry } from "../lib/types";
 import {
   NO_TARGET_RUN_ENTRY_FACT,
   recordRunEntryFallback,
+  resolveFallbackChatRunId,
   type RunEntryFact,
 } from "@/lib/runEntryFacts";
 import { useSSE } from "@/lib/sse/SSEContext";
@@ -15,13 +16,6 @@ interface ItemChatProps {
   readonly itemId: string;
   readonly chatEntry?: RunEntryFact;
   readonly chatEntryMissing?: boolean;
-}
-
-interface EngineRun {
-  id: string;
-  item_id: string;
-  status: string;
-  created_at: number;
 }
 
 interface EngineConversationEntry {
@@ -145,15 +139,6 @@ function entryRunId(entry: RunEntryFact): string | null {
   return null;
 }
 
-async function resolveFallbackRunId(itemId: string): Promise<string | null> {
-  const runsRes = await fetch("/api/runs", { cache: "no-store" });
-  if (!runsRes.ok) throw new Error(`runs_${runsRes.status}`);
-  const runsBody: { runs?: EngineRun[] } = await runsRes.json();
-  return (runsBody.runs ?? [])
-    .filter((run) => run.item_id === itemId)
-    .sort((left, right) => right.created_at - left.created_at)[0]?.id ?? null;
-}
-
 async function resolveChatRunId(
   itemId: string,
   chatEntry: RunEntryFact,
@@ -161,7 +146,7 @@ async function resolveChatRunId(
 ): Promise<string | null> {
   if (!chatEntryMissing) return entryRunId(chatEntry);
   recordRunEntryFallback({ itemId, surface: "chat" });
-  return resolveFallbackRunId(itemId);
+  return resolveFallbackChatRunId(itemId);
 }
 
 async function fetchConversation(runId: string): Promise<EngineConversationResponse> {
