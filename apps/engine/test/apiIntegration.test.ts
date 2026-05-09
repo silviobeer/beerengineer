@@ -1774,6 +1774,112 @@ test("GET /runs/:id/messages exposes structured startup recovery outcomes for sk
   }
 })
 
+test("startup with global auto-resume disabled leaves stale runs manual across workspaces and logs the disabled outcome", async () => {
+  const dbPath = tmpDbPath()
+  const db = initDatabase(dbPath)
+  const repos = new Repos(db)
+  const firstWorkspace = repos.upsertWorkspace({ key: "alpha", name: "Alpha" })
+  const secondWorkspace = repos.upsertWorkspace({ key: "beta", name: "Beta" })
+  const firstItem = repos.createItem({ workspaceId: firstWorkspace.id, title: "Disabled stale run one", description: "" })
+  const secondItem = repos.createItem({ workspaceId: secondWorkspace.id, title: "Disabled stale run two", description: "" })
+  const firstRun = seedStaleRunningRun(repos, {
+    workspaceId: firstWorkspace.id,
+    itemId: firstItem.id,
+    title: firstItem.title,
+    currentStage: "requirements",
+    lease: {
+      workerInstanceId: "cli-alpha",
+      workerOwnerKind: "cli",
+      now: 1_700_000_000_000,
+    },
+  })
+  const secondRun = seedStaleRunningRun(repos, {
+    workspaceId: secondWorkspace.id,
+    itemId: secondItem.id,
+    title: secondItem.title,
+    currentStage: "execution",
+    lease: {
+      workerInstanceId: "cli-beta",
+      workerOwnerKind: "cli",
+      now: 1_700_000_000_000,
+    },
+  })
+  db.close()
+
+  const { proc, base } = startServer({
+    BEERENGINEER_UI_DB_PATH: dbPath,
+    BEERENGINEER_STARTUP_AUTO_RESUME: "0",
+  })
+  try {
+    await waitForHealth(base)
+    const readyRes = await fetch(`${base}/ready`)
+    assert.equal(readyRes.status, 200)
+    const readyBody = await readyRes.json() as { startupRecovery: string }
+    assert.equal(readyBody.startupRecovery, "complete")
+
+    for (const runId of [firstRun.id, secondRun.id]) {
+      const res = await fetch(`${base}/runs/${runId}/messages?level=2`)
+      assert.equal(res.status, 200)
+      const body = await res.json() as {
+        entries: Array<{ runId: string; type: string; payload: Record<string, unknown> }>
+      }
+      const recoveryEntries = body.entries.filter(entry => entry.type === "startup_recovery")
+      assert.equal(recoveryEntries.length, 1)
+      assert.equal(recoveryEntries[0]?.runId, runId)
+      assert.equal(recoveryEntries[0]?.payload.outcome, "skipped")
+      assert.equal(recoveryEntries[0]?.payload.reason, "auto_resume_disabled")
+    }
+  } finally {
+    await stopServer(proc)
+  }
+
+  const dbAfter = initDatabase(dbPath)
+  const reposAfter = new Repos(dbAfter)
+  try {
+    for (const runId of [firstRun.id, secondRun.id]) {
+      assert.equal(reposAfter.getRun(runId)?.status, "failed")
+      assert.equal(reposAfter.getRun(runId)?.recovery_status, "failed")
+    }
+  } finally {
+    dbAfter.close()
+  }
+})
+
+test("startup with no stale runs completes and does not emit spurious recovery messages", async () => {
+  const dbPath = tmpDbPath()
+  const db = initDatabase(dbPath)
+  const repos = new Repos(db)
+  const ws = repos.upsertWorkspace({ key: "t", name: "T" })
+  const item = repos.createItem({ workspaceId: ws.id, title: "Fresh control run", description: "" })
+  const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "cli" })
+  repos.updateRun(run.id, { current_stage: "execution" })
+  claimWorkerLease(repos, {
+    runId: run.id,
+    workerInstanceId: "cli-fresh",
+    workerOwnerKind: "cli",
+    now: Date.now(),
+  })
+  db.close()
+
+  const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
+  try {
+    await waitForHealth(base)
+    const readyRes = await fetch(`${base}/ready`)
+    assert.equal(readyRes.status, 200)
+    const readyBody = await readyRes.json() as { startupRecovery: string }
+    assert.equal(readyBody.startupRecovery, "complete")
+
+    const messagesRes = await fetch(`${base}/runs/${run.id}/messages?level=2`)
+    assert.equal(messagesRes.status, 200)
+    const messagesBody = await messagesRes.json() as {
+      entries: Array<{ type: string }>
+    }
+    assert.deepEqual(messagesBody.entries.filter(entry => entry.type === "startup_recovery"), [])
+  } finally {
+    await stopServer(proc)
+  }
+})
+
 test("POST /runs/:id/messages appends a canonical user message through the API write path", async () => {
   const dbPath = tmpDbPath()
   const db = initDatabase(dbPath)
