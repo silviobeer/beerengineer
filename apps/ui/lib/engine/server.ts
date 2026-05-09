@@ -3,6 +3,13 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { engineBaseUrl } from "@/lib/engine/baseUrl";
 import { ITEM_ACTIONS, type ActionResult, type ItemAction, type ItemDetailDTO, type WorkflowGitBlockedActionResult } from "./types";
+import {
+  CHAT_ENTRY_FACT_FRESHNESS,
+  MESSAGES_ENTRY_FACT_FRESHNESS,
+  normalizeRunEntryFact,
+  normalizeRunEntryFreshness,
+} from "@/lib/runEntryFacts";
+import type { VisibleActionFactsFreshness, VisibleActionId } from "@/lib/visibleActionFacts";
 
 function tokenPath(): string {
   const envPath = process.env.BEERENGINEER_API_TOKEN_FILE;
@@ -35,6 +42,8 @@ function normalizeItem(fallbackId: string, raw: Record<string, unknown>): ItemDe
   const itemId = pickString(raw, ["id", "itemId"]) ?? fallbackId;
   const itemCode =
     pickString(raw, ["itemCode", "item_code", "code"]) ?? itemId;
+  const chatEntry = normalizeRunEntryFact(raw.chatEntry);
+  const messagesEntry = normalizeRunEntryFact(raw.messagesEntry);
   return {
     itemId,
     itemCode,
@@ -51,6 +60,24 @@ function normalizeItem(fallbackId: string, raw: Record<string, unknown>): ItemDe
       }
       return []
     })(),
+    visibleActions: (() => {
+      if (!Array.isArray(raw.visibleActions)) return undefined;
+      return (raw.visibleActions as unknown[]).filter((action): action is VisibleActionId => typeof action === "string");
+    })(),
+    visibleActionsFreshness: (() => {
+      const value = raw.visibleActionsFreshness;
+      if (!value || typeof value !== "object") return undefined;
+      const candidate = value as { strategy?: unknown; invalidatedBy?: unknown };
+      if (candidate.strategy !== "workspace_sse" || !Array.isArray(candidate.invalidatedBy)) return undefined;
+      const invalidatedBy = candidate.invalidatedBy.filter((event): event is string => typeof event === "string");
+      return { strategy: "workspace_sse", invalidatedBy } satisfies VisibleActionFactsFreshness;
+    })(),
+    chatEntry: chatEntry.fact,
+    chatEntryFreshness: normalizeRunEntryFreshness(raw.chatEntryFreshness, CHAT_ENTRY_FACT_FRESHNESS),
+    chatEntryMissing: chatEntry.missing,
+    messagesEntry: messagesEntry.fact,
+    messagesEntryFreshness: normalizeRunEntryFreshness(raw.messagesEntryFreshness, MESSAGES_ENTRY_FACT_FRESHNESS),
+    messagesEntryMissing: messagesEntry.missing,
   };
 }
 

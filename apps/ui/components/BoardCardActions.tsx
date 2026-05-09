@@ -1,21 +1,25 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import type { BoardCardDTO } from "../lib/types";
 import type { WorkflowGitBlockedActionResult } from "@/lib/engine/types";
 import { WorkflowGitRepairPanel } from "@/components/WorkflowGitRepairPanel";
+import {
+  type VisibleActionFallbackSurface,
+  type VisibleActionId,
+  recordVisibleActionFallback,
+} from "@/lib/visibleActionFacts";
 
 type ActionDef = { action: string; label: string };
 const ACTION_ERROR_FALLBACK = "Action could not be completed.";
-const IMPORT_PREPARED_ACTIONS: ActionDef[] = [{ action: "import_prepared", label: "Import prepared" }];
-const BRAINSTORM_ACTIONS: ActionDef[] = [
-  { action: "start_visual_companion", label: "Start visual companion" },
-  { action: "import_prepared", label: "Import prepared" },
-];
-const START_FRONTEND_DESIGN_ACTIONS: ActionDef[] = [{ action: "start_frontend_design", label: "Start frontend design" }];
-const PROMOTE_TO_REQUIREMENTS_ACTIONS: ActionDef[] = [{ action: "promote_to_requirements", label: "Promote to requirements" }];
-const CANCEL_PROMOTION_ACTION: ActionDef = { action: "cancel_promotion", label: "Cancel" };
-const PROMOTE_TO_BASE_ACTION: ActionDef = { action: "promote_to_base", label: "Promote to base" };
+const ACTIONS_BY_ID: Record<VisibleActionId, ActionDef> = {
+  import_prepared: { action: "import_prepared", label: "Import prepared" },
+  start_visual_companion: { action: "start_visual_companion", label: "Start visual companion" },
+  start_frontend_design: { action: "start_frontend_design", label: "Start frontend design" },
+  promote_to_requirements: { action: "promote_to_requirements", label: "Promote to requirements" },
+  cancel_promotion: { action: "cancel_promotion", label: "Cancel" },
+  promote_to_base: { action: "promote_to_base", label: "Promote to base" },
+};
 
 function isSettledPhase(phase: string): boolean {
   return phase === "completed" || phase === "review_required";
@@ -25,39 +29,42 @@ function isImportPreparedColumn(column: BoardCardDTO["column"]): boolean {
   return column === "idea" || column === "requirements";
 }
 
-function frontendActionsForStage(stage: BoardCardDTO["current_stage"] | null): ActionDef[] {
-  if (stage === "visual-companion") return START_FRONTEND_DESIGN_ACTIONS;
-  if (stage === "frontend-design" || stage == null) return PROMOTE_TO_REQUIREMENTS_ACTIONS;
+function legacyVisibleActionIdsForStage(stage: BoardCardDTO["current_stage"] | null): VisibleActionId[] {
+  if (stage === "visual-companion") return ["start_frontend_design"];
+  if (stage === "frontend-design" || stage == null) return ["promote_to_requirements"];
   return [];
 }
 
-function mergeActionsFor(card: BoardCardDTO): ActionDef[] {
-  const actions: ActionDef[] = [];
-  if (card.hasReviewGateWaiting) actions.push(CANCEL_PROMOTION_ACTION);
-  if (card.hasReviewGateWaiting || card.hasBlockedRun || card.hasOpenPrompt) actions.push(PROMOTE_TO_BASE_ACTION);
+function legacyVisibleActionIdsForMerge(card: BoardCardDTO): VisibleActionId[] {
+  const actions: VisibleActionId[] = [];
+  if (card.hasReviewGateWaiting) actions.push("cancel_promotion");
+  if (card.hasReviewGateWaiting || card.hasBlockedRun || card.hasOpenPrompt) actions.push("promote_to_base");
   return actions;
 }
 
-/**
- * Decide which manual-progression buttons to surface for a card based on its
- * column / phase / current_stage. Mirrors the engine's MATRIX in
- * apps/engine/src/core/itemActions.ts — UI-side prediction so we don't render
- * dead buttons. The engine remains authoritative; if the prediction is wrong
- * the click will get a 409 and we surface it.
- */
-export function actionsFor(card: BoardCardDTO): ActionDef[] {
+function legacyVisibleActionIdsForCard(card: BoardCardDTO): VisibleActionId[] {
   const phase = card.phase_status ?? "";
   const stage = card.current_stage ?? null;
 
-  if (isImportPreparedColumn(card.column) && phase !== "running") return IMPORT_PREPARED_ACTIONS;
-  if (card.column === "brainstorm" && isSettledPhase(phase)) return BRAINSTORM_ACTIONS;
-  if (card.column === "frontend" && isSettledPhase(phase)) return frontendActionsForStage(stage);
-  if (card.column === "merge") return mergeActionsFor(card);
+  if (isImportPreparedColumn(card.column) && phase !== "running") return ["import_prepared"];
+  if (card.column === "brainstorm" && isSettledPhase(phase)) return ["start_visual_companion", "import_prepared"];
+  if (card.column === "frontend" && isSettledPhase(phase)) return legacyVisibleActionIdsForStage(stage);
+  if (card.column === "merge") return legacyVisibleActionIdsForMerge(card);
   return [];
 }
 
 interface BoardCardActionsProps {
   card: BoardCardDTO;
+  surface?: VisibleActionFallbackSurface;
+}
+
+function actionDefsFor(actionIds: readonly VisibleActionId[]): ActionDef[] {
+  return actionIds.map((action) => ACTIONS_BY_ID[action]);
+}
+
+export function actionsFor(card: BoardCardDTO): ActionDef[] {
+  const actionIds = card.visibleActions ?? legacyVisibleActionIdsForCard(card);
+  return actionDefsFor(actionIds);
 }
 
 function parseActionError(body: unknown): string {
@@ -77,11 +84,24 @@ function parseWorkflowGitBlocker(body: unknown, status: number): WorkflowGitBloc
   return { ...candidate, ok: false, status } as WorkflowGitBlockedActionResult;
 }
 
-export function BoardCardActions({ card }: Readonly<BoardCardActionsProps>) {
+export function BoardCardActions({ card, surface = "board" }: Readonly<BoardCardActionsProps>) {
   const actions = actionsFor(card);
   const [error, setError] = useState<string | null>(null);
   const [gitBlocker, setGitBlocker] = useState<WorkflowGitBlockedActionResult | null>(null);
   const [isPending, startTransition] = useTransition();
+  const lastRecordedFallbackKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const itemId = card.id || card.itemCode || "";
+    const fallbackKey = `${surface}:${itemId}`;
+    if (card.visibleActions !== undefined) {
+      lastRecordedFallbackKeyRef.current = null;
+      return;
+    }
+    if (lastRecordedFallbackKeyRef.current === fallbackKey) return;
+    recordVisibleActionFallback({ itemId, surface });
+    lastRecordedFallbackKeyRef.current = fallbackKey;
+  }, [card.id, card.itemCode, card.visibleActions, surface]);
 
   if (actions.length === 0) return null;
 

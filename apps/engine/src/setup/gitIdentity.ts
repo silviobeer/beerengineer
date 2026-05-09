@@ -3,6 +3,7 @@ import { spawnSync, type SpawnSyncReturns } from "node:child_process"
 import type { AppConfig, CheckResult } from "./types.js"
 import { defaultAppConfig } from "./config.js"
 import { isInsideAllowedRoot } from "../core/workspaces/shared.js"
+import { createSetupDisplayFact, type SetupDisplayFact } from "./displayModes.js"
 
 export const GIT_IDENTITY_ERROR_CODES = [
   "git_not_installed",
@@ -66,6 +67,7 @@ export type GitCommandOptions = {
 
 export type GlobalGitReadiness = {
   mode: "global"
+  displayMode: SetupDisplayFact
   git: {
     installed: boolean
     version?: string
@@ -81,6 +83,7 @@ export type GlobalGitReadiness = {
 
 export type WorkspaceGitReadiness = {
   mode: "workspace"
+  displayMode: SetupDisplayFact
   workspace: {
     id: string
     key?: string
@@ -244,8 +247,16 @@ export function readGlobalGitReadiness(config: AppConfig, options: GitCommandOpt
   const missingIdentityBlocker: GitIdentityBlocker | undefined = effectiveIdentity
     ? undefined
     : { error: "identity_missing", message: "Git identity is missing. Add a global Git identity or save a beerengineer_ app default." }
+  const detail = missingGitBlocker?.message
+    ?? missingIdentityBlocker?.message
+    ?? `Git identity ready from ${effectiveIdentity?.source ?? "global"}`
   return {
     mode: "global",
+    displayMode: createSetupDisplayFact(
+      effectiveIdentity ? "ready" : "action-required",
+      detail,
+      ["setup_recheck", "workspace_changed", "git_identity_saved"],
+    ),
     git,
     globalIdentity,
     appDefaultIdentity,
@@ -294,8 +305,15 @@ export function readWorkspaceGitReadiness(
   const effectiveIdentity = completeRepoIdentity(repoLocalIdentity) ?? completeGlobalIdentity(globalIdentity)
   const appRepairAvailable = !effectiveIdentity && isGitRepo
   const blocker = workspaceGitBlocker(git, pathExists, insideAllowedRoot, isGitRepo, effectiveIdentity)
+  const detail = blocker?.message
+    ?? `Git identity ready from ${effectiveIdentity?.source ?? "unknown"}`
   return {
     mode: "workspace",
+    displayMode: createSetupDisplayFact(
+      effectiveIdentity ? "ready" : "action-required",
+      detail,
+      ["setup_recheck", "workspace_changed", "workspace_git_identity_repaired"],
+    ),
     workspace: { id: workspace.id, key: workspace.key },
     git,
     isGitRepo,

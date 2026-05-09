@@ -1,4 +1,9 @@
 import { PHASES, type BoardCardDTO, type BoardColumn, type ImplementationStage, type Item, type ItemDetailDTO, type Workspace } from "./types";
+import {
+  CHAT_ENTRY_FACT_FRESHNESS,
+  MESSAGES_ENTRY_FACT_FRESHNESS,
+  NO_TARGET_RUN_ENTRY_FACT,
+} from "./runEntryFacts";
 
 const LONG_LATIN =
   "Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod " +
@@ -20,6 +25,28 @@ export const FIXTURE_SINGLE_WORKSPACE: Workspace[] = [
 
 export const FIXTURE_EMPTY_WORKSPACES: Workspace[] = [];
 
+export function makeBoardCardFixture(
+  overrides: Partial<BoardCardDTO> & Pick<BoardCardDTO, "id" | "title" | "column">,
+): BoardCardDTO {
+  const { id, title, column, ...rest } = overrides;
+  return {
+    id,
+    title,
+    column,
+    summary: null,
+    phase_status: null,
+    hasOpenPrompt: false,
+    hasReviewGateWaiting: false,
+    hasBlockedRun: false,
+    current_stage: null,
+    chatEntry: NO_TARGET_RUN_ENTRY_FACT,
+    chatEntryFreshness: CHAT_ENTRY_FACT_FRESHNESS,
+    messagesEntry: NO_TARGET_RUN_ENTRY_FACT,
+    messagesEntryFreshness: MESSAGES_ENTRY_FACT_FRESHNESS,
+    ...rest,
+  };
+}
+
 export function makeItem(overrides: Partial<Item> & { id: string }): Item {
   return {
     itemCode: overrides.itemCode ?? `UI-${overrides.id}`,
@@ -33,7 +60,7 @@ export function makeItem(overrides: Partial<Item> & { id: string }): Item {
 
 export function fullBoardItems(): BoardCardDTO[] {
   return [
-    {
+    makeBoardCardFixture({
       id: "card_idea",
       itemCode: "UI-IDEA",
       title: "Idea card title",
@@ -44,8 +71,8 @@ export function fullBoardItems(): BoardCardDTO[] {
       hasReviewGateWaiting: false,
       hasBlockedRun: false,
       current_stage: null,
-    },
-    {
+    }),
+    makeBoardCardFixture({
       id: "card_frontend",
       itemCode: "UI-FE",
       title: "Frontend card title",
@@ -56,8 +83,8 @@ export function fullBoardItems(): BoardCardDTO[] {
       hasReviewGateWaiting: false,
       hasBlockedRun: false,
       current_stage: null,
-    },
-    {
+    }),
+    makeBoardCardFixture({
       id: "card_requirements",
       itemCode: "UI-REQ",
       title: "Requirements card title",
@@ -68,8 +95,8 @@ export function fullBoardItems(): BoardCardDTO[] {
       hasReviewGateWaiting: false,
       hasBlockedRun: false,
       current_stage: null,
-    },
-    {
+    }),
+    makeBoardCardFixture({
       id: "card_implementation",
       itemCode: "UI-IMPL",
       title: "Implementation card title",
@@ -80,8 +107,8 @@ export function fullBoardItems(): BoardCardDTO[] {
       hasReviewGateWaiting: false,
       hasBlockedRun: false,
       current_stage: "exec",
-    },
-    {
+    }),
+    makeBoardCardFixture({
       id: "card_brainstorm",
       itemCode: "UI-BRN",
       title: "Brainstorm card title",
@@ -92,8 +119,8 @@ export function fullBoardItems(): BoardCardDTO[] {
       hasReviewGateWaiting: false,
       hasBlockedRun: false,
       current_stage: null,
-    },
-    {
+    }),
+    makeBoardCardFixture({
       id: "card_done",
       itemCode: "UI-DONE",
       title: "Done card title",
@@ -104,14 +131,14 @@ export function fullBoardItems(): BoardCardDTO[] {
       hasReviewGateWaiting: false,
       hasBlockedRun: false,
       current_stage: null,
-    },
+    }),
   ];
 }
 
 export function attentionFlagCard(
   flag: "open" | "review" | "blocked" | "none"
 ): BoardCardDTO {
-  return {
+  return makeBoardCardFixture({
     id: `card_attn_${flag}`,
     itemCode: `UI-${flag.toUpperCase()}`,
     title: `${flag} card`,
@@ -122,13 +149,13 @@ export function attentionFlagCard(
     hasReviewGateWaiting: flag === "review",
     hasBlockedRun: flag === "blocked",
     current_stage: null,
-  };
+  });
 }
 
 export function implementationCardWithStage(
   stage: ImplementationStage | null
 ): BoardCardDTO {
-  return {
+  return makeBoardCardFixture({
     id: `card_impl_${stage ?? "null"}`,
     itemCode: `UI-IMPL-${stage ?? "NULL"}`,
     title: `Implementation ${stage ?? "no-stage"}`,
@@ -139,13 +166,13 @@ export function implementationCardWithStage(
     hasReviewGateWaiting: false,
     hasBlockedRun: false,
     current_stage: stage,
-  };
+  });
 }
 
 export const emptyBoardItems = (): BoardCardDTO[] => [];
 
 export function longSummaryCard(): BoardCardDTO {
-  return {
+  return makeBoardCardFixture({
     id: "card_long_summary",
     itemCode: "UI-LONG",
     title: "Long summary",
@@ -156,21 +183,21 @@ export function longSummaryCard(): BoardCardDTO {
     hasReviewGateWaiting: false,
     hasBlockedRun: false,
     current_stage: null,
-  };
+  });
 }
 
 export function implementationCard(
   stage: string | null | undefined,
   overrides: Partial<BoardCardDTO> = {}
 ): BoardCardDTO {
-  return {
+  return makeBoardCardFixture({
     id: "card_impl",
     itemCode: "UI-01",
     title: "Implementation card",
     column: "implementation",
     current_stage: stage,
     ...overrides,
-  };
+  });
 }
 
 export const fullBoardFixture: Item[] = PHASES.flatMap((phase, phaseIdx) => [
@@ -301,12 +328,12 @@ export function nonImplementationCard(
   column: Exclude<BoardColumn, "implementation">,
   overrides: Partial<BoardCardDTO> = {}
 ): BoardCardDTO {
-  return {
+  return makeBoardCardFixture({
     id: `card_${column}`,
     itemCode: `UI-${column.toUpperCase()}`,
     title: `${column} card`,
     column,
     current_stage: "exec",
     ...overrides,
-  };
+  });
 }
