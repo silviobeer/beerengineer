@@ -332,6 +332,65 @@ test("startup recovery leaves otherwise eligible stale runs manual when auto-res
   }
 })
 
+test("startup recovery leaves stale runs manual across workspaces when auto-resume is disabled", async () => {
+  const { db, repos, ws, item } = fixture()
+  try {
+    const wsTwo = repos.upsertWorkspace({ key: "test-2", name: "Test 2" })
+    const itemTwo = repos.createItem({ workspaceId: wsTwo.id, title: "Recovered item two", description: "" })
+
+    const firstRun = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "cli" })
+    repos.updateRun(firstRun.id, { current_stage: "requirements" })
+    claimWorkerLease(repos, {
+      runId: firstRun.id,
+      workerInstanceId: "cli-stale-one",
+      workerOwnerKind: "cli",
+      now: 1_700_000_000_000,
+    })
+
+    const secondRun = repos.createRun({ workspaceId: wsTwo.id, itemId: itemTwo.id, title: itemTwo.title, owner: "cli" })
+    repos.updateRun(secondRun.id, { current_stage: "execution" })
+    claimWorkerLease(repos, {
+      runId: secondRun.id,
+      workerInstanceId: "cli-stale-two",
+      workerOwnerKind: "cli",
+      now: 1_700_000_000_000,
+    })
+
+    let resumeCalls = 0
+    const result = await recoverLostWorkerRuns(repos, {
+      apiWorkerInstanceId: "api-current",
+      now: 1_700_000_130_001,
+      autoResume: {
+        enabled: false,
+        resumeRun: async () => {
+          resumeCalls += 1
+        },
+      },
+    })
+
+    assert.equal(resumeCalls, 0)
+    assert.equal(result.recovered, 2)
+    assert.deepEqual(new Set(result.recoveredRunIds), new Set([firstRun.id, secondRun.id]))
+    assert.deepEqual(
+      new Map(result.outcomes.map(outcome => [outcome.runId, outcome.reason])),
+      new Map([
+        [firstRun.id, "auto_resume_disabled"],
+        [secondRun.id, "auto_resume_disabled"],
+      ]),
+    )
+    for (const runId of [firstRun.id, secondRun.id]) {
+      assert.equal(repos.getRun(runId)?.status, "failed")
+      assert.equal(repos.getRun(runId)?.recovery_status, "failed")
+      const message = latestProjectedMessage(repos, runId)
+      assert.equal(message?.type, "startup_recovery")
+      assert.equal(message?.payload.outcome, "skipped")
+      assert.equal(message?.payload.reason, "auto_resume_disabled")
+    }
+  } finally {
+    db.close()
+  }
+})
+
 test("startup recovery falls back to manual recovery when auto-resume handoff fails", async () => {
   const { db, repos, ws, item } = fixture()
   try {
@@ -471,6 +530,39 @@ test("startup recovery handles mixed stale runs independently during one startup
       outcome: "auto_resumed",
       reason: null,
     })
+  } finally {
+    db.close()
+  }
+})
+
+test("startup recovery emits no recovery outcomes when no stale runs are present", async () => {
+  const { db, repos, ws, item } = fixture()
+  try {
+    const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "cli" })
+    repos.updateRun(run.id, { current_stage: "execution" })
+    claimWorkerLease(repos, {
+      runId: run.id,
+      workerInstanceId: "cli-fresh",
+      workerOwnerKind: "cli",
+      now: 1_700_000_120_000,
+    })
+
+    const result = await recoverLostWorkerRuns(repos, {
+      apiWorkerInstanceId: "api-current",
+      now: 1_700_000_130_001,
+      autoResume: {
+        enabled: true,
+        resumeRun: async () => {
+          throw new Error("should not be called")
+        },
+      },
+    })
+
+    assert.equal(result.recovered, 0)
+    assert.deepEqual(result.recoveredRunIds, [])
+    assert.deepEqual(result.outcomes, [])
+    assert.equal(repos.getRun(run.id)?.status, "running")
+    assert.equal(repos.listLogsForRun(run.id).filter(log => log.event_type === "startup_recovery").length, 0)
   } finally {
     db.close()
   }

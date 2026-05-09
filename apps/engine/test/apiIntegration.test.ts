@@ -11,6 +11,7 @@ import { Repos } from "../src/db/repositories.js"
 import { assignPort } from "../src/core/portAllocator.js"
 import { layout } from "../src/core/workspaceLayout.js"
 import { createDatabaseBackup } from "../src/core/updateMode.js"
+import { claimWorkerLease } from "../src/core/workerLease.js"
 import { getBoard } from "../src/api/board.js"
 
 test("PROJ-3-PRD-2 AC-4 workspace API contract keeps existing fields and adds capabilities", () => {
@@ -224,6 +225,34 @@ function stopServer(proc: ChildProcess): Promise<void> {
 
 function tmpDbPath(): string {
   return join(mkdtempSync(join(tmpdir(), "be2-api-")), "db.sqlite")
+}
+
+function seedStaleRunningRun(
+  repos: Repos,
+  input: {
+    workspaceId: string
+    itemId: string
+    title: string
+    currentStage?: string
+    lease: { workerInstanceId: string; workerOwnerKind: "api" | "cli"; now: number }
+  },
+) {
+  const run = repos.createRun({
+    workspaceId: input.workspaceId,
+    itemId: input.itemId,
+    title: input.title,
+    owner: "cli",
+  })
+  repos.updateRun(run.id, {
+    current_stage: input.currentStage ?? "execution",
+  })
+  claimWorkerLease(repos, {
+    runId: run.id,
+    workerInstanceId: input.lease.workerInstanceId,
+    workerOwnerKind: input.lease.workerOwnerKind,
+    now: input.lease.now,
+  })
+  return run
 }
 
 test("GET /health returns service, uptime, and DB reachability without a token", async () => {
@@ -1650,6 +1679,12 @@ test("GET /runs/:id/messages returns canonical projected messages with level fil
   const ws = repos.upsertWorkspace({ key: "t", name: "T" })
   const item = repos.createItem({ workspaceId: ws.id, title: "t", description: "" })
   const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "t", owner: "cli" })
+  claimWorkerLease(repos, {
+    runId: run.id,
+    workerInstanceId: "cli-fresh",
+    workerOwnerKind: "cli",
+    now: Date.now(),
+  })
   repos.appendLog({ runId: run.id, eventType: "run_started", message: "t", data: { itemId: item.id, title: "t" } })
   repos.appendLog({ runId: run.id, eventType: "chat_message", message: "debug", data: { role: "assistant", source: "stage-agent" } })
   repos.appendLog({
@@ -1681,6 +1716,59 @@ test("GET /runs/:id/messages returns canonical projected messages with level fil
       entries: Array<{ type: string }>
     }
     assert.deepEqual(secondBody.entries.map(entry => entry.type), ["agent_message", "phase_completed"])
+  } finally {
+    await stopServer(proc)
+  }
+})
+
+test("GET /runs/:id/messages exposes structured startup recovery outcomes for skipped and failed stale runs", async () => {
+  const dbPath = tmpDbPath()
+  const db = initDatabase(dbPath)
+  const repos = new Repos(db)
+  const ws = repos.upsertWorkspace({ key: "t", name: "T" })
+  const skippedItem = repos.createItem({ workspaceId: ws.id, title: "Skipped stale run", description: "" })
+  const failedItem = repos.createItem({ workspaceId: ws.id, title: "Failed stale run", description: "" })
+  const skippedRun = seedStaleRunningRun(repos, {
+    workspaceId: ws.id,
+    itemId: skippedItem.id,
+    title: skippedItem.title,
+    lease: {
+      workerInstanceId: "cli-waiting",
+      workerOwnerKind: "cli",
+      now: 1_700_000_000_000,
+    },
+  })
+  repos.createPendingPrompt({ runId: skippedRun.id, prompt: "Need approval?" })
+  const failedRun = seedStaleRunningRun(repos, {
+    workspaceId: ws.id,
+    itemId: failedItem.id,
+    title: failedItem.title,
+    lease: {
+      workerInstanceId: "cli-failing",
+      workerOwnerKind: "cli",
+      now: 1_700_000_000_000,
+    },
+  })
+  db.close()
+
+  const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
+  try {
+    await waitForHealth(base)
+    for (const [runId, expected] of [
+      [skippedRun.id, { outcome: "skipped", reason: "open_prompt" }],
+      [failedRun.id, { outcome: "failed", reason: "auto_resume_failed" }],
+    ] as const) {
+      const res = await fetch(`${base}/runs/${runId}/messages?level=2`)
+      assert.equal(res.status, 200)
+      const body = await res.json() as {
+        entries: Array<{ runId: string; type: string; payload: Record<string, unknown> }>
+      }
+      const recoveryEntries = body.entries.filter(entry => entry.type === "startup_recovery")
+      assert.equal(recoveryEntries.length, 1)
+      assert.equal(recoveryEntries[0]?.runId, runId)
+      assert.equal(recoveryEntries[0]?.payload.outcome, expected.outcome)
+      assert.equal(recoveryEntries[0]?.payload.reason, expected.reason)
+    }
   } finally {
     await stopServer(proc)
   }
