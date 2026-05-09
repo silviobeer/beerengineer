@@ -12,6 +12,7 @@ import {
   visibleActionsForItem,
   type ItemActionsService,
 } from "../../core/itemActions.js"
+import { runEntryFactsForItem } from "../../core/itemRunEntryFacts.js"
 import { latestRunForItemWithStageArtifact } from "../../core/itemWorkspace.js"
 import {
   isWorkflowCapabilityBlockedResult,
@@ -25,6 +26,12 @@ import { layout } from "../../core/workspaceLayout.js"
 import { resolveWorkflowContextForRun } from "../../core/workflowContextResolver.js"
 import { json, readJson } from "../http.js"
 import type { DesignArtifact, WireframeArtifact } from "../../types.js"
+
+export type ProjectedItemDetail = ItemRow & {
+  allowedActions: string[]
+  visibleActions: ReturnType<typeof visibleActionsForItem>
+  visibleActionsFreshness: typeof VISIBLE_ACTION_FACTS_FRESHNESS
+} & ReturnType<typeof runEntryFactsForItem>
 
 export function handleListItems(repos: Repos, url: URL, res: ServerResponse): void {
   const workspaceKey = url.searchParams.get("workspace")?.trim() ?? ""
@@ -46,12 +53,18 @@ export function handleListItems(repos: Repos, url: URL, res: ServerResponse): vo
 }
 
 export function handleGetItem(repos: Repos, res: ServerResponse, itemId: string): void {
+  const body = projectItemDetail(repos, itemId)
+  if (!body) return json(res, 404, { error: "item_not_found", code: "not_found" })
+  json(res, 200, body)
+}
+
+export function projectItemDetail(repos: Repos, itemId: string): ProjectedItemDetail | null {
   const item = repos.getItem(itemId)
-  if (!item) return json(res, 404, { error: "item_not_found", code: "not_found" })
+  if (!item) return null
   const latestRun = repos.latestActiveRunForItem(item.id) ?? repos.latestRecoverableRunForItem(item.id)
   const openPrompt = latestRun ? repos.getOpenPrompt(latestRun.id) : undefined
   const hasReviewGateWaiting = reviewGateWaiting(openPrompt?.actions_json)
-  json(res, 200, {
+  return {
     ...item,
     allowedActions: allowedActionsForItem(item),
     visibleActions: visibleActionsForItem({
@@ -63,7 +76,8 @@ export function handleGetItem(repos: Repos, res: ServerResponse, itemId: string)
       hasBlockedRun: latestRun?.recovery_status === "blocked",
     }),
     visibleActionsFreshness: VISIBLE_ACTION_FACTS_FRESHNESS,
-  })
+    ...runEntryFactsForItem(repos, item.id),
+  }
 }
 
 function allowedActionsForItem(item: ItemRow): string[] {

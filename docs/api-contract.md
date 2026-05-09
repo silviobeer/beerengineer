@@ -77,6 +77,7 @@ Workspace status (counts, latest run) is returned as part of `GET /workspaces/:k
 
 - `GET /items?workspace=:key&status=&column=&limit=&cursor=`
 - `GET /items/:id` — returns the raw item row plus additive `allowedActions`, `visibleActions`, and `visibleActionsFreshness`. `visibleActions` is the engine-owned compact action list for board/item-detail rendering; `visibleActionsFreshness` declares the workspace SSE invalidation events that require a fresh read.
+- `GET /items/:id` also exposes engine-owned `chatEntry` and `messagesEntry` facts. Each fact is explicit: `{ status: "resolved", targetRunId: string }` or `{ status: "none", targetRunId: null }`. Their matching `chatEntryFreshness` / `messagesEntryFreshness` fields declare the workspace SSE invalidation events for re-reading item launch targets.
 - `GET /items/:id/preview`
 - `POST /items/:id/actions/:action`
   - `:action` ∈ `start_brainstorm | start_visual_companion | start_frontend_design | start_implementation | import_prepared | rerun_design_prep | promote_to_requirements | promote_to_base | cancel_promotion | mark_done`
@@ -188,6 +189,7 @@ No channel-binding CRUD.
 ### Board
 
 - `GET /board?workspace=:key` — columns + cards aggregate for a workspace. Columns are `idea | brainstorm | frontend | requirements | implementation | merge | done`. Board cards expose `recovery_user_message: string | null` for lost-worker recovery using existing recovery fields; this is a projected API field, not a DB column. Board cards also expose engine-owned `visibleActions` plus `visibleActionsFreshness` so the UI can render compact action controls without re-deriving them locally.
+- Board cards also carry the same engine-owned `chatEntry` / `messagesEntry` facts and `chatEntryFreshness` / `messagesEntryFreshness` metadata used by the operator launch points. Consumers may use compatibility fallback only when those fields are absent from an older or partial response; when a fact is present with `status: "none"`, clients must preserve the existing no-target state instead of guessing another run.
 
 ### Spec
 
