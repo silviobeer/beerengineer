@@ -68,9 +68,9 @@ export function composeApiPrivilegedDependencies(
     try {
       cachedOpenApi = readFileSync(OPENAPI_PATH, "utf8")
     } catch {
-      cachedOpenApi = ""
+      cachedOpenApi = null
     }
-    return cachedOpenApi || null
+    return cachedOpenApi
   }
 
   const db = initDatabase()

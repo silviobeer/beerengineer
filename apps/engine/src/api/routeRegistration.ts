@@ -174,28 +174,28 @@ function runRouteMatchers(context: RouteContext, deps: ApiRouteDependencies): Ar
   ]
 }
 
-function supabaseActionRouteMatchers(context: RouteContext, deps: ApiRouteDependencies): Array<{ pattern: RegExp; method: string; handle: (...captures: string[]) => void }> {
+function supabaseActionRouteMatchers(context: RouteContext, deps: ApiRouteDependencies): Array<{ pattern: RegExp; method: string; handle: (...captures: string[]) => void | Promise<void> }> {
   return [
     {
       pattern: /^\/supabase\/branches\/([^/]+)\/retry-validation$/,
       method: "POST",
-      handle: branchRef => {
+      handle: async branchRef => {
         const adapter = deps.createSupabaseValidationAdapter()
-        void handleRetryValidation({ repos: deps.repos, adapter, req: context.req, res: context.res, branchRef })
+        await handleRetryValidation({ repos: deps.repos, adapter, req: context.req, res: context.res, branchRef })
       },
     },
   ]
 }
 
-function handleRouteMatchers(
+async function handleRouteMatchers(
   context: RouteContext,
-  matchers: Array<{ pattern: RegExp; method: string; handle: (...captures: string[]) => void }>,
-): boolean {
+  matchers: Array<{ pattern: RegExp; method: string; handle: (...captures: string[]) => void | Promise<void> }>,
+): Promise<boolean> {
   for (const matcher of matchers) {
     if (context.req.method !== matcher.method) continue
     const match = matcher.pattern.exec(context.path)
     if (!match) continue
-    matcher.handle(...match.slice(1))
+    await matcher.handle(...match.slice(1))
     return true
   }
   return false
@@ -252,30 +252,59 @@ async function handleSetupRoutes(context: RouteContext): Promise<boolean> {
   return false
 }
 
-async function handleWorkspaceRoutes(context: RouteContext, deps: ApiRouteDependencies): Promise<boolean> {
+async function handleWorkspaceCollectionRoutes(context: RouteContext, deps: ApiRouteDependencies): Promise<boolean> {
   const { path, req, res, url } = context
   if (path === "/workspaces/preview" && req.method === "GET") { handleWorkspacePreview(deps.repos, deps.loadEffectiveConfig, url, res); return true }
   if (path === "/workspaces" && req.method === "GET") { handleWorkspaceList(deps.repos, res); return true }
   if (path === "/workspaces" && req.method === "POST") { handleWorkspaceAdd(deps.repos, deps.loadEffectiveConfig, req, res); return true }
   if (path === "/workspaces/backfill" && req.method === "POST") { handleWorkspaceBackfill(deps.repos, res); return true }
+  return false
+}
 
+async function handleWorkspaceSupabaseRoutes(context: RouteContext, deps: ApiRouteDependencies): Promise<boolean> {
+  const { path, req, res, url } = context
   const supabaseMatch = /^\/workspaces\/([^/]+)\/supabase\/(readiness|connect|rotate|branch)$/.exec(path)
-  if (supabaseMatch) {
-    const [, key, sub] = supabaseMatch
-    if (sub === "readiness" && req.method === "GET") { await handleWorkspaceSupabaseReadiness(deps.repos, res, key, url.searchParams.get("runId")); return true }
-    if (sub === "connect" && req.method === "POST") { await handleWorkspaceSupabaseConnect(deps.repos, req, res, key); return true }
-    if (sub === "rotate" && req.method === "POST") { await handleWorkspaceSupabaseRotate(deps.repos, req, res, key); return true }
-    if (sub === "branch" && req.method === "POST") { await handleWorkspaceSupabaseBranch(deps.repos, req, res, key); return true }
-    return false
-  }
+  if (!supabaseMatch) return false
 
+  const [, key, sub] = supabaseMatch
+  if (sub === "readiness" && req.method === "GET") {
+    await handleWorkspaceSupabaseReadiness(deps.repos, res, key, url.searchParams.get("runId"))
+    return true
+  }
+  if (sub === "connect" && req.method === "POST") {
+    await handleWorkspaceSupabaseConnect(deps.repos, req, res, key)
+    return true
+  }
+  if (sub === "rotate" && req.method === "POST") {
+    await handleWorkspaceSupabaseRotate(deps.repos, req, res, key)
+    return true
+  }
+  if (sub === "branch" && req.method === "POST") {
+    await handleWorkspaceSupabaseBranch(deps.repos, req, res, key)
+    return true
+  }
+  return false
+}
+
+async function handleWorkspaceDetailRoutes(context: RouteContext, deps: ApiRouteDependencies): Promise<boolean> {
+  const { path, req, res, url } = context
   const workspaceMatch = /^\/workspaces\/([^/]+)(?:\/(open))?$/.exec(path)
   if (!workspaceMatch) return false
+
   const [, key, sub] = workspaceMatch
-  if (!sub && req.method === "GET") { handleWorkspaceGet(deps.repos, res, key); return true }
-  if (!sub && req.method === "DELETE") { handleWorkspaceRemove(deps.repos, deps.loadEffectiveConfig, url, res, key); return true }
+  if (sub === undefined) {
+    if (req.method === "GET") { handleWorkspaceGet(deps.repos, res, key); return true }
+    if (req.method === "DELETE") { handleWorkspaceRemove(deps.repos, deps.loadEffectiveConfig, url, res, key); return true }
+    return false
+  }
   if (sub === "open" && req.method === "POST") { handleWorkspaceOpen(deps.repos, res, key); return true }
   return false
+}
+
+async function handleWorkspaceRoutes(context: RouteContext, deps: ApiRouteDependencies): Promise<boolean> {
+  if (await handleWorkspaceCollectionRoutes(context, deps)) return true
+  if (await handleWorkspaceSupabaseRoutes(context, deps)) return true
+  return await handleWorkspaceDetailRoutes(context, deps)
 }
 
 async function handleItemRoutes(context: RouteContext, deps: ApiRouteDependencies): Promise<boolean> {
@@ -283,15 +312,15 @@ async function handleItemRoutes(context: RouteContext, deps: ApiRouteDependencie
     handleListItems(deps.repos, context.url, context.res)
     return true
   }
-  return handleRouteMatchers(context, itemRouteMatchers(context, deps))
+  return await handleRouteMatchers(context, itemRouteMatchers(context, deps))
 }
 
 async function handleRunRoutes(context: RouteContext, deps: ApiRouteDependencies): Promise<boolean> {
-  return handleRouteMatchers(context, runRouteMatchers(context, deps))
+  return await handleRouteMatchers(context, runRouteMatchers(context, deps))
 }
 
 async function handleSupabaseActionRoutes(context: RouteContext, deps: ApiRouteDependencies): Promise<boolean> {
-  return handleRouteMatchers(context, supabaseActionRouteMatchers(context, deps))
+  return await handleRouteMatchers(context, supabaseActionRouteMatchers(context, deps))
 }
 
 export function registerApiRoutes(
