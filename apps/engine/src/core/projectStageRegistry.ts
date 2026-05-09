@@ -337,11 +337,10 @@ export function resumesAtOrPastExecution(resume: ProjectResumePlan | null | unde
 }
 
 export function shouldPauseCliRunBeforeExecution(
-  resume: ProjectResumePlan | null | undefined,
+  _resume: ProjectResumePlan | null | undefined,
   executionOwnership: StageDeps["executionOwnership"],
 ): boolean {
   return runOwnershipKind(executionOwnership?.repos.getRun(executionOwnership.runId)) === "cli"
-    && !resumesAtOrPastExecution(resume)
 }
 
 export async function blockCliExecutionForApiOwnership(
