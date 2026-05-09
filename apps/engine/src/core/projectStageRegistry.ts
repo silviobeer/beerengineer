@@ -285,7 +285,10 @@ const executionNode: ProjectStageNode = {
   id: "execution",
   run: async (ctx, deps) => {
     const planned = assertWithPlan(ctx)
-    if (runOwnershipKind(deps.executionOwnership?.repos.getRun(deps.executionOwnership.runId)) === "cli") {
+    const executionOwnerRun = deps.executionOwnership
+      ? deps.executionOwnership.repos.getRun(deps.executionOwnership.runId)
+      : undefined
+    if (deps.executionOwnership && runOwnershipKind(executionOwnerRun) === "cli") {
       await blockCliExecutionForApiOwnership(planned, deps.executionOwnership)
     }
     await assertSupabaseReadyBeforeExecution(planned, deps.supabaseReadiness)
@@ -335,15 +338,22 @@ export function shouldPauseCliRunBeforeExecution(
   _resume: ProjectResumePlan | null | undefined,
   executionOwnership: StageDeps["executionOwnership"],
 ): boolean {
-  return runOwnershipKind(executionOwnership?.repos.getRun(executionOwnership.runId)) === "cli"
+  const run = executionOwnership
+    ? executionOwnership.repos.getRun(executionOwnership.runId)
+    : undefined
+  return runOwnershipKind(run) === "cli"
 }
 
 export async function blockCliExecutionForApiOwnership(
   ctx: ProjectContext,
   executionOwnership: StageDeps["executionOwnership"],
 ): Promise<never> {
-  const run = executionOwnership?.repos.getRun(executionOwnership.runId)
-  if (!executionOwnership || runOwnershipKind(run) !== "cli") {
+  if (!executionOwnership) {
+    throw new Error("execution ownership gate requested without a CLI-owned run")
+  }
+
+  const run = executionOwnership.repos.getRun(executionOwnership.runId)
+  if (runOwnershipKind(run) !== "cli") {
     throw new Error("execution ownership gate requested without a CLI-owned run")
   }
 

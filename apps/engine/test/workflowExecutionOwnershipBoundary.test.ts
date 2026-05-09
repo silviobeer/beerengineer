@@ -97,13 +97,15 @@ test("CLI-owned run stops at a recoverable execution handoff after planning", as
       owner: "cli",
     })
 
-    assert.equal(prepared.ok, true)
-    if (!prepared.ok) return
+    if (!prepared.ok) {
+      assert.fail("expected prepareForegroundIdeaRun to succeed")
+    }
     await prepared.start()
 
     const run = repos.getRun(prepared.runId)
-    assert.notEqual(run, undefined)
-    if (!run) return
+    if (!run) {
+      assert.fail("expected persisted run after foreground start")
+    }
     assert.equal(run.owner, "cli")
     assert.equal(run.worker_owner_kind, "cli")
     assert.equal(run.current_stage, "planning")
