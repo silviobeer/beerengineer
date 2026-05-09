@@ -15,6 +15,7 @@ import { ItemMessages } from "./ItemMessages";
 import { type MergeGatePanelProps } from "./merge/MergeGatePanel";
 import { SupabaseStatusPanel } from "./run/SupabaseStatusPanel";
 import { SSEContext } from "@/lib/sse/SSEContext";
+import type { VisibleActionFactsFreshness, VisibleActionId } from "@/lib/visibleActionFacts";
 
 interface BoardItemModalProps {
   readonly card: BoardCardDTO;
@@ -49,6 +50,11 @@ interface PreviewInfo {
     cwd: string;
     source: string;
   } | null;
+}
+
+interface ItemActionFactsInfo {
+  visibleActions?: VisibleActionId[];
+  visibleActionsFreshness?: VisibleActionFactsFreshness;
 }
 
 type MergeStatusView =
@@ -182,6 +188,43 @@ function useDesignArtifactState(card: BoardCardDTO, supportsDesignArtifacts: boo
   }, [card.id, supportsDesignArtifacts]);
 
   return { wireframes, design, artifactError };
+}
+
+function useItemActionFacts(card: BoardCardDTO): BoardCardDTO {
+  const [itemActionFacts, setItemActionFacts] = useState<{
+    status: "pending" | "ready" | "error";
+    visibleActions?: VisibleActionId[];
+    visibleActionsFreshness?: VisibleActionFactsFreshness;
+  }>({ status: "pending" });
+
+  useEffect(() => {
+    let cancelled = false;
+    setItemActionFacts({ status: "pending" });
+    fetch(`/api/items/${encodeURIComponent(card.id)}`, { cache: "no-store" })
+      .then(async (res) => {
+        const body = await res.json().catch(() => ({} as ItemActionFactsInfo & { error?: string }));
+        if (!res.ok) throw new Error((body as { error?: string }).error ?? `engine_${res.status}`);
+        if (cancelled) return;
+        setItemActionFacts({
+          status: "ready",
+          visibleActions: Array.isArray(body.visibleActions) ? body.visibleActions : undefined,
+          visibleActionsFreshness: body.visibleActionsFreshness,
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setItemActionFacts({ status: "error" });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [card.id]);
+
+  if (itemActionFacts.status !== "ready") return card;
+  return {
+    ...card,
+    visibleActions: itemActionFacts.visibleActions,
+    visibleActionsFreshness: itemActionFacts.visibleActionsFreshness,
+  };
 }
 
 const MERGE_STATUS_REFETCH_DEBOUNCE_MS = 500;
@@ -506,6 +549,7 @@ function PromotionGatePanel({
 }
 
 export function BoardItemModal({ card, workspaceKey, onClose }: Readonly<BoardItemModalProps>) {
+  const actionFactCard = useItemActionFacts(card);
   const supportsPreviewControls = supportsPreviewControlsForCard(card);
   const supportsDesignArtifacts = supportsDesignArtifactsForCard(card);
   const { preview, previewError, isPreviewPending, handleStartPreview, handleStopPreview } = usePreviewState(card, supportsPreviewControls);
@@ -643,7 +687,7 @@ export function BoardItemModal({ card, workspaceKey, onClose }: Readonly<BoardIt
                 mergeStatusError={mergeStatusError}
               />
 
-              <BoardCardActions card={card} surface="item_detail" />
+              <BoardCardActions card={actionFactCard} surface="item_detail" />
             </div>
 
             {supportsDesignArtifacts ? (

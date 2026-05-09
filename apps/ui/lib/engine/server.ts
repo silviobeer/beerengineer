@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { engineBaseUrl } from "@/lib/engine/baseUrl";
 import { ITEM_ACTIONS, type ActionResult, type ItemAction, type ItemDetailDTO, type WorkflowGitBlockedActionResult } from "./types";
+import type { VisibleActionFactsFreshness, VisibleActionId } from "@/lib/visibleActionFacts";
 
 function tokenPath(): string {
   const envPath = process.env.BEERENGINEER_API_TOKEN_FILE;
@@ -50,6 +51,18 @@ function normalizeItem(fallbackId: string, raw: Record<string, unknown>): ItemDe
         return ((raw as { allowed_actions: unknown[] }).allowed_actions).filter((a): a is string => typeof a === "string")
       }
       return []
+    })(),
+    visibleActions: (() => {
+      if (!Array.isArray(raw.visibleActions)) return undefined;
+      return (raw.visibleActions as unknown[]).filter((action): action is VisibleActionId => typeof action === "string");
+    })(),
+    visibleActionsFreshness: (() => {
+      const value = raw.visibleActionsFreshness;
+      if (!value || typeof value !== "object") return undefined;
+      const candidate = value as { strategy?: unknown; invalidatedBy?: unknown };
+      if (candidate.strategy !== "workspace_sse" || !Array.isArray(candidate.invalidatedBy)) return undefined;
+      const invalidatedBy = candidate.invalidatedBy.filter((event): event is string => typeof event === "string");
+      return { strategy: "workspace_sse", invalidatedBy } satisfies VisibleActionFactsFreshness;
     })(),
   };
 }
