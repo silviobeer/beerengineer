@@ -62,6 +62,7 @@ Applied to the existing `WorkflowEvent` union (`apps/engine/src/core/io.ts`):
 | `run_finished` | L2 | |
 | `run_blocked` | L2 (force) | Always delivered. |
 | `run_failed` | L2 (force) | Always delivered. |
+| `startup_recovery` | L2 (force on failed) | Startup recovery outcome for a stale run: auto-resumed, skipped, or auto-resume failed and fell back to manual recovery. |
 | `run_resumed` | L2 | |
 | `external_remediation_recorded` | L2 | |
 | `stage_started` | L1 | Phase boundaries exist at L2 via `stage_completed`; `stage_started` is operational. |
