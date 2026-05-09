@@ -142,6 +142,7 @@ export const ITEM_ACTION_MATRIX: Record<ItemAction, Record<string, Transition>> 
     "brainstorm/*": { kind: "resume" },
     "frontend/*": { kind: "resume" },
     "requirements/*": { kind: "resume" },
+    "implementation/completed": { kind: "resume" },
     "implementation/running": { kind: "resume" },
     "implementation/failed": { kind: "resume" },
     "merge/review_required": { kind: "resume" }

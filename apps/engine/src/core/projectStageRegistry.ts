@@ -15,6 +15,8 @@ import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { layout } from "./workspaceLayout.js"
 import { projectPrdFileName } from "./preparedImport.js"
+import { writeRecoveryRecord } from "./recovery.js"
+import { emitEvent, getActiveRun } from "./runContext.js"
 import type { GitAdapter } from "./gitAdapter.js"
 import { architecture } from "../stages/architecture/index.js"
 import { documentation } from "../stages/documentation/index.js"
@@ -47,6 +49,7 @@ import type {
   WithPrd,
   WithProjectReview,
 } from "../types.js"
+import type { Repos, RunRow } from "../db/repositories.js"
 
 export const PROJECT_STAGE_ORDER = [
   "requirements",
@@ -93,6 +96,11 @@ export type StageDeps = {
   supabaseHook?: SupabaseWorkflowHook
   /** Always-available pre-execution readiness hook. Blocks before execution side effects. */
   supabaseReadiness?: SupabaseWorkflowReadinessHook
+  /** Run-level owner inspection used to keep CLI runs out of execution. */
+  executionOwnership?: {
+    repos: Pick<Repos, "getRun" | "updateRun">
+    runId: string
+  }
 }
 
 /**
@@ -277,6 +285,12 @@ const executionNode: ProjectStageNode = {
   id: "execution",
   run: async (ctx, deps) => {
     const planned = assertWithPlan(ctx)
+    const executionOwnerRun = deps.executionOwnership
+      ? deps.executionOwnership.repos.getRun(deps.executionOwnership.runId)
+      : undefined
+    if (deps.executionOwnership && runOwnershipKind(executionOwnerRun) === "cli") {
+      await blockCliExecutionForApiOwnership(planned, deps.executionOwnership)
+    }
     await assertSupabaseReadyBeforeExecution(planned, deps.supabaseReadiness)
     return {
       ...ctx,
@@ -313,6 +327,68 @@ async function assertSupabaseReadyBeforeExecution(ctx: WithPlan, hook: SupabaseW
   if (result.status === "ready") return
   recordSupabaseReadinessBlockedRun({ repos: hook.repos, runId: hook.runId, readiness: result })
   throw new Error(supabaseReadinessRecoverySummary(result))
+}
+
+export function runOwnershipKind(run: RunRow | undefined): RunRow["owner"] | null {
+  if (!run) return null
+  return run.worker_owner_kind ?? run.owner
+}
+
+export function shouldPauseCliRunBeforeExecution(
+  _resume: ProjectResumePlan | null | undefined,
+  executionOwnership: StageDeps["executionOwnership"],
+): boolean {
+  const run = executionOwnership
+    ? executionOwnership.repos.getRun(executionOwnership.runId)
+    : undefined
+  return runOwnershipKind(run) === "cli"
+}
+
+export async function blockCliExecutionForApiOwnership(
+  ctx: ProjectContext,
+  executionOwnership: StageDeps["executionOwnership"],
+): Promise<never> {
+  if (!executionOwnership) {
+    throw new Error("execution ownership gate requested without a CLI-owned run")
+  }
+
+  const run = executionOwnership.repos.getRun(executionOwnership.runId)
+  if (runOwnershipKind(run) !== "cli") {
+    throw new Error("execution ownership gate requested without a CLI-owned run")
+  }
+
+  const summary = "Planning completed. API worker ownership is required before execution can start."
+  const scope = { type: "stage", runId: executionOwnership.runId, stageId: "execution" } as const
+  await writeRecoveryRecord(ctx, {
+    status: "blocked",
+    cause: "system_error",
+    scope,
+    summary,
+    detail: "CLI-started runs stop at the planning-to-execution handoff until an API worker resumes the run.",
+    evidencePaths: [layout.stageArtifactsDir(ctx, "planning"), layout.runDir(ctx)],
+  })
+  executionOwnership.repos.updateRun(executionOwnership.runId, {
+    status: "blocked",
+    recovery_status: "blocked",
+    recovery_scope: "stage",
+    recovery_scope_ref: "execution",
+    recovery_summary: summary,
+  })
+
+  const activeRun = getActiveRun()
+  if (activeRun) {
+    emitEvent({
+      type: "run_blocked",
+      runId: activeRun.runId,
+      itemId: activeRun.itemId,
+      title: activeRun.title ?? activeRun.itemId,
+      scope,
+      cause: "system_error",
+      summary,
+    })
+  }
+
+  throw new Error(summary)
 }
 
 const projectReviewNode: ProjectStageNode = {
