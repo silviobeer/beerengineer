@@ -127,41 +127,69 @@ function isFinalFacingAgentMessage(event: Extract<WorkflowEvent, { type: "chat_m
   return event.requiresResponse === true || event.source === "reviewer"
 }
 
+function startupRecoveryLevel(event: Extract<WorkflowEvent, { type: "startup_recovery" }>): LevelInfo {
+  return { level: 2, force: event.outcome === "failed", type: "startup_recovery" }
+}
+
+function stageCompletedLevel(event: Extract<WorkflowEvent, { type: "stage_completed" }>): LevelInfo {
+  return {
+    level: 2,
+    force: event.status === "failed",
+    type: event.status === "failed" ? "phase_failed" : "phase_completed",
+  }
+}
+
+function loopIterationLevel(event: Extract<WorkflowEvent, { type: "loop_iteration" }>): LevelInfo {
+  return {
+    level: event.phase === "review" && event.n === 1 ? 2 : 1,
+    force: false,
+    type: "loop_iteration",
+  }
+}
+
+function chatMessageLevel(event: Extract<WorkflowEvent, { type: "chat_message" }>): LevelInfo {
+  if (event.role === "user") return { level: 1, force: false, type: "user_message" }
+  return {
+    level: isFinalFacingAgentMessage(event) ? 1 : 0,
+    force: false,
+    type: "agent_message",
+  }
+}
+
+function logLevel(event: Extract<WorkflowEvent, { type: "log" }>): LevelInfo {
+  return {
+    level: event.level === "warn" || event.level === "error" ? 1 : 0,
+    force: false,
+    type: "log",
+  }
+}
+
+function supabaseBranchLifecycleLevel(
+  event: Extract<WorkflowEvent, { type: "supabase_branch_lifecycle" }>,
+): LevelInfo {
+  return {
+    level: 1,
+    force: event.status === "failed" || event.status === "retained",
+    type: supabaseLifecycleMessageType(event),
+  }
+}
+
 export function levelOf(event: WorkflowEvent): LevelInfo {
-  if (isSimpleEvent(event)) return SIMPLE_LEVELS_BY_EVENT[event.type]!
+  if (isSimpleEvent(event)) return SIMPLE_LEVELS_BY_EVENT[event.type]
 
   switch (event.type) {
     case "startup_recovery":
-      return { level: 2, force: event.outcome === "failed", type: "startup_recovery" }
+      return startupRecoveryLevel(event)
     case "stage_completed":
-      return {
-        level: 2,
-        force: event.status === "failed",
-        type: event.status === "failed" ? "phase_failed" : "phase_completed",
-      }
+      return stageCompletedLevel(event)
     case "loop_iteration":
-      // First entry into the review loop (n===1 with phase=review) is the
-      // L2 "entered review loop" milestone; every other tick is L1 progress.
-      return {
-        level: event.phase === "review" && event.n === 1 ? 2 : 1,
-        force: false,
-        type: "loop_iteration",
-      }
+      return loopIterationLevel(event)
     case "chat_message":
-      if (event.role === "user") return { level: 1, force: false, type: "user_message" }
-      return {
-        level: isFinalFacingAgentMessage(event) ? 1 : 0,
-        force: false,
-        type: "agent_message",
-      }
+      return chatMessageLevel(event)
     case "log":
-      return {
-        level: event.level === "warn" || event.level === "error" ? 1 : 0,
-        force: false,
-        type: "log",
-      }
+      return logLevel(event)
     case "supabase_branch_lifecycle":
-      return { level: 1, force: event.status === "failed" || event.status === "retained", type: supabaseLifecycleMessageType(event) }
+      return supabaseBranchLifecycleLevel(event)
     default: {
       const exhaustive: never = event
       return exhaustive

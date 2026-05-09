@@ -61,7 +61,7 @@ function projectRecoveredRunToItem(repos: Repos, run: RunRow): void {
   if (!item) return
   const mapped = run.current_stage
     ? mapStageToColumn(run.current_stage, "failed")
-    : { column: item.current_column, phaseStatus: "failed" as const }
+    : { column: item.current_column, phaseStatus: "failed" }
   repos.setItemColumn(item.id, mapped.column, "failed")
   repos.setItemCurrentStage(item.id, null)
 }

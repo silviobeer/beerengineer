@@ -42,6 +42,71 @@ function stringPayloadList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : []
 }
 
+function startupRecoveryPresentation(entry: MessageEntry): MessagePresentation {
+  return {
+    icon: "♻",
+    label: "startup recovery",
+    detail: [payloadString(entry.payload.outcome), payloadString(entry.payload.reason, "")].filter(Boolean).join(" / "),
+  }
+}
+
+function reviewFeedbackPresentation(entry: MessageEntry): MessagePresentation {
+  return {
+    icon: "↩",
+    label: `findings handed back to stage (cycle ${payloadNumberString(entry.payload.cycle, "1")})`,
+    detail: payloadString(entry.payload.feedback),
+  }
+}
+
+function toolCalledPresentation(entry: MessageEntry): MessagePresentation {
+  return {
+    icon: "·",
+    label: "tool call",
+    detail: [
+      payloadString(entry.payload.name),
+      typeof entry.payload.provider === "string" ? `(${entry.payload.provider})` : undefined,
+      typeof entry.payload.argsPreview === "string" ? `args=${entry.payload.argsPreview}` : undefined,
+    ].filter(Boolean).join(" "),
+  }
+}
+
+function toolResultPresentation(entry: MessageEntry): MessagePresentation {
+  return {
+    icon: "·",
+    label: "tool result",
+    detail: [
+      payloadString(entry.payload.name),
+      entry.payload.isError === true ? "(error)" : undefined,
+      typeof entry.payload.resultPreview === "string" ? entry.payload.resultPreview : undefined,
+    ].filter(Boolean).join(" "),
+  }
+}
+
+function llmTokensPresentation(entry: MessageEntry): MessagePresentation {
+  return {
+    icon: "🔢",
+    label: "tokens",
+    detail: tokenDetail(entry),
+  }
+}
+
+function worktreePortPresentation(entry: MessageEntry): MessagePresentation {
+  return {
+    icon: "·",
+    label: "preview port assigned",
+    detail: `${payloadString(entry.payload.branch)} on :${payloadNumberString(entry.payload.port, "?")}`,
+  }
+}
+
+function waveSerializedPresentation(entry: MessageEntry): MessagePresentation {
+  const stories = stringPayloadList(entry.payload.stories).join(", ")
+  return {
+    icon: "↺",
+    label: "wave serialized (parallel → sequential)",
+    detail: stories || payloadNumberString(entry.payload.waveNumber, "?"),
+  }
+}
+
 const SIMPLE_PRESENTATIONS: Partial<Record<MessageEntry["type"], (entry: MessageEntry) => MessagePresentation>> = {
   run_started: entry => ({ icon: "🚀", label: "run started", detail: payloadString(entry.payload.title, entry.runId) }),
   run_finished: entry => ({ icon: "🏁", label: "run finished", detail: payloadString(entry.payload.status, "completed") }),
@@ -98,61 +163,23 @@ export function presentMessageEntry(entry: MessageEntry): MessagePresentation {
   if (simple) return simple(entry)
   switch (entry.type) {
     case "startup_recovery":
-      return {
-        icon: "♻",
-        label: "startup recovery",
-        detail: [payloadString(entry.payload.outcome), payloadString(entry.payload.reason, "")].filter(Boolean).join(" / "),
-      }
+      return startupRecoveryPresentation(entry)
     case "loop_iteration": {
       const n = payloadNumberString(entry.payload.n, "0")
       return iterationLabel(n, entry.payload.phase)
     }
     case "review_feedback":
-      return {
-        icon: "↩",
-        label: `findings handed back to stage (cycle ${payloadNumberString(entry.payload.cycle, "1")})`,
-        detail: payloadString(entry.payload.feedback),
-      }
+      return reviewFeedbackPresentation(entry)
     case "tool_called":
-      return {
-        icon: "·",
-        label: "tool call",
-        detail: [
-          payloadString(entry.payload.name),
-          typeof entry.payload.provider === "string" ? `(${entry.payload.provider})` : undefined,
-          typeof entry.payload.argsPreview === "string" ? `args=${entry.payload.argsPreview}` : undefined,
-        ].filter(Boolean).join(" "),
-      }
+      return toolCalledPresentation(entry)
     case "tool_result":
-      return {
-        icon: "·",
-        label: "tool result",
-        detail: [
-          payloadString(entry.payload.name),
-          entry.payload.isError === true ? "(error)" : undefined,
-          typeof entry.payload.resultPreview === "string" ? entry.payload.resultPreview : undefined,
-        ].filter(Boolean).join(" "),
-      }
+      return toolResultPresentation(entry)
     case "llm_tokens":
-      return {
-        icon: "🔢",
-        label: "tokens",
-        detail: tokenDetail(entry),
-      }
+      return llmTokensPresentation(entry)
     case "worktree_port_assigned":
-      return {
-        icon: "·",
-        label: "preview port assigned",
-        detail: `${payloadString(entry.payload.branch)} on :${payloadNumberString(entry.payload.port, "?")}`,
-      }
-    case "wave_serialized": {
-      const stories = stringPayloadList(entry.payload.stories).join(", ")
-      return {
-        icon: "↺",
-        label: "wave serialized (parallel → sequential)",
-        detail: stories || payloadNumberString(entry.payload.waveNumber, "?"),
-      }
-    }
+      return worktreePortPresentation(entry)
+    case "wave_serialized":
+      return waveSerializedPresentation(entry)
     default: {
       // Switch is exhaustive over CanonicalMessageType; this branch only
       // fires if a new canonical type is added without a presentation case.
