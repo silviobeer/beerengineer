@@ -27,20 +27,64 @@ function seedCleanGitRepo(root: string): void {
   spawnSync("git", ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"], { cwd: root, encoding: "utf8" })
 }
 
+type PromptingState = {
+  brainstormAnswers: string[]
+  requirementsAnswers: string[]
+  brainstormIdx: number
+  requirementsIdx: number
+}
+
+const STATIC_PROMPT_ANSWERS: Array<{ matches: RegExp | ((prompt: string) => boolean); answer: string }> = [
+  { matches: prompt => prompt.startsWith("Promote "), answer: "promote" },
+  { matches: /wireframes or mockups/i, answer: "none" },
+  { matches: /screens or flows/i, answer: "dashboard first" },
+  { matches: /accessibility, responsive, or interaction constraints/i, answer: "WCAG AA required" },
+  { matches: /^Wireframe summary/i, answer: "approve" },
+  { matches: /design system, brand direction, or reference apps/i, answer: "none" },
+  { matches: /visual tone or product preference/i, answer: "professional" },
+  {
+    matches: /hard constraints on color, typography, density, accessibility, or responsiveness/i,
+    answer: "no brand constraints",
+  },
+  { matches: /^Design summary/i, answer: "approve" },
+  { matches: /^Reviewer findings:/i, answer: "accept" },
+]
+
+function promptMatches(prompt: string, matcher: RegExp | ((prompt: string) => boolean)): boolean {
+  return typeof matcher === "function" ? matcher(prompt) : matcher.test(prompt)
+}
+
+function answerPrompt(prompt: string, state: PromptingState): string {
+  const staticAnswer = STATIC_PROMPT_ANSWERS.find(entry => promptMatches(prompt, entry.matches))
+  if (staticAnswer) return staticAnswer.answer
+  if (/^What problem|^Who is|^What is the core value|^What constraints|^Why are/i.test(prompt)) {
+    return state.brainstormAnswers[state.brainstormIdx++] ?? "ok"
+  }
+  if (/^Which feature|^Which action|^Which important boundary/i.test(prompt)) {
+    return state.requirementsAnswers[state.requirementsIdx++] ?? "ok"
+  }
+  if (/^Which story or AC should I sharpen/i.test(prompt)) {
+    return state.requirementsAnswers[state.requirementsIdx++] ?? "US-02 acceptance criteria"
+  }
+  throw new Error(`Unexpected workflow prompt: ${prompt}`)
+}
+
 function makePromptingIo(): { io: ReturnType<typeof busToWorkflowIO> & { bus: ReturnType<typeof createBus> }; events: WorkflowEvent[] } {
-  const brainstormAnswers = [
-    "User needs structured workflow.",
-    "Target audience: solo-operator teams.",
-    "Constraint: single-node, no cloud access.",
-    "Yes, constraints are stable enough.",
-  ]
-  const requirementsAnswers = [
-    "Focus: core workflow as input form.",
-    "Status badges per entry.",
-    "US-02 clearer: filter by status.",
-  ]
-  let brainstormIdx = 0
-  let requirementsIdx = 0
+  const state: PromptingState = {
+    brainstormAnswers: [
+      "User needs structured workflow.",
+      "Target audience: solo-operator teams.",
+      "Constraint: single-node, no cloud access.",
+      "Yes, constraints are stable enough.",
+    ],
+    requirementsAnswers: [
+      "Focus: core workflow as input form.",
+      "Status badges per entry.",
+      "US-02 clearer: filter by status.",
+    ],
+    brainstormIdx: 0,
+    requirementsIdx: 0,
+  }
   let promptCount = 0
 
   const events: WorkflowEvent[] = []
@@ -54,28 +98,7 @@ function makePromptingIo(): { io: ReturnType<typeof busToWorkflowIO> & { bus: Re
       throw new Error(`Unexpected prompt loop after ${promptCount} prompts; last prompt: ${event.prompt}`)
     }
 
-    let answer: string
-    if (event.prompt.startsWith("Promote ")) answer = "promote"
-    else if (/wireframes or mockups/i.test(event.prompt)) answer = "none"
-    else if (/screens or flows/i.test(event.prompt)) answer = "dashboard first"
-    else if (/accessibility, responsive, or interaction constraints/i.test(event.prompt)) answer = "WCAG AA required"
-    else if (/^Wireframe summary/i.test(event.prompt)) answer = "approve"
-    else if (/design system, brand direction, or reference apps/i.test(event.prompt)) answer = "none"
-    else if (/visual tone or product preference/i.test(event.prompt)) answer = "professional"
-    else if (/hard constraints on color, typography, density, accessibility, or responsiveness/i.test(event.prompt)) {
-      answer = "no brand constraints"
-    } else if (/^Design summary/i.test(event.prompt)) answer = "approve"
-    else if (/^Reviewer findings:/i.test(event.prompt)) answer = "accept"
-    else if (/^What problem|^Who is|^What is the core value|^What constraints|^Why are/i.test(event.prompt)) {
-      answer = brainstormAnswers[brainstormIdx++] ?? "ok"
-    } else if (/^Which feature|^Which action|^Which important boundary/i.test(event.prompt)) {
-      answer = requirementsAnswers[requirementsIdx++] ?? "ok"
-    } else if (/^Which story or AC should I sharpen/i.test(event.prompt)) {
-      answer = requirementsAnswers[requirementsIdx++] ?? "US-02 acceptance criteria"
-    } else {
-      throw new Error(`Unexpected workflow prompt: ${event.prompt}`)
-    }
-
+    const answer = answerPrompt(event.prompt, state)
     bus.emit({ type: "prompt_answered", runId: event.runId, promptId: event.promptId, answer })
   })
 
