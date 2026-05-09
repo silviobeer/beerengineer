@@ -30,10 +30,14 @@ import { frontendDesign } from "./stages/frontend-design/index.js"
 import { mergeGate } from "./stages/mergeGate/index.js"
 import {
   PROJECT_STAGE_REGISTRY,
+  blockCliExecutionForApiOwnership,
+  shouldPauseCliRunBeforeExecution,
   shouldRunProjectStage,
   type ExecutionResumeOptions,
   type ProjectResumePlan,
+  type ProjectStageId,
   type StageLlmOptions,
+  type StageDeps,
 } from "./core/projectStageRegistry.js"
 import { branchNameItem } from "./core/branchNames.js"
 import { itemSlug, workflowWorkspaceId } from "./core/itemIdentity.js"
@@ -315,7 +319,14 @@ async function assertDesignPrepProjectFreeze(context: WorkflowContext, projects:
   throw new BlockedRunError(summary)
 }
 
-export async function runWorkflow(item: Item, options?: { resume?: WorkflowResumeInput; llm?: WorkflowLlmOptions; workspaceRoot?: string; supabaseHook?: SupabaseWorkflowHook; supabaseReadiness?: SupabaseWorkflowReadinessHook }): Promise<void> {
+export async function runWorkflow(item: Item, options?: {
+  resume?: WorkflowResumeInput
+  llm?: WorkflowLlmOptions
+  workspaceRoot?: string
+  supabaseHook?: SupabaseWorkflowHook
+  supabaseReadiness?: SupabaseWorkflowReadinessHook
+  executionOwnership?: StageDeps["executionOwnership"]
+}): Promise<void> {
   assertWorkflowNotCancelled()
   const slug = itemSlug(item)
   const activeRun = getActiveRun()
@@ -383,6 +394,7 @@ export async function runWorkflow(item: Item, options?: { resume?: WorkflowResum
         llm: itemWorktreeLlm,
         supabaseHook: options?.supabaseHook,
         supabaseReadiness: options?.supabaseReadiness,
+        executionOwnership: options?.executionOwnership,
       })
     }
 
@@ -511,21 +523,24 @@ async function runWorkflowProjects(
     llm: WorkflowLlmOptions | undefined
     supabaseHook?: SupabaseWorkflowHook
     supabaseReadiness?: SupabaseWorkflowReadinessHook
+    executionOwnership?: StageDeps["executionOwnership"]
   },
 ): Promise<void> {
-  const { context, projects, git, wireframes, design, itemSnapshot, resumePlan, llm, supabaseHook, supabaseReadiness } = options
+  const { context, projects, git, wireframes, design, itemSnapshot, resumePlan, llm, supabaseHook, supabaseReadiness, executionOwnership } = options
   const conceptAmendments = [
     ...(wireframes?.conceptAmendments ?? []),
     ...(design?.conceptAmendments ?? []),
   ]
   const projectDesignArtifact = design ? projectDesign(design) : undefined
   const decisions = loadItemDecisions(context)
+  const pauseBeforeExecution = shouldPauseCliRunBeforeExecution(resumePlan, executionOwnership)
+  let lastProjectCtx: ProjectContext | null = null
   for (const project of projects) {
     git.ensureProjectBranch(project.id)
     const projectResumePlan = resumePlan?.projectStartStages?.[project.id]
       ? { ...resumePlan, startStage: resumePlan.projectStartStages[project.id] }
       : resumePlan
-    await runProject(
+    lastProjectCtx = await runProjectStages(
       {
         ...context,
         project: { ...project, concept: mergeAmendments(project.concept, conceptAmendments, project.id) },
@@ -539,7 +554,12 @@ async function runWorkflowProjects(
       llm,
       supabaseHook,
       supabaseReadiness,
+      executionOwnership,
+      pauseBeforeExecution ? "planning" : undefined,
     )
+  }
+  if (pauseBeforeExecution && lastProjectCtx) {
+    await blockCliExecutionForApiOwnership(lastProjectCtx, executionOwnership)
   }
 }
 
@@ -653,15 +673,31 @@ async function runProject(
   supabaseHook?: SupabaseWorkflowHook,
   supabaseReadiness?: SupabaseWorkflowReadinessHook,
 ): Promise<void> {
+  await runProjectStages(initialCtx, git, resume, llm, supabaseHook, supabaseReadiness)
+}
+
+async function runProjectStages(
+  initialCtx: ProjectContext,
+  git: GitAdapter,
+  resume?: ProjectResumePlan,
+  llm?: WorkflowLlmOptions,
+  supabaseHook?: SupabaseWorkflowHook,
+  supabaseReadiness?: SupabaseWorkflowReadinessHook,
+  executionOwnership?: StageDeps["executionOwnership"],
+  stopAfter?: ProjectStageId,
+): Promise<ProjectContext> {
   let ctx = initialCtx
   const projectId = ctx.project.id
-  const deps = { llm, resume, git, supabaseHook, supabaseReadiness }
+  const deps = { llm, resume, git, supabaseHook, supabaseReadiness, executionOwnership }
+  const stopIndex = stopAfter ? PROJECT_STAGE_REGISTRY.findIndex(node => node.id === stopAfter) : PROJECT_STAGE_REGISTRY.length - 1
 
-  for (const node of PROJECT_STAGE_REGISTRY) {
+  for (let index = 0; index <= stopIndex; index += 1) {
+    const node = PROJECT_STAGE_REGISTRY[index]!
     assertWorkflowNotCancelled()
     ctx = shouldRunProjectStage(resume, node.id)
       ? await withStageLifecycle(node.id, () => node.run(ctx, deps), { projectId })
       : await node.resumeFromDisk(ctx)
     assertWorkflowNotCancelled()
   }
+  return ctx
 }
