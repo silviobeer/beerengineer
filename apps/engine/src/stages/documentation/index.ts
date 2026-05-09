@@ -12,7 +12,7 @@ import {
 import { buildDocFiles } from "../../render/documentation.js"
 import type { DocumentationArtifact, WithProjectReview } from "../../types.js"
 import type { DocumentationState } from "./types.js"
-import { layout, type WorkflowContext } from "../../core/workspaceLayout.js"
+import { layout, requireItemScopedContext, type ItemScopedContext, type WorkflowContext } from "../../core/workspaceLayout.js"
 import type { StageAgentAdapter, StageAgentInput, StageAgentResponse } from "../../core/adapters.js"
 import { groundDocumentationArtifactInProjectReview } from "./grounding.js"
 
@@ -28,7 +28,7 @@ type ExistingDocs = DocumentationState["existingDocs"]
  * Earlier this resolved to `<workspaceRoot>/docs/`, which left the files
  * untracked in the operator's main checkout and never made it into git.
  */
-function projectDocsDir(ctx: WorkflowContext): string {
+function projectDocsDir(ctx: ItemScopedContext): string {
   return join(layout.itemWorktreeDir(ctx), "docs")
 }
 
@@ -41,7 +41,7 @@ async function readOptional(path: string): Promise<string | undefined> {
 }
 
 async function loadExistingDocs(ctx: WorkflowContext): Promise<ExistingDocs> {
-  const dir = projectDocsDir(ctx)
+  const dir = projectDocsDir(requireItemScopedContext(ctx))
   return {
     technicalDoc: await readOptional(join(dir, "technical-doc.md")),
     featuresDoc: await readOptional(join(dir, "features-doc.md")),
@@ -50,7 +50,7 @@ async function loadExistingDocs(ctx: WorkflowContext): Promise<ExistingDocs> {
 }
 
 async function writeProjectDocs(ctx: WorkflowContext, artifact: DocumentationArtifact): Promise<void> {
-  const dir = projectDocsDir(ctx)
+  const dir = projectDocsDir(requireItemScopedContext(ctx))
   await mkdir(dir, { recursive: true })
   for (const file of buildDocFiles(artifact)) {
     await writeFile(join(dir, file.fileName), file.content)

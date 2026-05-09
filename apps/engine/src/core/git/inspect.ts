@@ -1,6 +1,5 @@
 import { isAbsolute, relative, resolve } from "node:path"
-import type { WorkflowContext } from "../workspaceLayout.js"
-import { layout } from "../workspaceLayout.js"
+import { layout, requireItemScopedContext, type WorkflowContext } from "../workspaceLayout.js"
 import { type GitMode, currentBranch, itemRoot, runGit } from "./shared.js"
 
 /**
@@ -88,7 +87,7 @@ export function detectGitMode(context: WorkflowContext): GitMode {
         enabled: true,
         workspaceRoot,
         baseBranch,
-        itemWorktreeRoot: layout.itemWorktreeDir(context),
+        itemWorktreeRoot: layout.itemWorktreeDir(requireItemScopedContext(context)),
       }
   }
 }
