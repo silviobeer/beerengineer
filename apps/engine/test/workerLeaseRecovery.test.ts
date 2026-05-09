@@ -18,6 +18,12 @@ function fixture() {
   return { db, repos, ws, item }
 }
 
+function latestProjectedMessage(repos: Repos, runId: string) {
+  const row = repos.listLogsForRun(runId).at(-1)
+  assert.ok(row, "expected a startup recovery log entry")
+  return projectStageLogRow(row)
+}
+
 function seedManualStaleRun(
   repos: Repos,
   input: {
@@ -195,7 +201,7 @@ test("startup recovery auto-resumes an eligible stale run and records the outcom
     assert.equal(result.outcomes[0]?.reason, null)
     assert.equal(repos.getRun(run.id)?.status, "running")
     assert.equal(repos.getRun(run.id)?.recovery_status, null)
-    const message = projectStageLogRow(repos.listLogsForRun(run.id).at(-1)!)
+    const message = latestProjectedMessage(repos, run.id)
     assert.equal(message?.type, "startup_recovery")
     assert.equal(message?.payload.outcome, "auto_resumed")
     assert.equal(message?.payload.reason, null)
@@ -241,7 +247,7 @@ test("startup recovery skips stale manual-recovery runs whose worker lease is no
     ])
     assert.equal(repos.getRun(run.id)?.status, "failed")
     assert.equal(repos.getRun(run.id)?.recovery_status, "failed")
-    const message = projectStageLogRow(repos.listLogsForRun(run.id).at(-1)!)
+    const message = latestProjectedMessage(repos, run.id)
     assert.equal(message?.type, "startup_recovery")
     assert.equal(message?.payload.outcome, "skipped")
     assert.equal(message?.payload.reason, "worker_lease_not_orphaned")
@@ -281,7 +287,7 @@ test("startup recovery keeps stale runs with open prompts on manual recovery and
     assert.equal(repos.getRun(run.id)?.status, "failed")
     assert.equal(repos.getRun(run.id)?.recovery_status, "failed")
     assert.ok(repos.getOpenPrompt(run.id), "startup recovery must preserve the open prompt")
-    const message = projectStageLogRow(repos.listLogsForRun(run.id).at(-1)!)
+    const message = latestProjectedMessage(repos, run.id)
     assert.equal(message?.type, "startup_recovery")
     assert.equal(message?.payload.outcome, "skipped")
     assert.equal(message?.payload.reason, "open_prompt")
@@ -317,7 +323,7 @@ test("startup recovery leaves otherwise eligible stale runs manual when auto-res
     assert.equal(result.outcomes[0]?.reason, "auto_resume_disabled")
     assert.equal(repos.getRun(run.id)?.status, "failed")
     assert.equal(repos.getRun(run.id)?.recovery_status, "failed")
-    const message = projectStageLogRow(repos.listLogsForRun(run.id).at(-1)!)
+    const message = latestProjectedMessage(repos, run.id)
     assert.equal(message?.type, "startup_recovery")
     assert.equal(message?.payload.outcome, "skipped")
     assert.equal(message?.payload.reason, "auto_resume_disabled")
@@ -356,7 +362,7 @@ test("startup recovery falls back to manual recovery when auto-resume handoff fa
     assert.equal(result.outcomes[0]?.reason, "auto_resume_failed")
     assert.equal(repos.getRun(run.id)?.status, "failed")
     assert.equal(repos.getRun(run.id)?.recovery_status, "failed")
-    const message = projectStageLogRow(repos.listLogsForRun(run.id).at(-1)!)
+    const message = latestProjectedMessage(repos, run.id)
     assert.equal(message?.type, "startup_recovery")
     assert.equal(message?.payload.outcome, "failed")
     assert.equal(message?.payload.reason, "auto_resume_failed")

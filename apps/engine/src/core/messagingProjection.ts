@@ -31,6 +31,22 @@ function parseRecoveryScope(
 }
 
 type StageLogEventParser = (row: StageLogRow, data: Record<string, unknown>) => WorkflowEvent | null
+type StartupRecoveryReason = Extract<WorkflowEvent, { type: "startup_recovery" }>["reason"]
+const STARTUP_RECOVERY_REASONS = [
+  "open_prompt",
+  "worker_lease_not_orphaned",
+  "auto_resume_disabled",
+  "auto_resume_failed",
+ ] as const satisfies ReadonlyArray<NonNullable<StartupRecoveryReason>>
+const STARTUP_RECOVERY_REASON_SET = new Set<string>(STARTUP_RECOVERY_REASONS)
+
+function parseStartupRecoveryReason(
+  value: unknown,
+): StartupRecoveryReason {
+  return typeof value === "string" && STARTUP_RECOVERY_REASON_SET.has(value)
+    ? (value as NonNullable<StartupRecoveryReason>)
+    : null
+}
 
 const STAGE_LOG_EVENT_PARSERS: Record<string, StageLogEventParser> = {
   run_started: (row, data) => ({
@@ -212,13 +228,7 @@ const STAGE_LOG_EVENT_PARSERS: Record<string, StageLogEventParser> = {
     type: "startup_recovery",
     runId: row.run_id,
     outcome: data.outcome === "auto_resumed" || data.outcome === "failed" ? data.outcome : "skipped",
-    reason:
-      data.reason === "open_prompt" ||
-      data.reason === "worker_lease_not_orphaned" ||
-      data.reason === "auto_resume_disabled" ||
-      data.reason === "auto_resume_failed"
-        ? data.reason
-        : null,
+    reason: parseStartupRecoveryReason(data.reason),
     error: typeof data.error === "string" ? data.error : undefined,
   }),
   external_remediation_recorded: (row, data) => ({

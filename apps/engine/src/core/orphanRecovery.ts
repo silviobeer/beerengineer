@@ -58,6 +58,22 @@ const WORKER_OWNERSHIP_LOST_SUMMARY =
   "Worker heartbeat detected lost worker ownership — resume or abandon."
 const WORKER_HEARTBEAT_FAILURE_SUMMARY =
   /^Worker heartbeat failed \d+ consecutive times — resume or abandon\.$/
+const STALE_WORKER_RECOVERY_SUMMARIES = new Set([
+  RECOVERY_SUMMARY,
+  CLI_STALE_RECOVERY_SUMMARY,
+  SHUTDOWN_RECOVERY_SUMMARY,
+  WORKER_OWNERSHIP_LOST_SUMMARY,
+])
+const STARTUP_RECOVERY_SKIP_MESSAGES: Record<
+  Extract<StartupRecoveryReason, "open_prompt" | "worker_lease_not_orphaned" | "auto_resume_disabled">,
+  string
+> = {
+  open_prompt: "Startup recovery left the stale run on manual recovery because a prompt is still open.",
+  worker_lease_not_orphaned:
+    "Startup recovery left the stale run on manual recovery because the worker lease is not orphaned.",
+  auto_resume_disabled:
+    "Startup recovery left the stale run on manual recovery because auto-resume is disabled.",
+}
 
 function hasOtherLiveRunForItem(repos: Repos, run: RunRow): boolean {
   return repos
@@ -112,11 +128,7 @@ function isStaleWorkerRecoverableRun(run: RunRow): boolean {
   if (run.recovery_status !== "failed") return false
   if (run.recovery_scope !== "run") return false
   const summary = run.recovery_summary ?? ""
-  return summary === RECOVERY_SUMMARY
-    || summary === CLI_STALE_RECOVERY_SUMMARY
-    || summary === SHUTDOWN_RECOVERY_SUMMARY
-    || summary === WORKER_OWNERSHIP_LOST_SUMMARY
-    || WORKER_HEARTBEAT_FAILURE_SUMMARY.test(summary)
+  return STALE_WORKER_RECOVERY_SUMMARIES.has(summary) || WORKER_HEARTBEAT_FAILURE_SUMMARY.test(summary)
 }
 
 function listStartupRecoveryCandidates(repos: Repos): RunRow[] {
@@ -153,14 +165,12 @@ function startupRecoveryMessage(outcome: StartupRecoveryOutcome, error?: string)
   if (outcome.outcome === "auto_resumed") {
     return "Startup recovery auto-resumed the stale run."
   }
-  if (outcome.reason === "open_prompt") {
-    return "Startup recovery left the stale run on manual recovery because a prompt is still open."
-  }
-  if (outcome.reason === "worker_lease_not_orphaned") {
-    return "Startup recovery left the stale run on manual recovery because the worker lease is not orphaned."
-  }
-  if (outcome.reason === "auto_resume_disabled") {
-    return "Startup recovery left the stale run on manual recovery because auto-resume is disabled."
+  if (
+    outcome.reason === "open_prompt" ||
+    outcome.reason === "worker_lease_not_orphaned" ||
+    outcome.reason === "auto_resume_disabled"
+  ) {
+    return STARTUP_RECOVERY_SKIP_MESSAGES[outcome.reason]
   }
   const base = "Startup recovery auto-resume failed; the run remains on manual recovery."
   return error ? `${base} ${error}` : base
