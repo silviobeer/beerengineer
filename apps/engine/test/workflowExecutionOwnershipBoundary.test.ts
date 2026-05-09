@@ -10,7 +10,9 @@ import { Repos } from "../src/db/repositories.js"
 import { createBus } from "../src/core/bus.js"
 import { busToWorkflowIO } from "../src/core/runOrchestrator.js"
 import { prepareForegroundIdeaRun } from "../src/core/runService.js"
+import { prepareForegroundResumeRun } from "../src/core/runService.js"
 import { loadResumeReadiness } from "../src/core/resume.js"
+import { claimExecutionOwnershipHandoffs, EXECUTION_OWNERSHIP_HANDOFF_SUMMARY } from "../src/core/executionOwnershipHandoff.js"
 import type { WorkflowEvent } from "../src/core/io.js"
 
 function seedCleanGitRepo(root: string): void {
@@ -136,6 +138,111 @@ test("CLI-owned run stops at a recoverable execution handoff after planning", as
     assert.equal(readiness.record.scope.type, "stage")
     if (readiness.record.scope.type !== "stage") return
     assert.equal(readiness.record.scope.stageId, "execution")
+  } finally {
+    db.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("API worker claims the blocked CLI handoff before execution resumes", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-api-execution-handoff-"))
+  const repoRoot = join(dir, "repo")
+  const db = initDatabase(join(dir, "test.sqlite"))
+  const repos = new Repos(db)
+  try {
+    seedCleanGitRepo(repoRoot)
+    repos.upsertWorkspace({ key: "test", name: "Test", rootPath: repoRoot })
+
+    const initial = makePromptingIo()
+    const prepared = prepareForegroundIdeaRun(repos, initial.io, {
+      title: "CLI-owned handoff",
+      description: "Resume under API ownership",
+      workspaceKey: "test",
+      owner: "cli",
+    })
+    if (!prepared.ok) {
+      assert.fail("expected prepareForegroundIdeaRun to succeed")
+    }
+    await prepared.start()
+
+    const blockedRun = repos.getRun(prepared.runId)
+    assert.equal(blockedRun?.owner, "cli")
+    assert.equal(blockedRun?.worker_owner_kind, "cli")
+    assert.equal(blockedRun?.status, "blocked")
+    assert.equal(blockedRun?.recovery_scope_ref, "execution")
+
+    const resumed = makePromptingIo()
+    let ownerAtResumeStart: string | null = null
+    const claimResult = await claimExecutionOwnershipHandoffs(repos, {
+      apiWorkerInstanceId: "api-worker-test",
+      resumeRun: async (claimRepos, input) => {
+        ownerAtResumeStart = claimRepos.getRun(input.runId)?.owner ?? null
+        assert.equal(input.summary, EXECUTION_OWNERSHIP_HANDOFF_SUMMARY)
+        const preparedResume = await prepareForegroundResumeRun(claimRepos, resumed.io, {
+          runId: input.runId,
+          summary: input.summary,
+          workerOwnerKind: "api",
+          workerInstanceId: input.apiWorkerInstanceId,
+        })
+        assert.equal(preparedResume.ok, true)
+        if (!preparedResume.ok) return { ok: false }
+        await preparedResume.start()
+        return { ok: true }
+      },
+    })
+
+    assert.deepEqual(claimResult.claimedRunIds, [prepared.runId])
+    assert.equal(ownerAtResumeStart, "api")
+
+    const initialStages = initial.events
+      .filter((event): event is Extract<WorkflowEvent, { type: "stage_started" }> => event.type === "stage_started")
+      .map(event => event.stageKey)
+    assert.equal(initialStages.includes("execution"), false)
+
+    const resumedStages = resumed.events
+      .filter((event): event is Extract<WorkflowEvent, { type: "stage_started" }> => event.type === "stage_started")
+      .map(event => event.stageKey)
+    assert.equal(resumedStages.includes("execution"), true)
+
+    const run = repos.getRun(prepared.runId)
+    assert.equal(run?.owner, "api")
+    assert.equal(run?.worker_owner_kind, "api")
+    assert.notEqual(run?.recovery_status, "blocked")
+  } finally {
+    db.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("execution handoff claimant ignores blocked runs outside the CLI planning boundary", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-ignore-execution-handoff-"))
+  const db = initDatabase(join(dir, "test.sqlite"))
+  const repos = new Repos(db)
+  try {
+    const ws = repos.upsertWorkspace({ key: "test", name: "Test" })
+    const item = repos.createItem({ workspaceId: ws.id, title: "Ignored", description: "" })
+    const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "api" })
+    repos.updateRun(run.id, {
+      status: "blocked",
+      current_stage: "execution",
+      recovery_status: "blocked",
+      recovery_scope: "stage",
+      recovery_scope_ref: "execution",
+      recovery_summary: "Execution blocked for another reason.",
+    })
+
+    let resumeCalls = 0
+    const claimResult = await claimExecutionOwnershipHandoffs(repos, {
+      apiWorkerInstanceId: "api-worker-test",
+      resumeRun: async () => {
+        resumeCalls += 1
+        return { ok: true }
+      },
+    })
+
+    assert.deepEqual(claimResult.claimedRunIds, [])
+    assert.equal(resumeCalls, 0)
+    assert.equal(repos.getRun(run.id)?.owner, "api")
   } finally {
     db.close()
     rmSync(dir, { recursive: true, force: true })

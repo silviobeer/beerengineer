@@ -18,7 +18,7 @@ import {
 import { resolveWorkflowContextForItemRun } from "../../core/workflowContextResolver.js"
 import { formatSupabaseReadinessBlockedCliOutput } from "../../core/supabase/preExecutionReadiness.js"
 import { parseSupabaseReadinessRecoveryPayload } from "../../core/supabase/recoveryPayload.js"
-import type { ItemRow, Repos, WorkspaceRow } from "../../db/repositories.js"
+import type { ItemRow, Repos, RunRow, WorkspaceRow } from "../../db/repositories.js"
 import { initDatabase } from "../../db/connection.js"
 import type { ResumeFlags } from "../types.js"
 import { resolveItemReference, resolveSelectedWorkspace } from "../common.js"
@@ -59,6 +59,12 @@ function exitCodeForSignal(signal: string): number {
   return 129
 }
 
+export function shouldFailCliRunOnProcessExit(
+  run: Pick<RunRow, "status" | "owner" | "worker_owner_kind"> | undefined,
+): boolean {
+  return run?.status === "running" && (run.worker_owner_kind ?? run.owner) === "cli"
+}
+
 function installCliRunDeathHandlers(repos: Repos, runId: string): () => void {
   let triggered = false
   const fail = (cause: string): void => {
@@ -66,7 +72,7 @@ function installCliRunDeathHandlers(repos: Repos, runId: string): () => void {
     triggered = true
     try {
       const run = repos.getRun(runId)
-      if (run?.status !== "running") return
+      if (!shouldFailCliRunOnProcessExit(run)) return
       repos.updateRun(runId, {
         status: "failed",
         recovery_status: "failed",
