@@ -89,16 +89,18 @@ export function BoardCardActions({ card, surface = "board" }: Readonly<BoardCard
   const [error, setError] = useState<string | null>(null);
   const [gitBlocker, setGitBlocker] = useState<WorkflowGitBlockedActionResult | null>(null);
   const [isPending, startTransition] = useTransition();
-  const recordedFallbackRef = useRef(false);
+  const lastRecordedFallbackKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
+    const itemId = card.id || card.itemCode || "";
+    const fallbackKey = `${surface}:${itemId}`;
     if (card.visibleActions !== undefined) {
-      recordedFallbackRef.current = false;
+      lastRecordedFallbackKeyRef.current = null;
       return;
     }
-    if (recordedFallbackRef.current) return;
-    recordVisibleActionFallback({ itemId: card.id || card.itemCode || "", surface });
-    recordedFallbackRef.current = true;
+    if (lastRecordedFallbackKeyRef.current === fallbackKey) return;
+    recordVisibleActionFallback({ itemId, surface });
+    lastRecordedFallbackKeyRef.current = fallbackKey;
   }, [card.id, card.itemCode, card.visibleActions, surface]);
 
   if (actions.length === 0) return null;

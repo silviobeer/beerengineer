@@ -34,11 +34,12 @@ function card(overrides: Partial<BoardCardDTO> = {}): BoardCardDTO {
 describe("BoardItemModal visible action facts", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     resetVisibleActionFallbackTelemetry();
   });
 
   it("prefers item-detail visible actions from the item read over the board card facts", async () => {
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const fetchMock: typeof fetch = vi.fn(async (input: RequestInfo | URL) => {
       if (String(input) === "/api/items/item-1") {
         return new Response(JSON.stringify({
           itemId: "item-1",
@@ -59,7 +60,8 @@ describe("BoardItemModal visible action facts", () => {
         });
       }
       throw new Error(`unexpected fetch ${String(input)}`);
-    }) as typeof fetch);
+    });
+    vi.stubGlobal("fetch", fetchMock);
 
     render(
       <BoardItemModal

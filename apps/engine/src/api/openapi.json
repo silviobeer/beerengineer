@@ -1156,6 +1156,8 @@
             "type": "string",
             "enum": [
               "start_brainstorm",
+              "start_visual_companion",
+              "start_frontend_design",
               "start_implementation",
               "import_prepared",
               "rerun_design_prep",
