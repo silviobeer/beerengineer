@@ -1,12 +1,13 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdtempSync } from "node:fs"
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { initDatabase } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
 import { createItemActionsService, type ItemAction } from "../src/core/itemActions.js"
+import { writeRecoveryRecord } from "../src/core/recovery.js"
 import { layout } from "../src/core/workspaceLayout.js"
 
 function tmpDb() {
@@ -94,6 +95,7 @@ const MATRIX_CASES: Array<{
   { action: "resume_run", column: "idea", phase: "draft", expect: "reject" },
   { action: "resume_run", column: "brainstorm", phase: "running", expect: "resume" },
   { action: "resume_run", column: "requirements", phase: "draft", expect: "resume" },
+  { action: "resume_run", column: "implementation", phase: "completed", expect: "resume" },
   { action: "resume_run", column: "implementation", phase: "running", expect: "resume" },
   { action: "resume_run", column: "implementation", phase: "failed", expect: "resume" },
   { action: "resume_run", column: "merge", phase: "review_required", expect: "resume" },
@@ -224,6 +226,53 @@ test("start-run action records column change and returns needs_spawn without cre
     assert.equal(persisted.current_column, "brainstorm")
     assert.equal(persisted.phase_status, "running")
     assert.equal(repos.listRuns().length, 0, "no run row should have been created")
+  } finally {
+    service.dispose()
+    db.close()
+  }
+})
+
+test("resume_run accepts the blocked planning-to-execution handoff state", async () => {
+  const db = tmpDb()
+  const repos = new Repos(db)
+  const item = makeItem(repos, "implementation", "completed")
+  const service = createItemActionsService(repos)
+  const workspace = repos.getWorkspace(item.workspace_id)
+  try {
+    const run = repos.createRun({
+      workspaceId: item.workspace_id,
+      itemId: item.id,
+      title: item.title,
+      owner: "cli",
+      workspaceFsId: `handoff-${item.id.toLowerCase()}`,
+    })
+    const ctx = { workspaceId: run.workspace_fs_id!, workspaceRoot: workspace?.root_path ?? "", runId: run.id }
+    mkdirSync(layout.runDir(ctx), { recursive: true })
+    writeFileSync(layout.runFile(ctx), `${JSON.stringify({ id: run.id }, null, 2)}\n`)
+    await writeRecoveryRecord(ctx, {
+      status: "blocked",
+      cause: "system_error",
+      scope: { type: "stage", runId: run.id, stageId: "execution" },
+      summary: "Planning completed. API worker ownership is required before execution can start.",
+      evidencePaths: [layout.runDir(ctx)],
+    })
+    repos.setRunRecovery(run.id, {
+      status: "blocked",
+      scope: "stage",
+      scopeRef: "execution",
+      summary: "Planning completed. API worker ownership is required before execution can start.",
+    })
+
+    const result = await service.perform(item.id, "resume_run", {
+      resume: { summary: "API worker is ready to claim execution." },
+    })
+
+    assert.equal(result.ok, true)
+    if (!result.ok) return
+    assert.equal(result.kind, "needs_spawn")
+    if (result.kind !== "needs_spawn") return
+    assert.equal(result.runId, run.id)
+    assert.ok(result.remediationId)
   } finally {
     service.dispose()
     db.close()

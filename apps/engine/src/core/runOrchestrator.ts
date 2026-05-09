@@ -207,6 +207,10 @@ export function prepareRun(
                   repos,
                   runId: runRow.id,
                 },
+                executionOwnership: {
+                  repos,
+                  runId: runRow.id,
+                },
               },
             )
             assertWorkflowNotCancelled()

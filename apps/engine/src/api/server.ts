@@ -90,7 +90,8 @@ import { seedIfEmpty } from "./seed.js"
 import { writeApiTokenFile } from "./tokenFile.js"
 import { removeEnginePidFile, writeEnginePidFile } from "./pidFile.js"
 import { recoverApiRunsForShutdown, recoverLostWorkerRuns } from "../core/orphanRecovery.js"
-import { API_WORKER_INSTANCE_ID } from "../core/runService.js"
+import { API_WORKER_INSTANCE_ID, resumeRunFromExistingRemediationInProcess } from "../core/runService.js"
+import { claimExecutionOwnershipHandoffs } from "../core/executionOwnershipHandoff.js"
 import { pruneMissingWorktreeAssignments } from "../core/portAllocator.js"
 import { markPreparedUpdateInFlight, releaseUpdateLock, type UpdateApplyResult } from "../core/updateMode.js"
 import { readActiveSecretValue } from "../setup/secretStore.js"
@@ -226,6 +227,31 @@ try {
   console.error("[orphanRecovery] startup scan failed:", (err as Error).message)
 }
 startupRecoveryComplete = true
+
+const executionOwnershipHandoffTick = async (): Promise<void> => {
+  try {
+    await claimExecutionOwnershipHandoffs(repos, {
+      apiWorkerInstanceId: API_WORKER_INSTANCE_ID,
+      onItemColumnChanged: payload => board.broadcastItemColumnChanged(payload),
+      resumeRun: (claimRepos, input) => resumeRunFromExistingRemediationInProcess(claimRepos, {
+        remediationId: input.remediationId,
+        apiWorkerInstanceId: input.apiWorkerInstanceId,
+        workerLeaseClock: input.workerLeaseClock,
+        workerLeaseScheduler: input.workerLeaseScheduler,
+        onItemColumnChanged: input.onItemColumnChanged,
+      }),
+    })
+  } catch (err) {
+    console.error("[executionOwnershipHandoff] poll failed:", (err as Error).message)
+  }
+}
+void executionOwnershipHandoffTick()
+
+const executionOwnershipHandoffPoller = setInterval(() => {
+  void executionOwnershipHandoffTick()
+}, 1_000)
+executionOwnershipHandoffPoller.unref?.()
+
 pruneMissingWorktreeAssignments()
 
 // QA-010: drive any elapsed TTL cleanups that accumulated while the engine
@@ -539,6 +565,7 @@ server.on("connection", socket => {
 async function gracefulShutdown(reason: string): Promise<void> {
   if (shutdownInFlight) return
   shutdownInFlight = true
+  clearInterval(executionOwnershipHandoffPoller)
   clearInterval(cleanupTick)
   console.error(`[engine] graceful shutdown requested: ${reason}`)
   const closePromise = new Promise<Error | undefined>(resolve => {
