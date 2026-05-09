@@ -5,6 +5,7 @@ import { createServer as createNetServer } from "node:net"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { test } from "node:test"
+import { fileURLToPath } from "node:url"
 
 import { initDatabase } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
@@ -15,6 +16,10 @@ type ServerHandle = {
   proc: ChildProcess
   base: string
 }
+
+const TEST_DIR = resolve(fileURLToPath(new URL(".", import.meta.url)))
+const SERVER_PATH = resolve(TEST_DIR, "..", "src", "api", "server.ts")
+const SERVER_START_RETRIES = 5
 
 type BoardResponse = {
   workspaceKey: string | null
@@ -45,26 +50,59 @@ async function reservePort(): Promise<number> {
 }
 
 async function startServer(env: NodeJS.ProcessEnv): Promise<ServerHandle> {
-  const port = await reservePort()
   const host = "127.0.0.1"
-  const serverPath = resolve(new URL(".", import.meta.url).pathname, "..", "src", "api", "server.ts")
-  const childEnv = {
-    ...process.env,
-    ...env,
-    PORT: String(port),
-    HOST: host,
-    BEERENGINEER_SEED: "0",
-    BEERENGINEER_API_TOKEN: TEST_API_TOKEN,
+  let lastError: Error | null = null
+
+  for (let attempt = 0; attempt < SERVER_START_RETRIES; attempt++) {
+    const port = await reservePort()
+    const childEnv = {
+      ...process.env,
+      ...env,
+      PORT: String(port),
+      HOST: host,
+      BEERENGINEER_SEED: "0",
+      BEERENGINEER_API_TOKEN: TEST_API_TOKEN,
+    }
+    if (!("BEERENGINEER_PUBLIC_BASE_URL" in env)) delete childEnv.BEERENGINEER_PUBLIC_BASE_URL
+    if (!("BEERENGINEER_PREVIEW_HOST" in env)) delete childEnv.BEERENGINEER_PREVIEW_HOST
+
+    const proc = spawn(process.execPath, ["--import", "tsx", SERVER_PATH], {
+      env: childEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    })
+    let stderr = ""
+    proc.stderr?.on("data", chunk => {
+      stderr += chunk.toString()
+    })
+    proc.stdout?.on("data", () => {})
+
+    const startup = await new Promise<"running" | "retry" | "failed">(resolve => {
+      let settled = false
+      const finish = (result: "running" | "retry" | "failed") => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        resolve(result)
+      }
+      const timer = setTimeout(() => finish("running"), 250)
+      proc.once("exit", () => {
+        finish(/EADDRINUSE/.test(stderr) ? "retry" : "failed")
+      })
+    })
+
+    if (startup === "running") {
+      return { proc, base: `http://${host}:${port}` }
+    }
+    if (startup === "retry") {
+      lastError = new Error(`server port ${port} was claimed before bind`)
+      continue
+    }
+
+    lastError = new Error(stderr.trim() || `server exited during startup on port ${port}`)
+    break
   }
-  if (!("BEERENGINEER_PUBLIC_BASE_URL" in env)) delete childEnv.BEERENGINEER_PUBLIC_BASE_URL
-  if (!("BEERENGINEER_PREVIEW_HOST" in env)) delete childEnv.BEERENGINEER_PREVIEW_HOST
-  const proc = spawn(process.execPath, ["--import", "tsx", serverPath], {
-    env: childEnv,
-    stdio: ["ignore", "pipe", "pipe"],
-  })
-  proc.stderr?.on("data", () => {})
-  proc.stdout?.on("data", () => {})
-  return { proc, base: `http://${host}:${port}` }
+
+  throw lastError ?? new Error("failed to start test server")
 }
 
 async function waitForHealth(base: string, timeoutMs = 5000): Promise<void> {
