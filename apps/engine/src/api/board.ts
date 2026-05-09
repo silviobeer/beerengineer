@@ -277,7 +277,7 @@ export function getBoard(db: Db, workspaceKey?: string | null): BoardDTO {
           visibleActionsFreshness: VISIBLE_ACTION_FACTS_FRESHNESS,
           dbRelevance: {
             value: Boolean(supabaseBranch),
-            source: "detector" as const,
+            source: "detector",
             reason: supabaseBranch ? "Supabase branch provisioned" : "No Supabase branch provisioned",
           },
           supabaseBranch,
