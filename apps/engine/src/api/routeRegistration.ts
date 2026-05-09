@@ -203,7 +203,7 @@ async function handleRouteMatchers(
 
 async function handlePreCsrfRoutes(context: RouteContext, deps: ApiRouteDependencies): Promise<boolean> {
   if (context.path !== "/webhooks/telegram" || context.req.method !== "POST") return false
-  handleTelegramChatToolWebhook(deps.repos, context.appConfig, context.req, context.res)
+  await handleTelegramChatToolWebhook(deps.repos, context.appConfig, context.req, context.res)
   return true
 }
 
@@ -229,7 +229,7 @@ async function handleTopLevelRoutes(context: RouteContext, deps: ApiRouteDepende
 async function handleNotificationRoutes(context: RouteContext, deps: ApiRouteDependencies): Promise<boolean> {
   const notificationTestMatch = /^\/notifications\/test\/([^/]+)$/.exec(context.path)
   if (notificationTestMatch && context.req.method === "POST") {
-    handleNotificationTest(deps.repos, deps.loadEffectiveConfig, context.res, notificationTestMatch[1])
+    await handleNotificationTest(deps.repos, deps.loadEffectiveConfig, context.res, notificationTestMatch[1])
     return true
   }
   if (context.path === "/notifications/deliveries" && context.req.method === "GET") {
@@ -254,34 +254,34 @@ async function handleSetupRoutes(context: RouteContext): Promise<boolean> {
 
 async function handleWorkspaceCollectionRoutes(context: RouteContext, deps: ApiRouteDependencies): Promise<boolean> {
   const { path, req, res, url } = context
-  if (path === "/workspaces/preview" && req.method === "GET") { handleWorkspacePreview(deps.repos, deps.loadEffectiveConfig, url, res); return true }
+  if (path === "/workspaces/preview" && req.method === "GET") { await handleWorkspacePreview(deps.repos, deps.loadEffectiveConfig, url, res); return true }
   if (path === "/workspaces" && req.method === "GET") { handleWorkspaceList(deps.repos, res); return true }
-  if (path === "/workspaces" && req.method === "POST") { handleWorkspaceAdd(deps.repos, deps.loadEffectiveConfig, req, res); return true }
-  if (path === "/workspaces/backfill" && req.method === "POST") { handleWorkspaceBackfill(deps.repos, res); return true }
+  if (path === "/workspaces" && req.method === "POST") { await handleWorkspaceAdd(deps.repos, deps.loadEffectiveConfig, req, res); return true }
+  if (path === "/workspaces/backfill" && req.method === "POST") { await handleWorkspaceBackfill(deps.repos, res); return true }
   return false
 }
 
 async function handleWorkspaceSupabaseRoutes(context: RouteContext, deps: ApiRouteDependencies): Promise<boolean> {
   const { path, req, res, url } = context
   const supabaseMatch = /^\/workspaces\/([^/]+)\/supabase\/(readiness|connect|rotate|branch)$/.exec(path)
-  if (!supabaseMatch) return false
-
-  const [, key, sub] = supabaseMatch
-  if (sub === "readiness" && req.method === "GET") {
-    await handleWorkspaceSupabaseReadiness(deps.repos, res, key, url.searchParams.get("runId"))
-    return true
-  }
-  if (sub === "connect" && req.method === "POST") {
-    await handleWorkspaceSupabaseConnect(deps.repos, req, res, key)
-    return true
-  }
-  if (sub === "rotate" && req.method === "POST") {
-    await handleWorkspaceSupabaseRotate(deps.repos, req, res, key)
-    return true
-  }
-  if (sub === "branch" && req.method === "POST") {
-    await handleWorkspaceSupabaseBranch(deps.repos, req, res, key)
-    return true
+  if (supabaseMatch) {
+    const [, key, sub] = supabaseMatch
+    if (sub === "readiness" && req.method === "GET") {
+      await handleWorkspaceSupabaseReadiness(deps.repos, res, key, url.searchParams.get("runId"))
+      return true
+    }
+    if (sub === "connect" && req.method === "POST") {
+      await handleWorkspaceSupabaseConnect(deps.repos, req, res, key)
+      return true
+    }
+    if (sub === "rotate" && req.method === "POST") {
+      await handleWorkspaceSupabaseRotate(deps.repos, req, res, key)
+      return true
+    }
+    if (sub === "branch" && req.method === "POST") {
+      await handleWorkspaceSupabaseBranch(deps.repos, req, res, key)
+      return true
+    }
   }
   return false
 }
@@ -289,15 +289,15 @@ async function handleWorkspaceSupabaseRoutes(context: RouteContext, deps: ApiRou
 async function handleWorkspaceDetailRoutes(context: RouteContext, deps: ApiRouteDependencies): Promise<boolean> {
   const { path, req, res, url } = context
   const workspaceMatch = /^\/workspaces\/([^/]+)(?:\/(open))?$/.exec(path)
-  if (!workspaceMatch) return false
-
-  const [, key, sub] = workspaceMatch
-  if (sub === undefined) {
-    if (req.method === "GET") { handleWorkspaceGet(deps.repos, res, key); return true }
-    if (req.method === "DELETE") { handleWorkspaceRemove(deps.repos, deps.loadEffectiveConfig, url, res, key); return true }
-    return false
+  if (workspaceMatch) {
+    const [, key, sub] = workspaceMatch
+    if (sub === undefined) {
+      if (req.method === "GET") { handleWorkspaceGet(deps.repos, res, key); return true }
+      if (req.method === "DELETE") { handleWorkspaceRemove(deps.repos, deps.loadEffectiveConfig, url, res, key); return true }
+      return false
+    }
+    if (sub === "open" && req.method === "POST") { handleWorkspaceOpen(deps.repos, res, key); return true }
   }
-  if (sub === "open" && req.method === "POST") { handleWorkspaceOpen(deps.repos, res, key); return true }
   return false
 }
 
