@@ -311,7 +311,7 @@ export function SSEConnectionManager({
     let es: EventSourceLike | null = null;
     try {
       es = factoryRef.current(
-        `/api/events?workspace=${encodeURIComponent(workspaceKey)}&level=1`,
+        `/api/events?workspace=${encodeURIComponent(workspaceKey)}&level=${currentRunId ? 1 : 2}`,
       );
     } catch {
       goOffline();
@@ -554,7 +554,7 @@ export function SSEConnectionManager({
         /* ignore */
       }
     };
-  }, [workspaceKey, applyItemUpdate, goOffline, goOnline]);
+  }, [workspaceKey, currentRunId, applyItemUpdate, goOffline, goOnline]);
 
   // Run-scoped SSE — same canonical vocabulary as workspace SSE.
   // Default engine level is 2 (milestones-only); request level=1 so we get
