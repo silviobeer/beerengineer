@@ -57,6 +57,12 @@ export function presentMessageEntry(entry: MessageEntry): MessagePresentation {
       return { icon: "💥", label: "run failed", detail: payloadString(entry.payload.summary) }
     case "run_blocked":
       return { icon: "🧱", label: "run blocked", detail: payloadString(entry.payload.summary) }
+    case "startup_recovery":
+      return {
+        icon: "♻",
+        label: "startup recovery",
+        detail: [payloadString(entry.payload.outcome), payloadString(entry.payload.reason, "")].filter(Boolean).join(" / "),
+      }
     case "phase_started":
       return { icon: "→", label: "stage entered", detail: payloadString(entry.payload.stageKey) }
     case "phase_completed":

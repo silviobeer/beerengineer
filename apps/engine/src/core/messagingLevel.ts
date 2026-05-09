@@ -7,6 +7,7 @@ export type CanonicalMessageType =
   | "run_finished"
   | "run_failed"
   | "run_blocked"
+  | "startup_recovery"
   | "run_resumed"
   | "phase_started"
   | "phase_completed"
@@ -68,6 +69,8 @@ export function levelOf(event: WorkflowEvent): LevelInfo {
       return { level: 2, force: true, type: "run_failed" }
     case "run_blocked":
       return { level: 2, force: true, type: "run_blocked" }
+    case "startup_recovery":
+      return { level: 2, force: event.outcome === "failed", type: "startup_recovery" }
     case "run_resumed":
       return { level: 2, force: false, type: "run_resumed" }
     case "external_remediation_recorded":

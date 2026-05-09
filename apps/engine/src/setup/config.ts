@@ -115,6 +115,9 @@ export function defaultAppConfig(): AppConfig {
         enabled: false,
       },
     },
+    recovery: {
+      startupAutoResume: true,
+    },
     browser: {
       enabled: false,
     },
@@ -245,6 +248,7 @@ function validateConfig(input: unknown): AppConfig {
   const defaultHarnessProfile = validateHarnessProfileShape((config.llm as AppConfig["llm"]).defaultHarnessProfile)
   const notifications = validateNotificationsConfig(config.notifications)
   const gitIdentityDefault = validateGitIdentityDefault(config.gitIdentityDefault)
+  const recovery = validateRecoveryConfig(config.recovery)
   return {
     schemaVersion: CONFIG_SCHEMA_VERSION,
     dataDir: core.dataDir,
@@ -265,6 +269,7 @@ function validateConfig(input: unknown): AppConfig {
         enabled: config.vcs?.github?.enabled === true,
       },
     },
+    recovery,
     browser: {
       enabled: config.browser?.enabled === true,
     },
@@ -358,6 +363,15 @@ function validateNotificationsConfig(notifications: AppConfig["notifications"] |
         webhookSecretEnv: telegram.webhookSecretEnv,
       },
     },
+  }
+}
+
+function validateRecoveryConfig(recovery: AppConfig["recovery"] | undefined): AppConfig["recovery"] {
+  if (recovery !== undefined && !isObject(recovery)) {
+    throw new TypeError("recovery must be an object when set")
+  }
+  return {
+    startupAutoResume: validateOptionalBoolean(recovery?.startupAutoResume, "recovery.startupAutoResume") ?? true,
   }
 }
 
@@ -490,6 +504,9 @@ export function resolveMergedConfig(state: ConfigFileState, overrides: SetupOver
       github: {
         enabled: overrides.githubEnabled ?? base.vcs?.github?.enabled ?? false,
       },
+    },
+    recovery: {
+      startupAutoResume: base.recovery?.startupAutoResume ?? true,
     },
     browser: {
       enabled: overrides.browserEnabled ?? base.browser?.enabled ?? false,

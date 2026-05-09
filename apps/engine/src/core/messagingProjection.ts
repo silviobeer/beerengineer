@@ -208,6 +208,16 @@ const STAGE_LOG_EVENT_PARSERS: Record<string, StageLogEventParser> = {
     cause: typeof data.cause === "string" ? data.cause : "",
     summary: row.message,
   }),
+  startup_recovery: (row, data) => ({
+    type: "startup_recovery",
+    runId: row.run_id,
+    outcome: data.outcome === "auto_resumed" || data.outcome === "failed" ? data.outcome : "skipped",
+    reason:
+      data.reason === "open_prompt" || data.reason === "auto_resume_disabled" || data.reason === "auto_resume_failed"
+        ? data.reason
+        : null,
+    error: typeof data.error === "string" ? data.error : undefined,
+  }),
   external_remediation_recorded: (row, data) => ({
     type: "external_remediation_recorded",
     runId: row.run_id,

@@ -90,7 +90,7 @@ import { seedIfEmpty } from "./seed.js"
 import { writeApiTokenFile } from "./tokenFile.js"
 import { removeEnginePidFile, writeEnginePidFile } from "./pidFile.js"
 import { recoverApiRunsForShutdown, recoverLostWorkerRuns } from "../core/orphanRecovery.js"
-import { API_WORKER_INSTANCE_ID } from "../core/runService.js"
+import { API_WORKER_INSTANCE_ID, autoResumeRunOnStartup } from "../core/runService.js"
 import { pruneMissingWorktreeAssignments } from "../core/portAllocator.js"
 import { markPreparedUpdateInFlight, releaseUpdateLock, type UpdateApplyResult } from "../core/updateMode.js"
 import { readActiveSecretValue } from "../setup/secretStore.js"
@@ -215,13 +215,44 @@ function loadEffectiveConfig(): AppConfig {
     ?? defaultAppConfig()
 }
 
+function parseStartupAutoResumeOverride(value: string | undefined): boolean | null {
+  if (!value) return null
+  const normalized = value.trim().toLowerCase()
+  if (["1", "true", "yes", "on"].includes(normalized)) return true
+  if (["0", "false", "no", "off"].includes(normalized)) return false
+  return null
+}
+
+function startupAutoResumeEnabled(config: AppConfig): boolean {
+  const override = parseStartupAutoResumeOverride(process.env.BEERENGINEER_STARTUP_AUTO_RESUME)
+  if (override !== null) return override
+  return config.recovery?.startupAutoResume !== false
+}
+
 seedIfEmpty(db, repos)
 
 // On every fresh process start, any run still in status='running' has no live
 // worker — the previous process died mid-flight. Mark them failed so
 // POST /runs/:id/resume accepts them without a manual DB patch.
 try {
-  await recoverLostWorkerRuns(repos, { apiWorkerInstanceId: API_WORKER_INSTANCE_ID })
+  const config = loadEffectiveConfig()
+  await recoverLostWorkerRuns(repos, {
+    apiWorkerInstanceId: API_WORKER_INSTANCE_ID,
+    autoResume: {
+      enabled: startupAutoResumeEnabled(config),
+      resumeRun: async run => {
+        const result = await autoResumeRunOnStartup(repos, {
+          runId: run.id,
+          summary: "Startup auto-resumed the stale run after confirming no human input is pending.",
+          apiWorkerInstanceId: API_WORKER_INSTANCE_ID,
+          onItemColumnChanged: payload => board.broadcastItemColumnChanged(payload),
+        })
+        if (!result.ok) {
+          throw new Error(result.error)
+        }
+      },
+    },
+  })
 } catch (err) {
   console.error("[orphanRecovery] startup scan failed:", (err as Error).message)
 }

@@ -21,6 +21,7 @@
 
 import type { Repos, RunRow } from "../db/repositories.js"
 import { mapStageToColumn } from "./boardColumns.js"
+import type { StartupRecoveryOutcome as StartupRecoveryOutcomeKind, StartupRecoveryReason } from "./io.js"
 import { STALE_WORKER_HEARTBEAT_MS } from "./workerLease.js"
 
 export type OrphanRecoveryResult = {
@@ -28,6 +29,19 @@ export type OrphanRecoveryResult = {
   recovered: number
   /** Run ids recovered during this pass, in scan order. */
   recoveredRunIds: string[]
+  /** Startup recovery outcome recorded for each processed stale run. */
+  outcomes: StartupRecoveryOutcome[]
+}
+
+export type StartupRecoveryOutcome = {
+  runId: string
+  outcome: StartupRecoveryOutcomeKind
+  reason: StartupRecoveryReason | null
+}
+
+type StartupAutoResumeOptions = {
+  enabled: boolean
+  resumeRun: (run: RunRow) => Promise<void>
 }
 
 const RECOVERY_SUMMARY =
@@ -84,16 +98,73 @@ function recoverySummary(run: RunRow): string {
   return "CLI worker heartbeat is stale — no live worker; resume or abandon."
 }
 
+function startupRecoveryMessage(outcome: StartupRecoveryOutcome, error?: string): string {
+  if (outcome.outcome === "auto_resumed") {
+    return "Startup recovery auto-resumed the stale run."
+  }
+  if (outcome.reason === "open_prompt") {
+    return "Startup recovery left the stale run on manual recovery because a prompt is still open."
+  }
+  if (outcome.reason === "auto_resume_disabled") {
+    return "Startup recovery left the stale run on manual recovery because auto-resume is disabled."
+  }
+  return `Startup recovery auto-resume failed; the run remains on manual recovery.${error ? ` ${error}` : ""}`
+}
+
+function appendStartupRecoveryLog(
+  repos: Repos,
+  outcome: StartupRecoveryOutcome,
+  error?: string,
+): void {
+  repos.appendLog({
+    runId: outcome.runId,
+    eventType: "startup_recovery",
+    message: startupRecoveryMessage(outcome, error),
+    data: {
+      outcome: outcome.outcome,
+      reason: outcome.reason,
+      ...(error ? { error } : {}),
+    },
+  })
+}
+
 export async function recoverLostWorkerRuns(
   repos: Repos,
-  input: { apiWorkerInstanceId: string; now?: number },
+  input: { apiWorkerInstanceId: string; now?: number; autoResume?: StartupAutoResumeOptions },
 ): Promise<OrphanRecoveryResult> {
   const now = input.now ?? Date.now()
   const recoveredRunIds: string[] = []
+  const outcomes: StartupRecoveryOutcome[] = []
   for (const run of repos.listRunningRuns()) {
     if (!shouldRecoverLostWorker(run, { apiWorkerInstanceId: input.apiWorkerInstanceId, now })) continue
     markRunFailedRecoverable(repos, run.id, recoverySummary(run))
     recoveredRunIds.push(run.id)
+    if (!input.autoResume) continue
+
+    if (repos.getOpenPrompt(run.id)) {
+      const outcome = { runId: run.id, outcome: "skipped", reason: "open_prompt" } satisfies StartupRecoveryOutcome
+      outcomes.push(outcome)
+      appendStartupRecoveryLog(repos, outcome)
+      continue
+    }
+    if (!input.autoResume.enabled) {
+      const outcome = { runId: run.id, outcome: "skipped", reason: "auto_resume_disabled" } satisfies StartupRecoveryOutcome
+      outcomes.push(outcome)
+      appendStartupRecoveryLog(repos, outcome)
+      continue
+    }
+
+    try {
+      await input.autoResume.resumeRun(repos.getRun(run.id) ?? run)
+      const outcome = { runId: run.id, outcome: "auto_resumed", reason: null } satisfies StartupRecoveryOutcome
+      outcomes.push(outcome)
+      appendStartupRecoveryLog(repos, outcome)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      const outcome = { runId: run.id, outcome: "failed", reason: "auto_resume_failed" } satisfies StartupRecoveryOutcome
+      outcomes.push(outcome)
+      appendStartupRecoveryLog(repos, outcome, message)
+    }
   }
 
   if (recoveredRunIds.length > 0) {
@@ -102,7 +173,7 @@ export async function recoverLostWorkerRuns(
     )
   }
 
-  return { recovered: recoveredRunIds.length, recoveredRunIds }
+  return { recovered: recoveredRunIds.length, recoveredRunIds, outcomes }
 }
 
 export async function recoverApiRunsForShutdown(
@@ -124,7 +195,7 @@ export async function recoverApiRunsForShutdown(
     )
   }
 
-  return { recovered: recoveredRunIds.length, recoveredRunIds }
+  return { recovered: recoveredRunIds.length, recoveredRunIds, outcomes: [] }
 }
 
 /**
