@@ -1,5 +1,6 @@
 import type { AppConfigView, GitReadiness, SetupReport } from "./types";
 import { engineBaseUrl } from "@/lib/engine/baseUrl";
+import { resolveWorkspaceScopedGitReadinessId } from "@/lib/setupDisplayModes";
 
 async function readJson<T>(path: string): Promise<{ data: T | null; error: string | null }> {
   try {
@@ -37,15 +38,9 @@ type WorkspaceLookup = {
   root_path?: string | null;
 };
 
-function usableRootPath(workspace: WorkspaceLookup | null): boolean {
-  const rootPath = workspace?.rootPath ?? workspace?.root_path;
-  return typeof rootPath === "string" && rootPath.trim().length > 0;
-}
-
 export async function resolveSetupGitReadinessWorkspaceId(configView: AppConfigView | null): Promise<string | undefined> {
-  const workspace = configView?.workspace;
-  if (!workspace?.id || !workspace.key) return undefined;
-  const result = await readJson<WorkspaceLookup>(`/workspaces/${encodeURIComponent(workspace.key)}`);
-  if (!usableRootPath(result.data)) return undefined;
-  return workspace.id;
+  return resolveWorkspaceScopedGitReadinessId(
+    configView,
+    async (workspaceKey) => (await readJson<WorkspaceLookup>(`/workspaces/${encodeURIComponent(workspaceKey)}`)).data,
+  );
 }

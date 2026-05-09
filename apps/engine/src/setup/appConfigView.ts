@@ -1,14 +1,18 @@
 import {
+  defaultAppConfig,
   readConfigFile,
   resolveConfigPath,
   resolveMergedConfig,
   resolveOverrides,
 } from "./config.js"
+import { existsSync } from "node:fs"
 import { readActiveSecretValue } from "./secretStore.js"
 import type { Repos } from "../db/repositories.js"
 import { SUPABASE_MANAGEMENT_TOKEN_SECRET_REF, readSecretMetadata } from "./secretMetadata.js"
 import type { AppConfig, ConfigFileState, SetupOverrides } from "./types.js"
 import { resolveTelegramInboundStatus, type TelegramInboundStatusView } from "./telegramInboundStatus.js"
+import { createSetupDisplayFact, type SetupDisplayFact } from "./displayModes.js"
+import { isInsideAllowedRoot } from "../core/workspaces/shared.js"
 
 export type SecretRefView = {
   ref: string
@@ -45,6 +49,10 @@ export type AppConfigView = {
       retainedBranchCount: number
       planLimitRatio: number
     }
+  }
+  setupDisplayModes: {
+    workspacePresence: SetupDisplayFact
+    secretsStub: SetupDisplayFact
   }
   config: {
     allowedRoots: string[]
@@ -101,6 +109,10 @@ export function getAppConfigView(
       workspace,
       telegramInbound,
       supabase,
+      setupDisplayModes: {
+        workspacePresence: workspacePresenceView(currentWorkspaceRow(deps.repos, deps.workspaceKey), null),
+        secretsStub: secretsStubView(null, setupState),
+      },
       config: emptyConfigView(),
     }
   }
@@ -112,6 +124,10 @@ export function getAppConfigView(
     workspace,
     telegramInbound,
     supabase,
+    setupDisplayModes: {
+      workspacePresence: workspacePresenceView(currentWorkspaceRow(deps.repos, deps.workspaceKey), config),
+      secretsStub: secretsStubView(config, setupState),
+    },
     config: configView(config),
   }
 }
@@ -214,6 +230,77 @@ function fileStateView(state: ConfigFileState): AppConfigView["configFile"] {
 
 function secretRef(ref: string): SecretRefView {
   return { ref, present: Boolean(process.env[ref]) || readActiveSecretValue(ref) !== null }
+}
+
+function workspacePresenceView(
+  workspace: ReturnType<typeof currentWorkspaceRow>,
+  config: AppConfig | null,
+): SetupDisplayFact {
+  const invalidatedBy = ["setup_recheck", "workspace_changed"]
+  if (!workspace) {
+    return createSetupDisplayFact(
+      "informational",
+      "No workspace is selected yet. Setup can continue with app-level defaults until a workspace is opened.",
+      invalidatedBy,
+    )
+  }
+
+  const rootPath = workspace.root_path?.trim()
+  if (!rootPath) {
+    return createSetupDisplayFact(
+      "action-required",
+      `Workspace ${workspace.key} does not have a usable local root path. Re-open or re-register it before repo-local readiness can run.`,
+      invalidatedBy,
+    )
+  }
+
+  if (!existsSync(rootPath)) {
+    return createSetupDisplayFact(
+      "action-required",
+      `Workspace ${workspace.key} is unavailable on disk. Re-open or repair the workspace registration before repo-local readiness can run.`,
+      invalidatedBy,
+    )
+  }
+
+  if (config && !isInsideAllowedRoot(rootPath, config.allowedRoots)) {
+    return createSetupDisplayFact(
+      "action-required",
+      `Workspace ${workspace.key} is outside the configured allowed roots. Update allowed roots or reopen the workspace from an allowed path.`,
+      invalidatedBy,
+    )
+  }
+
+  return createSetupDisplayFact(
+    "ready",
+    `Workspace ${workspace.key} is available for repo-local readiness checks.`,
+    invalidatedBy,
+  )
+}
+
+function secretsStubView(config: AppConfig | null, setupState: AppConfigSetupState): SetupDisplayFact {
+  const invalidatedBy = ["setup_recheck", "secret_metadata_changed"]
+  const apiKeyRef = config?.llm.apiKeyRef ?? defaultAppConfig().llm.apiKeyRef
+  if (setupState === "uninitialized") {
+    return createSetupDisplayFact(
+      "informational",
+      "Initialize app state before managing workflow secrets.",
+      invalidatedBy,
+    )
+  }
+
+  if (secretRef(apiKeyRef).present) {
+    return createSetupDisplayFact(
+      "ready",
+      `${apiKeyRef} is already available for workflow runs.`,
+      invalidatedBy,
+    )
+  }
+
+  return createSetupDisplayFact(
+    "action-required",
+    `Add ${apiKeyRef} before starting workflow runs.`,
+    invalidatedBy,
+  )
 }
 
 function emptyConfigView(): AppConfigView["config"] {
