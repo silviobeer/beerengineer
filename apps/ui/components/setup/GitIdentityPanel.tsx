@@ -105,15 +105,24 @@ function GitMissingStub({
   onRecheck,
 }: Readonly<{ readiness: GitReadiness; busy: boolean; onRecheck: () => void }>) {
   return (
-    <div className="space-y-3 border border-zinc-800 bg-zinc-950/40 p-4" data-testid="git-missing-stub">
-      <h3 className="font-display text-lg text-zinc-100">Git is not configured</h3>
-      <p className="text-sm text-zinc-400">{readiness.blocker?.message ?? "Install Git before configuring an identity."}</p>
-      <p className="text-sm text-zinc-400">Install Git, then re-check this setup step.</p>
+    <div
+      className="space-y-3 border p-4"
+      data-testid="git-missing-stub"
+      style={{ borderColor: "var(--color-zinc-800)", backgroundColor: "var(--color-zinc-950)" }}
+    >
+      <h3 className="font-display text-lg" style={{ color: "var(--color-zinc-100)" }}>Git is not configured</h3>
+      <p className="text-sm" style={{ color: "var(--color-zinc-400)" }}>{readiness.blocker?.message ?? "Install Git before configuring an identity."}</p>
+      <p className="text-sm" style={{ color: "var(--color-zinc-400)" }}>Install Git, then re-check this setup step.</p>
       <button
         type="button"
         onClick={onRecheck}
         disabled={busy}
-        className="border border-amber-500 bg-amber-500 px-3 py-2 text-sm font-medium text-zinc-950 disabled:opacity-50"
+        className="border px-3 py-2 text-sm font-medium disabled:opacity-50"
+        style={{
+          borderColor: "var(--color-amber-500)",
+          backgroundColor: "var(--color-amber-500)",
+          color: "var(--color-zinc-950)",
+        }}
       >
         {busy ? "Checking" : "Re-check Git"}
       </button>
@@ -142,10 +151,10 @@ function GitReadinessNotes({ readiness }: Readonly<{ readiness: GitReadiness }>)
   return (
     <>
       {hasRepoLocalIdentity ? (
-        <p className="text-sm text-emerald-300">Repo-local identity is respected and remains authoritative for this workspace.</p>
+        <p className="text-sm" style={{ color: "var(--color-emerald-300)" }}>Repo-local identity is respected and remains authoritative for this workspace.</p>
       ) : null}
       {usesGlobalIdentity ? (
-        <p className="text-sm text-emerald-300">Global Git identity is ready for workflows when no repo-local identity is set.</p>
+        <p className="text-sm" style={{ color: "var(--color-emerald-300)" }}>Global Git identity is ready for workflows when no repo-local identity is set.</p>
       ) : null}
     </>
   );
@@ -169,8 +178,12 @@ function WorkspaceRepairSection({
   onSubmit: (identity: { displayName: string; email: string }) => Promise<void>;
 }>) {
   return (
-    <div className="space-y-3 border border-zinc-800 bg-zinc-950/40 p-4" data-testid="git-workspace-repair">
-      <label className="flex items-start gap-2 text-sm text-zinc-300">
+    <div
+      className="space-y-3 border p-4"
+      data-testid="git-workspace-repair"
+      style={{ borderColor: "var(--color-zinc-800)", backgroundColor: "var(--color-zinc-950)" }}
+    >
+      <label className="flex items-start gap-2 text-sm" style={{ color: "var(--color-zinc-300)" }}>
         <input
           type="checkbox"
           className="mt-1"
@@ -323,17 +336,32 @@ export function GitIdentityPanel({ initialReadiness, workspace = null, error: in
 
   if (!readiness) {
     return (
-      <section className="space-y-3 border border-zinc-800 bg-zinc-900 p-5" data-testid="git-identity-panel">
+      <section
+        className="space-y-3 border p-5"
+        data-testid="git-identity-panel"
+        style={{ borderColor: "var(--color-zinc-800)", backgroundColor: "var(--color-zinc-900)" }}
+      >
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="font-mono text-xs uppercase text-zinc-400">Git step</p>
-            <h2 className="font-display text-xl text-zinc-100">Git identity readiness</h2>
+            <p className="font-mono text-xs uppercase" style={{ color: "var(--color-zinc-400)" }}>Git step</p>
+            <h2 className="font-display text-xl" style={{ color: "var(--color-zinc-100)" }}>Git identity readiness</h2>
           </div>
           <StatusChip state={statusForDisplayMode(displayMode)} />
         </div>
-        <p className="text-sm text-zinc-400">{message ?? "Git readiness is unavailable."}</p>
-        <p className="font-mono text-[11px] uppercase text-zinc-500" data-testid="git-identity-freshness">{freshnessText(displayMode)}</p>
-        <button type="button" onClick={recheck} className="border border-amber-500 bg-amber-500 px-3 py-2 text-sm font-medium text-zinc-950">
+        <p className="text-sm" style={{ color: "var(--color-zinc-400)" }}>{message ?? "Git readiness is unavailable."}</p>
+        <p className="font-mono text-[11px] uppercase" data-testid="git-identity-freshness" style={{ color: "var(--color-zinc-500)" }}>
+          {freshnessText(displayMode)}
+        </p>
+        <button
+          type="button"
+          onClick={recheck}
+          className="border px-3 py-2 text-sm font-medium"
+          style={{
+            borderColor: "var(--color-amber-500)",
+            backgroundColor: "var(--color-amber-500)",
+            color: "var(--color-zinc-950)",
+          }}
+        >
           Re-check Git
         </button>
       </section>
@@ -341,29 +369,39 @@ export function GitIdentityPanel({ initialReadiness, workspace = null, error: in
   }
 
   return (
-    <section className="space-y-5 border border-zinc-800 bg-zinc-900 p-5" data-testid="git-identity-panel">
+    <section
+      className="space-y-5 border p-5"
+      data-testid="git-identity-panel"
+      style={{ borderColor: "var(--color-zinc-800)", backgroundColor: "var(--color-zinc-900)" }}
+    >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 space-y-2">
-          <p className="font-mono text-xs uppercase text-zinc-400">Git step</p>
-          <h2 className="font-display text-xl text-zinc-100">Git identity readiness</h2>
-          <p className="max-w-3xl text-sm text-zinc-300">
+          <p className="font-mono text-xs uppercase" style={{ color: "var(--color-zinc-400)" }}>Git step</p>
+          <h2 className="font-display text-xl" style={{ color: "var(--color-zinc-100)" }}>Git identity readiness</h2>
+          <p className="max-w-3xl text-sm" style={{ color: "var(--color-zinc-300)" }}>
             beerengineer_ uses local Git commit checkpoints so workflows can recover cleanly. This setup does not create GitHub remotes, push branches, or open pull requests.
           </p>
-          <p className="font-mono text-[11px] uppercase text-zinc-500" data-testid="git-identity-freshness">{freshnessText(displayMode)}</p>
+          <p className="font-mono text-[11px] uppercase" data-testid="git-identity-freshness" style={{ color: "var(--color-zinc-500)" }}>
+            {freshnessText(displayMode)}
+          </p>
         </div>
         <StatusChip state={statusForDisplayMode(displayMode)} />
       </div>
 
       {displayMode.mode === "informational" ? (
-        <div className="space-y-3 border border-zinc-800 bg-zinc-950/40 p-4" data-testid="git-informational-stub">
-          <h3 className="font-display text-lg text-zinc-100">Git readiness information</h3>
-          <p className="text-sm text-zinc-400">{displayMode.detail}</p>
+        <div
+          className="space-y-3 border p-4"
+          data-testid="git-informational-stub"
+          style={{ borderColor: "var(--color-zinc-800)", backgroundColor: "var(--color-zinc-950)" }}
+        >
+          <h3 className="font-display text-lg" style={{ color: "var(--color-zinc-100)" }}>Git readiness information</h3>
+          <p className="text-sm" style={{ color: "var(--color-zinc-400)" }}>{displayMode.detail}</p>
         </div>
       ) : readiness.git.installed ? (
         <>
           <GitReadinessRows readiness={readiness} />
           <GitReadinessNotes readiness={readiness} />
-          {message ? <p role={messageRole(message)} className="text-sm text-amber-200">{message}</p> : null}
+          {message ? <p role={messageRole(message)} className="text-sm" style={{ color: "var(--color-amber-300)" }}>{message}</p> : null}
           <GitIdentityForm
             title="beerengineer_ default identity"
             description="Save this in beerengineer_ config only. Global Git config is not changed."
@@ -394,9 +432,12 @@ export function GitIdentityPanel({ initialReadiness, workspace = null, error: in
 
 function IdentityRow({ label, value }: Readonly<{ label: string; value: string }>) {
   return (
-    <div className="min-w-0 border border-zinc-800 bg-zinc-950/40 p-3">
-      <p className="font-mono text-xs uppercase text-zinc-500">{label}</p>
-      <p className="text-sm text-zinc-200" style={{ overflowWrap: "anywhere" }}>{value}</p>
+    <div
+      className="min-w-0 border p-3"
+      style={{ borderColor: "var(--color-zinc-800)", backgroundColor: "var(--color-zinc-950)" }}
+    >
+      <p className="font-mono text-xs uppercase" style={{ color: "var(--color-zinc-500)" }}>{label}</p>
+      <p className="text-sm" style={{ overflowWrap: "anywhere", color: "var(--color-zinc-200)" }}>{value}</p>
     </div>
   );
 }

@@ -110,6 +110,7 @@ export function fallbackWorkspacePresenceDisplayFact(configView: AppConfigView |
 export function fallbackSecretsStubDisplayFact(configView: AppConfigView | null | undefined): SetupDisplayFact {
   const apiKeyRef = configView?.config.llm.apiKey.ref ?? "ANTHROPIC_API_KEY";
   const setupState = configView?.setupState ?? "uninitialized";
+  const secretPresent = configView?.config.llm.apiKey.present === true;
   if (setupState === "uninitialized") {
     return {
       mode: "informational",
@@ -121,8 +122,8 @@ export function fallbackSecretsStubDisplayFact(configView: AppConfigView | null 
     };
   }
   return {
-    mode: configView?.config.llm.apiKey.present ? "ready" : "action-required",
-    detail: configView?.config.llm.apiKey.present
+    mode: secretPresent ? "ready" : "action-required",
+    detail: secretPresent
       ? `${apiKeyRef} is already available for workflow runs.`
       : `Add ${apiKeyRef} before starting workflow runs.`,
     freshness: {
@@ -135,8 +136,7 @@ export function fallbackSecretsStubDisplayFact(configView: AppConfigView | null 
 export function workspaceScopedGitReadinessId(configView: AppConfigView | null | undefined): string | undefined {
   const mode = configView?.setupDisplayModes?.workspacePresence?.mode;
   if (mode === "ready") return configView?.workspace?.id;
-  if (isSetupDisplayMode(mode)) return undefined;
-  return configView?.workspace?.id;
+  return undefined;
 }
 
 type WorkspaceLookup = {

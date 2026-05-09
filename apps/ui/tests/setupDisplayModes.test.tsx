@@ -100,18 +100,18 @@ describe("setup display modes", () => {
       ...initialConfig,
       setupDisplayModes: {
         workspacePresence: {
-          mode: "action-required" as const,
+          mode: "action-required",
           detail: "Workspace demo is unavailable on disk.",
           freshness: {
-            strategy: "per_request" as const,
+            strategy: "per_request",
             invalidatedBy: ["setup_recheck", "workspace_changed"],
           },
         },
         secretsStub: {
-          mode: "action-required" as const,
+          mode: "action-required",
           detail: "Add ANTHROPIC_API_KEY before starting workflow runs.",
           freshness: {
-            strategy: "per_request" as const,
+            strategy: "per_request",
             invalidatedBy: ["setup_recheck", "secret_metadata_changed"],
           },
         },

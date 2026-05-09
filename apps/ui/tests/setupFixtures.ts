@@ -1,11 +1,11 @@
-import type { AppConfigView, GitReadiness, SetupReport, WorkspaceGitReadiness } from "@/lib/setup/types";
+import type { AppConfigView, GitReadiness, SetupDisplayFact, SetupDisplayMode, SetupReport, WorkspaceGitReadiness } from "@/lib/setup/types";
 
-function displayFact(mode: "ready" | "action-required" | "informational", detail: string, invalidatedBy: string[]) {
+function displayFact(mode: SetupDisplayMode, detail: string, invalidatedBy: string[]): SetupDisplayFact {
   return {
     mode,
     detail,
     freshness: {
-      strategy: "per_request" as const,
+      strategy: "per_request",
       invalidatedBy,
     },
   };
