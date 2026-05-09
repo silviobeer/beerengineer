@@ -30,7 +30,11 @@ export type RecoveryEventScope =
 
 export type PresentationKind = "header" | "step" | "ok" | "warn" | "dim" | "finding"
 export type StartupRecoveryOutcome = "auto_resumed" | "skipped" | "failed"
-export type StartupRecoveryReason = "open_prompt" | "auto_resume_disabled" | "auto_resume_failed"
+export type StartupRecoveryReason =
+  | "open_prompt"
+  | "worker_lease_not_orphaned"
+  | "auto_resume_disabled"
+  | "auto_resume_failed"
 
 export type WorkflowEvent =
   | ({ type: "run_started"; runId: string; itemId: string; title: string } & WorkflowEventMeta)
