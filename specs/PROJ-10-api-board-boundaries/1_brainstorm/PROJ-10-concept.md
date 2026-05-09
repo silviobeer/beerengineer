@@ -10,6 +10,7 @@ Keep the app behaving the same on the outside while making backend API compositi
 - Existing system: beerengineer_ is a local-first workflow engine with a framework-free TypeScript HTTP API, SSE, SQLite state, a Next.js UI, and a board view driven by engine projections.
 - Relevant constraints: public route URLs, response shapes, auth/token behavior, CORS behavior, SSE behavior, setup/update/Supabase behavior, and UI visuals should remain compatible.
 - Prior related specs: PROJ-8 focuses on workflow capability safety; PROJ-9 focuses on engine-owned read models so the UI stops guessing workflow facts. PROJ-10 follows by reducing internal ownership bottlenecks after those product-facing safety/read-model concepts are established.
+- PROJ-9 implementation precedent: PROJ-9 delivers `apps/engine/src/core/itemRunEntryFacts.ts` and `apps/engine/src/core/itemActions.ts` as concern-separated projector modules, consumed by `board.ts` via import. This is the pattern PROJ-10 should extend to the remaining board concerns (placement, prompts, recovery, Supabase, merge-state) — sub-projectors as named engine modules, aggregated by board.ts, aggregate DTO shape preserved.
 - Source handoff: `specs/_refactor-dreamer/RDREAM-20260507-1155-whole-repo/refactor-dreamer-report.md`, especially Opportunity 4, "Split API Composition And Board Projection Boundaries."
 
 ## Problem And Goal
@@ -164,7 +165,7 @@ This is broader than a server-only split because board projection is also a majo
 - Unauthenticated mutation attempts must remain 401 after the shell/route split (structural CSRF invariant).
 - SSE stream attach/emit/close basics, pinned to the canonical event names in `docs/messaging-levels.md` and `src/core/messagingProjection.ts` to prevent alias drift during the split.
 - Startup recovery, cleanup scheduler startup, token/pid file behavior, shutdown handling, and the prepared-apply update handoff.
-- Representative `/board` responses: no workspace, empty board, normal item states, open prompts, blocked runs, recovery messages, preview URLs, Supabase blockers, retained branches, and merge-state facts. Pre-split vs post-split projection must be byte-equal over this fixture set.
+- Representative `/board` responses: no workspace, empty board, normal item states, open prompts, blocked runs, recovery messages, preview URLs, Supabase blockers, retained branches, and merge-state facts. Pre-split vs post-split projection must be byte-equal over this fixture set. The fixture set must include the PROJ-9 fields added to `BoardCardDTO`: `chatEntry`, `chatEntryFreshness`, `messagesEntry`, `messagesEntryFreshness`, `visibleActions`, `visibleActionsFreshness`.
 - Internal board projectors tested by concern while preserving the aggregate response.
 
 ## Next Step
