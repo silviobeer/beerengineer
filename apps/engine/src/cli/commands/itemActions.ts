@@ -18,7 +18,7 @@ import {
 import { resolveWorkflowContextForItemRun } from "../../core/workflowContextResolver.js"
 import { formatSupabaseReadinessBlockedCliOutput } from "../../core/supabase/preExecutionReadiness.js"
 import { parseSupabaseReadinessRecoveryPayload } from "../../core/supabase/recoveryPayload.js"
-import type { ItemRow, Repos, WorkspaceRow } from "../../db/repositories.js"
+import type { ItemRow, Repos, RunRow, WorkspaceRow } from "../../db/repositories.js"
 import { initDatabase } from "../../db/connection.js"
 import type { ResumeFlags } from "../types.js"
 import { resolveItemReference, resolveSelectedWorkspace } from "../common.js"
@@ -59,6 +59,25 @@ function exitCodeForSignal(signal: string): number {
   return 129
 }
 
+export function shouldFailCliRunOnProcessExit(
+  run: Pick<RunRow, "status" | "owner" | "worker_owner_kind"> | undefined,
+): boolean {
+  return run?.status === "running" && (run.worker_owner_kind ?? run.owner) === "cli"
+}
+
+function toStartRunAction(action: ItemAction): StartRunAction {
+  if (
+    action === "start_brainstorm"
+    || action === "start_visual_companion"
+    || action === "start_frontend_design"
+    || action === "start_implementation"
+    || action === "rerun_design_prep"
+  ) {
+    return action
+  }
+  throw new Error(`invalid_start_run_action:${action}`)
+}
+
 function installCliRunDeathHandlers(repos: Repos, runId: string): () => void {
   let triggered = false
   const fail = (cause: string): void => {
@@ -66,7 +85,7 @@ function installCliRunDeathHandlers(repos: Repos, runId: string): () => void {
     triggered = true
     try {
       const run = repos.getRun(runId)
-      if (run?.status !== "running") return
+      if (!shouldFailCliRunOnProcessExit(run)) return
       repos.updateRun(runId, {
         status: "failed",
         recovery_status: "failed",
@@ -281,12 +300,13 @@ function latestRunWithStageArtifacts(
 }
 
 function startRunPrelude(ctx: CliItemActionContext): number {
+  const action = toStartRunAction(ctx.action)
   const transition = lookupTransitionSync(ctx.action, ctx.item.current_column, ctx.item.phase_status)
   if (transition.kind !== "start-run") {
     console.error(`  Invalid transition: ${ctx.action} from ${ctx.item.current_column}/${ctx.item.phase_status}`)
     return 1
   }
-  const gitGate = checkWorkflowStartGitReadiness(ctx.repos, ctx.item, ctx.action as StartRunAction, {
+  const gitGate = checkWorkflowStartGitReadiness(ctx.repos, ctx.item, action, {
     appConfig: ctx.appConfig,
   })
   if (!gitGate.ok) return printWorkflowGitBlocker(gitGate, ctx.itemRef)
@@ -311,11 +331,12 @@ function printBlockedResumeIfAny(ctx: CliItemActionContext, runId: string): numb
 const handleStartBrainstorm: CliItemActionHandler = async ctx => {
   const exit = startRunPrelude(ctx)
   if (exit !== 0) return exit
+  const action = toStartRunAction(ctx.action)
   const io = createCliIO(ctx.repos)
   try {
     const prepared = prepareForegroundItemRun(ctx.repos, io, {
       itemId: ctx.item.id,
-      action: ctx.action as StartRunAction,
+      action,
       owner: "cli",
       appConfig: ctx.appConfig,
     })
@@ -340,6 +361,7 @@ const handleStartBrainstorm: CliItemActionHandler = async ctx => {
 const handleStartImplementationOrRerunDesignPrep: CliItemActionHandler = async ctx => {
   const exit = startRunPrelude(ctx)
   if (exit !== 0) return exit
+  const action = toStartRunAction(ctx.action)
   const sourceRun = latestRunWithStageArtifacts(ctx.repos, ctx.item, "brainstorm")
   if (!sourceRun) {
     console.error("  Cannot start implementation: no prior brainstorm artifacts found for this item.")
@@ -350,7 +372,7 @@ const handleStartImplementationOrRerunDesignPrep: CliItemActionHandler = async c
   try {
     const prepared = prepareForegroundItemRun(ctx.repos, io, {
       itemId: ctx.item.id,
-      action: ctx.action as StartRunAction,
+      action,
       owner: "cli",
       appConfig: ctx.appConfig,
     })
@@ -375,6 +397,7 @@ const handleStartImplementationOrRerunDesignPrep: CliItemActionHandler = async c
 const handleStartVisualCompanion: CliItemActionHandler = async ctx => {
   const exit = startRunPrelude(ctx)
   if (exit !== 0) return exit
+  const action = toStartRunAction(ctx.action)
   const sourceRun = latestRunWithStageArtifacts(ctx.repos, ctx.item, "brainstorm")
   if (!sourceRun) {
     console.error("  Cannot start visual-companion: no prior brainstorm artifacts found.")
@@ -385,7 +408,7 @@ const handleStartVisualCompanion: CliItemActionHandler = async ctx => {
   try {
     const prepared = prepareForegroundItemRun(ctx.repos, io, {
       itemId: ctx.item.id,
-      action: ctx.action as StartRunAction,
+      action,
       owner: "cli",
       appConfig: ctx.appConfig,
     })
@@ -410,6 +433,7 @@ const handleStartVisualCompanion: CliItemActionHandler = async ctx => {
 const handleStartFrontendDesign: CliItemActionHandler = async ctx => {
   const exit = startRunPrelude(ctx)
   if (exit !== 0) return exit
+  const action = toStartRunAction(ctx.action)
   const sourceRun = latestRunWithStageArtifacts(ctx.repos, ctx.item, "visual-companion")
   if (!sourceRun) {
     console.error("  Cannot start frontend-design: no prior visual-companion artifacts found.")
@@ -420,7 +444,7 @@ const handleStartFrontendDesign: CliItemActionHandler = async ctx => {
   try {
     const prepared = prepareForegroundItemRun(ctx.repos, io, {
       itemId: ctx.item.id,
-      action: ctx.action as StartRunAction,
+      action,
       owner: "cli",
       appConfig: ctx.appConfig,
     })
