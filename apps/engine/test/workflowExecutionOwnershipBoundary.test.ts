@@ -69,6 +69,26 @@ function answerPrompt(prompt: string, state: PromptingState): string {
   throw new Error(`Unexpected workflow prompt: ${prompt}`)
 }
 
+function attachPromptAutoAnswers(
+  bus: ReturnType<typeof createBus>,
+  state: PromptingState,
+  events: WorkflowEvent[],
+): void {
+  let promptCount = 0
+  bus.subscribe(event => {
+    events.push(event)
+    if (event.type !== "prompt_requested") return
+
+    promptCount += 1
+    if (promptCount > 80) {
+      throw new Error(`Unexpected prompt loop after ${promptCount} prompts; last prompt: ${event.prompt}`)
+    }
+
+    const answer = answerPrompt(event.prompt, state)
+    bus.emit({ type: "prompt_answered", runId: event.runId, promptId: event.promptId, answer })
+  })
+}
+
 function makePromptingIo(): { io: ReturnType<typeof busToWorkflowIO> & { bus: ReturnType<typeof createBus> }; events: WorkflowEvent[] } {
   const state: PromptingState = {
     brainstormAnswers: [
@@ -85,22 +105,10 @@ function makePromptingIo(): { io: ReturnType<typeof busToWorkflowIO> & { bus: Re
     brainstormIdx: 0,
     requirementsIdx: 0,
   }
-  let promptCount = 0
 
   const events: WorkflowEvent[] = []
   const bus = createBus()
-  bus.subscribe(event => {
-    events.push(event)
-    if (event.type !== "prompt_requested") return
-
-    promptCount += 1
-    if (promptCount > 80) {
-      throw new Error(`Unexpected prompt loop after ${promptCount} prompts; last prompt: ${event.prompt}`)
-    }
-
-    const answer = answerPrompt(event.prompt, state)
-    bus.emit({ type: "prompt_answered", runId: event.runId, promptId: event.promptId, answer })
-  })
+  attachPromptAutoAnswers(bus, state, events)
 
   return { io: { ...busToWorkflowIO(bus), bus }, events }
 }
@@ -207,8 +215,9 @@ test("API worker claims the blocked CLI handoff before execution resumes", async
           workerOwnerKind: "api",
           workerInstanceId: input.apiWorkerInstanceId,
         })
-        assert.equal(preparedResume.ok, true)
-        if (!preparedResume.ok) return { ok: false }
+        if (!preparedResume.ok) {
+          assert.fail("expected prepareForegroundResumeRun to succeed")
+        }
         await preparedResume.start()
         return { ok: true }
       },

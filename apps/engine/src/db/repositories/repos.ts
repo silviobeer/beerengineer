@@ -214,7 +214,11 @@ export class Repos {
         last_opened_at: input.lastOpenedAt === undefined ? existing.last_opened_at : input.lastOpenedAt,
         updated_at: now(),
       })
-    return this.getWorkspaceByKey(input.key) as WorkspaceRow
+    const workspace = this.getWorkspaceByKey(input.key)
+    if (!workspace) {
+      throw new Error(`workspace ${input.key} missing after upsert`)
+    }
+    return workspace
   }
 
   listWorkspaces(): WorkspaceRow[] {
