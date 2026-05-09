@@ -10,9 +10,9 @@ test("REQ-10-3 board coordinator composes five concern-owned projector contracts
     placementProjector: () => {
       calls.push("placement")
       return {
-        column: "merge",
-        phaseStatus: "review_required",
-        currentStage: "merge-gate",
+        column: "implementation",
+        phaseStatus: "running",
+        currentStage: "execution",
       }
     },
     promptProjector: () => {
@@ -57,8 +57,10 @@ test("REQ-10-3 board coordinator composes five concern-owned projector contracts
     mergeStateProjector: () => {
       calls.push("merge-state")
       return {
+        column: "merge",
+        phaseStatus: "review_required",
+        currentStage: "merge-gate",
         latestRunId: "run-1",
-        previewUrl: "http://127.0.0.1:4173",
       }
     },
   } satisfies BoardProjectionProjectors
@@ -114,7 +116,6 @@ test("REQ-10-3 board coordinator composes five concern-owned projector contracts
   assert.equal(card.hasReviewGateWaiting, true)
   assert.equal(card.hasBlockedRun, true)
   assert.equal(card.latestRunId, "run-1")
-  assert.equal(card.previewUrl, "http://127.0.0.1:4173")
   assert.equal(card.workspaceId, "ws-1")
   assert.equal(card.workspaceRoot, "/tmp/alpha")
   assert.equal(card.supabaseProjectRef, "sb-alpha")
