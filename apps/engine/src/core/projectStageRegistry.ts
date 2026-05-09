@@ -22,6 +22,7 @@ import { architecture } from "../stages/architecture/index.js"
 import { documentation } from "../stages/documentation/index.js"
 import { execution, type ExecutionLlmOptions } from "../stages/execution/index.js"
 import { handoff } from "../stages/handoff/index.js"
+import { executionOwnershipHandoffRecoveryPayloadJson } from "./executionOwnershipHandoff.js"
 import { planning } from "../stages/planning/index.js"
 import { projectReview } from "../stages/project-review/index.js"
 import { qa } from "../stages/qa/index.js"
@@ -373,6 +374,7 @@ export async function blockCliExecutionForApiOwnership(
     recovery_scope: "stage",
     recovery_scope_ref: "execution",
     recovery_summary: summary,
+    recovery_payload_json: executionOwnershipHandoffRecoveryPayloadJson(),
   })
 
   const activeRun = getActiveRun()
