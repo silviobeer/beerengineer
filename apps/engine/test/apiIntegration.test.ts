@@ -147,6 +147,23 @@ test("OpenAPI and prose document recovery_user_message on board and run DTOs", (
   assert.match(contract, /clients should render that engine-provided copy before generic fallback text/)
 })
 
+test("PROJ-9 REQ-4 rollout contract documents consumer surfaces, freshness, and board budget", () => {
+  const contract = readFileSync(resolve("../../docs/api-contract.md"), "utf8")
+
+  assert.match(contract, /Engine-Owned Read-Model Fact Contract/)
+  assert.match(contract, /visibleActions \+ `visibleActionsFreshness`|`visibleActions` \+ `visibleActionsFreshness`/)
+  assert.match(contract, /Board\/item-detail chat launch path/)
+  assert.match(contract, /Board\/item-detail messages launch path/)
+  assert.match(contract, /Setup workspace-presence panel/)
+  assert.match(contract, /Setup secrets-stub panel/)
+  assert.match(contract, /Setup Git identity panel/)
+  assert.match(contract, /workspace_sse/)
+  assert.match(contract, /per_request/)
+  assert.match(contract, /1 KB per\s+card/)
+  assert.match(contract, /must stay off [`']?\/board[`']?/)
+  assert.match(contract, /GET \/items\/:id/)
+})
+
 test("PROJ-3-PRD-2 AC-14 capability API changes are additive only", () => {
   const openapi = readFileSync(resolve("src/api/openapi.json"), "utf8")
   assert.match(openapi, /capabilityOutcomes/)

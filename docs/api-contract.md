@@ -191,6 +191,30 @@ No channel-binding CRUD.
 - `GET /board?workspace=:key` — columns + cards aggregate for a workspace. Columns are `idea | brainstorm | frontend | requirements | implementation | merge | done`. Board cards expose `recovery_user_message: string | null` for lost-worker recovery using existing recovery fields; this is a projected API field, not a DB column. Board cards also expose engine-owned `visibleActions` plus `visibleActionsFreshness` so the UI can render compact action controls without re-deriving them locally.
 - Board cards also carry the same engine-owned `chatEntry` / `messagesEntry` facts and `chatEntryFreshness` / `messagesEntryFreshness` metadata used by the operator launch points. Consumers may use compatibility fallback only when those fields are absent from an older or partial response; when a fact is present with `status: "none"`, clients must preserve the existing no-target state instead of guessing another run.
 
+### Engine-Owned Read-Model Fact Contract
+
+This rollout stays additive. Existing `GET /board`, `GET /items/:id`,
+`GET /setup/config`, and `GET /setup/git-readiness` fields remain valid;
+the engine-owned facts below are added on top and become authoritative
+whenever present.
+
+| Fact / surface | Production consumer surface | Freshness contract |
+|---|---|---|
+| `visibleActions` + `visibleActionsFreshness` on `GET /board` and `GET /items/:id` | Board card actions and item-detail actions | `workspace_sse`; re-read when item/run/prompt phase events invalidate the action state |
+| `chatEntry` + `chatEntryFreshness` on `GET /board` and `GET /items/:id` | Board/item-detail chat launch path | `workspace_sse`; re-read when run creation, prompt state, or conversation writes can change the chosen chat target |
+| `messagesEntry` + `messagesEntryFreshness` on `GET /board` and `GET /items/:id` | Board/item-detail messages launch path | `workspace_sse`; re-read when run lifecycle or message-producing events can change the chosen messages target |
+| `setupDisplayModes.workspacePresence` on `GET /setup/config` | Setup workspace-presence panel | `per_request`; refreshed by setup recheck or workspace/config changes |
+| `setupDisplayModes.secretsStub` on `GET /setup/config` | Setup secrets-stub panel | `per_request`; refreshed by setup recheck or secret metadata changes |
+| `displayMode` on `GET /setup/git-readiness` | Setup Git identity panel | `per_request`; refreshed by setup recheck, workspace changes, or Git identity repair/save |
+
+Board-card additive read-model facts are capped at roughly **1 KB per
+card**. The current summary facts (`visibleActions`, `chatEntry`,
+`messagesEntry`, and their freshness metadata) fit within that budget and
+therefore ship on `GET /board`. A future fact that would exceed that
+per-card budget must stay off `/board` and remain available through a
+focused read surface such as `GET /items/:id` before a production caller
+depends on it.
+
 ### Spec
 
 - `GET /openapi.json` — this contract as a machine-readable OpenAPI 3.1.0 document (served from `apps/engine/src/api/openapi.json`).
