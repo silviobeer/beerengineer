@@ -15,7 +15,15 @@ import { ItemMessages } from "./ItemMessages";
 import { type MergeGatePanelProps } from "./merge/MergeGatePanel";
 import { SupabaseStatusPanel } from "./run/SupabaseStatusPanel";
 import { SSEContext } from "@/lib/sse/SSEContext";
-import type { RunEntryFact, RunEntryFactFreshness } from "@/lib/runEntryFacts";
+import {
+  CHAT_ENTRY_FACT_FRESHNESS,
+  MESSAGES_ENTRY_FACT_FRESHNESS,
+  NO_TARGET_RUN_ENTRY_FACT,
+  normalizeRunEntryFact,
+  normalizeRunEntryFreshness,
+  type RunEntryFact,
+  type RunEntryFactFreshness,
+} from "@/lib/runEntryFacts";
 import type { VisibleActionFactsFreshness, VisibleActionId } from "@/lib/visibleActionFacts";
 
 interface BoardItemModalProps {
@@ -56,10 +64,12 @@ interface PreviewInfo {
 interface ItemActionFactsInfo {
   visibleActions?: VisibleActionId[];
   visibleActionsFreshness?: VisibleActionFactsFreshness;
-  chatEntry?: RunEntryFact;
-  chatEntryFreshness?: RunEntryFactFreshness;
-  messagesEntry?: RunEntryFact;
-  messagesEntryFreshness?: RunEntryFactFreshness;
+  chatEntry: RunEntryFact;
+  chatEntryFreshness: RunEntryFactFreshness;
+  chatEntryMissing?: boolean;
+  messagesEntry: RunEntryFact;
+  messagesEntryFreshness: RunEntryFactFreshness;
+  messagesEntryMissing?: boolean;
 }
 
 type MergeStatusView =
@@ -200,32 +210,58 @@ function useItemReadModelFacts(card: BoardCardDTO): BoardCardDTO {
     status: "pending" | "ready" | "error";
     visibleActions?: VisibleActionId[];
     visibleActionsFreshness?: VisibleActionFactsFreshness;
-    chatEntry?: RunEntryFact;
-    chatEntryFreshness?: RunEntryFactFreshness;
-    messagesEntry?: RunEntryFact;
-    messagesEntryFreshness?: RunEntryFactFreshness;
-  }>({ status: "pending" });
+    chatEntry: RunEntryFact;
+    chatEntryFreshness: RunEntryFactFreshness;
+    chatEntryMissing?: boolean;
+    messagesEntry: RunEntryFact;
+    messagesEntryFreshness: RunEntryFactFreshness;
+    messagesEntryMissing?: boolean;
+  }>({
+    status: "pending",
+    chatEntry: NO_TARGET_RUN_ENTRY_FACT,
+    chatEntryFreshness: CHAT_ENTRY_FACT_FRESHNESS,
+    messagesEntry: NO_TARGET_RUN_ENTRY_FACT,
+    messagesEntryFreshness: MESSAGES_ENTRY_FACT_FRESHNESS,
+  });
 
   useEffect(() => {
     let cancelled = false;
-    setItemReadModelFacts({ status: "pending" });
+    setItemReadModelFacts({
+      status: "pending",
+      chatEntry: NO_TARGET_RUN_ENTRY_FACT,
+      chatEntryFreshness: CHAT_ENTRY_FACT_FRESHNESS,
+      messagesEntry: NO_TARGET_RUN_ENTRY_FACT,
+      messagesEntryFreshness: MESSAGES_ENTRY_FACT_FRESHNESS,
+    });
     fetch(`/api/items/${encodeURIComponent(card.id)}`, { cache: "no-store" })
       .then(async (res) => {
         const body = await res.json().catch(() => ({} as ItemActionFactsInfo & { error?: string }));
         if (!res.ok) throw new Error((body as { error?: string }).error ?? `engine_${res.status}`);
         if (cancelled) return;
+        const chatEntry = normalizeRunEntryFact(body.chatEntry);
+        const messagesEntry = normalizeRunEntryFact(body.messagesEntry);
         setItemReadModelFacts({
           status: "ready",
           visibleActions: Array.isArray(body.visibleActions) ? body.visibleActions : undefined,
           visibleActionsFreshness: body.visibleActionsFreshness,
-          chatEntry: body.chatEntry,
-          chatEntryFreshness: body.chatEntryFreshness,
-          messagesEntry: body.messagesEntry,
-          messagesEntryFreshness: body.messagesEntryFreshness,
+          chatEntry: chatEntry.fact,
+          chatEntryFreshness: normalizeRunEntryFreshness(body.chatEntryFreshness, CHAT_ENTRY_FACT_FRESHNESS),
+          chatEntryMissing: body.chatEntryMissing ?? chatEntry.missing,
+          messagesEntry: messagesEntry.fact,
+          messagesEntryFreshness: normalizeRunEntryFreshness(body.messagesEntryFreshness, MESSAGES_ENTRY_FACT_FRESHNESS),
+          messagesEntryMissing: body.messagesEntryMissing ?? messagesEntry.missing,
         });
       })
       .catch(() => {
-        if (!cancelled) setItemReadModelFacts({ status: "error" });
+        if (!cancelled) {
+          setItemReadModelFacts({
+            status: "error",
+            chatEntry: NO_TARGET_RUN_ENTRY_FACT,
+            chatEntryFreshness: CHAT_ENTRY_FACT_FRESHNESS,
+            messagesEntry: NO_TARGET_RUN_ENTRY_FACT,
+            messagesEntryFreshness: MESSAGES_ENTRY_FACT_FRESHNESS,
+          });
+        }
       });
     return () => {
       cancelled = true;
@@ -239,8 +275,10 @@ function useItemReadModelFacts(card: BoardCardDTO): BoardCardDTO {
     visibleActionsFreshness: itemReadModelFacts.visibleActionsFreshness,
     chatEntry: itemReadModelFacts.chatEntry,
     chatEntryFreshness: itemReadModelFacts.chatEntryFreshness,
+    chatEntryMissing: itemReadModelFacts.chatEntryMissing,
     messagesEntry: itemReadModelFacts.messagesEntry,
     messagesEntryFreshness: itemReadModelFacts.messagesEntryFreshness,
+    messagesEntryMissing: itemReadModelFacts.messagesEntryMissing,
   };
 }
 
@@ -638,7 +676,11 @@ export function BoardItemModal({ card, workspaceKey, onClose }: Readonly<BoardIt
             <h3 className="mb-2 text-xs uppercase tracking-wider text-zinc-500">
               Conversation
             </h3>
-            <ItemChat itemId={card.id} chatEntry={factCard.chatEntry} />
+            <ItemChat
+              itemId={card.id}
+              chatEntry={factCard.chatEntry}
+              chatEntryMissing={factCard.chatEntryMissing}
+            />
           </section>
 
           <section className="min-w-0 min-h-0 space-y-3 overflow-y-auto pr-1">
@@ -719,7 +761,11 @@ export function BoardItemModal({ card, workspaceKey, onClose }: Readonly<BoardIt
               <h3 className="mb-2 text-xs uppercase tracking-wider text-zinc-500">
                 Messages
               </h3>
-              <ItemMessages itemId={card.id} messagesEntry={factCard.messagesEntry} />
+              <ItemMessages
+                itemId={card.id}
+                messagesEntry={factCard.messagesEntry}
+                messagesEntryMissing={factCard.messagesEntryMissing}
+              />
             </div>
 
             <div className="border-t border-zinc-800 pt-2">

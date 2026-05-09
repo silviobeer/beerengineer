@@ -3,7 +3,12 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { engineBaseUrl } from "@/lib/engine/baseUrl";
 import { ITEM_ACTIONS, type ActionResult, type ItemAction, type ItemDetailDTO, type WorkflowGitBlockedActionResult } from "./types";
-import { isRunEntryFact, isRunEntryFactFreshness } from "@/lib/runEntryFacts";
+import {
+  CHAT_ENTRY_FACT_FRESHNESS,
+  MESSAGES_ENTRY_FACT_FRESHNESS,
+  normalizeRunEntryFact,
+  normalizeRunEntryFreshness,
+} from "@/lib/runEntryFacts";
 import type { VisibleActionFactsFreshness, VisibleActionId } from "@/lib/visibleActionFacts";
 
 function tokenPath(): string {
@@ -37,6 +42,8 @@ function normalizeItem(fallbackId: string, raw: Record<string, unknown>): ItemDe
   const itemId = pickString(raw, ["id", "itemId"]) ?? fallbackId;
   const itemCode =
     pickString(raw, ["itemCode", "item_code", "code"]) ?? itemId;
+  const chatEntry = normalizeRunEntryFact(raw.chatEntry);
+  const messagesEntry = normalizeRunEntryFact(raw.messagesEntry);
   return {
     itemId,
     itemCode,
@@ -65,10 +72,12 @@ function normalizeItem(fallbackId: string, raw: Record<string, unknown>): ItemDe
       const invalidatedBy = candidate.invalidatedBy.filter((event): event is string => typeof event === "string");
       return { strategy: "workspace_sse", invalidatedBy } satisfies VisibleActionFactsFreshness;
     })(),
-    chatEntry: isRunEntryFact(raw.chatEntry) ? raw.chatEntry : undefined,
-    chatEntryFreshness: isRunEntryFactFreshness(raw.chatEntryFreshness) ? raw.chatEntryFreshness : undefined,
-    messagesEntry: isRunEntryFact(raw.messagesEntry) ? raw.messagesEntry : undefined,
-    messagesEntryFreshness: isRunEntryFactFreshness(raw.messagesEntryFreshness) ? raw.messagesEntryFreshness : undefined,
+    chatEntry: chatEntry.fact,
+    chatEntryFreshness: normalizeRunEntryFreshness(raw.chatEntryFreshness, CHAT_ENTRY_FACT_FRESHNESS),
+    chatEntryMissing: chatEntry.missing,
+    messagesEntry: messagesEntry.fact,
+    messagesEntryFreshness: normalizeRunEntryFreshness(raw.messagesEntryFreshness, MESSAGES_ENTRY_FACT_FRESHNESS),
+    messagesEntryMissing: messagesEntry.missing,
   };
 }
 

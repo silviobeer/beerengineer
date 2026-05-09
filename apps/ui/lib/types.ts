@@ -177,10 +177,12 @@ export interface BoardCardDTO {
   workspaceId?: string;
   workspaceRoot?: string | null;
   supabaseProjectRef?: string | null;
-  chatEntry?: import("./runEntryFacts").RunEntryFact;
-  chatEntryFreshness?: import("./runEntryFacts").RunEntryFactFreshness;
-  messagesEntry?: import("./runEntryFacts").RunEntryFact;
-  messagesEntryFreshness?: import("./runEntryFacts").RunEntryFactFreshness;
+  chatEntry: import("./runEntryFacts").RunEntryFact;
+  chatEntryFreshness: import("./runEntryFacts").RunEntryFactFreshness;
+  chatEntryMissing?: boolean;
+  messagesEntry: import("./runEntryFacts").RunEntryFact;
+  messagesEntryFreshness: import("./runEntryFacts").RunEntryFactFreshness;
+  messagesEntryMissing?: boolean;
   dbRelevance?: {
     value: boolean;
     source: "explicit" | "override" | "detector";

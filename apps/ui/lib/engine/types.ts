@@ -25,10 +25,12 @@ export type ItemDetailDTO = {
   allowedActions: string[];
   visibleActions?: VisibleActionId[];
   visibleActionsFreshness?: VisibleActionFactsFreshness;
-  chatEntry?: RunEntryFact;
-  chatEntryFreshness?: RunEntryFactFreshness;
-  messagesEntry?: RunEntryFact;
-  messagesEntryFreshness?: RunEntryFactFreshness;
+  chatEntry: RunEntryFact;
+  chatEntryFreshness: RunEntryFactFreshness;
+  chatEntryMissing?: boolean;
+  messagesEntry: RunEntryFact;
+  messagesEntryFreshness: RunEntryFactFreshness;
+  messagesEntryMissing?: boolean;
 };
 
 export type ActionResult =

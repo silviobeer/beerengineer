@@ -1,11 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { recordRunEntryFallback, type RunEntryFact } from "@/lib/runEntryFacts";
+import {
+  NO_TARGET_RUN_ENTRY_FACT,
+  recordRunEntryFallback,
+  type RunEntryFact,
+} from "@/lib/runEntryFacts";
 
 interface ItemMessagesProps {
   readonly itemId: string;
   readonly messagesEntry?: RunEntryFact;
+  readonly messagesEntryMissing?: boolean;
 }
 
 /**
@@ -135,10 +140,9 @@ async function fetchBackfilledMessages(runId: string): Promise<{
   return { entries, lastSeenId };
 }
 
-function entryRunId(entry: RunEntryFact | undefined): string | null | undefined {
-  if (entry?.status === "resolved") return entry.targetRunId;
-  if (entry?.status === "none") return null;
-  return undefined;
+function entryRunId(entry: RunEntryFact): string | null {
+  if (entry.status === "resolved") return entry.targetRunId;
+  return null;
 }
 
 async function resolveFallbackRunId(itemId: string): Promise<string | null> {
@@ -150,9 +154,12 @@ async function resolveFallbackRunId(itemId: string): Promise<string | null> {
     .sort((left, right) => right.created_at - left.created_at)[0]?.id ?? null;
 }
 
-async function resolveMessagesRunId(itemId: string, messagesEntry: RunEntryFact | undefined): Promise<string | null> {
-  const runId = entryRunId(messagesEntry);
-  if (runId !== undefined) return runId;
+async function resolveMessagesRunId(
+  itemId: string,
+  messagesEntry: RunEntryFact,
+  messagesEntryMissing: boolean,
+): Promise<string | null> {
+  if (!messagesEntryMissing) return entryRunId(messagesEntry);
   recordRunEntryFallback({ itemId, surface: "messages" });
   return resolveFallbackRunId(itemId);
 }
@@ -162,7 +169,14 @@ function messageLevelFor(value: number): MessagingLevel {
   return 0;
 }
 
-export function ItemMessages({ itemId, messagesEntry }: Readonly<ItemMessagesProps>) {
+export function ItemMessages({
+  itemId,
+  messagesEntry,
+  messagesEntryMissing = false,
+}: Readonly<ItemMessagesProps>) {
+  const effectiveMessagesEntry = messagesEntry ?? NO_TARGET_RUN_ENTRY_FACT;
+  const effectiveMessagesEntryMissing =
+    messagesEntryMissing || messagesEntry === undefined;
   const [runId, setRunId] = useState<string | null>(null);
   const [entries, setEntries] = useState<EngineMessageEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -187,7 +201,11 @@ export function ItemMessages({ itemId, messagesEntry }: Readonly<ItemMessagesPro
 
     (async () => {
       try {
-        const resolvedRunId = await resolveMessagesRunId(itemId, messagesEntry);
+        const resolvedRunId = await resolveMessagesRunId(
+          itemId,
+          effectiveMessagesEntry,
+          effectiveMessagesEntryMissing,
+        );
         if (cancelled) return;
         if (!resolvedRunId) {
           setLoaded(true);
@@ -210,7 +228,7 @@ export function ItemMessages({ itemId, messagesEntry }: Readonly<ItemMessagesPro
     return () => {
       cancelled = true;
     };
-  }, [itemId, messagesEntry]);
+  }, [effectiveMessagesEntry, effectiveMessagesEntryMissing, itemId]);
 
   // Open run-scoped SSE for live appends. We bypass SSEContext here because
   // its registerLogListener only dispatches log/artifact events; we want every
@@ -223,9 +241,10 @@ export function ItemMessages({ itemId, messagesEntry }: Readonly<ItemMessagesPro
     if (streamSinceRef.current) params.set("since", streamSinceRef.current);
     const url = `/api/runs/${encodeURIComponent(runId)}/events?${params.toString()}`;
     const es = new Ctor(url);
-    const append = (e: MessageEvent) => {
+    const append: EventListener = (event) => {
+      if (!(event instanceof MessageEvent)) return;
       try {
-        const data: EngineMessageEntry = JSON.parse(e.data);
+        const data: EngineMessageEntry = JSON.parse(event.data);
         if (!data?.id || data.runId !== runId) return;
         if (seenIdsRef.current.has(data.id)) return;
         seenIdsRef.current.add(data.id);
@@ -239,7 +258,7 @@ export function ItemMessages({ itemId, messagesEntry }: Readonly<ItemMessagesPro
     // register addEventListener for each canonical type produced by
     // messagingProjection.ts.
     for (const eventType of MESSAGE_EVENT_TYPES) {
-      es.addEventListener(eventType, append as EventListener);
+      es.addEventListener(eventType, append);
     }
     return () => {
       try {

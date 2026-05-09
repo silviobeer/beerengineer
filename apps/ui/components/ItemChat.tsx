@@ -2,7 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ConversationEntry } from "../lib/types";
-import { recordRunEntryFallback, type RunEntryFact } from "@/lib/runEntryFacts";
+import {
+  NO_TARGET_RUN_ENTRY_FACT,
+  recordRunEntryFallback,
+  type RunEntryFact,
+} from "@/lib/runEntryFacts";
 import { useSSE } from "@/lib/sse/SSEContext";
 import type { ChatEntry } from "@/lib/sse/types";
 import { ChatPanel } from "./ChatPanel";
@@ -10,6 +14,7 @@ import { ChatPanel } from "./ChatPanel";
 interface ItemChatProps {
   readonly itemId: string;
   readonly chatEntry?: RunEntryFact;
+  readonly chatEntryMissing?: boolean;
 }
 
 interface EngineRun {
@@ -135,10 +140,9 @@ function promptEntry(input: {
   };
 }
 
-function entryRunId(entry: RunEntryFact | undefined): string | null | undefined {
-  if (entry?.status === "resolved") return entry.targetRunId;
-  if (entry?.status === "none") return null;
-  return undefined;
+function entryRunId(entry: RunEntryFact): string | null {
+  if (entry.status === "resolved") return entry.targetRunId;
+  return null;
 }
 
 async function resolveFallbackRunId(itemId: string): Promise<string | null> {
@@ -150,9 +154,12 @@ async function resolveFallbackRunId(itemId: string): Promise<string | null> {
     .sort((left, right) => right.created_at - left.created_at)[0]?.id ?? null;
 }
 
-async function resolveChatRunId(itemId: string, chatEntry: RunEntryFact | undefined): Promise<string | null> {
-  const runId = entryRunId(chatEntry);
-  if (runId !== undefined) return runId;
+async function resolveChatRunId(
+  itemId: string,
+  chatEntry: RunEntryFact,
+  chatEntryMissing: boolean,
+): Promise<string | null> {
+  if (!chatEntryMissing) return entryRunId(chatEntry);
   recordRunEntryFallback({ itemId, surface: "chat" });
   return resolveFallbackRunId(itemId);
 }
@@ -183,8 +190,10 @@ function hasDuplicateEntry(
  * Primes the conversation from the engine, then keeps it live by appending
  * SSE chat entries the SSEConnectionManager dispatches.
  */
-export function ItemChat({ itemId, chatEntry }: Readonly<ItemChatProps>) {
+export function ItemChat({ itemId, chatEntry, chatEntryMissing = false }: Readonly<ItemChatProps>) {
   const { registerConversationListener, setRunId: setSseRunId } = useSSE();
+  const effectiveChatEntry = chatEntry ?? NO_TARGET_RUN_ENTRY_FACT;
+  const effectiveChatEntryMissing = chatEntryMissing || chatEntry === undefined;
 
   const [runId, setRunId] = useState<string | null>(null);
   const [entries, setEntries] = useState<ConversationEntry[]>([]);
@@ -225,7 +234,11 @@ export function ItemChat({ itemId, chatEntry }: Readonly<ItemChatProps>) {
 
     (async () => {
       try {
-        const resolvedRunId = await resolveChatRunId(itemId, chatEntry);
+        const resolvedRunId = await resolveChatRunId(
+          itemId,
+          effectiveChatEntry,
+          effectiveChatEntryMissing,
+        );
         if (cancelled) return;
         if (!resolvedRunId) {
           setLoaded(true);
@@ -250,7 +263,7 @@ export function ItemChat({ itemId, chatEntry }: Readonly<ItemChatProps>) {
       cancelled = true;
       setSseRunId(null);
     };
-  }, [chatEntry, itemId, setSseRunId]);
+  }, [effectiveChatEntry, effectiveChatEntryMissing, itemId, setSseRunId]);
 
   useEffect(() => {
     if (!runId) return;

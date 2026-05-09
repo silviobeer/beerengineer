@@ -1,7 +1,14 @@
 import { BoardWorkspaceView } from "@/components/BoardWorkspaceView";
 import { RunOverviewBanners } from "@/components/run/RunOverviewBanners";
 import { engineBaseUrl } from "@/lib/engine/baseUrl";
-import type { RunEntryFact, RunEntryFactFreshness } from "@/lib/runEntryFacts";
+import {
+  CHAT_ENTRY_FACT_FRESHNESS,
+  MESSAGES_ENTRY_FACT_FRESHNESS,
+  normalizeRunEntryFact,
+  normalizeRunEntryFreshness,
+  type RunEntryFact,
+  type RunEntryFactFreshness,
+} from "@/lib/runEntryFacts";
 import type { BoardCardDTO } from "@/lib/types";
 import type { VisibleActionFactsFreshness, VisibleActionId } from "@/lib/visibleActionFacts";
 
@@ -50,6 +57,8 @@ function toBoardCard(item: BoardApiItem): BoardCardDTO {
   const id = item.itemId ?? item.id ?? item.itemCode ?? "";
   const engineColumn = item.phase ?? item.column ?? "idea";
   const currentStage = item.current_stage ?? item.currentStage ?? null;
+  const chatEntry = normalizeRunEntryFact(item.chatEntry);
+  const messagesEntry = normalizeRunEntryFact(item.messagesEntry);
   return {
     id,
     itemCode: item.itemCode,
@@ -64,10 +73,12 @@ function toBoardCard(item: BoardApiItem): BoardCardDTO {
     previewUrl: typeof item.previewUrl === "string" ? item.previewUrl : undefined,
     current_stage: currentStage,
     supabaseBlocker: item.supabaseBlocker,
-    chatEntry: item.chatEntry,
-    chatEntryFreshness: item.chatEntryFreshness,
-    messagesEntry: item.messagesEntry,
-    messagesEntryFreshness: item.messagesEntryFreshness,
+    chatEntry: chatEntry.fact,
+    chatEntryFreshness: normalizeRunEntryFreshness(item.chatEntryFreshness, CHAT_ENTRY_FACT_FRESHNESS),
+    chatEntryMissing: chatEntry.missing,
+    messagesEntry: messagesEntry.fact,
+    messagesEntryFreshness: normalizeRunEntryFreshness(item.messagesEntryFreshness, MESSAGES_ENTRY_FACT_FRESHNESS),
+    messagesEntryMissing: messagesEntry.missing,
     visibleActions: Array.isArray(item.visibleActions) ? item.visibleActions : undefined,
     visibleActionsFreshness: item.visibleActionsFreshness,
   };

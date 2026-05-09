@@ -7,6 +7,39 @@ export interface RunEntryFactFreshness {
   invalidatedBy: string[];
 }
 
+export const NO_TARGET_RUN_ENTRY_FACT: RunEntryFact = {
+  status: "none",
+  targetRunId: null,
+};
+
+export const CHAT_ENTRY_FACT_FRESHNESS: RunEntryFactFreshness = {
+  strategy: "workspace_sse",
+  invalidatedBy: [
+    "run_started",
+    "prompt_requested",
+    "prompt_answered",
+    "agent_message",
+    "user_message",
+  ],
+};
+
+export const MESSAGES_ENTRY_FACT_FRESHNESS: RunEntryFactFreshness = {
+  strategy: "workspace_sse",
+  invalidatedBy: [
+    "run_started",
+    "run_finished",
+    "run_failed",
+    "run_blocked",
+    "run_resumed",
+    "prompt_requested",
+    "loop_iteration",
+    "project_created",
+    "wireframes_ready",
+    "design_ready",
+    "external_remediation_recorded",
+  ],
+};
+
 export type RunEntryFallbackSurface = "chat" | "messages";
 
 type RunEntryFallbackEvent = {
@@ -40,6 +73,24 @@ export function isRunEntryFactFreshness(value: unknown): value is RunEntryFactFr
   return candidate.strategy === "workspace_sse"
     && Array.isArray(candidate.invalidatedBy)
     && candidate.invalidatedBy.every((event) => typeof event === "string");
+}
+
+export function normalizeRunEntryFact(value: unknown): {
+  fact: RunEntryFact;
+  missing: boolean;
+} {
+  if (isRunEntryFact(value)) {
+    return { fact: value, missing: false };
+  }
+  return { fact: NO_TARGET_RUN_ENTRY_FACT, missing: true };
+}
+
+export function normalizeRunEntryFreshness(
+  value: unknown,
+  fallback: RunEntryFactFreshness,
+): RunEntryFactFreshness {
+  if (isRunEntryFactFreshness(value)) return value;
+  return fallback;
 }
 
 export function recordRunEntryFallback(event: RunEntryFallbackEvent): void {
