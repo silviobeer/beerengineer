@@ -68,6 +68,7 @@ test("AC-2 missing identity blocks workflow readiness without crashing setup", (
     assert.equal(readiness.setupBlocked, false)
     assert.equal(readiness.workflowBlocked, true)
     assert.equal(readiness.blocker?.error, "identity_missing")
+    assert.equal(readiness.displayMode.mode, "action-required")
   } finally {
     rmSync(paths.dir, { recursive: true, force: true })
   }
@@ -147,6 +148,8 @@ test("AC-7 global identity makes workspace ready when repo-local is absent", () 
 
     assert.equal(readiness.ready, true)
     assert.equal(readiness.effectiveIdentity?.source, "global")
+    assert.equal(readiness.displayMode.mode, "ready")
+    assert.deepEqual(readiness.displayMode.freshness.invalidatedBy, ["setup_recheck", "workspace_changed", "workspace_git_identity_repaired"])
   } finally {
     rmSync(paths.dir, { recursive: true, force: true })
   }

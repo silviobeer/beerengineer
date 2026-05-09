@@ -194,3 +194,30 @@ test("AC-12 effective app config exposes uninitialized, partial, and complete se
     rmSync(complete.dir, { recursive: true, force: true })
   }
 })
+
+test("PROJ-9 setup config view includes engine-owned workspace and secrets display modes", () => {
+  const paths = tempSetupPaths()
+  try {
+    writeConfigFile(paths.configPath, {
+      ...defaultAppConfig(),
+      dataDir: paths.dataDir,
+      allowedRoots: [paths.dir],
+      llm: {
+        ...defaultAppConfig().llm,
+        apiKeyRef: "ANTHROPIC_API_KEY",
+      },
+    })
+    process.env.ANTHROPIC_API_KEY = "present-for-test"
+
+    const view = withClearedTelegramSetupEnv(() => getAppConfigView({ configPath: paths.configPath, dataDir: paths.dataDir }))
+
+    assert.equal(view.setupDisplayModes.workspacePresence.mode, "informational")
+    assert.match(view.setupDisplayModes.workspacePresence.detail, /No workspace is selected/)
+    assert.equal(view.setupDisplayModes.secretsStub.mode, "ready")
+    assert.match(view.setupDisplayModes.secretsStub.detail, /ANTHROPIC_API_KEY/)
+    assert.deepEqual(view.setupDisplayModes.secretsStub.freshness.invalidatedBy, ["setup_recheck", "secret_metadata_changed"])
+  } finally {
+    delete process.env.ANTHROPIC_API_KEY
+    rmSync(paths.dir, { recursive: true, force: true })
+  }
+})

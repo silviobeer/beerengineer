@@ -1,5 +1,16 @@
 import type { AppConfigView, GitReadiness, SetupReport, WorkspaceGitReadiness } from "@/lib/setup/types";
 
+function displayFact(mode: "ready" | "action-required" | "informational", detail: string, invalidatedBy: string[]) {
+  return {
+    mode,
+    detail,
+    freshness: {
+      strategy: "per_request" as const,
+      invalidatedBy,
+    },
+  };
+}
+
 export function blockedReport(): SetupReport {
   return {
     reportVersion: 1,
@@ -136,6 +147,10 @@ export function configView(): AppConfigView {
     configPath: "/tmp/beerengineer/config.json",
     configFile: { kind: "ok", path: "/tmp/beerengineer/config.json" },
     workspace: { id: "ws-1", key: "demo", name: "Demo" },
+    setupDisplayModes: {
+      workspacePresence: displayFact("ready", "Workspace demo is available for repo-local readiness checks.", ["setup_recheck", "workspace_changed"]),
+      secretsStub: displayFact("ready", "ANTHROPIC_API_KEY is already available for workflow runs.", ["setup_recheck", "secret_metadata_changed"]),
+    },
     supabase: {
       workspaceId: "ws-1",
       projectRef: "proj_1",
@@ -178,8 +193,9 @@ export function configView(): AppConfigView {
 }
 
 export function globalGitReadiness(overrides: Partial<GitReadiness> = {}): GitReadiness {
-  return {
+  const readiness: GitReadiness = {
     mode: "global",
+    displayMode: displayFact("action-required", "Git identity is missing.", ["setup_recheck", "workspace_changed", "git_identity_saved"]),
     git: { installed: true, version: "git version 2.47.0" },
     globalIdentity: {},
     appDefaultIdentity: undefined,
@@ -190,10 +206,19 @@ export function globalGitReadiness(overrides: Partial<GitReadiness> = {}): GitRe
     blocker: { error: "identity_missing", message: "Git identity is missing." },
     ...overrides,
   } as GitReadiness;
+  if (!("displayMode" in overrides)) {
+    readiness.displayMode = displayFact(
+      readiness.git.installed && !readiness.workflowBlocked ? "ready" : "action-required",
+      readiness.blocker?.message ?? "Git identity is ready.",
+      ["setup_recheck", "workspace_changed", "git_identity_saved"],
+    );
+  }
+  return readiness;
 }
 
 export function missingGitReadiness(): GitReadiness {
   return globalGitReadiness({
+    displayMode: displayFact("action-required", "Git is not installed or not available on PATH.", ["setup_recheck", "workspace_changed", "git_identity_saved"]),
     git: { installed: false },
     setupBlocked: true,
     workflowBlocked: true,
@@ -202,8 +227,9 @@ export function missingGitReadiness(): GitReadiness {
 }
 
 export function workspaceGitReadiness(overrides: Partial<WorkspaceGitReadiness> = {}): WorkspaceGitReadiness {
-  return {
+  const readiness: WorkspaceGitReadiness = {
     mode: "workspace",
+    displayMode: displayFact("action-required", "Git identity is missing for this workspace.", ["setup_recheck", "workspace_changed", "workspace_git_identity_repaired"]),
     workspace: { id: "ws-1", key: "demo" },
     git: { installed: true, version: "git version 2.47.0" },
     isGitRepo: true,
@@ -218,6 +244,14 @@ export function workspaceGitReadiness(overrides: Partial<WorkspaceGitReadiness> 
     blocker: { error: "identity_missing", message: "Git identity is missing for this workspace." },
     ...overrides,
   };
+  if (!("displayMode" in overrides)) {
+    readiness.displayMode = displayFact(
+      readiness.git.installed && !readiness.workflowBlocked ? "ready" : "action-required",
+      readiness.blocker?.message ?? "Git identity is ready.",
+      ["setup_recheck", "workspace_changed", "workspace_git_identity_repaired"],
+    );
+  }
+  return readiness;
 }
 
 export function uninitializedConfigView(): AppConfigView {

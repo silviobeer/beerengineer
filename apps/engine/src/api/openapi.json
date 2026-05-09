@@ -252,7 +252,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Global or workspace Git identity readiness.",
+            "description": "Global or workspace Git identity readiness, including the engine-owned displayMode fact.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4563,6 +4563,7 @@
           "configFile",
           "telegramInbound",
           "supabase",
+          "setupDisplayModes",
           "config"
         ],
         "properties": {
@@ -4597,6 +4598,99 @@
               },
               "name": {
                 "type": "string"
+              }
+            }
+          },
+          "setupDisplayModes": {
+            "type": "object",
+            "required": [
+              "workspacePresence",
+              "secretsStub"
+            ],
+            "properties": {
+              "workspacePresence": {
+                "type": "object",
+                "required": [
+                  "mode",
+                  "detail",
+                  "freshness"
+                ],
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "ready",
+                      "action-required",
+                      "informational"
+                    ]
+                  },
+                  "detail": {
+                    "type": "string"
+                  },
+                  "freshness": {
+                    "type": "object",
+                    "required": [
+                      "strategy",
+                      "invalidatedBy"
+                    ],
+                    "properties": {
+                      "strategy": {
+                        "type": "string",
+                        "enum": [
+                          "per_request"
+                        ]
+                      },
+                      "invalidatedBy": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "secretsStub": {
+                "type": "object",
+                "required": [
+                  "mode",
+                  "detail",
+                  "freshness"
+                ],
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "ready",
+                      "action-required",
+                      "informational"
+                    ]
+                  },
+                  "detail": {
+                    "type": "string"
+                  },
+                  "freshness": {
+                    "type": "object",
+                    "required": [
+                      "strategy",
+                      "invalidatedBy"
+                    ],
+                    "properties": {
+                      "strategy": {
+                        "type": "string",
+                        "enum": [
+                          "per_request"
+                        ]
+                      },
+                      "invalidatedBy": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
               }
             }
           },

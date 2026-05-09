@@ -1,7 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { StatusChip } from "@/components/StatusChip";
+import { useEffect, useMemo, useState } from "react";
 import type {
   AppConfigPatchResult,
   GitIdentityDefault,
@@ -9,8 +8,14 @@ import type {
   GitIdentityValidationResponse,
   GitIdentityValue,
   GitReadiness,
+  SetupDisplayFact,
   WorkspaceGitRepairResponse,
 } from "@/lib/setup/types";
+import {
+  fallbackGitIdentityDisplayFact,
+  resolveSetupDisplayFact,
+} from "@/lib/setupDisplayModes";
+import { StatusChip } from "@/components/StatusChip";
 import { GitIdentityForm } from "./GitIdentityForm";
 
 interface GitIdentityPanelProps {
@@ -41,11 +46,21 @@ function identityText(identity: GitIdentityValue | GitIdentityDefault | undefine
   return "Not configured";
 }
 
-function statusFor(readiness: GitReadiness | null): string {
-  if (!readiness) return "unknown";
-  if (!readiness.git.installed) return "missing";
-  if (readiness.workflowBlocked) return "blocked";
-  return "ok";
+function statusForDisplayMode(displayMode: SetupDisplayFact): string {
+  switch (displayMode.mode) {
+    case "ready":
+      return "ready";
+    case "action-required":
+      return "blocked";
+    case "informational":
+      return "idle";
+    default:
+      return "unknown";
+  }
+}
+
+function freshnessText(displayMode: SetupDisplayFact): string {
+  return `Refreshes on ${displayMode.freshness.invalidatedBy.join(", ")}.`;
 }
 
 function messageRole(message: string): "alert" | "status" {
@@ -185,7 +200,20 @@ export function GitIdentityPanel({ initialReadiness, workspace = null, error: in
   const [errors, setErrors] = useState<GitIdentityValidationError[]>([]);
   const [message, setMessage] = useState<string | null>(initialError);
 
+  useEffect(() => {
+    setReadiness(initialReadiness);
+  }, [initialReadiness]);
+
+  useEffect(() => {
+    setMessage(initialError);
+  }, [initialError]);
+
   const formIdentity = useMemo(() => initialFormIdentity(readiness), [readiness]);
+  const displayMode = resolveSetupDisplayFact(
+    "git_identity",
+    readiness?.displayMode,
+    () => fallbackGitIdentityDisplayFact(readiness),
+  );
   const isWorkspace = readiness?.mode === "workspace";
   const canRepairWorkspace = isWorkspace
     && readiness.git.installed
@@ -278,6 +306,21 @@ export function GitIdentityPanel({ initialReadiness, workspace = null, error: in
     }
   }
 
+  if (!displayMode) {
+    return (
+      <section className="space-y-3 border p-5" data-testid="git-identity-panel" style={{ borderColor: "var(--color-coral)", backgroundColor: "var(--color-zinc-900)" }}>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="font-mono text-xs uppercase" style={{ color: "var(--color-zinc-400)" }}>Git step</p>
+            <h2 className="font-display text-xl" style={{ color: "var(--color-zinc-100)" }}>Git identity readiness</h2>
+          </div>
+          <StatusChip state="invalid" />
+        </div>
+        <p role="alert" className="text-sm" style={{ color: "var(--color-coral)" }}>Git panel mode data is invalid.</p>
+      </section>
+    );
+  }
+
   if (!readiness) {
     return (
       <section className="space-y-3 border border-zinc-800 bg-zinc-900 p-5" data-testid="git-identity-panel">
@@ -286,9 +329,10 @@ export function GitIdentityPanel({ initialReadiness, workspace = null, error: in
             <p className="font-mono text-xs uppercase text-zinc-400">Git step</p>
             <h2 className="font-display text-xl text-zinc-100">Git identity readiness</h2>
           </div>
-          <StatusChip state="unknown" />
+          <StatusChip state={statusForDisplayMode(displayMode)} />
         </div>
         <p className="text-sm text-zinc-400">{message ?? "Git readiness is unavailable."}</p>
+        <p className="font-mono text-[11px] uppercase text-zinc-500" data-testid="git-identity-freshness">{freshnessText(displayMode)}</p>
         <button type="button" onClick={recheck} className="border border-amber-500 bg-amber-500 px-3 py-2 text-sm font-medium text-zinc-950">
           Re-check Git
         </button>
@@ -305,11 +349,17 @@ export function GitIdentityPanel({ initialReadiness, workspace = null, error: in
           <p className="max-w-3xl text-sm text-zinc-300">
             beerengineer_ uses local Git commit checkpoints so workflows can recover cleanly. This setup does not create GitHub remotes, push branches, or open pull requests.
           </p>
+          <p className="font-mono text-[11px] uppercase text-zinc-500" data-testid="git-identity-freshness">{freshnessText(displayMode)}</p>
         </div>
-        <StatusChip state={statusFor(readiness)} />
+        <StatusChip state={statusForDisplayMode(displayMode)} />
       </div>
 
-      {readiness.git.installed ? (
+      {displayMode.mode === "informational" ? (
+        <div className="space-y-3 border border-zinc-800 bg-zinc-950/40 p-4" data-testid="git-informational-stub">
+          <h3 className="font-display text-lg text-zinc-100">Git readiness information</h3>
+          <p className="text-sm text-zinc-400">{displayMode.detail}</p>
+        </div>
+      ) : readiness.git.installed ? (
         <>
           <GitReadinessRows readiness={readiness} />
           <GitReadinessNotes readiness={readiness} />
