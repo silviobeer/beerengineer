@@ -102,7 +102,8 @@ test("CLI-owned run stops at a recoverable execution handoff after planning", as
     await prepared.start()
 
     const run = repos.getRun(prepared.runId)
-    assert.ok(run)
+    assert.notEqual(run, undefined)
+    if (!run) return
     assert.equal(run.owner, "cli")
     assert.equal(run.worker_owner_kind, "cli")
     assert.equal(run.current_stage, "planning")

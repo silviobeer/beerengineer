@@ -540,8 +540,8 @@ async function runWorkflowProjects(
     const projectResumePlan = resumePlan?.projectStartStages?.[project.id]
       ? { ...resumePlan, startStage: resumePlan.projectStartStages[project.id] }
       : resumePlan
-    lastProjectCtx = await runProjectStages(
-      {
+    lastProjectCtx = await runProjectStages({
+      initialCtx: {
         ...context,
         project: { ...project, concept: mergeAmendments(project.concept, conceptAmendments, project.id) },
         wireframes: wireframes ? projectWireframes(wireframes, project.id) : undefined,
@@ -550,13 +550,13 @@ async function runWorkflowProjects(
         decisions,
       },
       git,
-      projectResumePlan ?? undefined,
+      resume: projectResumePlan ?? undefined,
       llm,
       supabaseHook,
       supabaseReadiness,
       executionOwnership,
-      pauseBeforeExecution ? "planning" : undefined,
-    )
+      stopAfter: pauseBeforeExecution ? "planning" : undefined,
+    })
   }
   if (pauseBeforeExecution && lastProjectCtx) {
     await blockCliExecutionForApiOwnership(lastProjectCtx, executionOwnership)
@@ -673,19 +673,29 @@ async function runProject(
   supabaseHook?: SupabaseWorkflowHook,
   supabaseReadiness?: SupabaseWorkflowReadinessHook,
 ): Promise<void> {
-  await runProjectStages(initialCtx, git, resume, llm, supabaseHook, supabaseReadiness)
+  await runProjectStages({
+    initialCtx,
+    git,
+    resume,
+    llm,
+    supabaseHook,
+    supabaseReadiness,
+  })
 }
 
 async function runProjectStages(
-  initialCtx: ProjectContext,
-  git: GitAdapter,
-  resume?: ProjectResumePlan,
-  llm?: WorkflowLlmOptions,
-  supabaseHook?: SupabaseWorkflowHook,
-  supabaseReadiness?: SupabaseWorkflowReadinessHook,
-  executionOwnership?: StageDeps["executionOwnership"],
-  stopAfter?: ProjectStageId,
+  options: {
+    initialCtx: ProjectContext
+    git: GitAdapter
+    resume?: ProjectResumePlan
+    llm?: WorkflowLlmOptions
+    supabaseHook?: SupabaseWorkflowHook
+    supabaseReadiness?: SupabaseWorkflowReadinessHook
+    executionOwnership?: StageDeps["executionOwnership"]
+    stopAfter?: ProjectStageId
+  },
 ): Promise<ProjectContext> {
+  const { initialCtx, git, resume, llm, supabaseHook, supabaseReadiness, executionOwnership, stopAfter } = options
   let ctx = initialCtx
   const projectId = ctx.project.id
   const deps = { llm, resume, git, supabaseHook, supabaseReadiness, executionOwnership }

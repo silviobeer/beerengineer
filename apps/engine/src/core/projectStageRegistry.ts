@@ -331,11 +331,6 @@ export function runOwnershipKind(run: RunRow | undefined): RunRow["owner"] | nul
   return run.worker_owner_kind ?? run.owner
 }
 
-export function resumesAtOrPastExecution(resume: ProjectResumePlan | null | undefined): boolean {
-  if (!resume) return false
-  return PROJECT_STAGE_ORDER.indexOf(resume.startStage) >= PROJECT_STAGE_ORDER.indexOf("execution")
-}
-
 export function shouldPauseCliRunBeforeExecution(
   _resume: ProjectResumePlan | null | undefined,
   executionOwnership: StageDeps["executionOwnership"],
