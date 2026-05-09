@@ -12,7 +12,7 @@ function expectHosted(resolved: ReturnType<typeof resolveHarness>) {
   return resolved
 }
 
-test("resolveHarness maps fast mode coder to codex with the fast tier model (per preset)", () => {
+test("resolveHarness maps fast mode coder to codex with a supported Codex model (per preset)", () => {
   const resolved = expectHosted(
     resolveHarness({
       workspaceRoot: "/tmp/demo",
@@ -26,7 +26,7 @@ test("resolveHarness maps fast mode coder to codex with the fast tier model (per
   assert.equal(resolved.harness, "codex")
   assert.equal(resolved.provider, "openai")
   assert.equal(resolved.runtime, "cli")
-  assert.equal(resolved.model, "gpt-4o")
+  assert.equal(resolved.model, "gpt-5.4")
 })
 
 test("resolveHarness maps fast mode reviewer to claude haiku (per preset)", () => {
@@ -124,7 +124,7 @@ test("resolveHarness claude-first uses the reviewer LLM as qa stage author", () 
   assert.equal(reviewer.model, "claude-sonnet-4-6")
 })
 
-test("resolveHarness codex-first uses the reviewer LLM as qa stage author", () => {
+test("resolveHarness codex-first keeps the tool-capable coder LLM as qa stage author", () => {
   const coder = expectHosted(
     resolveHarness({
       workspaceRoot: "/tmp/demo",
@@ -144,10 +144,10 @@ test("resolveHarness codex-first uses the reviewer LLM as qa stage author", () =
     }),
   )
 
-  assert.equal(coder.harness, "claude")
-  assert.equal(coder.model, "claude-sonnet-4-6")
-  assert.equal(reviewer.harness, "codex")
-  assert.equal(reviewer.model, "gpt-5.4")
+  assert.equal(coder.harness, "codex")
+  assert.equal(coder.model, "gpt-5.4")
+  assert.equal(reviewer.harness, "claude")
+  assert.equal(reviewer.model, "claude-sonnet-4-6")
 })
 
 test("opencode-china declares the same qa reviewer-as-author override", () => {
@@ -168,24 +168,27 @@ test("opencode-china declares the same qa reviewer-as-author override", () => {
   assert.equal(qaOverride?.reviewer?.model, "qwen/qwen3.5-coder")
 })
 
-test("resolveHarness rejects opencode until the provider is implemented", () => {
-  assert.throws(
-    () =>
-      resolveHarness({
-        workspaceRoot: "/tmp/demo",
-        harnessProfile: {
-          mode: "self",
-          roles: {
-            coder: { harness: "opencode", provider: "openrouter", model: "x" },
-            reviewer: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6" },
-          },
+test("resolveHarness supports opencode in self-mode profiles", () => {
+  const resolved = expectHosted(
+    resolveHarness({
+      workspaceRoot: "/tmp/demo",
+      harnessProfile: {
+        mode: "self",
+        roles: {
+          coder: { harness: "opencode", provider: "openrouter", model: "qwen/qwen3.5-coder" },
+          reviewer: { harness: "claude", provider: "anthropic", model: "claude-sonnet-4-6" },
         },
-        runtimePolicy: defaultWorkspaceRuntimePolicy(),
-        role: "coder",
-        stage: "planning",
-      }),
-    /opencode/,
+      },
+      runtimePolicy: defaultWorkspaceRuntimePolicy(),
+      role: "coder",
+      stage: "planning",
+    }),
   )
+
+  assert.equal(resolved.harness, "opencode")
+  assert.equal(resolved.provider, "openrouter")
+  assert.equal(resolved.runtime, "cli")
+  assert.equal(resolved.model, "qwen/qwen3.5-coder")
 })
 
 test("resolveHarness upgrades coder to opus for execution stage on claude-first (implementation needs the strongest model)", () => {

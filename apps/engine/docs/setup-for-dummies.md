@@ -347,9 +347,9 @@ You'll get an interactive flow:
 2. Name + key — defaults to the folder name, usually fine.
 3. Harness profile — pick one:
    - `claude-first` — Claude does the work, Codex reviews; QA flips to Codex with Claude review *(recommended default)*
-   - `codex-first` — Codex does the work, Claude reviews; QA flips to Claude with Codex review
+   - `codex-first` — Codex does the work, Claude reviews; QA stays on Codex with Claude review
    - `claude-only` / `codex-only` — single harness
-   - `fast` — gpt-4o coder + Haiku reviewer for quick iteration
+   - `fast` — current Codex coder + Haiku reviewer for quick iteration
    - `claude-sdk-first` — same shape as `claude-first`, but Claude runs
      **in-process via the Anthropic Agent SDK** instead of the `claude`
      CLI. Requires `ANTHROPIC_API_KEY` in your environment; bills

@@ -421,9 +421,9 @@ From `apps/engine/src/core/harness/presets.json`:
 |-----------------|-----------------------------|---------------------------|-----------------------------|------------------------------|
 | `claude-first`  | claude / claude-sonnet-4-6  | codex / gpt-5.4           | claude / claude-sonnet-4-6  | codex QA, claude QA-review   |
 | `claude-only`   | claude / claude-opus-4-7    | claude / claude-sonnet-4-6| claude / claude-sonnet-4-6  | none                         |
-| `codex-first`   | codex / gpt-5.4             | claude / claude-sonnet-4-6| codex / gpt-5.4             | claude QA, codex QA-review   |
-| `codex-only`    | codex / gpt-5.4             | codex / gpt-4o            | codex / gpt-5.4             | none                         |
-| `fast`              | codex / gpt-4o              | claude / claude-haiku-4-5 | claude / claude-haiku-4-5   | none                         |
+| `codex-first`   | codex / gpt-5.4             | claude / claude-sonnet-4-6| codex / gpt-5.4             | codex QA, claude QA-review   |
+| `codex-only`    | codex / gpt-5.4             | codex / gpt-5.4           | codex / gpt-5.4             | none                         |
+| `fast`              | codex / gpt-5.4             | claude / claude-haiku-4-5 | claude / claude-haiku-4-5   | none                         |
 | `claude-sdk-first`  | claude:sdk / claude-sonnet-4-6 | codex / gpt-5.4         | claude:sdk / claude-sonnet-4-6 | none                      |
 | `codex-sdk-first`   | codex:sdk / gpt-5.4         | claude / claude-sonnet-4-6 | codex:sdk / gpt-5.4        | none                         |
 | `opencode-china`    | opencode / qwen3.5-coder    | opencode / deepseek-v3.2  | opencode / qwen3.5-coder    | deepseek QA, qwen QA-review  |
