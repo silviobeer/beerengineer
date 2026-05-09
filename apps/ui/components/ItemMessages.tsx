@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   NO_TARGET_RUN_ENTRY_FACT,
   recordRunEntryFallback,
+  resolveFallbackMessagesRunId,
   type RunEntryFact,
 } from "@/lib/runEntryFacts";
 
@@ -43,13 +44,6 @@ const LEVEL_BADGE_CLASS: Record<MessagingLevel, string> = {
 };
 const MESSAGE_BACKFILL_LIMIT = 500;
 const MAX_MESSAGE_BACKFILL_PAGES = 40;
-
-interface EngineRun {
-  id: string;
-  item_id: string;
-  status: string;
-  created_at: number;
-}
 
 interface EngineMessageEntry {
   id: string;
@@ -145,15 +139,6 @@ function entryRunId(entry: RunEntryFact): string | null {
   return null;
 }
 
-async function resolveFallbackRunId(itemId: string): Promise<string | null> {
-  const runsRes = await fetch("/api/runs", { cache: "no-store" });
-  if (!runsRes.ok) throw new Error(`runs_${runsRes.status}`);
-  const runsBody: { runs?: EngineRun[] } = await runsRes.json();
-  return (runsBody.runs ?? [])
-    .filter((run) => run.item_id === itemId)
-    .sort((left, right) => right.created_at - left.created_at)[0]?.id ?? null;
-}
-
 async function resolveMessagesRunId(
   itemId: string,
   messagesEntry: RunEntryFact,
@@ -161,7 +146,7 @@ async function resolveMessagesRunId(
 ): Promise<string | null> {
   if (!messagesEntryMissing) return entryRunId(messagesEntry);
   recordRunEntryFallback({ itemId, surface: "messages" });
-  return resolveFallbackRunId(itemId);
+  return resolveFallbackMessagesRunId(itemId);
 }
 
 function messageLevelFor(value: number): MessagingLevel {
