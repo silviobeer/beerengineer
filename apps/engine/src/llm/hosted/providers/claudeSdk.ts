@@ -132,7 +132,7 @@ function ensureApiKey(): void {
  * | policy mode               | CLI flag (today)                    | Agent SDK setting                 |
  * | ------------------------- | ----------------------------------- | --------------------------------- |
  * | no-tools                  | (none)                              | disallow all tools                |
- * | safe-readonly             | --permission-mode plan              | permission "plan", read-only tools|
+ * | safe-readonly             | --permission-mode plan + read tools | permission "plan", read-only tools|
  * | safe-workspace-write      | --permission-mode acceptEdits       | permission "acceptEdits"          |
  * | unsafe-autonomous-write   | --dangerously-skip-permissions      | permission "bypassPermissions"    |
  */
@@ -150,7 +150,7 @@ function policyToSdkOptions(input: HostedProviderInvokeInput): ClaudeAgentSdkOpt
       break
     case "safe-readonly":
       opts.permissionMode = "plan"
-      opts.allowedTools = ["Read", "Grep", "Glob"]
+      opts.allowedTools = ["Read", "Grep", "Glob", "LS"]
       break
     case "safe-workspace-write":
       opts.permissionMode = "acceptEdits"

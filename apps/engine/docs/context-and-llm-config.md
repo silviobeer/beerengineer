@@ -520,7 +520,9 @@ routes to one of:
 - `claude.ts` — claude CLI subprocess, `--print --verbose
   --output-format stream-json`, `--model <id>` if set. Server-side
   session reuse via `--resume <id>`; a session-unknown message
-  triggers one fresh-session retry.
+  triggers one fresh-session retry. `safe-readonly` passes
+  `--allowedTools Read Grep Glob LS` so cross-vendor reviewers can
+  inspect the repo non-interactively without opening edit tools.
 - `claudeSdk.ts` — `@anthropic-ai/claude-agent-sdk` in-process. Maps
   engine `RuntimePolicy` modes to Agent SDK permission modes (table
   inside the file). When the SDK does not expose a clean equivalent

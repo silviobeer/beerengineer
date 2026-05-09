@@ -116,6 +116,9 @@ printf '%s\n' '{"type":"assistant","message":{"id":"msg-text","role":"assistant"
     assert.equal(result.outputText, "{\"summary\":\"fallback\"}")
     assert.equal(result.session.sessionId, "session-456")
     assert.deepEqual(result.cacheStats, { cachedInputTokens: 33, totalInputTokens: 7 })
+    const allowedToolsIndex = result.command.indexOf("--allowedTools")
+    assert.ok(allowedToolsIndex > 0)
+    assert.deepEqual(result.command.slice(allowedToolsIndex + 1, allowedToolsIndex + 5), ["Read", "Grep", "Glob", "LS"])
   } finally {
     if (previousPath === undefined) delete process.env.PATH
     else process.env.PATH = previousPath

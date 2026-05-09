@@ -105,6 +105,9 @@ function buildClaudeCommand(input: HostedProviderInvokeInput): string[] {
   }
   const mode = permissionMode(input.runtime.policy)
   if (mode) command.push("--permission-mode", mode)
+  if (input.runtime.policy.mode === "safe-readonly") {
+    command.push("--allowedTools", "Read", "Grep", "Glob", "LS")
+  }
   if (input.runtime.policy.mode === "unsafe-autonomous-write") command.push("--dangerously-skip-permissions")
   if (process.env.CLAUDE_BARE === "1") command.push("--bare")
   if (input.runtime.model) command.push("--model", input.runtime.model)
