@@ -1,14 +1,20 @@
-import { cpSync, existsSync } from "node:fs"
+import { existsSync } from "node:fs"
 import { ask, close } from "../../sim/human.js"
 import { createCliIO } from "../../core/ioCli.js"
 import type { ItemAction, ItemActionResult } from "../../core/itemActions.js"
 import { attachOneShotPromptAnswer } from "../../core/promptAutoAnswer.js"
 import { inspectWorkspaceState } from "../../core/git.js"
 import { layout } from "../../core/workspaceLayout.js"
-import { prepareRun, runWorkflowWithSync } from "../../core/runOrchestrator.js"
-import { checkWorkflowStartGitReadiness, checkWorkflowStartGitReadinessForWorkspace, type WorkflowStartGitBlockedResult, type StartRunAction } from "../../core/runService.js"
-import { deriveProjectStartStages, loadPreparedImportBundleWithLlmFallback, seedPreparedImportArtifacts } from "../../core/preparedImport.js"
-import { resolveWorkflowLlmOptions } from "../../core/runSubscribers.js"
+import {
+  checkWorkflowStartGitReadiness,
+  checkWorkflowStartGitReadinessForWorkspace,
+  isWorkflowCapabilityBlockedResult,
+  prepareForegroundItemRun,
+  prepareForegroundPreparedImportRun,
+  prepareForegroundResumeRun,
+  type WorkflowStartGitBlockedResult,
+  type StartRunAction,
+} from "../../core/runService.js"
 import { resolveWorkflowContextForItemRun } from "../../core/workflowContextResolver.js"
 import { formatSupabaseReadinessBlockedCliOutput } from "../../core/supabase/preExecutionReadiness.js"
 import { parseSupabaseReadinessRecoveryPayload } from "../../core/supabase/recoveryPayload.js"
@@ -29,6 +35,21 @@ type CliItemActionContext = {
 }
 
 type CliItemActionHandler = (ctx: CliItemActionContext) => Promise<number>
+type FailedPreparedResumeRunResult = Exclude<
+  Awaited<ReturnType<typeof prepareForegroundResumeRun>>,
+  { ok: true; runId: string; remediationId: string; start: () => Promise<void> }
+>
+type FailedPreparedImportRunResult = Exclude<
+  Awaited<ReturnType<typeof prepareForegroundPreparedImportRun>>,
+  { ok: true; runId: string; itemId: string; warnings: string[]; start: () => Promise<void> }
+>
+type SuccessfulPreparedImportRunResult = Extract<
+  Awaited<ReturnType<typeof prepareForegroundPreparedImportRun>>,
+  { ok: true; runId: string; itemId: string; warnings: string[]; start: () => Promise<void> }
+>
+type PreparedImportCliStart =
+  | { ok: true; workspace: WorkspaceRow }
+  | { ok: false; exitCode: number }
 
 const CLI_RUN_DEATH_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const
 
@@ -190,6 +211,28 @@ function printWorkflowGitBlocker(blocker: WorkflowStartGitBlockedResult, itemRef
   return 75
 }
 
+function printWorkflowCapabilityBlocker(message: string): number {
+  console.error("\n  Workflow capability ownership blocked the requested action.")
+  console.error(`  Reason: ${message}`)
+  return 75
+}
+
+function printPreparedResumeFailure(result: FailedPreparedResumeRunResult): number {
+  if (isWorkflowCapabilityBlockedResult(result)) {
+    return printWorkflowCapabilityBlocker(result.message)
+  }
+  if (result.error === "resume_in_progress" || result.error === "not_resumable") {
+    console.error(`  Not resumable: ${result.error}`)
+    return 2
+  }
+  if (result.error === "remediation_required") {
+    console.error("  Missing remediation summary (pass --remediation-summary).")
+    return 75
+  }
+  console.error(`  ${result.error}`)
+  return 1
+}
+
 function printSupabaseStartBlockerIfAny(
   repos: Repos,
   runId: string,
@@ -237,18 +280,6 @@ function latestRunWithStageArtifacts(
     .find(run => hasStageArtifacts(repos, item, run.id, stageId))
 }
 
-function seedStageFromPreviousRun(repos: Repos, item: ItemRow, sourceRunId: string, targetRunId: string, stageId: string): boolean {
-  const sourceRun = repos.getRun(sourceRunId)
-  const targetRun = repos.getRun(targetRunId)
-  const sourceCtx = sourceRun ? resolveWorkflowContextForItemRun(repos, item, sourceRun) : null
-  const targetCtx = targetRun ? resolveWorkflowContextForItemRun(repos, item, targetRun) : null
-  if (!sourceCtx || !targetCtx) return false
-  const sourceStageDir = layout.stageDir(sourceCtx, stageId)
-  if (!existsSync(sourceStageDir)) return false
-  cpSync(sourceStageDir, layout.stageDir(targetCtx, stageId), { recursive: true })
-  return true
-}
-
 function startRunPrelude(ctx: CliItemActionContext): number {
   const transition = lookupTransitionSync(ctx.action, ctx.item.current_column, ctx.item.phase_status)
   if (transition.kind !== "start-run") {
@@ -262,21 +293,44 @@ function startRunPrelude(ctx: CliItemActionContext): number {
   return preflightCliBranchingStart(ctx.repos, ctx.item.workspace_id)
 }
 
+function printBlockedResumeIfAny(ctx: CliItemActionContext, runId: string): number {
+  const refreshed = ctx.repos.getRun(runId)
+  if (refreshed?.recovery_status !== "blocked") return 0
+
+  const supabaseBlockedExit = printSupabaseStartBlockerIfAny(ctx.repos, runId, ctx.itemRef, ctx.action)
+  if (supabaseBlockedExit !== 0) return supabaseBlockedExit
+
+  printResumeBlockedOutput(runId, {
+    summary: refreshed.recovery_summary,
+    scope: refreshed.recovery_scope,
+    scopeRef: refreshed.recovery_scope_ref,
+  }, ctx.itemRef)
+  return 0
+}
+
 const handleStartBrainstorm: CliItemActionHandler = async ctx => {
   const exit = startRunPrelude(ctx)
   if (exit !== 0) return exit
   const io = createCliIO(ctx.repos)
   try {
-    const runId = await runWorkflowWithSync(
-      { id: ctx.item.id, title: ctx.item.title, description: ctx.item.description },
-      ctx.repos,
-      io,
-      { owner: "cli", itemId: ctx.item.id },
-    )
-    const blockedExit = printSupabaseStartBlockerIfAny(ctx.repos, runId, ctx.itemRef, ctx.action)
+    const prepared = prepareForegroundItemRun(ctx.repos, io, {
+      itemId: ctx.item.id,
+      action: ctx.action as StartRunAction,
+      owner: "cli",
+      appConfig: ctx.appConfig,
+    })
+    if (!prepared.ok) {
+      if (isWorkflowCapabilityBlockedResult(prepared)) {
+        return printWorkflowCapabilityBlocker(prepared.message)
+      }
+      console.error(`  ${prepared.error}`)
+      return 1
+    }
+    await prepared.start()
+    const blockedExit = printSupabaseStartBlockerIfAny(ctx.repos, prepared.runId, ctx.itemRef, ctx.action)
     if (blockedExit !== 0) return blockedExit
     console.log(`  ${ctx.action} applied`)
-    console.log(`  run-id: ${runId}`)
+    console.log(`  run-id: ${prepared.runId}`)
     return 0
   } finally {
     io.close?.()
@@ -294,25 +348,19 @@ const handleStartImplementationOrRerunDesignPrep: CliItemActionHandler = async c
   }
   const io = createCliIO(ctx.repos)
   try {
-    const prepared = prepareRun(
-      { id: ctx.item.id, title: ctx.item.title, description: ctx.item.description },
-      ctx.repos,
-      io,
-      {
-        owner: "cli",
-        itemId: ctx.item.id,
-        resume: {
-          scope: { type: "run", runId: "pending" },
-          currentStage: ctx.action === "rerun_design_prep" ? "visual-companion" : "projects",
-        },
-      },
-    )
-    if (!seedStageFromPreviousRun(ctx.repos, ctx.item, sourceRun.id, prepared.runId, "brainstorm")) {
-      console.error("  Cannot start implementation: failed to seed brainstorm artifacts into the new run.")
+    const prepared = prepareForegroundItemRun(ctx.repos, io, {
+      itemId: ctx.item.id,
+      action: ctx.action as StartRunAction,
+      owner: "cli",
+      appConfig: ctx.appConfig,
+    })
+    if (!prepared.ok) {
+      if (isWorkflowCapabilityBlockedResult(prepared)) {
+        return printWorkflowCapabilityBlocker(prepared.message)
+      }
+      console.error(`  ${prepared.error}`)
       return 1
     }
-    seedStageFromPreviousRun(ctx.repos, ctx.item, sourceRun.id, prepared.runId, "visual-companion")
-    seedStageFromPreviousRun(ctx.repos, ctx.item, sourceRun.id, prepared.runId, "frontend-design")
     await prepared.start()
     const blockedExit = printSupabaseStartBlockerIfAny(ctx.repos, prepared.runId, ctx.itemRef, ctx.action)
     if (blockedExit !== 0) return blockedExit
@@ -335,22 +383,17 @@ const handleStartVisualCompanion: CliItemActionHandler = async ctx => {
   }
   const io = createCliIO(ctx.repos)
   try {
-    const prepared = prepareRun(
-      { id: ctx.item.id, title: ctx.item.title, description: ctx.item.description },
-      ctx.repos,
-      io,
-      {
-        owner: "cli",
-        itemId: ctx.item.id,
-        resume: {
-          scope: { type: "run", runId: "pending" },
-          currentStage: "visual-companion",
-          manualStage: "visual-companion",
-        },
-      },
-    )
-    if (!seedStageFromPreviousRun(ctx.repos, ctx.item, sourceRun.id, prepared.runId, "brainstorm")) {
-      console.error("  Cannot start visual-companion: failed to seed brainstorm artifacts into the new run.")
+    const prepared = prepareForegroundItemRun(ctx.repos, io, {
+      itemId: ctx.item.id,
+      action: ctx.action as StartRunAction,
+      owner: "cli",
+      appConfig: ctx.appConfig,
+    })
+    if (!prepared.ok) {
+      if (isWorkflowCapabilityBlockedResult(prepared)) {
+        return printWorkflowCapabilityBlocker(prepared.message)
+      }
+      console.error(`  ${prepared.error}`)
       return 1
     }
     await prepared.start()
@@ -375,25 +418,19 @@ const handleStartFrontendDesign: CliItemActionHandler = async ctx => {
   }
   const io = createCliIO(ctx.repos)
   try {
-    const prepared = prepareRun(
-      { id: ctx.item.id, title: ctx.item.title, description: ctx.item.description },
-      ctx.repos,
-      io,
-      {
-        owner: "cli",
-        itemId: ctx.item.id,
-        resume: {
-          scope: { type: "run", runId: "pending" },
-          currentStage: "frontend-design",
-          manualStage: "frontend-design",
-        },
-      },
-    )
-    if (!seedStageFromPreviousRun(ctx.repos, ctx.item, sourceRun.id, prepared.runId, "brainstorm")) {
-      console.error("  Cannot start frontend-design: failed to seed brainstorm artifacts into the new run.")
+    const prepared = prepareForegroundItemRun(ctx.repos, io, {
+      itemId: ctx.item.id,
+      action: ctx.action as StartRunAction,
+      owner: "cli",
+      appConfig: ctx.appConfig,
+    })
+    if (!prepared.ok) {
+      if (isWorkflowCapabilityBlockedResult(prepared)) {
+        return printWorkflowCapabilityBlocker(prepared.message)
+      }
+      console.error(`  ${prepared.error}`)
       return 1
     }
-    seedStageFromPreviousRun(ctx.repos, ctx.item, sourceRun.id, prepared.runId, "visual-companion")
     await prepared.start()
     const blockedExit = printSupabaseStartBlockerIfAny(ctx.repos, prepared.runId, ctx.itemRef, ctx.action)
     if (blockedExit !== 0) return blockedExit
@@ -414,57 +451,23 @@ const handleResumeRun: CliItemActionHandler = async ctx => {
   const resumePayload = resumePayloadResult.payload
 
   if (resumePayload && resumeRunId) {
-    const { loadResumeReadiness, performResume } = await import("../../core/resume.js")
-    const readiness = await loadResumeReadiness(ctx.repos, resumeRunId)
-    if (readiness.kind === "not_found") {
-      console.error(`  Item not found: ${ctx.itemRef}`)
-      return 1
-    }
-    if (readiness.kind === "not_resumable") {
-      console.error(`  Not resumable: ${readiness.reason}`)
-      return 2
-    }
-    if (readiness.kind === "no_recovery") {
-      console.error(`  Invalid transition: ${ctx.action} from ${ctx.item.current_column}/${ctx.item.phase_status}`)
-      return 1
-    }
-
-    let scopeRef: string | null = null
-    if (readiness.record.scope.type === "stage") scopeRef = readiness.record.scope.stageId
-    else if (readiness.record.scope.type === "story") scopeRef = `${readiness.record.scope.waveNumber}/${readiness.record.scope.storyId}`
-    const remediation = ctx.repos.createExternalRemediation({
-      runId: resumeRunId,
-      scope: readiness.record.scope.type,
-      scopeRef,
-      summary: resumePayload.summary,
-      branch: resumePayload.branch,
-      commitSha: resumePayload.commitSha,
-      reviewNotes: resumePayload.reviewNotes,
-      source: "cli",
-    })
-
     const io = createCliIO(ctx.repos)
     try {
-      console.log(`  ${ctx.action} applied`)
-      console.log(`  run-id: ${resumeRunId}`)
-      console.log(`  remediation-id: ${remediation.id}`)
-      await performResume({
-        repos: ctx.repos,
-        io,
+      const prepared = await prepareForegroundResumeRun(ctx.repos, io, {
         runId: resumeRunId,
-        remediation,
+        summary: resumePayload.summary,
+        branch: resumePayload.branch,
+        commit: resumePayload.commitSha,
+        reviewNotes: resumePayload.reviewNotes,
         workerOwnerKind: "cli",
       })
-      const refreshed = ctx.repos.getRun(resumeRunId)
-      if (refreshed?.recovery_status === "blocked") {
-        const supabaseBlockedExit = printSupabaseStartBlockerIfAny(ctx.repos, resumeRunId, ctx.itemRef, ctx.action)
-        if (supabaseBlockedExit !== 0) return supabaseBlockedExit
-        printResumeBlockedOutput(resumeRunId, {
-          summary: refreshed.recovery_summary,
-          scope: refreshed.recovery_scope,
-          scopeRef: refreshed.recovery_scope_ref,
-        }, ctx.itemRef)
-      }
+      if (!prepared.ok) return printPreparedResumeFailure(prepared)
+      console.log(`  ${ctx.action} applied`)
+      console.log(`  run-id: ${prepared.runId}`)
+      console.log(`  remediation-id: ${prepared.remediationId}`)
+      await prepared.start()
+      const blockedExit = printBlockedResumeIfAny(ctx, prepared.runId)
+      if (blockedExit !== 0) return blockedExit
       return 0
     } finally {
       io.close?.()
@@ -597,75 +600,83 @@ async function startPreparedImportFromCli(
   appConfig: AppConfig,
   json: boolean,
 ): Promise<number> {
+  const start = preparePreparedImportCliStart(repos, item, sourceDir, workspaceKey, appConfig)
+  if (!start.ok) return start.exitCode
+  const io = createCliIO(repos)
+  try {
+    const prepared = await prepareForegroundPreparedImportRun(repos, io, {
+      itemId: item?.id,
+      sourceDir,
+      workspaceKey: item ? undefined : start.workspace.key,
+      owner: "cli",
+      appConfig,
+    })
+    if (!prepared.ok) return reportPreparedImportFailure(prepared, item)
+    await startPreparedImportRun(repos, prepared)
+    printPreparedImportStartOutput(prepared, json)
+    return 0
+  } finally {
+    io.close?.()
+  }
+}
+
+function preparePreparedImportCliStart(
+  repos: Repos,
+  item: ItemRow | undefined,
+  sourceDir: string,
+  workspaceKey: string | undefined,
+  appConfig: AppConfig,
+): PreparedImportCliStart {
   const workspace = item ? repos.getWorkspace(item.workspace_id) : resolveSelectedWorkspace(repos, workspaceKey)
-  if (!workspace) return reportMissingPreparedImportWorkspace(workspaceKey)
+  if (!workspace) return { ok: false, exitCode: reportMissingPreparedImportWorkspace(workspaceKey) }
 
   const transitionExit = validatePreparedImportTransition(item)
-  if (transitionExit !== 0) return transitionExit
+  if (transitionExit !== 0) return { ok: false, exitCode: transitionExit }
+
   const gitGate = checkWorkflowStartGitReadinessForWorkspace(
     workspace,
     { itemId: item?.id ?? "new", action: "import_prepared" },
     { appConfig },
   )
-  if (!gitGate.ok) return printWorkflowGitBlocker(gitGate, item?.code ?? item?.id ?? "new")
-  const exit = preflightCliBranchingStart(repos, workspace.id, [sourceDir])
-  if (exit !== 0) return exit
-  const llm = await resolveWorkflowLlmOptions(workspace)
-  const bundle = await loadPreparedImportBundleWithLlmFallback(sourceDir, {
-    title: item?.title ?? "Prepared import",
-    description: item?.description ?? "",
-  }, llm?.stage)
-  const io = createCliIO(repos)
-  try {
-    const resume = {
-      scope: { type: "run", runId: "pending" } as const,
-      currentStage: "projects" as const,
-      projectStartStages: deriveProjectStartStages(bundle),
-      dirtyCheckIgnoredPaths: [sourceDir],
-      skipDesignPrep: true,
-    }
-    const prepared = prepareRun(
-      {
-        id: item?.id ?? "new",
-        title: item?.title ?? titleForPreparedImportItem(bundle),
-        description: item?.description ?? descriptionForPreparedImportItem(bundle),
-      },
-      repos,
-      io,
-      {
-        owner: "cli",
-        itemId: item?.id,
-        ...newItemWorkspaceFields(item, workspace),
-        resume,
-      },
-    )
-    const targetRun = repos.getRun(prepared.runId)
-    const preparedItem = repos.getItem(prepared.itemId)
-    const ctx = targetRun && preparedItem ? resolveWorkflowContextForItemRun(repos, preparedItem, targetRun) : null
-    if (!ctx) {
-      console.error("  Cannot import prepared artifacts: failed to resolve target run workspace.")
-      return 1
-    }
-    const seeded = seedPreparedImportArtifacts(ctx, bundle, { sourceDir })
-    repos.setItemColumn(prepared.itemId, "implementation", "running")
-    const releaseDeathHandlers = installCliRunDeathHandlers(repos, prepared.runId)
-    try {
-      await prepared.start()
-    } finally {
-      releaseDeathHandlers()
-    }
-    if (json) {
-      console.log(JSON.stringify({ kind: "started", itemId: prepared.itemId, runId: prepared.runId, warnings: seeded.warnings }))
-    } else {
-      console.log("  import_prepared applied")
-      console.log(`  item-id: ${prepared.itemId}`)
-      console.log(`  run-id: ${prepared.runId}`)
-      for (const warning of seeded.warnings) console.log(`  warning: ${warning}`)
-    }
-    return 0
-  } finally {
-    io.close?.()
+  if (!gitGate.ok) {
+    return { ok: false, exitCode: printWorkflowGitBlocker(gitGate, item?.code ?? item?.id ?? "new") }
   }
+
+  const exit = preflightCliBranchingStart(repos, workspace.id, [sourceDir])
+  if (exit !== 0) return { ok: false, exitCode: exit }
+  return { ok: true, workspace }
+}
+
+function reportPreparedImportFailure(prepared: FailedPreparedImportRunResult, item: ItemRow | undefined): number {
+  if (isWorkflowCapabilityBlockedResult(prepared)) {
+    return printWorkflowCapabilityBlocker(prepared.message)
+  }
+  if ("code" in prepared && prepared.code === "workflow_git_blocked") {
+    return printWorkflowGitBlocker(prepared, item?.code ?? item?.id ?? "new")
+  }
+  console.error(`  Import failed: ${prepared.error}`)
+  return 1
+}
+
+async function startPreparedImportRun(repos: Repos, prepared: SuccessfulPreparedImportRunResult): Promise<void> {
+  repos.setItemColumn(prepared.itemId, "implementation", "running")
+  const releaseDeathHandlers = installCliRunDeathHandlers(repos, prepared.runId)
+  try {
+    await prepared.start()
+  } finally {
+    releaseDeathHandlers()
+  }
+}
+
+function printPreparedImportStartOutput(prepared: SuccessfulPreparedImportRunResult, json: boolean): void {
+  if (json) {
+    console.log(JSON.stringify({ kind: "started", itemId: prepared.itemId, runId: prepared.runId, warnings: prepared.warnings }))
+    return
+  }
+  console.log("  import_prepared applied")
+  console.log(`  item-id: ${prepared.itemId}`)
+  console.log(`  run-id: ${prepared.runId}`)
+  for (const warning of prepared.warnings) console.log(`  warning: ${warning}`)
 }
 
 function reportMissingPreparedImportWorkspace(workspaceKey: string | undefined): number {
@@ -679,27 +690,6 @@ function validatePreparedImportTransition(item: ItemRow | undefined): number {
   if (transition.kind === "start-run") return 0
   console.error(`  Invalid transition: import_prepared from ${item.current_column}/${item.phase_status}`)
   return 1
-}
-
-function newItemWorkspaceFields(item: ItemRow | undefined, workspace: WorkspaceRow): { workspaceKey?: string; workspaceName?: string } {
-  if (item !== undefined) return {}
-  return { workspaceKey: workspace.key, workspaceName: workspace.name }
-}
-
-function titleForPreparedImportItem(bundle: Awaited<ReturnType<typeof loadPreparedImportBundleWithLlmFallback>>): string {
-  return bundle.projects[0]?.name.trim()
-    || firstLine(bundle.concept.summary)
-    || "Prepared import"
-}
-
-function descriptionForPreparedImportItem(bundle: Awaited<ReturnType<typeof loadPreparedImportBundleWithLlmFallback>>): string {
-  return bundle.projects[0]?.description.trim()
-    || firstLine(bundle.concept.problem)
-    || firstLine(bundle.concept.summary)
-}
-
-function firstLine(value: string): string {
-  return value.split(/\r?\n/).map(line => line.trim()).find(Boolean) ?? ""
 }
 
 function loadCliAppConfig(): AppConfig {

@@ -200,7 +200,7 @@ test("REQ-2 setup route registers webhook, reports provider state, and keeps liv
       BEERENGINEER_TELEGRAM_API_BASE_URL: baseUrl,
       TELEGRAM_BOT_TOKEN: "bot-secret",
       TELEGRAM_WEBHOOK_SECRET: "hook-secret",
-      BEERENGINEER_TELEGRAM_VERIFICATION_TIMEOUT_MS: "25",
+      BEERENGINEER_TELEGRAM_VERIFICATION_TIMEOUT_MS: "1000",
     })
 
     try {

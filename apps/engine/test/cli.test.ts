@@ -551,7 +551,7 @@ test("item preview prints and starts and stops the item worktree preview", async
           coderExecution: "safe-workspace-write",
         },
         preview: {
-          command: `${process.execPath} -e "const fs=require('node:fs');const http=require('node:http');const port=Number(process.env.PORT);http.createServer((_,res)=>res.end('ok')).listen(port, process.env.BEERENGINEER_PREVIEW_HOST, () => { fs.writeFileSync('preview-started.txt', String(port)); setTimeout(() => process.exit(0), 1500); });"`,
+          command: `${process.execPath} -e "const fs=require('node:fs');const http=require('node:http');const port=Number(process.env.PORT);http.createServer((_,res)=>res.end('ok')).listen(port, process.env.BEERENGINEER_PREVIEW_HOST, () => { fs.writeFileSync('preview-started.txt', String(port)); setTimeout(() => process.exit(0), 15000); });"`,
         },
         sonar: { enabled: false },
         reviewPolicy: { coderabbit: { enabled: false }, sonarcloud: { enabled: false } },

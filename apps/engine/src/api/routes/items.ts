@@ -6,7 +6,14 @@ import { isPortListening, readManagedPreviewPid, resolvePreviewLaunchSpec, start
 import { resolveItemPreviewContext } from "../../core/itemPreview.js"
 import { ITEM_ACTIONS, isItemAction, lookupTransition, type ItemActionsService } from "../../core/itemActions.js"
 import { latestRunForItemWithStageArtifact } from "../../core/itemWorkspace.js"
-import { isWorkflowStartGitBlockedResult, resumeRunInProcess, startPreparedImportForItem, startRunForItem, type StartRunAction } from "../../core/runService.js"
+import {
+  isWorkflowCapabilityBlockedResult,
+  isWorkflowStartGitBlockedResult,
+  resumeRunInProcess,
+  startPreparedImportForItem,
+  startRunForItem,
+  type StartRunAction,
+} from "../../core/runService.js"
 import { layout } from "../../core/workspaceLayout.js"
 import { resolveWorkflowContextForRun } from "../../core/workflowContextResolver.js"
 import { json, readJson } from "../http.js"
@@ -109,7 +116,9 @@ export async function handleCreatePreparedImportItem(
       respondWorkflowGitBlocker(res, result, "import_prepared")
       return
     }
-    json(res, result.status, { error: result.error, action: "import_prepared" })
+    json(res, result.status, isWorkflowCapabilityBlockedResult(result)
+      ? { error: result.error, code: result.code, message: result.message, reason: "reason" in result ? result.reason : undefined, action: "import_prepared" }
+      : { error: result.error, action: "import_prepared" })
     return
   }
   repos.setItemColumn(result.itemId, "implementation", "running")
@@ -157,7 +166,9 @@ async function handlePreparedImportAction(
       respondWorkflowGitBlocker(res, result, "import_prepared")
       return
     }
-    json(res, result.status, { error: result.error, action: "import_prepared" })
+    json(res, result.status, isWorkflowCapabilityBlockedResult(result)
+      ? { error: result.error, code: result.code, message: result.message, reason: "reason" in result ? result.reason : undefined, action: "import_prepared" }
+      : { error: result.error, action: "import_prepared" })
     return
   }
   repos.setItemColumn(itemId, transition.column, "running")
@@ -229,7 +240,9 @@ function handleStartRunItemAction(
       respondWorkflowGitBlocker(res, result, action)
       return
     }
-    json(res, result.status, { error: result.error, action })
+    json(res, result.status, isWorkflowCapabilityBlockedResult(result)
+      ? { error: result.error, code: result.code, message: result.message, reason: "reason" in result ? result.reason : undefined, action }
+      : { error: result.error, action })
     return
   }
   repos.setItemColumn(itemId, transition.column, "running")
@@ -257,7 +270,9 @@ async function maybeResumeItemActionRun(
     promptAnswer: result.promptAnswer,
   })
   if (!resumed.ok) {
-    json(res, resumed.status, { error: resumed.error, code: resumed.error })
+    json(res, resumed.status, isWorkflowCapabilityBlockedResult(resumed)
+      ? { error: resumed.error, code: resumed.code, message: resumed.message, reason: "reason" in resumed ? resumed.reason : undefined }
+      : { error: resumed.error, code: resumed.error })
     return true
   }
   return false

@@ -1,0 +1,19 @@
+{
+  "_doc": "Mode manifest for the engine test runner. Files listed here are explicitly classified outside the ordinary test mode driven by `npm test --workspace=@beerengineer/engine`. Paths are normalized relative to apps/engine/. Update this file whenever a test must move into or out of the ordinary mode; PROJ-8-PRD-1-US-1 makes this manifest the authoritative exclusion contract.",
+  "integrationOnly": [
+    {
+      "path": "test/apiIntegration.test.ts",
+      "reason": "Spawns the full HTTP API server end-to-end; runs in `npm run test:integration` rather than the ordinary fast-feedback command."
+    },
+    {
+      "path": "test/discoveryAcceptance.test.ts",
+      "reason": "Acceptance tests for PROJ-8-PRD-1-US-1 spawn `npm test --workspace=@beerengineer/engine` as a subprocess; classifying them out of ordinary mode prevents recursion."
+    }
+  ],
+  "sonarCoverageOnly": [
+    {
+      "path": "test/sdkLive.test.ts",
+      "reason": "Hits the live LLM SDK (gated on BEERENGINEER_SDK_LIVE=1); runs only when capturing Sonar coverage and is excluded from the ordinary test command."
+    }
+  ]
+}

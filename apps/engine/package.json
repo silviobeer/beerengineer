@@ -10,6 +10,7 @@
     "start": "tsx src/index.ts",
     "dev": "tsx watch src/api/server.ts",
     "start:api": "tsx src/api/server.ts",
+    "generate:item-actions-fixture": "tsx scripts/generateItemActionsFixture.ts",
     "typecheck": "tsc --noEmit",
     "test": "npm run test:all",
     "test:all": "node ../../scripts/run-engine-tests.mjs all",
