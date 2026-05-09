@@ -90,7 +90,7 @@ import { seedIfEmpty } from "./seed.js"
 import { writeApiTokenFile } from "./tokenFile.js"
 import { removeEnginePidFile, writeEnginePidFile } from "./pidFile.js"
 import { recoverApiRunsForShutdown, recoverLostWorkerRuns } from "../core/orphanRecovery.js"
-import { API_WORKER_INSTANCE_ID, resumeRunInProcess } from "../core/runService.js"
+import { API_WORKER_INSTANCE_ID, resumeRunFromExistingRemediationInProcess } from "../core/runService.js"
 import { claimExecutionOwnershipHandoffs } from "../core/executionOwnershipHandoff.js"
 import { pruneMissingWorktreeAssignments } from "../core/portAllocator.js"
 import { markPreparedUpdateInFlight, releaseUpdateLock, type UpdateApplyResult } from "../core/updateMode.js"
@@ -233,9 +233,8 @@ const executionOwnershipHandoffTick = async (): Promise<void> => {
     await claimExecutionOwnershipHandoffs(repos, {
       apiWorkerInstanceId: API_WORKER_INSTANCE_ID,
       onItemColumnChanged: payload => board.broadcastItemColumnChanged(payload),
-      resumeRun: (claimRepos, input) => resumeRunInProcess(claimRepos, {
-        runId: input.runId,
-        summary: input.summary,
+      resumeRun: (claimRepos, input) => resumeRunFromExistingRemediationInProcess(claimRepos, {
+        remediationId: input.remediationId,
         apiWorkerInstanceId: input.apiWorkerInstanceId,
         workerLeaseClock: input.workerLeaseClock,
         workerLeaseScheduler: input.workerLeaseScheduler,

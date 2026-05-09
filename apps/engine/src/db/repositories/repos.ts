@@ -668,6 +668,10 @@ export class Repos {
     return this.getAll("SELECT * FROM external_remediations WHERE run_id = ? ORDER BY created_at ASC", runId)
   }
 
+  getExternalRemediation(id: string): ExternalRemediationRow | undefined {
+    return this.byId("external_remediations", id)
+  }
+
   getRun(id: string): RunRow | undefined {
     return this.byId("runs", id)
   }
