@@ -161,6 +161,10 @@ This is intentionally broader than a pure test-runner fix, because the known Sup
 - UI rendered action buttons versus engine-allowed transitions.
 - Engine/UI import boundary preservation if the action drift check needs shared fixtures.
 
+## Local Quality Workflow
+- Run `npm test` before QA. For PROJ-8 this includes the engine-side committed-fixture staleness check and the UI-side `BoardDriftGuard` subset check.
+- When engine transition rules change intentionally, refresh the committed UI fixture with `npm run generate:item-actions-fixture --workspace=@beerengineer/engine` before re-running `npm test`.
+
 ## Next Step
 - UI feature: no visual-companion handoff needed.
 - Backend/API feature: requirements-engineer.

@@ -10,7 +10,7 @@ import { buildConversation, recordAnswer, recordUserMessage } from "../../core/c
 import { MESSAGES_ENDPOINT_MAX_SCAN } from "../../core/constants.js"
 import { messagingLevelFromQuery, shouldDeliverAtLevel } from "../../core/messagingLevel.js"
 import { projectStageLogRow } from "../../core/messagingProjection.js"
-import { resumeRunInProcess, startRunFromIdea } from "../../core/runService.js"
+import { isWorkflowCapabilityBlockedResult, resumeRunInProcess, startRunFromIdea } from "../../core/runService.js"
 import { json, readJson } from "../http.js"
 import { layout } from "../../core/workspaceLayout.js"
 import { resolveWorkflowContextForRun } from "../../core/workflowContextResolver.js"
@@ -254,7 +254,9 @@ export async function handleResumeRun(
     onItemColumnChanged,
   })
   if (!result.ok) {
-    return json(res, result.status, { error: result.error })
+    return json(res, result.status, isWorkflowCapabilityBlockedResult(result)
+      ? { error: result.error, code: result.code, message: result.message, reason: "reason" in result ? result.reason : undefined }
+      : { error: result.error })
   }
   const run = repos.getRun(result.runId)
   json(res, 200, { runId: result.runId, status: run?.status ?? "running" })
@@ -273,7 +275,11 @@ export async function handleSupabaseReadinessRetry(
     summary: typeof body.summary === "string" && body.summary.trim() ? body.summary : "Supabase readiness setup updated.",
     onItemColumnChanged,
   })
-  if (!result.ok) return json(res, result.status, { ok: false, error: result.error })
+  if (!result.ok) {
+    return json(res, result.status, isWorkflowCapabilityBlockedResult(result)
+      ? { ok: false, error: result.error, code: result.code, message: result.message, reason: "reason" in result ? result.reason : undefined }
+      : { ok: false, error: result.error })
+  }
   const run = repos.getRun(result.runId)
   json(res, 200, { ok: true, runId: result.runId, status: run?.status ?? "running", recoveryStatus: run?.recovery_status ?? null })
 }
@@ -301,7 +307,11 @@ export async function handleCreateRun(
       : undefined,
     onItemColumnChanged,
   })
-  if (!result.ok) return json(res, result.status, { error: result.error })
+  if (!result.ok) {
+    return json(res, result.status, isWorkflowCapabilityBlockedResult(result)
+      ? { error: result.error, code: result.code, message: result.message, reason: "reason" in result ? result.reason : undefined }
+      : { error: result.error })
+  }
   const run = repos.getRun(result.runId)
   json(res, 202, {
     runId: result.runId,

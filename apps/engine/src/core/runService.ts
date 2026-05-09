@@ -3,9 +3,9 @@ import { randomUUID } from "node:crypto"
 import { busToWorkflowIO, createBus, type EventBus } from "./bus.js"
 import { appendItemDecision } from "./itemDecisions.js"
 import { withPromptPersistence } from "./promptPersistence.js"
-import { prepareRun } from "./runOrchestrator.js"
+import { prepareRun, type SupabaseAdapterFactory } from "./runOrchestrator.js"
 import { resolveWorkflowLlmOptions } from "./runSubscribers.js"
-import { loadResumeReadiness, performResume } from "./resume.js"
+import { loadResumeReadiness, performResume, type PerformResumeInput } from "./resume.js"
 import { getRegisteredWorkspace } from "./workspaces.js"
 import { deriveProjectStartStages, loadPreparedImportBundleWithLlmFallback, seedPreparedImportArtifacts, type PreparedImportBundle } from "./preparedImport.js"
 import { layout } from "./workspaceLayout.js"
@@ -15,16 +15,14 @@ import type { WorkflowIO } from "./io.js"
 import type { WorkflowResumeInput } from "../workflow.js"
 import { defaultAppConfig, readConfigFile, resolveConfigPath, resolveMergedConfig, resolveOverrides } from "../setup/config.js"
 import { readWorkspaceGitReadiness, type GitCommandOptions, type WorkspaceGitReadiness } from "../setup/gitIdentity.js"
+import { SUPABASE_MANAGEMENT_TOKEN_SECRET_REF } from "../setup/secretMetadata.js"
+import { readActiveSecretValue } from "../setup/secretStore.js"
 import type { AppConfig } from "../setup/types.js"
-import type { SupabaseAdapter } from "./supabase/types.js"
-import type { SupabaseHandoffClient } from "./supabase/handoffWriter.js"
 import type { WorkerLeaseScheduler } from "./workerLease.js"
+import { createSupabaseAdapter } from "./supabase/adapter.js"
+import { SupabaseManagementClient } from "./supabase/managementClient.js"
 
-/** Factory type re-exported so server.ts can build it without importing from runOrchestrator. */
-export type SupabaseAdapterFactory = (deps: { workspaceId: string; projectRef: string }) => {
-  adapter: SupabaseAdapter
-  handoffClient?: SupabaseHandoffClient
-} | null
+export type { SupabaseAdapterFactory } from "./runOrchestrator.js"
 
 export const API_WORKER_INSTANCE_ID = process.env.BEERENGINEER_API_INSTANCE_ID ?? `api-${randomUUID()}`
 
@@ -62,19 +60,232 @@ export type WorkflowStartGitBlockedResult = {
   }
 }
 
+export type WorkflowCapabilityOwnershipBlockedResult = {
+  ok: false
+  status: 409
+  error: "workflow_capability_blocked"
+  code: "workflow_capability_blocked"
+  message: string
+}
+
+export type WorkflowCapabilityBlockedReason = "incomplete_config" | "blocked_readiness" | "gate_blocked"
+
+export type WorkflowCapabilityBlockedResult = {
+  ok: false
+  status: 400 | 409 | 503
+  error: "workflow_capability_blocked"
+  code: "workflow_capability_blocked"
+  reason: WorkflowCapabilityBlockedReason
+  message: string
+}
+
 export type StartRunResult =
   | { ok: true; runId: string; itemId: string }
   | WorkflowStartGitBlockedResult
+  | WorkflowCapabilityOwnershipBlockedResult
+  | WorkflowCapabilityBlockedResult
+  | { ok: false; status: 404 | 409 | 422; error: string }
+
+type StartRunFailureResult = Exclude<StartRunResult, { ok: true; runId: string; itemId: string }>
+
+export type PreparedForegroundRunResult =
+  | { ok: true; runId: string; itemId: string; start: () => Promise<void> }
+  | WorkflowStartGitBlockedResult
+  | WorkflowCapabilityOwnershipBlockedResult
+  | WorkflowCapabilityBlockedResult
   | { ok: false; status: 404 | 409 | 422; error: string }
 
 export type ResumeRunResult =
   | { ok: true; runId: string; remediationId: string }
+  | WorkflowCapabilityOwnershipBlockedResult
+  | WorkflowCapabilityBlockedResult
+  | { ok: false; status: 404 | 409 | 422; error: string }
+
+export type PreparedForegroundResumeRunResult =
+  | { ok: true; runId: string; remediationId: string; start: () => Promise<void> }
+  | WorkflowCapabilityOwnershipBlockedResult
+  | WorkflowCapabilityBlockedResult
   | { ok: false; status: 404 | 409 | 422; error: string }
 
 export type PreparedImportRunResult =
   | { ok: true; runId: string; itemId: string; warnings: string[] }
   | WorkflowStartGitBlockedResult
+  | WorkflowCapabilityOwnershipBlockedResult
+  | WorkflowCapabilityBlockedResult
   | { ok: false; status: 404 | 409 | 422; error: string }
+
+type PreparedImportFailureResult = Exclude<PreparedImportRunResult, { ok: true; runId: string; itemId: string; warnings: string[] }>
+
+export type PreparedForegroundImportRunResult =
+  | { ok: true; runId: string; itemId: string; warnings: string[]; start: () => Promise<void> }
+  | WorkflowStartGitBlockedResult
+  | WorkflowCapabilityOwnershipBlockedResult
+  | WorkflowCapabilityBlockedResult
+  | { ok: false; status: 404 | 409 | 422; error: string }
+
+type WorkflowCapabilityBag = {
+  supabaseAdapterFactory: SupabaseAdapterFactory | null
+}
+
+export type WorkflowCapabilityResolverInput = {
+  repos: Repos
+  workspace: WorkspaceRow | undefined
+  supabaseAdapterFactory?: SupabaseAdapterFactory
+}
+
+type WorkflowCapabilityResolution =
+  | WorkflowCapabilityBag
+  | WorkflowCapabilityOwnershipBlockedResult
+  | WorkflowCapabilityBlockedResult
+
+export type WorkflowCapabilityResolver = (input: WorkflowCapabilityResolverInput) => WorkflowCapabilityResolution
+
+type WorkflowCapabilityFailureFixture = {
+  status?: number
+  reason?: unknown
+  message?: unknown
+  secrets?: unknown
+}
+
+function redactCapabilityMessage(value: string, secrets: string[] = []): string {
+  let redacted = value
+  for (const secret of secrets) {
+    if (secret) redacted = redacted.split(secret).join("[redacted]")
+  }
+  return redacted
+    .replaceAll(/\bsbp_[A-Za-z0-9_-]+\b/g, "sbp_[redacted]")
+    .replaceAll(/\bsb_service_role_[A-Za-z0-9._-]+\b/g, "sb_service_role_[redacted]")
+    .replaceAll(/\bsk-[A-Za-z0-9._-]+\b/g, "sk-[redacted]")
+    .replaceAll(/(?:[A-Za-z]:)?(?:[\\/][^\s"'`]+)+/g, "[redacted-path]")
+}
+
+function buildWorkflowCapabilityBlockedResult(input: {
+  status: 400 | 409 | 503
+  reason: WorkflowCapabilityBlockedReason
+  message: string
+  secrets?: string[]
+}): WorkflowCapabilityBlockedResult {
+  return {
+    ok: false,
+    status: input.status,
+    error: "workflow_capability_blocked",
+    code: "workflow_capability_blocked",
+    reason: input.reason,
+    message: redactCapabilityMessage(input.message, input.secrets),
+  }
+}
+
+function isWorkflowCapabilityBag(result: WorkflowCapabilityResolution): result is WorkflowCapabilityBag {
+  return "supabaseAdapterFactory" in result
+}
+
+function workflowCapabilityFailureStatus(reason: WorkflowCapabilityBlockedReason, status: number | undefined): 400 | 409 | 503 {
+  if (status === 400 || status === 409 || status === 503) return status
+  if (reason === "incomplete_config") return 400
+  if (reason === "gate_blocked") return 409
+  return 503
+}
+
+function workflowCapabilityFailureSecrets(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
+    : []
+}
+
+function workflowCapabilityFailureMessage(value: unknown): string {
+  return typeof value === "string" && value.trim()
+    ? value
+    : "Supabase capability is blocked."
+}
+
+function workflowCapabilityFailureFixture(): WorkflowCapabilityBlockedResult | null {
+  const raw = process.env.BEERENGINEER_TEST_WORKFLOW_CAPABILITY_FAILURE?.trim()
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as WorkflowCapabilityFailureFixture
+    const reason = parsed.reason
+    if (reason !== "incomplete_config" && reason !== "blocked_readiness" && reason !== "gate_blocked") {
+      return buildWorkflowCapabilityBlockedResult({
+        status: 503,
+        reason: "blocked_readiness",
+        message: "Supabase capability is blocked by an invalid test fixture.",
+      })
+    }
+    return buildWorkflowCapabilityBlockedResult({
+      status: workflowCapabilityFailureStatus(reason, parsed.status),
+      reason,
+      message: workflowCapabilityFailureMessage(parsed.message),
+      secrets: workflowCapabilityFailureSecrets(parsed.secrets),
+    })
+  } catch {
+    return buildWorkflowCapabilityBlockedResult({
+      status: 503,
+      reason: "blocked_readiness",
+      message: "Supabase capability is blocked by an unreadable test fixture.",
+    })
+  }
+}
+
+function missingSupabaseCapabilityRequirements(workspace: WorkspaceRow, token: string | null): string[] {
+  const missing: string[] = []
+  if (!token) missing.push("management token")
+  if (!workspace.supabase_persistent_test_branch_ref?.trim()) missing.push("persistent test branch")
+  return missing
+}
+
+function configuredSupabaseCapabilityFailure(workspace: WorkspaceRow, token: string | null): WorkflowCapabilityBlockedResult | null {
+  const missing = missingSupabaseCapabilityRequirements(workspace, token)
+  if (missing.length === 0) return null
+  return buildWorkflowCapabilityBlockedResult({
+    status: 400,
+    reason: "incomplete_config",
+    message: `Supabase capability is configured but incomplete. Missing ${missing.join(" and ")}.`,
+  })
+}
+
+function defaultSupabaseAdapterFactory(
+  repos: Repos,
+  token: string,
+  providedFactory?: SupabaseAdapterFactory,
+): WorkflowCapabilityBag {
+  if (providedFactory) return { supabaseAdapterFactory: providedFactory }
+  return {
+    supabaseAdapterFactory: () => ({
+      adapter: createSupabaseAdapter({
+        repos,
+        client: new SupabaseManagementClient({ token }),
+      }),
+    }),
+  }
+}
+
+export function resolveWorkflowCapabilities(input: WorkflowCapabilityResolverInput): WorkflowCapabilityResolution {
+  if (!input.workspace?.supabase_project_ref) {
+    return { supabaseAdapterFactory: null }
+  }
+  const injectedFailure = workflowCapabilityFailureFixture()
+  if (injectedFailure) return injectedFailure
+
+  const token = readActiveSecretValue(SUPABASE_MANAGEMENT_TOKEN_SECRET_REF)
+  const configuredFailure = configuredSupabaseCapabilityFailure(input.workspace, token)
+  if (configuredFailure) return configuredFailure
+
+  return defaultSupabaseAdapterFactory(input.repos, token as string, input.supabaseAdapterFactory)
+}
+
+// Test-only smoke hook: forces every reviewed runService entry surface to
+// surface the same clear ownership failure without requiring live Supabase.
+function workflowCapabilityOwnershipBlocker(): WorkflowCapabilityOwnershipBlockedResult | null {
+  const message = process.env.BEERENGINEER_TEST_CAPABILITY_OWNERSHIP_FAILURE?.trim()
+  if (!message) return null
+  return {
+    ok: false,
+    status: 409,
+    error: "workflow_capability_blocked",
+    code: "workflow_capability_blocked",
+    message,
+  }
+}
 
 function buildApiIo(repos: Repos): WorkflowIO & { bus: EventBus } {
   const bus = createBus()
@@ -102,6 +313,8 @@ function fireInBackground(io: WorkflowIO & { bus?: EventBus }, label: string, ta
 }
 
 type BackgroundRunner = typeof fireInBackground
+type PrepareRunImpl = typeof prepareRun
+type PerformResumeImpl = (input: PerformResumeInput) => Promise<void>
 
 function hasStageArtifacts(
   repos: Repos,
@@ -172,27 +385,73 @@ export function startRunFromIdea(
     supabaseAdapterFactory?: SupabaseAdapterFactory
   },
 ): StartRunResult {
+  const io = buildApiIo(repos)
+  const prepared = prepareForegroundIdeaRun(repos, io, {
+    title: input.title,
+    description: input.description,
+    workspaceKey: input.workspaceKey,
+    owner: "api",
+    workerInstanceId: input.apiWorkerInstanceId ?? API_WORKER_INSTANCE_ID,
+    workerLeaseClock: input.workerLeaseClock,
+    workerLeaseScheduler: input.workerLeaseScheduler,
+    onItemColumnChanged: input.onItemColumnChanged,
+    supabaseAdapterFactory: input.supabaseAdapterFactory,
+  })
+  if (!prepared.ok) {
+    io.close?.()
+    return prepared
+  }
+  const runInBackground = input.backgroundRunner ?? fireInBackground
+  runInBackground(io, "startRunFromIdea", prepared.start)
+  return { ok: true, runId: prepared.runId, itemId: prepared.itemId }
+}
+
+export function prepareForegroundIdeaRun(
+  repos: Repos,
+  io: WorkflowIO & { bus?: EventBus },
+  input: {
+    title: string
+    description: string
+    workspaceKey?: string
+    owner?: "cli" | "api"
+    workerInstanceId?: string
+    workerLeaseClock?: () => number
+    workerLeaseScheduler?: WorkerLeaseScheduler
+    onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
+    supabaseAdapterFactory?: SupabaseAdapterFactory
+    capabilityResolver?: WorkflowCapabilityResolver
+    prepareRunImpl?: PrepareRunImpl
+  },
+): PreparedForegroundRunResult {
   const meta = resolveWorkspaceMeta(repos, input.workspaceKey)
   if ("error" in meta) return { ok: false, status: 404, error: "unknown_workspace" }
+  const workspace = input.workspaceKey ? repos.getWorkspaceByKey(input.workspaceKey) : undefined
+  const capabilitiesResult = (input.capabilityResolver ?? resolveWorkflowCapabilities)({
+    repos,
+    workspace,
+    supabaseAdapterFactory: input.supabaseAdapterFactory,
+  })
+  if (!isWorkflowCapabilityBag(capabilitiesResult)) return capabilitiesResult
+  const capabilities = capabilitiesResult
+  const blocker = workflowCapabilityOwnershipBlocker()
+  if (blocker) return blocker
 
-  const io = buildApiIo(repos)
-  const prepared = prepareRun(
+  const prepareRunImpl = input.prepareRunImpl ?? prepareRun
+  const prepared = prepareRunImpl(
     { id: "new", title: input.title, description: input.description },
     repos,
     io,
     {
-      owner: "api",
-      workerInstanceId: input.apiWorkerInstanceId ?? API_WORKER_INSTANCE_ID,
+      owner: input.owner ?? "api",
+      workerInstanceId: input.workerInstanceId,
       workerLeaseClock: input.workerLeaseClock,
       workerLeaseScheduler: input.workerLeaseScheduler,
       ...meta,
       onItemColumnChanged: input.onItemColumnChanged,
-      supabaseAdapterFactory: input.supabaseAdapterFactory,
+      supabaseAdapterFactory: capabilities.supabaseAdapterFactory,
     },
   )
-  const runInBackground = input.backgroundRunner ?? fireInBackground
-  runInBackground(io, "startRunFromIdea", prepared.start)
-  return { ok: true, runId: prepared.runId, itemId: prepared.itemId }
+  return { ok: true, runId: prepared.runId, itemId: prepared.itemId, start: prepared.start }
 }
 
 /**
@@ -213,6 +472,18 @@ export type StartRunAction =
 
 export function isWorkflowStartGitBlockedResult(result: StartRunResult | PreparedImportRunResult): result is WorkflowStartGitBlockedResult {
   return !result.ok && "code" in result && result.code === "workflow_git_blocked"
+}
+
+export function isWorkflowCapabilityOwnershipBlockedResult(
+  result: StartRunResult | ResumeRunResult | PreparedImportRunResult | PreparedForegroundRunResult | PreparedForegroundResumeRunResult | PreparedForegroundImportRunResult,
+): result is WorkflowCapabilityOwnershipBlockedResult {
+  return !result.ok && "code" in result && result.code === "workflow_capability_blocked" && !("reason" in result)
+}
+
+export function isWorkflowCapabilityBlockedResult(
+  result: StartRunResult | ResumeRunResult | PreparedImportRunResult | PreparedForegroundRunResult | PreparedForegroundResumeRunResult | PreparedForegroundImportRunResult,
+): result is WorkflowCapabilityOwnershipBlockedResult | WorkflowCapabilityBlockedResult {
+  return !result.ok && "code" in result && result.code === "workflow_capability_blocked"
 }
 
 function loadWorkflowGitGateConfig(): AppConfig {
@@ -310,7 +581,7 @@ type StartRunPreparation = {
   sourceRun?: RunRow
   resume?: WorkflowResumeInput
   seedStages: ReadonlyArray<string>
-  error?: StartRunResult
+  error?: StartRunFailureResult
 }
 
 function prepareStartRunAction(repos: Repos, item: ItemRow, action: StartRunAction): StartRunPreparation {
@@ -369,8 +640,55 @@ export function startRunForItem(
     supabaseAdapterFactory?: SupabaseAdapterFactory
   },
 ): StartRunResult {
+  const io = buildApiIo(repos)
+  const prepared = prepareForegroundItemRun(repos, io, {
+    itemId: input.itemId,
+    action: input.action,
+    appConfig: input.appConfig,
+    gitCommandOptions: input.gitCommandOptions,
+    owner: "api",
+    workerInstanceId: input.apiWorkerInstanceId ?? API_WORKER_INSTANCE_ID,
+    workerLeaseClock: input.workerLeaseClock,
+    workerLeaseScheduler: input.workerLeaseScheduler,
+    onItemColumnChanged: input.onItemColumnChanged,
+    supabaseAdapterFactory: input.supabaseAdapterFactory,
+  })
+  if (!prepared.ok) {
+    io.close?.()
+    return prepared
+  }
+  fireInBackground(io, `startRunForItem:${input.action}`, prepared.start)
+  return { ok: true, runId: prepared.runId, itemId: prepared.itemId }
+}
+
+export function prepareForegroundItemRun(
+  repos: Repos,
+  io: WorkflowIO & { bus?: EventBus },
+  input: {
+    itemId: string
+    action: StartRunAction
+    appConfig?: AppConfig
+    gitCommandOptions?: GitCommandOptions
+    owner?: "cli" | "api"
+    workerInstanceId?: string
+    workerLeaseClock?: () => number
+    workerLeaseScheduler?: WorkerLeaseScheduler
+    onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
+    supabaseAdapterFactory?: SupabaseAdapterFactory
+    capabilityResolver?: WorkflowCapabilityResolver
+    prepareRunImpl?: PrepareRunImpl
+  },
+): PreparedForegroundRunResult {
   const item = repos.getItem(input.itemId)
   if (!item) return { ok: false, status: 404, error: "item_not_found" }
+  const workspace = repos.getWorkspace(item.workspace_id)
+  const capabilitiesResult = (input.capabilityResolver ?? resolveWorkflowCapabilities)({
+    repos,
+    workspace,
+    supabaseAdapterFactory: input.supabaseAdapterFactory,
+  })
+  if (!isWorkflowCapabilityBag(capabilitiesResult)) return capabilitiesResult
+  const capabilities = capabilitiesResult
 
   const preparedAction = prepareStartRunAction(repos, item, input.action)
   if (preparedAction.error) return preparedAction.error
@@ -380,21 +698,23 @@ export function startRunForItem(
     gitCommandOptions: input.gitCommandOptions,
   })
   if (!gitGate.ok) return gitGate
+  const blocker = workflowCapabilityOwnershipBlocker()
+  if (blocker) return blocker
 
-  const io = buildApiIo(repos)
-  const prepared = prepareRun(
+  const prepareRunImpl = input.prepareRunImpl ?? prepareRun
+  const prepared = prepareRunImpl(
     { id: item.id, title: item.title, description: item.description },
     repos,
     io,
     {
-      owner: "api",
-      workerInstanceId: input.apiWorkerInstanceId ?? API_WORKER_INSTANCE_ID,
+      owner: input.owner ?? "api",
+      workerInstanceId: input.workerInstanceId,
       workerLeaseClock: input.workerLeaseClock,
       workerLeaseScheduler: input.workerLeaseScheduler,
       itemId: item.id,
       resume: preparedAction.resume,
       onItemColumnChanged: input.onItemColumnChanged,
-      supabaseAdapterFactory: input.supabaseAdapterFactory,
+      supabaseAdapterFactory: capabilities.supabaseAdapterFactory,
     },
   )
 
@@ -415,8 +735,7 @@ export function startRunForItem(
     }
   }
 
-  fireInBackground(io, `startRunForItem:${input.action}`, prepared.start)
-  return { ok: true, runId: prepared.runId, itemId: item.id }
+  return { ok: true, runId: prepared.runId, itemId: item.id, start: prepared.start }
 }
 
 export async function startPreparedImportForItem(
@@ -432,14 +751,67 @@ export async function startPreparedImportForItem(
     workerLeaseClock?: () => number
     workerLeaseScheduler?: WorkerLeaseScheduler
     onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
+    supabaseAdapterFactory?: SupabaseAdapterFactory
+    capabilityResolver?: WorkflowCapabilityResolver
+    prepareRunImpl?: PrepareRunImpl
   },
 ): Promise<PreparedImportRunResult> {
+  const io = buildApiIo(repos)
+  const prepared = await prepareForegroundPreparedImportRun(repos, io, {
+    itemId: input.itemId,
+    sourceDir: input.sourceDir,
+    workspaceKey: input.workspaceKey,
+    owner: input.owner ?? "api",
+    appConfig: input.appConfig,
+    gitCommandOptions: input.gitCommandOptions,
+    workerInstanceId: input.owner === "cli" ? undefined : input.apiWorkerInstanceId ?? API_WORKER_INSTANCE_ID,
+    workerLeaseClock: input.workerLeaseClock,
+    workerLeaseScheduler: input.workerLeaseScheduler,
+    onItemColumnChanged: input.onItemColumnChanged,
+    supabaseAdapterFactory: input.supabaseAdapterFactory,
+    capabilityResolver: input.capabilityResolver,
+    prepareRunImpl: input.prepareRunImpl,
+  })
+  if (!prepared.ok) {
+    io.close?.()
+    return prepared
+  }
+  fireInBackground(io, "startPreparedImportForItem", prepared.start)
+  return { ok: true, runId: prepared.runId, itemId: prepared.itemId, warnings: prepared.warnings }
+}
+
+export async function prepareForegroundPreparedImportRun(
+  repos: Repos,
+  io: WorkflowIO & { bus?: EventBus },
+  input: {
+    itemId?: string
+    sourceDir: string
+    workspaceKey?: string
+    owner?: "cli" | "api"
+    appConfig?: AppConfig
+    gitCommandOptions?: GitCommandOptions
+    workerInstanceId?: string
+    workerLeaseClock?: () => number
+    workerLeaseScheduler?: WorkerLeaseScheduler
+    onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
+    supabaseAdapterFactory?: SupabaseAdapterFactory
+    capabilityResolver?: WorkflowCapabilityResolver
+    prepareRunImpl?: PrepareRunImpl
+  },
+): Promise<PreparedForegroundImportRunResult> {
   const existingItem = input.itemId ? repos.getItem(input.itemId) : undefined
   if (input.itemId && !existingItem) return { ok: false, status: 404, error: "item_not_found" }
 
   const workspaceResult = resolvePreparedImportWorkspace(repos, existingItem, input.workspaceKey)
   if (!workspaceResult.ok) return workspaceResult.error
   const workspace = workspaceResult.workspace
+  const capabilitiesResult = (input.capabilityResolver ?? resolveWorkflowCapabilities)({
+    repos,
+    workspace,
+    supabaseAdapterFactory: input.supabaseAdapterFactory,
+  })
+  if (!isWorkflowCapabilityBag(capabilitiesResult)) return capabilitiesResult
+  const capabilities = capabilitiesResult
 
   const gitGate = checkWorkflowStartGitReadinessForWorkspace(
     workspace,
@@ -447,6 +819,8 @@ export async function startPreparedImportForItem(
     { appConfig: input.appConfig, gitCommandOptions: input.gitCommandOptions },
   )
   if (!gitGate.ok) return gitGate
+  const blocker = workflowCapabilityOwnershipBlocker()
+  if (blocker) return blocker
 
   let bundle: PreparedImportBundle
   try {
@@ -463,7 +837,6 @@ export async function startPreparedImportForItem(
     return { ok: false, status: 422, error: (error as Error).message }
   }
 
-  const io = buildApiIo(repos)
   const resume = {
     scope: { type: "run", runId: "pending" } as const,
     currentStage: "projects",
@@ -471,7 +844,8 @@ export async function startPreparedImportForItem(
     dirtyCheckIgnoredPaths: [input.sourceDir],
     skipDesignPrep: true,
   }
-  const prepared = prepareRun(
+  const prepareRunImpl = input.prepareRunImpl ?? prepareRun
+  const prepared = prepareRunImpl(
     {
       id: existingItem?.id ?? "new",
       title: existingItem?.title ?? titleForPreparedImportItem(bundle),
@@ -481,13 +855,14 @@ export async function startPreparedImportForItem(
     io,
     {
       owner: input.owner ?? "api",
-      workerInstanceId: input.owner === "cli" ? undefined : input.apiWorkerInstanceId ?? API_WORKER_INSTANCE_ID,
+      workerInstanceId: input.workerInstanceId,
       workerLeaseClock: input.workerLeaseClock,
       workerLeaseScheduler: input.workerLeaseScheduler,
       itemId: existingItem?.id,
       ...newItemWorkspaceFields(existingItem, workspace),
       resume,
       onItemColumnChanged: input.onItemColumnChanged,
+      supabaseAdapterFactory: capabilities.supabaseAdapterFactory,
     },
   )
   const targetRun = repos.getRun(prepared.runId)
@@ -496,15 +871,14 @@ export async function startPreparedImportForItem(
   const ctx = targetRun ? resolveWorkflowContextForItemRun(repos, item, targetRun) : null
   if (!ctx) return { ok: false, status: 409, error: "seed_failed" }
   const seeded = seedPreparedImportArtifacts(ctx, bundle, { sourceDir: input.sourceDir })
-  fireInBackground(io, "startPreparedImportForItem", prepared.start)
-  return { ok: true, runId: prepared.runId, itemId: item.id, warnings: seeded.warnings }
+  return { ok: true, runId: prepared.runId, itemId: item.id, warnings: seeded.warnings, start: prepared.start }
 }
 
 function resolvePreparedImportWorkspace(
   repos: Repos,
   existingItem: ItemRow | undefined,
   workspaceKey: string | undefined,
-): { ok: true; workspace: WorkspaceRow | undefined } | { ok: false; error: PreparedImportRunResult } {
+): { ok: true; workspace: WorkspaceRow | undefined } | { ok: false; error: PreparedImportFailureResult } {
   if (existingItem) return { ok: true, workspace: repos.getWorkspace(existingItem.workspace_id) }
   if (!workspaceKey) {
     return {
@@ -559,8 +933,54 @@ export async function resumeRunInProcess(
     workerLeaseClock?: () => number
     workerLeaseScheduler?: WorkerLeaseScheduler
     onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
+    supabaseAdapterFactory?: SupabaseAdapterFactory
+    capabilityResolver?: WorkflowCapabilityResolver
+    resumeRunImpl?: PerformResumeImpl
   },
 ): Promise<ResumeRunResult> {
+  const io = buildApiIo(repos)
+  const prepared = await prepareForegroundResumeRun(repos, io, {
+    runId: input.runId,
+    summary: input.summary,
+    branch: input.branch,
+    commit: input.commit,
+    reviewNotes: input.reviewNotes,
+    workerOwnerKind: "api",
+    workerInstanceId: input.apiWorkerInstanceId ?? API_WORKER_INSTANCE_ID,
+    workerLeaseClock: input.workerLeaseClock,
+    workerLeaseScheduler: input.workerLeaseScheduler,
+    onItemColumnChanged: input.onItemColumnChanged,
+    supabaseAdapterFactory: input.supabaseAdapterFactory,
+    capabilityResolver: input.capabilityResolver,
+    resumeRunImpl: input.resumeRunImpl,
+  })
+  if (!prepared.ok) {
+    io.close?.()
+    return prepared
+  }
+  fireInBackground(io, "resumeRunInProcess", prepared.start)
+  return { ok: true, runId: prepared.runId, remediationId: prepared.remediationId }
+}
+
+export async function prepareForegroundResumeRun(
+  repos: Repos,
+  io: WorkflowIO & { bus?: EventBus },
+  input: {
+    runId: string
+    summary: string
+    branch?: string
+    commit?: string
+    reviewNotes?: string
+    workerOwnerKind?: "cli" | "api"
+    workerInstanceId?: string
+    workerLeaseClock?: () => number
+    workerLeaseScheduler?: WorkerLeaseScheduler
+    onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
+    supabaseAdapterFactory?: SupabaseAdapterFactory
+    capabilityResolver?: WorkflowCapabilityResolver
+    resumeRunImpl?: PerformResumeImpl
+  },
+): Promise<PreparedForegroundResumeRunResult> {
   const summary = input.summary.trim()
   if (!summary) return { ok: false, status: 422, error: "remediation_required" }
 
@@ -570,6 +990,16 @@ export async function resumeRunInProcess(
   if (readiness.kind === "not_resumable") {
     return { ok: false, status: 409, error: readiness.reason }
   }
+  const workspace = repos.getWorkspace(readiness.run.workspace_id)
+  const capabilitiesResult = (input.capabilityResolver ?? resolveWorkflowCapabilities)({
+    repos,
+    workspace,
+    supabaseAdapterFactory: input.supabaseAdapterFactory,
+  })
+  if (!isWorkflowCapabilityBag(capabilitiesResult)) return capabilitiesResult
+  const capabilities = capabilitiesResult
+  const blocker = workflowCapabilityOwnershipBlocker()
+  if (blocker) return blocker
 
   const scope = readiness.record.scope
   let scopeRef: string | null = null
@@ -606,21 +1036,26 @@ export async function resumeRunInProcess(
     })
   }
 
-  const io = buildApiIo(repos)
-  fireInBackground(io, "resumeRunInProcess", () =>
-    performResume({
-      repos,
-      io,
-      runId: input.runId,
-      remediation,
-      workerOwnerKind: "api",
-      workerInstanceId: input.apiWorkerInstanceId ?? API_WORKER_INSTANCE_ID,
-      workerLeaseClock: input.workerLeaseClock,
-      workerLeaseScheduler: input.workerLeaseScheduler,
-      onItemColumnChanged: input.onItemColumnChanged,
-    }),
-  )
-  return { ok: true, runId: input.runId, remediationId: remediation.id }
+  return {
+    ok: true,
+    runId: input.runId,
+    remediationId: remediation.id,
+    start: () => {
+      const resumeRunImpl = input.resumeRunImpl ?? performResume
+      return resumeRunImpl({
+        repos,
+        io,
+        runId: input.runId,
+        remediation,
+        workerOwnerKind: input.workerOwnerKind ?? "api",
+        workerInstanceId: input.workerInstanceId,
+        workerLeaseClock: input.workerLeaseClock,
+        workerLeaseScheduler: input.workerLeaseScheduler,
+        supabaseAdapterFactory: capabilities.supabaseAdapterFactory,
+        onItemColumnChanged: input.onItemColumnChanged,
+      })
+    },
+  }
 }
 
 // Re-export the event type for convenience.
