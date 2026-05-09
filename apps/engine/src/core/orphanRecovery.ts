@@ -50,8 +50,14 @@ type StartupAutoResumeOptions = {
 
 const RECOVERY_SUMMARY =
   "API restart lost API worker ownership — no live worker; resume or abandon."
+const CLI_STALE_RECOVERY_SUMMARY =
+  "CLI worker heartbeat is stale — no live worker; resume or abandon."
 const SHUTDOWN_RECOVERY_SUMMARY =
   "Graceful shutdown stopped the API worker — resume or abandon."
+const WORKER_OWNERSHIP_LOST_SUMMARY =
+  "Worker heartbeat detected lost worker ownership — resume or abandon."
+const WORKER_HEARTBEAT_FAILURE_SUMMARY =
+  /^Worker heartbeat failed \d+ consecutive times — resume or abandon\.$/
 
 function hasOtherLiveRunForItem(repos: Repos, run: RunRow): boolean {
   return repos
@@ -83,11 +89,10 @@ export function markRunFailedRecoverable(repos: Repos, runId: string, summary: s
   projectRecoveredRunToItem(repos, run)
 }
 
-function shouldRecoverLostWorker(
+function hasOrphanedWorkerLease(
   run: RunRow,
   input: { apiWorkerInstanceId: string; now: number },
 ): boolean {
-  if (run.status !== "running") return false
   const owner = run.worker_owner_kind ?? run.owner
   if (owner === "api") {
     return run.worker_instance_id !== input.apiWorkerInstanceId
@@ -96,10 +101,35 @@ function shouldRecoverLostWorker(
   return heartbeatAt == null || input.now - heartbeatAt > STALE_WORKER_HEARTBEAT_MS
 }
 
+function shouldRecoverLostWorker(
+  run: RunRow,
+  input: { apiWorkerInstanceId: string; now: number },
+): boolean {
+  return run.status === "running" && hasOrphanedWorkerLease(run, input)
+}
+
+function isStaleWorkerRecoverableRun(run: RunRow): boolean {
+  if (run.recovery_status !== "failed") return false
+  if (run.recovery_scope !== "run") return false
+  const summary = run.recovery_summary ?? ""
+  return summary === RECOVERY_SUMMARY
+    || summary === CLI_STALE_RECOVERY_SUMMARY
+    || summary === SHUTDOWN_RECOVERY_SUMMARY
+    || summary === WORKER_OWNERSHIP_LOST_SUMMARY
+    || WORKER_HEARTBEAT_FAILURE_SUMMARY.test(summary)
+}
+
+function listStartupRecoveryCandidates(repos: Repos): RunRow[] {
+  return repos
+    .listRuns()
+    .filter(isStaleWorkerRecoverableRun)
+    .sort((a, b) => a.created_at - b.created_at)
+}
+
 function recoverySummary(run: RunRow): string {
   const owner = run.worker_owner_kind ?? run.owner
   if (owner === "api") return RECOVERY_SUMMARY
-  return "CLI worker heartbeat is stale — no live worker; resume or abandon."
+  return CLI_STALE_RECOVERY_SUMMARY
 }
 
 export function classifyStartupAutoResumeEligibility(input: {
@@ -171,10 +201,11 @@ function resumedStartupRecoveryOutcome(runId: string): StartupRecoveryOutcome {
 async function resolveStartupRecoveryOutcome(
   repos: Repos,
   run: RunRow,
+  input: { apiWorkerInstanceId: string; now: number },
   autoResume: StartupAutoResumeOptions,
 ): Promise<{ outcome: StartupRecoveryOutcome; error?: string }> {
   const eligibility = classifyStartupAutoResumeEligibility({
-    hasOrphanedWorkerLease: true,
+    hasOrphanedWorkerLease: hasOrphanedWorkerLease(run, input),
     hasOpenPrompt: repos.getOpenPrompt(run.id) != null,
     autoResumeEnabled: autoResume.enabled,
   })
@@ -201,10 +232,19 @@ export async function recoverLostWorkerRuns(
     if (!shouldRecoverLostWorker(run, { apiWorkerInstanceId: input.apiWorkerInstanceId, now })) continue
     markRunFailedRecoverable(repos, run.id, recoverySummary(run))
     recoveredRunIds.push(run.id)
-    if (!input.autoResume) continue
-    const { outcome, error } = await resolveStartupRecoveryOutcome(repos, run, input.autoResume)
-    outcomes.push(outcome)
-    appendStartupRecoveryLog(repos, outcome, error)
+  }
+
+  if (input.autoResume) {
+    for (const run of listStartupRecoveryCandidates(repos)) {
+      const { outcome, error } = await resolveStartupRecoveryOutcome(
+        repos,
+        repos.getRun(run.id) ?? run,
+        { apiWorkerInstanceId: input.apiWorkerInstanceId, now },
+        input.autoResume,
+      )
+      outcomes.push(outcome)
+      appendStartupRecoveryLog(repos, outcome, error)
+    }
   }
 
   if (recoveredRunIds.length > 0) {

@@ -18,6 +18,43 @@ function fixture() {
   return { db, repos, ws, item }
 }
 
+function seedManualStaleRun(
+  repos: Repos,
+  input: {
+    workspaceId: string
+    itemId: string
+    title: string
+    owner?: "api" | "cli"
+    currentStage?: string
+    recoverySummary?: string
+    lease?: { workerInstanceId: string; workerOwnerKind: "api" | "cli"; now: number }
+  },
+) {
+  const run = repos.createRun({
+    workspaceId: input.workspaceId,
+    itemId: input.itemId,
+    title: input.title,
+    owner: input.owner ?? "cli",
+  })
+  repos.updateRun(run.id, {
+    status: "failed",
+    current_stage: input.currentStage ?? "execution",
+    recovery_status: "failed",
+    recovery_scope: "run",
+    recovery_scope_ref: null,
+    recovery_summary: input.recoverySummary ?? "CLI worker heartbeat is stale — no live worker; resume or abandon.",
+  })
+  if (input.lease) {
+    claimWorkerLease(repos, {
+      runId: run.id,
+      workerInstanceId: input.lease.workerInstanceId,
+      workerOwnerKind: input.lease.workerOwnerKind,
+      now: input.lease.now,
+    })
+  }
+  return run
+}
+
 test("startup recovery fails previous-instance API runs without waiting for stale heartbeat", async () => {
   const { db, repos, ws, item } = fixture()
   try {
@@ -167,6 +204,52 @@ test("startup recovery auto-resumes an eligible stale run and records the outcom
   }
 })
 
+test("startup recovery skips stale manual-recovery runs whose worker lease is not orphaned", async () => {
+  const { db, repos, ws, item } = fixture()
+  try {
+    const run = seedManualStaleRun(repos, {
+      workspaceId: ws.id,
+      itemId: item.id,
+      title: "manual",
+      lease: {
+        workerInstanceId: "cli-fresh",
+        workerOwnerKind: "cli",
+        now: 1_700_000_120_000,
+      },
+    })
+
+    let resumeCalls = 0
+    const result = await recoverLostWorkerRuns(repos, {
+      apiWorkerInstanceId: "api-current",
+      now: 1_700_000_130_001,
+      autoResume: {
+        enabled: true,
+        resumeRun: async () => {
+          resumeCalls += 1
+        },
+      },
+    })
+
+    assert.equal(result.recovered, 0)
+    assert.equal(resumeCalls, 0)
+    assert.deepEqual(result.outcomes, [
+      {
+        runId: run.id,
+        outcome: "skipped",
+        reason: "worker_lease_not_orphaned",
+      },
+    ])
+    assert.equal(repos.getRun(run.id)?.status, "failed")
+    assert.equal(repos.getRun(run.id)?.recovery_status, "failed")
+    const message = projectStageLogRow(repos.listLogsForRun(run.id).at(-1)!)
+    assert.equal(message?.type, "startup_recovery")
+    assert.equal(message?.payload.outcome, "skipped")
+    assert.equal(message?.payload.reason, "worker_lease_not_orphaned")
+  } finally {
+    db.close()
+  }
+})
+
 test("startup recovery keeps stale runs with open prompts on manual recovery and records why", async () => {
   const { db, repos, ws, item } = fixture()
   try {
@@ -286,41 +369,49 @@ test("startup recovery falls back to manual recovery when auto-resume handoff fa
 test("startup recovery handles mixed stale runs independently during one startup cycle", async () => {
   const { db, repos, ws, item } = fixture()
   try {
-    const waitingRun = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "waiting", owner: "cli" })
-    repos.updateRun(waitingRun.id, { current_stage: "execution" })
-    claimWorkerLease(repos, {
-      runId: waitingRun.id,
-      workerInstanceId: "cli-waiting",
-      workerOwnerKind: "cli",
-      now: 1_700_000_000_000,
+    const nonOrphanedRun = seedManualStaleRun(repos, {
+      workspaceId: ws.id,
+      itemId: item.id,
+      title: "non-orphaned",
+      lease: {
+        workerInstanceId: "cli-fresh",
+        workerOwnerKind: "cli",
+        now: 1_700_000_120_000,
+      },
+    })
+
+    const waitingRun = seedManualStaleRun(repos, {
+      workspaceId: ws.id,
+      itemId: item.id,
+      title: "waiting",
+      lease: {
+        workerInstanceId: "cli-waiting",
+        workerOwnerKind: "cli",
+        now: 1_700_000_000_000,
+      },
     })
     repos.createPendingPrompt({ runId: waitingRun.id, prompt: "Need approval?" })
 
-    const failingRun = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "failing", owner: "cli" })
-    repos.updateRun(failingRun.id, { current_stage: "execution" })
-    claimWorkerLease(repos, {
-      runId: failingRun.id,
-      workerInstanceId: "cli-failing",
-      workerOwnerKind: "cli",
-      now: 1_700_000_000_000,
+    const failingRun = seedManualStaleRun(repos, {
+      workspaceId: ws.id,
+      itemId: item.id,
+      title: "failing",
+      lease: {
+        workerInstanceId: "cli-failing",
+        workerOwnerKind: "cli",
+        now: 1_700_000_000_000,
+      },
     })
 
-    const resumableRun = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "resumable", owner: "cli" })
-    repos.updateRun(resumableRun.id, { current_stage: "execution" })
-    claimWorkerLease(repos, {
-      runId: resumableRun.id,
-      workerInstanceId: "cli-resumable",
-      workerOwnerKind: "cli",
-      now: 1_700_000_000_000,
-    })
-
-    const freshRun = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "fresh", owner: "cli" })
-    repos.updateRun(freshRun.id, { current_stage: "execution" })
-    claimWorkerLease(repos, {
-      runId: freshRun.id,
-      workerInstanceId: "cli-fresh",
-      workerOwnerKind: "cli",
-      now: 1_700_000_120_000,
+    const resumableRun = seedManualStaleRun(repos, {
+      workspaceId: ws.id,
+      itemId: item.id,
+      title: "resumable",
+      lease: {
+        workerInstanceId: "cli-resumable",
+        workerOwnerKind: "cli",
+        now: 1_700_000_000_000,
+      },
     })
 
     const resumeAttempts: string[] = []
@@ -344,16 +435,21 @@ test("startup recovery handles mixed stale runs independently during one startup
       },
     })
 
-    assert.equal(result.recovered, 3)
+    assert.equal(result.recovered, 0)
     assert.deepEqual(new Set(resumeAttempts), new Set([failingRun.id, resumableRun.id]))
     assert.equal(resumeAttempts.length, 2)
+    assert.equal(repos.getRun(nonOrphanedRun.id)?.status, "failed")
     assert.ok(repos.getOpenPrompt(waitingRun.id), "waiting-for-operator runs must keep their prompt open")
     assert.equal(repos.getRun(waitingRun.id)?.status, "failed")
     assert.equal(repos.getRun(failingRun.id)?.status, "failed")
     assert.equal(repos.getRun(resumableRun.id)?.status, "running")
     assert.equal(repos.getRun(resumableRun.id)?.recovery_status, null)
-    assert.equal(repos.getRun(freshRun.id)?.status, "running")
     const outcomes = new Map(result.outcomes.map(outcome => [outcome.runId, outcome]))
+    assert.deepEqual(outcomes.get(nonOrphanedRun.id), {
+      runId: nonOrphanedRun.id,
+      outcome: "skipped",
+      reason: "worker_lease_not_orphaned",
+    })
     assert.deepEqual(outcomes.get(waitingRun.id), {
       runId: waitingRun.id,
       outcome: "skipped",
@@ -369,7 +465,6 @@ test("startup recovery handles mixed stale runs independently during one startup
       outcome: "auto_resumed",
       reason: null,
     })
-    assert.equal(outcomes.has(freshRun.id), false)
   } finally {
     db.close()
   }
