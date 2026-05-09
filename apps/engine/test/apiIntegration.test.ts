@@ -1363,7 +1363,6 @@ test("item preview endpoints expose launch info and can start and stop the local
   const worktreePath = layout.itemWorktreeDir({
     workspaceId,
     workspaceRoot,
-    runId: workspaceId,
     itemSlug: "preview-item",
   })
   mkdirSync(join(worktreePath, ".beerengineer"), { recursive: true })

@@ -28,7 +28,6 @@ export function resolveItemPreviewContext(repos: Repos, itemId: string): ItemPre
     workspaceId: latestRun.workspace_fs_id,
     workspaceRoot: workspace.root_path,
     itemSlug: slug,
-    runId: latestRun.workspace_fs_id,
   })
   const previewUrl = previewUrlForWorktree(worktreePath)
   if (!previewUrl) {
