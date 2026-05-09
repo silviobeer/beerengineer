@@ -101,6 +101,9 @@ export type AppConfig = {
       enabled?: boolean
     }
   }
+  recovery?: {
+    startupAutoResume?: boolean
+  }
   browser?: {
     enabled?: boolean
   }

@@ -29,6 +29,8 @@ export type RecoveryEventScope =
   | { type: "story"; runId: string; waveNumber: number; storyId: string }
 
 export type PresentationKind = "header" | "step" | "ok" | "warn" | "dim" | "finding"
+export type StartupRecoveryOutcome = "auto_resumed" | "skipped" | "failed"
+export type StartupRecoveryReason = "open_prompt" | "auto_resume_disabled" | "auto_resume_failed"
 
 export type WorkflowEvent =
   | ({ type: "run_started"; runId: string; itemId: string; title: string } & WorkflowEventMeta)
@@ -60,6 +62,13 @@ export type WorkflowEvent =
   | ({ type: "design_ready"; runId: string; itemId: string; url: string } & WorkflowEventMeta)
   | ({ type: "run_blocked"; runId: string; itemId: string; title: string; scope: RecoveryEventScope; cause: string; summary: string; branch?: string } & WorkflowEventMeta)
   | ({ type: "run_failed"; runId: string; scope: RecoveryEventScope; cause: string; summary: string } & WorkflowEventMeta)
+  | ({
+      type: "startup_recovery"
+      runId: string
+      outcome: StartupRecoveryOutcome
+      reason: StartupRecoveryReason | null
+      error?: string
+    } & WorkflowEventMeta)
   | ({ type: "external_remediation_recorded"; runId: string; remediationId: string; scope: RecoveryEventScope; summary: string; branch?: string } & WorkflowEventMeta)
   | ({ type: "run_resumed"; runId: string; remediationId: string; scope: RecoveryEventScope } & WorkflowEventMeta)
   | ({ type: "wave_serialized"; runId: string; waveId: string; waveNumber: number; stories: string[]; overlappingFiles: string[]; cause: "shared_file_overlap" | "missing_shared_files" } & WorkflowEventMeta)

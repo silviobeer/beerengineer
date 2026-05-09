@@ -21,6 +21,7 @@
 
 import type { Repos, RunRow } from "../db/repositories.js"
 import { mapStageToColumn } from "./boardColumns.js"
+import type { StartupRecoveryOutcome as StartupRecoveryOutcomeKind, StartupRecoveryReason } from "./io.js"
 import { STALE_WORKER_HEARTBEAT_MS } from "./workerLease.js"
 
 export type OrphanRecoveryResult = {
@@ -28,6 +29,19 @@ export type OrphanRecoveryResult = {
   recovered: number
   /** Run ids recovered during this pass, in scan order. */
   recoveredRunIds: string[]
+  /** Startup recovery outcome recorded for each processed stale run. */
+  outcomes: StartupRecoveryOutcome[]
+}
+
+export type StartupRecoveryOutcome = {
+  runId: string
+  outcome: StartupRecoveryOutcomeKind
+  reason: StartupRecoveryReason | null
+}
+
+type StartupAutoResumeOptions = {
+  enabled: boolean
+  resumeRun: (run: RunRow) => Promise<void>
 }
 
 const RECOVERY_SUMMARY =
@@ -47,7 +61,7 @@ function projectRecoveredRunToItem(repos: Repos, run: RunRow): void {
   if (!item) return
   const mapped = run.current_stage
     ? mapStageToColumn(run.current_stage, "failed")
-    : { column: item.current_column, phaseStatus: "failed" as const }
+    : { column: item.current_column, phaseStatus: "failed" }
   repos.setItemColumn(item.id, mapped.column, "failed")
   repos.setItemCurrentStage(item.id, null)
 }
@@ -84,16 +98,87 @@ function recoverySummary(run: RunRow): string {
   return "CLI worker heartbeat is stale — no live worker; resume or abandon."
 }
 
+function startupRecoveryMessage(outcome: StartupRecoveryOutcome, error?: string): string {
+  if (outcome.outcome === "auto_resumed") {
+    return "Startup recovery auto-resumed the stale run."
+  }
+  if (outcome.reason === "open_prompt") {
+    return "Startup recovery left the stale run on manual recovery because a prompt is still open."
+  }
+  if (outcome.reason === "auto_resume_disabled") {
+    return "Startup recovery left the stale run on manual recovery because auto-resume is disabled."
+  }
+  const base = "Startup recovery auto-resume failed; the run remains on manual recovery."
+  return error ? `${base} ${error}` : base
+}
+
+function appendStartupRecoveryLog(
+  repos: Repos,
+  outcome: StartupRecoveryOutcome,
+  error?: string,
+): void {
+  repos.appendLog({
+    runId: outcome.runId,
+    eventType: "startup_recovery",
+    message: startupRecoveryMessage(outcome, error),
+    data: {
+      outcome: outcome.outcome,
+      reason: outcome.reason,
+      ...(error ? { error } : {}),
+    },
+  })
+}
+
+function skippedStartupRecoveryOutcome(
+  runId: string,
+  reason: Extract<StartupRecoveryReason, "open_prompt" | "auto_resume_disabled">,
+): StartupRecoveryOutcome {
+  return { runId, outcome: "skipped", reason }
+}
+
+function failedStartupRecoveryOutcome(runId: string): StartupRecoveryOutcome {
+  return { runId, outcome: "failed", reason: "auto_resume_failed" }
+}
+
+function resumedStartupRecoveryOutcome(runId: string): StartupRecoveryOutcome {
+  return { runId, outcome: "auto_resumed", reason: null }
+}
+
+async function resolveStartupRecoveryOutcome(
+  repos: Repos,
+  run: RunRow,
+  autoResume: StartupAutoResumeOptions,
+): Promise<{ outcome: StartupRecoveryOutcome; error?: string }> {
+  if (repos.getOpenPrompt(run.id)) {
+    return { outcome: skippedStartupRecoveryOutcome(run.id, "open_prompt") }
+  }
+  if (!autoResume.enabled) {
+    return { outcome: skippedStartupRecoveryOutcome(run.id, "auto_resume_disabled") }
+  }
+  try {
+    await autoResume.resumeRun(repos.getRun(run.id) ?? run)
+    return { outcome: resumedStartupRecoveryOutcome(run.id) }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return { outcome: failedStartupRecoveryOutcome(run.id), error: message }
+  }
+}
+
 export async function recoverLostWorkerRuns(
   repos: Repos,
-  input: { apiWorkerInstanceId: string; now?: number },
+  input: { apiWorkerInstanceId: string; now?: number; autoResume?: StartupAutoResumeOptions },
 ): Promise<OrphanRecoveryResult> {
   const now = input.now ?? Date.now()
   const recoveredRunIds: string[] = []
+  const outcomes: StartupRecoveryOutcome[] = []
   for (const run of repos.listRunningRuns()) {
     if (!shouldRecoverLostWorker(run, { apiWorkerInstanceId: input.apiWorkerInstanceId, now })) continue
     markRunFailedRecoverable(repos, run.id, recoverySummary(run))
     recoveredRunIds.push(run.id)
+    if (!input.autoResume) continue
+    const { outcome, error } = await resolveStartupRecoveryOutcome(repos, run, input.autoResume)
+    outcomes.push(outcome)
+    appendStartupRecoveryLog(repos, outcome, error)
   }
 
   if (recoveredRunIds.length > 0) {
@@ -102,7 +187,7 @@ export async function recoverLostWorkerRuns(
     )
   }
 
-  return { recovered: recoveredRunIds.length, recoveredRunIds }
+  return { recovered: recoveredRunIds.length, recoveredRunIds, outcomes }
 }
 
 export async function recoverApiRunsForShutdown(
@@ -124,7 +209,7 @@ export async function recoverApiRunsForShutdown(
     )
   }
 
-  return { recovered: recoveredRunIds.length, recoveredRunIds }
+  return { recovered: recoveredRunIds.length, recoveredRunIds, outcomes: [] }
 }
 
 /**

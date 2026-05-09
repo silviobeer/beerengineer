@@ -8,6 +8,7 @@ import { initDatabase } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
 import { claimWorkerLease } from "../src/core/workerLease.js"
 import { recoverLostWorkerRuns } from "../src/core/orphanRecovery.js"
+import { projectStageLogRow } from "../src/core/messagingProjection.js"
 
 function fixture() {
   const db = initDatabase(join(mkdtempSync(join(tmpdir(), "be2-worker-recovery-")), "test.sqlite"))
@@ -120,6 +121,159 @@ test("startup recovery does not let a stale side run clobber a newer live run it
     assert.equal(projected?.phase_status, "running")
     assert.equal(projected?.current_stage, "requirements")
     assert.equal(repos.getRun(main.id)?.status, "running")
+  } finally {
+    db.close()
+  }
+})
+
+test("startup recovery auto-resumes an eligible stale run and records the outcome", async () => {
+  const { db, repos, ws, item } = fixture()
+  try {
+    const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "cli" })
+    repos.updateRun(run.id, { current_stage: "execution" })
+    claimWorkerLease(repos, {
+      runId: run.id,
+      workerInstanceId: "cli-stale",
+      workerOwnerKind: "cli",
+      now: 1_700_000_000_000,
+    })
+
+    let resumedRunId: string | null = null
+    const result = await recoverLostWorkerRuns(repos, {
+      apiWorkerInstanceId: "api-current",
+      now: 1_700_000_130_001,
+      autoResume: {
+        enabled: true,
+        resumeRun: async staleRun => {
+          resumedRunId = staleRun.id
+          repos.clearRunRecovery(staleRun.id)
+          repos.updateRun(staleRun.id, { status: "running", current_stage: "execution" })
+        },
+      },
+    })
+
+    assert.equal(resumedRunId, run.id)
+    assert.equal(result.recovered, 1)
+    assert.equal(result.outcomes[0]?.outcome, "auto_resumed")
+    assert.equal(result.outcomes[0]?.reason, null)
+    assert.equal(repos.getRun(run.id)?.status, "running")
+    assert.equal(repos.getRun(run.id)?.recovery_status, null)
+    const message = projectStageLogRow(repos.listLogsForRun(run.id).at(-1)!)
+    assert.equal(message?.type, "startup_recovery")
+    assert.equal(message?.payload.outcome, "auto_resumed")
+    assert.equal(message?.payload.reason, null)
+  } finally {
+    db.close()
+  }
+})
+
+test("startup recovery keeps stale runs with open prompts on manual recovery and records why", async () => {
+  const { db, repos, ws, item } = fixture()
+  try {
+    const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "cli" })
+    repos.updateRun(run.id, { current_stage: "execution" })
+    claimWorkerLease(repos, {
+      runId: run.id,
+      workerInstanceId: "cli-stale",
+      workerOwnerKind: "cli",
+      now: 1_700_000_000_000,
+    })
+    repos.createPendingPrompt({ runId: run.id, prompt: "Need approval?" })
+
+    let resumeCalls = 0
+    const result = await recoverLostWorkerRuns(repos, {
+      apiWorkerInstanceId: "api-current",
+      now: 1_700_000_130_001,
+      autoResume: {
+        enabled: true,
+        resumeRun: async () => {
+          resumeCalls += 1
+        },
+      },
+    })
+
+    assert.equal(resumeCalls, 0)
+    assert.equal(result.outcomes[0]?.outcome, "skipped")
+    assert.equal(result.outcomes[0]?.reason, "open_prompt")
+    assert.equal(repos.getRun(run.id)?.status, "failed")
+    assert.equal(repos.getRun(run.id)?.recovery_status, "failed")
+    const message = projectStageLogRow(repos.listLogsForRun(run.id).at(-1)!)
+    assert.equal(message?.type, "startup_recovery")
+    assert.equal(message?.payload.outcome, "skipped")
+    assert.equal(message?.payload.reason, "open_prompt")
+  } finally {
+    db.close()
+  }
+})
+
+test("startup recovery leaves otherwise eligible stale runs manual when auto-resume is disabled", async () => {
+  const { db, repos, ws, item } = fixture()
+  try {
+    const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "cli" })
+    repos.updateRun(run.id, { current_stage: "requirements" })
+    claimWorkerLease(repos, {
+      runId: run.id,
+      workerInstanceId: "cli-stale",
+      workerOwnerKind: "cli",
+      now: 1_700_000_000_000,
+    })
+
+    const result = await recoverLostWorkerRuns(repos, {
+      apiWorkerInstanceId: "api-current",
+      now: 1_700_000_130_001,
+      autoResume: {
+        enabled: false,
+        resumeRun: async () => {
+          throw new Error("should not be called")
+        },
+      },
+    })
+
+    assert.equal(result.outcomes[0]?.outcome, "skipped")
+    assert.equal(result.outcomes[0]?.reason, "auto_resume_disabled")
+    assert.equal(repos.getRun(run.id)?.status, "failed")
+    assert.equal(repos.getRun(run.id)?.recovery_status, "failed")
+    const message = projectStageLogRow(repos.listLogsForRun(run.id).at(-1)!)
+    assert.equal(message?.type, "startup_recovery")
+    assert.equal(message?.payload.outcome, "skipped")
+    assert.equal(message?.payload.reason, "auto_resume_disabled")
+  } finally {
+    db.close()
+  }
+})
+
+test("startup recovery falls back to manual recovery when auto-resume handoff fails", async () => {
+  const { db, repos, ws, item } = fixture()
+  try {
+    const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "cli" })
+    repos.updateRun(run.id, { current_stage: "execution" })
+    claimWorkerLease(repos, {
+      runId: run.id,
+      workerInstanceId: "cli-stale",
+      workerOwnerKind: "cli",
+      now: 1_700_000_000_000,
+    })
+
+    const result = await recoverLostWorkerRuns(repos, {
+      apiWorkerInstanceId: "api-current",
+      now: 1_700_000_130_001,
+      autoResume: {
+        enabled: true,
+        resumeRun: async () => {
+          throw new Error("resume exploded")
+        },
+      },
+    })
+
+    assert.equal(result.outcomes[0]?.outcome, "failed")
+    assert.equal(result.outcomes[0]?.reason, "auto_resume_failed")
+    assert.equal(repos.getRun(run.id)?.status, "failed")
+    assert.equal(repos.getRun(run.id)?.recovery_status, "failed")
+    const message = projectStageLogRow(repos.listLogsForRun(run.id).at(-1)!)
+    assert.equal(message?.type, "startup_recovery")
+    assert.equal(message?.payload.outcome, "failed")
+    assert.equal(message?.payload.reason, "auto_resume_failed")
+    assert.match(String(message?.payload.error ?? ""), /resume exploded/)
   } finally {
     db.close()
   }
