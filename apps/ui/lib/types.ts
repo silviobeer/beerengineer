@@ -187,6 +187,8 @@ export interface BoardCardDTO {
     name: string;
     lifecycleState?: string | null;
   };
+  visibleActions?: import("./visibleActionFacts").VisibleActionId[];
+  visibleActionsFreshness?: import("./visibleActionFacts").VisibleActionFactsFreshness;
   /** Live override from SSE; when defined, wins over the static flags. */
   liveAttention?: boolean | null;
 }

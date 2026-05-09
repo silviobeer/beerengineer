@@ -2,6 +2,7 @@ import { BoardWorkspaceView } from "@/components/BoardWorkspaceView";
 import { RunOverviewBanners } from "@/components/run/RunOverviewBanners";
 import { engineBaseUrl } from "@/lib/engine/baseUrl";
 import type { BoardCardDTO } from "@/lib/types";
+import type { VisibleActionFactsFreshness, VisibleActionId } from "@/lib/visibleActionFacts";
 
 interface BoardApiItem {
   id?: string;
@@ -21,6 +22,8 @@ interface BoardApiItem {
   current_stage?: string | null;
   currentStage?: string | null;
   supabaseBlocker?: BoardCardDTO["supabaseBlocker"];
+  visibleActions?: VisibleActionId[];
+  visibleActionsFreshness?: VisibleActionFactsFreshness;
 }
 
 interface BoardApiColumn {
@@ -56,6 +59,8 @@ function toBoardCard(item: BoardApiItem): BoardCardDTO {
     previewUrl: typeof item.previewUrl === "string" ? item.previewUrl : undefined,
     current_stage: currentStage,
     supabaseBlocker: item.supabaseBlocker,
+    visibleActions: Array.isArray(item.visibleActions) ? item.visibleActions : undefined,
+    visibleActionsFreshness: item.visibleActionsFreshness,
   };
 }
 

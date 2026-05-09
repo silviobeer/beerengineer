@@ -643,7 +643,7 @@ export function BoardItemModal({ card, workspaceKey, onClose }: Readonly<BoardIt
                 mergeStatusError={mergeStatusError}
               />
 
-              <BoardCardActions card={card} />
+              <BoardCardActions card={card} surface="item_detail" />
             </div>
 
             {supportsDesignArtifacts ? (
