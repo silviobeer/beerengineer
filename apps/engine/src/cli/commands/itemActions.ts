@@ -506,7 +506,7 @@ async function resumeItemActionResult(
     source: "cli",
   })
 
-  const io = createCliIO(ctx.repos)
+  const io = createCliIO(ctx.repos, { externalPromptResolver: Boolean(result.promptAnswer) })
   const detachPromptAnswer = result.promptAnswer ? attachOneShotPromptAnswer(io, result.promptAnswer) : () => {}
   try {
     console.log(`  ${ctx.action} applied`)
