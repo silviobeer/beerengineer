@@ -49,6 +49,7 @@ interface EngineConversationResponse {
 }
 
 function toUiEntry(e: EngineConversationEntry): ConversationEntry {
+  const answerTo = e.kind === "answer" ? e.answerTo ?? e.promptId : undefined;
   if (e.kind === "question" && e.promptId) {
     return promptEntry({
       id: e.id,
@@ -62,7 +63,7 @@ function toUiEntry(e: EngineConversationEntry): ConversationEntry {
     id: e.id,
     type: e.actor,
     text: e.text,
-    answerTo: e.kind === "answer" ? (e.answerTo ?? e.promptId) : undefined,
+    answerTo,
     createdAt: e.createdAt,
   };
 }
@@ -134,6 +135,49 @@ function promptEntry(input: {
   };
 }
 
+function entryRunId(entry: RunEntryFact | undefined): string | null | undefined {
+  if (entry?.status === "resolved") return entry.targetRunId;
+  if (entry?.status === "none") return null;
+  return undefined;
+}
+
+async function resolveFallbackRunId(itemId: string): Promise<string | null> {
+  const runsRes = await fetch("/api/runs", { cache: "no-store" });
+  if (!runsRes.ok) throw new Error(`runs_${runsRes.status}`);
+  const runsBody: { runs?: EngineRun[] } = await runsRes.json();
+  return (runsBody.runs ?? [])
+    .filter((run) => run.item_id === itemId)
+    .sort((left, right) => right.created_at - left.created_at)[0]?.id ?? null;
+}
+
+async function resolveChatRunId(itemId: string, chatEntry: RunEntryFact | undefined): Promise<string | null> {
+  const runId = entryRunId(chatEntry);
+  if (runId !== undefined) return runId;
+  recordRunEntryFallback({ itemId, surface: "chat" });
+  return resolveFallbackRunId(itemId);
+}
+
+async function fetchConversation(runId: string): Promise<EngineConversationResponse> {
+  const response = await fetch(`/api/runs/${encodeURIComponent(runId)}/conversation`, {
+    cache: "no-store",
+  });
+  if (!response.ok) throw new Error(`conv_${response.status}`);
+  return response.json();
+}
+
+function hasDuplicateEntry(
+  entries: ConversationEntry[],
+  entry: ConversationEntry,
+): boolean {
+  return entries.some(
+    (existing) =>
+      existing.type === entry.type &&
+      existing.text === entry.text &&
+      existing.promptId === entry.promptId &&
+      existing.answerTo === entry.answerTo,
+  );
+}
+
 /**
  * Resolves the latest run for an item and renders ChatPanel against it.
  * Primes the conversation from the engine, then keeps it live by appending
@@ -181,34 +225,14 @@ export function ItemChat({ itemId, chatEntry }: Readonly<ItemChatProps>) {
 
     (async () => {
       try {
-        let resolvedRunId: string | null = null;
-        if (chatEntry?.status === "resolved") {
-          resolvedRunId = chatEntry.targetRunId;
-        } else if (chatEntry?.status === "none") {
-          if (!cancelled) setLoaded(true);
-          return;
-        } else {
-          recordRunEntryFallback({ itemId, surface: "chat" });
-          const runsRes = await fetch("/api/runs", { cache: "no-store" });
-          if (!runsRes.ok) throw new Error(`runs_${runsRes.status}`);
-          const runsBody = (await runsRes.json()) as { runs?: EngineRun[] };
-          const itemRuns = (runsBody.runs ?? [])
-            .filter((r) => r.item_id === itemId)
-            .sort((a, b) => b.created_at - a.created_at);
-          resolvedRunId = itemRuns[0]?.id ?? null;
-        }
+        const resolvedRunId = await resolveChatRunId(itemId, chatEntry);
         if (cancelled) return;
         if (!resolvedRunId) {
           setLoaded(true);
           return;
         }
 
-        const convRes = await fetch(
-          `/api/runs/${encodeURIComponent(resolvedRunId)}/conversation`,
-          { cache: "no-store" }
-        );
-        if (!convRes.ok) throw new Error(`conv_${convRes.status}`);
-        const conv = (await convRes.json()) as EngineConversationResponse;
+        const conv = await fetchConversation(resolvedRunId);
         if (cancelled) return;
         setRunId(resolvedRunId);
         setSseRunId(resolvedRunId);
@@ -247,16 +271,7 @@ export function ItemChat({ itemId, chatEntry }: Readonly<ItemChatProps>) {
         );
       }
       const ui = chatEntryToUi(entry);
-      if (
-        !ui.id &&
-        entriesRef.current.some(
-          (existing) =>
-            existing.type === ui.type &&
-            existing.text === ui.text &&
-            existing.promptId === ui.promptId &&
-            existing.answerTo === ui.answerTo
-        )
-      ) {
+      if (!ui.id && hasDuplicateEntry(entriesRef.current, ui)) {
         return;
       }
       if (ui.id && seenIdsRef.current.has(ui.id)) return;

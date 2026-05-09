@@ -5,7 +5,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { getBoard } from "../src/api/board.js"
-import { projectItemDetail } from "../src/api/routes/items.js"
+import { projectItemDetail, type ProjectedItemDetail } from "../src/api/routes/items.js"
 import { resolveChatEntryFact, resolveMessagesEntryFact } from "../src/core/itemRunEntryFacts.js"
 import { initDatabase, type Db } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
@@ -186,12 +186,13 @@ test("board and item read surfaces expose both run-entry facts with explicit no-
 
     assert.ok(boardCard)
     assert.ok(itemDetail)
+    const projectedItemDetail: ProjectedItemDetail = itemDetail
     assert.deepEqual(boardCard.chatEntry, { status: "resolved", targetRunId: chatRun.id })
     assert.deepEqual(boardCard.messagesEntry, { status: "resolved", targetRunId: messagesRun.id })
     assert.equal(boardCard.chatEntryFreshness.strategy, "workspace_sse")
     assert.equal(boardCard.messagesEntryFreshness.strategy, "workspace_sse")
-    assert.deepEqual((itemDetail as { chatEntry: unknown }).chatEntry, { status: "resolved", targetRunId: chatRun.id })
-    assert.deepEqual((itemDetail as { messagesEntry: unknown }).messagesEntry, { status: "resolved", targetRunId: messagesRun.id })
+    assert.deepEqual(projectedItemDetail.chatEntry, { status: "resolved", targetRunId: chatRun.id })
+    assert.deepEqual(projectedItemDetail.messagesEntry, { status: "resolved", targetRunId: messagesRun.id })
   } finally {
     fx.cleanup()
   }

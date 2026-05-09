@@ -64,6 +64,18 @@ interface EngineMessagesResponse {
   entries: EngineMessageEntry[];
 }
 
+const MESSAGE_EVENT_TYPES = [
+  "run_started", "run_finished", "run_blocked", "run_failed", "run_resumed",
+  "phase_started", "phase_completed", "phase_failed",
+  "prompt_requested", "prompt_answered",
+  "agent_message", "user_message",
+  "artifact_written", "log",
+  "loop_iteration", "tool_called", "tool_result",
+  "llm_thinking", "llm_tokens",
+  "presentation", "project_created", "wireframes_ready", "design_ready",
+  "external_remediation_recorded",
+] as const;
+
 function pickText(env: EngineMessageEntry): string {
   const p: Record<string, unknown> = env.payload ?? {};
   const candidates = ["message", "text", "summary", "title", "prompt", "answer"];
@@ -123,6 +135,33 @@ async function fetchBackfilledMessages(runId: string): Promise<{
   return { entries, lastSeenId };
 }
 
+function entryRunId(entry: RunEntryFact | undefined): string | null | undefined {
+  if (entry?.status === "resolved") return entry.targetRunId;
+  if (entry?.status === "none") return null;
+  return undefined;
+}
+
+async function resolveFallbackRunId(itemId: string): Promise<string | null> {
+  const runsRes = await fetch("/api/runs", { cache: "no-store" });
+  if (!runsRes.ok) throw new Error(`runs_${runsRes.status}`);
+  const runsBody: { runs?: EngineRun[] } = await runsRes.json();
+  return (runsBody.runs ?? [])
+    .filter((run) => run.item_id === itemId)
+    .sort((left, right) => right.created_at - left.created_at)[0]?.id ?? null;
+}
+
+async function resolveMessagesRunId(itemId: string, messagesEntry: RunEntryFact | undefined): Promise<string | null> {
+  const runId = entryRunId(messagesEntry);
+  if (runId !== undefined) return runId;
+  recordRunEntryFallback({ itemId, surface: "messages" });
+  return resolveFallbackRunId(itemId);
+}
+
+function messageLevelFor(value: number): MessagingLevel {
+  if (value === 0 || value === 1 || value === 2) return value;
+  return 0;
+}
+
 export function ItemMessages({ itemId, messagesEntry }: Readonly<ItemMessagesProps>) {
   const [runId, setRunId] = useState<string | null>(null);
   const [entries, setEntries] = useState<EngineMessageEntry[]>([]);
@@ -148,21 +187,7 @@ export function ItemMessages({ itemId, messagesEntry }: Readonly<ItemMessagesPro
 
     (async () => {
       try {
-        let resolvedRunId: string | null = null;
-        if (messagesEntry?.status === "resolved") {
-          resolvedRunId = messagesEntry.targetRunId;
-        } else if (messagesEntry?.status === "none") {
-          if (!cancelled) setLoaded(true);
-          return;
-        } else {
-          recordRunEntryFallback({ itemId, surface: "messages" });
-          const runsRes = await fetch("/api/runs", { cache: "no-store" });
-          if (!runsRes.ok) throw new Error(`runs_${runsRes.status}`);
-          const runs = ((await runsRes.json()) as { runs?: EngineRun[] }).runs ?? [];
-          resolvedRunId = runs
-            .filter((r) => r.item_id === itemId)
-            .sort((a, b) => b.created_at - a.created_at)[0]?.id ?? null;
-        }
+        const resolvedRunId = await resolveMessagesRunId(itemId, messagesEntry);
         if (cancelled) return;
         if (!resolvedRunId) {
           setLoaded(true);
@@ -192,8 +217,7 @@ export function ItemMessages({ itemId, messagesEntry }: Readonly<ItemMessagesPro
   // run event for the messages view.
   useEffect(() => {
     if (!runId) return;
-    const Ctor = (globalThis as { EventSource?: new (u: string) => EventSource })
-      .EventSource;
+    const Ctor = globalThis.EventSource;
     if (!Ctor) return;
     const params = new URLSearchParams({ level: "0" });
     if (streamSinceRef.current) params.set("since", streamSinceRef.current);
@@ -201,7 +225,7 @@ export function ItemMessages({ itemId, messagesEntry }: Readonly<ItemMessagesPro
     const es = new Ctor(url);
     const append = (e: MessageEvent) => {
       try {
-        const data = JSON.parse(e.data) as EngineMessageEntry;
+        const data: EngineMessageEntry = JSON.parse(e.data);
         if (!data?.id || data.runId !== runId) return;
         if (seenIdsRef.current.has(data.id)) return;
         seenIdsRef.current.add(data.id);
@@ -214,18 +238,9 @@ export function ItemMessages({ itemId, messagesEntry }: Readonly<ItemMessagesPro
     // events). EventSource.onmessage only fires for *unnamed* events, so we
     // register addEventListener for each canonical type produced by
     // messagingProjection.ts.
-    const types = [
-      "run_started", "run_finished", "run_blocked", "run_failed", "run_resumed",
-      "phase_started", "phase_completed", "phase_failed",
-      "prompt_requested", "prompt_answered",
-      "agent_message", "user_message",
-      "artifact_written", "log",
-      "loop_iteration", "tool_called", "tool_result",
-      "llm_thinking", "llm_tokens",
-      "presentation", "project_created", "wireframes_ready", "design_ready",
-      "external_remediation_recorded",
-    ] as const;
-    for (const t of types) es.addEventListener(t, append as EventListener);
+    for (const eventType of MESSAGE_EVENT_TYPES) {
+      es.addEventListener(eventType, append as EventListener);
+    }
     return () => {
       try {
         es.close();
@@ -301,9 +316,7 @@ export function ItemMessages({ itemId, messagesEntry }: Readonly<ItemMessagesPro
         ) : (
           <ul className="divide-y divide-zinc-900">
             {visible.map((entry) => {
-              const lvl = (entry.level === 0 || entry.level === 1 || entry.level === 2
-                ? entry.level
-                : 0) as MessagingLevel;
+              const lvl = messageLevelFor(entry.level);
               return (
                 <li
                   key={entry.id}

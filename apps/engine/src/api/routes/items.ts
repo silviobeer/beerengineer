@@ -27,6 +27,12 @@ import { resolveWorkflowContextForRun } from "../../core/workflowContextResolver
 import { json, readJson } from "../http.js"
 import type { DesignArtifact, WireframeArtifact } from "../../types.js"
 
+export type ProjectedItemDetail = ItemRow & {
+  allowedActions: string[]
+  visibleActions: ReturnType<typeof visibleActionsForItem>
+  visibleActionsFreshness: typeof VISIBLE_ACTION_FACTS_FRESHNESS
+} & ReturnType<typeof runEntryFactsForItem>
+
 export function handleListItems(repos: Repos, url: URL, res: ServerResponse): void {
   const workspaceKey = url.searchParams.get("workspace")?.trim() ?? ""
   const status = url.searchParams.get("status")?.trim() ?? ""
@@ -52,7 +58,7 @@ export function handleGetItem(repos: Repos, res: ServerResponse, itemId: string)
   json(res, 200, body)
 }
 
-export function projectItemDetail(repos: Repos, itemId: string): Record<string, unknown> | null {
+export function projectItemDetail(repos: Repos, itemId: string): ProjectedItemDetail | null {
   const item = repos.getItem(itemId)
   if (!item) return null
   const latestRun = repos.latestActiveRunForItem(item.id) ?? repos.latestRecoverableRunForItem(item.id)
