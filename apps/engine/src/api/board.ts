@@ -1,6 +1,11 @@
 import type { Repos, RunRow } from "../db/repositories.js"
 import { itemSlug } from "../core/itemIdentity.js"
 import type { Db } from "../db/connection.js"
+import {
+  VISIBLE_ACTION_FACTS_FRESHNESS,
+  type VisibleItemAction,
+  visibleActionsForItem,
+} from "../core/itemActions.js"
 import { previewUrlForWorktree } from "../core/portAllocator.js"
 import { layout } from "../core/workspaceLayout.js"
 import { parseSupabaseReadinessRecoveryPayload } from "../core/supabase/recoveryPayload.js"
@@ -102,6 +107,8 @@ export type BoardCardDTO = {
   supabaseProjectRef?: string | null
   dbRelevance?: { value: boolean; source: "detector"; reason: string }
   supabaseBranch?: { ref: string; name: string; lifecycleState: string | null }
+  visibleActions: VisibleItemAction[]
+  visibleActionsFreshness: typeof VISIBLE_ACTION_FACTS_FRESHNESS
   meta: Array<{ label: string; value: string }>
 }
 
@@ -259,9 +266,18 @@ export function getBoard(db: Db, workspaceKey?: string | null): BoardDTO {
           workspaceId: workspace.id,
           workspaceRoot: workspace.root_path ?? null,
           supabaseProjectRef: workspace.supabase_project_ref ?? null,
+          visibleActions: visibleActionsForItem({
+            column: i.current_column,
+            phase: i.phase_status,
+            currentStage: i.current_stage ?? null,
+            hasOpenPrompt: Boolean(openPrompt),
+            hasReviewGateWaiting: reviewGateWaiting(openPrompt?.actions_json),
+            hasBlockedRun: latestRun?.recovery_status === "blocked",
+          }),
+          visibleActionsFreshness: VISIBLE_ACTION_FACTS_FRESHNESS,
           dbRelevance: {
             value: Boolean(supabaseBranch),
-            source: "detector" as const,
+            source: "detector",
             reason: supabaseBranch ? "Supabase branch provisioned" : "No Supabase branch provisioned",
           },
           supabaseBranch,
