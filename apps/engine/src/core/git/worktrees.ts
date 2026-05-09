@@ -1,7 +1,6 @@
 import { existsSync, readdirSync, rmSync } from "node:fs"
 import { basename, resolve } from "node:path"
-import type { WorkflowContext } from "../workspaceLayout.js"
-import { layout } from "../workspaceLayout.js"
+import { layout, requireItemRunScopedContext, type WorkflowContext } from "../workspaceLayout.js"
 import { branchNameItem, branchNameStory, branchNameWave } from "../branchNames.js"
 import {
   type GitMode,
@@ -114,7 +113,7 @@ export function ensureStoryWorktree(
 ): string {
   const branch = branchNameStory(context, projectId, waveNumber, storyId)
   const canonicalPath = resolve(worktreeRoot)
-  const legacyPath = resolve(layout.executionStoryLegacyWorktreeDir(context, waveNumber, storyId))
+  const legacyPath = resolve(layout.executionStoryLegacyWorktreeDir(requireItemRunScopedContext(context), waveNumber, storyId))
   if (legacyPath !== canonicalPath) {
     const legacy = findWorktreeByPath(mode.workspaceRoot, legacyPath)
     if (legacy?.branch === branch) removeStoryWorktree(mode, legacyPath)

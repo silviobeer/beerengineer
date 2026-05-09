@@ -4,8 +4,10 @@ function reviewGateWaiting(actionsJson: string | null | undefined): boolean {
   if (!actionsJson) return false
   try {
     const parsed = JSON.parse(actionsJson) as unknown
-    if (!Array.isArray(parsed)) return false
-    return parsed.some(item => typeof item === "object" && item !== null && "value" in item && item.value === "promote")
+    if (Array.isArray(parsed)) {
+      return parsed.some(item => typeof item === "object" && item !== null && "value" in item && item.value === "promote")
+    }
+    return false
   } catch {
     return false
   }

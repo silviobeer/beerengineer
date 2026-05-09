@@ -31,7 +31,7 @@ function workspaceCostRisk(db: Db, workspaceId?: string): BoardDTO["costRisk"] {
 }
 
 export function getBoard(db: Db, workspaceKey?: string | null): BoardDTO {
-  const workspace = workspaceKey
+  const workspace: BoardWorkspace | undefined = workspaceKey
     ? (db.prepare("SELECT * FROM workspaces WHERE key = ?").get(workspaceKey) as { id: string; key: string; root_path: string | null; supabase_project_ref: string | null } | undefined)
     : (db.prepare("SELECT * FROM workspaces ORDER BY created_at ASC LIMIT 1").get() as { id: string; key: string; root_path: string | null; supabase_project_ref: string | null } | undefined)
 
@@ -100,7 +100,7 @@ export function getBoard(db: Db, workspaceKey?: string | null): BoardDTO {
           const latestRun = latestRuns.get(i.id)
           const openPrompt = latestRun ? openPromptsByRun.get(latestRun.id) : undefined
           return boardProjectionCoordinator.projectCard({
-            workspace: workspace as BoardWorkspace,
+            workspace,
             item: i,
             latestRun,
             openPrompt,

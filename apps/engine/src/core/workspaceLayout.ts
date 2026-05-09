@@ -20,7 +20,8 @@ export type WorkflowContext = {
 }
 
 type WorkspaceScopedContext = Pick<WorkflowContext, "workspaceId" | "workspaceRoot">
-type ItemScopedContext = WorkspaceScopedContext & Pick<WorkflowContext, "itemSlug">
+export type ItemScopedContext = WorkspaceScopedContext & Required<Pick<WorkflowContext, "itemSlug">>
+export type ItemRunScopedContext = ItemScopedContext & Pick<WorkflowContext, "runId">
 
 function sanitizeSegment(segment: string): string {
   return segment.replaceAll(/[^a-z0-9/-]/gi, "-").toLowerCase()
@@ -33,6 +34,22 @@ function sanitizeStageId(stageId: string): string {
 function requireItemSlug(ctx: ItemScopedContext): string {
   if (!ctx.itemSlug?.trim()) throw new Error("WorkflowContext.itemSlug is required for item-scoped worktree paths")
   return sanitizeSegment(ctx.itemSlug)
+}
+
+export function requireItemScopedContext(ctx: WorkflowContext): ItemScopedContext {
+  if (!ctx.itemSlug?.trim()) throw new Error("WorkflowContext.itemSlug is required for item-scoped worktree paths")
+  return {
+    workspaceId: ctx.workspaceId,
+    workspaceRoot: ctx.workspaceRoot,
+    itemSlug: ctx.itemSlug,
+  }
+}
+
+export function requireItemRunScopedContext(ctx: WorkflowContext): ItemRunScopedContext {
+  return {
+    ...requireItemScopedContext(ctx),
+    runId: ctx.runId,
+  }
 }
 
 function requireWorkspaceRoot(workspaceRoot: string | undefined): string {
@@ -119,14 +136,14 @@ export const layout = {
   executionStoryDir(ctx: WorkflowContext, waveNumber: number, storyId: string): string {
     return join(layout.executionWaveDir(ctx, waveNumber), "stories", storyId)
   },
-  executionStoryLegacyWorktreeDir(ctx: WorkflowContext, waveNumber: number, storyId: string): string {
+  executionStoryLegacyWorktreeDir(ctx: ItemRunScopedContext, waveNumber: number, storyId: string): string {
     return join(
       layout.itemStoriesRootDir(ctx),
       `${sanitizeSegment(ctx.runId)}-${sanitizeSegment(storyId)}`,
       "worktree",
     )
   },
-  executionStoryWorktreeDir(ctx: WorkflowContext, waveNumber: number, storyId: string): string {
+  executionStoryWorktreeDir(ctx: ItemRunScopedContext, waveNumber: number, storyId: string): string {
     return join(
       layout.itemStoriesRootDir(ctx),
       `${sanitizeSegment(ctx.runId)}__${sanitizeSegment(storyId)}`,
