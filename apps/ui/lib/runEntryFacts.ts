@@ -136,39 +136,64 @@ async function listRunsForItem(itemId: string): Promise<EngineRunSummary[]> {
     .sort((left, right) => right.created_at - left.created_at);
 }
 
-export async function resolveFallbackChatRunId(itemId: string): Promise<string | null> {
-  const runs = await listRunsForItem(itemId);
-  let newestConversationRunId: string | null = null;
-
-  for (const run of runs) {
-    const response = await fetch(`/api/runs/${encodeURIComponent(run.id)}/conversation`, {
+async function fetchFallbackConversation(runId: string): Promise<EngineConversationResponse | null> {
+  try {
+    const response = await fetch(`/api/runs/${encodeURIComponent(runId)}/conversation`, {
       cache: "no-store",
     });
-    if (!response.ok) throw new Error(`conv_${response.status}`);
-    const conversation = (await response.json()) as EngineConversationResponse;
-    if (conversation.openPrompt) return run.id;
-    if (newestConversationRunId === null && conversation.entries.length > 0) {
-      newestConversationRunId = run.id;
-    }
+    if (!response.ok) return null;
+    const conversation: EngineConversationResponse = await response.json();
+    return conversation;
+  } catch {
+    return null;
   }
-
-  return newestConversationRunId;
 }
 
-export async function resolveFallbackMessagesRunId(itemId: string): Promise<string | null> {
-  const runs = await listRunsForItem(itemId);
-
-  for (const run of runs) {
+async function fetchFallbackMessages(runId: string): Promise<EngineMessagesResponse | null> {
+  try {
     const params = new URLSearchParams({
       level: "2",
       limit: "1",
     });
-    const response = await fetch(`/api/runs/${encodeURIComponent(run.id)}/messages?${params.toString()}`, {
+    const response = await fetch(`/api/runs/${encodeURIComponent(runId)}/messages?${params.toString()}`, {
       cache: "no-store",
     });
-    if (!response.ok) throw new Error(`messages_${response.status}`);
-    const body = (await response.json()) as EngineMessagesResponse;
-    if (body.entries.length > 0) return run.id;
+    if (!response.ok) return null;
+    const body: EngineMessagesResponse = await response.json();
+    return body;
+  } catch {
+    return null;
+  }
+}
+
+export async function resolveFallbackChatRunId(itemId: string): Promise<string | null> {
+  const runs = await listRunsForItem(itemId);
+  const conversations = await Promise.allSettled(
+    runs.map((run) => fetchFallbackConversation(run.id)),
+  );
+
+  for (const [index, result] of conversations.entries()) {
+    if (result.status !== "fulfilled") continue;
+    if (result.value?.openPrompt) return runs[index]?.id ?? null;
+  }
+
+  for (const [index, result] of conversations.entries()) {
+    if (result.status !== "fulfilled") continue;
+    if ((result.value?.entries.length ?? 0) > 0) return runs[index]?.id ?? null;
+  }
+
+  return null;
+}
+
+export async function resolveFallbackMessagesRunId(itemId: string): Promise<string | null> {
+  const runs = await listRunsForItem(itemId);
+  const messages = await Promise.allSettled(
+    runs.map((run) => fetchFallbackMessages(run.id)),
+  );
+
+  for (const [index, result] of messages.entries()) {
+    if (result.status !== "fulfilled") continue;
+    if ((result.value?.entries.length ?? 0) > 0) return runs[index]?.id ?? null;
   }
 
   return null;

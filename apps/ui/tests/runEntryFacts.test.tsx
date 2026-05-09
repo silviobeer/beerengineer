@@ -254,4 +254,94 @@ describe("run entry facts", () => {
       ],
     });
   });
+
+  it("skips failed compatibility probes and keeps searching for a qualifying run", async () => {
+    const fetchMock = vi.fn(async (input: FetchInput) => {
+      const url = urlOf(input);
+      if (url === "/api/runs") {
+        return jsonResponse({
+          runs: [
+            {
+              id: "run-2",
+              item_id: "item-1",
+              status: "failed",
+              created_at: 20,
+            },
+            {
+              id: "run-1",
+              item_id: "item-1",
+              status: "running",
+              created_at: 10,
+            },
+          ],
+        });
+      }
+      if (url === "/api/runs/run-2/conversation" || url === "/api/runs/run-2/messages?level=2&limit=1") {
+        return new Response("boom", { status: 500 });
+      }
+      if (url === "/api/runs/run-1/conversation") {
+        return jsonResponse({
+          runId: "run-1",
+          updatedAt: "2026-05-09T12:00:00.000Z",
+          entries: [],
+          openPrompt: {
+            promptId: "prompt-1",
+            runId: "run-1",
+            stageKey: null,
+            text: "Need input",
+            createdAt: "2026-05-09T12:00:00.000Z",
+          },
+        });
+      }
+      if (url === "/api/runs/run-1/messages?level=2&limit=1") {
+        return jsonResponse({
+          runId: "run-1",
+          schema: "messages-v1",
+          nextSince: null,
+          entries: [
+            {
+              id: "msg-1",
+              ts: "2026-05-09T12:01:00.000Z",
+              runId: "run-1",
+              stageRunId: null,
+              type: "run_started",
+              level: 2,
+              payload: { title: "Started" },
+            },
+          ],
+        });
+      }
+      if (url === "/api/runs/run-1/messages?level=0&limit=500") {
+        return jsonResponse({
+          runId: "run-1",
+          schema: "messages-v1",
+          nextSince: null,
+          entries: [],
+        });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("EventSource", undefined);
+
+    render(
+      <SSETestProvider value={noopSSEContext}>
+        <>
+          <ItemChat itemId="item-1" />
+          <ItemMessages itemId="item-1" />
+        </>
+      </SSETestProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("chat-panel")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId("item-messages")).toBeInTheDocument());
+    expect(readRunEntryFallbackTelemetry()).toEqual({
+      chat: 1,
+      messages: 1,
+      events: [
+        { itemId: "item-1", surface: "chat" },
+        { itemId: "item-1", surface: "messages" },
+      ],
+    });
+  });
 });
