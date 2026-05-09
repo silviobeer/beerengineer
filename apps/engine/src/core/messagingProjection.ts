@@ -213,7 +213,10 @@ const STAGE_LOG_EVENT_PARSERS: Record<string, StageLogEventParser> = {
     runId: row.run_id,
     outcome: data.outcome === "auto_resumed" || data.outcome === "failed" ? data.outcome : "skipped",
     reason:
-      data.reason === "open_prompt" || data.reason === "auto_resume_disabled" || data.reason === "auto_resume_failed"
+      data.reason === "open_prompt" ||
+      data.reason === "worker_lease_not_orphaned" ||
+      data.reason === "auto_resume_disabled" ||
+      data.reason === "auto_resume_failed"
         ? data.reason
         : null,
     error: typeof data.error === "string" ? data.error : undefined,

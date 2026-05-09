@@ -39,6 +39,10 @@ export type StartupRecoveryOutcome = {
   reason: StartupRecoveryReason | null
 }
 
+export type StartupAutoResumeEligibility =
+  | { eligible: true }
+  | { eligible: false; reason: Extract<StartupRecoveryReason, "open_prompt" | "worker_lease_not_orphaned" | "auto_resume_disabled"> }
+
 type StartupAutoResumeOptions = {
   enabled: boolean
   resumeRun: (run: RunRow) => Promise<void>
@@ -98,12 +102,32 @@ function recoverySummary(run: RunRow): string {
   return "CLI worker heartbeat is stale — no live worker; resume or abandon."
 }
 
+export function classifyStartupAutoResumeEligibility(input: {
+  hasOrphanedWorkerLease: boolean
+  hasOpenPrompt: boolean
+  autoResumeEnabled: boolean
+}): StartupAutoResumeEligibility {
+  if (input.hasOpenPrompt) {
+    return { eligible: false, reason: "open_prompt" }
+  }
+  if (!input.hasOrphanedWorkerLease) {
+    return { eligible: false, reason: "worker_lease_not_orphaned" }
+  }
+  if (!input.autoResumeEnabled) {
+    return { eligible: false, reason: "auto_resume_disabled" }
+  }
+  return { eligible: true }
+}
+
 function startupRecoveryMessage(outcome: StartupRecoveryOutcome, error?: string): string {
   if (outcome.outcome === "auto_resumed") {
     return "Startup recovery auto-resumed the stale run."
   }
   if (outcome.reason === "open_prompt") {
     return "Startup recovery left the stale run on manual recovery because a prompt is still open."
+  }
+  if (outcome.reason === "worker_lease_not_orphaned") {
+    return "Startup recovery left the stale run on manual recovery because the worker lease is not orphaned."
   }
   if (outcome.reason === "auto_resume_disabled") {
     return "Startup recovery left the stale run on manual recovery because auto-resume is disabled."
@@ -131,7 +155,7 @@ function appendStartupRecoveryLog(
 
 function skippedStartupRecoveryOutcome(
   runId: string,
-  reason: Extract<StartupRecoveryReason, "open_prompt" | "auto_resume_disabled">,
+  reason: Extract<StartupRecoveryReason, "open_prompt" | "worker_lease_not_orphaned" | "auto_resume_disabled">,
 ): StartupRecoveryOutcome {
   return { runId, outcome: "skipped", reason }
 }
@@ -149,11 +173,13 @@ async function resolveStartupRecoveryOutcome(
   run: RunRow,
   autoResume: StartupAutoResumeOptions,
 ): Promise<{ outcome: StartupRecoveryOutcome; error?: string }> {
-  if (repos.getOpenPrompt(run.id)) {
-    return { outcome: skippedStartupRecoveryOutcome(run.id, "open_prompt") }
-  }
-  if (!autoResume.enabled) {
-    return { outcome: skippedStartupRecoveryOutcome(run.id, "auto_resume_disabled") }
+  const eligibility = classifyStartupAutoResumeEligibility({
+    hasOrphanedWorkerLease: true,
+    hasOpenPrompt: repos.getOpenPrompt(run.id) != null,
+    autoResumeEnabled: autoResume.enabled,
+  })
+  if (!eligibility.eligible) {
+    return { outcome: skippedStartupRecoveryOutcome(run.id, eligibility.reason) }
   }
   try {
     await autoResume.resumeRun(repos.getRun(run.id) ?? run)

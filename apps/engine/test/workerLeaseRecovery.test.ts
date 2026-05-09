@@ -197,6 +197,7 @@ test("startup recovery keeps stale runs with open prompts on manual recovery and
     assert.equal(result.outcomes[0]?.reason, "open_prompt")
     assert.equal(repos.getRun(run.id)?.status, "failed")
     assert.equal(repos.getRun(run.id)?.recovery_status, "failed")
+    assert.ok(repos.getOpenPrompt(run.id), "startup recovery must preserve the open prompt")
     const message = projectStageLogRow(repos.listLogsForRun(run.id).at(-1)!)
     assert.equal(message?.type, "startup_recovery")
     assert.equal(message?.payload.outcome, "skipped")
@@ -254,17 +255,20 @@ test("startup recovery falls back to manual recovery when auto-resume handoff fa
       now: 1_700_000_000_000,
     })
 
+    let resumeCalls = 0
     const result = await recoverLostWorkerRuns(repos, {
       apiWorkerInstanceId: "api-current",
       now: 1_700_000_130_001,
       autoResume: {
         enabled: true,
         resumeRun: async () => {
+          resumeCalls += 1
           throw new Error("resume exploded")
         },
       },
     })
 
+    assert.equal(resumeCalls, 1)
     assert.equal(result.outcomes[0]?.outcome, "failed")
     assert.equal(result.outcomes[0]?.reason, "auto_resume_failed")
     assert.equal(repos.getRun(run.id)?.status, "failed")
@@ -274,6 +278,98 @@ test("startup recovery falls back to manual recovery when auto-resume handoff fa
     assert.equal(message?.payload.outcome, "failed")
     assert.equal(message?.payload.reason, "auto_resume_failed")
     assert.match(String(message?.payload.error ?? ""), /resume exploded/)
+  } finally {
+    db.close()
+  }
+})
+
+test("startup recovery handles mixed stale runs independently during one startup cycle", async () => {
+  const { db, repos, ws, item } = fixture()
+  try {
+    const waitingRun = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "waiting", owner: "cli" })
+    repos.updateRun(waitingRun.id, { current_stage: "execution" })
+    claimWorkerLease(repos, {
+      runId: waitingRun.id,
+      workerInstanceId: "cli-waiting",
+      workerOwnerKind: "cli",
+      now: 1_700_000_000_000,
+    })
+    repos.createPendingPrompt({ runId: waitingRun.id, prompt: "Need approval?" })
+
+    const failingRun = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "failing", owner: "cli" })
+    repos.updateRun(failingRun.id, { current_stage: "execution" })
+    claimWorkerLease(repos, {
+      runId: failingRun.id,
+      workerInstanceId: "cli-failing",
+      workerOwnerKind: "cli",
+      now: 1_700_000_000_000,
+    })
+
+    const resumableRun = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "resumable", owner: "cli" })
+    repos.updateRun(resumableRun.id, { current_stage: "execution" })
+    claimWorkerLease(repos, {
+      runId: resumableRun.id,
+      workerInstanceId: "cli-resumable",
+      workerOwnerKind: "cli",
+      now: 1_700_000_000_000,
+    })
+
+    const freshRun = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: "fresh", owner: "cli" })
+    repos.updateRun(freshRun.id, { current_stage: "execution" })
+    claimWorkerLease(repos, {
+      runId: freshRun.id,
+      workerInstanceId: "cli-fresh",
+      workerOwnerKind: "cli",
+      now: 1_700_000_120_000,
+    })
+
+    const resumeAttempts: string[] = []
+    const result = await recoverLostWorkerRuns(repos, {
+      apiWorkerInstanceId: "api-current",
+      now: 1_700_000_130_001,
+      autoResume: {
+        enabled: true,
+        resumeRun: async staleRun => {
+          resumeAttempts.push(staleRun.id)
+          if (staleRun.id === failingRun.id) {
+            throw new Error("resume exploded")
+          }
+          if (staleRun.id === resumableRun.id) {
+            repos.clearRunRecovery(staleRun.id)
+            repos.updateRun(staleRun.id, { status: "running", current_stage: "execution" })
+            return
+          }
+          throw new Error(`unexpected resume run ${staleRun.id}`)
+        },
+      },
+    })
+
+    assert.equal(result.recovered, 3)
+    assert.deepEqual(new Set(resumeAttempts), new Set([failingRun.id, resumableRun.id]))
+    assert.equal(resumeAttempts.length, 2)
+    assert.ok(repos.getOpenPrompt(waitingRun.id), "waiting-for-operator runs must keep their prompt open")
+    assert.equal(repos.getRun(waitingRun.id)?.status, "failed")
+    assert.equal(repos.getRun(failingRun.id)?.status, "failed")
+    assert.equal(repos.getRun(resumableRun.id)?.status, "running")
+    assert.equal(repos.getRun(resumableRun.id)?.recovery_status, null)
+    assert.equal(repos.getRun(freshRun.id)?.status, "running")
+    const outcomes = new Map(result.outcomes.map(outcome => [outcome.runId, outcome]))
+    assert.deepEqual(outcomes.get(waitingRun.id), {
+      runId: waitingRun.id,
+      outcome: "skipped",
+      reason: "open_prompt",
+    })
+    assert.deepEqual(outcomes.get(failingRun.id), {
+      runId: failingRun.id,
+      outcome: "failed",
+      reason: "auto_resume_failed",
+    })
+    assert.deepEqual(outcomes.get(resumableRun.id), {
+      runId: resumableRun.id,
+      outcome: "auto_resumed",
+      reason: null,
+    })
+    assert.equal(outcomes.has(freshRun.id), false)
   } finally {
     db.close()
   }

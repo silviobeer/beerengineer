@@ -6,7 +6,11 @@ import { join } from "node:path"
 
 import { initDatabase } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
-import { recoverLostWorkerRuns, markOrphanedRunsFailed } from "../src/core/orphanRecovery.js"
+import {
+  classifyStartupAutoResumeEligibility,
+  recoverLostWorkerRuns,
+  markOrphanedRunsFailed,
+} from "../src/core/orphanRecovery.js"
 import { claimWorkerLease } from "../src/core/workerLease.js"
 
 function tmpDb() {
@@ -121,4 +125,39 @@ test("recoverLostWorkerRuns treats worker_owner_kind as authoritative after API 
   assert.equal(recovered?.status, "failed")
   assert.equal(recovered?.recovery_scope, "run")
   assert.ok(recovered?.recovery_summary?.includes("API restart"), "actual API lease owner should get API recovery")
+})
+
+test("classifyStartupAutoResumeEligibility keeps open-prompt and non-orphaned runs off auto-resume", () => {
+  assert.deepEqual(
+    classifyStartupAutoResumeEligibility({
+      hasOrphanedWorkerLease: false,
+      hasOpenPrompt: false,
+      autoResumeEnabled: true,
+    }),
+    { eligible: false, reason: "worker_lease_not_orphaned" },
+  )
+  assert.deepEqual(
+    classifyStartupAutoResumeEligibility({
+      hasOrphanedWorkerLease: true,
+      hasOpenPrompt: true,
+      autoResumeEnabled: true,
+    }),
+    { eligible: false, reason: "open_prompt" },
+  )
+  assert.deepEqual(
+    classifyStartupAutoResumeEligibility({
+      hasOrphanedWorkerLease: false,
+      hasOpenPrompt: true,
+      autoResumeEnabled: true,
+    }),
+    { eligible: false, reason: "open_prompt" },
+  )
+  assert.deepEqual(
+    classifyStartupAutoResumeEligibility({
+      hasOrphanedWorkerLease: true,
+      hasOpenPrompt: false,
+      autoResumeEnabled: true,
+    }),
+    { eligible: true },
+  )
 })
