@@ -11,6 +11,11 @@ import {
   BOARD_MUTATION_REFRESH_INTERVAL_MS,
   type BoardLauncherMutationSuccess,
 } from "@/lib/api";
+import {
+  CHAT_ENTRY_FACT_FRESHNESS,
+  MESSAGES_ENTRY_FACT_FRESHNESS,
+  NO_TARGET_RUN_ENTRY_FACT,
+} from "@/lib/runEntryFacts";
 import { useSSE } from "@/lib/sse/SSEContext";
 
 export interface BoardLauncherRenderContext {
@@ -130,6 +135,10 @@ export function Board({ items, workspaceKey, renderLauncher }: Readonly<BoardPro
       hasBlockedRun: false,
       current_stage: null,
       latestRunId: result.runId,
+      chatEntry: NO_TARGET_RUN_ENTRY_FACT,
+      chatEntryFreshness: CHAT_ENTRY_FACT_FRESHNESS,
+      messagesEntry: NO_TARGET_RUN_ENTRY_FACT,
+      messagesEntryFreshness: MESSAGES_ENTRY_FACT_FRESHNESS,
     });
     setPendingMutation({ itemId: result.itemId, startedAt: Date.now() });
     startTransition(() => {

@@ -15,6 +15,15 @@ import { ItemMessages } from "./ItemMessages";
 import { type MergeGatePanelProps } from "./merge/MergeGatePanel";
 import { SupabaseStatusPanel } from "./run/SupabaseStatusPanel";
 import { SSEContext } from "@/lib/sse/SSEContext";
+import {
+  CHAT_ENTRY_FACT_FRESHNESS,
+  MESSAGES_ENTRY_FACT_FRESHNESS,
+  NO_TARGET_RUN_ENTRY_FACT,
+  normalizeRunEntryFact,
+  normalizeRunEntryFreshness,
+  type RunEntryFact,
+  type RunEntryFactFreshness,
+} from "@/lib/runEntryFacts";
 import type { VisibleActionFactsFreshness, VisibleActionId } from "@/lib/visibleActionFacts";
 
 interface BoardItemModalProps {
@@ -55,6 +64,12 @@ interface PreviewInfo {
 interface ItemActionFactsInfo {
   visibleActions?: VisibleActionId[];
   visibleActionsFreshness?: VisibleActionFactsFreshness;
+  chatEntry: RunEntryFact;
+  chatEntryFreshness: RunEntryFactFreshness;
+  chatEntryMissing?: boolean;
+  messagesEntry: RunEntryFact;
+  messagesEntryFreshness: RunEntryFactFreshness;
+  messagesEntryMissing?: boolean;
 }
 
 type MergeStatusView =
@@ -190,40 +205,80 @@ function useDesignArtifactState(card: BoardCardDTO, supportsDesignArtifacts: boo
   return { wireframes, design, artifactError };
 }
 
-function useItemActionFacts(card: BoardCardDTO): BoardCardDTO {
-  const [itemActionFacts, setItemActionFacts] = useState<{
+function useItemReadModelFacts(card: BoardCardDTO): BoardCardDTO {
+  const [itemReadModelFacts, setItemReadModelFacts] = useState<{
     status: "pending" | "ready" | "error";
     visibleActions?: VisibleActionId[];
     visibleActionsFreshness?: VisibleActionFactsFreshness;
-  }>({ status: "pending" });
+    chatEntry: RunEntryFact;
+    chatEntryFreshness: RunEntryFactFreshness;
+    chatEntryMissing?: boolean;
+    messagesEntry: RunEntryFact;
+    messagesEntryFreshness: RunEntryFactFreshness;
+    messagesEntryMissing?: boolean;
+  }>({
+    status: "pending",
+    chatEntry: NO_TARGET_RUN_ENTRY_FACT,
+    chatEntryFreshness: CHAT_ENTRY_FACT_FRESHNESS,
+    messagesEntry: NO_TARGET_RUN_ENTRY_FACT,
+    messagesEntryFreshness: MESSAGES_ENTRY_FACT_FRESHNESS,
+  });
 
   useEffect(() => {
     let cancelled = false;
-    setItemActionFacts({ status: "pending" });
+    setItemReadModelFacts({
+      status: "pending",
+      chatEntry: NO_TARGET_RUN_ENTRY_FACT,
+      chatEntryFreshness: CHAT_ENTRY_FACT_FRESHNESS,
+      messagesEntry: NO_TARGET_RUN_ENTRY_FACT,
+      messagesEntryFreshness: MESSAGES_ENTRY_FACT_FRESHNESS,
+    });
     fetch(`/api/items/${encodeURIComponent(card.id)}`, { cache: "no-store" })
       .then(async (res) => {
         const body = await res.json().catch(() => ({} as ItemActionFactsInfo & { error?: string }));
         if (!res.ok) throw new Error((body as { error?: string }).error ?? `engine_${res.status}`);
         if (cancelled) return;
-        setItemActionFacts({
+        const chatEntry = normalizeRunEntryFact(body.chatEntry);
+        const messagesEntry = normalizeRunEntryFact(body.messagesEntry);
+        setItemReadModelFacts({
           status: "ready",
           visibleActions: Array.isArray(body.visibleActions) ? body.visibleActions : undefined,
           visibleActionsFreshness: body.visibleActionsFreshness,
+          chatEntry: chatEntry.fact,
+          chatEntryFreshness: normalizeRunEntryFreshness(body.chatEntryFreshness, CHAT_ENTRY_FACT_FRESHNESS),
+          chatEntryMissing: body.chatEntryMissing ?? chatEntry.missing,
+          messagesEntry: messagesEntry.fact,
+          messagesEntryFreshness: normalizeRunEntryFreshness(body.messagesEntryFreshness, MESSAGES_ENTRY_FACT_FRESHNESS),
+          messagesEntryMissing: body.messagesEntryMissing ?? messagesEntry.missing,
         });
       })
       .catch(() => {
-        if (!cancelled) setItemActionFacts({ status: "error" });
+        if (!cancelled) {
+          setItemReadModelFacts({
+            status: "error",
+            chatEntry: NO_TARGET_RUN_ENTRY_FACT,
+            chatEntryFreshness: CHAT_ENTRY_FACT_FRESHNESS,
+            messagesEntry: NO_TARGET_RUN_ENTRY_FACT,
+            messagesEntryFreshness: MESSAGES_ENTRY_FACT_FRESHNESS,
+          });
+        }
       });
     return () => {
       cancelled = true;
     };
   }, [card.id]);
 
-  if (itemActionFacts.status !== "ready") return card;
+  if (itemReadModelFacts.status !== "ready") return card;
   return {
     ...card,
-    visibleActions: itemActionFacts.visibleActions,
-    visibleActionsFreshness: itemActionFacts.visibleActionsFreshness,
+    visibleActions: itemReadModelFacts.visibleActions,
+    visibleActionsFreshness: itemReadModelFacts.visibleActionsFreshness,
+    chatEntry: itemReadModelFacts.chatEntry,
+    chatEntryFreshness: itemReadModelFacts.chatEntryFreshness,
+    chatEntryMissing: itemReadModelFacts.chatEntryMissing,
+    messagesEntry: itemReadModelFacts.messagesEntry,
+    messagesEntryFreshness: itemReadModelFacts.messagesEntryFreshness,
+    messagesEntryMissing: itemReadModelFacts.messagesEntryMissing,
   };
 }
 
@@ -549,7 +604,7 @@ function PromotionGatePanel({
 }
 
 export function BoardItemModal({ card, workspaceKey, onClose }: Readonly<BoardItemModalProps>) {
-  const actionFactCard = useItemActionFacts(card);
+  const factCard = useItemReadModelFacts(card);
   const supportsPreviewControls = supportsPreviewControlsForCard(card);
   const supportsDesignArtifacts = supportsDesignArtifactsForCard(card);
   const { preview, previewError, isPreviewPending, handleStartPreview, handleStopPreview } = usePreviewState(card, supportsPreviewControls);
@@ -621,7 +676,11 @@ export function BoardItemModal({ card, workspaceKey, onClose }: Readonly<BoardIt
             <h3 className="mb-2 text-xs uppercase tracking-wider text-zinc-500">
               Conversation
             </h3>
-            <ItemChat itemId={card.id} />
+            <ItemChat
+              itemId={card.id}
+              chatEntry={factCard.chatEntry}
+              chatEntryMissing={factCard.chatEntryMissing}
+            />
           </section>
 
           <section className="min-w-0 min-h-0 space-y-3 overflow-y-auto pr-1">
@@ -687,7 +746,7 @@ export function BoardItemModal({ card, workspaceKey, onClose }: Readonly<BoardIt
                 mergeStatusError={mergeStatusError}
               />
 
-              <BoardCardActions card={actionFactCard} surface="item_detail" />
+              <BoardCardActions card={factCard} surface="item_detail" />
             </div>
 
             {supportsDesignArtifacts ? (
@@ -702,7 +761,11 @@ export function BoardItemModal({ card, workspaceKey, onClose }: Readonly<BoardIt
               <h3 className="mb-2 text-xs uppercase tracking-wider text-zinc-500">
                 Messages
               </h3>
-              <ItemMessages itemId={card.id} />
+              <ItemMessages
+                itemId={card.id}
+                messagesEntry={factCard.messagesEntry}
+                messagesEntryMissing={factCard.messagesEntryMissing}
+              />
             </div>
 
             <div className="border-t border-zinc-800 pt-2">
