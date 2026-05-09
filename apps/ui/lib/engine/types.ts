@@ -1,4 +1,5 @@
 import type { WorkspaceGitReadiness } from "@/lib/setup/types";
+import type { VisibleActionFactsFreshness, VisibleActionId } from "@/lib/visibleActionFacts";
 
 export const ITEM_ACTIONS = [
   "start_brainstorm",
@@ -21,6 +22,8 @@ export type ItemDetailDTO = {
   current_stage: string | null;
   currentRunId: string | null;
   allowedActions: string[];
+  visibleActions?: VisibleActionId[];
+  visibleActionsFreshness?: VisibleActionFactsFreshness;
 };
 
 export type ActionResult =

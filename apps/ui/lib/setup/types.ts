@@ -66,8 +66,20 @@ export interface GitIdentityBlocker {
   message: string;
 }
 
+export type SetupDisplayMode = "ready" | "action-required" | "informational";
+
+export interface SetupDisplayFact {
+  mode: SetupDisplayMode;
+  detail: string;
+  freshness: {
+    strategy: "per_request";
+    invalidatedBy: string[];
+  };
+}
+
 export interface GlobalGitReadiness {
   mode: "global";
+  displayMode?: SetupDisplayFact;
   git: {
     installed: boolean;
     version?: string;
@@ -83,6 +95,7 @@ export interface GlobalGitReadiness {
 
 export interface WorkspaceGitReadiness {
   mode: "workspace";
+  displayMode?: SetupDisplayFact;
   workspace: {
     id: string;
     key?: string;
@@ -132,6 +145,10 @@ export interface AppConfigView {
   configPath: string;
   configFile: { kind: "ok" | "missing" | "invalid"; path: string; error?: string };
   workspace?: { id: string; key: string; name: string } | null;
+  setupDisplayModes?: {
+    workspacePresence?: SetupDisplayFact;
+    secretsStub?: SetupDisplayFact;
+  };
   supabase: {
     workspaceId?: string;
     projectRef?: string;

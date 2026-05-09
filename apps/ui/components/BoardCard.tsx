@@ -168,7 +168,7 @@ export function BoardCard({ card, workspaceKey, onOpen }: Readonly<BoardCardProp
         ) : null}
       </Body>
       {card.supabaseBlocker ? <SupabaseBlockedRunPanel blocker={card.supabaseBlocker} compact /> : null}
-      <BoardCardActions card={card} />
+      <BoardCardActions card={card} surface="board" />
     </article>
   );
 }

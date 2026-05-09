@@ -252,7 +252,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Global or workspace Git identity readiness.",
+            "description": "Global or workspace Git identity readiness, including the engine-owned displayMode fact.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1074,7 +1074,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Item"
+                  "$ref": "#/components/schemas/ItemDetail"
                 }
               }
             }
@@ -1156,6 +1156,8 @@
             "type": "string",
             "enum": [
               "start_brainstorm",
+              "start_visual_companion",
+              "start_frontend_design",
               "start_implementation",
               "import_prepared",
               "rerun_design_prep",
@@ -3420,6 +3422,66 @@
           }
         }
       },
+      "VisibleActionId": {
+        "type": "string",
+        "enum": [
+          "import_prepared",
+          "start_visual_companion",
+          "start_frontend_design",
+          "promote_to_requirements",
+          "cancel_promotion",
+          "promote_to_base"
+        ]
+      },
+      "VisibleActionIds": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/VisibleActionId"
+        }
+      },
+      "VisibleActionFactsFreshness": {
+        "type": "object",
+        "required": [
+          "strategy",
+          "invalidatedBy"
+        ],
+        "properties": {
+          "strategy": {
+            "type": "string",
+            "const": "workspace_sse"
+          },
+          "invalidatedBy": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ItemDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Item"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "allowedActions": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "visibleActions": {
+                "$ref": "#/components/schemas/VisibleActionIds"
+              },
+              "visibleActionsFreshness": {
+                "$ref": "#/components/schemas/VisibleActionFactsFreshness"
+              }
+            }
+          }
+        ]
+      },
       "ItemActionResult": {
         "type": "object",
         "required": [
@@ -4239,6 +4301,12 @@
           "previewUrl": {
             "type": "string"
           },
+          "visibleActions": {
+            "$ref": "#/components/schemas/VisibleActionIds"
+          },
+          "visibleActionsFreshness": {
+            "$ref": "#/components/schemas/VisibleActionFactsFreshness"
+          },
           "meta": {
             "type": "array",
             "description": "Display-friendly key-value tags for the card. Currently: phase, projects.",
@@ -4495,6 +4563,7 @@
           "configFile",
           "telegramInbound",
           "supabase",
+          "setupDisplayModes",
           "config"
         ],
         "properties": {
@@ -4529,6 +4598,99 @@
               },
               "name": {
                 "type": "string"
+              }
+            }
+          },
+          "setupDisplayModes": {
+            "type": "object",
+            "required": [
+              "workspacePresence",
+              "secretsStub"
+            ],
+            "properties": {
+              "workspacePresence": {
+                "type": "object",
+                "required": [
+                  "mode",
+                  "detail",
+                  "freshness"
+                ],
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "ready",
+                      "action-required",
+                      "informational"
+                    ]
+                  },
+                  "detail": {
+                    "type": "string"
+                  },
+                  "freshness": {
+                    "type": "object",
+                    "required": [
+                      "strategy",
+                      "invalidatedBy"
+                    ],
+                    "properties": {
+                      "strategy": {
+                        "type": "string",
+                        "enum": [
+                          "per_request"
+                        ]
+                      },
+                      "invalidatedBy": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "secretsStub": {
+                "type": "object",
+                "required": [
+                  "mode",
+                  "detail",
+                  "freshness"
+                ],
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "ready",
+                      "action-required",
+                      "informational"
+                    ]
+                  },
+                  "detail": {
+                    "type": "string"
+                  },
+                  "freshness": {
+                    "type": "object",
+                    "required": [
+                      "strategy",
+                      "invalidatedBy"
+                    ],
+                    "properties": {
+                      "strategy": {
+                        "type": "string",
+                        "enum": [
+                          "per_request"
+                        ]
+                      },
+                      "invalidatedBy": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
               }
             }
           },

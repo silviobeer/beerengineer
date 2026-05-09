@@ -18,6 +18,7 @@ interface SetupGateBoxProps {
   readonly initialConfigView?: AppConfigView | null;
   readonly initialError?: string | null;
   readonly onCheckingChange?: (checking: boolean) => void;
+  readonly onRechecked?: (report: SetupReport) => Promise<void> | void;
 }
 
 function isSetupReport(value: unknown): value is SetupReport {
@@ -68,7 +69,13 @@ function gateDetail(error: string | null, needsInit: boolean, check: ReturnType<
   return check?.detail ?? check?.remedy?.hint ?? "All required checks are ready.";
 }
 
-export function SetupGateBox({ initialReport, initialConfigView = null, initialError = null, onCheckingChange }: Readonly<SetupGateBoxProps>) {
+export function SetupGateBox({
+  initialReport,
+  initialConfigView = null,
+  initialError = null,
+  onCheckingChange,
+  onRechecked,
+}: Readonly<SetupGateBoxProps>) {
   const router = useRouter();
   const [report, setReport] = useState(initialReport);
   const [configView, setConfigView] = useState(initialConfigView);
@@ -141,6 +148,7 @@ export function SetupGateBox({ initialReport, initialConfigView = null, initialE
         return;
       }
       setReport(nextReport);
+      await onRechecked?.(nextReport);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       setError("Re-check failed.");
@@ -188,6 +196,7 @@ export function SetupGateBox({ initialReport, initialConfigView = null, initialE
       }
       setReport(nextReport);
       setConfigView((prev) => prev ? { ...prev, setupState: "complete" } : prev);
+      await onRechecked?.(nextReport);
       router.refresh();
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
