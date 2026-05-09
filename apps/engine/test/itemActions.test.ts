@@ -363,6 +363,7 @@ test("promote_to_base returns resume_run when merge gate was previously blocked"
     assert.equal(result.kind, "resume_run")
     if (result.kind !== "resume_run") return
     assert.equal(result.runId, run.id)
+    assert.equal(result.promptAnswer, "promote")
   } finally {
     service.dispose()
     db.close()

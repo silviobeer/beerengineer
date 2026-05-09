@@ -1,7 +1,8 @@
 import { cpSync, existsSync } from "node:fs"
 import { ask, close } from "../../sim/human.js"
 import { createCliIO } from "../../core/ioCli.js"
-import type { ItemAction } from "../../core/itemActions.js"
+import type { ItemAction, ItemActionResult } from "../../core/itemActions.js"
+import { attachOneShotPromptAnswer } from "../../core/promptAutoAnswer.js"
 import { inspectWorkspaceState } from "../../core/git.js"
 import { layout } from "../../core/workspaceLayout.js"
 import { prepareRun, runWorkflowWithSync } from "../../core/runOrchestrator.js"
@@ -473,6 +474,68 @@ const handleResumeRun: CliItemActionHandler = async ctx => {
   return runDefaultItemAction(ctx, resumePayload)
 }
 
+async function resumeItemActionResult(
+  ctx: CliItemActionContext,
+  result: Extract<ItemActionResult, { ok: true; kind: "resume_run" }>,
+): Promise<number> {
+  const { loadResumeReadiness, performResume } = await import("../../core/resume.js")
+  const readiness = await loadResumeReadiness(ctx.repos, result.runId)
+  if (readiness.kind === "not_found") {
+    console.error(`  Item not found: ${ctx.itemRef}`)
+    return 1
+  }
+  if (readiness.kind === "not_resumable") {
+    console.error(`  Not resumable: ${readiness.reason}`)
+    return 2
+  }
+  if (readiness.kind === "no_recovery") {
+    console.error(`  Invalid transition: ${ctx.action} from ${ctx.item.current_column}/${ctx.item.phase_status}`)
+    return 1
+  }
+
+  let scopeRef: string | null = null
+  if (readiness.record.scope.type === "stage") scopeRef = readiness.record.scope.stageId
+  else if (readiness.record.scope.type === "story") scopeRef = `${readiness.record.scope.waveNumber}/${readiness.record.scope.storyId}`
+  const remediation = ctx.repos.createExternalRemediation({
+    runId: result.runId,
+    scope: readiness.record.scope.type,
+    scopeRef,
+    summary: result.summary,
+    branch: result.branch,
+    reviewNotes: result.reviewNotes,
+    source: "cli",
+  })
+
+  const io = createCliIO(ctx.repos)
+  const detachPromptAnswer = result.promptAnswer ? attachOneShotPromptAnswer(io, result.promptAnswer) : () => {}
+  try {
+    console.log(`  ${ctx.action} applied`)
+    console.log(`  run-id: ${result.runId}`)
+    console.log(`  remediation-id: ${remediation.id}`)
+    await performResume({
+      repos: ctx.repos,
+      io,
+      runId: result.runId,
+      remediation,
+      workerOwnerKind: "cli",
+    })
+    const refreshed = ctx.repos.getRun(result.runId)
+    if (refreshed?.recovery_status === "blocked") {
+      const supabaseBlockedExit = printSupabaseStartBlockerIfAny(ctx.repos, result.runId, ctx.itemRef, ctx.action)
+      if (supabaseBlockedExit !== 0) return supabaseBlockedExit
+      printResumeBlockedOutput(result.runId, {
+        summary: refreshed.recovery_summary,
+        scope: refreshed.recovery_scope,
+        scopeRef: refreshed.recovery_scope_ref,
+      }, ctx.itemRef)
+    }
+    return 0
+  } finally {
+    detachPromptAnswer()
+    io.close?.()
+  }
+}
+
 async function runDefaultItemAction(
   ctx: CliItemActionContext,
   resumePayload?: { summary: string; branch?: string; commitSha?: string; reviewNotes?: string },
@@ -497,6 +560,7 @@ async function runDefaultItemAction(
       }
       return 1
     }
+    if (result.kind === "resume_run") return resumeItemActionResult(ctx, result)
     console.log(`  ${ctx.action} applied`)
     if (result.kind === "needs_spawn" && result.runId) console.log(`  run-id: ${result.runId}`)
     if (result.kind === "needs_spawn" && result.remediationId) console.log(`  remediation-id: ${result.remediationId}`)

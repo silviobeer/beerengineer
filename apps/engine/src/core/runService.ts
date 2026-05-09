@@ -2,6 +2,7 @@ import { cpSync, existsSync } from "node:fs"
 import { randomUUID } from "node:crypto"
 import { busToWorkflowIO, createBus, type EventBus } from "./bus.js"
 import { appendItemDecision } from "./itemDecisions.js"
+import { attachOneShotPromptAnswer } from "./promptAutoAnswer.js"
 import { withPromptPersistence } from "./promptPersistence.js"
 import { prepareRun } from "./runOrchestrator.js"
 import { resolveWorkflowLlmOptions } from "./runSubscribers.js"
@@ -555,6 +556,7 @@ export async function resumeRunInProcess(
     branch?: string
     commit?: string
     reviewNotes?: string
+    promptAnswer?: string
     apiWorkerInstanceId?: string
     workerLeaseClock?: () => number
     workerLeaseScheduler?: WorkerLeaseScheduler
@@ -607,19 +609,24 @@ export async function resumeRunInProcess(
   }
 
   const io = buildApiIo(repos)
-  fireInBackground(io, "resumeRunInProcess", () =>
-    performResume({
-      repos,
-      io,
-      runId: input.runId,
-      remediation,
-      workerOwnerKind: "api",
-      workerInstanceId: input.apiWorkerInstanceId ?? API_WORKER_INSTANCE_ID,
-      workerLeaseClock: input.workerLeaseClock,
-      workerLeaseScheduler: input.workerLeaseScheduler,
-      onItemColumnChanged: input.onItemColumnChanged,
-    }),
-  )
+  const detachPromptAnswer = input.promptAnswer ? attachOneShotPromptAnswer(io, input.promptAnswer) : () => {}
+  fireInBackground(io, "resumeRunInProcess", async () => {
+    try {
+      await performResume({
+        repos,
+        io,
+        runId: input.runId,
+        remediation,
+        workerOwnerKind: "api",
+        workerInstanceId: input.apiWorkerInstanceId ?? API_WORKER_INSTANCE_ID,
+        workerLeaseClock: input.workerLeaseClock,
+        workerLeaseScheduler: input.workerLeaseScheduler,
+        onItemColumnChanged: input.onItemColumnChanged,
+      })
+    } finally {
+      detachPromptAnswer()
+    }
+  })
   return { ok: true, runId: input.runId, remediationId: remediation.id }
 }
 

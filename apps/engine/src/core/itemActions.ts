@@ -64,6 +64,7 @@ export type ItemActionResult =
       itemId: string
       runId: string
       summary: string
+      promptAnswer?: string
       branch?: string
       reviewNotes?: string
       column: ItemRow["current_column"]
@@ -370,6 +371,7 @@ export function createItemActionsService(repos: Repos): ItemActionsService {
       itemId: item.id,
       runId: recoverable.id,
       summary: `Operator resumed promotion of ${item.code} to base branch`,
+      promptAnswer: transition.promoteAnswer,
       column: item.current_column,
       phaseStatus: item.phase_status,
     }

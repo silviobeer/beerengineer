@@ -254,6 +254,7 @@ async function maybeResumeItemActionRun(
     summary: result.summary,
     branch: result.branch,
     reviewNotes: result.reviewNotes,
+    promptAnswer: result.promptAnswer,
   })
   if (!resumed.ok) {
     json(res, resumed.status, { error: resumed.error, code: resumed.error })
