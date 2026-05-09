@@ -535,7 +535,7 @@ test("item preview prints and starts and stops the item worktree preview", async
     db.close()
 
     const itemSlug = "preview-item"
-    const worktreePath = layout.itemWorktreeDir({ workspaceId, workspaceRoot: repoRoot, runId: workspaceId, itemSlug })
+    const worktreePath = layout.itemWorktreeDir({ workspaceId, workspaceRoot: repoRoot, itemSlug })
     mkdirSync(join(worktreePath, ".beerengineer"), { recursive: true })
     const markerPath = join(worktreePath, "preview-started.txt")
     writeFileSync(

@@ -15,7 +15,6 @@ function itemWorktreePath(rootPath: string | null, workspaceFsId: string | null,
     workspaceId: workspaceFsId,
     workspaceRoot: rootPath,
     itemSlug: slug,
-    runId: workspaceFsId,
   })
 }
 

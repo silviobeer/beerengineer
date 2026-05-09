@@ -3,8 +3,9 @@ import type { BoardProjector } from "./boardProjectionTypes.js"
 function reviewGateWaiting(actionsJson: string | null | undefined): boolean {
   if (!actionsJson) return false
   try {
-    const actions = JSON.parse(actionsJson) as Array<{ value?: unknown }>
-    return actions.some(action => action?.value === "promote")
+    const parsed = JSON.parse(actionsJson) as unknown
+    if (!Array.isArray(parsed)) return false
+    return parsed.some(item => typeof item === "object" && item !== null && "value" in item && item.value === "promote")
   } catch {
     return false
   }
