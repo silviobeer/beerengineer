@@ -214,7 +214,11 @@ export class Repos {
         last_opened_at: input.lastOpenedAt === undefined ? existing.last_opened_at : input.lastOpenedAt,
         updated_at: now(),
       })
-    return this.getWorkspaceByKey(input.key) as WorkspaceRow
+    const workspace = this.getWorkspaceByKey(input.key)
+    if (!workspace) {
+      throw new Error(`workspace ${input.key} missing after upsert`)
+    }
+    return workspace
   }
 
   listWorkspaces(): WorkspaceRow[] {
@@ -576,6 +580,35 @@ export class Repos {
     return this.getRun(id)
   }
 
+  claimBlockedExecutionHandoff(
+    id: string,
+    input: { workerInstanceId: string; startedAt: number },
+  ): RunRow | undefined {
+    const result = this.db.prepare(
+      `UPDATE runs
+       SET owner = 'api',
+           worker_instance_id = ?,
+           worker_owner_kind = 'api',
+           worker_started_at = ?,
+           worker_heartbeat_at = ?,
+           updated_at = ?
+       WHERE id = ?
+         AND status = 'blocked'
+         AND current_stage = 'planning'
+         AND recovery_status = 'blocked'
+         AND recovery_scope = 'stage'
+         AND recovery_scope_ref = 'execution'
+         AND COALESCE(worker_owner_kind, owner) = 'cli'`,
+    ).run(
+      input.workerInstanceId,
+      input.startedAt,
+      input.startedAt,
+      input.startedAt,
+      id,
+    )
+    return result.changes > 0 ? this.getRun(id) : undefined
+  }
+
   refreshRunWorkerHeartbeat(
     id: string,
     input: { workerInstanceId: string; workerOwnerKind: WorkerOwnerKind; heartbeatAt: number },
@@ -633,6 +666,10 @@ export class Repos {
 
   listExternalRemediations(runId: string): ExternalRemediationRow[] {
     return this.getAll("SELECT * FROM external_remediations WHERE run_id = ? ORDER BY created_at ASC", runId)
+  }
+
+  getExternalRemediation(id: string): ExternalRemediationRow | undefined {
+    return this.byId("external_remediations", id)
   }
 
   getRun(id: string): RunRow | undefined {

@@ -9,6 +9,7 @@ import { Repos } from "../src/db/repositories.js"
 import { createBus } from "../src/core/bus.js"
 import { busToWorkflowIO } from "../src/core/runOrchestrator.js"
 import { prepareRun } from "../src/core/runOrchestrator.js"
+import { shouldFailCliRunOnProcessExit } from "../src/cli/commands/itemActions.js"
 
 function tmpRepos() {
   const db = initDatabase(join(mkdtempSync(join(tmpdir(), "be2-worker-cli-")), "test.sqlite"))
@@ -63,4 +64,23 @@ test("CLI prepareRun claims ownership before start callback executes workflow si
   } finally {
     db.close()
   }
+})
+
+test("CLI exit cleanup ignores runs once API ownership has taken over", () => {
+  assert.equal(
+    shouldFailCliRunOnProcessExit({
+      status: "running",
+      owner: "api",
+      worker_owner_kind: "api",
+    }),
+    false,
+  )
+  assert.equal(
+    shouldFailCliRunOnProcessExit({
+      status: "running",
+      owner: "cli",
+      worker_owner_kind: "cli",
+    }),
+    true,
+  )
 })

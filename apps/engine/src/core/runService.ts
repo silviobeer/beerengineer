@@ -11,6 +11,7 @@ import { getRegisteredWorkspace } from "./workspaces.js"
 import { deriveProjectStartStages, loadPreparedImportBundleWithLlmFallback, seedPreparedImportArtifacts, type PreparedImportBundle } from "./preparedImport.js"
 import { layout } from "./workspaceLayout.js"
 import { resolveWorkflowContextForItemRun, resolveWorkflowContextForRun } from "./workflowContextResolver.js"
+import { isExecutionOwnershipHandoffRun, queueExecutionOwnershipHandoffResume } from "./executionOwnershipHandoff.js"
 import type { Repos, ItemRow, RunRow, ExternalRemediationRow, WorkspaceRow } from "../db/repositories.js"
 import type { WorkflowIO } from "./io.js"
 import type { WorkflowResumeInput } from "../workflow.js"
@@ -963,6 +964,35 @@ export async function resumeRunInProcess(
   return { ok: true, runId: prepared.runId, remediationId: prepared.remediationId }
 }
 
+export async function resumeRunFromExistingRemediationInProcess(
+  repos: Repos,
+  input: {
+    remediationId: string
+    apiWorkerInstanceId?: string
+    workerLeaseClock?: () => number
+    workerLeaseScheduler?: WorkerLeaseScheduler
+    onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
+  },
+): Promise<ResumeRunResult> {
+  const remediation = repos.getExternalRemediation(input.remediationId)
+  if (!remediation) return { ok: false, status: 404, error: "run_not_found" }
+  const io = buildApiIo(repos)
+  fireInBackground(io, "resumeRunFromExistingRemediationInProcess", async () => {
+    await performResume({
+      repos,
+      io,
+      runId: remediation.run_id,
+      remediation,
+      workerOwnerKind: "api",
+      workerInstanceId: input.apiWorkerInstanceId ?? API_WORKER_INSTANCE_ID,
+      workerLeaseClock: input.workerLeaseClock,
+      workerLeaseScheduler: input.workerLeaseScheduler,
+      onItemColumnChanged: input.onItemColumnChanged,
+    })
+  })
+  return { ok: true, runId: remediation.run_id, remediationId: remediation.id }
+}
+
 export async function prepareForegroundResumeRun(
   repos: Repos,
   io: WorkflowIO & { bus?: EventBus },
@@ -1042,6 +1072,16 @@ export async function prepareForegroundResumeRun(
       runId: input.runId,
       answeredAt: new Date().toISOString(),
     })
+  }
+
+  if (isExecutionOwnershipHandoffRun(readiness.run)) {
+    queueExecutionOwnershipHandoffResume(repos, input.runId, remediation.id)
+    return {
+      ok: true,
+      runId: input.runId,
+      remediationId: remediation.id,
+      start: async () => {},
+    }
   }
 
   return {
