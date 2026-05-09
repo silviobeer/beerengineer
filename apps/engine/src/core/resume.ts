@@ -289,6 +289,10 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
                   repos: input.repos,
                   runId: run.id,
                 },
+                executionOwnership: {
+                  repos: input.repos,
+                  runId: run.id,
+                },
               },
             )
             assertWorkflowNotCancelled()
