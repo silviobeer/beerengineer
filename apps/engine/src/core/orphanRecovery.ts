@@ -108,7 +108,8 @@ function startupRecoveryMessage(outcome: StartupRecoveryOutcome, error?: string)
   if (outcome.reason === "auto_resume_disabled") {
     return "Startup recovery left the stale run on manual recovery because auto-resume is disabled."
   }
-  return `Startup recovery auto-resume failed; the run remains on manual recovery.${error ? ` ${error}` : ""}`
+  const base = "Startup recovery auto-resume failed; the run remains on manual recovery."
+  return error ? `${base} ${error}` : base
 }
 
 function appendStartupRecoveryLog(
@@ -128,6 +129,41 @@ function appendStartupRecoveryLog(
   })
 }
 
+function skippedStartupRecoveryOutcome(
+  runId: string,
+  reason: Extract<StartupRecoveryReason, "open_prompt" | "auto_resume_disabled">,
+): StartupRecoveryOutcome {
+  return { runId, outcome: "skipped", reason }
+}
+
+function failedStartupRecoveryOutcome(runId: string): StartupRecoveryOutcome {
+  return { runId, outcome: "failed", reason: "auto_resume_failed" }
+}
+
+function resumedStartupRecoveryOutcome(runId: string): StartupRecoveryOutcome {
+  return { runId, outcome: "auto_resumed", reason: null }
+}
+
+async function resolveStartupRecoveryOutcome(
+  repos: Repos,
+  run: RunRow,
+  autoResume: StartupAutoResumeOptions,
+): Promise<{ outcome: StartupRecoveryOutcome; error?: string }> {
+  if (repos.getOpenPrompt(run.id)) {
+    return { outcome: skippedStartupRecoveryOutcome(run.id, "open_prompt") }
+  }
+  if (!autoResume.enabled) {
+    return { outcome: skippedStartupRecoveryOutcome(run.id, "auto_resume_disabled") }
+  }
+  try {
+    await autoResume.resumeRun(repos.getRun(run.id) ?? run)
+    return { outcome: resumedStartupRecoveryOutcome(run.id) }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return { outcome: failedStartupRecoveryOutcome(run.id), error: message }
+  }
+}
+
 export async function recoverLostWorkerRuns(
   repos: Repos,
   input: { apiWorkerInstanceId: string; now?: number; autoResume?: StartupAutoResumeOptions },
@@ -140,31 +176,9 @@ export async function recoverLostWorkerRuns(
     markRunFailedRecoverable(repos, run.id, recoverySummary(run))
     recoveredRunIds.push(run.id)
     if (!input.autoResume) continue
-
-    if (repos.getOpenPrompt(run.id)) {
-      const outcome = { runId: run.id, outcome: "skipped", reason: "open_prompt" } satisfies StartupRecoveryOutcome
-      outcomes.push(outcome)
-      appendStartupRecoveryLog(repos, outcome)
-      continue
-    }
-    if (!input.autoResume.enabled) {
-      const outcome = { runId: run.id, outcome: "skipped", reason: "auto_resume_disabled" } satisfies StartupRecoveryOutcome
-      outcomes.push(outcome)
-      appendStartupRecoveryLog(repos, outcome)
-      continue
-    }
-
-    try {
-      await input.autoResume.resumeRun(repos.getRun(run.id) ?? run)
-      const outcome = { runId: run.id, outcome: "auto_resumed", reason: null } satisfies StartupRecoveryOutcome
-      outcomes.push(outcome)
-      appendStartupRecoveryLog(repos, outcome)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      const outcome = { runId: run.id, outcome: "failed", reason: "auto_resume_failed" } satisfies StartupRecoveryOutcome
-      outcomes.push(outcome)
-      appendStartupRecoveryLog(repos, outcome, message)
-    }
+    const { outcome, error } = await resolveStartupRecoveryOutcome(repos, run, input.autoResume)
+    outcomes.push(outcome)
+    appendStartupRecoveryLog(repos, outcome, error)
   }
 
   if (recoveredRunIds.length > 0) {
