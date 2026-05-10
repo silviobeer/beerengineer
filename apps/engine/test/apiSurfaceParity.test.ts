@@ -15,6 +15,10 @@ type RouteSurfaceDiff = {
 
 const HTTP_METHODS = new Set(["get", "post", "patch", "put", "delete", "options", "head"])
 
+function compareRoutes(left: string, right: string): number {
+  return left.localeCompare(right)
+}
+
 function loadOpenApiDocument(): OpenApiDocument {
   return JSON.parse(readFileSync(new URL("../src/api/openapi.json", import.meta.url), "utf8")) as OpenApiDocument
 }
@@ -27,7 +31,7 @@ function readDocumentedApiRouteSurface(document: OpenApiDocument): string[] {
       routes.push(`${method.toUpperCase()} ${path}`)
     }
   }
-  return routes.sort()
+  return routes.sort(compareRoutes)
 }
 
 function diffRouteSurface(implemented: string[], documented: string[]): RouteSurfaceDiff {
@@ -64,7 +68,7 @@ test("REQ-1 parity gate passes when implemented and documented method+path pairs
 })
 
 test("REQ-1 parity gate reports implemented-only route drift", () => {
-  const implemented = [...listImplementedApiRouteSurface(), "POST /drift-only"].sort()
+  const implemented = [...listImplementedApiRouteSurface(), "POST /drift-only"].sort(compareRoutes)
   const documented = readDocumentedApiRouteSurface(loadOpenApiDocument())
 
   assert.throws(
@@ -75,7 +79,7 @@ test("REQ-1 parity gate reports implemented-only route drift", () => {
 
 test("REQ-1 parity gate reports documented-only route drift", () => {
   const implemented = listImplementedApiRouteSurface()
-  const documented = [...readDocumentedApiRouteSurface(loadOpenApiDocument()), "GET /documented-only"].sort()
+  const documented = [...readDocumentedApiRouteSurface(loadOpenApiDocument()), "GET /documented-only"].sort(compareRoutes)
 
   assert.throws(
     () => assertRouteSurfaceParity(implemented, documented),
@@ -84,7 +88,7 @@ test("REQ-1 parity gate reports documented-only route drift", () => {
 })
 
 test("REQ-1 parity gate treats a rename as two mismatches", () => {
-  const implemented = listImplementedApiRouteSurface().map(route => route === "GET /health" ? "GET /healthz" : route).sort()
+  const implemented = listImplementedApiRouteSurface().map(route => route === "GET /health" ? "GET /healthz" : route).sort(compareRoutes)
   const documented = readDocumentedApiRouteSurface(loadOpenApiDocument())
 
   assert.throws(
@@ -94,7 +98,7 @@ test("REQ-1 parity gate treats a rename as two mismatches", () => {
 })
 
 test("REQ-1 parity gate fails on method-only drift for the same path", () => {
-  const implemented = listImplementedApiRouteSurface().map(route => route === "GET /health" ? "POST /health" : route).sort()
+  const implemented = listImplementedApiRouteSurface().map(route => route === "GET /health" ? "POST /health" : route).sort(compareRoutes)
   const documented = readDocumentedApiRouteSurface(loadOpenApiDocument())
 
   assert.throws(
@@ -129,11 +133,11 @@ test("REQ-1 parity gate reports the full diff when both sides drift", () => {
   const implemented = listImplementedApiRouteSurface()
     .filter(route => route !== "GET /health")
     .concat("POST /implemented-only")
-    .sort()
+    .sort(compareRoutes)
   const documented = readDocumentedApiRouteSurface(loadOpenApiDocument())
     .filter(route => route !== "GET /ready")
     .concat("GET /documented-only")
-    .sort()
+    .sort(compareRoutes)
 
   assert.throws(() => assertRouteSurfaceParity(implemented, documented), err => {
     assert.match(String(err), /Implemented only:/)

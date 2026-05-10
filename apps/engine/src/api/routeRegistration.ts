@@ -235,6 +235,10 @@ const WORKSPACE_OPEN_ROUTE = {
   surfacePath: "/workspaces/{key}/open",
 } as const satisfies RouteMatcherDefinition
 
+function compareRoutes(left: string, right: string): number {
+  return left.localeCompare(right)
+}
+
 export function listImplementedApiRouteSurface(): string[] {
   const implementedRoutes = [
     WEBHOOK_TELEGRAM_ROUTE,
@@ -258,7 +262,7 @@ export function listImplementedApiRouteSurface(): string[] {
     WORKSPACE_OPEN_ROUTE,
   ]
 
-  return [...new Set(implementedRoutes.map(route => `${route.method} ${route.surfacePath}`))].sort()
+  return [...new Set(implementedRoutes.map(route => `${route.method} ${route.surfacePath}`))].sort(compareRoutes)
 }
 
 function attachRouteContext(
