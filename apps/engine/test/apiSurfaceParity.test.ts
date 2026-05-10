@@ -113,10 +113,19 @@ async function waitForHealth(base: string, timeoutMs = 5000): Promise<void> {
 
 function stopServer(proc: ChildProcess): Promise<void> {
   return new Promise(resolve => {
-    if (proc.exitCode !== null) return resolve()
-    proc.once("exit", () => resolve())
+    const killTimer = setTimeout(() => proc.kill("SIGKILL"), 1500)
+    killTimer.unref?.()
+
+    if (proc.exitCode !== null) {
+      clearTimeout(killTimer)
+      return resolve()
+    }
+
+    proc.once("exit", () => {
+      clearTimeout(killTimer)
+      resolve()
+    })
     proc.kill("SIGTERM")
-    setTimeout(() => proc.kill("SIGKILL"), 1500).unref?.()
   })
 }
 
