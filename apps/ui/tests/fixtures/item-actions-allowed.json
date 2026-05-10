@@ -97,7 +97,8 @@
     "import_prepared"
   ],
   "implementation/completed": [
-    "rerun_design_prep"
+    "rerun_design_prep",
+    "resume_run"
   ],
   "implementation/draft": [
     "rerun_design_prep"
