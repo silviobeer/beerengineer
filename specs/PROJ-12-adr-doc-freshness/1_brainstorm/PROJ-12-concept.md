@@ -166,6 +166,13 @@ This direction is broader than ADRs-only because stale docs still mislead future
 - Deleted active-directory reference check flags active navigation to missing directories and allows clearly historical notes.
 - Stale docs fixes are backed by code/spec evidence.
 
+## Post-Concept State (as of 2026-05-10)
+- PROJ-9 (engine-owned read models) and PROJ-10 (API board boundaries) have been completed and merged to master. Their ADR entries can carry "accepted" status — no longer "proposed/deferred".
+- PROJ-8 (workflow capability safety) has concept + PRDs completed and is in the `done` column; implementation PROJs (PRD execution) have not shipped yet — its ADR status should remain "accepted-for-concept / implementation pending".
+- PROJ-11 (API contract safety) is active (brainstorm/requirements in progress). Its ADR remains "proposed, pending implementation".
+- `docs/PROJECT.md` does not yet list PROJ-8 through PROJ-11 at all — the freshness check should flag these as a group, or they can be explicitly excluded until their implementation PROJs complete.
+- The `docs/adr/` directory does not exist yet (confirmed 2026-05-10).
+
 ## Next Step
 - UI feature: no visual-companion handoff needed.
 - Backend/API feature: requirements-engineer.
