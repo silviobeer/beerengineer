@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto"
 import { createGitAdapter, type GitAdapter } from "./core/gitAdapter.js"
 import { resolveBaseBranchForItem } from "./core/baseBranch.js"
 import { writeRecoveryRecord, type RecoveryCause, type RecoveryScope } from "./core/recovery.js"
-import { layout } from "./core/workspaceLayout.js"
+import { layout, requireItemScopedContext } from "./core/workspaceLayout.js"
 import type {
   Concept,
   DesignArtifact,
@@ -452,12 +452,13 @@ function emitWorkflowPreviewPort(
   activeRun: ReturnType<typeof getActiveRun>,
 ): void {
   if (!context.workspaceRoot) return
-  const port = assignPort(layout.itemWorktreeDir(context), branchNameItem(context), context.workspaceRoot)
+  const itemCtx = requireItemScopedContext(context)
+  const port = assignPort(layout.itemWorktreeDir(itemCtx), branchNameItem(context), context.workspaceRoot)
   emitEvent({
     type: "worktree_port_assigned",
     runId: activeRun?.runId,
     branch: branchNameItem(context),
-    worktreePath: layout.itemWorktreeDir(context),
+    worktreePath: layout.itemWorktreeDir(itemCtx),
     port,
   })
 }

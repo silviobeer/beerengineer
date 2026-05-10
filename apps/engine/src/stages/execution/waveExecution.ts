@@ -6,7 +6,7 @@ import { emitEvent, getActiveRun } from "../../core/runContext.js"
 import { writeRecoveryRecord } from "../../core/recovery.js"
 import { stagePresent } from "../../core/stagePresentation.js"
 import { assignPort, releasePort } from "../../core/portAllocator.js"
-import { layout } from "../../core/workspaceLayout.js"
+import { layout, requireItemRunScopedContext } from "../../core/workspaceLayout.js"
 import { resolveMergeResolverHarness } from "../../llm/registry.js"
 import { runRalphStory, writeWaveSummary, type RalphCycleBoundaryResult, type StoryArtifacts } from "./ralphRuntime.js"
 import { runSetupStory } from "./setupStory.js"
@@ -237,7 +237,7 @@ async function executeWave(
           ctx.project.id,
           wave.number,
           resolved.id,
-          layout.executionStoryWorktreeDir(ctx, wave.number, resolved.id),
+          layout.executionStoryWorktreeDir(requireItemRunScopedContext(ctx), wave.number, resolved.id),
         ) ?? undefined
       if (storyWorktreeRoot && ctx.workspaceRoot) {
         assignPort(storyWorktreeRoot, branchNameStory(ctx, ctx.project.id, wave.number, resolved.id), ctx.workspaceRoot)

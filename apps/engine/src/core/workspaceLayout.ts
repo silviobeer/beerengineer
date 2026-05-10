@@ -3,9 +3,9 @@ import { join, resolve } from "node:path"
 export type WorkflowContext = {
   workspaceId: string
   runId: string
-  // Present in top-level workflow runs; absent in pure-layout call sites
-  // (e.g., resume, stageRuntime) that only need workspaceId/runId to resolve
-  // filesystem paths. Branch/repo helpers require them and will throw.
+  // Present in top-level workflow runs; absent in item-scoped pure-layout call
+  // sites that only need workspaceId/workspaceRoot/itemSlug to resolve
+  // filesystem paths. Branch/repo helpers require it and will throw.
   itemSlug?: string
   baseBranch?: string
   // Absolute path of the target workspace on disk. The workflow operates
@@ -20,6 +20,8 @@ export type WorkflowContext = {
 }
 
 type WorkspaceScopedContext = Pick<WorkflowContext, "workspaceId" | "workspaceRoot">
+export type ItemScopedContext = WorkspaceScopedContext & Required<Pick<WorkflowContext, "itemSlug">>
+export type ItemRunScopedContext = ItemScopedContext & Pick<WorkflowContext, "runId">
 
 function sanitizeSegment(segment: string): string {
   return segment.replaceAll(/[^a-z0-9/-]/gi, "-").toLowerCase()
@@ -29,9 +31,25 @@ function sanitizeStageId(stageId: string): string {
   return stageId.split("/").map(sanitizeSegment).join("/")
 }
 
-function requireItemSlug(ctx: WorkflowContext): string {
+function requireItemSlug(ctx: ItemScopedContext): string {
   if (!ctx.itemSlug?.trim()) throw new Error("WorkflowContext.itemSlug is required for item-scoped worktree paths")
   return sanitizeSegment(ctx.itemSlug)
+}
+
+export function requireItemScopedContext(ctx: WorkflowContext): ItemScopedContext {
+  if (!ctx.itemSlug?.trim()) throw new Error("WorkflowContext.itemSlug is required for item-scoped worktree paths")
+  return {
+    workspaceId: ctx.workspaceId,
+    workspaceRoot: ctx.workspaceRoot,
+    itemSlug: ctx.itemSlug,
+  }
+}
+
+export function requireItemRunScopedContext(ctx: WorkflowContext): ItemRunScopedContext {
+  return {
+    ...requireItemScopedContext(ctx),
+    runId: ctx.runId,
+  }
 }
 
 function requireWorkspaceRoot(workspaceRoot: string | undefined): string {
@@ -103,13 +121,13 @@ export const layout = {
   handoffFile(ctx: WorkflowContext, projectId: string): string {
     return join(layout.handoffDir(ctx), `${projectId.toLowerCase()}-merge-handoff.json`)
   },
-  itemWorktreeRootDir(ctx: WorkflowContext): string {
+  itemWorktreeRootDir(ctx: ItemScopedContext): string {
     return join(worktreesRoot(requireWorkspaceRoot(ctx.workspaceRoot)), ctx.workspaceId, "items", requireItemSlug(ctx))
   },
-  itemWorktreeDir(ctx: WorkflowContext): string {
+  itemWorktreeDir(ctx: ItemScopedContext): string {
     return join(layout.itemWorktreeRootDir(ctx), "worktree")
   },
-  itemStoriesRootDir(ctx: WorkflowContext): string {
+  itemStoriesRootDir(ctx: ItemScopedContext): string {
     return join(layout.itemWorktreeRootDir(ctx), "stories")
   },
   executionWaveDir(ctx: WorkflowContext, waveNumber: number): string {
@@ -118,14 +136,14 @@ export const layout = {
   executionStoryDir(ctx: WorkflowContext, waveNumber: number, storyId: string): string {
     return join(layout.executionWaveDir(ctx, waveNumber), "stories", storyId)
   },
-  executionStoryLegacyWorktreeDir(ctx: WorkflowContext, waveNumber: number, storyId: string): string {
+  executionStoryLegacyWorktreeDir(ctx: ItemRunScopedContext, waveNumber: number, storyId: string): string {
     return join(
       layout.itemStoriesRootDir(ctx),
       `${sanitizeSegment(ctx.runId)}-${sanitizeSegment(storyId)}`,
       "worktree",
     )
   },
-  executionStoryWorktreeDir(ctx: WorkflowContext, waveNumber: number, storyId: string): string {
+  executionStoryWorktreeDir(ctx: ItemRunScopedContext, waveNumber: number, storyId: string): string {
     return join(
       layout.itemStoriesRootDir(ctx),
       `${sanitizeSegment(ctx.runId)}__${sanitizeSegment(storyId)}`,
