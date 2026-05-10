@@ -56,6 +56,7 @@ package.json        npm workspaces; engine + ui live under apps/.
 | LLM call shape, prompt envelope, harness/runtime config | [`apps/engine/docs/context-and-llm-config.md`](./apps/engine/docs/context-and-llm-config.md) |
 | Setup / harness JSON protocol / test pyramid | [`apps/engine/docs/app-setup.md`](./apps/engine/docs/app-setup.md) |
 | User-facing setup walkthrough | [`apps/engine/docs/setup-for-dummies.md`](./apps/engine/docs/setup-for-dummies.md) |
+| Durable architecture decisions | [`docs/adr/`](./docs/adr/) |
 | Durable rules for engine work | [`apps/engine/CLAUDE.md`](./apps/engine/CLAUDE.md) |
 | HTTP API contract (cross-cutting) | [`docs/api-contract.md`](./docs/api-contract.md) (prose) + `apps/engine/src/api/openapi.json` (machine) |
 | Messaging-level taxonomy (cross-cutting) | [`docs/messaging-levels.md`](./docs/messaging-levels.md) |
