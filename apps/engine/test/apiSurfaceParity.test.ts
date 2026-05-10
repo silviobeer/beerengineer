@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { test } from "node:test"
 
+import { buildHealthResponse } from "../src/api/health.js"
 import { listImplementedApiRouteSurface } from "../src/api/routeRegistration.js"
 
 type OpenApiDocument = {
@@ -43,13 +44,21 @@ function diffRouteSurface(implemented: string[], documented: string[]): RouteSur
   }
 }
 
+function formatRouteList(routes: string[]): string {
+  return routes.map(route => `  - ${route}`).join("\n")
+}
+
 function formatRouteSurfaceDiff(diff: RouteSurfaceDiff): string {
-  const sections = ["API route surface parity failed."]
+  const sections = [
+    "API route surface parity failed.",
+    "Compared implemented route registration with apps/engine/src/api/openapi.json.",
+    `Summary: ${diff.implementedOnly.length} implemented route(s) missing from OpenAPI; ${diff.documentedOnly.length} documented route(s) missing from the implementation.`,
+  ]
   if (diff.implementedOnly.length > 0) {
-    sections.push(`Implemented only:\n${diff.implementedOnly.map(route => `  - ${route}`).join("\n")}`)
+    sections.push(`Implemented routes missing from apps/engine/src/api/openapi.json:\n${formatRouteList(diff.implementedOnly)}`)
   }
   if (diff.documentedOnly.length > 0) {
-    sections.push(`Documented only:\n${diff.documentedOnly.map(route => `  - ${route}`).join("\n")}`)
+    sections.push(`Documented routes missing from the implementation:\n${formatRouteList(diff.documentedOnly)}`)
   }
   return sections.join("\n\n")
 }
@@ -58,6 +67,15 @@ function assertRouteSurfaceParity(implemented: string[], documented: string[]): 
   const diff = diffRouteSurface(implemented, documented)
   if (diff.implementedOnly.length === 0 && diff.documentedOnly.length === 0) return
   assert.fail(formatRouteSurfaceDiff(diff))
+}
+
+function captureRouteSurfaceParityFailure(implemented: string[], documented: string[]): Error {
+  try {
+    assertRouteSurfaceParity(implemented, documented)
+  } catch (error) {
+    return error as Error
+  }
+  throw new Error("expected route surface parity failure")
 }
 
 test("REQ-1 parity gate passes when implemented and documented method+path pairs match", () => {
@@ -73,7 +91,7 @@ test("REQ-1 parity gate reports implemented-only route drift", () => {
 
   assert.throws(
     () => assertRouteSurfaceParity(implemented, documented),
-    /Implemented only:\n  - POST \/drift-only/,
+    /Implemented routes missing from apps\/engine\/src\/api\/openapi\.json:\n  - POST \/drift-only/,
   )
 })
 
@@ -83,7 +101,7 @@ test("REQ-1 parity gate reports documented-only route drift", () => {
 
   assert.throws(
     () => assertRouteSurfaceParity(implemented, documented),
-    /Documented only:\n  - GET \/documented-only/,
+    /Documented routes missing from the implementation:\n  - GET \/documented-only/,
   )
 })
 
@@ -93,7 +111,7 @@ test("REQ-1 parity gate treats a rename as two mismatches", () => {
 
   assert.throws(
     () => assertRouteSurfaceParity(implemented, documented),
-    /Implemented only:\n  - GET \/healthz[\s\S]*Documented only:\n  - GET \/health/,
+    /Implemented routes missing from apps\/engine\/src\/api\/openapi\.json:\n  - GET \/healthz[\s\S]*Documented routes missing from the implementation:\n  - GET \/health/,
   )
 })
 
@@ -103,7 +121,7 @@ test("REQ-1 parity gate fails on method-only drift for the same path", () => {
 
   assert.throws(
     () => assertRouteSurfaceParity(implemented, documented),
-    /Implemented only:\n  - POST \/health[\s\S]*Documented only:\n  - GET \/health/,
+    /Implemented routes missing from apps\/engine\/src\/api\/openapi\.json:\n  - POST \/health[\s\S]*Documented routes missing from the implementation:\n  - GET \/health/,
   )
 })
 
@@ -140,10 +158,102 @@ test("REQ-1 parity gate reports the full diff when both sides drift", () => {
     .sort(compareRoutes)
 
   assert.throws(() => assertRouteSurfaceParity(implemented, documented), err => {
-    assert.match(String(err), /Implemented only:/)
+    assert.match(String(err), /Summary: 2 implemented route\(s\) missing from OpenAPI; 2 documented route\(s\) missing from the implementation\./)
+    assert.match(String(err), /Implemented routes missing from apps\/engine\/src\/api\/openapi\.json:/)
     assert.match(String(err), /POST \/implemented-only/)
-    assert.match(String(err), /Documented only:/)
+    assert.match(String(err), /GET \/ready/)
+    assert.match(String(err), /Documented routes missing from the implementation:/)
     assert.match(String(err), /GET \/documented-only/)
+    assert.match(String(err), /GET \/health/)
+    return true
+  })
+})
+
+test("REQ-2 drift report separates implemented-only and documented-only mismatches", () => {
+  const report = formatRouteSurfaceDiff({
+    implementedOnly: ["GET /items/{id}", "POST /runs/{id}/resume"],
+    documentedOnly: ["DELETE /items/{id}", "PATCH /runs/{id}/resume"],
+  })
+  const implementedSection = report.match(/Implemented routes missing from apps\/engine\/src\/api\/openapi\.json:\n([\s\S]*?)\n\nDocumented routes missing from the implementation:/)
+  const documentedSection = report.match(/Documented routes missing from the implementation:\n([\s\S]*)$/)
+
+  assert.ok(implementedSection)
+  assert.ok(documentedSection)
+  assert.match(report, /Implemented routes missing from apps\/engine\/src\/api\/openapi\.json:\n  - GET \/items\/\{id\}\n  - POST \/runs\/\{id\}\/resume/)
+  assert.match(report, /Documented routes missing from the implementation:\n  - DELETE \/items\/\{id\}\n  - PATCH \/runs\/\{id\}\/resume/)
+  assert.doesNotMatch(implementedSection[1], /DELETE \/items\/\{id\}|PATCH \/runs\/\{id\}\/resume/)
+  assert.doesNotMatch(documentedSection[1], /GET \/items\/\{id\}|POST \/runs\/\{id\}\/resume/)
+})
+
+test("REQ-2 parity gate failure output includes exact method and path for every mismatch", () => {
+  const implemented = listImplementedApiRouteSurface()
+    .filter(route => route !== "GET /health" && route !== "GET /ready")
+    .concat(["POST /runs/{id}", "PATCH /shared-path"])
+    .sort(compareRoutes)
+  const documented = readDocumentedApiRouteSurface(loadOpenApiDocument())
+    .filter(route => route !== "GET /board")
+    .concat(["DELETE /shared-path", "GET /documented-only"])
+    .sort(compareRoutes)
+
+  assert.throws(() => assertRouteSurfaceParity(implemented, documented), err => {
+    const message = String(err)
+    assert.match(message, /POST \/runs\/\{id\}/)
+    assert.match(message, /PATCH \/shared-path/)
+    assert.match(message, /GET \/health/)
+    assert.match(message, /GET \/ready/)
+    assert.match(message, /DELETE \/shared-path/)
+    assert.match(message, /GET \/documented-only/)
+    return true
+  })
+})
+
+test("REQ-2 parity gate reports every mismatch from both drift buckets in one run", () => {
+  const implemented = listImplementedApiRouteSurface()
+    .filter(route => route !== "GET /health" && route !== "GET /ready")
+    .concat(["POST /implemented-only-a", "PUT /implemented-only-b"])
+    .sort(compareRoutes)
+  const documented = readDocumentedApiRouteSurface(loadOpenApiDocument())
+    .filter(route => route !== "GET /board" && route !== "GET /events")
+    .concat(["DELETE /documented-only-a", "PATCH /documented-only-b"])
+    .sort(compareRoutes)
+
+  assert.throws(() => assertRouteSurfaceParity(implemented, documented), err => {
+    const message = String(err)
+    assert.match(message, /Summary: 4 implemented route\(s\) missing from OpenAPI; 4 documented route\(s\) missing from the implementation\./)
+    assert.match(message, /POST \/implemented-only-a/)
+    assert.match(message, /PUT \/implemented-only-b/)
+    assert.match(message, /GET \/health/)
+    assert.match(message, /GET \/ready/)
+    assert.match(message, /DELETE \/documented-only-a/)
+    assert.match(message, /PATCH \/documented-only-b/)
+    assert.match(message, /GET \/board/)
+    assert.match(message, /GET \/events/)
+    return true
+  })
+})
+
+test("REQ-2 parity drift appears in contributor gate output but not runtime health output", () => {
+  const report = captureRouteSurfaceParityFailure(
+    [...listImplementedApiRouteSurface(), "POST /drift-only"].sort(compareRoutes),
+    readDocumentedApiRouteSurface(loadOpenApiDocument()),
+  )
+
+  assert.match(String(report), /POST \/drift-only/)
+
+  const health = buildHealthResponse({ prepare: () => ({ get: () => ({ ok: 1 }) }) } as never)
+  assert.deepEqual(Object.keys(health.body).sort(), ["db", "ok", "service", "uptimeMs"])
+  assert.equal("parity" in health.body, false)
+})
+
+test("REQ-2 one-sided drift output stays clear when the opposite bucket is empty", () => {
+  const implemented = [...listImplementedApiRouteSurface(), "POST /implemented-only"].sort(compareRoutes)
+  const documented = readDocumentedApiRouteSurface(loadOpenApiDocument())
+
+  assert.throws(() => assertRouteSurfaceParity(implemented, documented), err => {
+    const message = String(err)
+    assert.match(message, /Summary: 1 implemented route\(s\) missing from OpenAPI; 0 documented route\(s\) missing from the implementation\./)
+    assert.match(message, /Implemented routes missing from apps\/engine\/src\/api\/openapi\.json:\n  - POST \/implemented-only/)
+    assert.doesNotMatch(message, /Documented routes missing from the implementation:\n  -/)
     return true
   })
 })
