@@ -993,6 +993,42 @@ export async function resumeRunFromExistingRemediationInProcess(
   return { ok: true, runId: remediation.run_id, remediationId: remediation.id }
 }
 
+export async function autoResumeRunOnStartup(
+  repos: Repos,
+  input: {
+    runId: string
+    summary: string
+    apiWorkerInstanceId?: string
+    workerLeaseClock?: () => number
+    workerLeaseScheduler?: WorkerLeaseScheduler
+    onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
+    supabaseAdapterFactory?: SupabaseAdapterFactory
+    capabilityResolver?: WorkflowCapabilityResolver
+    resumeRunImpl?: PerformResumeImpl
+  },
+): Promise<ResumeRunResult> {
+  const io = buildApiIo(repos)
+  const prepared = await prepareForegroundResumeRun(repos, io, {
+    runId: input.runId,
+    summary: input.summary,
+    workerOwnerKind: "api",
+    workerInstanceId: input.apiWorkerInstanceId ?? API_WORKER_INSTANCE_ID,
+    workerLeaseClock: input.workerLeaseClock,
+    workerLeaseScheduler: input.workerLeaseScheduler,
+    onItemColumnChanged: input.onItemColumnChanged,
+    supabaseAdapterFactory: input.supabaseAdapterFactory,
+    capabilityResolver: input.capabilityResolver,
+    resumeRunImpl: input.resumeRunImpl,
+    persistItemDecision: false,
+  })
+  if (!prepared.ok) {
+    io.close?.()
+    return prepared
+  }
+  fireInBackground(io, "autoResumeRunOnStartup", prepared.start)
+  return { ok: true, runId: prepared.runId, remediationId: prepared.remediationId }
+}
+
 export async function prepareForegroundResumeRun(
   repos: Repos,
   io: WorkflowIO & { bus?: EventBus },
@@ -1011,6 +1047,7 @@ export async function prepareForegroundResumeRun(
     supabaseAdapterFactory?: SupabaseAdapterFactory
     capabilityResolver?: WorkflowCapabilityResolver
     resumeRunImpl?: PerformResumeImpl
+    persistItemDecision?: boolean
   },
 ): Promise<PreparedForegroundResumeRunResult> {
   const summary = input.summary.trim()
@@ -1060,7 +1097,7 @@ export async function prepareForegroundResumeRun(
   // exactly like clarification answers do via recordAnswer.
   const run = repos.getRun(input.runId)
   const ctx = run ? resolveWorkflowContextForRun(repos, run) : null
-  if (ctx) {
+  if (ctx && input.persistItemDecision !== false) {
     let decisionStage: string | null = null
     if (scope.type === "stage") decisionStage = scope.stageId
     else if (scope.type === "story") decisionStage = `execution/${scope.waveNumber}/${scope.storyId}`
