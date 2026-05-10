@@ -1,8 +1,13 @@
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
+import { spawn, type ChildProcess } from "node:child_process"
+import { readFileSync, mkdtempSync, rmSync } from "node:fs"
+import { createServer as createNetServer } from "node:net"
+import { tmpdir } from "node:os"
+import { join, resolve } from "node:path"
 import { test } from "node:test"
+import { fileURLToPath } from "node:url"
 
-import { buildHealthResponse } from "../src/api/health.js"
+import { initDatabase } from "../src/db/connection.js"
 import { listImplementedApiRouteSurface } from "../src/api/routeRegistration.js"
 
 type OpenApiDocument = {
@@ -15,9 +20,104 @@ type RouteSurfaceDiff = {
 }
 
 const HTTP_METHODS = new Set(["get", "post", "patch", "put", "delete", "options", "head"])
+const TEST_API_TOKEN = "test-token"
+const TEST_DIR = resolve(fileURLToPath(new URL(".", import.meta.url)))
+const SERVER_PATH = resolve(TEST_DIR, "..", "src", "api", "server.ts")
+const SERVER_START_RETRIES = 5
+
+type ServerHandle = {
+  proc: ChildProcess
+  base: string
+}
 
 function compareRoutes(left: string, right: string): number {
   return left.localeCompare(right)
+}
+
+async function reservePort(): Promise<number> {
+  return await new Promise((resolve, reject) => {
+    const server = createNetServer()
+    server.once("error", reject)
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address()
+      if (!address || typeof address === "string") {
+        server.close(() => reject(new Error("failed to reserve port")))
+        return
+      }
+      server.close(err => err ? reject(err) : resolve(address.port))
+    })
+  })
+}
+
+async function startServer(dbPath: string): Promise<ServerHandle> {
+  const host = "127.0.0.1"
+  let lastError: Error | null = null
+
+  for (let attempt = 0; attempt < SERVER_START_RETRIES; attempt++) {
+    const port = await reservePort()
+    const proc = spawn(process.execPath, ["--import", "tsx", SERVER_PATH], {
+      env: {
+        ...process.env,
+        PORT: String(port),
+        HOST: host,
+        BEERENGINEER_SEED: "0",
+        BEERENGINEER_API_TOKEN: TEST_API_TOKEN,
+        BEERENGINEER_UI_DB_PATH: dbPath,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    })
+    let stderr = ""
+    proc.stderr?.on("data", chunk => {
+      stderr += chunk.toString()
+    })
+    proc.stdout?.on("data", () => {})
+
+    const startup = await new Promise<"running" | "retry" | "failed">(resolve => {
+      let settled = false
+      const finish = (result: "running" | "retry" | "failed") => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        resolve(result)
+      }
+      const timer = setTimeout(() => finish("running"), 250)
+      proc.once("exit", () => {
+        finish(/EADDRINUSE/.test(stderr) ? "retry" : "failed")
+      })
+    })
+
+    if (startup === "running") return { proc, base: `http://${host}:${port}` }
+    if (startup === "retry") {
+      lastError = new Error(`server port ${port} was claimed before bind`)
+      continue
+    }
+
+    lastError = new Error(stderr.trim() || `server exited during startup on port ${port}`)
+    break
+  }
+
+  throw lastError ?? new Error("failed to start test server")
+}
+
+async function waitForHealth(base: string, timeoutMs = 5000): Promise<void> {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const res = await fetch(`${base}/health`)
+      if (res.ok) return
+    } catch {}
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(`server at ${base} did not become healthy in time`)
+}
+
+function stopServer(proc: ChildProcess): Promise<void> {
+  return new Promise(resolve => {
+    if (proc.exitCode !== null) return resolve()
+    proc.once("exit", () => resolve())
+    proc.kill("SIGTERM")
+    setTimeout(() => proc.kill("SIGKILL"), 1500).unref?.()
+  })
 }
 
 function loadOpenApiDocument(): OpenApiDocument {
@@ -232,17 +332,29 @@ test("REQ-2 parity gate reports every mismatch from both drift buckets in one ru
   })
 })
 
-test("REQ-2 parity drift appears in contributor gate output but not runtime health output", () => {
+test("REQ-2 parity drift appears in contributor gate output but not runtime health output", async () => {
   const report = captureRouteSurfaceParityFailure(
     [...listImplementedApiRouteSurface(), "POST /drift-only"].sort(compareRoutes),
     readDocumentedApiRouteSurface(loadOpenApiDocument()),
   )
+  const dir = mkdtempSync(join(tmpdir(), "be2-api-surface-parity-"))
+  const dbPath = join(dir, "server.sqlite")
+  initDatabase(dbPath).close()
+  const { proc, base } = await startServer(dbPath)
 
-  assert.match(String(report), /POST \/drift-only/)
+  try {
+    await waitForHealth(base)
+    const res = await fetch(`${base}/health`)
+    assert.equal(res.status, 200)
+    const body = await res.json() as Record<string, unknown>
 
-  const health = buildHealthResponse({ prepare: () => ({ get: () => ({ ok: 1 }) }) } as never)
-  assert.deepEqual(Object.keys(health.body).sort(), ["db", "ok", "service", "uptimeMs"])
-  assert.equal("parity" in health.body, false)
+    assert.match(String(report), /POST \/drift-only/)
+    assert.deepEqual(Object.keys(body).sort(), ["db", "ok", "service", "uptimeMs"])
+    assert.doesNotMatch(JSON.stringify(body), /parity|openapi|implemented-only|documented-only/i)
+  } finally {
+    await stopServer(proc)
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 test("REQ-2 one-sided drift output stays clear when the opposite bucket is empty", () => {
