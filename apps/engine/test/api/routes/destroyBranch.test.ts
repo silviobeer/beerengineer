@@ -6,12 +6,12 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { initDatabase } from "../../../src/db/connection.js"
 import { Repos } from "../../../src/db/repositories.js"
+import { listImplementedApiRouteSurface } from "../../../src/api/routeRegistration.js"
 import { handleSupabaseDestroyBranch, resolveDestroyBranchTarget } from "../../../src/api/routes/setup.js"
 
 test("PROJ-4 PRD-8 US-2: engine exposes typed-confirm destroy route", () => {
-  const server = readFileSync(new URL("../../../src/api/server.ts", import.meta.url), "utf8")
   const routes = readFileSync(new URL("../../../src/api/routes/setup.ts", import.meta.url), "utf8")
-  assert.match(server, /POST \/setup\/supabase\/destroy/)
+  assert.ok(listImplementedApiRouteSurface().includes("POST /setup/supabase/destroy"))
   assert.match(routes, /confirmedName/)
   assert.match(routes, /confirmation_mismatch/)
 })
