@@ -70,12 +70,195 @@ import { handleTelegramChatToolWebhook } from "../notifications/chattool/webhook
 import { handleRunEvents } from "./sse/runStream.js"
 import type { ApiHttpShell, ApiLifecycleView, ApiRequest, ApiRouteDependencies } from "./entrypointContracts.js"
 
+type RouteSurfaceDefinition = {
+  method: string
+  surfacePath: string
+}
+
+type RouteMatcherDefinition = RouteSurfaceDefinition & {
+  pattern: RegExp
+}
+
 type RouteContext = {
   req: ApiRequest
   res: ServerResponse
   url: URL
   path: string
   appConfig: ReturnType<ApiRouteDependencies["loadEffectiveConfig"]>
+}
+
+const WEBHOOK_TELEGRAM_ROUTE = {
+  method: "POST",
+  surfacePath: "/webhooks/telegram",
+} as const satisfies RouteSurfaceDefinition
+
+const OPENAPI_ROUTE = {
+  method: "GET",
+  surfacePath: "/openapi.json",
+} as const satisfies RouteSurfaceDefinition
+
+const TOP_LEVEL_ROUTE_KEYS = [
+  "GET /runs",
+  "POST /runs",
+  "POST /items/import-prepared",
+  "GET /board",
+  "GET /setup/status",
+  "GET /setup/config",
+  "GET /setup/git-readiness",
+  "PATCH /setup/config",
+  "POST /setup/telegram/webhook",
+  "POST /setup/telegram/verification",
+  "POST /setup/git-identity",
+  "POST /setup/git-identity/repair",
+  "POST /setup/init",
+  "POST /setup/recheck",
+  "POST /setup/supabase/connect",
+  "POST /setup/supabase/disconnect",
+  "POST /setup/supabase/destroy",
+  "POST /setup/supabase/recreate",
+  "POST /setup/supabase/rotate",
+  "PATCH /setup/supabase/settings",
+  "GET /update/status",
+  "GET /update/preflight",
+  "POST /update/check",
+  "POST /update/apply",
+  "GET /update/history",
+  "POST /update/rollback",
+  "POST /update/shutdown",
+  "GET /events",
+  "GET /health",
+  "GET /ready",
+] as const
+
+const ITEM_ROUTE_DEFINITIONS = [
+  { pattern: /^\/items\/([^/]+)\/actions\/([^/]+)$/, method: "POST", surfacePath: "/items/{id}/actions/{action}" },
+  { pattern: /^\/items\/([^/]+)\/wireframes$/, method: "GET", surfacePath: "/items/{id}/wireframes" },
+  { pattern: /^\/items\/([^/]+)\/design$/, method: "GET", surfacePath: "/items/{id}/design" },
+  { pattern: /^\/items\/([^/]+)\/preview\/start$/, method: "POST", surfacePath: "/items/{id}/preview/start" },
+  { pattern: /^\/items\/([^/]+)\/preview\/stop$/, method: "POST", surfacePath: "/items/{id}/preview/stop" },
+  { pattern: /^\/items\/([^/]+)\/preview$/, method: "GET", surfacePath: "/items/{id}/preview" },
+  { pattern: /^\/items\/([^/]+)$/, method: "GET", surfacePath: "/items/{id}" },
+] as const satisfies readonly RouteMatcherDefinition[]
+
+const RUN_ROUTE_DEFINITIONS = [
+  { pattern: /^\/runs\/([^/]+)\/artifacts\/(.+)$/, method: "GET", surfacePath: "/runs/{id}/artifacts/{path}" },
+  { pattern: /^\/runs\/([^/]+)\/artifacts$/, method: "GET", surfacePath: "/runs/{id}/artifacts" },
+  { pattern: /^\/runs\/([^/]+)$/, method: "GET", surfacePath: "/runs/{id}" },
+  { pattern: /^\/runs\/([^/]+)\/tree$/, method: "GET", surfacePath: "/runs/{id}/tree" },
+  { pattern: /^\/runs\/([^/]+)\/merge-status$/, method: "GET", surfacePath: "/runs/{id}/merge-status" },
+  { pattern: /^\/runs\/([^/]+)\/events$/, method: "GET", surfacePath: "/runs/{id}/events" },
+  { pattern: /^\/runs\/([^/]+)\/messages$/, method: "GET", surfacePath: "/runs/{id}/messages" },
+  { pattern: /^\/runs\/([^/]+)\/messages$/, method: "POST", surfacePath: "/runs/{id}/messages" },
+  { pattern: /^\/runs\/([^/]+)\/conversation$/, method: "GET", surfacePath: "/runs/{id}/conversation" },
+  { pattern: /^\/runs\/([^/]+)\/answer$/, method: "POST", surfacePath: "/runs/{id}/answer" },
+  { pattern: /^\/runs\/([^/]+)\/resume$/, method: "POST", surfacePath: "/runs/{id}/resume" },
+  { pattern: /^\/runs\/([^/]+)\/supabase-readiness\/retry$/, method: "POST", surfacePath: "/runs/{id}/supabase-readiness/retry" },
+  { pattern: /^\/runs\/([^/]+)\/recovery$/, method: "GET", surfacePath: "/runs/{id}/recovery" },
+] as const satisfies readonly RouteMatcherDefinition[]
+
+const SUPABASE_ACTION_ROUTE_DEFINITIONS = [
+  {
+    pattern: /^\/supabase\/branches\/([^/]+)\/retry-validation$/,
+    method: "POST",
+    surfacePath: "/supabase/branches/{branchRef}/retry-validation",
+  },
+] as const satisfies readonly RouteMatcherDefinition[]
+
+const NOTIFICATION_TEST_ROUTE = {
+  pattern: /^\/notifications\/test\/([^/]+)$/,
+  method: "POST",
+  surfacePath: "/notifications/test/{channel}",
+} as const satisfies RouteMatcherDefinition
+
+const NOTIFICATION_DELIVERIES_ROUTE = {
+  method: "GET",
+  surfacePath: "/notifications/deliveries",
+} as const satisfies RouteSurfaceDefinition
+
+const SETUP_SECRET_METADATA_ROUTE = {
+  pattern: /^\/setup\/secrets\/([^/]+)$/,
+  method: "GET",
+  surfacePath: "/setup/secrets/{ref}",
+} as const satisfies RouteMatcherDefinition
+
+const SETUP_SECRET_ACTION_ROUTE = {
+  pattern: /^\/setup\/secrets\/([^/]+)$/,
+  method: "POST",
+  surfacePath: "/setup/secrets/{ref}",
+} as const satisfies RouteMatcherDefinition
+
+const WORKSPACE_COLLECTION_ROUTES = {
+  preview: { method: "GET", surfacePath: "/workspaces/preview" },
+  list: { method: "GET", surfacePath: "/workspaces" },
+  add: { method: "POST", surfacePath: "/workspaces" },
+  backfill: { method: "POST", surfacePath: "/workspaces/backfill" },
+} as const satisfies Record<string, RouteSurfaceDefinition>
+
+const WORKSPACE_SUPABASE_ROUTE_DEFINITIONS = [
+  {
+    pattern: /^\/workspaces\/([^/]+)\/supabase\/readiness$/,
+    method: "GET",
+    surfacePath: "/workspaces/{key}/supabase/readiness",
+  },
+  {
+    pattern: /^\/workspaces\/([^/]+)\/supabase\/connect$/,
+    method: "POST",
+    surfacePath: "/workspaces/{key}/supabase/connect",
+  },
+  {
+    pattern: /^\/workspaces\/([^/]+)\/supabase\/rotate$/,
+    method: "POST",
+    surfacePath: "/workspaces/{key}/supabase/rotate",
+  },
+  {
+    pattern: /^\/workspaces\/([^/]+)\/supabase\/branch$/,
+    method: "POST",
+    surfacePath: "/workspaces/{key}/supabase/branch",
+  },
+] as const satisfies readonly RouteMatcherDefinition[]
+
+const WORKSPACE_DETAIL_ROUTE = {
+  pattern: /^\/workspaces\/([^/]+)$/,
+  method: "GET",
+  surfacePath: "/workspaces/{key}",
+} as const satisfies RouteMatcherDefinition
+
+const WORKSPACE_REMOVE_ROUTE = {
+  pattern: /^\/workspaces\/([^/]+)$/,
+  method: "DELETE",
+  surfacePath: "/workspaces/{key}",
+} as const satisfies RouteMatcherDefinition
+
+const WORKSPACE_OPEN_ROUTE = {
+  pattern: /^\/workspaces\/([^/]+)\/open$/,
+  method: "POST",
+  surfacePath: "/workspaces/{key}/open",
+} as const satisfies RouteMatcherDefinition
+
+export function listImplementedApiRouteSurface(): string[] {
+  const implementedRoutes = [
+    WEBHOOK_TELEGRAM_ROUTE,
+    OPENAPI_ROUTE,
+    ...TOP_LEVEL_ROUTE_KEYS.map(key => {
+      const [method, ...pathParts] = key.split(" ")
+      return { method, surfacePath: pathParts.join(" ") }
+    }),
+    { method: "GET", surfacePath: "/items" },
+    ...ITEM_ROUTE_DEFINITIONS,
+    ...RUN_ROUTE_DEFINITIONS,
+    ...SUPABASE_ACTION_ROUTE_DEFINITIONS,
+    NOTIFICATION_TEST_ROUTE,
+    NOTIFICATION_DELIVERIES_ROUTE,
+    SETUP_SECRET_METADATA_ROUTE,
+    SETUP_SECRET_ACTION_ROUTE,
+    ...Object.values(WORKSPACE_COLLECTION_ROUTES),
+    ...WORKSPACE_SUPABASE_ROUTE_DEFINITIONS,
+    WORKSPACE_DETAIL_ROUTE,
+    WORKSPACE_REMOVE_ROUTE,
+    WORKSPACE_OPEN_ROUTE,
+  ]
+
+  return [...new Set(implementedRoutes.map(route => `${route.method} ${route.surfacePath}`))].sort()
 }
 
 function attachRouteContext(
@@ -95,7 +278,7 @@ function topLevelRouteHandlers(
   context: RouteContext,
   deps: ApiRouteDependencies,
   lifecycle: ApiLifecycleView,
-): Partial<Record<string, () => void | Promise<void>>> {
+): Record<(typeof TOP_LEVEL_ROUTE_KEYS)[number], () => void | Promise<void>> {
   return {
     "GET /runs": () => handleListRuns(deps.repos, context.res),
     "POST /runs": () => handleCreateRun(deps.repos, context.req, context.res, payload => deps.board.broadcastItemColumnChanged(payload)),
@@ -141,44 +324,43 @@ function topLevelRouteHandlers(
       })
       json(context.res, ready.status, ready.body)
     },
-  }
+  } satisfies Record<(typeof TOP_LEVEL_ROUTE_KEYS)[number], () => void | Promise<void>>
 }
 
 function itemRouteMatchers(context: RouteContext, deps: ApiRouteDependencies): Array<{ pattern: RegExp; method: string; handle: (...captures: string[]) => void }> {
   return [
-    { pattern: /^\/items\/([^/]+)\/actions\/([^/]+)$/, method: "POST", handle: (itemId, action) => handleItemActionNamed(deps.itemActions, deps.repos, context.req, context.res, itemId, action, payload => deps.board.broadcastItemColumnChanged(payload)) },
-    { pattern: /^\/items\/([^/]+)\/wireframes$/, method: "GET", handle: itemId => handleGetItemWireframes(deps.repos, context.res, itemId) },
-    { pattern: /^\/items\/([^/]+)\/design$/, method: "GET", handle: itemId => handleGetItemDesign(deps.repos, context.res, itemId) },
-    { pattern: /^\/items\/([^/]+)\/preview\/start$/, method: "POST", handle: itemId => handleStartItemPreview(deps.repos, context.req, context.res, itemId) },
-    { pattern: /^\/items\/([^/]+)\/preview\/stop$/, method: "POST", handle: itemId => handleStopItemPreview(deps.repos, context.req, context.res, itemId) },
-    { pattern: /^\/items\/([^/]+)\/preview$/, method: "GET", handle: itemId => handleGetItemPreview(deps.repos, context.res, itemId) },
-    { pattern: /^\/items\/([^/]+)$/, method: "GET", handle: itemId => handleGetItem(deps.repos, context.res, itemId) },
+    { ...ITEM_ROUTE_DEFINITIONS[0], handle: (itemId, action) => handleItemActionNamed(deps.itemActions, deps.repos, context.req, context.res, itemId, action, payload => deps.board.broadcastItemColumnChanged(payload)) },
+    { ...ITEM_ROUTE_DEFINITIONS[1], handle: itemId => handleGetItemWireframes(deps.repos, context.res, itemId) },
+    { ...ITEM_ROUTE_DEFINITIONS[2], handle: itemId => handleGetItemDesign(deps.repos, context.res, itemId) },
+    { ...ITEM_ROUTE_DEFINITIONS[3], handle: itemId => handleStartItemPreview(deps.repos, context.req, context.res, itemId) },
+    { ...ITEM_ROUTE_DEFINITIONS[4], handle: itemId => handleStopItemPreview(deps.repos, context.req, context.res, itemId) },
+    { ...ITEM_ROUTE_DEFINITIONS[5], handle: itemId => handleGetItemPreview(deps.repos, context.res, itemId) },
+    { ...ITEM_ROUTE_DEFINITIONS[6], handle: itemId => handleGetItem(deps.repos, context.res, itemId) },
   ]
 }
 
 function runRouteMatchers(context: RouteContext, deps: ApiRouteDependencies): Array<{ pattern: RegExp; method: string; handle: (...captures: string[]) => void }> {
   return [
-    { pattern: /^\/runs\/([^/]+)\/artifacts\/(.+)$/, method: "GET", handle: (runId, artifactPath) => handleGetArtifactFile(deps.repos, context.res, runId, artifactPath) },
-    { pattern: /^\/runs\/([^/]+)\/artifacts$/, method: "GET", handle: runId => handleGetArtifacts(deps.repos, context.res, runId) },
-    { pattern: /^\/runs\/([^/]+)$/, method: "GET", handle: runId => handleGetRun(deps.repos, context.res, runId) },
-    { pattern: /^\/runs\/([^/]+)\/tree$/, method: "GET", handle: runId => handleGetRunTree(deps.repos, context.res, runId) },
-    { pattern: /^\/runs\/([^/]+)\/merge-status$/, method: "GET", handle: runId => handleGetMergeStatus(deps.repos, context.res, runId) },
-    { pattern: /^\/runs\/([^/]+)\/events$/, method: "GET", handle: runId => handleRunEvents(deps.repos, context.req, context.res, runId) },
-    { pattern: /^\/runs\/([^/]+)\/messages$/, method: "GET", handle: runId => handleGetMessages(deps.repos, context.url, context.res, runId) },
-    { pattern: /^\/runs\/([^/]+)\/messages$/, method: "POST", handle: runId => handlePostMessage(deps.repos, context.req, context.res, runId) },
-    { pattern: /^\/runs\/([^/]+)\/conversation$/, method: "GET", handle: runId => handleGetConversation(deps.repos, context.res, runId) },
-    { pattern: /^\/runs\/([^/]+)\/answer$/, method: "POST", handle: runId => handleAnswer(deps.repos, context.req, context.res, runId) },
-    { pattern: /^\/runs\/([^/]+)\/resume$/, method: "POST", handle: runId => handleResumeRun(deps.repos, context.req, context.res, runId, payload => deps.board.broadcastItemColumnChanged(payload)) },
-    { pattern: /^\/runs\/([^/]+)\/supabase-readiness\/retry$/, method: "POST", handle: runId => handleSupabaseReadinessRetry(deps.repos, context.req, context.res, runId, payload => deps.board.broadcastItemColumnChanged(payload)) },
-    { pattern: /^\/runs\/([^/]+)\/recovery$/, method: "GET", handle: runId => handleGetRecovery(deps.repos, context.res, runId) },
+    { ...RUN_ROUTE_DEFINITIONS[0], handle: (runId, artifactPath) => handleGetArtifactFile(deps.repos, context.res, runId, artifactPath) },
+    { ...RUN_ROUTE_DEFINITIONS[1], handle: runId => handleGetArtifacts(deps.repos, context.res, runId) },
+    { ...RUN_ROUTE_DEFINITIONS[2], handle: runId => handleGetRun(deps.repos, context.res, runId) },
+    { ...RUN_ROUTE_DEFINITIONS[3], handle: runId => handleGetRunTree(deps.repos, context.res, runId) },
+    { ...RUN_ROUTE_DEFINITIONS[4], handle: runId => handleGetMergeStatus(deps.repos, context.res, runId) },
+    { ...RUN_ROUTE_DEFINITIONS[5], handle: runId => handleRunEvents(deps.repos, context.req, context.res, runId) },
+    { ...RUN_ROUTE_DEFINITIONS[6], handle: runId => handleGetMessages(deps.repos, context.url, context.res, runId) },
+    { ...RUN_ROUTE_DEFINITIONS[7], handle: runId => handlePostMessage(deps.repos, context.req, context.res, runId) },
+    { ...RUN_ROUTE_DEFINITIONS[8], handle: runId => handleGetConversation(deps.repos, context.res, runId) },
+    { ...RUN_ROUTE_DEFINITIONS[9], handle: runId => handleAnswer(deps.repos, context.req, context.res, runId) },
+    { ...RUN_ROUTE_DEFINITIONS[10], handle: runId => handleResumeRun(deps.repos, context.req, context.res, runId, payload => deps.board.broadcastItemColumnChanged(payload)) },
+    { ...RUN_ROUTE_DEFINITIONS[11], handle: runId => handleSupabaseReadinessRetry(deps.repos, context.req, context.res, runId, payload => deps.board.broadcastItemColumnChanged(payload)) },
+    { ...RUN_ROUTE_DEFINITIONS[12], handle: runId => handleGetRecovery(deps.repos, context.res, runId) },
   ]
 }
 
 function supabaseActionRouteMatchers(context: RouteContext, deps: ApiRouteDependencies): Array<{ pattern: RegExp; method: string; handle: (...captures: string[]) => void | Promise<void> }> {
   return [
     {
-      pattern: /^\/supabase\/branches\/([^/]+)\/retry-validation$/,
-      method: "POST",
+      ...SUPABASE_ACTION_ROUTE_DEFINITIONS[0],
       handle: async branchRef => {
         const adapter = deps.createSupabaseValidationAdapter()
         await handleRetryValidation({ repos: deps.repos, adapter, req: context.req, res: context.res, branchRef })
@@ -202,18 +384,18 @@ async function handleRouteMatchers(
 }
 
 async function handlePreCsrfRoutes(context: RouteContext, deps: ApiRouteDependencies): Promise<boolean> {
-  if (context.path !== "/webhooks/telegram" || context.req.method !== "POST") return false
+  if (context.path !== WEBHOOK_TELEGRAM_ROUTE.surfacePath || context.req.method !== WEBHOOK_TELEGRAM_ROUTE.method) return false
   await handleTelegramChatToolWebhook(deps.repos, context.appConfig, context.req, context.res)
   return true
 }
 
 async function handleTopLevelRoutes(context: RouteContext, deps: ApiRouteDependencies, lifecycle: ApiLifecycleView): Promise<boolean> {
-  const handler = topLevelRouteHandlers(context, deps, lifecycle)[`${context.req.method} ${context.path}`]
+  const handler = topLevelRouteHandlers(context, deps, lifecycle)[`${context.req.method} ${context.path}` as (typeof TOP_LEVEL_ROUTE_KEYS)[number]]
   if (handler) {
     await handler()
     return true
   }
-  if (context.path === "/openapi.json" && context.req.method === "GET") {
+  if (context.path === OPENAPI_ROUTE.surfacePath && context.req.method === OPENAPI_ROUTE.method) {
     const body = deps.loadOpenApi()
     if (!body) {
       json(context.res, 503, { error: "openapi_unavailable", code: "service_unavailable" })
@@ -227,12 +409,12 @@ async function handleTopLevelRoutes(context: RouteContext, deps: ApiRouteDepende
 }
 
 async function handleNotificationRoutes(context: RouteContext, deps: ApiRouteDependencies): Promise<boolean> {
-  const notificationTestMatch = /^\/notifications\/test\/([^/]+)$/.exec(context.path)
-  if (notificationTestMatch && context.req.method === "POST") {
+  const notificationTestMatch = NOTIFICATION_TEST_ROUTE.pattern.exec(context.path)
+  if (notificationTestMatch && context.req.method === NOTIFICATION_TEST_ROUTE.method) {
     await handleNotificationTest(deps.repos, deps.loadEffectiveConfig, context.res, notificationTestMatch[1])
     return true
   }
-  if (context.path === "/notifications/deliveries" && context.req.method === "GET") {
+  if (context.path === NOTIFICATION_DELIVERIES_ROUTE.surfacePath && context.req.method === NOTIFICATION_DELIVERIES_ROUTE.method) {
     handleNotificationDeliveries(deps.repos, context.url, context.res)
     return true
   }
@@ -240,12 +422,12 @@ async function handleNotificationRoutes(context: RouteContext, deps: ApiRouteDep
 }
 
 async function handleSetupRoutes(context: RouteContext): Promise<boolean> {
-  const secretMatch = /^\/setup\/secrets\/([^/]+)$/.exec(context.path)
-  if (secretMatch && context.req.method === "GET") {
+  const secretMatch = SETUP_SECRET_METADATA_ROUTE.pattern.exec(context.path)
+  if (secretMatch && context.req.method === SETUP_SECRET_METADATA_ROUTE.method) {
     await handleSecretMetadata(context.res, secretMatch[1])
     return true
   }
-  if (secretMatch && context.req.method === "POST") {
+  if (secretMatch && context.req.method === SETUP_SECRET_ACTION_ROUTE.method) {
     await handleSecretAction(context.req, context.res, secretMatch[1])
     return true
   }
@@ -254,50 +436,64 @@ async function handleSetupRoutes(context: RouteContext): Promise<boolean> {
 
 async function handleWorkspaceCollectionRoutes(context: RouteContext, deps: ApiRouteDependencies): Promise<boolean> {
   const { path, req, res, url } = context
-  if (path === "/workspaces/preview" && req.method === "GET") { await handleWorkspacePreview(deps.repos, deps.loadEffectiveConfig, url, res); return true }
-  if (path === "/workspaces" && req.method === "GET") { handleWorkspaceList(deps.repos, res); return true }
-  if (path === "/workspaces" && req.method === "POST") { await handleWorkspaceAdd(deps.repos, deps.loadEffectiveConfig, req, res); return true }
-  if (path === "/workspaces/backfill" && req.method === "POST") { await handleWorkspaceBackfill(deps.repos, res); return true }
+  if (path === WORKSPACE_COLLECTION_ROUTES.preview.surfacePath && req.method === WORKSPACE_COLLECTION_ROUTES.preview.method) { await handleWorkspacePreview(deps.repos, deps.loadEffectiveConfig, url, res); return true }
+  if (path === WORKSPACE_COLLECTION_ROUTES.list.surfacePath && req.method === WORKSPACE_COLLECTION_ROUTES.list.method) { handleWorkspaceList(deps.repos, res); return true }
+  if (path === WORKSPACE_COLLECTION_ROUTES.add.surfacePath && req.method === WORKSPACE_COLLECTION_ROUTES.add.method) { await handleWorkspaceAdd(deps.repos, deps.loadEffectiveConfig, req, res); return true }
+  if (path === WORKSPACE_COLLECTION_ROUTES.backfill.surfacePath && req.method === WORKSPACE_COLLECTION_ROUTES.backfill.method) { await handleWorkspaceBackfill(deps.repos, res); return true }
   return false
 }
 
 async function handleWorkspaceSupabaseRoutes(context: RouteContext, deps: ApiRouteDependencies): Promise<boolean> {
   const { path, req, res, url } = context
-  const supabaseMatch = /^\/workspaces\/([^/]+)\/supabase\/(readiness|connect|rotate|branch)$/.exec(path)
-  if (supabaseMatch) {
-    const [, key, sub] = supabaseMatch
-    if (sub === "readiness" && req.method === "GET") {
-      await handleWorkspaceSupabaseReadiness(deps.repos, res, key, url.searchParams.get("runId"))
-      return true
-    }
-    if (sub === "connect" && req.method === "POST") {
-      await handleWorkspaceSupabaseConnect(deps.repos, req, res, key)
-      return true
-    }
-    if (sub === "rotate" && req.method === "POST") {
-      await handleWorkspaceSupabaseRotate(deps.repos, req, res, key)
-      return true
-    }
-    if (sub === "branch" && req.method === "POST") {
-      await handleWorkspaceSupabaseBranch(deps.repos, req, res, key)
-      return true
-    }
+
+  const readinessMatch = WORKSPACE_SUPABASE_ROUTE_DEFINITIONS[0].pattern.exec(path)
+  if (readinessMatch && req.method === WORKSPACE_SUPABASE_ROUTE_DEFINITIONS[0].method) {
+    await handleWorkspaceSupabaseReadiness(deps.repos, res, readinessMatch[1], url.searchParams.get("runId"))
+    return true
   }
+
+  const connectMatch = WORKSPACE_SUPABASE_ROUTE_DEFINITIONS[1].pattern.exec(path)
+  if (connectMatch && req.method === WORKSPACE_SUPABASE_ROUTE_DEFINITIONS[1].method) {
+    await handleWorkspaceSupabaseConnect(deps.repos, req, res, connectMatch[1])
+    return true
+  }
+
+  const rotateMatch = WORKSPACE_SUPABASE_ROUTE_DEFINITIONS[2].pattern.exec(path)
+  if (rotateMatch && req.method === WORKSPACE_SUPABASE_ROUTE_DEFINITIONS[2].method) {
+    await handleWorkspaceSupabaseRotate(deps.repos, req, res, rotateMatch[1])
+    return true
+  }
+
+  const branchMatch = WORKSPACE_SUPABASE_ROUTE_DEFINITIONS[3].pattern.exec(path)
+  if (branchMatch && req.method === WORKSPACE_SUPABASE_ROUTE_DEFINITIONS[3].method) {
+    await handleWorkspaceSupabaseBranch(deps.repos, req, res, branchMatch[1])
+    return true
+  }
+
   return false
 }
 
 async function handleWorkspaceDetailRoutes(context: RouteContext, deps: ApiRouteDependencies): Promise<boolean> {
   const { path, req, res, url } = context
-  const workspaceMatch = /^\/workspaces\/([^/]+)(?:\/(open))?$/.exec(path)
-  if (workspaceMatch) {
-    const [, key, sub] = workspaceMatch
-    if (sub === undefined) {
-      if (req.method === "GET") { handleWorkspaceGet(deps.repos, res, key); return true }
-      if (req.method === "DELETE") { handleWorkspaceRemove(deps.repos, deps.loadEffectiveConfig, url, res, key); return true }
-      return false
-    }
-    if (sub === "open" && req.method === "POST") { handleWorkspaceOpen(deps.repos, res, key); return true }
+
+  const workspaceGetMatch = WORKSPACE_DETAIL_ROUTE.pattern.exec(path)
+  if (workspaceGetMatch && req.method === WORKSPACE_DETAIL_ROUTE.method) {
+    handleWorkspaceGet(deps.repos, res, workspaceGetMatch[1])
+    return true
   }
+
+  const workspaceDeleteMatch = WORKSPACE_REMOVE_ROUTE.pattern.exec(path)
+  if (workspaceDeleteMatch && req.method === WORKSPACE_REMOVE_ROUTE.method) {
+    handleWorkspaceRemove(deps.repos, deps.loadEffectiveConfig, url, res, workspaceDeleteMatch[1])
+    return true
+  }
+
+  const workspaceOpenMatch = WORKSPACE_OPEN_ROUTE.pattern.exec(path)
+  if (workspaceOpenMatch && req.method === WORKSPACE_OPEN_ROUTE.method) {
+    handleWorkspaceOpen(deps.repos, res, workspaceOpenMatch[1])
+    return true
+  }
+
   return false
 }
 
