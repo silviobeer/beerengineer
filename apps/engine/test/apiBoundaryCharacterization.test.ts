@@ -459,7 +459,7 @@ test("REQ-10-1 characterizes GET /board placement, prompt, recovery, Supabase, a
     const cards = columnCards(board)
     assert.deepEqual(cards.idea.map(sanitizeCard), [
       {
-        keys: ["column", "currentStage", "dbRelevance", "hasBlockedRun", "hasOpenPrompt", "hasReviewGateWaiting", "itemCode", "itemId", "meta", "phaseStatus", "recovery_user_message", "summary", "supabaseProjectRef", "title", "workspaceId", "workspaceRoot"],
+        keys: ["chatEntry", "chatEntryFreshness", "column", "currentStage", "dbRelevance", "hasBlockedRun", "hasOpenPrompt", "hasReviewGateWaiting", "itemCode", "itemId", "messagesEntry", "messagesEntryFreshness", "meta", "phaseStatus", "recovery_user_message", "summary", "supabaseProjectRef", "title", "visibleActions", "visibleActionsFreshness", "workspaceId", "workspaceRoot"],
         itemCode: idea.code,
         itemId: idea.id,
         title: "Idea seed",
@@ -486,7 +486,7 @@ test("REQ-10-1 characterizes GET /board placement, prompt, recovery, Supabase, a
     ])
     assert.deepEqual(cards.brainstorm.map(sanitizeCard), [
       {
-        keys: ["column", "currentStage", "dbRelevance", "hasBlockedRun", "hasOpenPrompt", "hasReviewGateWaiting", "itemCode", "itemId", "latestRunId", "meta", "phaseStatus", "recovery_user_message", "summary", "supabaseProjectRef", "title", "workspaceId", "workspaceRoot"],
+        keys: ["chatEntry", "chatEntryFreshness", "column", "currentStage", "dbRelevance", "hasBlockedRun", "hasOpenPrompt", "hasReviewGateWaiting", "itemCode", "itemId", "latestRunId", "messagesEntry", "messagesEntryFreshness", "meta", "phaseStatus", "recovery_user_message", "summary", "supabaseProjectRef", "title", "visibleActions", "visibleActionsFreshness", "workspaceId", "workspaceRoot"],
         itemCode: promptItem.code,
         itemId: promptItem.id,
         title: "Prompted brainstorm",
@@ -513,7 +513,7 @@ test("REQ-10-1 characterizes GET /board placement, prompt, recovery, Supabase, a
     ])
     assert.deepEqual(cards.frontend.map(sanitizeCard), [
       {
-        keys: ["column", "currentStage", "dbRelevance", "hasBlockedRun", "hasOpenPrompt", "hasReviewGateWaiting", "itemCode", "itemId", "latestRunId", "meta", "phaseStatus", "recovery_user_message", "summary", "supabaseProjectRef", "title", "workspaceId", "workspaceRoot"],
+        keys: ["chatEntry", "chatEntryFreshness", "column", "currentStage", "dbRelevance", "hasBlockedRun", "hasOpenPrompt", "hasReviewGateWaiting", "itemCode", "itemId", "latestRunId", "messagesEntry", "messagesEntryFreshness", "meta", "phaseStatus", "recovery_user_message", "summary", "supabaseProjectRef", "title", "visibleActions", "visibleActionsFreshness", "workspaceId", "workspaceRoot"],
         itemCode: recoveryItem.code,
         itemId: recoveryItem.id,
         title: "Recovery frontend",
@@ -540,7 +540,7 @@ test("REQ-10-1 characterizes GET /board placement, prompt, recovery, Supabase, a
     ])
     assert.deepEqual(cards.requirements.map(sanitizeCard), [
       {
-        keys: ["column", "currentStage", "dbRelevance", "hasBlockedRun", "hasOpenPrompt", "hasReviewGateWaiting", "itemCode", "itemId", "meta", "phaseStatus", "recovery_user_message", "summary", "supabaseProjectRef", "title", "workspaceId", "workspaceRoot"],
+        keys: ["chatEntry", "chatEntryFreshness", "column", "currentStage", "dbRelevance", "hasBlockedRun", "hasOpenPrompt", "hasReviewGateWaiting", "itemCode", "itemId", "messagesEntry", "messagesEntryFreshness", "meta", "phaseStatus", "recovery_user_message", "summary", "supabaseProjectRef", "title", "visibleActions", "visibleActionsFreshness", "workspaceId", "workspaceRoot"],
         itemCode: requirementsItem.code,
         itemId: requirementsItem.id,
         title: "Requirements plan",
@@ -567,7 +567,7 @@ test("REQ-10-1 characterizes GET /board placement, prompt, recovery, Supabase, a
     ])
     assert.deepEqual(cards.implementation.map(sanitizeCard), [
       {
-        keys: ["column", "currentStage", "dbRelevance", "hasBlockedRun", "hasOpenPrompt", "hasReviewGateWaiting", "itemCode", "itemId", "latestRunId", "meta", "phaseStatus", "recovery_user_message", "summary", "supabaseBranch", "supabaseProjectRef", "title", "workspaceId", "workspaceRoot"],
+        keys: ["chatEntry", "chatEntryFreshness", "column", "currentStage", "dbRelevance", "hasBlockedRun", "hasOpenPrompt", "hasReviewGateWaiting", "itemCode", "itemId", "latestRunId", "messagesEntry", "messagesEntryFreshness", "meta", "phaseStatus", "recovery_user_message", "summary", "supabaseBranch", "supabaseProjectRef", "title", "visibleActions", "visibleActionsFreshness", "workspaceId", "workspaceRoot"],
         itemCode: implementationItem.code,
         itemId: implementationItem.id,
         title: "Implementation db",
@@ -594,7 +594,7 @@ test("REQ-10-1 characterizes GET /board placement, prompt, recovery, Supabase, a
     ])
     assert.deepEqual(cards.merge.map(sanitizeCard), [
       {
-        keys: ["column", "currentStage", "dbRelevance", "hasBlockedRun", "hasOpenPrompt", "hasReviewGateWaiting", "itemCode", "itemId", "latestRunId", "meta", "phaseStatus", "recovery_user_message", "summary", "supabaseBlocker", "supabaseBranch", "supabaseProjectRef", "title", "workspaceId", "workspaceRoot"],
+        keys: ["chatEntry", "chatEntryFreshness", "column", "currentStage", "dbRelevance", "hasBlockedRun", "hasOpenPrompt", "hasReviewGateWaiting", "itemCode", "itemId", "latestRunId", "messagesEntry", "messagesEntryFreshness", "meta", "phaseStatus", "recovery_user_message", "summary", "supabaseBlocker", "supabaseBranch", "supabaseProjectRef", "title", "visibleActions", "visibleActionsFreshness", "workspaceId", "workspaceRoot"],
         itemCode: mergeItem.code,
         itemId: mergeItem.id,
         title: "Merge gate overlap",
@@ -629,7 +629,7 @@ test("REQ-10-1 characterizes GET /board placement, prompt, recovery, Supabase, a
     ])
     assert.deepEqual(cards.done.map(sanitizeCard), [
       {
-        keys: ["column", "currentStage", "dbRelevance", "hasBlockedRun", "hasOpenPrompt", "hasReviewGateWaiting", "itemCode", "itemId", "meta", "phaseStatus", "recovery_user_message", "summary", "supabaseProjectRef", "title", "workspaceId", "workspaceRoot"],
+        keys: ["chatEntry", "chatEntryFreshness", "column", "currentStage", "dbRelevance", "hasBlockedRun", "hasOpenPrompt", "hasReviewGateWaiting", "itemCode", "itemId", "messagesEntry", "messagesEntryFreshness", "meta", "phaseStatus", "recovery_user_message", "summary", "supabaseProjectRef", "title", "visibleActions", "visibleActionsFreshness", "workspaceId", "workspaceRoot"],
         itemCode: doneItem.code,
         itemId: doneItem.id,
         title: "Done item",
@@ -701,6 +701,8 @@ test("REQ-10-1 characterizes the touched route matrix and current OpenAPI board 
     })
     assert.deepEqual(boardCard.required, ["itemCode", "itemId", "title", "summary", "column", "phaseStatus", "meta"])
     assert.deepEqual(Object.keys(boardCard.properties ?? {}).sort(), [
+      "chatEntry",
+      "chatEntryFreshness",
       "column",
       "currentStage",
       "dbRelevance",
@@ -710,6 +712,8 @@ test("REQ-10-1 characterizes the touched route matrix and current OpenAPI board 
       "itemCode",
       "itemId",
       "latestRunId",
+      "messagesEntry",
+      "messagesEntryFreshness",
       "meta",
       "phaseStatus",
       "previewUrl",
@@ -719,6 +723,8 @@ test("REQ-10-1 characterizes the touched route matrix and current OpenAPI board 
       "supabaseBranch",
       "supabaseProjectRef",
       "title",
+      "visibleActions",
+      "visibleActionsFreshness",
       "workspaceId",
       "workspaceRoot",
     ])
