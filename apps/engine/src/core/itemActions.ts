@@ -16,6 +16,14 @@ export type ItemAction =
   | "cancel_promotion"
   | "mark_done"
 
+export type VisibleItemAction =
+  | "import_prepared"
+  | "start_visual_companion"
+  | "start_frontend_design"
+  | "promote_to_requirements"
+  | "cancel_promotion"
+  | "promote_to_base"
+
 export const ITEM_ACTIONS: readonly ItemAction[] = [
   "start_brainstorm",
   "start_visual_companion",
@@ -29,6 +37,26 @@ export const ITEM_ACTIONS: readonly ItemAction[] = [
   "cancel_promotion",
   "mark_done"
 ] as const
+
+export const VISIBLE_ACTION_FACTS_FRESHNESS = Object.freeze({
+  strategy: "workspace_sse",
+  invalidatedBy: [
+    "item_column_changed",
+    "prompt_requested",
+    "prompt_answered",
+    "run_started",
+    "run_resumed",
+    "run_blocked",
+    "run_failed",
+    "run_finished",
+    "phase_started",
+    "phase_completed",
+    "phase_failed",
+  ],
+} satisfies {
+  strategy: "workspace_sse"
+  invalidatedBy: string[]
+})
 
 export type ResumePayload = {
   summary: string
@@ -161,6 +189,37 @@ export const ITEM_ACTION_MATRIX: Record<ItemAction, Record<string, Transition>> 
 export function lookupTransition(action: ItemAction, column: ColumnKey, phase: PhaseKey): Transition {
   const table = ITEM_ACTION_MATRIX[action]
   return table[`${column}/${phase}`] ?? table[`${column}/*`] ?? { kind: "reject" }
+}
+
+export function visibleActionsForItem(input: {
+  column: ColumnKey
+  phase: string
+  currentStage?: string | null
+  hasOpenPrompt?: boolean
+  hasReviewGateWaiting?: boolean
+  hasBlockedRun?: boolean
+}): VisibleItemAction[] {
+  const phase = input.phase
+  const stage = input.currentStage ?? null
+
+  if ((input.column === "idea" || input.column === "requirements") && phase !== "running") {
+    return ["import_prepared"]
+  }
+  if (input.column === "brainstorm" && (phase === "completed" || phase === "review_required")) {
+    return ["start_visual_companion", "import_prepared"]
+  }
+  if (input.column === "frontend" && (phase === "completed" || phase === "review_required")) {
+    if (stage === "visual-companion") return ["start_frontend_design"]
+    if (stage === "frontend-design" || stage == null) return ["promote_to_requirements"]
+    return []
+  }
+  if (input.column === "merge") {
+    const actions: VisibleItemAction[] = []
+    if (input.hasReviewGateWaiting) actions.push("cancel_promotion")
+    if (input.hasReviewGateWaiting || input.hasBlockedRun || input.hasOpenPrompt) actions.push("promote_to_base")
+    return actions
+  }
+  return []
 }
 
 export function isItemAction(v: unknown): v is ItemAction {

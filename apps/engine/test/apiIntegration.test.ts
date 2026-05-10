@@ -147,6 +147,23 @@ test("OpenAPI and prose document recovery_user_message on board and run DTOs", (
   assert.match(contract, /clients should render that engine-provided copy before generic fallback text/)
 })
 
+test("PROJ-9 REQ-4 rollout contract documents consumer surfaces, freshness, and board budget", () => {
+  const contract = readFileSync(resolve("../../docs/api-contract.md"), "utf8")
+
+  assert.match(contract, /Engine-Owned Read-Model Fact Contract/)
+  assert.match(contract, /visibleActions \+ `visibleActionsFreshness`|`visibleActions` \+ `visibleActionsFreshness`/)
+  assert.match(contract, /Board\/item-detail chat launch path/)
+  assert.match(contract, /Board\/item-detail messages launch path/)
+  assert.match(contract, /Setup workspace-presence panel/)
+  assert.match(contract, /Setup secrets-stub panel/)
+  assert.match(contract, /Setup Git identity panel/)
+  assert.match(contract, /workspace_sse/)
+  assert.match(contract, /per_request/)
+  assert.match(contract, /1 KB per\s+card/)
+  assert.match(contract, /must stay off [`']?\/board[`']?/)
+  assert.match(contract, /GET \/items\/:id/)
+})
+
 test("PROJ-3-PRD-2 AC-14 capability API changes are additive only", () => {
   const openapi = readFileSync(resolve("src/api/openapi.json"), "utf8")
   assert.match(openapi, /capabilityOutcomes/)
@@ -383,10 +400,111 @@ test("GET /items/:id includes allowed actions for the item detail toolbar", asyn
       headers: authHeaders(),
     })
     assert.equal(res.status, 200)
-    const body = await res.json() as { allowedActions?: string[] }
+    const body = await res.json() as {
+      allowedActions?: string[]
+      visibleActions?: string[]
+      visibleActionsFreshness?: { strategy?: string; invalidatedBy?: string[] }
+    }
     assert.ok(Array.isArray(body.allowedActions))
     assert.ok(body.allowedActions.includes("start_brainstorm"))
     assert.ok(body.allowedActions.includes("import_prepared"))
+    assert.deepEqual(body.visibleActions, ["import_prepared"])
+    assert.equal(body.visibleActionsFreshness?.strategy, "workspace_sse")
+    assert.ok(body.visibleActionsFreshness?.invalidatedBy?.includes("item_column_changed"))
+  } finally {
+    await stopServer(proc)
+    rmSync(rootPath, { recursive: true, force: true })
+  }
+})
+
+test("board and item detail expose matching visible action facts for the same item state", async () => {
+  const dbPath = tmpDbPath()
+  const rootPath = mkdtempSync(join(tmpdir(), "be2-visible-actions-root-"))
+  const db = initDatabase(dbPath)
+  const repos = new Repos(db)
+  const workspace = repos.upsertWorkspace({ key: "demo", name: "Demo", rootPath })
+  const item = repos.createItem({ workspaceId: workspace.id, title: "Frontend item", description: "visible actions" })
+  repos.setItemColumn(item.id, "frontend", "completed")
+  repos.setItemCurrentStage(item.id, "frontend-design")
+  db.close()
+  const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
+  try {
+    await waitForHealth(base)
+
+    const boardRes = await fetch(`${base}/board?workspace=${encodeURIComponent(workspace.key)}`, {
+      headers: authHeaders(),
+    })
+    assert.equal(boardRes.status, 200)
+    const boardBody = await boardRes.json() as {
+      columns: Array<{ key: string; cards: Array<{ itemId: string; visibleActions?: string[]; visibleActionsFreshness?: { strategy?: string; invalidatedBy?: string[] } }> }>
+    }
+    const boardCard = boardBody.columns.flatMap(column => column.cards).find(card => card.itemId === item.id)
+    assert.ok(boardCard)
+    assert.deepEqual(boardCard.visibleActions, ["promote_to_requirements"])
+    assert.equal(boardCard.visibleActionsFreshness?.strategy, "workspace_sse")
+
+    const itemRes = await fetch(`${base}/items/${encodeURIComponent(item.id)}`, {
+      headers: authHeaders(),
+    })
+    assert.equal(itemRes.status, 200)
+    const itemBody = await itemRes.json() as { visibleActions?: string[] }
+    assert.deepEqual(itemBody.visibleActions, boardCard.visibleActions)
+  } finally {
+    await stopServer(proc)
+    rmSync(rootPath, { recursive: true, force: true })
+  }
+})
+
+test("visible action facts update after the declared invalidation transition", async () => {
+  const dbPath = tmpDbPath()
+  const rootPath = mkdtempSync(join(tmpdir(), "be2-visible-actions-transition-root-"))
+  const db = initDatabase(dbPath)
+  const repos = new Repos(db)
+  const workspace = repos.upsertWorkspace({ key: "demo", name: "Demo", rootPath })
+  const item = repos.createItem({ workspaceId: workspace.id, title: "Transition item", description: "facts transition" })
+  repos.setItemColumn(item.id, "frontend", "completed")
+  repos.setItemCurrentStage(item.id, "frontend-design")
+  db.close()
+  const { proc, base } = startServer({ BEERENGINEER_UI_DB_PATH: dbPath })
+  try {
+    await waitForHealth(base)
+
+    const beforeBoardRes = await fetch(`${base}/board?workspace=${encodeURIComponent(workspace.key)}`, {
+      headers: authHeaders(),
+    })
+    assert.equal(beforeBoardRes.status, 200)
+    const beforeBoard = await beforeBoardRes.json() as {
+      columns: Array<{ cards: Array<{ itemId: string; visibleActions?: string[]; visibleActionsFreshness?: { invalidatedBy?: string[] } }> }>
+    }
+    const beforeCard = beforeBoard.columns.flatMap(column => column.cards).find(card => card.itemId === item.id)
+    assert.ok(beforeCard)
+    assert.deepEqual(beforeCard.visibleActions, ["promote_to_requirements"])
+    assert.ok(beforeCard.visibleActionsFreshness?.invalidatedBy?.includes("item_column_changed"))
+
+    const actionRes = await fetch(`${base}/items/${encodeURIComponent(item.id)}/actions/promote_to_requirements`, {
+      method: "POST",
+      headers: authHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({}),
+    })
+    assert.equal(actionRes.status, 200)
+
+    const afterBoardRes = await fetch(`${base}/board?workspace=${encodeURIComponent(workspace.key)}`, {
+      headers: authHeaders(),
+    })
+    assert.equal(afterBoardRes.status, 200)
+    const afterBoard = await afterBoardRes.json() as {
+      columns: Array<{ cards: Array<{ itemId: string; visibleActions?: string[] }> }>
+    }
+    const afterCard = afterBoard.columns.flatMap(column => column.cards).find(card => card.itemId === item.id)
+    assert.ok(afterCard)
+    assert.deepEqual(afterCard.visibleActions, ["import_prepared"])
+
+    const itemRes = await fetch(`${base}/items/${encodeURIComponent(item.id)}`, {
+      headers: authHeaders(),
+    })
+    assert.equal(itemRes.status, 200)
+    const itemBody = await itemRes.json() as { visibleActions?: string[] }
+    assert.deepEqual(itemBody.visibleActions, ["import_prepared"])
   } finally {
     await stopServer(proc)
     rmSync(rootPath, { recursive: true, force: true })

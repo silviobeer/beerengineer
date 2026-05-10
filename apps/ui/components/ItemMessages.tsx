@@ -1,9 +1,17 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  NO_TARGET_RUN_ENTRY_FACT,
+  recordRunEntryFallback,
+  resolveFallbackMessagesRunId,
+  type RunEntryFact,
+} from "@/lib/runEntryFacts";
 
 interface ItemMessagesProps {
   readonly itemId: string;
+  readonly messagesEntry?: RunEntryFact;
+  readonly messagesEntryMissing?: boolean;
 }
 
 /**
@@ -37,13 +45,6 @@ const LEVEL_BADGE_CLASS: Record<MessagingLevel, string> = {
 const MESSAGE_BACKFILL_LIMIT = 500;
 const MAX_MESSAGE_BACKFILL_PAGES = 40;
 
-interface EngineRun {
-  id: string;
-  item_id: string;
-  status: string;
-  created_at: number;
-}
-
 interface EngineMessageEntry {
   id: string;
   ts: string;
@@ -61,6 +62,18 @@ interface EngineMessagesResponse {
   nextSince: string | null;
   entries: EngineMessageEntry[];
 }
+
+const MESSAGE_EVENT_TYPES = [
+  "run_started", "run_finished", "run_blocked", "run_failed", "run_resumed",
+  "phase_started", "phase_completed", "phase_failed",
+  "prompt_requested", "prompt_answered",
+  "agent_message", "user_message",
+  "artifact_written", "log",
+  "loop_iteration", "tool_called", "tool_result",
+  "llm_thinking", "llm_tokens",
+  "presentation", "project_created", "wireframes_ready", "design_ready",
+  "external_remediation_recorded",
+] as const;
 
 function pickText(env: EngineMessageEntry): string {
   const p: Record<string, unknown> = env.payload ?? {};
@@ -121,7 +134,34 @@ async function fetchBackfilledMessages(runId: string): Promise<{
   return { entries, lastSeenId };
 }
 
-export function ItemMessages({ itemId }: Readonly<ItemMessagesProps>) {
+function entryRunId(entry: RunEntryFact): string | null {
+  if (entry.status === "resolved") return entry.targetRunId;
+  return null;
+}
+
+async function resolveMessagesRunId(
+  itemId: string,
+  messagesEntry: RunEntryFact,
+  messagesEntryMissing: boolean,
+): Promise<string | null> {
+  if (!messagesEntryMissing) return entryRunId(messagesEntry);
+  recordRunEntryFallback({ itemId, surface: "messages" });
+  return resolveFallbackMessagesRunId(itemId);
+}
+
+function messageLevelFor(value: number): MessagingLevel {
+  if (value === 0 || value === 1 || value === 2) return value;
+  return 0;
+}
+
+export function ItemMessages({
+  itemId,
+  messagesEntry,
+  messagesEntryMissing = false,
+}: Readonly<ItemMessagesProps>) {
+  const effectiveMessagesEntry = messagesEntry ?? NO_TARGET_RUN_ENTRY_FACT;
+  const effectiveMessagesEntryMissing =
+    messagesEntryMissing || messagesEntry === undefined;
   const [runId, setRunId] = useState<string | null>(null);
   const [entries, setEntries] = useState<EngineMessageEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -146,22 +186,21 @@ export function ItemMessages({ itemId }: Readonly<ItemMessagesProps>) {
 
     (async () => {
       try {
-        const runsRes = await fetch("/api/runs", { cache: "no-store" });
-        if (!runsRes.ok) throw new Error(`runs_${runsRes.status}`);
-        const runs = ((await runsRes.json()) as { runs?: EngineRun[] }).runs ?? [];
-        const latest = runs
-          .filter((r) => r.item_id === itemId)
-          .sort((a, b) => b.created_at - a.created_at)[0];
+        const resolvedRunId = await resolveMessagesRunId(
+          itemId,
+          effectiveMessagesEntry,
+          effectiveMessagesEntryMissing,
+        );
         if (cancelled) return;
-        if (!latest) {
+        if (!resolvedRunId) {
           setLoaded(true);
           return;
         }
-        const body = await fetchBackfilledMessages(latest.id);
+        const body = await fetchBackfilledMessages(resolvedRunId);
         if (cancelled) return;
         for (const e of body.entries) seenIdsRef.current.add(e.id);
         streamSinceRef.current = body.lastSeenId;
-        setRunId(latest.id);
+        setRunId(resolvedRunId);
         setEntries(body.entries);
         setLoaded(true);
       } catch (err) {
@@ -174,23 +213,23 @@ export function ItemMessages({ itemId }: Readonly<ItemMessagesProps>) {
     return () => {
       cancelled = true;
     };
-  }, [itemId]);
+  }, [effectiveMessagesEntry, effectiveMessagesEntryMissing, itemId]);
 
   // Open run-scoped SSE for live appends. We bypass SSEContext here because
   // its registerLogListener only dispatches log/artifact events; we want every
   // run event for the messages view.
   useEffect(() => {
     if (!runId) return;
-    const Ctor = (globalThis as { EventSource?: new (u: string) => EventSource })
-      .EventSource;
+    const Ctor = globalThis.EventSource;
     if (!Ctor) return;
     const params = new URLSearchParams({ level: "0" });
     if (streamSinceRef.current) params.set("since", streamSinceRef.current);
     const url = `/api/runs/${encodeURIComponent(runId)}/events?${params.toString()}`;
     const es = new Ctor(url);
-    const append = (e: MessageEvent) => {
+    const append: EventListener = (event) => {
+      if (!(event instanceof MessageEvent)) return;
       try {
-        const data = JSON.parse(e.data) as EngineMessageEntry;
+        const data: EngineMessageEntry = JSON.parse(event.data);
         if (!data?.id || data.runId !== runId) return;
         if (seenIdsRef.current.has(data.id)) return;
         seenIdsRef.current.add(data.id);
@@ -203,18 +242,9 @@ export function ItemMessages({ itemId }: Readonly<ItemMessagesProps>) {
     // events). EventSource.onmessage only fires for *unnamed* events, so we
     // register addEventListener for each canonical type produced by
     // messagingProjection.ts.
-    const types = [
-      "run_started", "run_finished", "run_blocked", "run_failed", "run_resumed",
-      "phase_started", "phase_completed", "phase_failed",
-      "prompt_requested", "prompt_answered",
-      "agent_message", "user_message",
-      "artifact_written", "log",
-      "loop_iteration", "tool_called", "tool_result",
-      "llm_thinking", "llm_tokens",
-      "presentation", "project_created", "wireframes_ready", "design_ready",
-      "external_remediation_recorded",
-    ] as const;
-    for (const t of types) es.addEventListener(t, append as EventListener);
+    for (const eventType of MESSAGE_EVENT_TYPES) {
+      es.addEventListener(eventType, append);
+    }
     return () => {
       try {
         es.close();
@@ -290,9 +320,7 @@ export function ItemMessages({ itemId }: Readonly<ItemMessagesProps>) {
         ) : (
           <ul className="divide-y divide-zinc-900">
             {visible.map((entry) => {
-              const lvl = (entry.level === 0 || entry.level === 1 || entry.level === 2
-                ? entry.level
-                : 0) as MessagingLevel;
+              const lvl = messageLevelFor(entry.level);
               return (
                 <li
                   key={entry.id}

@@ -177,6 +177,12 @@ export interface BoardCardDTO {
   workspaceId?: string;
   workspaceRoot?: string | null;
   supabaseProjectRef?: string | null;
+  chatEntry: import("./runEntryFacts").RunEntryFact;
+  chatEntryFreshness: import("./runEntryFacts").RunEntryFactFreshness;
+  chatEntryMissing?: boolean;
+  messagesEntry: import("./runEntryFacts").RunEntryFact;
+  messagesEntryFreshness: import("./runEntryFacts").RunEntryFactFreshness;
+  messagesEntryMissing?: boolean;
   dbRelevance?: {
     value: boolean;
     source: "explicit" | "override" | "detector";
@@ -187,6 +193,8 @@ export interface BoardCardDTO {
     name: string;
     lifecycleState?: string | null;
   };
+  visibleActions?: import("./visibleActionFacts").VisibleActionId[];
+  visibleActionsFreshness?: import("./visibleActionFacts").VisibleActionFactsFreshness;
   /** Live override from SSE; when defined, wins over the static flags. */
   liveAttention?: boolean | null;
 }
