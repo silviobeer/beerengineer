@@ -8,7 +8,8 @@ import { buildSupabaseWorkflowHook, prepareRun, type SupabaseAdapterFactory } fr
 import { resolveWorkflowLlmOptions } from "./runSubscribers.js"
 import { loadResumeReadiness, performResume, type PerformResumeInput } from "./resume.js"
 import { getRegisteredWorkspace } from "./workspaces.js"
-import { deriveProjectStartStages, loadPreparedImportBundleWithLlmFallback, seedPreparedImportArtifacts, type PreparedImportBundle } from "./preparedImport.js"
+import { deriveProjectStartStages, seedPreparedImportArtifacts, type PreparedImportBundle } from "./preparedImport.js"
+import { defaultImportContextGenerator, writeImportContextArtifact, type ImportContextGenerator } from "./importContext.js"
 import { layout } from "./workspaceLayout.js"
 import { resolveWorkflowContextForItemRun, resolveWorkflowContextForRun } from "./workflowContextResolver.js"
 import { isExecutionOwnershipHandoffRun, queueExecutionOwnershipHandoffResume } from "./executionOwnershipHandoff.js"
@@ -757,6 +758,7 @@ export async function startPreparedImportForItem(
     onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
     supabaseAdapterFactory?: SupabaseAdapterFactory
     capabilityResolver?: WorkflowCapabilityResolver
+    importContextGenerator?: ImportContextGenerator
     prepareRunImpl?: PrepareRunImpl
   },
 ): Promise<PreparedImportRunResult> {
@@ -774,6 +776,7 @@ export async function startPreparedImportForItem(
     onItemColumnChanged: input.onItemColumnChanged,
     supabaseAdapterFactory: input.supabaseAdapterFactory,
     capabilityResolver: input.capabilityResolver,
+    importContextGenerator: input.importContextGenerator,
     prepareRunImpl: input.prepareRunImpl,
   })
   if (!prepared.ok) {
@@ -800,6 +803,7 @@ export async function prepareForegroundPreparedImportRun(
     onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
     supabaseAdapterFactory?: SupabaseAdapterFactory
     capabilityResolver?: WorkflowCapabilityResolver
+    importContextGenerator?: ImportContextGenerator
     prepareRunImpl?: PrepareRunImpl
   },
 ): Promise<PreparedForegroundImportRunResult> {
@@ -827,16 +831,19 @@ export async function prepareForegroundPreparedImportRun(
   if (blocker) return blocker
 
   let bundle: PreparedImportBundle
+  let importContext
   try {
     const llm = await resolveWorkflowLlmOptions(workspace)
-    bundle = await loadPreparedImportBundleWithLlmFallback(
-      input.sourceDir,
-      {
+    const generated = await (input.importContextGenerator ?? defaultImportContextGenerator)({
+      sourceDir: input.sourceDir,
+      item: {
         title: existingItem?.title ?? "Prepared import",
         description: existingItem?.description ?? "",
       },
-      llm?.stage,
-    )
+      llm: llm?.stage,
+    })
+    bundle = generated.bundle
+    importContext = generated.importContext
   } catch (error) {
     return { ok: false, status: 422, error: (error as Error).message }
   }
@@ -875,7 +882,14 @@ export async function prepareForegroundPreparedImportRun(
   const ctx = targetRun ? resolveWorkflowContextForItemRun(repos, item, targetRun) : null
   if (!ctx) return { ok: false, status: 409, error: "seed_failed" }
   const seeded = seedPreparedImportArtifacts(ctx, bundle, { sourceDir: input.sourceDir })
-  return { ok: true, runId: prepared.runId, itemId: item.id, warnings: seeded.warnings, start: prepared.start }
+  writeImportContextArtifact(ctx, importContext)
+  return {
+    ok: true,
+    runId: prepared.runId,
+    itemId: item.id,
+    warnings: Array.from(new Set([...seeded.warnings, ...importContext.warnings])),
+    start: prepared.start,
+  }
 }
 
 function resolvePreparedImportWorkspace(
