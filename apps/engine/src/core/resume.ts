@@ -15,6 +15,7 @@ import type { ExternalRemediationRow, Repos, RunRow, WorkerOwnerKind } from "../
 import { attachRunSubscribers, resolveWorkflowLlmOptions } from "./runSubscribers.js"
 import { preparedImportSourceSnapshotDir } from "./preparedImport.js"
 import type { SupabaseWorkflowHook } from "./supabase/workflowHook.js"
+import { parseSupabaseProvisioningRecoveryPayload } from "./supabase/recoveryPayload.js"
 import {
   claimWorkerLease,
   defaultWorkerInstanceId,
@@ -297,7 +298,11 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
               },
             )
             assertWorkflowNotCancelled()
-            const finalRun = input.repos.getRun(run.id)
+            let finalRun = input.repos.getRun(run.id)
+            if (finalRun?.recovery_status && parseSupabaseProvisioningRecoveryPayload(finalRun.recovery_payload_json)) {
+              input.repos.clearRunRecovery(run.id)
+              finalRun = input.repos.getRun(run.id)
+            }
             if (!finalRun?.recovery_status) {
               await persistWorkflowRunState(
                 ctx,
