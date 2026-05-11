@@ -7,10 +7,13 @@ import { join } from "node:path"
 import { buildCodexCommand, codexSandboxBypassEnabled } from "../src/llm/hosted/providers/codex.js"
 import type { HostedProviderInvokeInput } from "../src/llm/hosted/providerRuntime.js"
 import { invokeCodex } from "../src/llm/hosted/providers/codex.js"
+import { initDatabase } from "../src/db/connection.js"
+import { Repos } from "../src/db/repositories.js"
 import {
   markCodexSandboxCapabilitySupported,
   markCodexSandboxCapabilityUnsupported,
   resetCodexSandboxPolicyForTests,
+  setCodexSandboxCapabilityStore,
 } from "../src/llm/hosted/providers/codexSandboxPolicy.js"
 
 function inputFor(policyMode: "no-tools" | "safe-readonly" | "safe-workspace-write" | "unsafe-autonomous-write", opts: { resume?: boolean } = {}): HostedProviderInvokeInput {
@@ -375,14 +378,22 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_
 
 test("recognized sandbox failure disables later sandbox use until revalidation", async () => {
   resetCodexSandboxPolicyForTests()
-  markCodexSandboxCapabilitySupported()
   const dir = mkdtempSync(join(tmpdir(), "be2-codex-provider-"))
   const binDir = join(dir, "bin")
   const attemptsPath = join(dir, "attempts.log")
+  const db = initDatabase(join(dir, "test.sqlite"))
+  const repos = new Repos(db)
   const previousPath = process.env.PATH
   const previousBypass = process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
 
   try {
+    setCodexSandboxCapabilityStore({
+      load: () => repos.getCodexSandboxCapabilitySnapshot()?.capability ?? null,
+      persist: capability => {
+        repos.setCodexSandboxCapabilitySnapshot(capability)
+      },
+    })
+    markCodexSandboxCapabilitySupported()
     delete process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
     makeStubBin(
       binDir,
@@ -426,6 +437,13 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_
       session: null,
     })
 
+    resetCodexSandboxPolicyForTests()
+    setCodexSandboxCapabilityStore({
+      load: () => repos.getCodexSandboxCapabilitySnapshot()?.capability ?? null,
+      persist: capability => {
+        repos.setCodexSandboxCapabilitySnapshot(capability)
+      },
+    })
     await invokeCodex({
       prompt: "hello again",
       runtime: {
@@ -448,6 +466,7 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_
     else process.env.PATH = previousPath
     if (previousBypass === undefined) delete process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
     else process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS = previousBypass
+    db.close()
     rmSync(dir, { recursive: true, force: true })
     resetCodexSandboxPolicyForTests()
   }
@@ -596,6 +615,71 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_
     assert.match(attempts[1] ?? "", /--sandbox workspace-write/)
     assert.doesNotMatch(attempts[0] ?? "", /--dangerously-bypass-approvals-and-sandbox/)
     assert.doesNotMatch(attempts[1] ?? "", /--dangerously-bypass-approvals-and-sandbox/)
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH
+    else process.env.PATH = previousPath
+    if (previousBypass === undefined) delete process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
+    else process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS = previousBypass
+    rmSync(dir, { recursive: true, force: true })
+    resetCodexSandboxPolicyForTests()
+  }
+})
+
+test("invokeCodex surfaces the retry failure when bypass recovery also fails", async () => {
+  resetCodexSandboxPolicyForTests()
+  markCodexSandboxCapabilitySupported()
+  const dir = mkdtempSync(join(tmpdir(), "be2-codex-provider-"))
+  const binDir = join(dir, "bin")
+  const attemptsPath = join(dir, "attempts.log")
+  const previousPath = process.env.PATH
+  const previousBypass = process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
+
+  try {
+    delete process.env.BEERENGINEER_CODEX_SANDBOX_BYPASS
+    makeStubBin(
+      binDir,
+      "codex",
+      `
+count=0
+if [ -f "${attemptsPath}" ]; then
+  count="$(wc -l < "${attemptsPath}")"
+fi
+count="$((count + 1))"
+printf '%s\n' "$*" >> "${attemptsPath}"
+if [ "$count" -eq 1 ]; then
+  printf '%s\n' 'bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted' >&2
+  exit 1
+fi
+printf '%s\n' 'retry command failed' >&2
+exit 42
+`,
+    )
+    process.env.PATH = `${binDir}:${previousPath ?? ""}`
+
+    await assert.rejects(
+      () =>
+        invokeCodex({
+          prompt: "hello",
+          runtime: {
+            harness: "codex",
+            runtime: "cli",
+            provider: "openai",
+            workspaceRoot: dir,
+            policy: { mode: "safe-workspace-write" },
+          } as HostedProviderInvokeInput["runtime"],
+          session: null,
+        }),
+      error =>
+        error instanceof Error
+        && /exited with code 42/i.test(error.message)
+        && /retry command failed/i.test(error.message)
+        && !/sandbox retry failed/i.test(error.message),
+    )
+
+    const attempts = readFileSync(attemptsPath, "utf8").trim().split(/\r?\n/)
+    assert.equal(attempts.length, 2)
+    assert.match(attempts[0] ?? "", /--sandbox workspace-write/)
+    assert.match(attempts[1] ?? "", /--dangerously-bypass-approvals-and-sandbox/)
   } finally {
     if (previousPath === undefined) delete process.env.PATH
     else process.env.PATH = previousPath
