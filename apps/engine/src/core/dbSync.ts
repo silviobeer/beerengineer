@@ -619,6 +619,7 @@ function persistRunRecoveryEvent(
   wasSoleLiveRun: () => boolean,
 ): void {
   const soleLive = wasSoleLiveRun()
+  const existing = repos.getRun(event.runId)
   repos.updateRun(event.runId, { status: event.type === "run_blocked" ? "blocked" : "failed" })
   if (soleLive) repos.setItemCurrentStage(itemId, null)
   const scope = event.scope
@@ -627,7 +628,8 @@ function persistRunRecoveryEvent(
     status: event.type === "run_blocked" ? "blocked" : "failed",
     scope: scope.type,
     scopeRef: scopeRefVal,
-    summary: event.summary
+    summary: event.summary,
+    payloadJson: existing?.recovery_payload_json ?? null,
   })
   persistLogOnlyEvent(repos, track, event, currentEvent => ({
     runId: currentEvent.runId,
