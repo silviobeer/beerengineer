@@ -519,6 +519,15 @@ export class Repos {
     return this.getRun(runId)
   }
 
+  clearRunSupabaseBranch(runId: string): RunRow | undefined {
+    this.run(
+      "UPDATE runs SET supabase_branch_ref = NULL, supabase_branch_name = NULL, supabase_branch_lifecycle_state = NULL, updated_at = ? WHERE id = ?",
+      now(),
+      runId,
+    )
+    return this.getRun(runId)
+  }
+
   setRunSupabaseLifecycleState(runId: string, lifecycleState: string): RunRow | undefined {
     this.run("UPDATE runs SET supabase_branch_lifecycle_state = ?, updated_at = ? WHERE id = ?", lifecycleState, now(), runId)
     return this.getRun(runId)
