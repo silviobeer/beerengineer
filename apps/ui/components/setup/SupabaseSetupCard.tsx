@@ -29,6 +29,8 @@ export function SupabaseSetupCard({ workspaceId = "default", supabase }: Readonl
   const connected = isConnected && Boolean(supabase?.projectRef);
   const dbMode = supabase?.dbMode;
   const isDirectMode = connected && dbMode === "direct";
+  const showTokenEditor = connected ? mode === "rotate" : true;
+  const showProjectRefEditor = connected === false;
   const projectRefInvalid = projectRef.length > 0 && !PROJECT_REF_PATTERN.test(projectRef);
 
   async function validate() {
@@ -111,22 +113,22 @@ export function SupabaseSetupCard({ workspaceId = "default", supabase }: Readonl
   }
 
   return (
-    <article className="space-y-4 border border-zinc-800 bg-zinc-900 p-4" data-testid="supabase-setup-card">
+    <article className="space-y-4 border border-[var(--color-zinc-800)] bg-[var(--color-zinc-900)] p-4" data-testid="supabase-setup-card">
       <div>
-        <h3 className="text-sm font-medium text-zinc-100">Supabase database connection</h3>
-        <p className="text-sm text-zinc-400">
+        <h3 className="text-sm font-medium text-[var(--color-zinc-100)]">Supabase database connection</h3>
+        <p className="text-sm text-[var(--color-zinc-400)]">
           {isDirectMode
             ? "Direct mode is active. Persistent test branches are unavailable for this project."
             : "Connect a Supabase project for DB-relevant wave isolation."}
         </p>
       </div>
-      {message ? <output className="block text-sm text-emerald-300">{message}</output> : null}
+      {message ? <output className="block text-sm text-[var(--color-emerald-300)]">{message}</output> : null}
       {error || projectRefInvalid ? (
-        <p role="alert" className="text-sm text-amber-300">{projectRefInvalid ? PROJECT_REF_ERROR : error}</p>
+        <p role="alert" className="text-sm text-[var(--color-amber-300)]">{projectRefInvalid ? PROJECT_REF_ERROR : error}</p>
       ) : null}
       {connected ? (
         <fieldset className="space-y-2 text-sm">
-          <legend className="text-zinc-300">Existing connection</legend>
+          <legend className="text-[var(--color-zinc-300)]">Existing connection</legend>
           <label className="mr-3 inline-flex items-center gap-1">
             <input type="radio" name="supabase-mode" checked={mode === "leave"} onChange={() => setMode("leave")} />
             <span>Leave as is</span>
@@ -144,43 +146,43 @@ export function SupabaseSetupCard({ workspaceId = "default", supabase }: Readonl
       {connected ? (
         <div className="grid gap-2 md:grid-cols-2">
           <label className="block space-y-1 text-sm">
-            <span className="text-zinc-300">Project ref</span>
-            <input readOnly aria-label="Connected Supabase project ref" className="w-full border border-zinc-800 bg-zinc-950 p-2 text-zinc-400" value={supabase?.projectRef ?? ""} />
+            <span className="text-[var(--color-zinc-300)]">Project ref</span>
+            <input readOnly aria-label="Connected Supabase project ref" className="w-full border border-[var(--color-zinc-800)] bg-[var(--color-zinc-950)] p-2 text-[var(--color-zinc-400)]" value={supabase?.projectRef ?? ""} />
           </label>
           <label className="block space-y-1 text-sm">
-            <span className="text-zinc-300">Region</span>
-            <input readOnly aria-label="Connected Supabase region" className="w-full border border-zinc-800 bg-zinc-950 p-2 text-zinc-400" value={supabase?.region ?? ""} />
+            <span className="text-[var(--color-zinc-300)]">Region</span>
+            <input readOnly aria-label="Connected Supabase region" className="w-full border border-[var(--color-zinc-800)] bg-[var(--color-zinc-950)] p-2 text-[var(--color-zinc-400)]" value={supabase?.region ?? ""} />
           </label>
           <label className="block space-y-1 text-sm md:col-span-2">
-            <span className="text-zinc-300">Database mode</span>
-            <input readOnly aria-label="Connected Supabase database mode" className="w-full border border-zinc-800 bg-zinc-950 p-2 text-zinc-400" value={dbMode ?? "branching"} />
+            <span className="text-[var(--color-zinc-300)]">Database mode</span>
+            <input readOnly aria-label="Connected Supabase database mode" className="w-full border border-[var(--color-zinc-800)] bg-[var(--color-zinc-950)] p-2 text-[var(--color-zinc-400)]" value={dbMode ?? "branching"} />
           </label>
         </div>
       ) : null}
-      {!connected || mode === "rotate" ? (
+      {showTokenEditor ? (
         <>
       <label className="block space-y-1 text-sm">
-        <span className="text-zinc-300">Management API token</span>
-        <input aria-label="Supabase Management API token" type="password" className="w-full border border-zinc-800 bg-zinc-950 p-2" value={token} onChange={(event) => setToken(event.target.value)} />
+        <span className="text-[var(--color-zinc-300)]">Management API token</span>
+        <input aria-label="Supabase Management API token" type="password" className="w-full border border-[var(--color-zinc-800)] bg-[var(--color-zinc-950)] p-2" value={token} onChange={(event) => setToken(event.target.value)} />
       </label>
-      {!connected ? (
+      {showProjectRefEditor ? (
       <label className="block space-y-1 text-sm">
-        <span className="text-zinc-300">Project ref</span>
-        <input aria-label="Supabase project ref" pattern="^[a-z]{20}$" maxLength={20} className="w-full border border-zinc-800 bg-zinc-950 p-2" value={projectRef} onChange={(event) => setProjectRef(event.target.value)} />
+        <span className="text-[var(--color-zinc-300)]">Project ref</span>
+        <input aria-label="Supabase project ref" pattern="^[a-z]{20}$" maxLength={20} className="w-full border border-[var(--color-zinc-800)] bg-[var(--color-zinc-950)] p-2" value={projectRef} onChange={(event) => setProjectRef(event.target.value)} />
       </label>
       ) : null}
-      <button type="button" disabled={busy || !token.trim() || (!connected && (!projectRef.trim() || !PROJECT_REF_PATTERN.test(projectRef)))} onClick={connected ? rotate : validate} className="border border-emerald-500 px-2 py-1 text-xs text-emerald-300 disabled:opacity-45">
+      <button type="button" disabled={busy || !token.trim() || (showProjectRefEditor && (!projectRef.trim() || !PROJECT_REF_PATTERN.test(projectRef)))} onClick={connected ? rotate : validate} className="border border-[var(--color-emerald-500)] px-2 py-1 text-xs text-[var(--color-emerald-300)] disabled:opacity-45">
         {busy ? (connected ? "Rotating" : "Validating") : connected ? "Rotate token" : "Validate Supabase"}
       </button>
         </>
       ) : null}
       {connected && mode === "disconnect" ? (
-        <div className="space-y-2 border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-100">
+        <div className="space-y-2 border border-[var(--color-amber-700)] bg-[var(--color-zinc-900)] p-3 text-sm text-[var(--color-zinc-100)]">
           <p>Disconnecting keeps the secret store untouched but removes Supabase project metadata from this workspace.</p>
-          <button type="button" disabled={busy} onClick={disconnect} className="border border-amber-500 px-2 py-1 text-xs text-amber-200 disabled:opacity-45">
+          <button type="button" disabled={busy} onClick={disconnect} className="border border-[var(--color-amber-500)] px-2 py-1 text-xs text-[var(--color-amber-300)] disabled:opacity-45">
             {busy ? "Disconnecting" : "Confirm disconnect"}
           </button>
-          <button type="button" disabled={busy} onClick={() => setMode("leave")} className="ml-2 border border-zinc-700 px-2 py-1 text-xs text-zinc-200 disabled:opacity-45">
+          <button type="button" disabled={busy} onClick={() => setMode("leave")} className="ml-2 border border-[var(--color-zinc-700)] px-2 py-1 text-xs text-[var(--color-zinc-200)] disabled:opacity-45">
             Cancel
           </button>
         </div>
