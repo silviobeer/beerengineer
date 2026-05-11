@@ -595,7 +595,7 @@ function restoreWorkflowExitState(
   }
 }
 
-async function ensureWorkflowGitAdapter(context: WorkflowContext, workspaceRoot?: string) {
+export async function ensureWorkflowGitAdapter(context: WorkflowContext, workspaceRoot?: string) {
   try {
     return createGitAdapter(context)
   } catch (error) {

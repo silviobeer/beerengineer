@@ -1,5 +1,6 @@
-import { isAbsolute, relative, resolve } from "node:path"
+import { isAbsolute, matchesGlob, relative, resolve } from "node:path"
 import { layout, requireItemScopedContext, type WorkflowContext } from "../workspaceLayout.js"
+import { readWorkspaceConfigSync } from "../workspaces/configFile.js"
 import { type GitMode, currentBranch, itemRoot, runGit } from "./shared.js"
 
 /**
@@ -12,7 +13,36 @@ export type WorkspaceInspection =
   | { kind: "ok"; currentBranch: string }
   | { kind: "not-a-repo" }
   | { kind: "git-status-failed"; stderr: string }
-  | { kind: "dirty"; currentBranch: string; trackedCount: number; untrackedCount: number }
+  | { kind: "dirty"; currentBranch: string; trackedCount: number; untrackedCount: number; dirtyPaths: string[] }
+
+export const DEFAULT_DIRTY_MASTER_ALLOWLIST = [".claude/scheduled_tasks.lock"] as const
+
+export function normalizeRepoRelativePath(path: string): string {
+  return path
+    .trim()
+    .replaceAll("\\", "/")
+    .replace(/^\.\/+/, "")
+    .replace(/^\/+/, "")
+    .replace(/\/+/g, "/")
+}
+
+function normalizeAllowlistPattern(pattern: string): string {
+  return normalizeRepoRelativePath(pattern)
+}
+
+export function dirtyPathMatchesAllowlist(path: string, patterns: readonly string[]): boolean {
+  const normalizedPath = normalizeRepoRelativePath(path)
+  if (!normalizedPath) return false
+  return patterns.some(pattern => {
+    const normalizedPattern = normalizeAllowlistPattern(pattern)
+    return normalizedPattern.length > 0 && matchesGlob(normalizedPath, normalizedPattern)
+  })
+}
+
+export function resolveDirtyMasterAllowlistPatterns(workspaceRoot: string): string[] {
+  const configured = readWorkspaceConfigSync(workspaceRoot)?.dirtyMasterAllowlist ?? []
+  return [...new Set([...DEFAULT_DIRTY_MASTER_ALLOWLIST, ...configured])]
+}
 
 function ignoredPathspecs(workspaceRoot: string, ignoredPaths: string[] | undefined): string[] {
   if (!ignoredPaths?.length) return []
@@ -29,7 +59,7 @@ function ignoredPathspecs(workspaceRoot: string, ignoredPaths: string[] | undefi
 
 export function inspectWorkspaceState(
   workspaceRoot: string,
-  options: { ignoredPaths?: string[] } = {},
+  options: { ignoredPaths?: string[]; allowlistPatterns?: string[] } = {},
 ): WorkspaceInspection {
   const inside = runGit(workspaceRoot, ["rev-parse", "--is-inside-work-tree"])
   if (!inside.ok || inside.stdout !== "true") return { kind: "not-a-repo" }
@@ -37,6 +67,7 @@ export function inspectWorkspaceState(
     "status",
     "--porcelain",
     "--branch",
+    "--untracked-files=all",
     "--",
     ".",
     ":(exclude).beerengineer",
@@ -51,12 +82,24 @@ export function inspectWorkspaceState(
   const branch = (aheadBehindIndex >= 0 ? branchWithoutRemote.slice(0, aheadBehindIndex) : branchWithoutRemote).trim()
   const changed = lines.filter(line => !line.startsWith("## "))
   if (changed.length === 0) return { kind: "ok", currentBranch: branch }
+  const dirtyPaths = changed
+    .map(line => normalizeRepoRelativePath(line.slice(3).trim().split(" -> ").at(-1) ?? ""))
+    .filter(Boolean)
+  if (
+    (branch === "main" || branch === "master")
+    && dirtyPaths.length > 0
+    && options.allowlistPatterns?.length
+    && dirtyPaths.every(path => dirtyPathMatchesAllowlist(path, options.allowlistPatterns!))
+  ) {
+    return { kind: "ok", currentBranch: branch }
+  }
   const untrackedCount = changed.filter(line => line.startsWith("?? ")).length
   return {
     kind: "dirty",
     currentBranch: branch,
     trackedCount: changed.length - untrackedCount,
     untrackedCount,
+    dirtyPaths,
   }
 }
 
@@ -72,7 +115,10 @@ export function detectGitMode(context: WorkflowContext): GitMode {
   if (!context.itemSlug?.trim()) {
     throw new Error("git: itemSlug is required (item worktree is mandatory)")
   }
-  const inspection = inspectWorkspaceState(workspaceRoot, { ignoredPaths: context.dirtyCheckIgnoredPaths })
+  const inspection = inspectWorkspaceState(workspaceRoot, {
+    ignoredPaths: context.dirtyCheckIgnoredPaths,
+    allowlistPatterns: resolveDirtyMasterAllowlistPatterns(workspaceRoot),
+  })
   switch (inspection.kind) {
     case "not-a-repo":
       throw new Error(`git: workspace ${workspaceRoot} is not a git repository`)
