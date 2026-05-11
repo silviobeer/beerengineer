@@ -14,9 +14,11 @@ export type EffectiveWorkerCapResolution = {
   workerMemoryBytes: number | null
 }
 
+type WorkerAdmissionIntervalHandle = ReturnType<typeof setInterval>
+
 export type WorkerAdmissionScheduler = {
-  setInterval(callback: () => void, ms: number): unknown
-  clearInterval(handle: unknown): void
+  setInterval(callback: () => void, ms: number): WorkerAdmissionIntervalHandle
+  clearInterval(handle: WorkerAdmissionIntervalHandle): void
 }
 
 export type WorkerAdmissionController = ReturnType<typeof createWorkerAdmissionController>
@@ -34,7 +36,7 @@ function defaultScheduler(): WorkerAdmissionScheduler {
       return handle
     },
     clearInterval(handle) {
-      clearInterval(handle as ReturnType<typeof setInterval>)
+      clearInterval(handle)
     },
   }
 }
@@ -63,7 +65,11 @@ export function resolveEffectiveWorkerCap(input: {
   }
 
   const totalMemoryBytes = input.totalMemoryBytes ?? totalmem()
-  const workerMemoryBytes = input.workerMemoryBytes ?? DEFAULT_WORKER_MEMORY_BYTES
+  const workerMemoryBytes = input.workerMemoryBytes != null
+    && Number.isFinite(input.workerMemoryBytes)
+    && input.workerMemoryBytes > 0
+    ? input.workerMemoryBytes
+    : DEFAULT_WORKER_MEMORY_BYTES
   const rawDerivedCap = Math.floor(totalMemoryBytes / workerMemoryBytes)
   return {
     effectiveWorkerCap: clampWorkerCap(rawDerivedCap),
@@ -97,7 +103,7 @@ export function createWorkerAdmissionController(
   const pending = new Map<string, () => Promise<void>>()
   const launching = new Set<string>()
   let draining = false
-  let intervalHandle: unknown | null = null
+  let intervalHandle: WorkerAdmissionIntervalHandle | null = null
 
   const activeRunningCount = (): number => repos.listRunningRuns().length
 
@@ -171,6 +177,7 @@ export function createWorkerAdmissionController(
     },
     dispose(): void {
       if (intervalHandle != null) scheduler.clearInterval(intervalHandle)
+      intervalHandle = null
     },
   }
 

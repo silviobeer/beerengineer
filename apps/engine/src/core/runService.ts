@@ -874,8 +874,6 @@ export async function prepareForegroundPreparedImportRun(
   if (!gitGate.ok) return gitGate
   const blocker = workflowCapabilityOwnershipBlocker()
   if (blocker) return blocker
-  const admission = resolveAdmissionController(repos, input.admissionController)
-  const shouldQueue = !admission.hasCapacity()
 
   let bundle: PreparedImportBundle
   try {
@@ -899,6 +897,8 @@ export async function prepareForegroundPreparedImportRun(
     dirtyCheckIgnoredPaths: [input.sourceDir],
     skipDesignPrep: true,
   }
+  const admission = resolveAdmissionController(repos, input.admissionController)
+  const shouldQueue = !admission.hasCapacity()
   const prepareRunImpl = input.prepareRunImpl ?? prepareRun
   const prepared = prepareRunImpl(
     {

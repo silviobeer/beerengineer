@@ -256,6 +256,11 @@ export function composeApiPrivilegedDependencies(
         // best-effort cleanup before DB close
       }
       try {
+        admission.dispose()
+      } catch {
+        // best-effort cleanup before DB close
+      }
+      try {
         db.close()
       } catch (err) {
         console.error("[engine] db close during shutdown failed:", (err as Error).message)
