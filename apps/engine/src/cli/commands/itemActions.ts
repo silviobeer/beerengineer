@@ -18,9 +18,16 @@ import {
 import { resolveWorkflowContextForItemRun } from "../../core/workflowContextResolver.js"
 import { formatSupabaseReadinessBlockedCliOutput } from "../../core/supabase/preExecutionReadiness.js"
 import {
+  attachSupabaseBranchCommand,
+  discardSupabaseBranchCommand,
   parseSupabaseProvisioningRecoveryPayload,
   parseSupabaseReadinessRecoveryPayload,
+  runResumeCommand,
 } from "../../core/supabase/recoveryPayload.js"
+import {
+  attachSupabaseBranchToRunRecovery,
+  discardSupabaseBranchFromRunRecovery,
+} from "../../core/supabase/runRecoveryActions.js"
 import type { ItemRow, Repos, RunRow, WorkspaceRow } from "../../db/repositories.js"
 import { initDatabase } from "../../db/connection.js"
 import type { ResumeFlags } from "../types.js"
@@ -149,10 +156,6 @@ function printResumeBlockedOutput(
   )
 }
 
-function runResumeCommand(runId: string): string {
-  return `beerengineer run resume ${runId} --remediation-summary "<what you fixed>"`
-}
-
 function printEngineRecoveryMessage(message: string): void {
   console.error(message.replaceAll("\r\n", "\n").trimEnd())
 }
@@ -175,7 +178,21 @@ function printRunResumeBlockedOutput(
   console.error(`  Resume with: ${runResumeCommand(runId)}`)
 }
 
-function printSupabaseProvisioningItemActionGuidance(runId: string): number {
+function printSupabaseProvisioningRecoveryGuidance(runId: string, payload: NonNullable<ReturnType<typeof supabaseProvisioningPayloadForRun>>): void {
+  if (!payload.guidance) return
+  console.error("")
+  console.error("Supabase branch recovery options:")
+  console.error(`  ${discardSupabaseBranchCommand(runId)}`)
+  for (const branchRef of payload.guidance.attachBranchRefs) {
+    console.error(`  ${attachSupabaseBranchCommand(runId, branchRef)}`)
+  }
+}
+
+function printSupabaseProvisioningItemActionGuidance(
+  runId: string,
+  payload: NonNullable<ReturnType<typeof supabaseProvisioningPayloadForRun>>,
+): number {
+  printSupabaseProvisioningRecoveryGuidance(runId, payload)
   console.error("")
   console.error("Use the run-scoped recovery command for this incident:")
   console.error(`  ${runResumeCommand(runId)}`)
@@ -395,7 +412,7 @@ function printBlockedResumeIfAny(ctx: CliItemActionContext, runId: string): numb
   const provisioning = supabaseProvisioningPayloadForRun(refreshed)
   if (provisioning) {
     printEngineRecoveryMessage(provisioning.userMessage)
-    printSupabaseProvisioningItemActionGuidance(runId)
+    printSupabaseProvisioningItemActionGuidance(runId, provisioning)
     return 75
   }
 
@@ -416,7 +433,7 @@ function rejectSupabaseProvisioningItemResumeIfAny(ctx: CliItemActionContext): n
   const provisioning = supabaseProvisioningPayloadForRun(active)
   if (!active || !provisioning) return 0
   printEngineRecoveryMessage(provisioning.userMessage)
-  return printSupabaseProvisioningItemActionGuidance(active.id)
+  return printSupabaseProvisioningItemActionGuidance(active.id, provisioning)
 }
 
 const handleStartBrainstorm: CliItemActionHandler = async ctx => {
@@ -663,6 +680,7 @@ function printRunResumeBlockedIfAny(repos: Repos, runId: string): void {
   const provisioning = supabaseProvisioningPayloadForRun(refreshed)
   if (provisioning) {
     printEngineRecoveryMessage(provisioning.userMessage)
+    printSupabaseProvisioningRecoveryGuidance(runId, provisioning)
     printRunResumeStillBlocked(runId)
     return
   }
@@ -952,7 +970,10 @@ export async function runRunResumeCommand(runId: string | undefined, resumeFlags
   try {
     const provisioning = supabaseProvisioningPayloadForRun(targetRun)
     if (!summary) {
-      if (provisioning) printEngineRecoveryMessage(provisioning.userMessage)
+      if (provisioning) {
+        printEngineRecoveryMessage(provisioning.userMessage)
+        printSupabaseProvisioningRecoveryGuidance(runId, provisioning)
+      }
       return printRunResumeSummaryRequired(runId)
     }
 
@@ -977,6 +998,68 @@ export async function runRunResumeCommand(runId: string | undefined, resumeFlags
     } finally {
       io.close?.()
     }
+  } finally {
+    db.close()
+  }
+}
+
+function printSupabaseBranchRecoveryMutationError(
+  runId: string,
+  error: "run_not_found" | "not_blocked_supabase_recovery" | "branch_ref_required",
+): number {
+  if (error === "run_not_found") {
+    console.error(`  Run not found: ${runId}`)
+    return 1
+  }
+  if (error === "branch_ref_required") {
+    console.error("  Missing --ref (required for attach-supabase-branch).")
+    return 75
+  }
+  console.error(`  Run ${runId} is not a blocked Supabase provisioning recovery.`)
+  return 75
+}
+
+export async function runAttachSupabaseBranchCommand(
+  runId: string | undefined,
+  branchRef: string | undefined,
+): Promise<number> {
+  if (!runId) {
+    console.error("  Usage: beerengineer run attach-supabase-branch <run-id> --ref <branchRef>")
+    return 2
+  }
+
+  const db = initDatabase()
+  const repos = new (await import("../../db/repositories.js")).Repos(db)
+  try {
+    const result = attachSupabaseBranchToRunRecovery(repos, { runId, branchRef: branchRef ?? "" })
+    if (!result.ok) return printSupabaseBranchRecoveryMutationError(runId, result.error)
+
+    console.log("  attached Supabase branch")
+    console.log(`  run-id: ${runId}`)
+    console.log(`  branch-ref: ${result.run.supabase_branch_ref}`)
+    console.log(`  Next: ${runResumeCommand(runId)}`)
+    return 0
+  } finally {
+    db.close()
+  }
+}
+
+export async function runDiscardSupabaseBranchCommand(runId: string | undefined): Promise<number> {
+  if (!runId) {
+    console.error("  Usage: beerengineer run discard-supabase-branch <run-id>")
+    return 2
+  }
+
+  const db = initDatabase()
+  const repos = new (await import("../../db/repositories.js")).Repos(db)
+  try {
+    const result = discardSupabaseBranchFromRunRecovery(repos, { runId })
+    if (!result.ok) return printSupabaseBranchRecoveryMutationError(runId, result.error)
+
+    console.log("  cleared Supabase branch attachment")
+    console.log(`  run-id: ${runId}`)
+    console.log(`  Next: ${runResumeCommand(runId)}`)
+    return 0
   } finally {
     db.close()
   }
