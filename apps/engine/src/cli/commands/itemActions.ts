@@ -12,6 +12,8 @@ import {
   prepareForegroundItemRun,
   prepareForegroundPreparedImportRun,
   prepareForegroundResumeRun,
+  replanRunInProcess,
+  type ReplanRunResult,
   type WorkflowStartGitBlockedResult,
   type StartRunAction,
 } from "../../core/runService.js"
@@ -23,7 +25,7 @@ import {
 } from "../../core/supabase/recoveryPayload.js"
 import type { ItemRow, Repos, RunRow, WorkspaceRow } from "../../db/repositories.js"
 import { initDatabase } from "../../db/connection.js"
-import type { ResumeFlags } from "../types.js"
+import type { ReplanFlags, ResumeFlags } from "../types.js"
 import { deriveRunStatus, resolveItemReference, resolveSelectedWorkspace } from "../common.js"
 import { defaultAppConfig, readConfigFile, resolveConfigPath, resolveMergedConfig, resolveOverrides } from "../../setup/config.js"
 import type { AppConfig } from "../../setup/types.js"
@@ -153,6 +155,10 @@ function runResumeCommand(runId: string): string {
   return `beerengineer run resume ${runId} --remediation-summary "<what you fixed>"`
 }
 
+function runReplanCommand(runId: string): string {
+  return `beerengineer run replan ${runId} --reason "<why the plan should change>"`
+}
+
 function printEngineRecoveryMessage(message: string): void {
   console.error(message.replaceAll("\r\n", "\n").trimEnd())
 }
@@ -195,6 +201,34 @@ function printRunResumeStillBlocked(runId: string): number {
   console.error(`  Run ${runId} remains blocked after the last recovery attempt.`)
   console.error(`  Retry with: ${runResumeCommand(runId)}`)
   return 75
+}
+
+function printRunReplanReasonRequired(runId: string): number {
+  console.error("")
+  console.error("Missing --reason (required for run replan).")
+  console.error(`  Replan with: ${runReplanCommand(runId)}`)
+  return 2
+}
+
+function printRunReplanFailure(result: Awaited<ReturnType<typeof replanRunInProcess>>): number {
+  if (result.ok) return 0
+  if (result.error === "replan_run_active") {
+    const activeResult = result as Extract<ReplanRunResult, { ok: false; error: "replan_run_active" }>
+    console.error("Run is still actively executing and cannot be replanned.")
+    if (activeResult.workerHeartbeatAt) console.error(`  worker heartbeat at: ${activeResult.workerHeartbeatAt}`)
+    console.error(`  ${activeResult.hint}`)
+    return 2
+  }
+  switch (result.error) {
+    case "reason_required":
+    case "replan_plan_missing":
+    case "run_not_found":
+      console.error(result.message)
+      return result.status === 404 ? 1 : 2
+    default:
+      console.error(`Replan failed: ${result.message ?? result.error}`)
+      return 1
+  }
 }
 
 function describeRunRecoveryState(repos: Repos, run: RunRow): string {
@@ -977,6 +1011,30 @@ export async function runRunResumeCommand(runId: string | undefined, resumeFlags
     } finally {
       io.close?.()
     }
+  } finally {
+    db.close()
+  }
+}
+
+export async function runRunReplanCommand(runId: string | undefined, replanFlags?: ReplanFlags): Promise<number> {
+  if (!runId) {
+    console.error("  Usage: beerengineer run replan <run-id> --reason <text>")
+    return 2
+  }
+
+  const db = initDatabase()
+  const repos = new (await import("../../db/repositories.js")).Repos(db)
+  const reason = replanFlags?.reason?.trim()
+
+  try {
+    if (!reason) return printRunReplanReasonRequired(runId)
+
+    const result = await replanRunInProcess(repos, { runId, reason })
+    if (!result.ok) return printRunReplanFailure(result)
+
+    console.log("  run replan applied")
+    console.log(`  run-id: ${result.runId}`)
+    return 0
   } finally {
     db.close()
   }

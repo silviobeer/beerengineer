@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { spawnSync } from "node:child_process"
@@ -11,6 +11,7 @@ import { Repos } from "../src/db/repositories.js"
 import { writeRecoveryRecord } from "../src/core/recovery.js"
 import { buildSupabaseProvisioningRecoveryPayload } from "../src/core/supabase/recoveryPayload.js"
 import { layout } from "../src/core/workspaceLayout.js"
+import { claimWorkerLease } from "../src/core/workerLease.js"
 import { removeTempDir } from "./helpers/fs.js"
 
 function seedCliRepo(repoRoot: string): void {
@@ -23,6 +24,140 @@ function seedCliRepo(repoRoot: string): void {
   spawnSync("git", ["commit", "-m", "seed"], { cwd: repoRoot, encoding: "utf8" })
   spawnSync("git", ["remote", "add", "origin", "https://github.com/acme/demo.git"], { cwd: repoRoot, encoding: "utf8" })
   spawnSync("git", ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"], { cwd: repoRoot, encoding: "utf8" })
+}
+
+function seedReplanArtifacts(repoRoot: string, workspaceFsId: string, runId: string): void {
+  const ctx = { workspaceId: workspaceFsId, workspaceRoot: repoRoot, runId }
+  const planningDir = layout.stageArtifactsDir(ctx, "planning")
+  const brainstormDir = layout.stageArtifactsDir(ctx, "brainstorm")
+  const requirementsDir = layout.stageArtifactsDir(ctx, "requirements")
+  const architectureDir = layout.stageArtifactsDir(ctx, "architecture")
+  mkdirSync(planningDir, { recursive: true })
+  mkdirSync(brainstormDir, { recursive: true })
+  mkdirSync(requirementsDir, { recursive: true })
+  mkdirSync(architectureDir, { recursive: true })
+
+  writeFileSync(join(planningDir, "implementation-plan.json"), `${JSON.stringify({
+    project: { id: "proj-1", name: "Project One" },
+    conceptSummary: "Stable replan concept",
+    architectureSummary: "Run control owns plan replacement.",
+    plan: {
+      summary: "Original plan",
+      assumptions: ["Upstream context remains approved."],
+      sequencingNotes: ["Replans replace the active plan only after preparation succeeds."],
+      dependencies: ["requirements", "architecture"],
+      risks: ["Replacement plan may reorder work."],
+      waves: [
+        {
+          id: "W1",
+          number: 1,
+          goal: "Original wave one",
+          kind: "feature",
+          stories: [{ id: "REQ-1", title: "REQ-1 title", dbRelevant: false, sharedFiles: ["apps/engine/REQ-1.ts"] }],
+          dbRelevantStoryCount: 0,
+          dbRelevantWave: false,
+          internallyParallelizable: false,
+          dependencies: [],
+          exitCriteria: ["Wave 1 complete."],
+        },
+        {
+          id: "W2",
+          number: 2,
+          goal: "Original wave two",
+          kind: "feature",
+          stories: [{ id: "REQ-2", title: "REQ-2 title", dbRelevant: false, sharedFiles: ["apps/engine/REQ-2.ts"] }],
+          dbRelevantStoryCount: 0,
+          dbRelevantWave: false,
+          internallyParallelizable: false,
+          dependencies: ["W1"],
+          exitCriteria: ["Wave 2 complete."],
+        },
+      ],
+    },
+  }, null, 2)}\n`)
+  writeFileSync(join(planningDir, "implementation-plan.md"), "# Project One\n\nOriginal plan\n")
+  writeFileSync(join(brainstormDir, "projects.json"), `${JSON.stringify([{
+    id: "proj-1",
+    name: "Project One",
+    description: "Project for replan testing",
+    concept: {
+      summary: "Operator-visible replan",
+      problem: "Plans need safe replacement",
+      users: ["operators"],
+      constraints: ["single run row"],
+    },
+  }], null, 2)}\n`)
+  writeFileSync(join(requirementsDir, "prd.json"), `${JSON.stringify({
+    prd: {
+      stories: [
+        { id: "REQ-1", title: "First story", acceptanceCriteria: [{ id: "AC-1", text: "Do the first thing", priority: "must", category: "functional" }] },
+        { id: "REQ-2", title: "Second story", acceptanceCriteria: [{ id: "AC-2", text: "Do the second thing", priority: "must", category: "functional" }] },
+      ],
+    },
+  }, null, 2)}\n`)
+  writeFileSync(join(architectureDir, "architecture.json"), `${JSON.stringify({
+    project: { id: "proj-1", name: "Project One", description: "Project for replan testing" },
+    concept: {
+      summary: "Operator-visible replan",
+      problem: "Plans need safe replacement",
+      users: ["operators"],
+      constraints: ["single run row"],
+    },
+    prdSummary: { storyCount: 2, storyIds: ["REQ-1", "REQ-2"] },
+    architecture: {
+      summary: "Run control owns explicit replan.",
+      systemShape: "Single-process engine.",
+      components: [{ name: "Run Service", responsibility: "Coordinates explicit replan." }],
+      dataModelNotes: [],
+      apiNotes: [],
+      deploymentNotes: [],
+      constraints: ["Do not auto-resume."],
+      risks: [],
+      openQuestions: [],
+    },
+  }, null, 2)}\n`)
+}
+
+function seedCliReplanFixture(input: {
+  dir: string
+  repoRoot: string
+  status?: "blocked" | "running"
+  heartbeatAt?: number
+}): { dbPath: string; runId: string; workspaceFsId: string } {
+  const dbPath = join(input.dir, "workflow.sqlite")
+  const db = initDatabase(dbPath)
+  const repos = new Repos(db)
+  const ws = repos.upsertWorkspace({ key: "default", name: "Default Workspace", rootPath: input.repoRoot })
+  const item = repos.createItem({ workspaceId: ws.id, code: "ITEM-0001", title: "CLI Replan", description: "swap plans safely" })
+  const run = repos.createRun({
+    workspaceId: ws.id,
+    itemId: item.id,
+    title: item.title,
+    owner: "cli",
+    status: input.status ?? "blocked",
+    workspaceFsId: `cli-replan-${item.id.toLowerCase()}`,
+  })
+  repos.updateRun(run.id, {
+    status: input.status ?? "blocked",
+    current_stage: "planning",
+    recovery_status: input.status === "running" ? null : "blocked",
+    recovery_scope: input.status === "running" ? null : "run",
+    recovery_scope_ref: null,
+    recovery_summary: input.status === "running" ? null : "Operator paused for replanning.",
+    recovery_payload_json: null,
+  })
+  if (input.heartbeatAt != null) {
+    claimWorkerLease(repos, {
+      runId: run.id,
+      workerInstanceId: "cli-replan-worker",
+      workerOwnerKind: "cli",
+      now: input.heartbeatAt,
+    })
+  }
+  db.close()
+
+  seedReplanArtifacts(input.repoRoot, run.workspace_fs_id!, run.id)
+  return { dbPath, runId: run.id, workspaceFsId: run.workspace_fs_id! }
 }
 
 test("beerengineer item action start_brainstorm continues through execution from the terminal CLI", () => {
@@ -601,6 +736,110 @@ test("REQ-3 CLI run resume rejects a non-recoverable run with explicit state-spe
     assert.match(result.stderr ?? "", new RegExp(`Run ${blockedRunId} is not recoverable`))
     assert.doesNotMatch(result.stderr ?? "", /Unknown command|Invalid transition/)
     assert.doesNotMatch(result.stderr ?? "", /beerengineer run resume .* --remediation-summary/)
+  } finally {
+    removeTempDir(dir)
+  }
+})
+
+test("REQ-2 CLI run replan succeeds through the dedicated operator action", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-run-replan-"))
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
+  const repoRoot = join(dir, "repo")
+  seedCliRepo(repoRoot)
+
+  try {
+    const { dbPath, runId, workspaceFsId } = seedCliReplanFixture({ dir, repoRoot })
+
+    const result = spawnSync(
+      process.execPath,
+      [binPath, "run", "replan", runId, "--reason", "Operator requested a new plan split"],
+      {
+        cwd: engineRoot,
+        encoding: "utf8",
+        env: { ...process.env, BEERENGINEER_UI_DB_PATH: dbPath, BEERENGINEER_ALLOWED_ROOTS: dir },
+        timeout: 10000,
+      },
+    )
+
+    assert.equal(result.status, 0, `${result.stdout ?? ""}\n${result.stderr ?? ""}`)
+    assert.match(result.stdout ?? "", /run replan applied/)
+    assert.match(result.stdout ?? "", new RegExp(`run-id: ${runId}`))
+
+    const planPath = join(layout.stageArtifactsDir({ workspaceId: workspaceFsId, workspaceRoot: repoRoot, runId }, "planning"), "implementation-plan.json")
+    const after = JSON.parse(readFileSync(planPath, "utf8")) as { metadata: { activePlan: { version: number } } }
+    assert.equal(after.metadata.activePlan.version, 2)
+  } finally {
+    removeTempDir(dir)
+  }
+})
+
+test("REQ-2 CLI run replan rejects missing or blank reason with a clear error", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-run-replan-missing-reason-"))
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
+  const repoRoot = join(dir, "repo")
+  seedCliRepo(repoRoot)
+
+  try {
+    const { dbPath, runId } = seedCliReplanFixture({ dir, repoRoot })
+
+    for (const args of [
+      [binPath, "run", "replan", runId],
+      [binPath, "run", "replan", runId, "--reason", "   "],
+    ]) {
+      const result = spawnSync(
+        process.execPath,
+        args,
+        {
+          cwd: engineRoot,
+          encoding: "utf8",
+          env: { ...process.env, BEERENGINEER_UI_DB_PATH: dbPath, BEERENGINEER_ALLOWED_ROOTS: dir },
+        },
+      )
+
+      assert.notEqual(result.status, 0, `${result.stdout ?? ""}\n${result.stderr ?? ""}`)
+      assert.match(result.stderr ?? "", /Missing --reason \(required for run replan\)\./)
+    }
+  } finally {
+    removeTempDir(dir)
+  }
+})
+
+test("REQ-2 CLI run replan surfaces active-run conflict guidance without changing the run", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-cli-run-replan-active-"))
+  const testDir = dirname(fileURLToPath(import.meta.url))
+  const engineRoot = resolve(testDir, "..")
+  const binPath = resolve(engineRoot, "bin/beerengineer.js")
+  const repoRoot = join(dir, "repo")
+  seedCliRepo(repoRoot)
+
+  try {
+    const { dbPath, runId, workspaceFsId } = seedCliReplanFixture({
+      dir,
+      repoRoot,
+      status: "running",
+      heartbeatAt: Date.now(),
+    })
+    const planPath = join(layout.stageArtifactsDir({ workspaceId: workspaceFsId, workspaceRoot: repoRoot, runId }, "planning"), "implementation-plan.json")
+    const before = readFileSync(planPath, "utf8")
+
+    const result = spawnSync(
+      process.execPath,
+      [binPath, "run", "replan", runId, "--reason", "Need a fresh plan right now"],
+      {
+        cwd: engineRoot,
+        encoding: "utf8",
+        env: { ...process.env, BEERENGINEER_UI_DB_PATH: dbPath, BEERENGINEER_ALLOWED_ROOTS: dir },
+      },
+    )
+
+    assert.notEqual(result.status, 0, `${result.stdout ?? ""}\n${result.stderr ?? ""}`)
+    assert.match(result.stderr ?? "", /Run is still actively executing and cannot be replanned\./)
+    assert.match(result.stderr ?? "", /Use POST \/runs\/:runId\/block-now to pause, then replan\./)
+    assert.equal(readFileSync(planPath, "utf8"), before)
   } finally {
     removeTempDir(dir)
   }

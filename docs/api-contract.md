@@ -102,6 +102,12 @@ No generic `POST /items/:id/actions` with an action string in the body. Explicit
 - `POST /runs/:id/resume`
   - Request: `{ summary, branch?, commit?, reviewNotes? }`
   - Response: `{ runId, status }`
+- `POST /runs/:id/replan`
+  - Request: `{ reason }`
+  - Response: `{ runId, status }`
+  - `422 { error: "reason_required", message }` when `reason` is missing or blank after trimming.
+  - `409 { error: "replan_plan_missing", message }` when the run has not yet produced a persisted plan.
+  - `409 { error: "replan_run_active", currentStatus, workerHeartbeatAt, hint }` when the run is still active; `hint` is the pause-first guidance and `workerHeartbeatAt` is an ISO 8601 UTC timestamp or `null`.
 
 `GET /runs/:id` response includes `openPrompt` when the run is waiting on operator input, so UIs that only show "is it waiting on me?" don't need a second call. Prompt objects may also carry structured `actions` for button-style responses. `GET /runs/:id` and `GET /runs/:id/recovery` expose `recovery_user_message: string | null`; clients should render that engine-provided copy before generic fallback text.
 

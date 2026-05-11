@@ -28,6 +28,47 @@ export type RecoveryEventScope =
   | { type: "stage"; runId: string; stageId: string }
   | { type: "story"; runId: string; waveNumber: number; storyId: string }
 
+export type PlanRevisionWaveSummary = {
+  id: string
+  logicalId: string
+  number: number
+  kind: "setup" | "feature"
+  goal: string
+  storyIds: string[]
+  dbRelevantWave: boolean
+}
+
+export type PlanRevisionSummary = {
+  planId: string
+  version: number
+  generatedAt: string
+  summary: string
+  waveCount: number
+  waves: PlanRevisionWaveSummary[]
+}
+
+export type PlanArchiveAction = {
+  kind: "planning-json" | "planning-markdown" | "execution-waves" | "handoffs" | "supabase-handoff"
+  action: "copied" | "moved"
+  sourcePath: string
+  archivedPath: string
+}
+
+export type PlanRecoveryTransition = {
+  before: {
+    status: "blocked" | "failed" | null
+    scope: "run" | "stage" | "story" | null
+    scopeRef: string | null
+    payloadJson: string | null
+  }
+  after: {
+    status: "blocked" | "failed" | null
+    scope: "run" | "stage" | "story" | null
+    scopeRef: string | null
+    payloadJson: string | null
+  }
+}
+
 export type PresentationKind = "header" | "step" | "ok" | "warn" | "dim" | "finding"
 export type StartupRecoveryOutcome = "auto_resumed" | "skipped" | "failed"
 export type StartupRecoveryReason =
@@ -77,6 +118,16 @@ export type WorkflowEvent =
     } & WorkflowEventMeta)
   | ({ type: "external_remediation_recorded"; runId: string; remediationId: string; scope: RecoveryEventScope; summary: string; branch?: string } & WorkflowEventMeta)
   | ({ type: "run_resumed"; runId: string; remediationId: string; scope: RecoveryEventScope } & WorkflowEventMeta)
+  | ({
+      type: "plan_regenerated"
+      runId: string
+      operationId: string
+      reason: string
+      before: PlanRevisionSummary
+      after: PlanRevisionSummary
+      archivedArtifacts: PlanArchiveAction[]
+      recoveryTransition: PlanRecoveryTransition
+    } & WorkflowEventMeta)
   | ({ type: "wave_serialized"; runId: string; waveId: string; waveNumber: number; stories: string[]; overlappingFiles: string[]; cause: "shared_file_overlap" | "missing_shared_files" } & WorkflowEventMeta)
   | ({ type: "merge_gate_open"; runId: string; itemId: string; itemBranch: string; baseBranch: string; gatePromptId: string } & WorkflowEventMeta)
   | ({ type: "merge_gate_cancelled"; runId: string; itemId: string; itemBranch: string; baseBranch: string } & WorkflowEventMeta)

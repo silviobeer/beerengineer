@@ -11,7 +11,7 @@ import { buildConversation, recordAnswer, recordUserMessage } from "../../core/c
 import { MESSAGES_ENDPOINT_MAX_SCAN } from "../../core/constants.js"
 import { messagingLevelFromQuery, shouldDeliverAtLevel } from "../../core/messagingLevel.js"
 import { projectStageLogRow } from "../../core/messagingProjection.js"
-import { isWorkflowCapabilityBlockedResult, resumeRunInProcess, startRunFromIdea } from "../../core/runService.js"
+import { isWorkflowCapabilityBlockedResult, replanRunInProcess, resumeRunInProcess, startRunFromIdea, type ReplanRunResult } from "../../core/runService.js"
 import { json, readJson } from "../http.js"
 import { layout } from "../../core/workspaceLayout.js"
 import { resolveWorkflowContextForRun } from "../../core/workflowContextResolver.js"
@@ -261,6 +261,32 @@ export async function handleResumeRun(
   }
   const run = repos.getRun(result.runId)
   json(res, 200, { runId: result.runId, status: run?.status ?? "running" })
+}
+
+export async function handleReplanRun(
+  repos: Repos,
+  req: IncomingMessage,
+  res: ServerResponse,
+  runId: string,
+): Promise<void> {
+  const body = (await readJson(req)) as { reason?: string }
+  const result = await replanRunInProcess(repos, {
+    runId,
+    reason: typeof body.reason === "string" ? body.reason : "",
+  })
+  if (!result.ok) {
+    if (result.error === "replan_run_active") {
+      const activeResult = result as Extract<ReplanRunResult, { ok: false; error: "replan_run_active" }>
+      return json(res, activeResult.status, {
+        error: activeResult.error,
+        currentStatus: activeResult.currentStatus,
+        workerHeartbeatAt: activeResult.workerHeartbeatAt,
+        hint: activeResult.hint,
+      })
+    }
+    return json(res, result.status, { error: result.error, message: result.message })
+  }
+  json(res, 200, { runId: result.runId, status: "replanned" })
 }
 
 export async function handleSupabaseReadinessRetry(
