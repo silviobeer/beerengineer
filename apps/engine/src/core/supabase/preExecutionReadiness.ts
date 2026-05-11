@@ -166,12 +166,13 @@ export async function createSupabasePreExecutionReadiness(input: SupabasePreExec
   if (!projectRef || (requiresPersistentBranch(workspace.dbMode) && !branchRef)) {
     return blocked({ workspace, runId, actions: localMissingActions(workspace, input.secretStore) })
   }
-  if (!input.managementClient) {
+  const managementClient = input.managementClient
+  if (!managementClient) {
     return blocked({ workspace, runId, message: "Supabase Management API client unavailable", branch: { ref: branchRef, status: "provider_error" } })
   }
 
   try {
-    const project = await input.managementClient.getProject(projectRef)
+    const project = await managementClient.getProject(projectRef)
     if (normalize(project.ref) && normalize(project.ref) !== projectRef) {
       return blocked({ workspace, runId, actions: ["Re-authorize project access"], message: "Supabase project access returned a different project" })
     }
@@ -187,23 +188,26 @@ export async function createSupabasePreExecutionReadiness(input: SupabasePreExec
       }
     }
   } catch (err) {
-    return blocked({ workspace, runId, actions: actionForProviderError(err) ? [actionForProviderError(err)!] : [], message: messageForError(err) })
+    const action = actionForProviderError(err)
+    return blocked({ workspace, runId, actions: action ? [action] : [], message: messageForError(err) })
   }
 
-  const persistentBranchRef = branchRef as string
+  if (!branchRef) {
+    return blocked({ workspace, runId, actions: ["Create persistent test branch"] })
+  }
   try {
     const branch = await pollSupabaseBranch({
       clock: input.clock,
       timeoutMs: input.branchPollBudgetMs ?? getSupabaseReadinessBranchPollBudgetMs(input.env),
       poll: async () => {
         try {
-          return await input.managementClient!.getBranch(projectRef, persistentBranchRef)
+          return await managementClient.getBranch(projectRef, branchRef)
         } catch (err) {
           const listed = err instanceof SupabaseManagementError && err.status === 404
             ? await findReadyBranchFromList({
-              client: input.managementClient!,
+              client: managementClient,
               projectRef,
-              branchRef: persistentBranchRef,
+              branchRef,
               branchName: workspace.persistentTestBranchName,
             })
             : null
@@ -227,7 +231,7 @@ export async function createSupabasePreExecutionReadiness(input: SupabasePreExec
         missingSetupActions: [],
         retry: { available: true, runId },
         workspace,
-        branch: { ref: persistentBranchRef, status: "timeout" },
+        branch: { ref: branchRef, status: "timeout" },
         message: err.message,
       }
     }
@@ -238,7 +242,7 @@ export async function createSupabasePreExecutionReadiness(input: SupabasePreExec
       actions: action ? [action] : [],
       message: messageForError(err),
       branch: {
-        ref: persistentBranchRef,
+        ref: branchRef,
         status: action === "Create persistent test branch"
           ? "missing"
           : action === "Rotate management token" || action === "Re-authorize project access"
