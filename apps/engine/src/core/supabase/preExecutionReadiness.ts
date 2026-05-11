@@ -153,6 +153,115 @@ function blocked(input: {
   }
 }
 
+async function validateProjectReadiness(input: {
+  managementClient: SupabaseReadinessManagementClient
+  projectRef: string
+  workspace: SupabaseReadinessWorkspace
+  runId?: string
+}): Promise<SupabasePreExecutionReadiness | null> {
+  try {
+    const project = await input.managementClient.getProject(input.projectRef)
+    if (normalize(project.ref) && normalize(project.ref) !== input.projectRef) {
+      return blocked({
+        workspace: input.workspace,
+        runId: input.runId,
+        actions: ["Re-authorize project access"],
+        message: "Supabase project access returned a different project",
+      })
+    }
+    if (!input.workspace.dbMode && project.branchingEnabled === false) {
+      return blocked({
+        workspace: input.workspace,
+        runId: input.runId,
+        message: "Supabase branching is not enabled for this project",
+        branch: { ref: input.workspace.persistentTestBranchRef, status: "degraded" },
+      })
+    }
+    if (input.workspace.dbMode === "direct") {
+      return {
+        status: "ready",
+        missingSetupActions: [],
+        retry: { available: false, runId: input.runId },
+        workspace: input.workspace,
+      }
+    }
+    return null
+  } catch (err) {
+    const action = actionForProviderError(err)
+    return blocked({ workspace: input.workspace, runId: input.runId, actions: action ? [action] : [], message: messageForError(err) })
+  }
+}
+
+async function validatePersistentBranchReadiness(input: {
+  managementClient: SupabaseReadinessManagementClient
+  projectRef: string
+  branchRef: string
+  branchName?: string
+  workspace: SupabaseReadinessWorkspace
+  runId?: string
+  mode?: "execution" | "setup"
+  clock?: BranchPollerClock
+  branchPollBudgetMs?: number
+  env?: Record<string, string | undefined>
+}): Promise<SupabasePreExecutionReadiness> {
+  try {
+    const branch = await pollSupabaseBranch({
+      clock: input.clock,
+      timeoutMs: input.branchPollBudgetMs ?? getSupabaseReadinessBranchPollBudgetMs(input.env),
+      poll: async () => {
+        try {
+          return await input.managementClient.getBranch(input.projectRef, input.branchRef)
+        } catch (err) {
+          const listed = err instanceof SupabaseManagementError && err.status === 404
+            ? await findReadyBranchFromList({
+              client: input.managementClient,
+              projectRef: input.projectRef,
+              branchRef: input.branchRef,
+              branchName: input.branchName,
+            })
+            : null
+          if (listed) return listed
+          throw err
+        }
+      },
+      isReady: isSupabaseBranchReady,
+    })
+    return {
+      status: "ready",
+      missingSetupActions: [],
+      retry: { available: false, runId: input.runId },
+      workspace: input.workspace,
+      branch: { ref: branch.ref, status: "active_healthy", providerStatus: branch.status },
+    }
+  } catch (err) {
+    if (err instanceof SupabaseBranchPollTimeoutError) {
+      return {
+        status: input.mode === "setup" ? "checking" : "blocked",
+        missingSetupActions: [],
+        retry: { available: true, runId: input.runId },
+        workspace: input.workspace,
+        branch: { ref: input.branchRef, status: "timeout" },
+        message: err.message,
+      }
+    }
+    const action = actionForProviderError(err, true)
+    return blocked({
+      workspace: input.workspace,
+      runId: input.runId,
+      actions: action ? [action] : [],
+      message: messageForError(err),
+      branch: {
+        ref: input.branchRef,
+        status: action === "Create persistent test branch"
+          ? "missing"
+          : action === "Rotate management token" || action === "Re-authorize project access"
+            ? "unauthorized"
+            : "provider_error",
+      },
+    })
+  }
+}
+
 export async function createSupabasePreExecutionReadiness(input: SupabasePreExecutionReadinessInput): Promise<SupabasePreExecutionReadiness> {
   const { run, workspace } = resolveWorkspace(input)
   const runId = run?.id ?? input.runId
@@ -171,86 +280,24 @@ export async function createSupabasePreExecutionReadiness(input: SupabasePreExec
     return blocked({ workspace, runId, message: "Supabase Management API client unavailable", branch: { ref: branchRef, status: "provider_error" } })
   }
 
-  try {
-    const project = await managementClient.getProject(projectRef)
-    if (normalize(project.ref) && normalize(project.ref) !== projectRef) {
-      return blocked({ workspace, runId, actions: ["Re-authorize project access"], message: "Supabase project access returned a different project" })
-    }
-    if (!workspace.dbMode && project.branchingEnabled === false) {
-      return blocked({ workspace, runId, message: "Supabase branching is not enabled for this project", branch: { ref: branchRef, status: "degraded" } })
-    }
-    if (workspace.dbMode === "direct") {
-      return {
-        status: "ready",
-        missingSetupActions: [],
-        retry: { available: false, runId },
-        workspace,
-      }
-    }
-  } catch (err) {
-    const action = actionForProviderError(err)
-    return blocked({ workspace, runId, actions: action ? [action] : [], message: messageForError(err) })
-  }
+  const projectReadiness = await validateProjectReadiness({ managementClient, projectRef, workspace, runId })
+  if (projectReadiness) return projectReadiness
 
   if (!branchRef) {
     return blocked({ workspace, runId, actions: ["Create persistent test branch"] })
   }
-  try {
-    const branch = await pollSupabaseBranch({
-      clock: input.clock,
-      timeoutMs: input.branchPollBudgetMs ?? getSupabaseReadinessBranchPollBudgetMs(input.env),
-      poll: async () => {
-        try {
-          return await managementClient.getBranch(projectRef, branchRef)
-        } catch (err) {
-          const listed = err instanceof SupabaseManagementError && err.status === 404
-            ? await findReadyBranchFromList({
-              client: managementClient,
-              projectRef,
-              branchRef,
-              branchName: workspace.persistentTestBranchName,
-            })
-            : null
-          if (listed) return listed
-          throw err
-        }
-      },
-      isReady: isSupabaseBranchReady,
-    })
-    return {
-      status: "ready",
-      missingSetupActions: [],
-      retry: { available: false, runId },
-      workspace,
-      branch: { ref: branch.ref, status: "active_healthy", providerStatus: branch.status },
-    }
-  } catch (err) {
-    if (err instanceof SupabaseBranchPollTimeoutError) {
-      return {
-        status: input.mode === "setup" ? "checking" : "blocked",
-        missingSetupActions: [],
-        retry: { available: true, runId },
-        workspace,
-        branch: { ref: branchRef, status: "timeout" },
-        message: err.message,
-      }
-    }
-    const action = actionForProviderError(err, true)
-    return blocked({
-      workspace,
-      runId,
-      actions: action ? [action] : [],
-      message: messageForError(err),
-      branch: {
-        ref: branchRef,
-        status: action === "Create persistent test branch"
-          ? "missing"
-          : action === "Rotate management token" || action === "Re-authorize project access"
-            ? "unauthorized"
-            : "provider_error",
-      },
-    })
-  }
+  return await validatePersistentBranchReadiness({
+    managementClient,
+    projectRef,
+    branchRef,
+    branchName: workspace.persistentTestBranchName,
+    workspace,
+    runId,
+    mode: input.mode,
+    clock: input.clock,
+    branchPollBudgetMs: input.branchPollBudgetMs,
+    env: input.env,
+  })
 }
 
 function malformedPlan(message: string): SupabaseExecutionReadinessResult {
