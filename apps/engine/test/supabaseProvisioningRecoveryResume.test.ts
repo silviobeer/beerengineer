@@ -10,6 +10,10 @@ import { performResume } from "../src/core/resume.js"
 import { createSupabaseAdapter } from "../src/core/supabase/adapter.js"
 import { waveBranchName } from "../src/core/supabase/branchNaming.js"
 import {
+  attachSupabaseBranchToRunRecovery,
+  discardSupabaseBranchFromRunRecovery,
+} from "../src/core/supabase/runRecoveryActions.js"
+import {
   recordSupabaseProvisioningBlockedRun,
   type SupabaseProvisioningFailure,
 } from "../src/core/supabase/provisioningRecovery.js"
@@ -168,6 +172,7 @@ async function seedBlockedProvisioningRun(
     runBranchRef?: string
     runBranchName?: string
     payloadProjectRef?: string
+    payloadWaveId?: string
   } = {},
 ): Promise<void> {
   const summary = "Supabase provisioning failed during branch validation: original failure"
@@ -190,7 +195,7 @@ async function seedBlockedProvisioningRun(
       workspaceId: ctx.workspace.id,
       workspaceKey: ctx.workspace.key,
       projectRef: input.payloadProjectRef ?? "proj_alpha",
-      waveId: ctx.currentWave.id,
+      waveId: input.payloadWaveId ?? ctx.currentWave.id,
       waveNumber: ctx.currentWave.number,
       branchRef: input.branchRef,
       failedStep: "validate",
@@ -391,6 +396,56 @@ test("REQ-1 AC-1.2/AC-1.4: ambiguous missing-ref recovery stays blocked instead 
     assert.equal(blocked?.status, "blocked")
     assert.equal(blocked?.recovery_status, "blocked")
     assert.match(payload?.failureCause ?? "", /ambiguous/i)
+    assert.equal(payload?.guidance?.reason, "multiple_name_matches")
+    assert.deepEqual(payload?.guidance?.attachBranchRefs, ["br_saved_1", "br_saved_2"])
+  } finally {
+    ctx.close()
+  }
+})
+
+test("REQ-3 AC-3.1/AC-3.2/AC-3.3: resume blocks ref-conflict ambiguity with structured CLI guidance", async () => {
+  const ctx = fixture()
+  try {
+    const provider = fakeProvider({
+      branches: [{ id: "br_named", ref: "br_named", name: ctx.expectedName, status: "ACTIVE_HEALTHY" }],
+    })
+    await seedBlockedProvisioningRun(ctx, { branchRef: "br_saved", runBranchRef: "br_saved", runBranchName: ctx.expectedName })
+    provider.branches.unshift({ id: "br_saved", ref: "br_saved", name: ctx.expectedName, status: "ACTIVE_HEALTHY" })
+    provider.client.listBranches = async () => [{ id: "br_named", ref: "br_named", name: ctx.expectedName, status: "ACTIVE_HEALTHY" }]
+
+    await resumeOnce(ctx, provider)
+
+    const blocked = ctx.repos.getRun(ctx.run.id)
+    const payload = parseSupabaseProvisioningRecoveryPayload(blocked?.recovery_payload_json)
+    assert.equal(blocked?.status, "blocked")
+    assert.equal(payload?.guidance?.reason, "ref_conflict")
+    assert.deepEqual(payload?.guidance?.attachBranchRefs, ["br_saved", "br_named"])
+  } finally {
+    ctx.close()
+  }
+})
+
+test("REQ-3 AC-3.1/AC-3.2/AC-3.3: resume blocks a wrong-wave recovery payload with structured CLI guidance", async () => {
+  const ctx = fixture()
+  try {
+    const provider = fakeProvider({
+      branches: [{ id: "br_saved", ref: "br_saved", name: ctx.expectedName, status: "ACTIVE_HEALTHY" }],
+    })
+    await seedBlockedProvisioningRun(ctx, {
+      branchRef: "br_saved",
+      runBranchRef: "br_saved",
+      payloadWaveId: "wave-other",
+    })
+
+    await resumeOnce(ctx, provider)
+
+    const blocked = ctx.repos.getRun(ctx.run.id)
+    const payload = parseSupabaseProvisioningRecoveryPayload(blocked?.recovery_payload_json)
+    assert.equal(blocked?.status, "blocked")
+    assert.equal(provider.calls.listBranches, 0)
+    assert.deepEqual(provider.calls.getBranch, [])
+    assert.equal(payload?.guidance?.reason, "wave_mismatch")
+    assert.deepEqual(payload?.guidance?.attachBranchRefs, ["br_saved"])
   } finally {
     ctx.close()
   }
@@ -470,6 +525,83 @@ test("REQ-2 AC-2.4: later provisioning failure after branch reuse leaves the run
     assert.equal(blocked?.recovery_status, "blocked")
     assert.equal(payload?.failedStep, "validate")
     assert.equal(payload?.failureCause, "Validation still fails after branch reuse")
+  } finally {
+    ctx.close()
+  }
+})
+
+test("REQ-3 AC-3.4: attach repair followed by resume continues with the selected valid branch", async () => {
+  const ctx = fixture()
+  try {
+    const provider = fakeProvider({
+      branches: [
+        { id: "br_selected", ref: "br_selected", name: ctx.expectedName, status: "ACTIVE_HEALTHY" },
+        { id: "br_conflict", ref: "br_conflict", name: ctx.expectedName, status: "ACTIVE_HEALTHY" },
+      ],
+    })
+    await seedBlockedProvisioningRun(ctx)
+    provider.client.listBranches = async () => [{ id: "br_conflict", ref: "br_conflict", name: ctx.expectedName, status: "ACTIVE_HEALTHY" }]
+
+    const attach = attachSupabaseBranchToRunRecovery(ctx.repos, {
+      runId: ctx.run.id,
+      branchRef: "br_selected",
+    })
+    assert.equal(attach.ok, true)
+
+    await resumeOnce(ctx, provider)
+
+    const resumed = ctx.repos.getRun(ctx.run.id)
+    assert.equal(resumed?.status, "completed")
+    assert.equal(resumed?.recovery_status, null)
+    assert.equal(resumed?.supabase_branch_ref, "br_selected")
+  } finally {
+    ctx.close()
+  }
+})
+
+test("REQ-3 AC-3.4: discard repair followed by resume continues safely without falling back to the old recovery branch ref", async () => {
+  const ctx = fixture()
+  try {
+    const provider = fakeProvider({ branches: [] })
+    await seedBlockedProvisioningRun(ctx, { branchRef: "br_old", runBranchRef: "br_old", runBranchName: "beerengineer-alpha-old-run-old-item-proj-1-wave-0" })
+
+    const discard = discardSupabaseBranchFromRunRecovery(ctx.repos, { runId: ctx.run.id })
+    assert.equal(discard.ok, true)
+
+    await resumeOnce(ctx, provider)
+
+    const resumed = ctx.repos.getRun(ctx.run.id)
+    assert.equal(resumed?.status, "completed")
+    assert.equal(resumed?.recovery_status, null)
+    assert.equal(resumed?.supabase_branch_ref, "created-1")
+  } finally {
+    ctx.close()
+  }
+})
+
+test("REQ-3 AC-3.4: resume revalidates an operator-attached branch and re-blocks when it turns unhealthy before resume", async () => {
+  const ctx = fixture()
+  try {
+    const provider = fakeProvider({
+      branches: [{ id: "br_selected", ref: "br_selected", name: ctx.expectedName, status: "ACTIVE_HEALTHY" }],
+    })
+    await seedBlockedProvisioningRun(ctx)
+
+    const attach = attachSupabaseBranchToRunRecovery(ctx.repos, {
+      runId: ctx.run.id,
+      branchRef: "br_selected",
+    })
+    assert.equal(attach.ok, true)
+    provider.branches[0]!.status = "CREATING"
+
+    await resumeOnce(ctx, provider)
+
+    const blocked = ctx.repos.getRun(ctx.run.id)
+    const payload = parseSupabaseProvisioningRecoveryPayload(blocked?.recovery_payload_json)
+    assert.equal(blocked?.status, "blocked")
+    assert.equal(blocked?.recovery_status, "blocked")
+    assert.equal(payload?.guidance?.reason, "branch_not_active_healthy")
+    assert.deepEqual(payload?.guidance?.attachBranchRefs, ["br_selected"])
   } finally {
     ctx.close()
   }

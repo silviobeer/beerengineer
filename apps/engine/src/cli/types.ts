@@ -79,6 +79,8 @@ export type Command =
   | { kind: "run-list"; workspaceKey?: string; json?: boolean; all?: boolean; compact?: boolean }
   | { kind: "run-get"; runId?: string; json?: boolean }
   | { kind: "run-resume"; runId?: string; resume?: ResumeFlags }
+  | { kind: "run-attach-supabase-branch"; runId?: string; branchRef?: string }
+  | { kind: "run-discard-supabase-branch"; runId?: string }
   | { kind: "run-open"; runId?: string }
   | { kind: "run-tail"; runId?: string; level: MessagingLevel; since?: string; json?: boolean }
   | { kind: "run-messages"; runId?: string; level: MessagingLevel; since?: string; limit: number; json?: boolean }

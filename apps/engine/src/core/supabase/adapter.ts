@@ -2,13 +2,16 @@ import type { SupabaseAdapter, SupabaseAdapterResult, SupabaseWorkspaceContext }
 import { createOrAttachPersistentTestBranch, type PersistentBranchClient } from "./persistentTestBranch.js"
 import type { Repos } from "../../db/repositories.js"
 import { ownedWaveBranchPrefix, waveBranchName } from "./branchNaming.js"
-import { isSupabaseBranchReady, pollSupabaseBranch, SupabaseBranchPollTimeoutError } from "./branchPoller.js"
+import { pollSupabaseBranch, SupabaseBranchPollTimeoutError } from "./branchPoller.js"
 import { applySupabaseMigrationsAndSeeds, type SupabaseMigrationClient } from "./migrationRunner.js"
 import { listSupabaseSqlFiles } from "./migrationRunner.js"
 import { migrationSmoke } from "./dbTests/migrationSmoke.js"
 import { recordSupabaseLifecycle } from "./lifecycleEvents.js"
 import { SupabaseManagementError } from "./managementClient.js"
-import { parseSupabaseProvisioningRecoveryPayload } from "./recoveryPayload.js"
+import {
+  parseSupabaseProvisioningRecoveryPayload,
+  type SupabaseProvisioningRecoveryGuidance,
+} from "./recoveryPayload.js"
 import { readFileSync } from "node:fs"
 import { relative } from "node:path"
 
@@ -132,22 +135,48 @@ function recoveryReuseFailure(message: string, branchRef?: string): SupabaseAdap
   return { ok: false, context: { error: "recovery_branch_unusable", message, branchRef } }
 }
 
+function dedupeBranchRefs(values: Array<string | null | undefined>): string[] {
+  return Array.from(new Set(values.filter((value): value is string => typeof value === "string" && value.trim().length > 0)))
+}
+
+function recoveryGuidanceFailure(
+  message: string,
+  guidance: SupabaseProvisioningRecoveryGuidance,
+  branchRef?: string,
+): SupabaseAdapterResult {
+  return {
+    ok: false,
+    context: {
+      error: "recovery_branch_unusable",
+      message,
+      branchRef,
+      guidance,
+    },
+  }
+}
+
 function validateRecoveryReuseTarget(
   runId: string,
   recovery: NonNullable<ReturnType<typeof parseSupabaseProvisioningRecoveryPayload>>,
   context: Required<Pick<SupabaseWorkspaceContext, "workspaceId" | "projectRef" | "waveId">>,
-): string | null {
+): { message: string; guidance?: SupabaseProvisioningRecoveryGuidance } | null {
   if (recovery.runId !== runId) {
-    return "Supabase recovery refused to reuse the persisted branch because the recovery record belongs to a different run."
+    return { message: "Supabase recovery refused to reuse the persisted branch because the recovery record belongs to a different run." }
   }
   if (recovery.workspaceId && recovery.workspaceId !== context.workspaceId) {
-    return "Supabase recovery refused to reuse the persisted branch because it targets a different workspace."
+    return { message: "Supabase recovery refused to reuse the persisted branch because it targets a different workspace." }
   }
   if (recovery.projectRef && recovery.projectRef !== context.projectRef) {
-    return "Supabase recovery refused to reuse the persisted branch because it targets a different Supabase project."
+    return { message: "Supabase recovery refused to reuse the persisted branch because it targets a different Supabase project." }
   }
   if (recovery.waveId !== context.waveId) {
-    return "Supabase recovery refused to reuse the persisted branch because it belongs to a different execution wave."
+    return {
+      message: "Supabase recovery refused automatic branch reuse because the recovery record belongs to a different execution wave.",
+      guidance: {
+        reason: "wave_mismatch",
+        attachBranchRefs: dedupeBranchRefs([recovery.branchRef]),
+      },
+    }
   }
   return null
 }
@@ -161,7 +190,8 @@ function validateReuseIdentity(input: {
   if (input.runRecoveryStatus !== "blocked") return null
   const recovery = parseSupabaseProvisioningRecoveryPayload(input.recoveryPayloadJson)
   if (!recovery) return null
-  return validateRecoveryReuseTarget(input.runId, recovery, input.context)
+  if (recovery.operatorAction) return null
+  return validateRecoveryReuseTarget(input.runId, recovery, input.context)?.message ?? null
 }
 
 type ReusableBranch = { ref: string; name?: string; status?: string }
@@ -176,7 +206,7 @@ function markRunBranchReusable(input: {
   input.repos.setRunSupabaseBranch(input.runId, {
     ref: input.branch.ref,
     name: input.branch.name ?? input.branchName,
-    lifecycleState: isSupabaseBranchReady(input.branch)
+    lifecycleState: input.branch.status === "ACTIVE_HEALTHY"
       ? "ready"
       : input.existingLifecycleState ?? "provisioning",
   })
@@ -201,8 +231,12 @@ function expectedWaveBranchName(input: Required<Pick<SupabaseWorkspaceContext, "
 }
 
 function branchNotHealthyFailure(branch: ReusableBranch, expectedName: string): SupabaseAdapterResult {
-  return recoveryReuseFailure(
+  return recoveryGuidanceFailure(
     `Supabase recovery refused to reuse branch ${branch.ref} because ${expectedName} is not ACTIVE_HEALTHY (provider status: ${branch.status ?? "unknown"}).`,
+    {
+      reason: "branch_not_active_healthy",
+      attachBranchRefs: [branch.ref],
+    },
     branch.ref,
   )
 }
@@ -229,8 +263,12 @@ async function resolveCurrentWaveBranchByName(input: {
   if (sameNameBranches.length > 1) {
     return {
       kind: "ambiguous",
-      failure: recoveryReuseFailure(
+      failure: recoveryGuidanceFailure(
         `Supabase recovery found ambiguous current-wave branches named ${input.expectedName}; operator intervention is required before this run can continue.`,
+        {
+          reason: "multiple_name_matches",
+          attachBranchRefs: dedupeBranchRefs(sameNameBranches.map(branch => branch.ref)),
+        },
       ),
     }
   }
@@ -242,8 +280,12 @@ async function inspectPersistedRecoverableBranch(input: {
   projectRef: string
   branchRef: string | null
   expectedName: string
-}): Promise<{ reusableBranch: ReusableBranch | null; fallbackFailure: SupabaseAdapterResult | null }> {
-  if (!input.branchRef) return { reusableBranch: null, fallbackFailure: null }
+}): Promise<{
+  reusableBranch: ReusableBranch | null
+  fallbackFailure: SupabaseAdapterResult | null
+  failureReason: "wrong_name" | "missing" | "unhealthy" | "unverifiable" | null
+}> {
+  if (!input.branchRef) return { reusableBranch: null, fallbackFailure: null, failureReason: null }
   const getBranch = input.client.getBranch
   if (getBranch == null) {
     return {
@@ -252,6 +294,7 @@ async function inspectPersistedRecoverableBranch(input: {
         `Supabase recovery cannot continue because persisted branch ${input.branchRef} could not be verified.`,
         input.branchRef,
       ),
+      failureReason: "unverifiable",
     }
   }
 
@@ -265,11 +308,14 @@ async function inspectPersistedRecoverableBranch(input: {
           `Supabase recovery refused to reuse branch ${input.branchRef} because it does not belong to this blocked run target (expected ${input.expectedName}, got ${actualName}).`,
           input.branchRef,
         ),
+        failureReason: "wrong_name",
       }
     }
+    const healthFailure = validateHealthyReusableBranch(branch, input.expectedName)
     return {
-      reusableBranch: validateHealthyReusableBranch(branch, input.expectedName) ? null : branch,
-      fallbackFailure: validateHealthyReusableBranch(branch, input.expectedName),
+      reusableBranch: healthFailure ? null : branch,
+      fallbackFailure: healthFailure,
+      failureReason: healthFailure ? "unhealthy" : null,
     }
   } catch (err) {
     if (isNotFoundError(err)) {
@@ -279,10 +325,132 @@ async function inspectPersistedRecoverableBranch(input: {
           `Supabase recovery cannot continue because missing recoverable branch ${input.branchRef} no longer exists in project ${input.projectRef}.`,
           input.branchRef,
         ),
+        failureReason: "missing",
       }
     }
     throw err
   }
+}
+
+function recoveryBranchRef(
+  run: { supabase_branch_ref: string | null },
+  recovery: NonNullable<ReturnType<typeof parseSupabaseProvisioningRecoveryPayload>>,
+): string | null {
+  return nonEmptyString(run.supabase_branch_ref) ?? nonEmptyString(recovery.branchRef)
+}
+
+function recoveryTargetMismatchFailure(input: {
+  targetMismatch: NonNullable<ReturnType<typeof validateRecoveryReuseTarget>>
+  runBranchRef: string | null
+}): SupabaseAdapterResult {
+  const branchRef = input.runBranchRef ?? undefined
+  if (!input.targetMismatch.guidance) return recoveryReuseFailure(input.targetMismatch.message, branchRef)
+  return recoveryGuidanceFailure(
+    input.targetMismatch.message,
+    input.targetMismatch.guidance,
+    branchRef,
+  )
+}
+
+function conflictingPersistedBranchFailure(input: {
+  persistedBranchRef: string
+  namedBranchRef: string
+}): SupabaseAdapterResult {
+  return recoveryGuidanceFailure(
+    `Supabase recovery refused automatic branch reuse because persisted branch ${input.persistedBranchRef} conflicts with current-wave branch ${input.namedBranchRef}.`,
+    {
+      reason: "ref_conflict",
+      attachBranchRefs: dedupeBranchRefs([input.persistedBranchRef, input.namedBranchRef]),
+    },
+    input.persistedBranchRef,
+  )
+}
+
+async function reuseOperatorSelectedBranch(input: {
+  repos: Repos
+  client: WaveClient
+  projectRef: string
+  run: NonNullable<ReturnType<Repos["getRun"]>>
+  recovery: NonNullable<ReturnType<typeof parseSupabaseProvisioningRecoveryPayload>>
+  expectedName: string
+}): Promise<SupabaseAdapterResult> {
+  const attached = await inspectPersistedRecoverableBranch({
+    client: input.client,
+    projectRef: input.projectRef,
+    branchRef: recoveryBranchRef(input.run, input.recovery),
+    expectedName: input.expectedName,
+  })
+  if (!attached.reusableBranch) {
+    return attached.fallbackFailure ?? recoveryReuseFailure("Supabase recovery cannot continue because the selected branch attachment is missing.")
+  }
+  return markRunBranchReusable({
+    repos: input.repos,
+    runId: input.run.id,
+    branch: attached.reusableBranch,
+    branchName: input.expectedName,
+    existingLifecycleState: input.run.supabase_branch_lifecycle_state,
+  })
+}
+
+async function reuseBlockedRecoveryBranch(input: {
+  repos: Repos
+  client: WaveClient
+  projectRef: string
+  run: NonNullable<ReturnType<Repos["getRun"]>>
+  recovery: NonNullable<ReturnType<typeof parseSupabaseProvisioningRecoveryPayload>>
+  context: Required<Pick<SupabaseWorkspaceContext, "workspaceId" | "projectRef" | "waveId">>
+  expectedName: string
+}): Promise<SupabaseAdapterResult> {
+  const targetMismatch = validateRecoveryReuseTarget(input.run.id, input.recovery, input.context)
+  if (targetMismatch) {
+    return recoveryTargetMismatchFailure({
+      targetMismatch,
+      runBranchRef: recoveryBranchRef(input.run, input.recovery),
+    })
+  }
+
+  const persisted = await inspectPersistedRecoverableBranch({
+    client: input.client,
+    projectRef: input.projectRef,
+    branchRef: recoveryBranchRef(input.run, input.recovery),
+    expectedName: input.expectedName,
+  })
+
+  const namedBranch = await resolveCurrentWaveBranchByName({
+    client: input.client,
+    projectRef: input.projectRef,
+    expectedName: input.expectedName,
+  })
+  if (namedBranch.kind === "ambiguous") return namedBranch.failure
+  if (persisted.reusableBranch && namedBranch.kind === "candidate" && namedBranch.branch.ref !== persisted.reusableBranch.ref) {
+    return conflictingPersistedBranchFailure({
+      persistedBranchRef: persisted.reusableBranch.ref,
+      namedBranchRef: namedBranch.branch.ref,
+    })
+  }
+  if (persisted.reusableBranch) {
+    return markRunBranchReusable({
+      repos: input.repos,
+      runId: input.run.id,
+      branch: persisted.reusableBranch,
+      branchName: input.expectedName,
+      existingLifecycleState: input.run.supabase_branch_lifecycle_state,
+    })
+  }
+  if (persisted.failureReason === "unhealthy") return persisted.fallbackFailure!
+  if (namedBranch.kind === "candidate") {
+    const branchFailure = validateHealthyReusableBranch(namedBranch.branch, input.expectedName)
+    if (branchFailure) return branchFailure
+    return markRunBranchReusable({
+      repos: input.repos,
+      runId: input.run.id,
+      branch: namedBranch.branch,
+      branchName: input.expectedName,
+      existingLifecycleState: input.run.supabase_branch_lifecycle_state,
+    })
+  }
+
+  return persisted.fallbackFailure ?? recoveryReuseFailure("Supabase recovery cannot continue because this blocked run has no persisted branch identity to reuse.")
 }
 
 async function reuseRecoverableWaveBranch(input: {
@@ -299,50 +467,39 @@ async function reuseRecoverableWaveBranch(input: {
 
   const recovery = parseSupabaseProvisioningRecoveryPayload(run.recovery_payload_json)
   if (!recovery) return null
+  if (recovery.operatorAction === "discard") return null
 
-  const targetMismatch = validateRecoveryReuseTarget(run.id, recovery, {
-    workspaceId: context.workspaceId,
-    projectRef: context.projectRef,
+  const expectedName = expectedWaveBranchName({
+    workspaceKey: context.workspaceKey,
+    runId: context.runId,
+    itemId: context.itemId,
+    projectId: context.projectId,
     waveId: context.waveId,
   })
-  if (targetMismatch) return recoveryReuseFailure(targetMismatch)
-
-  const expectedName = expectedWaveBranchName(context)
-  const persisted = await inspectPersistedRecoverableBranch({
-    client: input.client,
-    projectRef: context.projectRef,
-    branchRef: nonEmptyString(run.supabase_branch_ref) ?? nonEmptyString(recovery.branchRef),
-    expectedName,
-  })
-  if (persisted.reusableBranch) {
-    return markRunBranchReusable({
+  if (recovery.operatorAction === "attach") {
+    return reuseOperatorSelectedBranch({
       repos: input.repos,
-      runId: context.runId,
-      branch: persisted.reusableBranch,
-      branchName: expectedName,
-      existingLifecycleState: run.supabase_branch_lifecycle_state,
+      client: input.client,
+      projectRef: context.projectRef,
+      run,
+      recovery,
+      expectedName,
     })
   }
 
-  const namedBranch = await resolveCurrentWaveBranchByName({
+  return reuseBlockedRecoveryBranch({
+    repos: input.repos,
     client: input.client,
     projectRef: context.projectRef,
+    run,
+    recovery,
+    context: {
+      workspaceId: context.workspaceId,
+      projectRef: context.projectRef,
+      waveId: context.waveId,
+    },
     expectedName,
   })
-  if (namedBranch.kind === "ambiguous") return namedBranch.failure
-  if (namedBranch.kind === "candidate") {
-    const branchFailure = validateHealthyReusableBranch(namedBranch.branch, expectedName)
-    if (branchFailure) return branchFailure
-    return markRunBranchReusable({
-      repos: input.repos,
-      runId: context.runId,
-      branch: namedBranch.branch,
-      branchName: expectedName,
-      existingLifecycleState: run.supabase_branch_lifecycle_state,
-    })
-  }
-
-  return persisted.fallbackFailure ?? recoveryReuseFailure("Supabase recovery cannot continue because this blocked run has no persisted branch identity to reuse.")
 }
 
 async function reuseExistingWaveBranch(input: {
@@ -428,6 +585,15 @@ export function createSupabaseAdapter(deps: { repos: Repos; client: WaveClient }
         if (!workspace || !context.projectRef || !context.parentBranchRef || !context.runId || !context.itemId || !context.projectId) {
           return { ok: false, context: { error: "wave_context_required" } }
         }
+        const waveContext = {
+          runId: context.runId,
+          workspaceId,
+          workspaceKey: context.workspaceKey ?? workspace.key,
+          itemId: context.itemId,
+          projectId: context.projectId,
+          projectRef: context.projectRef,
+          waveId: context.waveId,
+        }
         if (context.parentBranchRef === "main" || context.parentBranchRef === "production") {
           return { ok: false, context: { error: "invalid_parent", message: "Wave branches must fork from the persistent test branch" } }
         }
@@ -437,31 +603,24 @@ export function createSupabaseAdapter(deps: { repos: Repos; client: WaveClient }
           context,
         })
         if (reused) return reused
+        const recovery = parseSupabaseProvisioningRecoveryPayload(deps.repos.getRun(context.runId)?.recovery_payload_json)
         const staleAttachmentDiscarded = await discardStaleWaveAttachment({
           repos: deps.repos,
           client: deps.client,
           context: {
-            runId: context.runId,
-            projectRef: context.projectRef,
-            waveId: context.waveId,
-            workspaceKey: context.workspaceKey ?? workspace.key,
-            itemId: context.itemId,
-            projectId: context.projectId,
+            runId: waveContext.runId,
+            projectRef: waveContext.projectRef,
+            waveId: waveContext.waveId,
+            workspaceKey: waveContext.workspaceKey,
+            itemId: waveContext.itemId,
+            projectId: waveContext.projectId,
           },
         })
         const existing = await reuseExistingWaveBranch({
           repos: deps.repos,
           client: deps.client,
-          context: {
-            runId: context.runId,
-            workspaceId: context.workspaceId,
-            workspaceKey: context.workspaceKey ?? workspace.key,
-            itemId: context.itemId,
-            projectId: context.projectId,
-            projectRef: context.projectRef,
-            waveId: context.waveId,
-          },
-          allowFreshCreateOnUnhealthyCandidate: staleAttachmentDiscarded,
+          context: waveContext,
+          allowFreshCreateOnUnhealthyCandidate: staleAttachmentDiscarded || recovery?.operatorAction === "discard",
         })
         if (existing) return existing
         const name = waveBranchName({
