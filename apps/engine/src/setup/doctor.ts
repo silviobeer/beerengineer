@@ -57,8 +57,11 @@ export async function generateSetupReport(options: DoctorOptions = {}): Promise<
   const config = resolveMergedConfig(configState, overrides)
   const llmGroup = getActiveLlmGroup(config)
   const telegramEnabled = config?.notifications?.telegram?.enabled === true
+  const shouldFreshCodexSandbox =
+    options.freshCodexSandboxCapabilityCheck === true
+    && (options.group === undefined || options.group === "llm.openai")
   const codexSandbox = config
-    ? await resolveCodexSandboxStatus(config, { freshCodexSandboxCapabilityCheck: options.freshCodexSandboxCapabilityCheck })
+    ? await resolveCodexSandboxStatus(config, { freshCodexSandboxCapabilityCheck: shouldFreshCodexSandbox })
     : { snapshot: { state: "missing" } as const, status: projectCodexSandboxStatus({ state: "missing" }) }
   const llmGate = (id: "llm.anthropic" | "llm.openai" | "llm.opencode"): Pick<GroupDefinition, "level" | "minOk" | "idealOk"> =>
     options.allLlmGroups === true && id !== llmGroup
@@ -71,7 +74,7 @@ export async function generateSetupReport(options: DoctorOptions = {}): Promise<
     { id: "notifications", label: "Notification delivery", level: "optional", minOk: 0, idealOk: telegramEnabled ? 4 : 0, active: true, run: () => runNotificationChecks(config) },
     { id: "vcs.github", label: "GitHub workflows", level: "optional", minOk: 0, idealOk: config?.vcs?.github?.enabled ? 2 : 0, active: true, run: () => runGitHubChecks(Boolean(config?.vcs?.github?.enabled)) },
     { id: "llm.anthropic", label: "Anthropic capability", ...llmGate("llm.anthropic"), active: Boolean(config) && (options.allLlmGroups === true || llmGroup === "llm.anthropic"), run: () => runLlmChecks("anthropic", config as AppConfig) },
-    { id: "llm.openai", label: "OpenAI capability", ...llmGate("llm.openai"), active: Boolean(config) && (options.allLlmGroups === true || llmGroup === "llm.openai"), run: () => runLlmChecks("openai", config as AppConfig, { freshCodexSandboxCapabilityCheck: options.freshCodexSandboxCapabilityCheck, codexSandboxStatus: codexSandbox }) },
+    { id: "llm.openai", label: "OpenAI capability", ...llmGate("llm.openai"), active: Boolean(config) && (options.allLlmGroups === true || llmGroup === "llm.openai"), run: () => runLlmChecks("openai", config as AppConfig, { freshCodexSandboxCapabilityCheck: shouldFreshCodexSandbox, codexSandboxStatus: codexSandbox }) },
     { id: "llm.opencode", label: "OpenCode capability", ...llmGate("llm.opencode"), active: Boolean(config) && (options.allLlmGroups === true || llmGroup === "llm.opencode"), run: () => runLlmChecks("opencode", config as AppConfig) },
     { id: "browser-agent", label: "Browser agent capability", level: "optional", minOk: 0, idealOk: config?.browser?.enabled ? 2 : 0, active: true, run: () => runBrowserChecks(Boolean(config?.browser?.enabled)) },
     { id: "supabase", label: "Supabase readiness setup", level: "optional", minOk: 0, idealOk: 0, active: true, run: async () => [] },

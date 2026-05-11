@@ -582,6 +582,7 @@ test("GET /setup/status returns the doctor report contract", async () => {
     recovery: { startupAutoResume: true },
     browser: { enabled: false },
   }
+  mkdirSync(dataDir, { recursive: true })
   const db = initDatabase(join(dataDir, "beerengineer.sqlite"))
   const repos = new Repos(db)
   repos.setCodexSandboxCapabilitySnapshot("unsupported")

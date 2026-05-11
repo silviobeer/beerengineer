@@ -4298,6 +4298,13 @@
           },
           "codexSandbox": {
             "type": "object",
+            "required": [
+              "state",
+              "reason",
+              "effectiveMode",
+              "detectedCapability",
+              "overrideMode"
+            ],
             "properties": {
               "state": {
                 "type": "string",
