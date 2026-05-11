@@ -141,6 +141,10 @@ type Transition =
 
 type ColumnKey = ItemRow["current_column"]
 type PhaseKey = ItemRow["phase_status"]
+type ConfirmMergeResolutionContext = {
+  recoverable: RunRow
+  ctx: NonNullable<ReturnType<typeof resolveWorkflowContextForRun>> & { workspaceRoot: string }
+}
 
 /**
  * Action / state transition matrix. Keys are `${column}/${phase}` or a
@@ -469,10 +473,10 @@ export function createItemActionsService(repos: Repos): ItemActionsService {
     }
   }
 
-  const confirmMergeResolved = async (
+  const loadConfirmMergeResolutionContext = async (
     item: ItemRow,
     action: ItemAction,
-  ): Promise<ItemActionResult> => {
+  ): Promise<ConfirmMergeResolutionContext | ItemActionResult> => {
     const recoverable = repos.latestRecoverableRunForItem(item.id)
     if (!isStructuredMergeConflictRecoveryRun(recoverable)) return invalidTransition(item, action)
 
@@ -485,6 +489,14 @@ export function createItemActionsService(repos: Repos): ItemActionsService {
     const ctx = resolveWorkflowContextForRun(repos, recoverable)
     if (!ctx?.workspaceRoot) return invalidTransition(item, action)
 
+    return { recoverable, ctx: { ...ctx, workspaceRoot: ctx.workspaceRoot } }
+  }
+
+  const validateConfirmedMergeResolution = async (
+    item: ItemRow,
+    action: ItemAction,
+    ctx: ConfirmMergeResolutionContext["ctx"],
+  ): Promise<ItemActionResult | null> => {
     const artifact = await readMergeConflictRecoveryArtifact(ctx)
     if (!artifact) return invalidTransition(item, action)
 
@@ -496,21 +508,33 @@ export function createItemActionsService(repos: Repos): ItemActionsService {
           message: validation.message,
         })
       }
+      return null
     } catch (error) {
       if (error instanceof MergeConflictResolutionInspectionError) {
         return invalidTransition(item, action, { message: error.message })
       }
       throw error
     }
+  }
+
+  const confirmMergeResolved = async (
+    item: ItemRow,
+    action: ItemAction,
+  ): Promise<ItemActionResult> => {
+    const context = await loadConfirmMergeResolutionContext(item, action)
+    if ("ok" in context) return context
+
+    const validationFailure = await validateConfirmedMergeResolution(item, action, context.ctx)
+    if (validationFailure) return validationFailure
 
     return {
       ok: true,
       kind: "resume_run",
       itemId: item.id,
-      runId: recoverable.id,
+      runId: context.recoverable.id,
       summary: `Operator confirmed manual merge resolution for ${item.code}.`,
       resume: {
-        scope: { type: "stage", runId: recoverable.id, stageId: "merge-gate" },
+        scope: { type: "stage", runId: context.recoverable.id, stageId: "merge-gate" },
         currentStage: "merge-gate",
         skipMergeGate: true,
       },
