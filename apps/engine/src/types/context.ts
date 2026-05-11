@@ -49,6 +49,9 @@ export type FrontendSnapshot = {
 
 export type ProjectContext = WorkflowContext & {
   project: Project
+  supabase?: {
+    configured: boolean
+  }
   wireframes?: WireframeArtifact
   design?: DesignArtifact
   prd?: PRD
