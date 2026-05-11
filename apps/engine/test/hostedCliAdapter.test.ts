@@ -110,3 +110,47 @@ exit 1
     resetCodexSandboxPolicyForTests()
   }
 })
+
+test("qa hosted stage keeps semantic output errors distinct from worker start failures", async () => {
+  resetCodexSandboxPolicyForTests()
+  const dir = mkdtempSync(join(tmpdir(), "be2-hosted-stage-"))
+  const binDir = join(dir, "bin")
+  const previousPath = process.env.PATH
+
+  try {
+    makeStubBin(
+      binDir,
+      "codex",
+      `
+printf '%s\n' '{"type":"thread.started","thread_id":"thread-qa-semantic"}'
+printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1}}'
+`,
+    )
+    process.env.PATH = `${binDir}:${previousPath ?? ""}`
+
+    const adapter = new HostedStageAdapter<{ item: string }, { ok: boolean }>({
+      stageId: "qa",
+      harness: "codex",
+      runtime: "cli",
+      provider: "openai",
+      model: "gpt-5.4",
+      workspaceRoot: dir,
+      runtimePolicy: { mode: "safe-workspace-write" },
+    })
+
+    await assert.rejects(
+      () =>
+        adapter.step({
+          kind: "begin",
+          state: { item: "demo" },
+          stageContext: { turnCount: 1, phase: "begin" },
+        }),
+      /Provider output did not contain a JSON object/i,
+    )
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH
+    else process.env.PATH = previousPath
+    rmSync(dir, { recursive: true, force: true })
+    resetCodexSandboxPolicyForTests()
+  }
+})

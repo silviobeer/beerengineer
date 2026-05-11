@@ -79,6 +79,12 @@ export async function getCodexSandboxCapability(
   ])
 }
 
+export async function primeCodexSandboxCapabilityDetection(
+  timeoutMs = 1000,
+): Promise<void> {
+  await getCodexSandboxCapability(timeoutMs)
+}
+
 export async function resolveCodexSandboxBypass(
   mode: RuntimePolicy["mode"],
   env: NodeJS.ProcessEnv = process.env,
@@ -130,6 +136,17 @@ export function buildCodexWorkerStartFailure(error: unknown): Error {
     message.toLowerCase().startsWith("worker start failed:")
       ? message
       : `worker start failed: ${message}`,
+  )
+}
+
+export function isHostedWorkerLaunchFailure(error: unknown): boolean {
+  const message = errorText(error)
+  return (
+    /\bexited with code \d+\b/i.test(message) ||
+    /\bspawn\b/i.test(message) ||
+    /\bENOENT\b/.test(message) ||
+    /\bcodex:sdk turn failed\b/i.test(message) ||
+    /\bcodex:sdk error\b/i.test(message)
   )
 }
 
