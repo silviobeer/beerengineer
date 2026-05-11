@@ -254,6 +254,7 @@ export type WorkspaceRow = {
   key: string
   name: string
   rootPath: string
+  supabaseDbMode?: "branching" | "direct"
   harnessProfile: HarnessProfile | null
   harnessProfileInvalid?: string
   sonarEnabled: boolean

@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS workspaces (
   sonar_enabled INTEGER NOT NULL DEFAULT 0,
   supabase_project_ref TEXT,
   supabase_region TEXT,
+  supabase_db_mode TEXT,
   supabase_persistent_test_branch_ref TEXT,
   supabase_persistent_test_branch_name TEXT,
   supabase_persistent_test_branch_status TEXT,

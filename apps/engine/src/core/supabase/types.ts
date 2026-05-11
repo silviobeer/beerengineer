@@ -35,6 +35,8 @@ export type SupabaseProject = {
   branchQuotaLimit?: number
 }
 
+export type SupabaseDbMode = "branching" | "direct"
+
 export type SupabaseBranch = {
   id: string
   ref: string
@@ -70,6 +72,7 @@ export type SupabaseReadinessWorkspace = {
   key?: string
   rootPath?: string
   projectRef?: string
+  dbMode?: SupabaseDbMode
   persistentTestBranchRef?: string
   persistentTestBranchName?: string
 }
