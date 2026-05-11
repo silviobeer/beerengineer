@@ -79,3 +79,22 @@ test("PROJ-4 QA-021: createBranch uses a 30s timeout independent of the global 8
   const branch = await client.createBranch("proj", { name: "test" })
   assert.equal(branch.ref, "br_ref")
 })
+
+test("createBranch sends Supabase Management API branch_name payload", async () => {
+  let capturedBody: unknown
+  const client = new SupabaseManagementClient({
+    token: "sbp_secret",
+    baseUrl: "https://example.test",
+    fetch: (async (_url, init) => {
+      capturedBody = JSON.parse(String(init?.body))
+      return Response.json({ id: "br", ref: "br_ref", name: "test" })
+    }) as typeof fetch,
+  })
+
+  await client.createBranch("proj", { name: "test", parentRef: "parent_ref" })
+
+  assert.deepEqual(capturedBody, {
+    branch_name: "test",
+    parent_ref: "parent_ref",
+  })
+})

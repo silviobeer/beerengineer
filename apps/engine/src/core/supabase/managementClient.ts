@@ -66,7 +66,7 @@ export class SupabaseManagementClient {
     return await this.request(managementEndpoints.createBranch(projectRef), {
       method: "POST",
       body: JSON.stringify({
-        name: input.name,
+        branch_name: input.name,
         parent_ref: input.parentRef,
       }),
     }, { timeoutMs: 30_000 }) as SupabaseBranch
