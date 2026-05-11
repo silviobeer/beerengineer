@@ -209,9 +209,10 @@ function printRunResumeNotRecoverable(repos: Repos, runId: string): number {
   }
   console.error(`  Run ${runId} is not recoverable from its current state (${describeRunRecoveryState(repos, run)}).`)
   const recoverable = repos.latestRecoverableRunForItem(run.item_id)
-  if (recoverable && recoverable.id !== runId) {
+  const recoverableId = recoverable?.id
+  if (recoverableId && recoverableId !== runId) {
     console.error("  Resume the blocked run instead:")
-    console.error(`  ${runResumeCommand(recoverable.id)}`)
+    console.error(`  ${runResumeCommand(recoverableId)}`)
   }
   return 2
 }
@@ -811,7 +812,12 @@ function reportPreparedImportFailure(prepared: FailedPreparedImportRunResult, it
   if (isWorkflowCapabilityBlockedResult(prepared)) {
     return printWorkflowCapabilityBlocker(prepared.message)
   }
-  if ("code" in prepared && prepared.code === "workflow_git_blocked") {
+  if (
+    "code" in prepared
+    && prepared.code === "workflow_git_blocked"
+    && "message" in prepared
+    && "intent" in prepared
+  ) {
     return printWorkflowGitBlocker(prepared, item?.code ?? item?.id ?? "new")
   }
   console.error(`  Import failed: ${prepared.error}`)
