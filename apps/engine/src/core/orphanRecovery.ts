@@ -149,9 +149,6 @@ export function classifyStartupAutoResumeEligibility(input: {
   hasOpenPrompt: boolean
   autoResumeEnabled: boolean
 }): StartupAutoResumeEligibility {
-  if (input.hasOpenPrompt) {
-    return { eligible: false, reason: "open_prompt" }
-  }
   if (!input.hasOrphanedWorkerLease) {
     return { eligible: false, reason: "worker_lease_not_orphaned" }
   }

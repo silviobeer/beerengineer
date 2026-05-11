@@ -169,7 +169,7 @@ export function composeApiPrivilegedDependencies(
             resumeRun: async run => {
               const result = await autoResumeRunOnStartup(repos, {
                 runId: run.id,
-                summary: "Startup auto-resumed the stale run after confirming no human input is pending.",
+                summary: "Startup auto-resumed the stale run after engine restart.",
                 apiWorkerInstanceId: API_WORKER_INSTANCE_ID,
                 onItemColumnChanged: payload => board.broadcastItemColumnChanged(payload),
               })
