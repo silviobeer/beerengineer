@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { spawnSync } from "node:child_process"
@@ -13,7 +13,7 @@ import { NON_INTERACTIVE_NO_ANSWER_SENTINEL } from "../src/core/constants.js"
 import { runWithWorkflowIO, type WorkflowEvent } from "../src/core/io.js"
 import { withPromptPersistence } from "../src/core/promptPersistence.js"
 import { runWithActiveRun } from "../src/core/runContext.js"
-import { buildWorkspaceConfigFile, writeWorkspaceConfig } from "../src/core/workspaces/configFile.js"
+import { buildWorkspaceConfigFile } from "../src/core/workspaces/configFile.js"
 import { runWorkflow } from "../src/workflow.ts"
 
 function seedCleanGitRepo(root: string): void {
@@ -115,13 +115,18 @@ async function runAutopromoteWorkflow(input: {
   autoPromoteOnGreenQa?: boolean
   qaAnswer: "fix" | "accept"
 }): Promise<{ events: WorkflowEvent[] }> {
-  await writeWorkspaceConfig(input.root, buildWorkspaceConfigFile({
-    key: "demo",
-    name: "Demo",
-    harnessProfile: { mode: "fast" },
-    sonar: { enabled: false },
-    autoPromoteOnGreenQa: input.autoPromoteOnGreenQa,
-  }))
+  const workspaceConfig = {
+    ...buildWorkspaceConfigFile({
+      key: "demo",
+      name: "Demo",
+      harnessProfile: { mode: "fast" },
+      sonar: { enabled: false },
+      autoPromoteOnGreenQa: input.autoPromoteOnGreenQa,
+    }),
+    worktreePortPool: { start: 4700, end: 4720 },
+  }
+  mkdirSync(join(input.root, ".beerengineer"), { recursive: true })
+  writeFileSync(join(input.root, ".beerengineer", "workspace.json"), `${JSON.stringify(workspaceConfig, null, 2)}\n`)
 
   const bus = createBus()
   const io = busToWorkflowIO(bus)

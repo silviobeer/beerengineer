@@ -223,7 +223,7 @@ function parseWorkspaceConfigFile(raw: {
     name: raw.name,
     harnessProfile: raw.harnessProfile,
     runtimePolicy,
-    autoPromoteOnGreenQa: raw.autoPromoteOnGreenQa === false ? false : true,
+    autoPromoteOnGreenQa: raw.autoPromoteOnGreenQa !== false,
     preview,
     sonar,
     telegram: normalizeWorkspaceTelegramConfig(raw.telegram),
