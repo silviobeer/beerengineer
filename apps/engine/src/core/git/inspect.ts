@@ -1,5 +1,6 @@
+import { existsSync } from "node:fs"
 import { isAbsolute, relative, resolve } from "node:path"
-import { layout, requireItemScopedContext, type WorkflowContext } from "../workspaceLayout.js"
+import { layout, requireItemScopedContext, type ItemScopedContext, type WorkflowContext } from "../workspaceLayout.js"
 import { type GitMode, currentBranch, itemRoot, runGit } from "./shared.js"
 
 /**
@@ -78,10 +79,31 @@ export function detectGitMode(context: WorkflowContext): GitMode {
       throw new Error(`git: workspace ${workspaceRoot} is not a git repository`)
     case "git-status-failed":
       throw new Error(`git: git status failed: ${inspection.stderr}`)
-    case "dirty":
+    case "dirty": {
+      // Once an item has its own worktree, the run operates entirely on its
+      // own branch — uncommitted state on the parent workspace root is
+      // irrelevant. Without this bypass, a concurrent worker's transient
+      // write to the root racingly blocks every in-flight wave-start across
+      // every item. The original "must be clean" guard still applies the
+      // first time a run is created (before the worktree exists).
+      let itemScoped: ItemScopedContext | null = null
+      try {
+        itemScoped = requireItemScopedContext(context)
+      } catch {
+        itemScoped = null
+      }
+      if (itemScoped && existsSync(layout.itemWorktreeDir(itemScoped))) {
+        return {
+          enabled: true,
+          workspaceRoot,
+          baseBranch,
+          itemWorktreeRoot: layout.itemWorktreeDir(itemScoped),
+        }
+      }
       throw new Error(
         `git: workspace ${workspaceRoot} has uncommitted changes (dirty repo); commit or stash before starting`,
       )
+    }
     case "ok":
       return {
         enabled: true,

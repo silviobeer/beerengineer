@@ -8,6 +8,7 @@ import type { ApiHttpShell, ApiRequestHandler } from "../src/api/entrypointContr
 import { createApiLifecycleCoordinator } from "../src/api/lifecycleCoordinator.js"
 import { composeApiPrivilegedDependencies } from "../src/api/privilegedDependencies.js"
 import { registerApiRoutes } from "../src/api/routeRegistration.js"
+import { resetCodexSandboxPolicyForTests, setCodexSandboxCapabilityProbeForTests } from "../src/llm/hosted/providers/codexSandboxPolicy.js"
 
 test("REQ-10-2 wires the four API owners together through declared contracts", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-api-entrypoint-owners-"))
@@ -135,6 +136,50 @@ test("REQ-10-2 wires the four API owners together through declared contracts", a
       "deps:exit:0",
     ])
   } finally {
+    process.env.BEERENGINEER_UI_DB_PATH = originalEnv.BEERENGINEER_UI_DB_PATH
+    process.env.BEERENGINEER_CONFIG_PATH = originalEnv.BEERENGINEER_CONFIG_PATH
+    process.env.BEERENGINEER_DATA_DIR = originalEnv.BEERENGINEER_DATA_DIR
+    process.env.BEERENGINEER_SEED = originalEnv.BEERENGINEER_SEED
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("REQ-15-2 startup recovery includes bounded sandbox capability detection", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-api-entrypoint-bwrap-startup-"))
+  const originalEnv = {
+    BEERENGINEER_UI_DB_PATH: process.env.BEERENGINEER_UI_DB_PATH,
+    BEERENGINEER_CONFIG_PATH: process.env.BEERENGINEER_CONFIG_PATH,
+    BEERENGINEER_DATA_DIR: process.env.BEERENGINEER_DATA_DIR,
+    BEERENGINEER_SEED: process.env.BEERENGINEER_SEED,
+  }
+  process.env.BEERENGINEER_UI_DB_PATH = join(dir, "server.sqlite")
+  process.env.BEERENGINEER_CONFIG_PATH = join(dir, "config.json")
+  process.env.BEERENGINEER_DATA_DIR = join(dir, "data")
+  process.env.BEERENGINEER_SEED = "0"
+
+  try {
+    resetCodexSandboxPolicyForTests()
+    setCodexSandboxCapabilityProbeForTests(
+      () =>
+        new Promise(resolve => {
+          setTimeout(() => resolve("unsupported"), 50)
+        }),
+    )
+
+    const dependencies = composeApiPrivilegedDependencies({
+      host: "127.0.0.1",
+      port: 4100,
+      apiToken: "test-token",
+    })
+
+    const startedAt = Date.now()
+    await dependencies.lifecycleHooks.runStartupRecovery()
+    const elapsedMs = Date.now() - startedAt
+
+    assert.ok(elapsedMs < 1000, `expected startup recovery probe to stay under 1000 ms, got ${elapsedMs} ms`)
+    dependencies.lifecycleHooks.closeDatabase()
+  } finally {
+    resetCodexSandboxPolicyForTests()
     process.env.BEERENGINEER_UI_DB_PATH = originalEnv.BEERENGINEER_UI_DB_PATH
     process.env.BEERENGINEER_CONFIG_PATH = originalEnv.BEERENGINEER_CONFIG_PATH
     process.env.BEERENGINEER_DATA_DIR = originalEnv.BEERENGINEER_DATA_DIR

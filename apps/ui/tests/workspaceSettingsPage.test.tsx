@@ -20,4 +20,21 @@ describe("WorkspaceSettingsPage", () => {
     expect(screen.getByTestId("workspace-settings-supabase")).toHaveClass("scroll-mt-24");
     expect(screen.queryByText(/app-global/i)).not.toBeInTheDocument();
   });
+
+  it("labels direct mode explicitly and hides persistent-branch controls", () => {
+    render(<WorkspaceSettingsPage workspaceKey="alpha" workspaceName="Alpha" initialReadiness={{
+      ...blocked,
+      workspace: {
+        ...blocked.workspace,
+        projectRef: "proj_direct",
+        dbMode: "direct",
+      },
+      missingSetupActions: [],
+      status: "ready",
+    }} />);
+    expect(screen.getByText(/Direct mode is active for this workspace/i)).toBeInTheDocument();
+    expect(screen.getByText("direct")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create or attach persistent branch" })).toBeNull();
+    expect(screen.queryByLabelText("Attach existing")).toBeNull();
+  });
 });

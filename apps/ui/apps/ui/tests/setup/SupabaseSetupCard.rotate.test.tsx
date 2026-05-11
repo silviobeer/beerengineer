@@ -32,4 +32,20 @@ describe("SupabaseSetupCard rotate", () => {
       body: JSON.stringify({ token: "sbp_new", surface: "setup-ui" }),
     })));
   });
+
+  it("identifies a connected direct-mode workspace explicitly", () => {
+    render(<SupabaseSetupCard workspaceId="ws-1" supabase={{
+      workspaceId: "ws-1",
+      projectRef: "proj_1",
+      region: "eu",
+      dbMode: "direct",
+      tokenPresent: true,
+      branchGranularity: "wave",
+      cleanupPolicy: "on-success-immediate",
+      productionMigrationProtection: "off",
+      settingsVersion: 1,
+    }} />);
+    expect(screen.getByText(/Direct mode is active/i)).toBeInTheDocument();
+    expect(screen.getByLabelText("Connected Supabase database mode")).toHaveValue("direct");
+  });
 });

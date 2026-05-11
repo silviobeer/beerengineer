@@ -37,3 +37,30 @@ test("PROJ-6 PRD-3 US-1: readiness resolves workspace by route key server-side",
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test("PROJ-14 REQ-4 AC-4.1: readiness payload exposes authoritative workspace dbMode", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-workspace-readiness-mode-"))
+  const db = initDatabase(join(dir, "db.sqlite"))
+  const repos = new Repos(db)
+  const direct = repos.upsertWorkspace({ key: "direct", name: "Direct", rootPath: join(dir, "direct") })
+  const branching = repos.upsertWorkspace({ key: "branching", name: "Branching", rootPath: join(dir, "branching") })
+  repos.connectWorkspaceSupabase(direct.id, { projectRef: "proj_direct", region: "eu", dbMode: "direct" })
+  repos.connectWorkspaceSupabase(branching.id, { projectRef: "proj_branching", region: "eu", dbMode: "branching" })
+  repos.setWorkspaceSupabasePersistentBranch(branching.id, { ref: "br_1", name: "persistent", status: "ACTIVE_HEALTHY" })
+  try {
+    const directRec = responseRecorder()
+    await handleWorkspaceSupabaseReadiness(repos, directRec.res as never, "direct")
+    const directOut = directRec.result()
+    assert.equal(directOut.status, 200)
+    assert.equal((((directOut.body.readiness as Record<string, unknown>).workspace as Record<string, unknown>).dbMode), "direct")
+
+    const branchingRec = responseRecorder()
+    await handleWorkspaceSupabaseReadiness(repos, branchingRec.res as never, "branching")
+    const branchingOut = branchingRec.result()
+    assert.equal(branchingOut.status, 200)
+    assert.equal((((branchingOut.body.readiness as Record<string, unknown>).workspace as Record<string, unknown>).dbMode), "branching")
+  } finally {
+    db.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

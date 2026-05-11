@@ -153,6 +153,7 @@ export class Repos {
         sonar_enabled: input.sonarEnabled ? 1 : 0,
         supabase_project_ref: null,
         supabase_region: null,
+        supabase_db_mode: null,
         supabase_persistent_test_branch_ref: null,
         supabase_persistent_test_branch_name: null,
         supabase_persistent_test_branch_status: null,
@@ -178,6 +179,7 @@ export class Repos {
              sonar_enabled = @sonar_enabled,
              supabase_project_ref = @supabase_project_ref,
              supabase_region = @supabase_region,
+             supabase_db_mode = @supabase_db_mode,
              supabase_persistent_test_branch_ref = @supabase_persistent_test_branch_ref,
              supabase_persistent_test_branch_name = @supabase_persistent_test_branch_name,
              supabase_persistent_test_branch_status = @supabase_persistent_test_branch_status,
@@ -201,6 +203,7 @@ export class Repos {
         sonar_enabled: input.sonarEnabled === undefined ? existing.sonar_enabled : Number(input.sonarEnabled),
         supabase_project_ref: existing.supabase_project_ref,
         supabase_region: existing.supabase_region,
+        supabase_db_mode: existing.supabase_db_mode,
         supabase_persistent_test_branch_ref: existing.supabase_persistent_test_branch_ref,
         supabase_persistent_test_branch_name: existing.supabase_persistent_test_branch_name,
         supabase_persistent_test_branch_status: existing.supabase_persistent_test_branch_status,
@@ -256,11 +259,14 @@ export class Repos {
     this.run("UPDATE workspaces SET last_opened_at = ?, updated_at = ? WHERE key = ?", timestamp, timestamp, key)
   }
 
-  connectWorkspaceSupabase(workspaceId: string, input: { projectRef: string; region: string }): WorkspaceRow | undefined {
+  connectWorkspaceSupabase(workspaceId: string, input: { projectRef: string; region: string; dbMode?: WorkspaceRow["supabase_db_mode"] }): WorkspaceRow | undefined {
+    const existing = this.getWorkspace(workspaceId)
+    if (!existing) return undefined
     this.run(
-      "UPDATE workspaces SET supabase_project_ref = ?, supabase_region = ?, supabase_last_checked_at = ?, supabase_protection_switch = COALESCE(supabase_protection_switch, 'off'), updated_at = ? WHERE id = ?",
+      "UPDATE workspaces SET supabase_project_ref = ?, supabase_region = ?, supabase_db_mode = ?, supabase_last_checked_at = ?, supabase_protection_switch = COALESCE(supabase_protection_switch, 'off'), updated_at = ? WHERE id = ?",
       input.projectRef,
       input.region,
+      input.dbMode === undefined ? existing.supabase_db_mode : input.dbMode,
       now(),
       now(),
       workspaceId,
@@ -322,6 +328,7 @@ export class Repos {
       `UPDATE workspaces
        SET supabase_project_ref = NULL,
            supabase_region = NULL,
+           supabase_db_mode = NULL,
            supabase_persistent_test_branch_ref = NULL,
            supabase_persistent_test_branch_name = NULL,
            supabase_persistent_test_branch_status = NULL,
@@ -439,13 +446,21 @@ export class Repos {
     return this.insertRow("projects", row)
   }
 
-  createRun(input: { id?: string; workspaceId: string; itemId: string; title: string; owner?: RunOwner; workspaceFsId?: string | null }): RunRow {
+  createRun(input: {
+    id?: string
+    workspaceId: string
+    itemId: string
+    title: string
+    owner?: RunOwner
+    status?: string
+    workspaceFsId?: string | null
+  }): RunRow {
     const row: RunRow = this.withTimestamps({
       id: input.id ?? randomUUID(),
       workspace_id: input.workspaceId,
       item_id: input.itemId,
       title: input.title,
-      status: "running",
+      status: input.status ?? "running",
       current_stage: null,
       owner: input.owner ?? "api",
       recovery_status: null,

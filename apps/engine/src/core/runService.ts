@@ -24,6 +24,7 @@ import type { AppConfig } from "../setup/types.js"
 import type { WorkerLeaseScheduler } from "./workerLease.js"
 import { createSupabaseAdapter } from "./supabase/adapter.js"
 import { SupabaseManagementClient } from "./supabase/managementClient.js"
+import { getWorkerAdmissionController, type WorkerAdmissionController } from "./workerAdmission.js"
 
 export type { SupabaseAdapterFactory } from "./runOrchestrator.js"
 
@@ -232,7 +233,9 @@ function workflowCapabilityFailureFixture(): WorkflowCapabilityBlockedResult | n
 function missingSupabaseCapabilityRequirements(workspace: WorkspaceRow, token: string | null): string[] {
   const missing: string[] = []
   if (!token) missing.push("management token")
-  if (!workspace.supabase_persistent_test_branch_ref?.trim()) missing.push("persistent test branch")
+  if (workspace.supabase_db_mode !== "direct" && !workspace.supabase_persistent_test_branch_ref?.trim()) {
+    missing.push("persistent test branch")
+  }
   return missing
 }
 
@@ -261,6 +264,7 @@ function defaultSupabaseAdapterFactory(
           client,
         }),
         managementClient: client,
+        handoffClient: client,
       }
     },
   }
@@ -317,6 +321,36 @@ function fireInBackground(io: WorkflowIO & { bus?: EventBus }, label: string, ta
     .finally(() => {
       io.close?.()
     })
+}
+
+function resolveAdmissionController(
+  repos: Repos,
+  controller?: WorkerAdmissionController,
+): WorkerAdmissionController {
+  return controller ?? getWorkerAdmissionController(repos)
+}
+
+function queueDeferredStart(
+  controller: WorkerAdmissionController,
+  runId: string,
+  start: () => Promise<void>,
+): () => Promise<void> {
+  let completion: Promise<void> | null = null
+  return async () => {
+    if (completion) return completion
+    completion = new Promise<void>((resolve, reject) => {
+      controller.enqueue(runId, async () => {
+        try {
+          await start()
+          resolve()
+        } catch (error) {
+          reject(error)
+          throw error
+        }
+      })
+    })
+    return completion
+  }
 }
 
 type BackgroundRunner = typeof fireInBackground
@@ -427,6 +461,7 @@ export function prepareForegroundIdeaRun(
     onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
     supabaseAdapterFactory?: SupabaseAdapterFactory
     capabilityResolver?: WorkflowCapabilityResolver
+    admissionController?: WorkerAdmissionController
     prepareRunImpl?: PrepareRunImpl
   },
 ): PreparedForegroundRunResult {
@@ -442,6 +477,8 @@ export function prepareForegroundIdeaRun(
   const capabilities = capabilitiesResult
   const blocker = workflowCapabilityOwnershipBlocker()
   if (blocker) return blocker
+  const admission = resolveAdmissionController(repos, input.admissionController)
+  const shouldQueue = !admission.hasCapacity()
 
   const prepareRunImpl = input.prepareRunImpl ?? prepareRun
   const prepared = prepareRunImpl(
@@ -453,12 +490,16 @@ export function prepareForegroundIdeaRun(
       workerInstanceId: input.workerInstanceId,
       workerLeaseClock: input.workerLeaseClock,
       workerLeaseScheduler: input.workerLeaseScheduler,
+      deferWorkerLease: shouldQueue,
       ...meta,
       onItemColumnChanged: input.onItemColumnChanged,
       supabaseAdapterFactory: capabilities.supabaseAdapterFactory,
     },
   )
-  return { ok: true, runId: prepared.runId, itemId: prepared.itemId, start: prepared.start }
+  const start = shouldQueue
+    ? queueDeferredStart(admission, prepared.runId, prepared.start)
+    : () => admission.runAdmitted(prepared.runId, prepared.start)
+  return { ok: true, runId: prepared.runId, itemId: prepared.itemId, start }
 }
 
 /**
@@ -683,6 +724,7 @@ export function prepareForegroundItemRun(
     onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
     supabaseAdapterFactory?: SupabaseAdapterFactory
     capabilityResolver?: WorkflowCapabilityResolver
+    admissionController?: WorkerAdmissionController
     prepareRunImpl?: PrepareRunImpl
   },
 ): PreparedForegroundRunResult {
@@ -707,6 +749,8 @@ export function prepareForegroundItemRun(
   if (!gitGate.ok) return gitGate
   const blocker = workflowCapabilityOwnershipBlocker()
   if (blocker) return blocker
+  const admission = resolveAdmissionController(repos, input.admissionController)
+  const shouldQueue = !admission.hasCapacity()
 
   const workflowItem = { id: item.id, title: item.title, description: item.description }
   const prepareOptions = {
@@ -714,6 +758,7 @@ export function prepareForegroundItemRun(
     workerInstanceId: input.workerInstanceId,
     workerLeaseClock: input.workerLeaseClock,
     workerLeaseScheduler: input.workerLeaseScheduler,
+    deferWorkerLease: shouldQueue,
     itemId: item.id,
     resume: preparedAction.resume,
     onItemColumnChanged: input.onItemColumnChanged,
@@ -740,7 +785,10 @@ export function prepareForegroundItemRun(
     }
   }
 
-  return { ok: true, runId: prepared.runId, itemId: item.id, start: prepared.start }
+  const start = shouldQueue
+    ? queueDeferredStart(admission, prepared.runId, prepared.start)
+    : () => admission.runAdmitted(prepared.runId, prepared.start)
+  return { ok: true, runId: prepared.runId, itemId: item.id, start }
 }
 
 export async function startPreparedImportForItem(
@@ -804,6 +852,7 @@ export async function prepareForegroundPreparedImportRun(
     supabaseAdapterFactory?: SupabaseAdapterFactory
     capabilityResolver?: WorkflowCapabilityResolver
     importContextGenerator?: ImportContextGenerator
+    admissionController?: WorkerAdmissionController
     prepareRunImpl?: PrepareRunImpl
   },
 ): Promise<PreparedForegroundImportRunResult> {
@@ -855,6 +904,8 @@ export async function prepareForegroundPreparedImportRun(
     dirtyCheckIgnoredPaths: [input.sourceDir],
     skipDesignPrep: true,
   }
+  const admission = resolveAdmissionController(repos, input.admissionController)
+  const shouldQueue = !admission.hasCapacity()
   const prepareRunImpl = input.prepareRunImpl ?? prepareRun
   const prepared = prepareRunImpl(
     {
@@ -869,6 +920,7 @@ export async function prepareForegroundPreparedImportRun(
       workerInstanceId: input.workerInstanceId,
       workerLeaseClock: input.workerLeaseClock,
       workerLeaseScheduler: input.workerLeaseScheduler,
+      deferWorkerLease: shouldQueue,
       itemId: existingItem?.id,
       ...newItemWorkspaceFields(existingItem, workspace),
       resume,
@@ -889,12 +941,15 @@ export async function prepareForegroundPreparedImportRun(
     kind: "json",
     path: importContextPath,
   })
+  const start = shouldQueue
+    ? queueDeferredStart(admission, prepared.runId, prepared.start)
+    : () => admission.runAdmitted(prepared.runId, prepared.start)
   return {
     ok: true,
     runId: prepared.runId,
     itemId: item.id,
     warnings: Array.from(new Set([...seeded.warnings, ...importContext.warnings])),
-    start: prepared.start,
+    start,
   }
 }
 
@@ -1082,6 +1137,7 @@ export async function prepareForegroundResumeRun(
     onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
     supabaseAdapterFactory?: SupabaseAdapterFactory
     capabilityResolver?: WorkflowCapabilityResolver
+    admissionController?: WorkerAdmissionController
     resumeRunImpl?: PerformResumeImpl
     persistItemDecision?: boolean
   },
@@ -1105,6 +1161,8 @@ export async function prepareForegroundResumeRun(
   const capabilities = capabilitiesResult
   const blocker = workflowCapabilityOwnershipBlocker()
   if (blocker) return blocker
+  const admission = resolveAdmissionController(repos, input.admissionController)
+  const shouldQueue = !admission.hasCapacity()
   const supabaseHook = buildSupabaseWorkflowHook(
     repos,
     readiness.run.workspace_id,
@@ -1157,30 +1215,38 @@ export async function prepareForegroundResumeRun(
     }
   }
 
+  if (shouldQueue) {
+    repos.updateRun(input.runId, { status: "queued" })
+  }
+
+  const start = async () => {
+    const resumeRunImpl = input.resumeRunImpl ?? performResume
+    const detachPromptAnswer = input.promptAnswer ? attachOneShotPromptAnswer(io, input.promptAnswer) : () => {}
+    try {
+      await resumeRunImpl({
+        repos,
+        io,
+        runId: input.runId,
+        remediation,
+        workerOwnerKind: input.workerOwnerKind ?? "api",
+        workerInstanceId: input.workerInstanceId,
+        workerLeaseClock: input.workerLeaseClock,
+        workerLeaseScheduler: input.workerLeaseScheduler,
+        supabaseHook,
+        onItemColumnChanged: input.onItemColumnChanged,
+      })
+    } finally {
+      detachPromptAnswer()
+    }
+  }
+
   return {
     ok: true,
     runId: input.runId,
     remediationId: remediation.id,
-    start: async () => {
-      const resumeRunImpl = input.resumeRunImpl ?? performResume
-      const detachPromptAnswer = input.promptAnswer ? attachOneShotPromptAnswer(io, input.promptAnswer) : () => {}
-      try {
-        await resumeRunImpl({
-          repos,
-          io,
-          runId: input.runId,
-          remediation,
-          workerOwnerKind: input.workerOwnerKind ?? "api",
-          workerInstanceId: input.workerInstanceId,
-          workerLeaseClock: input.workerLeaseClock,
-          workerLeaseScheduler: input.workerLeaseScheduler,
-          supabaseHook,
-          onItemColumnChanged: input.onItemColumnChanged,
-        })
-      } finally {
-        detachPromptAnswer()
-      }
-    },
+    start: shouldQueue
+      ? queueDeferredStart(admission, input.runId, start)
+      : () => admission.runAdmitted(input.runId, start),
   }
 }
 

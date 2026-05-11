@@ -3,10 +3,10 @@ import { SUPABASE_MANAGEMENT_TOKEN_SECRET_REF } from "./secretMetadata.js"
 import { storeSecret, type SecretStoreOptions } from "./secretStore.js"
 import type { SupabaseManagementClient } from "../core/supabase/managementClient.js"
 import { SupabaseManagementError } from "../core/supabase/managementClient.js"
-import type { SupabaseProject, SupabaseReadinessSetupAction } from "../core/supabase/types.js"
+import type { SupabaseDbMode, SupabaseProject, SupabaseReadinessSetupAction } from "../core/supabase/types.js"
 
 export type SupabaseConnectResult =
-  | { ok: true; projectRef: string; region: string }
+  | { ok: true; projectRef: string; region: string; dbMode: SupabaseDbMode }
   | {
       ok: false
       message: string
@@ -16,6 +16,9 @@ export type SupabaseConnectResult =
 
 function classifySupabaseConnectFailure(err: unknown): { message: string; action: SupabaseReadinessSetupAction } {
   const message = err instanceof Error ? err.message : "Supabase validation failed"
+  if (err instanceof SupabaseManagementError && err.status === 402) {
+    return { message: "Supabase branching is unavailable for this project", action: "Connect Supabase project" }
+  }
   if (err instanceof SupabaseManagementError && err.status === 403) {
     return { message, action: "Re-authorize project access" }
   }
@@ -23,6 +26,10 @@ function classifySupabaseConnectFailure(err: unknown): { message: string; action
     return { message, action: "Rotate management token" }
   }
   return { message, action: "Rotate management token" }
+}
+
+function classifySupabaseDbMode(project: SupabaseProject): SupabaseDbMode {
+  return project.branchingEnabled === false ? "direct" : "branching"
 }
 
 export async function connectSupabaseProject(input: {
@@ -61,8 +68,9 @@ export async function connectSupabaseProject(input: {
     }
   }
   const region = project.region ?? "unknown"
+  const dbMode = classifySupabaseDbMode(project)
   storeSecret(SUPABASE_MANAGEMENT_TOKEN_SECRET_REF, token, input.secretStore)
-  input.repos.connectWorkspaceSupabase(workspace.id, { projectRef, region })
+  input.repos.connectWorkspaceSupabase(workspace.id, { projectRef, region, dbMode })
   input.repos.preserveWorkspaceSupabaseProtection(workspace.id)
-  return { ok: true, projectRef, region }
+  return { ok: true, projectRef, region, dbMode }
 }

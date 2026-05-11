@@ -15,7 +15,7 @@
 import type { Repos } from "../../db/repositories.js"
 import type { SecretStoreOptions } from "../../setup/secretStore.js"
 import type { SupabaseReadinessManagementClient } from "./preExecutionReadiness.js"
-import type { SupabaseAdapter } from "./types.js"
+import type { SupabaseAdapter, SupabaseDbMode } from "./types.js"
 import type { SupabaseHandoffClient } from "./handoffWriter.js"
 
 export type SupabaseWorkflowReadinessHook = {
@@ -31,8 +31,9 @@ export type SupabaseWorkflowHook = {
   managementClient?: SupabaseReadinessManagementClient
   workspaceId: string
   projectRef: string
+  dbMode: SupabaseDbMode
   /** Persistent test branch that is the parent for every wave branch. */
-  parentBranchRef: string
+  parentBranchRef?: string
   protectionSwitch: "off" | "on"
   cleanupPolicy: "on-success-immediate" | "ttl-after-success" | "manual"
   cleanupTtlHours?: number | null

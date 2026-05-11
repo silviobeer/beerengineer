@@ -111,11 +111,13 @@ export async function runStatusCommand(workspaceKey: string | undefined, all = f
     const openPrompts = repos.listOpenPrompts({ workspaceId: workspace.id })
     const latestRun = [...runs].sort((a, b) => b.created_at - a.created_at)[0]
     const state = workspaceState(runs, openPrompts.length > 0)
-    if (json) return jsonOut({ workspace: workspace.key, state, itemCount: items.length, runCount: runs.length, chatCount: openPrompts.length })
+    const dbMode = workspace.supabase_project_ref ? workspace.supabase_db_mode ?? "branching" : undefined
+    if (json) return jsonOut({ workspace: workspace.key, state, dbMode, itemCount: items.length, runCount: runs.length, chatCount: openPrompts.length })
     console.log(`  Workspace ${workspace.key}`)
     console.log(`  state: ${state}`)
     console.log(`  root: ${workspace.root_path ?? "—"}`)
     console.log(`  git: ${describeWorkspaceGit(workspace.root_path)}`)
+    if (dbMode) console.log(`  db mode: ${dbMode}`)
     console.log(`  counts: items=${items.length} runs=${runs.length} chats=${openPrompts.length}`)
     if (latestRun) console.log(`  latest run: run/${shortRunId(latestRun.id)} / ${latestRun.current_stage ?? "—"} / ${deriveRunStatus(latestRun, openPrompts.some(prompt => prompt.run_id === latestRun.id))}`)
     return 0

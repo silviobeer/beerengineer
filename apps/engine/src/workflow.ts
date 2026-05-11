@@ -31,8 +31,6 @@ import { frontendDesign } from "./stages/frontend-design/index.js"
 import { mergeGate } from "./stages/mergeGate/index.js"
 import {
   PROJECT_STAGE_REGISTRY,
-  blockCliExecutionForApiOwnership,
-  shouldPauseCliRunBeforeExecution,
   shouldRunProjectStage,
   type ExecutionResumeOptions,
   type ProjectResumePlan,
@@ -536,14 +534,12 @@ async function runWorkflowProjects(
   const projectDesignArtifact = design ? projectDesign(design) : undefined
   const decisions = loadItemDecisions(context)
   const importContext = await readImportContextArtifact(context) ?? undefined
-  const pauseBeforeExecution = shouldPauseCliRunBeforeExecution(resumePlan, executionOwnership)
-  let lastProjectCtx: ProjectContext | null = null
   for (const project of projects) {
     git.ensureProjectBranch(project.id)
     const projectResumePlan = resumePlan?.projectStartStages?.[project.id]
       ? { ...resumePlan, startStage: resumePlan.projectStartStages[project.id] }
       : resumePlan
-    lastProjectCtx = await runProjectStages({
+    await runProjectStages({
       initialCtx: {
         ...context,
         project: { ...project, concept: mergeAmendments(project.concept, conceptAmendments, project.id) },
@@ -559,11 +555,7 @@ async function runWorkflowProjects(
       supabaseHook,
       supabaseReadiness,
       executionOwnership,
-      stopAfter: pauseBeforeExecution ? "planning" : undefined,
     })
-  }
-  if (pauseBeforeExecution && lastProjectCtx) {
-    await blockCliExecutionForApiOwnership(lastProjectCtx, executionOwnership)
   }
 }
 
