@@ -22,20 +22,92 @@ export type DbRelevanceUnsupportedClaim =
   | { level: "story"; waveId: string; storyId: string; reason: string }
   | { level: "wave"; waveId: string; reason: string }
 
-const DB_EVIDENCE_PATTERNS = [
-  /\b(?:schema|table|column|index|foreign key|data model|storage|datastore|persisted data|database read|database write|read from (?:the )?(?:database|db)|write to (?:the )?(?:database|db)|query (?:the )?(?:database|db)|sql query|backfill|seed|sqlite|postgres(?:ql)?|mysql|mariadb)\b/i,
-  /\b(?:migrat(?:e|ion|ions)|insert(?:ing)? into|upsert(?:ing)?|delete(?:ing)? from|update(?:ing)? (?:the )?(?:database|db|table|row|record)|persist(?:ing|ed)?|store in (?:the )?(?:database|db))\b/i,
-  /(?:^|\/)(?:supabase\/migrations|db\/migrations)\//i,
-  /\.sql\b/i,
-  /\bschema\.prisma\b/i,
+const DB_EVIDENCE_PHRASES = [
+  "schema",
+  "table",
+  "column",
+  "index",
+  "foreign key",
+  "data model",
+  "storage",
+  "datastore",
+  "persisted data",
+  "database read",
+  "database write",
+  "read from database",
+  "read from db",
+  "read from the database",
+  "read from the db",
+  "write to database",
+  "write to db",
+  "write to the database",
+  "write to the db",
+  "query database",
+  "query db",
+  "query the database",
+  "query the db",
+  "sql query",
+  "backfill",
+  "seed",
+  "migrate",
+  "migration",
+  "migrations",
+  "insert into",
+  "upsert",
+  "delete from",
+  "update database",
+  "update db",
+  "update table",
+  "update row",
+  "update record",
+  "persisting",
+  "persisted",
+  "store in database",
+  "store in db",
+  "store in the database",
+  "store in the db",
+  "sqlite",
+  "postgres",
+  "postgresql",
+  "mysql",
+  "mariadb",
 ]
 
-const MIGRATION_PATH_PATTERNS = [
-  /\b(?:migration path|migrat(?:e|ion|ions)|backfill|seed|manual sql|sql script|prisma migrate|prisma migration|drizzle(?:-kit)?|knex|typeorm)\b/i,
+const DB_EVIDENCE_PATH_FRAGMENTS = [
+  "supabase/migrations/",
+  "db/migrations/",
+  ".sql",
+  "schema.prisma",
 ]
 
-const DATASTORE_PATTERNS = [
-  /\b(?:sqlite|postgres(?:ql)?|mysql|mariadb|database|db|sql|supabase|prisma)\b/i,
+const MIGRATION_PATH_PHRASES = [
+  "migration path",
+  "migrate",
+  "migration",
+  "migrations",
+  "backfill",
+  "seed",
+  "manual sql",
+  "sql script",
+  "prisma migrate",
+  "prisma migration",
+  "drizzle",
+  "drizzle-kit",
+  "knex",
+  "typeorm",
+]
+
+const DATASTORE_PHRASES = [
+  "sqlite",
+  "postgres",
+  "postgresql",
+  "mysql",
+  "mariadb",
+  "database",
+  "db",
+  "sql",
+  "supabase",
+  "prisma",
 ]
 
 const STORY_UNSUPPORTED_REASON = "Story marked dbRelevant:true but does not describe concrete database work in the plan output."
@@ -66,19 +138,20 @@ export function validatePlanStoryEnvelope(
 function normalizedText(parts: Array<string | undefined | null>): string {
   return parts
     .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
+    .map(part => part.trim().toLowerCase())
     .join("\n")
 }
 
-function hasAnyPattern(text: string, patterns: RegExp[]): boolean {
-  return patterns.some(pattern => pattern.test(text))
+function hasAnyPhrase(text: string, phrases: string[]): boolean {
+  return phrases.some(phrase => text.includes(phrase))
 }
 
 function hasConcreteDatabaseEvidence(text: string): boolean {
-  return hasAnyPattern(text, DB_EVIDENCE_PATTERNS)
+  return hasAnyPhrase(text, DB_EVIDENCE_PHRASES) || hasAnyPhrase(text, DB_EVIDENCE_PATH_FRAGMENTS)
 }
 
 function hasExplicitMigrationPath(text: string): boolean {
-  return hasAnyPattern(text, MIGRATION_PATH_PATTERNS) && hasAnyPattern(text, DATASTORE_PATTERNS)
+  return hasAnyPhrase(text, MIGRATION_PATH_PHRASES) && hasAnyPhrase(text, DATASTORE_PHRASES)
 }
 
 function storyEvidenceText(
