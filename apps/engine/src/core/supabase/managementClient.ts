@@ -95,7 +95,7 @@ export class SupabaseManagementClient {
     }) as SupabaseSqlResult
   }
 
-  async getProjectKeys(projectRef: string, branchRef: string): Promise<{ anonKey: string; serviceRoleKey: string; url: string }> {
+  async getProjectKeys(projectRef: string, branchRef?: string): Promise<{ anonKey: string; serviceRoleKey: string; url: string }> {
     const body = await this.request(managementEndpoints.projectKeys(projectRef, branchRef)) as {
       anonKey?: string
       anon_key?: string
@@ -106,7 +106,7 @@ export class SupabaseManagementClient {
     return {
       anonKey: body.anonKey ?? body.anon_key ?? "",
       serviceRoleKey: body.serviceRoleKey ?? body.service_role_key ?? "",
-      url: body.url ?? "",
+      url: body.url ?? `https://${projectRef}.supabase.co`,
     }
   }
 

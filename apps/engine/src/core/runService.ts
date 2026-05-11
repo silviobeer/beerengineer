@@ -254,12 +254,16 @@ function defaultSupabaseAdapterFactory(
 ): WorkflowCapabilityBag {
   if (providedFactory) return { supabaseAdapterFactory: providedFactory }
   return {
-    supabaseAdapterFactory: () => ({
-      adapter: createSupabaseAdapter({
-        repos,
-        client: new SupabaseManagementClient({ token }),
-      }),
-    }),
+    supabaseAdapterFactory: () => {
+      const client = new SupabaseManagementClient({ token })
+      return {
+        adapter: createSupabaseAdapter({
+          repos,
+          client,
+        }),
+        handoffClient: client,
+      }
+    },
   }
 }
 
