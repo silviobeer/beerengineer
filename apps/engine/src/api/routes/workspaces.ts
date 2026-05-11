@@ -150,6 +150,7 @@ export async function handleWorkspaceSupabaseReadiness(repos: Repos, res: Server
       key: workspace.key,
       rootPath: workspace.root_path ?? undefined,
       projectRef: workspace.supabase_project_ref ?? undefined,
+      dbMode: workspace.supabase_db_mode ?? undefined,
       persistentTestBranchRef: workspace.supabase_persistent_test_branch_ref ?? undefined,
       persistentTestBranchName: workspace.supabase_persistent_test_branch_name ?? undefined,
     },

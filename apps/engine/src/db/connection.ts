@@ -179,6 +179,7 @@ function migrateWorkspacesSupabaseColumns(db: Db): void {
   const has = (name: string) => cols.some(c => c.name === name)
   if (!has("supabase_project_ref")) db.exec("ALTER TABLE workspaces ADD COLUMN supabase_project_ref TEXT")
   if (!has("supabase_region")) db.exec("ALTER TABLE workspaces ADD COLUMN supabase_region TEXT")
+  if (!has("supabase_db_mode")) db.exec("ALTER TABLE workspaces ADD COLUMN supabase_db_mode TEXT")
   if (!has("supabase_persistent_test_branch_ref")) db.exec("ALTER TABLE workspaces ADD COLUMN supabase_persistent_test_branch_ref TEXT")
   if (!has("supabase_persistent_test_branch_name")) db.exec("ALTER TABLE workspaces ADD COLUMN supabase_persistent_test_branch_name TEXT")
   if (!has("supabase_persistent_test_branch_status")) db.exec("ALTER TABLE workspaces ADD COLUMN supabase_persistent_test_branch_status TEXT")

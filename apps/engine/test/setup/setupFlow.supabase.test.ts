@@ -60,11 +60,12 @@ test("PROJ-4 PRD-2 US-1: setup connect validates before persisting token and met
       token: "sbp_token",
       projectRef: "proj_1",
       secretStore: { storePath: ctx.storePath },
-      client: { listProjects: async () => [{ id: "1", ref: "proj_1", region: "eu" }] },
+      client: { listProjects: async () => [{ id: "1", ref: "proj_1", region: "eu", branchingEnabled: true }] },
     })
-    assert.deepEqual(result, { ok: true, projectRef: "proj_1", region: "eu" })
+    assert.deepEqual(result, { ok: true, projectRef: "proj_1", region: "eu", dbMode: "branching" })
     assert.equal(readActiveSecretValue(SUPABASE_MANAGEMENT_TOKEN_SECRET_REF, { storePath: ctx.storePath }), "sbp_token")
     assert.equal(ctx.repos.getWorkspace(ctx.workspace.id)?.supabase_project_ref, "proj_1")
+    assert.equal(ctx.repos.getWorkspace(ctx.workspace.id)?.supabase_db_mode, "branching")
   } finally {
     ctx.db.close()
     rmSync(ctx.dir, { recursive: true, force: true })
@@ -130,7 +131,7 @@ test("PROJ-6 PRD-2 US-3: connect stores project ref on the selected workspace on
       token: "sbp_token",
       projectRef: "proj_other",
       secretStore: { storePath: ctx.storePath },
-      client: { listProjects: async () => [{ id: "2", ref: "proj_other", region: "us" }] },
+      client: { listProjects: async () => [{ id: "2", ref: "proj_other", region: "us", branchingEnabled: true }] },
     })
 
     assert.equal(result.ok, true)
@@ -195,7 +196,7 @@ test("PROJ-6 PRD-2 US-4/5: interactive CLI setup connects, checks branch, and pr
         close: () => {},
       }),
       createSupabaseClient: () => ({
-        listProjects: async () => [{ id: "1", ref: "proj_1", region: "eu" }],
+        listProjects: async () => [{ id: "1", ref: "proj_1", region: "eu", branchingEnabled: true }],
         listBranches: async () => [],
         createBranch: async (_projectRef, input) => {
           createCalls += 1

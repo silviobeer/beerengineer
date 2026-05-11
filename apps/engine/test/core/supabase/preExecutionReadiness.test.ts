@@ -263,3 +263,30 @@ test("PROJ-6 PRD-1 US-5: beta token access does not unblock an alpha run", async
     rmSync(ctx.dir, { recursive: true, force: true })
   }
 })
+
+test("REQ-1 AC-1.3: readiness surfaces the stored db mode without reclassifying it", async () => {
+  const paths = tempStore()
+  try {
+    storeSecret(SUPABASE_MANAGEMENT_TOKEN_SECRET_REF, "sbp-secret", { storePath: paths.storePath })
+    const readiness = await createSupabasePreExecutionReadiness({
+      workspace: {
+        id: "ws",
+        key: "alpha",
+        rootPath: "/repo",
+        projectRef: "proj_alpha",
+        dbMode: "direct",
+        persistentTestBranchRef: "br_alpha",
+      },
+      secretStore: { storePath: paths.storePath },
+      managementClient: {
+        getProject: async (projectRef) => ({ id: "p1", ref: projectRef, branchingEnabled: true }),
+        getBranch: async (_projectRef, branchRef) => ({ id: "br", ref: branchRef, status: "ACTIVE_HEALTHY" }),
+      },
+    })
+
+    assert.equal(readiness.status, "ready")
+    assert.equal(readiness.workspace.dbMode, "direct")
+  } finally {
+    rmSync(paths.dir, { recursive: true, force: true })
+  }
+})
