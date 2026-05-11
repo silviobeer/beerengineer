@@ -8,11 +8,11 @@ import { spawnSync } from "node:child_process"
 import { initDatabase } from "../src/db/connection.js"
 import { Repos } from "../src/db/repositories.js"
 import { createBus } from "../src/core/bus.js"
-import { busToWorkflowIO } from "../src/core/runOrchestrator.js"
+import { busToWorkflowIO, prepareRun } from "../src/core/runOrchestrator.js"
 import { prepareForegroundIdeaRun } from "../src/core/runService.js"
-import { prepareForegroundResumeRun } from "../src/core/runService.js"
-import { loadResumeReadiness, performResume } from "../src/core/resume.js"
-import { claimExecutionOwnershipHandoffs, parseExecutionOwnershipHandoffRecoveryPayload } from "../src/core/executionOwnershipHandoff.js"
+import { claimExecutionOwnershipHandoffs } from "../src/core/executionOwnershipHandoff.js"
+import { markRunFailedRecoverable } from "../src/core/orphanRecovery.js"
+import { recoveryUserMessageForRun, LOST_WORKER_USER_MESSAGE } from "../src/core/recoveryUserMessage.js"
 import type { WorkflowEvent } from "../src/core/io.js"
 
 function seedCleanGitRepo(root: string): void {
@@ -113,81 +113,122 @@ function makePromptingIo(): { io: ReturnType<typeof busToWorkflowIO> & { bus: Re
   return { io: { ...busToWorkflowIO(bus), bus }, events }
 }
 
-test("CLI-owned run stops at a recoverable execution handoff after planning", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "be2-cli-execution-boundary-"))
+function stageStarts(events: WorkflowEvent[]): string[] {
+  return events
+    .filter((event): event is Extract<WorkflowEvent, { type: "stage_started" }> => event.type === "stage_started")
+    .map(event => event.stageKey)
+}
+
+for (const owner of ["cli", "api"] as const) {
+  test(`${owner}-owned runs continue from planning into execution without operator action`, async () => {
+    const dir = mkdtempSync(join(tmpdir(), `be2-${owner}-execution-autostart-`))
+    const repoRoot = join(dir, "repo")
+    const db = initDatabase(join(dir, "test.sqlite"))
+    const repos = new Repos(db)
+    try {
+      seedCleanGitRepo(repoRoot)
+      repos.upsertWorkspace({ key: "test", name: "Test", rootPath: repoRoot })
+      const { io, events } = makePromptingIo()
+
+      const prepared = prepareForegroundIdeaRun(repos, io, {
+        title: `${owner}-owned auto progression`,
+        description: "Planning should continue into execution automatically.",
+        workspaceKey: "test",
+        owner,
+      })
+
+      if (!prepared.ok) {
+        assert.fail("expected prepareForegroundIdeaRun to succeed")
+      }
+
+      const startedAt = Date.now()
+      await prepared.start()
+      const elapsedMs = Date.now() - startedAt
+
+      const run = repos.getRun(prepared.runId)
+      assert.ok(run, "expected persisted run after foreground start")
+      assert.equal(run?.owner, owner)
+      assert.equal(run?.worker_owner_kind, owner)
+      assert.equal(run?.status, "completed")
+      assert.equal(run?.recovery_status, null)
+      assert.ok(elapsedMs < 30_000, `expected planning-to-execution handoff within 30s, got ${elapsedMs} ms`)
+
+      const startedStages = stageStarts(events)
+      assert.ok(startedStages.includes("planning"))
+      assert.ok(startedStages.includes("execution"))
+      assert.ok(
+        startedStages.indexOf("execution") > startedStages.indexOf("planning"),
+        "execution must start after planning",
+      )
+      assert.equal(events.some(event => event.type === "run_blocked"), false)
+      assert.equal(events.some(event => event.type === "run_resumed"), false)
+    } finally {
+      db.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+}
+
+test("execution launch failure after planning leaves a recoverable failed run with operator-facing guidance", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-execution-launch-failure-"))
   const repoRoot = join(dir, "repo")
   const db = initDatabase(join(dir, "test.sqlite"))
   const repos = new Repos(db)
   try {
     seedCleanGitRepo(repoRoot)
     repos.upsertWorkspace({ key: "test", name: "Test", rootPath: repoRoot })
-    const { io, events } = makePromptingIo()
+    const { io } = makePromptingIo()
 
     const prepared = prepareForegroundIdeaRun(repos, io, {
-      title: "CLI-owned boundary",
-      description: "Stop before execution starts",
+      title: "CLI-owned execution start failure",
+      description: "Fail immediately after planning hands off to execution.",
       workspaceKey: "test",
       owner: "cli",
+      prepareRunImpl: (workflowItem, workflowRepos, workflowIo, opts) =>
+        prepareRun(workflowItem, workflowRepos, workflowIo, {
+          ...opts,
+          workflowRunner: async (_item, options) => {
+            const runId = options.executionOwnership?.runId
+            assert.ok(runId, "workflow runner must receive execution ownership context")
+            workflowRepos.updateRun(runId!, { status: "running", current_stage: "planning" })
+            workflowRepos.updateRun(runId!, { status: "running", current_stage: "execution" })
+            markRunFailedRecoverable(workflowRepos, runId!, "worker start failed: generic launch failure")
+            throw new Error("worker start failed: generic launch failure")
+          },
+        }),
     })
 
     if (!prepared.ok) {
       assert.fail("expected prepareForegroundIdeaRun to succeed")
     }
+
     await prepared.start()
 
     const run = repos.getRun(prepared.runId)
-    if (!run) {
-      assert.fail("expected persisted run after foreground start")
-    }
-    assert.equal(run.owner, "cli")
-    assert.equal(run.worker_owner_kind, "cli")
-    assert.equal(run.current_stage, "planning")
-    assert.equal(run.status, "blocked")
-    assert.equal(run.recovery_status, "blocked")
-    assert.equal(run.recovery_scope, "stage")
-    assert.equal(run.recovery_scope_ref, "execution")
-    assert.match(run.recovery_summary ?? "", /API worker ownership/i)
-
-    const startedStages = events
-      .filter((event): event is Extract<WorkflowEvent, { type: "stage_started" }> => event.type === "stage_started")
-      .map(event => event.stageKey)
-
-    assert.ok(startedStages.includes("brainstorm"))
-    assert.ok(startedStages.includes("requirements"))
-    assert.ok(startedStages.includes("architecture"))
-    assert.ok(startedStages.includes("planning"))
-    assert.equal(startedStages.includes("execution"), false)
-
-    const blocked = events.filter((event): event is Extract<WorkflowEvent, { type: "run_blocked" }> => event.type === "run_blocked")
-    assert.equal(blocked.length, 1)
-    assert.equal(blocked[0]?.scope.type, "stage")
-    assert.equal(blocked[0]?.scope.stageId, "execution")
-
-    const readiness = await loadResumeReadiness(repos, prepared.runId)
-    assert.equal(readiness.kind, "ready")
-    if (readiness.kind !== "ready") return
-    assert.equal(readiness.record.scope.type, "stage")
-    if (readiness.record.scope.type !== "stage") return
-    assert.equal(readiness.record.scope.stageId, "execution")
+    assert.ok(run, "expected persisted run after execution launch failure")
+    assert.equal(run?.status, "failed")
+    assert.equal(run?.recovery_status, "failed")
+    assert.equal(run?.current_stage, "execution")
+    assert.equal(recoveryUserMessageForRun(run!), LOST_WORKER_USER_MESSAGE)
   } finally {
     db.close()
     rmSync(dir, { recursive: true, force: true })
   }
 })
 
-test("API worker leaves a blocked CLI handoff idle until an operator resumes it", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "be2-api-execution-handoff-"))
+test("execution handoff claimant ignores runs that already auto-progressed through execution", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-ignore-auto-progressed-run-"))
   const repoRoot = join(dir, "repo")
   const db = initDatabase(join(dir, "test.sqlite"))
   const repos = new Repos(db)
   try {
     seedCleanGitRepo(repoRoot)
     repos.upsertWorkspace({ key: "test", name: "Test", rootPath: repoRoot })
+    const { io } = makePromptingIo()
 
-    const initial = makePromptingIo()
-    const prepared = prepareForegroundIdeaRun(repos, initial.io, {
-      title: "CLI-owned handoff",
-      description: "Resume under API ownership",
+    const prepared = prepareForegroundIdeaRun(repos, io, {
+      title: "Completed CLI run",
+      description: "Should not be reconsidered by the legacy execution handoff claimant.",
       workspaceKey: "test",
       owner: "cli",
     })
@@ -195,222 +236,6 @@ test("API worker leaves a blocked CLI handoff idle until an operator resumes it"
       assert.fail("expected prepareForegroundIdeaRun to succeed")
     }
     await prepared.start()
-
-    const blockedRun = repos.getRun(prepared.runId)
-    assert.equal(blockedRun?.owner, "cli")
-    assert.equal(blockedRun?.worker_owner_kind, "cli")
-    assert.equal(blockedRun?.status, "blocked")
-    assert.equal(blockedRun?.recovery_scope_ref, "execution")
-
-    let resumeCalls = 0
-    const idleClaimResult = await claimExecutionOwnershipHandoffs(repos, {
-      apiWorkerInstanceId: "api-worker-test",
-      resumeRun: async () => {
-        resumeCalls += 1
-        return { ok: true }
-      },
-    })
-    assert.deepEqual(idleClaimResult.claimedRunIds, [])
-    assert.equal(resumeCalls, 0)
-    assert.equal(repos.getRun(prepared.runId)?.owner, "cli")
-
-    const resumed = makePromptingIo()
-    const queuedResume = await prepareForegroundResumeRun(repos, resumed.io, {
-      runId: prepared.runId,
-      summary: "API worker is ready to claim execution.",
-      workerOwnerKind: "api",
-      workerInstanceId: "api-worker-test",
-    })
-    if (!queuedResume.ok) {
-      assert.fail("expected prepareForegroundResumeRun to succeed")
-    }
-    await queuedResume.start()
-
-    const queuedRun = repos.getRun(prepared.runId)
-    assert.equal(queuedRun?.owner, "cli")
-    assert.equal(queuedRun?.status, "blocked")
-    assert.equal(
-      parseExecutionOwnershipHandoffRecoveryPayload(queuedRun?.recovery_payload_json)?.pendingResumeRemediationId,
-      queuedResume.remediationId,
-    )
-
-    let ownerAtResumeStart: string | null = null
-    const claimResult = await claimExecutionOwnershipHandoffs(repos, {
-      apiWorkerInstanceId: "api-worker-test",
-      resumeRun: async (claimRepos, input) => {
-        ownerAtResumeStart = claimRepos.getRun(input.runId)?.owner ?? null
-        assert.equal(input.summary, "API worker is ready to claim execution.")
-        const remediation = claimRepos.getExternalRemediation(input.remediationId)
-        assert.ok(remediation, "expected queued remediation to exist")
-        if (!remediation) return { ok: false }
-        await performResume({
-          repos: claimRepos,
-          io: resumed.io,
-          runId: input.runId,
-          remediation,
-          workerOwnerKind: "api",
-          workerInstanceId: input.apiWorkerInstanceId,
-        })
-        return { ok: true }
-      },
-    })
-
-    assert.deepEqual(claimResult.claimedRunIds, [prepared.runId])
-    assert.equal(ownerAtResumeStart, "api")
-
-    const initialStages = initial.events
-      .filter((event): event is Extract<WorkflowEvent, { type: "stage_started" }> => event.type === "stage_started")
-      .map(event => event.stageKey)
-    assert.equal(initialStages.includes("execution"), false)
-
-    const resumedStages = resumed.events
-      .filter((event): event is Extract<WorkflowEvent, { type: "stage_started" }> => event.type === "stage_started")
-      .map(event => event.stageKey)
-    assert.equal(resumedStages.includes("execution"), true)
-
-    const run = repos.getRun(prepared.runId)
-    assert.equal(run?.owner, "api")
-    assert.equal(run?.worker_owner_kind, "api")
-    assert.notEqual(run?.recovery_status, "blocked")
-  } finally {
-    db.close()
-    rmSync(dir, { recursive: true, force: true })
-  }
-})
-
-test("failed handoff claim returns the run to the same blocked state until a later explicit resume succeeds", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "be2-api-execution-handoff-retry-"))
-  const repoRoot = join(dir, "repo")
-  const db = initDatabase(join(dir, "test.sqlite"))
-  const repos = new Repos(db)
-  try {
-    seedCleanGitRepo(repoRoot)
-    repos.upsertWorkspace({ key: "test", name: "Test", rootPath: repoRoot })
-
-    const initial = makePromptingIo()
-    const prepared = prepareForegroundIdeaRun(repos, initial.io, {
-      title: "CLI-owned handoff retry",
-      description: "Retry under API ownership",
-      workspaceKey: "test",
-      owner: "cli",
-    })
-    if (!prepared.ok) {
-      assert.fail("expected prepareForegroundIdeaRun to succeed")
-    }
-    await prepared.start()
-
-    const firstResume = await prepareForegroundResumeRun(repos, makePromptingIo().io, {
-      runId: prepared.runId,
-      summary: "First retry while claim is still failing.",
-      workerOwnerKind: "api",
-      workerInstanceId: "api-worker-test",
-    })
-    if (!firstResume.ok) {
-      assert.fail("expected first queued resume to succeed")
-    }
-    await firstResume.start()
-
-    const originalClaim = repos.claimBlockedExecutionHandoff.bind(repos)
-    repos.claimBlockedExecutionHandoff = () => undefined
-    try {
-      let resumeCalls = 0
-      const failedClaim = await claimExecutionOwnershipHandoffs(repos, {
-        apiWorkerInstanceId: "api-worker-test",
-        resumeRun: async () => {
-          resumeCalls += 1
-          return { ok: true }
-        },
-      })
-      assert.deepEqual(failedClaim.claimedRunIds, [])
-      assert.equal(resumeCalls, 0)
-    } finally {
-      repos.claimBlockedExecutionHandoff = originalClaim
-    }
-
-    const afterFailedClaim = repos.getRun(prepared.runId)
-    assert.equal(afterFailedClaim?.owner, "cli")
-    assert.equal(afterFailedClaim?.status, "blocked")
-    assert.equal(afterFailedClaim?.current_stage, "planning")
-    assert.equal(
-      parseExecutionOwnershipHandoffRecoveryPayload(afterFailedClaim?.recovery_payload_json)?.pendingResumeRemediationId,
-      null,
-    )
-
-    const noRetryWithoutResume = await claimExecutionOwnershipHandoffs(repos, {
-      apiWorkerInstanceId: "api-worker-test",
-      resumeRun: async () => {
-        assert.fail("worker must not auto-resume a previously failed handoff without a new operator resume")
-      },
-    })
-    assert.deepEqual(noRetryWithoutResume.claimedRunIds, [])
-
-    const resumed = makePromptingIo()
-    const secondResume = await prepareForegroundResumeRun(repos, resumed.io, {
-      runId: prepared.runId,
-      summary: "Second retry after the API worker is available.",
-      workerOwnerKind: "api",
-      workerInstanceId: "api-worker-test",
-    })
-    if (!secondResume.ok) {
-      assert.fail("expected second queued resume to succeed")
-    }
-    await secondResume.start()
-
-    const successfulClaim = await claimExecutionOwnershipHandoffs(repos, {
-      apiWorkerInstanceId: "api-worker-test",
-      resumeRun: async (claimRepos, input) => {
-        const remediation = claimRepos.getExternalRemediation(input.remediationId)
-        assert.ok(remediation, "expected queued remediation to exist")
-        if (!remediation) return { ok: false }
-        await performResume({
-          repos: claimRepos,
-          io: resumed.io,
-          runId: input.runId,
-          remediation,
-          workerOwnerKind: "api",
-          workerInstanceId: input.apiWorkerInstanceId,
-        })
-        return { ok: true }
-      },
-    })
-    assert.deepEqual(successfulClaim.claimedRunIds, [prepared.runId])
-
-    const initialStages = initial.events
-      .filter((event): event is Extract<WorkflowEvent, { type: "stage_started" }> => event.type === "stage_started")
-      .map(event => event.stageKey)
-    assert.equal(initialStages.includes("execution"), false)
-
-    const resumedStages = resumed.events
-      .filter((event): event is Extract<WorkflowEvent, { type: "stage_started" }> => event.type === "stage_started")
-      .map(event => event.stageKey)
-    assert.equal(resumedStages.includes("execution"), true)
-
-    const run = repos.getRun(prepared.runId)
-    assert.equal(run?.owner, "api")
-    assert.equal(run?.worker_owner_kind, "api")
-    assert.notEqual(run?.recovery_status, "blocked")
-  } finally {
-    db.close()
-    rmSync(dir, { recursive: true, force: true })
-  }
-})
-
-test("execution handoff claimant ignores blocked runs outside the CLI planning boundary", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "be2-ignore-execution-handoff-"))
-  const db = initDatabase(join(dir, "test.sqlite"))
-  const repos = new Repos(db)
-  try {
-    const ws = repos.upsertWorkspace({ key: "test", name: "Test" })
-    const item = repos.createItem({ workspaceId: ws.id, title: "Ignored", description: "" })
-    const run = repos.createRun({ workspaceId: ws.id, itemId: item.id, title: item.title, owner: "api" })
-    repos.updateRun(run.id, {
-      status: "blocked",
-      current_stage: "execution",
-      recovery_status: "blocked",
-      recovery_scope: "stage",
-      recovery_scope_ref: "execution",
-      recovery_summary: "Execution blocked for another reason.",
-    })
 
     let resumeCalls = 0
     const claimResult = await claimExecutionOwnershipHandoffs(repos, {
@@ -423,7 +248,8 @@ test("execution handoff claimant ignores blocked runs outside the CLI planning b
 
     assert.deepEqual(claimResult.claimedRunIds, [])
     assert.equal(resumeCalls, 0)
-    assert.equal(repos.getRun(run.id)?.owner, "api")
+    assert.equal(repos.getRun(prepared.runId)?.status, "completed")
+    assert.equal(repos.getRun(prepared.runId)?.recovery_status, null)
   } finally {
     db.close()
     rmSync(dir, { recursive: true, force: true })

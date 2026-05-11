@@ -24,7 +24,7 @@ function seedCliRepo(repoRoot: string): void {
   spawnSync("git", ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"], { cwd: repoRoot, encoding: "utf8" })
 }
 
-test("beerengineer item action start_brainstorm stops at the execution handoff through the terminal CLI", () => {
+test("beerengineer item action start_brainstorm continues through execution from the terminal CLI", () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-cli-"))
   const testDir = dirname(fileURLToPath(import.meta.url))
   const engineRoot = resolve(testDir, "..")
@@ -75,10 +75,8 @@ test("beerengineer item action start_brainstorm stops at the execution handoff t
     assert.ok(runs[0]?.worker_instance_id, "CLI command must persist a worker instance id")
     assert.equal(typeof runs[0]?.worker_started_at, "number")
     assert.equal(typeof runs[0]?.worker_heartbeat_at, "number")
-    assert.equal(runs[0]?.status, "blocked")
-    assert.equal(runs[0]?.recovery_status, "blocked")
-    assert.equal(runs[0]?.recovery_scope, "stage")
-    assert.equal(runs[0]?.recovery_scope_ref, "execution")
+    assert.equal(runs[0]?.status, "completed")
+    assert.equal(runs[0]?.recovery_status, null)
     verifyDb.close()
   } finally {
     removeTempDir(dir)
@@ -135,7 +133,7 @@ test("beerengineer item action start_brainstorm prints git identity repair steps
   }
 })
 
-test("beerengineer item action start_implementation resumes from brainstorm artifacts and stops at the execution handoff", () => {
+test("beerengineer item action start_implementation resumes from brainstorm artifacts and continues through execution", () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-cli-"))
   const testDir = dirname(fileURLToPath(import.meta.url))
   const engineRoot = resolve(testDir, "..")
@@ -224,10 +222,8 @@ test("beerengineer item action start_implementation resumes from brainstorm arti
     const runs = verifyRepos.listRuns().filter(run => run.item_id === item.id)
     const latest = runs.sort((a, b) => b.created_at - a.created_at)[0]
     assert.equal(latest?.owner, "cli")
-    assert.equal(latest?.status, "blocked")
-    assert.equal(latest?.recovery_status, "blocked")
-    assert.equal(latest?.recovery_scope, "stage")
-    assert.equal(latest?.recovery_scope_ref, "execution")
+    assert.equal(latest?.status, "completed")
+    assert.equal(latest?.recovery_status, null)
     verifyDb.close()
   } finally {
     const previousCwd = process.cwd()
@@ -276,7 +272,7 @@ test("beerengineer item action resume_run exits 75 without remediation summary i
   }
 })
 
-test("beerengineer item action resume_run re-enters the execution handoff without creating a new run", async () => {
+test("beerengineer item action resume_run surfaces the real execution blocker without creating a new run", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-cli-supabase-blocked-"))
   const testDir = dirname(fileURLToPath(import.meta.url))
   const engineRoot = resolve(testDir, "..")
@@ -376,12 +372,10 @@ test("beerengineer item action resume_run re-enters the execution handoff withou
       },
     )
 
-    assert.equal(result.status, 0, `${result.stdout ?? ""}\n${result.stderr ?? ""}`)
+    assert.equal(result.status, 75, `${result.stdout ?? ""}\n${result.stderr ?? ""}`)
     assert.match(result.stdout ?? "", /resume_run applied/)
-    assert.match(result.stderr ?? "", /Run .* is blocked\./)
-    assert.match(result.stderr ?? "", /API worker ownership is required before execution can start/)
-    assert.doesNotMatch(result.stdout ?? "", /stage entered  execution/)
-    assert.doesNotMatch(result.stderr ?? "", /Workflow start blocked by Supabase readiness/)
+    assert.match(result.stdout ?? "", /stage entered  execution/)
+    assert.match(result.stderr ?? "", /Workflow start blocked by Supabase readiness/)
 
     const verifyDb = initDatabase(dbPath)
     const verifyRepos = new Repos(verifyDb)
