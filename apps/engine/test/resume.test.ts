@@ -14,7 +14,7 @@ import { runWithWorkflowIO, type WorkflowEvent, type WorkflowIO } from "../src/c
 import { runWithActiveRun } from "../src/core/runContext.js"
 import { layout } from "../src/core/workspaceLayout.js"
 import { writeRecoveryRecord } from "../src/core/recovery.js"
-import { buildWorkflowResumeInput, performResume } from "../src/core/resume.js"
+import { buildWorkflowResumeInput, loadResumeReadiness, performResume } from "../src/core/resume.js"
 import { preparedImportSourceSnapshotDir } from "../src/core/preparedImport.js"
 import { createBus, busToWorkflowIO, type EventBus } from "../src/core/bus.js"
 import { defaultAppConfig, writeConfigFile } from "../src/setup/config.js"
@@ -301,6 +301,58 @@ test("buildWorkflowResumeInput trusts recovery scope and preserves prepared-impo
       currentStage: "execution",
       skipDesignPrep: true,
     })
+  })
+})
+
+test("loadResumeReadiness keeps blocked runs with open prompts non-resumable until answered", async () => {
+  await withTmpCwd(async () => {
+    const repoRoot = join(process.cwd(), "repo")
+    mkdirSync(repoRoot, { recursive: true })
+    const db = initDatabase(join(process.cwd(), "test.sqlite"))
+    const repos = new Repos(db)
+    const workspace = repos.upsertWorkspace({ key: "t", name: "T", rootPath: repoRoot })
+    const item = repos.createItem({ workspaceId: workspace.id, title: "Blocked Prompt", description: "smoke" })
+    const run = repos.createRun({
+      workspaceId: workspace.id,
+      itemId: item.id,
+      title: item.title,
+      owner: "api",
+      workspaceFsId: `blocked-prompt-${item.id.toLowerCase()}`,
+    })
+
+    try {
+      const ctx = { workspaceId: `blocked-prompt-${item.id.toLowerCase()}`, workspaceRoot: repoRoot, runId: run.id }
+      mkdirSync(layout.runDir(ctx), { recursive: true })
+      await writeFile(layout.runFile(ctx), `${JSON.stringify({ id: run.id }, null, 2)}\n`)
+      await writeRecoveryRecord(ctx, {
+        status: "blocked",
+        cause: "stage_error",
+        scope: { type: "stage", runId: run.id, stageId: "requirements" },
+        summary: "Waiting for operator input.",
+        evidencePaths: [],
+      })
+      repos.setRunRecovery(run.id, {
+        status: "blocked",
+        scope: "stage",
+        scopeRef: "requirements",
+        summary: "Waiting for operator input.",
+      })
+      repos.updateRun(run.id, { status: "blocked", current_stage: "requirements" })
+      repos.createPendingPrompt({
+        id: "p-open",
+        runId: run.id,
+        prompt: "Need more detail?",
+      })
+
+      const readiness = await loadResumeReadiness(repos, run.id)
+      assert.deepEqual(readiness, {
+        kind: "not_resumable",
+        run: repos.getRun(run.id),
+        reason: "open_prompt",
+      })
+    } finally {
+      db.close()
+    }
   })
 })
 

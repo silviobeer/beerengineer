@@ -20,6 +20,7 @@ import type {
 import { mergeAmendments, projectDesign, projectWireframes } from "./core/designPrep.js"
 import { loadCodebaseSnapshot } from "./core/codebaseSnapshot.js"
 import { loadFrontendSnapshot } from "./core/frontendSnapshot.js"
+import { BlockedRunError } from "./core/blockedError.js"
 import { loadItemDecisions } from "./core/itemDecisions.js"
 import { stagePresent } from "./core/stagePresentation.js"
 import { emitEvent, getActiveRun, withStageLifecycle } from "./core/runContext.js"
@@ -122,13 +123,6 @@ export type WorkflowLlmOptions = StageLlmOptions
  * the workflow wires provisioning, validation, merge gates, and cleanup.
  * When absent, the workflow runs as before with no Supabase side effects. */
 export type WorkflowSupabaseHook = SupabaseWorkflowHook
-
-class BlockedRunError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = "BlockedRunError"
-  }
-}
 
 async function readJson<T>(path: string): Promise<T> {
   return JSON.parse(await readFile(path, "utf8")) as T
