@@ -299,7 +299,8 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
             )
             assertWorkflowNotCancelled()
             let finalRun = input.repos.getRun(run.id)
-            if (finalRun?.recovery_status && parseSupabaseProvisioningRecoveryPayload(finalRun.recovery_payload_json)) {
+            const hasSupabaseProvisioningRecovery = parseSupabaseProvisioningRecoveryPayload(finalRun?.recovery_payload_json) !== null
+            if (finalRun?.recovery_status && hasSupabaseProvisioningRecovery) {
               input.repos.clearRunRecovery(run.id)
               finalRun = input.repos.getRun(run.id)
             }
