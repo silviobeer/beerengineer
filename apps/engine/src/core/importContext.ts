@@ -135,6 +135,33 @@ function importContextMetadata(bundle: PreparedImportBundle): ImportContextArtif
   }
 }
 
+function markdownOutcome(sourceDir: string, file: string, visibleMarkdown: Set<string>): ImportContextFileOutcome {
+  const rel = relativeImportPath(sourceDir, file)
+  if (!visibleMarkdown.has(resolve(file))) {
+    return { path: rel, outcome: "omitted", reason: "unsupported" }
+  }
+  const reason = /concept/i.test(basename(file)) ? "concept_markdown" : "prd_markdown"
+  return { path: rel, outcome: "visible", reason }
+}
+
+function classifyImportContextFile(
+  sourceDir: string,
+  file: string,
+  visibleMarkdown: Set<string>,
+): ImportContextFileOutcome {
+  const ext = extname(file).toLowerCase()
+  if (ext === ".json") return jsonOutcome(sourceDir, file)
+  if (ext === ".md") return markdownOutcome(sourceDir, file, visibleMarkdown)
+  return { path: relativeImportPath(sourceDir, file), outcome: "omitted", reason: "unsupported" }
+}
+
+function importContextStatus(outcomes: ImportContextFileOutcome[]): ImportContextStatus {
+  const visibleCount = outcomes.filter(file => file.outcome === "visible").length
+  if (visibleCount === 0) return "empty"
+  if (visibleCount === outcomes.length) return "full"
+  return "partial"
+}
+
 function buildImportContextArtifact(sourceDir: string, bundle: PreparedImportBundle): ImportContextArtifact {
   const files = collectFiles(sourceDir)
     .map(file => resolve(file))
@@ -151,25 +178,10 @@ function buildImportContextArtifact(sourceDir: string, bundle: PreparedImportBun
   }
 
   const visibleMarkdown = visibleMarkdownFiles(sourceDir, files)
-  const outcomes = files.map<ImportContextFileOutcome>(file => {
-    const rel = relativeImportPath(sourceDir, file)
-    const ext = extname(file).toLowerCase()
-    if (ext === ".json") return jsonOutcome(sourceDir, file)
-    if (ext === ".md") {
-      if (visibleMarkdown.has(resolve(file))) {
-        const reason = /concept/i.test(basename(file)) ? "concept_markdown" : "prd_markdown"
-        return { path: rel, outcome: "visible", reason }
-      }
-    }
-    return { path: rel, outcome: "omitted", reason: "unsupported" }
-  })
-  const visibleCount = outcomes.filter(file => file.outcome === "visible").length
-  let status: ImportContextStatus = "partial"
-  if (visibleCount === 0) status = "empty"
-  else if (visibleCount === outcomes.length) status = "full"
+  const outcomes = files.map(file => classifyImportContextFile(sourceDir, file, visibleMarkdown))
 
   return {
-    status,
+    status: importContextStatus(outcomes),
     files: outcomes,
     context: importContextMetadata(bundle),
     warnings: bundle.warnings,
@@ -214,7 +226,8 @@ export function writeImportContextArtifact(context: WorkflowContext, artifact: I
 
 export async function readImportContextArtifact(context: WorkflowContext): Promise<ImportContextArtifact | null> {
   try {
-    return JSON.parse(await readFile(importContextArtifactPath(context), "utf8")) as ImportContextArtifact
+    const artifact: ImportContextArtifact = JSON.parse(await readFile(importContextArtifactPath(context), "utf8"))
+    return artifact
   } catch {
     return null
   }

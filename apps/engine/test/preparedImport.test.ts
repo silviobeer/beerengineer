@@ -351,7 +351,7 @@ test("shared import-context artifact can be persisted into the run workspace", a
     writeImportContextArtifact(ctx, generated.importContext)
 
     const artifactPath = importContextArtifactPath(ctx)
-    const artifact = JSON.parse(readFileSync(artifactPath, "utf8")) as typeof generated.importContext
+    const artifact: typeof generated.importContext = JSON.parse(readFileSync(artifactPath, "utf8"))
 
     assert.equal(artifact.status, "partial")
     assert.deepEqual(
@@ -411,7 +411,7 @@ test("prepared import persists the same import-context contract produced by the 
     assert.ok(ctx)
     if (!ctx) return
 
-    const persisted = JSON.parse(readFileSync(importContextArtifactPath(ctx), "utf8")) as typeof direct.importContext
+    const persisted: typeof direct.importContext = JSON.parse(readFileSync(importContextArtifactPath(ctx), "utf8"))
     assert.deepEqual(persisted, direct.importContext)
     assert.deepEqual(
       repos.listArtifactsForRun(prepared.runId).map(artifact => ({ label: artifact.label, kind: artifact.kind, path: artifact.path })),
@@ -490,11 +490,11 @@ test("prepared import accepts degraded shared import-context results without blo
       assert.ok(ctx)
       if (!ctx) continue
 
-      const persisted = JSON.parse(readFileSync(importContextArtifactPath(ctx), "utf8")) as {
+      const persisted: {
         status: string
         files: Array<{ path: string; outcome: string; reason: string }>
         warnings: string[]
-      }
+      } = JSON.parse(readFileSync(importContextArtifactPath(ctx), "utf8"))
       assert.equal(persisted.status, fixture.status)
       assert.deepEqual(persisted.files, fixture.files)
       assert.deepEqual(persisted.warnings, fixture.warnings)
@@ -536,7 +536,7 @@ test("prepared import records an explicit empty import-context outcome", async (
     assert.ok(ctx)
     if (!ctx) return
 
-    const persisted = JSON.parse(readFileSync(importContextArtifactPath(ctx), "utf8")) as { status: string; files: unknown[] }
+    const persisted: { status: string; files: unknown[] } = JSON.parse(readFileSync(importContextArtifactPath(ctx), "utf8"))
     assert.equal(persisted.status, "empty")
     assert.deepEqual(persisted.files, [])
     assert.equal(repos.listArtifactsForRun(prepared.runId)[0]?.label, "Import Context")
@@ -648,18 +648,25 @@ test("prepared import injects import-context into downstream stage state", async
     if (!ctx) return
 
     const imported = await readImportContextArtifact(ctx)
+    assert.ok(imported)
+    if (!imported) return
     assert.deepEqual(imported, direct.importContext)
+    const project = direct.bundle.projects[0]
+    const prd = direct.bundle.prdsByProjectId.P01
+    assert.ok(project)
+    assert.ok(prd)
+    if (!project || !prd) return
     await architecture({
       ...ctx,
-      project: direct.bundle.projects[0]!,
-      prd: direct.bundle.prdsByProjectId.P01!,
-      importContext: imported ?? undefined,
+      project,
+      prd,
+      importContext: imported,
     })
 
-    const architectureRun = JSON.parse(readFileSync(layout.stageRunFile(ctx, "architecture"), "utf8")) as {
+    const architectureRun: {
       state: { importContext?: unknown }
       status: string
-    }
+    } = JSON.parse(readFileSync(layout.stageRunFile(ctx, "architecture"), "utf8"))
     assert.equal(architectureRun.status, "approved")
     assert.deepEqual(architectureRun.state.importContext, direct.importContext)
   } finally {
