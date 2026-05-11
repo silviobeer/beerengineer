@@ -102,6 +102,9 @@ No generic `POST /items/:id/actions` with an action string in the body. Explicit
 - `POST /runs/:id/resume`
   - Request: `{ summary, branch?, commit?, reviewNotes? }`
   - Response: `{ runId, status }`
+- `POST /runs/:id/replan`
+  - Request: `{ reason }`
+  - Response: `{ runId, status }`
 
 `GET /runs/:id` response includes `openPrompt` when the run is waiting on operator input, so UIs that only show "is it waiting on me?" don't need a second call. Prompt objects may also carry structured `actions` for button-style responses. `GET /runs/:id` and `GET /runs/:id/recovery` expose `recovery_user_message: string | null`; clients should render that engine-provided copy before generic fallback text.
 

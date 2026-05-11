@@ -13,6 +13,7 @@ import {
   handleGetConversation,
   handleGetMessages,
   handleGetMergeStatus,
+  handleReplanRun,
   handleGetRun,
   handleGetRunTree,
   handleGetRecovery,
@@ -152,6 +153,7 @@ const RUN_ROUTE_DEFINITIONS = [
   { pattern: /^\/runs\/([^/]+)\/conversation$/, method: "GET", surfacePath: "/runs/{id}/conversation" },
   { pattern: /^\/runs\/([^/]+)\/answer$/, method: "POST", surfacePath: "/runs/{id}/answer" },
   { pattern: /^\/runs\/([^/]+)\/resume$/, method: "POST", surfacePath: "/runs/{id}/resume" },
+  { pattern: /^\/runs\/([^/]+)\/replan$/, method: "POST", surfacePath: "/runs/{id}/replan" },
   { pattern: /^\/runs\/([^/]+)\/supabase-readiness\/retry$/, method: "POST", surfacePath: "/runs/{id}/supabase-readiness/retry" },
   { pattern: /^\/runs\/([^/]+)\/recovery$/, method: "GET", surfacePath: "/runs/{id}/recovery" },
 ] as const satisfies readonly RouteMatcherDefinition[]
@@ -356,8 +358,9 @@ function runRouteMatchers(context: RouteContext, deps: ApiRouteDependencies): Ar
     { ...RUN_ROUTE_DEFINITIONS[8], handle: runId => handleGetConversation(deps.repos, context.res, runId) },
     { ...RUN_ROUTE_DEFINITIONS[9], handle: runId => handleAnswer(deps.repos, context.req, context.res, runId) },
     { ...RUN_ROUTE_DEFINITIONS[10], handle: runId => handleResumeRun(deps.repos, context.req, context.res, runId, payload => deps.board.broadcastItemColumnChanged(payload)) },
-    { ...RUN_ROUTE_DEFINITIONS[11], handle: runId => handleSupabaseReadinessRetry(deps.repos, context.req, context.res, runId, payload => deps.board.broadcastItemColumnChanged(payload)) },
-    { ...RUN_ROUTE_DEFINITIONS[12], handle: runId => handleGetRecovery(deps.repos, context.res, runId) },
+    { ...RUN_ROUTE_DEFINITIONS[11], handle: runId => handleReplanRun(deps.repos, context.req, context.res, runId) },
+    { ...RUN_ROUTE_DEFINITIONS[12], handle: runId => handleSupabaseReadinessRetry(deps.repos, context.req, context.res, runId, payload => deps.board.broadcastItemColumnChanged(payload)) },
+    { ...RUN_ROUTE_DEFINITIONS[13], handle: runId => handleGetRecovery(deps.repos, context.res, runId) },
   ]
 }
 
