@@ -133,6 +133,18 @@ function normalizeWorkspaceTelegramConfig(raw: unknown): WorkspaceTelegramInboun
   return Object.keys(normalized).length > 0 ? normalized : undefined
 }
 
+function normalizeDirtyMasterAllowlist(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  return raw
+    .filter((value): value is string => typeof value === "string")
+    .map(value => value.trim())
+    .filter(Boolean)
+}
+
+function normalizeOptionalBoolean(raw: unknown): boolean | undefined {
+  return typeof raw === "boolean" ? raw : undefined
+}
+
 function isValidHarnessProfile(raw: unknown): raw is HarnessProfile {
   if (!raw || typeof raw !== "object") return false
   const mode = (raw as { mode?: unknown }).mode
@@ -167,6 +179,8 @@ export function buildWorkspaceConfigFile(input: {
   harnessProfile: HarnessProfile
   runtimePolicy?: WorkspaceRuntimePolicy
   autoPromoteOnGreenQa?: boolean
+  dirtyMasterAllowlist?: string[]
+  autoRestoreAllowlisted?: boolean
   preview?: WorkspacePreviewConfig
   sonar: SonarConfig
   telegram?: WorkspaceTelegramInboundConfig
@@ -181,6 +195,8 @@ export function buildWorkspaceConfigFile(input: {
     harnessProfile: input.harnessProfile,
     runtimePolicy: input.runtimePolicy ?? defaultWorkspaceRuntimePolicyForHarnessProfile(input.harnessProfile),
     autoPromoteOnGreenQa: input.autoPromoteOnGreenQa ?? true,
+    dirtyMasterAllowlist: input.dirtyMasterAllowlist?.map(value => value.trim()).filter(Boolean),
+    autoRestoreAllowlisted: input.autoRestoreAllowlisted,
     preview: input.preview,
     sonar: input.sonar,
     telegram: input.telegram,
@@ -197,6 +213,8 @@ function parseWorkspaceConfigFile(raw: {
   harnessProfile?: unknown
   runtimePolicy?: unknown
   autoPromoteOnGreenQa?: unknown
+  dirtyMasterAllowlist?: unknown
+  autoRestoreAllowlisted?: unknown
   preview?: unknown
   sonar?: unknown
   telegram?: unknown
@@ -224,6 +242,8 @@ function parseWorkspaceConfigFile(raw: {
     harnessProfile: raw.harnessProfile,
     runtimePolicy,
     autoPromoteOnGreenQa: raw.autoPromoteOnGreenQa !== false,
+    dirtyMasterAllowlist: normalizeDirtyMasterAllowlist(raw.dirtyMasterAllowlist),
+    autoRestoreAllowlisted: normalizeOptionalBoolean(raw.autoRestoreAllowlisted),
     preview,
     sonar,
     telegram: normalizeWorkspaceTelegramConfig(raw.telegram),

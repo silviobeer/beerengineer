@@ -102,6 +102,7 @@ export function applySchema(db: Db): void {
   migratePendingPromptActionsColumn(db)
   migrateWorktreePortAssignmentsTable(db)
   migrateSupabaseDeferredCleanupTable(db)
+  migrateCodexSandboxCapabilityStateTable(db)
   stampMigrationLevel(db)
 }
 
@@ -209,6 +210,16 @@ function migrateSupabaseDeferredCleanupTable(db: Db): void {
   db.exec(`
     CREATE INDEX IF NOT EXISTS supabase_deferred_cleanup_due_idx
     ON supabase_deferred_cleanup(scheduled_at)
+  `)
+}
+
+function migrateCodexSandboxCapabilityStateTable(db: Db): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS codex_sandbox_capability_state (
+      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+      capability TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
   `)
 }
 

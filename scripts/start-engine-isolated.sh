@@ -24,7 +24,7 @@ MEM_HIGH="${BEERENGINEER_MEM_HIGH:-8G}"
 MEM_MAX="${BEERENGINEER_MEM_MAX:-10G}"
 CPU_QUOTA="${BEERENGINEER_CPU_QUOTA:-600%}"
 IO_WEIGHT="${BEERENGINEER_IO_WEIGHT:-200}"
-WORKER_CAP="${BEERENGINEER_WORKER_CAP:-5}"
+WORKER_CAP="${BEERENGINEER_WORKER_CAP:-7}"
 
 if systemctl --user is-active --quiet "${UNIT_NAME}.scope" 2>/dev/null; then
   echo "[start-engine-isolated] ${UNIT_NAME}.scope is already active — refusing to start a second one" >&2

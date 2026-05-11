@@ -147,6 +147,12 @@ CREATE TABLE IF NOT EXISTS workflow_readiness_sentinel (
   checked_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS codex_sandbox_capability_state (
+  singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+  capability TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
 -- Pointer records for artifacts written to disk.
 CREATE TABLE IF NOT EXISTS artifact_files (
   id TEXT PRIMARY KEY,
