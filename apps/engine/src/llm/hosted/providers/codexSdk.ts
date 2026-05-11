@@ -9,7 +9,6 @@ import {
 } from "./_stream.js"
 import { appendReplayMessages, makeReplaySession, readReplayMessages } from "./_sdkSession.js"
 import {
-  buildCodexBypassRetryFailure,
   codexSandboxBypassEnabled,
   markCodexSandboxCapabilitySupported,
   markCodexSandboxCapabilityUnsupported,
@@ -305,10 +304,6 @@ export async function invokeCodexSdk(input: HostedProviderInvokeInput): Promise<
     }
     return result
   } catch (error) {
-    if (resolution.bypass && resolution.source === "capability") {
-      markCodexSandboxCapabilityUnsupported()
-      throw buildCodexBypassRetryFailure("cached sandbox capability required bypass", error)
-    }
     if (
       !shouldRetryCodexWithSandboxBypass({
         error,
@@ -320,10 +315,6 @@ export async function invokeCodexSdk(input: HostedProviderInvokeInput): Promise<
       throw error
     }
     markCodexSandboxCapabilityUnsupported()
-    try {
-      return await invokeCodexSdkAttempt(input, true)
-    } catch (retryError) {
-      throw buildCodexBypassRetryFailure(error, retryError)
-    }
+    return await invokeCodexSdkAttempt(input, true)
   }
 }

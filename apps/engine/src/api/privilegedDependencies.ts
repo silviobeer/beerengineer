@@ -27,7 +27,10 @@ import { markPreparedUpdateInFlight, releaseUpdateLock, type UpdateApplyResult }
 import { readActiveSecretValue } from "../setup/secretStore.js"
 import { SUPABASE_MANAGEMENT_TOKEN_SECRET_REF } from "../setup/secretMetadata.js"
 import { runStartupCleanupCatchup } from "../core/supabase/cleanupCatchup.js"
-import { primeCodexSandboxCapabilityDetection } from "../llm/hosted/providers/codexSandboxPolicy.js"
+import {
+  primeCodexSandboxCapabilityDetection,
+  setCodexSandboxCapabilityStore,
+} from "../llm/hosted/providers/codexSandboxPolicy.js"
 import type { ApiLifecycleHooks, ApiRouteDependencies } from "./entrypointContracts.js"
 
 const OPENAPI_PATH = resolvePath(dirname(fileURLToPath(import.meta.url)), "openapi.json")
@@ -76,6 +79,12 @@ export function composeApiPrivilegedDependencies(
 
   const db = initDatabase()
   const repos = new Repos(db)
+  setCodexSandboxCapabilityStore({
+    load: () => repos.getCodexSandboxCapabilitySnapshot()?.capability ?? "unknown",
+    persist: capability => {
+      repos.setCodexSandboxCapabilitySnapshot(capability)
+    },
+  })
   const itemActions = createItemActionsService(repos)
   const board = createBoardStream(repos, db)
 

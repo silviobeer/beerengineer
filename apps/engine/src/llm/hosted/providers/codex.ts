@@ -6,8 +6,6 @@ import type { HostedInvocationResult, HostedProviderInvokeInput } from "../provi
 import { invokeProviderCli, type ProviderDriver } from "./_invoke.js"
 import { emitHostedThinking, emitHostedTokens, emitHostedToolCalled, emitHostedToolResult, makeJsonLineStreamCallback } from "./_stream.js"
 import {
-  buildCodexWorkerStartFailure,
-  buildCodexBypassRetryFailure,
   codexSandboxBypassEnabled,
   markCodexSandboxCapabilitySupported,
   markCodexSandboxCapabilityUnsupported,
@@ -248,14 +246,6 @@ export async function invokeCodex(input: HostedProviderInvokeInput): Promise<Hos
     }
     return result
   } catch (error) {
-    if (resolution.bypass && resolution.source === "capability") {
-      markCodexSandboxCapabilityUnsupported()
-      throw buildCodexWorkerStartFailure(
-        `codex sandbox bypass launch failed after cached capability detection selected bypass: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      )
-    }
     if (
       !shouldRetryCodexWithSandboxBypass({
         error,
@@ -267,10 +257,6 @@ export async function invokeCodex(input: HostedProviderInvokeInput): Promise<Hos
       throw error
     }
     markCodexSandboxCapabilityUnsupported()
-    try {
-      return await invokeCodexAttempt(input, true)
-    } catch (retryError) {
-      throw buildCodexBypassRetryFailure(error, retryError)
-    }
+    return await invokeCodexAttempt(input, true)
   }
 }
