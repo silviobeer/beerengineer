@@ -241,6 +241,8 @@ export type WorkspaceConfigFile = {
   name: string
   harnessProfile: HarnessProfile
   runtimePolicy: WorkspaceRuntimePolicy
+  dirtyMasterAllowlist?: string[]
+  autoRestoreAllowlisted?: boolean
   preview?: WorkspacePreviewConfig
   sonar: SonarConfig
   telegram?: WorkspaceTelegramInboundConfig
