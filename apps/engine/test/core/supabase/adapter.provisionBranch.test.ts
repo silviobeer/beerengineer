@@ -135,6 +135,141 @@ test("REQ-1 AC-1.1: adapter discards a stale prior-wave attachment and reuses th
   }
 })
 
+test("REQ-2 AC-2.2: adapter discards a stale prior-wave attachment whose upstream branch is missing and creates the current-wave branch", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-wave-provision-"))
+  const db = initDatabase(join(dir, "db.sqlite"))
+  const repos = new Repos(db)
+  const workspace = repos.upsertWorkspace({ key: "demo", name: "Demo", rootPath: dir })
+  const item = repos.createItem({ workspaceId: workspace.id, title: "Item", description: "Desc" })
+  const run = repos.createRun({ workspaceId: workspace.id, itemId: item.id, title: "Run" })
+  repos.setRunSupabaseBranch(run.id, { ref: "br_old", name: "beerengineer-demo-old-run-old-item-project-1-wave-0", lifecycleState: "ready" })
+  const calls: unknown[] = []
+  try {
+    const adapter = createSupabaseAdapter({
+      repos,
+      client: {
+        listBranches: async () => [],
+        createBranch: async (_project, input) => {
+          calls.push(input)
+          return { id: "created", ref: "created", name: input.name, status: "CREATING" }
+        },
+        getBranch: async () => {
+          const err = new Error("missing") as Error & { status?: number }
+          err.status = 404
+          throw err
+        },
+        runQuery: async () => undefined,
+      },
+    })
+    const result = await adapter.provisionBranch({
+      workspaceId: workspace.id,
+      workspaceKey: workspace.key,
+      runId: run.id,
+      itemId: item.id,
+      projectId: "project-1",
+      waveId: "wave-1",
+      projectRef: "proj_1",
+      parentBranchRef: "br_persistent",
+    })
+    assert.equal(result.ok, true)
+    assert.deepEqual(calls, [{ name: `beerengineer-demo-${run.id.toLowerCase()}-${item.id.toLowerCase()}-project-1-wave-1`, parentRef: "br_persistent" }])
+    assert.equal(repos.getRun(run.id)?.supabase_branch_ref, "created")
+    assert.equal(repos.getRun(run.id)?.supabase_branch_name, `beerengineer-demo-${run.id.toLowerCase()}-${item.id.toLowerCase()}-project-1-wave-1`)
+    assert.equal(repos.getRun(run.id)?.supabase_branch_lifecycle_state, "provisioning")
+  } finally {
+    db.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("REQ-2 AC-2.3: adapter creates a fresh current-wave branch when stale cleanup only finds an unhealthy same-name candidate", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-wave-provision-"))
+  const db = initDatabase(join(dir, "db.sqlite"))
+  const repos = new Repos(db)
+  const workspace = repos.upsertWorkspace({ key: "demo", name: "Demo", rootPath: dir })
+  const item = repos.createItem({ workspaceId: workspace.id, title: "Item", description: "Desc" })
+  const run = repos.createRun({ workspaceId: workspace.id, itemId: item.id, title: "Run" })
+  repos.setRunSupabaseBranch(run.id, { ref: "br_old", name: "beerengineer-demo-old-run-old-item-project-1-wave-0", lifecycleState: "ready" })
+  const calls: unknown[] = []
+  try {
+    const adapter = createSupabaseAdapter({
+      repos,
+      client: {
+        listBranches: async () => [{ id: "br_wave", ref: "br_wave", name: `beerengineer-demo-${run.id.toLowerCase()}-${item.id.toLowerCase()}-project-1-wave-1`, status: "CREATING" }],
+        createBranch: async (_project, input) => {
+          calls.push(input)
+          return { id: "created", ref: "created", name: input.name, status: "CREATING" }
+        },
+        runQuery: async () => undefined,
+      },
+    })
+    const result = await adapter.provisionBranch({
+      workspaceId: workspace.id,
+      workspaceKey: workspace.key,
+      runId: run.id,
+      itemId: item.id,
+      projectId: "project-1",
+      waveId: "wave-1",
+      projectRef: "proj_1",
+      parentBranchRef: "br_persistent",
+    })
+    assert.equal(result.ok, true)
+    assert.deepEqual(calls, [{ name: `beerengineer-demo-${run.id.toLowerCase()}-${item.id.toLowerCase()}-project-1-wave-1`, parentRef: "br_persistent" }])
+    assert.equal(repos.getRun(run.id)?.supabase_branch_ref, "created")
+    assert.equal(repos.getRun(run.id)?.supabase_branch_name, `beerengineer-demo-${run.id.toLowerCase()}-${item.id.toLowerCase()}-project-1-wave-1`)
+  } finally {
+    db.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("REQ-2 AC-2.2: adapter clears the stale prior-wave attachment before blocking on an ambiguous current-wave match", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "be2-wave-provision-"))
+  const db = initDatabase(join(dir, "db.sqlite"))
+  const repos = new Repos(db)
+  const workspace = repos.upsertWorkspace({ key: "demo", name: "Demo", rootPath: dir })
+  const item = repos.createItem({ workspaceId: workspace.id, title: "Item", description: "Desc" })
+  const run = repos.createRun({ workspaceId: workspace.id, itemId: item.id, title: "Run" })
+  repos.setRunSupabaseBranch(run.id, { ref: "br_old", name: "beerengineer-demo-old-run-old-item-project-1-wave-0", lifecycleState: "ready" })
+  const calls: unknown[] = []
+  try {
+    const expectedName = `beerengineer-demo-${run.id.toLowerCase()}-${item.id.toLowerCase()}-project-1-wave-1`
+    const adapter = createSupabaseAdapter({
+      repos,
+      client: {
+        listBranches: async () => [
+          { id: "br_wave_1", ref: "br_wave_1", name: expectedName, status: "ACTIVE_HEALTHY" },
+          { id: "br_wave_2", ref: "br_wave_2", name: expectedName, status: "ACTIVE_HEALTHY" },
+        ],
+        createBranch: async (_project, input) => {
+          calls.push(input)
+          return { id: "created", ref: "created", name: input.name, status: "CREATING" }
+        },
+        runQuery: async () => undefined,
+      },
+    })
+    const result = await adapter.provisionBranch({
+      workspaceId: workspace.id,
+      workspaceKey: workspace.key,
+      runId: run.id,
+      itemId: item.id,
+      projectId: "project-1",
+      waveId: "wave-1",
+      projectRef: "proj_1",
+      parentBranchRef: "br_persistent",
+    })
+    assert.equal(result.ok, false)
+    assert.match(String(result.context?.message ?? ""), /ambiguous/i)
+    assert.deepEqual(calls, [])
+    assert.equal(repos.getRun(run.id)?.supabase_branch_ref, null)
+    assert.equal(repos.getRun(run.id)?.supabase_branch_name, null)
+    assert.equal(repos.getRun(run.id)?.supabase_branch_lifecycle_state, null)
+  } finally {
+    db.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test("REQ-1 AC-1.4: adapter does not automatically reuse an unhealthy same-name branch", async () => {
   const dir = mkdtempSync(join(tmpdir(), "be2-wave-provision-"))
   const db = initDatabase(join(dir, "db.sqlite"))
