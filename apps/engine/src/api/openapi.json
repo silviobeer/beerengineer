@@ -4302,6 +4302,65 @@
           "generatedAt": {
             "type": "integer"
           },
+          "codexSandbox": {
+            "type": "object",
+            "required": [
+              "state",
+              "reason",
+              "effectiveMode",
+              "detectedCapability",
+              "overrideMode"
+            ],
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "supported_using_bwrap",
+                  "unsupported_bypassing",
+                  "override_using_bwrap",
+                  "override_bypassing",
+                  "unverified_bypassing"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "supported",
+                  "unsupported",
+                  "override",
+                  "unverified"
+                ]
+              },
+              "effectiveMode": {
+                "type": "string",
+                "enum": [
+                  "bwrap",
+                  "bypass"
+                ]
+              },
+              "detectedCapability": {
+                "type": "string",
+                "enum": [
+                  "supported",
+                  "unsupported",
+                  "unknown",
+                  "missing",
+                  "invalid"
+                ]
+              },
+              "overrideMode": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "enum": [
+                  "bwrap",
+                  "bypass",
+                  null
+                ]
+              }
+            }
+          },
           "groups": {
             "type": "array",
             "items": {
