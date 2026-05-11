@@ -231,6 +231,25 @@ test("detectGitMode throws when repo is dirty", () => {
   }
 })
 
+test("detectGitMode bypasses dirty-root check once item worktree exists", () => {
+  const root = seedRepo()
+  try {
+    writeFileSync(join(root, "dirty.txt"), "uncommitted\n")
+    const ctx: WorkflowContext = {
+      workspaceId: "w",
+      runId: "r",
+      itemSlug: "s",
+      baseBranch: "main",
+      workspaceRoot: root,
+    }
+    mkdirSync(layout.itemWorktreeDir(ctx as Required<Pick<WorkflowContext, "workspaceId"|"itemSlug"|"workspaceRoot"|"baseBranch">> & WorkflowContext), { recursive: true })
+    const mode = detectGitMode(ctx)
+    assert.equal(mode.enabled, true)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test("detectGitMode throws when workspaceRoot is unset", () => {
   const ctx: WorkflowContext = { workspaceId: "w", runId: "r", itemSlug: "s", baseBranch: "main" }
   assert.throws(() => detectGitMode(ctx), /workspaceRoot is required/)

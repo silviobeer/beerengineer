@@ -224,6 +224,7 @@ export async function planning(ctx: WithArchitecture, llm?: RunLlmConfig): Promi
       projectId: ctx.project.id,
       prd: ctx.prd,
       architectureSummary: renderArchitectureSummary(ctx.architecture),
+      importContext: ctx.importContext,
       codebase: ctx.codebase,
       decisions: ctx.decisions,
       revisionCount: 0,

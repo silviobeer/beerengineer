@@ -9,7 +9,8 @@ import { buildSupabaseWorkflowHook, prepareRun, type SupabaseAdapterFactory } fr
 import { resolveWorkflowLlmOptions } from "./runSubscribers.js"
 import { loadResumeReadiness, performResume, type PerformResumeInput } from "./resume.js"
 import { getRegisteredWorkspace } from "./workspaces.js"
-import { deriveProjectStartStages, loadPreparedImportBundleWithLlmFallback, seedPreparedImportArtifacts, type PreparedImportBundle } from "./preparedImport.js"
+import { deriveProjectStartStages, seedPreparedImportArtifacts, type PreparedImportBundle } from "./preparedImport.js"
+import { defaultImportContextGenerator, writeImportContextArtifact, type ImportContextGenerator } from "./importContext.js"
 import { layout } from "./workspaceLayout.js"
 import { resolveWorkflowContextForItemRun, resolveWorkflowContextForRun } from "./workflowContextResolver.js"
 import { isExecutionOwnershipHandoffRun, queueExecutionOwnershipHandoffResume } from "./executionOwnershipHandoff.js"
@@ -24,6 +25,7 @@ import type { AppConfig } from "../setup/types.js"
 import type { WorkerLeaseScheduler } from "./workerLease.js"
 import { createSupabaseAdapter } from "./supabase/adapter.js"
 import { SupabaseManagementClient } from "./supabase/managementClient.js"
+import { getWorkerAdmissionController, type WorkerAdmissionController } from "./workerAdmission.js"
 
 export type { SupabaseAdapterFactory } from "./runOrchestrator.js"
 
@@ -322,6 +324,36 @@ function fireInBackground(io: WorkflowIO & { bus?: EventBus }, label: string, ta
     })
 }
 
+function resolveAdmissionController(
+  repos: Repos,
+  controller?: WorkerAdmissionController,
+): WorkerAdmissionController {
+  return controller ?? getWorkerAdmissionController(repos)
+}
+
+function queueDeferredStart(
+  controller: WorkerAdmissionController,
+  runId: string,
+  start: () => Promise<void>,
+): () => Promise<void> {
+  let completion: Promise<void> | null = null
+  return async () => {
+    if (completion) return completion
+    completion = new Promise<void>((resolve, reject) => {
+      controller.enqueue(runId, async () => {
+        try {
+          await start()
+          resolve()
+        } catch (error) {
+          reject(error)
+          throw error
+        }
+      })
+    })
+    return completion
+  }
+}
+
 type BackgroundRunner = typeof fireInBackground
 type PrepareRunImpl = typeof prepareRun
 type PerformResumeImpl = (input: PerformResumeInput) => Promise<void>
@@ -499,6 +531,7 @@ export function prepareForegroundIdeaRun(
     onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
     supabaseAdapterFactory?: SupabaseAdapterFactory
     capabilityResolver?: WorkflowCapabilityResolver
+    admissionController?: WorkerAdmissionController
     prepareRunImpl?: PrepareRunImpl
   },
 ): PreparedForegroundRunResult {
@@ -514,6 +547,8 @@ export function prepareForegroundIdeaRun(
   const capabilities = capabilitiesResult
   const blocker = workflowCapabilityOwnershipBlocker()
   if (blocker) return blocker
+  const admission = resolveAdmissionController(repos, input.admissionController)
+  const shouldQueue = !admission.hasCapacity()
 
   const prepareRunImpl = input.prepareRunImpl ?? prepareRun
   const prepared = prepareRunImpl(
@@ -525,12 +560,16 @@ export function prepareForegroundIdeaRun(
       workerInstanceId: input.workerInstanceId,
       workerLeaseClock: input.workerLeaseClock,
       workerLeaseScheduler: input.workerLeaseScheduler,
+      deferWorkerLease: shouldQueue,
       ...meta,
       onItemColumnChanged: input.onItemColumnChanged,
       supabaseAdapterFactory: capabilities.supabaseAdapterFactory,
     },
   )
-  return { ok: true, runId: prepared.runId, itemId: prepared.itemId, start: prepared.start }
+  const start = shouldQueue
+    ? queueDeferredStart(admission, prepared.runId, prepared.start)
+    : () => admission.runAdmitted(prepared.runId, prepared.start)
+  return { ok: true, runId: prepared.runId, itemId: prepared.itemId, start }
 }
 
 /**
@@ -755,6 +794,7 @@ export function prepareForegroundItemRun(
     onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
     supabaseAdapterFactory?: SupabaseAdapterFactory
     capabilityResolver?: WorkflowCapabilityResolver
+    admissionController?: WorkerAdmissionController
     prepareRunImpl?: PrepareRunImpl
   },
 ): PreparedForegroundRunResult {
@@ -779,6 +819,8 @@ export function prepareForegroundItemRun(
   if (!gitGate.ok) return gitGate
   const blocker = workflowCapabilityOwnershipBlocker()
   if (blocker) return blocker
+  const admission = resolveAdmissionController(repos, input.admissionController)
+  const shouldQueue = !admission.hasCapacity()
 
   const workflowItem = { id: item.id, title: item.title, description: item.description }
   const prepareOptions = {
@@ -786,6 +828,7 @@ export function prepareForegroundItemRun(
     workerInstanceId: input.workerInstanceId,
     workerLeaseClock: input.workerLeaseClock,
     workerLeaseScheduler: input.workerLeaseScheduler,
+    deferWorkerLease: shouldQueue,
     itemId: item.id,
     resume: preparedAction.resume,
     onItemColumnChanged: input.onItemColumnChanged,
@@ -812,7 +855,10 @@ export function prepareForegroundItemRun(
     }
   }
 
-  return { ok: true, runId: prepared.runId, itemId: item.id, start: prepared.start }
+  const start = shouldQueue
+    ? queueDeferredStart(admission, prepared.runId, prepared.start)
+    : () => admission.runAdmitted(prepared.runId, prepared.start)
+  return { ok: true, runId: prepared.runId, itemId: item.id, start }
 }
 
 export async function startPreparedImportForItem(
@@ -830,6 +876,7 @@ export async function startPreparedImportForItem(
     onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
     supabaseAdapterFactory?: SupabaseAdapterFactory
     capabilityResolver?: WorkflowCapabilityResolver
+    importContextGenerator?: ImportContextGenerator
     prepareRunImpl?: PrepareRunImpl
   },
 ): Promise<PreparedImportRunResult> {
@@ -847,6 +894,7 @@ export async function startPreparedImportForItem(
     onItemColumnChanged: input.onItemColumnChanged,
     supabaseAdapterFactory: input.supabaseAdapterFactory,
     capabilityResolver: input.capabilityResolver,
+    importContextGenerator: input.importContextGenerator,
     prepareRunImpl: input.prepareRunImpl,
   })
   if (!prepared.ok) {
@@ -873,6 +921,8 @@ export async function prepareForegroundPreparedImportRun(
     onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
     supabaseAdapterFactory?: SupabaseAdapterFactory
     capabilityResolver?: WorkflowCapabilityResolver
+    importContextGenerator?: ImportContextGenerator
+    admissionController?: WorkerAdmissionController
     prepareRunImpl?: PrepareRunImpl
   },
 ): Promise<PreparedForegroundImportRunResult> {
@@ -900,16 +950,19 @@ export async function prepareForegroundPreparedImportRun(
   if (blocker) return blocker
 
   let bundle: PreparedImportBundle
+  let importContext
   try {
     const llm = await resolveWorkflowLlmOptions(workspace)
-    bundle = await loadPreparedImportBundleWithLlmFallback(
-      input.sourceDir,
-      {
+    const generated = await (input.importContextGenerator ?? defaultImportContextGenerator)({
+      sourceDir: input.sourceDir,
+      item: {
         title: existingItem?.title ?? "Prepared import",
         description: existingItem?.description ?? "",
       },
-      llm?.stage,
-    )
+      llm: llm?.stage,
+    })
+    bundle = generated.bundle
+    importContext = generated.importContext
   } catch (error) {
     return { ok: false, status: 422, error: (error as Error).message }
   }
@@ -921,6 +974,8 @@ export async function prepareForegroundPreparedImportRun(
     dirtyCheckIgnoredPaths: [input.sourceDir],
     skipDesignPrep: true,
   }
+  const admission = resolveAdmissionController(repos, input.admissionController)
+  const shouldQueue = !admission.hasCapacity()
   const prepareRunImpl = input.prepareRunImpl ?? prepareRun
   const prepared = prepareRunImpl(
     {
@@ -935,6 +990,7 @@ export async function prepareForegroundPreparedImportRun(
       workerInstanceId: input.workerInstanceId,
       workerLeaseClock: input.workerLeaseClock,
       workerLeaseScheduler: input.workerLeaseScheduler,
+      deferWorkerLease: shouldQueue,
       itemId: existingItem?.id,
       ...newItemWorkspaceFields(existingItem, workspace),
       resume,
@@ -948,7 +1004,23 @@ export async function prepareForegroundPreparedImportRun(
   const ctx = targetRun ? resolveWorkflowContextForItemRun(repos, item, targetRun) : null
   if (!ctx) return { ok: false, status: 409, error: "seed_failed" }
   const seeded = seedPreparedImportArtifacts(ctx, bundle, { sourceDir: input.sourceDir })
-  return { ok: true, runId: prepared.runId, itemId: item.id, warnings: seeded.warnings, start: prepared.start }
+  const importContextPath = writeImportContextArtifact(ctx, importContext)
+  repos.recordArtifact({
+    runId: prepared.runId,
+    label: "Import Context",
+    kind: "json",
+    path: importContextPath,
+  })
+  const start = shouldQueue
+    ? queueDeferredStart(admission, prepared.runId, prepared.start)
+    : () => admission.runAdmitted(prepared.runId, prepared.start)
+  return {
+    ok: true,
+    runId: prepared.runId,
+    itemId: item.id,
+    warnings: Array.from(new Set([...seeded.warnings, ...importContext.warnings])),
+    start,
+  }
 }
 
 function resolvePreparedImportWorkspace(
@@ -1135,6 +1207,7 @@ export async function prepareForegroundResumeRun(
     onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
     supabaseAdapterFactory?: SupabaseAdapterFactory
     capabilityResolver?: WorkflowCapabilityResolver
+    admissionController?: WorkerAdmissionController
     resumeRunImpl?: PerformResumeImpl
     persistItemDecision?: boolean
   },
@@ -1158,6 +1231,8 @@ export async function prepareForegroundResumeRun(
   const capabilities = capabilitiesResult
   const blocker = workflowCapabilityOwnershipBlocker()
   if (blocker) return blocker
+  const admission = resolveAdmissionController(repos, input.admissionController)
+  const shouldQueue = !admission.hasCapacity()
   const supabaseHook = buildSupabaseWorkflowHook(
     repos,
     readiness.run.workspace_id,
@@ -1210,30 +1285,38 @@ export async function prepareForegroundResumeRun(
     }
   }
 
+  if (shouldQueue) {
+    repos.updateRun(input.runId, { status: "queued" })
+  }
+
+  const start = async () => {
+    const resumeRunImpl = input.resumeRunImpl ?? performResume
+    const detachPromptAnswer = input.promptAnswer ? attachOneShotPromptAnswer(io, input.promptAnswer) : () => {}
+    try {
+      await resumeRunImpl({
+        repos,
+        io,
+        runId: input.runId,
+        remediation,
+        workerOwnerKind: input.workerOwnerKind ?? "api",
+        workerInstanceId: input.workerInstanceId,
+        workerLeaseClock: input.workerLeaseClock,
+        workerLeaseScheduler: input.workerLeaseScheduler,
+        supabaseHook,
+        onItemColumnChanged: input.onItemColumnChanged,
+      })
+    } finally {
+      detachPromptAnswer()
+    }
+  }
+
   return {
     ok: true,
     runId: input.runId,
     remediationId: remediation.id,
-    start: async () => {
-      const resumeRunImpl = input.resumeRunImpl ?? performResume
-      const detachPromptAnswer = input.promptAnswer ? attachOneShotPromptAnswer(io, input.promptAnswer) : () => {}
-      try {
-        await resumeRunImpl({
-          repos,
-          io,
-          runId: input.runId,
-          remediation,
-          workerOwnerKind: input.workerOwnerKind ?? "api",
-          workerInstanceId: input.workerInstanceId,
-          workerLeaseClock: input.workerLeaseClock,
-          workerLeaseScheduler: input.workerLeaseScheduler,
-          supabaseHook,
-          onItemColumnChanged: input.onItemColumnChanged,
-        })
-      } finally {
-        detachPromptAnswer()
-      }
-    },
+    start: shouldQueue
+      ? queueDeferredStart(admission, input.runId, start)
+      : () => admission.runAdmitted(input.runId, start),
   }
 }
 

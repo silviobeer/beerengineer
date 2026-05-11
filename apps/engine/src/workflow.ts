@@ -28,6 +28,7 @@ import { getWorkflowIO } from "./core/io.js"
 import { assignPort, isWorktreePortPoolExhaustedError } from "./core/portAllocator.js"
 import { attachOneShotPromptAnswer } from "./core/promptAutoAnswer.js"
 import { readWorkspaceConfigSync } from "./core/workspaces.js"
+import { readImportContextArtifact } from "./core/importContext.js"
 import { brainstorm } from "./stages/brainstorm/index.js"
 import { visualCompanion } from "./stages/visual-companion/index.js"
 import { frontendDesign } from "./stages/frontend-design/index.js"
@@ -556,6 +557,7 @@ async function runWorkflowProjects(
   ]
   const projectDesignArtifact = design ? projectDesign(design) : undefined
   const decisions = loadItemDecisions(context)
+  const importContext = await readImportContextArtifact(context) ?? undefined
   for (const project of projects) {
     git.ensureProjectBranch(project.id)
     const projectResumePlan = resumePlan?.projectStartStages?.[project.id]
@@ -565,6 +567,7 @@ async function runWorkflowProjects(
       initialCtx: {
         ...context,
         project: { ...project, concept: mergeAmendments(project.concept, conceptAmendments, project.id) },
+        importContext,
         wireframes: wireframes ? projectWireframes(wireframes, project.id) : undefined,
         design: projectDesignArtifact,
         codebase: itemSnapshot,

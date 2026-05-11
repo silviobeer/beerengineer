@@ -94,6 +94,7 @@ export function prepareRun(
     workerLeaseScheduler?: WorkerLeaseScheduler
     workflowRunner?: typeof runWorkflow
     itemId?: string
+    deferWorkerLease?: boolean
     resume?: WorkflowResumeInput
     /** Forwarded to `attachRunSubscribers`; see `AttachDbSyncOptions.onItemColumnChanged`. */
     onItemColumnChanged?: (payload: { itemId: string; from: string; to: string; phaseStatus: string }) => void
@@ -135,40 +136,49 @@ export function prepareRun(
     title: item.title,
     owner: workerOwnerKind,
     workspaceFsId,
+    status: opts.deferWorkerLease ? "queued" : "running",
   })
-  try {
-    claimWorkerLease(repos, {
-      runId: runRow.id,
-      workerInstanceId,
-      workerOwnerKind,
-      now: opts.workerLeaseClock?.(),
-    })
-  } catch (error) {
-    markRunFailedRecoverable(
-      repos,
-      runRow.id,
-      `Worker start failed before ownership was durable: ${(error as Error).message}`,
-    )
-    throw error
-  }
   let heartbeat: WorkerLeaseHeartbeat | null = null
-  try {
-    heartbeat = startWorkerLeaseHeartbeat(repos, {
-      runId: runRow.id,
-      workerInstanceId,
-      workerOwnerKind,
-      now: opts.workerLeaseClock,
-      scheduler: opts.workerLeaseScheduler,
-      onFatal: (reason, error) => cancellation.cancel(reason, error),
-    })
-  } catch (error) {
-    markRunFailedRecoverable(
-      repos,
-      runRow.id,
-      `Worker start failed before heartbeat was durable: ${(error as Error).message}`,
-    )
-    throw error
+  let workerLeaseStarted = false
+
+  const ensureWorkerLease = (): void => {
+    if (workerLeaseStarted) return
+    try {
+      claimWorkerLease(repos, {
+        runId: runRow.id,
+        workerInstanceId,
+        workerOwnerKind,
+        now: opts.workerLeaseClock?.(),
+      })
+    } catch (error) {
+      markRunFailedRecoverable(
+        repos,
+        runRow.id,
+        `Worker start failed before ownership was durable: ${(error as Error).message}`,
+      )
+      throw error
+    }
+    try {
+      heartbeat = startWorkerLeaseHeartbeat(repos, {
+        runId: runRow.id,
+        workerInstanceId,
+        workerOwnerKind,
+        now: opts.workerLeaseClock,
+        scheduler: opts.workerLeaseScheduler,
+        onFatal: (reason, error) => cancellation.cancel(reason, error),
+      })
+    } catch (error) {
+      markRunFailedRecoverable(
+        repos,
+        runRow.id,
+        `Worker start failed before heartbeat was durable: ${(error as Error).message}`,
+      )
+      throw error
+    }
+    workerLeaseStarted = true
   }
+
+  if (!opts.deferWorkerLease) ensureWorkerLease()
 
   const bus = io.bus ?? createBus()
   const workflowIo = withWorkflowCancellation(io, cancellation)
@@ -176,6 +186,7 @@ export function prepareRun(
 
   const start = async (): Promise<void> => {
     assertWorkflowNotCancelled()
+    ensureWorkerLease()
     const workspaceRow = repos.getWorkspace(workspaceId)
     const llm = await resolveWorkflowLlmOptions(workspaceRow)
     if (workspaceRow?.root_path && !llm) {

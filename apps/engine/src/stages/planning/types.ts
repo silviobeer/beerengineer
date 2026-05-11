@@ -1,3 +1,4 @@
+import type { ImportContextArtifact } from "../../core/importContext.js"
 import type { ItemDecision } from "../../core/itemDecisions.js"
 import type { ArchitectureSummary, PRD } from "../../types.js"
 import type { CodebaseSnapshot } from "../../types/context.js"
@@ -6,6 +7,7 @@ export type PlanningState = {
   projectId: string
   prd: PRD
   architectureSummary: ArchitectureSummary
+  importContext?: ImportContextArtifact
   codebase?: CodebaseSnapshot
   decisions?: ItemDecision[]
   revisionCount: number

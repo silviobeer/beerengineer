@@ -78,7 +78,8 @@ Items move through the dedicated **Merge** column after per-project handoff. By 
 ## Docs
 
 - [Features](docs/PROJECT.md) — shipped PROJs, scope, PRDs, and QA status
-- [Technical](docs/TECHNICAL.md) — architecture, data model, decisions, and gotchas
+- [ADRs](docs/adr/) — canonical home for durable architecture decisions
+- [Technical](docs/TECHNICAL.md) — architecture, data model, dependencies, and gotchas
 - [Agent orientation](AGENTS.md) — durable conventions for AI-pair coding
 
 ## Prerequisites
@@ -353,7 +354,7 @@ configuration.
 - [`apps/engine/docs/PROJECT.md`](apps/engine/docs/PROJECT.md) — feature
   catalog (stages, runtimes, integrations, persistence).
 - [`apps/engine/docs/TECHNICAL.md`](apps/engine/docs/TECHNICAL.md) —
-  architecture map, source layout, cross-cutting decisions, gotchas.
+  engine architecture map, source layout, and gotchas.
 - [`apps/engine/docs/engine-architecture.md`](apps/engine/docs/engine-architecture.md) —
   registry-driven pipeline, `GitAdapter`, iteration loop, file map,
   how to add a stage.

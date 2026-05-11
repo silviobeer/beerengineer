@@ -11,8 +11,8 @@ export class FakeDocumentationReviewAdapter
   async review(input: { artifact: DocumentationArtifact; state: DocumentationState }): Promise<ReviewAgentResponse> {
     const failures: string[] = []
 
-    if (input.state.projectReview.findings.length > 0 && !hasSection(input.artifact, "Known Risks")) {
-      failures.push("Technical doc must call out residual project-review risks.")
+    if (input.state.projectReview.findings.length > 0 && !hasSection(input.artifact, "Known Issues")) {
+      failures.push("Technical doc must surface residual project-review findings under Known Issues.")
     }
 
     if (input.artifact.compactReadme.sections.length > 4) {
