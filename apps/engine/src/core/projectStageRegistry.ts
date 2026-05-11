@@ -274,7 +274,11 @@ const planningNode: ProjectStageNode = {
   id: "planning",
   run: async (ctx, deps) => ({
     ...ctx,
-    plan: await planning(assertWithArchitecture(ctx), deps.llm?.stage),
+    supabase: { configured: Boolean(deps.supabaseReadiness) },
+    plan: await planning(
+      { ...assertWithArchitecture(ctx), supabase: { configured: Boolean(deps.supabaseReadiness) } },
+      deps.llm?.stage,
+    ),
   }),
   resumeFromDisk: async ctx => ({ ...ctx, plan: await loadPlan(ctx) }),
 }
