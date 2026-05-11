@@ -43,10 +43,15 @@ function stringPayloadList(value: unknown): string[] {
 }
 
 function startupRecoveryPresentation(entry: MessageEntry): MessagePresentation {
+  const heldBackRunIds = stringPayloadList(entry.payload.heldBackRunIds)
   return {
     icon: "♻",
     label: "startup recovery",
-    detail: [payloadString(entry.payload.outcome), payloadString(entry.payload.reason, "")].filter(Boolean).join(" / "),
+    detail: [
+      payloadString(entry.payload.outcome),
+      payloadString(entry.payload.reason, ""),
+      heldBackRunIds.length > 0 ? heldBackRunIds.join(", ") : undefined,
+    ].filter(Boolean).join(" / "),
   }
 }
 

@@ -3342,7 +3342,8 @@
           "db",
           "startupRecovery",
           "shutdown",
-          "leaseWrite"
+          "leaseWrite",
+          "effectiveWorkerCap"
         ],
         "properties": {
           "ok": {
@@ -3386,6 +3387,11 @@
               "skipped"
             ],
             "description": "Result of the lightweight readiness sentinel write. `skipped` means an earlier readiness precondition already failed."
+          },
+          "effectiveWorkerCap": {
+            "type": "number",
+            "minimum": 1,
+            "description": "Session-wide worker admission cap derived at startup from the explicit override or the host-memory default."
           }
         }
       },
