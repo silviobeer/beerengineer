@@ -1,11 +1,12 @@
+import Database from "better-sqlite3"
 import { afterEach, beforeEach, test } from "node:test"
 import assert from "node:assert/strict"
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 
-import { initDatabase, resolveDbPathInfo } from "../src/db/connection.js"
-import { resolveLegacyDbCleanupLogPath, setLegacyDbTargetRemoverForTests } from "../src/db/legacyDbReconciler.js"
+import { applySchema, initDatabase, resolveDbPathInfo } from "../src/db/connection.js"
+import { resolveLegacyDbCleanupLogPath } from "../src/db/legacyDbReconciler.js"
 import { Repos } from "../src/db/repositories.js"
 import { buildUpdateStatus, assertUpdateSafety } from "../src/core/updateMode/status.js"
 import { CONFIG_SCHEMA_VERSION, type AppConfig } from "../src/setup/config.js"
@@ -114,13 +115,10 @@ test("failed deletion stays visible, blocks update preflight, and logs once", ()
   const repos = new Repos(control)
   const dataDir = mkdtempSync(join(tmpRoot, "data-"))
   seedConfiguredDb(dataDir)
-  seedEmptyLegacyDb()
-  writeFileSync(`${LEGACY_DB_PATH()}-wal`, "wal\n", "utf8")
+  seedBareLegacyDb()
   process.env.BEERENGINEER_CONFIG_PATH = writeTmpConfig(tmpRoot, dataDir)
-  setLegacyDbTargetRemoverForTests(path => {
-    if (path === `${LEGACY_DB_PATH()}-wal`) throw new Error("simulated delete failure")
-    rmSync(path, { recursive: true, force: false })
-  })
+  const legacyDir = resolve(LEGACY_DB_PATH(), "..")
+  chmodSync(legacyDir, 0o555)
 
   try {
     const status = buildUpdateStatus(repos, buildAppConfig(dataDir))
@@ -132,7 +130,7 @@ test("failed deletion stays visible, blocks update preflight, and logs once", ()
     )
     assert.equal(existsSync(LEGACY_DB_PATH()), true)
   } finally {
-    setLegacyDbTargetRemoverForTests(null)
+    chmodSync(legacyDir, 0o755)
     control.close()
   }
 })
@@ -196,6 +194,13 @@ function seedConfiguredDb(dataDir: string): void {
 
 function seedEmptyLegacyDb(): void {
   initDatabase(LEGACY_DB_PATH()).close()
+}
+
+function seedBareLegacyDb(): void {
+  mkdirSync(resolve(LEGACY_DB_PATH(), ".."), { recursive: true })
+  const db = new Database(LEGACY_DB_PATH())
+  applySchema(db)
+  db.close()
 }
 
 function seedLegacyItemOnlyDb(): void {

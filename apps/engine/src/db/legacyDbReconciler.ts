@@ -20,9 +20,6 @@ type ReconciliationState = {
 }
 
 let cachedState: ReconciliationState | null = null
-let removeLegacyDbTarget: (path: string) => void = path => {
-  fs.rmSync(path)
-}
 
 export function resolveLegacyDbPath(): string {
   return resolve(homedir(), ".local", "share", "beerengineer", "beerengineer.sqlite")
@@ -30,12 +27,6 @@ export function resolveLegacyDbPath(): string {
 
 export function resolveLegacyDbCleanupLogPath(dataDir: string): string {
   return join(dataDir, "logs", "legacy-db-cleanup.jsonl")
-}
-
-export function setLegacyDbTargetRemoverForTests(remover: ((path: string) => void) | null): void {
-  removeLegacyDbTarget = remover ?? (path => {
-    fs.rmSync(path)
-  })
 }
 
 export function getLegacyDbReconciliationState():
@@ -125,7 +116,7 @@ function deleteLegacyDbFamily(legacyDbPath: string): Exclude<LegacyDbCleanupOutc
   }
 
   try {
-    for (const { target } of backups) removeLegacyDbTarget(target)
+    for (const { target } of backups) fs.rmSync(target)
     if (backups.some(({ target }) => fs.existsSync(target))) throw new Error("legacy_cleanup_incomplete")
   } catch {
     restoreTargets(backups)
