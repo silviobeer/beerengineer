@@ -5,9 +5,14 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
+import { buildRunArtifactReadModels } from "../src/api/artifactReadModel.js"
+import { getRunTree } from "../src/api/board.js"
 import { createBus, busToWorkflowIO } from "../src/core/bus.js"
+import { attachDbSync } from "../src/core/dbSync.js"
 import { generateImportContext, importContextArtifactPath, readImportContextArtifact, writeImportContextArtifact, type GeneratedImportContext } from "../src/core/importContext.js"
+import { runWithWorkflowIO } from "../src/core/io.js"
 import { loadPreparedImportBundle, preparedImportSourceSnapshotDir, seedPreparedImportArtifacts } from "../src/core/preparedImport.js"
+import { runWithActiveRun, withStageLifecycle } from "../src/core/runContext.js"
 import { prepareForegroundPreparedImportRun } from "../src/core/runService.js"
 import { layout } from "../src/core/workspaceLayout.js"
 import { resolveWorkflowContextForItemRun } from "../src/core/workflowContextResolver.js"
@@ -647,6 +652,7 @@ test("prepared import injects import-context into downstream stage state", async
 
     assert.equal(prepared.ok, true)
     if (!prepared.ok) return
+    assert.deepEqual(repos.listStageRunsForRun(prepared.runId).map(stageRun => stageRun.stage_key), [])
 
     const item = repos.getItem(prepared.itemId)
     const run = repos.getRun(prepared.runId)
@@ -667,12 +673,30 @@ test("prepared import injects import-context into downstream stage state", async
     assert.ok(project)
     assert.ok(prd)
     if (!project || !prd) return
-    await architecture({
-      ...ctx,
-      project,
-      prd,
-      importContext: imported,
+    repos.createProject({
+      id: project.id,
+      itemId: prepared.itemId,
+      code: project.id,
+      name: project.name,
+      summary: project.description,
+      position: 0,
     })
+    const downstreamIo = makeIo()
+    const detachDbSync = attachDbSync(downstreamIo.bus, repos, { runId: prepared.runId, itemId: prepared.itemId })
+    try {
+      await runWithWorkflowIO(downstreamIo, async () =>
+        runWithActiveRun({ runId: prepared.runId, itemId: prepared.itemId, title: item.title }, async () =>
+          withStageLifecycle("architecture", () =>
+            architecture({
+              ...ctx,
+              project,
+              prd,
+              importContext: imported,
+            }),
+          { projectId: project.id })))
+    } finally {
+      detachDbSync()
+    }
 
     const architectureRun: {
       state: { importContext?: unknown }
@@ -680,6 +704,192 @@ test("prepared import injects import-context into downstream stage state", async
     } = JSON.parse(readFileSync(layout.stageRunFile(ctx, "architecture"), "utf8"))
     assert.equal(architectureRun.status, "approved")
     assert.deepEqual(architectureRun.state.importContext, direct.importContext)
+    assert.deepEqual(repos.listStageRunsForRun(prepared.runId).map(stageRun => stageRun.stage_key), ["architecture"])
+    assert.ok(!existsSync(layout.stageRunFile(ctx, "import-context")), "import-context must not run as a separate stage")
+    assert.ok(!existsSync(layout.stageArtifactsDir(ctx, "import-context")), "import-context must not create a stage artifact directory")
+  } finally {
+    db.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("import-context artifacts distinguish full, partial, unavailable, and empty outcomes while degraded context stays non-blocking downstream", async () => {
+  const { dir, db, repos } = tempRepos("be2-import-context-visibility-")
+  const repoRoot = join(dir, "repo")
+  seedGitRepo(repoRoot)
+  try {
+    const workspace = repos.upsertWorkspace({ key: "local", name: "Local", rootPath: repoRoot })
+    const io = makeIo()
+    const statuses = new Set<string>()
+
+    const fixtures: Array<{
+      name: string
+      sourceDir: string
+      importContextGenerator?: Parameters<typeof prepareForegroundPreparedImportRun>[2]["importContextGenerator"]
+      runArchitecture: boolean
+      expectedStatus: "full" | "partial" | "unavailable" | "empty"
+      expectedWarnings: string[]
+    }> = [
+      {
+        name: "full",
+        sourceDir: join(dir, "prepared-full"),
+        runArchitecture: true,
+        expectedStatus: "full",
+        expectedWarnings: [],
+      },
+      {
+        name: "partial",
+        sourceDir: join(dir, "prepared-partial"),
+        runArchitecture: true,
+        expectedStatus: "partial",
+        expectedWarnings: ["partial import-context fixture"],
+        importContextGenerator: async ({ sourceDir: preparedSourceDir, item }): Promise<GeneratedImportContext> => {
+          const bundle = loadPreparedImportBundle(preparedSourceDir, item)
+          return {
+            bundle,
+            importContext: {
+              status: "partial",
+              files: [
+                { path: "P01.prd.json", outcome: "visible", reason: "prd_json" },
+                { path: "concept.json", outcome: "visible", reason: "concept_json" },
+                { path: "notes.txt", outcome: "omitted", reason: "unsupported" },
+                { path: "projects.json", outcome: "visible", reason: "projects_json" },
+              ],
+              context: {
+                conceptSummary: bundle.concept.summary,
+                hasUi: bundle.concept.hasUi === true,
+                projectIds: bundle.projects.map(project => project.id),
+                prdProjectIds: Object.keys(bundle.prdsByProjectId).sort(),
+              },
+              warnings: ["partial import-context fixture"],
+            },
+          }
+        },
+      },
+      {
+        name: "unavailable",
+        sourceDir: join(dir, "prepared-unavailable"),
+        runArchitecture: true,
+        expectedStatus: "unavailable",
+        expectedWarnings: ["import-context generation unavailable: injected failure"],
+        importContextGenerator: async ({ sourceDir: preparedSourceDir, item }): Promise<GeneratedImportContext> => {
+          const bundle = loadPreparedImportBundle(preparedSourceDir, item)
+          return {
+            bundle,
+            importContext: {
+              status: "unavailable",
+              files: [],
+              context: {
+                conceptSummary: bundle.concept.summary,
+                hasUi: bundle.concept.hasUi === true,
+                projectIds: bundle.projects.map(project => project.id),
+                prdProjectIds: Object.keys(bundle.prdsByProjectId).sort(),
+              },
+              warnings: ["import-context generation unavailable: injected failure"],
+            },
+          }
+        },
+      },
+      {
+        name: "empty",
+        sourceDir: join(dir, "prepared-empty"),
+        runArchitecture: false,
+        expectedStatus: "empty",
+        expectedWarnings: [],
+      },
+    ]
+
+    for (const fixture of fixtures) {
+      mkdirSync(fixture.sourceDir, { recursive: true })
+      if (fixture.expectedStatus !== "empty") {
+        writeFileSync(
+          join(fixture.sourceDir, "concept.json"),
+          JSON.stringify({ summary: "Prepared", problem: "Import", users: ["operator"], constraints: [] }),
+        )
+        writeFileSync(
+          join(fixture.sourceDir, "projects.json"),
+          JSON.stringify([{ id: "P01", name: "Core", description: "Core", concept: { summary: "Core", problem: "", users: [], constraints: [] } }]),
+        )
+        writeFileSync(
+          join(fixture.sourceDir, "P01.prd.json"),
+          JSON.stringify({ prd: { stories: [{ id: "US-1", title: "Import", acceptanceCriteria: [] }] } }),
+        )
+      }
+      if (fixture.expectedStatus === "partial") {
+        writeFileSync(join(fixture.sourceDir, "notes.txt"), "omitted from downstream context\n")
+      }
+
+      const prepared = await prepareForegroundPreparedImportRun(repos, io, {
+        sourceDir: fixture.sourceDir,
+        workspaceKey: workspace.key,
+        owner: "cli",
+        appConfig: appConfigFor(dir),
+        workerLeaseScheduler: fakeScheduler(),
+        importContextGenerator: fixture.importContextGenerator,
+      })
+
+      assert.equal(prepared.ok, true)
+      if (!prepared.ok) continue
+      assert.deepEqual(prepared.warnings, fixture.expectedWarnings)
+
+      const item = repos.getItem(prepared.itemId)
+      const run = repos.getRun(prepared.runId)
+      assert.ok(item)
+      assert.ok(run)
+      if (!item || !run) continue
+
+      const ctx = resolveWorkflowContextForItemRun(repos, item, run)
+      assert.ok(ctx)
+      if (!ctx) continue
+
+      const importArtifact = repos.listArtifactsForRun(prepared.runId).find(artifact => artifact.label === "Import Context")
+      assert.ok(importArtifact)
+      if (!importArtifact) continue
+
+      const operatorArtifacts = buildRunArtifactReadModels(repos.listArtifactsForRun(prepared.runId))
+      const operatorImportArtifact = operatorArtifacts.find(artifact => artifact.label === "Import Context")
+      assert.equal(operatorImportArtifact?.metadata?.importContext?.status, fixture.expectedStatus)
+
+      const persisted: {
+        status: string
+        warnings: string[]
+      } = JSON.parse(readFileSync(importArtifact.path, "utf8"))
+      assert.equal(persisted.status, fixture.expectedStatus)
+      assert.deepEqual(persisted.warnings, fixture.expectedWarnings)
+      statuses.add(persisted.status)
+
+      const runTree = getRunTree(repos, prepared.runId)
+      const runTreeImportArtifact = runTree?.artifacts.find(artifact => artifact.label === "Import Context")
+      assert.equal(runTreeImportArtifact?.metadata?.importContext?.status, fixture.expectedStatus)
+
+      if (!fixture.runArchitecture) continue
+
+      const imported = await readImportContextArtifact(ctx)
+      assert.ok(imported)
+      if (!imported) continue
+
+      const project = loadPreparedImportBundle(fixture.sourceDir, { title: item.title, description: item.description ?? "" }).projects[0]
+      const prd = loadPreparedImportBundle(fixture.sourceDir, { title: item.title, description: item.description ?? "" }).prdsByProjectId.P01
+      assert.ok(project)
+      assert.ok(prd)
+      if (!project || !prd) continue
+
+      await architecture({
+        ...ctx,
+        project,
+        prd,
+        importContext: imported,
+      })
+
+      const architectureRun: {
+        state: { importContext?: { status?: string } }
+        status: string
+      } = JSON.parse(readFileSync(layout.stageRunFile(ctx, "architecture"), "utf8"))
+      assert.equal(architectureRun.status, "approved")
+      assert.equal(architectureRun.state.importContext?.status, fixture.expectedStatus)
+    }
+
+    assert.deepEqual([...statuses].sort(), ["empty", "full", "partial", "unavailable"])
   } finally {
     db.close()
     rmSync(dir, { recursive: true, force: true })
