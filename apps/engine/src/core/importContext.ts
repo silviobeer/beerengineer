@@ -49,6 +49,10 @@ function compareAlphabetically(left: string, right: string): number {
   return left.localeCompare(right)
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
 function collectFiles(root: string): string[] {
   let entries: string[]
   try {
@@ -202,7 +206,7 @@ export const defaultImportContextGenerator: ImportContextGenerator = async ({ so
         status: "unavailable",
         files: [],
         context: importContextMetadata(bundle),
-        warnings: [...bundle.warnings, `import-context generation unavailable: ${(error as Error).message}`],
+        warnings: [...bundle.warnings, `import-context generation unavailable: ${errorMessage(error)}`],
       },
     }
   }

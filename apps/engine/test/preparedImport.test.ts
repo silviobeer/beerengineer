@@ -20,6 +20,12 @@ function fileOutcomes(files: Array<{ path: string; outcome: string }>) {
   return files.map(file => [file.path, file.outcome])
 }
 
+type DegradedImportContextFixture = {
+  status: "partial" | "unavailable"
+  warnings: string[]
+  files: Array<{ path: string; outcome: string; reason: string }>
+}
+
 function tempRepos(prefix: string) {
   const dir = mkdtempSync(join(tmpdir(), prefix))
   const db = initDatabase(join(dir, "test.sqlite"))
@@ -439,8 +445,7 @@ test("prepared import accepts degraded shared import-context results without blo
 
     const workspace = repos.upsertWorkspace({ key: "local", name: "Local", rootPath: repoRoot })
     const io = makeIo()
-
-    for (const fixture of [
+    const fixtures: DegradedImportContextFixture[] = [
       {
         status: "partial",
         warnings: ["partial import-context fixture"],
@@ -454,7 +459,9 @@ test("prepared import accepts degraded shared import-context results without blo
         warnings: ["import-context generation unavailable: injected failure"],
         files: [],
       },
-    ] as const) {
+    ]
+
+    for (const fixture of fixtures) {
       const prepared = await prepareForegroundPreparedImportRun(repos, io, {
         sourceDir,
         workspaceKey: workspace.key,
