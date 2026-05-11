@@ -166,6 +166,7 @@ async function executeWave(
     const activeRun = getActiveRun()
     const context = {
       workspaceId: supabaseHook.workspaceId,
+      workspaceKey: supabaseHook.repos.getWorkspace(supabaseHook.workspaceId)?.key,
       workspaceRoot: ctx.workspaceRoot,
       projectRef: supabaseHook.projectRef,
       dbMode: supabaseHook.dbMode,
