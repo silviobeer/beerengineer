@@ -49,6 +49,10 @@ function compareAlphabetically(left: string, right: string): number {
   return left.localeCompare(right)
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
 function collectFiles(root: string): string[] {
   let entries: string[]
   try {
@@ -88,26 +92,29 @@ function isVisibleMarkdownContent(content: string, relativePath: string): boolea
   return /^###\s+(US-[\w-]+|Story\s+\d+)/im.test(content) || /^3_PRDs\//i.test(relativePath) || /^prds\//i.test(relativePath)
 }
 
-function visibleMarkdownFiles(sourceDir: string, files: string[]): Set<string> {
-  const conceptFile =
-    files.find(path => /(?:^|\/)1_brainstorm\/.*concept.*\.md$/i.test(path)) ??
-    files.find(path => path.toLowerCase().endsWith("concept.md")) ??
-    files.find(path => extname(path).toLowerCase() === ".md")
+function findConceptMarkdownFile(files: string[]): string | undefined {
+  return files.find(path => /(?:^|\/)1_brainstorm\/.*concept.*\.md$/i.test(path))
+    ?? files.find(path => path.toLowerCase().endsWith("concept.md"))
+    ?? files.find(path => extname(path).toLowerCase() === ".md")
+}
 
-  const conceptPath = conceptFile ? resolve(conceptFile) : null
+function isVisibleMarkdownFile(sourceDir: string, file: string, conceptPath: string | null): boolean {
+  if (extname(file).toLowerCase() !== ".md" || resolve(file) === conceptPath) return false
+  try {
+    return isVisibleMarkdownContent(readFileSync(file, "utf8"), relativeImportPath(sourceDir, file))
+  } catch {
+    return false
+  }
+}
+
+function visibleMarkdownFiles(sourceDir: string, files: string[]): Set<string> {
+  const conceptFile = findConceptMarkdownFile(files)
+  const conceptPath = conceptFile === undefined ? null : resolve(conceptFile)
   const visible = new Set<string>()
   if (conceptPath) visible.add(conceptPath)
 
   for (const file of files) {
-    if (extname(file).toLowerCase() !== ".md" || resolve(file) === conceptPath) continue
-    const rel = relativeImportPath(sourceDir, file)
-    let content: string
-    try {
-      content = readFileSync(file, "utf8")
-    } catch {
-      continue
-    }
-    if (isVisibleMarkdownContent(content, rel)) visible.add(resolve(file))
+    if (isVisibleMarkdownFile(sourceDir, file, conceptPath)) visible.add(resolve(file))
   }
   return visible
 }
@@ -199,7 +206,7 @@ export const defaultImportContextGenerator: ImportContextGenerator = async ({ so
         status: "unavailable",
         files: [],
         context: importContextMetadata(bundle),
-        warnings: [...bundle.warnings, `import-context generation unavailable: ${(error as Error).message}`],
+        warnings: [...bundle.warnings, `import-context generation unavailable: ${errorMessage(error)}`],
       },
     }
   }
