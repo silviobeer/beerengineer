@@ -28,6 +28,7 @@ import { readActiveSecretValue } from "../setup/secretStore.js"
 import { SUPABASE_MANAGEMENT_TOKEN_SECRET_REF } from "../setup/secretMetadata.js"
 import { runStartupCleanupCatchup } from "../core/supabase/cleanupCatchup.js"
 import { primeCodexSandboxCapabilityDetection } from "../llm/hosted/providers/codexSandboxPolicy.js"
+import { getWorkerAdmissionController, workerAdmissionStartupLogMessage } from "../core/workerAdmission.js"
 import type { ApiLifecycleHooks, ApiRouteDependencies } from "./entrypointContracts.js"
 
 const OPENAPI_PATH = resolvePath(dirname(fileURLToPath(import.meta.url)), "openapi.json")
@@ -76,8 +77,11 @@ export function composeApiPrivilegedDependencies(
 
   const db = initDatabase()
   const repos = new Repos(db)
+  const admission = getWorkerAdmissionController(repos)
   const itemActions = createItemActionsService(repos)
   const board = createBoardStream(repos, db)
+
+  console.log(workerAdmissionStartupLogMessage(admission.resolution))
 
   seedIfEmpty(db, repos)
 
@@ -248,6 +252,11 @@ export function composeApiPrivilegedDependencies(
     closeDatabase(): void {
       try {
         board.dispose()
+      } catch {
+        // best-effort cleanup before DB close
+      }
+      try {
+        admission.dispose()
       } catch {
         // best-effort cleanup before DB close
       }
