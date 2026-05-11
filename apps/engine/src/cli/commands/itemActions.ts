@@ -3,7 +3,7 @@ import { ask, close } from "../../sim/human.js"
 import { createCliIO } from "../../core/ioCli.js"
 import type { ItemAction, ItemActionResult } from "../../core/itemActions.js"
 import { attachOneShotPromptAnswer } from "../../core/promptAutoAnswer.js"
-import { inspectWorkspaceState } from "../../core/git.js"
+import { inspectWorkspaceState, resolveDirtyMasterAllowlistPatterns } from "../../core/git.js"
 import { layout } from "../../core/workspaceLayout.js"
 import {
   checkWorkflowStartGitReadiness,
@@ -178,7 +178,10 @@ async function collectResumePayload(
 }
 
 function printDirtyRepoPreflight(rootPath: string, ignoredPaths: string[] = []): number {
-  const inspection = inspectWorkspaceState(rootPath, { ignoredPaths })
+  const inspection = inspectWorkspaceState(rootPath, {
+    ignoredPaths,
+    allowlistPatterns: resolveDirtyMasterAllowlistPatterns(rootPath),
+  })
   if (inspection.kind !== "dirty") return 0
 
   const onBaseBranch = inspection.currentBranch === "main" || inspection.currentBranch === "master"
