@@ -288,6 +288,7 @@ export async function performResume(input: PerformResumeInput): Promise<void> {
                 supabaseReadiness: {
                   repos: input.repos,
                   runId: run.id,
+                  managementClient: supabaseHook?.managementClient,
                 },
                 executionOwnership: {
                   repos: input.repos,

@@ -252,12 +252,16 @@ function defaultSupabaseAdapterFactory(
 ): WorkflowCapabilityBag {
   if (providedFactory) return { supabaseAdapterFactory: providedFactory }
   return {
-    supabaseAdapterFactory: () => ({
-      adapter: createSupabaseAdapter({
-        repos,
-        client: new SupabaseManagementClient({ token }),
-      }),
-    }),
+    supabaseAdapterFactory: () => {
+      const client = new SupabaseManagementClient({ token })
+      return {
+        adapter: createSupabaseAdapter({
+          repos,
+          client,
+        }),
+        managementClient: client,
+      }
+    },
   }
 }
 
@@ -976,6 +980,17 @@ export async function resumeRunFromExistingRemediationInProcess(
 ): Promise<ResumeRunResult> {
   const remediation = repos.getExternalRemediation(input.remediationId)
   if (!remediation) return { ok: false, status: 404, error: "run_not_found" }
+  const run = repos.getRun(remediation.run_id)
+  if (!run) return { ok: false, status: 404, error: "run_not_found" }
+  const workspace = repos.getWorkspace(run.workspace_id)
+  const capabilitiesResult = resolveWorkflowCapabilities({ repos, workspace })
+  if (!isWorkflowCapabilityBag(capabilitiesResult)) return capabilitiesResult
+  const supabaseHook = buildSupabaseWorkflowHook(
+    repos,
+    run.workspace_id,
+    workspace,
+    capabilitiesResult.supabaseAdapterFactory,
+  )
   const io = buildApiIo(repos)
   fireInBackground(io, "resumeRunFromExistingRemediationInProcess", async () => {
     await performResume({
@@ -987,6 +1002,7 @@ export async function resumeRunFromExistingRemediationInProcess(
       workerInstanceId: input.apiWorkerInstanceId ?? API_WORKER_INSTANCE_ID,
       workerLeaseClock: input.workerLeaseClock,
       workerLeaseScheduler: input.workerLeaseScheduler,
+      supabaseHook,
       onItemColumnChanged: input.onItemColumnChanged,
     })
   })

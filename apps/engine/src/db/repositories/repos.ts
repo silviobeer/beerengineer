@@ -594,7 +594,7 @@ export class Repos {
            updated_at = ?
        WHERE id = ?
          AND status = 'blocked'
-         AND current_stage = 'planning'
+         AND current_stage IN ('planning', 'execution')
          AND recovery_status = 'blocked'
          AND recovery_scope = 'stage'
          AND recovery_scope_ref = 'execution'

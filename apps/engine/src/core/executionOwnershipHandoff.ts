@@ -123,7 +123,7 @@ export function isExecutionOwnershipHandoffRun(run: HandoffCandidate | undefined
   const owner = run?.worker_owner_kind ?? run?.owner
   return run?.status === "blocked"
     && owner === "cli"
-    && run.current_stage === "planning"
+    && (run.current_stage === "planning" || run.current_stage === "execution")
     && run.recovery_status === "blocked"
     && run.recovery_scope === "stage"
     && run.recovery_scope_ref === "execution"

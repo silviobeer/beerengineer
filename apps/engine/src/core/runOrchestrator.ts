@@ -10,6 +10,7 @@ import { persistWorkflowRunState } from "./stageRuntime.js"
 import type { SupabaseWorkflowHook } from "./supabase/workflowHook.js"
 import type { SupabaseAdapter } from "./supabase/types.js"
 import type { SupabaseHandoffClient } from "./supabase/handoffWriter.js"
+import type { SupabaseReadinessManagementClient } from "./supabase/preExecutionReadiness.js"
 import { markRunFailedRecoverable } from "./orphanRecovery.js"
 import {
   claimWorkerLease,
@@ -35,6 +36,7 @@ export type { WorkflowEvent } from "./io.js"
 
 export type SupabaseAdapterFactory = (deps: { workspaceId: string; projectRef: string }) => {
   adapter: SupabaseAdapter
+  managementClient?: SupabaseReadinessManagementClient
   handoffClient?: SupabaseHandoffClient
 } | null
 
@@ -57,6 +59,7 @@ export function buildSupabaseWorkflowHook(
   return {
     repos,
     adapter: built.adapter,
+    managementClient: built.managementClient,
     workspaceId,
     projectRef: workspaceRow.supabase_project_ref,
     parentBranchRef: workspaceRow.supabase_persistent_test_branch_ref,
@@ -206,6 +209,7 @@ export function prepareRun(
                 supabaseReadiness: {
                   repos,
                   runId: runRow.id,
+                  managementClient: supabaseHook?.managementClient,
                 },
                 executionOwnership: {
                   repos,

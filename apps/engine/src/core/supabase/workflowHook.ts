@@ -28,6 +28,7 @@ export type SupabaseWorkflowReadinessHook = {
 export type SupabaseWorkflowHook = {
   repos: Repos
   adapter: SupabaseAdapter
+  managementClient?: SupabaseReadinessManagementClient
   workspaceId: string
   projectRef: string
   /** Persistent test branch that is the parent for every wave branch. */
