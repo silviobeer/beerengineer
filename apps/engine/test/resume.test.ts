@@ -16,6 +16,7 @@ import { layout } from "../src/core/workspaceLayout.js"
 import { writeRecoveryRecord } from "../src/core/recovery.js"
 import { buildWorkflowResumeInput, performResume } from "../src/core/resume.js"
 import { preparedImportSourceSnapshotDir } from "../src/core/preparedImport.js"
+import { buildSupabaseProvisioningRecoveryPayload } from "../src/core/supabase/recoveryPayload.js"
 import { createBus, busToWorkflowIO, type EventBus } from "../src/core/bus.js"
 import { defaultAppConfig, writeConfigFile } from "../src/setup/config.js"
 import type { StoryImplementationArtifact } from "../src/types.js"
@@ -374,6 +375,110 @@ test("performResume preserves workspaceRoot so resume stays in real git mode", a
       assert.ok(
         presentationTexts.every(text => !text.includes("Simulated git mode (workspaceRoot not set)")),
         `resume unexpectedly lost workspaceRoot: ${JSON.stringify(presentationTexts)}`,
+      )
+    } finally {
+      db.close()
+    }
+  })
+})
+
+test("performResume keeps a persisted plan on run-scope provisioning resume when current_stage is null", async () => {
+  await withTmpCwd(async () => {
+    const repoRoot = join(process.cwd(), "repo")
+    mkdirSync(repoRoot, { recursive: true })
+    sh(repoRoot, ["init", "--initial-branch=main"])
+    sh(repoRoot, ["config", "user.email", "test@example.invalid"])
+    sh(repoRoot, ["config", "user.name", "test"])
+    await writeFile(join(repoRoot, "README.md"), "seed\n")
+    sh(repoRoot, ["add", "-A"])
+    sh(repoRoot, ["commit", "-m", "seed"])
+
+    const db = initDatabase(join(process.cwd(), "test.sqlite"))
+    const repos = new Repos(db)
+    const ws = repos.upsertWorkspace({ key: "t", name: "T", rootPath: repoRoot })
+    const item = repos.createItem({ workspaceId: ws.id, title: "Provisioning Resume", description: "smoke" })
+    const run = repos.createRun({
+      workspaceId: ws.id,
+      itemId: item.id,
+      title: item.title,
+      owner: "api",
+      workspaceFsId: `provisioning-resume-${item.id.toLowerCase()}`,
+    })
+
+    try {
+      const initial = makeWorkflowIO()
+      await runWithWorkflowIO(initial.io, () =>
+        runWithActiveRun({ runId: run.id, itemId: item.id }, () =>
+          runWorkflow(
+            { id: item.id, title: item.title, description: item.description },
+            { workspaceRoot: repoRoot },
+          ),
+        ),
+      )
+
+      const ctx = { workspaceId: `provisioning-resume-${item.id.toLowerCase()}`, workspaceRoot: repoRoot, runId: run.id }
+      const planPath = join(layout.stageArtifactsDir(ctx, "planning"), "implementation-plan.json")
+      const planBefore = await readFile(planPath, "utf8")
+      const planArtifact = JSON.parse(planBefore) as { plan: { waves: Array<{ id: string; number: number }> } }
+      const resumedWave = planArtifact.plan.waves[0]
+      assert.ok(resumedWave, "expected a persisted plan wave to exist before resume")
+
+      repos.updateRun(run.id, {
+        status: "blocked",
+        current_stage: null,
+        recovery_status: "blocked",
+        recovery_scope: "run",
+        recovery_scope_ref: null,
+        recovery_summary: "Supabase provisioning failed during branch activation.",
+        recovery_payload_json: buildSupabaseProvisioningRecoveryPayload({
+          runId: run.id,
+          workspaceId: ws.id,
+          workspaceKey: ws.key,
+          projectRef: "proj_test",
+          waveId: resumedWave.id,
+          waveNumber: resumedWave.number,
+          branchRef: "br_saved",
+          failedStep: "poll",
+          failureCause: "Branch activation timed out",
+          userMessage: "Supabase provisioning failed. Operator recovery action is required.",
+        }),
+      })
+      await writeRecoveryRecord(ctx, {
+        status: "blocked",
+        cause: "stage_error",
+        scope: { type: "run", runId: run.id },
+        summary: "Supabase provisioning failed during branch activation.",
+        detail: "seeded provisioning recovery",
+        evidencePaths: [layout.runDir(ctx)],
+      })
+
+      const remediation = repos.createExternalRemediation({
+        runId: run.id,
+        scope: "run",
+        scopeRef: null,
+        summary: "Operator retried the blocked provisioning run.",
+        branch: "item/provisioning-resume",
+        source: "api",
+      })
+
+      let capturedResume: Awaited<Parameters<typeof runWorkflow>[1]>["resume"] | undefined
+      const resumed = makeWorkflowIO()
+      await performResume({
+        repos,
+        io: resumed.io,
+        runId: run.id,
+        remediation,
+        workflowRunner: async (_item, options) => {
+          capturedResume = options?.resume
+        },
+      })
+
+      assert.equal(capturedResume?.scope.type, "run")
+      assert.equal(capturedResume?.currentStage, "execution")
+      assert.equal(await readFile(planPath, "utf8"), planBefore)
+      assert.deepEqual(
+        resumed.events.filter(event => event.type === "run_resumed").map(event => event.type),
+        ["run_resumed"],
       )
     } finally {
       db.close()
