@@ -30,6 +30,8 @@ type BlockRunFn = (
   },
 ) => Promise<never>
 
+type ActiveMergeRun = NonNullable<ReturnType<typeof getActiveRun>>
+
 function normalizeMergeGateAnswer(answer: string): "promote" | "cancel" | string {
   const normalized = answer.trim().toLowerCase()
   if (["promote", "approve", "approved", "yes", "y"].includes(normalized)) return "promote"
@@ -140,116 +142,136 @@ export async function mergeGate(
   }
 
   if (supabaseHook?.dbMode === "direct") {
-    try {
-      performGitMerge()
-      return
-    } catch (error) {
-      await blockRun(
-        context,
-        `Merge into ${git.mode.baseBranch} failed for ${itemBranch}: ${(error as Error).message}`,
-        {
-          cause: "merge_gate_failed",
-          scope: { type: "stage", runId: activeRun.runId, stageId: "merge-gate" },
-          branch: itemBranch,
-        },
-      )
-    }
+    await mergeOrBlock({ context, git, activeRun, itemBranch, blockRun, performGitMerge })
+    return
   }
 
   // BUG-PROJ4-QA-005 wiring point 4: Supabase gate stack
   if (supabaseHook) {
-    const run = supabaseHook.repos.getRun(activeRun.runId)
-    const lifecycleState = run?.supabase_branch_lifecycle_state ?? null
-    const dbRelevant = Boolean(run?.supabase_branch_ref)
-
-    // Gate 1: final wave validation
-    const validationGate = finalWaveValidationGate({ dbRelevant, lifecycleState })
-    if (!validationGate.ok) {
-      await blockRun(
-        context,
-        `Merge blocked: final wave validation incomplete (state=${lifecycleState ?? "missing"})`,
-        {
-          cause: "merge_gate_failed",
-          scope: { type: "stage", runId: activeRun.runId, stageId: "merge-gate" },
-          branch: itemBranch,
-        },
-      )
-    }
-
-    // Gate 2: destructive confirmation
-    const migrations = context.workspaceRoot
-      ? (() => {
-          try {
-            const files = listSupabaseSqlFiles(context.workspaceRoot!)
-            return files.migrations.map(file => ({
-              file,
-              sql: (() => { try { return readFileSync(file, "utf8") } catch { return "" } })(),
-            }))
-          } catch { return [] }
-        })()
-      : []
-    const findings = detectDestructiveMigrations({ migrations })
-    // destructiveConfirmed lives on the operator-supplied answer. We don't have
-    // a per-merge session flag yet — treat as unconfirmed if findings exist
-    // (the UI gate panel already exposes the confirmation toggle).
-    const destructiveGate = destructiveConfirmationGate({ findings, confirmedForThisMerge: false })
-    if (!destructiveGate.ok) {
-      await blockRun(
-        context,
-        `Merge blocked: destructive migration operations require per-merge confirmation`,
-        {
-          cause: "merge_gate_failed",
-          scope: { type: "stage", runId: activeRun.runId, stageId: "merge-gate" },
-          branch: itemBranch,
-        },
-      )
-    }
-
-    // Gates 3+4: protection switch + production migration (via mergeWithProtectionSwitch
-    // which captures the switch value atomically before the git merge runs).
-    const mergeContext = {
-      workspaceId: supabaseHook.workspaceId,
-      projectRef: supabaseHook.projectRef,
-      branchRef: run?.supabase_branch_ref ?? supabaseHook.parentBranchRef,
-      runId: activeRun.runId,
-      workspaceRoot: context.workspaceRoot ?? "",
-    }
-    const mergeResult = await mergeWithProtectionSwitch({
-      protectionSwitch: supabaseHook.protectionSwitch,
-      gitMerge: () => performGitMerge(),
-      migrateProduction: () => supabaseHook.adapter.migrateProduction(mergeContext),
+    await runSupabaseMergeGate({
+      context,
+      activeRun,
+      itemBranch,
+      blockRun,
+      supabaseHook,
+      performGitMerge,
     })
-
-    if (!mergeResult.ok) {
-      // Production migration failed after the git merge (QA-009 ordering hazard).
-      // Mark retained-for-diagnosis so the operator knows recovery is needed.
-      supabaseHook.repos.setRunSupabaseLifecycleState(activeRun.runId, "retained-for-diagnosis")
-      await blockRun(
-        context,
-        `Merge blocked: production migration failed — operator-driven recovery required`,
-        {
-          cause: "merge_gate_failed",
-          scope: { type: "stage", runId: activeRun.runId, stageId: "merge-gate" },
-          branch: itemBranch,
-        },
-      )
-    }
-    // Gate stack passed — merge already happened inside mergeWithProtectionSwitch.
     return
   }
 
   // Non-Supabase path: unconditional merge.
+  await mergeOrBlock({ context, git, activeRun, itemBranch, blockRun, performGitMerge })
+}
+
+async function mergeOrBlock(input: {
+  context: WorkflowContext
+  git: GitAdapter
+  activeRun: ActiveMergeRun
+  itemBranch: string
+  blockRun: BlockRunFn
+  performGitMerge: () => void
+}): Promise<void> {
   try {
-    performGitMerge()
+    input.performGitMerge()
   } catch (error) {
-    await blockRun(
-      context,
-      `Merge into ${git.mode.baseBranch} failed for ${itemBranch}: ${(error as Error).message}`,
+    await input.blockRun(
+      input.context,
+      `Merge into ${input.git.mode.baseBranch} failed for ${input.itemBranch}: ${(error as Error).message}`,
       {
         cause: "merge_gate_failed",
-        scope: { type: "stage", runId: activeRun.runId, stageId: "merge-gate" },
-        branch: itemBranch,
+        scope: { type: "stage", runId: input.activeRun.runId, stageId: "merge-gate" },
+        branch: input.itemBranch,
       },
     )
+  }
+}
+
+async function runSupabaseMergeGate(input: {
+  context: WorkflowContext
+  activeRun: ActiveMergeRun
+  itemBranch: string
+  blockRun: BlockRunFn
+  supabaseHook: SupabaseWorkflowHook
+  performGitMerge: () => void
+}): Promise<void> {
+  const run = input.supabaseHook.repos.getRun(input.activeRun.runId)
+  const lifecycleState = run?.supabase_branch_lifecycle_state ?? null
+  const dbRelevant = Boolean(run?.supabase_branch_ref)
+
+  const validationGate = finalWaveValidationGate({ dbRelevant, lifecycleState })
+  if (!validationGate.ok) {
+    await input.blockRun(
+      input.context,
+      `Merge blocked: final wave validation incomplete (state=${lifecycleState ?? "missing"})`,
+      {
+        cause: "merge_gate_failed",
+        scope: { type: "stage", runId: input.activeRun.runId, stageId: "merge-gate" },
+        branch: input.itemBranch,
+      },
+    )
+  }
+
+  const destructiveGate = destructiveConfirmationGate({
+    findings: loadDestructiveFindings(input.context.workspaceRoot),
+    confirmedForThisMerge: false,
+  })
+  if (!destructiveGate.ok) {
+    await input.blockRun(
+      input.context,
+      `Merge blocked: destructive migration operations require per-merge confirmation`,
+      {
+        cause: "merge_gate_failed",
+        scope: { type: "stage", runId: input.activeRun.runId, stageId: "merge-gate" },
+        branch: input.itemBranch,
+      },
+    )
+  }
+
+  const mergeResult = await mergeWithProtectionSwitch({
+    protectionSwitch: input.supabaseHook.protectionSwitch,
+    gitMerge: () => input.performGitMerge(),
+    migrateProduction: () => input.supabaseHook.adapter.migrateProduction({
+      workspaceId: input.supabaseHook.workspaceId,
+      projectRef: input.supabaseHook.projectRef,
+      branchRef: run?.supabase_branch_ref ?? input.supabaseHook.parentBranchRef,
+      runId: input.activeRun.runId,
+      workspaceRoot: input.context.workspaceRoot ?? "",
+    }),
+  })
+
+  if (!mergeResult.ok) {
+    input.supabaseHook.repos.setRunSupabaseLifecycleState(input.activeRun.runId, "retained-for-diagnosis")
+    await input.blockRun(
+      input.context,
+      `Merge blocked: production migration failed — operator-driven recovery required`,
+      {
+        cause: "merge_gate_failed",
+        scope: { type: "stage", runId: input.activeRun.runId, stageId: "merge-gate" },
+        branch: input.itemBranch,
+      },
+    )
+  }
+}
+
+function loadDestructiveFindings(workspaceRoot: string | undefined) {
+  if (!workspaceRoot) return detectDestructiveMigrations({ migrations: [] })
+  try {
+    const files = listSupabaseSqlFiles(workspaceRoot)
+    return detectDestructiveMigrations({
+      migrations: files.migrations.map(file => ({
+        file,
+        sql: safeReadSql(file),
+      })),
+    })
+  } catch {
+    return detectDestructiveMigrations({ migrations: [] })
+  }
+}
+
+function safeReadSql(file: string): string {
+  try {
+    return readFileSync(file, "utf8")
+  } catch {
+    return ""
   }
 }

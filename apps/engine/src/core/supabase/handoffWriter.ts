@@ -24,9 +24,9 @@ export async function writeSupabaseHandoff(input: {
   secretStore?: SecretStoreOptions
 }): Promise<{ path: string; env: { SUPABASE_HANDOFF_ENV: string } }> {
   if (process.platform === "win32") throw new Error("Supabase handoff requires a POSIX filesystem")
-  const token = readActiveSecretValue(SUPABASE_MANAGEMENT_TOKEN_SECRET_REF, input.secretStore)
-  if (!token) throw new Error("Supabase management token missing")
-  void token
+  if (!readActiveSecretValue(SUPABASE_MANAGEMENT_TOKEN_SECRET_REF, input.secretStore)) {
+    throw new Error("Supabase management token missing")
+  }
   const path = supabaseHandoffPath(input.workspaceRoot, input.runId, input.waveId)
   const dbMode = input.dbMode ?? "branching"
   const keys = await input.client.getProjectKeys(
