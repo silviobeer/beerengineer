@@ -28,8 +28,18 @@ export class MergeConflictResolutionInspectionError extends Error {
 }
 
 export function isStructuredMergeConflictRecoveryRun(
-  run: Pick<RunRow, "recovery_status" | "recovery_scope" | "recovery_scope_ref" | "recovery_summary"> | null | undefined,
-): boolean {
+  run: {
+    recovery_status?: RunRow["recovery_status"] | null
+    recovery_scope?: RunRow["recovery_scope"] | null
+    recovery_scope_ref?: RunRow["recovery_scope_ref"] | null
+    recovery_summary?: RunRow["recovery_summary"] | null
+  } | null | undefined,
+): run is NonNullable<typeof run> & {
+  recovery_status: "blocked"
+  recovery_scope: "stage"
+  recovery_scope_ref: "merge-gate"
+  recovery_summary: string
+} {
   if (!run) return false
   return run.recovery_status === "blocked"
     && run.recovery_scope === "stage"

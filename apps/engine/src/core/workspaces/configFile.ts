@@ -7,6 +7,7 @@ import type {
   RuntimePolicyMode,
   SonarConfig,
   WorkspaceConfigFile,
+  WorkspaceGitConfig,
   WorkspacePreviewConfig,
   WorkspacePreflightReport,
   WorkspaceReviewPolicy,
@@ -107,6 +108,25 @@ function nonEmptyTrimmedString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined
 }
 
+type ParsedWorkspaceGitConfig =
+  | { ok: true; value?: WorkspaceGitConfig }
+  | { ok: false; error: string }
+
+function parseWorkspaceGitConfig(raw: unknown): ParsedWorkspaceGitConfig {
+  if (raw === undefined) return { ok: true }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { ok: false, error: "workspace config git must be an object when provided" }
+  }
+  const git = raw as Partial<WorkspaceGitConfig>
+  if (git.rerere !== undefined && typeof git.rerere !== "boolean") {
+    return { ok: false, error: "workspace config git.rerere must be a boolean when provided" }
+  }
+  return {
+    ok: true,
+    value: typeof git.rerere === "boolean" ? { rerere: git.rerere } : undefined,
+  }
+}
+
 function normalizeWorkspaceTelegramInbound(
   raw: WorkspaceTelegramInboundConfig["inbound"],
 ): WorkspaceTelegramInboundConfig["inbound"] | undefined {
@@ -166,6 +186,7 @@ export function buildWorkspaceConfigFile(input: {
   name: string
   harnessProfile: HarnessProfile
   runtimePolicy?: WorkspaceRuntimePolicy
+  git?: WorkspaceGitConfig
   preview?: WorkspacePreviewConfig
   sonar: SonarConfig
   telegram?: WorkspaceTelegramInboundConfig
@@ -179,6 +200,7 @@ export function buildWorkspaceConfigFile(input: {
     name: input.name,
     harnessProfile: input.harnessProfile,
     runtimePolicy: input.runtimePolicy ?? defaultWorkspaceRuntimePolicyForHarnessProfile(input.harnessProfile),
+    git: input.git,
     preview: input.preview,
     sonar: input.sonar,
     telegram: input.telegram,
@@ -188,23 +210,28 @@ export function buildWorkspaceConfigFile(input: {
   }
 }
 
+type WorkspaceConfigParseResult =
+  | { ok: true; config: WorkspaceConfigFile }
+  | { ok: false; error: string }
+
 function parseWorkspaceConfigFile(raw: {
   schemaVersion?: number
   key?: unknown
   name?: unknown
   harnessProfile?: unknown
   runtimePolicy?: unknown
+  git?: unknown
   preview?: unknown
   sonar?: unknown
   telegram?: unknown
   reviewPolicy?: unknown
   preflight?: unknown
   createdAt?: unknown
-}): WorkspaceConfigFile | null {
+}): WorkspaceConfigParseResult {
   if ((raw.schemaVersion !== 1 && raw.schemaVersion !== WORKSPACE_SCHEMA_VERSION) || typeof raw.key !== "string" || typeof raw.name !== "string") {
-    return null
+    return { ok: false, error: "workspace config schemaVersion, key, or name is invalid" }
   }
-  if (!isValidHarnessProfile(raw.harnessProfile)) return null
+  if (!isValidHarnessProfile(raw.harnessProfile)) return { ok: false, error: "workspace config harnessProfile is invalid" }
   const runtimePolicy =
     normalizeRuntimePolicy(raw.runtimePolicy) ?? defaultWorkspaceRuntimePolicyForHarnessProfile(raw.harnessProfile)
   const preview = normalizePreviewConfig(raw.preview)
@@ -214,34 +241,46 @@ function parseWorkspaceConfigFile(raw: {
   )
   const reviewPolicy =
     raw.reviewPolicy && typeof raw.reviewPolicy === "object" ? (raw.reviewPolicy as WorkspaceReviewPolicy) : undefined
+  const git = parseWorkspaceGitConfig(raw.git)
+  if (!git.ok) return git
   return {
-    schemaVersion: WORKSPACE_SCHEMA_VERSION,
-    key: raw.key,
-    name: raw.name,
-    harnessProfile: raw.harnessProfile,
-    runtimePolicy,
-    preview,
-    sonar,
-    telegram: normalizeWorkspaceTelegramConfig(raw.telegram),
-    reviewPolicy: normalizeReviewPolicy(reviewPolicy, sonar, raw.key),
-    preflight: raw.preflight && typeof raw.preflight === "object" ? raw.preflight as WorkspacePreflightReport : undefined,
-    createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
+    ok: true,
+    config: {
+      schemaVersion: WORKSPACE_SCHEMA_VERSION,
+      key: raw.key,
+      name: raw.name,
+      harnessProfile: raw.harnessProfile,
+      runtimePolicy,
+      git: git.value,
+      preview,
+      sonar,
+      telegram: normalizeWorkspaceTelegramConfig(raw.telegram),
+      reviewPolicy: normalizeReviewPolicy(reviewPolicy, sonar, raw.key),
+      preflight: raw.preflight && typeof raw.preflight === "object" ? raw.preflight as WorkspacePreflightReport : undefined,
+      createdAt: typeof raw.createdAt === "number" ? raw.createdAt : Date.now(),
+    },
+  }
+}
+
+export async function readWorkspaceConfigDetailed(root: string): Promise<{ config: WorkspaceConfigFile | null; error?: string }> {
+  try {
+    const raw = JSON.parse(await readFile(workspaceConfigPath(root), "utf8")) as Parameters<typeof parseWorkspaceConfigFile>[0]
+    const parsed = parseWorkspaceConfigFile(raw)
+    return parsed.ok ? { config: parsed.config } : { config: null, error: parsed.error }
+  } catch {
+    return { config: null }
   }
 }
 
 export async function readWorkspaceConfig(root: string): Promise<WorkspaceConfigFile | null> {
-  try {
-    const raw = JSON.parse(await readFile(workspaceConfigPath(root), "utf8")) as Parameters<typeof parseWorkspaceConfigFile>[0]
-    return parseWorkspaceConfigFile(raw)
-  } catch {
-    return null
-  }
+  return (await readWorkspaceConfigDetailed(root)).config
 }
 
 export function readWorkspaceConfigSync(root: string): WorkspaceConfigFile | null {
   try {
     const raw = JSON.parse(readFileSync(workspaceConfigPath(root), "utf8")) as Parameters<typeof parseWorkspaceConfigFile>[0]
-    return parseWorkspaceConfigFile(raw)
+    const parsed = parseWorkspaceConfigFile(raw)
+    return parsed.ok ? parsed.config : null
   } catch {
     return null
   }

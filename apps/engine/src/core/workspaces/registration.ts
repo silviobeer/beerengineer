@@ -38,6 +38,7 @@ import {
   normalizeReviewPolicy,
   normalizeSonarConfig,
   readWorkspaceConfig,
+  readWorkspaceConfigDetailed,
   writeWorkspaceConfig,
 } from "./configFile.js"
 import { previewWorkspace, runWorkspacePreflight } from "./sonar.js"
@@ -120,7 +121,11 @@ async function resolveRegisterWorkspaceState(
   if (!preview.isInsideAllowedRoot) return { ok: false, error: "path_outside_allowed_roots", detail: `Path ${path} is outside allowed roots` }
   if (preview.exists && !preview.isDirectory) return { ok: false, error: "path_not_directory", detail: `Path ${path} is not a directory` }
   if (!preview.isWritable) return { ok: false, error: "path_not_writable", detail: `Path ${path} is not writable` }
-  const existingConfig = await readWorkspaceConfig(path)
+  const existingConfigResult = await readWorkspaceConfigDetailed(path)
+  if (existingConfigResult.error) {
+    return { ok: false, error: "workspace_config_invalid", detail: existingConfigResult.error }
+  }
+  const existingConfig = existingConfigResult.config
   const name = input.name ?? existingConfig?.name ?? basename(path)
   const key = input.key ?? existingConfig?.key ?? slugify(name)
   let requestedSonar = input.sonar ?? existingConfig?.sonar
@@ -256,6 +261,7 @@ export async function registerWorkspace(input: RegisterWorkspaceInput, deps: Reg
     name: state.name,
     harnessProfile: input.harnessProfile,
     runtimePolicy: state.existingConfig?.runtimePolicy,
+    git: state.existingConfig?.git,
     preview: state.existingConfig?.preview,
     sonar,
     reviewPolicy,
