@@ -166,6 +166,7 @@ export function buildWorkspaceConfigFile(input: {
   name: string
   harnessProfile: HarnessProfile
   runtimePolicy?: WorkspaceRuntimePolicy
+  autoPromoteOnGreenQa?: boolean
   preview?: WorkspacePreviewConfig
   sonar: SonarConfig
   telegram?: WorkspaceTelegramInboundConfig
@@ -179,6 +180,7 @@ export function buildWorkspaceConfigFile(input: {
     name: input.name,
     harnessProfile: input.harnessProfile,
     runtimePolicy: input.runtimePolicy ?? defaultWorkspaceRuntimePolicyForHarnessProfile(input.harnessProfile),
+    autoPromoteOnGreenQa: input.autoPromoteOnGreenQa ?? true,
     preview: input.preview,
     sonar: input.sonar,
     telegram: input.telegram,
@@ -194,6 +196,7 @@ function parseWorkspaceConfigFile(raw: {
   name?: unknown
   harnessProfile?: unknown
   runtimePolicy?: unknown
+  autoPromoteOnGreenQa?: unknown
   preview?: unknown
   sonar?: unknown
   telegram?: unknown
@@ -220,6 +223,7 @@ function parseWorkspaceConfigFile(raw: {
     name: raw.name,
     harnessProfile: raw.harnessProfile,
     runtimePolicy,
+    autoPromoteOnGreenQa: raw.autoPromoteOnGreenQa === false ? false : true,
     preview,
     sonar,
     telegram: normalizeWorkspaceTelegramConfig(raw.telegram),

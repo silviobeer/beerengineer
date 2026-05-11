@@ -346,6 +346,22 @@ function promptAnswerResumeSummary(source: AnswerSource): string {
   return `Operator answered a pending prompt via ${source}.`
 }
 
+function mergeGatePromptAnswerForResume(
+  repos: Repos,
+  runBeforeAnswer: RunRow | undefined,
+  runId: string,
+  promptId: string,
+  answer: string,
+): string | undefined {
+  if (runBeforeAnswer?.recovery_scope === "stage" && runBeforeAnswer.recovery_scope_ref === "merge-gate") {
+    return answer.trim()
+  }
+  const prompt = repos.getPendingPrompt(promptId)
+  if (!prompt?.stage_run_id) return undefined
+  const stageRun = repos.listStageRunsForRun(runId).find(row => row.id === prompt.stage_run_id)
+  return stageRun?.stage_key === "merge-gate" ? answer.trim() : undefined
+}
+
 export async function answerRunPromptInProcess(
   repos: Repos,
   input: { runId: string; promptId?: string; answer: string; source: AnswerSource },
@@ -354,10 +370,12 @@ export async function answerRunPromptInProcess(
   const runBeforeAnswer = repos.getRun(input.runId)
   const result = recordAnswer(repos, input)
   if (result.ok && options.resumeBlockedRunInProcess && shouldResumeBlockedRunAfterAnswer(runBeforeAnswer)) {
+    const promptAnswer = mergeGatePromptAnswerForResume(repos, runBeforeAnswer, input.runId, result.promptId, input.answer)
     const io = buildApiIo(repos)
     const prepared = await prepareForegroundResumeRun(repos, io, {
       runId: input.runId,
       summary: promptAnswerResumeSummary(input.source),
+      promptAnswer,
       workerOwnerKind: "api",
       workerInstanceId: options.apiWorkerInstanceId ?? API_WORKER_INSTANCE_ID,
       workerLeaseClock: options.workerLeaseClock,
