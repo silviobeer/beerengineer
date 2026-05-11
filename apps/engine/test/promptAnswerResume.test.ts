@@ -59,6 +59,7 @@ async function seedBlockedPromptRun() {
   await writeFile(layout.runFile(ctx), `${JSON.stringify({ id: run.id }, null, 2)}\n`)
 
   async function blockAt(stageId: string, summary: string, promptId: string, prompt: string): Promise<void> {
+    const stageRun = repos.createStageRun({ runId: run.id, stageKey: stageId })
     await writeRecoveryRecord(ctx, {
       status: "blocked",
       cause: "stage_error",
@@ -73,7 +74,7 @@ async function seedBlockedPromptRun() {
       summary,
     })
     repos.updateRun(run.id, { status: "blocked", current_stage: stageId })
-    repos.createPendingPrompt({ id: promptId, runId: run.id, prompt })
+    repos.createPendingPrompt({ id: promptId, runId: run.id, stageRunId: stageRun.id, prompt })
   }
 
   return {
@@ -248,6 +249,41 @@ test("answerRunPromptInProcess can re-block on a later prompt and resume again c
       assert.equal(fx.repos.getPendingPrompt("prompt-2")?.answer, "Yes, keep one process.")
       assert.equal(fx.repos.getOpenPrompt(fx.run.id), undefined)
       assert.equal(fx.repos.listExternalRemediations(fx.run.id).length, 2)
+    } finally {
+      await fx.cleanup()
+    }
+  })
+})
+
+test("answerRunPromptInProcess carries a merge-gate answer into the resumed run", async () => {
+  await withTmpCwd(async () => {
+    const fx = await seedBlockedPromptRun()
+    try {
+      await fx.blockAt("merge-gate", "Waiting for promotion.", "prompt-merge", "Promote this item?")
+      const background = createBackgroundHarness()
+      const promptAnswers: string[] = []
+
+      const result = await answerRunPromptInProcess(
+        fx.repos,
+        { runId: fx.run.id, promptId: "prompt-merge", answer: "cancel", source: "api" },
+        {
+          resumeBlockedRunInProcess: true,
+          backgroundRunner: background.backgroundRunner,
+          resumeRunImpl: async input => {
+            promptAnswers.push(await input.io.ask("Promote this item?", {
+              promptId: "recreated-merge-prompt",
+              actions: [
+                { label: "Promote", value: "promote" },
+                { label: "Cancel", value: "cancel" },
+              ],
+            }))
+          },
+        },
+      )
+      await background.wait()
+
+      assert.equal(result.ok, true)
+      assert.deepEqual(promptAnswers, ["cancel"])
     } finally {
       await fx.cleanup()
     }
