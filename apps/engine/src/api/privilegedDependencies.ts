@@ -170,6 +170,7 @@ export function composeApiPrivilegedDependencies(
           apiWorkerInstanceId: API_WORKER_INSTANCE_ID,
           autoResume: {
             enabled: autoResumeEnabled,
+            recoveryThreshold: admission.resolution.effectiveWorkerCap,
             resumeRun: async run => {
               const result = await autoResumeRunOnStartup(repos, {
                 runId: run.id,
