@@ -141,6 +141,10 @@ function normalizeDirtyMasterAllowlist(raw: unknown): string[] | undefined {
     .filter(Boolean)
 }
 
+function normalizeOptionalBoolean(raw: unknown): boolean | undefined {
+  return typeof raw === "boolean" ? raw : undefined
+}
+
 function isValidHarnessProfile(raw: unknown): raw is HarnessProfile {
   if (!raw || typeof raw !== "object") return false
   const mode = (raw as { mode?: unknown }).mode
@@ -175,6 +179,7 @@ export function buildWorkspaceConfigFile(input: {
   harnessProfile: HarnessProfile
   runtimePolicy?: WorkspaceRuntimePolicy
   dirtyMasterAllowlist?: string[]
+  autoRestoreAllowlisted?: boolean
   preview?: WorkspacePreviewConfig
   sonar: SonarConfig
   telegram?: WorkspaceTelegramInboundConfig
@@ -189,6 +194,7 @@ export function buildWorkspaceConfigFile(input: {
     harnessProfile: input.harnessProfile,
     runtimePolicy: input.runtimePolicy ?? defaultWorkspaceRuntimePolicyForHarnessProfile(input.harnessProfile),
     dirtyMasterAllowlist: input.dirtyMasterAllowlist?.map(value => value.trim()).filter(Boolean),
+    autoRestoreAllowlisted: input.autoRestoreAllowlisted,
     preview: input.preview,
     sonar: input.sonar,
     telegram: input.telegram,
@@ -205,6 +211,7 @@ function parseWorkspaceConfigFile(raw: {
   harnessProfile?: unknown
   runtimePolicy?: unknown
   dirtyMasterAllowlist?: unknown
+  autoRestoreAllowlisted?: unknown
   preview?: unknown
   sonar?: unknown
   telegram?: unknown
@@ -232,6 +239,7 @@ function parseWorkspaceConfigFile(raw: {
     harnessProfile: raw.harnessProfile,
     runtimePolicy,
     dirtyMasterAllowlist: normalizeDirtyMasterAllowlist(raw.dirtyMasterAllowlist),
+    autoRestoreAllowlisted: normalizeOptionalBoolean(raw.autoRestoreAllowlisted),
     preview,
     sonar,
     telegram: normalizeWorkspaceTelegramConfig(raw.telegram),
