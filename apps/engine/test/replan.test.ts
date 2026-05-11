@@ -1,0 +1,386 @@
+import { test } from "node:test"
+import assert from "node:assert/strict"
+import { mkdtempSync, mkdirSync, rmSync, existsSync } from "node:fs"
+import { readFile, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+
+import { createBus, busToWorkflowIO, type EventBus } from "../src/core/bus.js"
+import { attachRunSubscribers } from "../src/core/runSubscribers.js"
+import type { WorkflowEvent } from "../src/core/io.js"
+import { projectStageLogRow } from "../src/core/messagingProjection.js"
+import { performExplicitReplan, type PersistedImplementationPlanArtifact } from "../src/core/replan.js"
+import { buildSupabaseReadinessRecoveryPayload } from "../src/core/supabase/recoveryPayload.js"
+import { supabaseHandoffPath } from "../src/core/supabase/handoffWriter.js"
+import { layout, type WorkflowContext } from "../src/core/workspaceLayout.js"
+import { initDatabase } from "../src/db/connection.js"
+import { Repos, type RunRow } from "../src/db/repositories.js"
+import type { ImplementationPlanArtifact } from "../src/types.js"
+
+function workflowContext(root: string, workspaceId: string, runId: string): WorkflowContext {
+  return {
+    workspaceId,
+    workspaceRoot: root,
+    runId,
+  }
+}
+
+function buildPlan(input: {
+  summary: string
+  waves: Array<{
+    id: string
+    number: number
+    goal: string
+    storyIds: string[]
+    dbRelevantWave?: boolean
+  }>
+}): ImplementationPlanArtifact {
+  return {
+    project: {
+      id: "proj-1",
+      name: "Project One",
+    },
+    conceptSummary: "Stable replan concept",
+    architectureSummary: "Run control owns plan replacement.",
+    plan: {
+      summary: input.summary,
+      assumptions: ["Upstream context remains approved."],
+      sequencingNotes: ["Replans replace the active plan only after preparation succeeds."],
+      dependencies: ["requirements", "architecture"],
+      risks: ["Replacement plan may reorder work."],
+      waves: input.waves.map(wave => ({
+        id: wave.id,
+        number: wave.number,
+        goal: wave.goal,
+        kind: "feature",
+        stories: wave.storyIds.map(storyId => ({
+          id: storyId,
+          title: `${storyId} title`,
+          dbRelevant: wave.dbRelevantWave === true,
+          sharedFiles: [`apps/engine/${storyId}.ts`],
+        })),
+        dbRelevantStoryCount: wave.dbRelevantWave === true ? wave.storyIds.length : 0,
+        dbRelevantWave: wave.dbRelevantWave ?? false,
+        internallyParallelizable: false,
+        dependencies: wave.number === 1 ? [] : [input.waves[wave.number - 2]?.id ?? "W1"],
+        exitCriteria: [`Wave ${wave.number} complete.`],
+      })),
+    },
+  }
+}
+
+async function seedPlanArtifacts(ctx: WorkflowContext, plan: ImplementationPlanArtifact): Promise<void> {
+  const planningDir = layout.stageArtifactsDir(ctx, "planning")
+  mkdirSync(planningDir, { recursive: true })
+  await writeFile(
+    join(planningDir, "implementation-plan.json"),
+    `${JSON.stringify(plan, null, 2)}\n`,
+  )
+  await writeFile(
+    join(planningDir, "implementation-plan.md"),
+    `# ${plan.project.name}\n\n${plan.plan.summary}\n`,
+  )
+}
+
+function makeBus(): { bus: EventBus; io: ReturnType<typeof busToWorkflowIO>; events: WorkflowEvent[] } {
+  const bus = createBus()
+  const events: WorkflowEvent[] = []
+  bus.subscribe(event => events.push(event))
+  return { bus, io: busToWorkflowIO(bus), events }
+}
+
+function fixture() {
+  const dir = mkdtempSync(join(tmpdir(), "be2-replan-"))
+  const db = initDatabase(join(dir, "db.sqlite"))
+  const repos = new Repos(db)
+  const workspace = repos.upsertWorkspace({ key: "alpha", name: "Alpha", rootPath: dir })
+  const item = repos.createItem({ workspaceId: workspace.id, title: "Replan Item", description: "swap plans safely" })
+  const run = repos.createRun({
+    workspaceId: workspace.id,
+    itemId: item.id,
+    title: item.title,
+    owner: "api",
+    status: "blocked",
+    workspaceFsId: "replan-run",
+  })
+  const ctx = workflowContext(dir, "replan-run", run.id)
+
+  mkdirSync(layout.runDir(ctx), { recursive: true })
+  mkdirSync(layout.executionWaveDir(ctx, 1), { recursive: true })
+  mkdirSync(layout.handoffDir(ctx), { recursive: true })
+  mkdirSync(join(layout.artefactsRoot(dir), "handoff", "supabase", run.id), { recursive: true })
+
+  return {
+    dir,
+    db,
+    repos,
+    workspace,
+    item,
+    run,
+    ctx,
+    close() {
+      db.close()
+      rmSync(dir, { recursive: true, force: true })
+    },
+  }
+}
+
+async function seedBlockedExecutionState(input: ReturnType<typeof fixture>, run?: RunRow): Promise<void> {
+  const currentRun = run ?? input.run
+  input.repos.updateRun(currentRun.id, {
+    status: "blocked",
+    current_stage: "execution",
+    recovery_status: "blocked",
+    recovery_scope: "story",
+    recovery_scope_ref: "1/REQ-1",
+    recovery_summary: "Blocked on stale execution references.",
+    recovery_payload_json: buildSupabaseReadinessRecoveryPayload({
+      status: "blocked",
+      missingSetupActions: [],
+      retry: { available: true, runId: currentRun.id },
+      workspace: {
+        id: input.workspace.id,
+        key: input.workspace.key,
+        rootPath: input.dir,
+        projectRef: "proj_alpha",
+      },
+      dbRelevanceTrigger: { waveId: "W1", waveNumber: 1, storyId: "REQ-1" },
+      message: "Replacement plan should clear stale wave references.",
+    }),
+  })
+  await writeFile(
+    join(layout.executionWaveDir(input.ctx, 1), "wave-summary.json"),
+    `${JSON.stringify({ waveId: "W1", storyIds: ["REQ-1"] }, null, 2)}\n`,
+  )
+  await writeFile(layout.handoffFile(input.ctx, "proj-1"), "{\n  \"status\": \"old\"\n}\n")
+  await writeFile(supabaseHandoffPath(input.dir, currentRun.id, "W1"), "SUPABASE_URL=https://old.example\n")
+}
+
+test("successful explicit replan namespaces same-structure waves, archives prior artifacts, and clears stale recovery references", async () => {
+  const f = fixture()
+  try {
+    const currentPlan = buildPlan({
+      summary: "Original plan",
+      waves: [
+        { id: "W1", number: 1, goal: "Original wave one", storyIds: ["REQ-1"], dbRelevantWave: true },
+        { id: "W2", number: 2, goal: "Original wave two", storyIds: ["REQ-2"] },
+      ],
+    })
+    await seedPlanArtifacts(f.ctx, currentPlan)
+    await seedBlockedExecutionState(f)
+
+    const { bus, io, events } = makeBus()
+    const detach = attachRunSubscribers(bus, f.repos, { runId: f.run.id, itemId: f.item.id })
+    try {
+      await performExplicitReplan({
+        repos: f.repos,
+        io,
+        runId: f.run.id,
+        reason: "Scope changed after operator review.",
+        generatePlan: async () => buildPlan({
+          summary: "Replacement plan",
+          waves: [
+            { id: "W1", number: 1, goal: "Replacement wave one", storyIds: ["REQ-1"], dbRelevantWave: true },
+            { id: "W2", number: 2, goal: "Replacement wave two", storyIds: ["REQ-2"] },
+          ],
+        }),
+      })
+    } finally {
+      detach()
+    }
+
+    const persisted = JSON.parse(
+      await readFile(join(layout.stageArtifactsDir(f.ctx, "planning"), "implementation-plan.json"), "utf8"),
+    ) as PersistedImplementationPlanArtifact
+    assert.equal(persisted.metadata?.activePlan.version, 2)
+    assert.deepEqual(
+      persisted.plan.waves.map(wave => wave.id),
+      ["W1--r2", "W2--r2"],
+    )
+    assert.equal(persisted.metadata?.history.length, 1)
+    assert.equal(persisted.metadata?.history[0]?.reason, "Scope changed after operator review.")
+    assert.deepEqual(
+      persisted.metadata?.history[0]?.before.waves.map(wave => wave.id),
+      ["W1", "W2"],
+    )
+    assert.deepEqual(
+      persisted.metadata?.history[0]?.after.waves.map(wave => wave.id),
+      ["W1--r2", "W2--r2"],
+    )
+
+    const archiveEntries = persisted.metadata?.history[0]?.archivedArtifacts ?? []
+    assert.ok(archiveEntries.some(entry => entry.kind === "execution-waves"), JSON.stringify(archiveEntries))
+    assert.ok(archiveEntries.some(entry => entry.kind === "handoffs"), JSON.stringify(archiveEntries))
+    assert.ok(archiveEntries.some(entry => entry.kind === "supabase-handoff"), JSON.stringify(archiveEntries))
+    assert.ok(archiveEntries.some(entry => entry.kind === "planning-json"), JSON.stringify(archiveEntries))
+
+    const archivedPlanPath = archiveEntries.find(entry => entry.kind === "planning-json")?.archivedPath
+    assert.ok(archivedPlanPath && existsSync(archivedPlanPath), archivedPlanPath ?? "missing archived plan json")
+    assert.equal(existsSync(join(layout.executionWaveDir(f.ctx, 1), "wave-summary.json")), false)
+    assert.equal(existsSync(layout.handoffFile(f.ctx, "proj-1")), false)
+    assert.equal(existsSync(supabaseHandoffPath(f.dir, f.run.id, "W1")), false)
+
+    const updatedRun = f.repos.getRun(f.run.id)
+    assert.equal(updatedRun?.recovery_scope, "run")
+    assert.equal(updatedRun?.recovery_scope_ref, null)
+    assert.equal(updatedRun?.recovery_payload_json, null)
+
+    const regeneratedEvents = events.filter((event): event is Extract<WorkflowEvent, { type: "plan_regenerated" }> => event.type === "plan_regenerated")
+    assert.equal(regeneratedEvents.length, 1)
+    assert.equal(regeneratedEvents[0]?.reason, "Scope changed after operator review.")
+    assert.deepEqual(
+      regeneratedEvents[0]?.before.waves.map(wave => wave.id),
+      ["W1", "W2"],
+    )
+    assert.deepEqual(
+      regeneratedEvents[0]?.after.waves.map(wave => wave.id),
+      ["W1--r2", "W2--r2"],
+    )
+
+    const loggedEvents = f.repos.listLogsForRun(f.run.id).filter(log => log.event_type === "plan_regenerated")
+    assert.equal(loggedEvents.length, 1)
+    const projected = projectStageLogRow(loggedEvents[0]!)
+    assert.equal(projected?.type, "plan_regenerated")
+    assert.equal(projected?.payload.reason, "Scope changed after operator review.")
+  } finally {
+    f.close()
+  }
+})
+
+test("successful explicit replan records before/after metadata for changed wave structure", async () => {
+  const f = fixture()
+  try {
+    await seedPlanArtifacts(f.ctx, buildPlan({
+      summary: "Original plan",
+      waves: [
+        { id: "W1", number: 1, goal: "Original wave one", storyIds: ["REQ-1"] },
+        { id: "W2", number: 2, goal: "Original wave two", storyIds: ["REQ-2"] },
+      ],
+    }))
+
+    const { bus, io } = makeBus()
+    const detach = attachRunSubscribers(bus, f.repos, { runId: f.run.id, itemId: f.item.id })
+    try {
+      await performExplicitReplan({
+        repos: f.repos,
+        io,
+        runId: f.run.id,
+        reason: "Operator requested a new wave split.",
+        generatePlan: async () => buildPlan({
+          summary: "Replacement plan",
+          waves: [
+            { id: "W1", number: 1, goal: "Reworked first wave", storyIds: ["REQ-1"] },
+            { id: "W2", number: 2, goal: "Inserted second wave", storyIds: ["REQ-2"] },
+            { id: "W3", number: 3, goal: "New trailing wave", storyIds: ["REQ-3"] },
+          ],
+        }),
+      })
+    } finally {
+      detach()
+    }
+
+    const persisted = JSON.parse(
+      await readFile(join(layout.stageArtifactsDir(f.ctx, "planning"), "implementation-plan.json"), "utf8"),
+    ) as PersistedImplementationPlanArtifact
+    const history = persisted.metadata?.history[0]
+    assert.ok(history, "expected replan history entry")
+    assert.equal(history?.before.waveCount, 2)
+    assert.equal(history?.after.waveCount, 3)
+    assert.deepEqual(
+      history?.after.waves.map(wave => wave.id),
+      ["W1--r2", "W2--r2", "W3--r2"],
+    )
+  } finally {
+    f.close()
+  }
+})
+
+test("replan failure during replacement generation leaves the original plan active and records no success event", async () => {
+  const f = fixture()
+  try {
+    await seedPlanArtifacts(f.ctx, buildPlan({
+      summary: "Original plan",
+      waves: [{ id: "W1", number: 1, goal: "Original wave one", storyIds: ["REQ-1"] }],
+    }))
+    await seedBlockedExecutionState(f)
+    const before = await readFile(join(layout.stageArtifactsDir(f.ctx, "planning"), "implementation-plan.json"), "utf8")
+
+    const { bus, io } = makeBus()
+    const detach = attachRunSubscribers(bus, f.repos, { runId: f.run.id, itemId: f.item.id })
+    try {
+      await assert.rejects(
+        performExplicitReplan({
+          repos: f.repos,
+          io,
+          runId: f.run.id,
+          reason: "Should fail early.",
+          generatePlan: async () => {
+            throw new Error("planner exploded")
+          },
+        }),
+        /planner exploded/,
+      )
+    } finally {
+      detach()
+    }
+
+    assert.equal(
+      await readFile(join(layout.stageArtifactsDir(f.ctx, "planning"), "implementation-plan.json"), "utf8"),
+      before,
+    )
+    assert.equal(existsSync(join(layout.executionWaveDir(f.ctx, 1), "wave-summary.json")), true)
+    assert.equal(existsSync(layout.handoffFile(f.ctx, "proj-1")), true)
+    assert.equal(f.repos.listLogsForRun(f.run.id).filter(log => log.event_type === "plan_regenerated").length, 0)
+  } finally {
+    f.close()
+  }
+})
+
+test("late abort after replacement preparation keeps the original plan active and leaves no partial swap visible", async () => {
+  const f = fixture()
+  try {
+    await seedPlanArtifacts(f.ctx, buildPlan({
+      summary: "Original plan",
+      waves: [{ id: "W1", number: 1, goal: "Original wave one", storyIds: ["REQ-1"] }],
+    }))
+    await seedBlockedExecutionState(f)
+    const before = await readFile(join(layout.stageArtifactsDir(f.ctx, "planning"), "implementation-plan.json"), "utf8")
+
+    const { bus, io } = makeBus()
+    const detach = attachRunSubscribers(bus, f.repos, { runId: f.run.id, itemId: f.item.id })
+    try {
+      await assert.rejects(
+        performExplicitReplan({
+          repos: f.repos,
+          io,
+          runId: f.run.id,
+          reason: "Abort after preparation.",
+          generatePlan: async () => buildPlan({
+            summary: "Replacement plan",
+            waves: [{ id: "W1", number: 1, goal: "Replacement wave one", storyIds: ["REQ-9"] }],
+          }),
+          hooks: {
+            afterPreparation: async () => {
+              throw new Error("abort before activation")
+            },
+          },
+        }),
+        /abort before activation/,
+      )
+    } finally {
+      detach()
+    }
+
+    assert.equal(
+      await readFile(join(layout.stageArtifactsDir(f.ctx, "planning"), "implementation-plan.json"), "utf8"),
+      before,
+    )
+    assert.equal(existsSync(join(layout.executionWaveDir(f.ctx, 1), "wave-summary.json")), true)
+    assert.equal(existsSync(layout.handoffFile(f.ctx, "proj-1")), true)
+    assert.equal(existsSync(supabaseHandoffPath(f.dir, f.run.id, "W1")), true)
+    assert.equal(existsSync(join(layout.runDir(f.ctx), "replans")), false)
+    assert.equal(f.repos.listLogsForRun(f.run.id).filter(log => log.event_type === "plan_regenerated").length, 0)
+  } finally {
+    f.close()
+  }
+})
