@@ -52,10 +52,12 @@ function buildTechnicalSections(project: Project, state: DocumentationState): Do
   ]
 
   sections.push({
-    heading: "Known Risks",
+    heading: "Known Issues",
     content: state.projectReview.findings.length > 0
-      ? state.projectReview.findings.map(finding => `${finding.severity} ${finding.category}: ${finding.message}`).join("; ")
-      : "No residual project-wide technical risks remain.",
+      ? state.projectReview.findings
+        .map((finding, index) => `${index + 1}. ${finding.severity} ${finding.category}: ${finding.message}`)
+        .join("\n")
+      : "No residual project-wide technical issues remain.",
   })
 
   const updateModeContent = artifactMode(state) === "generate"

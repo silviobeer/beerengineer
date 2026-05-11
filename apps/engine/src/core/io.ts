@@ -34,6 +34,7 @@ export type StartupRecoveryReason =
   | "open_prompt"
   | "worker_lease_not_orphaned"
   | "auto_resume_disabled"
+  | "recovery_threshold_exceeded"
   | "auto_resume_failed"
 
 export type WorkflowEvent =
@@ -81,6 +82,7 @@ export type WorkflowEvent =
       runId: string
       outcome: StartupRecoveryOutcome
       reason: StartupRecoveryReason | null
+      heldBackRunIds?: string[]
       error?: string
     } & WorkflowEventMeta)
   | ({ type: "external_remediation_recorded"; runId: string; remediationId: string; scope: RecoveryEventScope; summary: string; branch?: string } & WorkflowEventMeta)

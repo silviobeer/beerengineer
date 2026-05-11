@@ -36,6 +36,7 @@ const STARTUP_RECOVERY_REASONS = [
   "open_prompt",
   "worker_lease_not_orphaned",
   "auto_resume_disabled",
+  "recovery_threshold_exceeded",
   "auto_resume_failed",
  ] as const satisfies ReadonlyArray<NonNullable<StartupRecoveryReason>>
 const STARTUP_RECOVERY_REASON_SET = new Set<string>(STARTUP_RECOVERY_REASONS)
@@ -239,6 +240,9 @@ const STAGE_LOG_EVENT_PARSERS: Record<string, StageLogEventParser> = {
     runId: row.run_id,
     outcome: data.outcome === "auto_resumed" || data.outcome === "failed" ? data.outcome : "skipped",
     reason: parseStartupRecoveryReason(data.reason),
+    heldBackRunIds: Array.isArray(data.heldBackRunIds)
+      ? data.heldBackRunIds.filter((value): value is string => typeof value === "string")
+      : undefined,
     error: typeof data.error === "string" ? data.error : undefined,
   }),
   external_remediation_recorded: (row, data) => ({

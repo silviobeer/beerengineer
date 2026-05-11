@@ -2,6 +2,7 @@ import type { ItemRow, Repos } from "../db/repositories.js"
 import type { EventBus } from "./bus.js"
 import { mapStageToColumn } from "./boardColumns.js"
 import type { WorkflowEvent } from "./io.js"
+import { parseSupabaseProvisioningRecoveryPayload } from "./supabase/recoveryPayload.js"
 
 export type AttachDbSyncOptions = {
   /**
@@ -29,6 +30,10 @@ type TrackLogRow = (row: { id: string } | undefined) => void
 type StageLogInsert = Parameters<Repos["appendLog"]>[0]
 type WorkflowEventHandler = (event: WorkflowEvent) => void
 type WorkflowEventHandlers = Partial<Record<WorkflowEvent["type"], WorkflowEventHandler>>
+
+function shouldDelayRecoveryClearForResume(repos: Repos, runId: string): boolean {
+  return parseSupabaseProvisioningRecoveryPayload(repos.getRun(runId)?.recovery_payload_json) !== null
+}
 
 function appendTrackedLog(repos: Repos, track: TrackLogRow, entry: StageLogInsert): void {
   track(repos.appendLog(entry))
@@ -417,7 +422,9 @@ export function persistWorkflowEvent(repos: Repos, event: WorkflowEvent): void {
   switch (event.type) {
     case "run_resumed":
       if (repos.listLogsForRun(runId).some(log => log.event_type === "run_resumed")) {
-        repos.clearRunRecovery(runId)
+        if (!shouldDelayRecoveryClearForResume(repos, runId)) {
+          repos.clearRunRecovery(runId)
+        }
         break
       }
       persistRunResumedEvent(repos, track, event)
@@ -632,6 +639,7 @@ function persistRunRecoveryEvent(
   wasSoleLiveRun: () => boolean,
 ): void {
   const soleLive = wasSoleLiveRun()
+  const existing = repos.getRun(event.runId)
   repos.updateRun(event.runId, { status: event.type === "run_blocked" ? "blocked" : "failed" })
   if (soleLive) repos.setItemCurrentStage(itemId, null)
   const scope = event.scope
@@ -640,7 +648,8 @@ function persistRunRecoveryEvent(
     status: event.type === "run_blocked" ? "blocked" : "failed",
     scope: scope.type,
     scopeRef: scopeRefVal,
-    summary: event.summary
+    summary: event.summary,
+    payloadJson: existing?.recovery_payload_json ?? null,
   })
   persistLogOnlyEvent(repos, track, event, currentEvent => ({
     runId: currentEvent.runId,
@@ -667,7 +676,9 @@ function persistRunResumedEvent(
   track: TrackLogRow,
   event: EventOf<"run_resumed">,
 ): void {
-  repos.clearRunRecovery(event.runId)
+  if (!shouldDelayRecoveryClearForResume(repos, event.runId)) {
+    repos.clearRunRecovery(event.runId)
+  }
   persistLogOnlyEvent(repos, track, event, currentEvent => ({
     runId: currentEvent.runId,
     eventType: "run_resumed",

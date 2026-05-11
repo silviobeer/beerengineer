@@ -31,13 +31,15 @@ export function groundDocumentationArtifactInProjectReview(
   }
 
   const groundedIssues = projectReview.findings.map(formatProjectReviewFinding)
-  const groundedIssueText = groundedIssues.join("; ")
+  const groundedIssueText = groundedIssues
+    .map((issue, index) => `${index + 1}. ${issue}`)
+    .join("\n")
 
   return {
     ...artifact,
     technicalDoc: {
       ...artifact.technicalDoc,
-      sections: upsertSection(artifact.technicalDoc.sections, "Known Risks", groundedIssueText),
+      sections: upsertSection(artifact.technicalDoc.sections, "Known Issues", groundedIssueText),
     },
     featuresDoc: {
       ...artifact.featuresDoc,
