@@ -39,7 +39,8 @@ exec systemd-run --user \
   --collect \
   --property="MemoryHigh=${MEM_HIGH}" \
   --property="MemoryMax=${MEM_MAX}" \
-  --property="ManagedOOMSwap=kill" \
+  --property="ManagedOOMSwap=auto" \
+  --property="ManagedOOMMemoryPressure=auto" \
   --property="CPUQuota=${CPU_QUOTA}" \
   --property="IOWeight=${IO_WEIGHT}" \
   --setenv=BEERENGINEER_CODEX_SANDBOX_BYPASS="${BEERENGINEER_CODEX_SANDBOX_BYPASS:-true}" \
