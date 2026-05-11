@@ -115,6 +115,10 @@ function makeEmptyProgressDir(root, projId, slug) {
   })
 }
 
+function makeDir(root, relativePath) {
+  mkdirSync(join(root, relativePath), { recursive: true })
+}
+
 function appendFile(root, relativePath, content) {
   const current = readFileSync(join(root, relativePath), "utf8")
   writeFile(root, relativePath, `${current}${content}`)
@@ -200,7 +204,44 @@ test("TC-4 incomplete PROJs do not trigger missing-PROJ failures", () => {
   }
 })
 
-test("TC-5 dependency scan ignores out-of-scope docs", () => {
+test("TC-5 7_progress with only non-markdown files does not mark a PROJ complete", () => {
+  const root = createFixture()
+  try {
+    makeCompletedProj(root, "PROJ-3", "non-markdown-only", ["progress.txt", "notes.json"])
+
+    const result = checkDocFreshness(root)
+
+    assert.equal(result.ok, true)
+    assert.deepEqual(result.findings.missingProjects, [])
+  } finally {
+    cleanup(root)
+  }
+})
+
+test("TC-6 multiple markdown progress logs still yield one missing-PROJ finding", () => {
+  const root = createFixture()
+  try {
+    makeCompletedProj(root, "PROJ-9", "missing-project", [
+      "ship.md",
+      "qa.md",
+      "retro.md",
+    ])
+
+    const result = checkDocFreshness(root)
+    const report = formatDocFreshnessReport(result)
+
+    assert.equal(result.ok, false)
+    assert.equal(result.findings.missingProjects.length, 1)
+    assert.equal(result.findings.missingProjects[0].projId, "PROJ-9")
+    assert.equal(result.findings.missingProjects[0].logCount, 3)
+    assert.match(report, /PROJ-9/)
+    assert.equal(report.match(/docs\/PROJECT\.md:/g)?.length, 1)
+  } finally {
+    cleanup(root)
+  }
+})
+
+test("TC-7 dependency scan ignores out-of-scope docs", () => {
   const root = createFixture()
   try {
     appendFile(root, "notes/working-notes.md", "\nPinned candidate: next@^99.0.0\n")
@@ -214,7 +255,25 @@ test("TC-5 dependency scan ignores out-of-scope docs", () => {
   }
 })
 
-test("TC-6 in-scope dependency mismatch reports doc and manifest", () => {
+test("TC-7b dependency scan ignores nested docs below the approved ADR scope", () => {
+  const root = createFixture()
+  try {
+    writeFile(
+      root,
+      "docs/adr/archive/old-decision.md",
+      "# Archived\n\nCurrent dependency: next@^99.0.0\n",
+    )
+
+    const result = checkDocFreshness(root)
+
+    assert.equal(result.ok, true)
+    assert.deepEqual(result.findings.dependencyClaims, [])
+  } finally {
+    cleanup(root)
+  }
+})
+
+test("TC-8 in-scope dependency mismatch reports doc and manifest", () => {
   const root = createFixture()
   try {
     appendFile(root, "docs/TECHNICAL.md", "\nPinned dependency: next@^99.0.0\n")
@@ -238,7 +297,203 @@ test("TC-6 in-scope dependency mismatch reports doc and manifest", () => {
   }
 })
 
-test("TC-7 deleted-path scan ignores out-of-scope docs", () => {
+test("TC-8b dependency scan uses only root and apps manifests as truth sources", () => {
+  const root = createFixture()
+  try {
+    writeJson(root, "package.json", {
+      name: "doc-freshness-fixture",
+      private: true,
+      type: "module",
+      workspaces: ["apps/*"],
+      dependencies: {
+        vite: "^6.1.0",
+      },
+      scripts: {
+        test: "npm run test:docs-freshness",
+        "test:docs-freshness": "node scripts/check-doc-freshness.mjs",
+      },
+    })
+    writeJson(root, "tools/package.json", {
+      name: "@fixture/tools",
+      private: true,
+      dependencies: {
+        vite: "^9.9.9",
+      },
+    })
+    appendFile(root, "docs/TECHNICAL.md", "\nCurrent dependency: vite@^6.1.0\n")
+
+    const result = checkDocFreshness(root)
+
+    assert.equal(result.ok, true)
+    assert.deepEqual(result.findings.dependencyClaims, [])
+  } finally {
+    cleanup(root)
+  }
+})
+
+test("TC-8c pinned claim for dependency missing from approved manifests is reported", () => {
+  const root = createFixture()
+  try {
+    writeJson(root, "tools/package.json", {
+      name: "@fixture/tools",
+      private: true,
+      dependencies: {
+        hono: "^4.7.0",
+      },
+    })
+    appendFile(root, "docs/TECHNICAL.md", "\nCurrent dependency: hono@^4.7.0\n")
+
+    const result = checkDocFreshness(root)
+    const report = formatDocFreshnessReport(result)
+
+    assert.equal(result.ok, false)
+    assert.equal(result.findings.dependencyClaims.length, 1)
+    assert.equal(result.findings.dependencyClaims[0].packageName, "hono")
+    assert.equal(result.findings.dependencyClaims[0].claimedVersion, "^4.7.0")
+    assert.equal(result.findings.dependencyClaims[0].actualVersion, null)
+    assert.equal(result.findings.dependencyClaims[0].manifestPath, null)
+    assert.match(report, /hono@\^4\.7\.0/)
+    assert.match(report, /has no approved manifest entry/)
+  } finally {
+    cleanup(root)
+  }
+})
+
+test("TC-8d matching approved manifest version produces no dependency finding", () => {
+  const root = createFixture()
+  try {
+    appendFile(root, "docs/TECHNICAL.md", "\nCurrent dependency: next@^15.0.0\n")
+
+    const result = checkDocFreshness(root)
+
+    assert.equal(result.ok, true)
+    assert.deepEqual(result.findings.dependencyClaims, [])
+  } finally {
+    cleanup(root)
+  }
+})
+
+test("TC-8d2 direct apps manifests are included in approved dependency truth", () => {
+  const root = createFixture()
+  try {
+    writeJson(root, "apps/docs/package.json", {
+      name: "@fixture/docs",
+      private: true,
+      dependencies: {
+        marked: "^15.0.7",
+      },
+    })
+    appendFile(root, "docs/TECHNICAL.md", "\nCurrent dependency: marked@^15.0.7\n")
+
+    const result = checkDocFreshness(root)
+
+    assert.equal(result.ok, true)
+    assert.deepEqual(result.findings.dependencyClaims, [])
+  } finally {
+    cleanup(root)
+  }
+})
+
+test("TC-8d3 current-guidance headings apply to the following pinned dependency bullet", () => {
+  const root = createFixture()
+  try {
+    appendFile(
+      root,
+      "docs/TECHNICAL.md",
+      [
+        "",
+        "Current dependencies:",
+        "- next@^99.0.0",
+      ].join("\n"),
+    )
+
+    const result = checkDocFreshness(root)
+
+    assert.equal(result.ok, false)
+    assert.equal(result.findings.dependencyClaims.length, 1)
+    assert.equal(result.findings.dependencyClaims[0].packageName, "next")
+    assert.equal(result.findings.dependencyClaims[0].claimedVersion, "^99.0.0")
+  } finally {
+    cleanup(root)
+  }
+})
+
+test("TC-8e current stale claim is reported while historical and example references are ignored", () => {
+  const root = createFixture()
+  try {
+    appendFile(
+      root,
+      "docs/TECHNICAL.md",
+      [
+        "",
+        "Current dependency: next@^99.0.0",
+        "Historical note: next@^13.0.0 was removed during migration.",
+        "Example snippet:",
+        "```bash",
+        "npm install next@^12.0.0",
+        "```",
+      ].join("\n"),
+    )
+
+    const result = checkDocFreshness(root)
+
+    assert.equal(result.ok, false)
+    assert.equal(result.findings.dependencyClaims.length, 1)
+    assert.equal(result.findings.dependencyClaims[0].packageName, "next")
+    assert.equal(result.findings.dependencyClaims[0].claimedVersion, "^99.0.0")
+  } finally {
+    cleanup(root)
+  }
+})
+
+test("TC-8e2 non-current headings suppress following pinned dependency bullets", () => {
+  const root = createFixture()
+  try {
+    appendFile(
+      root,
+      "docs/TECHNICAL.md",
+      [
+        "",
+        "Historical dependencies:",
+        "- next@^99.0.0",
+      ].join("\n"),
+    )
+
+    const result = checkDocFreshness(root)
+
+    assert.equal(result.ok, true)
+    assert.deepEqual(result.findings.dependencyClaims, [])
+  } finally {
+    cleanup(root)
+  }
+})
+
+test("TC-8f unversioned mentions do not create extra dependency findings", () => {
+  const root = createFixture()
+  try {
+    appendFile(
+      root,
+      "docs/TECHNICAL.md",
+      [
+        "",
+        "Current dependency: next@^99.0.0",
+        "Next remains the framework for the UI workspace.",
+        "The next upgrade needs coordination with React.",
+      ].join("\n"),
+    )
+
+    const result = checkDocFreshness(root)
+
+    assert.equal(result.ok, false)
+    assert.equal(result.findings.dependencyClaims.length, 1)
+    assert.equal(result.findings.dependencyClaims[0].packageName, "next")
+    assert.equal(result.findings.dependencyClaims[0].claimedVersion, "^99.0.0")
+  } finally {
+    cleanup(root)
+  }
+})
+
+test("TC-9 deleted-path scan ignores out-of-scope docs", () => {
   const root = createFixture()
   try {
     appendFile(root, "notes/working-notes.md", "\nCurrent active code lives in `legacy/`.\n")
@@ -252,7 +507,25 @@ test("TC-7 deleted-path scan ignores out-of-scope docs", () => {
   }
 })
 
-test("TC-8 active stale path in approved docs is reported", () => {
+test("TC-9b deleted-directory scan ignores nested docs below the approved ADR scope", () => {
+  const root = createFixture()
+  try {
+    writeFile(
+      root,
+      "docs/adr/archive/old-decision.md",
+      "# Archived\n\nCurrent active code lives in `legacy/`.\n",
+    )
+
+    const result = checkDocFreshness(root)
+
+    assert.equal(result.ok, true)
+    assert.deepEqual(result.findings.stalePaths, [])
+  } finally {
+    cleanup(root)
+  }
+})
+
+test("TC-10 active deleted directory in approved docs is reported", () => {
   const root = createFixture()
   try {
     appendFile(root, "docs/AGENTS.md", "\nCurrent active code lives in `legacy/`.\n")
@@ -272,7 +545,46 @@ test("TC-8 active stale path in approved docs is reported", () => {
   }
 })
 
-test("TC-9 historical deleted-path references are allowed", () => {
+test("TC-10b missing nested directory is reported even when its parent exists", () => {
+  const root = createFixture()
+  try {
+    makeDir(root, "apps/engine/")
+    appendFile(
+      root,
+      "docs/TECHNICAL.md",
+      "\nCurrent engine feature code now lives in `apps/engine/legacy/`.\n",
+    )
+
+    const result = checkDocFreshness(root)
+
+    assert.equal(result.ok, false)
+    assert.equal(result.findings.stalePaths.length, 1)
+    assert.equal(
+      result.findings.stalePaths[0].referencedPath,
+      "apps/engine/legacy/",
+    )
+    assert.equal(result.findings.stalePaths[0].docPath, "docs/TECHNICAL.md")
+  } finally {
+    cleanup(root)
+  }
+})
+
+test("TC-10c active directory reference is allowed when the directory exists", () => {
+  const root = createFixture()
+  try {
+    makeDir(root, "legacy/")
+    appendFile(root, "docs/AGENTS.md", "\nCurrent active code lives in `legacy/`.\n")
+
+    const result = checkDocFreshness(root)
+
+    assert.equal(result.ok, true)
+    assert.deepEqual(result.findings.stalePaths, [])
+  } finally {
+    cleanup(root)
+  }
+})
+
+test("TC-11 historical deleted-directory references are allowed", () => {
   const root = createFixture()
   try {
     appendFile(
@@ -290,7 +602,78 @@ test("TC-9 historical deleted-path references are allowed", () => {
   }
 })
 
-test("TC-10 root test path fails non-zero with grouped drift report", () => {
+test("TC-11b active and historical mentions of the same missing directory are evaluated independently", () => {
+  const root = createFixture()
+  try {
+    appendFile(
+      root,
+      "docs/TECHNICAL.md",
+      [
+        "",
+        "Historical note: `legacy/` was removed and is no longer active.",
+        "Current engine code lives in `legacy/`.",
+      ].join("\n"),
+    )
+
+    const result = checkDocFreshness(root)
+
+    assert.equal(result.ok, false)
+    assert.equal(result.findings.stalePaths.length, 1)
+    assert.equal(result.findings.stalePaths[0].referencedPath, "legacy/")
+    assert.equal(result.findings.stalePaths[0].lineNumber, 5)
+  } finally {
+    cleanup(root)
+  }
+})
+
+test("TC-11c deleted-directory rule does not broaden into generic broken-link checking", () => {
+  const root = createFixture()
+  try {
+    appendFile(
+      root,
+      "docs/TECHNICAL.md",
+      [
+        "",
+        "Current engine code lives in `legacy/`.",
+        "Current runbook file lives in `docs/missing-guide.md`.",
+        "Current external guide: [Setup](https://example.invalid/setup).",
+      ].join("\n"),
+    )
+
+    const result = checkDocFreshness(root)
+
+    assert.equal(result.ok, false)
+    assert.equal(result.findings.stalePaths.length, 1)
+    assert.equal(result.findings.stalePaths[0].referencedPath, "legacy/")
+  } finally {
+    cleanup(root)
+  }
+})
+
+test("TC-11d deleted-directory rule returns empty results when all references are valid or historical", () => {
+  const root = createFixture()
+  try {
+    makeDir(root, "legacy/")
+    appendFile(
+      root,
+      "docs/TECHNICAL.md",
+      [
+        "",
+        "Historical note: `retired/` was removed and is no longer active.",
+        "Current engine code lives in `legacy/`.",
+      ].join("\n"),
+    )
+
+    const result = checkDocFreshness(root)
+
+    assert.equal(result.ok, true)
+    assert.deepEqual(result.findings.stalePaths, [])
+  } finally {
+    cleanup(root)
+  }
+})
+
+test("TC-12 root test path fails non-zero with grouped drift report", () => {
   const root = createFixture()
   try {
     makeCompletedProj(root, "PROJ-9", "missing-project")
@@ -311,7 +694,7 @@ test("TC-10 root test path fails non-zero with grouped drift report", () => {
   }
 })
 
-test("TC-11 clean repo passes despite out-of-scope doc issues", () => {
+test("TC-13 clean repo passes despite out-of-scope doc issues", () => {
   const root = createFixture()
   try {
     makeCompletedProj(root, "PROJ-2", "listed-project")
