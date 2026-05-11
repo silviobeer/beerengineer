@@ -295,7 +295,7 @@ async function reuseRecoverableWaveBranch(input: {
     return null
   }
   const run = input.repos.getRun(context.runId)
-  if (!run || run.recovery_status !== "blocked") return null
+  if (run?.recovery_status !== "blocked") return null
 
   const recovery = parseSupabaseProvisioningRecoveryPayload(run.recovery_payload_json)
   if (!recovery) return null
