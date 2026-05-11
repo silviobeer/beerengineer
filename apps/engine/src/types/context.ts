@@ -1,4 +1,5 @@
 import type { ItemDecision } from "../core/itemDecisions.js"
+import type { ImportContextArtifact } from "../core/importContext.js"
 import type { WorkflowContext } from "../core/workspaceLayout.js"
 import type {
   ArchitectureArtifact,
@@ -49,6 +50,7 @@ export type FrontendSnapshot = {
 
 export type ProjectContext = WorkflowContext & {
   project: Project
+  importContext?: ImportContextArtifact
   wireframes?: WireframeArtifact
   design?: DesignArtifact
   prd?: PRD
