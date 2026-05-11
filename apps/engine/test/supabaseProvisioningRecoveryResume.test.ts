@@ -317,6 +317,85 @@ test("REQ-2 AC-2.1/AC-2.4: resume reuses the persisted same-run branch and clear
   }
 })
 
+test("REQ-1 AC-1.2/AC-1.3: resume reattaches a missing branch ref from one verified current-wave branch and clears blocked state", async () => {
+  const ctx = fixture()
+  try {
+    const provider = fakeProvider({
+      branches: [{ id: "br_saved", ref: "br_saved", name: ctx.expectedName, status: "ACTIVE_HEALTHY" }],
+    })
+    await seedBlockedProvisioningRun(ctx)
+
+    await resumeOnce(ctx, provider)
+
+    const resumed = ctx.repos.getRun(ctx.run.id)
+    assert.equal(provider.calls.createBranch, 0)
+    assert.equal(provider.branches.length, 1)
+    assert.equal(provider.calls.listBranches, 1)
+    assert.deepEqual(provider.calls.getBranch, ["br_saved"])
+    assert.equal(resumed?.supabase_branch_ref, "br_saved")
+    assert.equal(resumed?.status, "completed")
+    assert.equal(resumed?.recovery_status, null)
+  } finally {
+    ctx.close()
+  }
+})
+
+test("REQ-1 AC-1.1/AC-1.3: resume replaces a stale prior-wave attachment with the verified current-wave branch", async () => {
+  const ctx = fixture()
+  try {
+    const provider = fakeProvider({
+      branches: [
+        { id: "br_old", ref: "br_old", name: "beerengineer-alpha-old-run-old-item-proj-1-wave-0", status: "ACTIVE_HEALTHY" },
+        { id: "br_saved", ref: "br_saved", name: ctx.expectedName, status: "ACTIVE_HEALTHY" },
+      ],
+    })
+    await seedBlockedProvisioningRun(ctx, {
+      branchRef: "br_old",
+      runBranchRef: "br_old",
+      runBranchName: "beerengineer-alpha-old-run-old-item-proj-1-wave-0",
+    })
+
+    await resumeOnce(ctx, provider)
+
+    const resumed = ctx.repos.getRun(ctx.run.id)
+    assert.equal(provider.calls.createBranch, 0)
+    assert.equal(provider.calls.listBranches, 1)
+    assert.deepEqual(provider.calls.getBranch, ["br_old", "br_saved"])
+    assert.equal(resumed?.supabase_branch_ref, "br_saved")
+    assert.equal(resumed?.supabase_branch_name, ctx.expectedName)
+    assert.equal(resumed?.status, "completed")
+    assert.equal(resumed?.recovery_status, null)
+  } finally {
+    ctx.close()
+  }
+})
+
+test("REQ-1 AC-1.2/AC-1.4: ambiguous missing-ref recovery stays blocked instead of guessing", async () => {
+  const ctx = fixture()
+  try {
+    const provider = fakeProvider({
+      branches: [
+        { id: "br_saved_1", ref: "br_saved_1", name: ctx.expectedName, status: "ACTIVE_HEALTHY" },
+        { id: "br_saved_2", ref: "br_saved_2", name: ctx.expectedName, status: "ACTIVE_HEALTHY" },
+      ],
+    })
+    await seedBlockedProvisioningRun(ctx)
+
+    await resumeOnce(ctx, provider)
+
+    const blocked = ctx.repos.getRun(ctx.run.id)
+    const payload = parseSupabaseProvisioningRecoveryPayload(blocked?.recovery_payload_json)
+    assert.equal(provider.calls.createBranch, 0)
+    assert.equal(provider.calls.listBranches, 1)
+    assert.deepEqual(provider.calls.getBranch, [])
+    assert.equal(blocked?.status, "blocked")
+    assert.equal(blocked?.recovery_status, "blocked")
+    assert.match(payload?.failureCause ?? "", /ambiguous/i)
+  } finally {
+    ctx.close()
+  }
+})
+
 test("REQ-2 AC-2.2/AC-2.4: repeated recovery attempts reuse the same branch and do not create duplicates", async () => {
   const ctx = fixture()
   try {
@@ -400,7 +479,7 @@ test("REQ-2 AC-2.1: resume without a persisted branch identity fails explicitly 
   const ctx = fixture()
   try {
     const provider = fakeProvider({
-      branches: [{ id: "br_guess", ref: "br_guess", name: ctx.expectedName, status: "ACTIVE_HEALTHY" }],
+      branches: [{ id: "br_guess", ref: "br_guess", name: "beerengineer-alpha-other-run-other-item-proj-1-wave-1", status: "ACTIVE_HEALTHY" }],
     })
     await seedBlockedProvisioningRun(ctx)
 
@@ -409,6 +488,7 @@ test("REQ-2 AC-2.1: resume without a persisted branch identity fails explicitly 
     const blocked = ctx.repos.getRun(ctx.run.id)
     const payload = parseSupabaseProvisioningRecoveryPayload(blocked?.recovery_payload_json)
     assert.equal(provider.calls.createBranch, 0)
+    assert.equal(provider.calls.listBranches, 1)
     assert.equal(provider.calls.getBranch.length, 0)
     assert.equal(blocked?.status, "blocked")
     assert.equal(blocked?.recovery_status, "blocked")
